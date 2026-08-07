@@ -1,0 +1,87 @@
+{
+  "description": "支架组合：底座矩形轮廓 + 两个安装孔",
+  "confidence": 0.82,
+  "objects": [
+    {
+      "type": "line",
+      "params": {
+        "start": [0, 0],
+        "end": [200, 0]
+      },
+      "reference": "bottom_edge"
+    },
+    {
+      "type": "line",
+      "params": {
+        "start": [200, 0],
+        "end": [200, 80]
+      },
+      "reference": "right_edge"
+    },
+    {
+      "type": "line",
+      "params": {
+        "start": [200, 80],
+        "end": [0, 80]
+      },
+      "reference": "top_edge"
+    },
+    {
+      "type": "line",
+      "params": {
+        "start": [0, 80],
+        "end": [0, 0]
+      },
+      "reference": "left_edge"
+    },
+    {
+      "type": "circle",
+      "params": {
+        "center": [40, 40],
+        "radius": 15
+      },
+      "reference": "hole_1"
+    },
+    {
+      "type": "circle",
+      "params": {
+        "center": [160, 40],
+        "radius": 15
+      },
+      "reference": "hole_2"
+    }
+  ],
+  "relations": [
+    {
+      "kind": "equal",
+      "entities": ["hole_1", "hole_2"],
+      "property": "radius"
+    },
+    {
+      "kind": "distance",
+      "entities": ["hole_1", "hole_2"],
+      "value": 120
+    },
+    {
+      "kind": "horizontal",
+      "entities": ["bottom_edge"]
+    },
+    {
+      "kind": "horizontal",
+      "entities": ["top_edge"]
+    },
+    {
+      "kind": "vertical",
+      "entities": ["left_edge"]
+    },
+    {
+      "kind": "vertical",
+      "entities": ["right_edge"]
+    },
+    {
+      "kind": "radius",
+      "entities": ["hole_1"],
+      "value": 15
+    }
+  ]
+}
