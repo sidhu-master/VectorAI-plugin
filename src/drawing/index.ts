@@ -1,6 +1,8 @@
 export { createEmptyDrawing, randomIdFactory } from './document/create';
 export type { IdFactory } from './document/create';
 export type * from './document/types';
+export type * from './preview/types';
+export { emptyPerceptionPreview, applyPerceptionPreviewDelta } from './preview/reducer';
 
 export { validateDrawingDocument } from './validation/document';
 export type * from './validation/types';

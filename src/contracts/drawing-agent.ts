@@ -6,6 +6,8 @@ import type {
   RevisionId,
 } from '@/drawing';
 
+export type { PerceptionPreviewDelta } from '@/drawing';
+
 export type DrawingAgentRunStatus =
   | 'planning'
   | 'running'
