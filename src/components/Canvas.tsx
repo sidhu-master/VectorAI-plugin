@@ -5,19 +5,13 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '@/hooks/useStore';
-import type {
-  CircleEntity,
-  GeometryEntity,
-  LineEntity,
-  PointEntity,
-  SpatialRelation,
-} from '@/core/types';
+import type { GeometryEntity, SpatialRelation } from '@/core/types';
+import EntityRenderer from './canvas/EntityRenderer';
 import { aabbIntersects, entityBounds, entityCenter, modelBounds } from './canvas/geometry';
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 10;
 const FIT_PADDING = 1.3;
-const HIT_WIDTH = 14; // 透明点击区域宽度（屏幕像素）
 const DRAG_THRESHOLD = 4; // 拖动判定阈值（像素）
 
 export default function Canvas() {
@@ -130,54 +124,27 @@ export default function Canvas() {
 
   // 渲染实体（含透明点击区域）
   const renderEntity = (e: GeometryEntity) => {
-    if (!e.visible) return null;
-    const selected = selectedIds.includes(e.id);
-    const stroke = selected ? '#f59e0b' : '#22d3ee';
-    const sw = selected ? 2 : 1.5;
-    const dashAttrs = selected ? { strokeDasharray: '4 4', className: 'dash-flow' } : {};
-
-    const onClick = (ev: React.MouseEvent) => {
+    const onClick = (ev: React.MouseEvent<SVGGElement>) => {
       ev.stopPropagation();
       if (!hasMovedRef.current) {
         selectEntity(e.id, ev.ctrlKey || ev.metaKey);
       }
     };
-    const onMouseDown = (ev: React.MouseEvent) => {
+    const onMouseDown = (ev: React.MouseEvent<SVGGElement>) => {
       hasMovedRef.current = false;
       ev.stopPropagation();
     };
-
-    switch (e.type) {
-      case 'point': {
-        const p = e as PointEntity;
-        const visR = 3 / scale;
-        return (
-          <g key={p.id}>
-            <circle cx={p.x} cy={p.y} r={(visR + HIT_WIDTH) / scale} fill="transparent" onClick={onClick} onMouseDown={onMouseDown} className="cursor-pointer" />
-            <circle cx={p.x} cy={p.y} r={visR} fill={stroke} pointerEvents="none" />
-          </g>
-        );
-      }
-      case 'line': {
-        const l = e as LineEntity;
-        return (
-          <g key={l.id}>
-            <line x1={l.start[0]} y1={l.start[1]} x2={l.end[0]} y2={l.end[1]} stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" onClick={onClick} onMouseDown={onMouseDown} className="cursor-pointer" />
-            <line x1={l.start[0]} y1={l.start[1]} x2={l.end[0]} y2={l.end[1]} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" pointerEvents="none" {...dashAttrs} />
-          </g>
-        );
-      }
-      case 'circle': {
-        const c = e as CircleEntity;
-        return (
-          <g key={c.id}>
-            <circle cx={c.center[0]} cy={c.center[1]} r={c.radius} fill="none" stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" onClick={onClick} onMouseDown={onMouseDown} className="cursor-pointer" />
-            <circle cx={c.center[0]} cy={c.center[1]} r={c.radius} fill="none" stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" pointerEvents="none" {...dashAttrs} />
-          </g>
-        );
-      }
-      default: return null;
-    }
+    return (
+      <EntityRenderer
+        key={e.id}
+        entity={e}
+        scale={scale}
+        viewport={{ minX: worldLeft, minY: worldBottom, maxX: worldRight, maxY: worldTop }}
+        selected={selectedIds.includes(e.id)}
+        onSelect={onClick}
+        onPointerDown={onMouseDown}
+      />
+    );
   };
 
   // 关系连线
