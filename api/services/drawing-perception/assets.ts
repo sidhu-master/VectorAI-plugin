@@ -22,6 +22,9 @@ export interface DrawingAssetReference {
   page?: number;
   sourceAssetId?: string;
   bounds?: NormalizedImageBounds;
+  pixelWidth?: number;
+  pixelHeight?: number;
+  heightToWidthRatio?: number;
 }
 
 export interface DrawingImageCropper {
@@ -145,6 +148,7 @@ export class DrawingAssetCache {
       throw new Error('Drawing asset limit exceeded');
     }
     const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const dimensions = readRasterDimensions(bytes, attachment.mimeType);
     const identityHash = createHash('sha256')
       .update(bytes)
       .update(JSON.stringify(metadata))
@@ -155,6 +159,11 @@ export class DrawingAssetCache {
       mimeType: attachment.mimeType,
       sha256,
       byteLength: bytes.byteLength,
+      ...(dimensions ? {
+        pixelWidth: dimensions.width,
+        pixelHeight: dimensions.height,
+        heightToWidthRatio: dimensions.height / dimensions.width,
+      } : {}),
       ...metadata,
     });
     const stored = { runId, reference, attachment: { ...attachment } };
@@ -168,6 +177,53 @@ export class DrawingAssetCache {
     if (!asset) throw new Error(`Drawing asset "${assetId}" 不存在`);
     return asset;
   }
+}
+
+export function readRasterDimensions(
+  bytes: Buffer,
+  mimeType: string,
+): { width: number; height: number } | undefined {
+  if (mimeType === 'image/png' && bytes.length >= 24
+    && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    const width = bytes.readUInt32BE(16);
+    const height = bytes.readUInt32BE(20);
+    return width > 0 && height > 0 ? { width, height } : undefined;
+  }
+  if ((mimeType === 'image/jpeg' || mimeType === 'image/jpg')
+    && bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    return readJpegDimensions(bytes);
+  }
+  return undefined;
+}
+
+function readJpegDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+  const startOfFrameMarkers = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7,
+    0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+  ]);
+  let offset = 2;
+  while (offset + 8 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = bytes[offset + 1];
+    if (marker === 0xd9 || marker === 0xda) return undefined;
+    if (marker === 0x00 || marker === 0xff) {
+      offset += 1;
+      continue;
+    }
+    if (offset + 4 > bytes.length) return undefined;
+    const segmentLength = bytes.readUInt16BE(offset + 2);
+    if (segmentLength < 2 || offset + 2 + segmentLength > bytes.length) return undefined;
+    if (startOfFrameMarkers.has(marker)) {
+      const height = bytes.readUInt16BE(offset + 5);
+      const width = bytes.readUInt16BE(offset + 7);
+      return width > 0 && height > 0 ? { width, height } : undefined;
+    }
+    offset += 2 + segmentLength;
+  }
+  return undefined;
 }
 
 export class SipsImageCropper implements DrawingImageCropper {

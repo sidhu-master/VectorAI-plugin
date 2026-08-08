@@ -1,9 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { DrawingAssetCache, type DrawingImageCropper } from './assets.js';
+import {
+  DrawingAssetCache,
+  readRasterDimensions,
+  type DrawingImageCropper,
+} from './assets.js';
 import type { AgentAttachmentPreparer } from '../agent-runtime/types.js';
 
 describe('DrawingAssetCache', () => {
+  it('records PNG/JPEG pixel dimensions as safe coordinate metadata', async () => {
+    const png = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+    png.writeUInt32BE(1200, 16);
+    png.writeUInt32BE(1800, 20);
+    const cache = new DrawingAssetCache();
+
+    const page = await cache.putPage({
+      runId: 'run_dimensions', page: 1, image: png.toString('base64'),
+      mimeType: 'image/png', signal: new AbortController().signal,
+    });
+
+    expect(page).toMatchObject({ pixelWidth: 1200, pixelHeight: 1800, heightToWidthRatio: 1.5 });
+    expect(JSON.stringify(page)).not.toContain(png.toString('base64'));
+
+    const jpeg = Buffer.alloc(21);
+    jpeg.set([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08]);
+    jpeg.writeUInt16BE(1800, 7);
+    jpeg.writeUInt16BE(1200, 9);
+    expect(readRasterDimensions(jpeg, 'image/jpeg')).toEqual({ width: 1200, height: 1800 });
+  });
+
   it('prepares a PDF page once and reuses repeated crop bytes', async () => {
     const prepare = vi.fn<AgentAttachmentPreparer['prepare']>(async ({ signal }) => {
       expect(signal.aborted).toBe(false);
