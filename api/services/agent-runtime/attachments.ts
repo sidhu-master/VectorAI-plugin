@@ -13,6 +13,7 @@ export class LocalAttachmentPreparer implements AgentAttachmentPreparer {
   async prepare(
     input: PreparedAgentAttachment & { signal: AbortSignal },
   ): Promise<PreparedAgentAttachment> {
+    throwIfAborted(input.signal);
     if (input.mimeType.startsWith('image/')) {
       return { image: input.image, mimeType: input.mimeType };
     }
@@ -36,6 +37,11 @@ export class LocalAttachmentPreparer implements AgentAttachmentPreparer {
       await rm(directory, { recursive: true, force: true });
     }
   }
+}
+
+export function throwIfAborted(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error('Operation aborted');
 }
 
 function runCommand(command: string, args: string[], signal: AbortSignal): Promise<void> {
