@@ -1,3 +1,5 @@
+import type { PerceptionPreviewDelta } from '../../../src/drawing/index.js';
+
 export type AgentProgressEventType =
   | 'accepted'
   | 'planning'
@@ -7,6 +9,7 @@ export type AgentProgressEventType =
   | 'tool_finished'
   | 'validation'
   | 'commit'
+  | 'perception_delta'
   | 'heartbeat'
   | 'paused'
   | 'resumed'
@@ -20,6 +23,7 @@ export interface AgentProgressEvent {
   type: AgentProgressEventType;
   title: string;
   detail?: string;
+  perceptionDelta?: PerceptionPreviewDelta;
   timestamp: number;
   elapsedMs: number;
 }
@@ -49,7 +53,12 @@ export class RunProgressChannel {
     return () => this.listeners.delete(listener);
   }
 
-  publish(type: AgentProgressEventType, title: string, detail?: string): AgentProgressEvent {
+  publish(
+    type: AgentProgressEventType,
+    title: string,
+    detail?: string,
+    perceptionDelta?: PerceptionPreviewDelta,
+  ): AgentProgressEvent {
     this.clearHeartbeat();
     const timestamp = this.now();
     const event: AgentProgressEvent = {
@@ -58,6 +67,9 @@ export class RunProgressChannel {
       type,
       title,
       ...(detail === undefined ? {} : { detail }),
+      ...(perceptionDelta === undefined
+        ? {}
+        : { perceptionDelta: structuredClone(perceptionDelta) }),
       timestamp,
       elapsedMs: Math.max(0, timestamp - this.startedAt),
     };

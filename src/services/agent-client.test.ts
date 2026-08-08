@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { DrawingId, RevisionId } from '@/drawing';
+import type { DrawingId, GeometryId, RevisionId } from '@/drawing';
 import { AgentClient, type AgentProgressEvent, type EventSourceLike } from './agent-client';
 
 class FakeEventSource implements EventSourceLike {
@@ -74,6 +74,28 @@ describe('AgentClient', () => {
 
     expect(received).toEqual(['event_1', 'event_2', 'event_3']);
     expect(source.close).toHaveBeenCalledOnce();
+  });
+
+  it('preserves structured perception deltas from SSE', () => {
+    const source = new FakeEventSource();
+    const client = new AgentClient({ fetcher: vi.fn(), eventSourceFactory: () => source });
+    const received: AgentProgressEvent[] = [];
+    client.subscribe('run_1', (event) => received.push(event));
+    const event: AgentProgressEvent = {
+      ...progress('event_delta', 'perception_delta'),
+      perceptionDelta: {
+        runId: 'run_1', sequence: 1, action: 'observe', slotIds: ['GEO-0001'], removeIds: [],
+        upserts: [{
+          id: 'node_obs_1' as GeometryId, type: 'circle', center: [0, 0], radius: 5,
+          visible: true, quality: { status: 'candidate', confidence: 0.8, evidenceRefs: [] },
+        }],
+        source: { page: 1, viewId: 'view_1', stage: 'detail' },
+      },
+    };
+
+    source.emit('progress', event);
+
+    expect(received[0].perceptionDelta).toEqual(event.perceptionDelta);
   });
 
   it('sends pause, resume, stop, and queued instructions to run controls', async () => {

@@ -3,6 +3,7 @@ import {
   type AgentDecision,
   type DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
+import type { PerceptionPreviewDelta } from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
 import type {
   DrawingPerceptionInput,
@@ -87,6 +88,8 @@ interface RunRecord {
   perceptionCoverageComplete: boolean;
   perceptionIncompleteRegionCount: number;
   perceptionUnresolvedContourCount: number;
+  perceptionPreviewIds: Set<string>;
+  perceptionPreviewSequence: number;
 }
 
 export interface DrawingAgentRunHandle {
@@ -205,6 +208,8 @@ export class DrawingAgentRuntime {
       perceptionCoverageComplete: true,
       perceptionIncompleteRegionCount: 0,
       perceptionUnresolvedContourCount: 0,
+      perceptionPreviewIds: new Set(),
+      perceptionPreviewSequence: 0,
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -352,11 +357,13 @@ export class DrawingAgentRuntime {
         signal: controller.signal,
         deadlineAt: record.state.limits.deadlineAt,
       };
-      let outputs = await this.#collectPerception(record, {
+      const primary = await this.#consumePerceptionPass(record, {
         ...perceptionInput, modelName: this.#visionModelName,
-      }, 'primary');
+      }, 'primary', true);
+      if (!primary.continue) return false;
+      const deferredPrimary = primary.deferred;
       if (
-        outputs.some((output) => output.batch.lowConfidenceCount > 0)
+        deferredPrimary.length > 0
         && this.#visionRepairModelName !== this.#visionModelName
       ) {
         this.#transition(record, {
@@ -370,9 +377,10 @@ export class DrawingAgentRuntime {
           unresolvedContourCount: record.perceptionUnresolvedContourCount,
         };
         try {
-          outputs = await this.#collectPerception(record, {
+          const repair = await this.#consumePerceptionPass(record, {
             ...perceptionInput, modelName: this.#visionRepairModelName,
-          }, 'repair');
+          }, 'repair', false);
+          if (!repair.continue) return false;
         } catch (error) {
           record.perceptionCoverageComplete = coverageSnapshot.complete;
           record.perceptionIncompleteRegionCount = coverageSnapshot.incompleteRegionCount;
@@ -383,15 +391,9 @@ export class DrawingAgentRuntime {
           });
         }
       }
-      for (const output of outputs) {
+      for (const output of deferredPrimary) {
         if (record.perceptionBatchIds.has(output.batch.componentId)) continue;
-        if (!await this.#safePoint(record, 'before_model')) return false;
-        record.perceptionEntityCount += output.batch.commands.length;
-        record.perceptionLowConfidenceCount += output.batch.lowConfidenceCount;
-        if (record.inputMode !== 'analyze_only') {
-          if (!await this.#applyPerceptionBatch(record, output)) return false;
-        }
-        record.perceptionBatchIds.add(output.batch.componentId);
+        if (!await this.#acceptPerceptionBatch(record, output)) return false;
       }
       const summary = perceptionSummary(record);
       this.#transition(record, { type: 'ANALYSIS_READY', summary });
@@ -414,18 +416,30 @@ export class DrawingAgentRuntime {
     }
   }
 
-  async #collectPerception(
+  async #consumePerceptionPass(
     record: RunRecord,
     input: DrawingPerceptionInput,
     pass: 'primary' | 'repair',
-  ): Promise<Array<Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>>> {
-    const commands: Array<Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>> = [];
+    deferLowConfidence: boolean,
+  ): Promise<{
+    deferred: Array<Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>>;
+    continue: boolean;
+  }> {
+    const deferred: Array<Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>> = [];
     for await (const output of this.#perception!.run(input)) {
       if (output.kind === 'command_batch') {
-        commands.push(output);
+        if (record.perceptionBatchIds.has(output.batch.componentId)) continue;
+        if (deferLowConfidence && output.batch.lowConfidenceCount > 0) {
+          deferred.push(output);
+        } else if (!await this.#acceptPerceptionBatch(record, output)) {
+          return { deferred, continue: false };
+        }
         continue;
       }
-      if (output.kind === 'observation_delta') continue;
+      if (output.kind === 'observation_delta') {
+        this.#publishPerceptionDelta(record, output.delta, pass);
+        continue;
+      }
       if (output.stage === 'asset_prepared') {
         record.perceptionCoverageComplete = true;
         record.perceptionIncompleteRegionCount = 0;
@@ -449,7 +463,88 @@ export class DrawingAgentRuntime {
         detail: structuredClone(output.detail),
       });
     }
-    return commands;
+    return { deferred, continue: true };
+  }
+
+  async #acceptPerceptionBatch(
+    record: RunRecord,
+    output: Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>,
+  ): Promise<boolean> {
+    if (!await this.#safePoint(record, 'before_model')) return false;
+    const applied = record.inputMode === 'analyze_only'
+      ? true
+      : await this.#applyPerceptionBatch(record, output);
+    record.perceptionEntityCount += output.batch.commands.length;
+    record.perceptionLowConfidenceCount += output.batch.lowConfidenceCount;
+    record.perceptionBatchIds.add(output.batch.componentId);
+    if (record.inputMode !== 'analyze_only') this.#promotePerceptionBatch(record, output);
+    return applied;
+  }
+
+  #publishPerceptionDelta(
+    record: RunRecord,
+    received: PerceptionPreviewDelta,
+    pass: 'primary' | 'repair',
+  ): void {
+    const delta: PerceptionPreviewDelta = {
+      ...structuredClone(received),
+      runId: record.state.runId,
+      sequence: ++record.perceptionPreviewSequence,
+    };
+    for (const id of delta.removeIds) record.perceptionPreviewIds.delete(id);
+    for (const node of delta.upserts) record.perceptionPreviewIds.add(node.id);
+    const count = delta.upserts.length || delta.removeIds.length;
+    record.progress.publish(
+      'perception_delta',
+      delta.action === 'observe' ? `发现 ${count} 个图元` : `更新 ${count} 个图元`,
+      undefined,
+      delta,
+    );
+    this.#audit(record, 'perception', {
+      pass,
+      stage: 'observation_delta',
+      sequence: delta.sequence,
+      action: delta.action,
+      slotIds: [...delta.slotIds],
+      upsertIds: delta.upserts.map((node) => node.id),
+      removeIds: [...delta.removeIds],
+      entityTypes: delta.upserts.map((node) => node.type),
+      entities: delta.upserts.map((node) => ({
+        id: node.id,
+        type: node.type,
+        ...(node.quality.confidence === undefined
+          ? {}
+          : { confidence: node.quality.confidence }),
+        evidenceRefs: [...node.quality.evidenceRefs],
+      })),
+      source: structuredClone(delta.source),
+    });
+  }
+
+  #promotePerceptionBatch(
+    record: RunRecord,
+    output: Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>,
+  ): void {
+    const removeIds = output.batch.commands.flatMap((command) => {
+      if (command.type === 'geometry.create' || command.type === 'annotation.create') {
+        return command.value.id ? [command.value.id] : [];
+      }
+      return [];
+    }).filter((id) => record.perceptionPreviewIds.has(id));
+    if (removeIds.length === 0) return;
+    this.#publishPerceptionDelta(record, {
+      runId: record.state.runId,
+      sequence: 0,
+      action: 'promote',
+      slotIds: [...output.batch.observationIds],
+      upserts: [],
+      removeIds,
+      source: {
+        page: record.source?.page ?? 1,
+        viewId: 'page',
+        stage: 'reconciliation',
+      },
+    }, 'primary');
   }
 
   async #applyPerceptionBatch(
@@ -903,6 +998,21 @@ export class DrawingAgentRuntime {
     if (record.resolved) return;
     this.#discardPrepared(record);
     this.#tools.discardRun(record.state.runId);
+    if (record.perceptionPreviewIds.size > 0) {
+      this.#publishPerceptionDelta(record, {
+        runId: record.state.runId,
+        sequence: 0,
+        action: 'reject',
+        slotIds: [],
+        upserts: [],
+        removeIds: [...record.perceptionPreviewIds],
+        source: {
+          page: record.source?.page ?? 1,
+          viewId: 'page',
+          stage: 'reconciliation',
+        },
+      }, 'primary');
+    }
     record.progress.publish(type, title);
     record.resolved = true;
     record.resolveCompletion(record.state);

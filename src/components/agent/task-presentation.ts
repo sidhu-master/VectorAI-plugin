@@ -52,6 +52,7 @@ const EVENT_TITLES: Record<AgentProgressEvent['type'], string> = {
   tool_finished: '步骤执行完成',
   validation: '正在验证结果',
   commit: '已保存增量修改',
+  perception_delta: '正在绘制识别结果',
   heartbeat: '仍在处理',
   paused: '任务已暂停',
   resumed: '任务已继续',

@@ -9,6 +9,7 @@ import {
   type GeometryId,
   type IdFactory,
   MemoryDrawingRepository,
+  type PerceptionPreviewDelta,
 } from '../../../src/drawing';
 import { DrawingApplication } from '../drawing-application/application';
 import { DrawingToolRegistry } from './tool-registry';
@@ -111,6 +112,54 @@ async function setup(input: {
 }
 
 describe('DrawingAgentRuntime', () => {
+  it('forwards and audits a perception delta before the perception pass completes', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-progressive-audit-'));
+    try {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
+      const perceptionService = {
+        async *run(): AsyncIterable<DrawingPerceptionOutput> {
+          yield { kind: 'observation_delta', runId: 'run_1', delta: previewDelta() };
+          await gate;
+          yield perceptionBatch('circle_from_image');
+          yield {
+            kind: 'stage', runId: 'run_1', stage: 'completed', timestamp: 100,
+            durationMs: 2, detail: { batchCount: 1 },
+          };
+        },
+      };
+      const { runtime, workspace } = await setup({ auditStore, perceptionService });
+      const handle = runtime.start({
+        ...startInput(workspace), goal: '', source: sourceReference(),
+      });
+      const events: import('./progress').AgentProgressEvent[] = [];
+      runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+      await waitUntil(() => events.some((event) => event.type === 'perception_delta'));
+      expect(events.find((event) => event.type === 'perception_delta')).toMatchObject({
+        perceptionDelta: { sequence: 1, action: 'observe' },
+      });
+      expect(runtime.getState(handle.runId)?.status).not.toBe('completed');
+
+      release();
+      await handle.completion;
+      await runtime.flushAudit(handle.runId);
+      const audit = await auditStore.readRun(handle.runId);
+      expect(audit.events).toContainEqual(expect.objectContaining({
+        type: 'perception',
+        payload: expect.objectContaining({
+          stage: 'observation_delta', sequence: 1, action: 'observe',
+          entities: [{
+            id: 'circle_from_image', type: 'circle', confidence: 0.8, evidenceRefs: [],
+          }],
+        }),
+      }));
+      expect(JSON.stringify(audit.events)).not.toMatch(/vision-model|repair-vision-model/);
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
   it('analyzes a source without planning or committing when the input is analysis-only', async () => {
     const { application, planner, runtime, workspace } = await setup({
       perceptionOutputs: perceptionSequence([]),
@@ -821,4 +870,24 @@ function perceptionBatch(id: string, confidence = 0.9): DrawingPerceptionOutput 
       lowConfidenceCount: confidence < 0.6 ? 1 : 0,
     },
   };
+}
+
+function previewDelta(): PerceptionPreviewDelta {
+  return {
+    runId: 'run_1', sequence: 1, action: 'observe', slotIds: ['GEO-0001'], removeIds: [],
+    upserts: [{
+      id: 'circle_from_image' as GeometryId,
+      type: 'circle', visible: true, center: [0, 0], radius: 5,
+      quality: { status: 'candidate', confidence: 0.8, evidenceRefs: [] },
+    }],
+    source: { page: 1, viewId: 'view_1', stage: 'detail' },
+  };
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error('condition was not reached');
 }

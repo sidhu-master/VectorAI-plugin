@@ -85,6 +85,18 @@ describe('Agent task presentation', () => {
     expect(presentation.stages.find((stage) => stage.status === 'current')?.id).toBe('modify');
   });
 
+  it('presents live drawing deltas without exposing transport details', () => {
+    const presentation = presentAgentTask({
+      plan: reconstructPlan,
+      status: 'running',
+      currentStepIndex: 0,
+      commitCount: 0,
+      events: [event('perception_delta', 9_000)],
+    });
+
+    expect(presentation.details[0].title).toBe('正在绘制识别结果');
+  });
+
   it('summarizes completed incremental work', () => {
     const presentation = presentAgentTask({
       plan: reconstructPlan,

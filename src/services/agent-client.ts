@@ -1,5 +1,5 @@
 import type { DrawingAgentRunView } from '@/contracts/drawing-agent';
-import type { DrawingId, RevisionId } from '@/drawing';
+import type { DrawingId, PerceptionPreviewDelta, RevisionId } from '@/drawing';
 
 export type AgentProgressEventType =
   | 'accepted'
@@ -10,6 +10,7 @@ export type AgentProgressEventType =
   | 'tool_finished'
   | 'validation'
   | 'commit'
+  | 'perception_delta'
   | 'heartbeat'
   | 'paused'
   | 'resumed'
@@ -23,6 +24,7 @@ export interface AgentProgressEvent {
   type: AgentProgressEventType;
   title: string;
   detail?: string;
+  perceptionDelta?: PerceptionPreviewDelta;
   timestamp: number;
   elapsedMs: number;
 }
