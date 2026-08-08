@@ -12,7 +12,10 @@ import type {
   IntentObject,
   LineEntity,
   PointEntity,
+  PolylineEntity,
+  PolylineVertex,
   RayEntity,
+  SplineEntity,
   SpatialIntent,
   SpatialModel,
   SpatialRelation,
@@ -76,6 +79,12 @@ export function compileIntent(intent: SpatialIntent): {
         break;
       case 'ellipse':
         entity = compileEllipse(obj, id);
+        break;
+      case 'polyline':
+        entity = compilePolyline(obj, id);
+        break;
+      case 'spline':
+        entity = compileSpline(obj, id);
         break;
       default:
         supported = false;
@@ -282,4 +291,79 @@ function normalizeVector(vector: [number, number] | null): [number, number] | nu
 
 function normalizeAngle(angle: number): number {
   return ((angle % 360) + 360) % 360;
+}
+
+function compilePolyline(obj: CompilableIntentObject, id: string): PolylineEntity | null {
+  const rawVertices = obj.params.vertices;
+  const closed = obj.params.closed ?? false;
+  if (!Array.isArray(rawVertices) || typeof closed !== 'boolean') return null;
+  const vertices = rawVertices.map(asPolylineVertex);
+  if (vertices.some((vertex) => vertex === null)) return null;
+  if (vertices.length < (closed ? 3 : 2)) return null;
+  return {
+    ...baseEntity(obj, id),
+    type: 'polyline',
+    vertices: vertices as PolylineVertex[],
+    closed,
+  };
+}
+
+function asPolylineVertex(value: unknown): PolylineVertex | null {
+  if (Array.isArray(value)) {
+    const point = asPoint(value);
+    return point ? { point } : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const point = asPoint(record.point);
+  if (!point) return null;
+  if (record.bulge === undefined) return { point };
+  const bulge = asNumber(record.bulge);
+  return bulge === null ? null : { point, bulge };
+}
+
+function compileSpline(obj: CompilableIntentObject, id: string): SplineEntity | null {
+  const degree = asNumber(obj.params.degree);
+  const controlPoints = asPoints(obj.params.controlPoints);
+  const knots = asNumbers(obj.params.knots);
+  const weights = obj.params.weights === undefined ? undefined : asNumbers(obj.params.weights);
+  const closed = obj.params.closed ?? false;
+  const periodic = obj.params.periodic ?? false;
+  if (degree === null || !Number.isInteger(degree) || degree < 1
+    || !controlPoints || controlPoints.length < degree + 1
+    || !knots || knots.length !== controlPoints.length + degree + 1
+    || !isNonDecreasing(knots)
+    || (weights !== undefined && (!weights || weights.length !== controlPoints.length
+      || weights.some((weight) => weight <= 0)))
+    || typeof closed !== 'boolean'
+    || typeof periodic !== 'boolean'
+    || (periodic && !closed)) {
+    return null;
+  }
+  return {
+    ...baseEntity(obj, id),
+    type: 'spline',
+    degree,
+    controlPoints,
+    knots,
+    ...(weights === undefined ? {} : { weights }),
+    closed,
+    periodic,
+  };
+}
+
+function asPoints(value: unknown): [number, number][] | null {
+  if (!Array.isArray(value)) return null;
+  const points = value.map(asPoint);
+  return points.some((point) => point === null) ? null : points as [number, number][];
+}
+
+function asNumbers(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const numbers = value.map(asNumber);
+  return numbers.some((number) => number === null) ? null : numbers as number[];
+}
+
+function isNonDecreasing(values: number[]): boolean {
+  return values.every((value, index) => index === 0 || value >= values[index - 1]);
 }

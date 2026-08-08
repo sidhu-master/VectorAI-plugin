@@ -34,6 +34,11 @@ export function validateModel(model: SpatialModel): ValidationResult {
     }
     entityIds.add(entity.id);
 
+    if (entity.confidence !== undefined
+      && (!isValidNumber(entity.confidence) || entity.confidence < 0 || entity.confidence > 1)) {
+      errors.push(`${prefix}: confidence 必须在 0-1 范围内`);
+    }
+
     // 按类型校验
     switch (entity.type) {
       case 'point':
@@ -52,6 +57,12 @@ export function validateModel(model: SpatialModel): ValidationResult {
         }
         break;
 
+      case 'ray':
+      case 'xline':
+        if (!isValidPoint(entity.origin)) errors.push(`${prefix}: origin 坐标无效`);
+        if (!isUnitVector(entity.direction)) errors.push(`${prefix}: direction 必须是归一化非零向量`);
+        break;
+
       case 'circle':
         if (!isValidPoint(entity.center)) errors.push(`${prefix}: center 坐标无效`);
         if (!isValidNumber(entity.radius)) {
@@ -59,6 +70,62 @@ export function validateModel(model: SpatialModel): ValidationResult {
         } else if (entity.radius <= 0) {
           errors.push(`${prefix}: radius 必须大于 0，实际 ${entity.radius}`);
         }
+        break;
+
+
+      case 'arc':
+        if (!isValidPoint(entity.center)) errors.push(`${prefix}: center 坐标无效`);
+        if (!isValidNumber(entity.radius) || entity.radius <= 0) {
+          errors.push(`${prefix}: radius 必须大于 0`);
+        }
+        if (!isNormalizedAngle(entity.startAngle)) errors.push(`${prefix}: startAngle 无效`);
+        if (!isNormalizedAngle(entity.endAngle)) errors.push(`${prefix}: endAngle 无效`);
+        if (typeof entity.counterClockwise !== 'boolean') {
+          errors.push(`${prefix}: counterClockwise 必须是布尔值`);
+        }
+        break;
+
+      case 'ellipse': {
+        if (!isValidPoint(entity.center)) errors.push(`${prefix}: center 坐标无效`);
+        const majorLength = isValidPoint(entity.majorAxis)
+          ? Math.hypot(entity.majorAxis[0], entity.majorAxis[1])
+          : 0;
+        if (majorLength <= 0) errors.push(`${prefix}: majorAxis 必须是非零二维向量`);
+        if (!isValidNumber(entity.ratio) || entity.ratio <= 0 || entity.ratio > 1) {
+          errors.push(`${prefix}: ratio 必须在 (0, 1] 范围内`);
+        }
+        if ((entity.startParam === undefined) !== (entity.endParam === undefined)) {
+          errors.push(`${prefix}: startParam 和 endParam 必须同时提供`);
+        }
+        if (entity.startParam !== undefined && !isNormalizedAngle(entity.startParam)) {
+          errors.push(`${prefix}: startParam 无效`);
+        }
+        if (entity.endParam !== undefined && !isNormalizedAngle(entity.endParam)) {
+          errors.push(`${prefix}: endParam 无效`);
+        }
+        break;
+      }
+
+      case 'polyline': {
+        const minimum = entity.closed ? 3 : 2;
+        if (typeof entity.closed !== 'boolean') errors.push(`${prefix}: closed 必须是布尔值`);
+        if (!Array.isArray(entity.vertices) || entity.vertices.length < minimum) {
+          errors.push(`${prefix}: vertices 至少需要 ${minimum} 个顶点`);
+        } else {
+          entity.vertices.forEach((vertex, vertexIndex) => {
+            if (!isValidPoint(vertex.point)) {
+              errors.push(`${prefix}: vertices[${vertexIndex}].point 无效`);
+            }
+            if (vertex.bulge !== undefined && !isValidNumber(vertex.bulge)) {
+              errors.push(`${prefix}: vertices[${vertexIndex}].bulge 无效`);
+            }
+          });
+        }
+        break;
+      }
+
+      case 'spline':
+        validateSpline(entity, prefix, errors);
         break;
 
       default:
@@ -119,11 +186,46 @@ export function validateModel(model: SpatialModel): ValidationResult {
   return { valid: errors.length === 0, errors };
 }
 
-function isValidNumber(value: unknown): boolean {
+function isValidNumber(value: unknown): value is number {
   return typeof value === 'number' && !isNaN(value) && isFinite(value);
 }
 
-function isValidPoint(value: unknown): boolean {
+function isValidPoint(value: unknown): value is [number, number] {
   if (!Array.isArray(value) || value.length < 2) return false;
   return isValidNumber(value[0]) && isValidNumber(value[1]);
+}
+
+function isUnitVector(value: unknown): value is [number, number] {
+  return isValidPoint(value) && Math.abs(Math.hypot(value[0], value[1]) - 1) < 1e-9;
+}
+
+function isNormalizedAngle(value: unknown): value is number {
+  return isValidNumber(value) && value >= 0 && value < 360;
+}
+
+function validateSpline(
+  entity: Extract<SpatialModel['entities'][number], { type: 'spline' }>,
+  prefix: string,
+  errors: string[],
+): void {
+  if (!Number.isInteger(entity.degree) || entity.degree < 1) {
+    errors.push(`${prefix}: degree 必须是大于等于 1 的整数`);
+  }
+  if (!Array.isArray(entity.controlPoints) || !entity.controlPoints.every(isValidPoint)
+    || entity.controlPoints.length < entity.degree + 1) {
+    errors.push(`${prefix}: controlPoints 与 degree 不匹配`);
+  }
+  if (!Array.isArray(entity.knots)
+    || !entity.knots.every(isValidNumber)
+    || entity.knots.length !== entity.controlPoints.length + entity.degree + 1
+    || !entity.knots.every((value, index) => index === 0 || value >= entity.knots[index - 1])) {
+    errors.push(`${prefix}: knots 无效或非单调`);
+  }
+  if (entity.weights !== undefined && (entity.weights.length !== entity.controlPoints.length
+    || !entity.weights.every((weight) => isValidNumber(weight) && weight > 0))) {
+    errors.push(`${prefix}: weights 必须与控制点等长且全部大于 0`);
+  }
+  if (typeof entity.closed !== 'boolean') errors.push(`${prefix}: closed 必须是布尔值`);
+  if (typeof entity.periodic !== 'boolean') errors.push(`${prefix}: periodic 必须是布尔值`);
+  if (entity.periodic && !entity.closed) errors.push(`${prefix}: periodic 样条必须同时 closed`);
 }

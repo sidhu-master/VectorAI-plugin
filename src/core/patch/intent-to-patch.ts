@@ -115,6 +115,15 @@ function entityParams(entity: GeometryEntity): Record<string, unknown> {
       ...(entity.startParam === undefined ? {} : { startParam: entity.startParam }),
       ...(entity.endParam === undefined ? {} : { endParam: entity.endParam }),
     };
+    case 'polyline': return { vertices: entity.vertices, closed: entity.closed };
+    case 'spline': return {
+      degree: entity.degree,
+      controlPoints: entity.controlPoints,
+      knots: entity.knots,
+      ...(entity.weights === undefined ? {} : { weights: entity.weights }),
+      closed: entity.closed,
+      periodic: entity.periodic,
+    };
     default: return {};
   }
 }

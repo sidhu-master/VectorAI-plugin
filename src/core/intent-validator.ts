@@ -16,7 +16,7 @@ import type {
 import { RELATION_MIN_ENTITIES } from './types';
 
 const VALID_ENTITY_TYPES: EntityType[] = [
-  'point', 'line', 'ray', 'xline', 'circle', 'arc', 'ellipse',
+  'point', 'line', 'ray', 'xline', 'circle', 'arc', 'ellipse', 'polyline', 'spline',
 ];
 
 // 各实体类型所需的关键参数
@@ -24,6 +24,8 @@ const REQUIRED_PARAMS: Partial<Record<EntityType, string[]>> = {
   point: ['x', 'y'],
   line: ['start', 'end'],
   circle: ['center', 'radius'],
+  polyline: ['vertices'],
+  spline: ['degree', 'controlPoints', 'knots'],
 };
 
 const VALID_RELATION_KINDS: RelationKind[] = [
@@ -117,12 +119,89 @@ function validateIntentObject(obj: IntentObject, index: number): string[] {
     }
   }
 
+  if (obj.type === 'polyline') validatePolylineParams(obj.params, prefix, errors);
+  if (obj.type === 'spline') validateSplineParams(obj.params, prefix, errors);
+
   if (obj.confidence !== undefined
     && (typeof obj.confidence !== 'number' || obj.confidence < 0 || obj.confidence > 1)) {
     errors.push(`${prefix}: confidence 必须是 0-1 之间的数字`);
   }
 
   return errors;
+}
+
+function validatePolylineParams(
+  params: Record<string, unknown>,
+  prefix: string,
+  errors: string[],
+): void {
+  const vertices = params.vertices;
+  const closed = params.closed ?? false;
+  if (typeof closed !== 'boolean') errors.push(`${prefix} (polyline): closed 必须是布尔值`);
+  if (!Array.isArray(vertices)) return;
+  const minimum = closed === true ? 3 : 2;
+  if (vertices.length < minimum) {
+    errors.push(`${prefix} (polyline): ${closed === true ? '闭合' : '开放'}折线至少需要 ${minimum} 个顶点`);
+  }
+  vertices.forEach((vertex, index) => {
+    const point = Array.isArray(vertex)
+      ? vertex
+      : vertex && typeof vertex === 'object'
+        ? (vertex as Record<string, unknown>).point
+        : undefined;
+    if (!isVector(point)) errors.push(`${prefix} (polyline): vertices[${index}].point 无效`);
+    if (vertex && typeof vertex === 'object' && !Array.isArray(vertex)) {
+      const bulge = (vertex as Record<string, unknown>).bulge;
+      if (bulge !== undefined && (typeof bulge !== 'number' || !Number.isFinite(bulge))) {
+        errors.push(`${prefix} (polyline): vertices[${index}].bulge 必须是有限数字`);
+      }
+    }
+  });
+}
+
+function validateSplineParams(
+  params: Record<string, unknown>,
+  prefix: string,
+  errors: string[],
+): void {
+  const degree = params.degree;
+  const controlPoints = params.controlPoints;
+  const knots = params.knots;
+  const weights = params.weights;
+  const closed = params.closed ?? false;
+  const periodic = params.periodic ?? false;
+
+  if (!Number.isInteger(degree) || (degree as number) < 1) {
+    errors.push(`${prefix} (spline): degree 必须是大于等于 1 的整数`);
+  }
+  if (!Array.isArray(controlPoints) || !controlPoints.every(isVector)) {
+    errors.push(`${prefix} (spline): controlPoints 必须是二维点数组`);
+  }
+  if (Array.isArray(controlPoints) && Number.isInteger(degree)
+    && controlPoints.length < (degree as number) + 1) {
+    errors.push(`${prefix} (spline): controlPoints 数量必须大于 degree`);
+  }
+  if (!Array.isArray(knots) || !knots.every(isFiniteNumber)) {
+    errors.push(`${prefix} (spline): knots 必须是有限数字数组`);
+  } else {
+    if (!isNonDecreasing(knots as number[])) {
+      errors.push(`${prefix} (spline): knots 必须单调不减`);
+    }
+    if (Array.isArray(controlPoints) && Number.isInteger(degree)
+      && knots.length !== controlPoints.length + (degree as number) + 1) {
+      errors.push(`${prefix} (spline): knots 数量必须等于控制点数 + degree + 1`);
+    }
+  }
+  if (weights !== undefined && (!Array.isArray(weights)
+    || !weights.every((weight) => isFiniteNumber(weight) && weight > 0)
+    || (Array.isArray(controlPoints) && weights.length !== controlPoints.length))) {
+    errors.push(`${prefix} (spline): weights 必须与控制点等长且全部大于 0`);
+  }
+  if (typeof closed !== 'boolean') errors.push(`${prefix} (spline): closed 必须是布尔值`);
+  if (typeof periodic !== 'boolean') errors.push(`${prefix} (spline): periodic 必须是布尔值`);
+  if (periodic === true && closed !== true) {
+    errors.push(`${prefix} (spline): periodic 样条必须同时 closed`);
+  }
 }
 
 function validateRequiredParams(obj: IntentObject, prefix: string, errors: string[]): void {
@@ -156,13 +235,23 @@ function getParam(params: Record<string, unknown>, keys: string[]): unknown {
 }
 
 function isNonZeroVector(value: unknown): boolean {
+  return isVector(value)
+    && (value[0] !== 0 || value[1] !== 0);
+}
+
+function isVector(value: unknown): value is [number, number] {
   return Array.isArray(value)
     && value.length >= 2
-    && typeof value[0] === 'number'
-    && Number.isFinite(value[0])
-    && typeof value[1] === 'number'
-    && Number.isFinite(value[1])
-    && (value[0] !== 0 || value[1] !== 0);
+    && isFiniteNumber(value[0])
+    && isFiniteNumber(value[1]);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNonDecreasing(values: number[]): boolean {
+  return values.every((value, index) => index === 0 || value >= values[index - 1]);
 }
 
 function isPositiveNumber(value: unknown): boolean {
