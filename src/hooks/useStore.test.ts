@@ -197,6 +197,65 @@ describe('canonical drawing workspace store', () => {
 });
 
 describe('Drawing Agent workspace integration', () => {
+  it('projects ordered perception deltas without mutating the canonical drawing', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
+    const canonical = store.getState().document;
+
+    agent.emit(perceptionEvent(1, 4));
+    expect(store.getState().perceptionPreview).toMatchObject({
+      runId: 'run_1', lastSequence: 1,
+      nodes: { node_preview_1: { type: 'circle', radius: 4 } },
+    });
+    expect(store.getState().document).toBe(canonical);
+    expect(store.getState().revision).toBe(revision1);
+    expect(store.getState().commits).toEqual([]);
+
+    agent.emit(perceptionEvent(1, 9));
+    expect(store.getState().perceptionPreview.nodes.node_preview_1).toMatchObject({ radius: 4 });
+    agent.emit(perceptionEvent(2, 6));
+    expect(store.getState().perceptionPreview.nodes.node_preview_1).toMatchObject({ radius: 6 });
+
+    agent.emit({
+      ...perceptionEvent(3, 6),
+      perceptionDelta: {
+        ...perceptionEvent(3, 6).perceptionDelta!,
+        action: 'reject', upserts: [], removeIds: ['node_preview_1'],
+      },
+    });
+    expect(store.getState().perceptionPreview.nodes).toEqual({});
+  });
+
+  it('retains preview while paused and clears it on terminal events', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
+    agent.emit(perceptionEvent(1, 4));
+    agent.emit({
+      id: 'event_paused', runId: 'run_1', type: 'paused', title: '暂停',
+      timestamp: 2, elapsedMs: 1,
+    });
+    expect(store.getState().perceptionPreview.nodes).toHaveProperty('node_preview_1');
+
+    agent.emit({
+      id: 'event_stopped', runId: 'run_1', type: 'stopped', title: '停止',
+      timestamp: 3, elapsedMs: 2,
+    });
+    expect(store.getState().perceptionPreview).toEqual({
+      runId: null, lastSequence: 0, nodes: {},
+    });
+  });
   it('starts text work from drawing ID and revision without serializing the document', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
@@ -447,5 +506,26 @@ function memoryStorage(initial: Record<string, string> = {}): Storage {
     key: (index) => [...data.keys()][index] ?? null,
     removeItem: (key) => { data.delete(key); },
     setItem: (key, value) => { data.set(key, value); },
+  };
+}
+
+function perceptionEvent(sequence: number, radius: number) {
+  return {
+    id: `event_delta_${sequence}_${radius}`,
+    runId: 'run_1',
+    type: 'perception_delta' as const,
+    title: '发现图元',
+    timestamp: sequence + 1,
+    elapsedMs: sequence,
+    perceptionDelta: {
+      runId: 'run_1', sequence, action: sequence === 1 ? 'observe' as const : 'refine' as const,
+      slotIds: ['GEO-0001'], removeIds: [],
+      upserts: [{
+        id: 'node_preview_1' as GeometryId,
+        type: 'circle' as const, center: [0, 0] as const, radius, visible: true,
+        quality: { status: 'candidate' as const, confidence: 0.8, evidenceRefs: [] },
+      }],
+      source: { page: 1, viewId: 'view_1', stage: 'detail' as const },
+    },
   };
 }

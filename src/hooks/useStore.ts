@@ -1,11 +1,14 @@
 /** Frontend workspace orchestration. DrawingDocument is the only drawing authority. */
 import { create } from 'zustand';
 import {
+  applyPerceptionPreviewDelta,
+  emptyPerceptionPreview,
   randomIdFactory,
   type DrawingCommand,
   type DrawingCommit,
   type DrawingDocument,
   type IdFactory,
+  type PerceptionPreviewState,
   type RevisionId,
 } from '@/drawing';
 import type {
@@ -68,6 +71,7 @@ export interface AppState {
   agentRunId: string | null;
   agentEvents: AgentProgressEvent[];
   agentError: string | null;
+  perceptionPreview: PerceptionPreviewState;
 
   initializeDrawing: () => Promise<void>;
   updateNode: (id: string, changes: Record<string, unknown>) => Promise<void>;
@@ -163,6 +167,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       agentRunId: null,
       agentEvents: [],
       agentError: null,
+      perceptionPreview: emptyPerceptionPreview(null),
 
       initializeDrawing: () => {
         if (get().drawingStatus === 'ready') return Promise.resolve();
@@ -312,6 +317,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           agentRunId: null,
           agentEvents: [],
           agentError: null,
+          perceptionPreview: emptyPerceptionPreview(null),
         }));
         try {
           const started = await agents.start({
@@ -323,7 +329,10 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
               attachment: { data: image, mimeType: mimeType || 'image/png', page: 1 },
             } : {}),
           });
-          set({ agentRunId: started.runId });
+          set({
+            agentRunId: started.runId,
+            perceptionPreview: emptyPerceptionPreview(started.runId),
+          });
           unsubscribeAgent = agents.subscribe(
             started.runId,
             (event) => {
@@ -333,6 +342,11 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                   : [...current.agentEvents, event].slice(-100),
                 agentStatus: progressStatus(event.type, current.agentStatus),
                 agentError: event.type === 'failed' ? event.title : current.agentError,
+                perceptionPreview: ['stopped', 'completed', 'failed'].includes(event.type)
+                  ? emptyPerceptionPreview(null)
+                  : event.perceptionDelta
+                    ? applyPerceptionPreviewDelta(current.perceptionPreview, event.perceptionDelta)
+                    : current.perceptionPreview,
               }));
               if (event.type === 'commit') {
                 const drawingId = get().document?.id;
@@ -423,6 +437,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           agentRunId: null,
           agentEvents: [],
           agentError: null,
+          perceptionPreview: emptyPerceptionPreview(null),
         });
       },
     };
