@@ -1,10 +1,16 @@
 import type {
   Actor,
+  Bounds2D,
   DrawingId,
   DrawingInspectResult,
+  DrawingQueryItem,
   DrawingQueryResult,
   RevisionId,
 } from '../../../src/drawing/index.js';
+import type {
+  AgentDecision,
+  DrawingAgentPlan,
+} from '../../../src/contracts/drawing-agent.js';
 
 export type DrawingToolCapability =
   | 'query_entities'
@@ -84,4 +90,54 @@ export interface DrawingToolInvocation {
   toolCallId: string;
   context: DrawingToolContext;
   input: unknown;
+}
+
+export interface DrawingDocumentSummary {
+  unit: 'mm' | 'cm' | 'm';
+  counts: {
+    geometry: number;
+    annotation: number;
+    relation: number;
+    feature: number;
+  };
+  bounds?: Bounds2D;
+  items: DrawingQueryItem[];
+  truncated: boolean;
+}
+
+export interface DrawingPlannerInput {
+  objective: string;
+  instruction?: string;
+  drawingId: DrawingId;
+  revision: RevisionId;
+  summary: DrawingDocumentSummary;
+  modelName: string;
+  signal: AbortSignal;
+  deadlineAt: number;
+}
+
+export interface DrawingToolEvidence {
+  receipt: DrawingToolReceipt;
+  output?: DrawingQueryResult | DrawingInspectResult | null;
+}
+
+export interface DrawingDecisionInput {
+  plan: DrawingAgentPlan;
+  currentWorkflowNodeId: string;
+  revision: RevisionId;
+  pendingInstructions: string[];
+  recentReceipts: DrawingToolReceipt[];
+  toolEvidence: DrawingToolEvidence[];
+  attempt: number;
+  modelName: string;
+  signal: AbortSignal;
+  deadlineAt: number;
+}
+
+export interface DrawingPlannerModelAdapter {
+  plan(input: DrawingPlannerInput): Promise<DrawingAgentPlan>;
+}
+
+export interface DrawingDecisionModelAdapter {
+  decide(input: DrawingDecisionInput): Promise<AgentDecision>;
 }
