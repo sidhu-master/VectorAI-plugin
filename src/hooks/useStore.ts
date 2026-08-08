@@ -239,9 +239,43 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       },
 
       clearDrawing: async () => {
-        const document = get().document;
-        if (!document) return;
-        await executeCommands(buildClearCommands(document));
+        const state = get();
+        if (!state.document || state.drawingBusy) return;
+        const drawingId = state.document.id;
+        set({ drawingBusy: true, drawingError: null });
+        try {
+          const latest = await drawings.open(drawingId);
+          const commands = buildClearCommands(latest.document);
+          if (commands.length === 0) {
+            set({
+              ...latest,
+              drawingBusy: false,
+              drawingError: null,
+              selectedIds: [],
+              perceptionPreview: emptyPerceptionPreview(null),
+            });
+            return;
+          }
+          const transaction = createWorkspaceTransaction({
+            revision: latest.revision,
+            commands,
+            actor: { type: 'user', id: 'local-user' },
+            idFactory,
+          });
+          const result = await drawings.execute(drawingId, transaction);
+          const applied = applyWorkspaceResult(latest, result);
+          set({
+            ...applied.workspace,
+            drawingBusy: false,
+            drawingError: applied.error,
+            selectedIds: applied.error ? get().selectedIds : [],
+            perceptionPreview: applied.error
+              ? get().perceptionPreview
+              : emptyPerceptionPreview(null),
+          });
+        } catch (error) {
+          set({ drawingBusy: false, drawingError: errorMessage(error) });
+        }
       },
 
       revertLatest: async () => {

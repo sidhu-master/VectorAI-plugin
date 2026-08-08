@@ -174,6 +174,63 @@ describe('canonical drawing workspace store', () => {
     expect(store.getState().drawingError).toBe('版本已变化');
   });
 
+  it('clears against the latest repository revision instead of the visible stale revision', async () => {
+    const client = drawingClientDouble();
+    client.open.mockResolvedValueOnce({ ...workspace(), revision: revision2 });
+    client.execute.mockImplementationOnce(async (_id, transaction) => {
+      const empty = structuredClone(workspace().document);
+      empty.geometry = [];
+      return committed(empty, transaction.baseRevision);
+    });
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage: memoryStorage(),
+      idFactory: { next: (kind) => `${kind}_clear` },
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().clearDrawing();
+
+    expect(client.open).toHaveBeenCalledWith(drawingId);
+    expect(client.execute).toHaveBeenCalledWith(
+      drawingId,
+      expect.objectContaining({
+        id: 'transaction_clear',
+        baseRevision: revision2,
+        commands: [{ type: 'geometry.delete', id: geometryId }],
+      }),
+    );
+    expect(store.getState().document?.geometry).toEqual([]);
+    expect(store.getState().drawingBusy).toBe(false);
+  });
+
+  it('adopts an already empty latest workspace without submitting an empty transaction', async () => {
+    const client = drawingClientDouble();
+    const empty = structuredClone(workspace().document);
+    empty.geometry = [];
+    client.open.mockResolvedValueOnce({
+      document: empty,
+      revision: revision2,
+      commits: [],
+    });
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().clearDrawing();
+
+    expect(client.execute).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({
+      document: empty,
+      revision: revision2,
+      drawingBusy: false,
+      drawingError: null,
+      selectedIds: [],
+    });
+  });
+
   it('reverts the latest canonical commit through the repository', async () => {
     const existingCommit = { id: 'commit_existing' as CommitId } as DrawingCommit;
     const client = drawingClientDouble({ commits: [existingCommit] });
