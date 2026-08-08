@@ -18,6 +18,8 @@
 - Local audit data lives under `.local/vectorai/runs/<runId>/` and `.local/` must be ignored by Git.
 - Audit serialization must omit credentials, bearer tokens, base64 image/PDF bodies, and hidden model reasoning.
 - Existing Core tests and the current text/image UI flows must remain functional during migration.
+- Audit persistence must remain off the synchronous model/Patch critical path except for bounded enqueue work.
+- Every audit event and commit records stage timing fields needed by the later 30-second progress SLA.
 
 ---
 
@@ -342,6 +344,7 @@ export interface AuditEvent {
   type: string;
   timestamp: number;
   payload: Record<string, unknown>;
+  timing?: { queuedMs?: number; modelMs?: number; toolMs?: number; validationMs?: number; persistMs?: number };
 }
 
 export interface AuditStore {
@@ -362,6 +365,7 @@ it('writes manifest, JSONL events, commit files, and final model');
 it('preserves event order when appendEvent calls are concurrent');
 it('redacts apiKey, authorization, token, and base64 media fields recursively');
 it('replays stored commits to the same final SpatialModel');
+it('round-trips stage timing fields without adding media payloads');
 ```
 
 - [ ] **Step 2: Run audit tests and confirm failure**
@@ -446,8 +450,7 @@ git commit -m "docs: document spatial patch foundation"
 
 After this foundation passes review, create and execute separate plans in this order:
 
-1. Agent Runtime state machine, cancellation, safe-point instruction insertion, replanning, and bounded verification retries.
+1. Agent Runtime state machine, `SpatialCapabilityRegistry`, bounded context manager, structured tool receipts, SSE progress/heartbeat, cancellation, safe-point instruction insertion, replanning, shared deadlines, screenshot reuse, and bounded verification retries.
 2. Construction Timeline execution trace, commit diff visualization, controls, and low-confidence red highlighting.
-3. PDF ingestion, page rasterization, source metadata, page selection, and perception merge.
+3. PDF ingestion, page rasterization, source metadata, page selection, and perception merge；将 `test1` 移入 `src/core/tests/fixtures/perception/` 并建立首个图片黄金样例（当前文件若已被 `dist/` 清理，需要从原始来源重新放回）。
 4. Golden-fixture evaluation harness and optional online-model metrics.
-

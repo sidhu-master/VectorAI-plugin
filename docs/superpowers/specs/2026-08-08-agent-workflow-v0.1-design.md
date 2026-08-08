@@ -37,6 +37,9 @@ VectorAI v0.1 必须交付可运行的 Agent Workflow。产品以二维机械工
 4. UI 展示结构化决策摘要与操作轨迹，不存储或展示模型内部推理原文。
 5. 在线模型调用与确定性执行分离，使录制响应能够稳定回归。
 6. 首版保持简单：本地文件持久化，通过接口为数据库和对象存储预留替换点。
+7. 运行时采用单一主脑和显式工具注册表；不得在 Prompt 中宣告运行时未注册的能力。
+8. 上下文采用分层压缩，当前步骤只同步读取紧凑摘要；历史压缩和审计写入不得阻塞主执行循环。
+9. 用户发起任务后 30 秒内必须至少收到一次可见回执；长调用期间持续发送阶段进度，而不是等待完整任务结束后一次性返回。
 
 ## 3. 核心数据结构
 
@@ -115,7 +118,35 @@ type AgentRunStatus =
 
 默认自动连续执行。每个模型请求和每个 Patch 提交边界都是安全点。
 
-### 4.1 用户干预
+### 4.1 工具调用与上下文管理
+
+借鉴 HuAHua 已验证的 Agent 架构，VectorAI 使用以下约束：
+
+- 单一 `SpatialAgentRuntime` 负责计划、工具选择、进度评估和卡住检测，不额外叠加多个监督模型。
+- `SpatialCapabilityRegistry` 是工具能力的唯一事实来源，Prompt 只包含当前已注册且可用的工具。
+- 每次工具调用返回结构化 `SpatialToolReceipt`，区分持久事实、单轮瞬时信号、模型变更和重规划建议。
+- Context Manager 使用三层上下文：当前步骤和最近提交的热上下文、已完成阶段的压缩摘要、用户目标/单位/安全约束等稳定规则。
+- 热上下文保持有界，不传输完整审计日志、所有历史模型或重复截图。
+- 阶段摘要在后台生成；下一轮模型请求使用已有摘要，不等待摘要任务完成。
+- 截图只在视觉验证确有价值时生成，并按当前画布版本复用；同一提交版本不得重复编码相同截图。
+
+```typescript
+interface SpatialToolReceipt {
+  toolCallId: string;
+  toolName: string;
+  status: 'success' | 'error' | 'cancelled';
+  summary: string;
+  durableFacts: Record<string, unknown>;
+  transientSignals: Record<string, unknown>;
+  patch?: SpatialPatch;
+  validation?: ValidationReport;
+  needReplan: boolean;
+}
+```
+
+持久事实可以进入后续上下文；`page_changed`、请求耗时、一次性视觉观察等瞬时信号只进入下一轮，不得无限累积。
+
+### 4.2 用户干预
 
 - **暂停**：将状态设为 `pause_requested`，当前原子请求结束后不进入下一阶段。
 - **继续**：从暂停时的模型和计划恢复。
@@ -126,7 +157,7 @@ type AgentRunStatus =
 
 用户追加指令不会改写已有提交历史。重新规划结果以审计事件记录。
 
-### 4.2 验证与自动修正
+### 4.3 验证与自动修正
 
 验证分为：
 
@@ -183,6 +214,8 @@ type AgentRunStatus =
 
 每个回归案例包含固定输入、协议版本、提示模板版本、录制响应和断言。浮点几何比较必须使用明确容差。
 
+现有 `test1` 工程图作为首个感知黄金样例。素材必须放入受版本管理的测试 fixture 目录，例如 `src/core/tests/fixtures/perception/test1.jpg`，不得放在会被 Vite 构建清理的 `dist/` 中；同时保存期望实体、关系、置信度区间和几何容差。
+
 ## 7. PDF 感知
 
 首版在服务端引入 `DocumentIngestor` 接口：
@@ -211,6 +244,17 @@ Construction Timeline 展示：
 - 暂停、继续、立即停止和追加指令入口
 
 “AI 思考过程”在产品中统一表述为“执行轨迹”或“决策摘要”，不展示隐藏推理文本。
+
+### 8.1 回执与延迟预算
+
+- 接收请求后立即创建 `runId` 并在 1 秒内返回 `accepted` 事件。
+- 规划、模型调用、工具执行、验证和提交开始/结束时发送结构化进度事件。
+- 任意运行状态下，两条用户可见事件的间隔不得超过 30 秒；若底层模型仍未返回，发送带已等待时间的 heartbeat。
+- 单次模型/视觉/PDF 页面调用拥有独立 deadline 和 AbortSignal；重试共享该阶段的总预算，不能每次重试重新获得完整超时。
+- 记录 `queuedMs`、`modelMs`、`toolMs`、`validationMs`、`persistMs` 和端到端耗时，用于回归比较。
+- v0.1 推荐通过 Server-Sent Events 输出单向进度流；控制操作继续使用普通 HTTP 命令接口。
+
+30 秒目标是回执 SLA，不代表复杂工程图必须在 30 秒内完成。简单文字任务仍以 30 秒内产生首个有效提交为性能目标。
 
 ## 9. 模块边界
 
@@ -244,6 +288,8 @@ v0.1 Agent Workflow 满足以下条件才算完成：
 - 低置信度结果在画布和时间线标红。
 - 任一审计运行可在不访问 LLM 的情况下确定性回放。
 - Agent、Patch、History、Audit 和 PDF 主流程均有自动化测试。
+- 首次 `accepted` 回执不超过 1 秒，长调用期间用户可见进度间隔不超过 30 秒。
+- 性能回归记录各阶段耗时，并能发现上下文增长或重复截图导致的退化。
 
 ## 11. 模型能力提示约定
 
@@ -255,4 +301,3 @@ v0.1 Agent Workflow 满足以下条件才算完成：
 - 约束冲突分析与 Constraint Solver
 - 语义层到几何层的映射设计
 - C++/WASM Spatial Kernel 迁移
-

@@ -99,6 +99,7 @@ VectorAI Core (C++ 优先 / TS MVP)
 - **前端**：React 18 + TypeScript + Vite + Tailwind CSS 3 + Zustand
 - **后端**：Express 4 + TypeScript（ESM 格式），AI Service 层
 - **AI Service**：AI Gateway 代理 LLM 调用。未来扩展 Prompt 管理、Few-shot 示例、模型选择、成本控制
+- **Agent 通信**：SSE 进度流 + HTTP 控制命令；请求立即返回 runId，运行过程持续推送结构化事件
 - **渲染**：SVG（React 组件，支持原生 DOM 事件交互）
 - **表示层**：RepresentationAdapter 模式，Core 内置（DXFAdapter 实现，未来扩展 SVGAdapter / STEPAdapter / GLTFAdapter）
 - **测试**：Vitest，测试文件即协议标准案例
@@ -137,6 +138,8 @@ api/                           <- Express 后端
     audit/                     <- AuditStore + FileAuditStore
     ingestion/                 <- 图片/PDF 输入规范化
     model-router/              <- 按任务角色和能力选择模型
+    capabilities/              <- SpatialCapabilityRegistry，运行时工具事实来源
+    context/                   <- 有界热上下文 + 阶段摘要 + 稳定规则
   routes/
     ai.ts                      <- AI 路由
 ```
@@ -176,6 +179,8 @@ interface GenerateResponse {
 - Agent Runtime（计划、自动执行、暂停、停止、重规划、有限重试）
 - 本地审计与确定性回放
 - 图片/PDF 输入规范化
+- 结构化工具回执和阶段耗时采集
+- 1 秒受理回执、最长 30 秒可见进度间隔和共享 deadline
 
 ## 6. 空间协议类型定义
 
