@@ -150,6 +150,18 @@ api/                           <- Express 后端
 |------|------|
 | / | 主工作区（单页应用） |
 
+Agent Runtime 路由：
+
+| 方法与路由 | 返回/行为 |
+|------|------|
+| `POST /api/agent/runs` | 1 秒内返回 `202 + runId`，后台自动规划和执行 |
+| `GET /api/agent/runs/:runId/events` | SSE；回放最近 100 条事件并继续推送 |
+| `GET /api/agent/runs/:runId` | 当前状态、TaskPlan、SpatialHistory 和步骤游标 |
+| `POST /api/agent/runs/:runId/pause` | 标记 `pause_requested`，在最近安全点进入 `paused` |
+| `POST /api/agent/runs/:runId/resume` | 继续执行，先消费安全点追加指令 |
+| `POST /api/agent/runs/:runId/stop` | AbortSignal 中止当前阶段，不提交部分 Patch |
+| `POST /api/agent/runs/:runId/instructions` | 指令排队，在安全点消费一次并重规划 |
+
 ## 5. API 定义
 
 ### POST /api/ai/generate
@@ -544,9 +556,13 @@ core/tests/
 
 ### 当前实现进度（2026-08-08）
 
-已完成 SpatialPatch 结构验证、原子应用、逆向 Patch、SpatialIntent 兼容编译、SpatialCommit、Undo/Redo、本地 FileAuditStore、敏感字段脱敏和确定性提交回放。Zustand 中的参数编辑、删除、AI Intent、感知确认和 Agent 阶段变更已接入提交历史。
+已完成 SpatialPatch 结构验证、原子应用、逆向 Patch、SpatialIntent 兼容编译、SpatialCommit、Undo/Redo、本地 FileAuditStore、敏感字段脱敏和确定性提交回放。Zustand 中的参数编辑、删除、AI Intent、感知确认和 Agent 阶段变更均接入提交历史。
 
-待后续批次实现：Agent Runtime 状态机、能力注册表、有界上下文、SSE/heartbeat、暂停与安全点插入、有限自动重试、Construction Timeline 完整交互和 PDF 栅格化输入。
+Agent Runtime 已具备能力注册表、有界上下文、自动执行、共享阶段 deadline、最多两次修正重试、SSE/25 秒 heartbeat、规划期与执行期暂停、安全点追加指令、AbortSignal 停止、最近事件回放和前端运行控制。图片直接进入视觉规划；PDF 在本地临时目录栅格化第一页后进入相同流程，媒体正文不会写入审计。
+
+热上下文只包含可用能力目录、最近 10 条结构化工具回执、最近 5 条阶段摘要、持久事实和只消费一次的瞬时信号。原始截图、完整审计历史和隐藏模型推理不进入 prompt。
+
+待后续批次实现：多页 PDF 选择、建筑平面图专项语义、约束求解器、人工确认门禁、运行快照压缩和跨设备审计存储。
 
 ### v0.1 之后的演进方向
 - **Spatial Agent Workflow 增强**：复杂重规划、人工确认门禁、多 Agent 协作

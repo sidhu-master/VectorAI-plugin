@@ -37,6 +37,31 @@ COMPANY_INTERNAL_TOKEN
 
 本地运行记录写入 `.local/vectorai/runs/`，该目录不会进入 Git。审计载荷会移除令牌、API Key 和媒体正文。
 
+PDF 图纸会在本地服务端通过 Poppler 的 `pdftoppm` 只渲染第一页，并缩放到最长边 2048px。开发机需能执行 `pdftoppm`；如命令不在 `PATH`，可设置 `PDFTOPPM_PATH` 为其绝对路径。
+
+## Agent Workflow
+
+Agent 模式默认自动执行。启动请求在规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。
+
+| 方法 | 路由 | 用途 |
+|---|---|---|
+| `POST` | `/api/agent/runs` | 启动任务，可携带当前 `spatialModel`、图片或 PDF |
+| `GET` | `/api/agent/runs/:runId/events` | SSE 进度流和最近 100 条事件回放 |
+| `GET` | `/api/agent/runs/:runId` | 获取计划、游标和已提交模型 |
+| `POST` | `/api/agent/runs/:runId/pause` | 请求在安全点暂停 |
+| `POST` | `/api/agent/runs/:runId/resume` | 继续执行 |
+| `POST` | `/api/agent/runs/:runId/stop` | 中止当前调用且不提交半成品 |
+| `POST` | `/api/agent/runs/:runId/instructions` | 追加在下一个安全点生效的指令 |
+
+有效运行在连续静默 25 秒时发送 heartbeat，因此用户可见进度间隔保持在 30 秒以内。单阶段最多验证三次，第三次仍失败会暂停且不提交 Patch。
+
+检查某次本地运行：
+
+```bash
+find .local/vectorai/runs -maxdepth 2 -type f -print
+tail -n 20 .local/vectorai/runs/<runId>/events.jsonl
+```
+
 ## 验证
 
 ```bash
@@ -45,8 +70,6 @@ pnpm check
 pnpm lint
 pnpm build
 ```
-
-完整 Agent Workflow、进度流和 PDF 支持会在后续实施批次接入当前 Patch/History/Audit 地基。
 
 <!-- 原 Vite 模板说明保留在下方，后续项目初始化清理时删除。 -->
 
