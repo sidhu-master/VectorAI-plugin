@@ -56,6 +56,26 @@ describe('AgentRuntime', () => {
     expect((await handle.completion).status).toBe('completed');
   });
 
+  it('forwards an initial drawing attachment to planning without storing it in run state', async () => {
+    let planningInput: PlanStageInput | undefined;
+    const runtime = new AgentRuntime({
+      planner: planner(async (input) => {
+        planningInput = input;
+        return oneStepPlan;
+      }),
+      executor: executor(async () => ({ objects: [] })),
+    });
+
+    const handle = runtime.start({
+      runId: 'run_attachment', goal: '分析图纸', model: createEmptyModel(),
+      image: 'cG5n', mimeType: 'image/png',
+    });
+    await handle.completion;
+
+    expect(planningInput).toMatchObject({ image: 'cG5n', mimeType: 'image/png' });
+    expect(JSON.stringify(runtime.getState('run_attachment'))).not.toContain('cG5n');
+  });
+
   it('automatically commits a valid step patch and emits commit progress', async () => {
     const runtime = new AgentRuntime({
       planner: planner(async () => oneStepPlan),
@@ -170,6 +190,32 @@ describe('AgentRuntime', () => {
     expect(state.status).toBe('completed');
     expect(planningInputs).toHaveLength(2);
     expect(planningInputs[1].instruction).toBe('第二个点改成圆');
+  });
+
+  it('applies guidance added during planning before the first step executes', async () => {
+    const initialPlan = deferred<TaskPlan>();
+    const planningInputs: PlanStageInput[] = [];
+    let executedSummary = '';
+    const revisedPlan = { ...oneStepPlan, summary: '按追加指令创建点' };
+    const runtime = new AgentRuntime({
+      planner: planner(async (input) => {
+        planningInputs.push(input);
+        return input.instruction ? revisedPlan : initialPlan.promise;
+      }),
+      executor: executor(async (input) => {
+        executedSummary = input.plan.summary;
+        return { objects: [] };
+      }),
+    });
+    const handle = runtime.start({ runId: 'run_guidance', goal: '创建点', model: createEmptyModel() });
+    runtime.addInstruction('run_guidance', '先移动到原点');
+    initialPlan.resolve(oneStepPlan);
+
+    await handle.completion;
+
+    expect(planningInputs).toHaveLength(2);
+    expect(planningInputs[1].instruction).toBe('先移动到原点');
+    expect(executedSummary).toBe('按追加指令创建点');
   });
 
   it('aborts a stage when its shared deadline expires', async () => {

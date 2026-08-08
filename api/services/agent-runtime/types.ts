@@ -6,6 +6,8 @@ export interface PlanStageInput {
   goal: string;
   model: SpatialModel;
   instruction?: string;
+  image?: string;
+  mimeType?: string;
   signal: AbortSignal;
   deadlineAt: number;
 }
@@ -35,4 +37,15 @@ export interface StartAgentRunInput {
   goal: string;
   model: SpatialModel;
   stableRules?: string[];
+  image?: string;
+  mimeType?: string;
+}
+
+export interface PreparedAgentAttachment {
+  image: string;
+  mimeType: string;
+}
+
+export interface AgentAttachmentPreparer {
+  prepare(input: PreparedAgentAttachment & { signal: AbortSignal }): Promise<PreparedAgentAttachment>;
 }

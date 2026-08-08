@@ -23,7 +23,12 @@ export class GatewayPlannerAdapter implements AgentPlannerAdapter {
     const prompt = input.instruction
       ? `${input.goal}\n用户追加指令：${input.instruction}`
       : input.goal;
-    return this.planFunction({ prompt, signal: input.signal });
+    return this.planFunction({
+      prompt,
+      image: input.image,
+      mimeType: input.mimeType,
+      signal: input.signal,
+    });
   }
 }
 

@@ -16,6 +16,7 @@ import { createAgentRunsRouter } from './routes/agent-runs.js'
 import { AgentRuntime } from './services/agent-runtime/runtime.js'
 import { GatewayExecutorAdapter, GatewayPlannerAdapter } from './services/agent-runtime/model-adapters.js'
 import { FileAuditStore } from './services/audit/file-audit-store.js'
+import { LocalAttachmentPreparer } from './services/agent-runtime/attachments.js'
 
 // load env
 dotenv.config()
@@ -25,6 +26,7 @@ const agentRuntime = new AgentRuntime({
   planner: new GatewayPlannerAdapter(),
   executor: new GatewayExecutorAdapter(),
   auditStore: new FileAuditStore(path.resolve(process.cwd(), '.local/vectorai/runs')),
+  attachmentPreparer: new LocalAttachmentPreparer(),
 })
 
 app.use(cors())

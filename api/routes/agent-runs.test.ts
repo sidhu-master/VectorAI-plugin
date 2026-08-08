@@ -65,6 +65,8 @@ describe('agent run routes', () => {
       body: JSON.stringify({ goal: '检查模型' }),
     });
     const { runId } = await startResponse.json() as { runId: string };
+    const pause = await fetch(`${baseUrl}/api/agent/runs/${runId}/pause`, { method: 'POST' });
+    expect(pause.status).toBe(202);
     const invalidPause = await fetch(`${baseUrl}/api/agent/runs/${runId}/pause`, { method: 'POST' });
     expect(invalidPause.status).toBe(409);
 

@@ -24,6 +24,13 @@ export function createAgentRunsRouter(runtime: AgentRuntime): Router {
       res.status(400).json({ success: false, error: 'spatialModel 格式无效' });
       return;
     }
+    const image = typeof req.body?.image === 'string' ? req.body.image : undefined;
+    const mimeType = typeof req.body?.mimeType === 'string' ? req.body.mimeType : undefined;
+    if ((image && !mimeType) || (!image && mimeType)
+      || (mimeType && mimeType !== 'application/pdf' && !mimeType.startsWith('image/'))) {
+      res.status(400).json({ success: false, error: '图纸附件需要有效的 image 和 mimeType' });
+      return;
+    }
 
     const runId = `run_${randomUUID()}`;
     runtime.start({
@@ -33,6 +40,8 @@ export function createAgentRunsRouter(runtime: AgentRuntime): Router {
       stableRules: Array.isArray(req.body?.stableRules)
         ? req.body.stableRules.filter((rule: unknown): rule is string => typeof rule === 'string')
         : undefined,
+      image,
+      mimeType,
     });
     res.status(202).json({ success: true, runId });
   });
@@ -83,7 +92,9 @@ export function createAgentRunsRouter(runtime: AgentRuntime): Router {
   router.post('/:runId/pause', (req: Request, res: Response): void => {
     const state = runtime.getState(req.params.runId);
     if (!state) return sendNotFound(res);
-    if (state.status !== 'running') return sendConflict(res, `当前 ${state.status} 状态不能暂停`);
+    if (state.status !== 'planning' && state.status !== 'running') {
+      return sendConflict(res, `当前 ${state.status} 状态不能暂停`);
+    }
     res.status(202).json({ success: true, run: runtime.pause(req.params.runId) });
   });
 

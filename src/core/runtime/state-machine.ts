@@ -72,11 +72,18 @@ export function reduceAgentRun(
 
   switch (event.type) {
     case 'PLAN_READY':
-      if (state.status !== 'planning') return invalid(state, event.type);
-      return valid(state, { ...state, plan: event.plan, status: 'running', needsReplan: false });
+      if (state.status !== 'planning' && state.status !== 'pause_requested') {
+        return invalid(state, event.type);
+      }
+      return valid(state, {
+        ...state,
+        plan: event.plan,
+        status: state.status === 'pause_requested' ? 'paused' : 'running',
+        needsReplan: false,
+      });
 
     case 'PAUSE_REQUESTED':
-      if (state.status !== 'running') return invalid(state, event.type);
+      if (state.status !== 'planning' && state.status !== 'running') return invalid(state, event.type);
       return valid(state, { ...state, status: 'pause_requested' });
 
     case 'SAFE_POINT': {

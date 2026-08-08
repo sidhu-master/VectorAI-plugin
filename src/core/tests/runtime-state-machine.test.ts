@@ -44,6 +44,15 @@ describe('reduceAgentRun', () => {
     expect(reduceAgentRun(requested, { type: 'SAFE_POINT' }).state.status).toBe('paused');
   });
 
+  it('records a pause during planning and enters paused when the plan is ready', () => {
+    const requested = reduceAgentRun(initial(), { type: 'PAUSE_REQUESTED' }).state;
+    const planned = reduceAgentRun(requested, { type: 'PLAN_READY', plan }).state;
+
+    expect(requested.status).toBe('pause_requested');
+    expect(planned.status).toBe('paused');
+    expect(planned.plan).toEqual(plan);
+  });
+
   it('resumes a paused run', () => {
     const running = reduceAgentRun(initial(), { type: 'PLAN_READY', plan }).state;
     const paused = reduceAgentRun(

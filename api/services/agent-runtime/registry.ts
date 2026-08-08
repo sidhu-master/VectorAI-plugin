@@ -1,5 +1,6 @@
 import type { AgentRunState } from '../../../src/core/runtime/state-machine.js';
 import { RunProgressChannel } from './progress.js';
+import type { PreparedAgentAttachment } from './types.js';
 
 export interface AgentRunRecord {
   state: AgentRunState;
@@ -8,6 +9,7 @@ export interface AgentRunRecord {
   completion: Promise<AgentRunState>;
   resolveCompletion: (state: AgentRunState) => void;
   auditQueue: Promise<void>;
+  initialAttachment?: PreparedAgentAttachment;
 }
 
 export class AgentRunRegistry {

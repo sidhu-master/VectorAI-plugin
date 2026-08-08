@@ -16,6 +16,7 @@ import { RunProgressChannel } from './progress.js';
 import type { AuditStore } from '../audit/types.js';
 import type {
   AgentExecutorAdapter,
+  AgentAttachmentPreparer,
   AgentPlannerAdapter,
   StartAgentRunInput,
 } from './types.js';
@@ -27,6 +28,7 @@ export interface AgentRuntimeOptions {
   now?: () => number;
   stageTimeoutMs?: number;
   auditStore?: AuditStore;
+  attachmentPreparer?: AgentAttachmentPreparer;
 }
 
 export interface AgentRunHandle {
@@ -41,6 +43,7 @@ export class AgentRuntime {
   private readonly now: () => number;
   private readonly stageTimeoutMs: number;
   private readonly auditStore?: AuditStore;
+  private readonly attachmentPreparer: AgentAttachmentPreparer;
   private sequence = 0;
 
   constructor(options: AgentRuntimeOptions) {
@@ -50,6 +53,9 @@ export class AgentRuntime {
     this.now = options.now ?? Date.now;
     this.stageTimeoutMs = options.stageTimeoutMs ?? 120_000;
     this.auditStore = options.auditStore;
+    this.attachmentPreparer = options.attachmentPreparer ?? {
+      prepare: async ({ image, mimeType }) => ({ image, mimeType }),
+    };
   }
 
   start(input: StartAgentRunInput): AgentRunHandle {
@@ -70,6 +76,9 @@ export class AgentRuntime {
       completion,
       resolveCompletion,
       auditQueue: Promise.resolve(),
+      initialAttachment: input.image && input.mimeType
+        ? { image: input.image, mimeType: input.mimeType }
+        : undefined,
     };
     this.registry.add(input.runId, record);
     this.enqueueAudit(record, () => this.auditStore!.startRun({
@@ -114,7 +123,15 @@ export class AgentRuntime {
     const record = this.registry.require(runId);
     record.state = reduceAgentRun(record.state, { type: 'RESUME' }).state;
     record.progress.publish('resumed', '任务已继续');
-    void Promise.resolve().then(() => this.runSteps(record));
+    void Promise.resolve().then(async () => {
+      try {
+        if (record.state.needsReplan && record.state.activeInstruction) await this.replan(record);
+        await this.runSteps(record);
+      } catch (error) {
+        if (record.state.status === 'stopping' || isAbort(error)) this.finishStopped(record);
+        else this.finishFailed(record, error);
+      }
+    });
     return record.state;
   }
 
@@ -133,6 +150,22 @@ export class AgentRuntime {
 
   private async run(record: AgentRunRecord): Promise<void> {
     try {
+      let attachment;
+      if (record.initialAttachment) {
+        record.progress.publish('tool_started', '正在处理输入图纸');
+        const attachmentStage = this.createStage(record);
+        try {
+          attachment = await this.attachmentPreparer.prepare({
+            ...record.initialAttachment,
+            signal: attachmentStage.controller.signal,
+          });
+          record.progress.publish('tool_finished', '输入图纸处理完成');
+        } finally {
+          record.initialAttachment = undefined;
+          attachmentStage.clear();
+        }
+        if (record.state.status === 'stopping') return this.finishStopped(record);
+      }
       record.progress.publish('planning', '正在规划任务');
       const stage = this.createStage(record);
       let plan;
@@ -140,6 +173,8 @@ export class AgentRuntime {
         plan = await this.planner.plan({
           goal: record.state.goal,
           model: record.state.history.model,
+          image: attachment?.image,
+          mimeType: attachment?.mimeType,
           signal: stage.controller.signal,
           deadlineAt: stage.deadlineAt,
         });
@@ -148,6 +183,12 @@ export class AgentRuntime {
       }
       if (record.state.status === 'stopping') return this.finishStopped(record);
       record.state = reduceAgentRun(record.state, { type: 'PLAN_READY', plan }).state;
+      record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
+      if (record.state.status === 'paused') {
+        record.progress.publish('paused', '任务已暂停');
+        return;
+      }
+      if (record.state.needsReplan && record.state.activeInstruction) await this.replan(record);
       await this.runSteps(record);
     } catch (error) {
       if (record.state.status === 'stopping' || isAbort(error)) this.finishStopped(record);
