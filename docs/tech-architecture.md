@@ -542,6 +542,12 @@ core/tests/
 - 感知面板: 识别结果列表 + 置信度色标；低置信度首版标红
 - Construction Timeline: 执行轨迹 + Patch 差异 + 验证结果 + 运行控制
 
+### 当前实现进度（2026-08-08）
+
+已完成 SpatialPatch 结构验证、原子应用、逆向 Patch、SpatialIntent 兼容编译、SpatialCommit、Undo/Redo、本地 FileAuditStore、敏感字段脱敏和确定性提交回放。Zustand 中的参数编辑、删除、AI Intent、感知确认和 Agent 阶段变更已接入提交历史。
+
+待后续批次实现：Agent Runtime 状态机、能力注册表、有界上下文、SSE/heartbeat、暂停与安全点插入、有限自动重试、Construction Timeline 完整交互和 PDF 栅格化输入。
+
 ### v0.1 之后的演进方向
 - **Spatial Agent Workflow 增强**：复杂重规划、人工确认门禁、多 Agent 协作
   - AI 逐步构建 Spatial Model，而非一次性生成
