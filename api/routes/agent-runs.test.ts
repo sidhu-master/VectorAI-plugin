@@ -3,12 +3,24 @@ import type { Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TaskPlan } from '../../src/core/agent';
 import { AgentRuntime } from '../services/agent-runtime/runtime';
-import type { AgentExecutorAdapter, AgentPlannerAdapter } from '../services/agent-runtime/types';
+import type {
+  AgentExecutorAdapter,
+  AgentModelProfile,
+  AgentPlannerAdapter,
+  PlanStageInput,
+} from '../services/agent-runtime/types';
 import { createAgentRunsRouter } from './agent-runs';
 
 const plan: TaskPlan = {
   task: 'create_from_text', summary: '检查模型',
   steps: [{ id: 1, action: 'verify_model', description: '检查模型', status: 'pending' }],
+};
+
+const routeModelDefaults: AgentModelProfile = {
+  planner: 'default-planner',
+  vision: 'doubao-seed-2.0-lite',
+  executor: 'default-executor',
+  repair: 'default-repair',
 };
 
 const servers: Server[] = [];
@@ -88,6 +100,78 @@ describe('agent run routes', () => {
 
     expect(response.status).toBe(400);
   });
+
+  it('merges valid text and vision model overrides into the run profile', async () => {
+    const planningInputs: PlanStageInput[] = [];
+    const runtime = runtimeWith({
+      plan: async (input) => {
+        planningInputs.push(input);
+        return plan;
+      },
+    });
+    const baseUrl = await startServer(runtime);
+
+    const textResponse = await fetch(`${baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: '检查文字', models: { planner: 'request-planner' } }),
+    });
+    const imageResponse = await fetch(`${baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        goal: '检查图纸', image: 'cG5n', mimeType: 'image/png',
+        models: { vision: 'request-vision' },
+      }),
+    });
+
+    expect(textResponse.status).toBe(202);
+    expect(imageResponse.status).toBe(202);
+    await waitUntil(() => planningInputs.length === 2);
+    expect(planningInputs.map((input) => input.modelName)).toEqual([
+      'request-planner',
+      'request-vision',
+    ]);
+  });
+
+  it('uses server model defaults when the request has no overrides', async () => {
+    let planningInput: PlanStageInput | undefined;
+    const runtime = runtimeWith({
+      plan: async (input) => {
+        planningInput = input;
+        return plan;
+      },
+    });
+    const baseUrl = await startServer(runtime, {
+      ...routeModelDefaults,
+      planner: 'server-planner',
+    });
+
+    const response = await fetch(`${baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: '检查模型' }),
+    });
+
+    expect(response.status).toBe(202);
+    await waitUntil(() => planningInput !== undefined);
+    expect(planningInput?.modelName).toBe('server-planner');
+  });
+
+  it('rejects empty or non-string model overrides', async () => {
+    const runtime = runtimeWith({ plan: async () => plan });
+    const baseUrl = await startServer(runtime);
+
+    const responses = await Promise.all([
+      fetch(`${baseUrl}/api/agent/runs`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal: '检查模型', models: { vision: '   ' } }),
+      }),
+      fetch(`${baseUrl}/api/agent/runs`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal: '检查模型', models: { planner: 42 } }),
+      }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([400, 400]);
+  });
 });
 
 function runtimeWith(planner: AgentPlannerAdapter): AgentRuntime {
@@ -95,10 +179,13 @@ function runtimeWith(planner: AgentPlannerAdapter): AgentRuntime {
   return new AgentRuntime({ planner, executor });
 }
 
-async function startServer(runtime: AgentRuntime): Promise<string> {
+async function startServer(
+  runtime: AgentRuntime,
+  modelDefaults: AgentModelProfile = routeModelDefaults,
+): Promise<string> {
   const app = express();
   app.use(express.json());
-  app.use('/api/agent/runs', createAgentRunsRouter(runtime));
+  app.use('/api/agent/runs', createAgentRunsRouter(runtime, modelDefaults));
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -106,4 +193,12 @@ async function startServer(runtime: AgentRuntime): Promise<string> {
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('missing test server address');
   return `http://127.0.0.1:${address.port}`;
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let index = 0; index < 20; index += 1) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error('condition was not reached');
 }

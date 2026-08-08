@@ -17,6 +17,7 @@ import { AgentRuntime } from './services/agent-runtime/runtime.js'
 import { GatewayExecutorAdapter, GatewayPlannerAdapter } from './services/agent-runtime/model-adapters.js'
 import { FileAuditStore } from './services/audit/file-audit-store.js'
 import { LocalAttachmentPreparer } from './services/agent-runtime/attachments.js'
+import { resolveAgentModelProfile } from './services/agent-runtime/model-profile.js'
 
 // load env
 dotenv.config()
@@ -28,6 +29,13 @@ const agentRuntime = new AgentRuntime({
   auditStore: new FileAuditStore(path.resolve(process.cwd(), '.local/vectorai/runs')),
   attachmentPreparer: new LocalAttachmentPreparer(),
 })
+const sharedTextModel = process.env.COMPANY_AI_MODEL_NAME
+const agentModelDefaults = resolveAgentModelProfile({
+  planner: process.env.COMPANY_AI_PLANNER_MODEL || sharedTextModel,
+  vision: process.env.COMPANY_AI_VISION_MODEL,
+  executor: process.env.COMPANY_AI_EXECUTOR_MODEL || sharedTextModel,
+  repair: process.env.COMPANY_AI_REPAIR_MODEL || sharedTextModel,
+})
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
@@ -38,7 +46,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
  */
 app.use('/api/auth', authRoutes)
 app.use('/api/ai', aiRoutes)
-app.use('/api/agent/runs', createAgentRunsRouter(agentRuntime))
+app.use('/api/agent/runs', createAgentRunsRouter(agentRuntime, agentModelDefaults))
 
 /**
  * health

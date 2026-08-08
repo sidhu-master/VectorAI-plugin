@@ -35,6 +35,30 @@ describe('AgentClient', () => {
     });
   });
 
+  it('serializes request-level model overrides exactly', async () => {
+    const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
+    fetcher.mockResolvedValue(jsonResponse(202, { success: true, runId: 'run_models' }));
+    const client = new AgentClient({ fetcher, eventSourceFactory: () => new FakeEventSource() });
+
+    await client.start({
+      goal: '分析图纸',
+      spatialModel: createEmptyModel(),
+      models: {
+        planner: 'planner-custom',
+        vision: 'doubao-seed-2.0-lite',
+        executor: 'executor-custom',
+        repair: 'repair-custom',
+      },
+    });
+
+    expect(JSON.parse(String(fetcher.mock.calls.at(0)![1]?.body)).models).toEqual({
+      planner: 'planner-custom',
+      vision: 'doubao-seed-2.0-lite',
+      executor: 'executor-custom',
+      repair: 'repair-custom',
+    });
+  });
+
   it('projects ordered progress once and closes at a terminal event', () => {
     const source = new FakeEventSource();
     const client = new AgentClient({

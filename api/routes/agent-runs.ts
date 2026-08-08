@@ -7,11 +7,15 @@ import { validateModel } from '../../src/core/validator.js';
 import type { AgentProgressEvent } from '../services/agent-runtime/progress.js';
 import type { AgentRuntime } from '../services/agent-runtime/runtime.js';
 import { resolveAgentModelProfile } from '../services/agent-runtime/model-profile.js';
+import type { AgentModelProfile, AgentModelRole } from '../services/agent-runtime/types.js';
 
 const TERMINAL_STATUSES = new Set<AgentRunStatus>(['stopped', 'completed', 'failed']);
 const TERMINAL_EVENTS = new Set<AgentProgressEvent['type']>(['stopped', 'completed', 'failed']);
 
-export function createAgentRunsRouter(runtime: AgentRuntime): Router {
+export function createAgentRunsRouter(
+  runtime: AgentRuntime,
+  modelDefaults: AgentModelProfile,
+): Router {
   const router = Router();
 
   router.post('/', (req: Request, res: Response): void => {
@@ -32,13 +36,18 @@ export function createAgentRunsRouter(runtime: AgentRuntime): Router {
       res.status(400).json({ success: false, error: '图纸附件需要有效的 image 和 mimeType' });
       return;
     }
+    const modelOverrides = readModelOverrides(req.body?.models);
+    if (!modelOverrides) {
+      res.status(400).json({ success: false, error: 'models 必须只包含非空模型名称' });
+      return;
+    }
 
     const runId = `run_${randomUUID()}`;
     runtime.start({
       runId,
       goal,
       model,
-      modelProfile: resolveAgentModelProfile({}),
+      modelProfile: resolveAgentModelProfile(modelDefaults, modelOverrides),
       stableRules: Array.isArray(req.body?.stableRules)
         ? req.body.stableRules.filter((rule: unknown): rule is string => typeof rule === 'string')
         : undefined,
@@ -132,6 +141,28 @@ export function createAgentRunsRouter(runtime: AgentRuntime): Router {
   });
 
   return router;
+}
+
+const MODEL_ROLES: AgentModelRole[] = ['planner', 'executor', 'repair'];
+const MODEL_KEYS = [...MODEL_ROLES, 'vision'] as const;
+
+function readModelOverrides(value: unknown): Partial<AgentModelProfile> | undefined {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !MODEL_KEYS.includes(key as typeof MODEL_KEYS[number]))) {
+    return undefined;
+  }
+
+  const overrides: Partial<AgentModelProfile> = {};
+  for (const key of MODEL_KEYS) {
+    if (!(key in record)) continue;
+    const model = record[key];
+    if (typeof model !== 'string' || !model.trim()) return undefined;
+    overrides[key] = model;
+  }
+  return overrides;
 }
 
 function writeSse(res: Response, event: AgentProgressEvent): void {

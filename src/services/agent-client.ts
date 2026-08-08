@@ -31,6 +31,12 @@ export interface StartAgentInput {
   stableRules?: string[];
   image?: string;
   mimeType?: string;
+  models?: {
+    planner?: string;
+    vision?: string;
+    executor?: string;
+    repair?: string;
+  };
 }
 
 export interface EventSourceLike {
