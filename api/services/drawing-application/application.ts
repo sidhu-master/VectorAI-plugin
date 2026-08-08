@@ -1,15 +1,22 @@
 import {
   createEmptyDrawing,
+  previewTransaction,
+  queryDrawing,
   randomIdFactory,
   type Actor,
   type CommitId,
   type DrawingId,
   type DrawingRepository,
+  type DrawingSelector,
   type DrawingTransaction,
   type IdFactory,
   type RepositoryCommitResult,
+  type TransactionResult,
 } from '../../../src/drawing/index.js';
-import type { DrawingWorkspaceSnapshot } from '../../../src/contracts/drawing-application.js';
+import type {
+  DrawingQueryWorkspaceResult,
+  DrawingWorkspaceSnapshot,
+} from '../../../src/contracts/drawing-application.js';
 
 export class DrawingApplicationError extends Error {
   readonly code: 'DRAWING_NOT_FOUND';
@@ -66,27 +73,31 @@ export class DrawingApplication {
     transaction: DrawingTransaction;
   }): Promise<RepositoryCommitResult> {
     const workspace = await this.open(input.drawingId);
-    const knownRevisions = new Set([
-      workspace.revision,
-      ...workspace.commits.flatMap((commit) => [
-        commit.parentRevision,
-        commit.resultingRevision,
-      ]),
-    ]);
-    if (!knownRevisions.has(input.transaction.baseRevision)) {
-      return {
-        status: 'rejected',
-        errors: [{
-          code: 'DRAWING_REVISION_MISMATCH',
-          stage: 'revision',
-          retryable: false,
-          nodeIds: [],
-          message: '事务版本不属于指定图纸',
-          suggestedAction: 'requery',
-        }],
-      };
-    }
+    if (!ownsRevision(workspace, input.transaction.baseRevision)) return revisionMismatch();
     return this.#repository.commit(input.transaction);
+  }
+
+  async query(input: {
+    drawingId: DrawingId;
+    selector: DrawingSelector;
+  }): Promise<DrawingQueryWorkspaceResult> {
+    const workspace = await this.open(input.drawingId);
+    return {
+      revision: workspace.revision,
+      result: queryDrawing(workspace.document, structuredClone(input.selector)),
+    };
+  }
+
+  async preview(input: {
+    drawingId: DrawingId;
+    transaction: DrawingTransaction;
+  }): Promise<TransactionResult> {
+    const workspace = await this.open(input.drawingId);
+    if (!ownsRevision(workspace, input.transaction.baseRevision)) return revisionMismatch();
+    return previewTransaction({
+      document: workspace.document,
+      currentRevision: workspace.revision,
+    }, structuredClone(input.transaction), this.#idFactory);
   }
 
   revert(input: {
@@ -96,4 +107,31 @@ export class DrawingApplication {
   }): Promise<RepositoryCommitResult> {
     return this.#repository.revert(input);
   }
+}
+
+function ownsRevision(
+  workspace: DrawingWorkspaceSnapshot,
+  revision: DrawingTransaction['baseRevision'],
+): boolean {
+  return new Set([
+    workspace.revision,
+    ...workspace.commits.flatMap((commit) => [
+      commit.parentRevision,
+      commit.resultingRevision,
+    ]),
+  ]).has(revision);
+}
+
+function revisionMismatch(): Extract<TransactionResult, { status: 'rejected' }> {
+  return {
+    status: 'rejected',
+    errors: [{
+      code: 'DRAWING_REVISION_MISMATCH',
+      stage: 'revision',
+      retryable: false,
+      nodeIds: [],
+      message: '事务版本不属于指定图纸',
+      suggestedAction: 'requery',
+    }],
+  };
 }

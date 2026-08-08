@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { type IdFactory, MemoryDrawingRepository } from '../../../src/drawing/index';
+import {
+  type DrawingTransaction,
+  type IdFactory,
+  MemoryDrawingRepository,
+} from '../../../src/drawing/index';
 import type { DrawingId, GeometryId } from '../../../src/drawing/index';
 import { DrawingApplication } from './application';
 
@@ -174,4 +178,113 @@ describe('DrawingApplication', () => {
       code: 'DRAWING_NOT_FOUND',
     });
   });
+
+  it('queries the current drawing projection together with its revision', async () => {
+    const { application } = setup();
+    const workspace = await application.create();
+    const committed = await application.execute({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(workspace.revision, 'circle_query'),
+    });
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const queried = await application.query({
+      drawingId: workspace.document.id,
+      selector: { plane: 'geometry', types: ['circle'], limit: 10 },
+    });
+
+    expect(queried).toEqual({
+      revision: committed.revision,
+      result: {
+        items: [{
+          id: 'circle_query', plane: 'geometry', type: 'circle',
+          summary: 'circle center=[0,0] radius=5',
+          bounds: { minX: -5, minY: -5, maxX: 5, maxY: 5 },
+        }],
+        truncated: false,
+      },
+    });
+  });
+
+  it('previews a transaction without changing the repository', async () => {
+    const { application } = setup();
+    const workspace = await application.create();
+
+    const preview = await application.preview({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(workspace.revision, 'circle_preview'),
+    });
+
+    expect(preview).toMatchObject({
+      status: 'ready',
+      preview: { affectedNodeIds: ['circle_preview'], candidate: false },
+      resultingDocument: { geometry: [expect.objectContaining({ id: 'circle_preview' })] },
+    });
+    expect(await application.open(workspace.document.id)).toEqual(workspace);
+  });
+
+  it('marks a candidate node in the preview without persisting it', async () => {
+    const { application } = setup();
+    const workspace = await application.create();
+    const transaction = circleTransaction(workspace.revision, 'circle_candidate');
+    const command = transaction.commands[0];
+    if (command.type !== 'geometry.create') throw new Error('expected create');
+    command.value.quality = { status: 'candidate', confidence: 0.42, evidenceRefs: [] };
+
+    const preview = await application.preview({
+      drawingId: workspace.document.id,
+      transaction,
+    });
+
+    expect(preview).toMatchObject({ status: 'ready', preview: { candidate: true } });
+    expect((await application.open(workspace.document.id)).document.geometry).toEqual([]);
+  });
+
+  it('preserves stale and wrong-drawing revision errors during preview', async () => {
+    const { application } = setup();
+    const first = await application.create();
+    const second = await application.create();
+    await application.execute({
+      drawingId: first.document.id,
+      transaction: circleTransaction(first.revision, 'circle_committed'),
+    });
+
+    const stale = await application.preview({
+      drawingId: first.document.id,
+      transaction: circleTransaction(first.revision, 'circle_stale'),
+    });
+    const wrongDrawing = await application.preview({
+      drawingId: first.document.id,
+      transaction: circleTransaction(second.revision, 'circle_wrong'),
+    });
+
+    expect(stale).toMatchObject({
+      status: 'rejected', errors: [{ code: 'STALE_REVISION', retryable: true }],
+    });
+    expect(wrongDrawing).toMatchObject({
+      status: 'rejected', errors: [{ code: 'DRAWING_REVISION_MISMATCH', retryable: false }],
+    });
+  });
 });
+
+function circleTransaction(revision: string, id: string): DrawingTransaction {
+  return {
+    id: `tx_${id}`,
+    baseRevision: revision as DrawingTransaction['baseRevision'],
+    actor: { type: 'AI' as const, id: 'agent' },
+    commands: [{
+      type: 'geometry.create' as const,
+      value: {
+        id: id as GeometryId,
+        type: 'circle' as const,
+        visible: true,
+        quality: { status: 'confirmed' as const, evidenceRefs: [] },
+        center: [0, 0] as const,
+        radius: 5,
+      },
+    }],
+    preconditions: [],
+    postconditions: [{ type: 'node.exists' as const, nodeId: id }],
+    evidenceRefs: [],
+  };
+}
