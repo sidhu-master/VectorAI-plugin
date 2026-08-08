@@ -128,6 +128,36 @@ export function splitPerceptionRegion(input: {
   }));
 }
 
+export function createTargetedRefinementRegion(input: {
+  region: DrawingCoverageRegion;
+  unreadBounds: NormalizedImageBounds[];
+  paddingFraction?: number;
+}): DrawingCoverageRegion {
+  const padding = input.paddingFraction ?? 0.06;
+  const left = Math.max(0, Math.min(...input.unreadBounds.map((bounds) => bounds[0])) - padding);
+  const top = Math.max(0, Math.min(...input.unreadBounds.map((bounds) => bounds[1])) - padding);
+  const right = Math.min(1, Math.max(
+    ...input.unreadBounds.map((bounds) => bounds[0] + bounds[2]),
+  ) + padding);
+  const bottom = Math.min(1, Math.max(
+    ...input.unreadBounds.map((bounds) => bounds[1] + bounds[3]),
+  ) + padding);
+  const [regionX, regionY, regionWidth, regionHeight] = input.region.pageBounds;
+  return createCoverageRegion({
+    id: `${input.region.id}_focus_1`,
+    viewId: input.region.viewId,
+    pageBounds: [
+      round(regionX + left * regionWidth),
+      round(regionY + top * regionHeight),
+      round((right - left) * regionWidth),
+      round((bottom - top) * regionHeight),
+    ],
+  }, {
+    parentId: input.region.id,
+    depth: input.region.depth + 1,
+  });
+}
+
 function touchesInternalEdge(
   observation: NormalizedImageBounds,
   region: NormalizedImageBounds,

@@ -304,11 +304,10 @@ describe('DrawingPerceptionPipeline', () => {
     expect(geometry.some((item) => item.type === 'arc')).toBe(false);
     expect(evidenceCalls).toEqual(expect.arrayContaining([
       'view_full_region_1',
-      'view_full_region_1_child_1',
-      'view_full_region_1_child_2',
+      'view_full_region_1_focus_1',
     ]));
     expect(ledger.complete).toBe(true);
-    expect(ledger.regions.filter((region) => region.parentId === 'view_full_region_1')).toHaveLength(2);
+    expect(ledger.regions.filter((region) => region.parentId === 'view_full_region_1')).toHaveLength(1);
     expect(outputs.filter(isStage).map((output) => output.stage)).toEqual(expect.arrayContaining([
       'global_contours_built', 'coverage_assessed', 'coverage_completed',
     ]));

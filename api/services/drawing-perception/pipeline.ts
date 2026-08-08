@@ -8,6 +8,7 @@ import {
 import { assembleContours } from './contour-assembler.js';
 import {
   createCoverageRegion,
+  createTargetedRefinementRegion,
   decideRegionRefinement,
   splitPerceptionRegion,
   type DrawingCoverageAssessment,
@@ -425,10 +426,15 @@ export class DrawingPerceptionPipeline {
         region.refinementReasons = decision.reasons;
         if (decision.refine) {
           region.status = 'refine';
-          const split = splitPerceptionRegion({
-            region,
-            pageHeightToWidthRatio: pageRatio,
-          });
+          const split = result.assessment && result.assessment.unreadBounds.length > 0
+            ? [createTargetedRefinementRegion({
+                region,
+                unreadBounds: result.assessment.unreadBounds,
+              })]
+            : splitPerceptionRegion({
+                region,
+                pageHeightToWidthRatio: pageRatio,
+              });
           coverageRegions.push(...split);
           children.push(...split);
         } else if (decision.budgetExhausted) {

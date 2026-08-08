@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { GeometryObservation } from './types.js';
 import {
   createCoverageRegion,
+  createTargetedRefinementRegion,
   decideRegionRefinement,
   splitPerceptionRegion,
   type DrawingCoverageAssessment,
@@ -89,6 +90,19 @@ describe('drawing perception coverage policy', () => {
     expect(children.every((child) => child.depth === 1)).toBe(true);
     expect(children[0].pageBounds[1] + children[0].pageBounds[3])
       .toBeGreaterThan(children[1].pageBounds[1]);
+  });
+
+  it('creates one focused reread around model-reported unread bounds', () => {
+    const parent = region([0.1, 0.2, 0.8, 0.6]);
+
+    expect(createTargetedRefinementRegion({
+      region: parent,
+      unreadBounds: [[0.2, 0.3, 0.1, 0.1], [0.6, 0.5, 0.1, 0.2]],
+      paddingFraction: 0.05,
+    })).toMatchObject({
+      id: 'view_1_region_1_focus_1', parentId: 'view_1_region_1', depth: 1,
+      pageBounds: [0.22, 0.35, 0.48, 0.3],
+    });
   });
 });
 
