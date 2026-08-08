@@ -141,6 +141,29 @@ export function parseAgentDecision(value: unknown): AgentDecision {
   }
 }
 
+export function parseDrawingToolSelector(
+  value: unknown,
+  path = 'selector',
+): DrawingSelector {
+  return parseSelector(value, path);
+}
+
+export function parseDrawingToolCommands(
+  value: unknown,
+  path = 'commands',
+): DrawingCommand[] {
+  const values = array(value, path);
+  if (values.length === 0) fail(path, '事务命令不能为空');
+  return values.map((command, index) => parseCommand(command, `${path}[${index}]`));
+}
+
+export function parseDrawingToolAssertions(
+  value: unknown,
+  path = 'assertions',
+): DrawingAssertion[] {
+  return parseAssertions(value, path);
+}
+
 function parseGoal(value: unknown, path: string): GoalSpec {
   const goal = object(value, path);
   exact(goal, ['id', 'objective', 'scope', 'acceptanceCriteria', 'riskPolicy'], path);
