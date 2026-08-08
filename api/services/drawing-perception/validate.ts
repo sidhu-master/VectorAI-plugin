@@ -1,7 +1,6 @@
 import type { EntityAnchor } from '../../../src/drawing/index.js';
 import type {
   DrawingRecordValidation,
-  GlobalContour,
   NormalizedImageBounds,
 } from './types.js';
 
