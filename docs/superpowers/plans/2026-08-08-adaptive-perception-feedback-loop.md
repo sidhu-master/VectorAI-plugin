@@ -13,7 +13,7 @@
 - Work on `main`; do not create branches, worktrees or subagents.
 - Do not modify or commit `test1.jpg`.
 - No media bytes, model names or hidden reasoning in the coverage ledger, audit or public run view.
-- Default refinement depth is 1, maximum 12 regions per view and maximum 3 concurrent region calls.
+- Default refinement depth is 1, maximum 12 regions per view and maximum 3 concurrent region calls. Model-reported unread bounds produce one focused child; unknown failures retain the two-child fallback.
 - Existing immediate receipt and 25-second heartbeat behavior must remain unchanged.
 - Valid observations survive assessment errors and budget exhaustion.
 
@@ -45,7 +45,7 @@
 
 **Files:** Create `contour-assembler.ts` and `contour-assembler.test.ts`; modify perception observation types.
 
-**Interfaces:** Produces `GlobalContour`, `ContourEvidence`, `assembleContours(input)` and an explicit unresolved-contour result.
+**Interfaces:** Produces `GlobalContour`, `ContourEvidence`, a combined regional geometry/evidence read, `assembleContours(input)` and an explicit unresolved-contour result.
 
 - [ ] Write a failing cross-region circle test where two crop fragments reference one global circle and produce one circle observation.
 - [ ] Write failing tests preventing crop-edge fragments from becoming standalone geometry and preserving unresolved evidence.
@@ -62,7 +62,7 @@
 - [ ] Write a failing integration test where a whole-view circle crosses two regions and remains one assembled circle after refinement.
 - [ ] Write failing tests for simple convergence, assessment failure fallback, region budget exhaustion and byte-free ledger persistence.
 - [ ] Run the focused tests and confirm failures against the one-shot scheduler.
-- [ ] Implement wave scheduling, assessment, ledger checkpoints, child creation, stitching and final deduplication.
+- [ ] Implement wave scheduling, focused assessment rereads, terminal unverified status, ledger checkpoints, child creation, stitching and final deduplication.
 - [ ] Run perception tests and commit.
 
 ### Task 5: Runtime coverage result

@@ -69,13 +69,15 @@ An assessment failure does not discard valid observations. It creates an uncerta
 
 After the whole-view contour registry is established, initial detail regions come from the page/view segmentation policy. Refinement proceeds in breadth-first waves so progress, persistence and budgets are deterministic.
 
-- A refinable region splits into two children along its longest physical pixel axis with 4% overlap.
+- When coverage returns `unreadBounds`, a refinable region creates one padded focus crop around their union. If assessment is unavailable, it falls back to two children along the longest physical pixel axis with 4% overlap.
 - Default maximum refinement depth is 1 beyond the initial regions.
 - Default maximum region count is 12 per view.
 - At most three regions are perceived concurrently.
 - A child ID is derived from its parent and index; retrying produces the same ID.
 - Parent observations remain evidence. Child observations are stitched to page coordinates and conservatively deduplicated with all prior observations.
 - A crop-edge fragment never becomes a standalone Drawing entity unless expanded-view verification proves it is complete.
+- Regional standalone geometry and contour evidence share one geometry-domain vision request; OCR remains a separate request so engineering symbols and tolerances retain a specialized contract.
+- At the default terminal refinement depth, the focused reread is retained but no unactionable final coverage model call is made. The region is explicitly marked budget-exhausted/unverified instead of being called complete; raising the refinement depth enables another assess-and-refine cycle.
 
 When depth or region budget prevents requested refinement, the region becomes `budget_exhausted`. The run may still produce valid Drawing IR, but the coverage ledger and analysis summary state that perception is incomplete.
 
