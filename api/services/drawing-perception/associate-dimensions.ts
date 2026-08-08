@@ -132,7 +132,7 @@ function stripKey(candidate: ScoredCandidate) {
 }
 
 function isLinear(item: GeometryObservation): boolean {
-  return item.type === 'line' || item.type === 'ray' || item.type === 'xline';
+  return item.type === 'line' || item.type === 'ray';
 }
 
 function anchor(kind: 'start' | 'end' | 'center'): EntityAnchor {

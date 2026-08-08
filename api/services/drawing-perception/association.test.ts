@@ -102,6 +102,24 @@ describe('drawing topology and dimension association', () => {
       annotationId: 'ann_diameter', status: 'conflict', targets: [], score: 0,
     });
   });
+
+  it('does not bind endpoint dimensions to an infinite construction line', () => {
+    const [association] = associateDimensions({
+      annotations: [annotation(
+        'ann_linear', 'linear', [0.2, 0.1, 0.2, 0.08], [[0.2, 0.2], [0.4, 0.2]],
+      )],
+      geometry: [{
+        id: 'datum_xline', viewId: 'view_1', type: 'xline',
+        imageBounds: [0.3, 0, 0.01, 1],
+        measuredParams: { origin: [0.3, 0], direction: [0, 1] },
+        confidence: 0.9,
+      }],
+    });
+
+    expect(association).toMatchObject({
+      annotationId: 'ann_linear', status: 'conflict', targets: [],
+    });
+  });
 });
 
 function circle(

@@ -45,6 +45,7 @@ interface RuntimeLimitsInput {
   maxCommits: number;
   maxConsecutiveReads: number;
   wallClockMs: number;
+  maxPerceptionCommits: number;
 }
 
 type RuntimeApplication = Pick<DrawingApplication, 'summarize'>;
@@ -112,6 +113,7 @@ const DEFAULT_LIMITS: RuntimeLimitsInput = {
   maxCommits: 8,
   maxConsecutiveReads: 8,
   wallClockMs: 240_000,
+  maxPerceptionCommits: 128,
 };
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 const MAX_VALIDATION_REPAIRS = 2;
@@ -422,8 +424,8 @@ export class DrawingAgentRuntime {
     record: RunRecord,
     output: Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>,
   ): Promise<boolean> {
-    if (record.state.commitCount >= record.state.limits.maxCommits) {
-      throw new Error(`已达到最大提交次数 ${record.state.limits.maxCommits}`);
+    if (record.perceptionBatchIds.size >= this.#limits.maxPerceptionCommits) {
+      throw new Error(`图纸重建组件数超过上限 ${this.#limits.maxPerceptionCommits}`);
     }
     record.progress.publish('validation', '正在预览识别结果');
     const preview = await this.#tools.invoke({
@@ -934,9 +936,9 @@ function decisionBudget(state: DrawingAgentState, now: number) {
 }
 
 function effectiveCommitLimit(record: RunRecord): number {
-  return Math.min(
+  return record.commitBaseline + Math.min(
     record.state.limits.maxCommits,
-    record.commitBaseline + (record.state.plan?.goal.riskPolicy.maxCommits ?? Infinity),
+    record.state.plan?.goal.riskPolicy.maxCommits ?? Infinity,
   );
 }
 

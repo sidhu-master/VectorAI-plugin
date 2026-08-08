@@ -181,6 +181,20 @@ describe('DrawingAgentRuntime', () => {
     expect(plannerInputs[0].revision).not.toBe(workspace.revision);
   });
 
+  it('keeps reconstruction component commits separate from the text-agent commit budget', async () => {
+    const batches = Array.from({ length: 10 }, (_, index) => perceptionBatch(`circle_${index}`));
+    const { runtime, workspace } = await setup({
+      perceptionOutputs: perceptionSequence(batches),
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.commitCount).toBe(10);
+  });
+
   it('creates through Preview then Commit and verifies the goal', async () => {
     const { application, order, runtime, workspace } = await setup();
 
@@ -704,7 +718,7 @@ function perceptionBatch(id: string, confidence = 0.9): DrawingPerceptionOutput 
   return {
     kind: 'command_batch', runId: 'run_1', stage: 'patch_ready',
     batch: {
-      componentId: 'component_1',
+      componentId: `component_${id}`,
       commands: [{
         type: 'geometry.create',
         value: {
