@@ -237,12 +237,12 @@ interface AgentModelProfile {
 
 默认路由：
 
-- 任何携带原图或裁剪图的调用：`doubao-seed-2.0-lite`。
-- 纯文本 Planner、验证错误修正和总结：使用独立环境配置。
+- Planner、Vision、Executor、普通验证错误修正和总结默认均使用 `doubao-seed-2.0-lite`。
+- `repair` 默认使用 `doubao-seed-2.1-turbo`，但只允许在一次模型结果明确给出 `confidence < 0.6` 后触发；普通 JSON 或几何验证失败不得升级模型。
 - 请求体可覆盖角色模型；覆盖值按原样传给兼容服务端。
 - Audit manifest 和模型调用事件记录 role、model、startedAt、durationMs、attempt、status，不记录 prompt 原文、令牌或媒体正文。
 
-Agent Runtime 保存本次 `AgentModelProfile`，GatewayPlannerAdapter 和 GatewayExecutorAdapter 不再依赖一个隐式全局模型。重规划若携带图纸仍使用 vision；纯文本安全点指令可以使用 planner/repair。
+Agent Runtime 保存本次 `AgentModelProfile`，GatewayPlannerAdapter 和 GatewayExecutorAdapter 不再依赖一个隐式全局模型。低置信度升级最多一次，并可携带原图或局部裁剪调用 Turbo；若 Turbo 调用失败、输出无效或仍为低置信度，则保留最后一个几何有效的 Lite 结果并以红色提交，不阻塞其他组件。
 
 ## 7. 通用图纸拆解
 
@@ -315,7 +315,7 @@ Observation 保存图片坐标和裁剪哈希，不保存裁剪正文。Observat
 
 ## 10. 错误和低置信度策略
 
-- GeometryObservation 低于 0.6：只要参数和几何验证通过，仍可自动形成独立的红色候选实体 Commit，并必须保持实体 confidence；不得用模型猜测补齐缺失的关键参数。
+- GeometryObservation 或执行结果低于 0.6：先对同一局部上下文使用 `doubao-seed-2.1-turbo` 升级一次；Turbo 失败、无效或仍低置信度时，使用最后一个几何有效结果形成独立的红色候选实体 Commit，并保持实体 confidence；不得用模型猜测补齐缺失的关键参数。
 - Dimension `ambiguous`：以红色未解析尺寸存在，不绑定猜测目标。
 - Dimension `conflict`：产生验证事件，不修改几何。
 - 不支持的图元：Capability Registry 不向模型暴露该创建工具；返回结构化 `UNSUPPORTED_ENTITY_TYPE`。

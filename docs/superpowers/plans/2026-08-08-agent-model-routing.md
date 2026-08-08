@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Route every image-bearing Agent call through `doubao-seed-2.0-lite`, keep text roles independently configurable, and audit role/model/timing without persisting prompts or media.
+**Goal:** Use `doubao-seed-2.0-lite` for the normal Agent path, escalate only explicit low-confidence results to `doubao-seed-2.1-turbo`, and audit role/model/timing without persisting prompts or media.
 
 **Architecture:** A pure model-profile resolver selects a model by role and media presence. Agent Runtime owns the resolved profile for a run and passes an explicit model to gateway adapters. Structured model lifecycle events reuse the progress/audit channel.
 
@@ -12,7 +12,7 @@
 
 - Work directly on `main`; do not create a branch or worktree.
 - Use the main agent only; do not dispatch sub-agents.
-- Any call carrying an original image or crop uses `doubao-seed-2.0-lite` by default.
+- Any normal call carrying an original image or crop uses `doubao-seed-2.0-lite`; a single low-confidence repair may carry the same media to `doubao-seed-2.1-turbo`.
 - Request-provided model overrides are passed through unchanged after non-empty-string validation.
 - Never persist prompt text, image base64, tokens, credentials, or hidden reasoning.
 - Preserve the accepted-under-1-second and 25-second heartbeat behavior.
@@ -141,3 +141,24 @@ interface AgentModelEventDetail {
 - [ ] Run `pnpm test && pnpm check && pnpm build`; run targeted ESLint.
 - [ ] Commit with `feat(agent): audit model call lifecycle`.
 
+### Task 5: Lite Primary Model With Low-Confidence Turbo Escalation
+
+**Files:**
+- Modify: `api/services/agent-runtime/model-profile.ts`
+- Modify: `api/services/agent-runtime/model-profile.test.ts`
+- Modify: `api/services/agent-runtime/runtime.ts`
+- Modify: `api/services/agent-runtime/runtime.test.ts`
+- Modify: `api/app.ts`
+- Modify: `api/services/ai-gateway.ts`
+
+**Interfaces:**
+- Primary roles default to `doubao-seed-2.0-lite`; `repair` defaults to `doubao-seed-2.1-turbo`.
+- A geometrically valid executor result with `confidence < 0.6` triggers at most one `repair` call, including when an image is attached.
+- Validation failures do not select `repair`. If the repair call fails or remains low-confidence, commit the last geometrically valid result with its confidence.
+
+- [ ] Write failing profile/runtime tests for primary defaults, validation retry staying on Lite, image-bearing low-confidence escalation selecting Turbo, one-escalation limit, and fallback to the valid Lite result.
+- [ ] Run focused tests; expect current text default/repair selection and immediate low-confidence commit failures.
+- [ ] Implement explicit primary/repair defaults and retain the last geometrically valid candidate during one repair attempt.
+- [ ] Record both calls through existing model lifecycle audit events without persisting prompt or media.
+- [ ] Run focused/full tests, `pnpm check`, targeted ESLint and `pnpm build`.
+- [ ] Commit with `feat(agent): escalate low confidence runs to turbo`.
