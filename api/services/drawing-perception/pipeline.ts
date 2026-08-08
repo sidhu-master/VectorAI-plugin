@@ -2,8 +2,8 @@ import { throwIfAborted } from './attachments.js';
 import { associateDimensions } from './associate-dimensions.js';
 import { DrawingAssetCache, type DrawingAssetReference } from './assets.js';
 import {
-  buildObservationPatchBatches,
-  type ObservationPatchBatch,
+  buildObservationCommandBatches,
+  type DrawingCommandBatch,
 } from './build-patches.js';
 import type { DrawingObservationStore } from './observation-store.js';
 import {
@@ -47,19 +47,20 @@ export interface DrawingPerceptionStageReceipt {
   detail: Record<string, unknown>;
 }
 
-export interface DrawingPerceptionPatchOutput {
-  kind: 'patch_batch';
+export interface DrawingPerceptionCommandOutput {
+  kind: 'command_batch';
   runId: string;
   stage: 'patch_ready';
-  batch: ObservationPatchBatch;
+  batch: DrawingCommandBatch;
 }
 
 export type DrawingPerceptionOutput =
   | DrawingPerceptionStageReceipt
-  | DrawingPerceptionPatchOutput;
+  | DrawingPerceptionCommandOutput;
 
 export interface DrawingPerceptionInput {
   runId: string;
+  sourceId?: string;
   page: number;
   image: string;
   mimeType: string;
@@ -175,9 +176,12 @@ export class DrawingPerceptionPipeline {
         this.maxConcurrentViews,
         (view) => this.perceiveView(input, page, view),
       );
+      const sourceId = input.sourceId ?? `source_${input.runId}`;
       const geometry = perceived.flatMap((result) => result.geometry)
+        .map((observation) => enrichObservation(observation, sourceId, input.runId))
         .sort((first, second) => first.id.localeCompare(second.id));
       const annotations = perceived.flatMap((result) => result.annotations)
+        .map((observation) => enrichObservation(observation, sourceId, input.runId))
         .sort((first, second) => first.id.localeCompare(second.id));
       const perceptionErrors = perceived.flatMap((result) => result.errors);
       for (const result of perceived) {
@@ -223,7 +227,7 @@ export class DrawingPerceptionPipeline {
       });
 
       const patchStartedAt = this.now();
-      const batches = buildObservationPatchBatches({
+      const resolved = buildObservationCommandBatches({
         geometry,
         annotations,
         associations,
@@ -235,14 +239,17 @@ export class DrawingPerceptionPipeline {
           offsetY: 0,
         }])),
       });
-      await this.save(input.runId, 'patch-batches', batches);
+      const { batches } = resolved;
+      await this.save(input.runId, 'command-batches', batches);
+      if (resolved.warnings.length > 0) await this.save(input.runId, 'resolver-warnings', resolved.warnings);
       yield this.receipt(input.runId, 'patches_built', patchStartedAt, {
         batchCount: batches.length,
-        entityCount: batches.reduce((sum, batch) => sum + batch.intent.objects.length, 0),
+        entityCount: batches.reduce((sum, batch) => sum + batch.commands.length, 0),
         lowConfidenceCount: batches.reduce((sum, batch) => sum + batch.lowConfidenceCount, 0),
+        warningCount: resolved.warnings.length,
       });
       for (const batch of batches) {
-        yield { kind: 'patch_batch', runId: input.runId, stage: 'patch_ready', batch };
+        yield { kind: 'command_batch', runId: input.runId, stage: 'patch_ready', batch };
       }
       yield this.receipt(input.runId, 'completed', startedAt, {
         viewCount: views.length,
@@ -406,6 +413,20 @@ export class DrawingPerceptionPipeline {
 
 function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
   return result.status === 'fulfilled' ? result.value : fallback;
+}
+
+function enrichObservation<T extends GeometryObservation | AnnotationObservation>(
+  observation: T,
+  sourceId: string,
+  runId: string,
+): T {
+  return {
+    ...observation,
+    sourceId,
+    evidenceRefs: observation.evidenceRefs?.length
+      ? [...observation.evidenceRefs]
+      : [`evidence_${runId}_${observation.id}`],
+  };
 }
 
 function safeErrorMessage(error: unknown): string {

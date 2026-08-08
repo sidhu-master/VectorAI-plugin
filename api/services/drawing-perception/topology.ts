@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Vec2 } from '../../../src/core/types.js';
+import type { Vec2 } from '../../../src/drawing/index.js';
 import type { GeometryObservation } from './types.js';
 
 export interface DrawingTopologyComponent {

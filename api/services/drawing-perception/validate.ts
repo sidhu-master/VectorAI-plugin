@@ -1,4 +1,4 @@
-import type { EntityAnchor } from '../../../src/core/types.js';
+import type { EntityAnchor } from '../../../src/drawing/index.js';
 import type {
   DrawingRecordValidation,
   NormalizedImageBounds,
@@ -110,6 +110,13 @@ export function validateDimensionAssociation(value: unknown): DrawingRecordValid
 
 function validateIdentity(record: Record<string, unknown>, errors: string[]): void {
   if (!isNonEmptyString(record.id)) errors.push('id 必须是非空字符串');
+  if (record.sourceId !== undefined && !isNonEmptyString(record.sourceId)) {
+    errors.push('sourceId 必须是非空字符串');
+  }
+  if (record.evidenceRefs !== undefined && (!Array.isArray(record.evidenceRefs)
+    || record.evidenceRefs.length === 0 || !record.evidenceRefs.every(isNonEmptyString))) {
+    errors.push('evidenceRefs 必须是非空字符串数组');
+  }
   if (!isNonEmptyString(record.viewId)) errors.push('viewId 必须是非空字符串');
 }
 

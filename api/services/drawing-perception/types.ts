@@ -1,10 +1,9 @@
 import type {
-  DimensionKind,
-  DimensionTolerance,
+  DimensionAnnotation,
   EntityAnchor,
-  EntityType,
+  GeometryNode,
   Vec2,
-} from '../../../src/core/types.js';
+} from '../../../src/drawing/index.js';
 
 export type NormalizedImageBounds = [x: number, y: number, width: number, height: number];
 
@@ -26,10 +25,12 @@ export interface DrawingManifest {
   warnings: string[];
 }
 
-export type GeometryObservationType = Exclude<EntityType, 'text' | 'dimension'>;
+export type GeometryObservationType = GeometryNode['type'];
 
 export interface GeometryObservation {
   id: string;
+  sourceId?: string;
+  evidenceRefs?: string[];
   viewId: string;
   type: GeometryObservationType;
   imageBounds: NormalizedImageBounds;
@@ -39,12 +40,14 @@ export interface GeometryObservation {
 
 export interface AnnotationObservation {
   id: string;
+  sourceId?: string;
+  evidenceRefs?: string[];
   viewId: string;
-  kind: DimensionKind | 'text';
+  kind: DimensionAnnotation['dimensionKind'] | 'text';
   rawText: string;
   value?: number;
   unit?: string;
-  tolerance?: DimensionTolerance;
+  tolerance?: DimensionAnnotation['tolerance'];
   imageBounds: NormalizedImageBounds;
   arrowheads: Vec2[];
   confidence: number;

@@ -15,6 +15,8 @@ import type {
 
 const geometry: GeometryObservation = {
   id: 'obs_geom_view_1_0001',
+  sourceId: 'source_1',
+  evidenceRefs: ['evidence_geom_1'],
   viewId: 'view_1',
   type: 'circle',
   imageBounds: [0.1, 0.2, 0.3, 0.4],
@@ -24,6 +26,8 @@ const geometry: GeometryObservation = {
 
 const annotation: AnnotationObservation = {
   id: 'obs_ann_view_1_0001',
+  sourceId: 'source_1',
+  evidenceRefs: ['evidence_ann_1'],
   viewId: 'view_1',
   kind: 'diameter',
   rawText: 'Ø10 ±0.1',
@@ -86,6 +90,13 @@ describe('drawing perception records', () => {
       .toContain('confidence');
     expect(validateAnnotationObservation({ ...annotation, confidence: -0.1 }).errors.join(' '))
       .toContain('confidence');
+  });
+
+  it('rejects empty source identity and evidence references when persisted metadata is present', () => {
+    expect(validateGeometryObservation({ ...geometry, sourceId: '' }).errors.join(' '))
+      .toContain('sourceId');
+    expect(validateGeometryObservation({ ...geometry, evidenceRefs: [] }).errors.join(' '))
+      .toContain('evidenceRefs');
   });
 
   it('rejects unsupported geometry and annotation kinds', () => {

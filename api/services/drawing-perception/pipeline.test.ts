@@ -166,7 +166,7 @@ describe('DrawingPerceptionPipeline', () => {
     }));
 
     expect(extractAnnotations).toHaveBeenCalledTimes(2);
-    expect(outputs.some((output) => output.kind === 'patch_batch'
+    expect(outputs.some((output) => output.kind === 'command_batch'
       && output.batch.observationIds.some((id) => id.endsWith('__circle_safe')))).toBe(true);
     expect(outputs.at(-1)).toMatchObject({ kind: 'stage', stage: 'completed' });
     expect(await store.read('run_partial_view', 'perception-errors')).toEqual([{
@@ -251,8 +251,8 @@ function isStage(output: DrawingPerceptionOutput): output is Extract<DrawingPerc
   return output.kind === 'stage';
 }
 
-function isBatch(output: DrawingPerceptionOutput): output is Extract<DrawingPerceptionOutput, { kind: 'patch_batch' }> {
-  return output.kind === 'patch_batch';
+function isBatch(output: DrawingPerceptionOutput): output is Extract<DrawingPerceptionOutput, { kind: 'command_batch' }> {
+  return output.kind === 'command_batch';
 }
 
 function inertVision(): DrawingVisionToolset {
