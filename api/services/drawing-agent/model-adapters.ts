@@ -48,6 +48,11 @@ const DECISION_SYSTEM_PROMPT = `你是 VectorAI Drawing Agent 的单步决策器
 不得请求或输出 commit_transaction、previewHandle、完整图纸、SpatialModel 或 SpatialIntent。transact 会由运行时自动预览，提交由运行时在安全点执行。
 如果证据不足，先 query 或 inspect；如果目标已由回执证明，才 finish。`;
 
+export const DRAWING_AGENT_PROMPT_HASHES = Object.freeze({
+  planner: createHash('sha256').update(PLANNER_SYSTEM_PROMPT).digest('hex'),
+  decision: createHash('sha256').update(DECISION_SYSTEM_PROMPT).digest('hex'),
+});
+
 export type DrawingAgentCompletion = (input: DrawingAgentCompletionParams) => Promise<string>;
 
 export class DrawingPlannerAdapter implements DrawingPlannerModelAdapter {
@@ -163,3 +168,4 @@ function parseJsonReply(reply: string): unknown {
   if (start < 0 || end < start) throw new Error('模型响应中没有 JSON 对象');
   return JSON.parse(trimmed.slice(start, end + 1));
 }
+import { createHash } from 'node:crypto';

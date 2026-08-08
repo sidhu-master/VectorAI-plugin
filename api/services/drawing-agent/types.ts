@@ -1,5 +1,6 @@
 import type {
   Actor,
+  DrawingCommit,
   DrawingId,
   DrawingInspectResult,
   DrawingQueryResult,
@@ -81,6 +82,7 @@ export interface DrawingToolExecution {
   receipt: DrawingToolReceipt;
   output?: DrawingQueryResult | DrawingInspectResult | null;
   prepared?: PreparedDrawingTransaction;
+  commit?: DrawingCommit;
 }
 
 export interface DrawingToolInvocation {

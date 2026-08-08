@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DrawingAgentProtocolError, type AgentDecision, type DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
@@ -10,6 +13,8 @@ import {
 import { DrawingApplication } from '../drawing-application/application';
 import { DrawingToolRegistry } from './tool-registry';
 import { DrawingAgentRuntime } from './runtime';
+import { FileDrawingAgentAuditStore } from './file-audit-store';
+import type { DrawingAgentAuditStore } from './audit-types';
 import type {
   DrawingDecisionInput,
   DrawingDecisionModelAdapter,
@@ -37,6 +42,7 @@ async function setup(input: {
     application: DrawingApplication;
     workspace: Awaited<ReturnType<DrawingApplication['create']>>;
   }) => Pick<DrawingToolRegistry, 'invoke' | 'discardPrepared' | 'discardRun'>;
+  auditStore?: DrawingAgentAuditStore;
 } = {}) {
   const idFactory = ids();
   const repository = new MemoryDrawingRepository({ idFactory, now: () => 100 });
@@ -83,6 +89,7 @@ async function setup(input: {
     idFactory,
     now: () => 100,
     limits: input.limits,
+    auditStore: input.auditStore,
   });
   return { application, decision, order, planner, runtime, tools, workspace };
 }
@@ -356,6 +363,35 @@ describe('DrawingAgentRuntime', () => {
     await handle.completion;
     expect(JSON.stringify(progress.events())).not.toContain('lite-model');
     expect(JSON.stringify(progress.events())).not.toContain('repair-model');
+  });
+
+  it('persists plans, decisions, receipts and cloned repository commits for replay', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-runtime-audit-'));
+    try {
+      const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
+      const { application, runtime, workspace } = await setup({ auditStore });
+
+      const handle = runtime.start(startInput(workspace));
+      const final = await handle.completion;
+      await runtime.flushAudit(handle.runId);
+      const audit = await auditStore.readRun(handle.runId);
+      const repositoryCommits = (await application.open(workspace.document.id)).commits;
+
+      expect(final.status).toBe('completed');
+      expect(audit.manifest.goalSpec?.id).toBe('goal_1');
+      expect(audit.manifest.modelProfile).toEqual({
+        planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
+      });
+      expect(audit.events.map((event) => event.type)).toEqual(expect.arrayContaining([
+        'plan', 'decision', 'preview', 'commit', 'validation', 'state',
+      ]));
+      expect(audit.commits.map((commit) => commit.id)).toEqual(
+        repositoryCommits.map((commit) => commit.id),
+      );
+      expect(JSON.stringify(runtime.getProgress(handle.runId)!.events())).not.toContain('lite-model');
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
   });
 });
 

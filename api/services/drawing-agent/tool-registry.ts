@@ -272,6 +272,7 @@ export class DrawingToolRegistry {
         invocation, definition: tool, inputDigest, startedAt, result,
         affectedNodeIds: prepared.affectedNodeIds,
       }),
+      ...(result.status === 'committed' ? { commit: structuredClone(result.commit) } : {}),
     };
   }
 

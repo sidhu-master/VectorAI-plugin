@@ -1,6 +1,11 @@
 import { DrawingAgentProtocolError, type AgentDecision } from '../../../src/contracts/drawing-agent.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
 import { RunProgressChannel } from '../agent-runtime/progress.js';
+import type {
+  DrawingAgentAuditEvent,
+  DrawingAgentAuditStore,
+} from './audit-types.js';
+import { DRAWING_AGENT_PROMPT_HASHES } from './model-adapters.js';
 import {
   checkDrawingAgentBudget,
   createDrawingAgentState,
@@ -49,6 +54,8 @@ interface RunRecord {
   toolEvidence: DrawingToolEvidence[];
   prepared: PreparedDrawingTransaction | null;
   sequence: number;
+  auditSequence: number;
+  auditQueue: Promise<void>;
 }
 
 export interface DrawingAgentRunHandle {
@@ -65,6 +72,8 @@ export interface DrawingAgentRuntimeOptions {
   stageTimeoutMs?: number;
   limits?: Partial<RuntimeLimitsInput>;
   idFactory?: unknown;
+  auditStore?: DrawingAgentAuditStore;
+  promptHashes?: { planner: string; decision: string };
 }
 
 const DEFAULT_LIMITS: RuntimeLimitsInput = {
@@ -85,6 +94,8 @@ export class DrawingAgentRuntime {
   readonly #stageTimeoutMs: number;
   readonly #limits: RuntimeLimitsInput;
   readonly #runs = new Map<string, RunRecord>();
+  readonly #auditStore?: DrawingAgentAuditStore;
+  readonly #promptHashes: { planner: string; decision: string };
 
   constructor(options: DrawingAgentRuntimeOptions) {
     this.#application = options.application;
@@ -94,6 +105,8 @@ export class DrawingAgentRuntime {
     this.#now = options.now ?? Date.now;
     this.#stageTimeoutMs = options.stageTimeoutMs ?? 120_000;
     this.#limits = { ...DEFAULT_LIMITS, ...options.limits };
+    this.#auditStore = options.auditStore;
+    this.#promptHashes = options.promptHashes ?? DRAWING_AGENT_PROMPT_HASHES;
   }
 
   start(input: StartDrawingAgentRunInput): DrawingAgentRunHandle {
@@ -129,8 +142,24 @@ export class DrawingAgentRuntime {
       toolEvidence: [],
       prepared: null,
       sequence: 0,
+      auditSequence: 0,
+      auditQueue: Promise.resolve(),
     };
     this.#runs.set(input.runId, record);
+    this.#enqueueAudit(record, () => this.#auditStore!.startRun({
+      schemaVersion: 1,
+      runId: input.runId,
+      drawingId: input.drawingId,
+      baseRevision: input.baseRevision,
+      startedAt: createdAt,
+      drawingProtocolVersion: '1.0',
+      commandSchemaVersion: '1.0.0',
+      toolSchemaVersion: '1.0.0',
+      promptHashes: { ...this.#promptHashes },
+      modelProfile: { ...input.modelProfile },
+      goalSpec: null,
+    }));
+    this.#audit(record, 'state', { status: 'planning', revision: input.baseRevision });
     progress.publish('accepted', '任务已受理');
     void Promise.resolve().then(() => this.#drive(record));
     return { runId: input.runId, completion };
@@ -142,6 +171,10 @@ export class DrawingAgentRuntime {
 
   getProgress(runId: string): RunProgressChannel | undefined {
     return this.#runs.get(runId)?.progress;
+  }
+
+  async flushAudit(runId: string): Promise<void> {
+    await this.#require(runId).auditQueue;
   }
 
   pause(runId: string): DrawingAgentState {
@@ -161,6 +194,7 @@ export class DrawingAgentRuntime {
   addInstruction(runId: string, instruction: string): DrawingAgentState {
     const record = this.#require(runId);
     this.#transition(record, { type: 'INSTRUCTION_ADDED', instruction });
+    this.#audit(record, 'instruction', { instruction: instruction.trim() });
     return record.state;
   }
 
@@ -270,6 +304,14 @@ export class DrawingAgentRuntime {
     }
     if (record.state.status === 'stopping') return false;
     this.#transition(record, { type: 'PLAN_READY', plan });
+    this.#audit(record, 'plan', { plan: structuredClone(plan) });
+    this.#enqueueAudit(record, async () => {
+      const run = await this.#auditStore!.readRun(record.state.runId);
+      await this.#auditStore!.updateManifest({
+        ...run.manifest,
+        goalSpec: structuredClone(plan.goal),
+      });
+    });
     if (record.state.status === 'paused') {
       record.progress.publish('paused', '任务已暂停');
       return false;
@@ -353,7 +395,7 @@ export class DrawingAgentRuntime {
   async #nextDecision(record: RunRecord): Promise<AgentDecision> {
     const call = async (modelName: string) => {
       this.#transition(record, { type: 'DECISION_RECORDED' });
-      return this.#callModel(record, 'decision', modelName, (signal) => this.#decision.decide({
+      const decision = await this.#callModel(record, 'decision', modelName, (signal) => this.#decision.decide({
         plan: record.state.plan!,
         currentWorkflowNodeId: record.state.currentWorkflowNodeId!,
         revision: record.state.revision,
@@ -365,6 +407,8 @@ export class DrawingAgentRuntime {
         signal,
         deadlineAt: record.state.limits.deadlineAt,
       }));
+      this.#audit(record, 'decision', { decision: structuredClone(decision) });
+      return decision;
     };
     let decision: AgentDecision;
     try {
@@ -502,6 +546,20 @@ export class DrawingAgentRuntime {
         { receipt: execution.receipt, output: execution.output },
       ].slice(-20);
     }
+    const type = execution.receipt.capability === 'preview_transaction'
+      ? 'preview'
+      : execution.receipt.capability === 'commit_transaction'
+        ? 'commit'
+        : execution.receipt.capability === 'verify_goal'
+          ? 'validation'
+          : 'tool_call';
+    this.#audit(record, type, { receipt: structuredClone(execution.receipt) });
+    if (execution.commit) {
+      this.#enqueueAudit(record, () => this.#auditStore!.saveCommit(
+        record.state.runId,
+        execution.commit!,
+      ));
+    }
   }
 
   async #safePoint(record: RunRecord, point: DrawingAgentSafePoint): Promise<boolean> {
@@ -566,6 +624,14 @@ export class DrawingAgentRuntime {
     const result = reduceDrawingAgentState(record.state, event);
     if (result.error) throw new Error(result.error.message);
     record.state = result.state;
+    this.#audit(record, event.type === 'REPLAN_STARTED' || event.type === 'REPLAN_REQUIRED'
+      ? 'replan'
+      : 'state', {
+      event: event.type,
+      status: record.state.status,
+      revision: record.state.revision,
+      currentWorkflowNodeId: record.state.currentWorkflowNodeId,
+    });
   }
 
   #finish(
@@ -585,6 +651,29 @@ export class DrawingAgentRuntime {
     const record = this.#runs.get(runId);
     if (!record) throw new Error(`Agent run not found: ${runId}`);
     return record;
+  }
+
+  #audit(
+    record: RunRecord,
+    type: DrawingAgentAuditEvent['type'],
+    payload: Record<string, unknown>,
+  ): void {
+    if (!this.#auditStore) return;
+    record.auditSequence += 1;
+    const event: DrawingAgentAuditEvent = {
+      schemaVersion: 1,
+      id: `audit_${record.auditSequence}`,
+      runId: record.state.runId,
+      type,
+      timestamp: this.#now(),
+      payload,
+    };
+    this.#enqueueAudit(record, () => this.#auditStore!.appendEvent(event));
+  }
+
+  #enqueueAudit(record: RunRecord, operation: () => Promise<void>): void {
+    if (!this.#auditStore) return;
+    record.auditQueue = record.auditQueue.then(operation);
   }
 }
 
