@@ -8,6 +8,7 @@ export interface IdFactory {
       | 'annotation'
       | 'relation'
       | 'feature'
+      | 'transaction'
       | 'revision'
       | 'commit',
   ): string;
