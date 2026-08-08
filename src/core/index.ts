@@ -41,3 +41,7 @@ export type {
   StepResult,
   VerificationResult,
 } from './agent';
+
+// Spatial Patch
+export * from './patch/types';
+export { validatePatch } from './patch/validate';
