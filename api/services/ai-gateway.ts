@@ -371,11 +371,12 @@ export async function perceiveFromImage({
 
 // ============ Spatial Agent Workflow ============
 
-interface PlanParams {
+export interface PlanParams {
   prompt?: string;
   image?: string;
   mimeType?: string;
   model?: string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -386,6 +387,7 @@ export async function planTask({
   image,
   mimeType,
   model,
+  signal,
 }: PlanParams): Promise<TaskPlan> {
   const baseUrl = process.env.COMPANY_AI_BASE_URL;
   const apiKey = process.env.COMPANY_AI_API_KEY;
@@ -422,6 +424,7 @@ export async function planTask({
       temperature: 0.3,
       max_tokens: 2048,
     }),
+    signal,
   });
 
   if (!response.ok) {
@@ -436,12 +439,14 @@ export async function planTask({
   return parsePlanFromReply(content);
 }
 
-interface ExecuteStepParams {
+export interface ExecuteStepParams {
   step: TaskStep;
   model: SpatialModel;
   plan: TaskPlan;
   llmModel?: string;
   currentView?: string;  // base64 PNG，当前渲染截图
+  correctionErrors?: string[];
+  signal?: AbortSignal;
 }
 
 /**
@@ -454,6 +459,8 @@ export async function executeAgentStep({
   plan,
   llmModel,
   currentView,
+  correctionErrors,
+  signal,
 }: ExecuteStepParams): Promise<SpatialIntent> {
   const baseUrl = process.env.COMPANY_AI_BASE_URL;
   const apiKey = process.env.COMPANY_AI_API_KEY;
@@ -465,7 +472,10 @@ export async function executeAgentStep({
 
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const hasVisual = !!currentView;
-  const stepPrompt = buildStepPrompt(step, model, plan, hasVisual);
+  const baseStepPrompt = buildStepPrompt(step, model, plan, hasVisual);
+  const stepPrompt = correctionErrors && correctionErrors.length > 0
+    ? `${baseStepPrompt}\n\n## 上次验证错误\n${correctionErrors.map((error) => `- ${error}`).join('\n')}\n请修正这些错误。`
+    : baseStepPrompt;
 
   // 构建 user content（有图片时用多模态格式）
   const userContent = hasVisual
@@ -490,7 +500,7 @@ export async function executeAgentStep({
       temperature: 0.3,
       max_tokens: 2048,
     }),
-    signal: AbortSignal.timeout(120000),
+    signal: signal ?? AbortSignal.timeout(120000),
   });
 
   if (!response.ok) {
