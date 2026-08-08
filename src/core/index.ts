@@ -58,3 +58,4 @@ export type { CommitPatchResult } from './history/history';
 export * from './runtime/capabilities';
 export * from './runtime/receipts';
 export * from './runtime/context';
+export * from './runtime/state-machine';
