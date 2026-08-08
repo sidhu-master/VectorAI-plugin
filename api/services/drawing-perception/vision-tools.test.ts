@@ -85,6 +85,35 @@ describe('DrawingVisionTools', () => {
     }));
   });
 
+  it('reads standalone geometry and global contour evidence in one regional image request', async () => {
+    const complete = vi.fn<DrawingVisionCompletion>(async () => JSON.stringify({
+      observations: [{
+        id: 'small_hole', viewId: 'view_1_region_1', type: 'circle',
+        imageBounds: [0.2, 0.2, 0.1, 0.1],
+        measuredParams: { center: [0.25, 0.25], radius: 0.05 }, confidence: 0.9,
+      }],
+      evidence: [{
+        id: 'outer_fragment', viewId: 'view_1_region_1', globalContourId: 'outer',
+        imageBounds: [0, 0.1, 0.2, 0.8], samplePoints: [[0, 0.1], [0.1, 0.5]],
+        confidence: 0.88, touchesCropEdge: true,
+      }],
+    }));
+    const tools = new DrawingVisionTools(complete);
+
+    const result = await tools.detectRegionalGeometry(
+      { ...input, viewId: 'view_1_region_1' },
+      [{ id: 'outer', geometryFamily: 'circle', imageBounds: [0, 0.1, 0.2, 0.8] }],
+    );
+
+    expect(result.geometry).toHaveLength(1);
+    expect(result.evidence).toHaveLength(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      tool: 'detect_regional_geometry',
+      userPrompt: expect.stringContaining('outer'),
+    }));
+  });
+
   it('assesses whether a crop was fully read using a bounded observation summary', async () => {
     const complete = vi.fn<DrawingVisionCompletion>(async () => JSON.stringify({
       complete: false,

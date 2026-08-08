@@ -242,6 +242,8 @@ describe('DrawingPerceptionPipeline', () => {
 
   it('builds whole-view contours before refinement and never promotes crop arcs to geometry', async () => {
     const evidenceCalls: string[] = [];
+    const detectGeometry = vi.fn(async () => []);
+    const detectContourEvidence = vi.fn(async () => []);
     const vision = {
       analyzeSheet: async () => ({ warnings: [] }),
       segmentViews: async () => [{
@@ -253,24 +255,28 @@ describe('DrawingPerceptionPipeline', () => {
         imageBounds: [0.1, 0.1, 0.8, 0.8], closed: true, confidence: 0.94,
         coarseParams: { center: [0.5, 0.5], radius: 0.4 },
       }],
-      detectGeometry: async ({ viewId }: { viewId?: string }) => [{
-        id: 'misread_fragment', viewId: viewId!, type: 'arc',
-        imageBounds: [0, 0.1, 1, 0.8],
-        measuredParams: {
-          center: [0.5, 0.5], radius: 0.4, startAngle: 90, endAngle: 270,
-          counterClockwise: true,
-        },
-        confidence: 0.82,
-      }],
+      detectGeometry,
       extractAnnotations: async () => [],
-      detectContourEvidence: async ({ viewId }: { viewId?: string }) => {
+      detectContourEvidence,
+      detectRegionalGeometry: async ({ viewId }: { viewId?: string }) => {
         evidenceCalls.push(viewId!);
-        return [{
-          id: 'outer_fragment', viewId: viewId!, globalContourId: 'view_full_global__outer_circle',
-          imageBounds: [0, 0.1, 1, 0.8],
-          samplePoints: [[0, 0.5], [0.5, 0.1], [1, 0.5]],
-          confidence: 0.88, touchesCropEdge: true,
-        }];
+        return {
+          geometry: [{
+            id: 'misread_fragment', viewId: viewId!, type: 'arc',
+            imageBounds: [0, 0.1, 1, 0.8],
+            measuredParams: {
+              center: [0.5, 0.5], radius: 0.4, startAngle: 90, endAngle: 270,
+              counterClockwise: true,
+            },
+            confidence: 0.82,
+          }],
+          evidence: [{
+            id: 'outer_fragment', viewId: viewId!, globalContourId: 'view_full_global__outer_circle',
+            imageBounds: [0, 0.1, 1, 0.8],
+            samplePoints: [[0, 0.5], [0.5, 0.1], [1, 0.5]],
+            confidence: 0.88, touchesCropEdge: true,
+          }],
+        };
       },
       assessCoverage: async ({ viewId }: { viewId?: string }) => ({
         complete: viewId !== 'view_full_region_1', confidence: 0.9,
@@ -306,6 +312,8 @@ describe('DrawingPerceptionPipeline', () => {
       'view_full_region_1',
       'view_full_region_1_focus_1',
     ]));
+    expect(detectGeometry).not.toHaveBeenCalled();
+    expect(detectContourEvidence).not.toHaveBeenCalled();
     expect(ledger.complete).toBe(true);
     expect(ledger.regions.filter((region) => region.parentId === 'view_full_region_1')).toHaveLength(1);
     expect(outputs.filter(isStage).map((output) => output.stage)).toEqual(expect.arrayContaining([

@@ -41,6 +41,7 @@ import {
   DrawingVisionTools,
   type DrawingCoverageContext,
   type DrawingRegionalGeometryContext,
+  type DrawingRegionalGeometryRead,
   type DrawingVisionToolInput,
   type SheetAnalysis,
 } from './vision-tools.js';
@@ -104,6 +105,10 @@ export interface DrawingVisionToolset {
     input: DrawingVisionToolInput,
     contours: Array<Pick<GlobalContour, 'id' | 'geometryFamily' | 'imageBounds'>>,
   ): Promise<ContourEvidence[]>;
+  detectRegionalGeometry?(
+    input: DrawingVisionToolInput,
+    contours: Array<Pick<GlobalContour, 'id' | 'geometryFamily' | 'imageBounds'>>,
+  ): Promise<DrawingRegionalGeometryRead>;
   assessCoverage?(
     input: DrawingVisionToolInput,
     context: DrawingCoverageContext,
@@ -149,7 +154,8 @@ interface RegionPerception {
 interface ViewPerceptionError {
   viewId: string;
   tool: 'detect_datums' | 'detect_geometry' | 'extract_annotations'
-    | 'detect_global_contours' | 'detect_contour_evidence' | 'assess_coverage';
+    | 'detect_global_contours' | 'detect_contour_evidence'
+    | 'detect_regional_geometry' | 'assess_coverage';
   message: string;
 }
 
@@ -367,7 +373,7 @@ export class DrawingPerceptionPipeline {
     const pageRatio = page.heightToWidthRatio ?? 1;
     const adaptive = Boolean(
       this.vision.detectGlobalContours
-      && this.vision.detectContourEvidence
+      && (this.vision.detectRegionalGeometry || this.vision.detectContourEvidence)
       && this.vision.assessCoverage,
     );
     const regions = planPerceptionRegions(view, page).map((region) => createCoverageRegion(region));
@@ -559,28 +565,55 @@ export class DrawingPerceptionPipeline {
     const attachment = await this.readRegion(input, pageAssetId, region);
     const visionInput = this.visionInput(input, attachment, region.id);
     const projectedContours = projectGlobalContoursToRegion(globalContours, region);
+    const combinedTool = this.vision.detectRegionalGeometry?.bind(this.vision);
     const evidenceTool = this.vision.detectContourEvidence?.bind(this.vision);
-    const tools: ViewPerceptionError['tool'][] = [
-      'detect_geometry', 'extract_annotations',
-      ...(evidenceTool ? ['detect_contour_evidence' as const] : []),
-    ];
-    const operations: Array<Promise<unknown>> = [
-      this.retryViewTool(input, () => this.vision.detectGeometry(visionInput, {
-        mode: 'regional_standalone',
-        globalContours: projectedContours,
-      })),
-      this.retryViewTool(input, () => this.vision.extractAnnotations(visionInput)),
-      ...(evidenceTool
-        ? [this.retryViewTool(input, () => evidenceTool(visionInput, projectedContours))]
-        : []),
-    ];
-    const results = await Promise.allSettled(operations);
-    const rawGeometry = settledArray<GeometryObservation>(results[0]);
-    const rawAnnotations = settledArray<AnnotationObservation>(results[1]);
-    const rawEvidence = evidenceTool
-      ? settledArray<ContourEvidence>(results[2])
-      : [];
-    const errors = rejectedToolErrors(region.viewId, tools, results);
+    let rawGeometry: GeometryObservation[];
+    let rawAnnotations: AnnotationObservation[];
+    let rawEvidence: ContourEvidence[];
+    let errors: ViewPerceptionError[];
+    if (combinedTool) {
+      const results = await Promise.allSettled([
+        this.retryViewTool<DrawingRegionalGeometryRead>(
+          input,
+          () => combinedTool(visionInput, projectedContours),
+        ),
+        this.retryViewTool<AnnotationObservation[]>(
+          input,
+          () => this.vision.extractAnnotations(visionInput),
+        ),
+      ] as const);
+      const combined = results[0].status === 'fulfilled'
+        ? results[0].value
+        : { geometry: [], evidence: [] };
+      rawGeometry = combined.geometry;
+      rawEvidence = combined.evidence;
+      rawAnnotations = results[1].status === 'fulfilled' ? results[1].value : [];
+      errors = rejectedToolErrors(
+        region.viewId,
+        ['detect_regional_geometry', 'extract_annotations'],
+        results,
+      );
+    } else {
+      const tools: ViewPerceptionError['tool'][] = [
+        'detect_geometry', 'extract_annotations',
+        ...(evidenceTool ? ['detect_contour_evidence' as const] : []),
+      ];
+      const operations: Array<Promise<unknown>> = [
+        this.retryViewTool(input, () => this.vision.detectGeometry(visionInput, {
+          mode: 'regional_standalone',
+          globalContours: projectedContours,
+        })),
+        this.retryViewTool(input, () => this.vision.extractAnnotations(visionInput)),
+        ...(evidenceTool
+          ? [this.retryViewTool(input, () => evidenceTool(visionInput, projectedContours))]
+          : []),
+      ];
+      const results = await Promise.allSettled(operations);
+      rawGeometry = settledArray<GeometryObservation>(results[0]);
+      rawAnnotations = settledArray<AnnotationObservation>(results[1]);
+      rawEvidence = evidenceTool ? settledArray<ContourEvidence>(results[2]) : [];
+      errors = rejectedToolErrors(region.viewId, tools, results);
+    }
     let assessment: DrawingCoverageAssessment | null = this.vision.assessCoverage
       ? null
       : { complete: true, confidence: 1, unreadBounds: [], reasons: [] };

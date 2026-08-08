@@ -26,6 +26,7 @@ export type DrawingVisionToolName =
   | 'detect_geometry'
   | 'detect_global_contours'
   | 'detect_contour_evidence'
+  | 'detect_regional_geometry'
   | 'extract_annotations'
   | 'assess_coverage';
 
@@ -73,6 +74,11 @@ export interface DrawingRegionalGeometryContext {
   globalContours: Array<Pick<GlobalContour, 'id' | 'geometryFamily' | 'imageBounds'>>;
 }
 
+export interface DrawingRegionalGeometryRead {
+  geometry: GeometryObservation[];
+  evidence: ContourEvidence[];
+}
+
 const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> = {
   analyze_sheet: {
     system: '你是二维工程图纸页分析器。只输出 JSON，不识别具体对象，不输出图片或推理过程。',
@@ -118,6 +124,12 @@ const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> =
     user: `只输出以下 JSON 契约：
 {"evidence":[{"id":"evidence_<viewId>_001","viewId":"<输入中的精确 viewId>","globalContourId":"<匹配到的全局轮廓 id>","imageBounds":[x,y,width,height],"samplePoints":[[x,y],[x,y]],"confidence":0.9,"touchesCropEdge":true}]}
 所有坐标相对当前裁剪图归一化到 0-1。samplePoints 沿实际可见轮廓取样。能匹配给出的全局轮廓时必须填写其精确 id；不能可靠匹配时省略 globalContourId，交由扩大视野复核。不要把被裁剪的圆、椭圆、长线或闭合轮廓声明为独立图元。`,
+  },
+  detect_regional_geometry: {
+    system: '你是二维 CAD 区域几何读取器。一次读取小型完整独立图元和已有全局轮廓的局部证据。裁剪片段绝不是独立 CAD 图元。只输出 JSON。',
+    user: `只输出以下 JSON 契约：
+{"observations":[{"id":"geom_<viewId>_001","viewId":"<输入中的精确 viewId>","type":"circle","imageBounds":[x,y,width,height],"measuredParams":{"center":[x,y],"radius":number},"confidence":0.9}],"evidence":[{"id":"evidence_<viewId>_001","viewId":"<输入中的精确 viewId>","globalContourId":"<全局轮廓 id>","imageBounds":[x,y,width,height],"samplePoints":[[x,y],[x,y]],"confidence":0.9,"touchesCropEdge":true}]}
+所有坐标相对当前裁剪图归一化到 0-1。observations 只允许在裁剪中完整可见、参数完整且不属于给定全局轮廓的小型 point、line、ray、xline、circle、arc、ellipse、polyline、spline；参数契约与标准 CAD 图元一致。任何在裁剪边缘结束的线、圆弧、曲线或闭合轮廓只能放入 evidence。evidence.samplePoints 沿可见轮廓取样，能匹配时必须使用给出的精确 globalContourId，不能可靠匹配时省略该字段。`,
   },
   extract_annotations: {
     system: '你是工程图 OCR 与尺寸标注提取器。保留 R、Ø、°、± 和原始文本；不把尺寸绑定到几何。只输出 JSON。',
@@ -231,6 +243,42 @@ export class DrawingVisionTools {
     ));
     if (errors.length > 0) throw new DrawingVisionOutputError('detect_contour_evidence', errors);
     return structuredClone(evidence as ContourEvidence[]);
+  }
+
+  async detectRegionalGeometry(
+    input: DrawingVisionToolInput,
+    contours: Array<Pick<GlobalContour, 'id' | 'geometryFamily' | 'imageBounds'>>,
+  ): Promise<DrawingRegionalGeometryRead> {
+    const boundedContours = contours.slice(0, 100).map((contour) => ({
+      id: contour.id,
+      geometryFamily: contour.geometryFamily,
+      imageBounds: contour.imageBounds,
+    }));
+    const output = asRecord(await this.call(
+      'detect_regional_geometry',
+      input,
+      `\n当前裁剪内可匹配的全局轮廓=${JSON.stringify(boundedContours)}`,
+    ));
+    const observations = output?.observations;
+    const evidence = output?.evidence;
+    const errors: string[] = [];
+    if (!Array.isArray(observations)) errors.push('observations 必须是数组');
+    else observations.forEach((item, index) => {
+      errors.push(...validateGeometryObservation(item).errors.map(
+        (error) => `observations[${index}]: ${error}`,
+      ));
+    });
+    if (!Array.isArray(evidence)) errors.push('evidence 必须是数组');
+    else evidence.forEach((item, index) => {
+      errors.push(...validateContourEvidence(item).errors.map(
+        (error) => `evidence[${index}]: ${error}`,
+      ));
+    });
+    if (errors.length > 0) throw new DrawingVisionOutputError('detect_regional_geometry', errors);
+    return {
+      geometry: structuredClone(observations as GeometryObservation[]),
+      evidence: structuredClone(evidence as ContourEvidence[]),
+    };
   }
 
   async extractAnnotations(input: DrawingVisionToolInput): Promise<AnnotationObservation[]> {
