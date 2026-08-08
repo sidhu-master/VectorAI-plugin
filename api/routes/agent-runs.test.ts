@@ -47,6 +47,36 @@ describe('agent run routes', () => {
     expect(await response.json()).toMatchObject({ success: true, runId: expect.any(String) });
   });
 
+  it('accepts combined text and image immediately and forwards both to planning', async () => {
+    const planningInputs: PlanStageInput[] = [];
+    const runtime = runtimeWith({
+      plan: (input) => {
+        planningInputs.push(input);
+        return new Promise<TaskPlan>(() => undefined);
+      },
+    });
+    const baseUrl = await startServer(runtime);
+    const startedAt = Date.now();
+
+    const response = await fetch(`${baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        goal: '把左侧孔扩大到 20mm',
+        image: 'cG5n',
+        mimeType: 'image/png',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    await waitUntil(() => planningInputs.length === 1);
+    expect(planningInputs[0]).toMatchObject({
+      goal: '把左侧孔扩大到 20mm',
+      image: 'cG5n',
+      mimeType: 'image/png',
+    });
+  });
+
   it('streams accepted and later progress events over SSE', async () => {
     const runtime = runtimeWith({ plan: async () => plan });
     const baseUrl = await startServer(runtime);
