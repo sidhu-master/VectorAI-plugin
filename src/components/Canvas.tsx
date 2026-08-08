@@ -12,60 +12,13 @@ import type {
   PointEntity,
   SpatialRelation,
 } from '@/core/types';
+import { aabbIntersects, entityBounds, entityCenter, modelBounds } from './canvas/geometry';
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 10;
 const FIT_PADDING = 1.3;
 const HIT_WIDTH = 14; // 透明点击区域宽度（屏幕像素）
 const DRAG_THRESHOLD = 4; // 拖动判定阈值（像素）
-
-function entityCenter(e: GeometryEntity): [number, number] {
-  switch (e.type) {
-    case 'point': return [e.x, e.y];
-    case 'line': return [(e.start[0] + e.end[0]) / 2, (e.start[1] + e.end[1]) / 2];
-    case 'circle': return [e.center[0], e.center[1]];
-  }
-}
-
-/** 实体的世界坐标包围盒 */
-function entityBBox(e: GeometryEntity): { minX: number; minY: number; maxX: number; maxY: number } {
-  switch (e.type) {
-    case 'point':
-      return { minX: e.x, minY: e.y, maxX: e.x, maxY: e.y };
-    case 'line':
-      return {
-        minX: Math.min(e.start[0], e.end[0]),
-        minY: Math.min(e.start[1], e.end[1]),
-        maxX: Math.max(e.start[0], e.end[0]),
-        maxY: Math.max(e.start[1], e.end[1]),
-      };
-    case 'circle':
-      return {
-        minX: e.center[0] - e.radius, minY: e.center[1] - e.radius,
-        maxX: e.center[0] + e.radius, maxY: e.center[1] + e.radius,
-      };
-  }
-}
-
-function boundingBox(entities: GeometryEntity[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  const visible = entities.filter((e) => e.visible);
-  if (visible.length === 0) return null;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const e of visible) {
-    const b = entityBBox(e);
-    minX = Math.min(minX, b.minX); maxX = Math.max(maxX, b.maxX);
-    minY = Math.min(minY, b.minY); maxY = Math.max(maxY, b.maxY);
-  }
-  return { minX, minY, maxX, maxY };
-}
-
-/** AABB 相交测试 */
-function aabbIntersect(
-  a: { minX: number; minY: number; maxX: number; maxY: number },
-  b: { minX: number; minY: number; maxX: number; maxY: number },
-): boolean {
-  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
-}
 
 export default function Canvas() {
   const model = useStore((s) => s.model);
@@ -112,7 +65,7 @@ export default function Canvas() {
   // 自动适配
   useEffect(() => {
     if (model.entities.length > 0 && !hasAutoFitRef.current && w > 0 && h > 0) {
-      const bbox = boundingBox(model.entities);
+      const bbox = modelBounds(model.entities);
       if (bbox) {
         const bw = bbox.maxX - bbox.minX || 100;
         const bh = bbox.maxY - bbox.minY || 100;
@@ -235,8 +188,11 @@ export default function Canvas() {
       const pts = r.entities.map(entityById).filter(Boolean) as GeometryEntity[];
       if (pts.length < 2) return;
       for (let j = 0; j < pts.length - 1; j += 1) {
-        const [ax, ay] = entityCenter(pts[j]);
-        const [bx, by] = entityCenter(pts[j + 1]);
+        const a = entityCenter(pts[j]);
+        const b = entityCenter(pts[j + 1]);
+        if (!a || !b) continue;
+        const [ax, ay] = a;
+        const [bx, by] = b;
         relationLines.push(<line key={`rel${i}-${j}`} x1={ax} y1={ay} x2={bx} y2={by} stroke="#a78bfa" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" className="breathe" />);
         const mx = (ax + bx) / 2, my = (ay + by) / 2;
         relationLabels.push(<text key={`rl${i}-${j}`} x={offsetX + mx * scale} y={offsetY - my * scale - 4} className="fill-relation-light font-mono" fontSize={9} textAnchor="middle">{r.kind}</text>);
@@ -323,7 +279,11 @@ export default function Canvas() {
 
         // 检测相交
         const hits = model.entities
-          .filter((e) => e.visible && aabbIntersect(entityBBox(e), selBBox))
+          .filter((entity) => {
+            if (!entity.visible) return false;
+            const bounds = entityBounds(entity);
+            return bounds !== null && aabbIntersects(bounds, selBBox);
+          })
           .map((e) => e.id);
 
         if (hits.length > 0) {
