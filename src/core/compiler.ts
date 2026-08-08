@@ -5,13 +5,18 @@
  */
 
 import type {
+  ArcEntity,
   CircleEntity,
+  EllipseEntity,
   GeometryEntity,
+  IntentObject,
   LineEntity,
   PointEntity,
+  RayEntity,
   SpatialIntent,
   SpatialModel,
   SpatialRelation,
+  XLineEntity,
 } from './types';
 import { PROTOCOL_NAME, PROTOCOL_VERSION } from './types';
 
@@ -48,6 +53,7 @@ export function compileIntent(intent: SpatialIntent): {
     // modify 操作时保留已有 ID，否则生成新 ID
     const id = obj.id || generateId('ent');
     let entity: GeometryEntity | null = null;
+    let supported = true;
 
     switch (obj.type) {
       case 'point':
@@ -56,10 +62,23 @@ export function compileIntent(intent: SpatialIntent): {
       case 'line':
         entity = compileLine(obj, id);
         break;
+      case 'ray':
+        entity = compileRay(obj, id, 'ray');
+        break;
+      case 'xline':
+        entity = compileRay(obj, id, 'xline');
+        break;
       case 'circle':
         entity = compileCircle(obj, id);
         break;
+      case 'arc':
+        entity = compileArc(obj, id);
+        break;
+      case 'ellipse':
+        entity = compileEllipse(obj, id);
+        break;
       default:
+        supported = false;
         errors.push(`objects[${index}]: 未知实体类型 "${obj.type}"`);
     }
 
@@ -69,6 +88,8 @@ export function compileIntent(intent: SpatialIntent): {
       if (obj.reference) {
         refToId.set(obj.reference, id);
       }
+    } else if (supported) {
+      errors.push(`objects[${index}] (${obj.type}): 参数无效`);
     }
   });
 
@@ -127,10 +148,10 @@ function getParam(params: Record<string, unknown>, key: string, aliases: string[
 }
 
 function asNumber(value: unknown): number | null {
-  if (typeof value === 'number') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'string') {
     const parsed = parseFloat(value);
-    return isNaN(parsed) ? null : parsed;
+    return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
 }
@@ -143,21 +164,32 @@ function asPoint(value: unknown): [number, number] | null {
   return [x, y];
 }
 
-function compilePoint(obj: { params: Record<string, unknown> }, id: string): PointEntity | null {
+type CompilableIntentObject = Pick<IntentObject, 'params' | 'confidence'>;
+
+function baseEntity(
+  obj: CompilableIntentObject,
+  id: string,
+): { id: string; visible: true; confidence?: number } {
+  return obj.confidence === undefined
+    ? { id, visible: true }
+    : { id, visible: true, confidence: obj.confidence };
+}
+
+function compilePoint(obj: CompilableIntentObject, id: string): PointEntity | null {
   const x = asNumber(getParam(obj.params, 'x'));
   const y = asNumber(getParam(obj.params, 'y'));
   if (x === null || y === null) return null;
-  return { id, type: 'point', visible: true, x, y };
+  return { ...baseEntity(obj, id), type: 'point', x, y };
 }
 
-function compileLine(obj: { params: Record<string, unknown> }, id: string): LineEntity | null {
+function compileLine(obj: CompilableIntentObject, id: string): LineEntity | null {
   const start = asPoint(getParam(obj.params, 'start'));
   const end = asPoint(getParam(obj.params, 'end'));
   if (!start || !end) return null;
-  return { id, type: 'line', visible: true, start, end };
+  return { ...baseEntity(obj, id), type: 'line', start, end };
 }
 
-function compileCircle(obj: { params: Record<string, unknown> }, id: string): CircleEntity | null {
+function compileCircle(obj: CompilableIntentObject, id: string): CircleEntity | null {
   const center = asPoint(getParam(obj.params, 'center', ['position', 'pos']));
   const radius = asNumber(getParam(obj.params, 'radius', ['r', 'diameter']));
   if (!center || radius === null) return null;
@@ -165,5 +197,89 @@ function compileCircle(obj: { params: Record<string, unknown> }, id: string): Ci
   const actualRadius = 'diameter' in obj.params && !('radius' in obj.params) && !('r' in obj.params)
     ? radius / 2
     : radius;
-  return { id, type: 'circle', visible: true, center, radius: actualRadius };
+  if (actualRadius <= 0) return null;
+  return { ...baseEntity(obj, id), type: 'circle', center, radius: actualRadius };
+}
+
+function compileRay(
+  obj: CompilableIntentObject,
+  id: string,
+  type: 'ray',
+): RayEntity | null;
+function compileRay(
+  obj: CompilableIntentObject,
+  id: string,
+  type: 'xline',
+): XLineEntity | null;
+function compileRay(
+  obj: CompilableIntentObject,
+  id: string,
+  type: 'ray' | 'xline',
+): RayEntity | XLineEntity | null {
+  const origin = asPoint(getParam(obj.params, 'origin', ['point', 'position', 'pos']));
+  const direction = normalizeVector(asPoint(getParam(obj.params, 'direction', ['dir'])));
+  if (!origin || !direction) return null;
+  return { ...baseEntity(obj, id), type, origin, direction } as RayEntity | XLineEntity;
+}
+
+function compileArc(obj: CompilableIntentObject, id: string): ArcEntity | null {
+  const center = asPoint(getParam(obj.params, 'center', ['position', 'pos']));
+  const radiusValue = asNumber(getParam(obj.params, 'radius', ['r', 'diameter']));
+  const startAngle = asNumber(getParam(obj.params, 'startAngle', ['start', 'startDeg']));
+  const endAngle = asNumber(getParam(obj.params, 'endAngle', ['end', 'endDeg']));
+  if (!center || radiusValue === null || startAngle === null || endAngle === null) return null;
+  const radius = 'diameter' in obj.params && !('radius' in obj.params) && !('r' in obj.params)
+    ? radiusValue / 2
+    : radiusValue;
+  if (radius <= 0) return null;
+  const counterClockwise = typeof obj.params.counterClockwise === 'boolean'
+    ? obj.params.counterClockwise
+    : typeof obj.params.ccw === 'boolean'
+      ? obj.params.ccw
+      : typeof obj.params.clockwise === 'boolean'
+        ? !obj.params.clockwise
+        : true;
+  return {
+    ...baseEntity(obj, id),
+    type: 'arc',
+    center,
+    radius,
+    startAngle: normalizeAngle(startAngle),
+    endAngle: normalizeAngle(endAngle),
+    counterClockwise,
+  };
+}
+
+function compileEllipse(obj: CompilableIntentObject, id: string): EllipseEntity | null {
+  const center = asPoint(getParam(obj.params, 'center', ['position', 'pos']));
+  const majorAxis = asPoint(getParam(obj.params, 'majorAxis', ['major']));
+  const ratio = asNumber(getParam(obj.params, 'ratio'));
+  if (!center || !majorAxis || ratio === null || ratio <= 0 || ratio > 1) return null;
+  if (Math.hypot(majorAxis[0], majorAxis[1]) === 0) return null;
+  const rawStart = getParam(obj.params, 'startParam', ['start']);
+  const rawEnd = getParam(obj.params, 'endParam', ['end']);
+  if ((rawStart === undefined) !== (rawEnd === undefined)) return null;
+  const startParam = rawStart === undefined ? undefined : asNumber(rawStart);
+  const endParam = rawEnd === undefined ? undefined : asNumber(rawEnd);
+  if (startParam === null || endParam === null) return null;
+  return {
+    ...baseEntity(obj, id),
+    type: 'ellipse',
+    center,
+    majorAxis,
+    ratio,
+    ...(startParam === undefined ? {} : { startParam: normalizeAngle(startParam) }),
+    ...(endParam === undefined ? {} : { endParam: normalizeAngle(endParam) }),
+  };
+}
+
+function normalizeVector(vector: [number, number] | null): [number, number] | null {
+  if (!vector) return null;
+  const length = Math.hypot(vector[0], vector[1]);
+  if (length === 0) return null;
+  return [vector[0] / length, vector[1] / length];
+}
+
+function normalizeAngle(angle: number): number {
+  return ((angle % 360) + 360) % 360;
 }

@@ -98,7 +98,24 @@ function entityParams(entity: GeometryEntity): Record<string, unknown> {
   switch (entity.type) {
     case 'point': return { x: entity.x, y: entity.y };
     case 'line': return { start: entity.start, end: entity.end };
+    case 'ray':
+    case 'xline': return { origin: entity.origin, direction: entity.direction };
     case 'circle': return { center: entity.center, radius: entity.radius };
+    case 'arc': return {
+      center: entity.center,
+      radius: entity.radius,
+      startAngle: entity.startAngle,
+      endAngle: entity.endAngle,
+      counterClockwise: entity.counterClockwise,
+    };
+    case 'ellipse': return {
+      center: entity.center,
+      majorAxis: entity.majorAxis,
+      ratio: entity.ratio,
+      ...(entity.startParam === undefined ? {} : { startParam: entity.startParam }),
+      ...(entity.endParam === undefined ? {} : { endParam: entity.endParam }),
+    };
+    default: return {};
   }
 }
 

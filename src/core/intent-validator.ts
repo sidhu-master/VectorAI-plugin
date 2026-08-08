@@ -15,7 +15,9 @@ import type {
 } from './types';
 import { RELATION_MIN_ENTITIES } from './types';
 
-const VALID_ENTITY_TYPES: EntityType[] = ['point', 'line', 'circle'];
+const VALID_ENTITY_TYPES: EntityType[] = [
+  'point', 'line', 'ray', 'xline', 'circle', 'arc', 'ellipse',
+];
 
 // 各实体类型所需的关键参数
 const REQUIRED_PARAMS: Partial<Record<EntityType, string[]>> = {
@@ -76,13 +78,7 @@ function validateIntentObject(obj: IntentObject, index: number): string[] {
     return errors;
   }
 
-  // 检查必需参数是否存在
-  const required = REQUIRED_PARAMS[obj.type] ?? [];
-  for (const key of required) {
-    if (!(key in obj.params)) {
-      errors.push(`${prefix} (${obj.type}): 缺少关键参数 "${key}"`);
-    }
-  }
+  validateRequiredParams(obj, prefix, errors);
 
   // 检查参数值是否为明显非法类型（如字符串 "large"）
   if (obj.type === 'circle' && 'radius' in obj.params) {
@@ -92,7 +88,85 @@ function validateIntentObject(obj: IntentObject, index: number): string[] {
     }
   }
 
+  if (obj.type === 'ray' || obj.type === 'xline') {
+    const direction = getParam(obj.params, ['direction', 'dir']);
+    if (!isNonZeroVector(direction)) {
+      errors.push(`${prefix} (${obj.type}): direction 必须是非零二维向量`);
+    }
+  }
+
+  if (obj.type === 'arc') {
+    const radius = getParam(obj.params, ['radius', 'r', 'diameter']);
+    if (!isPositiveNumber(radius)) {
+      errors.push(`${prefix} (arc): radius 或 diameter 必须大于 0`);
+    }
+  }
+
+  if (obj.type === 'ellipse') {
+    if (!isNonZeroVector(getParam(obj.params, ['majorAxis', 'major']))) {
+      errors.push(`${prefix} (ellipse): majorAxis 必须是非零二维向量`);
+    }
+    const ratio = getParam(obj.params, ['ratio']);
+    if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio <= 0 || ratio > 1) {
+      errors.push(`${prefix} (ellipse): ratio 必须在 (0, 1] 范围内`);
+    }
+    const hasStart = hasParam(obj.params, ['startParam', 'start']);
+    const hasEnd = hasParam(obj.params, ['endParam', 'end']);
+    if (hasStart !== hasEnd) {
+      errors.push(`${prefix} (ellipse): startParam 和 endParam 必须同时提供`);
+    }
+  }
+
+  if (obj.confidence !== undefined
+    && (typeof obj.confidence !== 'number' || obj.confidence < 0 || obj.confidence > 1)) {
+    errors.push(`${prefix}: confidence 必须是 0-1 之间的数字`);
+  }
+
   return errors;
+}
+
+function validateRequiredParams(obj: IntentObject, prefix: string, errors: string[]): void {
+  const aliases: Partial<Record<EntityType, string[][]>> = {
+    ray: [['origin', 'point', 'position', 'pos'], ['direction', 'dir']],
+    xline: [['origin', 'point', 'position', 'pos'], ['direction', 'dir']],
+    arc: [
+      ['center', 'position', 'pos'],
+      ['radius', 'r', 'diameter'],
+      ['startAngle', 'start', 'startDeg'],
+      ['endAngle', 'end', 'endDeg'],
+    ],
+    ellipse: [['center', 'position', 'pos'], ['majorAxis', 'major'], ['ratio']],
+  };
+  const groups = aliases[obj.type]
+    ?? (REQUIRED_PARAMS[obj.type] ?? []).map((key) => [key]);
+  for (const group of groups) {
+    if (!hasParam(obj.params, group)) {
+      errors.push(`${prefix} (${obj.type}): 缺少关键参数 "${group[0]}"`);
+    }
+  }
+}
+
+function hasParam(params: Record<string, unknown>, keys: string[]): boolean {
+  return keys.some((key) => key in params);
+}
+
+function getParam(params: Record<string, unknown>, keys: string[]): unknown {
+  const key = keys.find((candidate) => candidate in params);
+  return key === undefined ? undefined : params[key];
+}
+
+function isNonZeroVector(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.length >= 2
+    && typeof value[0] === 'number'
+    && Number.isFinite(value[0])
+    && typeof value[1] === 'number'
+    && Number.isFinite(value[1])
+    && (value[0] !== 0 || value[1] !== 0);
+}
+
+function isPositiveNumber(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 function validateIntentRelation(rel: IntentRelation, index: number): string[] {
