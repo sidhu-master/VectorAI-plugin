@@ -108,7 +108,60 @@ describe('useStore agent runtime integration', () => {
     expect(client.addInstruction).toHaveBeenCalledWith('run_2', '移动到原点');
     expect(client.stop).toHaveBeenCalledWith('run_2');
   });
+
+  it('submits combined text and image through a new Agent run', async () => {
+    const client = agentClientDouble('run_combined');
+    const store = createAppStore(client as unknown as AgentClient);
+
+    await store.getState().submitAgentInput('把左侧孔扩大', 'anBn', 'image/png');
+
+    expect(client.start).toHaveBeenCalledWith(expect.objectContaining({
+      goal: '把左侧孔扩大',
+      image: 'anBn',
+      mimeType: 'image/png',
+    }));
+    expect(client.addInstruction).not.toHaveBeenCalled();
+  });
+
+  it('routes text to the active Agent run as an instruction', async () => {
+    const client = agentClientDouble('run_unused');
+    const store = createAppStore(client as unknown as AgentClient);
+    store.setState({ agentRunId: 'run_active', agentStatus: 'running' });
+
+    await store.getState().submitAgentInput('把右侧圆向上移动');
+
+    expect(client.addInstruction).toHaveBeenCalledWith('run_active', '把右侧圆向上移动');
+    expect(client.start).not.toHaveBeenCalled();
+  });
+
+  it('does not replace an active run with a new attachment', async () => {
+    const client = agentClientDouble('run_unused');
+    const store = createAppStore(client as unknown as AgentClient);
+    store.setState({ agentRunId: 'run_active', agentStatus: 'running' });
+
+    await store.getState().submitAgentInput('换一张图', 'bmV3', 'image/png');
+
+    expect(client.start).not.toHaveBeenCalled();
+    expect(client.addInstruction).not.toHaveBeenCalled();
+    expect(store.getState().agentError).toContain('当前任务');
+  });
 });
+
+function agentClientDouble(runId: string) {
+  const remoteState = {
+    status: 'running', plan: null, currentStepIndex: 0,
+    history: createHistory(createEmptyModel()),
+  } as AgentRunState;
+  return {
+    start: vi.fn(async () => ({ runId })),
+    subscribe: vi.fn(() => () => undefined),
+    getRun: vi.fn(async () => remoteState),
+    pause: vi.fn(async () => ({ ...remoteState, status: 'pause_requested' })),
+    resume: vi.fn(async () => remoteState),
+    stop: vi.fn(async () => ({ ...remoteState, status: 'stopping' })),
+    addInstruction: vi.fn(async () => remoteState),
+  };
+}
 
 function agentEvent(id: string, type: AgentProgressEvent['type']): AgentProgressEvent {
   return { id, runId: 'run_1', type, title: type, timestamp: 1_000, elapsedMs: 0 };

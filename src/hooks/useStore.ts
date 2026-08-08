@@ -104,6 +104,7 @@ export interface AppState {
   confirmAll: () => void;
   rejectResult: (resultId: string) => void;
   clearPerception: () => void;
+  submitAgentInput: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
   startAgent: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
   executeNextStep: () => Promise<void>;
   pauseAgent: () => Promise<void>;
@@ -411,6 +412,21 @@ export function createAppStore(client: AgentClient = agentClient) {
 
   // ============ Agent Workflow ============
 
+  submitAgentInput: async (prompt, image, mimeType) => {
+    const text = prompt?.trim();
+    const state = get();
+    const active = Boolean(state.agentRunId) && isAgentActiveStatus(state.agentStatus);
+    if (active) {
+      if (image) {
+        set({ agentError: '当前任务仍在运行，请先停止或等待完成后再上传新图纸' });
+        return;
+      }
+      if (text) await state.addAgentInstruction(text);
+      return;
+    }
+    await state.startAgent(text, image, mimeType);
+  },
+
   startAgent: async (prompt, image, mimeType) => {
     const goal = prompt?.trim() || (image ? '分析并重建二维工程图' : '');
     if (!goal) {
@@ -702,6 +718,11 @@ export function createAppStore(client: AgentClient = agentClient) {
 }
 
 export const useStore = createAppStore();
+
+function isAgentActiveStatus(status: AgentUiStatus): boolean {
+  return status === 'planning' || status === 'running' || status === 'pause_requested'
+    || status === 'paused' || status === 'stopping';
+}
 
 function shouldSyncRun(type: AgentProgressEvent['type']): boolean {
   return type === 'tool_started' || type === 'validation' || type === 'commit'
