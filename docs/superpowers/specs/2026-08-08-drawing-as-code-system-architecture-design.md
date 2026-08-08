@@ -1,7 +1,7 @@
 # VectorAI “图纸即代码”系统架构设计
 
 **日期：** 2026-08-08  
-**状态：** 已确认，待实施计划  
+**状态：** 已确认，阶段一核心能力已实现，主链迁移进行中
 **适用阶段：** MVP 到首版发布  
 **取代：** `docs/tech-architecture.md` 中以 SpatialIntent、扁平 SpatialModel 和文字步骤为中心的架构  
 
@@ -502,6 +502,14 @@ MVP 本地仓库至少分离保存：
 ## 18. 无兼容包袱的迁移计划
 
 迁移采用分阶段主链替换。每完成一条新主链就删除对应旧入口，不长期维护双协议或 Feature Flag。
+
+### 实施状态（2026-08-08）
+
+| 范围 | 状态 | 已验证边界 |
+| --- | --- | --- |
+| 阶段一：Drawing Core V1 基础能力 | 已实现 | Canonical DrawingDocument、稳定 ID、完整查询、类型化 Command、原子 Transaction Preview、可逆 Patch、分层 Validator、线性 In-memory Repository、Revert Commit 和确定性 Replay 已落地；Drawing Core 测试、全项目测试、类型检查与生产构建通过。 |
+| 阶段一：应用主链切换与旧 Core 删除 | 未完成 | 当前 UI、Agent Runtime、感知和旧审计仍引用 SpatialModel/SpatialIntent；在 Drawing Application Service 接管对应入口前不得删除旧实现，也不得把阶段一整体标记为验收完成。 |
+| 阶段二至阶段五 | 未开始 | 按下述阶段顺序分别制定实施计划和验收门槛。 |
 
 ### 阶段一：替换 Drawing Core
 
