@@ -121,6 +121,27 @@ describe('DrawingAgentRuntime', () => {
     expect((await application.open(workspace.document.id)).document.geometry).toEqual([]);
   });
 
+  it('keeps valid reconstruction results while reporting incomplete perception coverage', async () => {
+    const coverage: DrawingPerceptionOutput = {
+      kind: 'stage', runId: 'run_1', stage: 'coverage_completed', timestamp: 100,
+      durationMs: 10, viewId: 'view_1', detail: {
+        complete: false, incompleteRegionCount: 1, unresolvedContourCount: 1,
+      },
+    };
+    const { runtime, workspace } = await setup({
+      perceptionOutputs: perceptionSequence([coverage, perceptionBatch('verified_circle')]),
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.analysisSummary).toContain('1 个区域尚未完整读取');
+    expect(final.analysisSummary).toContain('1 个全局轮廓尚未参数化');
+    expect(final.commitCount).toBe(1);
+  });
+
   it('reconstructs DrawingCommand batches through preview and commit without a text planner', async () => {
     const batch = perceptionBatch('circle_from_image');
     const { application, planner, runtime, workspace } = await setup({

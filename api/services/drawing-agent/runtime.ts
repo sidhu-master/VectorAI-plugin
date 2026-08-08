@@ -84,6 +84,9 @@ interface RunRecord {
   perceptionBatchIds: Set<string>;
   perceptionEntityCount: number;
   perceptionLowConfidenceCount: number;
+  perceptionCoverageComplete: boolean;
+  perceptionIncompleteRegionCount: number;
+  perceptionUnresolvedContourCount: number;
 }
 
 export interface DrawingAgentRunHandle {
@@ -199,6 +202,9 @@ export class DrawingAgentRuntime {
       perceptionBatchIds: new Set(),
       perceptionEntityCount: 0,
       perceptionLowConfidenceCount: 0,
+      perceptionCoverageComplete: true,
+      perceptionIncompleteRegionCount: 0,
+      perceptionUnresolvedContourCount: 0,
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -358,11 +364,19 @@ export class DrawingAgentRuntime {
         });
         record.progress.publish('model_started', '正在复核低置信度图元');
         this.#audit(record, 'perception', { stage: 'low_confidence_escalation' });
+        const coverageSnapshot = {
+          complete: record.perceptionCoverageComplete,
+          incompleteRegionCount: record.perceptionIncompleteRegionCount,
+          unresolvedContourCount: record.perceptionUnresolvedContourCount,
+        };
         try {
           outputs = await this.#collectPerception(record, {
             ...perceptionInput, modelName: this.#visionRepairModelName,
           }, 'repair');
         } catch (error) {
+          record.perceptionCoverageComplete = coverageSnapshot.complete;
+          record.perceptionIncompleteRegionCount = coverageSnapshot.incompleteRegionCount;
+          record.perceptionUnresolvedContourCount = coverageSnapshot.unresolvedContourCount;
           this.#audit(record, 'perception', {
             stage: 'repair_fallback',
             error: error instanceof Error ? error.message : String(error),
@@ -385,6 +399,9 @@ export class DrawingAgentRuntime {
         stage: 'analysis_ready',
         entityCount: record.perceptionEntityCount,
         lowConfidenceCount: record.perceptionLowConfidenceCount,
+        coverageComplete: record.perceptionCoverageComplete,
+        incompleteRegionCount: record.perceptionIncompleteRegionCount,
+        unresolvedContourCount: record.perceptionUnresolvedContourCount,
         commitCount: record.state.commitCount,
       });
       record.perceptionCompleted = true;
@@ -407,6 +424,20 @@ export class DrawingAgentRuntime {
       if (output.kind === 'command_batch') {
         commands.push(output);
         continue;
+      }
+      if (output.stage === 'asset_prepared') {
+        record.perceptionCoverageComplete = true;
+        record.perceptionIncompleteRegionCount = 0;
+        record.perceptionUnresolvedContourCount = 0;
+      } else if (output.stage === 'coverage_completed') {
+        record.perceptionCoverageComplete = record.perceptionCoverageComplete
+          && output.detail.complete !== false;
+        record.perceptionIncompleteRegionCount += nonNegativeInteger(
+          output.detail.incompleteRegionCount,
+        );
+        record.perceptionUnresolvedContourCount += nonNegativeInteger(
+          output.detail.unresolvedContourCount,
+        );
       }
       record.progress.publish('tool_finished', perceptionStageTitle(output.stage));
       this.#audit(record, 'perception', {
@@ -976,7 +1007,17 @@ function perceptionSummary(record: RunRecord): string {
   const action = record.inputMode === 'analyze_only'
     ? '未修改当前图纸'
     : `形成 ${record.state.commitCount} 个增量提交`;
-  return `识别到 ${record.perceptionEntityCount} 个图元${candidate}；${action}。`;
+  const coverage = record.perceptionCoverageComplete
+    ? ''
+    : [
+        record.perceptionIncompleteRegionCount > 0
+          ? `${record.perceptionIncompleteRegionCount} 个区域尚未完整读取`
+          : '',
+        record.perceptionUnresolvedContourCount > 0
+          ? `${record.perceptionUnresolvedContourCount} 个全局轮廓尚未参数化`
+          : '',
+      ].filter(Boolean).join('，');
+  return `识别到 ${record.perceptionEntityCount} 个图元${candidate}；${action}${coverage ? `；注意：${coverage}` : ''}。`;
 }
 
 function perceptionStageTitle(stage: Extract<DrawingPerceptionOutput, { kind: 'stage' }>['stage']): string {
@@ -984,12 +1025,19 @@ function perceptionStageTitle(stage: Extract<DrawingPerceptionOutput, { kind: 's
     case 'asset_prepared': return '图纸来源已准备';
     case 'sheet_analyzed': return '图纸版面分析完成';
     case 'views_segmented': return '视图拆分完成';
+    case 'global_contours_built': return '全局轮廓建档完成';
+    case 'coverage_assessed': return '区域覆盖检查完成';
+    case 'coverage_completed': return '图纸读取覆盖已收敛';
     case 'view_perceived': return '局部图元识别完成';
     case 'topology_built': return '几何拓扑构建完成';
     case 'dimensions_associated': return '尺寸关联完成';
     case 'patches_built': return '增量修改已生成';
     case 'completed': return '图纸解析完成';
   }
+}
+
+function nonNegativeInteger(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
 function isStale(execution: DrawingToolExecution): boolean {
