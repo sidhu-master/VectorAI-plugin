@@ -1,6 +1,10 @@
+import type { AgentModelRole } from './types.js';
+
 export type AgentProgressEventType =
   | 'accepted'
   | 'planning'
+  | 'model_started'
+  | 'model_finished'
   | 'tool_started'
   | 'tool_finished'
   | 'validation'
@@ -12,12 +16,22 @@ export type AgentProgressEventType =
   | 'completed'
   | 'failed';
 
+export interface AgentModelEventDetail {
+  role: AgentModelRole;
+  model: string;
+  attempt: number;
+  durationMs?: number;
+  status?: 'success' | 'aborted' | 'failed';
+}
+
+export type AgentProgressEventDetail = string | AgentModelEventDetail;
+
 export interface AgentProgressEvent {
   id: string;
   runId: string;
   type: AgentProgressEventType;
   title: string;
-  detail?: string;
+  detail?: AgentProgressEventDetail;
   timestamp: number;
   elapsedMs: number;
 }
@@ -47,7 +61,11 @@ export class RunProgressChannel {
     return () => this.listeners.delete(listener);
   }
 
-  publish(type: AgentProgressEventType, title: string, detail?: string): AgentProgressEvent {
+  publish(
+    type: AgentProgressEventType,
+    title: string,
+    detail?: AgentProgressEventDetail,
+  ): AgentProgressEvent {
     this.clearHeartbeat();
     const timestamp = this.now();
     const event: AgentProgressEvent = {

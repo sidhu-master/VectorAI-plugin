@@ -446,7 +446,9 @@ export function createAppStore(client: AgentClient = agentClient) {
             ? state.agentEvents
             : [...state.agentEvents, event],
           agentStatus: statusFromProgress(event, state.agentStatus),
-          agentError: event.type === 'failed' ? event.detail || event.title : state.agentError,
+          agentError: event.type === 'failed'
+            ? (typeof event.detail === 'string' ? event.detail : event.title)
+            : state.agentError,
         }));
         if (shouldSyncRun(event.type)) void syncRun().catch((error) => {
           if (get().agentRunId === runId) {
@@ -711,6 +713,11 @@ function statusFromProgress(event: AgentProgressEvent, current: AgentUiStatus): 
   switch (event.type) {
     case 'accepted':
     case 'planning': return 'planning';
+    case 'model_started':
+    case 'model_finished':
+      return typeof event.detail === 'object' && event.detail.role === 'planner'
+        ? 'planning'
+        : 'running';
     case 'tool_started':
     case 'tool_finished':
     case 'validation':

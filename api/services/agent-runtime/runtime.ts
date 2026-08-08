@@ -18,6 +18,7 @@ import type { AuditStore } from '../audit/types.js';
 import type {
   AgentExecutorAdapter,
   AgentAttachmentPreparer,
+  AgentModelRole,
   AgentPlannerAdapter,
   StartAgentRunInput,
 } from './types.js';
@@ -175,18 +176,23 @@ export class AgentRuntime {
       const stage = this.createStage(record);
       let plan;
       try {
-        plan = await this.planner.plan({
-          goal: record.state.goal,
-          model: record.state.history.model,
-          modelName: selectAgentModel(record.modelProfile, {
-            role: 'planner',
-            hasImage: Boolean(attachment?.image),
-          }),
-          image: attachment?.image,
-          mimeType: attachment?.mimeType,
-          signal: stage.controller.signal,
-          deadlineAt: stage.deadlineAt,
+        const modelName = selectAgentModel(record.modelProfile, {
+          role: 'planner',
+          hasImage: Boolean(attachment?.image),
         });
+        plan = await this.callModel(
+          record,
+          { role: 'planner', model: modelName, attempt: 1, signal: stage.controller.signal },
+          () => this.planner.plan({
+            goal: record.state.goal,
+            model: record.state.history.model,
+            modelName,
+            image: attachment?.image,
+            mimeType: attachment?.mimeType,
+            signal: stage.controller.signal,
+            deadlineAt: stage.deadlineAt,
+          }),
+        );
       } finally {
         stage.clear();
       }
@@ -222,24 +228,30 @@ export class AgentRuntime {
           record.progress.publish('tool_started', `正在执行：${step.description}`);
           const built = buildRuntimeContext(record.state.context);
           record.state = { ...record.state, context: built.nextLedger };
-          const intent = await this.executor.execute({
-            goal: record.state.goal,
-            plan: record.state.plan!,
-            step,
-            model: record.state.history.model,
-            modelName: selectAgentModel(record.modelProfile, {
-              role: attempt > 1 ? 'repair' : 'executor',
-              hasImage: Boolean(record.referenceAttachment?.image),
-              isRepair: attempt > 1,
-            }),
-            context: built.context,
-            image: record.referenceAttachment?.image,
-            mimeType: record.referenceAttachment?.mimeType,
-            attempt,
-            previousErrors,
-            signal: stage.controller.signal,
-            deadlineAt: stage.deadlineAt,
+          const role: AgentModelRole = attempt > 1 ? 'repair' : 'executor';
+          const modelName = selectAgentModel(record.modelProfile, {
+            role,
+            hasImage: Boolean(record.referenceAttachment?.image),
+            isRepair: attempt > 1,
           });
+          const intent = await this.callModel(
+            record,
+            { role, model: modelName, attempt, signal: stage.controller.signal },
+            () => this.executor.execute({
+              goal: record.state.goal,
+              plan: record.state.plan!,
+              step,
+              model: record.state.history.model,
+              modelName,
+              context: built.context,
+              image: record.referenceAttachment?.image,
+              mimeType: record.referenceAttachment?.mimeType,
+              attempt,
+              previousErrors,
+              signal: stage.controller.signal,
+              deadlineAt: stage.deadlineAt,
+            }),
+          );
           if (isStopping(record)) return this.finishStopped(record);
 
           const compiled = compileIntentToPatch(intent, record.state.history.model);
@@ -323,19 +335,24 @@ export class AgentRuntime {
     record.progress.publish('planning', '正在根据新指令调整计划');
     const stage = this.createStage(record);
     try {
-      const plan = await this.planner.plan({
-        goal: record.state.goal,
-        model: record.state.history.model,
-        modelName: selectAgentModel(record.modelProfile, {
-          role: 'planner',
-          hasImage: Boolean(record.referenceAttachment?.image),
-        }),
-        instruction: record.state.activeInstruction,
-        image: record.referenceAttachment?.image,
-        mimeType: record.referenceAttachment?.mimeType,
-        signal: stage.controller.signal,
-        deadlineAt: stage.deadlineAt,
+      const modelName = selectAgentModel(record.modelProfile, {
+        role: 'planner',
+        hasImage: Boolean(record.referenceAttachment?.image),
       });
+      const plan = await this.callModel(
+        record,
+        { role: 'planner', model: modelName, attempt: 1, signal: stage.controller.signal },
+        () => this.planner.plan({
+          goal: record.state.goal,
+          model: record.state.history.model,
+          modelName,
+          instruction: record.state.activeInstruction,
+          image: record.referenceAttachment?.image,
+          mimeType: record.referenceAttachment?.mimeType,
+          signal: stage.controller.signal,
+          deadlineAt: stage.deadlineAt,
+        }),
+      );
       record.state = {
         ...record.state,
         plan,
@@ -386,6 +403,37 @@ export class AgentRuntime {
   private nextId(prefix: string): string {
     this.sequence += 1;
     return `${prefix}_${this.sequence}`;
+  }
+
+  private async callModel<T>(
+    record: AgentRunRecord,
+    input: { role: AgentModelRole; model: string; attempt: number; signal: AbortSignal },
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const startedAt = this.now();
+    const baseDetail = { role: input.role, model: input.model, attempt: input.attempt };
+    record.progress.publish('model_started', '模型调用开始', baseDetail);
+    try {
+      const result = await operation();
+      record.progress.publish('model_finished', '模型调用完成', {
+        ...baseDetail,
+        durationMs: Math.max(0, this.now() - startedAt),
+        status: 'success',
+      });
+      return result;
+    } catch (error) {
+      const aborted = input.signal.aborted || isAbort(error);
+      record.progress.publish(
+        'model_finished',
+        aborted ? '模型调用已中止' : '模型调用失败',
+        {
+          ...baseDetail,
+          durationMs: Math.max(0, this.now() - startedAt),
+          status: aborted ? 'aborted' : 'failed',
+        },
+      );
+      throw error;
+    }
   }
 
   private enqueueAudit(record: AgentRunRecord, operation: () => Promise<void>): void {

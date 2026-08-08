@@ -7,6 +7,23 @@ import { useStore } from '@/hooks/useStore';
 import type { TaskStep } from '@/core/agent';
 import type { AgentProgressEvent } from '@/services/agent-client';
 
+function formatEventDetail(event: AgentProgressEvent): string | undefined {
+  if (!event.detail) return undefined;
+  if (typeof event.detail === 'string') return event.detail.slice(0, 120);
+  const duration = event.detail.durationMs === undefined
+    ? undefined
+    : event.detail.durationMs < 1_000
+      ? `${event.detail.durationMs}ms`
+      : `${(event.detail.durationMs / 1_000).toFixed(1)}s`;
+  return [
+    event.detail.role,
+    event.detail.model,
+    `#${event.detail.attempt}`,
+    duration,
+    event.detail.status,
+  ].filter(Boolean).join(' · ');
+}
+
 function stepIcon(status: string) {
   switch (status) {
     case 'completed': return <Check size={12} className="text-green-400" />;
@@ -109,7 +126,11 @@ export default function ConstructionTimeline() {
             <div key={event.id} className="text-[10px]">
               <span className={eventTone(event.type)}>{event.title}</span>
               <span className="ml-1 text-slate-600">{Math.round(event.elapsedMs / 1000)}s</span>
-              {event.detail && <p className="break-words text-danger/80">{event.detail.slice(0, 120)}</p>}
+              {event.detail && (
+                <p className={`break-words ${typeof event.detail === 'string' ? 'text-danger/80' : 'font-mono text-slate-500'}`}>
+                  {formatEventDetail(event)}
+                </p>
+              )}
             </div>
           ))}
         </div>

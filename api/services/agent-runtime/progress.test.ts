@@ -72,4 +72,25 @@ describe('RunProgressChannel', () => {
     expect(second).toEqual(['accepted']);
     channel.close();
   });
+
+  it('retains structured model metadata without converting it to text', () => {
+    const channel = new RunProgressChannel('run_models', 1_000);
+
+    const event = channel.publish('model_finished', '模型调用完成', {
+      role: 'executor',
+      model: 'doubao-seed-2.0-lite',
+      attempt: 2,
+      durationMs: 320,
+      status: 'success',
+    });
+
+    expect(event.detail).toEqual({
+      role: 'executor',
+      model: 'doubao-seed-2.0-lite',
+      attempt: 2,
+      durationMs: 320,
+      status: 'success',
+    });
+    channel.close();
+  });
 });

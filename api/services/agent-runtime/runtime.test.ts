@@ -138,6 +138,44 @@ describe('AgentRuntime', () => {
     ]);
   });
 
+  it('pairs model lifecycle events with role, model, attempt, duration, and status', async () => {
+    let currentTime = 1_000;
+    const runtime = new AgentRuntime({
+      planner: planner(async () => {
+        currentTime += 40;
+        return oneStepPlan;
+      }),
+      executor: executor(async () => {
+        currentTime += 60;
+        return { objects: [] };
+      }),
+      now: () => currentTime,
+    });
+
+    await runtime.start({
+      runId: 'run_model_events', goal: '检查模型事件', model: createEmptyModel(),
+      modelProfile: defaultModelProfile,
+    }).completion;
+
+    const events = runtime.getProgress('run_model_events')!.events()
+      .filter((event) => event.type === 'model_started' || event.type === 'model_finished');
+    expect(events.map((event) => event.type)).toEqual([
+      'model_started', 'model_finished', 'model_started', 'model_finished',
+    ]);
+    expect(events.map((event) => event.detail)).toEqual([
+      { role: 'planner', model: 'planner-text', attempt: 1 },
+      {
+        role: 'planner', model: 'planner-text', attempt: 1,
+        durationMs: 40, status: 'success',
+      },
+      { role: 'executor', model: 'executor-text', attempt: 1 },
+      {
+        role: 'executor', model: 'executor-text', attempt: 1,
+        durationMs: 60, status: 'success',
+      },
+    ]);
+  });
+
   it('returns an accepted run before planning resolves', async () => {
     const pendingPlan = deferred<TaskPlan>();
     const runtime = new AgentRuntime({
@@ -271,6 +309,10 @@ describe('AgentRuntime', () => {
 
     expect(state.status).toBe('stopped');
     expect(state.history.commits).toEqual([]);
+    expect(runtime.getProgress('run_5')?.events()).toContainEqual(expect.objectContaining({
+      type: 'model_finished',
+      detail: expect.objectContaining({ role: 'executor', status: 'aborted' }),
+    }));
   });
 
   it('replans remaining work once with guidance consumed at a safe point', async () => {
@@ -385,6 +427,12 @@ describe('AgentRuntime', () => {
     expect(audit.commits).toHaveLength(1);
     expect(audit.finalModels).toHaveLength(1);
     expect(audit.events.map((event) => event.type)).toContain('commit');
+    const modelEvents = audit.events.filter((event) => event.type.startsWith('model_'));
+    expect(modelEvents).toHaveLength(4);
+    expect(JSON.stringify(modelEvents)).not.toContain('创建点');
+    expect(JSON.stringify(modelEvents)).not.toContain('image');
+    expect(JSON.stringify(modelEvents)).not.toContain('token');
+    expect(JSON.stringify(modelEvents)).not.toContain('apiKey');
   });
 });
 

@@ -4,6 +4,8 @@ import type { SpatialModel } from '@/core/types';
 export type AgentProgressEventType =
   | 'accepted'
   | 'planning'
+  | 'model_started'
+  | 'model_finished'
   | 'tool_started'
   | 'tool_finished'
   | 'validation'
@@ -15,12 +17,20 @@ export type AgentProgressEventType =
   | 'completed'
   | 'failed';
 
+export interface AgentModelEventDetail {
+  role: 'planner' | 'executor' | 'repair';
+  model: string;
+  attempt: number;
+  durationMs?: number;
+  status?: 'success' | 'aborted' | 'failed';
+}
+
 export interface AgentProgressEvent {
   id: string;
   runId: string;
   type: AgentProgressEventType;
   title: string;
-  detail?: string;
+  detail?: string | AgentModelEventDetail;
   timestamp: number;
   elapsedMs: number;
 }
