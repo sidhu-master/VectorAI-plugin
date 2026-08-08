@@ -6,6 +6,13 @@ import type { SpatialCommit } from '../../../src/core/history/types';
 import { replayCommits } from '../audit/replay';
 import type { AuditEvent, AuditRunManifest, AuditStore } from '../audit/types';
 import { AgentRuntime } from './runtime';
+
+const defaultModelProfile = {
+  planner: 'planner-text',
+  vision: 'doubao-seed-2.0-lite',
+  executor: 'executor-text',
+  repair: 'repair-text',
+};
 import type { PlanStageInput } from './types';
 
 const initialPlan: TaskPlan = {
@@ -46,7 +53,10 @@ describe('AgentRuntime integration', () => {
       now: () => 1_000,
     });
     const initial = createEmptyModel();
-    const handle = runtime.start({ runId: 'run_integration', goal: '创建两个点', model: initial });
+    const handle = runtime.start({
+      runId: 'run_integration', goal: '创建两个点', model: initial,
+      modelProfile: defaultModelProfile,
+    });
     await waitUntil(() => runtime.getState('run_integration')?.status === 'running');
     runtime.addInstruction('run_integration', '第二个点放在 x=20');
     firstStep.resolve({
@@ -77,7 +87,10 @@ describe('AgentRuntime integration', () => {
       executor: { execute: async () => ({ objects: [] }) },
       now: Date.now,
     });
-    const handle = runtime.start({ runId: 'run_slow', goal: '分析复杂图纸', model: createEmptyModel() });
+    const handle = runtime.start({
+      runId: 'run_slow', goal: '分析复杂图纸', model: createEmptyModel(),
+      modelProfile: defaultModelProfile,
+    });
     const elapsed: number[] = [];
     runtime.getProgress('run_slow')?.subscribe((event) => elapsed.push(event.elapsedMs));
     await vi.advanceTimersByTimeAsync(70_000);

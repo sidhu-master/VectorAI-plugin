@@ -25,6 +25,7 @@ export class GatewayPlannerAdapter implements AgentPlannerAdapter {
       : input.goal;
     return this.planFunction({
       prompt,
+      model: input.modelName,
       image: input.image,
       mimeType: input.mimeType,
       signal: input.signal,
@@ -40,6 +41,7 @@ export class GatewayExecutorAdapter implements AgentExecutorAdapter {
       step: input.step,
       model: input.model,
       plan: input.plan,
+      llmModel: input.modelName,
       correctionErrors: input.previousErrors,
       currentView: input.image,
       currentViewMimeType: input.mimeType,

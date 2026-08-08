@@ -23,6 +23,13 @@ const oneStepPlan: TaskPlan = {
   steps: [{ id: 1, action: 'extract_outline', description: '创建点', status: 'pending' }],
 };
 
+const defaultModelProfile = {
+  planner: 'planner-text',
+  vision: 'doubao-seed-2.0-lite',
+  executor: 'executor-text',
+  repair: 'repair-text',
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -40,6 +47,97 @@ function executor(fn: (input: ExecuteStageInput) => Promise<SpatialIntent>): Age
 
 describe('AgentRuntime', () => {
   afterEach(() => vi.useRealTimers());
+
+  it('uses the vision model for image planning, retries, and replanning', async () => {
+    const executionStarted = deferred<void>();
+    const releaseFirstExecution = deferred<void>();
+    const planningInputs: PlanStageInput[] = [];
+    const executionInputs: ExecuteStageInput[] = [];
+    const initialPlan: TaskPlan = {
+      ...oneStepPlan,
+      steps: [
+        oneStepPlan.steps[0],
+        { id: 2, action: 'detect_features', description: '检查第二步', status: 'pending' },
+      ],
+    };
+    const runtime = new AgentRuntime({
+      planner: planner(async (input) => {
+        planningInputs.push(input);
+        return input.instruction ? oneStepPlan : initialPlan;
+      }),
+      executor: executor(async (input) => {
+        executionInputs.push(input);
+        if (executionInputs.length === 1) {
+          executionStarted.resolve();
+          await releaseFirstExecution.promise;
+          return { objects: [{ type: 'circle', params: { center: [0, 0], radius: 0 } }] };
+        }
+        return { objects: [] };
+      }),
+    });
+    const handle = runtime.start({
+      runId: 'run_image_models',
+      goal: '分析图纸',
+      model: createEmptyModel(),
+      modelProfile: {
+        planner: 'planner-text',
+        vision: 'doubao-seed-2.0-lite',
+        executor: 'executor-text',
+        repair: 'repair-text',
+      },
+      image: 'cG5n',
+      mimeType: 'image/png',
+    });
+    await executionStarted.promise;
+    runtime.addInstruction('run_image_models', '按新要求继续');
+    releaseFirstExecution.resolve();
+
+    expect((await handle.completion).status).toBe('completed');
+    expect(planningInputs).toHaveLength(2);
+    expect(planningInputs.map((input) => input.modelName)).toEqual([
+      'doubao-seed-2.0-lite',
+      'doubao-seed-2.0-lite',
+    ]);
+    expect(executionInputs.length).toBeGreaterThanOrEqual(3);
+    expect(executionInputs.every((input) => input.modelName === 'doubao-seed-2.0-lite')).toBe(true);
+  });
+
+  it('uses executor then repair models for text-only execution attempts', async () => {
+    const planningInputs: PlanStageInput[] = [];
+    const executionInputs: ExecuteStageInput[] = [];
+    const runtime = new AgentRuntime({
+      planner: planner(async (input) => {
+        planningInputs.push(input);
+        return oneStepPlan;
+      }),
+      executor: executor(async (input) => {
+        executionInputs.push(input);
+        return input.attempt === 1
+          ? { objects: [{ type: 'circle', params: { center: [0, 0], radius: 0 } }] }
+          : { objects: [] };
+      }),
+    });
+
+    const state = await runtime.start({
+      runId: 'run_text_models',
+      goal: '创建圆',
+      model: createEmptyModel(),
+      modelProfile: {
+        planner: 'planner-text',
+        vision: 'doubao-seed-2.0-lite',
+        executor: 'executor-text',
+        repair: 'repair-text',
+      },
+    }).completion;
+
+    expect(state.status).toBe('completed');
+    expect(planningInputs[0].modelName).toBe('planner-text');
+    expect(executionInputs.map((input) => input.modelName)).toEqual([
+      'executor-text',
+      'repair-text',
+    ]);
+  });
+
   it('returns an accepted run before planning resolves', async () => {
     const pendingPlan = deferred<TaskPlan>();
     const runtime = new AgentRuntime({
@@ -48,7 +146,9 @@ describe('AgentRuntime', () => {
       now: () => 1_000,
     });
 
-    const handle = runtime.start({ runId: 'run_1', goal: '检查模型', model: createEmptyModel() });
+    const handle = runtime.start({
+      runId: 'run_1', goal: '检查模型', model: createEmptyModel(), modelProfile: defaultModelProfile,
+    });
 
     expect(runtime.getState('run_1')?.status).toBe('planning');
     expect(runtime.getProgress('run_1')?.latestEvent()?.type).toBe('accepted');
@@ -72,6 +172,7 @@ describe('AgentRuntime', () => {
 
     const handle = runtime.start({
       runId: 'run_attachment', goal: '分析图纸', model: createEmptyModel(),
+      modelProfile: defaultModelProfile,
       image: 'cG5n', mimeType: 'image/png',
     });
     await handle.completion;
@@ -92,7 +193,9 @@ describe('AgentRuntime', () => {
       now: () => 2_000,
     });
     const eventTypes: string[] = [];
-    const handle = runtime.start({ runId: 'run_2', goal: '创建点', model: createEmptyModel() });
+    const handle = runtime.start({
+      runId: 'run_2', goal: '创建点', model: createEmptyModel(), modelProfile: defaultModelProfile,
+    });
     runtime.getProgress('run_2')?.subscribe((event) => eventTypes.push(event.type));
 
     const state = await handle.completion;
@@ -122,7 +225,9 @@ describe('AgentRuntime', () => {
       stageTimeoutMs: 60_000,
     });
 
-    const state = await runtime.start({ runId: 'run_3', goal: '创建圆', model: createEmptyModel() }).completion;
+    const state = await runtime.start({
+      runId: 'run_3', goal: '创建圆', model: createEmptyModel(), modelProfile: defaultModelProfile,
+    }).completion;
 
     expect(state.status).toBe('completed');
     expect(attempts).toBe(3);
@@ -138,7 +243,9 @@ describe('AgentRuntime', () => {
       now: () => 1_000,
     });
 
-    const state = await runtime.start({ runId: 'run_4', goal: '创建圆', model: createEmptyModel() }).completion;
+    const state = await runtime.start({
+      runId: 'run_4', goal: '创建圆', model: createEmptyModel(), modelProfile: defaultModelProfile,
+    }).completion;
 
     expect(state.status).toBe('paused');
     expect(state.history.commits).toEqual([]);
@@ -154,7 +261,9 @@ describe('AgentRuntime', () => {
       })),
       now: () => 1_000,
     });
-    const handle = runtime.start({ runId: 'run_5', goal: '创建点', model: createEmptyModel() });
+    const handle = runtime.start({
+      runId: 'run_5', goal: '创建点', model: createEmptyModel(), modelProfile: defaultModelProfile,
+    });
     await executionStarted.promise;
 
     runtime.stop('run_5');
@@ -185,7 +294,10 @@ describe('AgentRuntime', () => {
       }),
       now: () => 1_000,
     });
-    const handle = runtime.start({ runId: 'run_6', goal: '创建两个点', model: createEmptyModel() });
+    const handle = runtime.start({
+      runId: 'run_6', goal: '创建两个点', model: createEmptyModel(),
+      modelProfile: defaultModelProfile,
+    });
     await waitUntil(() => runtime.getState('run_6')?.status === 'running');
     runtime.addInstruction('run_6', '第二个点改成圆');
     firstExecution.resolve({ objects: [] });
@@ -212,7 +324,10 @@ describe('AgentRuntime', () => {
         return { objects: [] };
       }),
     });
-    const handle = runtime.start({ runId: 'run_guidance', goal: '创建点', model: createEmptyModel() });
+    const handle = runtime.start({
+      runId: 'run_guidance', goal: '创建点', model: createEmptyModel(),
+      modelProfile: defaultModelProfile,
+    });
     runtime.addInstruction('run_guidance', '先移动到原点');
     initialPlan.resolve(oneStepPlan);
 
@@ -236,7 +351,10 @@ describe('AgentRuntime', () => {
       now: Date.now,
       stageTimeoutMs: 100,
     });
-    const handle = runtime.start({ runId: 'run_7', goal: '等待超时', model: createEmptyModel() });
+    const handle = runtime.start({
+      runId: 'run_7', goal: '等待超时', model: createEmptyModel(),
+      modelProfile: defaultModelProfile,
+    });
     await vi.advanceTimersByTimeAsync(0);
     await executionStarted.promise;
 
@@ -258,7 +376,9 @@ describe('AgentRuntime', () => {
       now: () => 1_000,
     });
 
-    await runtime.start({ runId: 'run_8', goal: '创建点', model: createEmptyModel() }).completion;
+    await runtime.start({
+      runId: 'run_8', goal: '创建点', model: createEmptyModel(), modelProfile: defaultModelProfile,
+    }).completion;
     await runtime.flushAudit('run_8');
 
     expect(audit.manifests).toHaveLength(1);

@@ -20,9 +20,12 @@ describe('gateway runtime adapters', () => {
 
     await adapter.plan({
       goal: '创建点', model: createEmptyModel(), instruction: '放到原点', signal, deadlineAt: 10,
+      modelName: 'planner-model',
     });
 
-    expect(received).toMatchObject({ prompt: '创建点\n用户追加指令：放到原点', signal });
+    expect(received).toMatchObject({
+      prompt: '创建点\n用户追加指令：放到原点', model: 'planner-model', signal,
+    });
   });
 
   it('forwards validation errors and the runtime AbortSignal to execution', async () => {
@@ -42,11 +45,13 @@ describe('gateway runtime adapters', () => {
       },
       attempt: 2, previousErrors: ['radius 必须大于 0'], signal, deadlineAt: 10,
       image: 'anBlZw==', mimeType: 'image/jpeg',
+      modelName: 'vision-model',
     })).toBe(response);
 
     expect(received).toMatchObject({
       step: plan.steps[0], plan, signal, correctionErrors: ['radius 必须大于 0'],
       currentView: 'anBlZw==', currentViewMimeType: 'image/jpeg',
+      llmModel: 'vision-model',
     });
   });
 });

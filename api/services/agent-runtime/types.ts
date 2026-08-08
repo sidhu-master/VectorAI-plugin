@@ -14,6 +14,7 @@ export interface AgentModelProfile {
 export interface PlanStageInput {
   goal: string;
   model: SpatialModel;
+  modelName: string;
   instruction?: string;
   image?: string;
   mimeType?: string;
@@ -26,6 +27,7 @@ export interface ExecuteStageInput {
   plan: TaskPlan;
   step: TaskStep;
   model: SpatialModel;
+  modelName: string;
   context: RuntimeContextProjection;
   image?: string;
   mimeType?: string;
@@ -47,6 +49,7 @@ export interface StartAgentRunInput {
   runId: string;
   goal: string;
   model: SpatialModel;
+  modelProfile: AgentModelProfile;
   stableRules?: string[];
   image?: string;
   mimeType?: string;

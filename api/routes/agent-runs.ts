@@ -6,6 +6,7 @@ import type { SpatialModel } from '../../src/core/types.js';
 import { validateModel } from '../../src/core/validator.js';
 import type { AgentProgressEvent } from '../services/agent-runtime/progress.js';
 import type { AgentRuntime } from '../services/agent-runtime/runtime.js';
+import { resolveAgentModelProfile } from '../services/agent-runtime/model-profile.js';
 
 const TERMINAL_STATUSES = new Set<AgentRunStatus>(['stopped', 'completed', 'failed']);
 const TERMINAL_EVENTS = new Set<AgentProgressEvent['type']>(['stopped', 'completed', 'failed']);
@@ -37,6 +38,7 @@ export function createAgentRunsRouter(runtime: AgentRuntime): Router {
       runId,
       goal,
       model,
+      modelProfile: resolveAgentModelProfile({}),
       stableRules: Array.isArray(req.body?.stableRules)
         ? req.body.stableRules.filter((rule: unknown): rule is string => typeof rule === 'string')
         : undefined,

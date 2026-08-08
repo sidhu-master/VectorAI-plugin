@@ -13,6 +13,7 @@ import {
 } from '../../../src/core/runtime/state-machine.js';
 import { AgentRunRegistry, type AgentRunRecord } from './registry.js';
 import { RunProgressChannel } from './progress.js';
+import { selectAgentModel } from './model-profile.js';
 import type { AuditStore } from '../audit/types.js';
 import type {
   AgentExecutorAdapter,
@@ -76,6 +77,7 @@ export class AgentRuntime {
       completion,
       resolveCompletion,
       auditQueue: Promise.resolve(),
+      modelProfile: input.modelProfile,
       referenceAttachment: input.image && input.mimeType
         ? { image: input.image, mimeType: input.mimeType }
         : undefined,
@@ -176,6 +178,10 @@ export class AgentRuntime {
         plan = await this.planner.plan({
           goal: record.state.goal,
           model: record.state.history.model,
+          modelName: selectAgentModel(record.modelProfile, {
+            role: 'planner',
+            hasImage: Boolean(attachment?.image),
+          }),
           image: attachment?.image,
           mimeType: attachment?.mimeType,
           signal: stage.controller.signal,
@@ -221,6 +227,11 @@ export class AgentRuntime {
             plan: record.state.plan!,
             step,
             model: record.state.history.model,
+            modelName: selectAgentModel(record.modelProfile, {
+              role: attempt > 1 ? 'repair' : 'executor',
+              hasImage: Boolean(record.referenceAttachment?.image),
+              isRepair: attempt > 1,
+            }),
             context: built.context,
             image: record.referenceAttachment?.image,
             mimeType: record.referenceAttachment?.mimeType,
@@ -315,6 +326,10 @@ export class AgentRuntime {
       const plan = await this.planner.plan({
         goal: record.state.goal,
         model: record.state.history.model,
+        modelName: selectAgentModel(record.modelProfile, {
+          role: 'planner',
+          hasImage: Boolean(record.referenceAttachment?.image),
+        }),
         instruction: record.state.activeInstruction,
         image: record.referenceAttachment?.image,
         mimeType: record.referenceAttachment?.mimeType,
