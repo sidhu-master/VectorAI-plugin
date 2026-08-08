@@ -1,234 +1,257 @@
 import express from 'express';
 import type { Server } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
-import type { TaskPlan } from '../../src/core/agent';
-import { AgentRuntime } from '../services/agent-runtime/runtime';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { AgentDecision, DrawingAgentPlan } from '../../src/contracts/drawing-agent';
+import {
+  type GeometryId,
+  type IdFactory,
+  MemoryDrawingRepository,
+} from '../../src/drawing';
+import { DrawingApplication } from '../services/drawing-application/application';
+import { DrawingAgentRuntime } from '../services/drawing-agent/runtime';
+import { DrawingToolRegistry } from '../services/drawing-agent/tool-registry';
 import type {
-  AgentExecutorAdapter,
-  AgentModelProfile,
-  AgentPlannerAdapter,
-  PlanStageInput,
-} from '../services/agent-runtime/types';
+  DrawingDecisionModelAdapter,
+  DrawingPlannerInput,
+  DrawingPlannerModelAdapter,
+} from '../services/drawing-agent/types';
 import { createAgentRunsRouter } from './agent-runs';
-
-const plan: TaskPlan = {
-  task: 'create_from_text', summary: '检查模型',
-  steps: [{ id: 1, action: 'verify_model', description: '检查模型', status: 'pending' }],
-};
-
-const routeModelDefaults: AgentModelProfile = {
-  planner: 'default-planner',
-  vision: 'doubao-seed-2.0-lite',
-  executor: 'default-executor',
-  repair: 'default-repair',
-};
 
 const servers: Server[] = [];
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  })));
 });
 
-describe('agent run routes', () => {
-  it('returns 202 with a run id without waiting for planning', async () => {
-    const runtime = runtimeWith({
-      plan: () => new Promise<TaskPlan>(() => undefined),
-    });
-    const baseUrl = await startServer(runtime);
+describe('drawing agent run routes', () => {
+  it('returns 202 quickly and forwards only drawing identity plus bounded guidance', async () => {
+    const planningInputs: DrawingPlannerInput[] = [];
+    const planner: DrawingPlannerModelAdapter = {
+      plan: vi.fn(async (input) => {
+        planningInputs.push(input);
+        return new Promise<DrawingAgentPlan>(() => undefined);
+      }),
+    };
+    const context = await startServer({ planner });
     const startedAt = Date.now();
 
-    const response = await fetch(`${baseUrl}/api/agent/runs`, {
+    const response = await fetch(`${context.baseUrl}/api/agent/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: '检查模型' }),
+      body: JSON.stringify(startBody(context, {
+        selectedIds: ['circle_1'], stableRules: ['单位使用 mm'],
+      })),
     });
 
     expect(response.status).toBe(202);
     expect(Date.now() - startedAt).toBeLessThan(1_000);
     expect(await response.json()).toMatchObject({ success: true, runId: expect.any(String) });
-  });
-
-  it('accepts combined text and image immediately and forwards both to planning', async () => {
-    const planningInputs: PlanStageInput[] = [];
-    const runtime = runtimeWith({
-      plan: (input) => {
-        planningInputs.push(input);
-        return new Promise<TaskPlan>(() => undefined);
-      },
-    });
-    const baseUrl = await startServer(runtime);
-    const startedAt = Date.now();
-
-    const response = await fetch(`${baseUrl}/api/agent/runs`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        goal: '把左侧孔扩大到 20mm',
-        image: 'cG5n',
-        mimeType: 'image/png',
-      }),
-    });
-
-    expect(response.status).toBe(202);
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
     await waitUntil(() => planningInputs.length === 1);
     expect(planningInputs[0]).toMatchObject({
-      goal: '把左侧孔扩大到 20mm',
-      image: 'cG5n',
-      mimeType: 'image/png',
+      drawingId: context.workspace.document.id,
+      revision: context.workspace.revision,
+      objective: '创建圆',
+      instruction: expect.stringContaining('circle_1'),
     });
+    expect(JSON.stringify(planningInputs[0])).not.toContain('document');
+    expect(JSON.stringify(planningInputs[0])).not.toContain('history');
   });
 
-  it('streams accepted and later progress events over SSE', async () => {
-    const runtime = runtimeWith({ plan: async () => plan });
-    const baseUrl = await startServer(runtime);
-    const startResponse = await fetch(`${baseUrl}/api/agent/runs`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: '检查模型' }),
-    });
-    const { runId } = await startResponse.json() as { runId: string };
+  it('rejects a revision owned by another drawing before starting a run', async () => {
+    const context = await startServer();
+    const second = await context.application.create();
 
-    const response = await fetch(`${baseUrl}/api/agent/runs/${runId}/events`);
-    const reader = response.body!.getReader();
-    const firstChunk = new TextDecoder().decode((await reader.read()).value);
-    await reader.cancel();
-
-    expect(response.headers.get('content-type')).toContain('text/event-stream');
-    expect(firstChunk).toContain('"type":"accepted"');
-  });
-
-  it('validates control targets and instruction text', async () => {
-    const runtime = runtimeWith({ plan: () => new Promise<TaskPlan>(() => undefined) });
-    const baseUrl = await startServer(runtime);
-
-    const missing = await fetch(`${baseUrl}/api/agent/runs/missing/pause`, { method: 'POST' });
-    expect(missing.status).toBe(404);
-
-    const startResponse = await fetch(`${baseUrl}/api/agent/runs`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: '检查模型' }),
-    });
-    const { runId } = await startResponse.json() as { runId: string };
-    const pause = await fetch(`${baseUrl}/api/agent/runs/${runId}/pause`, { method: 'POST' });
-    expect(pause.status).toBe(202);
-    const invalidPause = await fetch(`${baseUrl}/api/agent/runs/${runId}/pause`, { method: 'POST' });
-    expect(invalidPause.status).toBe(409);
-
-    const emptyInstruction = await fetch(`${baseUrl}/api/agent/runs/${runId}/instructions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instruction: '  ' }),
-    });
-
-    expect(emptyInstruction.status).toBe(400);
-  });
-
-  it('rejects an invalid initial spatial model', async () => {
-    const runtime = runtimeWith({ plan: async () => plan });
-    const baseUrl = await startServer(runtime);
-
-    const response = await fetch(`${baseUrl}/api/agent/runs`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: '检查模型', spatialModel: { protocol: 'invalid' } }),
-    });
-
-    expect(response.status).toBe(400);
-  });
-
-  it('merges valid text and vision model overrides into the run profile', async () => {
-    const planningInputs: PlanStageInput[] = [];
-    const runtime = runtimeWith({
-      plan: async (input) => {
-        planningInputs.push(input);
-        return plan;
-      },
-    });
-    const baseUrl = await startServer(runtime);
-
-    const textResponse = await fetch(`${baseUrl}/api/agent/runs`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: '检查文字', models: { planner: 'request-planner' } }),
-    });
-    const imageResponse = await fetch(`${baseUrl}/api/agent/runs`, {
+    const response = await fetch(`${context.baseUrl}/api/agent/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        goal: '检查图纸', image: 'cG5n', mimeType: 'image/png',
-        models: { vision: 'request-vision' },
+        drawingId: context.workspace.document.id,
+        baseRevision: second.revision,
+        goal: '创建圆',
       }),
     });
 
-    expect(textResponse.status).toBe(202);
-    expect(imageResponse.status).toBe(202);
-    await waitUntil(() => planningInputs.length === 2);
-    expect(planningInputs.map((input) => input.modelName)).toEqual([
-      'request-planner',
-      'request-vision',
-    ]);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'DRAWING_REVISION_MISMATCH' },
+    });
   });
 
-  it('uses server model defaults when the request has no overrides', async () => {
-    let planningInput: PlanStageInput | undefined;
-    const runtime = runtimeWith({
-      plan: async (input) => {
-        planningInput = input;
-        return plan;
-      },
-    });
-    const baseUrl = await startServer(runtime, {
-      ...routeModelDefaults,
-      planner: 'server-planner',
-    });
-
-    const response = await fetch(`${baseUrl}/api/agent/runs`, {
+  it('explicitly rejects attachments and legacy SpatialModel input', async () => {
+    const context = await startServer();
+    const attachment = await fetch(`${context.baseUrl}/api/agent/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: '检查模型' }),
+      body: JSON.stringify({ ...startBody(context), image: 'base64', mimeType: 'image/png' }),
+    });
+    const legacy = await fetch(`${context.baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...startBody(context), spatialModel: { entities: [] } }),
     });
 
-    expect(response.status).toBe(202);
-    await waitUntil(() => planningInput !== undefined);
-    expect(planningInput?.modelName).toBe('server-planner');
+    expect(attachment.status).toBe(409);
+    expect(await attachment.json()).toMatchObject({
+      error: { code: 'DRAWING_PERCEPTION_NOT_MIGRATED' },
+    });
+    expect(legacy.status).toBe(400);
+    expect(await legacy.json()).toMatchObject({
+      error: { code: 'LEGACY_SPATIAL_MODEL_FORBIDDEN' },
+    });
   });
 
-  it('rejects empty or non-string model overrides', async () => {
-    const runtime = runtimeWith({ plan: async () => plan });
-    const baseUrl = await startServer(runtime);
+  it('replays accepted and later progress over SSE and closes on terminal state', async () => {
+    const context = await startServer();
+    const started = await fetch(`${context.baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(startBody(context)),
+    });
+    const { runId } = await started.json() as { runId: string };
 
-    const responses = await Promise.all([
-      fetch(`${baseUrl}/api/agent/runs`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal: '检查模型', models: { vision: '   ' } }),
-      }),
-      fetch(`${baseUrl}/api/agent/runs`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal: '检查模型', models: { planner: 42 } }),
-      }),
-    ]);
+    const response = await fetch(`${context.baseUrl}/api/agent/runs/${runId}/events`);
+    const contents = await response.text();
 
-    expect(responses.map((response) => response.status)).toEqual([400, 400]);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    expect(contents).toContain('"type":"accepted"');
+    expect(contents).toContain('"type":"completed"');
+  });
+
+  it('returns only the shared public run projection', async () => {
+    const context = await startServer();
+    const started = await fetch(`${context.baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(startBody(context)),
+    });
+    const { runId } = await started.json() as { runId: string };
+    await waitUntil(() => context.runtime.getState(runId)?.status === 'completed');
+
+    const response = await fetch(`${context.baseUrl}/api/agent/runs/${runId}`);
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    expect(body.run).toMatchObject({
+      runId, drawingId: context.workspace.document.id,
+      status: 'completed', goal: { id: 'goal_1' }, commitCount: 1,
+    });
+    expect(serialized).not.toContain('document');
+    expect(serialized).not.toContain('history');
+    expect(serialized).not.toContain('modelProfile');
+    expect(serialized).not.toContain('recentReceipts');
+  });
+
+  it('validates controls and accepts instructions while a run is active', async () => {
+    const planner: DrawingPlannerModelAdapter = {
+      plan: vi.fn(async () => new Promise<DrawingAgentPlan>(() => undefined)),
+    };
+    const context = await startServer({ planner });
+    const missing = await fetch(`${context.baseUrl}/api/agent/runs/missing/pause`, { method: 'POST' });
+    expect(missing.status).toBe(404);
+
+    const started = await fetch(`${context.baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(startBody(context)),
+    });
+    const { runId } = await started.json() as { runId: string };
+    const instruction = await fetch(`${context.baseUrl}/api/agent/runs/${runId}/instructions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: '半径改为 8' }),
+    });
+    const pause = await fetch(`${context.baseUrl}/api/agent/runs/${runId}/pause`, { method: 'POST' });
+    const invalidPause = await fetch(`${context.baseUrl}/api/agent/runs/${runId}/pause`, { method: 'POST' });
+    const stop = await fetch(`${context.baseUrl}/api/agent/runs/${runId}/stop`, { method: 'POST' });
+
+    expect(instruction.status).toBe(202);
+    expect(pause.status).toBe(202);
+    expect(invalidPause.status).toBe(409);
+    expect(stop.status).toBe(202);
   });
 });
 
-function runtimeWith(planner: AgentPlannerAdapter): AgentRuntime {
-  const executor: AgentExecutorAdapter = { execute: async () => ({ objects: [] }) };
-  return new AgentRuntime({ planner, executor });
-}
-
-async function startServer(
-  runtime: AgentRuntime,
-  modelDefaults: AgentModelProfile = routeModelDefaults,
-): Promise<string> {
+async function startServer(input: {
+  planner?: DrawingPlannerModelAdapter;
+  decision?: DrawingDecisionModelAdapter;
+} = {}) {
+  const idFactory = ids();
+  const repository = new MemoryDrawingRepository({ idFactory, now: () => 10 });
+  const application = new DrawingApplication({ repository, idFactory, now: () => 1 });
+  const workspace = await application.create();
+  const tools = new DrawingToolRegistry({ application, idFactory });
+  const planner = input.planner ?? { plan: async () => plan };
+  const decisions: AgentDecision[] = [decision];
+  const decisionAdapter = input.decision ?? {
+    decide: async (): Promise<AgentDecision> => decisions.shift()
+      ?? { type: 'finish', summary: '完成' },
+  };
+  const runtime = new DrawingAgentRuntime({
+    application, tools, planner, decision: decisionAdapter,
+  });
   const app = express();
   app.use(express.json());
-  app.use('/api/agent/runs', createAgentRunsRouter(runtime, modelDefaults));
+  app.use('/api/agent/runs', createAgentRunsRouter(runtime, application, {
+    planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
+  }));
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
   servers.push(server);
   const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('missing test server address');
-  return `http://127.0.0.1:${address.port}`;
+  if (!address || typeof address === 'string') throw new Error('missing address');
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    application, runtime, workspace,
+  };
 }
 
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let index = 0; index < 20; index += 1) {
-    if (predicate()) return;
-    await Promise.resolve();
+const plan: DrawingAgentPlan = {
+  goal: {
+    id: 'goal_1', objective: '创建圆', scope: { plane: 'geometry', limit: 20 },
+    acceptanceCriteria: [{ type: 'node.exists', nodeId: 'circle_1' }],
+    riskPolicy: { candidateAllowed: true, maxCommits: 2 },
+  },
+  workflow: [{
+    id: 'create', capability: 'edit_entities', dependsOn: [],
+    completionCriteria: [{ type: 'node.exists', nodeId: 'circle_1' }], status: 'pending',
+  }],
+  summary: '创建圆',
+};
+
+const decision: AgentDecision = {
+  type: 'transact', toolCallId: 'create_circle', confidence: 0.95,
+  commands: [{
+    type: 'geometry.create',
+    value: {
+      id: 'circle_1' as GeometryId,
+      type: 'circle', visible: true,
+      quality: { status: 'confirmed', confidence: 0.95, evidenceRefs: [] },
+      center: [0, 0], radius: 5,
+    },
+  }],
+};
+
+function startBody(
+  context: Awaited<ReturnType<typeof startServer>>,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    drawingId: context.workspace.document.id,
+    baseRevision: context.workspace.revision,
+    goal: '创建圆',
+    ...extra,
+  };
+}
+
+function ids(): IdFactory {
+  const counts = new Map<string, number>();
+  return { next: (kind) => {
+    const next = (counts.get(kind) ?? 0) + 1;
+    counts.set(kind, next);
+    return `${kind}_${next}`;
+  } };
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error('condition was not reached');
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  throw new Error('condition was not reached');
 }

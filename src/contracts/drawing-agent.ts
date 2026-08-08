@@ -26,9 +26,15 @@ export interface GoalSpec {
 
 export type WorkflowNodeStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked';
 
+export type DrawingWorkflowCapability =
+  | 'query_entities'
+  | 'inspect_entity'
+  | 'edit_entities'
+  | 'verify_goal';
+
 export interface WorkflowNode {
   id: string;
-  capability: string;
+  capability: DrawingWorkflowCapability;
   dependsOn: string[];
   completionCriteria: DrawingAssertion[];
   status: WorkflowNodeStatus;
@@ -73,6 +79,9 @@ export class DrawingAgentProtocolError extends Error {
 }
 
 const WORKFLOW_STATUSES = ['pending', 'running', 'completed', 'failed', 'blocked'] as const;
+const WORKFLOW_CAPABILITIES = [
+  'query_entities', 'inspect_entity', 'edit_entities', 'verify_goal',
+] as const;
 const PLANES = ['geometry', 'annotation', 'relation', 'feature'] as const;
 
 export function parseAgentPlan(value: unknown): DrawingAgentPlan {
@@ -209,7 +218,7 @@ function parseWorkflowNode(value: unknown, path: string): WorkflowNode {
   exact(node, ['id', 'capability', 'dependsOn', 'completionCriteria', 'status'], path);
   return {
     id: nonEmptyString(node.id, `${path}.id`),
-    capability: nonEmptyString(node.capability, `${path}.capability`),
+    capability: enumValue(node.capability, WORKFLOW_CAPABILITIES, `${path}.capability`),
     dependsOn: stringArray(node.dependsOn, `${path}.dependsOn`),
     completionCriteria: parseAssertions(node.completionCriteria, `${path}.completionCriteria`),
     status: enumValue(node.status, WORKFLOW_STATUSES, `${path}.status`),

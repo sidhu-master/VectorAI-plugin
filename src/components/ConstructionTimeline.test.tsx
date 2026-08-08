@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { PresentedAgentTask } from './agent/task-presentation';
 import { ConstructionTimelineView } from './ConstructionTimeline';
+import { commitsForAgentRun } from './agent/run-commits';
 
 const presentation: PresentedAgentTask = {
   heading: '正在解析图纸',
@@ -18,6 +19,17 @@ const presentation: PresentedAgentTask = {
 };
 
 describe('ConstructionTimelineView', () => {
+  it('counts commits by run identity instead of reusable model goal IDs', () => {
+    const commits = [{
+      id: 'commit_1', goalId: 'goal_create_circle', actor: { type: 'AI', id: 'run_old' },
+    }, {
+      id: 'commit_2', goalId: 'goal_create_circle', actor: { type: 'AI', id: 'run_current' },
+    }];
+
+    expect(commitsForAgentRun(commits as never, 'run_current').map((commit) => commit.id))
+      .toEqual(['commit_2']);
+  });
+
   it('renders a restrained task card with one details disclosure and no duplicate composer', () => {
     const html = renderToStaticMarkup(
       <ConstructionTimelineView

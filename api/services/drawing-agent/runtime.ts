@@ -56,6 +56,8 @@ interface RunRecord {
   sequence: number;
   auditSequence: number;
   auditQueue: Promise<void>;
+  selectedIds: string[];
+  stableRules: string[];
 }
 
 export interface DrawingAgentRunHandle {
@@ -144,6 +146,8 @@ export class DrawingAgentRuntime {
       sequence: 0,
       auditSequence: 0,
       auditQueue: Promise.resolve(),
+      selectedIds: [...(input.selectedIds ?? [])],
+      stableRules: [...(input.stableRules ?? [])],
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -268,7 +272,13 @@ export class DrawingAgentRuntime {
       this.#transition(record, { type: 'REPLAN_REQUIRED', revision: summary.revision });
     }
     if (!await this.#safePoint(record, 'before_model')) return false;
-    const baseInstruction = record.state.activeInstructions.join('\n');
+    const baseInstruction = [
+      record.selectedIds.length > 0
+        ? `当前选中对象 ID：${record.selectedIds.join(', ')}`
+        : '',
+      ...record.stableRules.map((rule) => `稳定规则：${rule}`),
+      ...record.state.activeInstructions,
+    ].filter(Boolean).join('\n');
     let plan;
     try {
       plan = await this.#callModel(record, 'planner', record.modelProfile.planner, (signal) => (
@@ -321,6 +331,15 @@ export class DrawingAgentRuntime {
 
   async #runWorkflowNode(record: RunRecord, nodeId: string): Promise<boolean> {
     while (record.state.status === 'running' && record.state.currentWorkflowNodeId === nodeId) {
+      const workflowNode = record.state.plan?.workflow.find((item) => item.id === nodeId);
+      if (!workflowNode) throw new Error(`Workflow node not found: ${nodeId}`);
+      if (workflowNode.capability === 'verify_goal') {
+        if (!await this.#verifyWorkflowNode(record, nodeId)) {
+          throw new Error(`工作流节点 ${nodeId} 验收条件未满足`);
+        }
+        this.#transition(record, { type: 'WORKFLOW_NODE_COMPLETED', nodeId });
+        return true;
+      }
       if (!await this.#safePoint(record, 'before_model')) return false;
       if (record.state.needsReplan) return this.#plan(record);
       const budget = decisionBudget(record.state, this.#now());
@@ -332,18 +351,21 @@ export class DrawingAgentRuntime {
         const execution = await this.#invokeRead(record, decision);
         this.#recordTool(record, execution);
         if (execution.receipt.status === 'not_found') return this.#recoverStale(record);
-        continue;
+        if (!await this.#verifyWorkflowNode(record, nodeId)) {
+          throw new Error(`工作流节点 ${nodeId} 验收条件未满足`);
+        }
+        this.#transition(record, { type: 'WORKFLOW_NODE_COMPLETED', nodeId });
+        return true;
       }
       if (decision.type === 'transact') {
         if (record.state.commitCount >= effectiveCommitLimit(record.state)) {
           throw new Error(`已达到最大提交次数 ${effectiveCommitLimit(record.state)}`);
         }
-        const node = record.state.plan?.workflow.find((item) => item.id === nodeId);
         const preview = await this.#tools.invoke({
           capability: 'preview_transaction', caller: 'model',
           toolCallId: decision.toolCallId,
           context: this.#toolContext(record),
-          input: { commands: decision.commands, postconditions: node?.completionCriteria ?? [] },
+          input: { commands: decision.commands, postconditions: workflowNode.completionCriteria },
         });
         this.#recordTool(record, preview);
         record.prepared = preview.prepared ?? null;
@@ -407,6 +429,7 @@ export class DrawingAgentRuntime {
         signal,
         deadlineAt: record.state.limits.deadlineAt,
       }));
+      assertDecisionMatchesCapability(record, decision);
       this.#audit(record, 'decision', { decision: structuredClone(decision) });
       return decision;
     };
@@ -605,7 +628,7 @@ export class DrawingAgentRuntime {
       runId: record.state.runId,
       drawingId: record.state.drawingId,
       revision: record.state.revision,
-      actor: { type: 'AI', id: 'drawing-agent' },
+      actor: { type: 'AI', id: record.state.runId },
       ...(record.state.plan?.goal.id ? { goalId: record.state.plan.goal.id } : {}),
     };
   }
@@ -631,6 +654,9 @@ export class DrawingAgentRuntime {
       status: record.state.status,
       revision: record.state.revision,
       currentWorkflowNodeId: record.state.currentWorkflowNodeId,
+      ...(event.type === 'SAFE_POINT' ? { point: event.point } : {}),
+      ...(event.type === 'RECOVERY_RECORDED' ? { recovery: event.recovery } : {}),
+      ...(event.type === 'FAILED' ? { error: event.error } : {}),
     });
   }
 
@@ -684,6 +710,25 @@ function nextWorkflowNode(state: DrawingAgentState) {
       state.plan!.workflow.find((candidate) => candidate.id === dependency)?.status === 'completed'
     ))
   ));
+}
+
+function assertDecisionMatchesCapability(record: RunRecord, decision: AgentDecision): void {
+  const capability = record.state.plan?.workflow.find((node) => (
+    node.id === record.state.currentWorkflowNodeId
+  ))?.capability;
+  const allowed = capability === 'query_entities'
+    ? decision.type === 'query'
+    : capability === 'inspect_entity'
+      ? decision.type === 'inspect'
+      : capability === 'edit_entities'
+        ? decision.type === 'transact' || decision.type === 'finish'
+        : false;
+  if (!allowed) {
+    throw new DrawingAgentProtocolError(
+      'decision.type',
+      `工作流能力 ${capability ?? 'unknown'} 不允许 ${decision.type} 决策`,
+    );
+  }
 }
 
 function decisionBudget(state: DrawingAgentState, now: number) {

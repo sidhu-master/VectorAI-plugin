@@ -18,7 +18,7 @@ const validPlan = {
   },
   workflow: [{
     id: 'node_1',
-    capability: 'update_geometry',
+    capability: 'edit_entities',
     dependsOn: [],
     completionCriteria: [
       { type: 'property.equals', nodeId: 'geometry_1', path: 'radius', value: 8 },
@@ -100,6 +100,10 @@ describe('Drawing Agent shared protocol', () => {
   it.each([
     ['unknown plan key', { ...validPlan, reasoning: 'hidden' }, 'plan.reasoning'],
     ['empty workflow', { ...validPlan, workflow: [] }, 'plan.workflow'],
+    ['unsupported workflow capability', {
+      ...validPlan,
+      workflow: [{ ...validPlan.workflow[0], capability: 'create_geometry' }],
+    }, 'plan.workflow[0].capability'],
     ['invalid workflow dependency', {
       ...validPlan,
       workflow: [{ ...validPlan.workflow[0], dependsOn: ['missing_node'] }],

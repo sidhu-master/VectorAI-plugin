@@ -13,41 +13,37 @@ import dotenv from 'dotenv'
 import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
 import { createAgentRunsRouter } from './routes/agent-runs.js'
-import { AgentRuntime } from './services/agent-runtime/runtime.js'
-import { GatewayExecutorAdapter, GatewayPlannerAdapter } from './services/agent-runtime/model-adapters.js'
-import { FileAuditStore } from './services/audit/file-audit-store.js'
-import { LocalAttachmentPreparer } from './services/agent-runtime/attachments.js'
-import { resolveAgentModelProfile } from './services/agent-runtime/model-profile.js'
-import { DrawingPerceptionPipeline } from './services/drawing-perception/pipeline.js'
 import { FileDrawingRepository } from './services/drawing-application/file-drawing-repository.js'
 import { DrawingApplication } from './services/drawing-application/application.js'
+import { DrawingAgentRuntime } from './services/drawing-agent/runtime.js'
+import { DrawingDecisionAdapter, DrawingPlannerAdapter } from './services/drawing-agent/model-adapters.js'
+import { DrawingToolRegistry } from './services/drawing-agent/tool-registry.js'
+import { FileDrawingAgentAuditStore } from './services/drawing-agent/file-audit-store.js'
 import { createDrawingsRouter } from './routes/drawings.js'
 
 // load env
 dotenv.config()
 
 const app: express.Application = express()
-const auditStore = new FileAuditStore(path.resolve(process.cwd(), '.local/vectorai/runs'))
 const drawingRepository = new FileDrawingRepository({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/drawings'),
 })
 const drawingApplication = new DrawingApplication({ repository: drawingRepository })
-const agentRuntime = new AgentRuntime({
-  planner: new GatewayPlannerAdapter(),
-  executor: new GatewayExecutorAdapter(),
+const auditStore = new FileDrawingAgentAuditStore({
+  rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
+})
+const drawingTools = new DrawingToolRegistry({ application: drawingApplication })
+const agentRuntime = new DrawingAgentRuntime({
+  application: drawingApplication,
+  tools: drawingTools,
+  planner: new DrawingPlannerAdapter(),
+  decision: new DrawingDecisionAdapter(),
   auditStore,
-  attachmentPreparer: new LocalAttachmentPreparer(),
-  drawingPipeline: new DrawingPerceptionPipeline({
-    observationStore: {
-      save: (runId, name, value) => auditStore.saveDrawingRecord(runId, name, value),
-    },
-  }),
 })
 const primaryModel = process.env.COMPANY_AI_PRIMARY_MODEL || 'doubao-seed-2.0-lite'
-const agentModelDefaults = resolveAgentModelProfile({
+const agentModelDefaults = Object.freeze({
   planner: process.env.COMPANY_AI_PLANNER_MODEL || primaryModel,
-  vision: process.env.COMPANY_AI_VISION_MODEL || primaryModel,
-  executor: process.env.COMPANY_AI_EXECUTOR_MODEL || primaryModel,
+  decision: process.env.COMPANY_AI_DECISION_MODEL || primaryModel,
   repair: process.env.COMPANY_AI_REPAIR_MODEL || 'doubao-seed-2.1-turbo',
 })
 
@@ -60,7 +56,11 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
  */
 app.use('/api/auth', authRoutes)
 app.use('/api/ai', aiRoutes)
-app.use('/api/agent/runs', createAgentRunsRouter(agentRuntime, agentModelDefaults))
+app.use('/api/agent/runs', createAgentRunsRouter(
+  agentRuntime,
+  drawingApplication,
+  agentModelDefaults,
+))
 app.use('/api/drawings', createDrawingsRouter(drawingApplication))
 
 /**

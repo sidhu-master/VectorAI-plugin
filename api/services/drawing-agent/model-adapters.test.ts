@@ -71,6 +71,8 @@ describe('drawing-native model adapters', () => {
     expect(received).toMatchObject({ role: 'planner', modelName: 'internal-model-name', signal });
     expect(received?.systemPrompt).toContain('Drawing IR');
     expect(received?.systemPrompt).toContain('不得输出 commit');
+    expect(received?.systemPrompt).toContain('{"type":"selection.count","selector":DrawingSelector,"equals":non_negative_integer}');
+    expect(received?.systemPrompt).toContain('{"type":"document.valid"}');
     expect(received?.userPrompt).toContain('circle_1');
     expect(received?.userPrompt).not.toContain('FULL_DOCUMENT_MUST_NOT_LEAK');
     expect(received?.userPrompt).not.toContain('HISTORY_MUST_NOT_LEAK');
@@ -114,6 +116,7 @@ describe('drawing-native model adapters', () => {
     expect(received).toMatchObject({ role: 'decision', modelName: 'decision-model' });
     expect(received?.systemPrompt).toContain('只能输出一个决策');
     expect(received?.systemPrompt).toContain('提交由运行时');
+    expect(received?.systemPrompt).toContain('{"type":"geometry.create","value":{"type":"circle"');
     expect(received?.userPrompt).toContain('circle_1');
     expect(received?.userPrompt).not.toContain('DRAWING_DOCUMENT');
     expect(received?.userPrompt).not.toContain('DRAWING_HISTORY');
@@ -127,6 +130,16 @@ describe('drawing-native model adapters', () => {
 
     await expect(adapter.plan(plannerInput())).rejects.toMatchObject({
       name: 'DrawingAgentProtocolError', path: 'plan.operation',
+    });
+  });
+
+  it('classifies malformed model JSON as a correctable protocol failure', async () => {
+    const adapter = new DrawingPlannerAdapter(async () => (
+      '{"goal":{"id":"goal_1" "objective":"missing comma"}}'
+    ));
+
+    await expect(adapter.plan(plannerInput())).rejects.toMatchObject({
+      name: 'DrawingAgentProtocolError', path: 'response.json',
     });
   });
 

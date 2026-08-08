@@ -17,6 +17,7 @@ import {
 import type {
   DrawingInspectWorkspaceResult,
   DrawingQueryWorkspaceResult,
+  DrawingRevisionValidation,
   DrawingSummaryWorkspaceResult,
   DrawingWorkspaceSnapshot,
 } from '../../../src/contracts/drawing-application.js';
@@ -124,6 +125,17 @@ export class DrawingApplication {
         items: result.items,
         truncated: result.truncated,
       },
+    };
+  }
+
+  async validateRevision(input: {
+    drawingId: DrawingId;
+    revision: DrawingTransaction['baseRevision'];
+  }): Promise<DrawingRevisionValidation> {
+    const workspace = await this.open(input.drawingId);
+    return {
+      owned: ownsRevision(workspace, input.revision),
+      currentRevision: workspace.revision,
     };
   }
 

@@ -1,4 +1,4 @@
-import type { AgentTaskPlan } from '@/services/agent-types';
+import type { DrawingAgentPlan } from '@/contracts/drawing-agent';
 import type { AgentUiStatus } from '@/hooks/useStore';
 import type { AgentProgressEvent } from '@/services/agent-client';
 
@@ -28,7 +28,7 @@ export interface PresentedAgentTask {
 }
 
 interface PresentAgentTaskInput {
-  plan: AgentTaskPlan | null;
+  plan: DrawingAgentPlan | null;
   status: AgentUiStatus;
   currentStepIndex: number;
   events: AgentProgressEvent[];
@@ -69,12 +69,11 @@ function formatElapsed(milliseconds: number): string {
 
 function currentStage(input: PresentAgentTaskInput): AgentStageId {
   if (input.status === 'planning' || !input.plan) return 'understand';
-  const step = input.plan.steps[input.currentStepIndex];
-  const action = step?.action.toLowerCase() ?? '';
+  const step = input.plan.workflow[input.currentStepIndex];
+  const action = step?.capability.toLowerCase() ?? '';
   if (action.includes('verify') || action.includes('validate')) return 'verify';
-  if (action.includes('modify') || input.plan.task.includes('modify')) return 'modify';
-  if (input.plan.task.includes('inspect')) return 'perceive';
-  if (input.plan.task.includes('reconstruct')) return input.commitCount > 0 ? 'build' : 'perceive';
+  if (action.includes('edit') || action.includes('transact') || input.commitCount > 0) return 'modify';
+  if (action.includes('inspect') || action.includes('query')) return 'perceive';
   return 'build';
 }
 
@@ -103,16 +102,10 @@ function detailTone(type: AgentProgressEvent['type']): PresentedAgentDetail['ton
 }
 
 function presentDetail(event: AgentProgressEvent): PresentedAgentDetail {
-  const duration = typeof event.detail === 'object' && event.detail.durationMs !== undefined
-    ? event.detail.durationMs < 1000
-      ? `${event.detail.durationMs}ms`
-      : `${(event.detail.durationMs / 1000).toFixed(1)}s`
-    : undefined;
   return {
     id: event.id,
     title: EVENT_TITLES[event.type],
     elapsed: formatElapsed(event.elapsedMs),
-    duration,
     tone: detailTone(event.type),
   };
 }

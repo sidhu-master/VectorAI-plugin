@@ -142,4 +142,6 @@ export interface StartDrawingAgentRunInput {
   baseRevision: RevisionId;
   goal: string;
   modelProfile: DrawingAgentModelProfile;
+  selectedIds?: string[];
+  stableRules?: string[];
 }

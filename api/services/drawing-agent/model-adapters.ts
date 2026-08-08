@@ -1,4 +1,5 @@
 import {
+  DrawingAgentProtocolError,
   parseAgentDecision,
   parseAgentPlan,
   type AgentDecision,
@@ -30,8 +31,14 @@ const PLANNER_SYSTEM_PROMPT = `你是 VectorAI 的二维 Drawing IR 任务规划
 {"goal":{"id":string,"objective":string,"scope":DrawingSelector,"acceptanceCriteria":DrawingAssertion[],"riskPolicy":{"candidateAllowed":boolean,"maxCommits":positive_integer}},"workflow":[{"id":string,"capability":string,"dependsOn":string[],"completionCriteria":DrawingAssertion[],"status":"pending"}],"summary":string}
 
 DrawingSelector 可使用 plane、ids、types、qualityStatus、bounds、relationKind、limit。
-DrawingAssertion 只允许 node.exists、node.absent、property.equals、document.valid、selection.count。
-工作流应优先 query_entities、inspect_entity、edit_entities、verify_goal；修改必须是局部增量。
+DrawingAssertion 必须精确使用以下五种形状之一，不得添加额外字段：
+{"type":"node.exists","nodeId":string}
+{"type":"node.absent","nodeId":string}
+{"type":"property.equals","nodeId":string,"path":string,"value":json_value}
+{"type":"document.valid"}
+{"type":"selection.count","selector":DrawingSelector,"equals":non_negative_integer}
+对新建且尚无稳定 ID 的图元，使用 selection.count 或 document.valid，不要在计划中虚构 nodeId。
+工作流 capability 只能是 query_entities、inspect_entity、edit_entities、verify_goal；新建、修改、删除都使用 edit_entities。修改必须是局部增量。
 已有对象只能引用摘要里出现的稳定 ID，不得编造待修改或待删除对象的 ID。新建图元可不提供 ID。
 低置信度结果允许作为 candidate，但必须安排验证。不得输出 commit；提交由运行时在预览安全点后执行。
 不得输出思考过程、Markdown、模型名称、SpatialModel 或 SpatialIntent。`;
@@ -43,6 +50,17 @@ const DECISION_SYSTEM_PROMPT = `你是 VectorAI Drawing Agent 的单步决策器
 2. {"type":"inspect","toolCallId":string,"nodeId":string}
 3. {"type":"transact","toolCallId":string,"commands":DrawingCommand[],"confidence"?:0_to_1}
 4. {"type":"finish","summary":string}
+
+DrawingSelector 只允许 plane、ids、types、qualityStatus、bounds、relationKind、limit。
+DrawingCommand 只允许：
+- 新建：{"type":"geometry.create","value":GeometryNode}，或 annotation/relation/feature.create。value 可省略 id，运行时会生成稳定 ID。
+- 修改：{"type":"geometry.update","id":string,"changes":object,"expected"?:object}，或其他 plane.update。
+- 删除：{"type":"geometry.delete","id":string}，或其他 plane.delete。
+所有新建节点都必须包含 visible:boolean 和 quality:{"status":"confirmed"|"candidate","confidence"?:0_to_1,"evidenceRefs":[]} 。
+二维几何精确形状：
+{"type":"geometry.create","value":{"type":"circle","visible":true,"quality":{"status":"confirmed","evidenceRefs":[]},"center":[x,y],"radius":positive_number}}
+point 用 x,y；line 用 start,end；ray/xline 用 origin,direction；arc 用 center,radius,startAngle,endAngle,counterClockwise；ellipse 用 center,majorAxis,ratio,startParam?,endParam?；polyline 用 vertices:[{"point":[x,y],"bulge"?:number}],closed；spline 用 degree,controlPoints,knots,weights?,closed,periodic。
+文字使用 annotation.create + type:text + content,position,height,rotation,alignment,verticalAlignment,maxWidth?。
 
 修改和删除只可使用工具证据中出现的稳定 ID，不得猜测 ID。每次 transact 必须最小化改动并满足当前工作流节点的验收条件。
 不得请求或输出 commit_transaction、previewHandle、完整图纸、SpatialModel 或 SpatialIntent。transact 会由运行时自动预览，提交由运行时在安全点执行。
@@ -165,7 +183,16 @@ function parseJsonReply(reply: string): unknown {
   const trimmed = reply.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   const start = trimmed.indexOf('{');
   const end = trimmed.lastIndexOf('}');
-  if (start < 0 || end < start) throw new Error('模型响应中没有 JSON 对象');
-  return JSON.parse(trimmed.slice(start, end + 1));
+  if (start < 0 || end < start) {
+    throw new DrawingAgentProtocolError('response.json', '模型响应中没有 JSON 对象');
+  }
+  try {
+    return JSON.parse(trimmed.slice(start, end + 1));
+  } catch (error) {
+    throw new DrawingAgentProtocolError(
+      'response.json',
+      error instanceof Error ? error.message : '模型返回了非法 JSON',
+    );
+  }
 }
 import { createHash } from 'node:crypto';

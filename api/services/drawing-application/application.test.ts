@@ -324,6 +324,30 @@ describe('DrawingApplication', () => {
       status: 'rejected', errors: [{ code: 'DRAWING_REVISION_MISMATCH', retryable: false }],
     });
   });
+
+  it('validates revision ownership without returning a document', async () => {
+    const { application } = setup();
+    const first = await application.create();
+    const second = await application.create();
+    const committed = await application.execute({
+      drawingId: first.document.id,
+      transaction: circleTransaction(first.revision, 'circle_revision'),
+    });
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const oldRevision = await application.validateRevision({
+      drawingId: first.document.id,
+      revision: first.revision,
+    });
+    const wrongDrawing = await application.validateRevision({
+      drawingId: first.document.id,
+      revision: second.revision,
+    });
+
+    expect(oldRevision).toEqual({ owned: true, currentRevision: committed.revision });
+    expect(wrongDrawing).toEqual({ owned: false, currentRevision: committed.revision });
+    expect(oldRevision).not.toHaveProperty('document');
+  });
 });
 
 function circleTransaction(revision: string, id: string): DrawingTransaction {

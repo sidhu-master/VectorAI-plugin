@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { DrawingId, RevisionId } from '@/drawing';
 import { AgentClient, type AgentProgressEvent, type EventSourceLike } from './agent-client';
 
 class FakeEventSource implements EventSourceLike {
@@ -22,36 +23,39 @@ class FakeEventSource implements EventSourceLike {
 }
 
 describe('AgentClient', () => {
-  it('starts without serializing a legacy spatial model', async () => {
+  it('starts from the canonical drawing identity without serializing a document', async () => {
     const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
     fetcher.mockResolvedValue(jsonResponse(202, { success: true, runId: 'run_1' }));
     const client = new AgentClient({ fetcher, eventSourceFactory: () => new FakeEventSource() });
 
-    await expect(client.start({ goal: '创建圆' })).resolves.toEqual({ runId: 'run_1' });
-    expect(JSON.parse(String(fetcher.mock.calls.at(0)![1]?.body))).toEqual({ goal: '创建圆' });
+    await expect(client.start({
+      drawingId: 'drawing_1' as DrawingId,
+      baseRevision: 'revision_1' as RevisionId,
+      goal: '创建圆',
+      selectedIds: ['circle_1'],
+    })).resolves.toEqual({ runId: 'run_1' });
+    const body = JSON.parse(String(fetcher.mock.calls.at(0)![1]?.body));
+    expect(body).toEqual({
+      drawingId: 'drawing_1', baseRevision: 'revision_1',
+      goal: '创建圆', selectedIds: ['circle_1'],
+    });
+    expect(body).not.toHaveProperty('spatialModel');
+    expect(body).not.toHaveProperty('image');
   });
 
-  it('serializes request-level model overrides exactly', async () => {
+  it('surfaces structured server errors without leaking protocol details', async () => {
     const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
-    fetcher.mockResolvedValue(jsonResponse(202, { success: true, runId: 'run_models' }));
+    fetcher.mockResolvedValue(jsonResponse(409, {
+      success: false,
+      error: { code: 'DRAWING_REVISION_MISMATCH', message: '图纸版本已变化' },
+    }));
     const client = new AgentClient({ fetcher, eventSourceFactory: () => new FakeEventSource() });
 
-    await client.start({
+    await expect(client.start({
+      drawingId: 'drawing_1' as DrawingId,
+      baseRevision: 'revision_1' as RevisionId,
       goal: '分析图纸',
-      models: {
-        planner: 'planner-custom',
-        vision: 'doubao-seed-2.0-lite',
-        executor: 'executor-custom',
-        repair: 'repair-custom',
-      },
-    });
-
-    expect(JSON.parse(String(fetcher.mock.calls.at(0)![1]?.body)).models).toEqual({
-      planner: 'planner-custom',
-      vision: 'doubao-seed-2.0-lite',
-      executor: 'executor-custom',
-      repair: 'repair-custom',
-    });
+    })).rejects.toThrow('图纸版本已变化');
   });
 
   it('projects ordered progress once and closes at a terminal event', () => {

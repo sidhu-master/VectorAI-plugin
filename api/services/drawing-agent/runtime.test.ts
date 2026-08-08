@@ -109,6 +109,72 @@ describe('DrawingAgentRuntime', () => {
     expect((await application.open(workspace.document.id)).document.geometry).toEqual([
       expect.objectContaining({ id: 'circle_1', type: 'circle' }),
     ]);
+    expect((await application.open(workspace.document.id)).commits[0].actor).toEqual({
+      type: 'AI', id: 'run_1',
+    });
+  });
+
+  it('owns read-step completion and final verification without extra model decisions', async () => {
+    const plan: DrawingAgentPlan = {
+      goal: {
+        id: 'goal_bounded_create', objective: '创建一个圆',
+        scope: { plane: 'geometry', types: ['circle'] },
+        acceptanceCriteria: [{
+          type: 'selection.count', selector: { plane: 'geometry', types: ['circle'] }, equals: 1,
+        }],
+        riskPolicy: { candidateAllowed: true, maxCommits: 1 },
+      },
+      workflow: [{
+        id: 'query', capability: 'query_entities', dependsOn: [],
+        completionCriteria: [{
+          type: 'selection.count', selector: { plane: 'geometry', types: ['circle'] }, equals: 0,
+        }],
+        status: 'pending',
+      }, {
+        id: 'edit', capability: 'edit_entities', dependsOn: ['query'],
+        completionCriteria: [{ type: 'node.exists', nodeId: 'circle_1' }], status: 'pending',
+      }, {
+        id: 'verify', capability: 'verify_goal', dependsOn: ['edit'],
+        completionCriteria: [{
+          type: 'selection.count', selector: { plane: 'geometry', types: ['circle'] }, equals: 1,
+        }],
+        status: 'pending',
+      }],
+      summary: '查询、创建并验证圆',
+    };
+    const decision: DrawingDecisionModelAdapter = {
+      decide: vi.fn(async (input): Promise<AgentDecision> => (
+        input.currentWorkflowNodeId === 'query'
+          ? { type: 'query', toolCallId: 'query_1', selector: { plane: 'geometry', types: ['circle'] } }
+          : createDecision('circle_1', 0.9)
+      )),
+    };
+    const { runtime, workspace } = await setup({ plan, decision });
+
+    const final = await runtime.start(startInput(workspace)).completion;
+
+    expect(final.status).toBe('completed');
+    expect(decision.decide).toHaveBeenCalledTimes(2);
+    expect(final.plan?.workflow).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'query', status: 'completed' }),
+      expect.objectContaining({ id: 'verify', status: 'completed' }),
+    ]));
+  });
+
+  it('rejects a write decision inside a read-only workflow node before preview', async () => {
+    const plan = createPlan('circle_1');
+    plan.workflow[0].capability = 'query_entities';
+    const decision: DrawingDecisionModelAdapter = {
+      decide: vi.fn(async () => createDecision('circle_1', 0.9)),
+    };
+    const { application, order, runtime, workspace } = await setup({ plan, decision });
+
+    const final = await runtime.start(startInput(workspace)).completion;
+
+    expect(final.status).toBe('failed');
+    expect(final.error).toContain('query_entities');
+    expect(order).toEqual([]);
+    expect((await application.open(workspace.document.id)).document.geometry).toEqual([]);
   });
 
   it('completes an already-satisfied transaction without adding a commit', async () => {
@@ -336,6 +402,15 @@ describe('DrawingAgentRuntime', () => {
   });
 
   it('fails a bounded read loop and preserves any prior commits', async () => {
+    const plan = createPlan('circle_1');
+    plan.goal.acceptanceCriteria = [{ type: 'document.valid' }];
+    plan.workflow = Array.from({ length: 4 }, (_, index) => ({
+      id: `query_${index + 1}`,
+      capability: 'query_entities' as const,
+      dependsOn: index === 0 ? [] : [`query_${index}`],
+      completionCriteria: [],
+      status: 'pending' as const,
+    }));
     const decision: DrawingDecisionModelAdapter = {
       decide: vi.fn(async (): Promise<AgentDecision> => ({
         type: 'query' as const, toolCallId: `query_${Math.random()}`,
@@ -343,7 +418,7 @@ describe('DrawingAgentRuntime', () => {
       })),
     };
     const { runtime, workspace } = await setup({
-      decision,
+      decision, plan,
       limits: { maxConsecutiveReads: 2, maxDecisions: 10 },
     });
 
@@ -389,6 +464,45 @@ describe('DrawingAgentRuntime', () => {
         repositoryCommits.map((commit) => commit.id),
       );
       expect(JSON.stringify(runtime.getProgress(handle.runId)!.events())).not.toContain('lite-model');
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('persists recovery context and terminal errors in state audit events', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-runtime-failure-audit-'));
+    try {
+      const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
+      const planner: DrawingPlannerModelAdapter = {
+        plan: vi.fn(async () => {
+          throw new DrawingAgentProtocolError(
+            'plan.goal.acceptanceCriteria[0].selector',
+            '未知字段',
+          );
+        }),
+      };
+      const { runtime, workspace } = await setup({ auditStore, planner });
+
+      const handle = runtime.start(startInput(workspace));
+      const final = await handle.completion;
+      await runtime.flushAudit(handle.runId);
+      const audit = await auditStore.readRun(handle.runId);
+
+      expect(final.status).toBe('failed');
+      expect(audit.events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'state',
+          payload: expect.objectContaining({
+            event: 'RECOVERY_RECORDED', recovery: 'schemaCorrections',
+          }),
+        }),
+        expect.objectContaining({
+          type: 'state',
+          payload: expect.objectContaining({
+            event: 'FAILED', error: final.error,
+          }),
+        }),
+      ]));
     } finally {
       await rm(rootDirectory, { recursive: true, force: true });
     }

@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentTaskPlan } from '@/services/agent-types';
+import type { DrawingAgentPlan } from '@/contracts/drawing-agent';
 import type { AgentProgressEvent } from '@/services/agent-client';
 import { presentAgentTask } from './task-presentation';
 
-const reconstructPlan: AgentTaskPlan = {
-  task: 'reconstruct_drawing',
+const reconstructPlan: DrawingAgentPlan = {
+  goal: {
+    id: 'goal_1', objective: '分析并重建二维工程图', scope: {},
+    acceptanceCriteria: [{ type: 'document.valid' }],
+    riskPolicy: { candidateAllowed: true, maxCommits: 12 },
+  },
   summary: '分析并重建二维工程图',
-  steps: [
-    { id: 1, action: 'extract_outline', description: '识别整体轮廓', status: 'executing' },
-    { id: 2, action: 'verify_model', description: '验证二维模型', status: 'pending' },
+  workflow: [
+    { id: 'inspect', capability: 'inspect_entity', dependsOn: [], completionCriteria: [], status: 'running' },
+    { id: 'verify', capability: 'verify_goal', dependsOn: ['inspect'], completionCriteria: [], status: 'pending' },
   ],
 };
 
@@ -37,10 +41,7 @@ describe('Agent task presentation', () => {
       commitCount: 0,
       events: [
         event('accepted', 30),
-        event('model_finished', 12_340, {
-          role: 'planner', model: 'doubao-seed-2.0-lite', attempt: 2,
-          durationMs: 12_300, status: 'success',
-        }),
+        event('model_finished', 12_340, '内部推理完成'),
       ],
     });
     const visibleText = JSON.stringify(presentation);
@@ -49,7 +50,7 @@ describe('Agent task presentation', () => {
     expect(visibleText).not.toContain('planner');
     expect(visibleText).not.toContain('run_private_123');
     expect(visibleText).not.toContain('attempt');
-    expect(visibleText).toContain('12.3s');
+    expect(visibleText).toContain('12s');
     expect(visibleText).toContain('任务已接收');
   });
 
@@ -80,13 +81,13 @@ describe('Agent task presentation', () => {
       events: [event('commit', 21_000)],
     });
 
-    expect(presentation.heading).toBe('正在构建空间模型');
-    expect(presentation.stages.find((stage) => stage.status === 'current')?.id).toBe('build');
+    expect(presentation.heading).toBe('正在应用修改');
+    expect(presentation.stages.find((stage) => stage.status === 'current')?.id).toBe('modify');
   });
 
   it('summarizes completed incremental work', () => {
     const presentation = presentAgentTask({
-      plan: { ...reconstructPlan, task: 'modify_drawing' },
+      plan: reconstructPlan,
       status: 'complete',
       currentStepIndex: 1,
       commitCount: 12,

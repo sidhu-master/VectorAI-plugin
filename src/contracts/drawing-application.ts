@@ -41,3 +41,8 @@ export interface DrawingSummaryWorkspaceResult {
   revision: RevisionId;
   summary: DrawingDocumentSummary;
 }
+
+export interface DrawingRevisionValidation {
+  owned: boolean;
+  currentRevision: RevisionId;
+}

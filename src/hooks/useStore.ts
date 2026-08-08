@@ -8,7 +8,10 @@ import {
   type IdFactory,
   type RevisionId,
 } from '@/drawing';
-import type { AgentTaskPlan, AgentStepResult, AgentRunView } from '@/services/agent-types';
+import type {
+  DrawingAgentPlan,
+  DrawingAgentRunView,
+} from '@/contracts/drawing-agent';
 import {
   agentClient as defaultAgentClient,
   type AgentClient,
@@ -28,7 +31,7 @@ import {
 } from './drawing-store';
 
 export const ACTIVE_DRAWING_STORAGE_KEY = 'vectorai.activeDrawingId';
-export const AGENT_MIGRATION_MESSAGE = 'Agent Runtime 正在迁移到 Drawing Core';
+export const AGENT_MIGRATION_MESSAGE = '图片和 PDF 感知暂未接入新版 Drawing Agent，请先使用文字创建或修改当前图纸。';
 
 export interface ChatMessage {
   id: string;
@@ -60,9 +63,9 @@ export interface AppState {
   showRelations: boolean;
   mouseCoords: { x: number; y: number } | null;
 
-  taskPlan: AgentTaskPlan | null;
+  taskPlan: DrawingAgentPlan | null;
   currentStepIndex: number;
-  stepResults: AgentStepResult[];
+  stepResults: [];
   agentStatus: AgentUiStatus;
   agentRunId: string | null;
   agentEvents: AgentProgressEvent[];
@@ -281,7 +284,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       })),
       setMouseCoords: (mouseCoords) => set({ mouseCoords }),
 
-      submitAgentInput: async (prompt, image) => {
+      submitAgentInput: async (prompt, image, mimeType) => {
         const text = prompt?.trim();
         const state = get();
         if (state.agentRunId && isAgentActiveStatus(state.agentStatus)) {
@@ -293,18 +296,91 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           return;
         }
         const userText = text || (image ? '分析并重建二维工程图' : '');
-        if (userText) {
+        if (image) {
           const userMessage = chatMessage('user', userText, now);
           const assistantMessage = chatMessage('assistant', AGENT_MIGRATION_MESSAGE, now);
           set((current) => ({
             aiMessages: [...current.aiMessages, userMessage, assistantMessage],
           }));
+          set({ agentStatus: 'error', agentError: AGENT_MIGRATION_MESSAGE });
+          return;
         }
-        set({ agentStatus: 'error', agentError: AGENT_MIGRATION_MESSAGE });
+        if (text) await get().startAgent(text, undefined, mimeType);
       },
 
-      startAgent: async () => {
-        set({ agentStatus: 'error', agentError: AGENT_MIGRATION_MESSAGE });
+      startAgent: async (prompt, image) => {
+        const goal = prompt?.trim();
+        const state = get();
+        if (image) {
+          set({ agentStatus: 'error', agentError: AGENT_MIGRATION_MESSAGE });
+          return;
+        }
+        if (!goal || !state.document || !state.revision) return;
+        unsubscribeAgent?.();
+        unsubscribeAgent = null;
+        const userMessage = chatMessage('user', goal, now);
+        set((current) => ({
+          aiMessages: [...current.aiMessages, userMessage],
+          taskPlan: null,
+          currentStepIndex: 0,
+          stepResults: [],
+          agentStatus: 'planning',
+          agentRunId: null,
+          agentEvents: [],
+          agentError: null,
+        }));
+        try {
+          const started = await agents.start({
+            drawingId: state.document.id,
+            baseRevision: state.revision,
+            goal,
+            selectedIds: [...state.selectedIds],
+          });
+          set({ agentRunId: started.runId });
+          unsubscribeAgent = agents.subscribe(
+            started.runId,
+            (event) => {
+              set((current) => ({
+                agentEvents: current.agentEvents.some((item) => item.id === event.id)
+                  ? current.agentEvents
+                  : [...current.agentEvents, event].slice(-100),
+                agentStatus: progressStatus(event.type, current.agentStatus),
+                agentError: event.type === 'failed' ? event.title : current.agentError,
+              }));
+              if (event.type === 'commit') {
+                const drawingId = get().document?.id;
+                if (drawingId) {
+                  void drawings.open(drawingId).then((workspace) => {
+                    if (get().document?.id !== drawingId) return;
+                    set({ ...workspace, selectedIds: [] });
+                  }).catch((error) => set({ drawingError: errorMessage(error) }));
+                }
+              }
+              if (['model_finished', 'validation', 'commit'].includes(event.type)) {
+                void agents.getRun(started.runId).then((run) => {
+                  set(projectAgentRun(run));
+                }).catch((error) => set({ agentError: errorMessage(error) }));
+              }
+              if (['paused', 'stopped', 'completed', 'failed'].includes(event.type)) {
+                void agents.getRun(started.runId).then((run) => {
+                  set(projectAgentRun(run));
+                  if (event.type === 'completed') {
+                    set((current) => ({
+                      aiMessages: [...current.aiMessages, chatMessage(
+                        'assistant',
+                        `已完成：${run.goal?.objective ?? goal}`,
+                        now,
+                      )],
+                    }));
+                  }
+                }).catch((error) => set({ agentError: errorMessage(error) }));
+              }
+            },
+            (error) => set({ agentStatus: 'error', agentError: error.message }),
+          );
+        } catch (error) {
+          set({ agentStatus: 'error', agentError: errorMessage(error) });
+        }
       },
 
       pauseAgent: async () => {
@@ -390,13 +466,35 @@ function isAgentActiveStatus(status: AgentUiStatus): boolean {
     || status === 'paused' || status === 'stopping';
 }
 
-function projectAgentRun(run: AgentRunView): Partial<AppState> {
+function projectAgentRun(run: DrawingAgentRunView): Partial<AppState> {
+  const plan = run.goal ? {
+    goal: run.goal,
+    workflow: run.workflow,
+    summary: run.goal.objective,
+  } : null;
+  const runningIndex = run.workflow.findIndex((node) => node.status === 'running');
+  const completedCount = run.workflow.filter((node) => node.status === 'completed').length;
   return {
     agentStatus: run.status === 'completed'
       ? 'complete'
       : run.status === 'failed' ? 'error' : run.status,
-    taskPlan: run.plan,
-    currentStepIndex: run.currentStepIndex,
-    stepResults: run.stepResults ?? [],
+    agentError: run.status === 'failed' ? (run.error ?? '任务执行失败') : null,
+    taskPlan: plan,
+    currentStepIndex: runningIndex >= 0 ? runningIndex : completedCount,
+    stepResults: [],
   };
+}
+
+function progressStatus(
+  type: AgentProgressEvent['type'],
+  current: AgentUiStatus,
+): AgentUiStatus {
+  if (type === 'accepted' || type === 'planning') return 'planning';
+  if (type === 'paused') return 'paused';
+  if (type === 'resumed') return 'running';
+  if (type === 'stopped') return 'stopped';
+  if (type === 'completed') return 'complete';
+  if (type === 'failed') return 'error';
+  if (type === 'heartbeat') return current;
+  return current === 'pause_requested' || current === 'stopping' ? current : 'running';
 }

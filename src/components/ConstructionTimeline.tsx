@@ -9,6 +9,7 @@ import {
   type PresentedAgentStage,
   type PresentedAgentTask,
 } from './agent/task-presentation';
+import { commitsForAgentRun } from './agent/run-commits';
 
 interface ConstructionTimelineViewProps {
   presentation: PresentedAgentTask;
@@ -159,7 +160,7 @@ export default function ConstructionTimeline() {
   const active = !['stopped', 'complete', 'error'].includes(agentStatus);
   const canPause = agentStatus === 'planning' || agentStatus === 'running';
   const canResume = agentStatus === 'paused';
-  const runCommits = commits.filter((commit) => commit.goalId === agentRunId);
+  const runCommits = commitsForAgentRun(commits, agentRunId);
   const lastCommit = runCommits.at(-1);
   const lowConfidence = (lastCommit?.confidence !== undefined && lastCommit.confidence < 0.6)
     || Boolean(document && [...document.geometry, ...document.annotations]

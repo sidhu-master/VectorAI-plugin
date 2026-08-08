@@ -1,4 +1,5 @@
-import type { AgentRunView } from './agent-types';
+import type { DrawingAgentRunView } from '@/contracts/drawing-agent';
+import type { DrawingId, RevisionId } from '@/drawing';
 
 export type AgentProgressEventType =
   | 'accepted'
@@ -16,35 +17,22 @@ export type AgentProgressEventType =
   | 'completed'
   | 'failed';
 
-export interface AgentModelEventDetail {
-  role: 'planner' | 'executor' | 'repair';
-  model: string;
-  attempt: number;
-  durationMs?: number;
-  status?: 'success' | 'aborted' | 'failed';
-}
-
 export interface AgentProgressEvent {
   id: string;
   runId: string;
   type: AgentProgressEventType;
   title: string;
-  detail?: string | AgentModelEventDetail;
+  detail?: string;
   timestamp: number;
   elapsedMs: number;
 }
 
 export interface StartAgentInput {
+  drawingId: DrawingId;
+  baseRevision: RevisionId;
   goal: string;
+  selectedIds?: string[];
   stableRules?: string[];
-  image?: string;
-  mimeType?: string;
-  models?: {
-    planner?: string;
-    vision?: string;
-    executor?: string;
-    repair?: string;
-  };
 }
 
 export interface EventSourceLike {
@@ -112,31 +100,31 @@ export class AgentClient {
     return close;
   }
 
-  async getRun(runId: string): Promise<AgentRunView> {
-    const data = await this.request<{ success: true; run: AgentRunView }>(
+  async getRun(runId: string): Promise<DrawingAgentRunView> {
+    const data = await this.request<{ success: true; run: DrawingAgentRunView }>(
       `/api/agent/runs/${encodeURIComponent(runId)}`,
     );
     return data.run;
   }
 
-  pause(runId: string): Promise<AgentRunView> {
+  pause(runId: string): Promise<DrawingAgentRunView> {
     return this.control(runId, 'pause');
   }
 
-  resume(runId: string): Promise<AgentRunView> {
+  resume(runId: string): Promise<DrawingAgentRunView> {
     return this.control(runId, 'resume');
   }
 
-  stop(runId: string): Promise<AgentRunView> {
+  stop(runId: string): Promise<DrawingAgentRunView> {
     return this.control(runId, 'stop');
   }
 
-  addInstruction(runId: string, instruction: string): Promise<AgentRunView> {
+  addInstruction(runId: string, instruction: string): Promise<DrawingAgentRunView> {
     return this.control(runId, 'instructions', { instruction });
   }
 
-  private async control(runId: string, action: string, body?: unknown): Promise<AgentRunView> {
-    const data = await this.request<{ success: true; run: AgentRunView }>(
+  private async control(runId: string, action: string, body?: unknown): Promise<DrawingAgentRunView> {
+    const data = await this.request<{ success: true; run: DrawingAgentRunView }>(
       `/api/agent/runs/${encodeURIComponent(runId)}/${action}`, {
       method: 'POST',
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
@@ -148,8 +136,13 @@ export class AgentClient {
 
   private async request<T = unknown>(url: string, init?: RequestInit): Promise<T> {
     const response = await this.fetcher(url, init);
-    const data = await response.json().catch(() => ({})) as T & { error?: string };
-    if (!response.ok) throw new Error(data.error || `Agent API 请求失败 (${response.status})`);
+    const data = await response.json().catch(() => ({})) as T & {
+      error?: string | { code?: string; message?: string };
+    };
+    if (!response.ok) {
+      const message = typeof data.error === 'string' ? data.error : data.error?.message;
+      throw new Error(message || `Agent API 请求失败 (${response.status})`);
+    }
     return data;
   }
 }

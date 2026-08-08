@@ -196,8 +196,8 @@ describe('canonical drawing workspace store', () => {
   });
 });
 
-describe('Agent migration guard', () => {
-  it('blocks new Agent drawing mutations before any legacy request is sent', async () => {
+describe('Drawing Agent workspace integration', () => {
+  it('starts text work from drawing ID and revision without serializing the document', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
       drawingClient: drawingClientDouble() as unknown as DrawingClient,
@@ -206,17 +206,109 @@ describe('Agent migration guard', () => {
     });
     await store.getState().initializeDrawing();
 
-    await store.getState().submitAgentInput('创建一个圆', 'aW1hZ2U=', 'image/png');
+    await store.getState().submitAgentInput('创建一个圆');
 
-    expect(agent.start).not.toHaveBeenCalled();
-    expect(store.getState()).toMatchObject({
-      agentStatus: 'error',
-      agentError: 'Agent Runtime 正在迁移到 Drawing Core',
+    expect(agent.start).toHaveBeenCalledWith({
+      drawingId, baseRevision: revision1, goal: '创建一个圆', selectedIds: [],
     });
-    expect(store.getState().document?.geometry).toHaveLength(1);
+    expect(store.getState()).toMatchObject({
+      agentStatus: 'planning',
+      agentRunId: 'run_1',
+      agentError: null,
+    });
+    expect(JSON.stringify(agent.start.mock.calls[0][0])).not.toContain('document');
   });
 
-  it('keeps controls for an already-running task presentation-only', async () => {
+  it('guards image input locally until Drawing Perception is migrated', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
+
+    expect(agent.start).not.toHaveBeenCalled();
+    expect(store.getState().agentError).toContain('图片和 PDF 感知暂未接入');
+  });
+
+  it('refreshes the canonical workspace on commit and ignores documents in Agent responses', async () => {
+    const agent = agentClientDouble();
+    const drawings = drawingClientDouble();
+    const refreshed = workspace();
+    refreshed.revision = revision2;
+    const circle = refreshed.document.geometry[0];
+    if (circle.type !== 'circle') throw new Error('expected circle');
+    circle.radius = 8;
+    drawings.open.mockResolvedValueOnce(workspace()).mockResolvedValueOnce(refreshed);
+    const store = createAppStore({
+      drawingClient: drawings as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage({ [ACTIVE_DRAWING_STORAGE_KEY]: drawingId }),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('半径改成 8');
+
+    agent.emit({
+      id: 'event_commit', runId: 'run_1', type: 'commit', title: '已提交',
+      timestamp: 2, elapsedMs: 1,
+    });
+    await waitUntil(() => store.getState().revision === revision2);
+    expect(store.getState().document?.geometry[0]).toMatchObject({ radius: 8 });
+
+    agent.emit({
+      id: 'event_done', runId: 'run_1', type: 'completed', title: '完成',
+      timestamp: 3, elapsedMs: 2,
+    });
+    await waitUntil(() => store.getState().agentStatus === 'complete');
+    expect(store.getState().document?.geometry[0]).toMatchObject({ radius: 8 });
+  });
+
+  it('routes new text to the active run as an instruction', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    store.setState({ agentRunId: 'run_active', agentStatus: 'running' });
+
+    await store.getState().submitAgentInput('圆心不要移动');
+
+    expect(agent.addInstruction).toHaveBeenCalledWith('run_active', '圆心不要移动');
+    expect(agent.start).not.toHaveBeenCalled();
+  });
+
+  it('shows the terminal run error instead of the generic failed progress title', async () => {
+    const agent = agentClientDouble();
+    agent.getRun.mockResolvedValueOnce({
+      ...agentRunView('failed'),
+      error: 'plan.goal.acceptanceCriteria[0].selector: 未知字段',
+    });
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('创建一个圆');
+
+    agent.emit({
+      id: 'event_failed', runId: 'run_1', type: 'failed', title: '任务执行失败',
+      timestamp: 3, elapsedMs: 2,
+    });
+    await waitUntil(() => store.getState().agentError?.includes('未知字段') ?? false);
+
+    expect(store.getState()).toMatchObject({
+      agentStatus: 'error',
+      agentError: 'plan.goal.acceptanceCriteria[0].selector: 未知字段',
+    });
+  });
+
+  it('keeps run controls presentation-only', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
       drawingClient: drawingClientDouble() as unknown as DrawingClient,
@@ -308,16 +400,39 @@ function drawingClientDouble(overrides: { commits?: DrawingCommit[] } = {}) {
 }
 
 function agentClientDouble() {
-  const run = { status: 'pause_requested' as const, plan: null, currentStepIndex: 0 };
+  let listener: ((event: import('@/services/agent-client').AgentProgressEvent) => void) | undefined;
+  const run = agentRunView('pause_requested');
   return {
-    start: vi.fn(async () => ({ runId: 'run_1' })),
-    subscribe: vi.fn(() => () => undefined),
-    getRun: vi.fn(async () => run),
+    start: vi.fn<AgentClient['start']>(async () => ({ runId: 'run_1' })),
+    subscribe: vi.fn((_runId, onEvent) => {
+      listener = onEvent;
+      return () => undefined;
+    }),
+    emit: (event: import('@/services/agent-client').AgentProgressEvent) => listener?.(event),
+    getRun: vi.fn<AgentClient['getRun']>(async () => ({
+      ...agentRunView('completed'), document: { malicious: true },
+    } as never)),
     pause: vi.fn(async () => run),
-    resume: vi.fn(async () => ({ ...run, status: 'running' as const })),
-    stop: vi.fn(async () => ({ ...run, status: 'stopping' as const })),
-    addInstruction: vi.fn(async () => ({ ...run, status: 'running' as const })),
+    resume: vi.fn(async () => agentRunView('running')),
+    stop: vi.fn(async () => agentRunView('stopping')),
+    addInstruction: vi.fn(async () => agentRunView('running')),
   };
+}
+
+function agentRunView(status: import('@/contracts/drawing-agent').DrawingAgentRunStatus) {
+  return {
+    runId: 'run_1', drawingId, revision: revision1, status,
+    goal: null, workflow: [], currentWorkflowNodeId: null,
+    commitCount: 0, pendingInstructions: [], error: null,
+  };
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let index = 0; index < 20; index += 1) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error('condition was not reached');
 }
 
 function memoryStorage(initial: Record<string, string> = {}): Storage {
