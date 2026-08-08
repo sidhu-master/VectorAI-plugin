@@ -66,7 +66,7 @@ const PLANNER_PROMPT = `你是 VectorAI 空间任务规划器。分析用户请�
 ## 输出格式
 
 {
-  "task": "reconstruct_drawing | create_from_text",
+  "task": "inspect_drawing | reconstruct_drawing | modify_drawing | create_from_text",
   "summary": "整体任务摘要",
   "steps": [
     { "id": 1, "action": "extract_outline", "description": "识别整体轮廓" },
@@ -90,8 +90,11 @@ const PLANNER_PROMPT = `你是 VectorAI 空间任务规划器。分析用户请�
 1. 只输出 JSON
 2. 根据输入类型选择合适的阶段组合
 3. 文字描述简单的可以只有 1-2 个步骤
-4. 图片分析通常需要全部 5 个阶段
-5. 每个阶段的 description 用中文`;
+4. 图片/PDF且用户只要求分析说明时，task 使用 inspect_drawing
+5. 图片/PDF需要转为内部二维几何时，task 使用 reconstruct_drawing
+6. 图片/PDF且用户要求移动、删除、添加、替换或调整图元时，task 使用 modify_drawing
+7. modify_drawing 的 steps 只描述图纸重建完成后需要执行的增量修改，不要重复安排识图或重建阶段
+8. 每个阶段的 description 用中文`;
 
 // ============ Step Executor Prompt Builder ============
 

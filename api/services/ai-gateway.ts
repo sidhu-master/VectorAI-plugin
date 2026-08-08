@@ -395,7 +395,7 @@ export async function planTask({
 
   if (!baseUrl || !apiKey) {
     // 无配置时返回默认计划
-    return defaultPlan(prompt || '图片分析');
+    return defaultPlan(prompt || '图片分析', Boolean(image));
   }
 
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
@@ -577,12 +577,23 @@ function parsePlanFromReply(reply: string): TaskPlan {
   }
 }
 
-function defaultPlan(prompt: string): TaskPlan {
-  const isImage = prompt.includes('图片') || prompt.includes('图纸');
+function defaultPlan(prompt: string, hasAttachment = false): TaskPlan {
+  const isImage = hasAttachment || prompt.includes('图片') || prompt.includes('图纸');
+  const isModification = isImage
+    && /修改|移动|删除|移除|增加|新增|添加|替换|调整|扩大|缩小|旋转|对齐|改成|改为|改到|更新|move|delete|remove|add|replace|resize|rotate|align|update/i.test(prompt);
+  const isInspection = isImage && !isModification
+    && !/重建|转换|转成|复原|矢量化|建模|reconstruct|convert|vectorize/i.test(prompt)
+    && /分析|识别|检查|查看|说明|告诉|inspect|analy[sz]e|explain/i.test(prompt);
   return {
-    task: isImage ? 'reconstruct_drawing' : 'create_from_text',
+    task: isModification
+      ? 'modify_drawing'
+      : isInspection
+        ? 'inspect_drawing'
+        : isImage ? 'reconstruct_drawing' : 'create_from_text',
     summary: prompt.slice(0, 100),
-    steps: isImage
+    steps: isModification
+      ? [{ id: 1, action: 'modify_drawing', description: prompt, status: 'pending' as const }]
+      : isImage
       ? [
           { id: 1, action: 'extract_outline', description: '识别整体轮廓', status: 'pending' as const },
           { id: 2, action: 'detect_features', description: '识别孔/槽/圆角', status: 'pending' as const },
