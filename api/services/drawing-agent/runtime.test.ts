@@ -569,6 +569,33 @@ describe('DrawingAgentRuntime', () => {
     }
   });
 
+  it('persists the synthetic perception plan without source bytes', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-perception-audit-'));
+    try {
+      const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
+      const { runtime, workspace } = await setup({
+        auditStore,
+        perceptionOutputs: perceptionSequence([]),
+      });
+
+      const handle = runtime.start({
+        ...startInput(workspace), goal: '分析图纸', source: sourceReference(),
+      });
+      await handle.completion;
+      await runtime.flushAudit(handle.runId);
+      const audit = await auditStore.readRun(handle.runId);
+
+      expect(audit.manifest.goalSpec?.id).toContain('perception');
+      expect(audit.events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'plan' }),
+        expect.objectContaining({ type: 'perception' }),
+      ]));
+      expect(JSON.stringify(audit)).not.toContain(Buffer.from('png').toString('base64'));
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('persists recovery context and terminal errors in state audit events', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-runtime-failure-audit-'));
     try {

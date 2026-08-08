@@ -277,7 +277,7 @@ export class DrawingAgentRuntime {
       }
       if (record.state.needsReplan || !record.state.plan || record.state.status === 'planning') {
         if (record.inputMode === 'analyze_only' || record.inputMode === 'reconstruct') {
-          this.#transition(record, { type: 'PLAN_READY', plan: perceptionCompletionPlan(record) });
+          this.#installPlan(record, perceptionCompletionPlan(record));
         } else if (!await this.#plan(record)) return;
       }
       if (record.prepared) {
@@ -512,15 +512,7 @@ export class DrawingAgentRuntime {
       ));
     }
     if (record.state.status === 'stopping') return false;
-    this.#transition(record, { type: 'PLAN_READY', plan });
-    this.#audit(record, 'plan', { plan: structuredClone(plan) });
-    this.#enqueueAudit(record, async () => {
-      const run = await this.#auditStore!.readRun(record.state.runId);
-      await this.#auditStore!.updateManifest({
-        ...run.manifest,
-        goalSpec: structuredClone(plan.goal),
-      });
-    });
+    this.#installPlan(record, plan);
     if (record.state.status === 'paused') {
       record.progress.publish('paused', '任务已暂停');
       return false;
@@ -830,6 +822,18 @@ export class DrawingAgentRuntime {
       actor: { type: 'AI', id: record.state.runId },
       ...(record.state.plan?.goal.id ? { goalId: record.state.plan.goal.id } : {}),
     };
+  }
+
+  #installPlan(record: RunRecord, plan: DrawingAgentPlan): void {
+    this.#transition(record, { type: 'PLAN_READY', plan });
+    this.#audit(record, 'plan', { plan: structuredClone(plan) });
+    this.#enqueueAudit(record, async () => {
+      const run = await this.#auditStore!.readRun(record.state.runId);
+      await this.#auditStore!.updateManifest({
+        ...run.manifest,
+        goalSpec: structuredClone(plan.goal),
+      });
+    });
   }
 
   #discardPrepared(record: RunRecord): void {
