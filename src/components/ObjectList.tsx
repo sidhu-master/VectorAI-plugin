@@ -1,6 +1,7 @@
 /**
  * ObjectList - 左侧实体列表（支持多选）
  */
+import { useMemo } from 'react';
 import { Circle, Dot, Eye, EyeOff, Minus, Shapes, Trash2 } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { AnnotationNode, GeometryNode } from '@/drawing';
@@ -18,9 +19,10 @@ function typeIcon(type: ListedNode['type']) {
 }
 
 export default function ObjectList() {
-  const entities = useStore((s) => s.document
-    ? [...s.document.geometry, ...s.document.annotations]
-    : []);
+  const document = useStore((s) => s.document);
+  const entities = useMemo<ListedNode[]>(() => document
+    ? [...document.geometry, ...document.annotations]
+    : [], [document]);
   const selectedIds = useStore((s) => s.selectedIds);
   const selectEntity = useStore((s) => s.selectEntity);
   const updateNode = useStore((s) => s.updateNode);

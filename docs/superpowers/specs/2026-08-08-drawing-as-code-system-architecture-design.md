@@ -1,7 +1,7 @@
 # VectorAI “图纸即代码”系统架构设计
 
 **日期：** 2026-08-08  
-**状态：** 已确认，阶段一核心能力已实现，主链迁移进行中
+**状态：** 已确认，阶段一与阶段二已实现，Agent 主链迁移待进行
 **适用阶段：** MVP 到首版发布  
 **取代：** `docs/tech-architecture.md` 中以 SpatialIntent、扁平 SpatialModel 和文字步骤为中心的架构  
 
@@ -508,8 +508,11 @@ MVP 本地仓库至少分离保存：
 | 范围 | 状态 | 已验证边界 |
 | --- | --- | --- |
 | 阶段一：Drawing Core V1 基础能力 | 已实现 | Canonical DrawingDocument、稳定 ID、完整查询、类型化 Command、原子 Transaction Preview、可逆 Patch、分层 Validator、线性 In-memory Repository、Revert Commit 和确定性 Replay 已落地；Drawing Core 测试、全项目测试、类型检查与生产构建通过。 |
-| 阶段一：应用主链切换与旧 Core 删除 | 未完成 | 当前 UI、Agent Runtime、感知和旧审计仍引用 SpatialModel/SpatialIntent；在 Drawing Application Service 接管对应入口前不得删除旧实现，也不得把阶段一整体标记为验收完成。 |
-| 阶段二至阶段五 | 未开始 | 按下述阶段顺序分别制定实施计划和验收门槛。 |
+| 阶段二：Drawing Application 与本地仓库 | 已实现 | Drawing Application Service、原子文件快照、重启回放、HTTP Drawing API 和浏览器 Drawing Client 已落地。图纸 ID 经过内容哈希映射，不直接形成文件路径。 |
+| 阶段二：手工 UI 事务切换 | 已实现 | Zustand 仅保存 DrawingDocument 投影、revision、commits 与交互状态；属性编辑、显隐、删除、清空和 Revert 均经 Drawing API。生产 UI 无 `@/core` 导入、旧 AI 修改接口或直接数组写入。新 Agent 任务在本地明确拦截，不会回退到 SpatialModel。 |
+| 阶段三：Agent Runtime | 未开始 | 服务端旧 Agent Runtime、Agent 审计和模型适配仍依赖 SpatialModel/SpatialIntent，因此相关旧 Core 文件暂时保留；它们已与当前 UI 图纸修改主链隔离。 |
+| 阶段四：导入与感知 | 未开始 | 旧感知与部分 Drawing Perception 仍含 SpatialIntent 中间结果，待迁移为 Observation/Evidence → DrawingCommand。 |
+| 阶段五：表示、审计与回归闭环 | 未开始 | DXF/PDF Adapter、统一 Drawing Audit、运行时回放和模型回归仍待迁移。 |
 
 ### 阶段一：替换 Drawing Core
 

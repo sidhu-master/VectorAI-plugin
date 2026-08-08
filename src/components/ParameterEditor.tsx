@@ -2,7 +2,7 @@
  * ParameterEditor - 左侧参数编辑器（支持单选/多选）
  */
 import { useStore } from '@/hooks/useStore';
-import type { CircleGeometry, GeometryNode, LineGeometry, PointGeometry } from '@/drawing';
+import type { CircleGeometry, LineGeometry, PointGeometry } from '@/drawing';
 
 function Field({
   label,
@@ -27,11 +27,11 @@ function Field({
 }
 
 export default function ParameterEditor() {
-  const entities = useStore((s) => s.document?.geometry ?? []);
+  const entities = useStore((s) => s.document?.geometry);
   const selectedIds = useStore((s) => s.selectedIds);
   const updateNode = useStore((s) => s.updateNode);
 
-  const selected = entities.filter((e) => selectedIds.includes(e.id));
+  const selected = (entities ?? []).filter((e) => selectedIds.includes(e.id));
 
   const singleEntity = selected.length === 1 ? selected[0] : null;
 

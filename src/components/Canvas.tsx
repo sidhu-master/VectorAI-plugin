@@ -3,7 +3,7 @@
  * 坐标系：CAD 约定（Y 轴向上），通过 transform 翻转 SVG 的 Y 轴。
  * 支持：鼠标拖动平移、滚轮缩放、自动适配视图、Ctrl+多选、Ctrl+框选。
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { DrawingRelation } from '@/drawing';
 import EntityRenderer from './canvas/EntityRenderer';
@@ -33,9 +33,9 @@ export default function Canvas() {
   const setMouseCoords = useStore((s) => s.setMouseCoords);
 
   const { scale, offsetX, offsetY } = canvasTransform;
-  const entities: DrawingRenderable[] = document
+  const entities = useMemo<DrawingRenderable[]>(() => document
     ? [...document.geometry, ...document.annotations]
-    : [];
+    : [], [document]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
