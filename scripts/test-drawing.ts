@@ -50,11 +50,11 @@ for await (const output of pipeline.run({
   }
   batchCount += 1;
   firstPatchAt ??= Date.now();
-  commitEntityCount += output.batch.intent.objects.length;
+  commitEntityCount += output.batch.commands.length;
   lowConfidenceCount += output.batch.lowConfidenceCount;
   console.log(JSON.stringify({
     event: 'patch_batch', componentId: output.batch.componentId,
-    entityCount: output.batch.intent.objects.length,
+    entityCount: output.batch.commands.length,
     lowConfidenceCount: output.batch.lowConfidenceCount,
     confidence: output.batch.confidence,
     elapsedMs: Date.now() - startedAt,
