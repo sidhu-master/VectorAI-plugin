@@ -1,6 +1,6 @@
 import type { MouseEvent } from 'react';
 import type { Vec2 } from '@/drawing';
-import type { BBox, DrawingRenderable } from './geometry';
+import { entityCenter, type BBox, type DrawingRenderable } from './geometry';
 
 const HIT_WIDTH = 14;
 const PRIMARY_STROKE = '#cbd5e1';
@@ -8,6 +8,7 @@ const SELECTED_STROKE = '#6da9d2';
 const DANGER_STROKE = '#f87171';
 const CONSTRUCTION_STROKE = '#64748b';
 const DIMENSION_STROKE = '#94a3b8';
+const PROVISIONAL_STROKE = '#7f9bad';
 
 interface EntityRendererProps {
   entity: DrawingRenderable;
@@ -16,6 +17,8 @@ interface EntityRendererProps {
   selected?: boolean;
   onSelect?: (event: MouseEvent<SVGGElement>) => void;
   onPointerDown?: (event: MouseEvent<SVGGElement>) => void;
+  provisional?: boolean;
+  label?: string;
 }
 
 function pointOnCircle(center: Vec2, radius: number, angle: number): Vec2 {
@@ -79,27 +82,51 @@ export default function EntityRenderer({
   selected = false,
   onSelect,
   onPointerDown,
+  provisional = false,
+  label,
 }: EntityRendererProps) {
   if (!entity.visible) return null;
-  const lowConfidence = entity.quality.status === 'candidate'
-    || (entity.quality.confidence !== undefined && entity.quality.confidence < 0.6);
-  const regularStroke = selected ? SELECTED_STROKE : lowConfidence ? DANGER_STROKE : PRIMARY_STROKE;
+  const measuredLowConfidence = entity.quality.confidence !== undefined
+    && entity.quality.confidence < 0.6;
+  const lowConfidence = measuredLowConfidence
+    || (!provisional && entity.quality.status === 'candidate');
+  const regularStroke = provisional
+    ? lowConfidence ? DANGER_STROKE : PROVISIONAL_STROKE
+    : selected ? SELECTED_STROKE : lowConfidence ? DANGER_STROKE : PRIMARY_STROKE;
   const stroke = entity.type === 'ray' || entity.type === 'xline'
     ? CONSTRUCTION_STROKE
     : entity.type === 'dimension'
       ? lowConfidence ? DANGER_STROKE : selected ? SELECTED_STROKE : DIMENSION_STROKE
       : regularStroke;
-  const strokeWidth = selected ? 2 : 1.35;
-  const selectedDash = selected ? '5 4' : undefined;
+  const strokeWidth = selected && !provisional ? 2 : 1.35;
+  const selectedDash = provisional ? '4 3' : selected ? '5 4' : undefined;
+  const interactive = !provisional && Boolean(onSelect);
   const groupProps = {
     'data-entity-id': entity.id,
-    onClick: onSelect,
-    onMouseDown: onPointerDown,
-    className: onSelect ? 'cursor-pointer' : undefined,
+    'data-provisional': provisional || undefined,
+    onClick: interactive ? onSelect : undefined,
+    onMouseDown: interactive ? onPointerDown : undefined,
+    className: interactive ? 'cursor-pointer' : undefined,
+    opacity: provisional ? 0.82 : undefined,
   };
+  const center = entityCenter(entity);
+  const labelNode = provisional && label && center ? (
+    <g transform={`translate(${center[0]} ${center[1]}) scale(1 -1)`} pointerEvents="none">
+      <text
+        x={0}
+        y={-6 / Math.max(scale, 0.001)}
+        fill={stroke}
+        fontSize={10 / Math.max(scale, 0.001)}
+        textAnchor="middle"
+        fontFamily="JetBrains Mono, monospace"
+      >
+        {label}
+      </text>
+    </g>
+  ) : null;
   const visiblePath = (path: string, dash = selectedDash) => (
     <>
-      <path d={path} fill="none" stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" />
+      {!provisional && <path d={path} fill="none" stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" />}
       <path d={path} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray={dash} vectorEffect="non-scaling-stroke" pointerEvents="none" />
     </>
   );
@@ -109,24 +136,26 @@ export default function EntityRenderer({
       const radius = 3 / Math.max(scale, 0.001);
       return (
         <g {...groupProps}>
-          <circle cx={entity.x} cy={entity.y} r={HIT_WIDTH / Math.max(scale, 0.001)} fill="transparent" />
+          {!provisional && <circle cx={entity.x} cy={entity.y} r={HIT_WIDTH / Math.max(scale, 0.001)} fill="transparent" />}
           <circle cx={entity.x} cy={entity.y} r={radius} fill={stroke} pointerEvents="none" />
+          {labelNode}
         </g>
       );
     }
     case 'line':
-      return <g {...groupProps}>{visiblePath(linePath([entity.start, entity.end]))}</g>;
+      return <g {...groupProps}>{visiblePath(linePath([entity.start, entity.end]))}{labelNode}</g>;
     case 'ray':
     case 'xline': {
       const points = extendedLine(entity, viewport);
       if (!points) return null;
-      return <g {...groupProps}>{visiblePath(linePath(points), '7 5')}</g>;
+      return <g {...groupProps}>{visiblePath(linePath(points), provisional ? '4 3' : '7 5')}{labelNode}</g>;
     }
     case 'circle':
       return (
         <g {...groupProps}>
-          <circle cx={entity.center[0]} cy={entity.center[1]} r={entity.radius} fill="none" stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" />
+          {!provisional && <circle cx={entity.center[0]} cy={entity.center[1]} r={entity.radius} fill="none" stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" />}
           <circle cx={entity.center[0]} cy={entity.center[1]} r={entity.radius} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray={selectedDash} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+          {labelNode}
         </g>
       );
     case 'arc': {
@@ -134,7 +163,7 @@ export default function EntityRenderer({
       const end = pointOnCircle(entity.center, entity.radius, entity.endAngle);
       const span = arcSpan(entity.startAngle, entity.endAngle, entity.counterClockwise);
       const path = `M ${start[0]} ${start[1]} A ${entity.radius} ${entity.radius} 0 ${span > 180 ? 1 : 0} ${entity.counterClockwise ? 1 : 0} ${end[0]} ${end[1]}`;
-      return <g {...groupProps}>{visiblePath(path)}</g>;
+      return <g {...groupProps}>{visiblePath(path)}{labelNode}</g>;
     }
     case 'ellipse': {
       const radiusX = Math.hypot(entity.majorAxis[0], entity.majorAxis[1]);
@@ -142,22 +171,26 @@ export default function EntityRenderer({
       const angle = Math.atan2(entity.majorAxis[1], entity.majorAxis[0]) * 180 / Math.PI;
       return (
         <g {...groupProps}>
-          <ellipse cx={entity.center[0]} cy={entity.center[1]} rx={radiusX} ry={radiusX * entity.ratio} transform={`rotate(${angle} ${entity.center[0]} ${entity.center[1]})`} fill="none" stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" />
+          {!provisional && <ellipse cx={entity.center[0]} cy={entity.center[1]} rx={radiusX} ry={radiusX * entity.ratio} transform={`rotate(${angle} ${entity.center[0]} ${entity.center[1]})`} fill="none" stroke="transparent" strokeWidth={HIT_WIDTH} vectorEffect="non-scaling-stroke" />}
           <ellipse cx={entity.center[0]} cy={entity.center[1]} rx={radiusX} ry={radiusX * entity.ratio} transform={`rotate(${angle} ${entity.center[0]} ${entity.center[1]})`} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray={selectedDash} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+          {labelNode}
         </g>
       );
     }
     case 'polyline':
-      return <g {...groupProps}>{visiblePath(linePath(entity.vertices.map((vertex) => vertex.point), entity.closed))}</g>;
+      return <g {...groupProps}>{visiblePath(linePath(entity.vertices.map((vertex) => vertex.point), entity.closed))}{labelNode}</g>;
     case 'spline':
-      return <g {...groupProps}>{visiblePath(splinePath(entity.controlPoints, entity.closed))}</g>;
+      return <g {...groupProps}>{visiblePath(splinePath(entity.controlPoints, entity.closed))}{labelNode}</g>;
     case 'text': {
       const anchor = entity.alignment === 'center' ? 'middle' : entity.alignment === 'right' ? 'end' : 'start';
       return (
-        <g {...groupProps} transform={`translate(${entity.position[0]} ${entity.position[1]}) rotate(${-entity.rotation}) scale(1 -1)`}>
-          <text x={0} y={0} fill={stroke} fontSize={entity.height} textAnchor={anchor} fontFamily="Inter, system-ui, sans-serif">
-            {entity.content}
-          </text>
+        <g {...groupProps}>
+          <g transform={`translate(${entity.position[0]} ${entity.position[1]}) rotate(${-entity.rotation}) scale(1 -1)`}>
+            <text x={0} y={0} fill={stroke} fontSize={entity.height} textAnchor={anchor} fontFamily="Inter, system-ui, sans-serif">
+              {entity.content}
+            </text>
+          </g>
+          {labelNode}
         </g>
       );
     }
@@ -174,6 +207,7 @@ export default function EntityRenderer({
               {dimensionLabel(entity)}
             </text>
           </g>
+          {labelNode}
         </g>
       );
     }

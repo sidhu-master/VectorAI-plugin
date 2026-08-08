@@ -35,6 +35,19 @@ describe('RunProgressChannel', () => {
     });
     channel.close();
   });
+
+  it('retains enough progressive deltas for a complex drawing reconnect', () => {
+    const channel = new RunProgressChannel('run_1', 1_000);
+    for (let sequence = 1; sequence <= 300; sequence += 1) {
+      channel.publish('perception_delta', `发现图元 ${sequence}`, undefined, {
+        ...previewDelta(), sequence,
+      });
+    }
+
+    expect(channel.events()).toHaveLength(300);
+    expect(channel.events()[0].perceptionDelta?.sequence).toBe(1);
+    channel.close();
+  });
 });
 
 function previewDelta(): PerceptionPreviewDelta {

@@ -9,6 +9,28 @@ export interface BBox {
   maxY: number;
 }
 
+export function fitBoundsToViewport(
+  bounds: BBox,
+  viewport: { width: number; height: number; padding: number },
+): { scale: number; offsetX: number; offsetY: number } {
+  const width = bounds.maxX - bounds.minX || 1;
+  const height = bounds.maxY - bounds.minY || 1;
+  const padding = Number.isFinite(viewport.padding) && viewport.padding > 0
+    ? viewport.padding
+    : 1;
+  const scale = Math.min(
+    viewport.width / (width * padding),
+    viewport.height / (height * padding),
+  );
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  return {
+    scale,
+    offsetX: viewport.width / 2 - centerX * scale,
+    offsetY: viewport.height / 2 + centerY * scale,
+  };
+}
+
 const CARDINAL_ANGLES = [0, 90, 180, 270];
 
 function finite(value: number): boolean {

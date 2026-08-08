@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { AnnotationId, GeometryId } from '@/drawing';
-import { entityBounds, entityCenter, modelBounds, type DrawingRenderable } from './geometry';
+import {
+  entityBounds,
+  entityCenter,
+  fitBoundsToViewport,
+  modelBounds,
+  type DrawingRenderable,
+} from './geometry';
 
 const visible = {
   visible: true,
@@ -86,5 +92,16 @@ describe('CAD entity geometry', () => {
 
     expect(modelBounds([point, hidden, circle])).toEqual({ minX: 2, minY: 3, maxX: 10, maxY: 11 });
     expect(entityCenter(circle)).toEqual([8, 9]);
+  });
+
+  it('fits a normalized drawing to the viewport without a CAD-unit scale cap', () => {
+    const transform = fitBoundsToViewport(
+      { minX: 0, minY: 0, maxX: 1, maxY: 0.5 },
+      { width: 1000, height: 800, padding: 1.25 },
+    );
+
+    expect(transform.scale).toBe(800);
+    expect(transform.offsetX).toBe(100);
+    expect(transform.offsetY).toBe(600);
   });
 });

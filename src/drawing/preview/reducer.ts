@@ -4,7 +4,7 @@ import type {
 } from './types';
 
 export function emptyPerceptionPreview(runId: string | null): PerceptionPreviewState {
-  return { runId, lastSequence: 0, nodes: {} };
+  return { runId, lastSequence: 0, nodes: {}, labelsByNodeId: {} };
 }
 
 export function applyPerceptionPreviewDelta(
@@ -15,11 +15,19 @@ export function applyPerceptionPreviewDelta(
     || delta.sequence <= state.lastSequence) return state;
 
   const nodes = { ...state.nodes };
-  for (const id of delta.removeIds) delete nodes[id];
+  const labelsByNodeId = { ...state.labelsByNodeId };
+  for (const id of delta.removeIds) {
+    delete nodes[id];
+    delete labelsByNodeId[id];
+  }
   for (const node of delta.upserts) nodes[node.id] = structuredClone(node);
+  for (const [nodeId, label] of Object.entries(delta.labelsByNodeId ?? {})) {
+    labelsByNodeId[nodeId] = label;
+  }
   return {
     runId: delta.runId,
     lastSequence: delta.sequence,
     nodes,
+    labelsByNodeId,
   };
 }

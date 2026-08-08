@@ -11,17 +11,46 @@ import {
   aabbIntersects,
   entityBounds,
   entityCenter,
+  fitBoundsToViewport,
   modelBounds,
   type DrawingRenderable,
 } from './canvas/geometry';
 
 const MIN_SCALE = 0.1;
-const MAX_SCALE = 10;
+const MAX_SCALE = 100_000;
 const FIT_PADDING = 1.3;
 const DRAG_THRESHOLD = 4; // 拖动判定阈值（像素）
 
+export function PerceptionPreviewLayer({
+  entities,
+  labelsByNodeId,
+  scale,
+  viewport,
+}: {
+  entities: DrawingRenderable[];
+  labelsByNodeId: Record<string, string>;
+  scale: number;
+  viewport: { minX: number; minY: number; maxX: number; maxY: number };
+}) {
+  return (
+    <g data-perception-preview="true" pointerEvents="none">
+      {entities.map((entity) => (
+        <EntityRenderer
+          key={`preview:${entity.id}`}
+          entity={entity}
+          scale={scale}
+          viewport={viewport}
+          provisional
+          label={labelsByNodeId[entity.id]}
+        />
+      ))}
+    </g>
+  );
+}
+
 export default function Canvas() {
   const document = useStore((s) => s.document);
+  const perceptionPreview = useStore((s) => s.perceptionPreview);
   const selectedIds = useStore((s) => s.selectedIds);
   const showGrid = useStore((s) => s.showGrid);
   const showRelations = useStore((s) => s.showRelations);
@@ -36,6 +65,14 @@ export default function Canvas() {
   const entities = useMemo<DrawingRenderable[]>(() => document
     ? [...document.geometry, ...document.annotations]
     : [], [document]);
+  const previewEntities = useMemo<DrawingRenderable[]>(
+    () => Object.values(perceptionPreview.nodes),
+    [perceptionPreview.nodes],
+  );
+  const fittedEntities = useMemo(
+    () => [...entities, ...previewEntities],
+    [entities, previewEntities],
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -46,7 +83,8 @@ export default function Canvas() {
   const isSelectingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
   const [cursor, setCursor] = useState('grab');
-  const hasAutoFitRef = useRef(false);
+  const userAdjustedViewRef = useRef(false);
+  const previewRunRef = useRef<string | null>(null);
 
   // 框选状态
   const [selBox, setSelBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
@@ -65,23 +103,30 @@ export default function Canvas() {
 
   const { w, h } = size;
 
+  useEffect(() => {
+    if (perceptionPreview.runId && perceptionPreview.runId !== previewRunRef.current) {
+      userAdjustedViewRef.current = false;
+    }
+    previewRunRef.current = perceptionPreview.runId;
+  }, [perceptionPreview.runId]);
+
   // 自动适配
   useEffect(() => {
-    if (entities.length > 0 && !hasAutoFitRef.current && w > 0 && h > 0) {
-      const bbox = modelBounds(entities);
+    if (fittedEntities.length > 0 && !userAdjustedViewRef.current && w > 0 && h > 0) {
+      const bbox = modelBounds(fittedEntities);
       if (bbox) {
-        const bw = bbox.maxX - bbox.minX || 100;
-        const bh = bbox.maxY - bbox.minY || 100;
-        const cx = (bbox.minX + bbox.maxX) / 2;
-        const cy = (bbox.minY + bbox.maxY) / 2;
-        const fitScale = Math.min(w / (bw * FIT_PADDING), h / (bh * FIT_PADDING), 5);
-        const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fitScale));
-        setCanvasTransform({ scale: clamped, offsetX: w / 2 - cx * clamped, offsetY: h / 2 + cy * clamped });
-        hasAutoFitRef.current = true;
+        const fitted = fitBoundsToViewport(bbox, { width: w, height: h, padding: FIT_PADDING });
+        const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fitted.scale));
+        const ratio = clamped / fitted.scale;
+        setCanvasTransform({
+          scale: clamped,
+          offsetX: w / 2 + (fitted.offsetX - w / 2) * ratio,
+          offsetY: h / 2 + (fitted.offsetY - h / 2) * ratio,
+        });
       }
     }
-    if (entities.length === 0) hasAutoFitRef.current = false;
-  }, [entities, w, h, setCanvasTransform]);
+    if (fittedEntities.length === 0) userAdjustedViewRef.current = false;
+  }, [fittedEntities, w, h, setCanvasTransform]);
 
   // 屏幕坐标 -> 世界坐标
   const toWorld = useCallback((sx: number, sy: number) => ({
@@ -180,6 +225,7 @@ export default function Canvas() {
   const onWheel = (e: React.WheelEvent<SVGSVGElement>) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
+    userAdjustedViewRef.current = true;
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
@@ -229,6 +275,7 @@ export default function Canvas() {
         setSelBox({ x1: dragStartRef.current.x - rect.left, y1: dragStartRef.current.y - rect.top, x2: sx, y2: sy });
       } else if (isDraggingRef.current) {
         // 平移
+        userAdjustedViewRef.current = true;
         setCanvasTransform({ offsetX: dragStartRef.current.offsetX + dx, offsetY: dragStartRef.current.offsetY + dy });
       } else {
         // 悬停：更新坐标
@@ -323,6 +370,12 @@ export default function Canvas() {
           <line x1={worldLeft} y1={0} x2={worldRight} y2={0} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           <line x1={0} y1={worldBottom} x2={0} y2={worldTop} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           {entities.map(renderEntity)}
+          <PerceptionPreviewLayer
+            entities={previewEntities}
+            labelsByNodeId={perceptionPreview.labelsByNodeId}
+            scale={scale}
+            viewport={{ minX: worldLeft, minY: worldBottom, maxX: worldRight, maxY: worldTop }}
+          />
           {relationLines}
         </g>
 

@@ -84,4 +84,24 @@ describe('EntityRenderer', () => {
 
     expect(html).toContain('stroke="#6da9d2"');
   });
+
+  it('renders a non-interactive provisional entity with one treatment and label', () => {
+    const html = renderToStaticMarkup(
+      <svg>
+        <EntityRenderer
+          entity={entities[4]}
+          scale={10}
+          viewport={viewport}
+          provisional
+          label="GEO-0001"
+        />
+      </svg>,
+    );
+
+    expect(html).toContain('data-provisional="true"');
+    expect(html).toContain('GEO-0001');
+    expect(html).toContain('stroke-dasharray="4 3"');
+    expect(html).not.toContain('stroke="transparent"');
+    expect(html).not.toContain('cursor-pointer');
+  });
 });

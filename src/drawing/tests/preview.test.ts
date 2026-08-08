@@ -12,7 +12,9 @@ describe('perception preview reducer', () => {
     const observed = applyPerceptionPreviewDelta(initial, delta(1, 'observe', [circle(4)]));
     const refined = applyPerceptionPreviewDelta(observed, delta(2, 'refine', [circle(5)]));
 
-    expect(initial).toEqual({ runId: null, lastSequence: 0, nodes: {} });
+    expect(initial).toEqual({
+      runId: null, lastSequence: 0, nodes: {}, labelsByNodeId: {},
+    });
     expect(observed.nodes.node_obs_1).toMatchObject({ type: 'circle', radius: 4 });
     expect(refined).toMatchObject({ runId: 'run_1', lastSequence: 2 });
     expect(refined.nodes.node_obs_1).toMatchObject({ type: 'circle', radius: 5 });
@@ -48,6 +50,19 @@ describe('perception preview reducer', () => {
     expect(Object.keys(reconciled.nodes)).toEqual(['node_obs_1']);
     expect(reconciled.nodes.node_obs_1).toMatchObject({ type: 'circle', radius: 6 });
     expect(observed.nodes).toHaveProperty('node_obs_2');
+  });
+
+  it('keeps system labels aligned with node replacement and removal', () => {
+    const observed = applyPerceptionPreviewDelta(
+      emptyPerceptionPreview(null),
+      { ...delta(1, 'observe', [circle(4)]), labelsByNodeId: { node_obs_1: 'GEO-0001' } },
+    );
+    const removed = applyPerceptionPreviewDelta(observed, {
+      ...delta(2, 'reject', []), removeIds: ['node_obs_1'], labelsByNodeId: {},
+    });
+
+    expect(observed.labelsByNodeId).toEqual({ node_obs_1: 'GEO-0001' });
+    expect(removed.labelsByNodeId).toEqual({});
   });
 });
 

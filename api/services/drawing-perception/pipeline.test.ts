@@ -80,6 +80,8 @@ describe('DrawingPerceptionPipeline', () => {
         })],
       },
     });
+    if (early.value.kind !== 'observation_delta') throw new Error('expected observation delta');
+    expect(Object.values(early.value.delta.labelsByNodeId ?? {})).toContain('GEO-0001');
     await iterator.return?.(undefined as never);
   });
   it('orchestrates two views, parallelizes view tools, persists safe records, and releases media', async () => {
@@ -161,13 +163,13 @@ describe('DrawingPerceptionPipeline', () => {
       join(rootDir, 'run_two_views', 'drawing', 'associations.json'), 'utf8',
     ));
     expect(geometry.map((item: { id: string }) => item.id)).toEqual([
-      'view_detail_region_1__detail_circle',
-      'view_primary_datums__datum_axis',
-      'view_primary_region_1__primary_circle',
+      'geo_p1_view_detail_view_detail_region_1_0001',
+      'geo_p1_view_primary_view_primary_datums_0001',
+      'geo_p1_view_primary_view_primary_region_1_0001',
     ]);
     expect(associations).toMatchObject([{
-      annotationId: 'view_primary_region_1__diameter_40', status: 'resolved',
-      targets: [{ geometryObservationId: 'view_primary_region_1__primary_circle' }],
+      annotationId: 'dim_p1_view_primary_view_primary_region_1_0001', status: 'resolved',
+      targets: [{ geometryObservationId: 'geo_p1_view_primary_view_primary_region_1_0001' }],
     }]);
     expect(JSON.stringify({ outputs, geometry, associations })).not.toMatch(
       /base64|prompt|token|"image":/i,
@@ -227,7 +229,7 @@ describe('DrawingPerceptionPipeline', () => {
 
     expect(extractAnnotations).toHaveBeenCalledTimes(2);
     expect(outputs.some((output) => output.kind === 'command_batch'
-      && output.batch.observationIds.some((id) => id.endsWith('__circle_safe')))).toBe(true);
+      && output.batch.observationIds.some((id) => id.startsWith('geo_p1_')))).toBe(true);
     expect(outputs.at(-1)).toMatchObject({ kind: 'stage', stage: 'completed' });
     expect(await store.read('run_partial_view', 'perception-errors')).toEqual([{
       viewId: 'view_1', tool: 'extract_annotations', message: 'malformed annotation JSON',
@@ -425,7 +427,7 @@ describe('DrawingPerceptionPipeline', () => {
     }>('run_exhausted', 'coverage-ledger');
     expect(assessCoverage).toHaveBeenCalledTimes(2);
     expect(geometry).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: expect.stringContaining('small_circle') }),
+      expect.objectContaining({ id: expect.stringMatching(/^geo_p1_/) }),
     ]));
     expect(ledger.complete).toBe(false);
     expect(ledger.regions[0]).toMatchObject({

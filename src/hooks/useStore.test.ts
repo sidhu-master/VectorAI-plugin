@@ -253,7 +253,7 @@ describe('Drawing Agent workspace integration', () => {
       timestamp: 3, elapsedMs: 2,
     });
     expect(store.getState().perceptionPreview).toEqual({
-      runId: null, lastSequence: 0, nodes: {},
+      runId: null, lastSequence: 0, nodes: {}, labelsByNodeId: {},
     });
   });
   it('starts text work from drawing ID and revision without serializing the document', async () => {

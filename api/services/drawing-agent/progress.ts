@@ -33,7 +33,7 @@ type ProgressListener = (event: AgentProgressEvent) => void;
 const TERMINAL_TYPES = new Set<AgentProgressEventType>(['stopped', 'completed', 'failed']);
 
 export class RunProgressChannel {
-  private static readonly MAX_REPLAY_EVENTS = 100;
+  private static readonly MAX_REPLAY_EVENTS = 2_000;
   private readonly listeners = new Set<ProgressListener>();
   private readonly history: AgentProgressEvent[] = [];
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;

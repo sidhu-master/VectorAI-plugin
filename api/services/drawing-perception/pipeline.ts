@@ -4,6 +4,7 @@ import { DrawingAssetCache, type DrawingAssetReference } from './assets.js';
 import {
   buildObservationCommandBatches,
   buildObservationPreviewNodes,
+  stableDrawingNodeId,
   type DrawingCommandBatch,
 } from './build-patches.js';
 import { assembleContours } from './contour-assembler.js';
@@ -17,7 +18,7 @@ import {
   type DrawingCoverageRegion,
 } from './coverage.js';
 import type { DrawingObservationStore } from './observation-store.js';
-import { numberGlobalContours } from './numbering.js';
+import { numberGlobalContours, numberRegionObservations } from './numbering.js';
 import {
   deduplicateAnnotationObservations,
   deduplicateGeometryObservations,
@@ -274,6 +275,12 @@ export class DrawingPerceptionPipeline {
           });
           if (preview.nodes.length === 0) return;
           preview.nodes.forEach((node) => provisionalIds.add(node.id));
+          const labelsByNodeId = Object.fromEntries(
+            [...geometry, ...annotations].map((observation) => [
+              stableDrawingNodeId(sourceId, observation.id),
+              publicObservationLabel(observation),
+            ]),
+          );
           const delta: PerceptionPreviewDelta = {
             runId: input.runId,
             sequence: ++deltaSequence,
@@ -281,6 +288,7 @@ export class DrawingPerceptionPipeline {
             slotIds: [...geometry, ...annotations].map((item) => item.id),
             upserts: preview.nodes,
             removeIds: [],
+            labelsByNodeId,
             source: {
               page: input.page,
               viewId: emission.viewId,
@@ -473,10 +481,18 @@ export class DrawingPerceptionPipeline {
     const globalRegion: PerceptionRegion = {
       id: `${view.id}_global`, viewId: view.id, pageBounds: view.imageBounds,
     };
-    const [datumResult, rawGlobalResult] = await Promise.all([
+    const [rawDatumResult, rawGlobalResult] = await Promise.all([
       this.perceiveDatums(input, page.assetId, datumRegion, pageRatio),
       this.perceiveGlobalContours(input, page.assetId, globalRegion, pageRatio),
     ]);
+    const numberedDatums = numberRegionObservations(
+      input.page,
+      view.id,
+      datumRegion.id,
+      rawDatumResult.geometry,
+      [],
+    );
+    const datumResult = { ...rawDatumResult, geometry: numberedDatums.geometry };
     const numberedContours = numberGlobalContours(
       input.runId,
       input.page,
@@ -793,12 +809,17 @@ export class DrawingPerceptionPipeline {
         });
       }
     }
+    const numbered = numberRegionObservations(
+      input.page,
+      region.viewId,
+      region.id,
+      rawGeometry.map((observation) => stitchGeometryObservation(observation, region, pageRatio)),
+      rawAnnotations.map((observation) => stitchAnnotationObservation(observation, region)),
+    );
     return {
       region,
-      geometry: rawGeometry
-        .map((observation) => stitchGeometryObservation(observation, region, pageRatio)),
-      annotations: rawAnnotations
-        .map((observation) => stitchAnnotationObservation(observation, region)),
+      geometry: numbered.geometry,
+      annotations: numbered.annotations,
       evidence: rawEvidence.map((item) => stitchContourEvidence({
         ...item,
         ...(item.globalContourId ? {
@@ -996,6 +1017,18 @@ function boundsArea(bounds: NormalizedImageBounds): number {
 function safeRecordSegment(value: string): string {
   const normalized = value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
   return normalized || 'view';
+}
+
+function publicObservationLabel(
+  observation: GeometryObservation | AnnotationObservation,
+): string {
+  const prefix = observation.id.includes('ctr_')
+    ? 'CTR'
+    : 'kind' in observation
+      ? observation.kind === 'text' ? 'TXT' : 'DIM'
+      : 'GEO';
+  const match = observation.id.match(/(\d{4})$/);
+  return `${prefix}-${match?.[1] ?? observation.id.slice(-4).toUpperCase()}`;
 }
 
 class AsyncOutputQueue<T> implements AsyncIterableIterator<T> {

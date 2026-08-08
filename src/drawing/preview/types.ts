@@ -18,6 +18,7 @@ export interface PerceptionPreviewDelta {
   slotIds: string[];
   upserts: PerceptionPreviewNode[];
   removeIds: string[];
+  labelsByNodeId?: Record<string, string>;
   source: {
     page: number;
     viewId: string;
@@ -30,4 +31,5 @@ export interface PerceptionPreviewState {
   runId: string | null;
   lastSequence: number;
   nodes: Record<string, PerceptionPreviewNode>;
+  labelsByNodeId: Record<string, string>;
 }
