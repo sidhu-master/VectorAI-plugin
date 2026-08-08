@@ -18,7 +18,7 @@ import { RELATION_MIN_ENTITIES } from './types';
 const VALID_ENTITY_TYPES: EntityType[] = ['point', 'line', 'circle'];
 
 // 各实体类型所需的关键参数
-const REQUIRED_PARAMS: Record<EntityType, string[]> = {
+const REQUIRED_PARAMS: Partial<Record<EntityType, string[]>> = {
   point: ['x', 'y'],
   line: ['start', 'end'],
   circle: ['center', 'radius'],
@@ -77,7 +77,7 @@ function validateIntentObject(obj: IntentObject, index: number): string[] {
   }
 
   // 检查必需参数是否存在
-  const required = REQUIRED_PARAMS[obj.type];
+  const required = REQUIRED_PARAMS[obj.type] ?? [];
   for (const key of required) {
     if (!(key in obj.params)) {
       errors.push(`${prefix} (${obj.type}): 缺少关键参数 "${key}"`);

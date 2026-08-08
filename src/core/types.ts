@@ -6,8 +6,20 @@
 
 // ============ 几何实体类型 ============
 
-export type EntityType = 'point' | 'line' | 'circle';
-// 协议可扩展: 未来增加 'arc' | 'rect' | 'text' | ...
+export type Vec2 = [number, number];
+
+export type EntityType =
+  | 'point'
+  | 'line'
+  | 'ray'
+  | 'xline'
+  | 'circle'
+  | 'arc'
+  | 'ellipse'
+  | 'polyline'
+  | 'spline'
+  | 'text'
+  | 'dimension';
 
 export interface BaseEntity {
   id: string;
@@ -15,6 +27,7 @@ export interface BaseEntity {
   visible: boolean;
   parentId?: string; // 预留：父实体 ID，支持组织结构
   group?: string; // 预留：分组名称
+  confidence?: number; // 实体级置信度，范围 0-1
 }
 
 export interface PointEntity extends BaseEntity {
@@ -25,17 +38,138 @@ export interface PointEntity extends BaseEntity {
 
 export interface LineEntity extends BaseEntity {
   type: 'line';
-  start: [number, number];
-  end: [number, number];
+  start: Vec2;
+  end: Vec2;
+}
+
+export interface RayEntity extends BaseEntity {
+  type: 'ray';
+  origin: Vec2;
+  direction: Vec2;
+}
+
+export interface XLineEntity extends BaseEntity {
+  type: 'xline';
+  origin: Vec2;
+  direction: Vec2;
 }
 
 export interface CircleEntity extends BaseEntity {
   type: 'circle';
-  center: [number, number];
+  center: Vec2;
   radius: number;
 }
 
-export type GeometryEntity = PointEntity | LineEntity | CircleEntity;
+export interface ArcEntity extends BaseEntity {
+  type: 'arc';
+  center: Vec2;
+  radius: number;
+  startAngle: number;
+  endAngle: number;
+  counterClockwise: boolean;
+}
+
+export interface EllipseEntity extends BaseEntity {
+  type: 'ellipse';
+  center: Vec2;
+  majorAxis: Vec2;
+  ratio: number;
+  startParam?: number;
+  endParam?: number;
+}
+
+export interface PolylineVertex {
+  point: Vec2;
+  bulge?: number;
+}
+
+export interface PolylineEntity extends BaseEntity {
+  type: 'polyline';
+  vertices: PolylineVertex[];
+  closed: boolean;
+}
+
+export interface SplineEntity extends BaseEntity {
+  type: 'spline';
+  degree: number;
+  controlPoints: Vec2[];
+  knots: number[];
+  weights?: number[];
+  closed: boolean;
+  periodic: boolean;
+}
+
+export interface TextEntity extends BaseEntity {
+  type: 'text';
+  content: string;
+  position: Vec2;
+  height: number;
+  rotation: number;
+  alignment: 'left' | 'center' | 'right';
+  verticalAlignment: 'baseline' | 'bottom' | 'middle' | 'top';
+  maxWidth?: number;
+}
+
+export type DimensionKind =
+  | 'linear'
+  | 'aligned'
+  | 'angular'
+  | 'radius'
+  | 'diameter'
+  | 'ordinate'
+  | 'arc-length';
+
+export type EntityAnchor =
+  | { kind: 'start' | 'end' | 'center' }
+  | { kind: 'vertex'; index: number }
+  | { kind: 'curve-parameter'; parameter: number }
+  | { kind: 'nearest'; point: Vec2 };
+
+export interface DimensionTarget {
+  entityId: string;
+  anchor: EntityAnchor;
+}
+
+export interface DimensionCandidate {
+  targets: DimensionTarget[];
+  score: number;
+  reasons: string[];
+}
+
+export interface DimensionTolerance {
+  upper?: number;
+  lower?: number;
+}
+
+export interface DimensionEntity extends BaseEntity {
+  type: 'dimension';
+  dimensionKind: DimensionKind;
+  associationStatus: 'resolved' | 'ambiguous' | 'conflict';
+  targets: DimensionTarget[];
+  candidates?: DimensionCandidate[];
+  observedValue?: number;
+  computedValue?: number;
+  displayText?: string;
+  unit?: 'mm' | 'cm' | 'm' | 'deg';
+  tolerance?: DimensionTolerance;
+  prefix?: string;
+  suffix?: string;
+  textPosition: Vec2;
+  definitionPoints: Vec2[];
+}
+
+export type GeometryEntity =
+  | PointEntity
+  | LineEntity
+  | RayEntity
+  | XLineEntity
+  | CircleEntity
+  | ArcEntity
+  | EllipseEntity
+  | PolylineEntity
+  | SplineEntity
+  | TextEntity
+  | DimensionEntity;
 
 // ============ 关系类型 ============
 
@@ -142,7 +276,7 @@ export interface RepresentationAdapter {
 // ============ 常量 ============
 
 export const PROTOCOL_NAME = 'VectorAI-Spatial';
-export const PROTOCOL_VERSION = '0.1';
+export const PROTOCOL_VERSION = '0.2';
 
 // 关系类型所需的最少实体数量
 export const RELATION_MIN_ENTITIES: Record<ConstraintKind, number> = {

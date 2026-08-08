@@ -118,7 +118,7 @@ describe('Compiler', () => {
     };
     const { model } = compileIntent(intent);
     expect(model.protocol).toBe('VectorAI-Spatial');
-    expect(model.version).toBe('0.1');
+    expect(model.version).toBe('0.2');
     expect(model.metadata.unit).toBe('mm');
     expect(model.metadata.createdBy).toBe('AI');
     expect(model.metadata.timestamp).toBeGreaterThan(0);
