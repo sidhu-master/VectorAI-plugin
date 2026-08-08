@@ -53,3 +53,8 @@ export { compileIntentToPatch } from './patch/intent-to-patch';
 export * from './history/types';
 export { createHistory, commitPatch, undo, redo } from './history/history';
 export type { CommitPatchResult } from './history/history';
+
+// Agent Runtime
+export * from './runtime/capabilities';
+export * from './runtime/receipts';
+export * from './runtime/context';
