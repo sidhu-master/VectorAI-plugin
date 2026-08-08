@@ -27,7 +27,9 @@ type ProgressListener = (event: AgentProgressEvent) => void;
 const TERMINAL_TYPES = new Set<AgentProgressEventType>(['stopped', 'completed', 'failed']);
 
 export class RunProgressChannel {
+  private static readonly MAX_REPLAY_EVENTS = 100;
   private readonly listeners = new Set<ProgressListener>();
+  private readonly history: AgentProgressEvent[] = [];
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private sequence = 0;
   private terminal = false;
@@ -58,6 +60,8 @@ export class RunProgressChannel {
       elapsedMs: Math.max(0, timestamp - this.startedAt),
     };
     this.latest = event;
+    this.history.push(event);
+    if (this.history.length > RunProgressChannel.MAX_REPLAY_EVENTS) this.history.shift();
     for (const listener of this.listeners) listener(event);
 
     this.terminal = TERMINAL_TYPES.has(type);
@@ -67,6 +71,10 @@ export class RunProgressChannel {
 
   latestEvent(): AgentProgressEvent | null {
     return this.latest;
+  }
+
+  events(): AgentProgressEvent[] {
+    return [...this.history];
   }
 
   close(): void {
@@ -79,6 +87,7 @@ export class RunProgressChannel {
     this.heartbeatTimer = setTimeout(() => {
       this.publish('heartbeat', '任务仍在处理中', `已运行 ${Math.floor((this.now() - this.startedAt) / 1000)} 秒`);
     }, this.heartbeatMs);
+    (this.heartbeatTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
   }
 
   private clearHeartbeat(): void {

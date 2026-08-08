@@ -295,6 +295,7 @@ export class AgentRuntime {
     const timeout = setTimeout(() => {
       controller.abort(new Error('Stage deadline exceeded'));
     }, Math.max(0, deadlineAt - this.now()));
+    timeout.unref?.();
     record.activeController = controller;
     return {
       controller,
