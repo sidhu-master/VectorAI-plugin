@@ -6,11 +6,9 @@ import { join } from 'node:path';
 import {
   LocalAttachmentPreparer,
   throwIfAborted,
-} from '../agent-runtime/attachments.js';
-import type {
-  AgentAttachmentPreparer,
-  PreparedAgentAttachment,
-} from '../agent-runtime/types.js';
+  type DrawingAttachmentPreparer,
+  type PreparedDrawingAttachment,
+} from './attachments.js';
 import type { NormalizedImageBounds } from './types.js';
 
 export interface DrawingAssetReference {
@@ -28,14 +26,14 @@ export interface DrawingAssetReference {
 }
 
 export interface DrawingImageCropper {
-  crop(input: PreparedAgentAttachment & {
+  crop(input: PreparedDrawingAttachment & {
     bounds: NormalizedImageBounds;
     signal: AbortSignal;
-  }): Promise<PreparedAgentAttachment>;
+  }): Promise<PreparedDrawingAttachment>;
 }
 
 export interface DrawingAssetCacheOptions {
-  preparer?: AgentAttachmentPreparer;
+  preparer?: DrawingAttachmentPreparer;
   cropper?: DrawingImageCropper;
   maxBytes?: number;
   maxAssets?: number;
@@ -44,11 +42,11 @@ export interface DrawingAssetCacheOptions {
 interface StoredAsset {
   runId: string;
   reference: DrawingAssetReference;
-  attachment: PreparedAgentAttachment;
+  attachment: PreparedDrawingAttachment;
 }
 
 export class DrawingAssetCache {
-  private readonly preparer: AgentAttachmentPreparer;
+  private readonly preparer: DrawingAttachmentPreparer;
   private readonly cropper: DrawingImageCropper;
   private readonly maxBytes: number;
   private readonly maxAssets: number;
@@ -125,7 +123,7 @@ export class DrawingAssetCache {
     }
   }
 
-  async read(runId: string, assetId: string): Promise<PreparedAgentAttachment> {
+  async read(runId: string, assetId: string): Promise<PreparedDrawingAttachment> {
     const attachment = this.require(runId, assetId).attachment;
     return { ...attachment };
   }
@@ -152,7 +150,7 @@ export class DrawingAssetCache {
 
   private store(
     runId: string,
-    attachment: PreparedAgentAttachment,
+    attachment: PreparedDrawingAttachment,
     metadata: Omit<DrawingAssetReference, 'assetId' | 'mimeType' | 'sha256' | 'byteLength'>,
   ): StoredAsset {
     const bytes = Buffer.from(attachment.image, 'base64');
@@ -241,10 +239,10 @@ function readJpegDimensions(bytes: Buffer): { width: number; height: number } | 
 export class SipsImageCropper implements DrawingImageCropper {
   constructor(private readonly command = process.env.SIPS_PATH || 'sips') {}
 
-  async crop(input: PreparedAgentAttachment & {
+  async crop(input: PreparedDrawingAttachment & {
     bounds: NormalizedImageBounds;
     signal: AbortSignal;
-  }): Promise<PreparedAgentAttachment> {
+  }): Promise<PreparedDrawingAttachment> {
     throwIfAborted(input.signal);
     const directory = await mkdtemp(join(tmpdir(), 'vectorai-crop-'));
     const sourcePath = join(directory, input.mimeType === 'image/jpeg' ? 'source.jpg' : 'source.png');

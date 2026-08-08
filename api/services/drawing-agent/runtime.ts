@@ -1,6 +1,6 @@
 import { DrawingAgentProtocolError, type AgentDecision } from '../../../src/contracts/drawing-agent.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
-import { RunProgressChannel } from '../agent-runtime/progress.js';
+import { RunProgressChannel } from './progress.js';
 import type {
   DrawingAgentAuditEvent,
   DrawingAgentAuditStore,

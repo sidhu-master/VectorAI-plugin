@@ -4,21 +4,17 @@ import { LocalAttachmentPreparer } from './attachments';
 describe('LocalAttachmentPreparer', () => {
   it('passes image attachments through without conversion', async () => {
     const preparer = new LocalAttachmentPreparer();
-
     await expect(preparer.prepare({
       image: 'cG5n', mimeType: 'image/png', signal: new AbortController().signal,
     })).resolves.toEqual({ image: 'cG5n', mimeType: 'image/png' });
   });
 
   it('rasterizes the first PDF page into a bounded PNG', async () => {
-    const preparer = new LocalAttachmentPreparer();
-
-    const result = await preparer.prepare({
+    const result = await new LocalAttachmentPreparer().prepare({
       image: minimalPdf().toString('base64'),
       mimeType: 'application/pdf',
       signal: new AbortController().signal,
     });
-
     expect(result.mimeType).toBe('image/png');
     expect(Buffer.from(result.image, 'base64').subarray(0, 8)).toEqual(
       Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),

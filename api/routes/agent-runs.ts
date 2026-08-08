@@ -3,7 +3,7 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 
 import type { DrawingAgentRunStatus } from '../../src/contracts/drawing-agent.js';
 import type { DrawingId, RevisionId } from '../../src/drawing/index.js';
-import type { AgentProgressEvent } from '../services/agent-runtime/progress.js';
+import type { AgentProgressEvent } from '../services/drawing-agent/progress.js';
 import { DrawingApplication, DrawingApplicationError } from '../services/drawing-application/application.js';
 import { DrawingAgentRuntime } from '../services/drawing-agent/runtime.js';
 import { toDrawingAgentRunView } from '../services/drawing-agent/state.js';

@@ -1,4 +1,4 @@
-import { throwIfAborted } from '../agent-runtime/attachments.js';
+import { throwIfAborted } from './attachments.js';
 import { associateDimensions } from './associate-dimensions.js';
 import { DrawingAssetCache, type DrawingAssetReference } from './assets.js';
 import {

@@ -5,7 +5,7 @@ import {
   readRasterDimensions,
   type DrawingImageCropper,
 } from './assets.js';
-import type { AgentAttachmentPreparer } from '../agent-runtime/types.js';
+import type { DrawingAttachmentPreparer } from './attachments.js';
 
 describe('DrawingAssetCache', () => {
   it('records PNG/JPEG pixel dimensions as safe coordinate metadata', async () => {
@@ -31,7 +31,7 @@ describe('DrawingAssetCache', () => {
   });
 
   it('prepares a PDF page once and reuses repeated crop bytes', async () => {
-    const prepare = vi.fn<AgentAttachmentPreparer['prepare']>(async ({ signal }) => {
+    const prepare = vi.fn<DrawingAttachmentPreparer['prepare']>(async ({ signal }) => {
       expect(signal.aborted).toBe(false);
       return { image: Buffer.from('page-png').toString('base64'), mimeType: 'image/png' };
     });
