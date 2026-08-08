@@ -38,13 +38,9 @@ export function resolveInputIntent(
 export function fallbackAttachmentPlan(goal: string): AttachmentIntentPlan {
   const kind = inferKind(goal, true);
   const requiresMutation = kind === 'modify_drawing';
-  const plan: TaskPlan = {
-    task: kind,
-    summary: goal,
-    steps: requiresMutation
-      ? [{ id: 1, action: 'modify_drawing', description: goal, status: 'pending' }]
-      : [],
-  };
+  const plan: TaskPlan = requiresMutation
+    ? createModificationPlan(goal)
+    : { task: kind, summary: goal, steps: [] };
   return {
     plan,
     intent: {
@@ -54,6 +50,14 @@ export function fallbackAttachmentPlan(goal: string): AttachmentIntentPlan {
       requiresMutation,
       confidence: 0.5,
     },
+  };
+}
+
+export function createModificationPlan(goal: string, summary = goal): TaskPlan {
+  return {
+    task: 'modify_drawing',
+    summary,
+    steps: [{ id: 1, action: 'modify_drawing', description: goal, status: 'pending' }],
   };
 }
 

@@ -93,8 +93,9 @@ const PLANNER_PROMPT = `你是 VectorAI 空间任务规划器。分析用户请�
 4. 图片/PDF且用户只要求分析说明时，task 使用 inspect_drawing
 5. 图片/PDF需要转为内部二维几何时，task 使用 reconstruct_drawing
 6. 图片/PDF且用户要求移动、删除、添加、替换或调整图元时，task 使用 modify_drawing
-7. modify_drawing 的 steps 只描述图纸重建完成后需要执行的增量修改，不要重复安排识图或重建阶段
-8. 每个阶段的 description 用中文`;
+7. modify_drawing 只输出一个 action 为 modify_drawing 的步骤，description 完整描述用户要求；不要把同一个相对修改拆成定位、计算、更新、验证等重复执行步骤
+8. 不要重复安排识图或重建阶段，几何验证由运行时在 Patch 提交时完成
+9. 每个阶段的 description 用中文`;
 
 // ============ Step Executor Prompt Builder ============
 

@@ -208,6 +208,47 @@ describe('AgentRuntime drawing perception', () => {
     }));
   });
 
+  it('executes a relative drawing modification once even when the planner repeats it across steps', async () => {
+    const planner = vi.fn<AgentPlannerAdapter['plan']>(async () => ({
+      task: 'modify_drawing', summary: '将圆孔半径扩大 10%',
+      steps: [1, 2, 3, 4].map((id) => ({
+        id, action: 'modify_drawing', description: '将圆孔半径扩大 10%', status: 'pending' as const,
+      })),
+    }));
+    const drawing: DrawingPerceptionAdapter = {
+      run: async function* (input) {
+        yield patch(input.runId, batch('component_relative_change', {
+          objects: [{ id: 'circle_relative', type: 'circle', params: { center: [0, 0], radius: 1 } }],
+        }, ['relative_observation']));
+      },
+    };
+    const executor = vi.fn<AgentExecutorAdapter['execute']>(async (input) => {
+      const circle = input.model.entities.find((entity) => entity.id === 'circle_relative');
+      if (!circle || circle.type !== 'circle') throw new Error('missing baseline circle');
+      return {
+        operation: 'modify',
+        objects: [{
+          id: circle.id, type: 'circle',
+          params: { center: circle.center, radius: circle.radius * 1.1 },
+        }],
+        confidence: 0.95,
+      };
+    });
+    const runtime = new AgentRuntime({
+      planner: { plan: planner }, executor: { execute: executor }, drawingPipeline: drawing,
+    });
+
+    const state = await runtime.start({
+      runId: 'run_relative_once', goal: '将圆孔半径扩大 10%', model: createEmptyModel(),
+      modelProfile, image: 'cG5n', mimeType: 'image/png',
+    }).completion;
+
+    expect(executor).toHaveBeenCalledOnce();
+    expect(state.history.model.entities).toContainEqual(expect.objectContaining({
+      id: 'circle_relative', radius: 1.1,
+    }));
+  });
+
   it('pauses before drawing commits and resumes from the stored stable batches', async () => {
     const perceived = deferred<void>();
     const release = deferred<void>();

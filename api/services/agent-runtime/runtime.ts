@@ -29,7 +29,11 @@ import type {
   AgentPlannerAdapter,
   StartAgentRunInput,
 } from './types.js';
-import { fallbackAttachmentPlan, resolveInputIntent } from './input-intent.js';
+import {
+  createModificationPlan,
+  fallbackAttachmentPlan,
+  resolveInputIntent,
+} from './input-intent.js';
 
 export interface AgentRuntimeOptions {
   planner: AgentPlannerAdapter;
@@ -271,7 +275,7 @@ export class AgentRuntime {
       const intent = resolveInputIntent(plan, record.state.goal, true);
       record.inputIntent = intent;
       record.postDrawingPlan = intent.requiresMutation
-        ? (plan.steps.length > 0 ? plan : fallbackAttachmentPlan(record.state.goal).plan)
+        ? createModificationPlan(record.state.goal, plan.summary)
         : undefined;
       record.progress.publish('validation', '输入意图已确定', JSON.stringify({
         kind: intent.kind,
