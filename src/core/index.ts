@@ -45,3 +45,5 @@ export type {
 // Spatial Patch
 export * from './patch/types';
 export { validatePatch } from './patch/validate';
+export { applyPatch } from './patch/apply';
+export type { PatchApplyResult } from './patch/apply';
