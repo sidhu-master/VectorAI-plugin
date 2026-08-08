@@ -29,6 +29,7 @@ import type {
   AgentPlannerAdapter,
   StartAgentRunInput,
 } from './types.js';
+import { fallbackAttachmentPlan, resolveInputIntent } from './input-intent.js';
 
 export interface AgentRuntimeOptions {
   planner: AgentPlannerAdapter;
@@ -177,6 +178,8 @@ export class AgentRuntime {
   private async run(record: AgentRunRecord): Promise<void> {
     try {
       if (record.referenceAttachment && this.drawingPipeline) {
+        await this.analyzeAttachmentIntent(record);
+        if (isStopping(record)) return this.finishStopped(record);
         await this.runDrawingPerception(record);
         return;
       }
@@ -225,7 +228,11 @@ export class AgentRuntime {
       }
       if (record.state.status === 'stopping') return this.finishStopped(record);
       record.state = reduceAgentRun(record.state, { type: 'PLAN_READY', plan }).state;
-      record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
+      if (record.state.status === 'pause_requested') {
+        record.state = { ...record.state, status: 'paused' };
+      } else if (!record.state.activeInstruction) {
+        record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
+      }
       if (record.state.status === 'paused') {
         record.progress.publish('paused', '任务已暂停');
         return;
@@ -235,6 +242,54 @@ export class AgentRuntime {
     } catch (error) {
       if (record.state.status === 'stopping' || isAbort(error)) this.finishStopped(record);
       else this.finishFailed(record, error);
+    }
+  }
+
+  private async analyzeAttachmentIntent(record: AgentRunRecord): Promise<void> {
+    const attachment = record.referenceAttachment;
+    if (!attachment) return;
+    record.progress.publish('planning', '正在理解文字与图纸意图');
+    const stage = this.createStage(record);
+    try {
+      const modelName = selectAgentModel(record.modelProfile, {
+        role: 'planner',
+        hasImage: true,
+      });
+      const plan = await this.callModel(
+        record,
+        { role: 'planner', model: modelName, attempt: 1, signal: stage.controller.signal },
+        () => this.planner.plan({
+          goal: record.state.goal,
+          model: record.state.history.model,
+          modelName,
+          image: attachment.image,
+          mimeType: attachment.mimeType,
+          signal: stage.controller.signal,
+          deadlineAt: stage.deadlineAt,
+        }),
+      );
+      const intent = resolveInputIntent(plan, record.state.goal, true);
+      record.inputIntent = intent;
+      record.postDrawingPlan = intent.requiresMutation
+        ? (plan.steps.length > 0 ? plan : fallbackAttachmentPlan(record.state.goal).plan)
+        : undefined;
+      record.progress.publish('validation', '输入意图已确定', JSON.stringify({
+        kind: intent.kind,
+        confidence: intent.confidence,
+        path: intent.requiresMutation ? 'perception_then_modify' : 'perception_only',
+      }));
+    } catch (error) {
+      if (isStopping(record)) throw error;
+      const fallback = fallbackAttachmentPlan(record.state.goal);
+      record.inputIntent = fallback.intent;
+      record.postDrawingPlan = fallback.intent.requiresMutation ? fallback.plan : undefined;
+      record.progress.publish(
+        'validation',
+        '意图判断失败，已采用安全路径',
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      stage.clear();
     }
   }
 
@@ -265,17 +320,12 @@ export class AgentRuntime {
     if (isStopping(record)) return this.finishStopped(record);
 
     record.drawingBatches = batches;
+    record.drawingCommitCount = 0;
     const plan = drawingPlan(batches);
     record.state = reduceAgentRun(record.state, { type: 'PLAN_READY', plan }).state;
     record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
     if (record.state.status === 'paused') {
       record.progress.publish('paused', '任务已在图元提交前暂停');
-      return;
-    }
-    if (batches.length === 0) {
-      record.state = { ...record.state, status: 'completed' };
-      record.drawingBatches = undefined;
-      this.finishCompleted(record);
       return;
     }
     await this.runDrawingBatches(record);
@@ -288,9 +338,7 @@ export class AgentRuntime {
       const index = record.state.currentStepIndex;
       const batch = batches[index];
       if (!batch) {
-        record.drawingBatches = undefined;
-        record.state = { ...record.state, status: 'completed' };
-        this.finishCompleted(record);
+        await this.continueAfterDrawing(record);
         return;
       }
       const compiled = compileIntentToPatch(batch.intent, record.state.history.model);
@@ -372,6 +420,7 @@ export class AgentRuntime {
             history: result.history,
             context: recordReceipt(record.state.context, receipt),
           };
+          record.drawingCommitCount = (record.drawingCommitCount ?? 0) + 1;
           this.enqueueAudit(record, () => this.auditStore!.saveCommit(result.commit));
           record.progress.publish(
             'commit',
@@ -383,24 +432,58 @@ export class AgentRuntime {
         }
       }
 
-      record.state = reduceAgentRun(record.state, { type: 'STEP_COMPLETED' }).state;
-      record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
+      record.state = {
+        ...record.state,
+        currentStepIndex: record.state.currentStepIndex + 1,
+        status: 'running',
+      };
+      if (record.state.status === 'pause_requested') {
+        record.state = { ...record.state, status: 'paused' };
+      } else if (!record.state.activeInstruction) {
+        record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
+      }
       if (record.state.status === 'paused') {
         record.progress.publish('paused', '任务已在图纸组件安全点暂停');
         return;
       }
-      if (record.state.needsReplan && record.state.activeInstruction) {
-        record.drawingBatches = undefined;
-        await this.replan(record);
-        await this.runSteps(record);
-        return;
-      }
-      if (record.state.status === 'completed') {
-        record.drawingBatches = undefined;
-        this.finishCompleted(record);
+      if (record.state.currentStepIndex >= batches.length) {
+        await this.continueAfterDrawing(record);
         return;
       }
     }
+  }
+
+  private async continueAfterDrawing(record: AgentRunRecord): Promise<void> {
+    const requiresMutation = record.inputIntent?.requiresMutation === true;
+    if (requiresMutation && (record.drawingCommitCount ?? 0) === 0) {
+      record.drawingBatches = undefined;
+      this.finishFailed(record, new Error('图纸基准模型重建失败，未执行后续修改'));
+      return;
+    }
+
+    record.drawingBatches = undefined;
+    record.drawingCommitCount = undefined;
+    if (record.state.needsReplan && record.state.activeInstruction) {
+      record.state = { ...record.state, status: 'running' };
+      await this.replan(record);
+      await this.runSteps(record);
+      return;
+    }
+    if (requiresMutation && record.postDrawingPlan) {
+      record.progress.publish('planning', '基准模型已完成，正在执行图纸修改');
+      record.state = {
+        ...record.state,
+        plan: record.postDrawingPlan,
+        currentStepIndex: 0,
+        status: 'running',
+      };
+      record.postDrawingPlan = undefined;
+      await this.runSteps(record);
+      return;
+    }
+
+    record.state = { ...record.state, status: 'completed' };
+    this.finishCompleted(record);
   }
 
   private publishDrawingStage(
@@ -549,7 +632,11 @@ export class AgentRuntime {
           };
           this.enqueueAudit(record, () => this.auditStore!.saveCommit(result.commit));
           record.progress.publish('commit', selectedIntent.description ?? step.description);
-          record.state = reduceAgentRun(record.state, { type: 'STEP_COMPLETED' }).state;
+          record.state = {
+            ...record.state,
+            currentStepIndex: record.state.currentStepIndex + 1,
+            status: 'running',
+          };
           record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
           committed = true;
           break;
@@ -572,7 +659,10 @@ export class AgentRuntime {
       if (record.state.needsReplan && record.state.activeInstruction) {
         await this.replan(record);
       }
-      if (record.state.status === 'completed') {
+      if (record.state.plan
+        && record.state.currentStepIndex >= record.state.plan.steps.length
+        && !record.state.needsReplan) {
+        record.state = { ...record.state, status: 'completed' };
         this.finishCompleted(record);
         return;
       }
@@ -582,6 +672,9 @@ export class AgentRuntime {
   private finishStopped(record: AgentRunRecord): void {
     record.referenceAttachment = undefined;
     record.drawingBatches = undefined;
+    record.drawingCommitCount = undefined;
+    record.inputIntent = undefined;
+    record.postDrawingPlan = undefined;
     record.state = reduceAgentRun(record.state, { type: 'STOPPED' }).state;
     record.progress.publish('stopped', '任务已停止');
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));
@@ -645,6 +738,10 @@ export class AgentRuntime {
   private finishCompleted(record: AgentRunRecord): void {
     record.referenceAttachment = undefined;
     record.drawingBatches = undefined;
+    record.drawingCommitCount = undefined;
+    record.inputIntent = undefined;
+    record.postDrawingPlan = undefined;
+    record.state = { ...record.state, status: 'completed' };
     record.progress.publish('completed', '任务已完成');
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));
     record.resolveCompletion(record.state);
@@ -653,6 +750,9 @@ export class AgentRuntime {
   private finishFailed(record: AgentRunRecord, error: unknown): void {
     record.referenceAttachment = undefined;
     record.drawingBatches = undefined;
+    record.drawingCommitCount = undefined;
+    record.inputIntent = undefined;
+    record.postDrawingPlan = undefined;
     record.state = { ...record.state, status: 'failed' };
     record.progress.publish('failed', '任务执行失败', error instanceof Error ? error.message : String(error));
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));

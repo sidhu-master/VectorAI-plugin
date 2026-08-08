@@ -1,5 +1,7 @@
 import type { AgentRunState } from '../../../src/core/runtime/state-machine.js';
 import type { ObservationPatchBatch } from '../drawing-perception/build-patches.js';
+import type { TaskPlan } from '../../../src/core/agent.js';
+import type { InputIntent } from './input-intent.js';
 import { RunProgressChannel } from './progress.js';
 import type { AgentModelProfile, PreparedAgentAttachment } from './types.js';
 
@@ -13,6 +15,9 @@ export interface AgentRunRecord {
   modelProfile: AgentModelProfile;
   referenceAttachment?: PreparedAgentAttachment;
   drawingBatches?: ObservationPatchBatch[];
+  drawingCommitCount?: number;
+  inputIntent?: InputIntent;
+  postDrawingPlan?: TaskPlan;
 }
 
 export class AgentRunRegistry {

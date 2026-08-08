@@ -404,6 +404,37 @@ describe('AgentRuntime', () => {
     expect(planningInputs[1].instruction).toBe('第二个点改成圆');
   });
 
+  it('does not lose an instruction added while the final step is executing', async () => {
+    const finalExecution = deferred<SpatialIntent>();
+    const planningInputs: PlanStageInput[] = [];
+    let executions = 0;
+    const runtime = new AgentRuntime({
+      planner: planner(async (input) => {
+        planningInputs.push(input);
+        return oneStepPlan;
+      }),
+      executor: executor(async () => {
+        executions += 1;
+        if (executions === 1) return finalExecution.promise;
+        return { objects: [] };
+      }),
+    });
+    const handle = runtime.start({
+      runId: 'run_final_instruction', goal: '创建一个点', model: createEmptyModel(),
+      modelProfile: defaultModelProfile,
+    });
+    await waitUntil(() => runtime.getState('run_final_instruction')?.status === 'running');
+    runtime.addInstruction('run_final_instruction', '把这个点移动到原点');
+    finalExecution.resolve({ objects: [] });
+
+    const state = await handle.completion;
+
+    expect(state.status).toBe('completed');
+    expect(planningInputs).toHaveLength(2);
+    expect(planningInputs[1].instruction).toBe('把这个点移动到原点');
+    expect(executions).toBe(2);
+  });
+
   it('applies guidance added during planning before the first step executes', async () => {
     const initialPlan = deferred<TaskPlan>();
     const planningInputs: PlanStageInput[] = [];

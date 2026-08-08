@@ -44,7 +44,9 @@ describe('AgentRuntime drawing perception', () => {
   });
 
   it('commits valid drawing batches, skips an invalid component, and emits named stages', async () => {
-    const planner = vi.fn<AgentPlannerAdapter['plan']>();
+    const planner = vi.fn<AgentPlannerAdapter['plan']>(async () => ({
+      task: 'reconstruct_drawing', summary: '重建图纸', steps: [],
+    }));
     const executor = vi.fn<AgentExecutorAdapter['execute']>();
     const inputs: DrawingPerceptionInput[] = [];
     const drawing: DrawingPerceptionAdapter = {
@@ -77,7 +79,7 @@ describe('AgentRuntime drawing perception', () => {
     }).completion;
 
     expect(state.status).toBe('completed');
-    expect(planner).not.toHaveBeenCalled();
+    expect(planner).toHaveBeenCalledOnce();
     expect(executor).not.toHaveBeenCalled();
     expect(inputs[0]).toMatchObject({ modelName: 'doubao-seed-2.0-lite', mimeType: 'image/png' });
     expect(state.history.commits).toHaveLength(2);
@@ -93,6 +95,116 @@ describe('AgentRuntime drawing perception', () => {
     ]));
     expect(events).toContainEqual(expect.objectContaining({
       type: 'validation', detail: expect.stringContaining('component_invalid'),
+    }));
+  });
+
+  it('analyzes combined input, reconstructs the baseline, then applies the requested modification', async () => {
+    const order: string[] = [];
+    const plan: TaskPlan = {
+      task: 'modify_drawing', summary: '移动基准点',
+      steps: [{ id: 1, action: 'modify_drawing', description: '移动基准点', status: 'pending' }],
+    };
+    const planner = vi.fn<AgentPlannerAdapter['plan']>(async () => {
+      order.push('plan');
+      return plan;
+    });
+    const drawing: DrawingPerceptionAdapter = {
+      run: async function* (input) {
+        order.push('perceive');
+        yield patch(input.runId, batch('component_baseline', {
+          objects: [{ id: 'point_baseline', type: 'point', params: { x: 1, y: 2 } }],
+          confidence: 0.95,
+        }, ['baseline_observation']));
+      },
+    };
+    const executor = vi.fn<AgentExecutorAdapter['execute']>(async (input) => {
+      order.push('modify');
+      expect(input.model.entities).toContainEqual(expect.objectContaining({ id: 'point_baseline' }));
+      return {
+        operation: 'modify',
+        objects: [{ id: 'point_baseline', type: 'point', params: { x: 9, y: 2 } }],
+        confidence: 0.9,
+      };
+    });
+    const runtime = new AgentRuntime({
+      planner: { plan: planner }, executor: { execute: executor }, drawingPipeline: drawing,
+    });
+
+    const state = await runtime.start({
+      runId: 'run_modify_drawing', goal: '把基准点移动到 x=9',
+      model: createEmptyModel(), modelProfile, image: 'cG5n', mimeType: 'image/png',
+    }).completion;
+
+    expect(order).toEqual(['plan', 'perceive', 'modify']);
+    expect(state.status).toBe('completed');
+    expect(state.history.commits.map((commit) => commit.runId)).toEqual([
+      'run_modify_drawing', 'run_modify_drawing',
+    ]);
+    expect(state.history.model.entities).toContainEqual(expect.objectContaining({
+      id: 'point_baseline', x: 9, y: 2,
+    }));
+  });
+
+  it('falls back to safe reconstruction when attachment intent planning fails', async () => {
+    const planner = vi.fn<AgentPlannerAdapter['plan']>(async () => {
+      throw new Error('intent service unavailable');
+    });
+    const executor = vi.fn<AgentExecutorAdapter['execute']>();
+    const drawing: DrawingPerceptionAdapter = {
+      run: async function* (input) {
+        yield patch(input.runId, batch('component_fallback', {
+          objects: [{ id: 'fallback_point', type: 'point', params: { x: 0, y: 0 } }],
+        }, ['fallback_observation']));
+      },
+    };
+    const runtime = new AgentRuntime({
+      planner: { plan: planner }, executor: { execute: executor }, drawingPipeline: drawing,
+    });
+
+    const state = await runtime.start({
+      runId: 'run_intent_fallback', goal: '分析并重建二维工程图',
+      model: createEmptyModel(), modelProfile, image: 'cG5n', mimeType: 'image/png',
+    }).completion;
+
+    expect(state.status).toBe('completed');
+    expect(state.history.model.entities).toContainEqual(expect.objectContaining({ id: 'fallback_point' }));
+    expect(executor).not.toHaveBeenCalled();
+    expect(runtime.getProgress('run_intent_fallback')?.events()).toContainEqual(expect.objectContaining({
+      type: 'validation',
+      title: '意图判断失败，已采用安全路径',
+      detail: 'intent service unavailable',
+    }));
+  });
+
+  it('repairs an empty modification plan instead of silently skipping the requested change', async () => {
+    const planner = vi.fn<AgentPlannerAdapter['plan']>(async () => ({
+      task: 'modify_drawing', summary: '移动点', steps: [],
+    }));
+    const drawing: DrawingPerceptionAdapter = {
+      run: async function* (input) {
+        yield patch(input.runId, batch('component_empty_plan', {
+          objects: [{ id: 'empty_plan_point', type: 'point', params: { x: 0, y: 0 } }],
+        }, ['empty_plan_observation']));
+      },
+    };
+    const executor = vi.fn<AgentExecutorAdapter['execute']>(async () => ({
+      operation: 'modify',
+      objects: [{ id: 'empty_plan_point', type: 'point', params: { x: 2, y: 0 } }],
+      confidence: 0.9,
+    }));
+    const runtime = new AgentRuntime({
+      planner: { plan: planner }, executor: { execute: executor }, drawingPipeline: drawing,
+    });
+
+    const state = await runtime.start({
+      runId: 'run_empty_modify_plan', goal: '移动点', model: createEmptyModel(), modelProfile,
+      image: 'cG5n', mimeType: 'image/png',
+    }).completion;
+
+    expect(executor).toHaveBeenCalledOnce();
+    expect(state.status).toBe('completed');
+    expect(state.history.model.entities).toContainEqual(expect.objectContaining({
+      id: 'empty_plan_point', x: 2,
     }));
   });
 
