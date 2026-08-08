@@ -1,12 +1,14 @@
-export type AgentRunWireStatus =
-  | 'planning'
-  | 'running'
-  | 'pause_requested'
-  | 'paused'
-  | 'stopping'
-  | 'stopped'
-  | 'completed'
-  | 'failed';
+import type { DrawingAgentRunStatus } from '@/contracts/drawing-agent';
+
+export type {
+  DrawingAgentPlan,
+  DrawingAgentRunView,
+  GoalSpec,
+  WorkflowNode,
+  WorkflowNodeStatus,
+} from '@/contracts/drawing-agent';
+
+export type AgentRunWireStatus = DrawingAgentRunStatus;
 
 export type AgentTaskStepStatus =
   | 'pending'
