@@ -1,6 +1,7 @@
 import type { EntityAnchor } from '../../../src/drawing/index.js';
 import type {
   DrawingRecordValidation,
+  GlobalContour,
   NormalizedImageBounds,
 } from './types.js';
 
@@ -64,6 +65,25 @@ export function validateGeometryObservation(value: unknown): DrawingRecordValida
   validateBounds(record.imageBounds, 'imageBounds', errors);
   if (!asRecord(record.measuredParams)) errors.push('measuredParams 必须是对象');
   validateConfidence(record.confidence, 'confidence', errors);
+  return result(errors);
+}
+
+export function validateGlobalContour(value: unknown): DrawingRecordValidation {
+  const errors: string[] = [];
+  const record = asRecord(value);
+  if (!record) return invalid('global contour 必须是对象');
+  collectForbiddenFields(record, '$', errors);
+  if (!isNonEmptyString(record.id)) errors.push('id 必须是非空字符串');
+  if (!isNonEmptyString(record.viewId)) errors.push('viewId 必须是非空字符串');
+  if (!GEOMETRY_TYPES.has(record.geometryFamily as string)) {
+    errors.push('geometryFamily 不是支持的二维几何类型');
+  }
+  validateBounds(record.imageBounds, 'imageBounds', errors);
+  if (typeof record.closed !== 'boolean') errors.push('closed 必须是 boolean');
+  validateConfidence(record.confidence, 'confidence', errors);
+  if (record.coarseParams !== undefined && !asRecord(record.coarseParams)) {
+    errors.push('coarseParams 必须是对象');
+  }
   return result(errors);
 }
 

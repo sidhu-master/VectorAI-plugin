@@ -4,7 +4,7 @@
 
 **Goal:** Add a bounded, persistent feedback loop that recursively rereads incomplete drawing regions and reports whether perception coverage converged.
 
-**Architecture:** A standalone coverage policy evaluates model assessment plus deterministic extraction signals. The perception pipeline processes regions in breadth-first waves, persists a byte-free ledger after each wave, stitches and deduplicates observations, then resolves final Drawing commands only after convergence or explicit budget exhaustion.
+**Architecture:** A whole-view pass first establishes global contour identity. Region passes collect annotations, small standalone entities and contour evidence referencing that registry; a deterministic assembler produces one geometry per global contour. A standalone coverage policy then drives breadth-first refinement, persists a byte-free ledger after each wave and resolves final Drawing commands only after convergence or explicit budget exhaustion.
 
 **Tech Stack:** TypeScript 5.8, Vitest 3, Drawing Perception, Drawing Vision Tools, local observation store, Drawing Agent Runtime.
 
@@ -30,30 +30,42 @@
 - [ ] Implement pure deterministic coverage decisions and two-child long-axis splitting with stable IDs.
 - [ ] Run focused tests and commit.
 
-### Task 2: Coverage vision protocol
+### Task 2: Global contour and coverage vision protocols
 
 **Files:** Modify `vision-tools.ts`, `vision-tools.test.ts`, `validate.ts` if shared validation is useful.
 
-**Interfaces:** Adds `assessCoverage(input, context): Promise<DrawingCoverageAssessment>` and the `assess_coverage` tool contract.
+**Interfaces:** Adds `detectGlobalContours(input): Promise<GlobalContour[]>`, `assessCoverage(input, context): Promise<DrawingCoverageAssessment>`, and the `detect_global_contours`/`assess_coverage` tool contracts.
 
-- [ ] Write failing protocol tests for valid assessment JSON and rejection of invalid bounds/confidence/reasons.
+- [ ] Write failing protocol tests for global contour identity, valid assessment JSON and rejection of invalid bounds/confidence/reasons.
 - [ ] Run tests and confirm the missing tool behavior.
 - [ ] Add the bounded prompt, context serialization and strict parser without exposing media in returned records.
 - [ ] Run vision tests and commit.
 
-### Task 3: Adaptive breadth-first perception scheduler
+### Task 3: Contour evidence and assembler
+
+**Files:** Create `contour-assembler.ts` and `contour-assembler.test.ts`; modify perception observation types.
+
+**Interfaces:** Produces `GlobalContour`, `ContourEvidence`, `assembleContours(input)` and an explicit unresolved-contour result.
+
+- [ ] Write a failing cross-region circle test where two crop fragments reference one global circle and produce one circle observation.
+- [ ] Write failing tests preventing crop-edge fragments from becoming standalone geometry and preserving unresolved evidence.
+- [ ] Run tests and confirm the assembler API is missing.
+- [ ] Implement bounded analytic fitting, stable IDs and continuity validation.
+- [ ] Run focused tests and commit.
+
+### Task 4: Adaptive breadth-first perception scheduler
 
 **Files:** Modify `pipeline.ts`, `pipeline.test.ts`, `observation-store.ts` and their tests.
 
-**Interfaces:** Pipeline persists `coverage-ledger`, emits `coverage_assessed`/`coverage_completed`, rereads child regions and exposes final coverage counts in stage details.
+**Interfaces:** Pipeline runs global contours before region details, persists `coverage-ledger`, emits `coverage_assessed`/`coverage_completed`, rereads child regions and exposes final coverage/contour counts in stage details.
 
-- [ ] Write a failing integration test where a coarse assessment is incomplete and a child-only line appears after refinement.
+- [ ] Write a failing integration test where a whole-view circle crosses two regions and remains one assembled circle after refinement.
 - [ ] Write failing tests for simple convergence, assessment failure fallback, region budget exhaustion and byte-free ledger persistence.
 - [ ] Run the focused tests and confirm failures against the one-shot scheduler.
 - [ ] Implement wave scheduling, assessment, ledger checkpoints, child creation, stitching and final deduplication.
 - [ ] Run perception tests and commit.
 
-### Task 4: Runtime coverage result
+### Task 5: Runtime coverage result
 
 **Files:** Modify `runtime.ts`, `runtime.test.ts` and progress-stage mapping.
 
@@ -64,7 +76,7 @@
 - [ ] Implement bounded coverage counters from stage receipts and terminal summary wording.
 - [ ] Run runtime and audit tests; commit.
 
-### Task 5: Real baseline and final verification
+### Task 6: Real baseline and final verification
 
 **Files:** Update architecture documentation only if implementation changes the declared contract; do not add `test1.jpg`.
 

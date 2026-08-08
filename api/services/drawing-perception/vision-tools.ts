@@ -5,20 +5,26 @@ import {
 import {
   validateAnnotationObservation,
   validateDrawingManifest,
+  validateGlobalContour,
   validateGeometryObservation,
 } from './validate.js';
 import type {
   AnnotationObservation,
   DrawingView,
   GeometryObservation,
+  GlobalContour,
 } from './types.js';
+import type { NormalizedImageBounds } from './types.js';
+import type { DrawingCoverageAssessment } from './coverage.js';
 
 export type DrawingVisionToolName =
   | 'analyze_sheet'
   | 'segment_views'
   | 'detect_datums'
   | 'detect_geometry'
-  | 'extract_annotations';
+  | 'detect_global_contours'
+  | 'extract_annotations'
+  | 'assess_coverage';
 
 export interface DrawingVisionToolInput {
   runId: string;
@@ -43,6 +49,20 @@ export interface SheetAnalysis {
   unit?: 'mm' | 'cm' | 'm';
   scale?: number;
   warnings: string[];
+}
+
+export interface DrawingCoverageContext {
+  globalContours: Array<{
+    id: string;
+    geometryFamily: string;
+    imageBounds: NormalizedImageBounds;
+  }>;
+  contourEvidence: Array<{
+    globalContourId: string;
+    imageBounds: NormalizedImageBounds;
+  }>;
+  standaloneGeometry: Array<{ type: string; imageBounds: NormalizedImageBounds }>;
+  annotations: Array<{ kind: string; imageBounds: NormalizedImageBounds }>;
 }
 
 const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> = {
@@ -79,11 +99,23 @@ const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> =
 - spline {"degree":integer,"controlPoints":[[x,y],...],"knots":[number,...],"closed":boolean,"periodic":boolean}
 每项必须包含 id、viewId、type、imageBounds、measuredParams、confidence。不要输出语义对象或嵌套 geometry；无法给出完整 CAD 参数就省略该项。`,
   },
+  detect_global_contours: {
+    system: '你是二维 CAD 全局轮廓检测器。输入是完整视图；先识别跨区域的完整圆、长直线、闭合轮廓和主要曲线。只输出 JSON，不输出文字尺寸、局部碎片或推理过程。',
+    user: `只输出以下 JSON 契约：
+{"contours":[{"id":"contour_001","viewId":"<输入中的精确 viewId>","geometryFamily":"circle","imageBounds":[x,y,width,height],"closed":true,"confidence":0.9,"coarseParams":{"center":[x,y],"radius":number}}]}
+坐标相对完整视图归一化到 0-1。geometryFamily 只允许 point、line、ray、xline、circle、arc、ellipse、polyline、spline。一个视觉上连续的完整圆只能输出一个 circle，不能按局部可见段拆成多个 arc。coarseParams 可省略，缺失参数不得猜测。`,
+  },
   extract_annotations: {
     system: '你是工程图 OCR 与尺寸标注提取器。保留 R、Ø、°、± 和原始文本；不把尺寸绑定到几何。只输出 JSON。',
     user: `只输出以下 JSON 契约：
 {"annotations":[{"id":"ann_<viewId>_001","viewId":"<输入中的精确 viewId>","kind":"diameter","rawText":"Ø10 ±0.1","value":10,"unit":"mm","tolerance":{"upper":0.1,"lower":-0.1},"imageBounds":[x,y,width,height],"arrowheads":[[x,y]],"confidence":0.9}]}
 kind 只允许 text、linear、aligned、angular、radius、diameter、ordinate、arc-length。所有 imageBounds 和 arrowheads 相对当前裁剪图归一化到 0-1。text 可省略 value/unit/tolerance，其他项无法可靠解析 value 时也可省略 value，但每项必须包含 id、viewId、kind、rawText、imageBounds、arrowheads、confidence。不得输出图片或绑定的几何对象。`,
+  },
+  assess_coverage: {
+    system: '你是二维工程图感知覆盖检查器。比较裁剪图与已检测摘要，只判断是否仍有未参数化的可见几何或尺寸。只输出 JSON，不输出推理过程。',
+    user: `只输出以下 JSON 契约：
+{"complete":boolean,"confidence":0_to_1,"unreadBounds":[[x,y,width,height]],"reasons":[string]}
+unreadBounds 相对当前裁剪图归一化到 0-1，最多 16 项。若所有可见二维几何和尺寸都已被摘要覆盖，complete=true 且 unreadBounds=[]；装饰、水印、填充和颜色不计入遗漏。`,
   },
 };
 
@@ -144,6 +176,19 @@ export class DrawingVisionTools {
     return this.readGeometry('detect_geometry', input);
   }
 
+  async detectGlobalContours(input: DrawingVisionToolInput): Promise<GlobalContour[]> {
+    const output = asRecord(await this.call('detect_global_contours', input));
+    const contours = output?.contours;
+    if (!Array.isArray(contours)) {
+      throw new DrawingVisionOutputError('detect_global_contours', ['contours 必须是数组']);
+    }
+    const errors = contours.flatMap((contour, index) => (
+      validateGlobalContour(contour).errors.map((error) => `contours[${index}]: ${error}`)
+    ));
+    if (errors.length > 0) throw new DrawingVisionOutputError('detect_global_contours', errors);
+    return structuredClone(contours as GlobalContour[]);
+  }
+
   async extractAnnotations(input: DrawingVisionToolInput): Promise<AnnotationObservation[]> {
     const output = asRecord(await this.call('extract_annotations', input));
     const annotations = output?.annotations;
@@ -154,6 +199,34 @@ export class DrawingVisionTools {
       validateAnnotationObservation(annotation).errors.map((error) => `annotations[${index}]: ${error}`));
     if (errors.length > 0) throw new DrawingVisionOutputError('extract_annotations', errors);
     return structuredClone(annotations as AnnotationObservation[]);
+  }
+
+  async assessCoverage(
+    input: DrawingVisionToolInput,
+    context: DrawingCoverageContext,
+  ): Promise<DrawingCoverageAssessment> {
+    const bounded = {
+      globalContours: context.globalContours.slice(0, 100).map((item) => ({
+        id: item.id, geometryFamily: item.geometryFamily, imageBounds: item.imageBounds,
+      })),
+      contourEvidence: context.contourEvidence.slice(0, 100).map((item) => ({
+        globalContourId: item.globalContourId, imageBounds: item.imageBounds,
+      })),
+      standaloneGeometry: context.standaloneGeometry.slice(0, 100).map((item) => ({
+        type: item.type, imageBounds: item.imageBounds,
+      })),
+      annotations: context.annotations.slice(0, 100).map((item) => ({
+        kind: item.kind, imageBounds: item.imageBounds,
+      })),
+    };
+    const record = asRecord(await this.call(
+      'assess_coverage',
+      input,
+      `\n已检测摘要=${JSON.stringify(bounded)}`,
+    ));
+    const errors = validateCoverageAssessment(record);
+    if (errors.length > 0) throw new DrawingVisionOutputError('assess_coverage', errors);
+    return structuredClone(record as unknown as DrawingCoverageAssessment);
   }
 
   private async readGeometry(
@@ -181,14 +254,18 @@ export class DrawingVisionTools {
     return structuredClone(observations as GeometryObservation[]);
   }
 
-  private async call(tool: DrawingVisionToolName, input: DrawingVisionToolInput): Promise<unknown> {
+  private async call(
+    tool: DrawingVisionToolName,
+    input: DrawingVisionToolInput,
+    userSuffix = '',
+  ): Promise<unknown> {
     if (this.now() >= input.deadlineAt) throw new Error(`${tool} deadline exceeded`);
     const prompt = PROMPTS[tool];
     const reply = await this.complete({
       tool,
       modelName: input.modelName,
       systemPrompt: prompt.system,
-      userPrompt: `${prompt.user}\nrunId=${input.runId}; page=${input.page}; viewId=${input.viewId ?? 'page'}`,
+      userPrompt: `${prompt.user}\nrunId=${input.runId}; page=${input.page}; viewId=${input.viewId ?? 'page'}${userSuffix}`,
       image: input.image,
       mimeType: input.mimeType,
       signal: input.signal,
@@ -201,6 +278,37 @@ export class DrawingVisionTools {
       ]);
     }
   }
+}
+
+function validateCoverageAssessment(record: Record<string, unknown> | undefined): string[] {
+  if (!record) return ['响应必须是对象'];
+  const errors: string[] = [];
+  const keys = Object.keys(record).sort();
+  const expected = ['complete', 'confidence', 'reasons', 'unreadBounds'];
+  if (keys.join(',') !== expected.join(',')) errors.push('字段必须且只能包含 complete、confidence、unreadBounds、reasons');
+  if (typeof record.complete !== 'boolean') errors.push('complete 必须是 boolean');
+  if (typeof record.confidence !== 'number' || !Number.isFinite(record.confidence)
+    || record.confidence < 0 || record.confidence > 1) errors.push('confidence 必须位于 0-1');
+  if (!Array.isArray(record.unreadBounds) || record.unreadBounds.length > 16) {
+    errors.push('unreadBounds 必须是最多 16 项的数组');
+  } else {
+    record.unreadBounds.forEach((bounds, index) => {
+      if (!validNormalizedBounds(bounds)) errors.push(`unreadBounds[${index}] 必须位于 0-1`);
+    });
+  }
+  if (!Array.isArray(record.reasons) || record.reasons.length > 20
+    || record.reasons.some((reason) => typeof reason !== 'string')) {
+    errors.push('reasons 必须是最多 20 项的字符串数组');
+  }
+  return errors;
+}
+
+function validNormalizedBounds(value: unknown): value is NormalizedImageBounds {
+  if (!Array.isArray(value) || value.length !== 4
+    || value.some((item) => typeof item !== 'number' || !Number.isFinite(item))) return false;
+  const [x, y, width, height] = value as number[];
+  return x >= 0 && y >= 0 && width > 0 && height > 0
+    && x + width <= 1 && y + height <= 1;
 }
 
 function parseJsonReply(reply: string): unknown {

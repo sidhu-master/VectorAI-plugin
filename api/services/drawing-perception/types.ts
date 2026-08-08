@@ -38,6 +38,16 @@ export interface GeometryObservation {
   confidence: number;
 }
 
+export interface GlobalContour {
+  id: string;
+  viewId: string;
+  geometryFamily: GeometryObservationType;
+  imageBounds: NormalizedImageBounds;
+  closed: boolean;
+  confidence: number;
+  coarseParams?: Record<string, unknown>;
+}
+
 export interface AnnotationObservation {
   id: string;
   sourceId?: string;

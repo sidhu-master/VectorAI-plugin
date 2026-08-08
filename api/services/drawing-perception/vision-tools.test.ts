@@ -18,6 +18,71 @@ const input: DrawingVisionToolInput = {
 };
 
 describe('DrawingVisionTools', () => {
+  it('establishes whole-view contour identity before regional detail reads', async () => {
+    const tools = new DrawingVisionTools(async () => JSON.stringify({ contours: [{
+      id: 'contour_outer', viewId: 'view_1', geometryFamily: 'circle',
+      imageBounds: [0.1, 0.1, 0.8, 0.8], closed: true, confidence: 0.94,
+      coarseParams: { center: [0.5, 0.5], radius: 0.4 },
+    }] }));
+
+    await expect(tools.detectGlobalContours({ ...input, viewId: 'view_1' })).resolves.toEqual([{
+      id: 'contour_outer', viewId: 'view_1', geometryFamily: 'circle',
+      imageBounds: [0.1, 0.1, 0.8, 0.8], closed: true, confidence: 0.94,
+      coarseParams: { center: [0.5, 0.5], radius: 0.4 },
+    }]);
+  });
+
+  it('rejects global contours with unsupported families or invalid whole-view bounds', async () => {
+    const tools = new DrawingVisionTools(async () => JSON.stringify({ contours: [{
+      id: 'contour_bad', viewId: 'view_1', geometryFamily: 'hatch',
+      imageBounds: [0.8, 0.8, 0.4, 0.4], closed: true, confidence: 0.9,
+    }] }));
+
+    await expect(tools.detectGlobalContours({ ...input, viewId: 'view_1' }))
+      .rejects.toBeInstanceOf(DrawingVisionOutputError);
+  });
+
+  it('assesses whether a crop was fully read using a bounded observation summary', async () => {
+    const complete = vi.fn<DrawingVisionCompletion>(async () => JSON.stringify({
+      complete: false,
+      confidence: 0.82,
+      unreadBounds: [[0.6, 0.2, 0.3, 0.4]],
+      reasons: ['右侧轮廓仍未参数化'],
+    }));
+    const tools = new DrawingVisionTools(complete);
+
+    await expect(tools.assessCoverage({ ...input, viewId: 'view_1_region_1' }, {
+      globalContours: [{
+        id: 'contour_1', geometryFamily: 'line', imageBounds: [0.1, 0.1, 0.8, 0.01],
+      }],
+      contourEvidence: [{ globalContourId: 'contour_1', imageBounds: [0.1, 0.1, 0.4, 0.01] }],
+      standaloneGeometry: [],
+      annotations: [{ kind: 'linear', imageBounds: [0.2, 0.2, 0.1, 0.05] }],
+    })).resolves.toEqual({
+      complete: false,
+      confidence: 0.82,
+      unreadBounds: [[0.6, 0.2, 0.3, 0.4]],
+      reasons: ['右侧轮廓仍未参数化'],
+    });
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      tool: 'assess_coverage',
+      userPrompt: expect.stringContaining('"contour_1"'),
+    }));
+  });
+
+  it.each([
+    { complete: 'yes', confidence: 0.8, unreadBounds: [], reasons: [] },
+    { complete: true, confidence: 1.2, unreadBounds: [], reasons: [] },
+    { complete: false, confidence: 0.8, unreadBounds: [[0.9, 0.9, 0.2, 0.2]], reasons: [] },
+    { complete: false, confidence: 0.8, unreadBounds: [], reasons: [1] },
+  ])('rejects an invalid coverage assessment %#', async (response) => {
+    const tools = new DrawingVisionTools(async () => JSON.stringify(response));
+
+    await expect(tools.assessCoverage({ ...input, viewId: 'view_1_region_1' }, {
+      globalContours: [], contourEvidence: [], standaloneGeometry: [], annotations: [],
+    })).rejects.toBeInstanceOf(DrawingVisionOutputError);
+  });
+
   it('parses fenced sheet JSON and explicitly forwards model, media, and signal', async () => {
     const complete = vi.fn<DrawingVisionCompletion>(async () => `\`\`\`json
       {"unit":"mm","scale":2,"warnings":["title block unclear"]}
