@@ -1,5 +1,6 @@
 import {
   createEmptyDrawing,
+  inspectNode,
   previewTransaction,
   queryDrawing,
   randomIdFactory,
@@ -14,6 +15,7 @@ import {
   type TransactionResult,
 } from '../../../src/drawing/index.js';
 import type {
+  DrawingInspectWorkspaceResult,
   DrawingQueryWorkspaceResult,
   DrawingWorkspaceSnapshot,
 } from '../../../src/contracts/drawing-application.js';
@@ -85,6 +87,17 @@ export class DrawingApplication {
     return {
       revision: workspace.revision,
       result: queryDrawing(workspace.document, structuredClone(input.selector)),
+    };
+  }
+
+  async inspect(input: {
+    drawingId: DrawingId;
+    nodeId: string;
+  }): Promise<DrawingInspectWorkspaceResult> {
+    const workspace = await this.open(input.drawingId);
+    return {
+      revision: workspace.revision,
+      result: inspectNode(workspace.document, input.nodeId),
     };
   }
 

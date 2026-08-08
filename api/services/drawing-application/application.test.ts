@@ -206,6 +206,34 @@ describe('DrawingApplication', () => {
     });
   });
 
+  it('inspects one node through the Application boundary without exposing repository state', async () => {
+    const { application } = setup();
+    const workspace = await application.create();
+    const committed = await application.execute({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(workspace.revision, 'circle_inspect'),
+    });
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const inspected = await application.inspect({
+      drawingId: workspace.document.id,
+      nodeId: 'circle_inspect',
+    });
+    const missing = await application.inspect({
+      drawingId: workspace.document.id,
+      nodeId: 'missing',
+    });
+
+    expect(inspected).toMatchObject({
+      revision: committed.revision,
+      result: {
+        node: { id: 'circle_inspect', type: 'circle', radius: 5 },
+        relations: [], features: [],
+      },
+    });
+    expect(missing).toEqual({ revision: committed.revision, result: null });
+  });
+
   it('previews a transaction without changing the repository', async () => {
     const { application } = setup();
     const workspace = await application.create();
