@@ -47,3 +47,4 @@ export * from './patch/types';
 export { validatePatch } from './patch/validate';
 export { applyPatch } from './patch/apply';
 export type { PatchApplyResult } from './patch/apply';
+export { compileIntentToPatch } from './patch/intent-to-patch';

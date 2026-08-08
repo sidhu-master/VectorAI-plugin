@@ -5,8 +5,10 @@
  * Task Planner -> 多阶段 Action Executor -> Verification Loop
  */
 
-import type { GeometryEntity, SpatialIntent, SpatialModel, ValidationResult } from './types';
-import { validateIntent, compileIntent, validateModel } from './index';
+import type { SpatialIntent, SpatialModel } from './types';
+import { createEmptyModel } from './model';
+import { applyPatch } from './patch/apply';
+import { compileIntentToPatch } from './patch/intent-to-patch';
 
 // ============ Task Plan ============
 
@@ -143,29 +145,22 @@ function buildStepPrompt(
 
 // ============ Verification Loop ============
 
-export function verifyIntent(intent: SpatialIntent): VerificationResult {
-  const intentErrors: string[] = [];
-
-  // 1. Intent Validator
-  const intentResult = validateIntent(intent);
-  if (!intentResult.valid) {
-    intentErrors.push(...intentResult.errors);
+export function verifyIntent(
+  intent: SpatialIntent,
+  currentModel: SpatialModel = createEmptyModel(),
+): VerificationResult {
+  const compiled = compileIntentToPatch(intent, currentModel);
+  if (compiled.errors.length > 0) {
+    return { valid: false, intentErrors: compiled.errors, geometryErrors: [] };
   }
 
-  if (intentErrors.length > 0) {
-    return { valid: false, intentErrors, geometryErrors: [] };
-  }
-
-  // 2. Compiler
-  const { model: compiled, errors: compileErrors } = compileIntent(intent);
-  if (compileErrors.length > 0) {
-    return { valid: false, intentErrors: compileErrors, geometryErrors: [] };
-  }
-
-  // 3. Geometry Validator
-  const modelResult = validateModel(compiled);
-  if (!modelResult.valid) {
-    return { valid: false, intentErrors: [], geometryErrors: modelResult.errors };
+  const applied = applyPatch(currentModel, compiled.patch);
+  if ('errors' in applied) {
+    return {
+      valid: false,
+      intentErrors: [],
+      geometryErrors: applied.errors.map((error) => error.message),
+    };
   }
 
   return { valid: true, intentErrors: [], geometryErrors: [] };
@@ -182,7 +177,7 @@ export function executeStep(
   const warnings: string[] = [];
 
   // Verification Loop
-  const verification = verifyIntent(intent);
+  const verification = verifyIntent(intent, currentModel);
   if (!verification.valid) {
     return {
       stepId: step.id,
@@ -195,8 +190,7 @@ export function executeStep(
     };
   }
 
-  // 编译
-  const { model: compiled } = compileIntent(intent);
+  const { patch } = compileIntentToPatch(intent, currentModel);
 
   // 统计变化
   let added = 0;
@@ -204,11 +198,11 @@ export function executeStep(
 
   const operation = intent.operation || 'create';
   if (operation === 'replace') {
-    added = compiled.entities.length;
+    added = patch.operations.filter((item) => item.type === 'entity.add').length;
   } else if (operation === 'modify') {
-    modified = compiled.entities.length;
+    modified = patch.operations.filter((item) => item.type === 'entity.update').length;
   } else {
-    added = compiled.entities.length;
+    added = patch.operations.filter((item) => item.type === 'entity.add').length;
   }
 
   // 低置信度警告
@@ -239,29 +233,10 @@ export function applyStepToModel(
 ): SpatialModel {
   if (!result.success || !result.intent) return currentModel;
 
-  const { model: compiled } = compileIntent(result.intent);
-  const operation = result.intent.operation || 'create';
-
-  if (operation === 'replace') {
-    return { ...compiled, metadata: { ...compiled.metadata, parentId: undefined } };
-  }
-
-  if (operation === 'modify') {
-    const entityMap = new Map(currentModel.entities.map((e) => [e.id, e]));
-    for (const ent of compiled.entities) entityMap.set(ent.id, ent);
-    return {
-      ...currentModel,
-      entities: Array.from(entityMap.values()),
-      relations: [...currentModel.relations, ...compiled.relations],
-    };
-  }
-
-  // create (default)
-  return {
-    ...currentModel,
-    entities: [...currentModel.entities, ...compiled.entities],
-    relations: [...currentModel.relations, ...compiled.relations],
-  };
+  const compiled = compileIntentToPatch(result.intent, currentModel);
+  if (compiled.errors.length > 0) return currentModel;
+  const applied = applyPatch(currentModel, compiled.patch);
+  return applied.success ? applied.model : currentModel;
 }
 
 // ============ Exports ============
