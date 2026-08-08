@@ -115,6 +115,20 @@ export class DrawingToolRegistry {
     }
   }
 
+  discardPrepared(handle: string): boolean {
+    return this.#previews.delete(handle);
+  }
+
+  discardRun(runId: string): number {
+    let discarded = 0;
+    for (const [handle, preview] of this.#previews) {
+      if (preview.runId !== runId) continue;
+      this.#previews.delete(handle);
+      discarded += 1;
+    }
+    return discarded;
+  }
+
   async #query(
     invocation: DrawingToolInvocation,
     tool: DrawingToolDefinition,

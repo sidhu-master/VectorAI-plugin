@@ -54,6 +54,7 @@ export interface DrawingAgentState {
 
 export type DrawingAgentEvent =
   | { type: 'PLAN_READY'; plan: DrawingAgentPlan }
+  | { type: 'REPLAN_REQUIRED'; revision: RevisionId }
   | { type: 'REPLAN_STARTED' }
   | { type: 'PAUSE_REQUESTED' }
   | { type: 'SAFE_POINT'; point: DrawingAgentSafePoint }
@@ -141,6 +142,14 @@ export function reduceDrawingAgentState(
         activeInstructions: [],
         needsReplan: false,
         status: state.status === 'pause_requested' ? 'paused' : 'running',
+      });
+
+    case 'REPLAN_REQUIRED':
+      return valid(state, {
+        ...state,
+        revision: event.revision,
+        currentWorkflowNodeId: null,
+        needsReplan: true,
       });
 
     case 'REPLAN_STARTED':

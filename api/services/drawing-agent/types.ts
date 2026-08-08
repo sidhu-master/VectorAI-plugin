@@ -127,3 +127,17 @@ export interface DrawingPlannerModelAdapter {
 export interface DrawingDecisionModelAdapter {
   decide(input: DrawingDecisionInput): Promise<AgentDecision>;
 }
+
+export interface DrawingAgentModelProfile {
+  planner: string;
+  decision: string;
+  repair: string;
+}
+
+export interface StartDrawingAgentRunInput {
+  runId: string;
+  drawingId: DrawingId;
+  baseRevision: RevisionId;
+  goal: string;
+  modelProfile: DrawingAgentModelProfile;
+}
