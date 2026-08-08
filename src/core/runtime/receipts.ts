@@ -9,5 +9,8 @@ export interface SpatialToolReceipt {
   transientSignals: Record<string, unknown>;
   patch?: SpatialPatch;
   validation?: { valid: boolean; errors: string[] };
+  componentId?: string;
+  observationIds?: string[];
+  lowConfidenceCount?: number;
   needReplan: boolean;
 }
