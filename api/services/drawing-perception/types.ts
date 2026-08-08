@@ -61,6 +61,11 @@ export interface DimensionAssociation {
   score: number;
   reasons: string[];
   status: 'resolved' | 'ambiguous' | 'conflict';
+  candidates?: Array<{
+    targets: DimensionAssociationTarget[];
+    score: number;
+    reasons: string[];
+  }>;
 }
 
 export interface DrawingRecordValidation {
