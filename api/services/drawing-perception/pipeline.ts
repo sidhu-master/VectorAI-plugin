@@ -614,11 +614,19 @@ export class DrawingPerceptionPipeline {
       rawEvidence = evidenceTool ? settledArray<ContourEvidence>(results[2]) : [];
       errors = rejectedToolErrors(region.viewId, tools, results);
     }
-    let assessment: DrawingCoverageAssessment | null = this.vision.assessCoverage
-      ? null
-      : { complete: true, confidence: 1, unreadBounds: [], reasons: [] };
     const assess = this.vision.assessCoverage?.bind(this.vision);
-    if (assess) {
+    const terminalRefinement = region.depth >= this.maxRefinementDepth;
+    let assessment: DrawingCoverageAssessment | null = !assess
+      ? { complete: true, confidence: 1, unreadBounds: [], reasons: [] }
+      : terminalRefinement
+        ? {
+            complete: false,
+            confidence: 0,
+            unreadBounds: [],
+            reasons: ['terminal_reread_unverified'],
+          }
+        : null;
+    if (assess && !terminalRefinement) {
       try {
         assessment = await this.retryViewTool(input, () => assess(visionInput, {
           globalContours: projectedContours,

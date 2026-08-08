@@ -289,7 +289,9 @@ describe('DrawingPerceptionPipeline', () => {
       cropper: { crop: async ({ image, mimeType }) => ({ image, mimeType }) },
     });
     const store = new FileDrawingObservationStore(rootDir);
-    const pipeline = new DrawingPerceptionPipeline({ assets, vision, observationStore: store });
+    const pipeline = new DrawingPerceptionPipeline({
+      assets, vision, observationStore: store, maxRefinementDepth: 2,
+    });
 
     const outputs = await collect(pipeline.run({
       runId: 'run_outline_first', page: 1, image: 'eA==', mimeType: 'image/png',
@@ -347,7 +349,7 @@ describe('DrawingPerceptionPipeline', () => {
     });
     const store = new FileDrawingObservationStore(rootDir);
     const pipeline = new DrawingPerceptionPipeline({
-      assets, vision, observationStore: store, maxRefinementDepth: 0,
+      assets, vision, observationStore: store, maxRefinementDepth: 1,
     });
 
     const outputs = await collect(pipeline.run({
@@ -362,17 +364,27 @@ describe('DrawingPerceptionPipeline', () => {
       regions: Array<{ status: string; refinementReasons: string[] }>;
     }>('run_exhausted', 'coverage-ledger');
     expect(assessCoverage).toHaveBeenCalledTimes(2);
-    expect(geometry).toEqual([expect.objectContaining({ id: expect.stringContaining('small_circle') })]);
-    expect(ledger).toMatchObject({
-      complete: false,
-      regions: [{
-        status: 'budget_exhausted',
-        refinementReasons: expect.arrayContaining(['assessment_unavailable', 'max_depth']),
-      }],
+    expect(geometry).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining('small_circle') }),
+    ]));
+    expect(ledger.complete).toBe(false);
+    expect(ledger.regions[0]).toMatchObject({
+      status: 'refine',
+      refinementReasons: expect.arrayContaining(['assessment_unavailable']),
     });
+    expect(ledger.regions.slice(1)).toEqual([
+      expect.objectContaining({
+        status: 'budget_exhausted',
+        refinementReasons: expect.arrayContaining(['model_incomplete', 'max_depth']),
+      }),
+      expect.objectContaining({
+        status: 'budget_exhausted',
+        refinementReasons: expect.arrayContaining(['model_incomplete', 'max_depth']),
+      }),
+    ]);
     expect(outputs.at(-1)).toMatchObject({
       kind: 'stage', stage: 'completed',
-      detail: { coverageComplete: false, incompleteRegionCount: 1 },
+      detail: { coverageComplete: false, incompleteRegionCount: 2 },
     });
   });
 });
