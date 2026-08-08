@@ -333,9 +333,9 @@ export class DrawingAgentRuntime {
     if (remaining <= 0) throw new Error('任务已超过运行截止时间');
     const controller = new AbortController();
     record.activeController = controller;
-    const timer = setTimeout(() => controller.abort(new Error('perception timeout')), (
-      Math.min(this.#stageTimeoutMs, remaining)
-    ));
+    // Perception is a bounded multi-tool pipeline; each vision call owns its model deadline.
+    // The outer controller therefore follows the run deadline instead of a single-call timeout.
+    const timer = setTimeout(() => controller.abort(new Error('perception timeout')), remaining);
     (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
     record.progress.publish('model_started', '正在理解图纸');
     try {

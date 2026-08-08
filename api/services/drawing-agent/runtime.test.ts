@@ -47,6 +47,11 @@ async function setup(input: {
   auditStore?: DrawingAgentAuditStore;
   perceptionOutputs?: DrawingPerceptionOutput[];
   perceptionModels?: string[];
+  perceptionService?: { run(input: {
+    signal: AbortSignal;
+    modelName: string;
+  }): AsyncIterable<DrawingPerceptionOutput> };
+  stageTimeoutMs?: number;
 } = {}) {
   const idFactory = ids();
   const repository = new MemoryDrawingRepository({ idFactory, now: () => 100 });
@@ -94,10 +99,11 @@ async function setup(input: {
     now: () => 100,
     limits: input.limits,
     auditStore: input.auditStore,
-    sourceArtifacts: input.perceptionOutputs ? sourceStore() : undefined,
-    perception: input.perceptionOutputs
+    sourceArtifacts: input.perceptionOutputs || input.perceptionService ? sourceStore() : undefined,
+    perception: input.perceptionService ?? (input.perceptionOutputs
       ? perception(input.perceptionOutputs, input.perceptionModels)
-      : undefined,
+      : undefined),
+    stageTimeoutMs: input.stageTimeoutMs,
     visionModelName: 'vision-model',
     visionRepairModelName: 'repair-vision-model',
   });
@@ -140,6 +146,35 @@ describe('DrawingAgentRuntime', () => {
     expect(final.analysisSummary).toContain('1 个区域尚未完整读取');
     expect(final.analysisSummary).toContain('1 个全局轮廓尚未参数化');
     expect(final.commitCount).toBe(1);
+  });
+
+  it('uses the run deadline for the multi-call perception pipeline instead of one model timeout', async () => {
+    const perceptionService = {
+      async *run(input: { signal: AbortSignal }): AsyncIterable<DrawingPerceptionOutput> {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 20);
+          input.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(input.signal.reason);
+          }, { once: true });
+        });
+        yield {
+          kind: 'stage', runId: 'run_1', stage: 'completed', timestamp: 100,
+          durationMs: 20, detail: { coverageComplete: true },
+        };
+      },
+    };
+    const { runtime, workspace } = await setup({
+      perceptionService,
+      stageTimeoutMs: 5,
+      limits: { wallClockMs: 1_000 },
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
   });
 
   it('reconstructs DrawingCommand batches through preview and commit without a text planner', async () => {
