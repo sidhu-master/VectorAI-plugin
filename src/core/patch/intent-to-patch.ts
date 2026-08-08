@@ -124,6 +124,22 @@ function entityParams(entity: GeometryEntity): Record<string, unknown> {
       closed: entity.closed,
       periodic: entity.periodic,
     };
+    case 'text': return {
+      content: entity.content, position: entity.position, height: entity.height,
+      rotation: entity.rotation, alignment: entity.alignment,
+      verticalAlignment: entity.verticalAlignment,
+      ...(entity.maxWidth === undefined ? {} : { maxWidth: entity.maxWidth }),
+    };
+    case 'dimension': return {
+      dimensionKind: entity.dimensionKind,
+      associationStatus: entity.associationStatus,
+      targets: entity.targets,
+      ...(entity.candidates === undefined ? {} : { candidates: entity.candidates }),
+      ...(entity.observedValue === undefined ? {} : { observedValue: entity.observedValue }),
+      ...(entity.computedValue === undefined ? {} : { computedValue: entity.computedValue }),
+      textPosition: entity.textPosition,
+      definitionPoints: entity.definitionPoints,
+    };
     default: return {};
   }
 }

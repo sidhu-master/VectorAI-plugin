@@ -11,6 +11,7 @@ import type {
   GeometryEntity,
   IntentObject,
   LineEntity,
+  DimensionEntity,
   PointEntity,
   PolylineEntity,
   PolylineVertex,
@@ -20,6 +21,7 @@ import type {
   SpatialModel,
   SpatialRelation,
   XLineEntity,
+  TextEntity,
 } from './types';
 import { PROTOCOL_NAME, PROTOCOL_VERSION } from './types';
 
@@ -85,6 +87,12 @@ export function compileIntent(intent: SpatialIntent): {
         break;
       case 'spline':
         entity = compileSpline(obj, id);
+        break;
+      case 'text':
+        entity = compileText(obj, id);
+        break;
+      case 'dimension':
+        entity = compileDimension(obj, id);
         break;
       default:
         supported = false;
@@ -366,4 +374,66 @@ function asNumbers(value: unknown): number[] | null {
 
 function isNonDecreasing(values: number[]): boolean {
   return values.every((value, index) => index === 0 || value >= values[index - 1]);
+}
+
+function compileText(obj: CompilableIntentObject, id: string): TextEntity | null {
+  const content = obj.params.content;
+  const position = asPoint(obj.params.position);
+  const height = asNumber(obj.params.height);
+  const rotation = asNumber(obj.params.rotation ?? 0);
+  const alignment = obj.params.alignment ?? 'left';
+  const verticalAlignment = obj.params.verticalAlignment ?? 'baseline';
+  const maxWidth = obj.params.maxWidth === undefined ? undefined : asNumber(obj.params.maxWidth);
+  if (typeof content !== 'string' || !content || !position || height === null || height <= 0
+    || rotation === null
+    || !['left', 'center', 'right'].includes(alignment as string)
+    || !['baseline', 'bottom', 'middle', 'top'].includes(verticalAlignment as string)
+    || (maxWidth !== undefined && (maxWidth === null || maxWidth <= 0))) return null;
+  return {
+    ...baseEntity(obj, id), type: 'text', content, position, height,
+    rotation: normalizeAngle(rotation),
+    alignment: alignment as TextEntity['alignment'],
+    verticalAlignment: verticalAlignment as TextEntity['verticalAlignment'],
+    ...(maxWidth === undefined ? {} : { maxWidth }),
+  };
+}
+
+function compileDimension(obj: CompilableIntentObject, id: string): DimensionEntity | null {
+  const params = obj.params;
+  const kinds = ['linear', 'aligned', 'angular', 'radius', 'diameter', 'ordinate', 'arc-length'];
+  const statuses = ['resolved', 'ambiguous', 'conflict'];
+  const textPosition = asPoint(params.textPosition);
+  const definitionPoints = asPoints(params.definitionPoints);
+  if (!kinds.includes(params.dimensionKind as string)
+    || !statuses.includes(params.associationStatus as string)
+    || !Array.isArray(params.targets)
+    || !textPosition || !definitionPoints) return null;
+  const targets = structuredClone(params.targets) as DimensionEntity['targets'];
+  const candidates = params.candidates === undefined
+    ? undefined
+    : structuredClone(params.candidates) as DimensionEntity['candidates'];
+  return {
+    ...baseEntity(obj, id),
+    type: 'dimension',
+    dimensionKind: params.dimensionKind as DimensionEntity['dimensionKind'],
+    associationStatus: params.associationStatus as DimensionEntity['associationStatus'],
+    targets,
+    ...(candidates === undefined ? {} : { candidates }),
+    ...(asOptionalNumber(params.observedValue, 'observedValue') ?? {}),
+    ...(asOptionalNumber(params.computedValue, 'computedValue') ?? {}),
+    ...(typeof params.displayText === 'string' ? { displayText: params.displayText } : {}),
+    ...(typeof params.unit === 'string' ? { unit: params.unit as DimensionEntity['unit'] } : {}),
+    ...(params.tolerance && typeof params.tolerance === 'object'
+      ? { tolerance: structuredClone(params.tolerance) as DimensionEntity['tolerance'] } : {}),
+    ...(typeof params.prefix === 'string' ? { prefix: params.prefix } : {}),
+    ...(typeof params.suffix === 'string' ? { suffix: params.suffix } : {}),
+    textPosition,
+    definitionPoints,
+  };
+}
+
+function asOptionalNumber(value: unknown, key: string): Record<string, number> | null {
+  if (value === undefined) return {};
+  const number = asNumber(value);
+  return number === null ? null : { [key]: number };
 }

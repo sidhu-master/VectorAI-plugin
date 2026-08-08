@@ -17,6 +17,7 @@ import { RELATION_MIN_ENTITIES } from './types';
 
 const VALID_ENTITY_TYPES: EntityType[] = [
   'point', 'line', 'ray', 'xline', 'circle', 'arc', 'ellipse', 'polyline', 'spline',
+  'text', 'dimension',
 ];
 
 // 各实体类型所需的关键参数
@@ -26,6 +27,8 @@ const REQUIRED_PARAMS: Partial<Record<EntityType, string[]>> = {
   circle: ['center', 'radius'],
   polyline: ['vertices'],
   spline: ['degree', 'controlPoints', 'knots'],
+  text: ['content', 'position', 'height'],
+  dimension: ['dimensionKind', 'associationStatus', 'targets', 'textPosition', 'definitionPoints'],
 };
 
 const VALID_RELATION_KINDS: RelationKind[] = [
@@ -121,6 +124,24 @@ function validateIntentObject(obj: IntentObject, index: number): string[] {
 
   if (obj.type === 'polyline') validatePolylineParams(obj.params, prefix, errors);
   if (obj.type === 'spline') validateSplineParams(obj.params, prefix, errors);
+  if (obj.type === 'text') {
+    if (typeof obj.params.content !== 'string' || !obj.params.content) {
+      errors.push(`${prefix} (text): content 必须是非空字符串`);
+    }
+    if (!isVector(obj.params.position)) errors.push(`${prefix} (text): position 无效`);
+    if (!isPositiveNumber(obj.params.height)) errors.push(`${prefix} (text): height 必须大于 0`);
+    if (obj.params.maxWidth !== undefined && !isPositiveNumber(obj.params.maxWidth)) {
+      errors.push(`${prefix} (text): maxWidth 必须大于 0`);
+    }
+  }
+  if (obj.type === 'dimension') {
+    if (!Array.isArray(obj.params.targets)) errors.push(`${prefix} (dimension): targets 必须是数组`);
+    if (!isVector(obj.params.textPosition)) errors.push(`${prefix} (dimension): textPosition 无效`);
+    if (!Array.isArray(obj.params.definitionPoints)
+      || !obj.params.definitionPoints.every(isVector)) {
+      errors.push(`${prefix} (dimension): definitionPoints 无效`);
+    }
+  }
 
   if (obj.confidence !== undefined
     && (typeof obj.confidence !== 'number' || obj.confidence < 0 || obj.confidence > 1)) {

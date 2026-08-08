@@ -128,8 +128,39 @@ export function validateModel(model: SpatialModel): ValidationResult {
         validateSpline(entity, prefix, errors);
         break;
 
+      case 'text':
+        if (!entity.content) errors.push(`${prefix}: content 不能为空`);
+        if (!isValidPoint(entity.position)) errors.push(`${prefix}: position 无效`);
+        if (!isValidNumber(entity.height) || entity.height <= 0) errors.push(`${prefix}: height 必须大于 0`);
+        if (!isNormalizedAngle(entity.rotation)) errors.push(`${prefix}: rotation 无效`);
+        if (entity.maxWidth !== undefined && (!isValidNumber(entity.maxWidth) || entity.maxWidth <= 0)) {
+          errors.push(`${prefix}: maxWidth 必须大于 0`);
+        }
+        break;
+
+      case 'dimension':
+        validateDimensionShape(entity, prefix, errors);
+        break;
+
       default:
         errors.push(`${prefix}: 未知实体类型`);
+    }
+  });
+
+  model.entities.forEach((entity, index) => {
+    if (entity.type !== 'dimension') return;
+    const prefix = `entities[${index}] (dimension)`;
+    for (const target of entity.targets) {
+      if (!entityIds.has(target.entityId)) {
+        errors.push(`${prefix}: target 引用了不存在的实体 ID "${target.entityId}"`);
+      }
+    }
+    for (const candidate of entity.candidates ?? []) {
+      for (const target of candidate.targets) {
+        if (!entityIds.has(target.entityId)) {
+          errors.push(`${prefix}: candidate 引用了不存在的实体 ID "${target.entityId}"`);
+        }
+      }
     }
   });
 
@@ -228,4 +259,37 @@ function validateSpline(
   if (typeof entity.closed !== 'boolean') errors.push(`${prefix}: closed 必须是布尔值`);
   if (typeof entity.periodic !== 'boolean') errors.push(`${prefix}: periodic 必须是布尔值`);
   if (entity.periodic && !entity.closed) errors.push(`${prefix}: periodic 样条必须同时 closed`);
+}
+
+function validateDimensionShape(
+  entity: Extract<SpatialModel['entities'][number], { type: 'dimension' }>,
+  prefix: string,
+  errors: string[],
+): void {
+  const minimumTargets = ['radius', 'diameter', 'arc-length'].includes(entity.dimensionKind) ? 1 : 2;
+  if (entity.associationStatus === 'resolved' && entity.targets.length < minimumTargets) {
+    errors.push(`${prefix}: resolved ${entity.dimensionKind} 至少需要 ${minimumTargets} 个 targets`);
+  }
+  if (entity.associationStatus === 'ambiguous' && (entity.candidates?.length ?? 0) < 2) {
+    errors.push(`${prefix}: ambiguous dimension 至少需要两个 candidates`);
+  }
+  if (!isValidPoint(entity.textPosition)) errors.push(`${prefix}: textPosition 无效`);
+  if (!Array.isArray(entity.definitionPoints) || !entity.definitionPoints.every(isValidPoint)) {
+    errors.push(`${prefix}: definitionPoints 无效`);
+  }
+  entity.targets.forEach((target, index) => {
+    if (!target || typeof target.entityId !== 'string' || !isValidAnchor(target.anchor)) {
+      errors.push(`${prefix}: targets[${index}] anchor 无效`);
+    }
+  });
+}
+
+function isValidAnchor(anchor: unknown): boolean {
+  if (!anchor || typeof anchor !== 'object') return false;
+  const value = anchor as Record<string, unknown>;
+  if (['start', 'end', 'center'].includes(value.kind as string)) return true;
+  if (value.kind === 'vertex') return Number.isInteger(value.index) && (value.index as number) >= 0;
+  if (value.kind === 'curve-parameter') return isValidNumber(value.parameter);
+  if (value.kind === 'nearest') return isValidPoint(value.point);
+  return false;
 }

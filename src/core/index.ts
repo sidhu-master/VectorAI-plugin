@@ -8,6 +8,7 @@ export { compileIntent, resetIdCounter } from './compiler';
 export { validateModel } from './validator';
 export { createEmptyModel, createModel, createDerivedModel, cloneModel } from './model';
 export { migrateModelToCurrent } from './migrate';
+export { computeDimensionValue, refreshDimensions } from './dimensions';
 export { DXFAdapter } from './adapters/dxf';
 export type { RepresentationAdapter } from './adapters/types';
 
