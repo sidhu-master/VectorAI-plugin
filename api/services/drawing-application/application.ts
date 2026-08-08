@@ -11,6 +11,16 @@ import {
 } from '../../../src/drawing/index.js';
 import type { DrawingWorkspaceSnapshot } from '../../../src/contracts/drawing-application.js';
 
+export class DrawingApplicationError extends Error {
+  readonly code: 'DRAWING_NOT_FOUND';
+
+  constructor(code: 'DRAWING_NOT_FOUND', message: string) {
+    super(message);
+    this.name = 'DrawingApplicationError';
+    this.code = code;
+  }
+}
+
 export class DrawingApplication {
   readonly #repository: DrawingRepository;
   readonly #idFactory: IdFactory;
@@ -37,11 +47,18 @@ export class DrawingApplication {
   }
 
   async open(drawingId: DrawingId): Promise<DrawingWorkspaceSnapshot> {
-    const [current, commits] = await Promise.all([
-      this.#repository.getCurrent(drawingId),
-      this.#repository.listCommits(drawingId),
-    ]);
-    return { ...current, commits };
+    try {
+      const [current, commits] = await Promise.all([
+        this.#repository.getCurrent(drawingId),
+        this.#repository.listCommits(drawingId),
+      ]);
+      return { ...current, commits };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('does not exist')) {
+        throw new DrawingApplicationError('DRAWING_NOT_FOUND', '图纸不存在');
+      }
+      throw error;
+    }
   }
 
   async execute(input: {

@@ -19,12 +19,19 @@ import { FileAuditStore } from './services/audit/file-audit-store.js'
 import { LocalAttachmentPreparer } from './services/agent-runtime/attachments.js'
 import { resolveAgentModelProfile } from './services/agent-runtime/model-profile.js'
 import { DrawingPerceptionPipeline } from './services/drawing-perception/pipeline.js'
+import { FileDrawingRepository } from './services/drawing-application/file-drawing-repository.js'
+import { DrawingApplication } from './services/drawing-application/application.js'
+import { createDrawingsRouter } from './routes/drawings.js'
 
 // load env
 dotenv.config()
 
 const app: express.Application = express()
 const auditStore = new FileAuditStore(path.resolve(process.cwd(), '.local/vectorai/runs'))
+const drawingRepository = new FileDrawingRepository({
+  rootDirectory: path.resolve(process.cwd(), '.local/vectorai/drawings'),
+})
+const drawingApplication = new DrawingApplication({ repository: drawingRepository })
 const agentRuntime = new AgentRuntime({
   planner: new GatewayPlannerAdapter(),
   executor: new GatewayExecutorAdapter(),
@@ -54,6 +61,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 app.use('/api/auth', authRoutes)
 app.use('/api/ai', aiRoutes)
 app.use('/api/agent/runs', createAgentRunsRouter(agentRuntime, agentModelDefaults))
+app.use('/api/drawings', createDrawingsRouter(drawingApplication))
 
 /**
  * health

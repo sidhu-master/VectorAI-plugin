@@ -170,6 +170,8 @@ describe('DrawingApplication', () => {
 
   it('rejects opening an unknown drawing without fabricating state', async () => {
     const { application } = setup();
-    await expect(application.open('missing' as DrawingId)).rejects.toThrow('does not exist');
+    await expect(application.open('missing' as DrawingId)).rejects.toMatchObject({
+      code: 'DRAWING_NOT_FOUND',
+    });
   });
 });
