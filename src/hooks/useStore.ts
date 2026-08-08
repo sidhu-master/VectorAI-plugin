@@ -9,14 +9,21 @@ import {
   validateModel,
   createEmptyModel,
   DXFAdapter,
-  applyStepToModel,
+  compileIntentToPatch,
+  createHistory,
+  commitPatch,
+  undo as undoHistory,
+  redo as redoHistory,
 } from '@/core';
 import type {
   GeometryEntity,
   SpatialIntent,
   SpatialModel,
+  SpatialRelation,
 } from '@/core/types';
 import type { TaskPlan, StepResult } from '@/core/agent';
+import type { SpatialHistory } from '@/core/history/types';
+import type { EntityPatch } from '@/core/patch/types';
 
 export interface ChatMessage {
   id: string;
@@ -38,6 +45,7 @@ export interface PerceptionResult {
 interface AppState {
   // 空间模型
   model: SpatialModel;
+  history: SpatialHistory;
   selectedIds: string[];
 
   // AI 对话
@@ -61,6 +69,7 @@ interface AppState {
 
   // 感知结果
   perceptionResults: PerceptionResult[];
+  perceptionRelations: SpatialRelation[];
   perceptionStatus: 'idle' | 'loading' | 'error';
 
   // Agent 工作流
@@ -89,6 +98,8 @@ interface AppState {
   setCanvasTransform: (transform: Partial<AppState['canvasTransform']>) => void;
   setMouseCoords: (coords: { x: number; y: number } | null) => void;
   clearAll: () => void;
+  undo: () => void;
+  redo: () => void;
 }
 
 let msgIdCounter = 0;
@@ -154,8 +165,11 @@ function captureCanvas(): Promise<string | undefined> {
   }
 }
 
+const initialModel = createEmptyModel('mm');
+
 export const useStore = create<AppState>((set, get) => ({
-  model: createEmptyModel('mm'),
+  model: initialModel,
+  history: createHistory(initialModel),
   selectedIds: [],
 
   aiMessages: [],
@@ -174,6 +188,7 @@ export const useStore = create<AppState>((set, get) => ({
   mouseCoords: null,
 
   perceptionResults: [],
+  perceptionRelations: [],
   perceptionStatus: 'idle',
 
   taskPlan: null,
@@ -182,77 +197,52 @@ export const useStore = create<AppState>((set, get) => ({
   agentStatus: 'idle',
 
   applyIntent: (intent: SpatialIntent) => {
-    const intentResult = validateIntent(intent);
-    if (!intentResult.valid) return intentResult.errors;
-
-    const { model: compiled, errors: compileErrors } = compileIntent(intent);
-    if (compileErrors.length > 0) return compileErrors;
-
-    const modelResult = validateModel(compiled);
-    if (!modelResult.valid) return modelResult.errors;
-
-    const currentModel = get().model;
-    const operation = intent.operation || 'create';
-
-    let newEntities: typeof currentModel.entities;
-    let newRelations: typeof currentModel.relations;
-
-    if (operation === 'replace') {
-      // 替换：用新实体完全替换
-      newEntities = compiled.entities;
-      newRelations = compiled.relations;
-    } else if (operation === 'modify') {
-      // 修改：按 ID 更新已有实体，无 ID 的视为新增
-      const entityMap = new Map(currentModel.entities.map((e) => [e.id, e]));
-      for (const newEnt of compiled.entities) {
-        entityMap.set(newEnt.id, newEnt);
-      }
-      newEntities = Array.from(entityMap.values());
-      // 关系：追加（避免重复）
-      const relIds = new Set(currentModel.relations.map((r) => r.id));
-      newRelations = [...currentModel.relations];
-      for (const rel of compiled.relations) {
-        if (!relIds.has(rel.id)) newRelations.push(rel);
-      }
-    } else {
-      // create（默认）：追加
-      newEntities = [...currentModel.entities, ...compiled.entities];
-      newRelations = [...currentModel.relations, ...compiled.relations];
-    }
-
-    const newModel: SpatialModel = {
-      ...compiled,
-      metadata: { ...compiled.metadata, parentId: undefined },
-      entities: newEntities,
-      relations: newRelations,
-    };
-
-    set({ model: newModel, selectedIds: [] });
+    const state = get();
+    const compiled = compileIntentToPatch(intent, state.model);
+    if (compiled.errors.length > 0) return compiled.errors;
+    const result = commitPatch(state.history, {
+      id: genId('commit'), runId: 'interactive', stepId: genId('step'),
+      source: 'AI', patch: compiled.patch, confidence: intent.confidence,
+      timestamp: Date.now(),
+    });
+    if ('errors' in result) return result.errors.map((error) => error.message);
+    set({ history: result.history, model: result.history.model, selectedIds: [] });
     return [];
   },
 
   updateEntity: (id, patch) => {
-    set((state) => ({
-      model: {
-        ...state.model,
-        entities: state.model.entities.map((e) =>
-          e.id === id ? { ...e, ...patch } as GeometryEntity : e
-        ),
-      },
-    }));
+    const state = get();
+    const result = commitPatch(state.history, {
+      id: genId('commit'), runId: 'interactive', stepId: genId('step'), source: 'user',
+      patch: { operations: [{ type: 'entity.update', entityId: id, changes: patch as EntityPatch }] },
+      timestamp: Date.now(),
+    });
+    if (result.success) set({ history: result.history, model: result.history.model });
   },
 
   deleteEntity: (id) => {
-    set((state) => ({
-      model: {
-        ...state.model,
-        entities: state.model.entities.filter((e) => e.id !== id),
-        relations: state.model.relations.filter(
-          (r) => !r.entities.includes(id)
-        ),
-      },
-      selectedIds: state.selectedIds.filter((sid) => sid !== id),
-    }));
+    const state = get();
+    const result = commitPatch(state.history, {
+      id: genId('commit'), runId: 'interactive', stepId: genId('step'), source: 'user',
+      patch: { operations: [{ type: 'entity.delete', entityId: id }] }, timestamp: Date.now(),
+    });
+    if (result.success) {
+      set({
+        history: result.history,
+        model: result.history.model,
+        selectedIds: state.selectedIds.filter((selectedId) => selectedId !== id),
+      });
+    }
+  },
+
+  undo: () => {
+    const history = undoHistory(get().history);
+    set({ history, model: history.model, selectedIds: [] });
+  },
+
+  redo: () => {
+    const history = redoHistory(get().history);
+    set({ history, model: history.model, selectedIds: [] });
   },
 
   selectEntity: (id, ctrlKey) =>
@@ -328,7 +318,11 @@ export const useStore = create<AppState>((set, get) => ({
         rejected: false,
       }));
 
-      set({ perceptionResults: results, perceptionStatus: 'idle' });
+      set({
+        perceptionResults: results,
+        perceptionRelations: compiled.relations,
+        perceptionStatus: 'idle',
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误';
       set({ perceptionStatus: 'error' });
@@ -344,14 +338,26 @@ export const useStore = create<AppState>((set, get) => ({
 
     if (toConfirm.length === 0) return;
 
-    // 添加到模型
-    const newEntities = [...state.model.entities, ...toConfirm.map((r) => r.entity)];
-    set({
-      model: { ...state.model, entities: newEntities },
-      perceptionResults: state.perceptionResults.filter(
-        (r) => !resultIds.includes(r.resultId),
-      ),
+    const entityIds = new Set(toConfirm.map((result) => result.entity.id));
+    const relations = state.perceptionRelations.filter((relation) =>
+      relation.entities.every((entityId) => entityIds.has(entityId))
+    );
+    const commit = commitPatch(state.history, {
+      id: genId('commit'), runId: 'perception', stepId: genId('step'), source: 'AI',
+      patch: { operations: [
+        ...toConfirm.map((result) => ({ type: 'entity.add' as const, entity: result.entity })),
+        ...relations.map((relation) => ({ type: 'relation.add' as const, relation })),
+      ] },
+      timestamp: Date.now(),
     });
+    if (commit.success) {
+      set({
+        history: commit.history,
+        model: commit.history.model,
+        perceptionResults: state.perceptionResults.filter((r) => !resultIds.includes(r.resultId)),
+        perceptionRelations: state.perceptionRelations.filter((relation) => !relations.includes(relation)),
+      });
+    }
   },
 
   confirmAll: () => {
@@ -359,11 +365,17 @@ export const useStore = create<AppState>((set, get) => ({
     const valid = state.perceptionResults.filter((r) => !r.rejected);
     if (valid.length === 0) return;
 
-    const newEntities = [...state.model.entities, ...valid.map((r) => r.entity)];
-    set({
-      model: { ...state.model, entities: newEntities },
-      perceptionResults: [],
+    const commit = commitPatch(state.history, {
+      id: genId('commit'), runId: 'perception', stepId: genId('step'), source: 'AI',
+      patch: { operations: [
+        ...valid.map((result) => ({ type: 'entity.add' as const, entity: result.entity })),
+        ...state.perceptionRelations.map((relation) => ({ type: 'relation.add' as const, relation })),
+      ] },
+      timestamp: Date.now(),
     });
+    if (commit.success) {
+      set({ history: commit.history, model: commit.history.model, perceptionResults: [], perceptionRelations: [] });
+    }
   },
 
   rejectResult: (resultId) => {
@@ -372,7 +384,7 @@ export const useStore = create<AppState>((set, get) => ({
     }));
   },
 
-  clearPerception: () => set({ perceptionResults: [], perceptionStatus: 'idle' }),
+  clearPerception: () => set({ perceptionResults: [], perceptionRelations: [], perceptionStatus: 'idle' }),
 
   // ============ Agent Workflow ============
 
@@ -440,12 +452,26 @@ export const useStore = create<AppState>((set, get) => ({
 
       // 如果成功，应用到模型
       let newModel = state.model;
+      let newHistory = state.history;
       if (result.success) {
-        newModel = applyStepToModel(result, state.model);
+        const compiled = result.intent
+          ? compileIntentToPatch(result.intent, state.model)
+          : { patch: { operations: [] }, errors: [] };
+        if (compiled.errors.length === 0) {
+          const committed = commitPatch(state.history, {
+            id: genId('commit'), runId: 'agent', stepId: String(step.id), source: 'AI',
+            patch: compiled.patch, confidence: result.intent?.confidence, timestamp: Date.now(),
+          });
+          if (committed.success) {
+            newHistory = committed.history;
+            newModel = committed.history.model;
+          }
+        }
       }
 
       set({
         model: newModel,
+        history: newHistory,
         stepResults: [...state.stepResults, result],
         currentStepIndex: state.currentStepIndex + 1,
         agentStatus: state.currentStepIndex + 1 >= state.taskPlan.steps.length ? 'complete' : 'idle',
@@ -553,18 +579,22 @@ export const useStore = create<AppState>((set, get) => ({
 
   setMouseCoords: (coords) => set({ mouseCoords: coords }),
 
-  clearAll: () =>
+  clearAll: () => {
+    const model = createEmptyModel('mm');
     set({
-      model: createEmptyModel('mm'),
+      model,
+      history: createHistory(model),
       selectedIds: [],
       aiMessages: [],
       aiStatus: 'idle',
       aiError: null,
       perceptionResults: [],
+      perceptionRelations: [],
       perceptionStatus: 'idle',
       taskPlan: null,
       currentStepIndex: 0,
       stepResults: [],
       agentStatus: 'idle',
-    }),
+    });
+  },
 }));
