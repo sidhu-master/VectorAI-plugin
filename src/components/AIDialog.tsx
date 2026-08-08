@@ -186,7 +186,7 @@ export default function AIDialog() {
         </button>
       </div>
 
-      {taskPlan && <ConstructionTimeline />}
+      {(agentRunId || taskPlan) && <ConstructionTimeline />}
 
       {perceptionResults.length > 0 && <PerceptionPanel />}
 
