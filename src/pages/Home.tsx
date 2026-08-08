@@ -4,11 +4,17 @@
 import TopToolbar from '@/components/TopToolbar';
 import AIDialog from '@/components/AIDialog';
 import Canvas from '@/components/Canvas';
+import { CanvasErrorBoundary } from '@/components/CanvasErrorBoundary';
 import ObjectList from '@/components/ObjectList';
 import ParameterEditor from '@/components/ParameterEditor';
 import StatusBar from '@/components/StatusBar';
+import { useStore } from '@/hooks/useStore';
 
 export default function Home() {
+  const canvasResetKey = useStore((state) => (
+    `${state.model.metadata.timestamp}:${state.history.cursor}:${state.model.entities.length}`
+  ));
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-base-900">
       <TopToolbar />
@@ -21,7 +27,9 @@ export default function Home() {
         </div>
 
         {/* 中栏：SVG 画布 */}
-        <Canvas />
+        <CanvasErrorBoundary resetKey={canvasResetKey}>
+          <Canvas />
+        </CanvasErrorBoundary>
 
         {/* 右栏：AI 对话 */}
         <AIDialog />
