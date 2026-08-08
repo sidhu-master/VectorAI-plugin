@@ -9,6 +9,17 @@ import type {
 
 type Fetcher = typeof fetch;
 
+export class DrawingClientError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | undefined,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'DrawingClientError';
+  }
+}
+
 export class DrawingClient {
   readonly #fetcher: Fetcher;
 
@@ -63,7 +74,12 @@ export class DrawingClient {
         && typeof data.error.message === 'string'
         ? data.error.message
         : `Drawing API 请求失败 (${response.status})`;
-      throw new Error(message);
+      const code = isRecord(data)
+        && isRecord(data.error)
+        && typeof data.error.code === 'string'
+        ? data.error.code
+        : undefined;
+      throw new DrawingClientError(message, code, response.status);
     }
     if (!isRecord(data) || data.success !== true) {
       throw new Error('Drawing API 响应结构无效');

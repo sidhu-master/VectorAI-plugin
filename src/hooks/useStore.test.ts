@@ -1,168 +1,333 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHistory } from '@/core/history/history';
-import { createEmptyModel } from '@/core/model';
-import type { AgentRunState } from '@/core/runtime/state-machine';
-import type { AgentClient, AgentProgressEvent } from '@/services/agent-client';
-import { createAppStore, useStore } from './useStore';
+import { describe, expect, it, vi } from 'vitest';
+import type {
+  CommitId,
+  DrawingCommit,
+  DrawingDocument,
+  DrawingId,
+  DrawingTransaction,
+  GeometryId,
+  RepositoryCommitResult,
+  RevisionId,
+} from '@/drawing';
+import type { AgentClient } from '@/services/agent-client';
+import { DrawingClientError, type DrawingClient } from '@/services/drawing-client';
+import {
+  ACTIVE_DRAWING_STORAGE_KEY,
+  createAppStore,
+} from './useStore';
 
-beforeEach(() => {
-  const model = createEmptyModel();
-  model.entities.push({
-    id: 'c1', type: 'circle', visible: true, center: [0, 0], radius: 5,
-  });
-  model.relations.push({
-    id: 'r1', kind: 'radius', entities: ['c1'], status: 'unsolved', value: 5,
-  });
-  useStore.setState({ model, history: createHistory(model), selectedIds: [] });
-});
+const drawingId = 'drawing_1' as DrawingId;
+const geometryId = 'geometry_1' as GeometryId;
+const revision1 = 'revision_1' as RevisionId;
+const revision2 = 'revision_2' as RevisionId;
 
-describe('useStore history integration', () => {
-  it('records a parameter edit and can undo it', () => {
-    useStore.getState().updateEntity('c1', { radius: 8 });
-
-    expect(useStore.getState().model.entities[0]).toMatchObject({ radius: 8 });
-    expect(useStore.getState().history.commits).toHaveLength(1);
-
-    useStore.getState().undo();
-    expect(useStore.getState().model.entities[0]).toMatchObject({ radius: 5 });
-  });
-
-  it('undo restores an entity and attached relations after deletion', () => {
-    useStore.getState().deleteEntity('c1');
-    expect(useStore.getState().model.entities).toEqual([]);
-    expect(useStore.getState().model.relations).toEqual([]);
-
-    useStore.getState().undo();
-    expect(useStore.getState().model.entities).toHaveLength(1);
-    expect(useStore.getState().model.relations).toHaveLength(1);
-  });
-
-  it('does not commit an invalid AI intent', () => {
-    const errors = useStore.getState().applyIntent({
-      objects: [{ type: 'circle', params: { center: [0, 0], radius: 0 } }],
+describe('canonical drawing workspace store', () => {
+  it('opens the locally remembered drawing on initialization', async () => {
+    const storage = memoryStorage({ [ACTIVE_DRAWING_STORAGE_KEY]: drawingId });
+    const client = drawingClientDouble();
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage,
     });
 
-    expect(errors.length).toBeGreaterThan(0);
-    expect(useStore.getState().history.commits).toHaveLength(0);
-    expect(useStore.getState().model.entities).toHaveLength(1);
+    await store.getState().initializeDrawing();
+
+    expect(client.open).toHaveBeenCalledWith(drawingId);
+    expect(client.create).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({
+      document: expect.objectContaining({ id: drawingId }),
+      revision: revision1,
+      commits: [],
+      drawingStatus: 'ready',
+      drawingError: null,
+    });
+  });
+
+  it('creates a drawing only when no saved drawing exists', async () => {
+    const storage = memoryStorage();
+    const client = drawingClientDouble();
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage,
+    });
+
+    await store.getState().initializeDrawing();
+
+    expect(client.open).not.toHaveBeenCalled();
+    expect(client.create).toHaveBeenCalledWith('mm');
+    expect(storage.getItem(ACTIVE_DRAWING_STORAGE_KEY)).toBe(drawingId);
+  });
+
+  it('coalesces concurrent initialization from React development effects', async () => {
+    const client = drawingClientDouble();
+    let release!: () => void;
+    client.create.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return workspace();
+    });
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage: memoryStorage(),
+    });
+
+    const first = store.getState().initializeDrawing();
+    const second = store.getState().initializeDrawing();
+    release();
+    await Promise.all([first, second]);
+
+    expect(client.create).toHaveBeenCalledOnce();
+  });
+
+  it('recreates a drawing after a remembered drawing was deleted', async () => {
+    const storage = memoryStorage({ [ACTIVE_DRAWING_STORAGE_KEY]: 'drawing_gone' });
+    const client = drawingClientDouble();
+    client.open.mockRejectedValueOnce(
+      new DrawingClientError('图纸不存在', 'DRAWING_NOT_FOUND', 404),
+    );
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage,
+    });
+
+    await store.getState().initializeDrawing();
+
+    expect(client.create).toHaveBeenCalledOnce();
+    expect(store.getState().drawingStatus).toBe('ready');
+  });
+
+  it('does not hide corrupt local data by silently creating a replacement', async () => {
+    const storage = memoryStorage({ [ACTIVE_DRAWING_STORAGE_KEY]: 'drawing_bad' });
+    const client = drawingClientDouble();
+    client.open.mockRejectedValueOnce(
+      new DrawingClientError('本地图纸数据损坏', 'CORRUPT_SNAPSHOT', 409),
+    );
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage,
+    });
+
+    await store.getState().initializeDrawing();
+
+    expect(client.create).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({
+      document: null,
+      drawingStatus: 'error',
+      drawingError: '本地图纸数据损坏',
+    });
+  });
+
+  it('executes a typed optimistic update and adopts the committed snapshot', async () => {
+    const client = drawingClientDouble();
+    client.execute.mockImplementation(async (_id, transaction) => {
+      const next = structuredClone(workspace().document);
+      const circle = next.geometry[0];
+      if (circle.type !== 'circle') throw new Error('fixture must be a circle');
+      circle.radius = 8;
+      return committed(next, transaction.baseRevision);
+    });
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage: memoryStorage(),
+      idFactory: { next: (kind) => `${kind}_local` },
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().updateNode(geometryId, { radius: 8 });
+
+    expect(client.execute).toHaveBeenCalledWith(
+      drawingId,
+      expect.objectContaining({
+        id: 'transaction_local',
+        baseRevision: revision1,
+        actor: { type: 'user', id: 'local-user' },
+        commands: [{
+          type: 'geometry.update', id: geometryId,
+          changes: { radius: 8 }, expected: { radius: 5 },
+        }],
+      }),
+    );
+    expect(store.getState().revision).toBe(revision2);
+    expect(store.getState().commits).toHaveLength(1);
+    expect(store.getState().document?.geometry[0]).toMatchObject({ radius: 8 });
+  });
+
+  it('retains the visible revision and document when a transaction is stale', async () => {
+    const client = drawingClientDouble();
+    client.execute.mockResolvedValueOnce({
+      status: 'rejected',
+      errors: [{
+        code: 'STALE_REVISION', stage: 'revision', retryable: true, nodeIds: [],
+        message: '版本已变化', suggestedAction: 'requery',
+      }],
+    });
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    const before = store.getState().document;
+
+    await store.getState().deleteNode(geometryId);
+
+    expect(store.getState().document).toBe(before);
+    expect(store.getState().revision).toBe(revision1);
+    expect(store.getState().drawingError).toBe('版本已变化');
+  });
+
+  it('reverts the latest canonical commit through the repository', async () => {
+    const existingCommit = { id: 'commit_existing' as CommitId } as DrawingCommit;
+    const client = drawingClientDouble({ commits: [existingCommit] });
+    client.revert.mockResolvedValueOnce({
+      status: 'already_satisfied', outcome: { satisfied: true, assertions: [] },
+    });
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().revertLatest();
+
+    expect(client.revert).toHaveBeenCalledWith(
+      drawingId,
+      existingCommit.id,
+      { type: 'user', id: 'local-user' },
+    );
   });
 });
 
-describe('useStore agent runtime integration', () => {
-  it('starts automatically, projects progress, and syncs committed model state', async () => {
-    let listener: ((event: AgentProgressEvent) => void) | undefined;
-    const remoteModel = createEmptyModel();
-    remoteModel.entities.push({ id: 'p1', type: 'point', visible: true, x: 1, y: 2 });
-    const remoteState = {
-      status: 'running', plan: null, currentStepIndex: 1,
-      history: createHistory(remoteModel),
-    } as AgentRunState;
-    const client = {
-      start: vi.fn(async () => ({ runId: 'run_1' })),
-      subscribe: vi.fn((_runId: string, next: (event: AgentProgressEvent) => void) => {
-        listener = next;
-        return () => undefined;
-      }),
-      getRun: vi.fn(async () => remoteState),
-      pause: vi.fn(async () => ({ ...remoteState, status: 'pause_requested' })),
-      resume: vi.fn(async () => remoteState),
-      stop: vi.fn(async () => ({ ...remoteState, status: 'stopping' })),
-      addInstruction: vi.fn(async () => remoteState),
-    } as unknown as AgentClient;
-    const store = createAppStore(client);
+describe('Agent migration guard', () => {
+  it('blocks new Agent drawing mutations before any legacy request is sent', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
 
-    await store.getState().startAgent('创建一个点');
-    listener?.(agentEvent('event_1', 'accepted'));
-    listener?.(agentEvent('event_2', 'commit'));
-    await vi.waitFor(() => expect(store.getState().model.entities).toHaveLength(1));
+    await store.getState().submitAgentInput('创建一个圆', 'aW1hZ2U=', 'image/png');
 
-    expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ goal: '创建一个点' }));
-    expect(store.getState().agentRunId).toBe('run_1');
-    expect(store.getState().agentEvents.map((event) => event.id)).toEqual(['event_1', 'event_2']);
+    expect(agent.start).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({
+      agentStatus: 'error',
+      agentError: 'Agent Runtime 正在迁移到 Drawing Core',
+    });
+    expect(store.getState().document?.geometry).toHaveLength(1);
   });
 
-  it('forwards run controls and additional instructions', async () => {
-    const remoteState = {
-      status: 'running', plan: null, currentStepIndex: 0,
-      history: createHistory(createEmptyModel()),
-    } as AgentRunState;
-    const client = {
-      start: vi.fn(async () => ({ runId: 'run_2' })),
-      subscribe: vi.fn(() => () => undefined),
-      getRun: vi.fn(async () => remoteState),
-      pause: vi.fn(async () => ({ ...remoteState, status: 'pause_requested' })),
-      resume: vi.fn(async () => remoteState),
-      stop: vi.fn(async () => ({ ...remoteState, status: 'stopping' })),
-      addInstruction: vi.fn(async () => remoteState),
-    } as unknown as AgentClient;
-    const store = createAppStore(client);
-    await store.getState().startAgent('创建一个点');
+  it('keeps controls for an already-running task presentation-only', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    const before = store.getState().document;
+    store.setState({ agentRunId: 'run_active', agentStatus: 'running' });
 
     await store.getState().pauseAgent();
-    await store.getState().resumeAgent();
-    await store.getState().addAgentInstruction('移动到原点');
-    await store.getState().stopAgent();
 
-    expect(client.pause).toHaveBeenCalledWith('run_2');
-    expect(client.resume).toHaveBeenCalledWith('run_2');
-    expect(client.addInstruction).toHaveBeenCalledWith('run_2', '移动到原点');
-    expect(client.stop).toHaveBeenCalledWith('run_2');
-  });
-
-  it('submits combined text and image through a new Agent run', async () => {
-    const client = agentClientDouble('run_combined');
-    const store = createAppStore(client as unknown as AgentClient);
-
-    await store.getState().submitAgentInput('把左侧孔扩大', 'anBn', 'image/png');
-
-    expect(client.start).toHaveBeenCalledWith(expect.objectContaining({
-      goal: '把左侧孔扩大',
-      image: 'anBn',
-      mimeType: 'image/png',
-    }));
-    expect(client.addInstruction).not.toHaveBeenCalled();
-  });
-
-  it('routes text to the active Agent run as an instruction', async () => {
-    const client = agentClientDouble('run_unused');
-    const store = createAppStore(client as unknown as AgentClient);
-    store.setState({ agentRunId: 'run_active', agentStatus: 'running' });
-
-    await store.getState().submitAgentInput('把右侧圆向上移动');
-
-    expect(client.addInstruction).toHaveBeenCalledWith('run_active', '把右侧圆向上移动');
-    expect(client.start).not.toHaveBeenCalled();
-  });
-
-  it('does not replace an active run with a new attachment', async () => {
-    const client = agentClientDouble('run_unused');
-    const store = createAppStore(client as unknown as AgentClient);
-    store.setState({ agentRunId: 'run_active', agentStatus: 'running' });
-
-    await store.getState().submitAgentInput('换一张图', 'bmV3', 'image/png');
-
-    expect(client.start).not.toHaveBeenCalled();
-    expect(client.addInstruction).not.toHaveBeenCalled();
-    expect(store.getState().agentError).toContain('当前任务');
+    expect(agent.pause).toHaveBeenCalledWith('run_active');
+    expect(store.getState().agentStatus).toBe('pause_requested');
+    expect(store.getState().document).toBe(before);
   });
 });
 
-function agentClientDouble(runId: string) {
-  const remoteState = {
-    status: 'running', plan: null, currentStepIndex: 0,
-    history: createHistory(createEmptyModel()),
-  } as AgentRunState;
+function workspace(overrides: { commits?: DrawingCommit[] } = {}) {
   return {
-    start: vi.fn(async () => ({ runId })),
-    subscribe: vi.fn(() => () => undefined),
-    getRun: vi.fn(async () => remoteState),
-    pause: vi.fn(async () => ({ ...remoteState, status: 'pause_requested' })),
-    resume: vi.fn(async () => remoteState),
-    stop: vi.fn(async () => ({ ...remoteState, status: 'stopping' })),
-    addInstruction: vi.fn(async () => remoteState),
+    document: drawingDocument(),
+    revision: revision1,
+    commits: overrides.commits ?? [],
   };
 }
 
-function agentEvent(id: string, type: AgentProgressEvent['type']): AgentProgressEvent {
-  return { id, runId: 'run_1', type, title: type, timestamp: 1_000, elapsedMs: 0 };
+function drawingDocument(): DrawingDocument {
+  return {
+    protocol: 'VectorAI-Drawing', schemaVersion: '1.0', id: drawingId,
+    metadata: { createdAt: 1, updatedAt: 1 },
+    unitSystem: { length: 'mm', angle: 'deg' },
+    coordinateFrames: [{
+      id: 'frame_document', kind: 'document', transform: [1, 0, 0, 1, 0, 0],
+    }],
+    geometry: [{
+      id: geometryId, type: 'circle', center: [0, 0], radius: 5, visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }],
+    annotations: [], relations: [], features: [],
+  };
+}
+
+function committed(
+  document: DrawingDocument,
+  parentRevision: RevisionId,
+): RepositoryCommitResult {
+  return {
+    status: 'committed',
+    document,
+    revision: revision2,
+    commit: {
+      id: 'commit_1' as CommitId,
+      drawingId,
+      parentRevision,
+      resultingRevision: revision2,
+      actor: { type: 'user', id: 'local-user' },
+      commands: [], patch: { operations: [] }, inversePatch: { operations: [] },
+      validationReport: { valid: true, issues: [] },
+      outcomeReport: { satisfied: true, assertions: [] },
+      evidenceRefs: [], timestamp: 2,
+    },
+  };
+}
+
+function drawingClientDouble(overrides: { commits?: DrawingCommit[] } = {}) {
+  return {
+    create: vi.fn<(unit?: 'mm' | 'cm' | 'm') => Promise<ReturnType<typeof workspace>>>(
+      async () => workspace(overrides),
+    ),
+    open: vi.fn<(id: DrawingId) => Promise<ReturnType<typeof workspace>>>(
+      async () => workspace(overrides),
+    ),
+    execute: vi.fn<(
+      id: DrawingId,
+      transaction: DrawingTransaction,
+    ) => Promise<RepositoryCommitResult>>(async () => ({
+      status: 'already_satisfied' as const,
+      outcome: { satisfied: true, assertions: [] },
+    })),
+    revert: vi.fn<(
+      id: DrawingId,
+      commitId: CommitId,
+      actor: { type: 'user' | 'AI' | 'system'; id: string },
+    ) => Promise<RepositoryCommitResult>>(async () => ({
+      status: 'already_satisfied' as const,
+      outcome: { satisfied: true, assertions: [] },
+    })),
+  };
+}
+
+function agentClientDouble() {
+  const run = { status: 'pause_requested' as const, plan: null, currentStepIndex: 0 };
+  return {
+    start: vi.fn(async () => ({ runId: 'run_1' })),
+    subscribe: vi.fn(() => () => undefined),
+    getRun: vi.fn(async () => run),
+    pause: vi.fn(async () => run),
+    resume: vi.fn(async () => ({ ...run, status: 'running' as const })),
+    stop: vi.fn(async () => ({ ...run, status: 'stopping' as const })),
+    addInstruction: vi.fn(async () => ({ ...run, status: 'running' as const })),
+  };
+}
+
+function memoryStorage(initial: Record<string, string> = {}): Storage {
+  const data = new Map(Object.entries(initial));
+  return {
+    get length() { return data.size; },
+    clear: () => data.clear(),
+    getItem: (key) => data.get(key) ?? null,
+    key: (index) => [...data.keys()][index] ?? null,
+    removeItem: (key) => { data.delete(key); },
+    setItem: (key, value) => { data.set(key, value); },
+  };
 }

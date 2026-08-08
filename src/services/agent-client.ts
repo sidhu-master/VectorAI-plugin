@@ -1,5 +1,4 @@
-import type { AgentRunState } from '@/core/runtime/state-machine';
-import type { SpatialModel } from '@/core/types';
+import type { AgentRunView } from './agent-types';
 
 export type AgentProgressEventType =
   | 'accepted'
@@ -37,7 +36,6 @@ export interface AgentProgressEvent {
 
 export interface StartAgentInput {
   goal: string;
-  spatialModel: SpatialModel;
   stableRules?: string[];
   image?: string;
   mimeType?: string;
@@ -114,31 +112,31 @@ export class AgentClient {
     return close;
   }
 
-  async getRun(runId: string): Promise<AgentRunState> {
-    const data = await this.request<{ success: true; run: AgentRunState }>(
+  async getRun(runId: string): Promise<AgentRunView> {
+    const data = await this.request<{ success: true; run: AgentRunView }>(
       `/api/agent/runs/${encodeURIComponent(runId)}`,
     );
     return data.run;
   }
 
-  pause(runId: string): Promise<AgentRunState> {
+  pause(runId: string): Promise<AgentRunView> {
     return this.control(runId, 'pause');
   }
 
-  resume(runId: string): Promise<AgentRunState> {
+  resume(runId: string): Promise<AgentRunView> {
     return this.control(runId, 'resume');
   }
 
-  stop(runId: string): Promise<AgentRunState> {
+  stop(runId: string): Promise<AgentRunView> {
     return this.control(runId, 'stop');
   }
 
-  addInstruction(runId: string, instruction: string): Promise<AgentRunState> {
+  addInstruction(runId: string, instruction: string): Promise<AgentRunView> {
     return this.control(runId, 'instructions', { instruction });
   }
 
-  private async control(runId: string, action: string, body?: unknown): Promise<AgentRunState> {
-    const data = await this.request<{ success: true; run: AgentRunState }>(
+  private async control(runId: string, action: string, body?: unknown): Promise<AgentRunView> {
+    const data = await this.request<{ success: true; run: AgentRunView }>(
       `/api/agent/runs/${encodeURIComponent(runId)}/${action}`, {
       method: 'POST',
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },

@@ -6,7 +6,7 @@ import type {
   DrawingTransaction,
   RevisionId,
 } from '@/drawing';
-import { DrawingClient } from './drawing-client';
+import { DrawingClient, DrawingClientError } from './drawing-client';
 
 const workspace = {
   document: {
@@ -96,7 +96,14 @@ describe('DrawingClient', () => {
     }, 409));
     const client = new DrawingClient({ fetcher });
 
-    await expect(client.open('drawing_bad' as DrawingId)).rejects.toThrow('本地图纸数据损坏');
+    const error = await client.open('drawing_bad' as DrawingId).catch((reason) => reason);
+
+    expect(error).toBeInstanceOf(DrawingClientError);
+    expect(error).toMatchObject({
+      code: 'CORRUPT_SNAPSHOT',
+      status: 409,
+      message: '本地图纸数据损坏',
+    });
   });
 });
 

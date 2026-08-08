@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createEmptyModel } from '@/core/model';
 import { AgentClient, type AgentProgressEvent, type EventSourceLike } from './agent-client';
 
 class FakeEventSource implements EventSourceLike {
@@ -23,16 +22,13 @@ class FakeEventSource implements EventSourceLike {
 }
 
 describe('AgentClient', () => {
-  it('starts immediately and sends the current spatial model', async () => {
+  it('starts without serializing a legacy spatial model', async () => {
     const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
     fetcher.mockResolvedValue(jsonResponse(202, { success: true, runId: 'run_1' }));
     const client = new AgentClient({ fetcher, eventSourceFactory: () => new FakeEventSource() });
-    const model = createEmptyModel();
 
-    await expect(client.start({ goal: '创建圆', spatialModel: model })).resolves.toEqual({ runId: 'run_1' });
-    expect(JSON.parse(String(fetcher.mock.calls.at(0)![1]?.body))).toMatchObject({
-      goal: '创建圆', spatialModel: { protocol: 'VectorAI-Spatial' },
-    });
+    await expect(client.start({ goal: '创建圆' })).resolves.toEqual({ runId: 'run_1' });
+    expect(JSON.parse(String(fetcher.mock.calls.at(0)![1]?.body))).toEqual({ goal: '创建圆' });
   });
 
   it('serializes request-level model overrides exactly', async () => {
@@ -42,7 +38,6 @@ describe('AgentClient', () => {
 
     await client.start({
       goal: '分析图纸',
-      spatialModel: createEmptyModel(),
       models: {
         planner: 'planner-custom',
         vision: 'doubao-seed-2.0-lite',
