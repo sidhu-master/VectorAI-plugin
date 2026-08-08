@@ -18,6 +18,8 @@ export interface ExecuteStageInput {
   step: TaskStep;
   model: SpatialModel;
   context: RuntimeContextProjection;
+  image?: string;
+  mimeType?: string;
   attempt: number;
   previousErrors: string[];
   signal: AbortSignal;

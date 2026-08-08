@@ -9,7 +9,7 @@ export interface AgentRunRecord {
   completion: Promise<AgentRunState>;
   resolveCompletion: (state: AgentRunState) => void;
   auditQueue: Promise<void>;
-  initialAttachment?: PreparedAgentAttachment;
+  referenceAttachment?: PreparedAgentAttachment;
 }
 
 export class AgentRunRegistry {

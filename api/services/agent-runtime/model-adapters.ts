@@ -41,6 +41,8 @@ export class GatewayExecutorAdapter implements AgentExecutorAdapter {
       model: input.model,
       plan: input.plan,
       correctionErrors: input.previousErrors,
+      currentView: input.image,
+      currentViewMimeType: input.mimeType,
       signal: input.signal,
     });
   }

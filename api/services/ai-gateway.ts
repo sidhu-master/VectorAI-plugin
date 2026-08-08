@@ -445,6 +445,7 @@ export interface ExecuteStepParams {
   plan: TaskPlan;
   llmModel?: string;
   currentView?: string;  // base64 PNG，当前渲染截图
+  currentViewMimeType?: string;
   correctionErrors?: string[];
   signal?: AbortSignal;
 }
@@ -459,6 +460,7 @@ export async function executeAgentStep({
   plan,
   llmModel,
   currentView,
+  currentViewMimeType,
   correctionErrors,
   signal,
 }: ExecuteStepParams): Promise<SpatialIntent> {
@@ -481,7 +483,7 @@ export async function executeAgentStep({
   const userContent = hasVisual
     ? [
         { type: 'text', text: stepPrompt },
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${currentView}` } },
+        { type: 'image_url', image_url: { url: `data:${currentViewMimeType || 'image/png'};base64,${currentView}` } },
       ]
     : stepPrompt;
 

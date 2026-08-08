@@ -76,7 +76,7 @@ export class AgentRuntime {
       completion,
       resolveCompletion,
       auditQueue: Promise.resolve(),
-      initialAttachment: input.image && input.mimeType
+      referenceAttachment: input.image && input.mimeType
         ? { image: input.image, mimeType: input.mimeType }
         : undefined,
     };
@@ -151,17 +151,20 @@ export class AgentRuntime {
   private async run(record: AgentRunRecord): Promise<void> {
     try {
       let attachment;
-      if (record.initialAttachment) {
+      if (record.referenceAttachment) {
         record.progress.publish('tool_started', '正在处理输入图纸');
         const attachmentStage = this.createStage(record);
         try {
           attachment = await this.attachmentPreparer.prepare({
-            ...record.initialAttachment,
+            ...record.referenceAttachment,
             signal: attachmentStage.controller.signal,
           });
+          record.referenceAttachment = attachment;
           record.progress.publish('tool_finished', '输入图纸处理完成');
+        } catch (error) {
+          record.referenceAttachment = undefined;
+          throw error;
         } finally {
-          record.initialAttachment = undefined;
           attachmentStage.clear();
         }
         if (record.state.status === 'stopping') return this.finishStopped(record);
@@ -219,6 +222,8 @@ export class AgentRuntime {
             step,
             model: record.state.history.model,
             context: built.context,
+            image: record.referenceAttachment?.image,
+            mimeType: record.referenceAttachment?.mimeType,
             attempt,
             previousErrors,
             signal: stage.controller.signal,
@@ -296,6 +301,7 @@ export class AgentRuntime {
   }
 
   private finishStopped(record: AgentRunRecord): void {
+    record.referenceAttachment = undefined;
     record.state = reduceAgentRun(record.state, { type: 'STOPPED' }).state;
     record.progress.publish('stopped', '任务已停止');
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));
@@ -310,6 +316,8 @@ export class AgentRuntime {
         goal: record.state.goal,
         model: record.state.history.model,
         instruction: record.state.activeInstruction,
+        image: record.referenceAttachment?.image,
+        mimeType: record.referenceAttachment?.mimeType,
         signal: stage.controller.signal,
         deadlineAt: stage.deadlineAt,
       });
@@ -346,12 +354,14 @@ export class AgentRuntime {
   }
 
   private finishCompleted(record: AgentRunRecord): void {
+    record.referenceAttachment = undefined;
     record.progress.publish('completed', '任务已完成');
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));
     record.resolveCompletion(record.state);
   }
 
   private finishFailed(record: AgentRunRecord, error: unknown): void {
+    record.referenceAttachment = undefined;
     record.state = { ...record.state, status: 'failed' };
     record.progress.publish('failed', '任务执行失败', error instanceof Error ? error.message : String(error));
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));

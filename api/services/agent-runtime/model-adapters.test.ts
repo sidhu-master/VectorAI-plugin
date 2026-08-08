@@ -41,10 +41,12 @@ describe('gateway runtime adapters', () => {
         durableFacts: {}, transientSignals: {},
       },
       attempt: 2, previousErrors: ['radius 必须大于 0'], signal, deadlineAt: 10,
+      image: 'anBlZw==', mimeType: 'image/jpeg',
     })).toBe(response);
 
     expect(received).toMatchObject({
       step: plan.steps[0], plan, signal, correctionErrors: ['radius 必须大于 0'],
+      currentView: 'anBlZw==', currentViewMimeType: 'image/jpeg',
     });
   });
 });

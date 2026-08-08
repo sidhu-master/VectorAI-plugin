@@ -58,12 +58,16 @@ describe('AgentRuntime', () => {
 
   it('forwards an initial drawing attachment to planning without storing it in run state', async () => {
     let planningInput: PlanStageInput | undefined;
+    let executionInput: ExecuteStageInput | undefined;
     const runtime = new AgentRuntime({
       planner: planner(async (input) => {
         planningInput = input;
         return oneStepPlan;
       }),
-      executor: executor(async () => ({ objects: [] })),
+      executor: executor(async (input) => {
+        executionInput = input;
+        return { objects: [] };
+      }),
     });
 
     const handle = runtime.start({
@@ -73,6 +77,7 @@ describe('AgentRuntime', () => {
     await handle.completion;
 
     expect(planningInput).toMatchObject({ image: 'cG5n', mimeType: 'image/png' });
+    expect(executionInput).toMatchObject({ image: 'cG5n', mimeType: 'image/png' });
     expect(JSON.stringify(runtime.getState('run_attachment'))).not.toContain('cG5n');
   });
 
