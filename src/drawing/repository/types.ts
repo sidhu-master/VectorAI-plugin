@@ -32,6 +32,13 @@ export interface DrawingCommit {
   timestamp: number;
 }
 
+export interface DrawingRepositoryState {
+  initialDocument: DrawingDocument;
+  document: DrawingDocument;
+  revision: RevisionId;
+  commits: DrawingCommit[];
+}
+
 export type RepositoryCommitResult =
   | {
       status: 'committed';

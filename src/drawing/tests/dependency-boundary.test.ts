@@ -6,11 +6,14 @@ import { describe, expect, it } from 'vitest';
 import {
   MemoryDrawingRepository,
   applyDrawingPatch,
+  commitRepositoryState,
   compileDrawingCommands,
   createEmptyDrawing,
+  createRepositoryState,
   previewTransaction,
   queryDrawing,
   replayDrawingCommits,
+  revertRepositoryState,
   validateDrawingDocument,
 } from '../index';
 
@@ -27,9 +30,12 @@ describe('Drawing Core public boundary', () => {
     expect(queryDrawing(document).items).toEqual([]);
     expect([
       applyDrawingPatch,
+      commitRepositoryState,
       compileDrawingCommands,
+      createRepositoryState,
       previewTransaction,
       replayDrawingCommits,
+      revertRepositoryState,
       MemoryDrawingRepository,
     ].every((value) => typeof value === 'function')).toBe(true);
   });

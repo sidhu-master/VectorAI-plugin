@@ -19,5 +19,11 @@ export type * from './transaction/types';
 
 export { MemoryDrawingRepository } from './repository/memory';
 export { replayDrawingCommits } from './repository/replay';
+export {
+  commitRepositoryState,
+  createRepositoryState,
+  revertRepositoryState,
+} from './repository/state';
 export type * from './repository/replay';
+export type * from './repository/state';
 export type * from './repository/types';
