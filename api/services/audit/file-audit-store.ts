@@ -33,6 +33,15 @@ export class FileAuditStore implements AuditStore {
     await writeJson(join(directory, `${commit.id}.json`), redactAuditPayload(commit));
   }
 
+  saveDrawingRecord(runId: string, name: string, value: unknown): Promise<void> {
+    assertSafeId(name, 'record name');
+    const directory = join(this.runDirectory(runId), 'drawing');
+    return this.enqueue(runId, async () => {
+      await mkdir(directory, { recursive: true });
+      await writeJson(join(directory, `${name}.json`), redactAuditPayload(value));
+    });
+  }
+
   async finishRun(runId: string, model: SpatialModel): Promise<void> {
     await this.flush(runId);
     await writeJson(join(this.runDirectory(runId), 'final-model.json'), model);

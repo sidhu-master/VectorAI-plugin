@@ -29,6 +29,7 @@ export interface AuditStore {
   startRun(manifest: AuditRunManifest): Promise<void>;
   appendEvent(event: AuditEvent): Promise<void>;
   saveCommit(commit: SpatialCommit): Promise<void>;
+  saveDrawingRecord?(runId: string, name: string, value: unknown): Promise<void>;
   finishRun(runId: string, model: SpatialModel): Promise<void>;
   readEvents(runId: string): Promise<AuditEvent[]>;
 }

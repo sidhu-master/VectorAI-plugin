@@ -37,11 +37,16 @@ describe('FileAuditStore', () => {
     });
     if (!committed.success) throw new Error('fixture commit failed');
     await store.saveCommit(committed.commit);
+    await store.saveDrawingRecord('run_1', 'geometry', [{
+      id: 'observation_1', imageBounds: [0, 0, 1, 1], sourceSha256: 'drawing-hash',
+    }]);
     await store.finishRun('run_1', committed.history.model);
 
     expect((await store.readEvents('run_1')).map((event) => event.id)).toEqual(['e1', 'e2']);
     expect(JSON.parse(await readFile(join(rootDir, 'run_1', 'manifest.json'), 'utf8'))).toMatchObject({ runId: 'run_1' });
     expect(JSON.parse(await readFile(join(rootDir, 'run_1', 'commits', 'c1.json'), 'utf8'))).toMatchObject({ id: 'c1' });
+    expect(JSON.parse(await readFile(join(rootDir, 'run_1', 'drawing', 'geometry.json'), 'utf8')))
+      .toEqual([{ id: 'observation_1', imageBounds: [0, 0, 1, 1], sourceSha256: 'drawing-hash' }]);
     expect(JSON.parse(await readFile(join(rootDir, 'run_1', 'final-model.json'), 'utf8')).entities).toHaveLength(1);
   });
 

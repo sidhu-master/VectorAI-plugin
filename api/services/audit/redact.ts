@@ -7,8 +7,11 @@ export function redactAuditPayload<T>(value: T): T {
 function redact(value: unknown, key: string): unknown {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
   const isReference = normalized.includes('hash') || normalized.includes('sha256') || normalized.includes('reference');
+  const isMediaBounds = normalized.endsWith('imagebounds')
+    || normalized.endsWith('screenshotbounds')
+    || normalized.endsWith('pdfbounds');
   const isMediaBody = (normalized.includes('image') || normalized.includes('screenshot') || normalized.includes('pdf'))
-    && !isReference;
+    && !isReference && !isMediaBounds;
   if (!isReference && (isMediaBody || SENSITIVE_PARTS.some((part) => normalized.includes(part)))) {
     return '[REDACTED]';
   }
