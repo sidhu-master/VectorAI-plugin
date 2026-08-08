@@ -1,8 +1,10 @@
 import type { Vec2 } from '../../../src/drawing/index.js';
 import type {
   AnnotationObservation,
+  ContourEvidence,
   DrawingView,
   GeometryObservation,
+  GlobalContour,
   NormalizedImageBounds,
 } from './types.js';
 
@@ -69,6 +71,58 @@ export function stitchAnnotationObservation(
     imageBounds: transformBounds(observation.imageBounds, region.pageBounds),
     arrowheads: observation.arrowheads.map((point) => transformImagePoint(point, region.pageBounds)),
   };
+}
+
+export function stitchGlobalContour(
+  contour: GlobalContour,
+  region: PerceptionRegion,
+  pageHeightToWidthRatio: number,
+): GlobalContour {
+  const stitched = stitchGeometryObservation({
+    id: contour.id,
+    viewId: contour.viewId,
+    type: contour.geometryFamily,
+    imageBounds: contour.imageBounds,
+    measuredParams: contour.coarseParams ?? {},
+    confidence: contour.confidence,
+  }, region, pageHeightToWidthRatio);
+  return {
+    id: stitched.id,
+    viewId: stitched.viewId,
+    geometryFamily: stitched.type,
+    imageBounds: stitched.imageBounds,
+    closed: contour.closed,
+    confidence: stitched.confidence,
+    ...(contour.coarseParams ? { coarseParams: stitched.measuredParams } : {}),
+  };
+}
+
+export function stitchContourEvidence(
+  evidence: ContourEvidence,
+  region: PerceptionRegion,
+): ContourEvidence {
+  return {
+    ...structuredClone(evidence),
+    id: stitchedId(region.id, evidence.id),
+    viewId: region.viewId,
+    imageBounds: transformBounds(evidence.imageBounds, region.pageBounds),
+    samplePoints: evidence.samplePoints.map((point) => transformImagePoint(point, region.pageBounds)),
+  };
+}
+
+export function projectGlobalContoursToRegion(
+  contours: GlobalContour[],
+  region: PerceptionRegion,
+): Array<Pick<GlobalContour, 'id' | 'geometryFamily' | 'imageBounds'>> {
+  return contours.flatMap((contour) => {
+    const intersection = intersectBounds(contour.imageBounds, region.pageBounds);
+    if (!intersection) return [];
+    return [{
+      id: contour.id,
+      geometryFamily: contour.geometryFamily,
+      imageBounds: projectBounds(intersection, region.pageBounds),
+    }];
+  });
 }
 
 export function deduplicateGeometryObservations(
@@ -230,6 +284,30 @@ function transformBounds(
     round(page[1] + local[1] * page[3]),
     round(local[2] * page[2]),
     round(local[3] * page[3]),
+  ];
+}
+
+function intersectBounds(
+  first: NormalizedImageBounds,
+  second: NormalizedImageBounds,
+): NormalizedImageBounds | null {
+  const left = Math.max(first[0], second[0]);
+  const top = Math.max(first[1], second[1]);
+  const right = Math.min(first[0] + first[2], second[0] + second[2]);
+  const bottom = Math.min(first[1] + first[3], second[1] + second[3]);
+  if (right <= left || bottom <= top) return null;
+  return [round(left), round(top), round(right - left), round(bottom - top)];
+}
+
+function projectBounds(
+  pageBounds: NormalizedImageBounds,
+  regionBounds: NormalizedImageBounds,
+): NormalizedImageBounds {
+  return [
+    round((pageBounds[0] - regionBounds[0]) / regionBounds[2]),
+    round((pageBounds[1] - regionBounds[1]) / regionBounds[3]),
+    round(pageBounds[2] / regionBounds[2]),
+    round(pageBounds[3] / regionBounds[3]),
   ];
 }
 

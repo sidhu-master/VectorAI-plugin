@@ -239,6 +239,81 @@ describe('DrawingPerceptionPipeline', () => {
       kind: 'stage', stage: 'view_perceived', detail: expect.objectContaining({ regionCount: 3 }),
     }));
   });
+
+  it('builds whole-view contours before refinement and never promotes crop arcs to geometry', async () => {
+    const evidenceCalls: string[] = [];
+    const vision = {
+      analyzeSheet: async () => ({ warnings: [] }),
+      segmentViews: async () => [{
+        id: 'view_full', kind: 'primary', imageBounds: [0, 0, 1, 1], confidence: 0.95,
+      }],
+      detectDatums: async () => [],
+      detectGlobalContours: async ({ viewId }: { viewId?: string }) => [{
+        id: 'outer_circle', viewId: viewId!, geometryFamily: 'circle',
+        imageBounds: [0.1, 0.1, 0.8, 0.8], closed: true, confidence: 0.94,
+        coarseParams: { center: [0.5, 0.5], radius: 0.4 },
+      }],
+      detectGeometry: async ({ viewId }: { viewId?: string }) => [{
+        id: 'misread_fragment', viewId: viewId!, type: 'arc',
+        imageBounds: [0, 0.1, 1, 0.8],
+        measuredParams: {
+          center: [0.5, 0.5], radius: 0.4, startAngle: 90, endAngle: 270,
+          counterClockwise: true,
+        },
+        confidence: 0.82,
+      }],
+      extractAnnotations: async () => [],
+      detectContourEvidence: async ({ viewId }: { viewId?: string }) => {
+        evidenceCalls.push(viewId!);
+        return [{
+          id: 'outer_fragment', viewId: viewId!, globalContourId: 'view_full_global__outer_circle',
+          imageBounds: [0, 0.1, 1, 0.8],
+          samplePoints: [[0, 0.5], [0.5, 0.1], [1, 0.5]],
+          confidence: 0.88, touchesCropEdge: true,
+        }];
+      },
+      assessCoverage: async ({ viewId }: { viewId?: string }) => ({
+        complete: viewId !== 'view_full_region_1', confidence: 0.9,
+        unreadBounds: viewId === 'view_full_region_1' ? [[0, 0, 1, 1]] : [],
+        reasons: viewId === 'view_full_region_1' ? ['需要放大复核左侧轮廓'] : [],
+      }),
+    } as DrawingVisionToolset;
+    const assets = new DrawingAssetCache({
+      preparer: { prepare: async ({ image, mimeType }) => ({ image, mimeType }) },
+      cropper: { crop: async ({ image, mimeType }) => ({ image, mimeType }) },
+    });
+    const store = new FileDrawingObservationStore(rootDir);
+    const pipeline = new DrawingPerceptionPipeline({ assets, vision, observationStore: store });
+
+    const outputs = await collect(pipeline.run({
+      runId: 'run_outline_first', page: 1, image: 'eA==', mimeType: 'image/png',
+      modelName: 'doubao-seed-2.0-lite', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 60_000,
+    }));
+
+    const geometry = await store.read<Array<{ type: string; id: string }>>(
+      'run_outline_first', 'geometry',
+    );
+    const ledger = await store.read<{
+      complete: boolean;
+      regions: Array<{ id: string; parentId?: string; status: string }>;
+    }>('run_outline_first', 'coverage-ledger');
+    expect(geometry).toEqual([expect.objectContaining({
+      id: 'global_contour_view_full_global__outer_circle', type: 'circle',
+    })]);
+    expect(geometry.some((item) => item.type === 'arc')).toBe(false);
+    expect(evidenceCalls).toEqual(expect.arrayContaining([
+      'view_full_region_1',
+      'view_full_region_1_child_1',
+      'view_full_region_1_child_2',
+    ]));
+    expect(ledger.complete).toBe(true);
+    expect(ledger.regions.filter((region) => region.parentId === 'view_full_region_1')).toHaveLength(2);
+    expect(outputs.filter(isStage).map((output) => output.stage)).toEqual(expect.arrayContaining([
+      'global_contours_built', 'coverage_assessed', 'coverage_completed',
+    ]));
+    expect(JSON.stringify(ledger)).not.toMatch(/doubao|seed|base64|prompt|token|"image":/i);
+  });
 });
 
 async function collect(source: AsyncIterable<DrawingPerceptionOutput>): Promise<DrawingPerceptionOutput[]> {

@@ -2,11 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import {
   deduplicateGeometryObservations,
+  projectGlobalContoursToRegion,
   planPerceptionRegions,
   stitchAnnotationObservation,
+  stitchContourEvidence,
   stitchGeometryObservation,
+  stitchGlobalContour,
 } from './regions.js';
-import type { AnnotationObservation, DrawingView, GeometryObservation } from './types.js';
+import type {
+  AnnotationObservation,
+  ContourEvidence,
+  DrawingView,
+  GeometryObservation,
+  GlobalContour,
+} from './types.js';
 
 const primaryView: DrawingView = {
   id: 'view_primary', kind: 'primary', imageBounds: [0.02, 0.02, 0.96, 0.96], confidence: 0.95,
@@ -72,6 +81,52 @@ describe('drawing perception regions', () => {
     expect(deduplicateGeometryObservations(observations).map((item) => item.id)).toEqual([
       'region_2_circle', 'concentric_feature',
     ]);
+  });
+
+  it('keeps whole-view contour identity while projecting it into regional reads', () => {
+    const wholeView = {
+      id: 'view_primary_global', viewId: 'view_primary',
+      pageBounds: [0.1, 0.2, 0.8, 0.6] as [number, number, number, number],
+    };
+    const contour: GlobalContour = {
+      id: 'outer', viewId: wholeView.id, geometryFamily: 'circle',
+      imageBounds: [0.1, 0.1, 0.8, 0.8], closed: true, confidence: 0.92,
+      coarseParams: { center: [0.5, 0.5], radius: 0.4 },
+    };
+    const stitched = stitchGlobalContour(contour, wholeView, 1.5);
+    const region = {
+      id: 'view_primary_region_1', viewId: 'view_primary',
+      pageBounds: [0.1, 0.2, 0.4, 0.6] as [number, number, number, number],
+    };
+
+    expect(stitched).toMatchObject({
+      id: 'view_primary_global__outer', viewId: 'view_primary',
+      imageBounds: [0.18, 0.26, 0.64, 0.48],
+      coarseParams: { center: [0.5, 0.75], radius: 0.32 },
+    });
+    expect(projectGlobalContoursToRegion([stitched], region)).toEqual([{
+      id: 'view_primary_global__outer', geometryFamily: 'circle',
+      imageBounds: [0.2, 0.1, 0.8, 0.8],
+    }]);
+  });
+
+  it('stitches regional contour samples without changing their global contour id', () => {
+    const region = {
+      id: 'view_primary_region_2', viewId: 'view_primary',
+      pageBounds: [0.5, 0.2, 0.4, 0.6] as [number, number, number, number],
+    };
+    const evidence: ContourEvidence = {
+      id: 'right_arc', viewId: region.id, globalContourId: 'view_primary_global__outer',
+      imageBounds: [0, 0.1, 0.8, 0.8], samplePoints: [[0, 0.5], [0.5, 0.1]],
+      confidence: 0.88, touchesCropEdge: true,
+    };
+
+    expect(stitchContourEvidence(evidence, region)).toMatchObject({
+      id: 'view_primary_region_2__right_arc', viewId: 'view_primary',
+      globalContourId: 'view_primary_global__outer',
+      imageBounds: [0.5, 0.26, 0.32, 0.48],
+      samplePoints: [[0.5, 0.5], [0.7, 0.26]],
+    });
   });
 });
 
