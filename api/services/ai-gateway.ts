@@ -517,6 +517,51 @@ export async function executeAgentStep({
   return parseIntentFromReply(content);
 }
 
+export interface DrawingVisionCompletionParams {
+  modelName: string;
+  systemPrompt: string;
+  userPrompt: string;
+  image: string;
+  mimeType: string;
+  signal: AbortSignal;
+}
+
+export async function requestDrawingVisionCompletion(
+  input: DrawingVisionCompletionParams,
+): Promise<string> {
+  const baseUrl = process.env.COMPANY_AI_BASE_URL;
+  const apiKey = process.env.COMPANY_AI_API_KEY;
+  if (!baseUrl || !apiKey) throw new Error('AI 未配置');
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: input.modelName,
+      messages: [
+        { role: 'system', content: input.systemPrompt },
+        { role: 'user', content: [
+          { type: 'text', text: input.userPrompt },
+          { type: 'image_url', image_url: { url: `data:${input.mimeType};base64,${input.image}` } },
+        ] },
+      ],
+      temperature: 0.1,
+      max_tokens: 4096,
+    }),
+    signal: input.signal,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Drawing Vision API 错误: ${response.status} ${detail.slice(0, 200)}`);
+  }
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content) throw new Error('Drawing Vision 返回空内容');
+  return content;
+}
+
 function parsePlanFromReply(reply: string): TaskPlan {
   const jsonStr = reply
     .replace(/```json\n?/g, '')
