@@ -48,6 +48,16 @@ export interface GlobalContour {
   coarseParams?: Record<string, unknown>;
 }
 
+export interface ContourEvidence {
+  id: string;
+  viewId: string;
+  globalContourId?: string;
+  imageBounds: NormalizedImageBounds;
+  samplePoints: Vec2[];
+  confidence: number;
+  touchesCropEdge: boolean;
+}
+
 export interface AnnotationObservation {
   id: string;
   sourceId?: string;
