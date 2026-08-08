@@ -206,6 +206,37 @@ describe('DrawingApplication', () => {
     });
   });
 
+  it('summarizes the drawing without exposing the full document', async () => {
+    const { application } = setup();
+    const workspace = await application.create({ unit: 'cm' });
+    const committed = await application.execute({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(workspace.revision, 'circle_summary'),
+    });
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const summarized = await application.summarize({
+      drawingId: workspace.document.id,
+      limit: 20,
+    });
+
+    expect(summarized).toEqual({
+      revision: committed.revision,
+      summary: {
+        unit: 'cm',
+        counts: { geometry: 1, annotation: 0, relation: 0, feature: 0 },
+        bounds: { minX: -5, minY: -5, maxX: 5, maxY: 5 },
+        items: [{
+          id: 'circle_summary', plane: 'geometry', type: 'circle',
+          summary: 'circle center=[0,0] radius=5',
+          bounds: { minX: -5, minY: -5, maxX: 5, maxY: 5 },
+        }],
+        truncated: false,
+      },
+    });
+    expect(summarized).not.toHaveProperty('document');
+  });
+
   it('inspects one node through the Application boundary without exposing repository state', async () => {
     const { application } = setup();
     const workspace = await application.create();

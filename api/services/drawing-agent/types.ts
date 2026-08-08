@@ -1,12 +1,11 @@
 import type {
   Actor,
-  Bounds2D,
   DrawingId,
   DrawingInspectResult,
-  DrawingQueryItem,
   DrawingQueryResult,
   RevisionId,
 } from '../../../src/drawing/index.js';
+import type { DrawingDocumentSummary } from '../../../src/contracts/drawing-application.js';
 import type {
   AgentDecision,
   DrawingAgentPlan,
@@ -90,19 +89,6 @@ export interface DrawingToolInvocation {
   toolCallId: string;
   context: DrawingToolContext;
   input: unknown;
-}
-
-export interface DrawingDocumentSummary {
-  unit: 'mm' | 'cm' | 'm';
-  counts: {
-    geometry: number;
-    annotation: number;
-    relation: number;
-    feature: number;
-  };
-  bounds?: Bounds2D;
-  items: DrawingQueryItem[];
-  truncated: boolean;
 }
 
 export interface DrawingPlannerInput {

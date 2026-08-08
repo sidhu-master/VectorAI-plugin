@@ -17,6 +17,7 @@ import {
 import type {
   DrawingInspectWorkspaceResult,
   DrawingQueryWorkspaceResult,
+  DrawingSummaryWorkspaceResult,
   DrawingWorkspaceSnapshot,
 } from '../../../src/contracts/drawing-application.js';
 
@@ -87,6 +88,42 @@ export class DrawingApplication {
     return {
       revision: workspace.revision,
       result: queryDrawing(workspace.document, structuredClone(input.selector)),
+    };
+  }
+
+  async summarize(input: {
+    drawingId: DrawingId;
+    limit?: number;
+  }): Promise<DrawingSummaryWorkspaceResult> {
+    const workspace = await this.open(input.drawingId);
+    const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 100)));
+    const result = queryDrawing(workspace.document, { limit });
+    const bounds = result.items.reduce<{
+      minX: number; minY: number; maxX: number; maxY: number;
+    } | undefined>((current, item) => {
+      if (!item.bounds) return current;
+      if (!current) return { ...item.bounds };
+      return {
+        minX: Math.min(current.minX, item.bounds.minX),
+        minY: Math.min(current.minY, item.bounds.minY),
+        maxX: Math.max(current.maxX, item.bounds.maxX),
+        maxY: Math.max(current.maxY, item.bounds.maxY),
+      };
+    }, undefined);
+    return {
+      revision: workspace.revision,
+      summary: {
+        unit: workspace.document.unitSystem.length,
+        counts: {
+          geometry: workspace.document.geometry.length,
+          annotation: workspace.document.annotations.length,
+          relation: workspace.document.relations.length,
+          feature: workspace.document.features.length,
+        },
+        ...(bounds ? { bounds } : {}),
+        items: result.items,
+        truncated: result.truncated,
+      },
     };
   }
 
