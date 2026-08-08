@@ -65,6 +65,26 @@ describe('DrawingVisionTools', () => {
     }));
   });
 
+  it('restricts regional geometry reads to complete standalone entities', async () => {
+    const complete = vi.fn<DrawingVisionCompletion>(async () => JSON.stringify({ observations: [] }));
+    const tools = new DrawingVisionTools(complete);
+
+    await tools.detectGeometry({ ...input, viewId: 'view_1_region_1' }, {
+      mode: 'regional_standalone',
+      globalContours: [{
+        id: 'contour_outer', geometryFamily: 'circle', imageBounds: [0, 0.1, 1, 0.8],
+      }],
+    });
+
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      tool: 'detect_geometry',
+      userPrompt: expect.stringContaining('裁剪边缘结束'),
+    }));
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      userPrompt: expect.stringContaining('contour_outer'),
+    }));
+  });
+
   it('assesses whether a crop was fully read using a bounded observation summary', async () => {
     const complete = vi.fn<DrawingVisionCompletion>(async () => JSON.stringify({
       complete: false,

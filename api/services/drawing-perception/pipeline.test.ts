@@ -314,6 +314,60 @@ describe('DrawingPerceptionPipeline', () => {
     ]));
     expect(JSON.stringify(ledger)).not.toMatch(/doubao|seed|base64|prompt|token|"image":/i);
   });
+
+  it('retains valid observations and reports budget exhaustion when coverage assessment fails', async () => {
+    const assessCoverage = vi.fn(async () => {
+      throw new Error('coverage response malformed');
+    });
+    const vision = {
+      analyzeSheet: async () => ({ warnings: [] }),
+      segmentViews: async () => [{
+        id: 'view_detail', kind: 'detail', imageBounds: [0, 0, 0.5, 0.5], confidence: 0.9,
+      }],
+      detectDatums: async () => [],
+      detectGlobalContours: async () => [],
+      detectGeometry: async ({ viewId }: { viewId?: string }) => [{
+        id: 'small_circle', viewId: viewId!, type: 'circle', imageBounds: [0.2, 0.2, 0.2, 0.2],
+        measuredParams: { center: [0.3, 0.3], radius: 0.1 }, confidence: 0.9,
+      }],
+      extractAnnotations: async () => [],
+      detectContourEvidence: async () => [],
+      assessCoverage,
+    } as DrawingVisionToolset;
+    const assets = new DrawingAssetCache({
+      preparer: { prepare: async ({ image, mimeType }) => ({ image, mimeType }) },
+      cropper: { crop: async ({ image, mimeType }) => ({ image, mimeType }) },
+    });
+    const store = new FileDrawingObservationStore(rootDir);
+    const pipeline = new DrawingPerceptionPipeline({
+      assets, vision, observationStore: store, maxRefinementDepth: 0,
+    });
+
+    const outputs = await collect(pipeline.run({
+      runId: 'run_exhausted', page: 1, image: 'eA==', mimeType: 'image/png',
+      modelName: 'doubao-seed-2.0-lite', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 60_000,
+    }));
+
+    const geometry = await store.read<Array<{ id: string }>>('run_exhausted', 'geometry');
+    const ledger = await store.read<{
+      complete: boolean;
+      regions: Array<{ status: string; refinementReasons: string[] }>;
+    }>('run_exhausted', 'coverage-ledger');
+    expect(assessCoverage).toHaveBeenCalledTimes(2);
+    expect(geometry).toEqual([expect.objectContaining({ id: expect.stringContaining('small_circle') })]);
+    expect(ledger).toMatchObject({
+      complete: false,
+      regions: [{
+        status: 'budget_exhausted',
+        refinementReasons: expect.arrayContaining(['assessment_unavailable', 'max_depth']),
+      }],
+    });
+    expect(outputs.at(-1)).toMatchObject({
+      kind: 'stage', stage: 'completed',
+      detail: { coverageComplete: false, incompleteRegionCount: 1 },
+    });
+  });
 });
 
 async function collect(source: AsyncIterable<DrawingPerceptionOutput>): Promise<DrawingPerceptionOutput[]> {

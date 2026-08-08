@@ -68,6 +68,11 @@ export interface DrawingCoverageContext {
   annotations: Array<{ kind: string; imageBounds: NormalizedImageBounds }>;
 }
 
+export interface DrawingRegionalGeometryContext {
+  mode: 'regional_standalone';
+  globalContours: Array<Pick<GlobalContour, 'id' | 'geometryFamily' | 'imageBounds'>>;
+}
+
 const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> = {
   analyze_sheet: {
     system: '你是二维工程图纸页分析器。只输出 JSON，不识别具体对象，不输出图片或推理过程。',
@@ -181,8 +186,13 @@ export class DrawingVisionTools {
     return this.readGeometry('detect_datums', input, new Set(['point', 'line', 'ray', 'xline']));
   }
 
-  detectGeometry(input: DrawingVisionToolInput): Promise<GeometryObservation[]> {
-    return this.readGeometry('detect_geometry', input);
+  detectGeometry(
+    input: DrawingVisionToolInput,
+    context?: DrawingRegionalGeometryContext,
+  ): Promise<GeometryObservation[]> {
+    const suffix = context ? `
+区域读取规则：只输出在当前裁剪中边界完整、参数完整的小型独立图元。任何在裁剪边缘结束的线、圆弧、曲线或闭合轮廓都不要输出，它们由全局轮廓证据工具处理。不要重复以下全局轮廓：${JSON.stringify(context.globalContours.slice(0, 100))}` : '';
+    return this.readGeometry('detect_geometry', input, undefined, suffix);
   }
 
   async detectGlobalContours(input: DrawingVisionToolInput): Promise<GlobalContour[]> {
@@ -267,8 +277,9 @@ export class DrawingVisionTools {
     tool: 'detect_datums' | 'detect_geometry',
     input: DrawingVisionToolInput,
     allowedTypes?: Set<string>,
+    userSuffix = '',
   ): Promise<GeometryObservation[]> {
-    const output = asRecord(await this.call(tool, input));
+    const output = asRecord(await this.call(tool, input, userSuffix));
     const observations = output?.observations;
     if (!Array.isArray(observations)) {
       throw new DrawingVisionOutputError(tool, ['observations 必须是数组']);

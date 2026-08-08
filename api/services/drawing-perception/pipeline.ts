@@ -39,6 +39,7 @@ import type {
 import {
   DrawingVisionTools,
   type DrawingCoverageContext,
+  type DrawingRegionalGeometryContext,
   type DrawingVisionToolInput,
   type SheetAnalysis,
 } from './vision-tools.js';
@@ -92,7 +93,10 @@ export interface DrawingVisionToolset {
   analyzeSheet(input: DrawingVisionToolInput): Promise<SheetAnalysis>;
   segmentViews(input: DrawingVisionToolInput): Promise<DrawingView[]>;
   detectDatums(input: DrawingVisionToolInput): Promise<GeometryObservation[]>;
-  detectGeometry(input: DrawingVisionToolInput): Promise<GeometryObservation[]>;
+  detectGeometry(
+    input: DrawingVisionToolInput,
+    context?: DrawingRegionalGeometryContext,
+  ): Promise<GeometryObservation[]>;
   extractAnnotations(input: DrawingVisionToolInput): Promise<AnnotationObservation[]>;
   detectGlobalContours?(input: DrawingVisionToolInput): Promise<GlobalContour[]>;
   detectContourEvidence?(
@@ -555,7 +559,10 @@ export class DrawingPerceptionPipeline {
       ...(evidenceTool ? ['detect_contour_evidence' as const] : []),
     ];
     const operations: Array<Promise<unknown>> = [
-      this.retryViewTool(input, () => this.vision.detectGeometry(visionInput)),
+      this.retryViewTool(input, () => this.vision.detectGeometry(visionInput, {
+        mode: 'regional_standalone',
+        globalContours: projectedContours,
+      })),
       this.retryViewTool(input, () => this.vision.extractAnnotations(visionInput)),
       ...(evidenceTool
         ? [this.retryViewTool(input, () => evidenceTool(visionInput, projectedContours))]
