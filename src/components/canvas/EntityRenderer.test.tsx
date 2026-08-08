@@ -71,6 +71,6 @@ describe('EntityRenderer', () => {
       <svg><EntityRenderer entity={entities[1]} scale={1} viewport={viewport} selected /></svg>,
     );
 
-    expect(html).toContain('stroke="#60a5fa"');
+    expect(html).toContain('stroke="#6da9d2"');
   });
 });

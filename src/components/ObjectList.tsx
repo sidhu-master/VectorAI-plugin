@@ -1,7 +1,7 @@
 /**
  * ObjectList - 左侧实体列表（支持多选）
  */
-import { Circle, Dot, Eye, EyeOff, Minus, Trash2 } from 'lucide-react';
+import { Circle, Dot, Eye, EyeOff, Minus, Shapes, Trash2 } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { EntityType, GeometryEntity } from '@/core/types';
 
@@ -11,7 +11,7 @@ function typeIcon(type: EntityType) {
     case 'circle': return <Circle size={14} className={cls} />;
     case 'line': return <Minus size={14} className={cls} />;
     case 'point': return <Dot size={16} className={cls} />;
-    default: return null;
+    default: return <span className="w-4 text-center font-mono text-[8px] uppercase text-slate-500">{type.slice(0, 2)}</span>;
   }
 }
 
@@ -34,43 +34,47 @@ export default function ObjectList() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-white/5 p-3">
-        <span className="font-mono text-xs uppercase tracking-wider text-slate-500">
-          实体列表
+      <div className="flex h-11 items-center justify-between border-b border-white/[0.06] px-3">
+        <span className="text-[11px] font-medium text-slate-300">
+          图元
         </span>
-        <span className="rounded bg-base-600 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
-          {entities.length} entities
-          {selectedIds.length > 0 && ` · ${selectedIds.length} selected`}
+        <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
+          {entities.length}
+          {selectedIds.length > 0 && ` · 已选 ${selectedIds.length}`}
         </span>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {entities.length === 0 ? (
-          <p className="py-8 text-center text-xs text-slate-600">No entities yet</p>
+          <div className="flex h-full flex-col items-center justify-center px-5 text-center">
+            <Shapes size={20} className="mb-2 text-slate-700" />
+            <p className="text-[11px] text-slate-500">暂无图元</p>
+            <p className="mt-1 text-[10px] leading-4 text-slate-700">通过 AI 对话导入或创建二维图纸</p>
+          </div>
         ) : (
           entities.map((e) => {
             const selected = selectedIds.includes(e.id);
             return (
               <div
                 key={e.id}
-                className={`flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-base-600 ${
-                  selected ? 'border-l-2 border-accent bg-base-600' : 'border-l-2 border-transparent'
+                className={`group flex cursor-pointer items-center gap-2 border-l-2 px-3 py-2 transition hover:bg-white/[0.035] ${
+                  selected ? 'border-accent bg-accent/[0.07]' : 'border-transparent'
                 }`}
                 onClick={(ev) => selectEntity(e.id, ev.ctrlKey || ev.metaKey)}
               >
                 {typeIcon(e.type)}
-                <span className="flex-1 truncate font-mono text-xs text-slate-300">
+                <span className={`flex-1 truncate font-mono text-[10px] ${selected ? 'text-slate-200' : 'text-slate-400'}`}>
                   {e.id}
                 </span>
                 <button
-                  className="text-slate-500 hover:text-accent"
+                  className="text-slate-700 opacity-0 transition hover:text-accent group-hover:opacity-100"
                   onClick={(ev) => toggleVisible(e, ev)}
                   title={e.visible ? '隐藏' : '显示'}
                 >
                   {e.visible ? <Eye size={14} /> : <EyeOff size={14} />}
                 </button>
                 <button
-                  className="text-slate-500 hover:text-danger"
+                  className="text-slate-700 opacity-0 transition hover:text-danger group-hover:opacity-100"
                   onClick={(ev) => onDelete(e.id, ev)}
                   title="删除"
                 >

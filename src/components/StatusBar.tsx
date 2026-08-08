@@ -12,8 +12,8 @@ export default function StatusBar() {
   const fmt = (n: number) => n.toFixed(2);
 
   return (
-    <footer className="flex h-7 items-center justify-between border-t border-white/5 bg-base-900 px-4">
-      <div className="font-mono text-xs text-slate-500">
+    <footer className="flex h-6 shrink-0 items-center justify-between border-t border-white/[0.06] bg-base-900 px-3.5">
+      <div className="font-mono text-[9px] text-slate-600">
         {mouseCoords ? (
           <span>
             X: {fmt(mouseCoords.x)}&nbsp;&nbsp;Y: {fmt(mouseCoords.y)}
@@ -23,14 +23,14 @@ export default function StatusBar() {
         )}
       </div>
 
-      <div className="text-xs text-slate-500">{unit}</div>
+      <div className="text-[9px] uppercase tracking-wider text-slate-700">{unit}</div>
 
-      <div className="flex items-center gap-4">
-        <span className="font-mono text-xs text-slate-500">
+      <div className="flex items-center gap-3">
+        <span className="font-mono text-[9px] text-slate-600">
           {Math.round(scale * 100)}%
         </span>
-        <span className="font-mono text-xs text-slate-500">
-          {entityCount} entities
+        <span className="border-l border-white/[0.07] pl-3 font-mono text-[9px] text-slate-600">
+          {entityCount} 个图元
         </span>
       </div>
     </footer>

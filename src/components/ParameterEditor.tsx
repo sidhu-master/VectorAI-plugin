@@ -2,7 +2,7 @@
  * ParameterEditor - 左侧参数编辑器（支持单选/多选）
  */
 import { useStore } from '@/hooks/useStore';
-import type { CircleEntity, GeometryEntity, LineEntity, PointEntity } from '@/core/types';
+import type { CircleEntity, LineEntity, PointEntity } from '@/core/types';
 
 function Field({
   label,
@@ -14,11 +14,11 @@ function Field({
   onChange: (v: number) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs text-slate-500">{label}</span>
+    <label className="flex flex-col gap-1.5">
+      <span className="font-mono text-[9px] text-slate-600">{label}</span>
       <input
         type="number"
-        className="w-full rounded border border-white/10 bg-base-800 px-2 py-1 font-mono text-xs text-slate-200 focus:border-accent/50"
+        className="w-full rounded-md border border-white/[0.08] bg-base-800 px-2 py-1.5 font-mono text-[10px] text-slate-300 transition focus:border-accent/45"
         value={Number.isFinite(value) ? value : 0}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
       />
@@ -36,40 +36,40 @@ export default function ParameterEditor() {
   const singleEntity = selected.length === 1 ? selected[0] : null;
 
   return (
-    <div className="flex h-64 flex-col border-t border-white/5 bg-base-700">
-      <div className="border-b border-white/5 p-3">
-        <span className="font-mono text-xs uppercase tracking-wider text-slate-500">
-          参数编辑
+    <div className="flex h-64 flex-col border-t border-white/[0.06] bg-base-700">
+      <div className="flex h-11 items-center border-b border-white/[0.06] px-3">
+        <span className="text-[11px] font-medium text-slate-300">
+          属性
         </span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
         {selected.length === 0 ? (
-          <p className="py-8 text-center text-xs text-slate-600">Select an entity</p>
+          <p className="py-8 text-center text-[10px] leading-4 text-slate-600">选择一个图元以查看参数</p>
         ) : selected.length > 1 ? (
           <div className="space-y-2">
-            <p className="text-center text-xs text-slate-400">
-              {selected.length} entities selected
+            <p className="text-center text-[10px] text-slate-400">
+              已选择 {selected.length} 个图元
             </p>
             <div className="flex flex-wrap gap-1">
               {selected.map((e) => (
                 <span
                   key={e.id}
-                  className="rounded bg-base-600 px-1.5 py-0.5 font-mono text-[10px] text-accent"
+                  className="rounded-md bg-accent/[0.08] px-1.5 py-0.5 font-mono text-[9px] text-accent"
                 >
                   {e.type}
                 </span>
               ))}
             </div>
-            <p className="pt-2 text-center text-xs text-slate-600">
-              Ctrl+click to toggle individual selection
+            <p className="pt-2 text-center text-[10px] text-slate-600">
+              按住 Ctrl 点击可调整多选
             </p>
           </div>
         ) : singleEntity ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-accent">{singleEntity.id}</span>
-              <span className="rounded bg-base-600 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+              <span className="truncate font-mono text-[10px] text-slate-300">{singleEntity.id}</span>
+              <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
                 {singleEntity.type}
               </span>
             </div>
@@ -82,6 +82,11 @@ export default function ParameterEditor() {
             )}
             {singleEntity.type === 'circle' && (
               <CircleFields entity={singleEntity as CircleEntity} update={updateEntity} />
+            )}
+            {!['point', 'line', 'circle'].includes(singleEntity.type) && (
+              <p className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-[10px] leading-4 text-slate-600">
+                当前图元已支持显示与选择，参数编辑将在后续版本逐步开放。
+              </p>
             )}
           </div>
         ) : null}

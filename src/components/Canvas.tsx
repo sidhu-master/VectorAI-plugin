@@ -3,7 +3,7 @@
  * 坐标系：CAD 约定（Y 轴向上），通过 transform 翻转 SVG 的 Y 轴。
  * 支持：鼠标拖动平移、滚轮缩放、自动适配视图、Ctrl+多选、Ctrl+框选。
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { GeometryEntity, SpatialRelation } from '@/core/types';
 import EntityRenderer from './canvas/EntityRenderer';
@@ -44,7 +44,7 @@ export default function Canvas() {
   // 标记鼠标是否移动过（区分点击和拖动）
   const hasMovedRef = useRef(false);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const update = () => setSize({ w: el.clientWidth, h: el.clientHeight });
@@ -75,10 +75,10 @@ export default function Canvas() {
   }, [model.entities, w, h, setCanvasTransform]);
 
   // 屏幕坐标 -> 世界坐标
-  const toWorld = (sx: number, sy: number) => ({
+  const toWorld = useCallback((sx: number, sy: number) => ({
     x: (sx - offsetX) / scale,
     y: (offsetY - sy) / scale,
-  });
+  }), [offsetX, offsetY, scale]);
 
   const worldLeft = w ? -offsetX / scale : 0;
   const worldRight = w ? (w - offsetX) / scale : 0;
@@ -110,13 +110,13 @@ export default function Canvas() {
     const x1 = Math.floor(worldRight / 50) * 50;
     for (let x = x0; x <= x1; x += 50) {
       if (x === 0) continue;
-      axisLabels.push(<text key={`lx${x}`} x={offsetX + x * scale} y={offsetY + 12} className="fill-slate-600 font-mono" fontSize={9} textAnchor="middle">{x}</text>);
+    axisLabels.push(<text key={`lx${x}`} x={offsetX + x * scale} y={offsetY + 12} className="fill-slate-700 font-mono" fontSize={9} textAnchor="middle">{x}</text>);
     }
     const y0 = Math.ceil(worldBottom / 50) * 50;
     const y1 = Math.floor(worldTop / 50) * 50;
     for (let y = y0; y <= y1; y += 50) {
       if (y === 0) continue;
-      axisLabels.push(<text key={`ly${y}`} x={offsetX + 4} y={offsetY - y * scale - 3} className="fill-slate-600 font-mono" fontSize={9} textAnchor="start">{y}</text>);
+      axisLabels.push(<text key={`ly${y}`} x={offsetX + 4} y={offsetY - y * scale - 3} className="fill-slate-700 font-mono" fontSize={9} textAnchor="start">{y}</text>);
     }
   }
 
@@ -160,7 +160,7 @@ export default function Canvas() {
         if (!a || !b) continue;
         const [ax, ay] = a;
         const [bx, by] = b;
-        relationLines.push(<line key={`rel${i}-${j}`} x1={ax} y1={ay} x2={bx} y2={by} stroke="#a78bfa" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" className="breathe" />);
+        relationLines.push(<line key={`rel${i}-${j}`} x1={ax} y1={ay} x2={bx} y2={by} stroke="#7893a6" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" className="breathe" />);
         const mx = (ax + bx) / 2, my = (ay + by) / 2;
         relationLabels.push(<text key={`rl${i}-${j}`} x={offsetX + mx * scale} y={offsetY - my * scale - 4} className="fill-relation-light font-mono" fontSize={9} textAnchor="middle">{r.kind}</text>);
       }
@@ -226,7 +226,7 @@ export default function Canvas() {
         setMouseCoords(toWorld(sx, sy));
       }
     },
-    [offsetX, offsetY, scale, setCanvasTransform, setMouseCoords],
+    [setCanvasTransform, setMouseCoords, toWorld],
   );
 
   const onMouseUp = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -296,7 +296,7 @@ export default function Canvas() {
     : null;
 
   return (
-    <div ref={containerRef} className="relative flex-1 bg-base-800">
+    <div ref={containerRef} className="relative min-w-0 flex-1 bg-[#080a0d]">
       <svg
         ref={svgRef}
         className="h-full w-full select-none"
@@ -309,10 +309,10 @@ export default function Canvas() {
       >
         {/* 世界坐标组 */}
         <g transform={`translate(${offsetX}, ${offsetY}) scale(${scale}, ${-scale})`}>
-          {showGrid && <g stroke="rgba(255,255,255,0.03)" strokeWidth={1}>{minorLines}</g>}
-          {showGrid && <g stroke="rgba(255,255,255,0.08)" strokeWidth={1}>{majorLines}</g>}
-          <line x1={worldLeft} y1={0} x2={worldRight} y2={0} stroke="rgba(239,68,68,0.4)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <line x1={0} y1={worldBottom} x2={0} y2={worldTop} stroke="rgba(34,197,54,0.4)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {showGrid && <g stroke="rgba(148,163,184,0.025)" strokeWidth={1}>{minorLines}</g>}
+          {showGrid && <g stroke="rgba(148,163,184,0.075)" strokeWidth={1}>{majorLines}</g>}
+          <line x1={worldLeft} y1={0} x2={worldRight} y2={0} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          <line x1={0} y1={worldBottom} x2={0} y2={worldTop} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           {model.entities.map(renderEntity)}
           {relationLines}
         </g>
@@ -328,8 +328,8 @@ export default function Canvas() {
             y={selRect.y}
             width={selRect.w}
             height={selRect.h}
-            fill="rgba(34, 211, 238, 0.08)"
-            stroke="#22d3ee"
+            fill="rgba(109, 169, 210, 0.08)"
+            stroke="#6da9d2"
             strokeWidth={1}
             strokeDasharray="4 2"
             pointerEvents="none"

@@ -3,7 +3,7 @@
  * 支持文字输入 + 图片上传/粘贴（先预览，发送时才分析）
  */
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Paperclip, Send, X } from 'lucide-react';
+import { Loader2, Paperclip, Send, Sparkles, X } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { ChatMessage } from '@/hooks/useStore';
 import ConstructionTimeline from './ConstructionTimeline';
@@ -27,21 +27,21 @@ function Message({ msg }: { msg: ChatMessage }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+        className={`max-w-[88%] rounded-xl px-3 py-2.5 text-[12px] leading-5 ${
           isUser
-            ? 'bg-base-600 text-slate-200'
-            : 'border border-white/5 bg-base-800 text-slate-200'
+            ? 'bg-white/[0.075] text-slate-200'
+            : 'border border-white/[0.06] bg-base-800/70 text-slate-300'
         }`}
       >
         <p className="whitespace-pre-wrap break-words">{msg.content}</p>
 
         {!isUser && msg.confidence !== undefined && (
           <div className="mt-1.5 flex items-center gap-2">
-            <span className="text-[10px] text-slate-500">置信度</span>
+            <span className="text-[9px] text-slate-600">置信度</span>
             <span className={`font-mono text-[10px] ${confidenceColor(msg.confidence)}`}>
               {Math.round(msg.confidence * 100)}%
             </span>
-            <span className="h-1 flex-1 overflow-hidden rounded bg-base-600">
+            <span className="h-1 flex-1 overflow-hidden rounded bg-white/[0.06]">
               <span
                 className="block h-full rounded bg-current"
                 style={{ width: `${Math.round(msg.confidence * 100)}%` }}
@@ -52,10 +52,10 @@ function Message({ msg }: { msg: ChatMessage }) {
 
         {!isUser && msg.intent && (
           <details className="mt-2">
-            <summary className="cursor-pointer text-[10px] text-slate-500 hover:text-slate-300">
-              Spatial Intent JSON
+            <summary className="cursor-pointer text-[9px] text-slate-600 hover:text-slate-400">
+              查看空间意图
             </summary>
-            <pre className="mt-1 overflow-x-auto rounded bg-base-900 p-2 font-mono text-[10px] text-slate-400">
+            <pre className="mt-1 overflow-x-auto rounded-lg border border-white/[0.05] bg-base-900 p-2 font-mono text-[9px] text-slate-500">
               {JSON.stringify(msg.intent, null, 2)}
             </pre>
           </details>
@@ -139,47 +139,55 @@ export default function AIDialog() {
       : '描述任务，AI 将自动分阶段构建...';
 
   return (
-    <aside className="flex w-80 flex-col border-l border-white/5 bg-base-700">
-      <div className="border-b border-white/5 p-3">
-        <span className="font-mono text-xs uppercase tracking-wider text-slate-500">
-          AI 对话
+    <aside data-panel="assistant" className="flex w-[360px] shrink-0 flex-col border-l border-white/[0.07] bg-base-700 max-lg:w-[320px]">
+      <div className="flex h-12 shrink-0 items-center gap-2.5 border-b border-white/[0.06] px-3.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/[0.08] text-accent">
+          <Sparkles size={14} />
         </span>
+        <div className="leading-tight">
+          <span className="block text-[12px] font-medium text-slate-200">AI 助手</span>
+          <span className="block text-[9px] text-slate-600">可暂停 · 可随时追加指令</span>
+        </div>
       </div>
 
       {(agentRunId || taskPlan) && <ConstructionTimeline />}
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-3">
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {aiMessages.length === 0 && !pendingImage && (
-          <p className="py-8 text-center text-xs text-slate-600">
-            描述你想要的图形，或粘贴/上传图纸
-          </p>
+          <div className="flex h-full min-h-44 flex-col items-center justify-center px-7 text-center">
+            <span className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.025] text-slate-600">
+              <Sparkles size={15} />
+            </span>
+            <p className="text-[11px] text-slate-400">从图纸或文字开始</p>
+            <p className="mt-1.5 text-[10px] leading-4 text-slate-600">上传工程图，或描述需要创建和修改的二维几何</p>
+          </div>
         )}
         {aiMessages.map((m) => (
           <Message key={m.id} msg={m} />
         ))}
       </div>
 
-      <div className="border-t border-white/5 p-3">
+      <div className="shrink-0 border-t border-white/[0.06] bg-base-700 p-3">
         {/* 图片预览 */}
         {pendingImage && (
-          <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/20 bg-base-800 p-2">
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/[0.08] bg-base-800 p-2">
             {pendingImage.mimeType === 'application/pdf' ? (
-              <div className="flex h-12 w-12 items-center justify-center rounded bg-danger/10 font-mono text-[10px] text-danger">
+              <div className="flex h-11 w-11 items-center justify-center rounded-md bg-white/[0.04] font-mono text-[9px] text-slate-400">
                 PDF
               </div>
             ) : (
               <img
                 src={pendingImage.dataUrl}
                 alt="preview"
-                className="h-12 w-12 rounded object-cover"
+                className="h-11 w-11 rounded-md object-cover"
               />
             )}
             <div className="flex-1 truncate">
-              <p className="text-xs text-slate-300">{pendingImage.name}</p>
-              <p className="text-[10px] text-accent">等待发送</p>
+              <p className="text-[10px] text-slate-300">{pendingImage.name}</p>
+              <p className="text-[9px] text-slate-600">等待发送</p>
             </div>
             <button
-              className="text-slate-500 hover:text-danger"
+              className="rounded-md p-1 text-slate-600 transition hover:bg-danger/[0.06] hover:text-danger"
               onClick={() => setPendingImage(null)}
               title="移除图片"
             >
@@ -188,9 +196,9 @@ export default function AIDialog() {
           </div>
         )}
 
-        <div className="flex gap-2">
+        <div className="rounded-xl border border-white/[0.09] bg-base-800 p-2 shadow-lg shadow-black/10 transition focus-within:border-accent/35">
           <textarea
-            className="w-full resize-none rounded-lg border border-white/10 bg-base-800 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:border-accent/50"
+            className="block w-full resize-none bg-transparent px-1.5 py-1 text-[12px] leading-5 text-slate-200 placeholder:text-slate-600 disabled:opacity-50"
             rows={2}
             placeholder={placeholder}
             value={input}
@@ -206,28 +214,28 @@ export default function AIDialog() {
             className="hidden"
             onChange={handleFileSelect}
           />
-          <div className="flex shrink-0 flex-col gap-1">
+          <div className="mt-1 flex items-center justify-between">
             <button
-              className="flex items-center justify-center rounded-lg border border-white/10 bg-base-800 px-2 py-1.5 text-slate-400 hover:text-accent disabled:opacity-40"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/[0.05] hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-30"
               onClick={() => fileInputRef.current?.click()}
               disabled={starting || agentActive || !!pendingImage}
               title={agentActive ? '当前任务结束后可上传新图纸' : '上传图纸'}
             >
               <Paperclip size={14} />
             </button>
+            <button
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent text-base-900 transition hover:bg-accent-light disabled:cursor-not-allowed disabled:bg-white/[0.06] disabled:text-slate-700"
+              onClick={handleSend}
+              disabled={starting || (!input.trim() && !pendingImage)}
+              title={pendingImage ? '发送并分析图片' : '发送'}
+            >
+              {starting ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Send size={13} />
+              )}
+            </button>
           </div>
-          <button
-            className="flex shrink-0 items-center justify-center rounded-lg bg-accent px-3 text-base-900 hover:bg-accent-light disabled:opacity-40"
-            onClick={handleSend}
-            disabled={starting || (!input.trim() && !pendingImage)}
-            title={pendingImage ? '发送并分析图片' : '发送'}
-          >
-            {starting ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Send size={14} />
-            )}
-          </button>
         </div>
       </div>
     </aside>

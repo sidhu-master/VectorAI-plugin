@@ -3,7 +3,7 @@
  * Logo / AI 连接状态 / 缩放控制 / DXF 导出 / 清空
  */
 import { useEffect, useState } from 'react';
-import { Download, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { DraftingCompass, Download, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 
 const MIN_SCALE = 0.1;
@@ -39,40 +39,45 @@ export default function TopToolbar() {
   };
 
   return (
-    <header className="flex h-12 items-center justify-between border-b border-white/5 bg-base-900 px-4">
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-white/[0.07] bg-base-900 px-3.5">
       {/* Logo */}
-      <div className="flex items-baseline gap-2">
-        <span className="font-mono text-sm font-bold text-accent">VectorAI</span>
-        <span className="text-xs text-slate-500">Spatial Protocol</span>
+      <div className="flex min-w-[220px] items-center gap-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.035] text-accent">
+          <DraftingCompass size={15} />
+        </span>
+        <div className="leading-tight">
+          <span className="block text-[13px] font-semibold tracking-tight text-slate-100">VectorAI</span>
+          <span className="block text-[9px] tracking-wide text-slate-600">二维空间编辑器</span>
+        </div>
       </div>
 
       {/* AI 状态 */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.02] px-2.5 py-1">
         <span
-          className={`h-2 w-2 rounded-full ${
-            connected ? 'bg-green-500' : 'bg-slate-600'
+          className={`h-1.5 w-1.5 rounded-full ${
+            connected ? 'bg-emerald-400' : 'bg-slate-600'
           }`}
         />
-        <span className="text-xs text-slate-400">
-          {connected ? 'AI Connected' : 'Demo Mode'}
+        <span className="text-[10px] text-slate-500">
+          {connected ? 'AI 服务已连接' : '本地模式'}
         </span>
       </div>
 
       {/* 右侧操作 */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1 text-slate-400">
+      <div className="flex min-w-[220px] items-center justify-end gap-2">
+        <div className="flex items-center rounded-lg border border-white/[0.07] bg-white/[0.025] p-0.5 text-slate-500">
           <button
-            className="rounded p-1 hover:bg-base-600 hover:text-slate-200"
+            className="rounded-md p-1.5 transition hover:bg-white/[0.06] hover:text-slate-200"
             onClick={() => zoomBy(1 / 1.2)}
             title="缩小"
           >
             <ZoomOut size={14} />
           </button>
-          <span className="font-mono text-xs text-slate-500 w-12 text-center">
+          <span className="w-11 text-center font-mono text-[10px] text-slate-500">
             {Math.round(scale * 100)}%
           </span>
           <button
-            className="rounded p-1 hover:bg-base-600 hover:text-slate-200"
+            className="rounded-md p-1.5 transition hover:bg-white/[0.06] hover:text-slate-200"
             onClick={() => zoomBy(1.2)}
             title="放大"
           >
@@ -81,7 +86,7 @@ export default function TopToolbar() {
         </div>
 
         <button
-          className="flex items-center gap-1 rounded border border-accent/30 px-3 py-1 font-mono text-xs text-accent hover:bg-accent/10"
+          className="flex items-center gap-1.5 rounded-lg border border-accent/25 bg-accent/[0.07] px-2.5 py-1.5 text-[10px] font-medium text-accent-light transition hover:border-accent/40 hover:bg-accent/[0.12]"
           onClick={exportDXF}
         >
           <Download size={12} />
@@ -89,11 +94,11 @@ export default function TopToolbar() {
         </button>
 
         <button
-          className="flex items-center gap-1 text-xs text-slate-400 hover:text-danger"
+          className="flex items-center gap-1 rounded-md p-1.5 text-slate-600 transition hover:bg-danger/[0.06] hover:text-red-300"
           onClick={clearAll}
+          title="清空图纸"
         >
-          <Trash2 size={12} />
-          清空
+          <Trash2 size={13} />
         </button>
       </div>
     </header>

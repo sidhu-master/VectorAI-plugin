@@ -4,7 +4,7 @@ import type { BBox } from './geometry';
 
 const HIT_WIDTH = 14;
 const PRIMARY_STROKE = '#cbd5e1';
-const SELECTED_STROKE = '#60a5fa';
+const SELECTED_STROKE = '#6da9d2';
 const DANGER_STROKE = '#f87171';
 const CONSTRUCTION_STROKE = '#64748b';
 const DIMENSION_STROKE = '#94a3b8';

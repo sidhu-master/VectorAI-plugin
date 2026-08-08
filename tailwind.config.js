@@ -9,42 +9,37 @@ export default {
     },
     extend: {
       colors: {
-        // 深色背景层次
         base: {
-          900: "#0a0f1a",      // 最深底色
-          800: "#0d1117",      // 画布背景
-          700: "#131923",      // 面板背景
-          600: "#1a2133",      // 悬停背景
-          500: "#222b3f",      // 活跃背景
+          900: "#090b0e",
+          800: "#0d1014",
+          700: "#12161b",
+          600: "#1a2027",
+          500: "#242c35",
         },
-        // 青色技术强调色
         accent: {
-          DEFAULT: "#22d3ee",
-          dark: "#0891b2",
-          light: "#67e8f9",
-          glow: "rgba(34, 211, 238, 0.15)",
+          DEFAULT: "#6da9d2",
+          dark: "#4f86ad",
+          light: "#8dbddd",
+          glow: "rgba(109, 169, 210, 0.12)",
         },
-        // 琥珀色选中高亮
         highlight: {
-          DEFAULT: "#f59e0b",
-          dark: "#d97706",
-          light: "#fbbf24",
+          DEFAULT: "#6da9d2",
+          dark: "#4f86ad",
+          light: "#8dbddd",
         },
-        // 紫色关系连接
         relation: {
-          DEFAULT: "#a78bfa",
-          dark: "#7c3aed",
-          light: "#c4b5fd",
+          DEFAULT: "#7893a6",
+          dark: "#596f7e",
+          light: "#9aafbd",
         },
-        // 错误/删除
         danger: {
-          DEFAULT: "#ef4444",
-          dark: "#dc2626",
+          DEFAULT: "#ef6a6a",
+          dark: "#d95757",
         },
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', 'monospace'],
-        sans: ['"Sora"', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       animation: {
         'pulse-slow': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
