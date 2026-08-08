@@ -78,20 +78,24 @@ describe('drawing agent run routes', () => {
     });
   });
 
-  it('explicitly rejects attachments and legacy SpatialModel input', async () => {
+  it('stores a bounded attachment reference and still rejects legacy SpatialModel input', async () => {
     const context = await startServer();
     const attachment = await fetch(`${context.baseUrl}/api/agent/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...startBody(context), image: 'base64', mimeType: 'image/png' }),
+      body: JSON.stringify({
+        ...startBody(context, { goal: '分析图纸' }),
+        attachment: { data: 'cG5n', mimeType: 'image/png', page: 1 },
+      }),
     });
     const legacy = await fetch(`${context.baseUrl}/api/agent/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...startBody(context), spatialModel: { entities: [] } }),
     });
 
-    expect(attachment.status).toBe(409);
-    expect(await attachment.json()).toMatchObject({
-      error: { code: 'DRAWING_PERCEPTION_NOT_MIGRATED' },
+    expect(attachment.status).toBe(202);
+    expect(await attachment.json()).toMatchObject({ success: true, runId: expect.any(String) });
+    expect(context.sourceArtifacts.put).toHaveBeenCalledWith({
+      data: 'cG5n', mimeType: 'image/png', page: 1,
     });
     expect(legacy.status).toBe(400);
     expect(await legacy.json()).toMatchObject({
@@ -181,14 +185,31 @@ async function startServer(input: {
     decide: async (): Promise<AgentDecision> => decisions.shift()
       ?? { type: 'finish', summary: '完成' },
   };
+  const sourceReference = {
+    sourceId: 'source_aaaaaaaaaaaaaaaaaaaaaaaa', sha256: 'a'.repeat(64),
+    mimeType: 'image/png' as const, byteLength: 3, page: 1,
+  };
+  const sourceArtifacts = {
+    put: vi.fn(async () => sourceReference),
+    read: vi.fn(async () => ({ metadata: sourceReference, bytes: Buffer.from('png') })),
+  };
+  const perception = {
+    async *run() {
+      yield {
+        kind: 'stage' as const, runId: 'run_attachment', stage: 'completed' as const,
+        timestamp: 1, durationMs: 1, detail: { batchCount: 0 },
+      };
+    },
+  };
   const runtime = new DrawingAgentRuntime({
     application, tools, planner, decision: decisionAdapter,
+    sourceArtifacts, perception, visionModelName: 'vision-model',
   });
   const app = express();
   app.use(express.json());
   app.use('/api/agent/runs', createAgentRunsRouter(runtime, application, {
     planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
-  }));
+  }, sourceArtifacts));
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -197,7 +218,7 @@ async function startServer(input: {
   if (!address || typeof address === 'string') throw new Error('missing address');
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
-    application, runtime, workspace,
+    application, runtime, sourceArtifacts, workspace,
   };
 }
 

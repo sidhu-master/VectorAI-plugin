@@ -67,6 +67,7 @@ export interface DrawingAgentRunView {
   workflow: WorkflowNode[];
   currentWorkflowNodeId: string | null;
   commitCount: number;
+  analysisSummary: string | null;
   pendingInstructions: string[];
   error: string | null;
 }

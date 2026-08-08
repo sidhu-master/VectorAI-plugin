@@ -43,6 +43,7 @@ export interface DrawingAgentState {
   activeInstructions: string[];
   needsReplan: boolean;
   commitCount: number;
+  analysisSummary: string | null;
   decisionCount: number;
   consecutiveReadCount: number;
   recovery: DrawingAgentRecoveryState;
@@ -54,6 +55,7 @@ export interface DrawingAgentState {
 
 export type DrawingAgentEvent =
   | { type: 'PLAN_READY'; plan: DrawingAgentPlan }
+  | { type: 'ANALYSIS_READY'; summary: string }
   | { type: 'REPLAN_REQUIRED'; revision: RevisionId }
   | { type: 'REPLAN_STARTED' }
   | { type: 'PAUSE_REQUESTED' }
@@ -110,6 +112,7 @@ export function createDrawingAgentState(input: {
     activeInstructions: [],
     needsReplan: false,
     commitCount: 0,
+    analysisSummary: null,
     decisionCount: 0,
     consecutiveReadCount: 0,
     recovery: {
@@ -131,6 +134,9 @@ export function reduceDrawingAgentState(
   if (isTerminal(state.status)) return valid(state, state);
 
   switch (event.type) {
+    case 'ANALYSIS_READY':
+      return valid(state, { ...state, analysisSummary: event.summary });
+
     case 'PLAN_READY':
       if (state.status !== 'planning' && state.status !== 'pause_requested') {
         return invalid(state, event.type);
@@ -296,6 +302,7 @@ export function toDrawingAgentRunView(state: DrawingAgentState): DrawingAgentRun
     workflow: state.plan ? structuredClone(state.plan.workflow) : [],
     currentWorkflowNodeId: state.currentWorkflowNodeId,
     commitCount: state.commitCount,
+    analysisSummary: state.analysisSummary,
     pendingInstructions: [...state.pendingInstructions],
     error: state.error,
   };

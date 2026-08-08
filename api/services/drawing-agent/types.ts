@@ -11,6 +11,7 @@ import type {
   AgentDecision,
   DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
+import type { SourceArtifactReference } from '../source-artifacts/types.js';
 
 export type DrawingToolCapability =
   | 'query_entities'
@@ -144,4 +145,5 @@ export interface StartDrawingAgentRunInput {
   modelProfile: DrawingAgentModelProfile;
   selectedIds?: string[];
   stableRules?: string[];
+  source?: SourceArtifactReference;
 }

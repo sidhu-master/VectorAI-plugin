@@ -15,6 +15,8 @@ import { DrawingToolRegistry } from './tool-registry';
 import { DrawingAgentRuntime } from './runtime';
 import { FileDrawingAgentAuditStore } from './file-audit-store';
 import type { DrawingAgentAuditStore } from './audit-types';
+import type { DrawingPerceptionOutput } from '../drawing-perception/pipeline';
+import type { SourceArtifactStore } from '../source-artifacts/types';
 import type {
   DrawingDecisionInput,
   DrawingDecisionModelAdapter,
@@ -43,6 +45,8 @@ async function setup(input: {
     workspace: Awaited<ReturnType<DrawingApplication['create']>>;
   }) => Pick<DrawingToolRegistry, 'invoke' | 'discardPrepared' | 'discardRun'>;
   auditStore?: DrawingAgentAuditStore;
+  perceptionOutputs?: DrawingPerceptionOutput[];
+  perceptionModels?: string[];
 } = {}) {
   const idFactory = ids();
   const repository = new MemoryDrawingRepository({ idFactory, now: () => 100 });
@@ -90,11 +94,93 @@ async function setup(input: {
     now: () => 100,
     limits: input.limits,
     auditStore: input.auditStore,
+    sourceArtifacts: input.perceptionOutputs ? sourceStore() : undefined,
+    perception: input.perceptionOutputs
+      ? perception(input.perceptionOutputs, input.perceptionModels)
+      : undefined,
+    visionModelName: 'vision-model',
+    visionRepairModelName: 'repair-vision-model',
   });
   return { application, decision, order, planner, runtime, tools, workspace };
 }
 
 describe('DrawingAgentRuntime', () => {
+  it('analyzes a source without planning or committing when the input is analysis-only', async () => {
+    const { application, planner, runtime, workspace } = await setup({
+      perceptionOutputs: perceptionSequence([]),
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace), goal: '分析这张图纸的结构', source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.commitCount).toBe(0);
+    expect(final.analysisSummary).toContain('0 个图元');
+    expect(planner.plan).not.toHaveBeenCalled();
+    expect((await application.open(workspace.document.id)).document.geometry).toEqual([]);
+  });
+
+  it('reconstructs DrawingCommand batches through preview and commit without a text planner', async () => {
+    const batch = perceptionBatch('circle_from_image');
+    const { application, planner, runtime, workspace } = await setup({
+      perceptionOutputs: perceptionSequence([batch]),
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.commitCount).toBe(1);
+    expect(planner.plan).not.toHaveBeenCalled();
+    expect((await application.open(workspace.document.id)).document.geometry).toEqual([
+      expect.objectContaining({ id: 'circle_from_image', type: 'circle', radius: 5 }),
+    ]);
+  });
+
+  it('retries perception with the repair profile only after a low-confidence result', async () => {
+    const perceptionModels: string[] = [];
+    const { runtime, workspace } = await setup({
+      perceptionOutputs: perceptionSequence([perceptionBatch('candidate_circle', 0.4)]),
+      perceptionModels,
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.recovery.lowConfidenceEscalations).toBe(1);
+    expect(perceptionModels).toEqual(['vision-model', 'repair-vision-model']);
+  });
+
+  it('plans a combined modification against the revision created by reconstruction', async () => {
+    const plannerInputs: DrawingPlannerInput[] = [];
+    const planner: DrawingPlannerModelAdapter = {
+      plan: vi.fn(async (input) => {
+        plannerInputs.push(input);
+        return createPlan('circle_after_image');
+      }),
+    };
+    const { runtime, workspace } = await setup({
+      planner,
+      decisions: [createDecision('circle_after_image', 0.9)],
+      perceptionOutputs: perceptionSequence([perceptionBatch('circle_from_image')]),
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace),
+      goal: '先分析图纸，然后添加一个圆',
+      source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.commitCount).toBe(2);
+    expect(plannerInputs[0]).toMatchObject({ objective: '添加一个圆' });
+    expect(plannerInputs[0].revision).not.toBe(workspace.revision);
+  });
+
   it('creates through Preview then Commit and verifies the goal', async () => {
     const { application, order, runtime, workspace } = await setup();
 
@@ -566,5 +652,76 @@ function circleTransaction(revision: string, id: string): DrawingTransaction {
     actor: { type: 'user', id: 'external' },
     commands: decision.commands,
     preconditions: [], postconditions: [], evidenceRefs: [],
+  };
+}
+
+function sourceReference() {
+  return {
+    sourceId: 'source_aaaaaaaaaaaaaaaaaaaaaaaa',
+    sha256: 'a'.repeat(64),
+    mimeType: 'image/png' as const,
+    byteLength: 3,
+    page: 1,
+  };
+}
+
+function sourceStore(): SourceArtifactStore {
+  return {
+    put: vi.fn(async () => sourceReference()),
+    read: vi.fn(async () => ({
+      metadata: sourceReference(),
+      bytes: Buffer.from('png'),
+    })),
+  };
+}
+
+function perception(outputs: DrawingPerceptionOutput[], models: string[] = []) {
+  return {
+    async *run(input: { modelName: string }) {
+      models.push(input.modelName);
+      for (const output of outputs) yield structuredClone(output);
+    },
+  };
+}
+
+function perceptionSequence(
+  outputs: DrawingPerceptionOutput[],
+): DrawingPerceptionOutput[] {
+  return [
+    {
+      kind: 'stage', runId: 'run_1', stage: 'asset_prepared', timestamp: 100,
+      durationMs: 1, detail: { byteLength: 3 },
+    },
+    ...outputs,
+    {
+      kind: 'stage', runId: 'run_1', stage: 'completed', timestamp: 100,
+      durationMs: 2, detail: { batchCount: outputs.length },
+    },
+  ];
+}
+
+function perceptionBatch(id: string, confidence = 0.9): DrawingPerceptionOutput {
+  return {
+    kind: 'command_batch', runId: 'run_1', stage: 'patch_ready',
+    batch: {
+      componentId: 'component_1',
+      commands: [{
+        type: 'geometry.create',
+        value: {
+          id: id as GeometryId,
+          type: 'circle', visible: true,
+          quality: {
+            status: confidence < 0.6 ? 'candidate' : 'confirmed',
+            confidence, evidenceRefs: [],
+          },
+          center: [0, 0], radius: 5,
+        },
+      }],
+      postconditions: [{ type: 'node.exists', nodeId: id }],
+      observationIds: ['observation_1'],
+      evidenceRefs: [],
+      confidence,
+      lowConfidenceCount: confidence < 0.6 ? 1 : 0,
+    },
   };
 }

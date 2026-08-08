@@ -31,8 +31,6 @@ import {
 } from './drawing-store';
 
 export const ACTIVE_DRAWING_STORAGE_KEY = 'vectorai.activeDrawingId';
-export const AGENT_MIGRATION_MESSAGE = '图片和 PDF 感知暂未接入新版 Drawing Agent，请先使用文字创建或修改当前图纸。';
-
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -295,30 +293,16 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           }
           return;
         }
-        const userText = text || (image ? '分析并重建二维工程图' : '');
-        if (image) {
-          const userMessage = chatMessage('user', userText, now);
-          const assistantMessage = chatMessage('assistant', AGENT_MIGRATION_MESSAGE, now);
-          set((current) => ({
-            aiMessages: [...current.aiMessages, userMessage, assistantMessage],
-          }));
-          set({ agentStatus: 'error', agentError: AGENT_MIGRATION_MESSAGE });
-          return;
-        }
-        if (text) await get().startAgent(text, undefined, mimeType);
+        if (text || image) await get().startAgent(text, image, mimeType);
       },
 
-      startAgent: async (prompt, image) => {
-        const goal = prompt?.trim();
+      startAgent: async (prompt, image, mimeType) => {
+        const goal = prompt?.trim() ?? '';
         const state = get();
-        if (image) {
-          set({ agentStatus: 'error', agentError: AGENT_MIGRATION_MESSAGE });
-          return;
-        }
-        if (!goal || !state.document || !state.revision) return;
+        if ((!goal && !image) || !state.document || !state.revision) return;
         unsubscribeAgent?.();
         unsubscribeAgent = null;
-        const userMessage = chatMessage('user', goal, now);
+        const userMessage = chatMessage('user', goal || '上传图纸并重建', now);
         set((current) => ({
           aiMessages: [...current.aiMessages, userMessage],
           taskPlan: null,
@@ -335,6 +319,9 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
             baseRevision: state.revision,
             goal,
             selectedIds: [...state.selectedIds],
+            ...(image ? {
+              attachment: { data: image, mimeType: mimeType || 'image/png', page: 1 },
+            } : {}),
           });
           set({ agentRunId: started.runId });
           unsubscribeAgent = agents.subscribe(
@@ -368,7 +355,8 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                     set((current) => ({
                       aiMessages: [...current.aiMessages, chatMessage(
                         'assistant',
-                        `已完成：${run.goal?.objective ?? goal}`,
+                        run.analysisSummary
+                          ?? `已完成：${run.goal?.objective ?? goal}`,
                         now,
                       )],
                     }));

@@ -1,5 +1,18 @@
-import { DrawingAgentProtocolError, type AgentDecision } from '../../../src/contracts/drawing-agent.js';
+import {
+  DrawingAgentProtocolError,
+  type AgentDecision,
+  type DrawingAgentPlan,
+} from '../../../src/contracts/drawing-agent.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
+import type {
+  DrawingPerceptionInput,
+  DrawingPerceptionOutput,
+} from '../drawing-perception/pipeline.js';
+import type { SourceArtifactStore } from '../source-artifacts/types.js';
+import {
+  interpretDrawingInput,
+  type DrawingInputMode,
+} from './input-interpreter.js';
 import { RunProgressChannel } from './progress.js';
 import type {
   DrawingAgentAuditEvent,
@@ -42,6 +55,10 @@ interface RuntimeTools {
   discardRun(runId: string): number;
 }
 
+interface RuntimePerception {
+  run(input: DrawingPerceptionInput): AsyncIterable<DrawingPerceptionOutput>;
+}
+
 interface RunRecord {
   state: DrawingAgentState;
   progress: RunProgressChannel;
@@ -58,6 +75,14 @@ interface RunRecord {
   auditQueue: Promise<void>;
   selectedIds: string[];
   stableRules: string[];
+  source: StartDrawingAgentRunInput['source'];
+  inputMode: DrawingInputMode;
+  planningObjective: string;
+  perceptionCompleted: boolean;
+  commitBaseline: number;
+  perceptionBatchIds: Set<string>;
+  perceptionEntityCount: number;
+  perceptionLowConfidenceCount: number;
 }
 
 export interface DrawingAgentRunHandle {
@@ -76,6 +101,10 @@ export interface DrawingAgentRuntimeOptions {
   idFactory?: unknown;
   auditStore?: DrawingAgentAuditStore;
   promptHashes?: { planner: string; decision: string };
+  sourceArtifacts?: SourceArtifactStore;
+  perception?: RuntimePerception;
+  visionModelName?: string;
+  visionRepairModelName?: string;
 }
 
 const DEFAULT_LIMITS: RuntimeLimitsInput = {
@@ -98,6 +127,10 @@ export class DrawingAgentRuntime {
   readonly #runs = new Map<string, RunRecord>();
   readonly #auditStore?: DrawingAgentAuditStore;
   readonly #promptHashes: { planner: string; decision: string };
+  readonly #sourceArtifacts?: SourceArtifactStore;
+  readonly #perception?: RuntimePerception;
+  readonly #visionModelName: string;
+  readonly #visionRepairModelName: string;
 
   constructor(options: DrawingAgentRuntimeOptions) {
     this.#application = options.application;
@@ -109,6 +142,10 @@ export class DrawingAgentRuntime {
     this.#limits = { ...DEFAULT_LIMITS, ...options.limits };
     this.#auditStore = options.auditStore;
     this.#promptHashes = options.promptHashes ?? DRAWING_AGENT_PROMPT_HASHES;
+    this.#sourceArtifacts = options.sourceArtifacts;
+    this.#perception = options.perception;
+    this.#visionModelName = options.visionModelName ?? 'doubao-seed-2.0-lite';
+    this.#visionRepairModelName = options.visionRepairModelName ?? 'doubao-seed-2.1-turbo';
   }
 
   start(input: StartDrawingAgentRunInput): DrawingAgentRunHandle {
@@ -125,6 +162,10 @@ export class DrawingAgentRuntime {
       deadlineAt: createdAt + this.#limits.wallClockMs,
     };
     const progress = new RunProgressChannel(input.runId, createdAt, 25_000, this.#now);
+    const interpretation = interpretDrawingInput({
+      goal: input.goal,
+      hasSource: Boolean(input.source),
+    });
     const record: RunRecord = {
       state: createDrawingAgentState({
         runId: input.runId,
@@ -148,6 +189,14 @@ export class DrawingAgentRuntime {
       auditQueue: Promise.resolve(),
       selectedIds: [...(input.selectedIds ?? [])],
       stableRules: [...(input.stableRules ?? [])],
+      source: input.source ? structuredClone(input.source) : undefined,
+      inputMode: interpretation.mode,
+      planningObjective: interpretation.modificationGoal ?? input.goal.trim(),
+      perceptionCompleted: !input.source,
+      commitBaseline: 0,
+      perceptionBatchIds: new Set(),
+      perceptionEntityCount: 0,
+      perceptionLowConfidenceCount: 0,
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -164,6 +213,12 @@ export class DrawingAgentRuntime {
       goalSpec: null,
     }));
     this.#audit(record, 'state', { status: 'planning', revision: input.baseRevision });
+    if (input.source) {
+      this.#audit(record, 'perception', {
+        source: structuredClone(input.source),
+        mode: interpretation.mode,
+      });
+    }
     progress.publish('accepted', '任务已受理');
     void Promise.resolve().then(() => this.#drive(record));
     return { runId: input.runId, completion };
@@ -215,8 +270,13 @@ export class DrawingAgentRuntime {
     record.driving = true;
     try {
       if (!await this.#safePoint(record, 'before_model')) return;
+      if (!record.perceptionCompleted) {
+        if (!await this.#runPerception(record)) return;
+      }
       if (record.state.needsReplan || !record.state.plan || record.state.status === 'planning') {
-        if (!await this.#plan(record)) return;
+        if (record.inputMode === 'analyze_only' || record.inputMode === 'reconstruct') {
+          this.#transition(record, { type: 'PLAN_READY', plan: perceptionCompletionPlan(record) });
+        } else if (!await this.#plan(record)) return;
       }
       if (record.prepared) {
         if (!await this.#resumePrepared(record)) return;
@@ -257,6 +317,143 @@ export class DrawingAgentRuntime {
     }
   }
 
+  async #runPerception(record: RunRecord): Promise<boolean> {
+    if (!record.source || !this.#sourceArtifacts || !this.#perception) {
+      throw new Error('图纸来源解析服务未配置');
+    }
+    const remaining = record.state.limits.deadlineAt - this.#now();
+    if (remaining <= 0) throw new Error('任务已超过运行截止时间');
+    const controller = new AbortController();
+    record.activeController = controller;
+    const timer = setTimeout(() => controller.abort(new Error('perception timeout')), (
+      Math.min(this.#stageTimeoutMs, remaining)
+    ));
+    (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+    record.progress.publish('model_started', '正在理解图纸');
+    try {
+      const source = await this.#sourceArtifacts.read(record.source.sourceId);
+      if (source.metadata.sha256 !== record.source.sha256) {
+        throw new Error('图纸来源校验失败');
+      }
+      const perceptionInput = {
+        runId: record.state.runId,
+        sourceId: source.metadata.sourceId,
+        page: source.metadata.page,
+        image: source.bytes.toString('base64'),
+        mimeType: source.metadata.mimeType,
+        signal: controller.signal,
+        deadlineAt: record.state.limits.deadlineAt,
+      };
+      let outputs = await this.#collectPerception(record, {
+        ...perceptionInput, modelName: this.#visionModelName,
+      }, 'primary');
+      if (
+        outputs.some((output) => output.batch.lowConfidenceCount > 0)
+        && this.#visionRepairModelName !== this.#visionModelName
+      ) {
+        this.#transition(record, {
+          type: 'RECOVERY_RECORDED', recovery: 'lowConfidenceEscalations',
+        });
+        record.progress.publish('model_started', '正在复核低置信度图元');
+        this.#audit(record, 'perception', { stage: 'low_confidence_escalation' });
+        try {
+          outputs = await this.#collectPerception(record, {
+            ...perceptionInput, modelName: this.#visionRepairModelName,
+          }, 'repair');
+        } catch (error) {
+          this.#audit(record, 'perception', {
+            stage: 'repair_fallback',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      for (const output of outputs) {
+        if (record.perceptionBatchIds.has(output.batch.componentId)) continue;
+        if (!await this.#safePoint(record, 'before_model')) return false;
+        record.perceptionEntityCount += output.batch.commands.length;
+        record.perceptionLowConfidenceCount += output.batch.lowConfidenceCount;
+        if (record.inputMode !== 'analyze_only') {
+          if (!await this.#applyPerceptionBatch(record, output)) return false;
+        }
+        record.perceptionBatchIds.add(output.batch.componentId);
+      }
+      const summary = perceptionSummary(record);
+      this.#transition(record, { type: 'ANALYSIS_READY', summary });
+      this.#audit(record, 'perception', {
+        stage: 'analysis_ready',
+        entityCount: record.perceptionEntityCount,
+        lowConfidenceCount: record.perceptionLowConfidenceCount,
+        commitCount: record.state.commitCount,
+      });
+      record.perceptionCompleted = true;
+      record.commitBaseline = record.state.commitCount;
+      record.progress.publish('model_finished', '图纸理解完成');
+      return true;
+    } finally {
+      clearTimeout(timer);
+      if (record.activeController === controller) record.activeController = null;
+    }
+  }
+
+  async #collectPerception(
+    record: RunRecord,
+    input: DrawingPerceptionInput,
+    pass: 'primary' | 'repair',
+  ): Promise<Array<Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>>> {
+    const commands: Array<Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>> = [];
+    for await (const output of this.#perception!.run(input)) {
+      if (output.kind === 'command_batch') {
+        commands.push(output);
+        continue;
+      }
+      record.progress.publish('tool_finished', perceptionStageTitle(output.stage));
+      this.#audit(record, 'perception', {
+        pass,
+        stage: output.stage,
+        durationMs: output.durationMs,
+        ...(output.viewId ? { viewId: output.viewId } : {}),
+        detail: structuredClone(output.detail),
+      });
+    }
+    return commands;
+  }
+
+  async #applyPerceptionBatch(
+    record: RunRecord,
+    output: Extract<DrawingPerceptionOutput, { kind: 'command_batch' }>,
+  ): Promise<boolean> {
+    if (record.state.commitCount >= record.state.limits.maxCommits) {
+      throw new Error(`已达到最大提交次数 ${record.state.limits.maxCommits}`);
+    }
+    record.progress.publish('validation', '正在预览识别结果');
+    const preview = await this.#tools.invoke({
+      capability: 'preview_transaction', caller: 'model',
+      toolCallId: this.#callId(record, 'perception_preview'),
+      context: this.#toolContext(record),
+      input: {
+        commands: output.batch.commands,
+        postconditions: output.batch.postconditions,
+      },
+    });
+    this.#recordTool(record, preview);
+    record.prepared = preview.prepared ?? null;
+    if (!preview.prepared) {
+      if (preview.receipt.status === 'already_satisfied') return true;
+      if (isStale(preview)) throw new Error('图纸重建时 revision 已变化');
+      throw new Error(`图纸组件 ${output.batch.componentId} 预览验证失败`);
+    }
+    const committed = await this.#commitPrepared(record, preview.prepared);
+    this.#recordTool(record, committed);
+    record.prepared = null;
+    if (isStale(committed)) throw new Error('图纸重建提交时 revision 已变化');
+    if (committed.receipt.status !== 'succeeded'
+      && committed.receipt.status !== 'already_satisfied') {
+      throw new Error(`图纸组件 ${output.batch.componentId} 提交失败`);
+    }
+    record.progress.publish('commit', '已提交一个图纸组件');
+    return this.#safePoint(record, 'after_commit');
+  }
+
   async #plan(record: RunRecord): Promise<boolean> {
     this.#discardPrepared(record);
     if (record.state.status === 'running' && record.state.needsReplan) {
@@ -283,7 +480,7 @@ export class DrawingAgentRuntime {
     try {
       plan = await this.#callModel(record, 'planner', record.modelProfile.planner, (signal) => (
         this.#planner.plan({
-          objective: record.state.objective,
+          objective: record.planningObjective,
           ...(baseInstruction ? { instruction: baseInstruction } : {}),
           drawingId: record.state.drawingId,
           revision: summary.revision,
@@ -300,7 +497,7 @@ export class DrawingAgentRuntime {
       this.#transition(record, { type: 'RECOVERY_RECORDED', recovery: 'schemaCorrections' });
       plan = await this.#callModel(record, 'planner', record.modelProfile.planner, (signal) => (
         this.#planner.plan({
-          objective: record.state.objective,
+          objective: record.planningObjective,
           instruction: [baseInstruction, `上次输出不符合协议：${error.message}，请只返回合法 JSON。`]
             .filter(Boolean).join('\n'),
           drawingId: record.state.drawingId,
@@ -358,8 +555,8 @@ export class DrawingAgentRuntime {
         return true;
       }
       if (decision.type === 'transact') {
-        if (record.state.commitCount >= effectiveCommitLimit(record.state)) {
-          throw new Error(`已达到最大提交次数 ${effectiveCommitLimit(record.state)}`);
+        if (record.state.commitCount >= effectiveCommitLimit(record)) {
+          throw new Error(`已达到最大提交次数 ${effectiveCommitLimit(record)}`);
         }
         const preview = await this.#tools.invoke({
           capability: 'preview_transaction', caller: 'model',
@@ -736,8 +933,57 @@ function decisionBudget(state: DrawingAgentState, now: number) {
   return budget?.code === 'MAX_COMMITS' ? null : budget;
 }
 
-function effectiveCommitLimit(state: DrawingAgentState): number {
-  return Math.min(state.limits.maxCommits, state.plan?.goal.riskPolicy.maxCommits ?? Infinity);
+function effectiveCommitLimit(record: RunRecord): number {
+  return Math.min(
+    record.state.limits.maxCommits,
+    record.commitBaseline + (record.state.plan?.goal.riskPolicy.maxCommits ?? Infinity),
+  );
+}
+
+function perceptionCompletionPlan(record: RunRecord): DrawingAgentPlan {
+  const objective = record.inputMode === 'analyze_only'
+    ? '分析图纸并形成可审计结果'
+    : '将来源图纸重建为 Drawing IR';
+  return {
+    goal: {
+      id: `goal_${record.state.runId}_perception`,
+      objective,
+      scope: { limit: 1 },
+      acceptanceCriteria: [{ type: 'document.valid' }],
+      riskPolicy: { candidateAllowed: true, maxCommits: Math.max(1, record.state.commitCount) },
+    },
+    workflow: [{
+      id: 'verify_perception_result',
+      capability: 'verify_goal',
+      dependsOn: [],
+      completionCriteria: [{ type: 'document.valid' }],
+      status: 'pending',
+    }],
+    summary: objective,
+  };
+}
+
+function perceptionSummary(record: RunRecord): string {
+  const candidate = record.perceptionLowConfidenceCount > 0
+    ? `，其中 ${record.perceptionLowConfidenceCount} 个低置信度结果已标为候选`
+    : '';
+  const action = record.inputMode === 'analyze_only'
+    ? '未修改当前图纸'
+    : `形成 ${record.state.commitCount} 个增量提交`;
+  return `识别到 ${record.perceptionEntityCount} 个图元${candidate}；${action}。`;
+}
+
+function perceptionStageTitle(stage: Extract<DrawingPerceptionOutput, { kind: 'stage' }>['stage']): string {
+  switch (stage) {
+    case 'asset_prepared': return '图纸来源已准备';
+    case 'sheet_analyzed': return '图纸版面分析完成';
+    case 'views_segmented': return '视图拆分完成';
+    case 'view_perceived': return '局部图元识别完成';
+    case 'topology_built': return '几何拓扑构建完成';
+    case 'dimensions_associated': return '尺寸关联完成';
+    case 'patches_built': return '增量修改已生成';
+    case 'completed': return '图纸解析完成';
+  }
 }
 
 function isStale(execution: DrawingToolExecution): boolean {

@@ -219,7 +219,7 @@ describe('Drawing Agent workspace integration', () => {
     expect(JSON.stringify(agent.start.mock.calls[0][0])).not.toContain('document');
   });
 
-  it('guards image input locally until Drawing Perception is migrated', async () => {
+  it('starts image analysis through the same Agent run contract', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
       drawingClient: drawingClientDouble() as unknown as DrawingClient,
@@ -230,8 +230,11 @@ describe('Drawing Agent workspace integration', () => {
 
     await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
 
-    expect(agent.start).not.toHaveBeenCalled();
-    expect(store.getState().agentError).toContain('图片和 PDF 感知暂未接入');
+    expect(agent.start).toHaveBeenCalledWith({
+      drawingId, baseRevision: revision1, goal: '分析图纸', selectedIds: [],
+      attachment: { data: 'aW1hZ2U=', mimeType: 'image/png', page: 1 },
+    });
+    expect(store.getState().agentError).toBeNull();
   });
 
   it('refreshes the canonical workspace on commit and ignores documents in Agent responses', async () => {
@@ -423,7 +426,7 @@ function agentRunView(status: import('@/contracts/drawing-agent').DrawingAgentRu
   return {
     runId: 'run_1', drawingId, revision: revision1, status,
     goal: null, workflow: [], currentWorkflowNodeId: null,
-    commitCount: 0, pendingInstructions: [], error: null,
+    commitCount: 0, analysisSummary: null, pendingInstructions: [], error: null,
   };
 }
 

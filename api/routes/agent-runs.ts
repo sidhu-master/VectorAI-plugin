@@ -8,32 +8,24 @@ import { DrawingApplication, DrawingApplicationError } from '../services/drawing
 import { DrawingAgentRuntime } from '../services/drawing-agent/runtime.js';
 import { toDrawingAgentRunView } from '../services/drawing-agent/state.js';
 import type { DrawingAgentModelProfile } from '../services/drawing-agent/types.js';
+import type { SourceArtifactStore } from '../services/source-artifacts/types.js';
 
 const TERMINAL_STATUSES = new Set<DrawingAgentRunStatus>(['stopped', 'completed', 'failed']);
 const TERMINAL_EVENTS = new Set<AgentProgressEvent['type']>(['stopped', 'completed', 'failed']);
-const ATTACHMENT_KEYS = ['image', 'mimeType', 'pdf', 'pdfBody', 'attachment', 'file'];
 const ALLOWED_START_KEYS = new Set([
-  'drawingId', 'baseRevision', 'goal', 'selectedIds', 'stableRules',
+  'drawingId', 'baseRevision', 'goal', 'selectedIds', 'stableRules', 'attachment',
 ]);
 
 export function createAgentRunsRouter(
   runtime: DrawingAgentRuntime,
   application: DrawingApplication,
   modelProfile: DrawingAgentModelProfile,
+  sourceArtifacts?: SourceArtifactStore,
 ): Router {
   const router = Router();
 
   router.post('/', route(async (req, res) => {
     const body = isRecord(req.body) ? req.body : {};
-    if (ATTACHMENT_KEYS.some((key) => key in body)) {
-      invalid(
-        res,
-        409,
-        'DRAWING_PERCEPTION_NOT_MIGRATED',
-        '图片和 PDF 感知尚未迁移到 Drawing Agent，请先使用文字修改当前图纸',
-      );
-      return;
-    }
     if ('spatialModel' in body) {
       invalid(res, 400, 'LEGACY_SPATIAL_MODEL_FORBIDDEN', 'Agent 不再接受 SpatialModel');
       return;
@@ -45,16 +37,24 @@ export function createAgentRunsRouter(
     }
     const drawingId = nonEmptyString(body.drawingId);
     const baseRevision = nonEmptyString(body.baseRevision);
-    const goal = nonEmptyString(body.goal);
+    const goal = typeof body.goal === 'string' ? body.goal.trim() : null;
+    const attachment = parseAttachment(body.attachment);
     const selectedIds = optionalStringArray(body.selectedIds);
     const stableRules = optionalStringArray(body.stableRules);
-    if (!drawingId || !baseRevision || !goal || selectedIds === null || stableRules === null) {
+    if (
+      !drawingId || !baseRevision || goal === null || (!goal && !attachment)
+      || attachment === null || selectedIds === null || stableRules === null
+    ) {
       invalid(
         res,
         400,
         'INVALID_AGENT_REQUEST',
-        'drawingId、baseRevision、goal 必填，selectedIds/stableRules 必须是非空字符串数组',
+        'drawingId、baseRevision 必填；goal 与 attachment 至少提供一个，attachment 仅支持图片/PDF',
       );
+      return;
+    }
+    if (attachment && !sourceArtifacts) {
+      invalid(res, 503, 'DRAWING_PERCEPTION_UNAVAILABLE', '图纸解析服务未配置');
       return;
     }
     const revision = await application.validateRevision({
@@ -71,6 +71,20 @@ export function createAgentRunsRouter(
       return;
     }
 
+    let source;
+    try {
+      source = attachment ? await sourceArtifacts!.put(attachment) : undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith('SOURCE_TOO_LARGE')) {
+        invalid(res, 413, 'SOURCE_TOO_LARGE', '图纸文件不能超过 20MB');
+      } else if (message.startsWith('SOURCE_MIME_UNSUPPORTED')) {
+        invalid(res, 415, 'SOURCE_MIME_UNSUPPORTED', '仅支持 PNG、JPEG、WebP 和 PDF');
+      } else {
+        invalid(res, 400, 'SOURCE_INVALID', '图纸文件为空或内容无效');
+      }
+      return;
+    }
     const runId = `run_${randomUUID()}`;
     runtime.start({
       runId,
@@ -80,6 +94,7 @@ export function createAgentRunsRouter(
       modelProfile: { ...modelProfile },
       ...(selectedIds ? { selectedIds } : {}),
       ...(stableRules ? { stableRules } : {}),
+      ...(source ? { source } : {}),
     });
     res.status(202).json({ success: true, runId });
   }));
@@ -204,4 +219,26 @@ function optionalStringArray(value: unknown): string[] | undefined | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseAttachment(value: unknown): {
+  data: string;
+  mimeType: string;
+  page?: number;
+} | undefined | null {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.some((key) => !['data', 'mimeType', 'page'].includes(key))) return null;
+  const data = nonEmptyString(value.data);
+  const mimeType = nonEmptyString(value.mimeType);
+  if (!data || !mimeType) return null;
+  if (value.page !== undefined && (!Number.isInteger(value.page) || Number(value.page) < 1)) {
+    return null;
+  }
+  return {
+    data,
+    mimeType,
+    ...(value.page === undefined ? {} : { page: Number(value.page) }),
+  };
 }

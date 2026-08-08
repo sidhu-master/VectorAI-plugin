@@ -20,6 +20,9 @@ import { DrawingDecisionAdapter, DrawingPlannerAdapter } from './services/drawin
 import { DrawingToolRegistry } from './services/drawing-agent/tool-registry.js'
 import { FileDrawingAgentAuditStore } from './services/drawing-agent/file-audit-store.js'
 import { createDrawingsRouter } from './routes/drawings.js'
+import { DrawingPerceptionPipeline } from './services/drawing-perception/pipeline.js'
+import { FileDrawingObservationStore } from './services/drawing-perception/observation-store.js'
+import { FileSourceArtifactStore } from './services/source-artifacts/file-source-artifact-store.js'
 
 // load env
 dotenv.config()
@@ -29,8 +32,22 @@ const drawingRepository = new FileDrawingRepository({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/drawings'),
 })
 const drawingApplication = new DrawingApplication({ repository: drawingRepository })
+const primaryModel = process.env.COMPANY_AI_PRIMARY_MODEL || 'doubao-seed-2.0-lite'
+const agentModelDefaults = Object.freeze({
+  planner: process.env.COMPANY_AI_PLANNER_MODEL || primaryModel,
+  decision: process.env.COMPANY_AI_DECISION_MODEL || primaryModel,
+  repair: process.env.COMPANY_AI_REPAIR_MODEL || 'doubao-seed-2.1-turbo',
+})
 const auditStore = new FileDrawingAgentAuditStore({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
+})
+const sourceArtifacts = new FileSourceArtifactStore({
+  rootDirectory: path.resolve(process.cwd(), '.local/vectorai/sources'),
+})
+const drawingPerception = new DrawingPerceptionPipeline({
+  observationStore: new FileDrawingObservationStore(
+    path.resolve(process.cwd(), '.local/vectorai/runs'),
+  ),
 })
 const drawingTools = new DrawingToolRegistry({ application: drawingApplication })
 const agentRuntime = new DrawingAgentRuntime({
@@ -39,17 +56,15 @@ const agentRuntime = new DrawingAgentRuntime({
   planner: new DrawingPlannerAdapter(),
   decision: new DrawingDecisionAdapter(),
   auditStore,
-})
-const primaryModel = process.env.COMPANY_AI_PRIMARY_MODEL || 'doubao-seed-2.0-lite'
-const agentModelDefaults = Object.freeze({
-  planner: process.env.COMPANY_AI_PLANNER_MODEL || primaryModel,
-  decision: process.env.COMPANY_AI_DECISION_MODEL || primaryModel,
-  repair: process.env.COMPANY_AI_REPAIR_MODEL || 'doubao-seed-2.1-turbo',
+  sourceArtifacts,
+  perception: drawingPerception,
+  visionModelName: primaryModel,
+  visionRepairModelName: agentModelDefaults.repair,
 })
 
 app.use(cors())
-app.use(express.json({ limit: '10mb' }))
-app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+app.use(express.json({ limit: '30mb' }))
+app.use(express.urlencoded({ extended: true, limit: '30mb' }))
 
 /**
  * API Routes
@@ -60,6 +75,7 @@ app.use('/api/agent/runs', createAgentRunsRouter(
   agentRuntime,
   drawingApplication,
   agentModelDefaults,
+  sourceArtifacts,
 ))
 app.use('/api/drawings', createDrawingsRouter(drawingApplication))
 

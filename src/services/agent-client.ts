@@ -33,6 +33,11 @@ export interface StartAgentInput {
   goal: string;
   selectedIds?: string[];
   stableRules?: string[];
+  attachment?: {
+    data: string;
+    mimeType: string;
+    page?: number;
+  };
 }
 
 export interface EventSourceLike {

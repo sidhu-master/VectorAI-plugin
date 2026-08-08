@@ -15,6 +15,7 @@ export type DrawingAgentAuditEventType =
   | 'validation'
   | 'commit'
   | 'replan'
+  | 'perception'
   | 'state';
 
 export interface DrawingAgentAuditManifest {
