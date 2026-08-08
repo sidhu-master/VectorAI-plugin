@@ -109,6 +109,14 @@ export function createWorkspaceTransaction(input: {
   idFactory: IdFactory;
   goalId?: string;
 }): DrawingTransaction {
+  const deletionPostconditions = input.commands.flatMap((command) => (
+    command.type === 'geometry.delete'
+      || command.type === 'annotation.delete'
+      || command.type === 'relation.delete'
+      || command.type === 'feature.delete'
+      ? [{ type: 'node.absent' as const, nodeId: command.id }]
+      : []
+  ));
   return {
     id: input.idFactory.next('transaction'),
     baseRevision: input.revision,
@@ -116,7 +124,7 @@ export function createWorkspaceTransaction(input: {
     ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
     commands: clone(input.commands),
     preconditions: [],
-    postconditions: [{ type: 'document.valid' }],
+    postconditions: [...deletionPostconditions, { type: 'document.valid' }],
     evidenceRefs: [],
   };
 }

@@ -19,6 +19,7 @@ import {
   createWorkspaceTransaction,
   locateDrawingNode,
 } from './drawing-store';
+import { previewTransaction } from '@/drawing/transaction/execute';
 
 const drawingId = 'drawing_test' as DrawingId;
 const geometryId = 'geometry_circle' as GeometryId;
@@ -135,9 +136,27 @@ describe('drawing workspace pure state helpers', () => {
       actor: { type: 'user', id: 'local-user' },
       commands: [{ type: 'geometry.delete', id: geometryId }],
       preconditions: [],
-      postconditions: [{ type: 'document.valid' }],
+      postconditions: [
+        { type: 'node.absent', nodeId: geometryId },
+        { type: 'document.valid' },
+      ],
       evidenceRefs: [],
     });
+  });
+
+  it('does not treat a valid non-empty drawing as an already completed clear', () => {
+    const current = document();
+    const transaction = createWorkspaceTransaction({
+      revision,
+      commands: buildClearCommands(current),
+      actor: { type: 'user', id: 'local-user' },
+      idFactory: { next: (kind) => `${kind}_clear` },
+    });
+
+    expect(previewTransaction({ document: current, currentRevision: revision }, transaction))
+      .toMatchObject({ status: 'ready', resultingDocument: {
+        geometry: [], annotations: [], relations: [], features: [],
+      } });
   });
 
   it('applies committed results without mutating the existing workspace', () => {
