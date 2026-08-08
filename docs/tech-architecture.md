@@ -73,13 +73,15 @@ VectorAI Core
      └── Representation (DXF, SVG, STEP, GLTF)
 ```
 
-编译流水线：**LLM -> Spatial Intent -> Intent Validator -> Compiler -> Geometry Validator -> SpatialModel**
+执行流水线：**LLM -> Spatial Intent/Spatial Patch -> Intent Validator -> Patch Compiler -> 临时模型 -> Geometry Validator -> SpatialCommit -> SpatialModel**
 
 - LLM 输出宽松的空间意图（可能缺字段、用索引引用实体、参数为字符串等）
 - Intent Validator 检查意图合理性（如 `radius: "large"` 是意图错误，非几何错误），在 Compiler 前拦截
 - Compiler 规范化为严格协议（分配 ID、转换引用、填充默认值）
 - Geometry Validator 校验几何合法性（半径 > 0、坐标有效）
 - SpatialModel 存储最终的空间实体 + 关系 + 语义实体
+- Patch 只描述局部增量，只有在临时模型上验证通过后才能形成提交
+- SpatialCommit 保存正向/逆向 Patch，支持审计、回放和 Undo/Redo
 
 长期愿景：
 
@@ -130,7 +132,11 @@ src/
   utils/                       <- 前端工具函数
 api/                           <- Express 后端
   services/
-    ai-gateway.ts              <- AI Gateway（未来扩展为 AI Service）
+    ai-gateway.ts              <- 仅负责模型供应商适配
+    agent-runtime/             <- Agent 状态机、重试、取消、重规划
+    audit/                     <- AuditStore + FileAuditStore
+    ingestion/                 <- 图片/PDF 输入规范化
+    model-router/              <- 按任务角色和能力选择模型
   routes/
     ai.ts                      <- AI 路由
 ```
@@ -161,12 +167,15 @@ interface GenerateResponse {
 }
 ```
 
-**AI Service 未来扩展：**
+**AI Service 首版职责：**
 - Prompt 管理（system prompt 模板化）
 - Few-shot 示例注入（使用 `core/tests/examples/` 中的标准案例）
 - 用户上下文传递（当前画布对象 + 关系）
 - 模型选择（不同复杂度请求路由不同 LLM）
 - 成本控制（token 计数、速率限制）
+- Agent Runtime（计划、自动执行、暂停、停止、重规划、有限重试）
+- 本地审计与确定性回放
+- 图片/PDF 输入规范化
 
 ## 6. 空间协议类型定义
 
@@ -288,9 +297,9 @@ interface SpatialRelation {
 | equal | >= 2 | property | 指定属性相等 | 仅定义 |
 | symmetry | >= 2 | axis | 关于轴对称 | 仅定义 |
 
-### 6.4 空间意图（Spatial Intent）
+### 6.4 空间意图与增量操作
 
-LLM 输出的中间表示。使用 `params` 字段避免 LLM 字段名混乱（如 r / radius / size 混用）。
+Spatial Intent 是 LLM 对用户目标的宽松中间表示；它必须由 Patch Compiler 转换为严格的 SpatialPatch 后才能修改模型。使用 `params` 字段避免 LLM 字段名混乱（如 r / radius / size 混用）。
 
 ```typescript
 interface SpatialIntent {
@@ -314,6 +323,24 @@ interface IntentRelation {
   property?: string;
 }
 ```
+
+严格的局部修改协议：
+
+```typescript
+interface SpatialPatch {
+  operations: SpatialOperation[];
+}
+
+type SpatialOperation =
+  | { type: 'entity.add'; entity: GeometryEntity }
+  | { type: 'entity.update'; entityId: string; changes: Partial<GeometryEntity> }
+  | { type: 'entity.delete'; entityId: string }
+  | { type: 'relation.add'; relation: SpatialRelation }
+  | { type: 'relation.update'; relationId: string; changes: Partial<SpatialRelation> }
+  | { type: 'relation.delete'; relationId: string };
+```
+
+Patch 可以为空，供纯验证阶段使用。每个成功 Patch 生成包含正向 Patch、逆 Patch和验证报告的 SpatialCommit。
 
 示例：
 ```json
@@ -499,25 +526,28 @@ core/tests/
 
 ## 14. 架构演进记录
 
-### v0.1 当前
-- Spatial Core: Intent Validator + Compiler + Geometry Validator + SpatialModel + Relation System + Representation
-- Spatial Harness: Search + Inspect + Edit + ModelSummary
-- AI Service: AI Gateway（文字代理 + 图片感知）
-- Spatial Perception Layer: Drawing Parser + Spatial Reconstruction + Confidence System（多模态 LLM）
-- 协议: 三层结构 + 版本历史预留 + 实体级 confidence + IntentOperation(create/modify/replace)
-- 感知面板: 识别结果列表 + 置信度色标 + 批量确认
+### v0.1 目标
+- Spatial Core: Intent Validator + Patch Compiler + Geometry Validator + SpatialModel + Relation System + Representation
+- Spatial Harness: Search + Inspect + Patch Edit + ModelSummary
+- AI Service: AI Gateway + Model Router + Agent Runtime + Audit Store
+- Spatial Perception Layer: 图片/PDF 输入规范化 + Drawing Parser + Spatial Reconstruction + Confidence System
+- 协议: 三层结构 + SpatialPatch + SpatialCommit + 实体级 confidence
+- Agent Workflow: Task Planner + Action Executor + Verification Loop + Human Feedback Manager
+- History: 正向/逆向 Patch 实现 Undo/Redo，预留快照接口
+- 感知面板: 识别结果列表 + 置信度色标；低置信度首版标红
+- Construction Timeline: 执行轨迹 + Patch 差异 + 验证结果 + 运行控制
 
-### 未来演进方向
-- **Spatial Agent Workflow**：Task Planner + Action Executor + Verification Loop + Human Feedback Manager
+### v0.1 之后的演进方向
+- **Spatial Agent Workflow 增强**：复杂重规划、人工确认门禁、多 Agent 协作
   - AI 逐步构建 Spatial Model，而非一次性生成
   - 分阶段执行：理解 -> 骨架 -> 特征 -> 尺寸 -> 约束 -> 验证
   - 增量操作（类 git diff），不是重新生成整个模型
   - 验证闭环：AI 提议 -> 几何检查 -> 约束检查 -> 通过/修正（类 CI/CD）
-  - Construction Timeline UI：分阶段进度 + 增量预览 + 阶段确认
+  - Construction Timeline UI：在首版执行轨迹上增加分支比较和人工阶段门禁
 - **Spatial Kernel**：Geometry Validator + Relation System + Solver 演进为独立内核
 - **Relation 扩展**：`RelationKind` 扩展为包含非数学关系（belongs_to, connected_to）
-- **AI Service**：完整服务层（Prompt 管理、Few-shot、模型选择、成本控制）
-- **Undo/History**：基于 `parentId` 实现版本链
+- **AI Service**：云端审计存储、跨运行分析和更完整的成本控制
+- **Undo/History**：快照压缩、历史分支和跨设备同步
 - **Semantic Layer**：Semantic -> Geometry 映射引擎
 
 ### Spatial Harness 演进（当前 -> 未来）
@@ -530,12 +560,15 @@ Spatial Harness
 ├── Edit（applyEdits）
 └── ModelSummary（summarizeModel）
 
-未来:
+v0.1:
 Spatial Harness
 ├── Task Planner           <- 大目标拆小任务，分阶段执行
 ├── Context Manager         <- 管理上下文（当前模型状态、历史操作、用户偏好）
 ├── Spatial Search          <- 按类型/区域/属性/关系查询实体
-├── Action Executor         <- 产生空间操作（add/modify/delete），类 git diff
+├── Action Executor         <- 产生 SpatialPatch 局部操作，类 git diff
 ├── Verification Loop       <- AI提议 -> 验证 -> 通过/修正（类CI/CD）
 └── Human Feedback Manager  <- 不确定项暴露给用户，批量确认/拒绝
 ```
+
+完整的 v0.1 Agent、审计、回放和 PDF 设计见
+`docs/superpowers/specs/2026-08-08-agent-workflow-v0.1-design.md`。

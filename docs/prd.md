@@ -14,8 +14,8 @@ VectorAI Spatial Protocol MVP v0.1 - AI 原生二维空间协议引擎。
 ### 2.1 功能模块
 
 1. **主工作区**：SVG 画布渲染、对象列表、基础参数编辑、关系可视化、DXF 导出
-2. **Spatial Perception Layer（空间感知层）**：图片/PDF/CAD截图 -> Vision 分析 -> Spatial Intent
-3. **Spatial Agent Workflow（空间智能工作流）**：AI 逐步构建 Spatial Model，分阶段执行，增量更新，带验证闭环
+2. **Spatial Perception Layer（空间感知层）**：图片/PDF/CAD截图 -> 输入规范化 -> Vision 分析 -> Spatial Intent
+3. **Spatial Agent Workflow（空间智能工作流）**：首版核心能力。AI 逐步构建 Spatial Model，分阶段自动执行，以可审计提交进行增量更新，并带验证闭环
 
 ### 2.2 Spatial Agent Workflow 架构
 
@@ -62,13 +62,15 @@ AI 不直接生成最终图纸，而是**逐步构建** Spatial Model。
 
 #### 2.2.2 Action Executor（操作执行器）
 
-AI 不直接修改模型，而是产生**空间操作**（类似 git diff）：
+AI 不直接修改或重新生成整个模型，而是产生可验证的 **Spatial Patch**（类似 git diff）：
 
 ```json
-{ "operation": "add", "entity": { "type": "circle", "center": [50,50], "radius": 5 } }
-{ "operation": "modify", "target": "hole_001", "change": { "radius": 10 } }
-{ "operation": "delete", "target": "line_003" }
+{ "type": "entity.add", "entity": { "id": "hole_001", "type": "circle", "center": [50,50], "radius": 5 } }
+{ "type": "entity.update", "entityId": "hole_001", "changes": { "radius": 10 } }
+{ "type": "entity.delete", "entityId": "line_003" }
 ```
+
+每个通过验证的 Patch 形成一条不可变 `SpatialCommit`，包含父提交、正向 Patch、逆 Patch、验证报告和置信度。提交历史用于审计、回放、Undo/Redo 和后续版本分支。
 
 #### 2.2.3 Verification Loop（验证闭环）
 
@@ -81,17 +83,27 @@ Validator（几何检查）
   ↓
 Constraint 检查（约束冲突）
   ↓
-通过 → 提交
+通过 → 生成 SpatialCommit 并提交
   ↓
-失败 → 反馈给 AI → 修正 → 重试
+失败 → 反馈结构化错误给 AI → 修正 → 有限重试
 ```
+
+首版每阶段最多自动修正两次；仍失败时暂停并等待用户处理。未通过验证的临时模型不得提交。
 
 #### 2.2.4 Human Feedback Manager（人工反馈管理）
 
 AI 发现不确定项时主动暴露：
 - 尺寸无法确定 -> "继续推测" / "等待人工确认"
 - 约束冲突 -> 列出选项供用户选择
-- 低置信度结果 -> 标黄高亮，批量确认
+- 低置信度结果 -> 首版标红并允许继续自动执行；后续升级为用户确认门禁
+
+#### 2.2.5 自动执行与用户干预
+
+- Agent 默认自动连续执行，每个模型请求和 Patch 提交边界为安全点
+- 用户可请求暂停，当前原子操作结束后停止进入下一阶段
+- 用户可继续或立即停止；立即停止会取消当前请求且不提交未完成 Patch
+- 用户可随时追加指令，系统在下一安全点基于当前模型重新规划剩余步骤
+- UI 展示阶段目标、决策摘要、Patch 差异、验证结果和置信度，不展示模型内部隐藏推理原文
 
 ### 2.3 图片转 CAD 的分阶段流程
 
@@ -139,9 +151,9 @@ Phase 5: 工程验证 -> 检查闭合、尺寸冲突、约束冲突
 #### Confidence System（置信度系统）
 - > 0.8（绿色）：自动进入模型
 - 0.6-0.8（黄色）：标黄高亮，进入模型但需关注
-- < 0.6（红色）：不自动进入，等待用户确认
+- < 0.6（红色）：首版允许进入模型但持续标红；后续升级为等待用户确认
 
-批量确认：识别结果列表，每项含图元类型+参数摘要+置信度色标，支持"全部确认"/"确认选中"
+感知结果列表：每项含图元类型、参数摘要和置信度色标。首版保留“全部确认/确认选中”入口，但 Agent 自动流程不以人工确认作为默认门禁。
 
 ### 2.5 MVP 边界
 
@@ -149,20 +161,27 @@ Phase 5: 工程验证 -> 检查闭合、尺寸冲突、约束冲突
 - AI 文字输入 -> Spatial Intent 生成（含 confidence）
 - 图片输入 -> Vision Pipeline -> Spatial Intent 生成
 - Intent Validator -> Compiler -> Geometry Validator 流水线
-- SpatialModel（create/modify/replace 操作）
+- SpatialModel + SpatialPatch（实体/关系的 add/update/delete 局部操作）
 - 几何实体：Point / Line / Circle
 - 关系实现：`radius` + `distance`
 - SVG Render + 多选 + 拖拽
 - DXF Export
 - 感知结果面板 + 批量确认
+- Agent Workflow：Task Planner + Action Executor + Verification Loop
+- 自动连续执行 + 暂停/继续/立即停止/追加指令
+- Spatial Patch + SpatialCommit + 本地审计记录
+- Undo/Redo（基于正向/逆向 Patch）和快照接口
+- 图片与 PDF 输入；PDF 首版采用服务端逐页栅格化并复用 Vision Pipeline
+- 低置信度实体/关系/提交标红
+- Agent 确定性回放测试与图片/PDF 黄金样例
 
 **暂不实现（协议预留）：**
-- Task Planner 多阶段拆解（协议设计完成，实现预留）
-- Verification Loop 自动重试（验证逻辑已有，闭环预留）
-- Construction Timeline UI（设计完成，实现预留）
 - Constraint Solver
 - Semantic Mapping
 - B-Rep / STEP Export / CAD Plugin / C++ Kernel
+- 建筑平面图专用识别规则和大量领域适配（协议保持兼容）
+- PDF 矢量对象/文字层原生解析
+- 数据库或云端审计存储
 
 ### 2.6 页面详情
 
@@ -175,7 +194,7 @@ Phase 5: 工程验证 -> 检查闭合、尺寸冲突、约束冲突
 | 主工作区 | 参数编辑面板 | 选中实体参数编辑、实时预览 |
 | 主工作区 | 底部状态栏 | 鼠标坐标、单位、缩放比例、实体数量 |
 | 主工作区 | 感知面板 | 识别结果列表、置信度色标、勾选、全部确认/确认选中/拒绝 |
-| 主工作区 | Construction Timeline（未来） | 分阶段进度条、每阶段实体增量预览、阶段确认 |
+| 主工作区 | Construction Timeline | 分阶段进度、执行轨迹、Patch 差异、验证/重试、提交历史、暂停/继续/停止/追加指令 |
 
 ## 3. 核心流程
 
@@ -185,7 +204,7 @@ Phase 5: 工程验证 -> 检查闭合、尺寸冲突、约束冲突
 **感知路径（MVP）：**
 图片 -> Vision Pipeline -> Spatial Intent -> Spatial Core -> 感知面板（置信度+确认）-> SpatialModel -> SVG 渲染
 
-**Agent Workflow 路径（未来）：**
+**Agent Workflow 路径（MVP）：**
 图片/文字 -> Task Planner（分阶段）-> 每阶段 Action Executor（增量操作）-> Verification Loop（验证闭环）-> SpatialModel 增量更新 -> Construction Timeline + Human Feedback
 
 ```mermaid
@@ -210,11 +229,12 @@ flowchart TD
     L --> M["DXF 导出"]
     L --> A
 
-    E -.->|未来: Agent Workflow| W1["Task Planner"]
-    W1 -.-> W2["Action Executor (增量)"]
-    W2 -.-> W3["Verification Loop"]
-    W3 -.-> W4["Construction Timeline"]
-    W4 -.-> J
+    E --> W1["Task Planner"]
+    W1 --> W2["Action Executor (Spatial Patch)"]
+    W2 --> W3["Verification Loop"]
+    W3 --> W4["SpatialCommit + Audit"]
+    W4 --> J
+    W4 --> W5["Construction Timeline"]
 ```
 
 ## 4. 界面设计
@@ -240,8 +260,15 @@ flowchart TD
 | 参数编辑面板 | 实体参数输入框 |
 | 感知面板 | 图片预览、结果列表、置信度色标、勾选、确认按钮 |
 | 状态栏 | 坐标、单位、缩放、计数 |
-| Construction Timeline（未来） | ✓/●/○ 阶段进度、每阶段增量预览、AI发现问题提示 |
+| Construction Timeline | ✓/●/○ 阶段进度、结构化执行轨迹、增量差异、验证结果、提交历史和运行控制 |
 
-### 4.3 响应式与视觉细节
+### 4.3 首版领域边界
+
+- 优先覆盖二维机械工程图
+- 建筑平面图在 Point/Line/Circle/Relation 和表示层保持协议兼容
+- 若建筑兼容需要墙体、门窗、房间语义或专用识别规则的大量适配，可延后至独立版本
+- 产品中“AI 思考过程”统一表述为“执行轨迹”或“决策摘要”
+
+### 4.4 响应式与视觉细节
 
 桌面优先 1024px+，画布自适应，面板可折叠。网格线、坐标轴、选中虚线流动、关系呼吸动画、置信度色标、低置信度高亮。
