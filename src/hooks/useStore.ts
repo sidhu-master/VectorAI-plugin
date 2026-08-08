@@ -24,6 +24,12 @@ import type {
 import type { TaskPlan, StepResult } from '@/core/agent';
 import type { SpatialHistory } from '@/core/history/types';
 import type { EntityPatch } from '@/core/patch/types';
+import type { AgentRunState } from '@/core/runtime/state-machine';
+import {
+  agentClient,
+  type AgentClient,
+  type AgentProgressEvent,
+} from '@/services/agent-client';
 
 export interface ChatMessage {
   id: string;
@@ -42,7 +48,11 @@ export interface PerceptionResult {
   rejected: boolean;
 }
 
-interface AppState {
+export type AgentUiStatus =
+  | 'idle' | 'planning' | 'running' | 'pause_requested' | 'paused'
+  | 'stopping' | 'stopped' | 'complete' | 'error';
+
+export interface AppState {
   // 空间模型
   model: SpatialModel;
   history: SpatialHistory;
@@ -76,7 +86,10 @@ interface AppState {
   taskPlan: TaskPlan | null;
   currentStepIndex: number;
   stepResults: StepResult[];
-  agentStatus: 'idle' | 'planning' | 'executing' | 'complete' | 'error';
+  agentStatus: AgentUiStatus;
+  agentRunId: string | null;
+  agentEvents: AgentProgressEvent[];
+  agentError: string | null;
 
   // 操作方法
   applyIntent: (intent: SpatialIntent) => string[];
@@ -93,6 +106,10 @@ interface AppState {
   clearPerception: () => void;
   startAgent: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
   executeNextStep: () => Promise<void>;
+  pauseAgent: () => Promise<void>;
+  resumeAgent: () => Promise<void>;
+  stopAgent: () => Promise<void>;
+  addAgentInstruction: (instruction: string) => Promise<void>;
   resetAgent: () => void;
   exportDXF: () => void;
   setCanvasTransform: (transform: Partial<AppState['canvasTransform']>) => void;
@@ -167,7 +184,10 @@ function captureCanvas(): Promise<string | undefined> {
 
 const initialModel = createEmptyModel('mm');
 
-export const useStore = create<AppState>((set, get) => ({
+export function createAppStore(client: AgentClient = agentClient) {
+  let unsubscribeAgent: (() => void) | null = null;
+
+  return create<AppState>((set, get) => ({
   model: initialModel,
   history: createHistory(initialModel),
   selectedIds: [],
@@ -195,6 +215,9 @@ export const useStore = create<AppState>((set, get) => ({
   currentStepIndex: 0,
   stepResults: [],
   agentStatus: 'idle',
+  agentRunId: null,
+  agentEvents: [],
+  agentError: null,
 
   applyIntent: (intent: SpatialIntent) => {
     const state = get();
@@ -389,36 +412,58 @@ export const useStore = create<AppState>((set, get) => ({
   // ============ Agent Workflow ============
 
   startAgent: async (prompt, image, mimeType) => {
-    set({ agentStatus: 'planning', taskPlan: null, currentStepIndex: 0, stepResults: [] });
+    const goal = prompt?.trim() || (image ? '分析并重建二维工程图' : '');
+    if (!goal) {
+      set({ agentStatus: 'error', agentError: '任务描述不能为空' });
+      return;
+    }
+
+    unsubscribeAgent?.();
+    unsubscribeAgent = null;
+    set({
+      agentStatus: 'planning', agentRunId: null, agentEvents: [], agentError: null,
+      taskPlan: null, currentStepIndex: 0, stepResults: [],
+    });
 
     try {
-      const body: Record<string, string> = {};
-      if (prompt) body.prompt = prompt;
-      if (image) body.image = image;
-      if (mimeType) body.mimeType = mimeType;
-
-      const response = await fetch('/api/ai/agent/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      const { runId } = await client.start({
+        goal,
+        spatialModel: get().model,
+        image,
+        mimeType,
       });
+      set({ agentRunId: runId });
 
-      const data = await response.json();
-      if (!data.success || !data.plan) {
-        throw new Error(data.error || '任务规划失败');
-      }
-
-      set({ taskPlan: data.plan, agentStatus: 'idle' });
+      const syncRun = async () => {
+        const remote = await client.getRun(runId);
+        if (get().agentRunId !== runId) return;
+        set(projectAgentRun(remote));
+      };
+      unsubscribeAgent = client.subscribe(runId, (event) => {
+        if (get().agentRunId !== runId) return;
+        set((state) => ({
+          agentEvents: state.agentEvents.some((item) => item.id === event.id)
+            ? state.agentEvents
+            : [...state.agentEvents, event],
+          agentStatus: statusFromProgress(event, state.agentStatus),
+          agentError: event.type === 'failed' ? event.detail || event.title : state.agentError,
+        }));
+        if (shouldSyncRun(event.type)) void syncRun().catch((error) => {
+          if (get().agentRunId === runId) {
+            set({ agentError: error instanceof Error ? error.message : String(error) });
+          }
+        });
+      }, (error) => set({ agentStatus: 'error', agentError: error.message }));
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误';
-      set({ agentStatus: 'error' });
+      set({ agentStatus: 'error', agentError: message });
       console.error('[Agent Plan]', message);
     }
   },
 
   executeNextStep: async () => {
     const state = get();
-    if (!state.taskPlan || state.agentStatus === 'executing') return;
+    if (!state.taskPlan || state.agentStatus === 'running') return;
 
     const step = state.taskPlan.steps[state.currentStepIndex];
     if (!step) {
@@ -426,7 +471,7 @@ export const useStore = create<AppState>((set, get) => ({
       return;
     }
 
-    set({ agentStatus: 'executing' });
+    set({ agentStatus: 'running' });
 
     try {
       // 捕获当前画布截图（视觉反馈）
@@ -483,13 +528,64 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  resetAgent: () =>
+  pauseAgent: async () => {
+    const runId = get().agentRunId;
+    if (!runId) return;
+    try {
+      set(projectAgentRun(await client.pause(runId)));
+    } catch (error) {
+      set({ agentError: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  resumeAgent: async () => {
+    const runId = get().agentRunId;
+    if (!runId) return;
+    try {
+      set(projectAgentRun(await client.resume(runId)));
+    } catch (error) {
+      set({ agentError: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  stopAgent: async () => {
+    const runId = get().agentRunId;
+    if (!runId) return;
+    try {
+      set(projectAgentRun(await client.stop(runId)));
+    } catch (error) {
+      set({ agentError: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  addAgentInstruction: async (instruction) => {
+    const runId = get().agentRunId;
+    const trimmed = instruction.trim();
+    if (!runId || !trimmed) return;
+    try {
+      set(projectAgentRun(await client.addInstruction(runId, trimmed)));
+    } catch (error) {
+      set({ agentError: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  resetAgent: () => {
+    const state = get();
+    if (state.agentRunId && !['stopped', 'complete', 'error'].includes(state.agentStatus)) {
+      void client.stop(state.agentRunId).catch(() => undefined);
+    }
+    unsubscribeAgent?.();
+    unsubscribeAgent = null;
     set({
       taskPlan: null,
       currentStepIndex: 0,
       stepResults: [],
       agentStatus: 'idle',
-    }),
+      agentRunId: null,
+      agentEvents: [],
+      agentError: null,
+    });
+  },
 
   sendPrompt: async (prompt) => {
     const msg: ChatMessage = {
@@ -595,6 +691,50 @@ export const useStore = create<AppState>((set, get) => ({
       currentStepIndex: 0,
       stepResults: [],
       agentStatus: 'idle',
+      agentRunId: null,
+      agentEvents: [],
+      agentError: null,
     });
   },
-}));
+  }));
+}
+
+export const useStore = createAppStore();
+
+function shouldSyncRun(type: AgentProgressEvent['type']): boolean {
+  return type === 'tool_started' || type === 'validation' || type === 'commit'
+    || type === 'paused' || type === 'resumed' || type === 'stopped'
+    || type === 'completed' || type === 'failed';
+}
+
+function statusFromProgress(event: AgentProgressEvent, current: AgentUiStatus): AgentUiStatus {
+  switch (event.type) {
+    case 'accepted':
+    case 'planning': return 'planning';
+    case 'tool_started':
+    case 'tool_finished':
+    case 'validation':
+    case 'commit':
+    case 'resumed': return 'running';
+    case 'paused': return 'paused';
+    case 'stopped': return 'stopped';
+    case 'completed': return 'complete';
+    case 'failed': return 'error';
+    case 'heartbeat': return current;
+  }
+}
+
+function projectAgentRun(run: AgentRunState): Partial<AppState> {
+  const status: AgentUiStatus = run.status === 'completed'
+    ? 'complete'
+    : run.status === 'failed'
+      ? 'error'
+      : run.status;
+  return {
+    agentStatus: status,
+    taskPlan: run.plan,
+    currentStepIndex: run.currentStepIndex,
+    history: run.history,
+    model: run.history.model,
+  };
+}

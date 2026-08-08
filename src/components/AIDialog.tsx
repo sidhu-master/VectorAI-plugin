@@ -77,6 +77,8 @@ export default function AIDialog() {
   const startAgent = useStore((s) => s.startAgent);
   const taskPlan = useStore((s) => s.taskPlan);
   const agentStatus = useStore((s) => s.agentStatus);
+  const agentRunId = useStore((s) => s.agentRunId);
+  const addAgentInstruction = useStore((s) => s.addAgentInstruction);
 
   const [input, setInput] = useState('');
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
@@ -88,22 +90,28 @@ export default function AIDialog() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [aiMessages, aiStatus, perceptionStatus]);
 
-  const busy = aiStatus === 'loading' || perceptionStatus === 'loading' || agentStatus === 'executing' || agentStatus === 'planning';
+  const agentActive = !!agentRunId && !['stopped', 'complete', 'error'].includes(agentStatus);
+  const busy = aiStatus === 'loading' || perceptionStatus === 'loading';
 
   const handleSend = () => {
     const text = input.trim();
 
-    // 有图片：发送感知请求
-    if (pendingImage) {
-      void perceiveImage(pendingImage.base64, pendingImage.mimeType);
+    // Agent 模式：新任务可携带图纸；运行中则追加文字指令
+    if (agentMode && (text || pendingImage)) {
+      if (agentActive && text && !pendingImage) {
+        void addAgentInstruction(text);
+      } else {
+        void startAgent(text || undefined, pendingImage?.base64, pendingImage?.mimeType);
+      }
       setPendingImage(null);
       setInput('');
       return;
     }
 
-    // Agent 模式：启动任务规划
-    if (agentMode && text) {
-      void startAgent(text);
+    // 普通模式有图片：发送感知请求
+    if (pendingImage) {
+      void perceiveImage(pendingImage.base64, pendingImage.mimeType);
+      setPendingImage(null);
       setInput('');
       return;
     }
@@ -155,7 +163,7 @@ export default function AIDialog() {
   const placeholder = pendingImage
     ? '输入分析指令（可选），按发送开始分析图片...'
     : agentMode
-    ? '描述任务，AI 将分阶段构建...'
+    ? agentActive ? '追加指令，将在安全点生效...' : '描述任务，AI 将自动分阶段构建...'
     : '描述你想要的图形，或粘贴/上传图纸...';
 
   return (
@@ -215,11 +223,17 @@ export default function AIDialog() {
         {/* 图片预览 */}
         {pendingImage && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/20 bg-base-800 p-2">
-            <img
-              src={pendingImage.dataUrl}
-              alt="preview"
-              className="h-12 w-12 rounded object-cover"
-            />
+            {pendingImage.mimeType === 'application/pdf' ? (
+              <div className="flex h-12 w-12 items-center justify-center rounded bg-danger/10 font-mono text-[10px] text-danger">
+                PDF
+              </div>
+            ) : (
+              <img
+                src={pendingImage.dataUrl}
+                alt="preview"
+                className="h-12 w-12 rounded object-cover"
+              />
+            )}
             <div className="flex-1 truncate">
               <p className="text-xs text-slate-300">{pendingImage.name}</p>
               <p className="text-[10px] text-accent">等待发送</p>
@@ -248,7 +262,7 @@ export default function AIDialog() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf"
             className="hidden"
             onChange={handleFileSelect}
           />
