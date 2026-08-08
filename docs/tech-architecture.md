@@ -1,3 +1,7 @@
+# VectorAI 旧技术架构（已被取代）
+
+> 本文记录基于 SpatialIntent、SpatialModel 0.2 和文字步骤 Agent 的旧架构，仅供历史参考。当前权威架构见 [`docs/superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md`](./superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md)。新开发不得继续扩展本文中的旧协议。
+
 ## 1. 架构设计
 
 **核心原则：Spatial Core 是平台无关的核心资产，不依赖 UI。Representation 是 Core 的能力之一。**
