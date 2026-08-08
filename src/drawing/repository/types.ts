@@ -39,6 +39,10 @@ export interface DrawingRepositoryState {
   commits: DrawingCommit[];
 }
 
+export interface DrawingRepositorySnapshot extends DrawingRepositoryState {
+  schemaVersion: 1;
+}
+
 export type RepositoryCommitResult =
   | {
       status: 'committed';
