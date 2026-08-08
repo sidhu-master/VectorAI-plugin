@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { TaskPlan } from '@/core/agent';
+import type { AgentTaskPlan } from '@/services/agent-types';
 import type { AgentProgressEvent } from '@/services/agent-client';
 import { presentAgentTask } from './task-presentation';
 
-const reconstructPlan: TaskPlan = {
+const reconstructPlan: AgentTaskPlan = {
   task: 'reconstruct_drawing',
   summary: '分析并重建二维工程图',
   steps: [

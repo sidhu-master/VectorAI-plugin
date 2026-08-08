@@ -1,36 +1,42 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { GeometryEntity } from '@/core/types';
+import type { AnnotationId, GeometryId } from '@/drawing';
 import EntityRenderer from './EntityRenderer';
+import type { DrawingRenderable } from './geometry';
 
-const common = { visible: true } as const;
+const common = {
+  visible: true,
+  quality: { status: 'confirmed' as const, evidenceRefs: [] },
+};
 const viewport = { minX: -100, minY: -100, maxX: 100, maxY: 100 };
+const gid = (id: string) => id as GeometryId;
+const aid = (id: string) => id as AnnotationId;
 
-const entities: GeometryEntity[] = [
-  { ...common, id: 'point-1', type: 'point', x: 1, y: 2 },
-  { ...common, id: 'line-1', type: 'line', start: [0, 0], end: [10, 5] },
-  { ...common, id: 'ray-1', type: 'ray', origin: [0, 0], direction: [1, 1] },
-  { ...common, id: 'xline-1', type: 'xline', origin: [0, 0], direction: [1, 0] },
-  { ...common, id: 'circle-1', type: 'circle', center: [3, 4], radius: 2 },
+const entities: DrawingRenderable[] = [
+  { ...common, id: gid('point-1'), type: 'point', x: 1, y: 2 },
+  { ...common, id: gid('line-1'), type: 'line', start: [0, 0], end: [10, 5] },
+  { ...common, id: gid('ray-1'), type: 'ray', origin: [0, 0], direction: [1, 1] },
+  { ...common, id: gid('xline-1'), type: 'xline', origin: [0, 0], direction: [1, 0] },
+  { ...common, id: gid('circle-1'), type: 'circle', center: [3, 4], radius: 2 },
   {
-    ...common, id: 'arc-1', type: 'arc', center: [0, 0], radius: 8,
+    ...common, id: gid('arc-1'), type: 'arc', center: [0, 0], radius: 8,
     startAngle: 0, endAngle: 90, counterClockwise: true,
   },
-  { ...common, id: 'ellipse-1', type: 'ellipse', center: [0, 0], majorAxis: [8, 3], ratio: 0.5 },
+  { ...common, id: gid('ellipse-1'), type: 'ellipse', center: [0, 0], majorAxis: [8, 3], ratio: 0.5 },
   {
-    ...common, id: 'polyline-1', type: 'polyline', closed: true,
+    ...common, id: gid('polyline-1'), type: 'polyline', closed: true,
     vertices: [{ point: [0, 0] }, { point: [5, 0] }, { point: [5, 4] }],
   },
   {
-    ...common, id: 'spline-1', type: 'spline', degree: 2, closed: false, periodic: false,
+    ...common, id: gid('spline-1'), type: 'spline', degree: 2, closed: false, periodic: false,
     controlPoints: [[0, 0], [3, 5], [8, 2]], knots: [0, 0, 0, 1, 1, 1],
   },
   {
-    ...common, id: 'text-1', type: 'text', content: 'ROOM', position: [2, 3], height: 2,
+    ...common, id: aid('text-1'), type: 'text', content: 'ROOM', position: [2, 3], height: 2,
     rotation: 0, alignment: 'center', verticalAlignment: 'middle',
   },
   {
-    ...common, id: 'dimension-1', type: 'dimension', dimensionKind: 'linear',
+    ...common, id: aid('dimension-1'), type: 'dimension', dimensionKind: 'linear',
     associationStatus: 'resolved', targets: [], definitionPoints: [[0, 0], [10, 0]],
     textPosition: [5, 2], displayText: '10 mm',
   },
@@ -56,8 +62,13 @@ describe('EntityRenderer', () => {
   });
 
   it('renders low-confidence geometry in the danger stroke', () => {
-    const lowConfidence: GeometryEntity = {
-      ...common, id: 'uncertain', type: 'circle', center: [0, 0], radius: 5, confidence: 0.42,
+    const lowConfidence: DrawingRenderable = {
+      ...common,
+      id: gid('uncertain'),
+      type: 'circle',
+      center: [0, 0],
+      radius: 5,
+      quality: { status: 'candidate', confidence: 0.42, evidenceRefs: [] },
     };
     const html = renderToStaticMarkup(
       <svg><EntityRenderer entity={lowConfidence} scale={1} viewport={viewport} /></svg>,

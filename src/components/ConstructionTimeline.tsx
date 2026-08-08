@@ -147,7 +147,8 @@ export default function ConstructionTimeline() {
   const agentEvents = useStore((state) => state.agentEvents);
   const agentStatus = useStore((state) => state.agentStatus);
   const agentError = useStore((state) => state.agentError);
-  const history = useStore((state) => state.history);
+  const document = useStore((state) => state.document);
+  const commits = useStore((state) => state.commits);
   const pauseAgent = useStore((state) => state.pauseAgent);
   const resumeAgent = useStore((state) => state.resumeAgent);
   const stopAgent = useStore((state) => state.stopAgent);
@@ -158,11 +159,11 @@ export default function ConstructionTimeline() {
   const active = !['stopped', 'complete', 'error'].includes(agentStatus);
   const canPause = agentStatus === 'planning' || agentStatus === 'running';
   const canResume = agentStatus === 'paused';
-  const runCommits = history.commits.filter((commit) => commit.runId === agentRunId);
+  const runCommits = commits.filter((commit) => commit.goalId === agentRunId);
   const lastCommit = runCommits.at(-1);
-  const lowConfidence = lastCommit?.source === 'AI'
-    && lastCommit.confidence !== undefined
-    && lastCommit.confidence < 0.6;
+  const lowConfidence = (lastCommit?.confidence !== undefined && lastCommit.confidence < 0.6)
+    || Boolean(document && [...document.geometry, ...document.annotations]
+      .some((node) => node.quality.status === 'candidate'));
   const presentation = presentAgentTask({
     plan: taskPlan,
     status: agentStatus,

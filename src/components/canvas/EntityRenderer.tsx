@@ -1,6 +1,6 @@
 import type { MouseEvent } from 'react';
-import type { GeometryEntity, Vec2 } from '@/core/types';
-import type { BBox } from './geometry';
+import type { Vec2 } from '@/drawing';
+import type { BBox, DrawingRenderable } from './geometry';
 
 const HIT_WIDTH = 14;
 const PRIMARY_STROKE = '#cbd5e1';
@@ -10,7 +10,7 @@ const CONSTRUCTION_STROKE = '#64748b';
 const DIMENSION_STROKE = '#94a3b8';
 
 interface EntityRendererProps {
-  entity: GeometryEntity;
+  entity: DrawingRenderable;
   scale: number;
   viewport: BBox;
   selected?: boolean;
@@ -31,12 +31,12 @@ function arcSpan(start: number, end: number, counterClockwise: boolean): number 
     : (normalizedStart - normalizedEnd + 360) % 360;
 }
 
-function linePath(points: Vec2[], closed = false): string {
+function linePath(points: readonly Vec2[], closed = false): string {
   if (points.length === 0) return '';
   return `M ${points[0][0]} ${points[0][1]} ${points.slice(1).map(([x, y]) => `L ${x} ${y}`).join(' ')}${closed ? ' Z' : ''}`;
 }
 
-function splinePath(points: Vec2[], closed: boolean): string {
+function splinePath(points: readonly Vec2[], closed: boolean): string {
   if (points.length < 2) return points.length === 1 ? `M ${points[0][0]} ${points[0][1]}` : '';
   if (points.length === 2) return linePath(points, closed);
   const commands = [`M ${points[0][0]} ${points[0][1]}`];
@@ -53,7 +53,7 @@ function splinePath(points: Vec2[], closed: boolean): string {
   return commands.join(' ');
 }
 
-function extendedLine(entity: Extract<GeometryEntity, { type: 'ray' | 'xline' }>, viewport: BBox): [Vec2, Vec2] | null {
+function extendedLine(entity: Extract<DrawingRenderable, { type: 'ray' | 'xline' }>, viewport: BBox): [Vec2, Vec2] | null {
   const length = Math.hypot(entity.direction[0], entity.direction[1]);
   if (!Number.isFinite(length) || length === 0) return null;
   const unit: Vec2 = [entity.direction[0] / length, entity.direction[1] / length];
@@ -66,7 +66,7 @@ function extendedLine(entity: Extract<GeometryEntity, { type: 'ray' | 'xline' }>
   ];
 }
 
-function dimensionLabel(entity: Extract<GeometryEntity, { type: 'dimension' }>): string {
+function dimensionLabel(entity: Extract<DrawingRenderable, { type: 'dimension' }>): string {
   if (entity.displayText) return entity.displayText;
   const value = entity.observedValue ?? entity.computedValue;
   return `${entity.prefix ?? ''}${value === undefined ? '—' : value}${entity.unit ? ` ${entity.unit}` : ''}${entity.suffix ?? ''}`;
@@ -81,7 +81,8 @@ export default function EntityRenderer({
   onPointerDown,
 }: EntityRendererProps) {
   if (!entity.visible) return null;
-  const lowConfidence = entity.confidence !== undefined && entity.confidence < 0.6;
+  const lowConfidence = entity.quality.status === 'candidate'
+    || (entity.quality.confidence !== undefined && entity.quality.confidence < 0.6);
   const regularStroke = selected ? SELECTED_STROKE : lowConfidence ? DANGER_STROKE : PRIMARY_STROKE;
   const stroke = entity.type === 'ray' || entity.type === 'xline'
     ? CONSTRUCTION_STROKE

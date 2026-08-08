@@ -1,4 +1,4 @@
-import type { TaskPlan } from '@/core/agent';
+import type { AgentTaskPlan } from '@/services/agent-types';
 import type { AgentUiStatus } from '@/hooks/useStore';
 import type { AgentProgressEvent } from '@/services/agent-client';
 
@@ -28,7 +28,7 @@ export interface PresentedAgentTask {
 }
 
 interface PresentAgentTaskInput {
-  plan: TaskPlan | null;
+  plan: AgentTaskPlan | null;
   status: AgentUiStatus;
   currentStepIndex: number;
   events: AgentProgressEvent[];

@@ -1,4 +1,6 @@
-import type { GeometryEntity, Vec2 } from '@/core/types';
+import type { AnnotationNode, GeometryNode, Vec2 } from '@/drawing';
+
+export type DrawingRenderable = GeometryNode | AnnotationNode;
 
 export interface BBox {
   minX: number;
@@ -17,7 +19,7 @@ function finitePoint(point: Vec2): boolean {
   return finite(point[0]) && finite(point[1]);
 }
 
-function boundsFromPoints(points: Vec2[]): BBox | null {
+function boundsFromPoints(points: readonly Vec2[]): BBox | null {
   if (points.length === 0 || points.some((point) => !finitePoint(point))) return null;
   const xs = points.map((point) => point[0]);
   const ys = points.map((point) => point[1]);
@@ -52,7 +54,7 @@ function arcPoint(center: Vec2, radius: number, angle: number): Vec2 {
   return [center[0] + Math.cos(radians) * radius, center[1] + Math.sin(radians) * radius];
 }
 
-function rotatedTextBounds(entity: Extract<GeometryEntity, { type: 'text' }>): BBox | null {
+function rotatedTextBounds(entity: Extract<DrawingRenderable, { type: 'text' }>): BBox | null {
   const width = entity.maxWidth ?? entity.content.length * entity.height * 0.6;
   if (!finitePoint(entity.position) || !finite(entity.height) || !finite(width) || !finite(entity.rotation)) {
     return null;
@@ -80,7 +82,7 @@ function rotatedTextBounds(entity: Extract<GeometryEntity, { type: 'text' }>): B
   return boundsFromPoints(corners);
 }
 
-export function entityBounds(entity: GeometryEntity): BBox | null {
+export function entityBounds(entity: DrawingRenderable): BBox | null {
   switch (entity.type) {
     case 'point':
       return boundsFromPoints([[entity.x, entity.y]]);
@@ -134,7 +136,7 @@ export function entityBounds(entity: GeometryEntity): BBox | null {
   }
 }
 
-export function modelBounds(entities: GeometryEntity[]): BBox | null {
+export function modelBounds(entities: readonly DrawingRenderable[]): BBox | null {
   const finiteBounds = entities
     .filter((entity) => entity.visible)
     .map(entityBounds)
@@ -148,7 +150,7 @@ export function modelBounds(entities: GeometryEntity[]): BBox | null {
   }));
 }
 
-export function entityCenter(entity: GeometryEntity): Vec2 | null {
+export function entityCenter(entity: DrawingRenderable): Vec2 | null {
   if (entity.type === 'ray' || entity.type === 'xline') {
     return finitePoint(entity.origin) ? entity.origin : null;
   }

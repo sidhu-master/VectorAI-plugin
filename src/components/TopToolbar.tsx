@@ -3,7 +3,7 @@
  * Logo / AI 连接状态 / 缩放控制 / DXF 导出 / 清空
  */
 import { useEffect, useState } from 'react';
-import { DraftingCompass, Download, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { DraftingCompass, Download, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 
 const MIN_SCALE = 0.1;
@@ -12,8 +12,10 @@ const MAX_SCALE = 10;
 export default function TopToolbar() {
   const canvasTransform = useStore((s) => s.canvasTransform);
   const setCanvasTransform = useStore((s) => s.setCanvasTransform);
-  const exportDXF = useStore((s) => s.exportDXF);
-  const clearAll = useStore((s) => s.clearAll);
+  const clearDrawing = useStore((s) => s.clearDrawing);
+  const revertLatest = useStore((s) => s.revertLatest);
+  const commits = useStore((s) => s.commits);
+  const drawingBusy = useStore((s) => s.drawingBusy);
 
   const [connected, setConnected] = useState(false);
 
@@ -86,16 +88,27 @@ export default function TopToolbar() {
         </div>
 
         <button
-          className="flex items-center gap-1.5 rounded-lg border border-accent/25 bg-accent/[0.07] px-2.5 py-1.5 text-[10px] font-medium text-accent-light transition hover:border-accent/40 hover:bg-accent/[0.12]"
-          onClick={exportDXF}
+          className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.02] px-2.5 py-1.5 text-[10px] font-medium text-slate-600"
+          disabled
+          title="DXF 导出适配器将在 Drawing Core 迁移后接入"
         >
           <Download size={12} />
           导出 DXF
         </button>
 
         <button
+          className="rounded-md p-1.5 text-slate-500 transition hover:bg-white/[0.05] hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-30"
+          onClick={() => void revertLatest()}
+          disabled={drawingBusy || commits.length === 0}
+          title="撤销上一次增量修改"
+        >
+          <Undo2 size={13} />
+        </button>
+
+        <button
           className="flex items-center gap-1 rounded-md p-1.5 text-slate-600 transition hover:bg-danger/[0.06] hover:text-red-300"
-          onClick={clearAll}
+          onClick={() => void clearDrawing()}
+          disabled={drawingBusy}
           title="清空图纸"
         >
           <Trash2 size={13} />

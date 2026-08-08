@@ -6,8 +6,10 @@ import { useStore } from '@/hooks/useStore';
 export default function StatusBar() {
   const mouseCoords = useStore((s) => s.mouseCoords);
   const scale = useStore((s) => s.canvasTransform.scale);
-  const unit = useStore((s) => s.model.metadata.unit);
-  const entityCount = useStore((s) => s.model.entities.length);
+  const unit = useStore((s) => s.document?.unitSystem.length ?? 'mm');
+  const entityCount = useStore((s) => (
+    (s.document?.geometry.length ?? 0) + (s.document?.annotations.length ?? 0)
+  ));
 
   const fmt = (n: number) => n.toFixed(2);
 

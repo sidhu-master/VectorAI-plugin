@@ -2,7 +2,7 @@
  * ParameterEditor - 左侧参数编辑器（支持单选/多选）
  */
 import { useStore } from '@/hooks/useStore';
-import type { CircleEntity, LineEntity, PointEntity } from '@/core/types';
+import type { CircleGeometry, GeometryNode, LineGeometry, PointGeometry } from '@/drawing';
 
 function Field({
   label,
@@ -27,9 +27,9 @@ function Field({
 }
 
 export default function ParameterEditor() {
-  const entities = useStore((s) => s.model.entities);
+  const entities = useStore((s) => s.document?.geometry ?? []);
   const selectedIds = useStore((s) => s.selectedIds);
-  const updateEntity = useStore((s) => s.updateEntity);
+  const updateNode = useStore((s) => s.updateNode);
 
   const selected = entities.filter((e) => selectedIds.includes(e.id));
 
@@ -75,13 +75,13 @@ export default function ParameterEditor() {
             </div>
 
             {singleEntity.type === 'point' && (
-              <PointFields entity={singleEntity as PointEntity} update={updateEntity} />
+              <PointFields entity={singleEntity as PointGeometry} update={updateNode} />
             )}
             {singleEntity.type === 'line' && (
-              <LineFields entity={singleEntity as LineEntity} update={updateEntity} />
+              <LineFields entity={singleEntity as LineGeometry} update={updateNode} />
             )}
             {singleEntity.type === 'circle' && (
-              <CircleFields entity={singleEntity as CircleEntity} update={updateEntity} />
+              <CircleFields entity={singleEntity as CircleGeometry} update={updateNode} />
             )}
             {!['point', 'line', 'circle'].includes(singleEntity.type) && (
               <p className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-[10px] leading-4 text-slate-600">
@@ -95,43 +95,43 @@ export default function ParameterEditor() {
   );
 }
 
-type UpdateFn = ReturnType<typeof useStore.getState>['updateEntity'];
+type UpdateFn = ReturnType<typeof useStore.getState>['updateNode'];
 
-function PointFields({ entity, update }: { entity: PointEntity; update: UpdateFn }) {
+function PointFields({ entity, update }: { entity: PointGeometry; update: UpdateFn }) {
   return (
     <div className="grid grid-cols-2 gap-2">
-      <Field label="x" value={entity.x} onChange={(v) => update(entity.id, { x: v } as Partial<PointEntity>)} />
-      <Field label="y" value={entity.y} onChange={(v) => update(entity.id, { y: v } as Partial<PointEntity>)} />
+      <Field label="x" value={entity.x} onChange={(v) => void update(entity.id, { x: v })} />
+      <Field label="y" value={entity.y} onChange={(v) => void update(entity.id, { y: v })} />
     </div>
   );
 }
 
-function LineFields({ entity, update }: { entity: LineEntity; update: UpdateFn }) {
+function LineFields({ entity, update }: { entity: LineGeometry; update: UpdateFn }) {
   const [sx, sy] = entity.start;
   const [ex, ey] = entity.end;
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
-        <Field label="start.x" value={sx} onChange={(v) => update(entity.id, { start: [v, sy] } as Partial<LineEntity>)} />
-        <Field label="start.y" value={sy} onChange={(v) => update(entity.id, { start: [sx, v] } as Partial<LineEntity>)} />
+        <Field label="start.x" value={sx} onChange={(v) => void update(entity.id, { start: [v, sy] })} />
+        <Field label="start.y" value={sy} onChange={(v) => void update(entity.id, { start: [sx, v] })} />
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="end.x" value={ex} onChange={(v) => update(entity.id, { end: [v, ey] } as Partial<LineEntity>)} />
-        <Field label="end.y" value={ey} onChange={(v) => update(entity.id, { end: [ex, v] } as Partial<LineEntity>)} />
+        <Field label="end.x" value={ex} onChange={(v) => void update(entity.id, { end: [v, ey] })} />
+        <Field label="end.y" value={ey} onChange={(v) => void update(entity.id, { end: [ex, v] })} />
       </div>
     </div>
   );
 }
 
-function CircleFields({ entity, update }: { entity: CircleEntity; update: UpdateFn }) {
+function CircleFields({ entity, update }: { entity: CircleGeometry; update: UpdateFn }) {
   const [cx, cy] = entity.center;
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
-        <Field label="center.x" value={cx} onChange={(v) => update(entity.id, { center: [v, cy] } as Partial<CircleEntity>)} />
-        <Field label="center.y" value={cy} onChange={(v) => update(entity.id, { center: [cx, v] } as Partial<CircleEntity>)} />
+        <Field label="center.x" value={cx} onChange={(v) => void update(entity.id, { center: [v, cy] })} />
+        <Field label="center.y" value={cy} onChange={(v) => void update(entity.id, { center: [cx, v] })} />
       </div>
-      <Field label="radius" value={entity.radius} onChange={(v) => update(entity.id, { radius: v } as Partial<CircleEntity>)} />
+      <Field label="radius" value={entity.radius} onChange={(v) => void update(entity.id, { radius: v })} />
     </div>
   );
 }

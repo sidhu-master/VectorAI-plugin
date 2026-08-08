@@ -50,16 +50,6 @@ function Message({ msg }: { msg: ChatMessage }) {
           </div>
         )}
 
-        {!isUser && msg.intent && (
-          <details className="mt-2">
-            <summary className="cursor-pointer text-[9px] text-slate-600 hover:text-slate-400">
-              查看空间意图
-            </summary>
-            <pre className="mt-1 overflow-x-auto rounded-lg border border-white/[0.05] bg-base-900 p-2 font-mono text-[9px] text-slate-500">
-              {JSON.stringify(msg.intent, null, 2)}
-            </pre>
-          </details>
-        )}
       </div>
     </div>
   );

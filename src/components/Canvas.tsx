@@ -5,9 +5,15 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '@/hooks/useStore';
-import type { GeometryEntity, SpatialRelation } from '@/core/types';
+import type { DrawingRelation } from '@/drawing';
 import EntityRenderer from './canvas/EntityRenderer';
-import { aabbIntersects, entityBounds, entityCenter, modelBounds } from './canvas/geometry';
+import {
+  aabbIntersects,
+  entityBounds,
+  entityCenter,
+  modelBounds,
+  type DrawingRenderable,
+} from './canvas/geometry';
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 10;
@@ -15,7 +21,7 @@ const FIT_PADDING = 1.3;
 const DRAG_THRESHOLD = 4; // 拖动判定阈值（像素）
 
 export default function Canvas() {
-  const model = useStore((s) => s.model);
+  const document = useStore((s) => s.document);
   const selectedIds = useStore((s) => s.selectedIds);
   const showGrid = useStore((s) => s.showGrid);
   const showRelations = useStore((s) => s.showRelations);
@@ -27,6 +33,9 @@ export default function Canvas() {
   const setMouseCoords = useStore((s) => s.setMouseCoords);
 
   const { scale, offsetX, offsetY } = canvasTransform;
+  const entities: DrawingRenderable[] = document
+    ? [...document.geometry, ...document.annotations]
+    : [];
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -58,8 +67,8 @@ export default function Canvas() {
 
   // 自动适配
   useEffect(() => {
-    if (model.entities.length > 0 && !hasAutoFitRef.current && w > 0 && h > 0) {
-      const bbox = modelBounds(model.entities);
+    if (entities.length > 0 && !hasAutoFitRef.current && w > 0 && h > 0) {
+      const bbox = modelBounds(entities);
       if (bbox) {
         const bw = bbox.maxX - bbox.minX || 100;
         const bh = bbox.maxY - bbox.minY || 100;
@@ -71,8 +80,8 @@ export default function Canvas() {
         hasAutoFitRef.current = true;
       }
     }
-    if (model.entities.length === 0) hasAutoFitRef.current = false;
-  }, [model.entities, w, h, setCanvasTransform]);
+    if (entities.length === 0) hasAutoFitRef.current = false;
+  }, [entities, w, h, setCanvasTransform]);
 
   // 屏幕坐标 -> 世界坐标
   const toWorld = useCallback((sx: number, sy: number) => ({
@@ -120,10 +129,10 @@ export default function Canvas() {
     }
   }
 
-  const entityById = (id: string) => model.entities.find((e) => e.id === id);
+  const entityById = (id: string) => entities.find((entity) => entity.id === id);
 
   // 渲染实体（含透明点击区域）
-  const renderEntity = (e: GeometryEntity) => {
+  const renderEntity = (e: DrawingRenderable) => {
     const onClick = (ev: React.MouseEvent<SVGGElement>) => {
       ev.stopPropagation();
       if (!hasMovedRef.current) {
@@ -151,8 +160,8 @@ export default function Canvas() {
   const relationLines: React.ReactElement[] = [];
   const relationLabels: React.ReactElement[] = [];
   if (showRelations) {
-    model.relations.forEach((r: SpatialRelation, i) => {
-      const pts = r.entities.map(entityById).filter(Boolean) as GeometryEntity[];
+    (document?.relations ?? []).forEach((relation: DrawingRelation, i) => {
+      const pts = relationNodeIds(relation).map(entityById).filter(Boolean) as DrawingRenderable[];
       if (pts.length < 2) return;
       for (let j = 0; j < pts.length - 1; j += 1) {
         const a = entityCenter(pts[j]);
@@ -162,7 +171,7 @@ export default function Canvas() {
         const [bx, by] = b;
         relationLines.push(<line key={`rel${i}-${j}`} x1={ax} y1={ay} x2={bx} y2={by} stroke="#7893a6" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke" className="breathe" />);
         const mx = (ax + bx) / 2, my = (ay + by) / 2;
-        relationLabels.push(<text key={`rl${i}-${j}`} x={offsetX + mx * scale} y={offsetY - my * scale - 4} className="fill-relation-light font-mono" fontSize={9} textAnchor="middle">{r.kind}</text>);
+        relationLabels.push(<text key={`rl${i}-${j}`} x={offsetX + mx * scale} y={offsetY - my * scale - 4} className="fill-relation-light font-mono" fontSize={9} textAnchor="middle">{relation.kind}</text>);
       }
     });
   }
@@ -245,7 +254,7 @@ export default function Canvas() {
         const selBBox = { minX: Math.min(w1.x, w2.x), minY: Math.min(w1.y, w2.y), maxX: Math.max(w1.x, w2.x), maxY: Math.max(w1.y, w2.y) };
 
         // 检测相交
-        const hits = model.entities
+        const hits = entities
           .filter((entity) => {
             if (!entity.visible) return false;
             const bounds = entityBounds(entity);
@@ -313,7 +322,7 @@ export default function Canvas() {
           {showGrid && <g stroke="rgba(148,163,184,0.075)" strokeWidth={1}>{majorLines}</g>}
           <line x1={worldLeft} y1={0} x2={worldRight} y2={0} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           <line x1={0} y1={worldBottom} x2={0} y2={worldTop} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          {model.entities.map(renderEntity)}
+          {entities.map(renderEntity)}
           {relationLines}
         </g>
 
@@ -338,4 +347,13 @@ export default function Canvas() {
       </svg>
     </div>
   );
+}
+
+function relationNodeIds(relation: DrawingRelation): string[] {
+  switch (relation.type) {
+    case 'topology': return relation.nodeIds;
+    case 'constraint': return relation.geometryIds;
+    case 'association': return [relation.annotationId, ...relation.geometryIds];
+    case 'semantic': return relation.nodeIds;
+  }
 }

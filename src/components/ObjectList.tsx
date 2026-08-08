@@ -3,9 +3,11 @@
  */
 import { Circle, Dot, Eye, EyeOff, Minus, Shapes, Trash2 } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
-import type { EntityType, GeometryEntity } from '@/core/types';
+import type { AnnotationNode, GeometryNode } from '@/drawing';
 
-function typeIcon(type: EntityType) {
+type ListedNode = GeometryNode | AnnotationNode;
+
+function typeIcon(type: ListedNode['type']) {
   const cls = 'text-slate-500';
   switch (type) {
     case 'circle': return <Circle size={14} className={cls} />;
@@ -16,27 +18,29 @@ function typeIcon(type: EntityType) {
 }
 
 export default function ObjectList() {
-  const entities = useStore((s) => s.model.entities);
+  const entities = useStore((s) => s.document
+    ? [...s.document.geometry, ...s.document.annotations]
+    : []);
   const selectedIds = useStore((s) => s.selectedIds);
   const selectEntity = useStore((s) => s.selectEntity);
-  const updateEntity = useStore((s) => s.updateEntity);
-  const deleteEntity = useStore((s) => s.deleteEntity);
+  const updateNode = useStore((s) => s.updateNode);
+  const deleteNode = useStore((s) => s.deleteNode);
 
-  const toggleVisible = (e: GeometryEntity, ev: React.MouseEvent) => {
+  const toggleVisible = (e: ListedNode, ev: React.MouseEvent) => {
     ev.stopPropagation();
-    updateEntity(e.id, { visible: !e.visible });
+    void updateNode(e.id, { visible: !e.visible });
   };
 
   const onDelete = (id: string, ev: React.MouseEvent) => {
     ev.stopPropagation();
-    deleteEntity(id);
+    void deleteNode(id);
   };
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex h-11 items-center justify-between border-b border-white/[0.06] px-3">
         <span className="text-[11px] font-medium text-slate-300">
-          图元
+          对象
         </span>
         <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-500">
           {entities.length}
