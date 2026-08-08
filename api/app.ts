@@ -29,12 +29,12 @@ const agentRuntime = new AgentRuntime({
   auditStore: new FileAuditStore(path.resolve(process.cwd(), '.local/vectorai/runs')),
   attachmentPreparer: new LocalAttachmentPreparer(),
 })
-const sharedTextModel = process.env.COMPANY_AI_MODEL_NAME
+const primaryModel = process.env.COMPANY_AI_PRIMARY_MODEL || 'doubao-seed-2.0-lite'
 const agentModelDefaults = resolveAgentModelProfile({
-  planner: process.env.COMPANY_AI_PLANNER_MODEL || sharedTextModel,
-  vision: process.env.COMPANY_AI_VISION_MODEL,
-  executor: process.env.COMPANY_AI_EXECUTOR_MODEL || sharedTextModel,
-  repair: process.env.COMPANY_AI_REPAIR_MODEL || sharedTextModel,
+  planner: process.env.COMPANY_AI_PLANNER_MODEL || primaryModel,
+  vision: process.env.COMPANY_AI_VISION_MODEL || primaryModel,
+  executor: process.env.COMPANY_AI_EXECUTOR_MODEL || primaryModel,
+  repair: process.env.COMPANY_AI_REPAIR_MODEL || 'doubao-seed-2.1-turbo',
 })
 
 app.use(cors())

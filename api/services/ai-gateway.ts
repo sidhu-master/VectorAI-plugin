@@ -188,7 +188,7 @@ async function callCompanyGateway(
       messages: [{ role: 'user', content: userMessage }],
       system_context: SYSTEM_PROMPT,
       model_role: 'planner',
-      model: model || process.env.COMPANY_AI_MODEL_NAME,
+      model: model || process.env.COMPANY_AI_MODEL_NAME || 'doubao-seed-2.0-lite',
     }),
   });
 
@@ -217,7 +217,7 @@ async function callLLMDirect(
   selectedEntities?: GeometryEntity[],
 ): Promise<SpatialIntent> {
   const url = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
-  const modelName = model || process.env.COMPANY_AI_MODEL_NAME || 'Doubao-Seed-2.1-turbo';
+  const modelName = model || process.env.COMPANY_AI_MODEL_NAME || 'doubao-seed-2.0-lite';
   const userMessage = buildUserMessage(prompt, context, selectedEntities);
 
   const response = await fetch(url, {
@@ -313,7 +313,7 @@ export async function perceiveFromImage({
   const visionModel = model
     || process.env.COMPANY_AI_VISION_MODEL
     || process.env.COMPANY_AI_MODEL_NAME
-    || 'Doubao-Seed-2.1-turbo';
+    || 'doubao-seed-2.0-lite';
 
   console.log('[Vision] 使用模型:', visionModel, '图片大小:', Math.round(image.length * 0.75 / 1024), 'KB');
 
@@ -391,7 +391,7 @@ export async function planTask({
 }: PlanParams): Promise<TaskPlan> {
   const baseUrl = process.env.COMPANY_AI_BASE_URL;
   const apiKey = process.env.COMPANY_AI_API_KEY;
-  const modelName = model || process.env.COMPANY_AI_MODEL_NAME || 'Doubao-Seed-2.1-turbo';
+  const modelName = model || process.env.COMPANY_AI_MODEL_NAME || 'doubao-seed-2.0-lite';
 
   if (!baseUrl || !apiKey) {
     // 无配置时返回默认计划
@@ -466,7 +466,7 @@ export async function executeAgentStep({
 }: ExecuteStepParams): Promise<SpatialIntent> {
   const baseUrl = process.env.COMPANY_AI_BASE_URL;
   const apiKey = process.env.COMPANY_AI_API_KEY;
-  const modelName = llmModel || process.env.COMPANY_AI_MODEL_NAME || 'Doubao-Seed-2.1-turbo';
+  const modelName = llmModel || process.env.COMPANY_AI_MODEL_NAME || 'doubao-seed-2.0-lite';
 
   if (!baseUrl || !apiKey) {
     throw new Error('AI 未配置');

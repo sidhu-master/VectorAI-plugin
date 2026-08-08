@@ -1,7 +1,8 @@
 import type { AgentModelProfile, AgentModelRole } from './types.js';
 
 export const DEFAULT_AGENT_VISION_MODEL = 'doubao-seed-2.0-lite';
-export const DEFAULT_AGENT_TEXT_MODEL = 'Doubao-Seed-2.1-turbo';
+export const DEFAULT_AGENT_PRIMARY_MODEL = 'doubao-seed-2.0-lite';
+export const DEFAULT_AGENT_REPAIR_MODEL = 'doubao-seed-2.1-turbo';
 
 type AgentModelProfileInput = Partial<AgentModelProfile>;
 
@@ -11,21 +12,29 @@ function nonEmptyModel(value: string | undefined): string | undefined {
 }
 
 function firstModel(...values: Array<string | undefined>): string {
-  return values.map(nonEmptyModel).find(Boolean) ?? DEFAULT_AGENT_TEXT_MODEL;
+  return values.map(nonEmptyModel).find(Boolean) ?? DEFAULT_AGENT_PRIMARY_MODEL;
 }
 
 export function resolveAgentModelProfile(
   defaults: AgentModelProfileInput = {},
   overrides: AgentModelProfileInput = {},
 ): AgentModelProfile {
-  const planner = firstModel(overrides.planner, defaults.planner);
+  const planner = firstModel(
+    overrides.planner,
+    defaults.planner,
+    DEFAULT_AGENT_PRIMARY_MODEL,
+  );
   const vision = firstModel(
     overrides.vision,
     defaults.vision,
     DEFAULT_AGENT_VISION_MODEL,
   );
   const executor = firstModel(overrides.executor, defaults.executor, planner);
-  const repair = firstModel(overrides.repair, defaults.repair, executor, planner);
+  const repair = firstModel(
+    overrides.repair,
+    defaults.repair,
+    DEFAULT_AGENT_REPAIR_MODEL,
+  );
 
   return Object.freeze({ planner, vision, executor, repair });
 }
@@ -34,12 +43,12 @@ export function selectAgentModel(
   profile: AgentModelProfile,
   input: { role: AgentModelRole; hasImage: boolean; isRepair?: boolean },
 ): string {
-  if (input.hasImage) {
-    return firstModel(profile.vision, DEFAULT_AGENT_VISION_MODEL);
-  }
-
   if (input.isRepair || input.role === 'repair') {
     return firstModel(profile.repair, profile.executor, profile.planner, profile.vision);
+  }
+
+  if (input.hasImage) {
+    return firstModel(profile.vision, DEFAULT_AGENT_VISION_MODEL);
   }
 
   if (input.role === 'executor') {

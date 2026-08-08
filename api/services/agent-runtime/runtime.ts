@@ -6,6 +6,7 @@ import {
   recordReceipt,
 } from '../../../src/core/runtime/context.js';
 import type { SpatialToolReceipt } from '../../../src/core/runtime/receipts.js';
+import type { SpatialIntent } from '../../../src/core/types.js';
 import {
   createAgentRunState,
   reduceAgentRun,
@@ -37,6 +38,8 @@ export interface AgentRunHandle {
   runId: string;
   completion: Promise<AgentRunState>;
 }
+
+const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
 export class AgentRuntime {
   private readonly planner: AgentPlannerAdapter;
@@ -221,6 +224,8 @@ export class AgentRuntime {
       const stage = this.createStage(record);
       let previousErrors: string[] = [];
       let committed = false;
+      let lowConfidenceFallback: SpatialIntent | undefined;
+      let escalationAttempted = false;
 
       try {
         for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -228,58 +233,107 @@ export class AgentRuntime {
           record.progress.publish('tool_started', `正在执行：${step.description}`);
           const built = buildRuntimeContext(record.state.context);
           record.state = { ...record.state, context: built.nextLedger };
-          const role: AgentModelRole = attempt > 1 ? 'repair' : 'executor';
+          const useRepair = escalationAttempted && lowConfidenceFallback !== undefined;
+          const role: AgentModelRole = useRepair ? 'repair' : 'executor';
           const modelName = selectAgentModel(record.modelProfile, {
             role,
             hasImage: Boolean(record.referenceAttachment?.image),
-            isRepair: attempt > 1,
+            isRepair: useRepair,
           });
-          const intent = await this.callModel(
-            record,
-            { role, model: modelName, attempt, signal: stage.controller.signal },
-            () => this.executor.execute({
-              goal: record.state.goal,
-              plan: record.state.plan!,
-              step,
-              model: record.state.history.model,
-              modelName,
-              context: built.context,
-              image: record.referenceAttachment?.image,
-              mimeType: record.referenceAttachment?.mimeType,
-              attempt,
-              previousErrors,
-              signal: stage.controller.signal,
-              deadlineAt: stage.deadlineAt,
-            }),
-          );
+          let intent: SpatialIntent;
+          try {
+            intent = await this.callModel(
+              record,
+              { role, model: modelName, attempt, signal: stage.controller.signal },
+              () => this.executor.execute({
+                goal: record.state.goal,
+                plan: record.state.plan!,
+                step,
+                model: record.state.history.model,
+                modelName,
+                context: built.context,
+                image: record.referenceAttachment?.image,
+                mimeType: record.referenceAttachment?.mimeType,
+                attempt,
+                previousErrors,
+                signal: stage.controller.signal,
+                deadlineAt: stage.deadlineAt,
+              }),
+            );
+          } catch (error) {
+            if (!useRepair || !lowConfidenceFallback) throw error;
+            intent = lowConfidenceFallback;
+            record.progress.publish('validation', 'Turbo 升级失败，保留 Lite 结果');
+          }
           if (isStopping(record)) return this.finishStopped(record);
 
-          const compiled = compileIntentToPatch(intent, record.state.history.model);
-          if (compiled.errors.length > 0) {
-            previousErrors = compiled.errors;
+          const evaluate = (candidate: SpatialIntent) => {
+            const compiled = compileIntentToPatch(candidate, record.state.history.model);
+            if (compiled.errors.length > 0) {
+              return { success: false as const, errors: compiled.errors };
+            }
+            const result = commitPatch(record.state.history, {
+              id: this.nextId('commit'),
+              runId: record.state.runId,
+              stepId: String(step.id),
+              source: 'AI',
+              patch: compiled.patch,
+              confidence: candidate.confidence,
+              timestamp: this.now(),
+            });
+            if ('errors' in result) {
+              return {
+                success: false as const,
+                errors: result.errors.map((item) => item.message),
+              };
+            }
+            return { success: true as const, compiled, result };
+          };
+
+          let selectedIntent = intent;
+          let evaluated = evaluate(selectedIntent);
+          if (!evaluated.success && useRepair && lowConfidenceFallback) {
+            selectedIntent = lowConfidenceFallback;
+            evaluated = evaluate(selectedIntent);
+            record.progress.publish('validation', 'Turbo 输出无效，保留 Lite 结果');
+          }
+          if (!evaluated.success) {
+            previousErrors = evaluated.errors;
             record.progress.publish('validation', '输出验证失败', previousErrors.join('; '));
             continue;
           }
-          const result = commitPatch(record.state.history, {
-            id: this.nextId('commit'),
-            runId: record.state.runId,
-            stepId: String(step.id),
-            source: 'AI',
-            patch: compiled.patch,
-            confidence: intent.confidence,
-            timestamp: this.now(),
-          });
-          if ('errors' in result) {
-            previousErrors = result.errors.map((item) => item.message);
-            record.progress.publish('validation', '几何验证失败', previousErrors.join('; '));
+
+          if (!useRepair && !escalationAttempted
+            && selectedIntent.confidence !== undefined
+            && selectedIntent.confidence < LOW_CONFIDENCE_THRESHOLD) {
+            lowConfidenceFallback = selectedIntent;
+            escalationAttempted = true;
+            previousErrors = [
+              `confidence ${selectedIntent.confidence} 低于 ${LOW_CONFIDENCE_THRESHOLD}`,
+            ];
+            record.progress.publish('validation', '置信度较低，正在升级 Turbo', previousErrors[0]);
             continue;
           }
+
+          if (useRepair && lowConfidenceFallback
+            && selectedIntent !== lowConfidenceFallback
+            && (selectedIntent.confidence ?? 0) < LOW_CONFIDENCE_THRESHOLD) {
+            selectedIntent = lowConfidenceFallback;
+            evaluated = evaluate(selectedIntent);
+            if (!evaluated.success) {
+              previousErrors = evaluated.errors;
+              continue;
+            }
+            record.progress.publish('validation', 'Turbo 结果置信度仍低，保留 Lite 结果');
+          }
+
+          const { compiled, result } = evaluated;
 
           const receipt: SpatialToolReceipt = {
             toolCallId: this.nextId('tool'),
             toolName: step.action,
             status: 'success',
-            summary: intent.description ?? step.description,
+            summary: selectedIntent.description ?? step.description,
             durableFacts: {},
             transientSignals: { attempt },
             patch: compiled.patch,
@@ -292,7 +346,7 @@ export class AgentRuntime {
             context: recordReceipt(record.state.context, receipt),
           };
           this.enqueueAudit(record, () => this.auditStore!.saveCommit(result.commit));
-          record.progress.publish('commit', intent.description ?? step.description);
+          record.progress.publish('commit', selectedIntent.description ?? step.description);
           record.state = reduceAgentRun(record.state, { type: 'STEP_COMPLETED' }).state;
           record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
           committed = true;

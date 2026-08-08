@@ -102,7 +102,7 @@ describe('AgentRuntime', () => {
     expect(executionInputs.every((input) => input.modelName === 'doubao-seed-2.0-lite')).toBe(true);
   });
 
-  it('uses executor then repair models for text-only execution attempts', async () => {
+  it('keeps ordinary validation retries on the primary executor model', async () => {
     const planningInputs: PlanStageInput[] = [];
     const executionInputs: ExecuteStageInput[] = [];
     const runtime = new AgentRuntime({
@@ -134,8 +134,61 @@ describe('AgentRuntime', () => {
     expect(planningInputs[0].modelName).toBe('planner-text');
     expect(executionInputs.map((input) => input.modelName)).toEqual([
       'executor-text',
-      'repair-text',
+      'executor-text',
     ]);
+  });
+
+  it('escalates one low-confidence image result to turbo and commits the improved result', async () => {
+    const executionInputs: ExecuteStageInput[] = [];
+    const runtime = new AgentRuntime({
+      planner: planner(async () => oneStepPlan),
+      executor: executor(async (input) => {
+        executionInputs.push(input);
+        return input.modelName === 'repair-turbo'
+          ? { objects: [{ type: 'point', params: { x: 2, y: 2 } }], confidence: 0.91 }
+          : { objects: [{ type: 'point', params: { x: 1, y: 1 } }], confidence: 0.42 };
+      }),
+    });
+
+    const state = await runtime.start({
+      runId: 'run_confidence_escalation', goal: '识别低置信度图元', model: createEmptyModel(),
+      modelProfile: {
+        planner: 'primary-lite', vision: 'vision-lite',
+        executor: 'primary-lite', repair: 'repair-turbo',
+      },
+      image: 'cG5n', mimeType: 'image/png',
+    }).completion;
+
+    expect(state.status).toBe('completed');
+    expect(executionInputs.map((input) => input.modelName)).toEqual(['vision-lite', 'repair-turbo']);
+    expect(state.history.model.entities[0]).toMatchObject({ type: 'point', x: 2, y: 2 });
+    expect(state.history.commits[0].confidence).toBe(0.91);
+  });
+
+  it('keeps the valid lite candidate red when the single turbo escalation fails', async () => {
+    const executionInputs: ExecuteStageInput[] = [];
+    const runtime = new AgentRuntime({
+      planner: planner(async () => oneStepPlan),
+      executor: executor(async (input) => {
+        executionInputs.push(input);
+        if (input.modelName === 'repair-turbo') throw new Error('turbo unavailable');
+        return { objects: [{ type: 'point', params: { x: 1, y: 1 } }], confidence: 0.42 };
+      }),
+    });
+
+    const state = await runtime.start({
+      runId: 'run_confidence_fallback', goal: '识别低置信度图元', model: createEmptyModel(),
+      modelProfile: {
+        planner: 'primary-lite', vision: 'vision-lite',
+        executor: 'primary-lite', repair: 'repair-turbo',
+      },
+      image: 'cG5n', mimeType: 'image/png',
+    }).completion;
+
+    expect(state.status).toBe('completed');
+    expect(executionInputs.map((input) => input.modelName)).toEqual(['vision-lite', 'repair-turbo']);
+    expect(state.history.model.entities[0]).toMatchObject({ type: 'point', x: 1, y: 1 });
+    expect(state.history.commits[0].confidence).toBe(0.42);
   });
 
   it('pairs model lifecycle events with role, model, attempt, duration, and status', async () => {

@@ -18,13 +18,15 @@ pnpm dev
 ```text
 COMPANY_AI_BASE_URL
 COMPANY_AI_API_KEY
-COMPANY_AI_MODEL_NAME
-COMPANY_AI_VISION_MODEL
+COMPANY_AI_MODEL_NAME=doubao-seed-2.0-lite
+COMPANY_AI_PRIMARY_MODEL=doubao-seed-2.0-lite
+COMPANY_AI_VISION_MODEL=doubao-seed-2.0-lite
+COMPANY_AI_REPAIR_MODEL=doubao-seed-2.1-turbo
 COMPANY_AI_GATEWAY_URL
 COMPANY_INTERNAL_TOKEN
 ```
 
-未配置模型服务时，文字生成进入演示模式；图片/PDF 感知需要可用的视觉模型配置。
+Agent 主流程默认使用 Lite；只有低于 0.6 的有效结果才升级一次 Turbo。未配置模型服务时，文字生成进入演示模式；图片/PDF 感知需要可用的视觉模型配置。
 
 ## 架构入口
 

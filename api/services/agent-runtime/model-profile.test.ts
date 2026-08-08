@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveAgentModelProfile, selectAgentModel } from './model-profile.js';
 
 describe('Agent model profile', () => {
-  it('routes every image-bearing role through the vision model', () => {
+  it('routes normal image roles through vision and explicit repair through its fallback model', () => {
     const profile = resolveAgentModelProfile({
       planner: 'planner-text',
       vision: 'vision-image',
@@ -13,7 +13,9 @@ describe('Agent model profile', () => {
 
     expect(selectAgentModel(profile, { role: 'planner', hasImage: true })).toBe('vision-image');
     expect(selectAgentModel(profile, { role: 'executor', hasImage: true })).toBe('vision-image');
-    expect(selectAgentModel(profile, { role: 'repair', hasImage: true })).toBe('vision-image');
+    expect(selectAgentModel(profile, { role: 'repair', hasImage: true, isRepair: true })).toBe(
+      'repair-text',
+    );
   });
 
   it('uses independently configured models for text-only roles', () => {
@@ -32,13 +34,15 @@ describe('Agent model profile', () => {
     );
   });
 
-  it('provides non-empty defaults and the required default vision model', () => {
+  it('defaults primary roles to lite and low-confidence repair to turbo', () => {
     const profile = resolveAgentModelProfile({});
 
-    expect(profile.vision).toBe('doubao-seed-2.0-lite');
-    expect(selectAgentModel(profile, { role: 'planner', hasImage: false })).not.toBe('');
-    expect(selectAgentModel(profile, { role: 'executor', hasImage: false })).not.toBe('');
-    expect(selectAgentModel(profile, { role: 'repair', hasImage: false })).not.toBe('');
+    expect(profile).toEqual({
+      planner: 'doubao-seed-2.0-lite',
+      vision: 'doubao-seed-2.0-lite',
+      executor: 'doubao-seed-2.0-lite',
+      repair: 'doubao-seed-2.1-turbo',
+    });
   });
 
   it('merges non-empty request overrides over configured defaults', () => {
