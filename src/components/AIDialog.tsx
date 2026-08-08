@@ -72,7 +72,6 @@ export default function AIDialog() {
   const agentStatus = useStore((s) => s.agentStatus);
   const agentRunId = useStore((s) => s.agentRunId);
   const agentEvents = useStore((s) => s.agentEvents);
-  const agentError = useStore((s) => s.agentError);
 
   const [input, setInput] = useState('');
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
@@ -158,9 +157,6 @@ export default function AIDialog() {
         {aiMessages.map((m) => (
           <Message key={m.id} msg={m} />
         ))}
-        {agentError && (
-          <p className="text-xs text-danger">{agentError}</p>
-        )}
       </div>
 
       <div className="border-t border-white/5 p-3">

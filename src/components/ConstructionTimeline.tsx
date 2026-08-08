@@ -1,43 +1,143 @@
-/** Agent Workflow 的结构化、可审计进度面板。 */
-import { useState } from 'react';
+/** Agent Workflow 的阶段式、可审计任务卡。 */
 import {
-  AlertTriangle, Check, Circle, Loader2, Pause, Play, RotateCcw, Send, Square, X,
+  AlertTriangle, Check, ChevronDown, Circle, Loader2, Pause, Play, RotateCcw, Square, X,
 } from 'lucide-react';
-import { useStore } from '@/hooks/useStore';
-import type { TaskStep } from '@/core/agent';
-import type { AgentProgressEvent } from '@/services/agent-client';
+import { useStore, type AgentUiStatus } from '@/hooks/useStore';
+import {
+  presentAgentTask,
+  type PresentedAgentDetail,
+  type PresentedAgentStage,
+  type PresentedAgentTask,
+} from './agent/task-presentation';
 
-function formatEventDetail(event: AgentProgressEvent): string | undefined {
-  if (!event.detail) return undefined;
-  if (typeof event.detail === 'string') return event.detail.slice(0, 120);
-  const duration = event.detail.durationMs === undefined
-    ? undefined
-    : event.detail.durationMs < 1_000
-      ? `${event.detail.durationMs}ms`
-      : `${(event.detail.durationMs / 1_000).toFixed(1)}s`;
-  return [
-    event.detail.role,
-    event.detail.model,
-    `#${event.detail.attempt}`,
-    duration,
-    event.detail.status,
-  ].filter(Boolean).join(' · ');
+interface ConstructionTimelineViewProps {
+  presentation: PresentedAgentTask;
+  status: AgentUiStatus;
+  active: boolean;
+  canPause: boolean;
+  canResume: boolean;
+  lowConfidence: boolean;
+  error: string | null;
+  onPauseOrResume: () => void;
+  onStop: () => void;
+  onReset: () => void;
 }
 
-function stepIcon(status: string) {
-  switch (status) {
-    case 'completed': return <Check size={12} className="text-green-400" />;
-    case 'executing': return <Loader2 size={12} className="animate-spin text-accent" />;
-    case 'failed': return <X size={12} className="text-danger" />;
-    default: return <Circle size={8} className="text-slate-600" />;
+function StageIcon({ stage }: { stage: PresentedAgentStage }) {
+  if (stage.status === 'completed') {
+    return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/[0.07] text-slate-300"><Check size={11} /></span>;
   }
+  if (stage.status === 'current') {
+    return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-accent"><Loader2 size={11} className="animate-spin" /></span>;
+  }
+  if (stage.status === 'failed') {
+    return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-danger/10 text-danger"><X size={11} /></span>;
+  }
+  return <span className="flex h-5 w-5 items-center justify-center text-slate-700"><Circle size={7} /></span>;
 }
 
-function eventTone(type: AgentProgressEvent['type']): string {
-  if (type === 'failed' || type === 'validation') return 'text-danger';
-  if (type === 'completed' || type === 'commit') return 'text-green-400';
-  if (type === 'paused' || type === 'heartbeat') return 'text-amber-400';
+function detailTone(detail: PresentedAgentDetail): string {
+  if (detail.tone === 'danger') return 'text-danger';
+  if (detail.tone === 'warning') return 'text-amber-400';
+  if (detail.tone === 'success') return 'text-emerald-400';
   return 'text-slate-400';
+}
+
+export function ConstructionTimelineView({
+  presentation,
+  status,
+  active,
+  canPause,
+  canResume,
+  lowConfidence,
+  error,
+  onPauseOrResume,
+  onStop,
+  onReset,
+}: ConstructionTimelineViewProps) {
+  return (
+    <section className="mx-3 mt-3 overflow-hidden rounded-xl border border-white/[0.08] bg-base-800 shadow-lg shadow-black/10" aria-label="AI 任务进度">
+      <div className="flex items-start justify-between gap-3 px-3.5 pb-3 pt-3.5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {active && status !== 'paused' ? <Loader2 size={13} className="shrink-0 animate-spin text-accent" /> : <Check size={13} className="shrink-0 text-slate-500" />}
+            <h2 className="truncate text-[13px] font-medium text-slate-100">{presentation.heading}</h2>
+          </div>
+          <p className="mt-1 pl-5 text-[11px] text-slate-500">{presentation.summary}</p>
+        </div>
+        <button type="button" className="rounded-md p-1 text-slate-600 transition hover:bg-white/[0.05] hover:text-slate-300" onClick={onReset} title="清除任务">
+          <RotateCcw size={12} />
+        </button>
+      </div>
+
+      <div className="space-y-0.5 border-y border-white/[0.06] bg-black/10 px-3 py-2.5">
+        {presentation.stages.map((stage) => (
+          <div key={stage.id} className={`flex items-center gap-2.5 rounded-lg px-1 py-1.5 ${stage.status === 'current' ? 'bg-white/[0.035]' : ''}`}>
+            <StageIcon stage={stage} />
+            <span className={`text-[11px] ${
+              stage.status === 'current' ? 'font-medium text-slate-100'
+                : stage.status === 'failed' ? 'text-danger'
+                  : stage.status === 'completed' ? 'text-slate-400' : 'text-slate-600'
+            }`}>{stage.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {lowConfidence && (
+        <div className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/[0.06] px-2.5 py-2 text-[11px] leading-4 text-red-300">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
+          发现低置信度图元，已在画布中标红，请重点检查。
+        </div>
+      )}
+
+      {error && (
+        <div className="mx-3 mt-3 rounded-lg border border-danger/20 bg-danger/[0.06] px-2.5 py-2 text-[11px] leading-4 text-red-300">
+          任务执行未完成。可重试，详细原因已保存在本地审计记录中。
+        </div>
+      )}
+
+      {presentation.details.length > 0 && (
+        <details className="group px-3 py-2.5">
+          <summary className="flex cursor-pointer list-none items-center justify-between text-[11px] text-slate-500 transition hover:text-slate-300">
+            <span>执行详情</span>
+            <ChevronDown size={12} className="transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="mt-2 max-h-36 space-y-2 overflow-y-auto border-l border-white/[0.08] pl-2.5">
+            {presentation.details.map((detail) => (
+              <div key={detail.id} className="flex items-baseline justify-between gap-3 text-[10px]">
+                <span className={detailTone(detail)}>{detail.title}</span>
+                <span className="shrink-0 font-mono text-slate-600">
+                  {detail.duration ?? detail.elapsed}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {active && (
+        <div className="flex gap-2 border-t border-white/[0.06] p-3">
+          <button
+            type="button"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.025] py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
+            onClick={onPauseOrResume}
+            disabled={!canPause && !canResume}
+          >
+            {canResume ? <Play size={11} /> : <Pause size={11} />}
+            {canResume ? '继续' : status === 'pause_requested' ? '等待暂停' : '暂停'}
+          </button>
+          <button
+            type="button"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.09] px-3 py-2 text-[11px] text-slate-400 transition hover:border-danger/30 hover:bg-danger/[0.05] hover:text-red-300"
+            onClick={onStop}
+          >
+            <Square size={10} />
+            停止
+          </button>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export default function ConstructionTimeline() {
@@ -51,135 +151,38 @@ export default function ConstructionTimeline() {
   const pauseAgent = useStore((state) => state.pauseAgent);
   const resumeAgent = useStore((state) => state.resumeAgent);
   const stopAgent = useStore((state) => state.stopAgent);
-  const addAgentInstruction = useStore((state) => state.addAgentInstruction);
   const resetAgent = useStore((state) => state.resetAgent);
-  const [instruction, setInstruction] = useState('');
 
   if (!agentRunId && !taskPlan) return null;
 
   const active = !['stopped', 'complete', 'error'].includes(agentStatus);
   const canPause = agentStatus === 'planning' || agentStatus === 'running';
   const canResume = agentStatus === 'paused';
-  const lastCommit = history.commits.at(-1);
-  const lowConfidence = lastCommit?.runId === agentRunId
-    && lastCommit.source === 'AI'
+  const runCommits = history.commits.filter((commit) => commit.runId === agentRunId);
+  const lastCommit = runCommits.at(-1);
+  const lowConfidence = lastCommit?.source === 'AI'
     && lastCommit.confidence !== undefined
     && lastCommit.confidence < 0.6;
-  const visibleEvents = agentEvents.slice(-8);
-
-  const submitInstruction = () => {
-    const value = instruction.trim();
-    if (!value) return;
-    setInstruction('');
-    void addAgentInstruction(value);
-  };
+  const presentation = presentAgentTask({
+    plan: taskPlan,
+    status: agentStatus,
+    currentStepIndex,
+    events: agentEvents,
+    commitCount: runCommits.length,
+  });
 
   return (
-    <div className="border-b border-accent/20 bg-base-800 p-2">
-      <div className="mb-2 flex items-center justify-between">
-        <div>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
-            Agent 执行记录
-          </span>
-          <span className="ml-2 text-[10px] text-slate-500">{agentStatus}</span>
-        </div>
-        <button className="text-slate-500 hover:text-danger" onClick={resetAgent} title="清除任务">
-          <RotateCcw size={12} />
-        </button>
-      </div>
-
-      {taskPlan ? (
-        <>
-          <p className="mb-2 text-[10px] text-slate-500">{taskPlan.summary.slice(0, 80)}</p>
-          <div className="space-y-1">
-            {taskPlan.steps.map((step: TaskStep, index: number) => {
-              const isPast = index < currentStepIndex;
-              const isCurrent = index === currentStepIndex && active;
-              return (
-                <div key={step.id} className={`flex items-center gap-2 rounded px-1 py-0.5 ${isCurrent ? 'bg-base-700' : ''}`}>
-                  <span className="flex w-3 justify-center">
-                    {stepIcon(isPast ? 'completed' : isCurrent ? 'executing' : 'pending')}
-                  </span>
-                  <span className={`text-[11px] ${isPast ? 'text-slate-400' : isCurrent ? 'text-accent' : 'text-slate-600'}`}>
-                    {step.description}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      ) : (
-        <div className="flex items-center gap-2 py-1 text-[11px] text-accent">
-          <Loader2 size={11} className="animate-spin" /> 正在生成执行计划
-        </div>
-      )}
-
-      {lowConfidence && (
-        <div className="mt-2 flex items-center gap-1 rounded border border-danger/30 bg-danger/10 px-2 py-1 text-[10px] text-danger">
-          <AlertTriangle size={11} /> 本次增量修改置信度较低，请重点检查红色提示
-        </div>
-      )}
-
-      {visibleEvents.length > 0 && (
-        <div className="mt-2 max-h-28 space-y-1 overflow-y-auto border-l border-white/10 pl-2">
-          {visibleEvents.map((event) => (
-            <div key={event.id} className="text-[10px]">
-              <span className={eventTone(event.type)}>{event.title}</span>
-              <span className="ml-1 text-slate-600">{Math.round(event.elapsedMs / 1000)}s</span>
-              {event.detail && (
-                <p className={`break-words ${typeof event.detail === 'string'
-                  ? event.type === 'failed' || event.type === 'validation' ? 'text-danger/80' : 'text-slate-500'
-                  : 'font-mono text-slate-500'}`}>
-                  {formatEventDetail(event)}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {agentError && <p className="mt-2 text-[10px] text-danger">{agentError}</p>}
-
-      {active && (
-        <>
-          <div className="mt-2 flex gap-1">
-            <button
-              className="flex flex-1 items-center justify-center gap-1 rounded border border-white/10 py-1 text-[10px] text-slate-300 disabled:opacity-30"
-              onClick={() => void (canResume ? resumeAgent() : pauseAgent())}
-              disabled={!canPause && !canResume}
-            >
-              {canResume ? <Play size={10} /> : <Pause size={10} />}
-              {canResume ? '继续' : agentStatus === 'pause_requested' ? '等待暂停' : '暂停'}
-            </button>
-            <button
-              className="flex flex-1 items-center justify-center gap-1 rounded border border-danger/20 py-1 text-[10px] text-danger"
-              onClick={() => void stopAgent()}
-            >
-              <Square size={9} /> 停止
-            </button>
-          </div>
-          <div className="mt-2 flex gap-1">
-            <input
-              className="min-w-0 flex-1 rounded border border-white/10 bg-base-900 px-2 py-1 text-[10px] text-slate-200 placeholder:text-slate-600"
-              value={instruction}
-              onChange={(event) => setInstruction(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') submitInstruction();
-              }}
-              placeholder="追加指令（在安全点生效）"
-            />
-            <button className="rounded bg-accent/10 px-2 text-accent disabled:opacity-30" onClick={submitInstruction} disabled={!instruction.trim()}>
-              <Send size={11} />
-            </button>
-          </div>
-        </>
-      )}
-
-      {agentStatus === 'complete' && (
-        <div className="mt-2 flex items-center gap-1 rounded bg-green-500/10 py-1 text-[11px] text-green-400">
-          <Check size={11} className="ml-2" /> 构建完成
-        </div>
-      )}
-    </div>
+    <ConstructionTimelineView
+      presentation={presentation}
+      status={agentStatus}
+      active={active}
+      canPause={canPause}
+      canResume={canResume}
+      lowConfidence={lowConfidence}
+      error={agentError}
+      onPauseOrResume={() => void (canResume ? resumeAgent() : pauseAgent())}
+      onStop={() => void stopAgent()}
+      onReset={resetAgent}
+    />
   );
 }

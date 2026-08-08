@@ -10,4 +10,5 @@ describe('AIDialog unified Agent entry', () => {
     expect(html).not.toContain('>普通<');
     expect(html).toContain('accept="image/*,application/pdf"');
   });
+
 });
