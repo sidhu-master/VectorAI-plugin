@@ -58,7 +58,7 @@ const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> =
     system: '你是二维 CAD 基准几何检测器。只识别 point、line、ray、xline，只输出 JSON，缺失参数不得猜测。',
     user: `只输出以下 JSON 契约：
 {"observations":[{"id":"datum_<viewId>_001","viewId":"<输入中的精确 viewId>","type":"line","imageBounds":[x,y,width,height],"measuredParams":{"start":[x,y],"end":[x,y]},"confidence":0.9}]}
-所有坐标、长度和 imageBounds 均相对当前裁剪图归一化到 0-1。type 与 measuredParams 只允许：
+点坐标的 x 按裁剪图宽度归一化、y 按裁剪图高度归一化；方向向量使用同一像素坐标基底；imageBounds 相对裁剪图归一化到 0-1。type 与 measuredParams 只允许：
 - point: {"x":number,"y":number}
 - line: {"start":[x,y],"end":[x,y]}
 - ray/xline: {"origin":[x,y],"direction":[dx,dy]}
@@ -68,7 +68,7 @@ const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> =
     system: '你是二维 CAD 显式几何检测器。支持 point,line,ray,xline,circle,arc,ellipse,polyline,spline；不输出 text、dimension、图层、图块或填充。只输出 JSON。',
     user: `只输出以下 JSON 契约：
 {"observations":[{"id":"geom_<viewId>_001","viewId":"<输入中的精确 viewId>","type":"circle","imageBounds":[x,y,width,height],"measuredParams":{"center":[x,y],"radius":number},"confidence":0.9}]}
-所有坐标、长度和 imageBounds 均相对当前裁剪图归一化到 0-1。type 与 measuredParams 只允许：
+点坐标的 x 按裁剪图宽度归一化、y 按裁剪图高度归一化；radius 等标量长度按裁剪图像素宽度归一化；向量分量 x/y 分别按裁剪宽/高归一化；imageBounds 相对裁剪图归一化到 0-1。type 与 measuredParams 只允许：
 - point {"x":number,"y":number}
 - line {"start":[x,y],"end":[x,y]}
 - ray/xline {"origin":[x,y],"direction":[dx,dy]}

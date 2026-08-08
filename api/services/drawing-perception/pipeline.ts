@@ -1,11 +1,19 @@
 import { throwIfAborted } from '../agent-runtime/attachments.js';
 import { associateDimensions } from './associate-dimensions.js';
-import { DrawingAssetCache } from './assets.js';
+import { DrawingAssetCache, type DrawingAssetReference } from './assets.js';
 import {
   buildObservationPatchBatches,
   type ObservationPatchBatch,
 } from './build-patches.js';
 import type { DrawingObservationStore } from './observation-store.js';
+import {
+  deduplicateAnnotationObservations,
+  deduplicateGeometryObservations,
+  planPerceptionRegions,
+  stitchAnnotationObservation,
+  stitchGeometryObservation,
+  type PerceptionRegion,
+} from './regions.js';
 import { buildDrawingTopology } from './topology.js';
 import type {
   AnnotationObservation,
@@ -73,6 +81,7 @@ export interface DrawingPerceptionPipelineOptions {
   vision?: DrawingVisionToolset;
   observationStore?: DrawingObservationStore;
   maxConcurrentViews?: number;
+  maxConcurrentRegions?: number;
   now?: () => number;
 }
 
@@ -81,7 +90,14 @@ interface ViewPerception {
   geometry: GeometryObservation[];
   annotations: AnnotationObservation[];
   errors: ViewPerceptionError[];
+  regionCount: number;
   durationMs: number;
+}
+
+interface RegionPerception {
+  geometry: GeometryObservation[];
+  annotations: AnnotationObservation[];
+  errors: ViewPerceptionError[];
 }
 
 interface ViewPerceptionError {
@@ -95,6 +111,7 @@ export class DrawingPerceptionPipeline {
   private readonly vision: DrawingVisionToolset;
   private readonly observationStore?: DrawingObservationStore;
   private readonly maxConcurrentViews: number;
+  private readonly maxConcurrentRegions: number;
   private readonly now: () => number;
 
   constructor(options: DrawingPerceptionPipelineOptions = {}) {
@@ -102,6 +119,7 @@ export class DrawingPerceptionPipeline {
     this.vision = options.vision ?? new DrawingVisionTools();
     this.observationStore = options.observationStore;
     this.maxConcurrentViews = Math.max(1, Math.floor(options.maxConcurrentViews ?? 2));
+    this.maxConcurrentRegions = Math.max(1, Math.floor(options.maxConcurrentRegions ?? 3));
     this.now = options.now ?? Date.now;
   }
 
@@ -155,7 +173,7 @@ export class DrawingPerceptionPipeline {
       const perceived = await mapLimit(
         views,
         this.maxConcurrentViews,
-        (view) => this.perceiveView(input, page.assetId, view),
+        (view) => this.perceiveView(input, page, view),
       );
       const geometry = perceived.flatMap((result) => result.geometry)
         .sort((first, second) => first.id.localeCompare(second.id));
@@ -175,6 +193,7 @@ export class DrawingPerceptionPipeline {
             annotationCount: result.annotations.length,
             errorCount: result.errors.length,
             failedTools: result.errors.map((error) => error.tool),
+            regionCount: result.regionCount,
           },
         };
       }
@@ -209,6 +228,12 @@ export class DrawingPerceptionPipeline {
         annotations,
         associations,
         topology,
+        annotationTransforms: Object.fromEntries(views.map((view) => [view.id, {
+          scaleX: 1,
+          scaleY: page.heightToWidthRatio ?? 1,
+          offsetX: 0,
+          offsetY: 0,
+        }])),
       });
       await this.save(input.runId, 'patch-batches', batches);
       yield this.receipt(input.runId, 'patches_built', patchStartedAt, {
@@ -230,47 +255,98 @@ export class DrawingPerceptionPipeline {
 
   private async perceiveView(
     input: DrawingPerceptionInput,
-    pageAssetId: string,
+    page: DrawingAssetReference,
     view: DrawingView,
   ): Promise<ViewPerception> {
     this.assertActive(input);
     const startedAt = this.now();
-    const crop = await this.assets.crop({
-      runId: input.runId,
-      assetId: pageAssetId,
-      bounds: view.imageBounds,
-      signal: input.signal,
-    });
-    const attachment = await this.assets.read(input.runId, crop.assetId);
-    const visionInput = this.visionInput(input, attachment, view.id);
-    const results = await Promise.allSettled([
+    const pageRatio = page.heightToWidthRatio ?? 1;
+    const regions = planPerceptionRegions(view, page);
+    const datumRegion: PerceptionRegion = {
+      id: `${view.id}_datums`, viewId: view.id, pageBounds: view.imageBounds,
+    };
+    const [datumResult, regionResults] = await Promise.all([
+      this.perceiveDatums(input, page.assetId, datumRegion, pageRatio),
+      mapLimit(
+        regions,
+        this.maxConcurrentRegions,
+        (region) => this.perceiveRegion(input, page.assetId, region, pageRatio),
+      ),
+    ]);
+    this.assertActive(input);
+    const geometry = deduplicateGeometryObservations([
+      ...datumResult.geometry,
+      ...regionResults.flatMap((result) => result.geometry),
+    ]);
+    const annotations = deduplicateAnnotationObservations(
+      regionResults.flatMap((result) => result.annotations),
+    );
+    return {
+      view,
+      geometry,
+      annotations,
+      errors: [...datumResult.errors, ...regionResults.flatMap((result) => result.errors)],
+      regionCount: regions.length,
+      durationMs: Math.max(0, this.now() - startedAt),
+    };
+  }
+
+  private async perceiveDatums(
+    input: DrawingPerceptionInput,
+    pageAssetId: string,
+    region: PerceptionRegion,
+    pageRatio: number,
+  ): Promise<RegionPerception> {
+    const attachment = await this.readRegion(input, pageAssetId, region);
+    const visionInput = this.visionInput(input, attachment, region.id);
+    const result = await Promise.allSettled([
       this.retryViewTool(input, () => this.vision.detectDatums(visionInput)),
+    ]);
+    return {
+      geometry: settledValue<GeometryObservation[]>(result[0], [])
+        .map((observation) => stitchGeometryObservation(observation, region, pageRatio)),
+      annotations: [],
+      errors: rejectedToolErrors(region.viewId, ['detect_datums'], result),
+    };
+  }
+
+  private async perceiveRegion(
+    input: DrawingPerceptionInput,
+    pageAssetId: string,
+    region: PerceptionRegion,
+    pageRatio: number,
+  ): Promise<RegionPerception> {
+    const attachment = await this.readRegion(input, pageAssetId, region);
+    const visionInput = this.visionInput(input, attachment, region.id);
+    const results = await Promise.allSettled([
       this.retryViewTool(input, () => this.vision.detectGeometry(visionInput)),
       this.retryViewTool(input, () => this.vision.extractAnnotations(visionInput)),
     ]);
-    this.assertActive(input);
-    const datums = settledValue<GeometryObservation[]>(results[0], []);
-    const detected = settledValue<GeometryObservation[]>(results[1], []);
-    const annotations = settledValue<AnnotationObservation[]>(results[2], []);
-    const toolNames: ViewPerceptionError['tool'][] = [
-      'detect_datums', 'detect_geometry', 'extract_annotations',
-    ];
-    const errors = results.flatMap((result, index): ViewPerceptionError[] => result.status === 'rejected'
-      ? [{
-        viewId: view.id,
-        tool: toolNames[index],
-        message: safeErrorMessage(result.reason),
-      }]
-      : []);
-    const byId = new Map<string, GeometryObservation>();
-    for (const observation of [...datums, ...detected]) byId.set(observation.id, observation);
     return {
-      view,
-      geometry: [...byId.values()].sort((first, second) => first.id.localeCompare(second.id)),
-      annotations: [...annotations].sort((first, second) => first.id.localeCompare(second.id)),
-      errors,
-      durationMs: Math.max(0, this.now() - startedAt),
+      geometry: settledValue<GeometryObservation[]>(results[0], [])
+        .map((observation) => stitchGeometryObservation(observation, region, pageRatio)),
+      annotations: settledValue<AnnotationObservation[]>(results[1], [])
+        .map((observation) => stitchAnnotationObservation(observation, region)),
+      errors: rejectedToolErrors(
+        region.viewId,
+        ['detect_geometry', 'extract_annotations'],
+        results,
+      ),
     };
+  }
+
+  private async readRegion(
+    input: DrawingPerceptionInput,
+    pageAssetId: string,
+    region: PerceptionRegion,
+  ): Promise<{ image: string; mimeType: string }> {
+    const crop = await this.assets.crop({
+      runId: input.runId,
+      assetId: pageAssetId,
+      bounds: region.pageBounds,
+      signal: input.signal,
+    });
+    return this.assets.read(input.runId, crop.assetId);
   }
 
   private async retryViewTool<T>(
@@ -334,6 +410,16 @@ function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
 
 function safeErrorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 500);
+}
+
+function rejectedToolErrors(
+  viewId: string,
+  tools: ViewPerceptionError['tool'][],
+  results: PromiseSettledResult<unknown>[],
+): ViewPerceptionError[] {
+  return results.flatMap((result, index): ViewPerceptionError[] => result.status === 'rejected'
+    ? [{ viewId, tool: tools[index], message: safeErrorMessage(result.reason) }]
+    : []);
 }
 
 async function mapLimit<T, R>(

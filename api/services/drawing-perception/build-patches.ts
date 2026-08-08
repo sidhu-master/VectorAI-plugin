@@ -40,6 +40,7 @@ export interface BuildObservationPatchInput {
   associations: DimensionAssociation[];
   topology: DrawingTopology;
   viewTransforms?: Record<string, ViewCoordinateTransform>;
+  annotationTransforms?: Record<string, ViewCoordinateTransform>;
 }
 
 interface BatchedObject {
@@ -87,7 +88,10 @@ export function buildObservationPatchBatches(
   );
   const annotationViews = [...new Set(input.annotations.map((item) => item.viewId))].sort();
   for (const viewId of annotationViews) {
-    const transform = transformFor(viewId, input.viewTransforms);
+    const transform = transformFor(
+      viewId,
+      input.annotationTransforms ?? input.viewTransforms,
+    );
     const items = input.annotations
       .filter((annotation) => annotation.viewId === viewId)
       .sort(compareAnnotations)
@@ -155,7 +159,7 @@ function textIntentObject(
     params: {
       content: annotation.rawText,
       position: transformPoint(boundsCenter, transform),
-      height: Math.max(Math.abs(annotation.imageBounds[3] * transform.scaleY), 0.001),
+      height: round(Math.max(Math.abs(annotation.imageBounds[3] * transform.scaleY), 0.001)),
       rotation: 0,
       alignment: 'left',
       verticalAlignment: 'baseline',
@@ -300,8 +304,8 @@ function transformVertex(vertex: unknown, transform: ViewCoordinateTransform): u
 
 function transformPoint(point: Vec2, transform: ViewCoordinateTransform): Vec2 {
   return [
-    point[0] * transform.scaleX + transform.offsetX,
-    point[1] * transform.scaleY + transform.offsetY,
+    round(point[0] * transform.scaleX + transform.offsetX),
+    round(point[1] * transform.scaleY + transform.offsetY),
   ];
 }
 
@@ -371,4 +375,8 @@ function isPoint(value: unknown): value is Vec2 {
 
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function round(value: number): number {
+  return Math.round(value * 1_000_000_000) / 1_000_000_000;
 }

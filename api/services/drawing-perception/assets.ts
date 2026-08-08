@@ -55,6 +55,7 @@ export class DrawingAssetCache {
   private readonly assets = new Map<string, StoredAsset>();
   private readonly pageIndex = new Map<string, string>();
   private readonly cropIndex = new Map<string, string>();
+  private readonly cropInflight = new Map<string, Promise<DrawingAssetReference>>();
   private totalBytes = 0;
 
   constructor(options: DrawingAssetCacheOptions = {}) {
@@ -98,20 +99,30 @@ export class DrawingAssetCache {
     const indexKey = `${input.runId}:${input.assetId}:${input.bounds.join(',')}`;
     const existingId = this.cropIndex.get(indexKey);
     if (existingId) return this.require(input.runId, existingId).reference;
+    const inflight = this.cropInflight.get(indexKey);
+    if (inflight) return inflight;
 
-    const attachment = await this.cropper.crop({
-      ...source.attachment,
-      bounds: input.bounds,
-      signal: input.signal,
-    });
-    throwIfAborted(input.signal);
-    const stored = this.store(input.runId, attachment, {
-      kind: 'crop',
-      sourceAssetId: input.assetId,
-      bounds: [...input.bounds],
-    });
-    this.cropIndex.set(indexKey, stored.reference.assetId);
-    return stored.reference;
+    const pending = (async () => {
+      const attachment = await this.cropper.crop({
+        ...source.attachment,
+        bounds: input.bounds,
+        signal: input.signal,
+      });
+      throwIfAborted(input.signal);
+      const stored = this.store(input.runId, attachment, {
+        kind: 'crop',
+        sourceAssetId: input.assetId,
+        bounds: [...input.bounds],
+      });
+      this.cropIndex.set(indexKey, stored.reference.assetId);
+      return stored.reference;
+    })();
+    this.cropInflight.set(indexKey, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.cropInflight.get(indexKey) === pending) this.cropInflight.delete(indexKey);
+    }
   }
 
   async read(runId: string, assetId: string): Promise<PreparedAgentAttachment> {
@@ -135,6 +146,7 @@ export class DrawingAssetCache {
     }
     for (const [key] of this.pageIndex) if (key.startsWith(`${runId}:`)) this.pageIndex.delete(key);
     for (const [key] of this.cropIndex) if (key.startsWith(`${runId}:`)) this.cropIndex.delete(key);
+    for (const [key] of this.cropInflight) if (key.startsWith(`${runId}:`)) this.cropInflight.delete(key);
     return released;
   }
 

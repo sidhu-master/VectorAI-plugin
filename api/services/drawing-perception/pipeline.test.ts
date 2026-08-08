@@ -46,13 +46,13 @@ describe('DrawingPerceptionPipeline', () => {
         { id: 'view_detail', kind: 'detail', imageBounds: [0.5, 0, 0.5, 1], confidence: 0.88 },
       ]),
       detectDatums: vi.fn<DrawingVisionToolset['detectDatums']>(
-        async ({ viewId }) => duringCall(viewId === 'view_primary' ? [{
+        async ({ viewId }) => duringCall(viewId?.startsWith('view_primary') ? [{
         id: 'datum_axis', viewId, type: 'line', imageBounds: [0.1, 0.5, 0.8, 0.01],
         measuredParams: { start: [0.1, 0.5], end: [0.9, 0.5] }, confidence: 0.86,
       }] : []),
       ),
       detectGeometry: vi.fn<DrawingVisionToolset['detectGeometry']>(
-        async ({ viewId }) => duringCall(viewId === 'view_primary' ? [{
+        async ({ viewId }) => duringCall(viewId?.startsWith('view_primary') ? [{
         id: 'primary_circle', viewId, type: 'circle', imageBounds: [0.3, 0.3, 0.4, 0.4],
         measuredParams: { center: [0.5, 0.5], radius: 0.2 }, confidence: 0.91,
       }] : [{
@@ -61,7 +61,7 @@ describe('DrawingPerceptionPipeline', () => {
       }]),
       ),
       extractAnnotations: vi.fn<DrawingVisionToolset['extractAnnotations']>(
-        async ({ viewId }) => duringCall(viewId === 'view_primary' ? [{
+        async ({ viewId }) => duringCall(viewId?.startsWith('view_primary') ? [{
         id: 'diameter_40', viewId, kind: 'diameter', rawText: 'Ø40', value: 40, unit: 'mm',
         imageBounds: [0.42, 0.72, 0.16, 0.06], arrowheads: [[0.5, 0.7]], confidence: 0.82,
       }] : [{
@@ -101,11 +101,13 @@ describe('DrawingPerceptionPipeline', () => {
       join(rootDir, 'run_two_views', 'drawing', 'associations.json'), 'utf8',
     ));
     expect(geometry.map((item: { id: string }) => item.id)).toEqual([
-      'datum_axis', 'detail_circle', 'primary_circle',
+      'view_detail_region_1__detail_circle',
+      'view_primary_datums__datum_axis',
+      'view_primary_region_1__primary_circle',
     ]);
     expect(associations).toMatchObject([{
-      annotationId: 'diameter_40', status: 'resolved',
-      targets: [{ geometryObservationId: 'primary_circle' }],
+      annotationId: 'view_primary_region_1__diameter_40', status: 'resolved',
+      targets: [{ geometryObservationId: 'view_primary_region_1__primary_circle' }],
     }]);
     expect(JSON.stringify({ outputs, geometry, associations })).not.toMatch(
       /base64|prompt|token|"image":/i,
@@ -145,7 +147,7 @@ describe('DrawingPerceptionPipeline', () => {
     const vision: DrawingVisionToolset = {
       analyzeSheet: async () => ({ warnings: [] }),
       segmentViews: async () => [{
-        id: 'view_1', kind: 'primary', imageBounds: [0, 0, 1, 1], confidence: 0.9,
+        id: 'view_1', kind: 'primary', imageBounds: [0, 0, 0.8, 0.8], confidence: 0.9,
       }],
       detectDatums: async () => [],
       detectGeometry: async ({ viewId }) => [{
@@ -165,11 +167,77 @@ describe('DrawingPerceptionPipeline', () => {
 
     expect(extractAnnotations).toHaveBeenCalledTimes(2);
     expect(outputs.some((output) => output.kind === 'patch_batch'
-      && output.batch.observationIds.includes('circle_safe'))).toBe(true);
+      && output.batch.observationIds.some((id) => id.endsWith('__circle_safe')))).toBe(true);
     expect(outputs.at(-1)).toMatchObject({ kind: 'stage', stage: 'completed' });
     expect(await store.read('run_partial_view', 'perception-errors')).toEqual([{
       viewId: 'view_1', tool: 'extract_annotations', message: 'malformed annotation JSON',
     }]);
+  });
+
+  it('perceives a page-sized portrait view through three stitched regions', async () => {
+    const png = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+    png.writeUInt32BE(1200, 16);
+    png.writeUInt32BE(1800, 20);
+    const geometryCalls: string[] = [];
+    const annotationCalls: string[] = [];
+    let datumCalls = 0;
+    const vision: DrawingVisionToolset = {
+      analyzeSheet: async () => ({ warnings: [] }),
+      segmentViews: async () => [{
+        id: 'view_full', kind: 'primary', imageBounds: [0.02, 0.02, 0.96, 0.96], confidence: 0.95,
+      }],
+      detectDatums: async ({ viewId }) => {
+        datumCalls += 1;
+        return [{
+          id: 'axis', viewId: viewId!, type: 'xline', imageBounds: [0.49, 0, 0.02, 1],
+          measuredParams: { origin: [0.5, 0], direction: [0, 1] }, confidence: 0.9,
+        }];
+      },
+      detectGeometry: async ({ viewId }) => {
+        geometryCalls.push(viewId!);
+        return [{
+          id: 'circle', viewId: viewId!, type: 'circle', imageBounds: [0.4, 0.4, 0.2, 0.2],
+          measuredParams: { center: [0.5, 0.5], radius: 0.1 }, confidence: 0.9,
+        }];
+      },
+      extractAnnotations: async ({ viewId }) => {
+        annotationCalls.push(viewId!);
+        return [];
+      },
+    };
+    const assets = new DrawingAssetCache({
+      preparer: { prepare: async ({ image, mimeType }) => ({ image, mimeType }) },
+      cropper: { crop: async () => ({ image: png.toString('base64'), mimeType: 'image/png' }) },
+    });
+    const store = new FileDrawingObservationStore(rootDir);
+    const pipeline = new DrawingPerceptionPipeline({ assets, vision, observationStore: store });
+
+    const outputs = await collect(pipeline.run({
+      runId: 'run_regions', page: 1, image: png.toString('base64'), mimeType: 'image/png',
+      modelName: 'doubao-seed-2.0-lite', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 60_000,
+    }));
+
+    expect(datumCalls).toBe(1);
+    expect(geometryCalls.sort()).toEqual([
+      'view_full_region_1', 'view_full_region_2', 'view_full_region_3',
+    ]);
+    expect(annotationCalls.sort()).toEqual(geometryCalls);
+    const geometry = await store.read<Array<{
+      id: string;
+      viewId: string;
+      measuredParams: { center?: [number, number] };
+    }>>('run_regions', 'geometry');
+    expect(geometry).toHaveLength(4);
+    expect(geometry.every((item) => item.viewId === 'view_full')).toBe(true);
+    expect(geometry.filter((item) => item.measuredParams.center)
+      .map((item) => item.measuredParams.center![1])).toEqual(expect.arrayContaining([
+      expect.any(Number),
+    ]));
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'stage', stage: 'view_perceived', detail: expect.objectContaining({ regionCount: 3 }),
+    }));
   });
 });
 

@@ -128,6 +128,23 @@ describe('observation-to-patch builder', () => {
 
     expect(batch.intent.objects[0].params).toEqual({ start: [10, 80], end: [50, 60] });
   });
+
+  it('maps annotation positions into CAD coordinates independently from stitched geometry', () => {
+    const annotations: AnnotationObservation[] = [{
+      id: 'text_ratio', viewId: 'view_1', kind: 'text', rawText: 'NOTE',
+      imageBounds: [0.2, 0.4, 0.2, 0.1], arrowheads: [], confidence: 0.9,
+    }];
+    const [batch] = buildObservationPatchBatches({
+      geometry: [], annotations, associations: [], topology: { components: [] },
+      annotationTransforms: {
+        view_1: { scaleX: 1, scaleY: 1.5, offsetX: 0, offsetY: 0 },
+      },
+    });
+
+    expect(batch.intent.objects[0].params).toMatchObject({
+      position: [0.3, 0.675], height: 0.15,
+    });
+  });
 });
 
 function circle(

@@ -558,7 +558,9 @@ core/tests/
 
 已完成 SpatialPatch 结构验证、原子应用、逆向 Patch、SpatialIntent 兼容编译、SpatialCommit、Undo/Redo、本地 FileAuditStore、敏感字段脱敏和确定性提交回放。Zustand 中的参数编辑、删除、AI Intent、感知确认和 Agent 阶段变更均接入提交历史。
 
-Agent Runtime 已具备能力注册表、有界上下文、自动执行、共享阶段 deadline、最多两次修正重试、SSE/25 秒 heartbeat、规划期与执行期暂停、安全点追加指令、AbortSignal 停止、最近事件回放和前端运行控制。纯文本任务保留 Planner/Executor；图片与 PDF 进入 Drawing Perception Pipeline：页级分析与视图拆分并行、每个视图只裁剪一次、基准/显式几何/OCR 并行、确定性拓扑与尺寸关联，最后按主闭合轮廓优先且每批最多 25 个图元形成稳定 ID 的增量提交。单组件失败不会污染既有提交。
+Agent Runtime 已具备能力注册表、有界上下文、自动执行、共享阶段 deadline、最多两次修正重试、SSE/25 秒 heartbeat、规划期与执行期暂停、安全点追加指令、AbortSignal 停止、最近事件回放和前端运行控制。纯文本任务保留 Planner/Executor；图片与 PDF 进入 Drawing Perception Pipeline：页级分析与视图拆分并行、基准/显式几何/OCR 并行、确定性拓扑与尺寸关联，最后按主闭合轮廓优先且每批最多 25 个图元形成稳定 ID 的增量提交。单组件失败不会污染既有提交。
+
+占据大部分页面的复杂主视图会按实际像素纵横比沿长轴拆成三个重叠感知窗口，而不是依赖“从上到下”或对象名称。窗口内点坐标按裁剪宽高归一化、标量长度按裁剪宽度归一化，拼接后统一进入以页面宽度为 1 的 CAD 坐标系；OCR 证据继续保留 0-1 页面坐标用于确定性关联，构建标注图元时再单独映射到 CAD 坐标。重叠窗口结果按显式图元类型、边界、参数与置信度保守去重。
 
 图纸观测、关联、拓扑和 Patch 批次以无媒体 JSON 存在 `.local/vectorai/runs/<runId>/drawing/`；`imageBounds` 作为回归证据保留，图片/PDF 正文和凭证字段被拒绝或脱敏。运行终止时页图与裁剪缓存统一释放。`pnpm test:drawing -- <path>` 可把本地性能基准写入 `.local/vectorai/baselines/`。
 
