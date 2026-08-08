@@ -80,7 +80,14 @@ interface ViewPerception {
   view: DrawingView;
   geometry: GeometryObservation[];
   annotations: AnnotationObservation[];
+  errors: ViewPerceptionError[];
   durationMs: number;
+}
+
+interface ViewPerceptionError {
+  viewId: string;
+  tool: 'detect_datums' | 'detect_geometry' | 'extract_annotations';
+  message: string;
 }
 
 export class DrawingPerceptionPipeline {
@@ -154,6 +161,7 @@ export class DrawingPerceptionPipeline {
         .sort((first, second) => first.id.localeCompare(second.id));
       const annotations = perceived.flatMap((result) => result.annotations)
         .sort((first, second) => first.id.localeCompare(second.id));
+      const perceptionErrors = perceived.flatMap((result) => result.errors);
       for (const result of perceived) {
         yield {
           kind: 'stage',
@@ -165,12 +173,15 @@ export class DrawingPerceptionPipeline {
           detail: {
             geometryCount: result.geometry.length,
             annotationCount: result.annotations.length,
+            errorCount: result.errors.length,
+            failedTools: result.errors.map((error) => error.tool),
           },
         };
       }
       await Promise.all([
         this.save(input.runId, 'geometry', geometry),
         this.save(input.runId, 'annotations', annotations),
+        this.save(input.runId, 'perception-errors', perceptionErrors),
       ]);
 
       this.assertActive(input);
@@ -232,20 +243,46 @@ export class DrawingPerceptionPipeline {
     });
     const attachment = await this.assets.read(input.runId, crop.assetId);
     const visionInput = this.visionInput(input, attachment, view.id);
-    const [datums, detected, annotations] = await Promise.all([
-      this.vision.detectDatums(visionInput),
-      this.vision.detectGeometry(visionInput),
-      this.vision.extractAnnotations(visionInput),
+    const results = await Promise.allSettled([
+      this.retryViewTool(input, () => this.vision.detectDatums(visionInput)),
+      this.retryViewTool(input, () => this.vision.detectGeometry(visionInput)),
+      this.retryViewTool(input, () => this.vision.extractAnnotations(visionInput)),
     ]);
     this.assertActive(input);
+    const datums = settledValue<GeometryObservation[]>(results[0], []);
+    const detected = settledValue<GeometryObservation[]>(results[1], []);
+    const annotations = settledValue<AnnotationObservation[]>(results[2], []);
+    const toolNames: ViewPerceptionError['tool'][] = [
+      'detect_datums', 'detect_geometry', 'extract_annotations',
+    ];
+    const errors = results.flatMap((result, index): ViewPerceptionError[] => result.status === 'rejected'
+      ? [{
+        viewId: view.id,
+        tool: toolNames[index],
+        message: safeErrorMessage(result.reason),
+      }]
+      : []);
     const byId = new Map<string, GeometryObservation>();
     for (const observation of [...datums, ...detected]) byId.set(observation.id, observation);
     return {
       view,
       geometry: [...byId.values()].sort((first, second) => first.id.localeCompare(second.id)),
       annotations: [...annotations].sort((first, second) => first.id.localeCompare(second.id)),
+      errors,
       durationMs: Math.max(0, this.now() - startedAt),
     };
+  }
+
+  private async retryViewTool<T>(
+    input: DrawingPerceptionInput,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch {
+      this.assertActive(input);
+      return operation();
+    }
   }
 
   private visionInput(
@@ -289,6 +326,14 @@ export class DrawingPerceptionPipeline {
   private async save(runId: string, name: string, value: unknown): Promise<void> {
     await this.observationStore?.save(runId, name, value);
   }
+}
+
+function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
+  return result.status === 'fulfilled' ? result.value : fallback;
+}
+
+function safeErrorMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 500);
 }
 
 async function mapLimit<T, R>(

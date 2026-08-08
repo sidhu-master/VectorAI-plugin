@@ -133,6 +133,44 @@ describe('DrawingPerceptionPipeline', () => {
     await expect(store.save('run_safe', 'geometry', [{ image: 'raw-media' }]))
       .rejects.toThrow(/media|敏感/i);
   });
+
+  it('retries a failed view tool once and keeps valid geometry when OCR still fails', async () => {
+    const assets = new DrawingAssetCache({
+      preparer: { prepare: async ({ image, mimeType }) => ({ image, mimeType }) },
+      cropper: { crop: async ({ image, mimeType }) => ({ image, mimeType }) },
+    });
+    const extractAnnotations = vi.fn<DrawingVisionToolset['extractAnnotations']>(async () => {
+      throw new Error('malformed annotation JSON');
+    });
+    const vision: DrawingVisionToolset = {
+      analyzeSheet: async () => ({ warnings: [] }),
+      segmentViews: async () => [{
+        id: 'view_1', kind: 'primary', imageBounds: [0, 0, 1, 1], confidence: 0.9,
+      }],
+      detectDatums: async () => [],
+      detectGeometry: async ({ viewId }) => [{
+        id: 'circle_safe', viewId: viewId!, type: 'circle', imageBounds: [0.2, 0.2, 0.2, 0.2],
+        measuredParams: { center: [0.3, 0.3], radius: 0.1 }, confidence: 0.9,
+      }],
+      extractAnnotations,
+    };
+    const store = new FileDrawingObservationStore(rootDir);
+    const pipeline = new DrawingPerceptionPipeline({ assets, vision, observationStore: store });
+
+    const outputs = await collect(pipeline.run({
+      runId: 'run_partial_view', page: 1, image: 'eA==', mimeType: 'image/png',
+      modelName: 'doubao-seed-2.0-lite', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 60_000,
+    }));
+
+    expect(extractAnnotations).toHaveBeenCalledTimes(2);
+    expect(outputs.some((output) => output.kind === 'patch_batch'
+      && output.batch.observationIds.includes('circle_safe'))).toBe(true);
+    expect(outputs.at(-1)).toMatchObject({ kind: 'stage', stage: 'completed' });
+    expect(await store.read('run_partial_view', 'perception-errors')).toEqual([{
+      viewId: 'view_1', tool: 'extract_annotations', message: 'malformed annotation JSON',
+    }]);
+  });
 });
 
 async function collect(source: AsyncIterable<DrawingPerceptionOutput>): Promise<DrawingPerceptionOutput[]> {

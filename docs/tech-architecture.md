@@ -136,7 +136,7 @@ api/                           <- Express 后端
     ai-gateway.ts              <- 仅负责模型供应商适配
     agent-runtime/             <- Agent 状态机、重试、取消、重规划
     audit/                     <- AuditStore + FileAuditStore
-    ingestion/                 <- 图片/PDF 输入规范化
+    drawing-perception/        <- 图纸缓存、视图感知、拓扑、尺寸关联、增量 Patch
     model-router/              <- 按任务角色和能力选择模型
     capabilities/              <- SpatialCapabilityRegistry，运行时工具事实来源
     context/                   <- 有界热上下文 + 阶段摘要 + 稳定规则
@@ -558,7 +558,9 @@ core/tests/
 
 已完成 SpatialPatch 结构验证、原子应用、逆向 Patch、SpatialIntent 兼容编译、SpatialCommit、Undo/Redo、本地 FileAuditStore、敏感字段脱敏和确定性提交回放。Zustand 中的参数编辑、删除、AI Intent、感知确认和 Agent 阶段变更均接入提交历史。
 
-Agent Runtime 已具备能力注册表、有界上下文、自动执行、共享阶段 deadline、最多两次修正重试、SSE/25 秒 heartbeat、规划期与执行期暂停、安全点追加指令、AbortSignal 停止、最近事件回放和前端运行控制。图片直接进入视觉规划；PDF 在本地临时目录栅格化第一页后进入相同流程，媒体正文不会写入审计。
+Agent Runtime 已具备能力注册表、有界上下文、自动执行、共享阶段 deadline、最多两次修正重试、SSE/25 秒 heartbeat、规划期与执行期暂停、安全点追加指令、AbortSignal 停止、最近事件回放和前端运行控制。纯文本任务保留 Planner/Executor；图片与 PDF 进入 Drawing Perception Pipeline：页级分析与视图拆分并行、每个视图只裁剪一次、基准/显式几何/OCR 并行、确定性拓扑与尺寸关联，最后按主闭合轮廓优先且每批最多 25 个图元形成稳定 ID 的增量提交。单组件失败不会污染既有提交。
+
+图纸观测、关联、拓扑和 Patch 批次以无媒体 JSON 存在 `.local/vectorai/runs/<runId>/drawing/`；`imageBounds` 作为回归证据保留，图片/PDF 正文和凭证字段被拒绝或脱敏。运行终止时页图与裁剪缓存统一释放。`pnpm test:drawing -- <path>` 可把本地性能基准写入 `.local/vectorai/baselines/`。
 
 热上下文只包含可用能力目录、最近 10 条结构化工具回执、最近 5 条阶段摘要、持久事实和只消费一次的瞬时信号。原始截图、完整审计历史和隐藏模型推理不进入 prompt。
 

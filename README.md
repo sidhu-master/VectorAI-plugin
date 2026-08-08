@@ -26,7 +26,7 @@ COMPANY_AI_GATEWAY_URL
 COMPANY_INTERNAL_TOKEN
 ```
 
-Agent 主流程默认使用 Lite；只有低于 0.6 的有效结果才升级一次 Turbo。未配置模型服务时，文字生成进入演示模式；图片/PDF 感知需要可用的视觉模型配置。
+Agent 主流程默认使用 Lite。二维图纸走专用感知管线，按页级分析、视图拆分、几何/OCR 并行检测、拓扑与尺寸关联、最多 25 图元的增量 Patch 顺序执行；旧的单体图纸 Prompt 不再参与主路径。低于 0.6 的有效图元直接提交并标红；文字任务的低置信度有效结果才升级一次 Turbo。未配置模型服务时，文字生成进入演示模式；图片/PDF 感知需要可用的视觉模型配置。
 
 ## 架构入口
 
@@ -36,6 +36,7 @@ Agent 主流程默认使用 Lite；只有低于 0.6 的有效结果才升级一�
 - `src/core/patch/`：增量 Patch、验证、应用和逆操作
 - `src/core/history/`：SpatialCommit 与 Undo/Redo
 - `api/services/audit/`：本地审计、脱敏和回放
+- `api/services/drawing-perception/`：图纸资产缓存、视觉工具、拓扑、尺寸关联与 Patch 编排
 
 本地运行记录写入 `.local/vectorai/runs/`，该目录不会进入 Git。审计载荷会移除令牌、API Key 和媒体正文。
 
@@ -55,7 +56,15 @@ Agent 模式默认自动执行。启动请求在规划和图纸转换前返回 `
 | `POST` | `/api/agent/runs/:runId/stop` | 中止当前调用且不提交半成品 |
 | `POST` | `/api/agent/runs/:runId/instructions` | 追加在下一个安全点生效的指令 |
 
-有效运行在连续静默 25 秒时发送 heartbeat，因此用户可见进度间隔保持在 30 秒以内。单阶段最多验证三次，第三次仍失败会暂停且不提交 Patch。
+有效运行在连续静默 25 秒时发送 heartbeat，因此用户可见回执间隔保持在 30 秒以内。图纸任务按稳定 observation/entity ID 提交独立组件，单个组件失败不会回滚之前的提交；图片正文只存在于运行期缓存，终止后释放。
+
+用本地图纸运行非 CI 基准（结果只写入被 Git 忽略的 `.local/vectorai/baselines/`）：
+
+```bash
+pnpm test:drawing -- test1.jpg
+```
+
+命令逐行输出受理延迟、首个 Patch 延迟、各感知阶段耗时、Patch 批次数、观测/尺寸关联数量、低置信度与局部工具错误数量，不输出图片正文。正式服务的普通模型阶段 deadline 默认 120 秒，图纸感知总 deadline 默认 240 秒；期间仍以结构化阶段事件和 25 秒 heartbeat 保持可见回执。
 
 检查某次本地运行：
 

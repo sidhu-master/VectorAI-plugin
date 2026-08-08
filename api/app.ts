@@ -18,16 +18,23 @@ import { GatewayExecutorAdapter, GatewayPlannerAdapter } from './services/agent-
 import { FileAuditStore } from './services/audit/file-audit-store.js'
 import { LocalAttachmentPreparer } from './services/agent-runtime/attachments.js'
 import { resolveAgentModelProfile } from './services/agent-runtime/model-profile.js'
+import { DrawingPerceptionPipeline } from './services/drawing-perception/pipeline.js'
 
 // load env
 dotenv.config()
 
 const app: express.Application = express()
+const auditStore = new FileAuditStore(path.resolve(process.cwd(), '.local/vectorai/runs'))
 const agentRuntime = new AgentRuntime({
   planner: new GatewayPlannerAdapter(),
   executor: new GatewayExecutorAdapter(),
-  auditStore: new FileAuditStore(path.resolve(process.cwd(), '.local/vectorai/runs')),
+  auditStore,
   attachmentPreparer: new LocalAttachmentPreparer(),
+  drawingPipeline: new DrawingPerceptionPipeline({
+    observationStore: {
+      save: (runId, name, value) => auditStore.saveDrawingRecord(runId, name, value),
+    },
+  }),
 })
 const primaryModel = process.env.COMPANY_AI_PRIMARY_MODEL || 'doubao-seed-2.0-lite'
 const agentModelDefaults = resolveAgentModelProfile({

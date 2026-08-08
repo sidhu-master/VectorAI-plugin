@@ -127,7 +127,9 @@ export default function ConstructionTimeline() {
               <span className={eventTone(event.type)}>{event.title}</span>
               <span className="ml-1 text-slate-600">{Math.round(event.elapsedMs / 1000)}s</span>
               {event.detail && (
-                <p className={`break-words ${typeof event.detail === 'string' ? 'text-danger/80' : 'font-mono text-slate-500'}`}>
+                <p className={`break-words ${typeof event.detail === 'string'
+                  ? event.type === 'failed' || event.type === 'validation' ? 'text-danger/80' : 'text-slate-500'
+                  : 'font-mono text-slate-500'}`}>
                   {formatEventDetail(event)}
                 </p>
               )}

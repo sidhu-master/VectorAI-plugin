@@ -56,15 +56,34 @@ const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> =
   },
   detect_datums: {
     system: '你是二维 CAD 基准几何检测器。只识别 point、line、ray、xline，只输出 JSON，缺失参数不得猜测。',
-    user: '输出 {"observations":[GeometryObservation]}，包含稳定 id、viewId、imageBounds、measuredParams、confidence。',
+    user: `只输出以下 JSON 契约：
+{"observations":[{"id":"datum_<viewId>_001","viewId":"<输入中的精确 viewId>","type":"line","imageBounds":[x,y,width,height],"measuredParams":{"start":[x,y],"end":[x,y]},"confidence":0.9}]}
+所有坐标、长度和 imageBounds 均相对当前裁剪图归一化到 0-1。type 与 measuredParams 只允许：
+- point: {"x":number,"y":number}
+- line: {"start":[x,y],"end":[x,y]}
+- ray/xline: {"origin":[x,y],"direction":[dx,dy]}
+每项必须包含 id、viewId、type、imageBounds、measuredParams、confidence；无法给出完整参数就不输出该项。`,
   },
   detect_geometry: {
     system: '你是二维 CAD 显式几何检测器。支持 point,line,ray,xline,circle,arc,ellipse,polyline,spline；不输出 text、dimension、图层、图块或填充。只输出 JSON。',
-    user: '输出 {"observations":[GeometryObservation]}，每项包含稳定 id、viewId、归一化 imageBounds、measuredParams 和 confidence；关键参数不完整时省略该项。',
+    user: `只输出以下 JSON 契约：
+{"observations":[{"id":"geom_<viewId>_001","viewId":"<输入中的精确 viewId>","type":"circle","imageBounds":[x,y,width,height],"measuredParams":{"center":[x,y],"radius":number},"confidence":0.9}]}
+所有坐标、长度和 imageBounds 均相对当前裁剪图归一化到 0-1。type 与 measuredParams 只允许：
+- point {"x":number,"y":number}
+- line {"start":[x,y],"end":[x,y]}
+- ray/xline {"origin":[x,y],"direction":[dx,dy]}
+- circle {"center":[x,y],"radius":number}
+- arc {"center":[x,y],"radius":number,"startAngle":degree,"endAngle":degree,"counterClockwise":boolean}
+- ellipse {"center":[x,y],"majorAxis":[dx,dy],"ratio":0_to_1}
+- polyline {"vertices":[[x,y],...],"closed":boolean}
+- spline {"degree":integer,"controlPoints":[[x,y],...],"knots":[number,...],"closed":boolean,"periodic":boolean}
+每项必须包含 id、viewId、type、imageBounds、measuredParams、confidence。不要输出语义对象或嵌套 geometry；无法给出完整 CAD 参数就省略该项。`,
   },
   extract_annotations: {
     system: '你是工程图 OCR 与尺寸标注提取器。保留 R、Ø、°、± 和原始文本；不把尺寸绑定到几何。只输出 JSON。',
-    user: '输出 {"annotations":[AnnotationObservation]}，包含 kind、rawText、value、unit、tolerance、imageBounds、arrowheads、confidence。',
+    user: `只输出以下 JSON 契约：
+{"annotations":[{"id":"ann_<viewId>_001","viewId":"<输入中的精确 viewId>","kind":"diameter","rawText":"Ø10 ±0.1","value":10,"unit":"mm","tolerance":{"upper":0.1,"lower":-0.1},"imageBounds":[x,y,width,height],"arrowheads":[[x,y]],"confidence":0.9}]}
+kind 只允许 text、linear、aligned、angular、radius、diameter、ordinate、arc-length。所有 imageBounds 和 arrowheads 相对当前裁剪图归一化到 0-1。text 可省略 value/unit/tolerance，其他项无法可靠解析 value 时也可省略 value，但每项必须包含 id、viewId、kind、rawText、imageBounds、arrowheads、confidence。不得输出图片或绑定的几何对象。`,
   },
 };
 
@@ -150,6 +169,9 @@ export class DrawingVisionTools {
     const errors = observations.flatMap((observation, index) => {
       const item = asRecord(observation);
       const itemErrors = validateGeometryObservation(observation).errors;
+      if (itemErrors.length > 0 && item) {
+        itemErrors.push(`received fields [${Object.keys(item).sort().join(', ')}]`);
+      }
       if (allowedTypes && item && !allowedTypes.has(item.type as string)) {
         itemErrors.push(`type "${String(item.type)}" 不是 datum 类型`);
       }

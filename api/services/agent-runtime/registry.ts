@@ -1,4 +1,5 @@
 import type { AgentRunState } from '../../../src/core/runtime/state-machine.js';
+import type { ObservationPatchBatch } from '../drawing-perception/build-patches.js';
 import { RunProgressChannel } from './progress.js';
 import type { AgentModelProfile, PreparedAgentAttachment } from './types.js';
 
@@ -11,6 +12,7 @@ export interface AgentRunRecord {
   auditQueue: Promise<void>;
   modelProfile: AgentModelProfile;
   referenceAttachment?: PreparedAgentAttachment;
+  drawingBatches?: ObservationPatchBatch[];
 }
 
 export class AgentRunRegistry {

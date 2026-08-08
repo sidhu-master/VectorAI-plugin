@@ -65,6 +65,37 @@ describe('DrawingVisionTools', () => {
     });
   });
 
+  it('expands the observation contracts instead of referring to undeclared type names', async () => {
+    const complete = vi.fn<DrawingVisionCompletion>(async ({ tool }) => tool === 'extract_annotations'
+      ? '{"annotations":[]}'
+      : '{"observations":[]}');
+    const tools = new DrawingVisionTools(complete);
+
+    await tools.detectGeometry({ ...input, viewId: 'view_1' });
+    await tools.extractAnnotations({ ...input, viewId: 'view_1' });
+
+    const prompts = complete.mock.calls.map(([call]) => call.userPrompt).join('\n');
+    expect(prompts).toContain('"id"');
+    expect(prompts).toContain('"viewId"');
+    expect(prompts).toContain('"imageBounds"');
+    expect(prompts).toContain('"measuredParams"');
+    expect(prompts).toContain('"rawText"');
+    expect(prompts).not.toContain('[GeometryObservation]');
+    expect(prompts).not.toContain('[AnnotationObservation]');
+  });
+
+  it('reports only received field names when an observation uses the wrong shape', async () => {
+    const tools = new DrawingVisionTools(async () => JSON.stringify({ observations: [{
+      name: 'axis-1', geometry: { from: [0, 0], to: [1, 1] }, certainty: 0.9,
+    }] }));
+
+    const error = await tools.detectDatums({ ...input, viewId: 'view_1' })
+      .catch((caught) => caught) as DrawingVisionOutputError;
+
+    expect(error.errors).toContain('observations[0]: received fields [certainty, geometry, name]');
+    expect(error.errors.join(' ')).not.toContain('axis-1');
+  });
+
   it.each([
     ['unsupported CAD type', JSON.stringify({ observations: [{
       id: 'obs_1', viewId: 'view_1', type: 'hatch', imageBounds: [0, 0, 0.2, 0.2],

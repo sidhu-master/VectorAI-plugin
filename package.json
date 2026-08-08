@@ -12,6 +12,7 @@
     "server:dev": "nodemon",
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
     "test": "vitest run",
+    "test:drawing": "tsx scripts/test-drawing.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

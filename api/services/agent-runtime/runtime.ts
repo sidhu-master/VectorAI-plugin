@@ -7,6 +7,7 @@ import {
 } from '../../../src/core/runtime/context.js';
 import type { SpatialToolReceipt } from '../../../src/core/runtime/receipts.js';
 import type { SpatialIntent } from '../../../src/core/types.js';
+import type { TaskPlan } from '../../../src/core/agent.js';
 import {
   createAgentRunState,
   reduceAgentRun,
@@ -16,6 +17,11 @@ import { AgentRunRegistry, type AgentRunRecord } from './registry.js';
 import { RunProgressChannel } from './progress.js';
 import { selectAgentModel } from './model-profile.js';
 import type { AuditStore } from '../audit/types.js';
+import type { ObservationPatchBatch } from '../drawing-perception/build-patches.js';
+import type {
+  DrawingPerceptionInput,
+  DrawingPerceptionOutput,
+} from '../drawing-perception/pipeline.js';
 import type {
   AgentExecutorAdapter,
   AgentAttachmentPreparer,
@@ -30,8 +36,14 @@ export interface AgentRuntimeOptions {
   registry?: AgentRunRegistry;
   now?: () => number;
   stageTimeoutMs?: number;
+  drawingTimeoutMs?: number;
   auditStore?: AuditStore;
   attachmentPreparer?: AgentAttachmentPreparer;
+  drawingPipeline?: DrawingPerceptionAdapter;
+}
+
+export interface DrawingPerceptionAdapter {
+  run(input: DrawingPerceptionInput): AsyncIterable<DrawingPerceptionOutput>;
 }
 
 export interface AgentRunHandle {
@@ -47,8 +59,10 @@ export class AgentRuntime {
   private readonly registry: AgentRunRegistry;
   private readonly now: () => number;
   private readonly stageTimeoutMs: number;
+  private readonly drawingTimeoutMs: number;
   private readonly auditStore?: AuditStore;
   private readonly attachmentPreparer: AgentAttachmentPreparer;
+  private readonly drawingPipeline?: DrawingPerceptionAdapter;
   private sequence = 0;
 
   constructor(options: AgentRuntimeOptions) {
@@ -57,10 +71,12 @@ export class AgentRuntime {
     this.registry = options.registry ?? new AgentRunRegistry();
     this.now = options.now ?? Date.now;
     this.stageTimeoutMs = options.stageTimeoutMs ?? 120_000;
+    this.drawingTimeoutMs = options.drawingTimeoutMs ?? 240_000;
     this.auditStore = options.auditStore;
     this.attachmentPreparer = options.attachmentPreparer ?? {
       prepare: async ({ image, mimeType }) => ({ image, mimeType }),
     };
+    this.drawingPipeline = options.drawingPipeline;
   }
 
   start(input: StartAgentRunInput): AgentRunHandle {
@@ -131,6 +147,10 @@ export class AgentRuntime {
     record.progress.publish('resumed', '任务已继续');
     void Promise.resolve().then(async () => {
       try {
+        if (record.drawingBatches) {
+          await this.runDrawingBatches(record);
+          return;
+        }
         if (record.state.needsReplan && record.state.activeInstruction) await this.replan(record);
         await this.runSteps(record);
       } catch (error) {
@@ -156,6 +176,10 @@ export class AgentRuntime {
 
   private async run(record: AgentRunRecord): Promise<void> {
     try {
+      if (record.referenceAttachment && this.drawingPipeline) {
+        await this.runDrawingPerception(record);
+        return;
+      }
       let attachment;
       if (record.referenceAttachment) {
         record.progress.publish('tool_started', '正在处理输入图纸');
@@ -212,6 +236,184 @@ export class AgentRuntime {
       if (record.state.status === 'stopping' || isAbort(error)) this.finishStopped(record);
       else this.finishFailed(record, error);
     }
+  }
+
+  private async runDrawingPerception(record: AgentRunRecord): Promise<void> {
+    const attachment = record.referenceAttachment;
+    if (!attachment || !this.drawingPipeline) throw new Error('Drawing perception input missing');
+    record.progress.publish('planning', '正在拆解二维工程图');
+    const stage = this.createStage(record, this.drawingTimeoutMs);
+    const batches: ObservationPatchBatch[] = [];
+    try {
+      const input: DrawingPerceptionInput = {
+        runId: record.state.runId,
+        page: 1,
+        image: attachment.image,
+        mimeType: attachment.mimeType,
+        modelName: record.modelProfile.vision,
+        signal: stage.controller.signal,
+        deadlineAt: stage.deadlineAt,
+      };
+      for await (const output of this.drawingPipeline.run(input)) {
+        if (isStopping(record)) return this.finishStopped(record);
+        if (output.kind === 'patch_batch') batches.push(output.batch);
+        else this.publishDrawingStage(record, output);
+      }
+    } finally {
+      stage.clear();
+    }
+    if (isStopping(record)) return this.finishStopped(record);
+
+    record.drawingBatches = batches;
+    const plan = drawingPlan(batches);
+    record.state = reduceAgentRun(record.state, { type: 'PLAN_READY', plan }).state;
+    record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
+    if (record.state.status === 'paused') {
+      record.progress.publish('paused', '任务已在图元提交前暂停');
+      return;
+    }
+    if (batches.length === 0) {
+      record.state = { ...record.state, status: 'completed' };
+      record.drawingBatches = undefined;
+      this.finishCompleted(record);
+      return;
+    }
+    await this.runDrawingBatches(record);
+  }
+
+  private async runDrawingBatches(record: AgentRunRecord): Promise<void> {
+    const batches = record.drawingBatches;
+    if (!batches) return;
+    while (record.state.status === 'running') {
+      const index = record.state.currentStepIndex;
+      const batch = batches[index];
+      if (!batch) {
+        record.drawingBatches = undefined;
+        record.state = { ...record.state, status: 'completed' };
+        this.finishCompleted(record);
+        return;
+      }
+      const compiled = compileIntentToPatch(batch.intent, record.state.history.model);
+      let receipt: SpatialToolReceipt;
+      if (compiled.errors.length > 0) {
+        receipt = {
+          toolCallId: this.nextId('tool'),
+          toolName: 'drawing_patch',
+          status: 'error',
+          summary: `跳过无效组件 ${batch.componentId}`,
+          durableFacts: { componentId: batch.componentId },
+          transientSignals: {},
+          validation: { valid: false, errors: compiled.errors },
+          componentId: batch.componentId,
+          observationIds: [...batch.observationIds],
+          lowConfidenceCount: batch.lowConfidenceCount,
+          needReplan: false,
+        };
+        record.state = {
+          ...record.state,
+          context: recordReceipt(record.state.context, receipt),
+        };
+        record.progress.publish(
+          'validation',
+          '图纸组件验证失败，已跳过',
+          `${batch.componentId}: ${compiled.errors.join('; ')}`,
+        );
+      } else {
+        const result = commitPatch(record.state.history, {
+          id: this.nextId('commit'),
+          runId: record.state.runId,
+          stepId: batch.componentId,
+          source: 'AI',
+          patch: compiled.patch,
+          confidence: batch.confidence,
+          timestamp: this.now(),
+        });
+        if ('errors' in result) {
+          const errors = result.errors.map((error) => error.message);
+          receipt = {
+            toolCallId: this.nextId('tool'),
+            toolName: 'drawing_patch',
+            status: 'error',
+            summary: `跳过冲突组件 ${batch.componentId}`,
+            durableFacts: { componentId: batch.componentId },
+            transientSignals: {},
+            validation: { valid: false, errors },
+            componentId: batch.componentId,
+            observationIds: [...batch.observationIds],
+            lowConfidenceCount: batch.lowConfidenceCount,
+            needReplan: false,
+          };
+          record.state = {
+            ...record.state,
+            context: recordReceipt(record.state.context, receipt),
+          };
+          record.progress.publish(
+            'validation',
+            '图纸组件提交冲突，已跳过',
+            `${batch.componentId}: ${errors.join('; ')}`,
+          );
+        } else {
+          receipt = {
+            toolCallId: this.nextId('tool'),
+            toolName: 'drawing_patch',
+            status: 'success',
+            summary: batch.intent.description ?? `提交图纸组件 ${batch.componentId}`,
+            durableFacts: { componentId: batch.componentId },
+            transientSignals: {},
+            patch: compiled.patch,
+            validation: { valid: true, errors: [] },
+            componentId: batch.componentId,
+            observationIds: [...batch.observationIds],
+            lowConfidenceCount: batch.lowConfidenceCount,
+            needReplan: false,
+          };
+          record.state = {
+            ...record.state,
+            history: result.history,
+            context: recordReceipt(record.state.context, receipt),
+          };
+          this.enqueueAudit(record, () => this.auditStore!.saveCommit(result.commit));
+          record.progress.publish(
+            'commit',
+            batch.intent.description ?? `已提交图纸组件 ${batch.componentId}`,
+            batch.lowConfidenceCount > 0
+              ? `${batch.lowConfidenceCount} 个低置信度图元已标红`
+              : undefined,
+          );
+        }
+      }
+
+      record.state = reduceAgentRun(record.state, { type: 'STEP_COMPLETED' }).state;
+      record.state = reduceAgentRun(record.state, { type: 'SAFE_POINT' }).state;
+      if (record.state.status === 'paused') {
+        record.progress.publish('paused', '任务已在图纸组件安全点暂停');
+        return;
+      }
+      if (record.state.needsReplan && record.state.activeInstruction) {
+        record.drawingBatches = undefined;
+        await this.replan(record);
+        await this.runSteps(record);
+        return;
+      }
+      if (record.state.status === 'completed') {
+        record.drawingBatches = undefined;
+        this.finishCompleted(record);
+        return;
+      }
+    }
+  }
+
+  private publishDrawingStage(
+    record: AgentRunRecord,
+    output: Extract<DrawingPerceptionOutput, { kind: 'stage' }>,
+  ): void {
+    const title = DRAWING_STAGE_TITLES[output.stage];
+    const suffix = output.viewId ? ` · ${output.viewId}` : '';
+    record.progress.publish(
+      output.stage === 'completed' ? 'tool_finished' : 'tool_started',
+      `${title}${suffix}`,
+      `${output.stage} · ${output.durationMs}ms`,
+    );
   }
 
   private async runSteps(record: AgentRunRecord): Promise<void> {
@@ -379,6 +581,7 @@ export class AgentRuntime {
 
   private finishStopped(record: AgentRunRecord): void {
     record.referenceAttachment = undefined;
+    record.drawingBatches = undefined;
     record.state = reduceAgentRun(record.state, { type: 'STOPPED' }).state;
     record.progress.publish('stopped', '任务已停止');
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));
@@ -420,13 +623,13 @@ export class AgentRuntime {
     }
   }
 
-  private createStage(record: AgentRunRecord): {
+  private createStage(record: AgentRunRecord, timeoutMs = this.stageTimeoutMs): {
     controller: AbortController;
     deadlineAt: number;
     clear: () => void;
   } {
     const controller = new AbortController();
-    const deadlineAt = this.now() + this.stageTimeoutMs;
+    const deadlineAt = this.now() + timeoutMs;
     const timeout = setTimeout(() => {
       controller.abort(new Error('Stage deadline exceeded'));
     }, Math.max(0, deadlineAt - this.now()));
@@ -441,6 +644,7 @@ export class AgentRuntime {
 
   private finishCompleted(record: AgentRunRecord): void {
     record.referenceAttachment = undefined;
+    record.drawingBatches = undefined;
     record.progress.publish('completed', '任务已完成');
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));
     record.resolveCompletion(record.state);
@@ -448,6 +652,7 @@ export class AgentRuntime {
 
   private finishFailed(record: AgentRunRecord, error: unknown): void {
     record.referenceAttachment = undefined;
+    record.drawingBatches = undefined;
     record.state = { ...record.state, status: 'failed' };
     record.progress.publish('failed', '任务执行失败', error instanceof Error ? error.message : String(error));
     this.enqueueAudit(record, () => this.auditStore!.finishRun(record.state.runId, record.state.history.model));
@@ -494,6 +699,33 @@ export class AgentRuntime {
     if (!this.auditStore) return;
     record.auditQueue = record.auditQueue.then(operation, operation).catch(() => undefined);
   }
+}
+
+const DRAWING_STAGE_TITLES: Record<
+  Extract<DrawingPerceptionOutput, { kind: 'stage' }>['stage'],
+  string
+> = {
+  asset_prepared: '准备图纸页面',
+  sheet_analyzed: '分析图纸单位与比例',
+  views_segmented: '拆分工程视图',
+  view_perceived: '识别视图几何与标注',
+  topology_built: '建立二维拓扑',
+  dimensions_associated: '关联尺寸标注',
+  patches_built: '生成增量 CAD 修改',
+  completed: '图纸感知完成',
+};
+
+function drawingPlan(batches: ObservationPatchBatch[]): TaskPlan {
+  return {
+    task: 'reconstruct_drawing',
+    summary: '按连通组件增量重建二维工程图',
+    steps: batches.map((batch, index) => ({
+      id: index + 1,
+      action: 'drawing_patch',
+      description: `提交组件 ${batch.componentId}`,
+      status: 'pending',
+    })),
+  };
 }
 
 function isAbort(error: unknown): boolean {
