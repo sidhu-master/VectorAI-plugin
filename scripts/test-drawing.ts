@@ -4,7 +4,13 @@ import dotenv from 'dotenv';
 
 import { FileDrawingObservationStore } from '../api/services/drawing-perception/observation-store.js';
 import { DrawingPerceptionPipeline } from '../api/services/drawing-perception/pipeline.js';
-import type { DimensionAssociation, GeometryObservation } from '../api/services/drawing-perception/types.js';
+import type { DrawingCoverageLedger } from '../api/services/drawing-perception/coverage.js';
+import type {
+  ContourEvidence,
+  DimensionAssociation,
+  GeometryObservation,
+  GlobalContour,
+} from '../api/services/drawing-perception/types.js';
 
 dotenv.config();
 
@@ -68,6 +74,9 @@ const perceptionErrors = await store.read<Array<{
   tool: string;
   message: string;
 }>>(runId, 'perception-errors');
+const coverage = await store.read<DrawingCoverageLedger>(runId, 'coverage-ledger');
+const globalContours = await store.read<GlobalContour[]>(runId, 'global-contours');
+const contourEvidence = await store.read<ContourEvidence[]>(runId, 'contour-evidence');
 console.log(JSON.stringify({
   event: 'summary',
   status: 'completed',
@@ -84,6 +93,14 @@ console.log(JSON.stringify({
   lowConfidenceCount,
   perceptionErrorCount: perceptionErrors.length,
   failedTools: [...new Set(perceptionErrors.map((error) => error.tool))],
+  coverageComplete: coverage.complete,
+  coverageRegionCount: coverage.regions.length,
+  refinedRegionCount: coverage.regions.filter((region) => region.status === 'refine').length,
+  budgetExhaustedRegionCount: coverage.regions.filter(
+    (region) => region.status === 'budget_exhausted',
+  ).length,
+  globalContourCount: globalContours.length,
+  contourEvidenceCount: contourEvidence.length,
   recordsDirectory: resolve(rootDir, runId, 'drawing'),
 }));
 
