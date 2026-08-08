@@ -22,6 +22,66 @@ afterEach(async () => {
 });
 
 describe('DrawingPerceptionPipeline', () => {
+  it('emits a provisional drawing delta before a later view finishes', async () => {
+    let releasePrimary!: () => void;
+    let releaseDetail!: () => void;
+    const primaryReady = new Promise<void>((resolve) => { releasePrimary = resolve; });
+    const detailReady = new Promise<void>((resolve) => { releaseDetail = resolve; });
+    const assets = new DrawingAssetCache({
+      preparer: { prepare: async ({ image, mimeType }) => ({ image, mimeType }) },
+      cropper: { crop: async ({ image, mimeType }) => ({ image, mimeType }) },
+    });
+    const vision: DrawingVisionToolset = {
+      analyzeSheet: async () => ({ unit: 'mm', scale: 1, warnings: [] }),
+      segmentViews: async () => [
+        { id: 'view_primary', kind: 'detail', imageBounds: [0, 0, 0.5, 1], confidence: 0.9 },
+        { id: 'view_later', kind: 'detail', imageBounds: [0.5, 0, 0.5, 1], confidence: 0.9 },
+      ],
+      detectDatums: async () => [],
+      detectGeometry: async ({ viewId }) => {
+        if (viewId?.startsWith('view_primary')) await primaryReady;
+        else await detailReady;
+        return [{
+          id: 'model_circle', viewId: viewId!, type: 'circle',
+          imageBounds: [0.2, 0.2, 0.4, 0.4],
+          measuredParams: { center: [0.4, 0.4], radius: 0.2 }, confidence: 0.9,
+        }];
+      },
+      extractAnnotations: async () => [],
+    };
+    const iterator = new DrawingPerceptionPipeline({ assets, vision, maxConcurrentViews: 2 })
+      .run({
+        runId: 'run_test', page: 1, image: 'eA==', mimeType: 'image/png',
+        modelName: 'doubao-seed-2.0-lite', signal: new AbortController().signal,
+        deadlineAt: Date.now() + 60_000,
+      })[Symbol.asyncIterator]();
+
+    let output = await iterator.next();
+    while (!output.done && (output.value.kind !== 'stage'
+      || output.value.stage !== 'views_segmented')) output = await iterator.next();
+
+    const pending = iterator.next();
+    releasePrimary();
+    const early = await Promise.race([
+      pending,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 40)),
+    ]);
+    releaseDetail();
+
+    expect(early).not.toBe('timeout');
+    if (early === 'timeout' || early.done) throw new Error('expected online perception output');
+    expect(early.value).toMatchObject({
+      kind: 'observation_delta',
+      delta: {
+        runId: 'run_test', sequence: 1, action: 'observe',
+        source: { page: 1, viewId: 'view_primary', stage: 'detail' },
+        upserts: [expect.objectContaining({
+          type: 'circle', quality: expect.objectContaining({ status: 'candidate' }),
+        })],
+      },
+    });
+    await iterator.return?.(undefined as never);
+  });
   it('orchestrates two views, parallelizes view tools, persists safe records, and releases media', async () => {
     let activeCalls = 0;
     let maxActiveCalls = 0;
@@ -307,7 +367,7 @@ describe('DrawingPerceptionPipeline', () => {
       regions: Array<{ id: string; parentId?: string; status: string }>;
     }>('run_outline_first', 'coverage-ledger');
     expect(geometry).toEqual([expect.objectContaining({
-      id: 'global_contour_view_full_global__outer_circle', type: 'circle',
+      id: 'global_contour_ctr_p1_view_full_0001', type: 'circle',
     })]);
     expect(geometry.some((item) => item.type === 'arc')).toBe(false);
     expect(evidenceCalls).toEqual(expect.arrayContaining([

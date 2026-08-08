@@ -54,6 +54,14 @@ for await (const output of pipeline.run({
     }));
     continue;
   }
+  if (output.kind === 'observation_delta') {
+    console.log(JSON.stringify({
+      event: 'observation_delta', sequence: output.delta.sequence,
+      action: output.delta.action, entityCount: output.delta.upserts.length,
+      elapsedMs: Date.now() - startedAt,
+    }));
+    continue;
+  }
   batchCount += 1;
   firstPatchAt ??= Date.now();
   commitEntityCount += output.batch.commands.length;

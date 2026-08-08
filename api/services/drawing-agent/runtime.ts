@@ -425,6 +425,7 @@ export class DrawingAgentRuntime {
         commands.push(output);
         continue;
       }
+      if (output.kind === 'observation_delta') continue;
       if (output.stage === 'asset_prepared') {
         record.perceptionCoverageComplete = true;
         record.perceptionIncompleteRegionCount = 0;

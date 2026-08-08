@@ -3,6 +3,7 @@ import { associateDimensions } from './associate-dimensions.js';
 import { DrawingAssetCache, type DrawingAssetReference } from './assets.js';
 import {
   buildObservationCommandBatches,
+  buildObservationPreviewNodes,
   type DrawingCommandBatch,
 } from './build-patches.js';
 import { assembleContours } from './contour-assembler.js';
@@ -16,6 +17,7 @@ import {
   type DrawingCoverageRegion,
 } from './coverage.js';
 import type { DrawingObservationStore } from './observation-store.js';
+import { numberGlobalContours } from './numbering.js';
 import {
   deduplicateAnnotationObservations,
   deduplicateGeometryObservations,
@@ -45,6 +47,7 @@ import {
   type DrawingVisionToolInput,
   type SheetAnalysis,
 } from './vision-tools.js';
+import type { PerceptionPreviewDelta } from '../../../src/drawing/index.js';
 
 export type DrawingPerceptionStage =
   | 'asset_prepared'
@@ -76,9 +79,16 @@ export interface DrawingPerceptionCommandOutput {
   batch: DrawingCommandBatch;
 }
 
+export interface DrawingPerceptionObservationOutput {
+  kind: 'observation_delta';
+  runId: string;
+  delta: PerceptionPreviewDelta;
+}
+
 export type DrawingPerceptionOutput =
   | DrawingPerceptionStageReceipt
-  | DrawingPerceptionCommandOutput;
+  | DrawingPerceptionCommandOutput
+  | DrawingPerceptionObservationOutput;
 
 export interface DrawingPerceptionInput {
   runId: string;
@@ -149,6 +159,15 @@ interface RegionPerception {
   evidence: ContourEvidence[];
   assessment: DrawingCoverageAssessment | null;
   errors: ViewPerceptionError[];
+}
+
+interface PerceptionEmission {
+  action: PerceptionPreviewDelta['action'];
+  viewId: string;
+  regionId?: string;
+  stage: PerceptionPreviewDelta['source']['stage'];
+  geometry?: GeometryObservation[];
+  annotations?: AnnotationObservation[];
 }
 
 interface ViewPerceptionError {
@@ -227,12 +246,57 @@ export class DrawingPerceptionPipeline {
       };
       await this.save(input.runId, 'manifest', manifest);
 
-      const perceived = await mapLimit(
+      const sourceId = input.sourceId ?? `source_${input.runId}`;
+      let deltaSequence = 0;
+      const provisionalIds = new Set<string>();
+      const outputQueue = new AsyncOutputQueue<DrawingPerceptionOutput>();
+      const perceivedPromise = mapLimit(
         views,
         this.maxConcurrentViews,
-        (view) => this.perceiveView(input, page, view),
+        (view) => this.perceiveView(input, page, view, (emission) => {
+          const geometry = (emission.geometry ?? []).map((observation) => (
+            enrichObservation(observation, sourceId, input.runId)
+          ));
+          const annotations = (emission.annotations ?? []).map((observation) => (
+            enrichObservation(observation, sourceId, input.runId)
+          ));
+          const preview = buildObservationPreviewNodes({
+            geometry,
+            annotations,
+            annotationTransforms: {
+              [emission.viewId]: {
+                scaleX: 1,
+                scaleY: page.heightToWidthRatio ?? 1,
+                offsetX: 0,
+                offsetY: 0,
+              },
+            },
+          });
+          if (preview.nodes.length === 0) return;
+          preview.nodes.forEach((node) => provisionalIds.add(node.id));
+          const delta: PerceptionPreviewDelta = {
+            runId: input.runId,
+            sequence: ++deltaSequence,
+            action: emission.action,
+            slotIds: [...geometry, ...annotations].map((item) => item.id),
+            upserts: preview.nodes,
+            removeIds: [],
+            source: {
+              page: input.page,
+              viewId: emission.viewId,
+              ...(emission.regionId ? { regionId: emission.regionId } : {}),
+              stage: emission.stage,
+            },
+          };
+          outputQueue.push({ kind: 'observation_delta', runId: input.runId, delta });
+        }),
       );
-      const sourceId = input.sourceId ?? `source_${input.runId}`;
+      void perceivedPromise.then(
+        () => outputQueue.close(),
+        (error: unknown) => outputQueue.fail(error),
+      );
+      for await (const output of outputQueue) yield output;
+      const perceived = await perceivedPromise;
       const geometry = perceived.flatMap((result) => result.geometry)
         .map((observation) => enrichObservation(observation, sourceId, input.runId))
         .sort((first, second) => first.id.localeCompare(second.id));
@@ -347,6 +411,31 @@ export class DrawingPerceptionPipeline {
         lowConfidenceCount: batches.reduce((sum, batch) => sum + batch.lowConfidenceCount, 0),
         warningCount: resolved.warnings.length,
       });
+      const finalNodeIds = new Set<string>(batches.flatMap((batch) => batch.commands.flatMap((command) => (
+        command.type === 'geometry.create' || command.type === 'annotation.create'
+          ? [command.value.id]
+          : []
+      ))));
+      const rejectedPreviewIds = [...provisionalIds].filter((id) => !finalNodeIds.has(id));
+      if (rejectedPreviewIds.length > 0) {
+        yield {
+          kind: 'observation_delta',
+          runId: input.runId,
+          delta: {
+            runId: input.runId,
+            sequence: ++deltaSequence,
+            action: 'reject',
+            slotIds: [],
+            upserts: [],
+            removeIds: rejectedPreviewIds,
+            source: {
+              page: input.page,
+              viewId: 'page',
+              stage: 'reconciliation',
+            },
+          },
+        };
+      }
       for (const batch of batches) {
         yield { kind: 'command_batch', runId: input.runId, stage: 'patch_ready', batch };
       }
@@ -367,6 +456,7 @@ export class DrawingPerceptionPipeline {
     input: DrawingPerceptionInput,
     page: DrawingAssetReference,
     view: DrawingView,
+    emit: (emission: PerceptionEmission) => void,
   ): Promise<ViewPerception> {
     this.assertActive(input);
     const startedAt = this.now();
@@ -383,10 +473,42 @@ export class DrawingPerceptionPipeline {
     const globalRegion: PerceptionRegion = {
       id: `${view.id}_global`, viewId: view.id, pageBounds: view.imageBounds,
     };
-    const [datumResult, globalResult] = await Promise.all([
+    const [datumResult, rawGlobalResult] = await Promise.all([
       this.perceiveDatums(input, page.assetId, datumRegion, pageRatio),
       this.perceiveGlobalContours(input, page.assetId, globalRegion, pageRatio),
     ]);
+    const numberedContours = numberGlobalContours(
+      input.runId,
+      input.page,
+      view.id,
+      rawGlobalResult.contours,
+    );
+    const globalResult = {
+      contours: numberedContours.contours,
+      errors: rawGlobalResult.errors,
+    };
+    if (datumResult.geometry.length > 0) {
+      emit({
+        action: 'observe', viewId: view.id, regionId: datumRegion.id,
+        stage: 'outline', geometry: datumResult.geometry,
+      });
+    }
+    const coarseContours = globalResult.contours.flatMap((contour): GeometryObservation[] => (
+      contour.coarseParams ? [{
+        id: `global_contour_${contour.id}`,
+        viewId: contour.viewId,
+        type: contour.geometryFamily,
+        imageBounds: [...contour.imageBounds],
+        measuredParams: structuredClone(contour.coarseParams),
+        confidence: contour.confidence,
+      }] : []
+    ));
+    if (coarseContours.length > 0) {
+      emit({
+        action: 'observe', viewId: view.id, regionId: globalRegion.id,
+        stage: 'outline', geometry: coarseContours,
+      });
+    }
 
     const coverageRegions = [...regions];
     const regionResults: RegionPerception[] = [];
@@ -405,11 +527,24 @@ export class DrawingPerceptionPipeline {
           region,
           pageRatio,
           globalResult.contours,
+          numberedContours.idMap,
         ),
       );
       regionResults.push(...waveResults);
       const children: DrawingCoverageRegion[] = [];
       for (const result of waveResults) {
+        if (result.geometry.length > 0) {
+          emit({
+            action: 'observe', viewId: view.id, regionId: result.region.id,
+            stage: 'detail', geometry: result.geometry,
+          });
+        }
+        if (result.annotations.length > 0) {
+          emit({
+            action: 'observe', viewId: view.id, regionId: result.region.id,
+            stage: 'annotation', annotations: result.annotations,
+          });
+        }
         const region = result.region;
         region.geometryCount = result.geometry.length;
         region.annotationCount = result.annotations.length;
@@ -467,6 +602,14 @@ export class DrawingPerceptionPipeline {
       contours: globalResult.contours,
       evidence: contourEvidence,
     });
+    if (assembled.geometry.length > 0) {
+      emit({
+        action: coarseContours.length > 0 ? 'refine' : 'observe',
+        viewId: view.id,
+        stage: 'outline',
+        geometry: assembled.geometry,
+      });
+    }
     const standaloneGeometry = regionResults.flatMap((result) => (
       result.geometry.filter((observation) => isAuthoritativeStandalone(
         observation,
@@ -561,6 +704,7 @@ export class DrawingPerceptionPipeline {
     region: DrawingCoverageRegion,
     pageRatio: number,
     globalContours: GlobalContour[],
+    contourIdMap: Record<string, string>,
   ): Promise<RegionPerception> {
     const attachment = await this.readRegion(input, pageAssetId, region);
     const visionInput = this.visionInput(input, attachment, region.id);
@@ -655,7 +799,12 @@ export class DrawingPerceptionPipeline {
         .map((observation) => stitchGeometryObservation(observation, region, pageRatio)),
       annotations: rawAnnotations
         .map((observation) => stitchAnnotationObservation(observation, region)),
-      evidence: rawEvidence.map((item) => stitchContourEvidence(item, region)),
+      evidence: rawEvidence.map((item) => stitchContourEvidence({
+        ...item,
+        ...(item.globalContourId ? {
+          globalContourId: contourIdMap[item.globalContourId] ?? item.globalContourId,
+        } : {}),
+      }, region)),
       assessment,
       errors,
     };
@@ -847,6 +996,48 @@ function boundsArea(bounds: NormalizedImageBounds): number {
 function safeRecordSegment(value: string): string {
   const normalized = value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
   return normalized || 'view';
+}
+
+class AsyncOutputQueue<T> implements AsyncIterableIterator<T> {
+  private readonly values: T[] = [];
+  private readonly waiters: Array<{
+    resolve: (result: IteratorResult<T>) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  private closed = false;
+  private error: unknown;
+
+  push(value: T): void {
+    if (this.closed) return;
+    const waiter = this.waiters.shift();
+    if (waiter) waiter.resolve({ done: false, value });
+    else this.values.push(value);
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) waiter.resolve({ done: true, value: undefined });
+  }
+
+  fail(error: unknown): void {
+    if (this.closed) return;
+    this.error = error;
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) waiter.reject(error);
+  }
+
+  next(): Promise<IteratorResult<T>> {
+    const value = this.values.shift();
+    if (value !== undefined) return Promise.resolve({ done: false, value });
+    if (this.error !== undefined) return Promise.reject(this.error);
+    if (this.closed) return Promise.resolve({ done: true, value: undefined });
+    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
+  }
+
+  [Symbol.asyncIterator](): AsyncIterableIterator<T> {
+    return this;
+  }
 }
 
 async function mapLimit<T, R>(

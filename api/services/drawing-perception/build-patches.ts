@@ -10,6 +10,7 @@ import type {
   EvidenceId,
   GeometryId,
   GeometryNode,
+  PerceptionPreviewNode,
   TextAnnotation,
   Vec2,
 } from '../../../src/drawing/index.js';
@@ -53,6 +54,19 @@ export interface BuildObservationCommandInput {
   topology: DrawingTopology;
   viewTransforms?: Record<string, ViewCoordinateTransform>;
   annotationTransforms?: Record<string, ViewCoordinateTransform>;
+}
+
+export interface BuildObservationPreviewInput {
+  geometry?: GeometryObservation[];
+  annotations?: AnnotationObservation[];
+  associations?: DimensionAssociation[];
+  viewTransforms?: Record<string, ViewCoordinateTransform>;
+  annotationTransforms?: Record<string, ViewCoordinateTransform>;
+}
+
+export interface BuildObservationPreviewResult {
+  nodes: PerceptionPreviewNode[];
+  warnings: string[];
 }
 
 interface ResolvedCommand {
@@ -117,6 +131,43 @@ export function buildObservationCommandBatches(
     batches.push(...makeBatches(`annotations:${viewId}`, resolved));
   }
   return { batches, warnings };
+}
+
+export function buildObservationPreviewNodes(
+  input: BuildObservationPreviewInput,
+): BuildObservationPreviewResult {
+  const warnings: string[] = [];
+  const geometry = (input.geometry ?? []).flatMap((observation): PerceptionPreviewNode[] => {
+    const item = geometryCommand(
+      observation,
+      transformFor(observation.viewId, input.viewTransforms),
+    );
+    if (!item || item.command.type !== 'geometry.create') {
+      warnings.push(`观察 ${observation.id} 缺少 ${observation.type} 必需参数，已跳过预览`);
+      return [];
+    }
+    return [candidateNode(item.command.value as GeometryNode)];
+  });
+  const associationByAnnotationId = new Map(
+    (input.associations ?? []).map((association) => [association.annotationId, association]),
+  );
+  const annotations = (input.annotations ?? []).map((observation): PerceptionPreviewNode => {
+    const item = annotationCommand(
+      observation,
+      associationByAnnotationId.get(observation.id),
+      transformFor(observation.viewId, input.annotationTransforms ?? input.viewTransforms),
+    );
+    if (item.command.type !== 'annotation.create') throw new Error('annotation preview command mismatch');
+    return candidateNode(item.command.value as AnnotationNode);
+  });
+  return { nodes: [...geometry, ...annotations], warnings };
+}
+
+function candidateNode<T extends PerceptionPreviewNode>(node: T): T {
+  return {
+    ...structuredClone(node),
+    quality: { ...structuredClone(node.quality), status: 'candidate' },
+  };
 }
 
 function makeBatches(componentId: string, items: ResolvedCommand[]): DrawingCommandBatch[] {
