@@ -87,6 +87,26 @@ export function validateGlobalContour(value: unknown): DrawingRecordValidation {
   return result(errors);
 }
 
+export function validateContourEvidence(value: unknown): DrawingRecordValidation {
+  const errors: string[] = [];
+  const record = asRecord(value);
+  if (!record) return invalid('contour evidence 必须是对象');
+  collectForbiddenFields(record, '$', errors);
+  if (!isNonEmptyString(record.id)) errors.push('id 必须是非空字符串');
+  if (!isNonEmptyString(record.viewId)) errors.push('viewId 必须是非空字符串');
+  if (record.globalContourId !== undefined && !isNonEmptyString(record.globalContourId)) {
+    errors.push('globalContourId 必须是非空字符串');
+  }
+  validateBounds(record.imageBounds, 'imageBounds', errors);
+  if (!Array.isArray(record.samplePoints) || record.samplePoints.length < 2
+    || !record.samplePoints.every(isNormalizedPoint)) {
+    errors.push('samplePoints 必须至少包含两个归一化坐标点');
+  }
+  validateConfidence(record.confidence, 'confidence', errors);
+  if (typeof record.touchesCropEdge !== 'boolean') errors.push('touchesCropEdge 必须是 boolean');
+  return result(errors);
+}
+
 export function validateAnnotationObservation(value: unknown): DrawingRecordValidation {
   const errors: string[] = [];
   const record = asRecord(value);

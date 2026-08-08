@@ -42,6 +42,29 @@ describe('DrawingVisionTools', () => {
       .rejects.toBeInstanceOf(DrawingVisionOutputError);
   });
 
+  it('extracts regional samples as evidence for an existing global contour', async () => {
+    const complete = vi.fn<DrawingVisionCompletion>(async () => JSON.stringify({ evidence: [{
+      id: 'evidence_outer_left', viewId: 'view_1_region_1',
+      globalContourId: 'contour_outer', imageBounds: [0.8, 0.1, 0.2, 0.8],
+      samplePoints: [[0.8, 0.1], [0.95, 0.5], [0.8, 0.9]],
+      confidence: 0.9, touchesCropEdge: true,
+    }] }));
+    const tools = new DrawingVisionTools(complete);
+
+    const evidence = await tools.detectContourEvidence(
+      { ...input, viewId: 'view_1_region_1' },
+      [{ id: 'contour_outer', geometryFamily: 'circle', imageBounds: [0.1, 0.1, 0.8, 0.8] }],
+    );
+
+    expect(evidence).toEqual([expect.objectContaining({
+      id: 'evidence_outer_left', globalContourId: 'contour_outer', touchesCropEdge: true,
+    })]);
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      tool: 'detect_contour_evidence',
+      userPrompt: expect.stringContaining('contour_outer'),
+    }));
+  });
+
   it('assesses whether a crop was fully read using a bounded observation summary', async () => {
     const complete = vi.fn<DrawingVisionCompletion>(async () => JSON.stringify({
       complete: false,

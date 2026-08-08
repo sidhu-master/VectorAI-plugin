@@ -4,12 +4,14 @@ import {
 } from '../ai-gateway.js';
 import {
   validateAnnotationObservation,
+  validateContourEvidence,
   validateDrawingManifest,
   validateGlobalContour,
   validateGeometryObservation,
 } from './validate.js';
 import type {
   AnnotationObservation,
+  ContourEvidence,
   DrawingView,
   GeometryObservation,
   GlobalContour,
@@ -23,6 +25,7 @@ export type DrawingVisionToolName =
   | 'detect_datums'
   | 'detect_geometry'
   | 'detect_global_contours'
+  | 'detect_contour_evidence'
   | 'extract_annotations'
   | 'assess_coverage';
 
@@ -104,6 +107,12 @@ const PROMPTS: Record<DrawingVisionToolName, { system: string; user: string }> =
     user: `只输出以下 JSON 契约：
 {"contours":[{"id":"contour_001","viewId":"<输入中的精确 viewId>","geometryFamily":"circle","imageBounds":[x,y,width,height],"closed":true,"confidence":0.9,"coarseParams":{"center":[x,y],"radius":number}}]}
 坐标相对完整视图归一化到 0-1。geometryFamily 只允许 point、line、ray、xline、circle、arc、ellipse、polyline、spline。一个视觉上连续的完整圆只能输出一个 circle，不能按局部可见段拆成多个 arc。coarseParams 可省略，缺失参数不得猜测。`,
+  },
+  detect_contour_evidence: {
+    system: '你是二维 CAD 区域轮廓证据检测器。输入是完整视图的局部裁剪；只采集轮廓采样点并关联已有全局轮廓。裁剪边缘的碎片不是独立 CAD 图元。只输出 JSON。',
+    user: `只输出以下 JSON 契约：
+{"evidence":[{"id":"evidence_<viewId>_001","viewId":"<输入中的精确 viewId>","globalContourId":"<匹配到的全局轮廓 id>","imageBounds":[x,y,width,height],"samplePoints":[[x,y],[x,y]],"confidence":0.9,"touchesCropEdge":true}]}
+所有坐标相对当前裁剪图归一化到 0-1。samplePoints 沿实际可见轮廓取样。能匹配给出的全局轮廓时必须填写其精确 id；不能可靠匹配时省略 globalContourId，交由扩大视野复核。不要把被裁剪的圆、椭圆、长线或闭合轮廓声明为独立图元。`,
   },
   extract_annotations: {
     system: '你是工程图 OCR 与尺寸标注提取器。保留 R、Ø、°、± 和原始文本；不把尺寸绑定到几何。只输出 JSON。',
@@ -187,6 +196,31 @@ export class DrawingVisionTools {
     ));
     if (errors.length > 0) throw new DrawingVisionOutputError('detect_global_contours', errors);
     return structuredClone(contours as GlobalContour[]);
+  }
+
+  async detectContourEvidence(
+    input: DrawingVisionToolInput,
+    contours: Array<Pick<GlobalContour, 'id' | 'geometryFamily' | 'imageBounds'>>,
+  ): Promise<ContourEvidence[]> {
+    const boundedContours = contours.slice(0, 100).map((contour) => ({
+      id: contour.id,
+      geometryFamily: contour.geometryFamily,
+      imageBounds: contour.imageBounds,
+    }));
+    const output = asRecord(await this.call(
+      'detect_contour_evidence',
+      input,
+      `\n当前裁剪内可匹配的全局轮廓=${JSON.stringify(boundedContours)}`,
+    ));
+    const evidence = output?.evidence;
+    if (!Array.isArray(evidence)) {
+      throw new DrawingVisionOutputError('detect_contour_evidence', ['evidence 必须是数组']);
+    }
+    const errors = evidence.flatMap((item, index) => (
+      validateContourEvidence(item).errors.map((error) => `evidence[${index}]: ${error}`)
+    ));
+    if (errors.length > 0) throw new DrawingVisionOutputError('detect_contour_evidence', errors);
+    return structuredClone(evidence as ContourEvidence[]);
   }
 
   async extractAnnotations(input: DrawingVisionToolInput): Promise<AnnotationObservation[]> {
