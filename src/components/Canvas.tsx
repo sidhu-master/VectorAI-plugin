@@ -3,10 +3,11 @@
  * 坐标系：CAD 约定（Y 轴向上），通过 transform 翻转 SVG 的 Y 轴。
  * 支持：鼠标拖动平移、滚轮缩放、自动适配视图、Ctrl+多选、Ctrl+框选。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { DrawingRelation } from '@/drawing';
 import EntityRenderer from './canvas/EntityRenderer';
+import { gridPatternMetrics } from './canvas/grid-pattern';
 import { createCanvasPanSession } from './canvas/pan-interaction';
 import {
   aabbIntersects,
@@ -21,6 +22,63 @@ const MIN_SCALE = 0.1;
 const MAX_SCALE = 100_000;
 const FIT_PADDING = 1.3;
 const DRAG_THRESHOLD = 4; // 拖动判定阈值（像素）
+
+export function CadGridPattern({
+  visible,
+  transform,
+  minorPatternRef,
+  majorPatternRef,
+}: {
+  visible: boolean;
+  transform: { scale: number; offsetX: number; offsetY: number };
+  minorPatternRef?: Ref<SVGPatternElement>;
+  majorPatternRef?: Ref<SVGPatternElement>;
+}) {
+  if (!visible) return null;
+  const metrics = gridPatternMetrics(transform);
+  return (
+    <g data-cad-grid="true" pointerEvents="none">
+      <defs>
+        <pattern
+          ref={minorPatternRef}
+          id="cad-grid-minor"
+          data-grid-pattern="minor"
+          patternUnits="userSpaceOnUse"
+          x={metrics.minorX}
+          y={metrics.minorY}
+          width={metrics.minorSize}
+          height={metrics.minorSize}
+        >
+          <path
+            d={`M ${metrics.minorSize} 0 H 0 V ${metrics.minorSize}`}
+            fill="none"
+            stroke="rgba(148,163,184,0.025)"
+            strokeWidth={1}
+          />
+        </pattern>
+        <pattern
+          ref={majorPatternRef}
+          id="cad-grid-major"
+          data-grid-pattern="major"
+          patternUnits="userSpaceOnUse"
+          x={metrics.majorX}
+          y={metrics.majorY}
+          width={metrics.majorSize}
+          height={metrics.majorSize}
+        >
+          <path
+            d={`M ${metrics.majorSize} 0 H 0 V ${metrics.majorSize}`}
+            fill="none"
+            stroke="rgba(148,163,184,0.075)"
+            strokeWidth={1}
+          />
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#cad-grid-minor)" />
+      <rect width="100%" height="100%" fill="url(#cad-grid-major)" />
+    </g>
+  );
+}
 
 export function PerceptionPreviewLayer({
   entities,
@@ -79,6 +137,8 @@ export default function Canvas() {
   const svgRef = useRef<SVGSVGElement>(null);
   const worldGroupRef = useRef<SVGGElement>(null);
   const screenOverlayRef = useRef<SVGGElement>(null);
+  const minorGridPatternRef = useRef<SVGPatternElement>(null);
+  const majorGridPatternRef = useRef<SVGPatternElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
   // 交互状态
@@ -163,24 +223,6 @@ export default function Canvas() {
   const worldRight = w ? (w - offsetX) / scale : 0;
   const worldBottom = h ? (offsetY - h) / scale : 0;
   const worldTop = offsetY / scale;
-
-  // 网格
-  const minorLines: React.ReactElement[] = [];
-  const majorLines: React.ReactElement[] = [];
-  if (showGrid && w && h) {
-    const x0 = Math.floor(worldLeft / 10) * 10;
-    const x1 = Math.ceil(worldRight / 10) * 10;
-    const y0 = Math.floor(worldBottom / 10) * 10;
-    const y1 = Math.ceil(worldTop / 10) * 10;
-    for (let x = x0; x <= x1; x += 10) {
-      const arr = x % 50 === 0 ? majorLines : minorLines;
-      arr.push(<line key={`vx${x}`} x1={x} y1={worldBottom} x2={x} y2={worldTop} vectorEffect="non-scaling-stroke" />);
-    }
-    for (let y = y0; y <= y1; y += 10) {
-      const arr = y % 50 === 0 ? majorLines : minorLines;
-      arr.push(<line key={`hy${y}`} x1={worldLeft} y1={y} x2={worldRight} y2={y} vectorEffect="non-scaling-stroke" />);
-    }
-  }
 
   // 坐标轴标签
   const axisLabels: React.ReactElement[] = [];
@@ -313,6 +355,11 @@ export default function Canvas() {
             'transform',
             `translate(${preview.transform.offsetX}, ${preview.transform.offsetY}) scale(${preview.transform.scale}, ${-preview.transform.scale})`,
           );
+          const grid = gridPatternMetrics(preview.transform);
+          minorGridPatternRef.current?.setAttribute('x', String(grid.minorX));
+          minorGridPatternRef.current?.setAttribute('y', String(grid.minorY));
+          majorGridPatternRef.current?.setAttribute('x', String(grid.majorX));
+          majorGridPatternRef.current?.setAttribute('y', String(grid.majorY));
           screenOverlayRef.current?.setAttribute(
             'transform',
             `translate(${preview.deltaX}, ${preview.deltaY})`,
@@ -412,10 +459,14 @@ export default function Canvas() {
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseLeave}
       >
+        <CadGridPattern
+          visible={showGrid}
+          transform={canvasTransform}
+          minorPatternRef={minorGridPatternRef}
+          majorPatternRef={majorGridPatternRef}
+        />
         {/* 世界坐标组 */}
         <g ref={worldGroupRef} transform={`translate(${offsetX}, ${offsetY}) scale(${scale}, ${-scale})`}>
-          {showGrid && <g stroke="rgba(148,163,184,0.025)" strokeWidth={1}>{minorLines}</g>}
-          {showGrid && <g stroke="rgba(148,163,184,0.075)" strokeWidth={1}>{majorLines}</g>}
           <line x1={worldLeft} y1={0} x2={worldRight} y2={0} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           <line x1={0} y1={worldBottom} x2={0} y2={worldTop} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           {entities.map(renderEntity)}

@@ -2,7 +2,27 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import type { GeometryId } from '@/drawing';
-import { PerceptionPreviewLayer } from './Canvas';
+import { CadGridPattern, PerceptionPreviewLayer } from './Canvas';
+
+describe('Canvas infinite grid', () => {
+  it('renders viewport-covering patterns instead of finite world-space lines', () => {
+    const html = renderToStaticMarkup(
+      <svg>
+        <CadGridPattern
+          visible
+          transform={{ scale: 2, offsetX: 80, offsetY: 500 }}
+        />
+      </svg>,
+    );
+
+    expect(html).toContain('data-cad-grid="true"');
+    expect(html).toContain('width="100%"');
+    expect(html).toContain('height="100%"');
+    expect(html).toContain('data-grid-pattern="minor"');
+    expect(html).toContain('data-grid-pattern="major"');
+    expect(html).not.toContain('data-grid-line');
+  });
+});
 
 describe('Canvas progressive perception overlay', () => {
   it('renders provisional nodes and system labels in a non-interactive layer', () => {
