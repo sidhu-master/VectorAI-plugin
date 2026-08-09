@@ -3,11 +3,44 @@
  * Logo / AI 连接状态 / 缩放控制 / DXF 导出 / 清空
  */
 import { useEffect, useState } from 'react';
-import { DraftingCompass, Download, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  DraftingCompass,
+  Download,
+  Eye,
+  EyeOff,
+  Trash2,
+  Undo2,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 10;
+
+export function AnnotationVisibilityButton({
+  visible,
+  onToggle,
+}: {
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium transition ${
+        visible
+          ? 'border-fuchsia-300/20 bg-fuchsia-300/[0.07] text-fuchsia-200'
+          : 'border-white/[0.07] bg-white/[0.02] text-slate-500 hover:text-slate-200'
+      }`}
+      onClick={onToggle}
+      title={visible ? '隐藏全部标注' : '显示全部标注'}
+      aria-pressed={visible}
+    >
+      {visible ? <Eye size={13} /> : <EyeOff size={13} />}
+      标注
+    </button>
+  );
+}
 
 export default function TopToolbar() {
   const canvasTransform = useStore((s) => s.canvasTransform);
@@ -16,6 +49,8 @@ export default function TopToolbar() {
   const revertLatest = useStore((s) => s.revertLatest);
   const commits = useStore((s) => s.commits);
   const drawingBusy = useStore((s) => s.drawingBusy);
+  const showAnnotations = useStore((s) => s.showAnnotations);
+  const toggleAnnotations = useStore((s) => s.toggleAnnotations);
 
   const [connected, setConnected] = useState(false);
 
@@ -67,6 +102,8 @@ export default function TopToolbar() {
 
       {/* 右侧操作 */}
       <div className="flex min-w-[220px] items-center justify-end gap-2">
+        <AnnotationVisibilityButton visible={showAnnotations} onToggle={toggleAnnotations} />
+
         <div className="flex items-center rounded-lg border border-white/[0.07] bg-white/[0.025] p-0.5 text-slate-500">
           <button
             className="rounded-md p-1.5 transition hover:bg-white/[0.06] hover:text-slate-200"

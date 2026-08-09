@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import type { GeometryId } from '@/drawing';
+import type { AnnotationId, GeometryId } from '@/drawing';
 import { CadGridPattern, PerceptionPreviewLayer } from './Canvas';
+import { filterCanvasAnnotations } from './canvas/annotation-visibility';
 
 describe('Canvas infinite grid', () => {
   it('renders viewport-covering patterns instead of finite world-space lines', () => {
@@ -45,5 +46,23 @@ describe('Canvas progressive perception overlay', () => {
     expect(html).toContain('data-entity-id="node_preview"');
     expect(html).toContain('GEO-0001');
     expect(html).toContain('pointer-events="none"');
+  });
+});
+
+describe('Canvas annotation visibility', () => {
+  it('hides authoritative and provisional annotations without removing geometry', () => {
+    const entities = [{
+      id: 'geometry_1' as GeometryId,
+      type: 'line' as const, start: [0, 0] as const, end: [10, 0] as const, visible: true,
+      quality: { status: 'confirmed' as const, evidenceRefs: [] },
+    }, {
+      id: 'annotation_1' as AnnotationId,
+      type: 'text' as const, content: '10', position: [5, 2] as const, height: 2,
+      rotation: 0, alignment: 'center' as const, verticalAlignment: 'middle' as const,
+      visible: true, quality: { status: 'confirmed' as const, evidenceRefs: [] },
+    }];
+
+    expect(filterCanvasAnnotations(entities, false).map((entity) => entity.id)).toEqual(['geometry_1']);
+    expect(filterCanvasAnnotations(entities, true)).toEqual(entities);
   });
 });

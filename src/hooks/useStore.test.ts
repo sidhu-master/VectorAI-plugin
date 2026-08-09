@@ -22,6 +22,23 @@ const revision1 = 'revision_1' as RevisionId;
 const revision2 = 'revision_2' as RevisionId;
 
 describe('canonical drawing workspace store', () => {
+  it('toggles all canvas annotations as a view preference without changing Drawing IR', async () => {
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    const document = store.getState().document;
+
+    expect(store.getState().showAnnotations).toBe(true);
+    store.getState().toggleAnnotations();
+
+    expect(store.getState().showAnnotations).toBe(false);
+    expect(store.getState().document).toBe(document);
+    store.getState().toggleAnnotations();
+    expect(store.getState().showAnnotations).toBe(true);
+  });
+
   it('opens the locally remembered drawing on initialization', async () => {
     const storage = memoryStorage({ [ACTIVE_DRAWING_STORAGE_KEY]: drawingId });
     const client = drawingClientDouble();

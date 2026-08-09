@@ -7,7 +7,9 @@ const PRIMARY_STROKE = '#cbd5e1';
 const SELECTED_STROKE = '#6da9d2';
 const DANGER_STROKE = '#f87171';
 const CONSTRUCTION_STROKE = '#64748b';
-const DIMENSION_STROKE = '#94a3b8';
+const DIMENSION_STROKE = '#a9b3c1';
+const DIMENSION_TEXT = '#df78ca';
+const DIMENSION_CENTER = '#63c991';
 const PROVISIONAL_STROKE = '#7f9bad';
 const PROVISIONAL_OUTLINE_STROKE = '#7dd3fc';
 
@@ -76,6 +78,28 @@ function dimensionLabel(entity: Extract<DrawingRenderable, { type: 'dimension' }
   if (entity.displayText) return entity.displayText;
   const value = entity.observedValue ?? entity.computedValue;
   return `${entity.prefix ?? ''}${value === undefined ? '—' : value}${entity.unit ? ` ${entity.unit}` : ''}${entity.suffix ?? ''}`;
+}
+
+function arrowPoints(tip: Vec2, toward: Vec2, size: number): string {
+  const dx = toward[0] - tip[0];
+  const dy = toward[1] - tip[1];
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return `${tip[0]},${tip[1]}`;
+  const ux = dx / length;
+  const uy = dy / length;
+  const nx = -uy;
+  const ny = ux;
+  const base: Vec2 = [tip[0] + ux * size, tip[1] + uy * size];
+  const halfWidth = size * 0.36;
+  return [
+    tip,
+    [base[0] + nx * halfWidth, base[1] + ny * halfWidth] as Vec2,
+    [base[0] - nx * halfWidth, base[1] - ny * halfWidth] as Vec2,
+  ].map(([x, y]) => `${x},${y}`).join(' ');
+}
+
+function midpoint(first: Vec2, second: Vec2): Vec2 {
+  return [(first[0] + second[0]) / 2, (first[1] + second[1]) / 2];
 }
 
 export default function EntityRenderer({
@@ -202,15 +226,101 @@ export default function EntityRenderer({
       );
     }
     case 'dimension': {
-      const path = linePath(entity.definitionPoints);
+      const points = entity.definitionPoints;
+      const screenScale = Math.max(scale, 0.001);
+      const arrowSize = 7 / screenScale;
+      const centerSize = 5 / screenScale;
+      const dimensionStroke = lowConfidence ? DANGER_STROKE : selected ? SELECTED_STROKE : DIMENSION_STROKE;
+      const textStroke = lowConfidence ? DANGER_STROKE : DIMENSION_TEXT;
+      const centerStroke = lowConfidence ? DANGER_STROKE : DIMENSION_CENTER;
+      const dimensionLine = (first: Vec2, second: Vec2, role: string, dashed = false) => (
+        <line
+          data-dimension-role={role}
+          x1={first[0]}
+          y1={first[1]}
+          x2={second[0]}
+          y2={second[1]}
+          stroke={dimensionStroke}
+          strokeWidth={selected ? 1.8 : 1.15}
+          strokeDasharray={dashed ? '4 3' : undefined}
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+      );
+      const arrow = (tip: Vec2, toward: Vec2, key: string) => (
+        <polygon
+          key={key}
+          data-dimension-role="arrow"
+          points={arrowPoints(tip, toward, arrowSize)}
+          fill={dimensionStroke}
+          pointerEvents="none"
+        />
+      );
+      const centerMark = (centerPoint: Vec2) => (
+        <g data-dimension-role="center-mark" pointerEvents="none">
+          <line
+            x1={centerPoint[0] - centerSize} y1={centerPoint[1]}
+            x2={centerPoint[0] + centerSize} y2={centerPoint[1]}
+            stroke={centerStroke} strokeWidth={1.2} vectorEffect="non-scaling-stroke"
+          />
+          <line
+            x1={centerPoint[0]} y1={centerPoint[1] - centerSize}
+            x2={centerPoint[0]} y2={centerPoint[1] + centerSize}
+            stroke={centerStroke} strokeWidth={1.2} vectorEffect="non-scaling-stroke"
+          />
+        </g>
+      );
+      let graphics: React.ReactNode;
+      if ((entity.dimensionKind === 'linear' || entity.dimensionKind === 'aligned') && points.length >= 4) {
+        const [sourceStart, sourceEnd, measureStart, measureEnd] = points;
+        graphics = (
+          <>
+            {dimensionLine(sourceStart, measureStart, 'extension', true)}
+            {dimensionLine(sourceEnd, measureEnd, 'extension', true)}
+            {dimensionLine(measureStart, measureEnd, 'measure')}
+            {arrow(measureStart, measureEnd, 'start')}
+            {arrow(measureEnd, measureStart, 'end')}
+          </>
+        );
+      } else if (entity.dimensionKind === 'radius' && points.length >= 2) {
+        const centerPoint = points[0];
+        const edge = points[1];
+        const leaderEnd = points[2] ?? edge;
+        graphics = (
+          <>
+            {dimensionLine(centerPoint, leaderEnd, 'leader')}
+            {arrow(edge, centerPoint, 'radius')}
+            {centerMark(centerPoint)}
+          </>
+        );
+      } else if (points.length >= 2) {
+        const first = points[0];
+        const second = points[1];
+        graphics = (
+          <>
+            {dimensionLine(first, second, 'measure')}
+            {arrow(first, second, 'start')}
+            {arrow(second, first, 'end')}
+            {centerMark(midpoint(first, second))}
+          </>
+        );
+      } else {
+        const path = linePath(points);
+        graphics = path ? visiblePath(path) : null;
+      }
       return (
-        <g {...groupProps}>
-          {path && visiblePath(path)}
-          {entity.definitionPoints.map(([x, y], index) => (
-            <circle key={index} cx={x} cy={y} r={2.2 / Math.max(scale, 0.001)} fill={stroke} pointerEvents="none" />
-          ))}
+        <g {...groupProps} data-dimension-kind={entity.dimensionKind}>
+          {graphics}
           <g transform={`translate(${entity.textPosition[0]} ${entity.textPosition[1]}) scale(1 -1)`} pointerEvents="none">
-            <text x={0} y={-4} fill={stroke} fontSize={11 / Math.max(scale, 0.001)} textAnchor="middle" fontFamily="JetBrains Mono, monospace">
+            <rect
+              x={-dimensionLabel(entity).length * 3.2 / screenScale}
+              y={-10 / screenScale}
+              width={dimensionLabel(entity).length * 6.4 / screenScale}
+              height={13 / screenScale}
+              rx={2 / screenScale}
+              fill="rgba(8,10,13,0.88)"
+            />
+            <text x={0} y={0} fill={textStroke} fontSize={11 / screenScale} textAnchor="middle" fontFamily="JetBrains Mono, monospace">
               {dimensionLabel(entity)}
             </text>
           </g>

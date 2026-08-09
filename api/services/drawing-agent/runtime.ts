@@ -1403,6 +1403,7 @@ function feedbackStageProgress(stage: import('../drawing-feedback/loop-controlle
     case 'VECTORIZE_SOURCE': return ['tool_started', '正在提取图纸中心线'] as const;
     case 'DRAW_VECTOR_DRAFT': return ['tool_started', '正在逐条绘制矢量底稿'] as const;
     case 'PROMOTE_PRIMITIVE': return ['validation', '正在提升为规范图元'] as const;
+    case 'ANNOTATE_GEOMETRY': return ['tool_started', '正在逐条生成工程标注'] as const;
     case 'SELECT_TARGET': return ['model_started', '正在选择下一观察目标'] as const;
     case 'ACQUIRE_EVIDENCE': return ['tool_started', '正在提取局部证据'] as const;
     case 'PROPOSE_PATCH': return ['model_started', '正在生成局部修改'] as const;

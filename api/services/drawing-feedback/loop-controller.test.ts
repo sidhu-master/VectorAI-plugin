@@ -71,17 +71,24 @@ describe('DrawingFeedbackLoop', () => {
     }, undefined, async () => metricReport(1, 0, 0, true), vectorization);
 
     const outputs = await collect(loop.run(fixture.input));
-
     const proposalTypes = outputs
       .filter((output): output is Extract<DrawingFeedbackOutput, { kind: 'proposal' }> => (
         output.kind === 'proposal'
       ))
       .map((output) => output.nodes[0]?.type);
-    expect(proposalTypes).toEqual(['polyline', 'circle']);
-    expect(outputs.filter((output) => output.kind === 'commit')).toHaveLength(2);
+    expect(proposalTypes).toEqual([
+      'polyline', 'circle', 'dimension', 'dimension', 'dimension',
+    ]);
+    expect(outputs.filter((output) => output.kind === 'commit')).toHaveLength(5);
+    expect(outputs.filter((output) => output.kind === 'state').map((output) => output.stage))
+      .toContain('ANNOTATE_GEOMETRY');
     expect(modelDrawingTypes).toEqual([]);
-    expect((await fixture.application.open(fixture.input.drawingId)).document.geometry)
+    const completedDocument = (await fixture.application.open(fixture.input.drawingId)).document;
+    expect(completedDocument.geometry)
       .toEqual([expect.objectContaining({ type: 'circle', center: [250, 250], radius: 125 })]);
+    expect(completedDocument.annotations.map((annotation) => (
+      annotation.type === 'dimension' ? annotation.displayText : annotation.content
+    ))).toEqual(['250', '250', 'Ø250']);
     expect(outputs.at(-1)).toMatchObject({ kind: 'completed', unresolvedRequired: 0 });
   });
 
@@ -107,9 +114,10 @@ describe('DrawingFeedbackLoop', () => {
       ...fixture.input, checkpoint, shouldPause: () => pause,
     }));
 
-    expect(resumed.filter((output) => output.kind === 'commit')).toHaveLength(2);
-    expect((await fixture.application.open(fixture.input.drawingId)).document.geometry)
-      .toEqual([expect.objectContaining({ type: 'circle' })]);
+    expect(resumed.filter((output) => output.kind === 'commit')).toHaveLength(5);
+    const resumedDocument = (await fixture.application.open(fixture.input.drawingId)).document;
+    expect(resumedDocument.geometry).toEqual([expect.objectContaining({ type: 'circle' })]);
+    expect(resumedDocument.annotations).toHaveLength(3);
   });
 
   it('keeps a committed polyline when its analytic promotion fails Drawing validation', async () => {

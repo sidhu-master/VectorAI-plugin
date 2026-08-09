@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'rea
 import { useStore } from '@/hooks/useStore';
 import type { DrawingRelation } from '@/drawing';
 import EntityRenderer from './canvas/EntityRenderer';
+import { filterCanvasAnnotations } from './canvas/annotation-visibility';
 import { gridPatternMetrics } from './canvas/grid-pattern';
 import { createCanvasPanSession } from './canvas/pan-interaction';
 import {
@@ -116,6 +117,7 @@ export default function Canvas() {
   const selectedIds = useStore((s) => s.selectedIds);
   const showGrid = useStore((s) => s.showGrid);
   const showRelations = useStore((s) => s.showRelations);
+  const showAnnotations = useStore((s) => s.showAnnotations);
   const canvasTransform = useStore((s) => s.canvasTransform);
   const setCanvasTransform = useStore((s) => s.setCanvasTransform);
   const selectEntity = useStore((s) => s.selectEntity);
@@ -124,12 +126,12 @@ export default function Canvas() {
   const setMouseCoords = useStore((s) => s.setMouseCoords);
 
   const { scale, offsetX, offsetY } = canvasTransform;
-  const entities = useMemo<DrawingRenderable[]>(() => document
+  const entities = useMemo<DrawingRenderable[]>(() => filterCanvasAnnotations(document
     ? [...document.geometry, ...document.annotations]
-    : [], [document]);
+    : [], showAnnotations), [document, showAnnotations]);
   const previewEntities = useMemo<DrawingRenderable[]>(
-    () => Object.values(perceptionPreview.nodes),
-    [perceptionPreview.nodes],
+    () => filterCanvasAnnotations(Object.values(perceptionPreview.nodes), showAnnotations),
+    [perceptionPreview.nodes, showAnnotations],
   );
   const fittedEntities = useMemo(
     () => [...entities, ...previewEntities],

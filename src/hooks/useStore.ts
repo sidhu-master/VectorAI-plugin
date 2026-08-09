@@ -64,6 +64,7 @@ export interface AppState {
   canvasTransform: { scale: number; offsetX: number; offsetY: number };
   showGrid: boolean;
   showRelations: boolean;
+  showAnnotations: boolean;
   mouseCoords: { x: number; y: number } | null;
 
   taskPlan: DrawingAgentPlan | null;
@@ -84,6 +85,7 @@ export interface AppState {
   selectEntities: (ids: string[]) => void;
   clearSelection: () => void;
   setCanvasTransform: (transform: Partial<AppState['canvasTransform']>) => void;
+  toggleAnnotations: () => void;
   setMouseCoords: (coords: { x: number; y: number } | null) => void;
 
   submitAgentInput: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
@@ -160,6 +162,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       canvasTransform: { scale: 1, offsetX: 80, offsetY: 500 },
       showGrid: true,
       showRelations: true,
+      showAnnotations: true,
       mouseCoords: null,
 
       taskPlan: null,
@@ -320,6 +323,12 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       clearSelection: () => set({ selectedIds: [] }),
       setCanvasTransform: (transform) => set((state) => ({
         canvasTransform: { ...state.canvasTransform, ...transform },
+      })),
+      toggleAnnotations: () => set((state) => ({
+        showAnnotations: !state.showAnnotations,
+        selectedIds: state.showAnnotations
+          ? state.selectedIds.filter((id) => !state.document?.annotations.some((node) => node.id === id))
+          : state.selectedIds,
       })),
       setMouseCoords: (mouseCoords) => set({ mouseCoords }),
 

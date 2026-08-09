@@ -34,6 +34,10 @@ import { DrawingFeedbackProtocolError } from './model-adapter.js';
 import { projectFeedbackTransactionPreview } from './preview-projector.js';
 import { buildVectorizationSteps } from '../drawing-vectorization/build-steps.js';
 import type { CleanLineVectorizationService } from '../drawing-vectorization/service.js';
+import {
+  buildAutomaticAnnotationSteps,
+  withoutAutomaticAnnotations,
+} from '../drawing-annotation/build-steps.js';
 
 interface FeedbackApplication {
   open: DrawingApplication['open'];
@@ -119,6 +123,7 @@ export type FeedbackStage =
   | 'VECTORIZE_SOURCE'
   | 'DRAW_VECTOR_DRAFT'
   | 'PROMOTE_PRIMITIVE'
+  | 'ANNOTATE_GEOMETRY'
   | 'SELECT_TARGET'
   | 'ACQUIRE_EVIDENCE'
   | 'PROPOSE_PATCH'
@@ -192,7 +197,7 @@ export class DrawingFeedbackLoop {
     } else {
       const workspace = await this.#application.open(input.drawingId);
       revision = workspace.revision;
-      residual = await this.#compare(workspace.document, undefined, { sourceId: input.sourceId });
+      residual = await this.#compareSource(workspace.document, undefined, { sourceId: input.sourceId });
       unresolvedRequired = requiredResidualCount(residual);
       yield { kind: 'state', stage: 'OBSERVE', iteration };
       yield { kind: 'residual', report: structuredClone(residual), accepted: true };
@@ -219,7 +224,7 @@ export class DrawingFeedbackLoop {
         vectorizationCompletedStepIds = bootstrapped.completedStepIds;
         if (bootstrapped.terminal) return;
         const updated = await this.#application.open(input.drawingId);
-        residual = await this.#compare(updated.document, undefined, { sourceId: input.sourceId });
+        residual = await this.#compareSource(updated.document, undefined, { sourceId: input.sourceId });
         unresolvedRequired = requiredResidualCount(residual);
         yield { kind: 'residual', report: structuredClone(residual), accepted: true };
         const highCoverageAccepted = isHighCoverageVectorResult(residual);
@@ -240,9 +245,23 @@ export class DrawingFeedbackLoop {
             });
           }
           unresolvedRequired = 0;
+          const annotated = yield* this.#bootstrapAutomaticAnnotations({
+            input,
+            revision,
+            iteration,
+            recentReceipts,
+            requestedCrops,
+            controllerFeedback,
+            nonImprovingBySlot,
+            residual,
+            unresolvedRequired,
+            vectorizationCompletedStepIds,
+          });
+          revision = annotated.revision;
+          if (annotated.terminal) return;
           yield {
             kind: 'completed', revision, unresolvedRequired: 0,
-            summary: `已完成 ${vectorizationCompletedStepIds.length} 个可审计矢量化步骤`,
+            summary: `已完成 ${vectorizationCompletedStepIds.length} 个可审计矢量化步骤和 ${annotated.committedCount} 个自动标注`,
           };
           return;
         }
@@ -271,7 +290,7 @@ export class DrawingFeedbackLoop {
       if (summary.revision !== revision) {
         revision = summary.revision;
         const workspace = await this.#application.open(input.drawingId);
-        residual = await this.#compare(workspace.document, undefined, { sourceId: input.sourceId });
+        residual = await this.#compareSource(workspace.document, undefined, { sourceId: input.sourceId });
         unresolvedRequired = requiredResidualCount(residual);
       }
       const escalation = escalationReason(nonImprovingBySlot);
@@ -350,6 +369,20 @@ export class DrawingFeedbackLoop {
           };
           return;
         }
+        const annotated = yield* this.#bootstrapAutomaticAnnotations({
+          input,
+          revision,
+          iteration,
+          recentReceipts,
+          requestedCrops,
+          controllerFeedback,
+          nonImprovingBySlot,
+          residual,
+          unresolvedRequired,
+          vectorizationCompletedStepIds,
+        });
+        revision = annotated.revision;
+        if (annotated.terminal) return;
         yield { kind: 'completed', revision, unresolvedRequired: 0, summary: decision.summary };
         return;
       }
@@ -537,7 +570,7 @@ export class DrawingFeedbackLoop {
         revision = current.revision;
         continue;
       }
-      const localBaseline = await this.#compare(current.document, undefined, {
+      const localBaseline = await this.#compareSource(current.document, undefined, {
         sourceId: input.sourceId,
         region: verificationRegion,
       });
@@ -604,7 +637,7 @@ export class DrawingFeedbackLoop {
           labelsByNodeId: proposal.labelsByNodeId,
         };
       }
-      const compared = await this.#compare(
+      const compared = await this.#compareSource(
         preview.previewDocument,
         localBaseline.geometry,
         { sourceId: input.sourceId, region: verificationRegion },
@@ -612,7 +645,7 @@ export class DrawingFeedbackLoop {
       yield { kind: 'state', stage: 'COMPARE', iteration };
       const locallyAccepted = isLocallyVerified(localBaseline, compared);
       const globalPreview = locallyAccepted
-        ? await this.#compare(
+        ? await this.#compareSource(
           preview.previewDocument,
           residual.geometry,
           { sourceId: input.sourceId },
@@ -925,6 +958,179 @@ export class DrawingFeedbackLoop {
       };
     }
     return { revision, completedStepIds: [...completed], terminal: false };
+  }
+
+  async *#bootstrapAutomaticAnnotations(state: {
+    input: DrawingFeedbackRunInput;
+    revision: RevisionId;
+    iteration: number;
+    recentReceipts: unknown[];
+    requestedCrops: FeedbackDecisionInput['requestedCrops'];
+    controllerFeedback?: string;
+    nonImprovingBySlot: Record<string, number>;
+    residual: RegionResidualReport;
+    unresolvedRequired: number;
+    vectorizationCompletedStepIds: string[];
+  }): AsyncGenerator<DrawingFeedbackOutput, {
+    revision: RevisionId;
+    committedCount: number;
+    terminal: boolean;
+  }> {
+    let revision = state.revision;
+    let committedCount = 0;
+    const workspace = await this.#application.open(state.input.drawingId);
+    const steps = buildAutomaticAnnotationSteps({
+      drawingId: workspace.document.id,
+      geometry: workspace.document.geometry,
+      existingAnnotationIds: workspace.document.annotations.map((node) => node.id),
+    });
+    if (steps.length === 0) return { revision, committedCount, terminal: false };
+
+    yield { kind: 'state', stage: 'ANNOTATE_GEOMETRY', iteration: state.iteration };
+    yield {
+      kind: 'audit',
+      type: 'state',
+      payload: {
+        event: 'AUTOMATIC_ANNOTATION_INVENTORY',
+        annotationCount: steps.length,
+        geometryCount: workspace.document.geometry.length,
+      },
+    };
+    await this.#record('automatic_annotation_inventory', {
+      annotationCount: steps.length,
+      geometryCount: workspace.document.geometry.length,
+    });
+
+    for (const step of steps) {
+      if (state.input.signal.aborted) {
+        yield { kind: 'stopped', revision };
+        return { revision, committedCount, terminal: true };
+      }
+      if (state.input.shouldPause?.()) {
+        const checkpoint = makeCheckpoint({
+          input: state.input,
+          revision,
+          iteration: state.iteration,
+          recentReceipts: state.recentReceipts,
+          requestedCrops: state.requestedCrops,
+          controllerFeedback: state.controllerFeedback,
+          nonImprovingBySlot: state.nonImprovingBySlot,
+          residual: state.residual,
+          unresolvedRequired: state.unresolvedRequired,
+          vectorizationCompletedStepIds: state.vectorizationCompletedStepIds,
+        });
+        yield { kind: 'paused', checkpoint };
+        return { revision, committedCount, terminal: true };
+      }
+
+      const slotId = `annotation:${step.annotation.id}`;
+      const preview = await this.#drawingTools.invoke({
+        capability: 'preview_transaction',
+        caller: 'model',
+        toolCallId: `${step.id}:preview`,
+        context: toolContext(state.input, revision),
+        input: { commands: step.commands, postconditions: [] },
+      });
+      state.recentReceipts.push(preview.receipt);
+      state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
+      yield { kind: 'drawing_tool', execution: preview };
+      if (!preview.prepared || !preview.previewDocument) {
+        yield { kind: 'correction', action: 'reject', slotIds: [slotId] };
+        await this.#record('automatic_annotation_rejected', {
+          stepId: step.id,
+          annotationId: step.annotation.id,
+          status: preview.receipt.status,
+        });
+        continue;
+      }
+
+      const proposal = projectFeedbackTransactionPreview({
+        document: preview.previewDocument,
+        affectedNodeIds: preview.receipt.affectedNodeIds,
+        slotId,
+        confidence: step.annotation.quality.confidence ?? 1,
+        evidenceRefs: step.annotation.quality.evidenceRefs,
+      });
+      if (proposal.nodes.length > 0) {
+        yield {
+          kind: 'proposal',
+          slotId,
+          nodes: proposal.nodes,
+          labelsByNodeId: Object.fromEntries(proposal.nodes.map((node) => [node.id, step.label])),
+        };
+      }
+
+      const committed = await this.#drawingTools.invoke({
+        capability: 'commit_transaction',
+        caller: 'runtime',
+        toolCallId: `${step.id}:commit`,
+        context: toolContext(state.input, revision),
+        input: { previewHandle: preview.prepared.handle },
+      });
+      state.recentReceipts.push(committed.receipt);
+      state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
+      if (committed.receipt.status !== 'succeeded'
+        && committed.receipt.status !== 'already_satisfied') {
+        yield { kind: 'correction', action: 'reject', slotIds: [slotId] };
+        continue;
+      }
+
+      revision = committed.receipt.revisionAfter ?? revision;
+      committedCount += 1;
+      await this.#record('automatic_annotation_committed', {
+        stepId: step.id,
+        annotationId: step.annotation.id,
+        dimensionKind: step.annotation.dimensionKind,
+        displayText: step.annotation.displayText,
+        commitId: committed.commit?.id,
+        revision,
+      });
+      yield {
+        kind: 'audit',
+        type: 'validation',
+        payload: {
+          event: 'AUTOMATIC_ANNOTATION_COMMITTED',
+          stepId: step.id,
+          annotationId: step.annotation.id,
+          dimensionKind: step.annotation.dimensionKind,
+          displayText: step.annotation.displayText,
+          commitId: committed.commit?.id,
+          revision,
+        },
+      };
+      yield {
+        kind: 'commit',
+        commitId: committed.commit?.id,
+        revision,
+        slotIds: [slotId],
+        execution: committed,
+      };
+      yield { kind: 'correction', action: 'create', slotIds: [slotId] };
+      yield {
+        kind: 'checkpoint',
+        checkpoint: makeCheckpoint({
+          input: state.input,
+          revision,
+          iteration: state.iteration,
+          recentReceipts: state.recentReceipts,
+          requestedCrops: state.requestedCrops,
+          controllerFeedback: state.controllerFeedback,
+          nonImprovingBySlot: state.nonImprovingBySlot,
+          residual: state.residual,
+          unresolvedRequired: state.unresolvedRequired,
+          vectorizationCompletedStepIds: state.vectorizationCompletedStepIds,
+        }),
+      };
+    }
+    return { revision, committedCount, terminal: false };
+  }
+
+  async #compareSource(
+    document: DrawingDocument,
+    previous?: RegionResidualReport['geometry'],
+    context?: { sourceId: string; region?: SourcePixelRect },
+  ): Promise<RegionResidualReport> {
+    return this.#compare(withoutAutomaticAnnotations(document), previous, context);
   }
 
   async #record(type: string, payload: Record<string, unknown>): Promise<void> {

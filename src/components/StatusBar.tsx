@@ -7,9 +7,8 @@ export default function StatusBar() {
   const mouseCoords = useStore((s) => s.mouseCoords);
   const scale = useStore((s) => s.canvasTransform.scale);
   const unit = useStore((s) => s.document?.unitSystem.length ?? 'mm');
-  const entityCount = useStore((s) => (
-    (s.document?.geometry.length ?? 0) + (s.document?.annotations.length ?? 0)
-  ));
+  const geometryCount = useStore((s) => s.document?.geometry.length ?? 0);
+  const annotationCount = useStore((s) => s.document?.annotations.length ?? 0);
 
   const fmt = (n: number) => n.toFixed(2);
 
@@ -32,7 +31,8 @@ export default function StatusBar() {
           {Math.round(scale * 100)}%
         </span>
         <span className="border-l border-white/[0.07] pl-3 font-mono text-[9px] text-slate-600">
-          {entityCount} 个图元
+          {geometryCount} 个图元
+          {annotationCount > 0 ? ` · ${annotationCount} 个标注` : ''}
         </span>
       </div>
     </footer>

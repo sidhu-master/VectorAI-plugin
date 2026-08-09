@@ -104,4 +104,51 @@ describe('EntityRenderer', () => {
     expect(html).not.toContain('stroke="transparent"');
     expect(html).not.toContain('cursor-pointer');
   });
+
+  it('renders test1-style CAD dimensions with extension lines, arrows, accent text, and center marks', () => {
+    const linear: DrawingRenderable = {
+      ...common,
+      id: aid('dimension-linear'), type: 'dimension', dimensionKind: 'linear',
+      associationStatus: 'resolved', targets: [], computedValue: 10, displayText: '10',
+      definitionPoints: [[0, 0], [10, 0], [0, 4], [10, 4]], textPosition: [5, 5],
+    };
+    const diameter: DrawingRenderable = {
+      ...common,
+      id: aid('dimension-diameter'), type: 'dimension', dimensionKind: 'diameter',
+      associationStatus: 'resolved', targets: [], computedValue: 10, displayText: 'Ø10',
+      definitionPoints: [[0, 0], [10, 0]], textPosition: [5, 2],
+    };
+
+    const linearHtml = renderToStaticMarkup(
+      <svg><EntityRenderer entity={linear} scale={2} viewport={viewport} /></svg>,
+    );
+    const diameterHtml = renderToStaticMarkup(
+      <svg><EntityRenderer entity={diameter} scale={2} viewport={viewport} /></svg>,
+    );
+
+    expect(linearHtml).toContain('data-dimension-role="extension"');
+    expect(linearHtml).toContain('data-dimension-role="measure"');
+    expect(linearHtml).toContain('data-dimension-role="arrow"');
+    expect(linearHtml).toContain('fill="#df78ca"');
+    expect(diameterHtml).toContain('data-dimension-role="center-mark"');
+    expect(diameterHtml).toContain('stroke="#63c991"');
+  });
+
+  it('renders every part of a low-confidence dimension in the danger color', () => {
+    const lowConfidence: DrawingRenderable = {
+      ...common,
+      id: aid('dimension-low-confidence'), type: 'dimension', dimensionKind: 'diameter',
+      associationStatus: 'resolved', targets: [], computedValue: 10, displayText: 'Ø10',
+      definitionPoints: [[0, 0], [10, 0]], textPosition: [5, 2],
+      quality: { status: 'candidate', confidence: 0.4, evidenceRefs: [] },
+    };
+
+    const html = renderToStaticMarkup(
+      <svg><EntityRenderer entity={lowConfidence} scale={2} viewport={viewport} /></svg>,
+    );
+
+    expect(html).toContain('data-dimension-role="center-mark"');
+    expect(html).toContain('stroke="#f87171"');
+    expect(html).not.toContain('stroke="#63c991"');
+  });
 });
