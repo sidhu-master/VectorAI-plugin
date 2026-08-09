@@ -5,6 +5,7 @@ import type {
   PerceptionPreviewNode,
   RevisionId,
 } from '../../../src/drawing/index.js';
+import { parseDrawingToolCommands } from '../../../src/contracts/drawing-agent.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
 import {
   selectDrawingFeedbackModel,
@@ -30,10 +31,7 @@ import type {
   SlotLineageAction,
 } from './types.js';
 import { DrawingFeedbackProtocolError } from './model-adapter.js';
-import {
-  projectFeedbackCandidates,
-  type FeedbackSuggestedFit,
-} from './preview-projector.js';
+import { projectFeedbackTransactionPreview } from './preview-projector.js';
 
 interface FeedbackApplication {
   open: DrawingApplication['open'];
@@ -78,15 +76,24 @@ export interface DrawingFeedbackRunInput {
 
 export type DrawingFeedbackOutput =
   | { kind: 'state'; stage: FeedbackStage; iteration: number }
+  | { kind: 'decision'; decision: Record<string, unknown> }
+  | { kind: 'controller_feedback'; message: string }
+  | { kind: 'protocol_retry'; attempt: number; maxAttempts: number; message: string }
   | { kind: 'tool'; execution: CvToolExecution }
+  | { kind: 'drawing_tool'; execution: DrawingToolExecution }
   | {
-      kind: 'observation';
-      regionId: string;
+      kind: 'inventory';
+      regionId?: string;
       slotIds: string[];
+      candidateCount: number;
+    }
+  | {
+      kind: 'proposal';
+      slotId: string;
+      regionId?: string;
       nodes: PerceptionPreviewNode[];
       labelsByNodeId: Record<string, string>;
     }
-  | { kind: 'preview'; slotIds: string[]; affectedNodeIds: string[] }
   | { kind: 'residual'; report: RegionResidualReport; accepted: boolean }
   | {
       kind: 'commit';
@@ -212,7 +219,9 @@ export class DrawingFeedbackLoop {
         ...(controllerFeedback ? { protocolFeedback: controllerFeedback } : {}),
         recentReceipts: recentReceipts.slice(-8),
         regions: this.#regions.list(input.sourceId).slice(0, 32),
-        slots: this.#slots.list(input.sourceId).slice(0, 32),
+        slots: this.#slots.list(input.sourceId)
+          .filter((slot) => (nonImprovingBySlot[slot.id] ?? 0) < 3)
+          .slice(0, 32),
         drawingItems: summary.summary.items.slice(0, 100).map((item) => ({
           id: item.id,
           type: item.type,
@@ -222,20 +231,50 @@ export class DrawingFeedbackLoop {
         residual: structuredClone(residual),
         modelName: selectDrawingFeedbackModel(input.modelProfile, escalation),
         signal: input.signal,
-        deadlineAt: this.#now() + 120_000,
+        deadlineAt: this.#now() + 30_000,
       };
-      let decision: FeedbackAgentDecision;
-      try {
-        decision = await this.#model.decide(decisionInput);
-      } catch (error) {
-        if (!(error instanceof DrawingFeedbackProtocolError)) throw error;
-        decision = await this.#model.decide({
-          ...decisionInput,
-          protocolFeedback: `上次输出不符合协议：${error.message}。请只返回一种合法 JSON 决策，并使用完整 DrawingCommand 包装。`,
-        });
+      let decision: FeedbackAgentDecision | undefined;
+      let repairedDecisionInput = decisionInput;
+      const maxProtocolAttempts = 3;
+      for (let protocolAttempt = 1; protocolAttempt <= maxProtocolAttempts; protocolAttempt += 1) {
+        try {
+          decision = await this.#model.decide(repairedDecisionInput);
+          break;
+        } catch (error) {
+          if (!(error instanceof DrawingFeedbackProtocolError)) throw error;
+          await this.#record('protocol_error', {
+            attempt: protocolAttempt,
+            maxAttempts: maxProtocolAttempts,
+            path: error.path,
+            message: error.message,
+          });
+          if (protocolAttempt === maxProtocolAttempts) {
+            yield {
+              kind: 'failed',
+              code: 'FEEDBACK_MODEL_PROTOCOL_RETRIES_EXHAUSTED',
+              message: '模型连续三次未返回合法的单步决策',
+            };
+            return;
+          }
+          yield {
+            kind: 'protocol_retry',
+            attempt: protocolAttempt,
+            maxAttempts: maxProtocolAttempts,
+            message: error.message,
+          };
+          repairedDecisionInput = {
+            ...decisionInput,
+            modelName: input.modelProfile.repair,
+            deadlineAt: this.#now() + 30_000,
+            protocolFeedback: `上次输出不符合协议：${error.message}。请只返回一种合法 JSON 决策，并使用完整 DrawingCommand 包装。`,
+          };
+        }
       }
+      if (!decision) throw new Error('FEEDBACK_DECISION_MISSING');
       controllerFeedback = undefined;
-      await this.#record('decision', safeDecisionAudit(decision));
+      const decisionAudit = safeDecisionAudit(decision);
+      await this.#record('decision', decisionAudit);
+      yield { kind: 'decision', decision: structuredClone(decisionAudit) };
 
       if (decision.type === 'finish') {
         if (unresolvedRequired !== 0) {
@@ -265,6 +304,7 @@ export class DrawingFeedbackLoop {
           && !requestedCrops.some((crop) => crop.sourceId === input.sourceId
             && crop.regionId === requestedRegionId)) {
           controllerFeedback = `区域 ${requestedRegionId} 尚未经过视觉观察。请先对同一区域调用 inspect_source_crop，再决定是否调用 cv_extract_evidence。`;
+          yield { kind: 'controller_feedback', message: controllerFeedback };
           yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
             input, revision, iteration, recentReceipts, residual,
             unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
@@ -298,11 +338,11 @@ export class DrawingFeedbackLoop {
           };
           return;
         }
-        let observation: Extract<DrawingFeedbackOutput, { kind: 'observation' }> | undefined;
+        let inventory: Extract<DrawingFeedbackOutput, { kind: 'inventory' }> | undefined;
         if (decision.capability === 'cv_extract_evidence'
           && execution.receipt.status === 'succeeded') {
           const evidence = evidenceSummaries(execution.output);
-          const slotIdsByEvidence: Record<string, string> = {};
+          const slotIds: string[] = [];
           for (const item of evidence) {
             const slot = this.#slots.observe({
               sourceId: item.sourceId,
@@ -318,22 +358,15 @@ export class DrawingFeedbackLoop {
                 score: item.confidence,
               }],
             });
-            slotIdsByEvidence[item.handle] = slot.id;
+            slotIds.push(slot.id);
           }
-          const projected = projectFeedbackCandidates({
-            evidence,
-            suggestedFits: suggestedFits(execution.output),
-            slotIdsByEvidence,
-          });
           const regionId = execution.receipt.regionId ?? evidence[0]?.regionId;
-          if (regionId && projected.nodes.length > 0) {
-            observation = {
-              kind: 'observation', regionId,
-              slotIds: projected.nodes.map((node) => (
-                slotIdsByEvidence[node.quality.evidenceRefs[0] ?? '']
-              )).filter((slotId): slotId is string => Boolean(slotId)),
-              nodes: projected.nodes,
-              labelsByNodeId: projected.labelsByNodeId,
+          if (slotIds.length > 0) {
+            inventory = {
+              kind: 'inventory',
+              ...(regionId ? { regionId } : {}),
+              slotIds,
+              candidateCount: slotIds.length,
             };
           }
         }
@@ -344,14 +377,13 @@ export class DrawingFeedbackLoop {
         }
         await this.#record('cv_tool', { receipt: structuredClone(execution.receipt) });
         yield { kind: 'tool', execution };
-        if (observation) {
-          await this.#record('observation', {
-            regionId: observation.regionId,
-            slotIds: [...observation.slotIds],
-            nodeIds: observation.nodes.map((node) => node.id),
-            nodeTypes: observation.nodes.map((node) => node.type),
+        if (inventory) {
+          await this.#record('inventory', {
+            ...(inventory.regionId ? { regionId: inventory.regionId } : {}),
+            slotIds: [...inventory.slotIds],
+            candidateCount: inventory.candidateCount,
           });
-          yield observation;
+          yield inventory;
         }
         const nextCheckpoint = makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
@@ -361,13 +393,45 @@ export class DrawingFeedbackLoop {
         continue;
       }
 
+      if (decision.type === 'transact_fit') {
+        const materialized = materializeFitTransaction(
+          decision,
+          recentReceipts,
+          this.#slots.list(input.sourceId),
+        );
+        if ('message' in materialized) {
+          controllerFeedback = materialized.message;
+          await this.#record('controller_feedback', { message: controllerFeedback });
+          yield { kind: 'controller_feedback', message: controllerFeedback };
+          yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
+            input, revision, iteration, recentReceipts, residual,
+            unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+          }) };
+          continue;
+        }
+        decision = materialized.decision;
+      }
+
       const scopeFeedback = transactionScopeFeedback(
         input.sourceId,
         decision.slotIds,
         this.#slots.list(input.sourceId),
+        decision.commands,
+        nonImprovingBySlot,
       );
       if (scopeFeedback) {
-        controllerFeedback = scopeFeedback;
+        const newlyDeferred = incrementRejectedSlots(
+          decision.slotIds,
+          nonImprovingBySlot,
+        );
+        controllerFeedback = newlyDeferred.length > 0
+          ? `${scopeFeedback} 该槽位已暂缓，先继续处理其他对象，后续再重试。`
+          : scopeFeedback;
+        await this.#record('controller_feedback', { message: controllerFeedback });
+        yield { kind: 'controller_feedback', message: controllerFeedback };
+        for (const slotId of newlyDeferred) {
+          yield { kind: 'slot_paused', slotId, reason: 'non_improving' };
+        }
         yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
           unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
@@ -414,36 +478,88 @@ export class DrawingFeedbackLoop {
         input: { commands: decision.commands, postconditions: [] },
       });
       recentReceipts = [...recentReceipts, preview.receipt].slice(-8);
+      yield { kind: 'drawing_tool', execution: preview };
       if (!preview.prepared || !preview.previewDocument) {
         if (preview.receipt.status === 'stale') {
           const current = await this.#application.open(input.drawingId);
           revision = current.revision;
           continue;
         }
-        yield {
-          kind: 'failed', code: 'FEEDBACK_PREVIEW_REJECTED',
-          message: `预览失败: ${preview.receipt.status}`,
-        };
-        return;
+        const codes = preview.receipt.outcome.kind === 'error'
+          ? preview.receipt.outcome.codes
+          : [`PREVIEW_${preview.receipt.status.toUpperCase()}`];
+        controllerFeedback = `单对象事务预览被拒绝（${codes.join(', ')}）；请修正 DrawingCommand 后重试同一 slot，或选择下一条兼容证据。`;
+        const newlyDeferred = incrementRejectedSlots(
+          decision.slotIds,
+          nonImprovingBySlot,
+        );
+        if (newlyDeferred.length > 0) {
+          controllerFeedback += ' 该槽位已暂缓，先继续处理其他对象，后续再重试。';
+        }
+        await this.#record('controller_feedback', {
+          message: controllerFeedback,
+          receipt: structuredClone(preview.receipt),
+        });
+        yield { kind: 'controller_feedback', message: controllerFeedback };
+        yield { kind: 'correction', action: 'reject', slotIds: [...decision.slotIds] };
+        for (const slotId of newlyDeferred) {
+          yield { kind: 'slot_paused', slotId, reason: 'non_improving' };
+        }
+        yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
+          input, revision, iteration, recentReceipts, residual,
+          unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+        }) };
+        continue;
       }
       yield { kind: 'state', stage: 'PREVIEW_AND_RENDER', iteration };
-      yield {
-        kind: 'preview',
-        slotIds: [...decision.slotIds],
-        affectedNodeIds: [...preview.receipt.affectedNodeIds],
-      };
+      const selectedSlot = this.#slots.list(input.sourceId)
+        .find((slot) => slot.id === decision.slotIds[0]);
+      const proposal = projectFeedbackTransactionPreview({
+        document: preview.previewDocument,
+        affectedNodeIds: preview.receipt.affectedNodeIds,
+        slotId: decision.slotIds[0],
+        confidence: decision.confidence,
+        evidenceRefs: selectedSlot?.evidenceRefs ?? [],
+      });
+      if (proposal.nodes.length > 0) {
+        const regionId = this.#regions.list(input.sourceId).find((region) => (
+          region.targetSlotIds.includes(decision.slotIds[0])
+        ))?.id;
+        yield {
+          kind: 'proposal', slotId: decision.slotIds[0],
+          ...(regionId ? { regionId } : {}),
+          nodes: proposal.nodes,
+          labelsByNodeId: proposal.labelsByNodeId,
+        };
+      }
       const compared = await this.#compare(
         preview.previewDocument,
         localBaseline.geometry,
         { sourceId: input.sourceId, region: verificationRegion },
       );
       yield { kind: 'state', stage: 'COMPARE', iteration };
-      const accepted = isLocallyVerified(compared);
+      const locallyAccepted = isLocallyVerified(localBaseline, compared);
+      const globalPreview = locallyAccepted
+        ? await this.#compare(
+          preview.previewDocument,
+          residual.geometry,
+          { sourceId: input.sourceId },
+        )
+        : undefined;
+      const accepted = locallyAccepted
+        && globalPreview !== undefined
+        && isGloballyNonRegressive(residual, globalPreview);
       yield { kind: 'residual', report: structuredClone(compared), accepted };
       await this.#record('validation', {
-        slotIds: [...decision.slotIds], accepted,
-        geometry: structuredClone(compared.geometry),
-        residualRegionCount: compared.residualRegions.length,
+        slotIds: [...decision.slotIds], accepted, locallyAccepted,
+        local: {
+          geometry: structuredClone(compared.geometry),
+          residualRegionCount: compared.residualRegions.length,
+        },
+        ...(globalPreview ? { global: {
+          geometry: structuredClone(globalPreview.geometry),
+          requiredResidualCount: requiredResidualCount(globalPreview),
+        } } : {}),
       });
 
       if (!accepted) {
@@ -453,7 +569,6 @@ export class DrawingFeedbackLoop {
           nonImprovingBySlot[slotId] = (nonImprovingBySlot[slotId] ?? 0) + 1;
           if (nonImprovingBySlot[slotId] >= 3) {
             yield { kind: 'slot_paused', slotId, reason: 'non_improving' };
-            return;
           }
         }
         yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
@@ -486,11 +601,7 @@ export class DrawingFeedbackLoop {
         return;
       }
       revision = committed.receipt.revisionAfter;
-      residual = await this.#compare(
-        preview.previewDocument,
-        residual.geometry,
-        { sourceId: input.sourceId },
-      );
+      residual = globalPreview!;
       unresolvedRequired = requiredResidualCount(residual);
       const action = drawingAction(decision.commands);
       const changed = changedIds(decision.commands);
@@ -502,6 +613,11 @@ export class DrawingFeedbackLoop {
           addedDrawingEntityIds: changed.added,
         });
       }
+      reenableLargestDeferredSlot(
+        input.sourceId,
+        this.#slots.list(input.sourceId),
+        nonImprovingBySlot,
+      );
       await this.#record('commit', {
         commitId: committed.commit?.id,
         revision,
@@ -576,10 +692,27 @@ function requiredResidualCount(report: RegionResidualReport): number {
     + report.associationMismatches.length;
 }
 
-function isLocallyVerified(report: RegionResidualReport): boolean {
+function isLocallyVerified(
+  baseline: RegionResidualReport,
+  report: RegionResidualReport,
+): boolean {
+  const edgeGain = report.geometry.edgeF1 - baseline.geometry.edgeF1;
+  const fitGain = Number.isFinite(baseline.geometry.fitP95)
+    ? baseline.geometry.fitP95 - report.geometry.fitP95
+    : Number.isFinite(report.geometry.fitP95) ? Number.POSITIVE_INFINITY : 0;
   return report.topologyFailures.length === 0
     && report.associationMismatches.length === 0
-    && (report.improved || report.geometry.edgeF1 >= 0.995);
+    && (edgeGain >= 0.002 || fitGain >= 0.5);
+}
+
+function isGloballyNonRegressive(
+  baseline: RegionResidualReport,
+  report: RegionResidualReport,
+): boolean {
+  return requiredResidualCount(report) <= requiredResidualCount(baseline)
+    && report.geometry.edgeF1 >= baseline.geometry.edgeF1 - 0.001
+    && report.topologyFailures.length <= baseline.topologyFailures.length
+    && report.associationMismatches.length <= baseline.associationMismatches.length;
 }
 
 function escalationReason(
@@ -647,29 +780,74 @@ function transactionScopeFeedback(
   sourceId: string,
   selectedSlotIds: string[],
   slots: ReturnType<MemoryObservationSlotStore['list']>,
+  commands: DrawingCommand[],
+  nonImprovingBySlot: Record<string, number>,
 ): string | undefined {
+  if (selectedSlotIds.length !== 1) {
+    return '每次只能处理一个 slot；请为单个对象提出局部事务，验证完成后再处理下一个。';
+  }
   const selectedIds = new Set(selectedSlotIds);
   const selected = slots.filter((slot) => slot.sourceId === sourceId && selectedIds.has(slot.id));
   if (selected.length !== selectedIds.size) {
     return '事务引用了尚未建立证据的 slot；请先观察并提取对应区域。';
   }
+  const deferred = selected.find((slot) => (nonImprovingBySlot[slot.id] ?? 0) >= 3);
+  if (deferred) {
+    return `槽位 ${deferred.id} 已因重复无效提案暂缓；请先选择上下文中仍可处理的其他 slot。`;
+  }
   const partialClosed = selected.find((slot) => {
     const type = slot.candidateTypes[0]?.type;
-    return (type === 'circle' || type === 'ellipse' || type === 'polyline')
+    return (type === 'circle' || type === 'ellipse')
       && slot.evidence.length > 0
       && slot.evidence.every((evidence) => evidence.touchesRegionEdge);
   });
   if (partialClosed) {
     return `槽位 ${partialClosed.id} 的闭合图元证据全部触碰裁剪边缘；请扩大重叠区域看到完整对象后再提交。`;
   }
+  const createdTypes = commands.flatMap((command) => (
+    command.type === 'geometry.create' ? [command.value.type] : []
+  ));
+  const allowedTypes = new Set(selected.flatMap((slot) => (
+    slot.candidateTypes.map((candidate) => candidate.type)
+  )));
+  const incompatibleType = createdTypes.find((type) => !allowedTypes.has(type));
+  if (incompatibleType) {
+    return `事务图元类型 ${incompatibleType} 与 slot 证据候选 ${[...allowedTypes].join(', ')} 不兼容；请先获取支持该类型的证据，或按现有候选类型提案。`;
+  }
   const unresolved = slots.filter((slot) => slot.sourceId === sourceId
-    && slot.status !== 'committed' && slot.status !== 'rejected');
+    && slot.status !== 'committed' && slot.status !== 'rejected'
+    && (nonImprovingBySlot[slot.id] ?? 0) < 3);
   const largestArea = Math.max(0, ...unresolved.map(slotEvidenceArea));
   const selectedArea = Math.max(0, ...selected.map(slotEvidenceArea));
   if (largestArea > 0 && selectedArea < largestArea * 0.2) {
     return `当前仍有尺度显著更大的主体候选（最大证据面积 ${largestArea}）；请按从大到小先完成轮廓，再处理当前 ${selectedArea} 面积的细节。`;
   }
   return undefined;
+}
+
+function incrementRejectedSlots(
+  slotIds: string[],
+  nonImprovingBySlot: Record<string, number>,
+): string[] {
+  const newlyDeferred: string[] = [];
+  for (const slotId of slotIds) {
+    const previous = nonImprovingBySlot[slotId] ?? 0;
+    const next = previous + 1;
+    nonImprovingBySlot[slotId] = next;
+    if (previous < 3 && next >= 3) newlyDeferred.push(slotId);
+  }
+  return newlyDeferred;
+}
+
+function reenableLargestDeferredSlot(
+  sourceId: string,
+  slots: ReturnType<MemoryObservationSlotStore['list']>,
+  nonImprovingBySlot: Record<string, number>,
+): void {
+  const deferred = slots
+    .filter((slot) => slot.sourceId === sourceId && (nonImprovingBySlot[slot.id] ?? 0) >= 3)
+    .sort((left, right) => slotEvidenceArea(right) - slotEvidenceArea(left))[0];
+  if (deferred) nonImprovingBySlot[deferred.id] = 2;
 }
 
 function slotEvidenceArea(slot: ReturnType<MemoryObservationSlotStore['list']>[number]): number {
@@ -716,10 +894,85 @@ function safeDecisionAudit(decision: FeedbackAgentDecision): Record<string, unkn
       toolCallId: decision.toolCallId,
       slotIds: [...decision.slotIds],
       commandTypes: decision.commands.map((command) => command.type),
+      commands: structuredClone(decision.commands),
+      confidence: decision.confidence,
+    };
+  }
+  if (decision.type === 'transact_fit') {
+    return {
+      type: decision.type,
+      toolCallId: decision.toolCallId,
+      slotId: decision.slotId,
+      evidenceHandle: decision.evidenceHandle,
+      primitiveType: decision.primitiveType,
       confidence: decision.confidence,
     };
   }
   return { type: decision.type, summary: decision.summary };
+}
+
+function materializeFitTransaction(
+  decision: Extract<FeedbackAgentDecision, { type: 'transact_fit' }>,
+  recentReceipts: unknown[],
+  slots: ReturnType<MemoryObservationSlotStore['list']>,
+): { decision: Extract<FeedbackAgentDecision, { type: 'transact' }> } | { message: string } {
+  const slot = slots.find((candidate) => candidate.id === decision.slotId);
+  if (!slot || !slot.evidenceRefs.includes(decision.evidenceHandle)) {
+    return {
+      message: `槽位 ${decision.slotId} 未绑定证据 ${decision.evidenceHandle}；请使用该 slot 的 evidenceRefs。`,
+    };
+  }
+  const fit = [...recentReceipts].reverse().find((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const record = entry as Record<string, unknown>;
+    if (!record.receipt || typeof record.receipt !== 'object'
+      || !record.output || typeof record.output !== 'object') return false;
+    const receipt = record.receipt as Record<string, unknown>;
+    const output = record.output as Record<string, unknown>;
+    return receipt.capability === 'cv_fit_primitive'
+      && receipt.status === 'succeeded'
+      && Array.isArray(receipt.evidenceHandles)
+      && receipt.evidenceHandles.includes(decision.evidenceHandle)
+      && output.primitiveType === decision.primitiveType;
+  }) as Record<string, unknown> | undefined;
+  if (!fit) {
+    return {
+      message: `未找到证据 ${decision.evidenceHandle} 的 ${decision.primitiveType} 拟合回执；请先调用 cv_fit_primitive。`,
+    };
+  }
+  const output = fit.output as Record<string, unknown>;
+  const parameters = output.documentParameters;
+  if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
+    return { message: '拟合回执缺少可用的 documentParameters；请重新拟合该证据。' };
+  }
+  try {
+    const commands = parseDrawingToolCommands([{
+      type: 'geometry.create',
+      value: {
+        ...(parameters as Record<string, unknown>),
+        type: decision.primitiveType,
+        visible: true,
+        quality: {
+          status: 'candidate',
+          confidence: decision.confidence,
+          evidenceRefs: [decision.evidenceHandle],
+        },
+      },
+    }], 'decision.commands');
+    return {
+      decision: {
+        type: 'transact',
+        toolCallId: decision.toolCallId,
+        slotIds: [decision.slotId],
+        commands,
+        confidence: decision.confidence,
+      },
+    };
+  } catch (error) {
+    return {
+      message: `拟合参数无法组装为显式 ${decision.primitiveType} 图元：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 function evidenceSummaries(output: unknown): CvEvidenceSummary[] {
@@ -729,17 +982,6 @@ function evidenceSummaries(output: unknown): CvEvidenceSummary[] {
     Boolean(item && typeof item === 'object'
       && 'handle' in item && typeof item.handle === 'string'
       && 'sourceId' in item && typeof item.sourceId === 'string')
-  ));
-}
-
-function suggestedFits(output: unknown): FeedbackSuggestedFit[] {
-  if (!output || typeof output !== 'object' || !('suggestedFits' in output)
-    || !Array.isArray(output.suggestedFits)) return [];
-  return output.suggestedFits.filter((item): item is FeedbackSuggestedFit => (
-    Boolean(item && typeof item === 'object'
-      && 'evidenceHandle' in item && typeof item.evidenceHandle === 'string'
-      && 'primitiveType' in item && typeof item.primitiveType === 'string'
-      && 'documentParameters' in item)
   ));
 }
 

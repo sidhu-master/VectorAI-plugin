@@ -135,6 +135,36 @@ describe('DrawingCvToolRegistry', () => {
     expect(fit.receipt.evidenceHandles).toEqual([handle]);
   });
 
+  it('deterministically downsamples oversized evidence to the fit budget', async () => {
+    let fittedSamples: readonly (readonly [number, number])[] = [];
+    const registry = createRegistry({
+      sampleCount: 550,
+      onFitSamples: (samples) => { fittedSamples = samples; },
+    });
+    await registry.invoke(invocation('create_observation_region', {
+      sourceId: SOURCE.sourceId,
+      regionId: 'region_dense',
+      bounds: { x: 0, y: 0, width: 200, height: 120 },
+      purpose: 'geometry', targetSlotIds: [], resolutionLevel: 1, attempt: 1,
+    }));
+    const extracted = await registry.invoke(invocation('cv_extract_evidence', {
+      sourceId: SOURCE.sourceId,
+      regionId: 'region_dense',
+      budget: { ...BUDGET, maxSamplesPerResult: 500 },
+    }));
+    const fit = await registry.invoke(invocation('cv_fit_primitive', {
+      handle: extracted.receipt.evidenceHandles[0],
+      primitiveType: 'polyline',
+      budget: { ...BUDGET, maxSamplesPerResult: 500 },
+    }));
+
+    expect(fit.receipt.status).toBe('succeeded');
+    expect(fit.receipt.errorCodes).toEqual([]);
+    expect(fittedSamples).toHaveLength(500);
+    expect(fittedSamples[0]).toEqual([0, 0]);
+    expect(fittedSamples.at(-1)).toEqual([149, 2]);
+  });
+
   it('returns a bounded crop handle without exposing image bytes', async () => {
     const registry = createRegistry();
     await registry.invoke(invocation('create_observation_region', {
@@ -246,6 +276,8 @@ function invocation(capability: Parameters<DrawingCvToolRegistry['invoke']>[0]['
 function createRegistry(options: {
   evidenceKind?: CvEvidenceDraft['kind'];
   regions?: Map<string, CvObservationRegion>;
+  sampleCount?: number;
+  onFitSamples?: (samples: readonly (readonly [number, number])[]) => void;
 } = {}): DrawingCvToolRegistry {
   const regions = options.regions ?? new Map<string, CvObservationRegion>();
   const provider: DrawingCvProvider = {
@@ -262,18 +294,25 @@ function createRegistry(options: {
       bounds: { ...region, width: Math.min(region.width, 60), height: Math.min(region.height, 60) },
       confidence: 0.9,
       touchesRegionEdge: false,
-      samples: [[20, 40], [40, 20], [60, 40], [40, 60]],
+      samples: options.sampleCount === undefined
+        ? [[20, 40], [40, 20], [60, 40], [40, 60]]
+        : Array.from({ length: options.sampleCount }, (_, index) => (
+          [index % SOURCE.width, Math.floor(index / SOURCE.width)] as const
+        )),
     }],
-    fitPrimitive: async ({ primitiveType, samples }): Promise<CvPrimitiveFit> => ({
-      primitiveType,
-      parameters: { center: [40, 40], radius: 20 },
-      bounds: { x: 20, y: 20, width: 40, height: 40 },
-      sampleCount: samples.length,
-      fitErrorP50: 0,
-      fitErrorP95: 0,
-      fitErrorMax: 0,
-      outlierRatio: 0,
-    }),
+    fitPrimitive: async ({ primitiveType, samples }): Promise<CvPrimitiveFit> => {
+      options.onFitSamples?.(samples);
+      return {
+        primitiveType,
+        parameters: { center: [40, 40], radius: 20 },
+        bounds: { x: 20, y: 20, width: 40, height: 40 },
+        sampleCount: samples.length,
+        fitErrorP50: 0,
+        fitErrorP95: 0,
+        fitErrorMax: 0,
+        outlierRatio: 0,
+      };
+    },
     close: async () => undefined,
   };
   return new DrawingCvToolRegistry({

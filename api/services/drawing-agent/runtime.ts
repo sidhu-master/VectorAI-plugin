@@ -385,6 +385,36 @@ export class DrawingAgentRuntime {
           record.progress.publish(type, title);
           continue;
         }
+        if (output.kind === 'decision') {
+          this.#audit(record, 'decision', structuredClone(output.decision));
+          continue;
+        }
+        if (output.kind === 'controller_feedback') {
+          record.progress.publish(
+            'validation',
+            '正在调整下一步提案',
+            output.message,
+          );
+          this.#audit(record, 'validation', {
+            event: 'FEEDBACK_CONTROLLER_REJECTION',
+            message: output.message,
+          });
+          continue;
+        }
+        if (output.kind === 'protocol_retry') {
+          record.progress.publish(
+            'validation',
+            `正在修正模型输出格式（${output.attempt}/${output.maxAttempts}）`,
+            output.message,
+          );
+          this.#audit(record, 'decision', {
+            event: 'FEEDBACK_PROTOCOL_RETRY',
+            attempt: output.attempt,
+            maxAttempts: output.maxAttempts,
+            message: output.message,
+          });
+          continue;
+        }
         if (output.kind === 'tool') {
           record.progress.publish(
             output.execution.receipt.status === 'succeeded' ? 'tool_finished' : 'validation',
@@ -395,26 +425,36 @@ export class DrawingAgentRuntime {
           });
           continue;
         }
-        if (output.kind === 'observation') {
+        if (output.kind === 'drawing_tool') {
+          this.#recordTool(record, output.execution);
+          record.progress.publish(
+            output.execution.receipt.status === 'succeeded' ? 'validation' : 'tool_finished',
+            output.execution.receipt.status === 'succeeded'
+              ? '单对象事务预览已生成'
+              : '单对象事务预览需要修正',
+          );
+          continue;
+        }
+        if (output.kind === 'inventory') {
+          record.progress.publish('tool_finished', `已建立 ${output.candidateCount} 个候选槽位`);
+          continue;
+        }
+        if (output.kind === 'proposal') {
           this.#publishPerceptionDelta(record, {
             runId: record.state.runId,
             sequence: 0,
             action: 'observe',
-            slotIds: [...output.slotIds],
+            slotIds: [output.slotId],
             upserts: structuredClone(output.nodes),
             removeIds: [],
             labelsByNodeId: { ...output.labelsByNodeId },
             source: {
               page: record.source.page,
               viewId: 'page',
-              regionId: output.regionId,
+              ...(output.regionId ? { regionId: output.regionId } : {}),
               stage: 'outline',
             },
           }, 'primary');
-          continue;
-        }
-        if (output.kind === 'preview') {
-          record.progress.publish('validation', '局部修改已进入来源对照');
           continue;
         }
         if (output.kind === 'residual') {
@@ -457,10 +497,13 @@ export class DrawingAgentRuntime {
           return;
         }
         if (output.kind === 'slot_paused') {
-          const message = `槽位 ${output.slotId} 连续三次修正未改善`;
-          this.#transition(record, { type: 'FAILED', error: message });
-          this.#finish(record, 'failed', '局部区域未收敛');
-          return;
+          this.#audit(record, 'validation', {
+            event: 'FEEDBACK_SLOT_DEFERRED',
+            slotId: output.slotId,
+            reason: output.reason,
+          });
+          record.progress.publish('validation', '一个对象已暂缓，继续处理其他对象');
+          continue;
         }
         if (output.kind === 'completed') {
           this.#transition(record, { type: 'ANALYSIS_READY', summary: output.summary });

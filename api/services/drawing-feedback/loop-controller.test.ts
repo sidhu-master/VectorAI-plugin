@@ -90,25 +90,80 @@ describe('DrawingFeedbackLoop', () => {
     expect(resumed.at(-1)?.kind).not.toBe('paused');
   });
 
-  it('pauses one slot after three different non-improving corrections', async () => {
+  it('defers one slot after three different non-improving corrections', async () => {
     const fixture = await setup();
     const unchanged = (): FeedbackAgentDecision => ({
       type: 'transact', toolCallId: `noop_${Math.random()}`, slotIds: [fixture.slotId], confidence: 0.9,
       commands: [{
         type: 'geometry.create', value: {
-          type: 'point', visible: true,
-          quality: { status: 'candidate', evidenceRefs: [] }, x: 0, y: 0,
+          type: 'arc', visible: true,
+          quality: { status: 'candidate', evidenceRefs: [] },
+          center: [5, 5], radius: 1, startAngle: 0, endAngle: 10,
+          counterClockwise: true,
         },
       }],
     });
-    const loop = fixture.loopWith([unchanged(), unchanged(), unchanged()]);
+    const loop = fixture.loopWith([
+      unchanged(), unchanged(), unchanged(),
+      { type: 'finish', summary: '暂缓该槽位' },
+    ]);
 
     const outputs = await collect(loop.run(fixture.input));
 
     expect(outputs.filter((item) => item.kind === 'correction' && item.action === 'reject'))
       .toHaveLength(3);
-    expect(outputs.at(-1)).toMatchObject({ kind: 'slot_paused', slotId: fixture.slotId });
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'slot_paused', slotId: fixture.slotId,
+    }));
+    expect(outputs.at(-1)).toMatchObject({
+      kind: 'failed', code: 'FEEDBACK_REQUIRED_RESIDUALS_REMAIN',
+    });
     expect((await fixture.application.open(fixture.input.drawingId)).commits).toHaveLength(0);
+  });
+
+  it('defers a repeatedly incompatible dominant slot and continues with another object', async () => {
+    const fixture = await setup();
+    const dominant = fixture.slots.observe({
+      sourceId: 'source_test1',
+      evidence: {
+        handle: 'evidence_dominant_contour', kind: 'contour',
+        bounds: { x: 0, y: 0, width: 120, height: 120 }, confidence: 0.9,
+        touchesRegionEdge: false,
+      },
+      candidateTypes: [{ type: 'polyline', score: 0.9 }],
+    });
+    const wrongCircle = (index: number): FeedbackAgentDecision => ({
+      type: 'transact', toolCallId: `wrong_circle_${index}`,
+      slotIds: [dominant.id], confidence: 0.9,
+      commands: [{
+        type: 'geometry.create', value: {
+          type: 'circle', visible: true,
+          quality: { status: 'candidate', evidenceRefs: [] },
+          center: [60, 60], radius: 55,
+        },
+      }],
+    });
+    const visibleSlots: string[][] = [];
+    let calls = 0;
+    const loop = fixture.loopWith([], (modelInput) => {
+      calls += 1;
+      visibleSlots.push(modelInput.slots.map((slot) => slot.id));
+      if (calls <= 3) return wrongCircle(calls);
+      if (calls === 4) return arcDecision(fixture.slotId, 'draw_after_deferral');
+      return { type: 'finish', summary: '已继续处理下一对象' };
+    });
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'slot_paused', slotId: dominant.id,
+    }));
+    expect(visibleSlots[3]).not.toContain(dominant.id);
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'proposal', slotId: fixture.slotId,
+    }));
+    expect(outputs).toContainEqual(expect.objectContaining({ kind: 'commit' }));
+    expect(outputs.at(-1)).toMatchObject({ kind: 'completed' });
   });
 
   it('stops after three identical rejected CV calls instead of looping forever', async () => {
@@ -183,10 +238,11 @@ describe('DrawingFeedbackLoop', () => {
     });
   });
 
-  it('emits bounded provisional geometry immediately after extracting CV evidence', async () => {
+  it('keeps extracted CV candidates in Agent context without drawing them', async () => {
     const fixture = await setup();
     let call = 0;
-    const loop = fixture.loopWith([], () => {
+    let slotsAfterExtraction: FeedbackDecisionInput['slots'] = [];
+    const loop = fixture.loopWith([], (modelInput) => {
       call += 1;
       if (call === 1) {
         return {
@@ -204,7 +260,8 @@ describe('DrawingFeedbackLoop', () => {
           } },
         };
       }
-      return { type: 'finish', summary: '候选已显示' };
+      slotsAfterExtraction = structuredClone(modelInput.slots);
+      return { type: 'finish', summary: '候选已进入上下文' };
     }, {
       invoke: async (invocation): Promise<CvToolExecution> => {
         const receipt = {
@@ -237,10 +294,153 @@ describe('DrawingFeedbackLoop', () => {
 
     const outputs = await collect(loop.run(fixture.input));
 
-    expect(outputs.find((output) => output.kind === 'observation')).toMatchObject({
-      kind: 'observation', regionId: 'region_head', slotIds: [expect.any(String)],
-      nodes: [expect.objectContaining({ type: 'circle', center: [55, 65], radius: 35 })],
-      labelsByNodeId: expect.any(Object),
+    expect(outputs.filter((output) => output.kind === 'inventory')
+      .every((output) => !('nodes' in output))).toBe(true);
+    expect(outputs.find((output) => output.kind === 'inventory')).toMatchObject({
+      kind: 'inventory', regionId: 'region_head', candidateCount: 1,
+      slotIds: [expect.any(String)],
+    });
+    expect(slotsAfterExtraction).toContainEqual(expect.objectContaining({
+      sourceId: 'source_test1',
+      evidenceRefs: ['evidence_head'],
+      candidateTypes: [{ type: 'circle', score: 0.91 }],
+    }));
+  });
+
+  it('returns protocol feedback when one transaction tries to draw multiple slots', async () => {
+    const fixture = await setup();
+    const second = fixture.slots.observe({
+      sourceId: 'source_test1',
+      evidence: {
+        handle: 'evidence_second_arc', kind: 'arc-candidate',
+        bounds: { x: 30, y: 30, width: 60, height: 30 }, confidence: 0.8,
+        touchesRegionEdge: false,
+      },
+      candidateTypes: [{ type: 'arc', score: 0.8 }],
+    });
+    const feedback: string[] = [];
+    let calls = 0;
+    const loop = fixture.loopWith([], (modelInput) => {
+      calls += 1;
+      feedback.push(modelInput.protocolFeedback ?? '');
+      if (calls === 1) {
+        return {
+          type: 'transact', toolCallId: 'batch_two_slots',
+          slotIds: [fixture.slotId, second.id], confidence: 0.9,
+          commands: [{
+            type: 'geometry.create', value: {
+              type: 'arc', visible: true,
+              quality: { status: 'candidate', evidenceRefs: [] },
+              center: [60, 60], radius: 30, startAngle: 20, endAngle: 160,
+              counterClockwise: true,
+            },
+          }],
+        };
+      }
+      return { type: 'finish', summary: '等待逐个处理' };
+    });
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(feedback[1]).toContain('每次只能处理一个 slot');
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'decision', decision: expect.objectContaining({
+        type: 'transact', slotIds: [fixture.slotId, second.id],
+        commands: [expect.objectContaining({ type: 'geometry.create' })],
+      }),
+    }));
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'controller_feedback', message: expect.stringContaining('每次只能处理一个 slot'),
+    }));
+    expect((await fixture.application.open(fixture.input.drawingId)).commits).toHaveLength(0);
+  });
+
+  it('rejects a primitive type that is incompatible with its evidence slot', async () => {
+    const fixture = await setup();
+    const contour = fixture.slots.observe({
+      sourceId: 'source_test1',
+      evidence: {
+        handle: 'evidence_whole_contour', kind: 'contour',
+        bounds: { x: 5, y: 5, width: 110, height: 110 }, confidence: 0.8,
+        touchesRegionEdge: false,
+      },
+      candidateTypes: [{ type: 'polyline', score: 0.8 }],
+    });
+    const feedback: string[] = [];
+    let calls = 0;
+    const loop = fixture.loopWith([], (modelInput) => {
+      calls += 1;
+      feedback.push(modelInput.protocolFeedback ?? '');
+      if (calls === 1) {
+        return {
+          type: 'transact', toolCallId: 'force_contour_to_circle',
+          slotIds: [contour.id], confidence: 0.9,
+          commands: [{
+            type: 'geometry.create', value: {
+              type: 'circle', visible: true,
+              quality: { status: 'candidate', evidenceRefs: [] },
+              center: [60, 60], radius: 55,
+            },
+          }],
+        };
+      }
+      return { type: 'finish', summary: '等待兼容提案' };
+    });
+
+    await collect(loop.run(fixture.input));
+
+    expect(feedback[1]).toContain('polyline');
+    expect(feedback[1]).toContain('circle');
+    expect((await fixture.application.open(fixture.input.drawingId)).commits).toHaveLength(0);
+  });
+
+  it('feeds a rejected Drawing preview back to the model instead of failing the run', async () => {
+    const fixture = await setup();
+    const contour = fixture.slots.observe({
+      sourceId: 'source_test1',
+      evidence: {
+        handle: 'evidence_invalid_polyline', kind: 'contour',
+        bounds: { x: 0, y: 0, width: 120, height: 120 }, confidence: 0.9,
+        touchesRegionEdge: false,
+      },
+      candidateTypes: [{ type: 'polyline', score: 0.9 }],
+    });
+    const feedback: string[] = [];
+    let calls = 0;
+    const loop = fixture.loopWith([], (modelInput) => {
+      calls += 1;
+      feedback.push(modelInput.protocolFeedback ?? '');
+      if (calls === 1) {
+        return {
+          type: 'transact', toolCallId: 'invalid_polyline_preview',
+          slotIds: [contour.id], confidence: 0.8,
+          commands: [{
+            type: 'geometry.create', value: {
+              type: 'polyline', visible: true,
+              quality: { status: 'candidate', evidenceRefs: [] },
+              vertices: [], closed: false,
+            },
+          }],
+        };
+      }
+      return { type: 'finish', summary: '等待修复预览' };
+    });
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'drawing_tool',
+      execution: { receipt: expect.objectContaining({
+        capability: 'preview_transaction', status: 'rejected',
+        outcome: { kind: 'error', codes: ['INVALID_POLYLINE'] },
+      }) },
+    }));
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'correction', action: 'reject', slotIds: [contour.id],
+    }));
+    expect(feedback[1]).toContain('INVALID_POLYLINE');
+    expect(outputs.at(-1)).not.toMatchObject({
+      kind: 'failed', code: 'FEEDBACK_PREVIEW_REJECTED',
     });
   });
 
@@ -350,12 +550,96 @@ describe('DrawingFeedbackLoop', () => {
     expect((await fixture.application.open(fixture.input.drawingId)).commits).toHaveLength(0);
   });
 
+  it('allows an open polyline proposal to enter preview when its contour touches a crop edge', async () => {
+    const fixture = await setup();
+    const contour = fixture.slots.observe({
+      sourceId: 'source_test1',
+      evidence: {
+        handle: 'evidence_open_contour', kind: 'contour',
+        bounds: { x: 0, y: 0, width: 120, height: 120 }, confidence: 0.9,
+        touchesRegionEdge: true,
+      },
+      candidateTypes: [{ type: 'polyline', score: 0.9 }],
+    });
+    const loop = fixture.loopWith([{
+      type: 'transact', toolCallId: 'open_contour', slotIds: [contour.id], confidence: 0.9,
+      commands: [{
+        type: 'geometry.create', value: {
+          type: 'polyline', visible: true,
+          quality: { status: 'candidate', evidenceRefs: [] },
+          vertices: [{ point: [0, 0] }, { point: [60, 60] }, { point: [120, 0] }],
+          closed: false,
+        },
+      }],
+    }, { type: 'finish', summary: '开放轮廓已验证' }]);
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'proposal', slotId: contour.id,
+      nodes: [expect.objectContaining({ type: 'polyline', closed: false })],
+    }));
+  });
+
+  it('materializes one explicit Drawing object from a model-selected verified fit reference', async () => {
+    const fixture = await setup();
+    const fitDecision: FeedbackAgentDecision = {
+      type: 'call_tool', toolCallId: 'fit_arc', capability: 'cv_fit_primitive',
+      input: { handle: 'evidence_arc', primitiveType: 'arc', budget: {
+        maxPixels: 100_000, maxResults: 1, maxSamplesPerResult: 64, timeoutMs: 1_000,
+      } },
+    };
+    const loop = fixture.loopWith([
+      fitDecision,
+      {
+        type: 'transact_fit', toolCallId: 'apply_arc_fit',
+        slotId: fixture.slotId, evidenceHandle: 'evidence_arc',
+        primitiveType: 'arc', confidence: 0.96,
+      },
+      { type: 'finish', summary: '引用拟合后完成' },
+    ], undefined, {
+      invoke: async (invocation): Promise<CvToolExecution> => ({
+        receipt: {
+          schemaVersion: 1, toolCallId: invocation.toolCallId,
+          capability: invocation.capability, capabilityVersion: '1.0.0',
+          runId: invocation.runId, inputDigest: 'fit-input', outputDigest: 'fit-output',
+          sourceId: 'source_test1', slotIds: [], evidenceHandles: ['evidence_arc'],
+          durationMs: 1, status: 'succeeded', errorCodes: [], retry: { allowed: false },
+        },
+        output: {
+          primitiveType: 'arc', fitErrorP50: 0, fitErrorP95: 0, fitErrorMax: 0,
+          sampleCount: 64, sourceParameters: {},
+          documentParameters: {
+            center: [60, 60], radius: 30, startAngle: 20, endAngle: 160,
+            counterClockwise: true,
+          },
+        },
+      }),
+    });
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'decision', decision: expect.objectContaining({
+        type: 'transact_fit', slotId: fixture.slotId,
+      }),
+    }));
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'proposal', slotId: fixture.slotId,
+      nodes: [expect.objectContaining({ type: 'arc', center: [60, 60], radius: 30 })],
+    }));
+    expect(outputs).toContainEqual(expect.objectContaining({ kind: 'commit' }));
+    expect(outputs.at(-1)).toMatchObject({ kind: 'completed' });
+  });
+
   it('repairs one malformed model decision with explicit protocol feedback', async () => {
     const fixture = await setup();
     const received: string[] = [];
+    const receivedModels: string[] = [];
     let calls = 0;
     const loop = fixture.loopWith([], (input) => {
       calls += 1;
+      receivedModels.push(input.modelName);
       if (calls === 1) throw new DrawingFeedbackProtocolError(
         'decision.commands[0].type', '不支持的命令类型 circle',
       );
@@ -367,7 +651,55 @@ describe('DrawingFeedbackLoop', () => {
 
     expect(calls).toBe(2);
     expect(received[0]).toContain('完整 DrawingCommand 包装');
+    expect(receivedModels).toEqual([
+      'doubao-seed-2.0-lite',
+      'doubao-seed-2.1-turbo',
+    ]);
     expect(outputs.at(-1)).toMatchObject({ kind: 'failed', code: 'FEEDBACK_REQUIRED_RESIDUALS_REMAIN' });
+  });
+
+  it('keeps repairing two malformed model replies before accepting one local proposal', async () => {
+    const fixture = await setup();
+    const received: string[] = [];
+    let calls = 0;
+    const loop = fixture.loopWith([], (modelInput) => {
+      calls += 1;
+      received.push(modelInput.protocolFeedback ?? '');
+      if (calls <= 2) {
+        throw new DrawingFeedbackProtocolError(
+          'response.json', `malformed reply ${calls}`,
+        );
+      }
+      if (calls === 3) return arcDecision(fixture.slotId, 'repaired_arc');
+      return { type: 'finish', summary: '格式修复后完成' };
+    });
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs.filter((output) => output.kind === 'protocol_retry')).toEqual([
+      expect.objectContaining({ kind: 'protocol_retry', attempt: 1, maxAttempts: 3 }),
+      expect.objectContaining({ kind: 'protocol_retry', attempt: 2, maxAttempts: 3 }),
+    ]);
+    expect(received[1]).toContain('malformed reply 1');
+    expect(received[2]).toContain('malformed reply 2');
+    expect(outputs).toContainEqual(expect.objectContaining({ kind: 'commit' }));
+    expect(outputs.at(-1)).toMatchObject({ kind: 'completed', unresolvedRequired: 0 });
+  });
+
+  it('fails explicitly after three malformed model replies', async () => {
+    const fixture = await setup();
+    let calls = 0;
+    const loop = fixture.loopWith([], () => {
+      calls += 1;
+      throw new DrawingFeedbackProtocolError('response.json', `malformed reply ${calls}`);
+    });
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(calls).toBe(3);
+    expect(outputs.at(-1)).toMatchObject({
+      kind: 'failed', code: 'FEEDBACK_MODEL_PROTOCOL_RETRIES_EXHAUSTED',
+    });
   });
 
   it('verifies a transaction against the current drawing inside its padded slot bounds', async () => {
@@ -413,6 +745,20 @@ describe('DrawingFeedbackLoop', () => {
 
     const outputs = await collect(loop.run(fixture.input));
 
+    const proposalIndex = outputs.findIndex((output) => output.kind === 'proposal');
+    const acceptedResidualIndex = outputs.findIndex((output, index) => (
+      index > proposalIndex && output.kind === 'residual' && output.accepted
+    ));
+    const commitIndex = outputs.findIndex((output) => output.kind === 'commit');
+    expect(proposalIndex).toBeGreaterThan(-1);
+    expect(proposalIndex).toBeLessThan(acceptedResidualIndex);
+    expect(acceptedResidualIndex).toBeLessThan(commitIndex);
+    expect(outputs[proposalIndex]).toMatchObject({
+      kind: 'proposal', slotId: fixture.slotId,
+      nodes: [expect.objectContaining({
+        id: `feedback_preview_${fixture.slotId}`, type: 'arc',
+      })],
+    });
     const localRegions = comparedRegions.filter((region) => region !== undefined);
     expect(localRegions).toHaveLength(2);
     expect(localRegions[0]).toEqual(localRegions[1]);
@@ -423,7 +769,94 @@ describe('DrawingFeedbackLoop', () => {
     expect(comparedRegions.at(-1)).toBeUndefined();
     expect(outputs.at(-1)).toMatchObject({ kind: 'completed', unresolvedRequired: 0 });
   });
+
+  it('rejects an epsilon-only local metric change instead of committing noise', async () => {
+    const fixture = await setup();
+    let localCalls = 0;
+    const compare = async (
+      _document: Awaited<ReturnType<typeof fixture.application.open>>['document'],
+      _previous?: Parameters<typeof compareDrawingRegion>[0]['previousGeometry'],
+      context?: { sourceId: string; region?: { x: number; y: number; width: number; height: number } },
+    ) => {
+      if (!context?.region) return metricReport(0.4, 10, 1, false);
+      localCalls += 1;
+      return localCalls === 1
+        ? metricReport(0.5, 10, 1, false)
+        : metricReport(0.5000001, 9.9999999, 1, true);
+    };
+    const loop = fixture.loopWith([arcDecision(fixture.slotId, 'epsilon_arc'), {
+      type: 'finish', summary: '不应提交噪声',
+    }], undefined, undefined, compare);
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'correction', action: 'reject', slotIds: [fixture.slotId],
+    }));
+    expect((await fixture.application.open(fixture.input.drawingId)).commits).toHaveLength(0);
+  });
+
+  it('rejects a locally improved proposal when whole-drawing residuals regress', async () => {
+    const fixture = await setup();
+    let localCalls = 0;
+    let globalCalls = 0;
+    const compare = async (
+      _document: Awaited<ReturnType<typeof fixture.application.open>>['document'],
+      _previous?: Parameters<typeof compareDrawingRegion>[0]['previousGeometry'],
+      context?: { sourceId: string; region?: { x: number; y: number; width: number; height: number } },
+    ) => {
+      if (context?.region) {
+        localCalls += 1;
+        return localCalls === 1
+          ? metricReport(0.5, 8, 1, false)
+          : metricReport(0.7, 4, 0, true);
+      }
+      globalCalls += 1;
+      return globalCalls === 1
+        ? metricReport(0.4, 10, 1, false)
+        : metricReport(0.5, 8, 2, true);
+    };
+    const loop = fixture.loopWith([arcDecision(fixture.slotId, 'global_regression'), {
+      type: 'finish', summary: '不应提交整图退化',
+    }], undefined, undefined, compare);
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(globalCalls).toBe(2);
+    expect(outputs).toContainEqual(expect.objectContaining({
+      kind: 'correction', action: 'reject', slotIds: [fixture.slotId],
+    }));
+    expect((await fixture.application.open(fixture.input.drawingId)).commits).toHaveLength(0);
+  });
 });
+
+function arcDecision(slotId: string, toolCallId: string): FeedbackAgentDecision {
+  return {
+    type: 'transact', toolCallId, slotIds: [slotId], confidence: 0.9,
+    commands: [{
+      type: 'geometry.create', value: {
+        type: 'arc', visible: true,
+        quality: { status: 'candidate', evidenceRefs: [] },
+        center: [60, 60], radius: 30, startAngle: 20, endAngle: 160,
+        counterClockwise: true,
+      },
+    }],
+  };
+}
+
+function metricReport(edgeF1: number, fitP95: number, residualCount: number, improved: boolean) {
+  return {
+    geometry: {
+      edgePrecision: edgeF1, edgeRecall: edgeF1, edgeF1,
+      fitP50: fitP95 / 2, fitP95, fitMax: fitP95,
+    },
+    topologyFailures: [], associationMismatches: [],
+    residualRegions: Array.from({ length: residualCount }, (_, index) => ({
+      x: index * 10, y: 0, width: 5, height: 5,
+    })),
+    improved,
+  };
+}
 
 async function setup() {
   const idFactory = ids();
@@ -442,7 +875,7 @@ async function setup() {
       bounds: { x: 25, y: 25, width: 70, height: 40 }, confidence: 0.9,
       touchesRegionEdge: false,
     },
-    candidateTypes: [{ type: 'arc', score: 0.9 }],
+    candidateTypes: [{ type: 'arc', score: 0.9 }, { type: 'circle', score: 0.7 }],
   });
   const sourceDocument = structuredClone(workspace.document);
   sourceDocument.geometry = [{

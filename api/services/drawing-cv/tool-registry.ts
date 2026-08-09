@@ -265,10 +265,12 @@ export class DrawingCvToolRegistry {
         }
         case 'cv_fit_primitive': {
           const summary = await this.#evidenceStore.readSummary(parsed.handle);
-          if (summary.sampleCount > parsed.budget.maxSamplesPerResult) {
-            throw codedError('CV_BUDGET_EXCEEDED');
-          }
-          const samples = await readAllSamples(this.#evidenceStore, parsed.handle, summary.sampleCount);
+          const allSamples = await readAllSamples(
+            this.#evidenceStore, parsed.handle, summary.sampleCount,
+          );
+          const samples = evenlySample(
+            allSamples, parsed.budget.maxSamplesPerResult,
+          );
           const [fit, source] = await Promise.all([this.#provider.fitPrimitive({
             primitiveType: parsed.primitiveType,
             samples,
@@ -510,6 +512,17 @@ async function readAllSamples(
   }
   if (samples.length !== total) throw codedError('CV_EVIDENCE_INCOMPLETE');
   return samples;
+}
+
+function evenlySample(
+  samples: SourcePixelPoint[],
+  limit: number,
+): SourcePixelPoint[] {
+  if (samples.length <= limit) return samples;
+  if (limit === 1) return [samples[0]];
+  return Array.from({ length: limit }, (_, index) => (
+    samples[Math.floor(index * (samples.length - 1) / (limit - 1))]
+  ));
 }
 
 function assertRegionWithinSource(bounds: SourcePixelRect, source: CvSourceImage): void {

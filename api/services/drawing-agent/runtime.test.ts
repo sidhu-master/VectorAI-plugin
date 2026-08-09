@@ -150,18 +150,18 @@ describe('DrawingAgentRuntime', () => {
     expect(final.analysisSummary).toBe('来源反馈已收敛');
   });
 
-  it('streams feedback candidates and removes them when their local patch is committed', async () => {
+  it('streams one model proposal and removes it when its local patch is committed', async () => {
     const feedbackLoop = {
       async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
         yield { kind: 'state', stage: 'SELECT_TARGET', iteration: 1 };
         yield {
-          kind: 'observation', regionId: 'region_head', slotIds: ['slot_head'],
+          kind: 'proposal', regionId: 'region_head', slotId: 'slot_head',
           nodes: [{
             id: 'feedback_preview_slot_head' as GeometryId,
             type: 'circle', visible: true, center: [55, 65], radius: 35,
             quality: { status: 'candidate', confidence: 0.91, evidenceRefs: [] },
           }],
-          labelsByNodeId: { feedback_preview_slot_head: '轮廓 1' },
+          labelsByNodeId: { feedback_preview_slot_head: '模型提案 1' },
         };
         yield {
           kind: 'commit', revision: input.revision, slotIds: ['slot_head'],
@@ -209,6 +209,129 @@ describe('DrawingAgentRuntime', () => {
     }));
     expect(events.filter((event) => event.type === 'planning')).toEqual([]);
   });
+
+  it('surfaces feedback model protocol repair as visible task progress', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-protocol-retry-audit-'));
+    try {
+      const feedbackLoop = {
+        async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+          yield {
+            kind: 'protocol_retry', attempt: 1, maxAttempts: 3,
+            message: 'decision.commands[0]: polyline vertices invalid',
+          };
+          yield {
+            kind: 'completed', revision: input.revision,
+            unresolvedRequired: 0, summary: '已恢复',
+          };
+        },
+      };
+      const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
+      const { runtime, workspace } = await setup({ feedbackLoop, auditStore });
+      const handle = runtime.start({
+        ...startInput(workspace), goal: '', source: sourceReference(),
+      });
+      const events: import('./progress').AgentProgressEvent[] = [];
+      runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+      await handle.completion;
+      await runtime.flushAudit(handle.runId);
+
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'validation', title: '正在修正模型输出格式（1/3）',
+      }));
+      const audit = await auditStore.readRun(handle.runId);
+      expect(audit.events).toContainEqual(expect.objectContaining({
+        type: 'decision',
+        payload: expect.objectContaining({
+          event: 'FEEDBACK_PROTOCOL_RETRY',
+          message: 'decision.commands[0]: polyline vertices invalid',
+        }),
+      }));
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('audits feedback decisions and surfaces controller rejection reasons', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-feedback-decision-audit-'));
+    try {
+      const feedbackLoop = {
+        async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+          yield {
+            kind: 'decision',
+            decision: {
+              type: 'transact', toolCallId: 'one_slot',
+              slotIds: ['slot_1'], commandTypes: ['geometry.create'], confidence: 0.9,
+            },
+          };
+          yield {
+            kind: 'controller_feedback',
+            message: '事务图元类型 circle 与 slot 证据候选 polyline 不兼容',
+          };
+          yield {
+            kind: 'completed', revision: input.revision,
+            unresolvedRequired: 0, summary: '已恢复',
+          };
+        },
+      };
+      const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
+      const { runtime, workspace } = await setup({ feedbackLoop, auditStore });
+      const handle = runtime.start({
+        ...startInput(workspace), goal: '', source: sourceReference(),
+      });
+      const events: import('./progress').AgentProgressEvent[] = [];
+      runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+      await handle.completion;
+      await runtime.flushAudit(handle.runId);
+
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'validation',
+        title: '正在调整下一步提案',
+        detail: '事务图元类型 circle 与 slot 证据候选 polyline 不兼容',
+      }));
+      const audit = await auditStore.readRun(handle.runId);
+      expect(audit.events).toContainEqual(expect.objectContaining({
+        type: 'decision',
+        payload: expect.objectContaining({ type: 'transact', slotIds: ['slot_1'] }),
+      }));
+      expect(audit.events).toContainEqual(expect.objectContaining({
+        type: 'validation',
+        payload: expect.objectContaining({
+          event: 'FEEDBACK_CONTROLLER_REJECTION',
+          message: '事务图元类型 circle 与 slot 证据候选 polyline 不兼容',
+        }),
+      }));
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('continues the feedback run after one repeatedly invalid slot is deferred', async () => {
+    const feedbackLoop = {
+      async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+        yield { kind: 'slot_paused', slotId: 'slot_dominant', reason: 'non_improving' };
+        yield {
+          kind: 'completed', revision: input.revision,
+          unresolvedRequired: 0, summary: '已继续其他对象',
+        };
+      },
+    };
+    const { runtime, workspace } = await setup({ feedbackLoop });
+    const handle = runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    await handle.completion;
+
+    expect(runtime.getState(handle.runId)).toMatchObject({ status: 'completed' });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'validation', title: '一个对象已暂缓，继续处理其他对象',
+    }));
+  });
+
   it('forwards and audits a perception delta before the perception pass completes', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-progressive-audit-'));
     try {

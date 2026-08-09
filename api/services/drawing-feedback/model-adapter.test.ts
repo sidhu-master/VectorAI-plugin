@@ -37,6 +37,67 @@ describe('DrawingFeedbackModelAdapter', () => {
     }
   });
 
+  it('rejects a transaction that references more than one observation slot', async () => {
+    const adapter = new DrawingFeedbackModelAdapter(async () => JSON.stringify({
+      type: 'transact', toolCallId: 'batch_slots',
+      slotIds: ['slot_1', 'slot_2'], confidence: 0.9,
+      commands: [{
+        type: 'geometry.create', value: {
+          type: 'line', visible: true,
+          quality: { status: 'candidate', evidenceRefs: [] },
+          start: [0, 0], end: [10, 10],
+        },
+      }],
+    }));
+
+    await expect(adapter.decide(input())).rejects.toMatchObject({
+      name: 'DrawingFeedbackProtocolError',
+      path: 'decision.slotIds',
+    });
+  });
+
+  it('rejects a transaction that creates more than one Drawing object', async () => {
+    const adapter = new DrawingFeedbackModelAdapter(async () => JSON.stringify({
+      type: 'transact', toolCallId: 'batch_objects',
+      slotIds: ['slot_1'], confidence: 0.9,
+      commands: [
+        {
+          type: 'geometry.create', value: {
+            type: 'line', visible: true,
+            quality: { status: 'candidate', evidenceRefs: [] },
+            start: [0, 0], end: [10, 10],
+          },
+        },
+        {
+          type: 'geometry.create', value: {
+            type: 'circle', visible: true,
+            quality: { status: 'candidate', evidenceRefs: [] },
+            center: [20, 20], radius: 5,
+          },
+        },
+      ],
+    }));
+
+    await expect(adapter.decide(input())).rejects.toMatchObject({
+      name: 'DrawingFeedbackProtocolError',
+      path: 'decision.commands',
+    });
+  });
+
+  it('parses a compact one-slot transaction that references a verified CV fit', async () => {
+    const adapter = new DrawingFeedbackModelAdapter(async () => JSON.stringify({
+      type: 'transact_fit', toolCallId: 'apply_outer_fit',
+      slotId: 'slot_outer', evidenceHandle: 'evidence_outer',
+      primitiveType: 'polyline', confidence: 0.92,
+    }));
+
+    await expect(adapter.decide(input())).resolves.toEqual({
+      type: 'transact_fit', toolCallId: 'apply_outer_fit',
+      slotId: 'slot_outer', evidenceHandle: 'evidence_outer',
+      primitiveType: 'polyline', confidence: 0.92,
+    });
+  });
+
   it('bounds receipts, regions, slots, Drawing items and crop context', async () => {
     let received: Parameters<DrawingAgentCompletion>[0] | undefined;
     const complete = vi.fn<DrawingAgentCompletion>(async (request) => {
@@ -87,6 +148,8 @@ describe('DrawingFeedbackModelAdapter', () => {
     expect(received!.userPrompt).not.toContain('feedback-model');
     expect(received!.systemPrompt).toContain('suggestedFits');
     expect(received!.systemPrompt).toContain('无需再次调用 cv_fit_primitive');
+    expect(received!.systemPrompt).toContain('"vertices":[{"point":[x1,y1]}');
+    expect(received!.systemPrompt).toContain('禁止原样重复上一提案');
   });
 
   it('uses the requested crop for one multimodal decision without placing bytes in context', async () => {
@@ -120,6 +183,19 @@ describe('DrawingFeedbackModelAdapter', () => {
     expect(textComplete).not.toHaveBeenCalled();
     expect(visionRequest).toMatchObject({ image: Buffer.from('crop-png').toString('base64') });
     expect(visionRequest!.userPrompt).not.toContain(Buffer.from('crop-png').toString('base64'));
+  });
+
+  it('aborts a model decision at its deadline and returns repairable protocol feedback', async () => {
+    const adapter = new DrawingFeedbackModelAdapter(async (request) => new Promise<string>((_resolve, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+    }));
+    const expiring = input();
+    expiring.deadlineAt = Date.now() + 20;
+
+    await expect(adapter.decide(expiring)).rejects.toMatchObject({
+      name: 'DrawingFeedbackProtocolError',
+      path: 'decision.timeout',
+    });
   });
 });
 

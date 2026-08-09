@@ -94,6 +94,14 @@ export type FeedbackAgentDecision =
       commands: DrawingCommand[];
       confidence: number;
     }
+  | {
+      type: 'transact_fit';
+      toolCallId: string;
+      slotId: string;
+      evidenceHandle: string;
+      primitiveType: CvPrimitiveType;
+      confidence: number;
+    }
   | { type: 'finish'; summary: string };
 
 export interface FeedbackDecisionInput {
