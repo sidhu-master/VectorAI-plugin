@@ -65,3 +65,34 @@ export interface CvEvidenceStore {
   readSummary(handle: string): Promise<CvEvidenceSummary>;
   readSamples(handle: string, page: { offset: number; limit: number }): Promise<CvEvidencePage>;
 }
+
+export interface CvSourceImage {
+  sourceId: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+}
+
+export interface CvOverview {
+  width: number;
+  height: number;
+  componentCount: number;
+  foregroundBounds?: SourcePixelRect;
+}
+
+export interface DrawingCvProvider {
+  inspectOverview(input: {
+    source: CvSourceImage;
+    budget: CvToolBudget;
+    signal: AbortSignal;
+  }): Promise<CvOverview>;
+  extractEvidence(input: {
+    source: CvSourceImage;
+    regionId: string;
+    region: SourcePixelRect;
+    budget: CvToolBudget;
+    signal: AbortSignal;
+  }): Promise<CvEvidenceDraft[]>;
+  close(): Promise<void>;
+}
