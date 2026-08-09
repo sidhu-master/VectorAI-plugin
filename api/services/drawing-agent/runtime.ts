@@ -3,7 +3,10 @@ import {
   type AgentDecision,
   type DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
-import type { PerceptionPreviewDelta } from '../../../src/drawing/index.js';
+import type {
+  PerceptionPreviewDelta,
+  PerceptionPreviewNode,
+} from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
 import type {
   DrawingPerceptionInput,
@@ -100,6 +103,7 @@ interface RunRecord {
   perceptionIncompleteRegionCount: number;
   perceptionUnresolvedContourCount: number;
   perceptionPreviewIds: Set<string>;
+  perceptionPreviewNodes: Map<string, PerceptionPreviewNode>;
   perceptionPreviewSequence: number;
   feedbackCheckpoint: DrawingFeedbackCheckpoint | null;
 }
@@ -227,6 +231,7 @@ export class DrawingAgentRuntime {
       perceptionIncompleteRegionCount: 0,
       perceptionUnresolvedContourCount: 0,
       perceptionPreviewIds: new Set(),
+      perceptionPreviewNodes: new Map(),
       perceptionPreviewSequence: 0,
       feedbackCheckpoint: null,
     };
@@ -440,13 +445,16 @@ export class DrawingAgentRuntime {
           continue;
         }
         if (output.kind === 'proposal') {
+          const nextIds = new Set<string>(output.nodes.map((node) => node.id));
+          const removeIds = [...record.perceptionPreviewIds]
+            .filter((id) => id.startsWith('feedback_preview_') && !nextIds.has(id));
           this.#publishPerceptionDelta(record, {
             runId: record.state.runId,
             sequence: 0,
             action: 'observe',
             slotIds: [output.slotId],
             upserts: structuredClone(output.nodes),
-            removeIds: [],
+            removeIds,
             labelsByNodeId: { ...output.labelsByNodeId },
             source: {
               page: record.source.page,
@@ -473,7 +481,7 @@ export class DrawingAgentRuntime {
         }
         if (output.kind === 'correction') {
           if (output.action === 'reject') {
-            this.#removeFeedbackPreviews(record, output.slotIds, 'reject');
+            this.#markFeedbackPreviewsRejected(record, output.slotIds);
           }
           record.progress.publish('validation', feedbackCorrectionTitle(output.action));
           continue;
@@ -692,7 +700,11 @@ export class DrawingAgentRuntime {
       sequence: ++record.perceptionPreviewSequence,
     };
     for (const id of delta.removeIds) record.perceptionPreviewIds.delete(id);
-    for (const node of delta.upserts) record.perceptionPreviewIds.add(node.id);
+    for (const id of delta.removeIds) record.perceptionPreviewNodes.delete(id);
+    for (const node of delta.upserts) {
+      record.perceptionPreviewIds.add(node.id);
+      record.perceptionPreviewNodes.set(node.id, structuredClone(node));
+    }
     const count = delta.upserts.length || delta.removeIds.length;
     record.progress.publish(
       'perception_delta',
@@ -737,6 +749,35 @@ export class DrawingAgentRuntime {
       slotIds: [...slotIds],
       upserts: [],
       removeIds,
+      source: {
+        page: record.source?.page ?? 1,
+        viewId: 'page',
+        stage: 'reconciliation',
+      },
+    }, 'primary');
+  }
+
+  #markFeedbackPreviewsRejected(record: RunRecord, slotIds: string[]): void {
+    const upserts = slotIds
+      .map(feedbackPreviewNodeId)
+      .map((id) => record.perceptionPreviewNodes.get(id))
+      .filter((node): node is PerceptionPreviewNode => node !== undefined)
+      .map((node) => ({
+        ...structuredClone(node),
+        quality: {
+          ...structuredClone(node.quality),
+          status: 'candidate' as const,
+          confidence: Math.min(node.quality.confidence ?? 0.59, 0.59),
+        },
+      }));
+    if (upserts.length === 0) return;
+    this.#publishPerceptionDelta(record, {
+      runId: record.state.runId,
+      sequence: 0,
+      action: 'reject',
+      slotIds: [...slotIds],
+      upserts,
+      removeIds: [],
       source: {
         page: record.source?.page ?? 1,
         viewId: 'page',
@@ -1222,7 +1263,7 @@ export class DrawingAgentRuntime {
     if (record.resolved) return;
     this.#discardPrepared(record);
     this.#tools.discardRun(record.state.runId);
-    if (record.perceptionPreviewIds.size > 0) {
+    if (type !== 'failed' && record.perceptionPreviewIds.size > 0) {
       this.#publishPerceptionDelta(record, {
         runId: record.state.runId,
         sequence: 0,

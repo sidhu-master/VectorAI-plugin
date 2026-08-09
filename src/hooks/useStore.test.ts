@@ -313,6 +313,27 @@ describe('Drawing Agent workspace integration', () => {
       runId: null, lastSequence: 0, nodes: {}, labelsByNodeId: {},
     });
   });
+
+  it('retains the last rejected preview when a task fails until the user resets it', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
+    agent.emit(perceptionEvent(1, 4));
+    agent.emit({
+      id: 'event_failed', runId: 'run_1', type: 'failed', title: '未收敛',
+      timestamp: 2, elapsedMs: 1,
+    });
+
+    expect(store.getState().perceptionPreview.nodes).toHaveProperty('node_preview_1');
+
+    store.getState().resetAgent();
+    expect(store.getState().perceptionPreview.nodes).toEqual({});
+  });
   it('starts text work from drawing ID and revision without serializing the document', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({

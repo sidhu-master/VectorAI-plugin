@@ -210,6 +210,90 @@ describe('DrawingAgentRuntime', () => {
     expect(events.filter((event) => event.type === 'planning')).toEqual([]);
   });
 
+  it('keeps a rejected proposal visible in red through terminal failure', async () => {
+    const feedbackLoop = {
+      async *run(): AsyncIterable<DrawingFeedbackOutput> {
+        yield {
+          kind: 'proposal', slotId: 'slot_rejected',
+          nodes: [{
+            id: 'feedback_preview_slot_rejected' as GeometryId,
+            type: 'circle', visible: true, center: [50, 50], radius: 20,
+            quality: { status: 'candidate', confidence: 0.95, evidenceRefs: [] },
+          }],
+          labelsByNodeId: { feedback_preview_slot_rejected: '模型提案 1' },
+        };
+        yield { kind: 'correction', action: 'reject', slotIds: ['slot_rejected'] };
+        yield { kind: 'failed', code: 'NO_CONVERGENCE', message: '局部未收敛' };
+      },
+    };
+    const { runtime, workspace } = await setup({ feedbackLoop });
+    const handle = runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    await handle.completion;
+
+    const deltas = events
+      .filter((event) => event.type === 'perception_delta')
+      .map((event) => event.perceptionDelta);
+    expect(deltas).toEqual([
+      expect.objectContaining({
+        action: 'observe', removeIds: [],
+        upserts: [expect.objectContaining({
+          id: 'feedback_preview_slot_rejected',
+          quality: expect.objectContaining({ confidence: 0.95 }),
+        })],
+      }),
+      expect.objectContaining({
+        action: 'reject', removeIds: [],
+        upserts: [expect.objectContaining({
+          id: 'feedback_preview_slot_rejected',
+          quality: expect.objectContaining({ status: 'candidate', confidence: 0.59 }),
+        })],
+        source: expect.objectContaining({ stage: 'reconciliation' }),
+      }),
+    ]);
+  });
+
+  it('atomically replaces an older rejected preview when the next slot is proposed', async () => {
+    const proposal = (slotId: string, x: number): Extract<DrawingFeedbackOutput, { kind: 'proposal' }> => ({
+      kind: 'proposal', slotId,
+      nodes: [{
+        id: `feedback_preview_${slotId}` as GeometryId,
+        type: 'circle', visible: true, center: [x, 50], radius: 10,
+        quality: { status: 'candidate', confidence: 0.9, evidenceRefs: [] },
+      }],
+      labelsByNodeId: { [`feedback_preview_${slotId}`]: '模型提案 1' },
+    });
+    const feedbackLoop = {
+      async *run(): AsyncIterable<DrawingFeedbackOutput> {
+        yield proposal('slot_first', 20);
+        yield { kind: 'correction', action: 'reject', slotIds: ['slot_first'] };
+        yield proposal('slot_second', 80);
+        yield { kind: 'failed', code: 'STOP_AFTER_PREVIEW', message: '测试结束' };
+      },
+    };
+    const { runtime, workspace } = await setup({ feedbackLoop });
+    const handle = runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    await handle.completion;
+
+    const observeDeltas = events
+      .filter((event) => event.type === 'perception_delta'
+        && event.perceptionDelta?.action === 'observe')
+      .map((event) => event.perceptionDelta!);
+    expect(observeDeltas[1]).toMatchObject({
+      upserts: [expect.objectContaining({ id: 'feedback_preview_slot_second' })],
+      removeIds: ['feedback_preview_slot_first'],
+    });
+  });
+
   it('surfaces feedback model protocol repair as visible task progress', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-protocol-retry-audit-'));
     try {

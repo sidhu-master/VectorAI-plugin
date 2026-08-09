@@ -378,7 +378,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                   : [...current.agentEvents, event].slice(-100),
                 agentStatus: progressStatus(event.type, current.agentStatus),
                 agentError: event.type === 'failed' ? event.title : current.agentError,
-                perceptionPreview: ['stopped', 'completed', 'failed'].includes(event.type)
+                perceptionPreview: ['stopped', 'completed'].includes(event.type)
                   ? emptyPerceptionPreview(null)
                   : event.perceptionDelta
                     ? applyPerceptionPreviewDelta(
