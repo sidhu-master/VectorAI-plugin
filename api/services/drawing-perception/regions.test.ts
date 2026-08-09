@@ -71,6 +71,39 @@ describe('drawing perception regions', () => {
     });
   });
 
+  it('converts image-down points, vectors, and arc winding into CAD Y-up coordinates', () => {
+    const region = {
+      id: 'view_orientation_region_1', viewId: 'view_orientation',
+      pageBounds: [0.1, 0.2, 0.4, 0.4] as [number, number, number, number],
+    };
+
+    expect(stitchGeometryObservation({
+      id: 'point_top', viewId: region.id, type: 'point', imageBounds: [0.4, 0.2, 0.1, 0.1],
+      measuredParams: { x: 0.5, y: 0.25 }, confidence: 0.9,
+    }, region, 2)).toMatchObject({
+      measuredParams: { x: 0.3, y: 1.4 },
+    });
+    expect(stitchGeometryObservation({
+      id: 'vertical_axis', viewId: region.id, type: 'xline', imageBounds: [0.5, 0, 0.01, 1],
+      measuredParams: { origin: [0.5, 0.25], direction: [0, 1] }, confidence: 0.9,
+    }, region, 2)).toMatchObject({
+      measuredParams: { origin: [0.3, 1.4], direction: [0, -1] },
+    });
+    expect(stitchGeometryObservation({
+      id: 'upper_arc', viewId: region.id, type: 'arc', imageBounds: [0.2, 0.1, 0.4, 0.2],
+      measuredParams: {
+        center: [0.5, 0.25], radius: 0.2,
+        startAngle: 0, endAngle: 90, counterClockwise: true,
+      },
+      confidence: 0.9,
+    }, region, 2)).toMatchObject({
+      measuredParams: {
+        center: [0.3, 1.4], radius: 0.08,
+        startAngle: 0, endAngle: 270, counterClockwise: false,
+      },
+    });
+  });
+
   it('deduplicates overlapping crop detections but preserves distinct concentric circles', () => {
     const observations: GeometryObservation[] = [
       circle('region_1_circle', [0.4, 0.3, 0.2, 0.2], [0.5, 0.6], 0.1, 0.84),

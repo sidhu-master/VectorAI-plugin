@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { DrawingRelation } from '@/drawing';
 import EntityRenderer from './canvas/EntityRenderer';
+import { createCanvasPanSession } from './canvas/pan-interaction';
 import {
   aabbIntersects,
   entityBounds,
@@ -76,6 +77,8 @@ export default function Canvas() {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const worldGroupRef = useRef<SVGGElement>(null);
+  const screenOverlayRef = useRef<SVGGElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
   // 交互状态
@@ -85,6 +88,28 @@ export default function Canvas() {
   const [cursor, setCursor] = useState('grab');
   const userAdjustedViewRef = useRef(false);
   const previewRunRef = useRef<string | null>(null);
+  const panSessionRef = useRef<ReturnType<typeof createCanvasPanSession> | null>(null);
+
+  // 交互视口节流：拖动/缩放时用 requestAnimationFrame 合并高频更新，
+  // 每帧最多提交一次 setCanvasTransform，避免整块 SVG 逐事件重渲染导致闪烁。
+  const transformRef = useRef(canvasTransform);
+  transformRef.current = canvasTransform;
+  const pendingTransformRef = useRef(canvasTransform);
+  const rafRef = useRef<number | null>(null);
+  const scheduleTransform = useCallback((next: typeof canvasTransform) => {
+    transformRef.current = next;
+    pendingTransformRef.current = next;
+    if (rafRef.current == null) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        const pending = pendingTransformRef.current;
+        if (pending) setCanvasTransform(pending);
+      });
+    }
+  }, [setCanvasTransform]);
+  useEffect(() => () => {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+  }, []);
 
   // 框选状态
   const [selBox, setSelBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
@@ -184,10 +209,6 @@ export default function Canvas() {
         selectEntity(e.id, ev.ctrlKey || ev.metaKey);
       }
     };
-    const onMouseDown = (ev: React.MouseEvent<SVGGElement>) => {
-      hasMovedRef.current = false;
-      ev.stopPropagation();
-    };
     return (
       <EntityRenderer
         key={e.id}
@@ -196,7 +217,6 @@ export default function Canvas() {
         viewport={{ minX: worldLeft, minY: worldBottom, maxX: worldRight, maxY: worldTop }}
         selected={selectedIds.includes(e.id)}
         onSelect={onClick}
-        onPointerDown={onMouseDown}
       />
     );
   };
@@ -229,9 +249,14 @@ export default function Canvas() {
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
-    const ratio = next / scale;
-    setCanvasTransform({ scale: next, offsetX: px - (px - offsetX) * ratio, offsetY: py + (offsetY - py) * ratio });
+    const current = transformRef.current;
+    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, current.scale * factor));
+    const ratio = next / current.scale;
+    scheduleTransform({
+      scale: next,
+      offsetX: px - (px - current.offsetX) * ratio,
+      offsetY: py + (current.offsetY - py) * ratio,
+    });
   };
 
   // 鼠标按下：决定是拖动还是框选
@@ -253,6 +278,11 @@ export default function Canvas() {
     } else {
       // 普通拖动：平移模式
       isDraggingRef.current = true;
+      panSessionRef.current = createCanvasPanSession(
+        { x: e.clientX, y: e.clientY },
+        transformRef.current,
+        (transform) => setCanvasTransform(transform),
+      );
       setCursor('grabbing');
     }
   };
@@ -276,13 +306,24 @@ export default function Canvas() {
       } else if (isDraggingRef.current) {
         // 平移
         userAdjustedViewRef.current = true;
-        setCanvasTransform({ offsetX: dragStartRef.current.offsetX + dx, offsetY: dragStartRef.current.offsetY + dy });
+        const preview = panSessionRef.current?.preview({ x: e.clientX, y: e.clientY });
+        if (preview) {
+          transformRef.current = preview.transform;
+          worldGroupRef.current?.setAttribute(
+            'transform',
+            `translate(${preview.transform.offsetX}, ${preview.transform.offsetY}) scale(${preview.transform.scale}, ${-preview.transform.scale})`,
+          );
+          screenOverlayRef.current?.setAttribute(
+            'transform',
+            `translate(${preview.deltaX}, ${preview.deltaY})`,
+          );
+        }
       } else {
         // 悬停：更新坐标
         setMouseCoords(toWorld(sx, sy));
       }
     },
-    [setCanvasTransform, setMouseCoords, toWorld],
+    [setMouseCoords, toWorld],
   );
 
   const onMouseUp = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -325,6 +366,9 @@ export default function Canvas() {
 
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
+      panSessionRef.current?.finish();
+      panSessionRef.current = null;
+      screenOverlayRef.current?.removeAttribute('transform');
       setCursor('grab');
       // 如果没移动过，视为点击背景 -> 清空选择
       if (!hasMovedRef.current) {
@@ -334,6 +378,11 @@ export default function Canvas() {
   };
 
   const onMouseLeave = () => {
+    if (isDraggingRef.current) {
+      panSessionRef.current?.finish();
+      panSessionRef.current = null;
+      screenOverlayRef.current?.removeAttribute('transform');
+    }
     isDraggingRef.current = false;
     isSelectingRef.current = false;
     setCursor('grab');
@@ -364,7 +413,7 @@ export default function Canvas() {
         onMouseLeave={onMouseLeave}
       >
         {/* 世界坐标组 */}
-        <g transform={`translate(${offsetX}, ${offsetY}) scale(${scale}, ${-scale})`}>
+        <g ref={worldGroupRef} transform={`translate(${offsetX}, ${offsetY}) scale(${scale}, ${-scale})`}>
           {showGrid && <g stroke="rgba(148,163,184,0.025)" strokeWidth={1}>{minorLines}</g>}
           {showGrid && <g stroke="rgba(148,163,184,0.075)" strokeWidth={1}>{majorLines}</g>}
           <line x1={worldLeft} y1={0} x2={worldRight} y2={0} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
@@ -380,8 +429,10 @@ export default function Canvas() {
         </g>
 
         {/* 屏幕坐标叠加层 */}
-        <g>{axisLabels}</g>
-        <g>{relationLabels}</g>
+        <g ref={screenOverlayRef}>
+          <g>{axisLabels}</g>
+          <g>{relationLabels}</g>
+        </g>
 
         {/* 框选矩形 */}
         {selRect && selRect.w > 1 && selRect.h > 1 && (

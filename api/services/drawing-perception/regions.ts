@@ -215,10 +215,23 @@ function stitchGeometryParams(
           : {}),
       };
     case 'circle':
+      return {
+        ...transformPointFields(params, ['center'], bounds, pageRatio),
+        ...(isNumber(params.radius) ? { radius: round(params.radius * bounds[2]) } : {}),
+      };
     case 'arc':
       return {
         ...transformPointFields(params, ['center'], bounds, pageRatio),
         ...(isNumber(params.radius) ? { radius: round(params.radius * bounds[2]) } : {}),
+        ...(isNumber(params.startAngle)
+          ? { startAngle: transformCadAngle(params.startAngle, bounds, pageRatio) }
+          : {}),
+        ...(isNumber(params.endAngle)
+          ? { endAngle: transformCadAngle(params.endAngle, bounds, pageRatio) }
+          : {}),
+        ...(typeof params.counterClockwise === 'boolean'
+          ? { counterClockwise: !params.counterClockwise }
+          : {}),
       };
     case 'ellipse':
       return {
@@ -322,7 +335,7 @@ function transformCadPoint(
 ): Vec2 {
   return [
     round(page[0] + point[0] * page[2]),
-    round((page[1] + point[1] * page[3]) * pageRatio),
+    round((1 - page[1] - point[1] * page[3]) * pageRatio),
   ];
 }
 
@@ -331,7 +344,17 @@ function transformCadVector(
   page: NormalizedImageBounds,
   pageRatio: number,
 ): Vec2 {
-  return [round(vector[0] * page[2]), round(vector[1] * page[3] * pageRatio)];
+  return [round(vector[0] * page[2]), round(-vector[1] * page[3] * pageRatio)];
+}
+
+function transformCadAngle(
+  angle: number,
+  page: NormalizedImageBounds,
+  pageRatio: number,
+): number {
+  const radians = angle * Math.PI / 180;
+  const [x, y] = transformCadVector([Math.cos(radians), Math.sin(radians)], page, pageRatio);
+  return round(((Math.atan2(y, x) * 180 / Math.PI) % 360 + 360) % 360);
 }
 
 function normalize(vector: Vec2): Vec2 {

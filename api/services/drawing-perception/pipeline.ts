@@ -265,12 +265,7 @@ export class DrawingPerceptionPipeline {
             geometry,
             annotations,
             annotationTransforms: {
-              [emission.viewId]: {
-                scaleX: 1,
-                scaleY: page.heightToWidthRatio ?? 1,
-                offsetX: 0,
-                offsetY: 0,
-              },
+              [emission.viewId]: imageToCadTransform(page.heightToWidthRatio),
             },
           });
           if (preview.nodes.length === 0) return;
@@ -404,10 +399,7 @@ export class DrawingPerceptionPipeline {
         associations,
         topology,
         annotationTransforms: Object.fromEntries(views.map((view) => [view.id, {
-          scaleX: 1,
-          scaleY: page.heightToWidthRatio ?? 1,
-          offsetX: 0,
-          offsetY: 0,
+          ...imageToCadTransform(page.heightToWidthRatio),
         }])),
       });
       const { batches } = resolved;
@@ -1029,6 +1021,11 @@ function publicObservationLabel(
       : 'GEO';
   const match = observation.id.match(/(\d{4})$/);
   return `${prefix}-${match?.[1] ?? observation.id.slice(-4).toUpperCase()}`;
+}
+
+function imageToCadTransform(heightToWidthRatio: number | undefined) {
+  const ratio = heightToWidthRatio ?? 1;
+  return { scaleX: 1, scaleY: -ratio, offsetX: 0, offsetY: ratio };
 }
 
 class AsyncOutputQueue<T> implements AsyncIterableIterator<T> {

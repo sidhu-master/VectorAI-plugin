@@ -22,6 +22,43 @@ afterEach(async () => {
 });
 
 describe('DrawingPerceptionPipeline', () => {
+  it('projects annotation image coordinates into the same CAD Y-up frame as geometry', async () => {
+    const png = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+    png.writeUInt32BE(1000, 16);
+    png.writeUInt32BE(2000, 20);
+    const assets = new DrawingAssetCache({
+      preparer: { prepare: async () => ({ image: png.toString('base64'), mimeType: 'image/png' }) },
+      cropper: { crop: async () => ({ image: png.toString('base64'), mimeType: 'image/png' }) },
+    });
+    const vision: DrawingVisionToolset = {
+      analyzeSheet: async () => ({ warnings: [] }),
+      segmentViews: async () => [{
+        id: 'view_detail', kind: 'detail', imageBounds: [0, 0, 1, 1], confidence: 0.95,
+      }],
+      detectDatums: async () => [],
+      detectGeometry: async () => [],
+      extractAnnotations: async ({ viewId }) => [{
+        id: 'note_top', viewId: viewId!, kind: 'text', rawText: 'TOP',
+        imageBounds: [0.1, 0.2, 0.2, 0.2], arrowheads: [], confidence: 0.9,
+      }],
+    };
+
+    const outputs = await collect(new DrawingPerceptionPipeline({ assets, vision }).run({
+      runId: 'run_orientation', page: 1, image: png.toString('base64'), mimeType: 'image/png',
+      modelName: 'doubao-seed-2.0-lite', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 60_000,
+    }));
+    const annotationCommand = outputs.filter(isBatch)
+      .flatMap((output) => output.batch.commands)
+      .find((command) => command.type === 'annotation.create');
+
+    expect(annotationCommand).toMatchObject({
+      type: 'annotation.create',
+      value: { type: 'text', position: [0.2, 1.4] },
+    });
+  });
+
   it('emits a provisional drawing delta before a later view finishes', async () => {
     let releasePrimary!: () => void;
     let releaseDetail!: () => void;
