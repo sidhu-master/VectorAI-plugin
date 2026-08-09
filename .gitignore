@@ -28,3 +28,7 @@ dist-ssr
 
 # VectorAI local runtime artifacts
 .local/
+
+# Python-generated caches
+__pycache__/
+*.py[cod]
