@@ -94,7 +94,38 @@ describe('Agent task presentation', () => {
       events: [event('perception_delta', 9_000)],
     });
 
-    expect(presentation.details[0].title).toBe('正在绘制识别结果');
+    expect(presentation.details[0].title).toBe('底层事件 perception_delta');
+  });
+
+  it('derives feedback-loop stages from live evidence events when its workflow is dynamic', () => {
+    const dynamicPlan = { ...reconstructPlan, workflow: [] };
+    const perceiving = presentAgentTask({
+      plan: dynamicPlan, status: 'running', currentStepIndex: 0, commitCount: 0,
+      events: [event('tool_started', 4_000)],
+    });
+    const building = presentAgentTask({
+      plan: dynamicPlan, status: 'running', currentStepIndex: 0, commitCount: 0,
+      events: [event('perception_delta', 12_000)],
+    });
+
+    expect(perceiving.heading).toBe('正在解析图纸');
+    expect(building.heading).toBe('正在构建空间模型');
+  });
+
+  it('moves image-only tasks (no goal plan) through perception then construction', () => {
+    const perceiving = presentAgentTask({
+      plan: null, status: 'running', currentStepIndex: 0, commitCount: 0,
+      events: [event('perception_delta', 9_000)],
+    });
+    expect(perceiving.heading).toBe('正在解析图纸');
+    expect(perceiving.stages.find((stage) => stage.status === 'current')?.id).toBe('perceive');
+
+    const building = presentAgentTask({
+      plan: null, status: 'running', currentStepIndex: 0, commitCount: 3,
+      events: [event('perception_delta', 9_000), event('commit', 12_000)],
+    });
+    expect(building.stages.find((stage) => stage.status === 'current')?.id).toBe('build');
+    expect(building.heading).toBe('正在构建空间模型');
   });
 
   it('summarizes completed incremental work', () => {

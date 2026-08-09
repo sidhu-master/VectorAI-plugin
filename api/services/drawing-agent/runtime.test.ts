@@ -149,6 +149,66 @@ describe('DrawingAgentRuntime', () => {
     expect(perceptionCalls).toBe(0);
     expect(final.analysisSummary).toBe('来源反馈已收敛');
   });
+
+  it('streams feedback candidates and removes them when their local patch is committed', async () => {
+    const feedbackLoop = {
+      async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+        yield { kind: 'state', stage: 'SELECT_TARGET', iteration: 1 };
+        yield {
+          kind: 'observation', regionId: 'region_head', slotIds: ['slot_head'],
+          nodes: [{
+            id: 'feedback_preview_slot_head' as GeometryId,
+            type: 'circle', visible: true, center: [55, 65], radius: 35,
+            quality: { status: 'candidate', confidence: 0.91, evidenceRefs: [] },
+          }],
+          labelsByNodeId: { feedback_preview_slot_head: '轮廓 1' },
+        };
+        yield {
+          kind: 'commit', revision: input.revision, slotIds: ['slot_head'],
+          execution: {
+            receipt: {
+              toolCallId: 'commit_head', capability: 'commit_transaction', version: '1.0.0',
+              access: 'write', revisionBefore: input.revision,
+              revisionAfter: input.revision, inputDigest: 'in',
+              affectedNodeIds: [], status: 'already_satisfied',
+              outcome: { kind: 'commit', committed: false },
+              durationMs: 1, retry: { allowed: false },
+            },
+          },
+        };
+        yield {
+          kind: 'completed', revision: input.revision,
+          unresolvedRequired: 0, summary: '来源反馈已收敛',
+        };
+      },
+    };
+    const { runtime, workspace } = await setup({ feedbackLoop });
+    const handle = runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    await handle.completion;
+
+    const deltas = events
+      .filter((event) => event.type === 'perception_delta')
+      .map((event) => event.perceptionDelta);
+    expect(deltas).toEqual([
+      expect.objectContaining({
+        action: 'observe', slotIds: ['slot_head'],
+        upserts: [expect.objectContaining({ id: 'feedback_preview_slot_head' })],
+      }),
+      expect.objectContaining({
+        action: 'promote', slotIds: ['slot_head'],
+        removeIds: ['feedback_preview_slot_head'],
+      }),
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'model_started', title: '正在选择下一观察目标',
+    }));
+    expect(events.filter((event) => event.type === 'planning')).toEqual([]);
+  });
   it('forwards and audits a perception delta before the perception pass completes', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-progressive-audit-'));
     try {

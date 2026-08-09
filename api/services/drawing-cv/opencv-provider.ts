@@ -100,25 +100,35 @@ export class OpenCvWorkerProvider implements DrawingCvProvider {
   }): Promise<CvEvidenceDraft[]> {
     assertSource(input.source);
     assertRegion(input.region, input.source);
-    assertPixelBudget(input.region.width, input.region.height, input.budget.maxPixels);
-    const decoded = await decode(input.source, input.region);
+    assertPixelBudget(input.budget.maxPixels);
+    const decoded = await decodeRegion(input.source, input.region, input.budget.maxPixels);
     const value = await this.#invoke({
       id: randomUUID(),
       operation: 'extract',
       rgba: decoded.rgba,
       width: decoded.width,
       height: decoded.height,
-      origin: [input.region.x, input.region.y],
+      origin: [0, 0],
       budget: input.budget,
     }, input.signal) as CvWorkerEvidence[];
+    const scaleX = input.region.width / decoded.width;
+    const scaleY = input.region.height / decoded.height;
     return value.map((item) => ({
       sourceId: input.source.sourceId,
       regionId: input.regionId,
       kind: item.kind,
-      bounds: { ...item.bounds },
+      bounds: {
+        x: input.region.x + item.bounds.x * scaleX,
+        y: input.region.y + item.bounds.y * scaleY,
+        width: item.bounds.width * scaleX,
+        height: item.bounds.height * scaleY,
+      },
       confidence: item.confidence,
       touchesRegionEdge: item.touchesRegionEdge,
-      samples: item.samples.map((point) => [...point] as SourcePixelPoint),
+      samples: item.samples.map((point) => [
+        input.region.x + point[0] * scaleX,
+        input.region.y + point[1] * scaleY,
+      ] as SourcePixelPoint),
     }));
   }
 
@@ -222,17 +232,27 @@ async function waitForReady(worker: Worker): Promise<void> {
   });
 }
 
-async function decode(source: CvSourceImage, region?: SourcePixelRect) {
-  let operation = sharp(source.bytes).ensureAlpha();
-  if (region) {
-    operation = operation.extract({
-      left: region.x,
-      top: region.y,
-      width: region.width,
-      height: region.height,
-    });
+async function decodeRegion(
+  source: CvSourceImage,
+  region: SourcePixelRect,
+  maxPixels: number,
+) {
+  const factor = Math.min(1, Math.sqrt(maxPixels / (region.width * region.height)));
+  const width = Math.max(1, Math.floor(region.width * factor));
+  const height = Math.max(1, Math.floor(region.height * factor));
+  let operation = sharp(source.bytes).extract({
+    left: region.x,
+    top: region.y,
+    width: region.width,
+    height: region.height,
+  });
+  if (width !== region.width || height !== region.height) {
+    operation = operation.resize(width, height, { fit: 'fill' });
   }
-  const { data, info } = await operation.raw().toBuffer({ resolveWithObject: true });
+  const { data, info } = await operation
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   const copy = Uint8Array.from(data);
   return { rgba: copy.buffer, width: info.width, height: info.height };
 }
@@ -266,8 +286,8 @@ function assertRegion(region: SourcePixelRect, source: CvSourceImage): void {
   }
 }
 
-function assertPixelBudget(width: number, height: number, maxPixels: number): void {
-  if (!Number.isInteger(maxPixels) || maxPixels < 1 || width * height > maxPixels) {
+function assertPixelBudget(maxPixels: number): void {
+  if (!Number.isInteger(maxPixels) || maxPixels < 1) {
     throw new DrawingCvError('CV_BUDGET_EXCEEDED');
   }
 }

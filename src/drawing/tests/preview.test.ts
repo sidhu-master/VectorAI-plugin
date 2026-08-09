@@ -67,6 +67,30 @@ describe('perception preview reducer', () => {
     expect(removed.labelsByNodeId).toEqual({});
   });
 
+  it('tracks the perception stage of each preview node for layered rendering', () => {
+    const observed = applyPerceptionPreviewDelta(
+      emptyPerceptionPreview(null),
+      {
+        ...delta(1, 'observe', [circle(4)]),
+        source: { page: 1, viewId: 'view_1', regionId: 'region_1', stage: 'outline' },
+      },
+    );
+    expect(observed.stageByNodeId).toEqual({ node_obs_1: 'outline' });
+
+    const refined = applyPerceptionPreviewDelta(observed, {
+      ...delta(2, 'observe', [circle(6)]),
+      source: { page: 1, viewId: 'view_1', regionId: 'region_1', stage: 'detail' },
+    });
+    expect(refined.stageByNodeId).toEqual({ node_obs_1: 'detail' });
+
+    const removed = applyPerceptionPreviewDelta(refined, {
+      ...delta(3, 'reject', []),
+      removeIds: ['node_obs_1'],
+      source: { page: 1, viewId: 'view_1', stage: 'reconciliation' },
+    });
+    expect(removed.stageByNodeId).toEqual({});
+  });
+
   it('keeps promoted previews until the authoritative document contains the same id', () => {
     const observed = applyPerceptionPreviewDelta(
       emptyPerceptionPreview(null),

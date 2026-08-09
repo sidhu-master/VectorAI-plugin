@@ -105,6 +105,8 @@ describe('DrawingFeedbackLoop', () => {
 
     const outputs = await collect(loop.run(fixture.input));
 
+    expect(outputs.filter((item) => item.kind === 'correction' && item.action === 'reject'))
+      .toHaveLength(3);
     expect(outputs.at(-1)).toMatchObject({ kind: 'slot_paused', slotId: fixture.slotId });
     expect((await fixture.application.open(fixture.input.drawingId)).commits).toHaveLength(0);
   });
@@ -178,6 +180,67 @@ describe('DrawingFeedbackLoop', () => {
     }]);
     expect(outputs.find((item) => item.kind === 'checkpoint')).toMatchObject({
       checkpoint: { requestedCrops: seen[1] },
+    });
+  });
+
+  it('emits bounded provisional geometry immediately after extracting CV evidence', async () => {
+    const fixture = await setup();
+    let call = 0;
+    const loop = fixture.loopWith([], () => {
+      call += 1;
+      if (call === 1) {
+        return {
+          type: 'call_tool', toolCallId: 'see_head', capability: 'inspect_source_crop',
+          input: { sourceId: 'source_test1', regionId: 'region_head', budget: {
+            maxPixels: 100_000, maxResults: 1, maxSamplesPerResult: 20, timeoutMs: 1_000,
+          } },
+        };
+      }
+      if (call === 2) {
+        return {
+          type: 'call_tool', toolCallId: 'extract_head', capability: 'cv_extract_evidence',
+          input: { sourceId: 'source_test1', regionId: 'region_head', budget: {
+            maxPixels: 100_000, maxResults: 10, maxSamplesPerResult: 64, timeoutMs: 1_000,
+          } },
+        };
+      }
+      return { type: 'finish', summary: '候选已显示' };
+    }, {
+      invoke: async (invocation): Promise<CvToolExecution> => {
+        const receipt = {
+          schemaVersion: 1 as const, toolCallId: invocation.toolCallId,
+          capability: invocation.capability, capabilityVersion: '1.0.0' as const,
+          runId: invocation.runId, inputDigest: `input-${call}`, outputDigest: `output-${call}`,
+          sourceId: 'source_test1', regionId: 'region_head', slotIds: [], evidenceHandles: [],
+          durationMs: 1, status: 'succeeded' as const, errorCodes: [], retry: { allowed: false },
+        };
+        if (invocation.capability === 'inspect_source_crop') {
+          return { receipt, output: {
+            mediaHandle: 'crop_0123456789abcdef01234567', sourceId: 'source_test1',
+            regionId: 'region_head', mimeType: 'image/png', width: 100, height: 80,
+            sourceBounds: { x: 10, y: 10, width: 100, height: 80 },
+          } };
+        }
+        return { receipt: { ...receipt, evidenceHandles: ['evidence_head'] }, output: {
+          evidence: [{
+            handle: 'evidence_head', sourceId: 'source_test1', regionId: 'region_head',
+            kind: 'circle-candidate', bounds: { x: 20, y: 20, width: 70, height: 70 },
+            confidence: 0.91, touchesRegionEdge: false, sampleCount: 64,
+          }],
+          suggestedFits: [{
+            evidenceHandle: 'evidence_head', primitiveType: 'circle',
+            documentParameters: { center: [55, 65], radius: 35 },
+          }],
+        } };
+      },
+    });
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs.find((output) => output.kind === 'observation')).toMatchObject({
+      kind: 'observation', regionId: 'region_head', slotIds: [expect.any(String)],
+      nodes: [expect.objectContaining({ type: 'circle', center: [55, 65], radius: 35 })],
+      labelsByNodeId: expect.any(Object),
     });
   });
 

@@ -74,17 +74,26 @@ describe('OpenCvWorkerProvider', () => {
       .toBe(true);
   });
 
-  it('rejects a region before allocation when its pixel budget is exceeded', async () => {
+  it('downsamples oversized extraction work and maps evidence back to source coordinates', async () => {
     const provider = await createProvider();
     const source = await circleSource();
 
-    await expect(provider.extractEvidence({
+    const evidence = await provider.extractEvidence({
       source,
       regionId: 'region_full',
       region: { x: 0, y: 0, width: source.width, height: source.height },
-      budget: { ...budget, maxPixels: 100 },
+      budget: { ...budget, maxPixels: 4_800 },
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: 'CV_BUDGET_EXCEEDED' });
+    });
+
+    const circle = evidence.find((item) => item.kind === 'circle-candidate');
+    expect(circle).toBeDefined();
+    expect(circle?.bounds.x).toBeGreaterThanOrEqual(35);
+    expect(circle?.bounds.x).toBeLessThanOrEqual(45);
+    expect(circle?.bounds.y).toBeGreaterThanOrEqual(15);
+    expect(circle?.bounds.y).toBeLessThanOrEqual(25);
+    expect(circle?.samples.every(([x, y]) => x > 30 && x < 130 && y > 10 && y < 110))
+      .toBe(true);
   });
 
   it('downsamples overview work to its pixel budget while preserving source-space bounds', async () => {

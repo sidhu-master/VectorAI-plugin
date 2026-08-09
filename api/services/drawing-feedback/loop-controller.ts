@@ -2,6 +2,7 @@ import type {
   DrawingCommand,
   DrawingDocument,
   DrawingId,
+  PerceptionPreviewNode,
   RevisionId,
 } from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
@@ -29,6 +30,10 @@ import type {
   SlotLineageAction,
 } from './types.js';
 import { DrawingFeedbackProtocolError } from './model-adapter.js';
+import {
+  projectFeedbackCandidates,
+  type FeedbackSuggestedFit,
+} from './preview-projector.js';
 
 interface FeedbackApplication {
   open: DrawingApplication['open'];
@@ -74,6 +79,13 @@ export interface DrawingFeedbackRunInput {
 export type DrawingFeedbackOutput =
   | { kind: 'state'; stage: FeedbackStage; iteration: number }
   | { kind: 'tool'; execution: CvToolExecution }
+  | {
+      kind: 'observation';
+      regionId: string;
+      slotIds: string[];
+      nodes: PerceptionPreviewNode[];
+      labelsByNodeId: Record<string, string>;
+    }
   | { kind: 'preview'; slotIds: string[]; affectedNodeIds: string[] }
   | { kind: 'residual'; report: RegionResidualReport; accepted: boolean }
   | {
@@ -286,23 +298,43 @@ export class DrawingFeedbackLoop {
           };
           return;
         }
+        let observation: Extract<DrawingFeedbackOutput, { kind: 'observation' }> | undefined;
         if (decision.capability === 'cv_extract_evidence'
           && execution.receipt.status === 'succeeded') {
-          for (const evidence of evidenceSummaries(execution.output)) {
-            this.#slots.observe({
-              sourceId: evidence.sourceId,
+          const evidence = evidenceSummaries(execution.output);
+          const slotIdsByEvidence: Record<string, string> = {};
+          for (const item of evidence) {
+            const slot = this.#slots.observe({
+              sourceId: item.sourceId,
               evidence: {
-                handle: evidence.handle,
-                kind: evidence.kind,
-                bounds: { ...evidence.bounds },
-                confidence: evidence.confidence,
-                touchesRegionEdge: evidence.touchesRegionEdge,
+                handle: item.handle,
+                kind: item.kind,
+                bounds: { ...item.bounds },
+                confidence: item.confidence,
+                touchesRegionEdge: item.touchesRegionEdge,
               },
               candidateTypes: [{
-                type: candidateType(evidence),
-                score: evidence.confidence,
+                type: candidateType(item),
+                score: item.confidence,
               }],
             });
+            slotIdsByEvidence[item.handle] = slot.id;
+          }
+          const projected = projectFeedbackCandidates({
+            evidence,
+            suggestedFits: suggestedFits(execution.output),
+            slotIdsByEvidence,
+          });
+          const regionId = execution.receipt.regionId ?? evidence[0]?.regionId;
+          if (regionId && projected.nodes.length > 0) {
+            observation = {
+              kind: 'observation', regionId,
+              slotIds: projected.nodes.map((node) => (
+                slotIdsByEvidence[node.quality.evidenceRefs[0] ?? '']
+              )).filter((slotId): slotId is string => Boolean(slotId)),
+              nodes: projected.nodes,
+              labelsByNodeId: projected.labelsByNodeId,
+            };
           }
         }
         if (decision.capability === 'inspect_source_crop'
@@ -312,6 +344,15 @@ export class DrawingFeedbackLoop {
         }
         await this.#record('cv_tool', { receipt: structuredClone(execution.receipt) });
         yield { kind: 'tool', execution };
+        if (observation) {
+          await this.#record('observation', {
+            regionId: observation.regionId,
+            slotIds: [...observation.slotIds],
+            nodeIds: observation.nodes.map((node) => node.id),
+            nodeTypes: observation.nodes.map((node) => node.type),
+          });
+          yield observation;
+        }
         const nextCheckpoint = makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
           unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
@@ -407,6 +448,7 @@ export class DrawingFeedbackLoop {
 
       if (!accepted) {
         this.#drawingTools.discardPrepared(preview.prepared.handle);
+        yield { kind: 'correction', action: 'reject', slotIds: [...decision.slotIds] };
         for (const slotId of decision.slotIds) {
           nonImprovingBySlot[slotId] = (nonImprovingBySlot[slotId] ?? 0) + 1;
           if (nonImprovingBySlot[slotId] >= 3) {
@@ -687,6 +729,17 @@ function evidenceSummaries(output: unknown): CvEvidenceSummary[] {
     Boolean(item && typeof item === 'object'
       && 'handle' in item && typeof item.handle === 'string'
       && 'sourceId' in item && typeof item.sourceId === 'string')
+  ));
+}
+
+function suggestedFits(output: unknown): FeedbackSuggestedFit[] {
+  if (!output || typeof output !== 'object' || !('suggestedFits' in output)
+    || !Array.isArray(output.suggestedFits)) return [];
+  return output.suggestedFits.filter((item): item is FeedbackSuggestedFit => (
+    Boolean(item && typeof item === 'object'
+      && 'evidenceHandle' in item && typeof item.evidenceHandle === 'string'
+      && 'primitiveType' in item && typeof item.primitiveType === 'string'
+      && 'documentParameters' in item)
   ));
 }
 

@@ -19,11 +19,16 @@ export function applyPerceptionPreviewDelta(
 
   const nodes = { ...state.nodes };
   const labelsByNodeId = { ...state.labelsByNodeId };
+  const stageByNodeId = { ...(state.stageByNodeId ?? {}) };
   for (const id of delta.removeIds) {
     delete nodes[id];
     delete labelsByNodeId[id];
+    delete stageByNodeId[id];
   }
-  for (const node of delta.upserts) nodes[node.id] = structuredClone(node);
+  for (const node of delta.upserts) {
+    nodes[node.id] = structuredClone(node);
+    stageByNodeId[node.id] = delta.source.stage;
+  }
   for (const [nodeId, label] of Object.entries(delta.labelsByNodeId ?? {})) {
     labelsByNodeId[nodeId] = label;
   }
@@ -32,6 +37,7 @@ export function applyPerceptionPreviewDelta(
     lastSequence: delta.sequence,
     nodes,
     labelsByNodeId,
+    stageByNodeId,
   };
 }
 
@@ -57,14 +63,19 @@ export function reconcilePerceptionPreview(
 
   const nodes = { ...state.nodes };
   const labelsByNodeId = { ...state.labelsByNodeId };
+  const stageByNodeId = state.stageByNodeId === undefined
+    ? undefined
+    : { ...state.stageByNodeId };
   for (const id of promotedIds) {
     delete nodes[id];
     delete labelsByNodeId[id];
+    if (stageByNodeId) delete stageByNodeId[id];
   }
   return {
     ...state,
     nodes,
     labelsByNodeId,
+    ...(stageByNodeId === undefined ? {} : { stageByNodeId }),
   };
 }
 

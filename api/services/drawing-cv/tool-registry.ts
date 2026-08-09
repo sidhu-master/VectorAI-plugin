@@ -117,7 +117,7 @@ const CROP_BUDGET_LIMIT = {
   maxPixels: 2_000_000, maxResults: 8, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
 } satisfies CvToolBudget;
 const EXTRACT_BUDGET_LIMIT = {
-  maxPixels: 1_000_000, maxResults: 64, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+  maxPixels: 1_000_000, maxResults: 16, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
 } satisfies CvToolBudget;
 
 export class DrawingCvToolRegistry {
@@ -527,13 +527,12 @@ function budget(value: unknown, limit: CvToolBudget): CvToolBudget {
     maxSamplesPerResult: integer(input.maxSamplesPerResult, 1, 100_000),
     timeoutMs: integer(input.timeoutMs, 1, 60_000),
   };
-  if (parsed.maxPixels > limit.maxPixels
-    || parsed.maxResults > limit.maxResults
-    || parsed.maxSamplesPerResult > limit.maxSamplesPerResult
-    || parsed.timeoutMs > limit.timeoutMs) {
-    throw codedError('CV_BUDGET_EXCEEDED');
-  }
-  return parsed;
+  return {
+    maxPixels: Math.min(parsed.maxPixels, limit.maxPixels),
+    maxResults: Math.min(parsed.maxResults, limit.maxResults),
+    maxSamplesPerResult: Math.min(parsed.maxSamplesPerResult, limit.maxSamplesPerResult),
+    timeoutMs: Math.min(parsed.timeoutMs, limit.timeoutMs),
+  };
 }
 
 function rect(value: unknown): SourcePixelRect {

@@ -83,11 +83,13 @@ export function CadGridPattern({
 export function PerceptionPreviewLayer({
   entities,
   labelsByNodeId,
+  stageByNodeId,
   scale,
   viewport,
 }: {
   entities: DrawingRenderable[];
   labelsByNodeId: Record<string, string>;
+  stageByNodeId?: Record<string, 'outline' | 'detail' | 'annotation' | 'reconciliation'>;
   scale: number;
   viewport: { minX: number; minY: number; maxX: number; maxY: number };
 }) {
@@ -100,6 +102,7 @@ export function PerceptionPreviewLayer({
           scale={scale}
           viewport={viewport}
           provisional
+          perceptionStage={stageByNodeId?.[entity.id]}
           label={labelsByNodeId[entity.id]}
         />
       ))}
@@ -473,6 +476,7 @@ export default function Canvas() {
           <PerceptionPreviewLayer
             entities={previewEntities}
             labelsByNodeId={perceptionPreview.labelsByNodeId}
+            stageByNodeId={perceptionPreview.stageByNodeId}
             scale={scale}
             viewport={{ minX: worldLeft, minY: worldBottom, maxX: worldRight, maxY: worldTop }}
           />

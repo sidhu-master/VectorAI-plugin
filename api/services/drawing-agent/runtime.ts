@@ -16,6 +16,7 @@ import type {
   DrawingFeedbackRunInput,
 } from '../drawing-feedback/loop-controller.js';
 import type { DrawingFeedbackCheckpointStore } from '../drawing-feedback/checkpoint-store.js';
+import { feedbackPreviewNodeId } from '../drawing-feedback/preview-projector.js';
 import {
   interpretDrawingInput,
   type DrawingInputMode,
@@ -394,6 +395,24 @@ export class DrawingAgentRuntime {
           });
           continue;
         }
+        if (output.kind === 'observation') {
+          this.#publishPerceptionDelta(record, {
+            runId: record.state.runId,
+            sequence: 0,
+            action: 'observe',
+            slotIds: [...output.slotIds],
+            upserts: structuredClone(output.nodes),
+            removeIds: [],
+            labelsByNodeId: { ...output.labelsByNodeId },
+            source: {
+              page: record.source.page,
+              viewId: 'page',
+              regionId: output.regionId,
+              stage: 'outline',
+            },
+          }, 'primary');
+          continue;
+        }
         if (output.kind === 'preview') {
           record.progress.publish('validation', '局部修改已进入来源对照');
           continue;
@@ -407,11 +426,15 @@ export class DrawingAgentRuntime {
           continue;
         }
         if (output.kind === 'commit') {
+          this.#removeFeedbackPreviews(record, output.slotIds, 'promote');
           this.#recordTool(record, output.execution);
           record.progress.publish('commit', '已提交一个局部图纸修改');
           continue;
         }
         if (output.kind === 'correction') {
+          if (output.action === 'reject') {
+            this.#removeFeedbackPreviews(record, output.slotIds, 'reject');
+          }
           record.progress.publish('validation', feedbackCorrectionTitle(output.action));
           continue;
         }
@@ -653,6 +676,30 @@ export class DrawingAgentRuntime {
       })),
       source: structuredClone(delta.source),
     });
+  }
+
+  #removeFeedbackPreviews(
+    record: RunRecord,
+    slotIds: string[],
+    action: 'promote' | 'reject',
+  ): void {
+    const removeIds = slotIds
+      .map(feedbackPreviewNodeId)
+      .filter((id) => record.perceptionPreviewIds.has(id));
+    if (removeIds.length === 0) return;
+    this.#publishPerceptionDelta(record, {
+      runId: record.state.runId,
+      sequence: 0,
+      action,
+      slotIds: [...slotIds],
+      upserts: [],
+      removeIds,
+      source: {
+        page: record.source?.page ?? 1,
+        viewId: 'page',
+        stage: 'reconciliation',
+      },
+    }, 'primary');
   }
 
   #promotePerceptionBatch(
@@ -1265,7 +1312,7 @@ function feedbackLoopPlan(record: RunRecord): DrawingAgentPlan {
 function feedbackStageProgress(stage: import('../drawing-feedback/loop-controller.js').FeedbackStage) {
   switch (stage) {
     case 'OBSERVE': return ['tool_started', '正在观察图纸轮廓'] as const;
-    case 'SELECT_TARGET': return ['planning', '正在选择下一观察目标'] as const;
+    case 'SELECT_TARGET': return ['model_started', '正在选择下一观察目标'] as const;
     case 'ACQUIRE_EVIDENCE': return ['tool_started', '正在提取局部证据'] as const;
     case 'PROPOSE_PATCH': return ['model_started', '正在生成局部修改'] as const;
     case 'PREVIEW_AND_RENDER': return ['validation', '正在把局部修改渲染回原图'] as const;

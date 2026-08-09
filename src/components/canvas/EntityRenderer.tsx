@@ -9,6 +9,7 @@ const DANGER_STROKE = '#f87171';
 const CONSTRUCTION_STROKE = '#64748b';
 const DIMENSION_STROKE = '#94a3b8';
 const PROVISIONAL_STROKE = '#7f9bad';
+const PROVISIONAL_OUTLINE_STROKE = '#7dd3fc';
 
 interface EntityRendererProps {
   entity: DrawingRenderable;
@@ -19,6 +20,8 @@ interface EntityRendererProps {
   onPointerDown?: (event: MouseEvent<SVGGElement>) => void;
   provisional?: boolean;
   label?: string;
+  /** 感知阶段：outline 轮廓 / detail 细节 / annotation 标注，用于分层呈现绘制过程 */
+  perceptionStage?: 'outline' | 'detail' | 'annotation' | 'reconciliation';
 }
 
 function pointOnCircle(center: Vec2, radius: number, angle: number): Vec2 {
@@ -84,14 +87,16 @@ export default function EntityRenderer({
   onPointerDown,
   provisional = false,
   label,
+  perceptionStage,
 }: EntityRendererProps) {
   if (!entity.visible) return null;
   const measuredLowConfidence = entity.quality.confidence !== undefined
     && entity.quality.confidence < 0.6;
   const lowConfidence = measuredLowConfidence
     || (!provisional && entity.quality.status === 'candidate');
+  const isOutline = provisional && perceptionStage === 'outline';
   const regularStroke = provisional
-    ? lowConfidence ? DANGER_STROKE : PROVISIONAL_STROKE
+    ? lowConfidence ? DANGER_STROKE : isOutline ? PROVISIONAL_OUTLINE_STROKE : PROVISIONAL_STROKE
     : selected ? SELECTED_STROKE : lowConfidence ? DANGER_STROKE : PRIMARY_STROKE;
   const stroke = entity.type === 'ray' || entity.type === 'xline'
     ? CONSTRUCTION_STROKE
@@ -99,7 +104,9 @@ export default function EntityRenderer({
       ? lowConfidence ? DANGER_STROKE : selected ? SELECTED_STROKE : DIMENSION_STROKE
       : regularStroke;
   const strokeWidth = selected && !provisional ? 2 : 1.35;
-  const selectedDash = provisional ? '4 3' : selected ? '5 4' : undefined;
+  const selectedDash = provisional
+    ? isOutline ? undefined : '4 3'
+    : selected ? '5 4' : undefined;
   const interactive = !provisional && Boolean(onSelect);
   const groupProps = {
     'data-entity-id': entity.id,

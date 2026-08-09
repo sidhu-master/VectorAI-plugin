@@ -69,7 +69,20 @@ function formatElapsed(milliseconds: number): string {
 }
 
 function currentStage(input: PresentAgentTaskInput): AgentStageId {
-  if (input.status === 'planning' || !input.plan) return 'understand';
+  if (input.status === 'planning') return 'understand';
+  if (!input.plan) {
+    // 图片/PDF 感知型任务没有 GoalSpec（不经过文字 planner），直接进入感知阶段，
+    // 避免一直卡在“理解需求”。
+    if (input.commitCount > 0) return 'build';
+    return 'perceive';
+  }
+  if (input.plan.workflow.length === 0) {
+    if (input.commitCount > 0) return 'modify';
+    const latestType = input.events.at(-1)?.type;
+    if (latestType === 'perception_delta') return 'build';
+    if (latestType === 'validation') return 'verify';
+    return 'perceive';
+  }
   const step = input.plan.workflow[input.currentStepIndex];
   const action = step?.capability.toLowerCase() ?? '';
   if (action.includes('verify') || action.includes('validate')) return 'verify';
@@ -105,7 +118,7 @@ function detailTone(type: AgentProgressEvent['type']): PresentedAgentDetail['ton
 function presentDetail(event: AgentProgressEvent): PresentedAgentDetail {
   return {
     id: event.id,
-    title: EVENT_TITLES[event.type],
+    title: event.title.trim() || EVENT_TITLES[event.type],
     elapsed: formatElapsed(event.elapsedMs),
     tone: detailTone(event.type),
   };

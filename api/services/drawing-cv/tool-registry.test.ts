@@ -163,8 +163,14 @@ describe('DrawingCvToolRegistry', () => {
     expect(JSON.stringify(cropped.output)).not.toMatch(/base64|bytes|rgba/);
   });
 
-  it('rejects unknown fields, invalid bounds, and unavailable comparison with audit-safe receipts', async () => {
+  it('rejects invalid inputs but clamps oversized model budgets to server limits', async () => {
     const registry = createRegistry();
+    await registry.invoke(invocation('create_observation_region', {
+      sourceId: SOURCE.sourceId,
+      regionId: 'region_budgeted',
+      bounds: { x: 0, y: 0, width: 200, height: 120 },
+      purpose: 'geometry', targetSlotIds: [], resolutionLevel: 1, attempt: 1,
+    }));
     const unknown = await registry.invoke(invocation('inspect_source_overview', {
       sourceId: SOURCE.sourceId,
       budget: BUDGET,
@@ -186,8 +192,11 @@ describe('DrawingCvToolRegistry', () => {
     }));
     const oversized = await registry.invoke(invocation('cv_extract_evidence', {
       sourceId: SOURCE.sourceId,
-      regionId: 'region_missing',
-      budget: { ...BUDGET, maxPixels: 3_000_000 },
+      regionId: 'region_budgeted',
+      budget: {
+        maxPixels: 3_000_000, maxResults: 500,
+        maxSamplesPerResult: 9_000, timeoutMs: 30_000,
+      },
     }));
 
     expect(unknown.receipt).toMatchObject({ status: 'rejected', errorCodes: ['INVALID_TOOL_INPUT'] });
@@ -198,7 +207,11 @@ describe('DrawingCvToolRegistry', () => {
       retry: { allowed: true, action: 'pause' },
     });
     expect(oversized.receipt).toMatchObject({
-      status: 'rejected', errorCodes: ['CV_BUDGET_EXCEEDED'],
+      status: 'succeeded', errorCodes: [],
+      budget: {
+        maxPixels: 1_000_000, maxResults: 16,
+        maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+      },
     });
     expect(JSON.stringify([unknown.receipt, invalid.receipt, compare.receipt]))
       .not.toMatch(/forbidden|imageBase64/);
