@@ -1,6 +1,6 @@
 # 干净线稿矢量化与 CAD 图元提升设计
 
-> 状态：已确认设计，等待实现计划评审
+> 状态：MVP 基线已实现，`test2.png` 真实网页验收通过
 >
 > 日期：2026-08-09
 >
@@ -20,6 +20,25 @@
 6. AI 负责提出候选、处理歧义和规划观察区域；确定性几何算法负责坐标、拟合、验证、提交和回滚。
 
 这个设计的核心不是一次识别正确，而是保证任意中间状态都可见、可审计、可回归，并且每次修改都有局部证据。
+
+### 1.1 2026-08-09 实现基线
+
+当前生产路径已落地为常驻 Python NDJSON Worker、Evidence Store、Polyline draft、解析图元 promotion、Drawing Preview/Commit、checkpoint 和主运行审计。运行参数与网页一致，`maxPixels=4_000_000`；`test2` 实测如下：
+
+| 指标 | 结果 |
+|---|---:|
+| 中心线 Worker 返回 | 765 ms |
+| 完整像素回归总耗时 | 4.54 s |
+| 网页完整任务 | 18 s |
+| 中心线链 / Polyline draft | 68 / 68 |
+| 规范图元 promotion | 59 |
+| 最终类型 | 34 Line、24 Arc、1 Circle、9 Polyline |
+| 边缘 Precision / Recall / F1 | 99.9997% / 99.9798% / 99.9897% |
+| 双向距离 P95 | 0 px |
+| 越界、空底稿、假大圆 | 0 |
+| 真实网页增量步骤 | 127 |
+
+基准产物由 `npm run benchmark:test2` 写入 `.local/vectorai/baselines/test2/report.json` 和 `result.svg`。网页验收确认 y 方向、500 mm 默认宽度、画布比例和主体结构正确；公开任务面板不显示模型名称。高覆盖但仍残留少量抗锯齿碎片时，只有 Precision、Recall、F1 同时越过严格门限且拓扑/关联无错误才允许收敛，避免把已经正确的矢量图继续交给模型破坏。
 
 ## 2. 背景与当前问题
 
@@ -117,7 +136,7 @@ interface DrawingCvProvider {
 |---|---|---|---|
 | OpenCV | Apache-2.0 | 二值化、形态学、Hough、椭圆拟合、图像度量 | 采用；Python 侧为主，OpenCV.js 保留快速路径 |
 | scikit-image | BSD-3-Clause | `skeletonize`/`thin`、RANSAC、Line/Circle/Ellipse Model、轮廓和简化 | 采用，作为中心线和稳健拟合基础 |
-| skan | BSD-3-Clause | 骨架像素图、分支、端点、节点和路径统计 | 采用，避免自行实现脆弱的骨架遍历 |
+| skan | BSD-3-Clause | 骨架像素图、分支、端点、节点和路径统计 | 已评估；MVP 使用项目内确定性追踪器，复杂骨架基准需要时再引入 |
 | SciPy | BSD-3-Clause | 最小二乘、优化、B-spline 拟合 | 采用 |
 | Sharp | Apache-2.0 | Node 侧图片解码、尺寸读取和快速预处理 | 保留现有用途 |
 | DeepLSD | MIT | 噪声或断裂场景中的直线候选 | 作为可选模型 Provider，不进入 `test2` 基线硬依赖 |

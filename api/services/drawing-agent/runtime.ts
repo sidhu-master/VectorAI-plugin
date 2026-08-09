@@ -390,6 +390,10 @@ export class DrawingAgentRuntime {
           record.progress.publish(type, title);
           continue;
         }
+        if (output.kind === 'audit') {
+          this.#audit(record, output.type, structuredClone(output.payload));
+          continue;
+        }
         if (output.kind === 'decision') {
           this.#audit(record, 'decision', structuredClone(output.decision));
           continue;

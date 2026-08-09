@@ -79,6 +79,7 @@ export interface DrawingFeedbackRunInput {
 
 export type DrawingFeedbackOutput =
   | { kind: 'state'; stage: FeedbackStage; iteration: number }
+  | { kind: 'audit'; type: 'state' | 'validation'; payload: Record<string, unknown> }
   | { kind: 'decision'; decision: Record<string, unknown> }
   | { kind: 'controller_feedback'; message: string }
   | { kind: 'protocol_retry'; attempt: number; maxAttempts: number; message: string }
@@ -178,7 +179,7 @@ export class DrawingFeedbackLoop {
     let recentReceipts = [...(input.checkpoint?.recentReceipts ?? [])];
     let requestedCrops = [...(input.checkpoint?.requestedCrops ?? [])];
     let controllerFeedback = input.checkpoint?.controllerFeedback;
-    let nonImprovingBySlot = { ...(input.checkpoint?.nonImprovingBySlot ?? {}) };
+    const nonImprovingBySlot = { ...(input.checkpoint?.nonImprovingBySlot ?? {}) };
     let vectorizationCompletedStepIds = [
       ...(input.checkpoint?.vectorizationCompletedStepIds ?? []),
     ];
@@ -221,7 +222,24 @@ export class DrawingFeedbackLoop {
         residual = await this.#compare(updated.document, undefined, { sourceId: input.sourceId });
         unresolvedRequired = requiredResidualCount(residual);
         yield { kind: 'residual', report: structuredClone(residual), accepted: true };
-        if (unresolvedRequired === 0) {
+        const highCoverageAccepted = isHighCoverageVectorResult(residual);
+        if (unresolvedRequired === 0 || highCoverageAccepted) {
+          if (highCoverageAccepted && unresolvedRequired > 0) {
+            yield {
+              kind: 'audit',
+              type: 'validation',
+              payload: {
+                event: 'VECTORIZATION_HIGH_COVERAGE_ACCEPTED',
+                geometry: structuredClone(residual.geometry),
+                ignoredRasterResidualRegions: residual.residualRegions.length,
+              },
+            };
+            await this.#record('vectorization_high_coverage_accepted', {
+              geometry: structuredClone(residual.geometry),
+              ignoredRasterResidualRegions: residual.residualRegions.length,
+            });
+          }
+          unresolvedRequired = 0;
           yield {
             kind: 'completed', revision, unresolvedRequired: 0,
             summary: `已完成 ${vectorizationCompletedStepIds.length} 个可审计矢量化步骤`,
@@ -730,6 +748,17 @@ export class DrawingFeedbackLoop {
       return { revision, completedStepIds: [...completed], terminal: false };
     }
     const steps = buildVectorizationSteps(vectorized);
+    yield {
+      kind: 'audit',
+      type: 'state',
+      payload: {
+        event: 'VECTORIZATION_INVENTORY',
+        pipelineVersion: vectorized.pipelineVersion,
+        chainCount: vectorized.chains.length,
+        stepCount: steps.length,
+        medianLineWidthPx: vectorized.medianLineWidthPx,
+      },
+    };
     await this.#record('vectorization_inventory', {
       pipelineVersion: vectorized.pipelineVersion,
       chainCount: vectorized.chains.length,
@@ -787,6 +816,17 @@ export class DrawingFeedbackLoop {
       yield { kind: 'drawing_tool', execution: preview };
       if (!preview.prepared || !preview.previewDocument) {
         completed.add(stepId);
+        yield {
+          kind: 'audit',
+          type: 'validation',
+          payload: {
+            event: 'VECTORIZATION_STEP_REJECTED',
+            stepId,
+            chainId: step.chainId,
+            kind: step.kind,
+            status: preview.receipt.status,
+          },
+        };
         await this.#record('vectorization_step_rejected', {
           stepId,
           chainId: step.chainId,
@@ -845,6 +885,21 @@ export class DrawingFeedbackLoop {
         commitId: committed.commit?.id,
         revision,
       });
+      yield {
+        kind: 'audit',
+        type: 'validation',
+        payload: {
+          event: 'VECTORIZATION_STEP_COMMITTED',
+          stepId,
+          chainId: step.chainId,
+          kind: step.kind,
+          nodeId: step.previewNode.id,
+          nodeType: step.previewNode.type,
+          validation: structuredClone(step.validation),
+          commitId: committed.commit?.id,
+          revision,
+        },
+      };
       yield {
         kind: 'commit',
         commitId: committed.commit?.id,
@@ -921,6 +976,14 @@ function requiredResidualCount(report: RegionResidualReport): number {
   return report.residualRegions.length
     + report.topologyFailures.length
     + report.associationMismatches.length;
+}
+
+function isHighCoverageVectorResult(report: RegionResidualReport): boolean {
+  return report.geometry.edgePrecision >= 0.98
+    && report.geometry.edgeRecall >= 0.98
+    && report.geometry.edgeF1 >= 0.985
+    && report.topologyFailures.length === 0
+    && report.associationMismatches.length === 0;
 }
 
 function isLocallyVerified(

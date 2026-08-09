@@ -179,6 +179,49 @@ describe('DrawingAgentRuntime', () => {
     ]));
   });
 
+  it('persists vectorization validation traces in the run audit', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-vector-trace-audit-'));
+    try {
+      const feedbackLoop = {
+        async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+          yield {
+            kind: 'audit',
+            type: 'validation',
+            payload: {
+              event: 'VECTORIZATION_STEP_COMMITTED',
+              chainId: 'chain_1',
+              fitErrorP95: 0.4,
+            },
+          } as DrawingFeedbackOutput;
+          yield {
+            kind: 'completed', revision: input.revision,
+            unresolvedRequired: 0, summary: '完成',
+          };
+        },
+      };
+      const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
+      const { runtime, workspace } = await setup({ feedbackLoop, auditStore });
+      const handle = runtime.start({
+        ...startInput(workspace), goal: '', source: sourceReference(),
+      });
+
+      await handle.completion;
+      await runtime.flushAudit(handle.runId);
+
+      const audit = await auditStore.readRun(handle.runId);
+      expect(audit.events).toContainEqual(expect.objectContaining({
+        type: 'validation',
+        payload: expect.objectContaining({
+          event: 'VECTORIZATION_STEP_COMMITTED',
+          chainId: 'chain_1',
+          fitErrorP95: 0.4,
+        }),
+      }));
+    } finally {
+      await rm(rootDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('streams one model proposal and removes it when its local patch is committed', async () => {
     const feedbackLoop = {
       async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {

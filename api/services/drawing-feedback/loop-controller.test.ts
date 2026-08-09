@@ -139,6 +139,28 @@ describe('DrawingFeedbackLoop', () => {
       .toEqual([expect.objectContaining({ type: 'polyline' })]);
   });
 
+  it('accepts a high-coverage vector result without sending tiny raster speckles to the model', async () => {
+    const fixture = await setup();
+    let modelCalls = 0;
+    const loop = fixture.loopWith(
+      [],
+      () => {
+        modelCalls += 1;
+        return { type: 'finish', summary: '不应调用' };
+      },
+      undefined,
+      async () => metricReport(0.999, 0.2, 11, true),
+      { vectorizeSource: async () => cleanVectorization(fixture.input.sourceId) },
+    );
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(modelCalls).toBe(0);
+    expect(outputs.at(-1)).toMatchObject({
+      kind: 'completed', unresolvedRequired: 0,
+    });
+  });
+
   it('commits a wrong circle, retypes it to an arc, and converges through source feedback', async () => {
     const fixture = await setup();
     const decisions: FeedbackAgentDecision[] = [

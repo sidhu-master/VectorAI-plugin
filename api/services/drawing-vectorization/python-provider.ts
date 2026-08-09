@@ -57,12 +57,17 @@ export class PythonVectorizationProvider implements CleanLineVectorizationProvid
     pythonPath?: string;
     scriptPath?: string;
     timeoutMs?: number;
+    startupTimeoutMs?: number;
   } = {}): Promise<PythonVectorizationProvider> {
     const pythonPath = options.pythonPath ?? await defaultPythonPath();
     const scriptPath = options.scriptPath ?? resolve(process.cwd(), 'python/vectorai_vectorizer.py');
     const timeoutMs = options.timeoutMs ?? 30_000;
+    const startupTimeoutMs = options.startupTimeoutMs ?? Math.max(1_000, timeoutMs);
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
       throw new PythonVectorizationError('PYTHON_VECTORIZATION_TIMEOUT_INVALID');
+    }
+    if (!Number.isInteger(startupTimeoutMs) || startupTimeoutMs < 1) {
+      throw new PythonVectorizationError('PYTHON_VECTORIZATION_STARTUP_TIMEOUT_INVALID');
     }
     const child = spawn(pythonPath, ['-u', scriptPath], {
       cwd: process.cwd(),
@@ -71,7 +76,11 @@ export class PythonVectorizationProvider implements CleanLineVectorizationProvid
     });
     const provider = new PythonVectorizationProvider(child, timeoutMs);
     try {
-      await provider.#invoke({ operation: 'health' }, new AbortController().signal);
+      await provider.#invoke(
+        { operation: 'health' },
+        new AbortController().signal,
+        startupTimeoutMs,
+      );
       return provider;
     } catch (error) {
       await provider.close();
@@ -114,7 +123,11 @@ export class PythonVectorizationProvider implements CleanLineVectorizationProvid
     });
   }
 
-  #invoke(payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
+  #invoke(
+    payload: Record<string, unknown>,
+    signal: AbortSignal,
+    timeoutMs = this.#timeoutMs,
+  ): Promise<unknown> {
     if (this.#closed) return Promise.reject(new PythonVectorizationError('PYTHON_VECTORIZATION_CLOSED'));
     if (signal.aborted) return Promise.reject(signal.reason ?? new PythonVectorizationError('PYTHON_VECTORIZATION_ABORTED'));
     const id = randomUUID();
@@ -123,7 +136,7 @@ export class PythonVectorizationProvider implements CleanLineVectorizationProvid
       signal.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(() => {
         this.#reject(id, new PythonVectorizationError('PYTHON_VECTORIZATION_TIMEOUT'));
-      }, this.#timeoutMs);
+      }, timeoutMs);
       this.#pending.set(id, {
         resolve: resolveValue,
         reject,
