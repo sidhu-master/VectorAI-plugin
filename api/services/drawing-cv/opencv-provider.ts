@@ -60,8 +60,10 @@ export class OpenCvWorkerProvider implements DrawingCvProvider {
     signal: AbortSignal;
   }): Promise<CvOverview> {
     assertSource(input.source);
-    assertPixelBudget(input.source.width, input.source.height, input.budget.maxPixels);
-    const decoded = await decode(input.source);
+    if (!Number.isInteger(input.budget.maxPixels) || input.budget.maxPixels < 1) {
+      throw new DrawingCvError('CV_BUDGET_EXCEEDED');
+    }
+    const decoded = await decodeOverview(input.source, input.budget.maxPixels);
     const value = await this.#invoke({
       id: randomUUID(),
       operation: 'overview',
@@ -71,7 +73,22 @@ export class OpenCvWorkerProvider implements DrawingCvProvider {
       origin: [0, 0],
       budget: input.budget,
     }, input.signal);
-    return value as CvOverview;
+    const overview = value as CvOverview;
+    const scaleX = input.source.width / decoded.width;
+    const scaleY = input.source.height / decoded.height;
+    return {
+      width: input.source.width,
+      height: input.source.height,
+      componentCount: overview.componentCount,
+      ...(overview.foregroundBounds ? {
+        foregroundBounds: {
+          x: overview.foregroundBounds.x * scaleX,
+          y: overview.foregroundBounds.y * scaleY,
+          width: overview.foregroundBounds.width * scaleX,
+          height: overview.foregroundBounds.height * scaleY,
+        },
+      } : {}),
+    };
   }
 
   async extractEvidence(input: {
@@ -216,6 +233,19 @@ async function decode(source: CvSourceImage, region?: SourcePixelRect) {
     });
   }
   const { data, info } = await operation.raw().toBuffer({ resolveWithObject: true });
+  const copy = Uint8Array.from(data);
+  return { rgba: copy.buffer, width: info.width, height: info.height };
+}
+
+async function decodeOverview(source: CvSourceImage, maxPixels: number) {
+  const factor = Math.min(1, Math.sqrt(maxPixels / (source.width * source.height)));
+  const width = Math.max(1, Math.floor(source.width * factor));
+  const height = Math.max(1, Math.floor(source.height * factor));
+  const { data, info } = await sharp(source.bytes)
+    .resize(width, height, { fit: 'fill' })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   const copy = Uint8Array.from(data);
   return { rgba: copy.buffer, width: info.width, height: info.height };
 }

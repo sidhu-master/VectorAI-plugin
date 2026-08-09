@@ -1,6 +1,7 @@
 import type {
   Actor,
   DrawingCommit,
+  DrawingDocument,
   DrawingId,
   DrawingInspectResult,
   DrawingQueryResult,
@@ -83,6 +84,8 @@ export interface DrawingToolExecution {
   receipt: DrawingToolReceipt;
   output?: DrawingQueryResult | DrawingInspectResult | null;
   prepared?: PreparedDrawingTransaction;
+  /** Runtime-only candidate document used for source-space feedback before commit. */
+  previewDocument?: DrawingDocument;
   commit?: DrawingCommit;
 }
 

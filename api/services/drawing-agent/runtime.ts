@@ -10,6 +10,12 @@ import type {
   DrawingPerceptionOutput,
 } from '../drawing-perception/pipeline.js';
 import type { SourceArtifactStore } from '../source-artifacts/types.js';
+import type {
+  DrawingFeedbackCheckpoint,
+  DrawingFeedbackOutput,
+  DrawingFeedbackRunInput,
+} from '../drawing-feedback/loop-controller.js';
+import type { DrawingFeedbackCheckpointStore } from '../drawing-feedback/checkpoint-store.js';
 import {
   interpretDrawingInput,
   type DrawingInputMode,
@@ -61,6 +67,10 @@ interface RuntimePerception {
   run(input: DrawingPerceptionInput): AsyncIterable<DrawingPerceptionOutput>;
 }
 
+interface RuntimeFeedbackLoop {
+  run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput>;
+}
+
 interface RunRecord {
   state: DrawingAgentState;
   progress: RunProgressChannel;
@@ -90,6 +100,7 @@ interface RunRecord {
   perceptionUnresolvedContourCount: number;
   perceptionPreviewIds: Set<string>;
   perceptionPreviewSequence: number;
+  feedbackCheckpoint: DrawingFeedbackCheckpoint | null;
 }
 
 export interface DrawingAgentRunHandle {
@@ -112,6 +123,8 @@ export interface DrawingAgentRuntimeOptions {
   perception?: RuntimePerception;
   visionModelName?: string;
   visionRepairModelName?: string;
+  feedbackLoop?: RuntimeFeedbackLoop;
+  feedbackCheckpointStore?: DrawingFeedbackCheckpointStore;
 }
 
 const DEFAULT_LIMITS: RuntimeLimitsInput = {
@@ -139,6 +152,8 @@ export class DrawingAgentRuntime {
   readonly #perception?: RuntimePerception;
   readonly #visionModelName: string;
   readonly #visionRepairModelName: string;
+  readonly #feedbackLoop?: RuntimeFeedbackLoop;
+  readonly #feedbackCheckpointStore?: DrawingFeedbackCheckpointStore;
 
   constructor(options: DrawingAgentRuntimeOptions) {
     this.#application = options.application;
@@ -154,6 +169,8 @@ export class DrawingAgentRuntime {
     this.#perception = options.perception;
     this.#visionModelName = options.visionModelName ?? 'doubao-seed-2.0-lite';
     this.#visionRepairModelName = options.visionRepairModelName ?? 'doubao-seed-2.1-turbo';
+    this.#feedbackLoop = options.feedbackLoop;
+    this.#feedbackCheckpointStore = options.feedbackCheckpointStore;
   }
 
   start(input: StartDrawingAgentRunInput): DrawingAgentRunHandle {
@@ -210,6 +227,7 @@ export class DrawingAgentRuntime {
       perceptionUnresolvedContourCount: 0,
       perceptionPreviewIds: new Set(),
       perceptionPreviewSequence: 0,
+      feedbackCheckpoint: null,
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -283,6 +301,10 @@ export class DrawingAgentRuntime {
     record.driving = true;
     try {
       if (!await this.#safePoint(record, 'before_model')) return;
+      if (record.source && this.#feedbackLoop) {
+        await this.#runFeedback(record);
+        return;
+      }
       if (!record.perceptionCompleted) {
         if (!await this.#runPerception(record)) return;
       }
@@ -327,6 +349,118 @@ export class DrawingAgentRuntime {
       }
     } finally {
       record.driving = false;
+    }
+  }
+
+  async #runFeedback(record: RunRecord): Promise<void> {
+    if (!record.source || !this.#feedbackLoop) throw new Error('来源反馈循环未配置');
+    if (!record.state.plan) this.#installPlan(record, feedbackLoopPlan(record));
+    if (!record.feedbackCheckpoint && this.#feedbackCheckpointStore) {
+      record.feedbackCheckpoint = await this.#feedbackCheckpointStore.read(record.state.runId) ?? null;
+    }
+    const controller = new AbortController();
+    record.activeController = controller;
+    try {
+      const outputs = this.#feedbackLoop.run({
+        runId: record.state.runId,
+        sourceId: record.source.sourceId,
+        drawingId: record.state.drawingId,
+        revision: record.state.revision,
+        goal: record.planningObjective || '将来源图纸重建为 Drawing IR',
+        modelProfile: { ...record.modelProfile },
+        signal: controller.signal,
+        ...(record.feedbackCheckpoint ? {
+          checkpoint: structuredClone(record.feedbackCheckpoint),
+        } : {}),
+        shouldPause: () => record.state.status === 'pause_requested',
+        readInstructions: () => [
+          ...record.state.activeInstructions,
+          ...record.state.pendingInstructions,
+        ],
+      });
+      for await (const output of outputs) {
+        if (output.kind === 'state') {
+          const [type, title] = feedbackStageProgress(output.stage);
+          record.progress.publish(type, title);
+          continue;
+        }
+        if (output.kind === 'tool') {
+          record.progress.publish(
+            output.execution.receipt.status === 'succeeded' ? 'tool_finished' : 'validation',
+            output.execution.receipt.status === 'succeeded' ? '局部证据已返回' : '局部证据调用未完成',
+          );
+          this.#audit(record, 'cv_tool', {
+            receipt: structuredClone(output.execution.receipt),
+          });
+          continue;
+        }
+        if (output.kind === 'preview') {
+          record.progress.publish('validation', '局部修改已进入来源对照');
+          continue;
+        }
+        if (output.kind === 'residual') {
+          record.progress.publish(
+            'validation',
+            output.accepted ? '局部误差下降' : '该区域尚未收敛',
+            `边缘 F1 ${(output.report.geometry.edgeF1 * 100).toFixed(1)}%`,
+          );
+          continue;
+        }
+        if (output.kind === 'commit') {
+          this.#recordTool(record, output.execution);
+          record.progress.publish('commit', '已提交一个局部图纸修改');
+          continue;
+        }
+        if (output.kind === 'correction') {
+          record.progress.publish('validation', feedbackCorrectionTitle(output.action));
+          continue;
+        }
+        if (output.kind === 'checkpoint') {
+          record.feedbackCheckpoint = structuredClone(output.checkpoint);
+          await this.#feedbackCheckpointStore?.save(output.checkpoint);
+          this.#audit(record, 'state', {
+            event: 'FEEDBACK_CHECKPOINT',
+            iteration: output.checkpoint.iteration,
+            revision: output.checkpoint.revision,
+            unresolvedRequired: output.checkpoint.unresolvedRequired,
+          });
+          continue;
+        }
+        if (output.kind === 'paused') {
+          record.feedbackCheckpoint = structuredClone(output.checkpoint);
+          await this.#feedbackCheckpointStore?.save(output.checkpoint);
+          this.#transition(record, { type: 'SAFE_POINT', point: 'before_model' });
+          record.progress.publish('paused', '任务已暂停');
+          return;
+        }
+        if (output.kind === 'slot_paused') {
+          const message = `槽位 ${output.slotId} 连续三次修正未改善`;
+          this.#transition(record, { type: 'FAILED', error: message });
+          this.#finish(record, 'failed', '局部区域未收敛');
+          return;
+        }
+        if (output.kind === 'completed') {
+          this.#transition(record, { type: 'ANALYSIS_READY', summary: output.summary });
+          this.#transition(record, { type: 'COMPLETED' });
+          this.#finish(record, 'completed', '任务已完成');
+          return;
+        }
+        if (output.kind === 'stopped') {
+          this.#transition(record, { type: 'SAFE_POINT', point: 'before_model' });
+          this.#finish(record, 'stopped', '任务已停止');
+          return;
+        }
+        if (output.kind === 'failed') {
+          this.#transition(record, { type: 'FAILED', error: output.message });
+          this.#finish(record, 'failed', '任务执行失败');
+          return;
+        }
+      }
+      if (!isTerminal(record.state) && record.state.status !== 'paused') {
+        throw new Error('来源反馈循环意外结束');
+      }
+    } finally {
+      if (record.activeController === controller) record.activeController = null;
     }
   }
 
@@ -1109,6 +1243,47 @@ function perceptionCompletionPlan(record: RunRecord): DrawingAgentPlan {
     }],
     summary: objective,
   };
+}
+
+function feedbackLoopPlan(record: RunRecord): DrawingAgentPlan {
+  const objective = record.inputMode === 'analyze_only'
+    ? '逐步观察并分析来源图纸'
+    : '通过来源反馈循环重建 Drawing IR';
+  return {
+    goal: {
+      id: `goal_${record.state.runId}_feedback`,
+      objective,
+      scope: { limit: 1 },
+      acceptanceCriteria: [{ type: 'document.valid' }],
+      riskPolicy: { candidateAllowed: true, maxCommits: record.state.limits.maxCommits },
+    },
+    workflow: [],
+    summary: objective,
+  };
+}
+
+function feedbackStageProgress(stage: import('../drawing-feedback/loop-controller.js').FeedbackStage) {
+  switch (stage) {
+    case 'OBSERVE': return ['tool_started', '正在观察图纸轮廓'] as const;
+    case 'SELECT_TARGET': return ['planning', '正在选择下一观察目标'] as const;
+    case 'ACQUIRE_EVIDENCE': return ['tool_started', '正在提取局部证据'] as const;
+    case 'PROPOSE_PATCH': return ['model_started', '正在生成局部修改'] as const;
+    case 'PREVIEW_AND_RENDER': return ['validation', '正在把局部修改渲染回原图'] as const;
+    case 'COMPARE': return ['validation', '正在比较来源与当前图纸'] as const;
+    case 'COMMIT_LOCAL_RESULT': return ['validation', '局部验证通过，正在提交'] as const;
+  }
+}
+
+function feedbackCorrectionTitle(action: import('../drawing-feedback/types.js').SlotLineageAction): string {
+  switch (action) {
+    case 'create': return '已建立一个图元';
+    case 'update': return '已修正图元参数';
+    case 'retype': return '已修正图元类型';
+    case 'merge': return '已合并图元';
+    case 'split': return '已拆分图元';
+    case 'delete': return '已删除错误图元';
+    case 'reject': return '已拒绝错误候选';
+  }
 }
 
 function perceptionSummary(record: RunRecord): string {

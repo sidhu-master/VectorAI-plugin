@@ -239,6 +239,7 @@ export class DrawingToolRegistry {
         retry: { allowed: false },
       }),
       prepared: publicPrepared(prepared),
+      previewDocument: structuredClone(result.resultingDocument),
     };
   }
 

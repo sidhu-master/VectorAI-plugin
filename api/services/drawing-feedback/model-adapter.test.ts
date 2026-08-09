@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DrawingAgentCompletion } from '../drawing-agent/model-adapters.js';
+import type { DrawingVisionCompletionParams } from '../ai-gateway.js';
 import { DrawingFeedbackModelAdapter } from './model-adapter.js';
 import type { FeedbackDecisionInput } from './types.js';
 
@@ -48,7 +49,9 @@ describe('DrawingFeedbackModelAdapter', () => {
     const adapter = new DrawingFeedbackModelAdapter(complete);
     const oversized = input();
     oversized.recentReceipts = Array.from({ length: 30 }, (_, index) => ({
-      id: `receipt_${index}`, samples: [[index, index]],
+      receipt: { id: `receipt_${index}` },
+      output: { documentParameters: { center: [40, 50], radius: 10 } },
+      samples: [[index, index]],
     })) as never;
     oversized.regions = Array.from({ length: 70 }, (_, index) => ({
       id: `region_${index}`, sourceId: 'source_test1',
@@ -71,7 +74,10 @@ describe('DrawingFeedbackModelAdapter', () => {
     await adapter.decide(oversized);
 
     const context = JSON.parse(received!.userPrompt);
+    expect(context.sourceId).toBe('source_test1');
     expect(context.recentReceipts).toHaveLength(8);
+    expect(context.recentReceipts[0].output.documentParameters)
+      .toEqual({ center: [40, 50], radius: 10 });
     expect(context.regions).toHaveLength(32);
     expect(context.slots).toHaveLength(32);
     expect(context.drawingItems).toHaveLength(100);
@@ -79,12 +85,48 @@ describe('DrawingFeedbackModelAdapter', () => {
     expect(context.droppedContext).toMatchObject({ receipts: 22, regions: 38, slots: 38, drawingItems: 80, crops: 1 });
     expect(received!.userPrompt).not.toContain('samples');
     expect(received!.userPrompt).not.toContain('feedback-model');
+    expect(received!.systemPrompt).toContain('suggestedFits');
+    expect(received!.systemPrompt).toContain('无需再次调用 cv_fit_primitive');
+  });
+
+  it('uses the requested crop for one multimodal decision without placing bytes in context', async () => {
+    const textComplete = vi.fn(async () => JSON.stringify({ type: 'finish', summary: 'unused' }));
+    let visionRequest: DrawingVisionCompletionParams | undefined;
+    const adapter = new DrawingFeedbackModelAdapter(textComplete, Date.now, {
+      readCrop: async () => ({
+        mediaHandle: 'crop_0123456789abcdef01234567',
+        sourceId: 'source_test1', regionId: 'region_1', mimeType: 'image/png',
+        width: 100, height: 80, sourceBounds: { x: 10, y: 20, width: 100, height: 80 },
+        bytes: Uint8Array.from(Buffer.from('crop-png')),
+      }),
+      complete: async (request) => {
+        visionRequest = request;
+        return JSON.stringify({
+          type: 'call_tool', toolCallId: 'extract_seen_region', capability: 'cv_extract_evidence',
+          input: { sourceId: 'source_test1', regionId: 'region_1', budget: budget() },
+        });
+      },
+    });
+    const withCrop = input();
+    withCrop.requestedCrops = [{
+      sourceId: 'source_test1', regionId: 'region_1',
+      mediaHandle: 'crop_0123456789abcdef01234567',
+    }];
+
+    await expect(adapter.decide(withCrop)).resolves.toMatchObject({
+      type: 'call_tool', capability: 'cv_extract_evidence',
+    });
+
+    expect(textComplete).not.toHaveBeenCalled();
+    expect(visionRequest).toMatchObject({ image: Buffer.from('crop-png').toString('base64') });
+    expect(visionRequest!.userPrompt).not.toContain(Buffer.from('crop-png').toString('base64'));
   });
 });
 
 function input(): FeedbackDecisionInput {
   return {
     goal: '完整重建 test1',
+    sourceId: 'source_test1',
     revision: 'revision_1',
     unresolvedRequired: 1,
     pendingInstructions: [],

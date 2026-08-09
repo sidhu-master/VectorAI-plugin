@@ -78,8 +78,8 @@ function extractEvidence(
   request: Extract<CvWorkerRequest, { operation: 'extract' }>,
 ): CvWorkerEvidence[] {
   return withBinaryContours(request, (contours: any) => {
-    const output: CvWorkerEvidence[] = [];
-    for (let index = 0; index < contours.size() && output.length < request.budget.maxResults; index += 1) {
+    const ranked: Array<{ evidence: CvWorkerEvidence; score: number }> = [];
+    for (let index = 0; index < contours.size(); index += 1) {
       const contour = contours.get(index);
       try {
         const area = Math.abs(cv.contourArea(contour, false));
@@ -92,23 +92,34 @@ function extractEvidence(
         const touchesRegionEdge = rect.x <= 1 || rect.y <= 1
           || rect.x + rect.width >= request.width - 1
           || rect.y + rect.height >= request.height - 1;
-        output.push({
-          kind: circularity >= 0.72 ? 'circle-candidate' : 'contour',
+        const kind = circularity >= 0.72 ? 'circle-candidate' : 'contour';
+        ranked.push({
+          score: Math.max(area, rect.width * rect.height * 0.5),
+          evidence: {
+          kind,
           bounds: {
             x: rect.x + request.origin[0],
             y: rect.y + request.origin[1],
             width: rect.width,
             height: rect.height,
           },
-          confidence: Math.max(0, Math.min(1, circularity)),
+          confidence: kind === 'circle-candidate'
+            ? Math.max(0, Math.min(1, circularity))
+            : Math.max(0.35, Math.min(0.95, 0.35 + Math.sqrt(
+              area / (request.width * request.height),
+            ) * 2)),
           touchesRegionEdge,
           samples,
+          },
         });
       } finally {
         contour.delete();
       }
     }
-    return output;
+    return ranked
+      .sort((left, right) => right.score - left.score)
+      .slice(0, request.budget.maxResults)
+      .map((item) => item.evidence);
   });
 }
 
@@ -313,9 +324,17 @@ function fitPolyline(points: SourcePixelPoint[]) {
   if (points.length < 2) throw codedError('CV_FIT_REQUIRES_MORE_SAMPLES');
   const diagonal = Math.hypot(boundsOf(points).width, boundsOf(points).height);
   const closed = distance(points[0], points.at(-1)!) <= Math.max(1, diagonal * 0.02);
+  const limit = Math.min(64, points.length);
+  const vertices = Array.from({ length: limit }, (_, index) => {
+    const sourceIndex = closed
+      ? Math.floor(index * points.length / limit)
+      : Math.round(index * (points.length - 1) / Math.max(1, limit - 1));
+    return points[sourceIndex];
+  });
+  const fittedLine = closed ? [...vertices, vertices[0]] : vertices;
   return {
-    parameters: { vertices: points.map((point) => ({ point })), closed },
-    errors: points.map(() => 0),
+    parameters: { vertices: vertices.map((point) => ({ point })), closed },
+    errors: points.map((point) => nearestPolylineDistance(point, fittedLine)),
   };
 }
 

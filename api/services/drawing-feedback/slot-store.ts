@@ -65,7 +65,7 @@ export class MemoryObservationSlotStore {
   }
 
   recordDrawingChange(id: string, change: {
-    action: Exclude<SlotLineageAction, 'create' | 'merge' | 'split'>;
+    action: Exclude<SlotLineageAction, 'merge' | 'split'>;
     removedDrawingEntityIds?: string[];
     addedDrawingEntityIds?: string[];
   }): ObservationSlot {

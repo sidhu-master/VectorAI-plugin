@@ -1,7 +1,7 @@
 /**
  * local server entry file, for local development
  */
-import app from './app.js';
+import app, { closeAppServices } from './app.js';
 
 /**
  * start server with port
@@ -17,7 +17,8 @@ const server = app.listen(PORT, () => {
  */
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received');
-  server.close(() => {
+  server.close(async () => {
+    await closeAppServices();
     console.log('Server closed');
     process.exit(0);
   });
@@ -25,7 +26,8 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('SIGINT signal received');
-  server.close(() => {
+  server.close(async () => {
+    await closeAppServices();
     console.log('Server closed');
     process.exit(0);
   });

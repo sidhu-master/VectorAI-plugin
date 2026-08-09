@@ -98,9 +98,11 @@ export type FeedbackAgentDecision =
 
 export interface FeedbackDecisionInput {
   goal: string;
+  sourceId: string;
   revision: string;
   unresolvedRequired: number;
   pendingInstructions: string[];
+  protocolFeedback?: string;
   recentReceipts: unknown[];
   regions: ObservationRegion[];
   slots: ObservationSlot[];

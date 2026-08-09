@@ -149,6 +149,9 @@ describe('DrawingToolRegistry', () => {
       prepared: { runId: context.runId, drawingId: context.drawingId },
     });
     expect(result.prepared?.handle).toEqual(expect.any(String));
+    expect(result.previewDocument?.geometry).toEqual([
+      expect.objectContaining({ id: 'circle_preview', type: 'circle' }),
+    ]);
     expect(JSON.stringify(result.receipt)).not.toContain(result.prepared!.handle);
     expect(JSON.stringify(result.receipt)).not.toContain('resultingDocument');
     expect((await application.open(workspace.document.id)).commits).toEqual([]);

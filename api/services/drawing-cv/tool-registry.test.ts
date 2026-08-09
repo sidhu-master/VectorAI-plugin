@@ -33,17 +33,19 @@ describe('DrawingCvToolRegistry', () => {
       sourceId: SOURCE.sourceId,
       regionId: 'region_a',
       bounds: { x: 0, y: 0, width: 80, height: 80 },
-      purpose: '完整观察圆 C1',
+      purpose: 'geometry',
       targetSlotIds: ['slot_c1'],
-      resolutionScale: 1,
+      resolutionLevel: 1,
+      attempt: 1,
     }));
     const second = await registry.invoke(invocation('create_observation_region', {
       sourceId: SOURCE.sourceId,
       regionId: 'region_b',
       bounds: { x: 40, y: 20, width: 100, height: 80 },
-      purpose: '观察圆和相邻线',
+      purpose: 'topology',
       targetSlotIds: ['slot_c1'],
-      resolutionScale: 1,
+      resolutionLevel: 1,
+      attempt: 1,
     }));
     const extracted = await registry.invoke(invocation('cv_extract_evidence', {
       sourceId: SOURCE.sourceId,
@@ -60,6 +62,37 @@ describe('DrawingCvToolRegistry', () => {
     expect(JSON.stringify([first.output, second.output, extracted.output]))
       .not.toMatch(/samples|rgba|base64/);
     expect(extracted.receipt.evidenceHandles).toHaveLength(1);
+    expect(extracted.output).toMatchObject({
+      evidence: [expect.objectContaining({ kind: 'circle-candidate' })],
+      suggestedFits: [{
+        evidenceHandle: extracted.receipt.evidenceHandles[0],
+        primitiveType: 'circle',
+        documentParameters: { center: [100, 200], radius: 50 },
+        documentFrame: { width: 500, height: 300 },
+      }],
+    });
+  });
+
+  it('provides a deterministic polyline suggestion for a generic contour', async () => {
+    const regions = new Map<string, CvObservationRegion>();
+    const registry = createRegistry({
+      evidenceKind: 'contour',
+      regions,
+    });
+    await registry.invoke(invocation('create_observation_region', {
+      sourceId: SOURCE.sourceId,
+      regionId: 'region_contour',
+      bounds: { x: 0, y: 0, width: 80, height: 80 },
+      purpose: 'geometry', targetSlotIds: [], resolutionLevel: 1, attempt: 1,
+    }));
+
+    const extracted = await registry.invoke(invocation('cv_extract_evidence', {
+      sourceId: SOURCE.sourceId, regionId: 'region_contour', budget: BUDGET,
+    }));
+
+    expect(extracted.output).toMatchObject({
+      suggestedFits: [expect.objectContaining({ primitiveType: 'polyline' })],
+    });
   });
 
   it('paginates evidence explicitly and fits from its server-side handle', async () => {
@@ -68,9 +101,10 @@ describe('DrawingCvToolRegistry', () => {
       sourceId: SOURCE.sourceId,
       regionId: 'region_a',
       bounds: { x: 0, y: 0, width: 80, height: 80 },
-      purpose: '观察圆',
+      purpose: 'geometry',
       targetSlotIds: [],
-      resolutionScale: 1,
+      resolutionLevel: 1,
+      attempt: 1,
     }));
     const extracted = await registry.invoke(invocation('cv_extract_evidence', {
       sourceId: SOURCE.sourceId,
@@ -91,8 +125,42 @@ describe('DrawingCvToolRegistry', () => {
     }));
 
     expect(page.output).toMatchObject({ total: 4, nextOffset: 2 });
-    expect(fit.output).toMatchObject({ primitiveType: 'circle', sampleCount: 4 });
+    expect(fit.output).toMatchObject({
+      primitiveType: 'circle',
+      sampleCount: 4,
+      sourceParameters: { center: [40, 40], radius: 20 },
+      documentParameters: { center: [100, 200], radius: 50 },
+      documentFrame: { width: 500, height: 300 },
+    });
     expect(fit.receipt.evidenceHandles).toEqual([handle]);
+  });
+
+  it('returns a bounded crop handle without exposing image bytes', async () => {
+    const registry = createRegistry();
+    await registry.invoke(invocation('create_observation_region', {
+      sourceId: SOURCE.sourceId,
+      regionId: 'region_crop',
+      bounds: { x: 20, y: 10, width: 100, height: 80 },
+      purpose: 'inventory',
+      targetSlotIds: [],
+      resolutionLevel: 1,
+      attempt: 1,
+    }));
+
+    const cropped = await registry.invoke(invocation('inspect_source_crop', {
+      sourceId: SOURCE.sourceId,
+      regionId: 'region_crop',
+      budget: BUDGET,
+    }));
+
+    expect(cropped.receipt).toMatchObject({
+      status: 'succeeded', sourceId: SOURCE.sourceId, regionId: 'region_crop',
+    });
+    expect(cropped.output).toMatchObject({
+      mediaHandle: 'crop_region_crop',
+      sourceBounds: { x: 20, y: 10, width: 100, height: 80 },
+    });
+    expect(JSON.stringify(cropped.output)).not.toMatch(/base64|bytes|rgba/);
   });
 
   it('rejects unknown fields, invalid bounds, and unavailable comparison with audit-safe receipts', async () => {
@@ -106,14 +174,20 @@ describe('DrawingCvToolRegistry', () => {
       sourceId: SOURCE.sourceId,
       regionId: 'region_bad',
       bounds: { x: 190, y: 0, width: 20, height: 20 },
-      purpose: '越界',
+      purpose: 'geometry',
       targetSlotIds: [],
-      resolutionScale: 1,
+      resolutionLevel: 1,
+      attempt: 1,
     }));
     const compare = await registry.invoke(invocation('compare_region', {
       sourceId: SOURCE.sourceId,
       regionId: 'region_missing',
       revision: 'revision_1',
+    }));
+    const oversized = await registry.invoke(invocation('cv_extract_evidence', {
+      sourceId: SOURCE.sourceId,
+      regionId: 'region_missing',
+      budget: { ...BUDGET, maxPixels: 3_000_000 },
     }));
 
     expect(unknown.receipt).toMatchObject({ status: 'rejected', errorCodes: ['INVALID_TOOL_INPUT'] });
@@ -122,6 +196,9 @@ describe('DrawingCvToolRegistry', () => {
       status: 'failed',
       errorCodes: ['CV_CAPABILITY_UNAVAILABLE'],
       retry: { allowed: true, action: 'pause' },
+    });
+    expect(oversized.receipt).toMatchObject({
+      status: 'rejected', errorCodes: ['CV_BUDGET_EXCEEDED'],
     });
     expect(JSON.stringify([unknown.receipt, invalid.receipt, compare.receipt]))
       .not.toMatch(/forbidden|imageBase64/);
@@ -153,8 +230,11 @@ function invocation(capability: Parameters<DrawingCvToolRegistry['invoke']>[0]['
   };
 }
 
-function createRegistry(): DrawingCvToolRegistry {
-  const regions = new Map<string, CvObservationRegion>();
+function createRegistry(options: {
+  evidenceKind?: CvEvidenceDraft['kind'];
+  regions?: Map<string, CvObservationRegion>;
+} = {}): DrawingCvToolRegistry {
+  const regions = options.regions ?? new Map<string, CvObservationRegion>();
   const provider: DrawingCvProvider = {
     inspectOverview: async ({ source }) => ({
       width: source.width,
@@ -165,7 +245,7 @@ function createRegistry(): DrawingCvToolRegistry {
     extractEvidence: async ({ source, regionId, region }): Promise<CvEvidenceDraft[]> => [{
       sourceId: source.sourceId,
       regionId,
-      kind: 'circle-candidate',
+      kind: options.evidenceKind ?? 'circle-candidate',
       bounds: { ...region, width: Math.min(region.width, 60), height: Math.min(region.height, 60) },
       confidence: 0.9,
       touchesRegionEdge: false,
@@ -200,6 +280,17 @@ function createRegistry(): DrawingCvToolRegistry {
         if (!region) throw Object.assign(new Error('not found'), { code: 'CV_REGION_NOT_FOUND' });
         return structuredClone(region);
       },
+    },
+    crops: {
+      create: async ({ source, regionId, bounds }) => ({
+        mediaHandle: `crop_${regionId}`,
+        sourceId: source.sourceId,
+        regionId,
+        mimeType: 'image/png',
+        width: bounds.width,
+        height: bounds.height,
+        sourceBounds: { ...bounds },
+      }),
     },
     now: (() => {
       let value = 100;

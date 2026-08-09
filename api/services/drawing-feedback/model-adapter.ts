@@ -3,9 +3,12 @@ import {
   parseDrawingToolCommands,
 } from '../../../src/contracts/drawing-agent.js';
 import {
+  requestDrawingVisionCompletion,
   requestDrawingAgentCompletion,
   type DrawingAgentCompletionParams,
+  type DrawingVisionCompletionParams,
 } from '../ai-gateway.js';
+import type { CvCropArtifact } from '../drawing-cv/crop-store.js';
 import type { CvToolCapability } from '../drawing-cv/tool-registry.js';
 import type {
   FeedbackAgentDecision,
@@ -21,6 +24,7 @@ const MAX_OBJECT_KEYS = 40;
 const MAX_STRING_LENGTH = 1_000;
 const CAPABILITIES: CvToolCapability[] = [
   'inspect_source_overview',
+  'inspect_source_crop',
   'create_observation_region',
   'cv_extract_evidence',
   'cv_read_evidence_page',
@@ -35,15 +39,37 @@ const FEEDBACK_SYSTEM_PROMPT = `你是 VectorAI 的二维工程图反馈 Agent�
 2. {"type":"transact","toolCallId":string,"slotIds":string[],"commands":DrawingCommand[],"confidence":0_to_1}
 3. {"type":"finish","summary":string}
 
-CvToolCapability 只能是 inspect_source_overview、create_observation_region、cv_extract_evidence、cv_read_evidence_page、cv_fit_primitive、compare_region。
-观察区域应围绕完整图元，可重叠、嵌套或扩大；触碰裁剪边缘的证据不能单独确认圆、椭圆等闭合图元。
-坐标和图元参数应优先来自 CV evidence handle 的确定性拟合，不得凭空估计。不得输出原始 samples、rgba、base64 或像素正文。
+所有来源工具必须使用 user context 顶层的 sourceId；revision 只用于 compare_region 和 Drawing 事务，绝不能当作 sourceId。
+
+CvToolCapability 只能是 inspect_source_overview、inspect_source_crop、create_observation_region、cv_extract_evidence、cv_read_evidence_page、cv_fit_primitive、compare_region。
+工具 input 严格形状：
+- inspect_source_overview: {"sourceId":string,"budget":{"maxPixels":positive_integer,"maxResults":positive_integer,"maxSamplesPerResult":positive_integer,"timeoutMs":positive_integer}}
+- inspect_source_crop: {"sourceId":string,"regionId":string,"budget":budget}。先创建区域，再用此工具查看该区域画面；视觉裁剪只用于理解和选择目标，几何坐标仍以 CV 拟合为准。
+- create_observation_region: {"sourceId":string,"regionId":string,"bounds":{"x":integer,"y":integer,"width":positive_integer,"height":positive_integer},"purpose":"inventory"|"geometry"|"topology"|"annotation"|"verification","targetSlotIds":string[],"parentRegionId"?:string,"resolutionLevel":non_negative_integer,"attempt":positive_integer}
+- cv_extract_evidence: {"sourceId":string,"regionId":string,"budget":budget}
+- cv_read_evidence_page: {"handle":string,"offset":non_negative_integer,"limit":1_to_1000}
+- cv_fit_primitive: {"handle":string,"primitiveType":"point"|"line"|"ray"|"xline"|"circle"|"arc"|"ellipse"|"polyline"|"spline","budget":budget}
+- compare_region: {"sourceId":string,"regionId":string,"revision":string}
+工具调用必须遵守“创建区域 → inspect_source_crop 视觉查看同一区域 → cv_extract_evidence”的顺序。整页裁剪只用于判断版面和选择下一批重叠区域，不得直接在整页上提取明细。服务器硬上限：overview/crop 的 maxPixels 不超过 2000000；cv_extract_evidence/cv_fit_primitive 的 maxPixels 不超过 1000000；maxResults 不超过 64、maxSamplesPerResult 不超过 2048、timeoutMs 不超过 10000。不得自行提高预算绕过分区。
+观察区域应围绕完整图元，可重叠、嵌套或扩大。对同一批未处理 slot 必须按证据尺度从大到小：先提交主体外轮廓，再处理内部几何，最后才处理文字、尺寸和小孔；不得在大轮廓仍未处理时挑选小型闭合像素。触碰裁剪边缘的证据不能单独确认圆、椭圆等闭合图元，必须扩大重叠区域看到完整对象。
+坐标和图元参数应优先来自 CV evidence handle 的确定性拟合，不得凭空估计。cv_extract_evidence 会为明确类型的候选附带 suggestedFits；存在合适 suggestedFits 时应直接使用其中的 documentParameters，无需再次调用 cv_fit_primitive。只有需要尝试不同图元类型或重新拟合时才单独调用 cv_fit_primitive。拟合结果里的 sourceParameters 用于审计，创建 DrawingCommand 必须直接采用 documentParameters；documentFrame 已完成图片 Y-down 到 CAD Y-up 及默认 500 宽换算，不要再次翻转或缩放。不得输出原始 samples、rgba、base64 或像素正文。
 修改必须通过 DrawingCommand 做局部增量；允许 create、update、retype、merge、split、delete 的后续修正。只有 required residual 为零时才能 finish。
+DrawingCommand 必须使用完整命令包装，禁止直接输出 circle、line 等简写：
+- 新建几何：{"type":"geometry.create","value":{"type":"circle","visible":true,"quality":{"status":"confirmed"|"candidate","confidence"?:0_to_1,"evidenceRefs":[]},"center":[x,y],"radius":positive_number}}；其他几何把 value 换成对应 point/line/ray/xline/arc/ellipse/polyline/spline 字段。
+- 修改几何：{"type":"geometry.update","id":string,"changes":object,"expected"?:object}
+- 删除几何：{"type":"geometry.delete","id":string}
+- 文字和尺寸使用 annotation.create/update/delete，且同样必须包含完整 type 包装。
+retype 必须在同一事务中删除旧图元并新建正确类型。新建节点 ID 可省略，由运行时生成。
 不得输出 Markdown、隐藏思考过程、模型名称、完整图纸或历史。`;
 
 export type DrawingFeedbackCompletion = (
   input: DrawingAgentCompletionParams,
 ) => Promise<string>;
+
+export interface DrawingFeedbackVisionOptions {
+  readCrop(mediaHandle: string): Promise<CvCropArtifact>;
+  complete?: (input: DrawingVisionCompletionParams) => Promise<string>;
+}
 
 export class DrawingFeedbackProtocolError extends Error {
   constructor(readonly path: string, message: string) {
@@ -56,17 +82,37 @@ export class DrawingFeedbackModelAdapter {
   constructor(
     private readonly complete: DrawingFeedbackCompletion = requestDrawingAgentCompletion,
     private readonly now: () => number = Date.now,
+    private readonly vision?: DrawingFeedbackVisionOptions,
   ) {}
 
   async decide(input: FeedbackDecisionInput): Promise<FeedbackAgentDecision> {
     if (this.now() >= input.deadlineAt) throw new Error('feedback decision deadline exceeded');
-    const reply = await this.complete({
-      role: 'decision',
-      modelName: input.modelName,
-      systemPrompt: FEEDBACK_SYSTEM_PROMPT,
-      userPrompt: JSON.stringify(projectContext(input)),
-      signal: input.signal,
-    });
+    const userPrompt = JSON.stringify(projectContext(input));
+    const requestedCrop = input.requestedCrops[0];
+    let reply: string;
+    if (requestedCrop && this.vision) {
+      const artifact = await this.vision.readCrop(requestedCrop.mediaHandle);
+      if (artifact.sourceId !== requestedCrop.sourceId
+        || artifact.regionId !== requestedCrop.regionId) {
+        throw new Error('FEEDBACK_CROP_SCOPE_MISMATCH');
+      }
+      reply = await (this.vision.complete ?? requestDrawingVisionCompletion)({
+        modelName: input.modelName,
+        systemPrompt: FEEDBACK_SYSTEM_PROMPT,
+        userPrompt,
+        image: Buffer.from(artifact.bytes).toString('base64'),
+        mimeType: artifact.mimeType,
+        signal: input.signal,
+      });
+    } else {
+      reply = await this.complete({
+        role: 'decision',
+        modelName: input.modelName,
+        systemPrompt: FEEDBACK_SYSTEM_PROMPT,
+        userPrompt,
+        signal: input.signal,
+      });
+    }
     return parseFeedbackDecision(parseJsonReply(reply), input.unresolvedRequired);
   }
 }
@@ -133,9 +179,11 @@ export function parseFeedbackDecision(
 function projectContext(input: FeedbackDecisionInput): Record<string, unknown> {
   return {
     goal: truncate(input.goal),
+    sourceId: input.sourceId,
     revision: input.revision,
     unresolvedRequired: input.unresolvedRequired,
     pendingInstructions: input.pendingInstructions.slice(-MAX_RECEIPTS).map(truncate),
+    ...(input.protocolFeedback ? { protocolFeedback: truncate(input.protocolFeedback) } : {}),
     recentReceipts: input.recentReceipts.slice(-MAX_RECEIPTS).map(sanitizeBounded),
     regions: input.regions.slice(0, MAX_REGIONS).map((region) => ({
       id: region.id,

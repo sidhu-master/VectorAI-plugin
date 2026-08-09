@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type {
+  CvEvidenceDraft,
   CvEvidenceStore,
   CvPrimitiveType,
   CvSourceImage,
@@ -9,9 +10,11 @@ import type {
   SourcePixelPoint,
   SourcePixelRect,
 } from './types.js';
+import type { CvCropSummary } from './crop-store.js';
 
 export type CvToolCapability =
   | 'inspect_source_overview'
+  | 'inspect_source_crop'
   | 'create_observation_region'
   | 'cv_extract_evidence'
   | 'cv_read_evidence_page'
@@ -22,9 +25,11 @@ export interface CvObservationRegion {
   id: string;
   sourceId: string;
   bounds: SourcePixelRect;
-  purpose: string;
+  purpose: 'inventory' | 'geometry' | 'topology' | 'annotation' | 'verification';
   targetSlotIds: string[];
-  resolutionScale: number;
+  parentRegionId?: string;
+  resolutionLevel: number;
+  attempt: number;
 }
 
 export interface CvToolInvocation {
@@ -68,6 +73,15 @@ export interface CvSourceGateway {
   read(sourceId: string): Promise<CvSourceImage>;
 }
 
+export interface CvCropGateway {
+  create(input: {
+    source: CvSourceImage;
+    regionId: string;
+    bounds: SourcePixelRect;
+    maxPixels: number;
+  }): Promise<CvCropSummary>;
+}
+
 export interface CvRegionComparator {
   compare(input: {
     sourceId: string;
@@ -79,6 +93,7 @@ export interface CvRegionComparator {
 
 type ParsedInvocation =
   | { capability: 'inspect_source_overview'; sourceId: string; budget: CvToolBudget }
+  | { capability: 'inspect_source_crop'; sourceId: string; regionId: string; budget: CvToolBudget }
   | { capability: 'create_observation_region'; region: CvObservationRegion }
   | {
       capability: 'cv_extract_evidence';
@@ -95,11 +110,22 @@ type ParsedInvocation =
     }
   | { capability: 'compare_region'; sourceId: string; regionId: string; revision: string };
 
+const OVERVIEW_BUDGET_LIMIT = {
+  maxPixels: 2_000_000, maxResults: 256, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+} satisfies CvToolBudget;
+const CROP_BUDGET_LIMIT = {
+  maxPixels: 2_000_000, maxResults: 8, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+} satisfies CvToolBudget;
+const EXTRACT_BUDGET_LIMIT = {
+  maxPixels: 1_000_000, maxResults: 64, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+} satisfies CvToolBudget;
+
 export class DrawingCvToolRegistry {
   readonly #provider: DrawingCvProvider;
   readonly #evidenceStore: CvEvidenceStore;
   readonly #sources: CvSourceGateway;
   readonly #regions: CvRegionGateway;
+  readonly #crops: CvCropGateway;
   readonly #comparator?: CvRegionComparator;
   readonly #now: () => number;
 
@@ -108,6 +134,7 @@ export class DrawingCvToolRegistry {
     evidenceStore: CvEvidenceStore;
     sources: CvSourceGateway;
     regions: CvRegionGateway;
+    crops: CvCropGateway;
     comparator?: CvRegionComparator;
     now?: () => number;
   }) {
@@ -115,6 +142,7 @@ export class DrawingCvToolRegistry {
     this.#evidenceStore = input.evidenceStore;
     this.#sources = input.sources;
     this.#regions = input.regions;
+    this.#crops = input.crops;
     this.#comparator = input.comparator;
     this.#now = input.now ?? Date.now;
   }
@@ -125,8 +153,15 @@ export class DrawingCvToolRegistry {
     let parsed: ParsedInvocation;
     try {
       parsed = parseInvocation(invocation.capability, invocation.input);
-    } catch {
-      return this.#failure(invocation, startedAt, inputDigest, 'INVALID_TOOL_INPUT', 'rejected');
+    } catch (error) {
+      const code = errorCode(error);
+      return this.#failure(
+        invocation,
+        startedAt,
+        inputDigest,
+        code === 'CV_BUDGET_EXCEEDED' ? code : 'INVALID_TOOL_INPUT',
+        'rejected',
+      );
     }
 
     try {
@@ -140,6 +175,25 @@ export class DrawingCvToolRegistry {
           });
           return this.#success(invocation, startedAt, inputDigest, output, {
             sourceId: parsed.sourceId,
+            budget: parsed.budget,
+          });
+        }
+        case 'inspect_source_crop': {
+          const [source, region] = await Promise.all([
+            this.#sources.read(parsed.sourceId),
+            this.#regions.read(parsed.regionId),
+          ]);
+          if (region.sourceId !== parsed.sourceId) throw codedError('CV_REGION_SOURCE_MISMATCH');
+          const output = await this.#crops.create({
+            source,
+            regionId: region.id,
+            bounds: region.bounds,
+            maxPixels: parsed.budget.maxPixels,
+          });
+          return this.#success(invocation, startedAt, inputDigest, output, {
+            sourceId: parsed.sourceId,
+            regionId: region.id,
+            slotIds: region.targetSlotIds,
             budget: parsed.budget,
           });
         }
@@ -169,7 +223,27 @@ export class DrawingCvToolRegistry {
           const evidence = await Promise.all(drafts.map((draft) => (
             this.#evidenceStore.putEvidence(draft)
           )));
-          return this.#success(invocation, startedAt, inputDigest, { evidence }, {
+          const suggestedFits = (await Promise.all(drafts.map(async (draft, index) => {
+            const primitiveType = suggestedPrimitiveType(draft.kind);
+            if (!primitiveType || draft.samples.length > parsed.budget.maxSamplesPerResult) {
+              return undefined;
+            }
+            try {
+              const fit = await this.#provider.fitPrimitive({
+                primitiveType,
+                samples: draft.samples,
+                budget: parsed.budget,
+                signal: invocation.signal,
+              });
+              return {
+                evidenceHandle: evidence[index].handle,
+                ...projectFitToDocument(fit, source),
+              };
+            } catch {
+              return undefined;
+            }
+          }))).filter((fit) => fit !== undefined);
+          return this.#success(invocation, startedAt, inputDigest, { evidence, suggestedFits }, {
             sourceId: parsed.sourceId,
             regionId: region.id,
             slotIds: region.targetSlotIds,
@@ -195,12 +269,13 @@ export class DrawingCvToolRegistry {
             throw codedError('CV_BUDGET_EXCEEDED');
           }
           const samples = await readAllSamples(this.#evidenceStore, parsed.handle, summary.sampleCount);
-          const output = await this.#provider.fitPrimitive({
+          const [fit, source] = await Promise.all([this.#provider.fitPrimitive({
             primitiveType: parsed.primitiveType,
             samples,
             budget: parsed.budget,
             signal: invocation.signal,
-          });
+          }), this.#sources.read(summary.sourceId)]);
+          const output = projectFitToDocument(fit, source);
           return this.#success(invocation, startedAt, inputDigest, output, {
             sourceId: summary.sourceId,
             regionId: summary.regionId,
@@ -302,25 +377,60 @@ export class DrawingCvToolRegistry {
   }
 }
 
+function suggestedPrimitiveType(kind: CvEvidenceDraft['kind']): CvPrimitiveType | undefined {
+  switch (kind) {
+    case 'point-candidate': return 'point';
+    case 'line-candidate': return 'line';
+    case 'circle-candidate': return 'circle';
+    case 'arc-candidate': return 'arc';
+    case 'ellipse-candidate': return 'ellipse';
+    case 'polyline-candidate': return 'polyline';
+    case 'spline-candidate': return 'spline';
+    case 'edge':
+    case 'contour': return 'polyline';
+    case 'endpoint':
+    case 'intersection':
+    case 'primitive-candidate':
+      return undefined;
+  }
+}
+
 function parseInvocation(capability: CvToolCapability, value: unknown): ParsedInvocation {
   const input = record(value);
   switch (capability) {
     case 'inspect_source_overview':
       exactKeys(input, ['sourceId', 'budget']);
-      return { capability, sourceId: safeId(input.sourceId), budget: budget(input.budget) };
+      return {
+        capability, sourceId: safeId(input.sourceId),
+        budget: budget(input.budget, OVERVIEW_BUDGET_LIMIT),
+      };
+    case 'inspect_source_crop':
+      exactKeys(input, ['sourceId', 'regionId', 'budget']);
+      return {
+        capability,
+        sourceId: safeId(input.sourceId),
+        regionId: safeId(input.regionId),
+        budget: budget(input.budget, CROP_BUDGET_LIMIT),
+      };
     case 'create_observation_region':
-      exactKeys(input, [
-        'sourceId', 'regionId', 'bounds', 'purpose', 'targetSlotIds', 'resolutionScale',
-      ]);
+      exactOptionalKeys(
+        input,
+        ['sourceId', 'regionId', 'bounds', 'purpose', 'targetSlotIds', 'resolutionLevel', 'attempt'],
+        ['parentRegionId'],
+      );
       return {
         capability,
         region: {
           id: safeId(input.regionId),
           sourceId: safeId(input.sourceId),
           bounds: rect(input.bounds),
-          purpose: boundedString(input.purpose, 1, 500),
+          purpose: observationPurpose(input.purpose),
           targetSlotIds: stringArray(input.targetSlotIds, 32),
-          resolutionScale: finiteNumber(input.resolutionScale, 0.1, 8),
+          ...(input.parentRegionId === undefined ? {} : {
+            parentRegionId: safeId(input.parentRegionId),
+          }),
+          resolutionLevel: integer(input.resolutionLevel, 0, 8),
+          attempt: integer(input.attempt, 1, 100),
         },
       };
     case 'cv_extract_evidence':
@@ -329,7 +439,7 @@ function parseInvocation(capability: CvToolCapability, value: unknown): ParsedIn
         capability,
         sourceId: safeId(input.sourceId),
         regionId: safeId(input.regionId),
-        budget: budget(input.budget),
+        budget: budget(input.budget, EXTRACT_BUDGET_LIMIT),
       };
     case 'cv_read_evidence_page':
       exactKeys(input, ['handle', 'offset', 'limit']);
@@ -345,7 +455,7 @@ function parseInvocation(capability: CvToolCapability, value: unknown): ParsedIn
         capability,
         handle: boundedString(input.handle, 1, 80),
         primitiveType: primitiveType(input.primitiveType),
-        budget: budget(input.budget),
+        budget: budget(input.budget, EXTRACT_BUDGET_LIMIT),
       };
     case 'compare_region':
       exactKeys(input, ['sourceId', 'regionId', 'revision']);
@@ -361,6 +471,9 @@ function parseInvocation(capability: CvToolCapability, value: unknown): ParsedIn
 function parsedReferences(parsed: ParsedInvocation): Partial<CvToolReceipt> {
   if (parsed.capability === 'inspect_source_overview') {
     return { sourceId: parsed.sourceId, budget: parsed.budget };
+  }
+  if (parsed.capability === 'inspect_source_crop') {
+    return { sourceId: parsed.sourceId, regionId: parsed.regionId, budget: parsed.budget };
   }
   if (parsed.capability === 'create_observation_region') {
     return {
@@ -405,15 +518,22 @@ function assertRegionWithinSource(bounds: SourcePixelRect, source: CvSourceImage
   }
 }
 
-function budget(value: unknown): CvToolBudget {
+function budget(value: unknown, limit: CvToolBudget): CvToolBudget {
   const input = record(value);
   exactKeys(input, ['maxPixels', 'maxResults', 'maxSamplesPerResult', 'timeoutMs']);
-  return {
+  const parsed = {
     maxPixels: integer(input.maxPixels, 1, 100_000_000),
     maxResults: integer(input.maxResults, 1, 10_000),
     maxSamplesPerResult: integer(input.maxSamplesPerResult, 1, 100_000),
     timeoutMs: integer(input.timeoutMs, 1, 60_000),
   };
+  if (parsed.maxPixels > limit.maxPixels
+    || parsed.maxResults > limit.maxResults
+    || parsed.maxSamplesPerResult > limit.maxSamplesPerResult
+    || parsed.timeoutMs > limit.timeoutMs) {
+    throw codedError('CV_BUDGET_EXCEEDED');
+  }
+  return parsed;
 }
 
 function rect(value: unknown): SourcePixelRect {
@@ -446,6 +566,28 @@ function exactKeys(value: Record<string, unknown>, keys: string[]): void {
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
     throw new Error();
   }
+}
+
+function exactOptionalKeys(
+  value: Record<string, unknown>,
+  required: string[],
+  optional: string[],
+): void {
+  const actual = Object.keys(value);
+  if (required.some((key) => !actual.includes(key))
+    || actual.some((key) => !required.includes(key) && !optional.includes(key))) {
+    throw new Error();
+  }
+}
+
+function observationPurpose(value: unknown): CvObservationRegion['purpose'] {
+  const allowed: CvObservationRegion['purpose'][] = [
+    'inventory', 'geometry', 'topology', 'annotation', 'verification',
+  ];
+  if (typeof value !== 'string' || !allowed.includes(value as CvObservationRegion['purpose'])) {
+    throw new Error();
+  }
+  return value as CvObservationRegion['purpose'];
 }
 
 function safeId(value: unknown): string {
@@ -496,4 +638,97 @@ function errorCode(error: unknown): string {
   }
   if (error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)) return error.message;
   return 'CV_TOOL_FAILED';
+}
+
+function projectFitToDocument(
+  fit: Awaited<ReturnType<DrawingCvProvider['fitPrimitive']>>,
+  source: CvSourceImage,
+) {
+  const scale = 500 / source.width;
+  const point = (value: unknown): [number, number] => {
+    if (!Array.isArray(value) || value.length !== 2
+      || !value.every((item) => typeof item === 'number')) {
+      throw codedError('CV_FIT_PARAMETERS_INVALID');
+    }
+    return [value[0] * scale, (source.height - value[1]) * scale];
+  };
+  const vector = (value: unknown): [number, number] => {
+    if (!Array.isArray(value) || value.length !== 2
+      || !value.every((item) => typeof item === 'number')) {
+      throw codedError('CV_FIT_PARAMETERS_INVALID');
+    }
+    return [value[0] * scale, -value[1] * scale];
+  };
+  const params = fit.parameters;
+  let documentParameters: Record<string, unknown>;
+  switch (fit.primitiveType) {
+    case 'point':
+      documentParameters = Object.fromEntries([
+        ['x', (params.x as number) * scale],
+        ['y', (source.height - (params.y as number)) * scale],
+      ]);
+      break;
+    case 'line':
+      documentParameters = { start: point(params.start), end: point(params.end) };
+      break;
+    case 'ray':
+    case 'xline':
+      documentParameters = { origin: point(params.origin), direction: vector(params.direction) };
+      break;
+    case 'circle':
+      documentParameters = { center: point(params.center), radius: (params.radius as number) * scale };
+      break;
+    case 'arc':
+      documentParameters = {
+        center: point(params.center),
+        radius: (params.radius as number) * scale,
+        startAngle: normalizeDegrees(-(params.startAngle as number) * 180 / Math.PI),
+        endAngle: normalizeDegrees(-(params.endAngle as number) * 180 / Math.PI),
+        counterClockwise: !(params.counterClockwise as boolean),
+      };
+      break;
+    case 'ellipse':
+      documentParameters = {
+        center: point(params.center),
+        majorAxis: vector(params.majorAxis),
+        ratio: params.ratio,
+      };
+      break;
+    case 'polyline':
+      documentParameters = {
+        vertices: Array.isArray(params.vertices)
+          ? params.vertices.map((vertex) => {
+              const item = record(vertex);
+              return { point: point(item.point) };
+            })
+          : [],
+        closed: params.closed,
+      };
+      break;
+    case 'spline':
+      documentParameters = {
+        degree: params.degree,
+        controlPoints: Array.isArray(params.controlPoints)
+          ? params.controlPoints.map(point)
+          : [],
+        knots: params.knots,
+        closed: params.closed,
+        periodic: params.periodic,
+      };
+      break;
+  }
+  return {
+    ...fit,
+    sourceParameters: structuredClone(params),
+    documentParameters,
+    documentFrame: {
+      width: 500,
+      height: source.height * scale,
+      sourceToDocument: [scale, 0, 0, -scale, 0, source.height * scale],
+    },
+  };
+}
+
+function normalizeDegrees(value: number): number {
+  return ((value % 360) + 360) % 360;
 }

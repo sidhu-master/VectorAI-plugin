@@ -23,6 +23,17 @@ import { createDrawingsRouter } from './routes/drawings.js'
 import { DrawingPerceptionPipeline } from './services/drawing-perception/pipeline.js'
 import { FileDrawingObservationStore } from './services/drawing-perception/observation-store.js'
 import { FileSourceArtifactStore } from './services/source-artifacts/file-source-artifact-store.js'
+import { FileCvEvidenceStore } from './services/drawing-cv/evidence-store.js'
+import { OpenCvWorkerProvider } from './services/drawing-cv/opencv-provider.js'
+import { StoredSourceCvGateway } from './services/drawing-cv/source-gateway.js'
+import { DrawingCvToolRegistry } from './services/drawing-cv/tool-registry.js'
+import { FileCvCropStore } from './services/drawing-cv/crop-store.js'
+import { FileDrawingFeedbackCheckpointStore } from './services/drawing-feedback/checkpoint-store.js'
+import { DrawingFeedbackLoop } from './services/drawing-feedback/loop-controller.js'
+import { DrawingFeedbackModelAdapter } from './services/drawing-feedback/model-adapter.js'
+import { MemoryObservationRegionStore } from './services/drawing-feedback/region-store.js'
+import { MemoryObservationSlotStore } from './services/drawing-feedback/slot-store.js'
+import { SourceRasterFeedbackComparator } from './services/drawing-feedback/source-comparator.js'
 
 // load env
 dotenv.config()
@@ -44,12 +55,48 @@ const auditStore = new FileDrawingAgentAuditStore({
 const sourceArtifacts = new FileSourceArtifactStore({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/sources'),
 })
+const sourceCvGateway = new StoredSourceCvGateway({ sourceArtifacts })
+const cvProvider = await OpenCvWorkerProvider.create({ workerCount: 1 })
+const cvEvidenceStore = new FileCvEvidenceStore({
+  rootDirectory: path.resolve(process.cwd(), '.local/vectorai/evidence'),
+  resolveSourceSize: (sourceId) => sourceCvGateway.size(sourceId),
+})
+const cvCropStore = new FileCvCropStore({
+  rootDirectory: path.resolve(process.cwd(), '.local/vectorai/crops'),
+})
+const observationRegions = new MemoryObservationRegionStore({
+  resolveSourceSize: (sourceId) => sourceCvGateway.cachedSize(sourceId),
+})
+const observationSlots = new MemoryObservationSlotStore()
+const cvTools = new DrawingCvToolRegistry({
+  provider: cvProvider,
+  evidenceStore: cvEvidenceStore,
+  sources: sourceCvGateway,
+  regions: {
+    create: async (region) => observationRegions.create(region),
+    read: async (regionId) => observationRegions.read(regionId),
+  },
+  crops: cvCropStore,
+})
+const sourceComparator = new SourceRasterFeedbackComparator({ sources: sourceCvGateway })
 const drawingPerception = new DrawingPerceptionPipeline({
   observationStore: new FileDrawingObservationStore(
     path.resolve(process.cwd(), '.local/vectorai/runs'),
   ),
 })
 const drawingTools = new DrawingToolRegistry({ application: drawingApplication })
+const drawingFeedback = new DrawingFeedbackLoop({
+  application: drawingApplication,
+  drawingTools,
+  cvTools,
+  model: new DrawingFeedbackModelAdapter(undefined, undefined, {
+    readCrop: (mediaHandle) => cvCropStore.read(mediaHandle),
+  }),
+  regions: observationRegions,
+  slots: observationSlots,
+  compare: sourceComparator.compare.bind(sourceComparator),
+  maxIterations: 160,
+})
 const agentRuntime = new DrawingAgentRuntime({
   application: drawingApplication,
   tools: drawingTools,
@@ -60,6 +107,10 @@ const agentRuntime = new DrawingAgentRuntime({
   perception: drawingPerception,
   visionModelName: primaryModel,
   visionRepairModelName: agentModelDefaults.repair,
+  feedbackLoop: drawingFeedback,
+  feedbackCheckpointStore: new FileDrawingFeedbackCheckpointStore({
+    rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
+  }),
 })
 
 app.use(cors())
@@ -115,3 +166,7 @@ app.use((req: Request, res: Response) => {
 })
 
 export default app
+
+export async function closeAppServices(): Promise<void> {
+  await cvProvider.close()
+}

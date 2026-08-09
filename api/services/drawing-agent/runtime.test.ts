@@ -17,6 +17,10 @@ import { DrawingAgentRuntime } from './runtime';
 import { FileDrawingAgentAuditStore } from './file-audit-store';
 import type { DrawingAgentAuditStore } from './audit-types';
 import type { DrawingPerceptionOutput } from '../drawing-perception/pipeline';
+import type {
+  DrawingFeedbackOutput,
+  DrawingFeedbackRunInput,
+} from '../drawing-feedback/loop-controller';
 import type { SourceArtifactStore } from '../source-artifacts/types';
 import type {
   DrawingDecisionInput,
@@ -52,6 +56,7 @@ async function setup(input: {
     signal: AbortSignal;
     modelName: string;
   }): AsyncIterable<DrawingPerceptionOutput> };
+  feedbackLoop?: { run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> };
   stageTimeoutMs?: number;
 } = {}) {
   const idFactory = ids();
@@ -100,18 +105,50 @@ async function setup(input: {
     now: () => 100,
     limits: input.limits,
     auditStore: input.auditStore,
-    sourceArtifacts: input.perceptionOutputs || input.perceptionService ? sourceStore() : undefined,
+    sourceArtifacts: input.perceptionOutputs || input.perceptionService || input.feedbackLoop
+      ? sourceStore() : undefined,
     perception: input.perceptionService ?? (input.perceptionOutputs
       ? perception(input.perceptionOutputs, input.perceptionModels)
       : undefined),
     stageTimeoutMs: input.stageTimeoutMs,
     visionModelName: 'vision-model',
     visionRepairModelName: 'repair-vision-model',
+    feedbackLoop: input.feedbackLoop,
   });
   return { application, decision, order, planner, runtime, tools, workspace };
 }
 
 describe('DrawingAgentRuntime', () => {
+  it('uses the feedback loop as the only source-backed reconstruction path when configured', async () => {
+    let feedbackCalls = 0;
+    let perceptionCalls = 0;
+    const feedbackLoop = {
+      async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+        feedbackCalls += 1;
+        yield { kind: 'state', stage: 'OBSERVE', iteration: 0 };
+        yield {
+          kind: 'completed', revision: input.revision,
+          unresolvedRequired: 0, summary: '来源反馈已收敛',
+        };
+      },
+    };
+    const perceptionService = {
+      async *run(): AsyncIterable<DrawingPerceptionOutput> {
+        perceptionCalls += 1;
+        yield { kind: 'stage', runId: 'run_1', stage: 'completed', timestamp: 1, durationMs: 1, detail: {} };
+      },
+    };
+    const { runtime, workspace } = await setup({ feedbackLoop, perceptionService });
+
+    const final = await runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(feedbackCalls).toBe(1);
+    expect(perceptionCalls).toBe(0);
+    expect(final.analysisSummary).toBe('来源反馈已收敛');
+  });
   it('forwards and audits a perception delta before the perception pass completes', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-progressive-audit-'));
     try {
