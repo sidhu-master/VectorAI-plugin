@@ -21,11 +21,124 @@ import { DrawingFeedbackProtocolError } from './model-adapter.js';
 import { MemoryObservationRegionStore } from './region-store.js';
 import { renderDrawingRegion } from './source-renderer.js';
 import { MemoryObservationSlotStore } from './slot-store.js';
+import type { PersistedCleanLineVectorizationResult } from '../drawing-vectorization/types.js';
 
 const TRANSFORM = [1, 0, 0, -1, 0, 120] as const;
 const REGION = { x: 0, y: 0, width: 120, height: 120 };
 
 describe('DrawingFeedbackLoop', () => {
+  it('bootstraps a clean stroke as polyline before promoting the same node to circle', async () => {
+    const fixture = await setup();
+    const modelDrawingTypes: string[][] = [];
+    const vectorization = {
+      vectorizeSource: async () => ({
+        sourceId: fixture.input.sourceId,
+        pipelineVersion: 'fixture-vector-v1',
+        width: 120,
+        height: 120,
+        analysisScale: 1,
+        medianLineWidthPx: 4,
+        chains: [{
+          id: 'chain_0123456789abcdef0123',
+          closed: true,
+          samples: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
+          simplified: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
+          bounds: { x: 30, y: 30, width: 60, height: 60 },
+          candidate: {
+            type: 'circle' as const,
+            parameters: { center: [60, 60], radius: 30 },
+            fitErrorMean: 0.2,
+            fitErrorP95: 0.5,
+            fitErrorMax: 0.8,
+            confidence: 0.96,
+          },
+          evidence: {
+            handle: 'evidence_cccccccccccccccccccccccc',
+            sourceId: fixture.input.sourceId,
+            regionId: 'vector_chain_0123456789abcdef0123',
+            kind: 'circle-candidate' as const,
+            bounds: { x: 30, y: 30, width: 60, height: 60 },
+            confidence: 0.96,
+            touchesRegionEdge: false,
+            sampleCount: 4,
+          },
+        }],
+      }),
+    };
+    const loop = fixture.loopWith([], (modelInput) => {
+      modelDrawingTypes.push(modelInput.drawingItems.map((item) => item.type));
+      return { type: 'finish', summary: 'bootstrap 已完成' };
+    }, undefined, async () => metricReport(1, 0, 0, true), vectorization);
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    const proposalTypes = outputs
+      .filter((output): output is Extract<DrawingFeedbackOutput, { kind: 'proposal' }> => (
+        output.kind === 'proposal'
+      ))
+      .map((output) => output.nodes[0]?.type);
+    expect(proposalTypes).toEqual(['polyline', 'circle']);
+    expect(outputs.filter((output) => output.kind === 'commit')).toHaveLength(2);
+    expect(modelDrawingTypes).toEqual([]);
+    expect((await fixture.application.open(fixture.input.drawingId)).document.geometry)
+      .toEqual([expect.objectContaining({ type: 'circle', center: [250, 250], radius: 125 })]);
+    expect(outputs.at(-1)).toMatchObject({ kind: 'completed', unresolvedRequired: 0 });
+  });
+
+  it('pauses before the first vectorization transaction and resumes without duplicate drafts', async () => {
+    const fixture = await setup();
+    let pause = true;
+    const vectorization = cleanVectorization(fixture.input.sourceId);
+    const loop = fixture.loopWith(
+      [],
+      () => ({ type: 'finish', summary: '无需模型' }),
+      undefined,
+      async () => metricReport(1, 0, 0, true),
+      { vectorizeSource: async () => vectorization },
+    );
+
+    const first = await collect(loop.run({ ...fixture.input, shouldPause: () => pause }));
+    const checkpoint = first.find((output) => output.kind === 'paused')?.checkpoint;
+    expect(checkpoint).toBeDefined();
+    expect((await fixture.application.open(fixture.input.drawingId)).document.geometry).toEqual([]);
+
+    pause = false;
+    const resumed = await collect(loop.run({
+      ...fixture.input, checkpoint, shouldPause: () => pause,
+    }));
+
+    expect(resumed.filter((output) => output.kind === 'commit')).toHaveLength(2);
+    expect((await fixture.application.open(fixture.input.drawingId)).document.geometry)
+      .toEqual([expect.objectContaining({ type: 'circle' })]);
+  });
+
+  it('keeps a committed polyline when its analytic promotion fails Drawing validation', async () => {
+    const fixture = await setup();
+    const vectorization = cleanVectorization(fixture.input.sourceId);
+    vectorization.chains[0].closed = false;
+    vectorization.chains[0].candidate = {
+      type: 'line',
+      parameters: { start: [60, 60], end: [60, 60] },
+      fitErrorMean: 0,
+      fitErrorP95: 0,
+      fitErrorMax: 0,
+      confidence: 0.99,
+    };
+    const loop = fixture.loopWith(
+      [],
+      () => ({ type: 'finish', summary: '保留底稿' }),
+      undefined,
+      async () => metricReport(1, 0, 0, true),
+      { vectorizeSource: async () => vectorization },
+    );
+
+    const outputs = await collect(loop.run(fixture.input));
+
+    expect(outputs).toContainEqual(expect.objectContaining({ kind: 'correction', action: 'reject' }));
+    expect((await fixture.application.open(fixture.input.drawingId)).document.geometry)
+      .toEqual([expect.objectContaining({ type: 'polyline' })]);
+  });
+
   it('commits a wrong circle, retypes it to an arc, and converges through source feedback', async () => {
     const fixture = await setup();
     const decisions: FeedbackAgentDecision[] = [
@@ -858,6 +971,42 @@ function metricReport(edgeF1: number, fitP95: number, residualCount: number, imp
   };
 }
 
+function cleanVectorization(sourceId: string): PersistedCleanLineVectorizationResult {
+  return {
+    sourceId,
+    pipelineVersion: 'fixture-vector-v1',
+    width: 120,
+    height: 120,
+    analysisScale: 1,
+    medianLineWidthPx: 4,
+    chains: [{
+      id: 'chain_0123456789abcdef0123',
+      closed: true,
+      samples: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
+      simplified: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
+      bounds: { x: 30, y: 30, width: 60, height: 60 },
+      candidate: {
+        type: 'circle' as const,
+        parameters: { center: [60, 60], radius: 30 },
+        fitErrorMean: 0.2,
+        fitErrorP95: 0.5,
+        fitErrorMax: 0.8,
+        confidence: 0.96,
+      },
+      evidence: {
+        handle: 'evidence_cccccccccccccccccccccccc',
+        sourceId,
+        regionId: 'vector_chain_0123456789abcdef0123',
+        kind: 'circle-candidate' as const,
+        bounds: { x: 30, y: 30, width: 60, height: 60 },
+        confidence: 0.96,
+        touchesRegionEdge: false,
+        sampleCount: 4,
+      },
+    }],
+  };
+}
+
 async function setup() {
   const idFactory = ids();
   const repository = new MemoryDrawingRepository({ idFactory, now: () => 100 });
@@ -916,6 +1065,7 @@ async function setup() {
       decideOverride?: (input: Parameters<ConstructorParameters<typeof DrawingFeedbackLoop>[0]['model']['decide']>[0]) => FeedbackAgentDecision,
       cvTools?: Pick<DrawingCvToolRegistry, 'invoke'>,
       compareOverride?: ConstructorParameters<typeof DrawingFeedbackLoop>[0]['compare'],
+      vectorization?: ConstructorParameters<typeof DrawingFeedbackLoop>[0]['vectorization'],
     ) {
       let index = 0;
       return new DrawingFeedbackLoop({
@@ -927,6 +1077,7 @@ async function setup() {
         slots,
         compare: compareOverride ?? compare,
         maxIterations: 10,
+        ...(vectorization ? { vectorization } : {}),
       });
     },
   };

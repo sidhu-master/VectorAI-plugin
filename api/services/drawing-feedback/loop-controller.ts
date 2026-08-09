@@ -32,6 +32,8 @@ import type {
 } from './types.js';
 import { DrawingFeedbackProtocolError } from './model-adapter.js';
 import { projectFeedbackTransactionPreview } from './preview-projector.js';
+import { buildVectorizationSteps } from '../drawing-vectorization/build-steps.js';
+import type { CleanLineVectorizationService } from '../drawing-vectorization/service.js';
 
 interface FeedbackApplication {
   open: DrawingApplication['open'];
@@ -59,6 +61,7 @@ export interface DrawingFeedbackCheckpoint {
   residual: RegionResidualReport;
   unresolvedRequired: number;
   nonImprovingBySlot: Record<string, number>;
+  vectorizationCompletedStepIds?: string[];
 }
 
 export interface DrawingFeedbackRunInput {
@@ -112,6 +115,9 @@ export type DrawingFeedbackOutput =
 
 export type FeedbackStage =
   | 'OBSERVE'
+  | 'VECTORIZE_SOURCE'
+  | 'DRAW_VECTOR_DRAFT'
+  | 'PROMOTE_PRIMITIVE'
   | 'SELECT_TARGET'
   | 'ACQUIRE_EVIDENCE'
   | 'PROPOSE_PATCH'
@@ -134,6 +140,7 @@ export class DrawingFeedbackLoop {
   readonly #maxIterations: number;
   readonly #now: () => number;
   readonly #audit?: (event: { type: string; payload: Record<string, unknown> }) => Promise<void> | void;
+  readonly #vectorization?: Pick<CleanLineVectorizationService, 'vectorizeSource'>;
 
   constructor(input: {
     application: FeedbackApplication;
@@ -150,6 +157,7 @@ export class DrawingFeedbackLoop {
     maxIterations?: number;
     now?: () => number;
     audit?: (event: { type: string; payload: Record<string, unknown> }) => Promise<void> | void;
+    vectorization?: Pick<CleanLineVectorizationService, 'vectorizeSource'>;
   }) {
     this.#application = input.application;
     this.#drawingTools = input.drawingTools;
@@ -161,6 +169,7 @@ export class DrawingFeedbackLoop {
     this.#maxIterations = input.maxIterations ?? 40;
     this.#now = input.now ?? Date.now;
     this.#audit = input.audit;
+    this.#vectorization = input.vectorization;
   }
 
   async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
@@ -170,6 +179,9 @@ export class DrawingFeedbackLoop {
     let requestedCrops = [...(input.checkpoint?.requestedCrops ?? [])];
     let controllerFeedback = input.checkpoint?.controllerFeedback;
     let nonImprovingBySlot = { ...(input.checkpoint?.nonImprovingBySlot ?? {}) };
+    let vectorizationCompletedStepIds = [
+      ...(input.checkpoint?.vectorizationCompletedStepIds ?? []),
+    ];
     let residual: RegionResidualReport;
     let unresolvedRequired: number;
     if (input.checkpoint) {
@@ -185,6 +197,40 @@ export class DrawingFeedbackLoop {
       yield { kind: 'residual', report: structuredClone(residual), accepted: true };
     }
 
+    if (this.#vectorization) {
+      const workspace = await this.#application.open(input.drawingId);
+      const vectorDrawing = workspace.document.geometry.every((node) => node.id.startsWith('node_vec_'));
+      if (workspace.document.geometry.length === 0
+        || vectorDrawing || vectorizationCompletedStepIds.length > 0) {
+        const bootstrapped = yield* this.#bootstrapVectorization({
+          input,
+          revision,
+          iteration,
+          recentReceipts,
+          requestedCrops,
+          controllerFeedback,
+          nonImprovingBySlot,
+          residual,
+          unresolvedRequired,
+          completedStepIds: vectorizationCompletedStepIds,
+        });
+        revision = bootstrapped.revision;
+        vectorizationCompletedStepIds = bootstrapped.completedStepIds;
+        if (bootstrapped.terminal) return;
+        const updated = await this.#application.open(input.drawingId);
+        residual = await this.#compare(updated.document, undefined, { sourceId: input.sourceId });
+        unresolvedRequired = requiredResidualCount(residual);
+        yield { kind: 'residual', report: structuredClone(residual), accepted: true };
+        if (unresolvedRequired === 0) {
+          yield {
+            kind: 'completed', revision, unresolvedRequired: 0,
+            summary: `已完成 ${vectorizationCompletedStepIds.length} 个可审计矢量化步骤`,
+          };
+          return;
+        }
+      }
+    }
+
     while (iteration < this.#maxIterations) {
       if (input.signal.aborted) {
         yield { kind: 'stopped', revision };
@@ -193,6 +239,7 @@ export class DrawingFeedbackLoop {
       const checkpoint = makeCheckpoint({
         input, revision, iteration, recentReceipts, residual,
         unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+        vectorizationCompletedStepIds,
       });
       if (input.shouldPause?.()) {
         await this.#record('checkpoint', checkpoint as unknown as Record<string, unknown>);
@@ -308,6 +355,7 @@ export class DrawingFeedbackLoop {
           yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
             input, revision, iteration, recentReceipts, residual,
             unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+            vectorizationCompletedStepIds,
           }) };
           continue;
         }
@@ -315,6 +363,7 @@ export class DrawingFeedbackLoop {
           yield { kind: 'paused', checkpoint: makeCheckpoint({
             input, revision, iteration, recentReceipts, residual,
             unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+            vectorizationCompletedStepIds,
           }) };
           return;
         }
@@ -388,6 +437,7 @@ export class DrawingFeedbackLoop {
         const nextCheckpoint = makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
           unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+          vectorizationCompletedStepIds,
         });
         yield { kind: 'checkpoint', checkpoint: nextCheckpoint };
         continue;
@@ -406,6 +456,7 @@ export class DrawingFeedbackLoop {
           yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
             input, revision, iteration, recentReceipts, residual,
             unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+            vectorizationCompletedStepIds,
           }) };
           continue;
         }
@@ -435,6 +486,7 @@ export class DrawingFeedbackLoop {
         yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
           unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+          vectorizationCompletedStepIds,
         }) };
         continue;
       }
@@ -444,6 +496,7 @@ export class DrawingFeedbackLoop {
         yield { kind: 'paused', checkpoint: makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
           unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+          vectorizationCompletedStepIds,
         }) };
         return;
       }
@@ -508,6 +561,7 @@ export class DrawingFeedbackLoop {
         yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
           unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+          vectorizationCompletedStepIds,
         }) };
         continue;
       }
@@ -574,6 +628,7 @@ export class DrawingFeedbackLoop {
         yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
           input, revision, iteration, recentReceipts, residual,
           unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+          vectorizationCompletedStepIds,
         }) };
         continue;
       }
@@ -632,6 +687,7 @@ export class DrawingFeedbackLoop {
       yield { kind: 'checkpoint', checkpoint: makeCheckpoint({
         input, revision, iteration, recentReceipts, residual,
         unresolvedRequired, nonImprovingBySlot, requestedCrops, controllerFeedback,
+        vectorizationCompletedStepIds,
       }) };
     }
 
@@ -639,6 +695,181 @@ export class DrawingFeedbackLoop {
       kind: 'failed', code: 'FEEDBACK_ITERATION_BUDGET_EXCEEDED',
       message: `反馈循环超过 ${this.#maxIterations} 轮`,
     };
+  }
+
+  async *#bootstrapVectorization(state: {
+    input: DrawingFeedbackRunInput;
+    revision: RevisionId;
+    iteration: number;
+    recentReceipts: unknown[];
+    requestedCrops: FeedbackDecisionInput['requestedCrops'];
+    controllerFeedback?: string;
+    nonImprovingBySlot: Record<string, number>;
+    residual: RegionResidualReport;
+    unresolvedRequired: number;
+    completedStepIds: string[];
+  }): AsyncGenerator<DrawingFeedbackOutput, {
+    revision: RevisionId;
+    completedStepIds: string[];
+    terminal: boolean;
+  }> {
+    let revision = state.revision;
+    const completed = new Set(state.completedStepIds);
+    yield { kind: 'state', stage: 'VECTORIZE_SOURCE', iteration: state.iteration };
+    let vectorized;
+    try {
+      vectorized = await this.#vectorization!.vectorizeSource({
+        sourceId: state.input.sourceId,
+        maxPixels: 4_000_000,
+        signal: state.input.signal,
+      });
+    } catch (error) {
+      const message = `中心线矢量化未完成，转入现有观察循环：${error instanceof Error ? error.message : String(error)}`;
+      await this.#record('vectorization_fallback', { message });
+      yield { kind: 'controller_feedback', message };
+      return { revision, completedStepIds: [...completed], terminal: false };
+    }
+    const steps = buildVectorizationSteps(vectorized);
+    await this.#record('vectorization_inventory', {
+      pipelineVersion: vectorized.pipelineVersion,
+      chainCount: vectorized.chains.length,
+      stepCount: steps.length,
+      medianLineWidthPx: vectorized.medianLineWidthPx,
+    });
+    for (const step of steps) {
+      const stepId = `${step.kind}:${step.chainId}`;
+      if (completed.has(stepId)) continue;
+      if (state.input.signal.aborted) {
+        yield { kind: 'stopped', revision };
+        return { revision, completedStepIds: [...completed], terminal: true };
+      }
+      if (state.input.shouldPause?.()) {
+        const checkpoint = makeCheckpoint({
+          input: state.input,
+          revision,
+          iteration: state.iteration,
+          recentReceipts: state.recentReceipts,
+          requestedCrops: state.requestedCrops,
+          controllerFeedback: state.controllerFeedback,
+          nonImprovingBySlot: state.nonImprovingBySlot,
+          residual: state.residual,
+          unresolvedRequired: state.unresolvedRequired,
+          vectorizationCompletedStepIds: [...completed],
+        });
+        yield { kind: 'paused', checkpoint };
+        return { revision, completedStepIds: [...completed], terminal: true };
+      }
+      yield {
+        kind: 'state',
+        stage: step.kind === 'draft' ? 'DRAW_VECTOR_DRAFT' : 'PROMOTE_PRIMITIVE',
+        iteration: state.iteration,
+      };
+      const existingSlot = this.#slots.observe(step.slotObservation);
+      const slot = step.kind === 'promotion'
+        ? this.#slots.observe(step.slotObservation, { preferredSlotId: existingSlot.id })
+        : existingSlot;
+      if (step.kind === 'draft') {
+        yield {
+          kind: 'inventory',
+          slotIds: [slot.id],
+          candidateCount: 1,
+        };
+      }
+      const preview = await this.#drawingTools.invoke({
+        capability: 'preview_transaction',
+        caller: 'model',
+        toolCallId: `vectorize:${stepId}:preview`,
+        context: toolContext(state.input, revision),
+        input: { commands: step.commands, postconditions: [] },
+      });
+      state.recentReceipts.push(preview.receipt);
+      state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
+      yield { kind: 'drawing_tool', execution: preview };
+      if (!preview.prepared || !preview.previewDocument) {
+        completed.add(stepId);
+        await this.#record('vectorization_step_rejected', {
+          stepId,
+          chainId: step.chainId,
+          kind: step.kind,
+          status: preview.receipt.status,
+        });
+        yield { kind: 'correction', action: 'reject', slotIds: [slot.id] };
+        continue;
+      }
+      const proposal = projectFeedbackTransactionPreview({
+        document: preview.previewDocument,
+        affectedNodeIds: preview.receipt.affectedNodeIds,
+        slotId: slot.id,
+        confidence: step.confidence,
+        evidenceRefs: slot.evidenceRefs,
+      });
+      if (proposal.nodes.length > 0) {
+        const label = step.kind === 'draft' ? '矢量底稿' : '规范图元';
+        yield {
+          kind: 'proposal',
+          slotId: slot.id,
+          nodes: proposal.nodes,
+          labelsByNodeId: Object.fromEntries(proposal.nodes.map((node) => [node.id, label])),
+        };
+      }
+      const committed = await this.#drawingTools.invoke({
+        capability: 'commit_transaction',
+        caller: 'runtime',
+        toolCallId: `vectorize:${stepId}:commit`,
+        context: toolContext(state.input, revision),
+        input: { previewHandle: preview.prepared.handle },
+      });
+      state.recentReceipts.push(committed.receipt);
+      state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
+      if (committed.receipt.status !== 'succeeded'
+        && committed.receipt.status !== 'already_satisfied') {
+        completed.add(stepId);
+        yield { kind: 'correction', action: 'reject', slotIds: [slot.id] };
+        continue;
+      }
+      revision = committed.receipt.revisionAfter ?? revision;
+      const action = step.kind === 'draft' ? 'create' as const : 'retype' as const;
+      this.#slots.recordDrawingChange(slot.id, {
+        action,
+        ...(step.kind === 'promotion' ? { removedDrawingEntityIds: [step.previewNode.id] } : {}),
+        addedDrawingEntityIds: [step.previewNode.id],
+      });
+      completed.add(stepId);
+      await this.#record('vectorization_step_committed', {
+        stepId,
+        chainId: step.chainId,
+        kind: step.kind,
+        nodeId: step.previewNode.id,
+        nodeType: step.previewNode.type,
+        validation: structuredClone(step.validation),
+        commitId: committed.commit?.id,
+        revision,
+      });
+      yield {
+        kind: 'commit',
+        commitId: committed.commit?.id,
+        revision,
+        slotIds: [slot.id],
+        execution: committed,
+      };
+      yield { kind: 'correction', action, slotIds: [slot.id] };
+      yield {
+        kind: 'checkpoint',
+        checkpoint: makeCheckpoint({
+          input: state.input,
+          revision,
+          iteration: state.iteration,
+          recentReceipts: state.recentReceipts,
+          requestedCrops: state.requestedCrops,
+          controllerFeedback: state.controllerFeedback,
+          nonImprovingBySlot: state.nonImprovingBySlot,
+          residual: state.residual,
+          unresolvedRequired: state.unresolvedRequired,
+          vectorizationCompletedStepIds: [...completed],
+        }),
+      };
+    }
+    return { revision, completedStepIds: [...completed], terminal: false };
   }
 
   async #record(type: string, payload: Record<string, unknown>): Promise<void> {
@@ -754,6 +985,7 @@ function makeCheckpoint(input: {
   residual: RegionResidualReport;
   unresolvedRequired: number;
   nonImprovingBySlot: Record<string, number>;
+  vectorizationCompletedStepIds?: string[];
 }): DrawingFeedbackCheckpoint {
   return {
     schemaVersion: 1,
@@ -767,6 +999,7 @@ function makeCheckpoint(input: {
     residual: structuredClone(input.residual),
     unresolvedRequired: input.unresolvedRequired,
     nonImprovingBySlot: { ...input.nonImprovingBySlot },
+    vectorizationCompletedStepIds: [...(input.vectorizationCompletedStepIds ?? [])],
   };
 }
 
