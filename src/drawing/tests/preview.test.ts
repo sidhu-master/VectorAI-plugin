@@ -4,6 +4,8 @@ import type { GeometryId, GeometryNode, PerceptionPreviewDelta } from '@/drawing
 import {
   applyPerceptionPreviewDelta,
   emptyPerceptionPreview,
+  reconcilePerceptionPreview,
+  retainUncommittedPromotions,
 } from '@/drawing/preview/reducer';
 
 describe('perception preview reducer', () => {
@@ -63,6 +65,30 @@ describe('perception preview reducer', () => {
 
     expect(observed.labelsByNodeId).toEqual({ node_obs_1: 'GEO-0001' });
     expect(removed.labelsByNodeId).toEqual({});
+  });
+
+  it('keeps promoted previews until the authoritative document contains the same id', () => {
+    const observed = applyPerceptionPreviewDelta(
+      emptyPerceptionPreview(null),
+      delta(1, 'observe', [circle(4)]),
+    );
+    const promote = {
+      ...delta(2, 'promote', []),
+      removeIds: ['node_obs_1'],
+      source: { page: 1, viewId: 'view_1', stage: 'reconciliation' as const },
+    };
+
+    const retained = applyPerceptionPreviewDelta(
+      observed,
+      retainUncommittedPromotions(promote, { geometry: [], annotations: [] }),
+    );
+    expect(retained.nodes).toHaveProperty('node_obs_1');
+
+    const reconciled = reconcilePerceptionPreview(retained, {
+      geometry: [circle(4)], annotations: [],
+    });
+    expect(reconciled.nodes).toEqual({});
+    expect(reconciled.labelsByNodeId).toEqual({});
   });
 });
 

@@ -63,7 +63,7 @@ describe('drawing perception regions', () => {
     expect(stitchGeometryObservation(geometry, region, 1.5)).toMatchObject({
       id: 'view_primary_region_2__geom_001', viewId: 'view_primary',
       imageBounds: [0.3, 0.45, 0.4, 0.1],
-      measuredParams: { center: [0.5, 0.75], radius: 0.08 },
+      measuredParams: { center: [250, 375], radius: 40 },
     });
     expect(stitchAnnotationObservation(annotation, region)).toMatchObject({
       id: 'view_primary_region_2__ann_001', viewId: 'view_primary',
@@ -81,13 +81,13 @@ describe('drawing perception regions', () => {
       id: 'point_top', viewId: region.id, type: 'point', imageBounds: [0.4, 0.2, 0.1, 0.1],
       measuredParams: { x: 0.5, y: 0.25 }, confidence: 0.9,
     }, region, 2)).toMatchObject({
-      measuredParams: { x: 0.3, y: 1.4 },
+      measuredParams: { x: 150, y: 700 },
     });
     expect(stitchGeometryObservation({
       id: 'vertical_axis', viewId: region.id, type: 'xline', imageBounds: [0.5, 0, 0.01, 1],
       measuredParams: { origin: [0.5, 0.25], direction: [0, 1] }, confidence: 0.9,
     }, region, 2)).toMatchObject({
-      measuredParams: { origin: [0.3, 1.4], direction: [0, -1] },
+      measuredParams: { origin: [150, 700], direction: [0, -1] },
     });
     expect(stitchGeometryObservation({
       id: 'upper_arc', viewId: region.id, type: 'arc', imageBounds: [0.2, 0.1, 0.4, 0.2],
@@ -98,7 +98,7 @@ describe('drawing perception regions', () => {
       confidence: 0.9,
     }, region, 2)).toMatchObject({
       measuredParams: {
-        center: [0.3, 1.4], radius: 0.08,
+        center: [150, 700], radius: 40,
         startAngle: 0, endAngle: 270, counterClockwise: false,
       },
     });
@@ -135,7 +135,7 @@ describe('drawing perception regions', () => {
     expect(stitched).toMatchObject({
       id: 'view_primary_global__outer', viewId: 'view_primary',
       imageBounds: [0.18, 0.26, 0.64, 0.48],
-      coarseParams: { center: [0.5, 0.75], radius: 0.32 },
+      coarseParams: { center: [250, 375], radius: 160 },
     });
     expect(projectGlobalContoursToRegion([stitched], region)).toEqual([{
       id: 'view_primary_global__outer', geometryFamily: 'circle',

@@ -55,7 +55,7 @@ describe('DrawingPerceptionPipeline', () => {
 
     expect(annotationCommand).toMatchObject({
       type: 'annotation.create',
-      value: { type: 'text', position: [0.2, 1.4] },
+      value: { type: 'text', position: [100, 700], height: 200 },
     });
   });
 

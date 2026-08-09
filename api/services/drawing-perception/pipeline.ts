@@ -30,6 +30,7 @@ import {
   stitchGlobalContour,
   type PerceptionRegion,
 } from './regions.js';
+import { imageToCadTransform } from './coordinate-space.js';
 import { buildDrawingTopology } from './topology.js';
 import type {
   AnnotationObservation,
@@ -1021,11 +1022,6 @@ function publicObservationLabel(
       : 'GEO';
   const match = observation.id.match(/(\d{4})$/);
   return `${prefix}-${match?.[1] ?? observation.id.slice(-4).toUpperCase()}`;
-}
-
-function imageToCadTransform(heightToWidthRatio: number | undefined) {
-  const ratio = heightToWidthRatio ?? 1;
-  return { scaleX: 1, scaleY: -ratio, offsetX: 0, offsetY: ratio };
 }
 
 class AsyncOutputQueue<T> implements AsyncIterableIterator<T> {

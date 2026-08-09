@@ -4,6 +4,8 @@ import {
   applyPerceptionPreviewDelta,
   emptyPerceptionPreview,
   randomIdFactory,
+  reconcilePerceptionPreview,
+  retainUncommittedPromotions,
   type DrawingCommand,
   type DrawingCommit,
   type DrawingDocument,
@@ -379,7 +381,10 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                 perceptionPreview: ['stopped', 'completed', 'failed'].includes(event.type)
                   ? emptyPerceptionPreview(null)
                   : event.perceptionDelta
-                    ? applyPerceptionPreviewDelta(current.perceptionPreview, event.perceptionDelta)
+                    ? applyPerceptionPreviewDelta(
+                      current.perceptionPreview,
+                      retainUncommittedPromotions(event.perceptionDelta, current.document),
+                    )
                     : current.perceptionPreview,
               }));
               if (event.type === 'commit') {
@@ -387,7 +392,14 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                 if (drawingId) {
                   void drawings.open(drawingId).then((workspace) => {
                     if (get().document?.id !== drawingId) return;
-                    set({ ...workspace, selectedIds: [] });
+                    set((current) => ({
+                      ...workspace,
+                      selectedIds: [],
+                      perceptionPreview: reconcilePerceptionPreview(
+                        current.perceptionPreview,
+                        workspace.document,
+                      ),
+                    }));
                   }).catch((error) => set({ drawingError: errorMessage(error) }));
                 }
               }

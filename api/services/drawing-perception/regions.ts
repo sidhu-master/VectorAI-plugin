@@ -7,6 +7,7 @@ import type {
   GlobalContour,
   NormalizedImageBounds,
 } from './types.js';
+import { DEFAULT_UNSCALED_PAGE_WIDTH_MM } from './coordinate-space.js';
 
 export interface PerceptionRegion {
   id: string;
@@ -217,12 +218,16 @@ function stitchGeometryParams(
     case 'circle':
       return {
         ...transformPointFields(params, ['center'], bounds, pageRatio),
-        ...(isNumber(params.radius) ? { radius: round(params.radius * bounds[2]) } : {}),
+        ...(isNumber(params.radius) ? {
+          radius: round(params.radius * bounds[2] * DEFAULT_UNSCALED_PAGE_WIDTH_MM),
+        } : {}),
       };
     case 'arc':
       return {
         ...transformPointFields(params, ['center'], bounds, pageRatio),
-        ...(isNumber(params.radius) ? { radius: round(params.radius * bounds[2]) } : {}),
+        ...(isNumber(params.radius) ? {
+          radius: round(params.radius * bounds[2] * DEFAULT_UNSCALED_PAGE_WIDTH_MM),
+        } : {}),
         ...(isNumber(params.startAngle)
           ? { startAngle: transformCadAngle(params.startAngle, bounds, pageRatio) }
           : {}),
@@ -334,8 +339,12 @@ function transformCadPoint(
   pageRatio: number,
 ): Vec2 {
   return [
-    round(page[0] + point[0] * page[2]),
-    round((1 - page[1] - point[1] * page[3]) * pageRatio),
+    round((page[0] + point[0] * page[2]) * DEFAULT_UNSCALED_PAGE_WIDTH_MM),
+    round(
+      (1 - page[1] - point[1] * page[3])
+      * pageRatio
+      * DEFAULT_UNSCALED_PAGE_WIDTH_MM,
+    ),
   ];
 }
 
@@ -344,7 +353,10 @@ function transformCadVector(
   page: NormalizedImageBounds,
   pageRatio: number,
 ): Vec2 {
-  return [round(vector[0] * page[2]), round(-vector[1] * page[3] * pageRatio)];
+  return [
+    round(vector[0] * page[2] * DEFAULT_UNSCALED_PAGE_WIDTH_MM),
+    round(-vector[1] * page[3] * pageRatio * DEFAULT_UNSCALED_PAGE_WIDTH_MM),
+  ];
 }
 
 function transformCadAngle(

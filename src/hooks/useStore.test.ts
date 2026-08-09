@@ -385,6 +385,44 @@ describe('Drawing Agent workspace integration', () => {
     expect(store.getState().document?.geometry[0]).toMatchObject({ radius: 8 });
   });
 
+  it('keeps a promoted preview visible until its committed node arrives', async () => {
+    const agent = agentClientDouble();
+    const drawings = drawingClientDouble();
+    const promotedId = 'geometry_promoted' as GeometryId;
+    let resolveRefresh!: (value: ReturnType<typeof workspace>) => void;
+    const refreshed = workspace();
+    refreshed.revision = revision2;
+    refreshed.document.geometry.push({
+      id: promotedId, type: 'circle', center: [20, 20], radius: 5, visible: true,
+      quality: { status: 'confirmed', confidence: 0.9, evidenceRefs: [] },
+    });
+    drawings.open
+      .mockResolvedValueOnce(workspace())
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+    const store = createAppStore({
+      drawingClient: drawings as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage({ [ACTIVE_DRAWING_STORAGE_KEY]: drawingId }),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
+
+    agent.emit(perceptionEventForId(1, promotedId, 'observe'));
+    agent.emit({
+      id: 'event_commit_atomic', runId: 'run_1', type: 'commit', title: '已提交',
+      timestamp: 2, elapsedMs: 1,
+    });
+    agent.emit(perceptionEventForId(2, promotedId, 'promote'));
+
+    expect(store.getState().perceptionPreview.nodes).toHaveProperty(promotedId);
+    resolveRefresh(refreshed);
+    await waitUntil(() => store.getState().revision === revision2);
+    expect(store.getState().document?.geometry).toContainEqual(
+      expect.objectContaining({ id: promotedId }),
+    );
+    expect(store.getState().perceptionPreview.nodes).not.toHaveProperty(promotedId);
+  });
+
   it('routes new text to the active run as an instruction', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
@@ -583,6 +621,32 @@ function perceptionEvent(sequence: number, radius: number) {
         quality: { status: 'candidate' as const, confidence: 0.8, evidenceRefs: [] },
       }],
       source: { page: 1, viewId: 'view_1', stage: 'detail' as const },
+    },
+  };
+}
+
+function perceptionEventForId(
+  sequence: number,
+  id: GeometryId,
+  action: 'observe' | 'promote',
+) {
+  return {
+    id: `event_${action}_${sequence}`,
+    runId: 'run_1',
+    type: 'perception_delta' as const,
+    title: action === 'observe' ? '发现图元' : '提交图元',
+    timestamp: sequence + 1,
+    elapsedMs: sequence,
+    perceptionDelta: {
+      runId: 'run_1', sequence, action,
+      slotIds: [id],
+      removeIds: action === 'promote' ? [id] : [],
+      upserts: action === 'observe' ? [{
+        id,
+        type: 'circle' as const, center: [0, 0] as const, radius: 5, visible: true,
+        quality: { status: 'candidate' as const, confidence: 0.8, evidenceRefs: [] },
+      }] : [],
+      source: { page: 1, viewId: 'view_1', stage: 'reconciliation' as const },
     },
   };
 }
