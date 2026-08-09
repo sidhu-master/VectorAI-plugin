@@ -6,10 +6,12 @@ VectorAI 是 AI 原生二维空间协议引擎。AI 通过可验证的 SpatialPa
 
 ```bash
 pnpm install
+pnpm setup:vectorization
 pnpm dev
 ```
 
 前端默认运行在 Vite 开发端口，`/api` 代理到本地 Express 服务 `http://localhost:3001`。
+`setup:vectorization` 会在 `.local/vectorai/cv-venv/` 创建隔离的 Python 环境并安装中心线矢量化依赖；服务启动后复用一个常驻 Python 进程，不会为每条线重复启动解释器。若该环境不可用，服务仍能启动，并回退到原有的模型反馈循环。
 
 ## 环境变量
 
@@ -56,7 +58,7 @@ Agent 默认自动执行。启动请求在意图判断、规划和图纸转换�
 | `POST` | `/api/agent/runs/:runId/stop` | 中止当前调用且不提交半成品 |
 | `POST` | `/api/agent/runs/:runId/instructions` | 追加在下一个安全点生效的指令 |
 
-有效运行在连续静默 25 秒时发送 heartbeat，因此用户可见回执间隔保持在 30 秒以内。图纸任务按稳定 observation/entity ID 提交独立组件，单个组件失败不会回滚之前的提交；图片正文只存在于运行期缓存，终止后释放。
+有效运行在连续静默 25 秒时发送 heartbeat，因此用户可见回执间隔保持在 30 秒以内。干净线稿会先提取单像素中心线和拓扑链，再把每条链作为 Polyline 底稿逐条预览、提交，随后通过局部验证把同一对象原位提升为直线、圆、圆弧或椭圆；不能可靠拟合的部分保持为 Polyline。每一步都有独立事务、证据句柄和检查点，暂停后不会重复绘制。图纸任务按稳定 observation/entity ID 提交独立组件，单个组件失败不会回滚之前的提交；图片正文只存在于运行期缓存，终止后释放。
 
 用本地图纸运行非 CI 基准（结果只写入被 Git 忽略的 `.local/vectorai/baselines/`）：
 

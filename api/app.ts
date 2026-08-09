@@ -34,6 +34,8 @@ import { DrawingFeedbackModelAdapter } from './services/drawing-feedback/model-a
 import { MemoryObservationRegionStore } from './services/drawing-feedback/region-store.js'
 import { MemoryObservationSlotStore } from './services/drawing-feedback/slot-store.js'
 import { SourceRasterFeedbackComparator } from './services/drawing-feedback/source-comparator.js'
+import { PythonVectorizationProvider } from './services/drawing-vectorization/python-provider.js'
+import { CleanLineVectorizationService } from './services/drawing-vectorization/service.js'
 
 // load env
 dotenv.config()
@@ -61,6 +63,20 @@ const cvEvidenceStore = new FileCvEvidenceStore({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/evidence'),
   resolveSourceSize: (sourceId) => sourceCvGateway.size(sourceId),
 })
+const vectorizationProvider = await PythonVectorizationProvider.create().catch((error: unknown) => {
+  console.warn(
+    '[Vectorization] Python worker unavailable; source feedback will use the model loop only.',
+    error instanceof Error ? error.message : String(error),
+  )
+  return null
+})
+const cleanLineVectorization = vectorizationProvider
+  ? new CleanLineVectorizationService({
+      provider: vectorizationProvider,
+      sources: sourceCvGateway,
+      evidence: cvEvidenceStore,
+    })
+  : undefined
 const cvCropStore = new FileCvCropStore({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/crops'),
 })
@@ -95,6 +111,7 @@ const drawingFeedback = new DrawingFeedbackLoop({
   regions: observationRegions,
   slots: observationSlots,
   compare: sourceComparator.compare.bind(sourceComparator),
+  ...(cleanLineVectorization ? { vectorization: cleanLineVectorization } : {}),
   maxIterations: 160,
 })
 const agentRuntime = new DrawingAgentRuntime({
@@ -168,5 +185,8 @@ app.use((req: Request, res: Response) => {
 export default app
 
 export async function closeAppServices(): Promise<void> {
-  await cvProvider.close()
+  await Promise.all([
+    cvProvider.close(),
+    vectorizationProvider?.close(),
+  ])
 }

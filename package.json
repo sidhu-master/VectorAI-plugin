@@ -13,6 +13,8 @@
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
     "test": "vitest run",
     "test:drawing": "tsx scripts/test-drawing.ts",
+    "setup:vectorization": "bash scripts/setup-vectorization-python.sh",
+    "benchmark:test2": "tsx scripts/benchmark-test2.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

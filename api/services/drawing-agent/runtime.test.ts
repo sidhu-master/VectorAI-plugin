@@ -150,6 +150,35 @@ describe('DrawingAgentRuntime', () => {
     expect(final.analysisSummary).toBe('来源反馈已收敛');
   });
 
+  it('publishes clean-line vectorization stages as visible progress', async () => {
+    const feedbackLoop = {
+      async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+        yield { kind: 'state', stage: 'VECTORIZE_SOURCE', iteration: 0 };
+        yield { kind: 'state', stage: 'DRAW_VECTOR_DRAFT', iteration: 0 };
+        yield { kind: 'state', stage: 'PROMOTE_PRIMITIVE', iteration: 0 };
+        yield {
+          kind: 'completed', revision: input.revision,
+          unresolvedRequired: 0, summary: '矢量化完成',
+        };
+      },
+    };
+    const { runtime, workspace } = await setup({ feedbackLoop });
+    const handle = runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    const final = await handle.completion;
+
+    expect(final.status).toBe('completed');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_started', title: '正在提取图纸中心线' }),
+      expect.objectContaining({ type: 'tool_started', title: '正在逐条绘制矢量底稿' }),
+      expect.objectContaining({ type: 'validation', title: '正在提升为规范图元' }),
+    ]));
+  });
+
   it('streams one model proposal and removes it when its local patch is committed', async () => {
     const feedbackLoop = {
       async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {

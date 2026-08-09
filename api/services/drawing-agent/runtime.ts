@@ -1396,6 +1396,9 @@ function feedbackLoopPlan(record: RunRecord): DrawingAgentPlan {
 function feedbackStageProgress(stage: import('../drawing-feedback/loop-controller.js').FeedbackStage) {
   switch (stage) {
     case 'OBSERVE': return ['tool_started', '正在观察图纸轮廓'] as const;
+    case 'VECTORIZE_SOURCE': return ['tool_started', '正在提取图纸中心线'] as const;
+    case 'DRAW_VECTOR_DRAFT': return ['tool_started', '正在逐条绘制矢量底稿'] as const;
+    case 'PROMOTE_PRIMITIVE': return ['validation', '正在提升为规范图元'] as const;
     case 'SELECT_TARGET': return ['model_started', '正在选择下一观察目标'] as const;
     case 'ACQUIRE_EVIDENCE': return ['tool_started', '正在提取局部证据'] as const;
     case 'PROPOSE_PATCH': return ['model_started', '正在生成局部修改'] as const;
@@ -1403,6 +1406,8 @@ function feedbackStageProgress(stage: import('../drawing-feedback/loop-controlle
     case 'COMPARE': return ['validation', '正在比较来源与当前图纸'] as const;
     case 'COMMIT_LOCAL_RESULT': return ['validation', '局部验证通过，正在提交'] as const;
   }
+  const exhaustive: never = stage;
+  throw new Error(`未知反馈阶段: ${exhaustive}`);
 }
 
 function feedbackCorrectionTitle(action: import('../drawing-feedback/types.js').SlotLineageAction): string {
