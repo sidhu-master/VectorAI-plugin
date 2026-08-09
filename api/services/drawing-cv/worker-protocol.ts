@@ -1,6 +1,8 @@
 import type {
   CvEvidenceKind,
   CvOverview,
+  CvPrimitiveFit,
+  CvPrimitiveType,
   CvToolBudget,
   SourcePixelPoint,
   SourcePixelRect,
@@ -24,6 +26,13 @@ export type CvWorkerRequest =
       height: number;
       origin: SourcePixelPoint;
       budget: CvToolBudget;
+    }
+  | {
+      id: string;
+      operation: 'fit';
+      samples: ArrayBuffer;
+      primitiveType: CvPrimitiveType;
+      budget: CvToolBudget;
     };
 
 export interface CvWorkerEvidence {
@@ -34,7 +43,7 @@ export interface CvWorkerEvidence {
   samples: SourcePixelPoint[];
 }
 
-export type CvWorkerValue = CvOverview | CvWorkerEvidence[];
+export type CvWorkerValue = CvOverview | CvWorkerEvidence[] | CvPrimitiveFit;
 
 export type CvWorkerMessage =
   | { type: 'ready' }

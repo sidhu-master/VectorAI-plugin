@@ -81,6 +81,28 @@ export interface CvOverview {
   foregroundBounds?: SourcePixelRect;
 }
 
+export type CvPrimitiveType =
+  | 'point'
+  | 'line'
+  | 'ray'
+  | 'xline'
+  | 'circle'
+  | 'arc'
+  | 'ellipse'
+  | 'polyline'
+  | 'spline';
+
+export interface CvPrimitiveFit {
+  primitiveType: CvPrimitiveType;
+  parameters: Record<string, unknown>;
+  bounds: SourcePixelRect;
+  sampleCount: number;
+  fitErrorP50: number;
+  fitErrorP95: number;
+  fitErrorMax: number;
+  outlierRatio: number;
+}
+
 export interface DrawingCvProvider {
   inspectOverview(input: {
     source: CvSourceImage;
@@ -94,5 +116,11 @@ export interface DrawingCvProvider {
     budget: CvToolBudget;
     signal: AbortSignal;
   }): Promise<CvEvidenceDraft[]>;
+  fitPrimitive(input: {
+    primitiveType: CvPrimitiveType;
+    samples: readonly SourcePixelPoint[];
+    budget: CvToolBudget;
+    signal: AbortSignal;
+  }): Promise<CvPrimitiveFit>;
   close(): Promise<void>;
 }

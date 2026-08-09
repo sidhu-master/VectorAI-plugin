@@ -71,6 +71,28 @@ describe('OpenCvWorkerProvider', () => {
       expect(result.height).toBe(120);
     }
   }, 30_000);
+
+  it('fits source-space circle parameters from bounded evidence samples', async () => {
+    const provider = await createProvider();
+    const samples = Array.from({ length: 72 }, (_, index) => {
+      const angle = index * Math.PI * 2 / 72;
+      return [80 + Math.cos(angle) * 30, 60 + Math.sin(angle) * 30] as const;
+    });
+
+    const fit = await provider.fitPrimitive({
+      primitiveType: 'circle',
+      samples,
+      budget: { ...budget, maxSamplesPerResult: 100 },
+      signal: new AbortController().signal,
+    });
+
+    expect(fit.primitiveType).toBe('circle');
+    const center = fit.parameters.center as [number, number];
+    expect(center[0]).toBeCloseTo(80, 8);
+    expect(center[1]).toBeCloseTo(60, 8);
+    expect(fit.parameters.radius as number).toBeCloseTo(30, 8);
+    expect(fit.fitErrorP95).toBeLessThan(0.01);
+  });
 });
 
 async function createProvider(): Promise<OpenCvWorkerProvider> {

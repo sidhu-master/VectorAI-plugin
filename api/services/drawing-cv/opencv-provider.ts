@@ -5,6 +5,8 @@ import sharp from 'sharp';
 import type {
   CvEvidenceDraft,
   CvOverview,
+  CvPrimitiveFit,
+  CvPrimitiveType,
   CvSourceImage,
   DrawingCvProvider,
   SourcePixelPoint,
@@ -103,6 +105,32 @@ export class OpenCvWorkerProvider implements DrawingCvProvider {
     }));
   }
 
+  async fitPrimitive(input: {
+    primitiveType: CvPrimitiveType;
+    samples: readonly SourcePixelPoint[];
+    budget: Parameters<DrawingCvProvider['fitPrimitive']>[0]['budget'];
+    signal: AbortSignal;
+  }): Promise<CvPrimitiveFit> {
+    if (input.samples.length < 1 || input.samples.length > input.budget.maxSamplesPerResult) {
+      throw new DrawingCvError('CV_BUDGET_EXCEEDED');
+    }
+    const packed = new Float64Array(input.samples.length * 2);
+    input.samples.forEach((point, index) => {
+      if (!Number.isFinite(point[0]) || !Number.isFinite(point[1])) {
+        throw new DrawingCvError('CV_SAMPLES_INVALID');
+      }
+      packed[index * 2] = point[0];
+      packed[index * 2 + 1] = point[1];
+    });
+    return await this.#invoke({
+      id: randomUUID(),
+      operation: 'fit',
+      samples: packed.buffer,
+      primitiveType: input.primitiveType,
+      budget: input.budget,
+    }, input.signal) as CvPrimitiveFit;
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
@@ -125,7 +153,8 @@ export class OpenCvWorkerProvider implements DrawingCvProvider {
         timer,
         removeAbortListener: () => signal.removeEventListener('abort', abort),
       });
-      this.#worker.postMessage(request, [request.rgba]);
+      const transferable = request.operation === 'fit' ? request.samples : request.rgba;
+      this.#worker.postMessage(request, [transferable]);
     });
   }
 
