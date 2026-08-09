@@ -11,6 +11,7 @@ export type DrawingAgentAuditEventType =
   | 'plan'
   | 'decision'
   | 'tool_call'
+  | 'cv_tool'
   | 'preview'
   | 'validation'
   | 'commit'
