@@ -6,6 +6,7 @@ import type { DrawingToolReceipt } from './types';
 import {
   DrawingDecisionAdapter,
   DrawingPlannerAdapter,
+  selectDrawingFeedbackModel,
   type DrawingAgentCompletion,
 } from './model-adapters';
 
@@ -36,6 +37,24 @@ const validPlan: DrawingAgentPlan = {
 };
 
 describe('drawing-native model adapters', () => {
+  it('routes normal feedback to Lite and only approved ambiguity triggers to Turbo', () => {
+    const profile = {
+      planner: 'doubao-seed-2.0-lite',
+      decision: 'doubao-seed-2.0-lite',
+      repair: 'doubao-seed-2.1-turbo',
+    };
+    expect(selectDrawingFeedbackModel(profile)).toBe('doubao-seed-2.0-lite');
+    expect(selectDrawingFeedbackModel(profile, 'repeated_non_improvement'))
+      .toBe('doubao-seed-2.1-turbo');
+    expect(selectDrawingFeedbackModel(profile, 'topology_type_ambiguity'))
+      .toBe('doubao-seed-2.1-turbo');
+    expect(selectDrawingFeedbackModel(profile, 'merge_split_retype_ambiguity'))
+      .toBe('doubao-seed-2.1-turbo');
+    expect(selectDrawingFeedbackModel(profile, 'topology_regression'))
+      .toBe('doubao-seed-2.1-turbo');
+    expect(selectDrawingFeedbackModel(profile, 'explicit_low_confidence'))
+      .toBe('doubao-seed-2.1-turbo');
+  });
   it('sends the planner only a bounded Drawing IR summary and parses its strict result', async () => {
     let received: Parameters<DrawingAgentCompletion>[0] | undefined;
     const signal = new AbortController().signal;

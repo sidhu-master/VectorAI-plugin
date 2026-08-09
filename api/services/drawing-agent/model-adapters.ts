@@ -16,7 +16,22 @@ import type {
   DrawingPlannerModelAdapter,
   DrawingToolEvidence,
   DrawingToolReceipt,
+  DrawingAgentModelProfile,
 } from './types.js';
+
+export type DrawingFeedbackEscalationReason =
+  | 'repeated_non_improvement'
+  | 'topology_type_ambiguity'
+  | 'merge_split_retype_ambiguity'
+  | 'topology_regression'
+  | 'explicit_low_confidence';
+
+export function selectDrawingFeedbackModel(
+  profile: DrawingAgentModelProfile,
+  escalationReason?: DrawingFeedbackEscalationReason,
+): string {
+  return escalationReason ? profile.repair : profile.decision;
+}
 
 const MAX_SUMMARY_ITEMS = 100;
 const MAX_CONTEXT_ITEMS = 8;
