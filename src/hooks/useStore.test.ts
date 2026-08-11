@@ -353,7 +353,7 @@ describe('Drawing Agent workspace integration', () => {
     expect(store.getState().perceptionPreview.activeOverlay).toBeNull();
   });
 
-  it('retains the last rejected preview when a task fails until the user resets it', async () => {
+  it('clears the last rejected preview when a task fails', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
       drawingClient: drawingClientDouble() as unknown as DrawingClient,
@@ -368,10 +368,64 @@ describe('Drawing Agent workspace integration', () => {
       timestamp: 2, elapsedMs: 1,
     });
 
-    expect(store.getState().perceptionPreview.nodes).toHaveProperty('node_preview_1');
+    expect(store.getState().perceptionPreview).toEqual({
+      runId: null, lastSequence: 0, nodes: {}, labelsByNodeId: {},
+      activeOverlay: null, previewVersionId: null,
+    });
+  });
 
-    store.getState().resetAgent();
+  it('retries a failed run from the latest canonical revision without duplicating chat', async () => {
+    const agent = agentClientDouble();
+    agent.start
+      .mockResolvedValueOnce({ runId: 'run_failed' })
+      .mockResolvedValueOnce({ runId: 'run_retry' });
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('把右手抬起来');
+    agent.emit({
+      id: 'event_failed', runId: 'run_failed', type: 'failed', title: 'grounding timeout',
+      timestamp: 2, elapsedMs: 1,
+    });
+    store.setState({ revision: revision2 });
+
+    await store.getState().retryAgent();
+
+    expect(agent.start).toHaveBeenLastCalledWith(expect.objectContaining({
+      drawingId, goal: '把右手抬起来', baseRevision: revision2,
+    }));
+    expect(store.getState().agentRunId).toBe('run_retry');
+    expect(store.getState().aiMessages.filter((message) => message.role === 'user'))
+      .toHaveLength(1);
     expect(store.getState().perceptionPreview.nodes).toEqual({});
+  });
+
+  it('reuses the original image attachment when retrying a failed run', async () => {
+    const agent = agentClientDouble();
+    agent.start
+      .mockResolvedValueOnce({ runId: 'run_failed' })
+      .mockResolvedValueOnce({ runId: 'run_retry' });
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('分析这张图', 'aW1hZ2U=', 'image/png');
+    agent.emit({
+      id: 'event_failed', runId: 'run_failed', type: 'failed', title: 'vision timeout',
+      timestamp: 2, elapsedMs: 1,
+    });
+
+    await store.getState().retryAgent();
+
+    expect(agent.start).toHaveBeenLastCalledWith(expect.objectContaining({
+      goal: '分析这张图',
+      attachment: { data: 'aW1hZ2U=', mimeType: 'image/png', page: 1 },
+    }));
   });
   it('starts text work from drawing ID and revision without serializing the document', async () => {
     const agent = agentClientDouble();

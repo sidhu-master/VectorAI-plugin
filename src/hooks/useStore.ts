@@ -44,6 +44,12 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+interface AgentSubmission {
+  goal: string;
+  image?: string;
+  mimeType?: string;
+}
+
 export type AgentUiStatus =
   | 'idle' | 'planning' | 'running' | 'pause_requested' | 'paused'
   | 'stopping' | 'stopped' | 'complete' | 'error';
@@ -92,6 +98,7 @@ export interface AppState {
 
   submitAgentInput: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
   startAgent: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
+  retryAgent: () => Promise<void>;
   pauseAgent: () => Promise<void>;
   resumeAgent: () => Promise<void>;
   stopAgent: () => Promise<void>;
@@ -117,6 +124,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
   const now = dependencies.now ?? Date.now;
   let unsubscribeAgent: (() => void) | null = null;
   let initializationPromise: Promise<void> | null = null;
+  let lastAgentSubmission: AgentSubmission | null = null;
 
   return create<AppState>((set, get) => {
     const executeCommands = async (commands: DrawingCommand[]) => {
@@ -146,6 +154,149 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         });
       } catch (error) {
         set({ drawingBusy: false, drawingError: errorMessage(error) });
+      }
+    };
+
+    const launchAgent = async (
+      submission: AgentSubmission,
+      options: { appendUserMessage: boolean },
+    ): Promise<void> => {
+      const state = get();
+      if (!state.document || !state.revision) {
+        set({ agentError: '请先加载或创建图纸，再发送指令' });
+        return;
+      }
+      unsubscribeAgent?.();
+      unsubscribeAgent = null;
+      set((current) => ({
+        ...(options.appendUserMessage ? {
+          aiMessages: [
+            ...current.aiMessages,
+            chatMessage('user', submission.goal || '上传图纸并重建', now),
+          ],
+        } : {}),
+        taskPlan: null,
+        currentStepIndex: 0,
+        stepResults: [],
+        agentStatus: 'planning',
+        agentRunId: null,
+        agentEvents: [],
+        agentError: null,
+        perceptionPreview: emptyPerceptionPreview(null),
+      }));
+      try {
+        const started = await agents.start({
+          drawingId: state.document.id,
+          baseRevision: state.revision,
+          goal: submission.goal,
+          selectedIds: [...state.selectedIds],
+          viewport: state.viewportSize.width > 0 && state.viewportSize.height > 0
+            ? {
+                scale: state.canvasTransform.scale,
+                offsetX: state.canvasTransform.offsetX,
+                offsetY: state.canvasTransform.offsetY,
+                width: state.viewportSize.width,
+                height: state.viewportSize.height,
+              }
+            : undefined,
+          ...(submission.image ? {
+            attachment: {
+              data: submission.image,
+              mimeType: submission.mimeType || 'image/png',
+              page: 1,
+            },
+          } : {}),
+        });
+        set({
+          agentRunId: started.runId,
+          perceptionPreview: emptyPerceptionPreview(started.runId),
+        });
+        unsubscribeAgent = agents.subscribe(
+          started.runId,
+          (event) => {
+            if (get().agentRunId !== started.runId) return;
+            set((current) => ({
+              agentEvents: current.agentEvents.some((item) => item.id === event.id)
+                ? current.agentEvents
+                : [...current.agentEvents, event].slice(-100),
+              agentStatus: progressStatus(event.type, current.agentStatus),
+              agentError: event.type === 'failed' ? event.title : current.agentError,
+              perceptionPreview: event.type === 'stopped' || event.type === 'failed'
+                ? emptyPerceptionPreview(null)
+                : event.type === 'completed'
+                  ? {
+                      ...reconcilePerceptionPreview(
+                        current.perceptionPreview,
+                        current.document,
+                      ),
+                      activeOverlay: null,
+                      previewVersionId: null,
+                    }
+                  : event.perceptionDelta
+                    ? applyPerceptionPreviewDelta(
+                        current.perceptionPreview,
+                        retainUncommittedPromotions(event.perceptionDelta, current.document),
+                      )
+                    : current.perceptionPreview,
+            }));
+            if (event.type === 'commit') {
+              const drawingId = get().document?.id;
+              if (drawingId) {
+                void drawings.open(drawingId).then((workspace) => {
+                  if (get().document?.id !== drawingId || get().agentRunId !== started.runId) return;
+                  set((current) => ({
+                    ...workspace,
+                    selectedIds: [],
+                    perceptionPreview: reconcilePerceptionPreview(
+                      current.perceptionPreview,
+                      workspace.document,
+                    ),
+                  }));
+                }).catch((error) => set({ drawingError: errorMessage(error) }));
+              }
+            }
+            if (['model_finished', 'validation', 'commit'].includes(event.type)) {
+              void agents.getRun(started.runId).then((run) => {
+                if (get().agentRunId !== started.runId) return;
+                set(projectAgentRun(run));
+              }).catch((error) => {
+                if (get().agentRunId === started.runId) set({ agentError: errorMessage(error) });
+              });
+            }
+            if (['paused', 'stopped', 'completed', 'failed'].includes(event.type)) {
+              void agents.getRun(started.runId).then((run) => {
+                if (get().agentRunId !== started.runId) return;
+                set(projectAgentRun(run));
+                if (event.type === 'completed') {
+                  set((current) => ({
+                    aiMessages: [...current.aiMessages, chatMessage(
+                      'assistant',
+                      run.analysisSummary
+                        ?? `已完成：${run.goal?.objective ?? submission.goal}`,
+                      now,
+                    )],
+                  }));
+                }
+              }).catch((error) => {
+                if (get().agentRunId === started.runId) set({ agentError: errorMessage(error) });
+              });
+            }
+          },
+          (error) => {
+            if (get().agentRunId !== started.runId) return;
+            set({
+              agentStatus: 'error',
+              agentError: error.message,
+              perceptionPreview: emptyPerceptionPreview(null),
+            });
+          },
+        );
+      } catch (error) {
+        set({
+          agentStatus: 'error',
+          agentError: errorMessage(error),
+          perceptionPreview: emptyPerceptionPreview(null),
+        });
       }
     };
 
@@ -352,118 +503,17 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
 
       startAgent: async (prompt, image, mimeType) => {
         const goal = prompt?.trim() ?? '';
-        const state = get();
         if (!goal && !image) return;
-        if (!state.document || !state.revision) {
-          set({ agentError: '请先加载或创建图纸，再发送指令' });
-          return;
-        }
-        unsubscribeAgent?.();
-        unsubscribeAgent = null;
-        const userMessage = chatMessage('user', goal || '上传图纸并重建', now);
-        set((current) => ({
-          aiMessages: [...current.aiMessages, userMessage],
-          taskPlan: null,
-          currentStepIndex: 0,
-          stepResults: [],
-          agentStatus: 'planning',
-          agentRunId: null,
-          agentEvents: [],
-          agentError: null,
-          perceptionPreview: emptyPerceptionPreview(null),
-        }));
-        try {
-          const started = await agents.start({
-            drawingId: state.document.id,
-            baseRevision: state.revision,
-            goal,
-            selectedIds: [...state.selectedIds],
-            viewport: state.viewportSize.width > 0 && state.viewportSize.height > 0
-              ? {
-                  scale: state.canvasTransform.scale,
-                  offsetX: state.canvasTransform.offsetX,
-                  offsetY: state.canvasTransform.offsetY,
-                  width: state.viewportSize.width,
-                  height: state.viewportSize.height,
-                }
-              : undefined,
-            ...(image ? {
-              attachment: { data: image, mimeType: mimeType || 'image/png', page: 1 },
-            } : {}),
-          });
-          set({
-            agentRunId: started.runId,
-            perceptionPreview: emptyPerceptionPreview(started.runId),
-          });
-          unsubscribeAgent = agents.subscribe(
-            started.runId,
-            (event) => {
-              set((current) => ({
-                agentEvents: current.agentEvents.some((item) => item.id === event.id)
-                  ? current.agentEvents
-                  : [...current.agentEvents, event].slice(-100),
-                agentStatus: progressStatus(event.type, current.agentStatus),
-                agentError: event.type === 'failed' ? event.title : current.agentError,
-                perceptionPreview: event.type === 'stopped'
-                  ? emptyPerceptionPreview(null)
-                  : event.type === 'completed'
-                    ? {
-                        ...reconcilePerceptionPreview(
-                          current.perceptionPreview,
-                          current.document,
-                        ),
-                        activeOverlay: null,
-                        previewVersionId: null,
-                      }
-                  : event.perceptionDelta
-                    ? applyPerceptionPreviewDelta(
-                      current.perceptionPreview,
-                      retainUncommittedPromotions(event.perceptionDelta, current.document),
-                    )
-                    : current.perceptionPreview,
-              }));
-              if (event.type === 'commit') {
-                const drawingId = get().document?.id;
-                if (drawingId) {
-                  void drawings.open(drawingId).then((workspace) => {
-                    if (get().document?.id !== drawingId) return;
-                    set((current) => ({
-                      ...workspace,
-                      selectedIds: [],
-                      perceptionPreview: reconcilePerceptionPreview(
-                        current.perceptionPreview,
-                        workspace.document,
-                      ),
-                    }));
-                  }).catch((error) => set({ drawingError: errorMessage(error) }));
-                }
-              }
-              if (['model_finished', 'validation', 'commit'].includes(event.type)) {
-                void agents.getRun(started.runId).then((run) => {
-                  set(projectAgentRun(run));
-                }).catch((error) => set({ agentError: errorMessage(error) }));
-              }
-              if (['paused', 'stopped', 'completed', 'failed'].includes(event.type)) {
-                void agents.getRun(started.runId).then((run) => {
-                  set(projectAgentRun(run));
-                  if (event.type === 'completed') {
-                    set((current) => ({
-                      aiMessages: [...current.aiMessages, chatMessage(
-                        'assistant',
-                        run.analysisSummary
-                          ?? `已完成：${run.goal?.objective ?? goal}`,
-                        now,
-                      )],
-                    }));
-                  }
-                }).catch((error) => set({ agentError: errorMessage(error) }));
-              }
-            },
-            (error) => set({ agentStatus: 'error', agentError: error.message }),
-          );
-        } catch (error) {
-          set({ agentStatus: 'error', agentError: errorMessage(error) });
-        }
+        lastAgentSubmission = {
+          goal,
+          ...(image ? { image, mimeType: mimeType || 'image/png' } : {}),
+        };
+        await launchAgent(lastAgentSubmission, { appendUserMessage: true });
+      },
+
+      retryAgent: async () => {
+        if (get().agentStatus !== 'error' || !lastAgentSubmission) return;
+        await launchAgent(lastAgentSubmission, { appendUserMessage: false });
       },
 
       pauseAgent: async () => {
@@ -510,6 +560,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         }
         unsubscribeAgent?.();
         unsubscribeAgent = null;
+        lastAgentSubmission = null;
         set({
           taskPlan: null,
           currentStepIndex: 0,
