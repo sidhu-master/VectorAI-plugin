@@ -31,6 +31,7 @@ import type { SpatialEditDesign } from '../drawing-spatial/spatial-edit-compiler
 
 const REGION_SYSTEM_PROMPT = `你是 VectorAI 二维语义区域选择器。
 根据用户目标和服务器渲染视图，先选择目标在连续二维画面中的完整区域，不考虑现有图元边界，也不要输出任何 nodeId、图元列表或 DrawingCommand。
+区域必须圈选“当前图中已经存在、即将被修改的源对象”，绝不能圈选修改后的预期位置。例如用户说“把下垂的右手抬起”，你必须圈选当前仍然下垂的完整右臂和手，而不是在上方想象一条抬起后的手臂。
 轮廓、洞和锚点坐标均使用相对所选视图宽高的 [x,y] 归一化坐标，两个分量必须在 0 到 1 之间。
 区域必须覆盖语义部件的完整外形；需要排除的内部区域写入 holes。evidenceRefs 只能引用输入视图 id。
 只输出严格 JSON：{"label":string,"sourceViewId":string,"contours":[[[number,number],...]],"holes":[[[number,number],...]],"anchors":[{"id":string,"role":string,"point":[number,number],"confidence":number}],"confidence":number,"evidenceRefs":string[]}。

@@ -8,6 +8,7 @@ import {
 } from '../../../src/drawing/index.js';
 import type { DrawingAgentAuditEvent } from '../drawing-agent/audit-types.js';
 import { comparePreservedNodes } from '../drawing-edit/preserve-report.js';
+import type { SplitLineageEntry } from '../drawing-spatial/split-materializer.js';
 
 export interface SemanticEditAnchorExpectation {
   nodeIds: readonly string[];
@@ -26,6 +27,13 @@ export interface SemanticEditBenchmarkInput {
   auditEvents: readonly DrawingAgentAuditEvent[];
   progressEvents: readonly DrawingAgentProgressEvent[];
   visibleSilenceBudgetMs?: number;
+  regionEvidence?: {
+    sharedPolylineNodeId: string;
+    expectedProtectedFragments: Record<string, GeometryNode>;
+    lineage: SplitLineageEntry[];
+    unexpectedDanglingEndpoints: Vec2[];
+    closureTolerance?: number;
+  };
 }
 
 export interface SemanticEditBenchmarkReport {
@@ -40,6 +48,13 @@ export interface SemanticEditBenchmarkReport {
   maxVisibleSilenceMs: number;
   visibleSilenceBudgetMs: number;
   visibleFeedbackWithinTarget: boolean;
+  regionSelectedBeforeNodes: boolean;
+  sharedPolylineSplit: boolean;
+  protectedBodyFragmentUnchanged: boolean;
+  lineageComplete: boolean;
+  editedContourClosed: boolean;
+  unexpectedDanglingEndpoints: Vec2[];
+  feedbackPreviewVersionCount: number;
 }
 
 /**
@@ -74,6 +89,41 @@ export function evaluateSemanticEditBenchmark(
   const maxVisibleSilenceMs = maximumEventGap(input.progressEvents);
   const visibleFeedbackWithinTarget = maxVisibleSilenceMs <= visibleSilenceBudgetMs;
   const anchorsConnected = disconnectedAnchors.length === 0;
+  const regionSelectedBeforeNodes = regionBeforeSelection(input.auditEvents);
+  const sharedPolylineSplit = input.regionEvidence
+    ? hasTargetAndProtectedLineage(
+        input.regionEvidence.sharedPolylineNodeId,
+        input.regionEvidence.lineage,
+      )
+    : true;
+  const protectedBodyFragmentUnchanged = input.regionEvidence
+    ? Object.entries(input.regionEvidence.expectedProtectedFragments).every(([id, expected]) => {
+        const actual = input.finalDocument.geometry.find((node) => node.id === id);
+        return actual !== undefined && deepEqual(actual, expected);
+      })
+    : true;
+  const lineageComplete = input.regionEvidence
+    ? completeLineage(input.initialDocument, input.regionEvidence.lineage)
+    : true;
+  const unexpectedDanglingEndpoints = structuredClone(
+    input.regionEvidence?.unexpectedDanglingEndpoints ?? [],
+  );
+  const editedContourClosed = input.regionEvidence
+    ? contourClosed(
+        input.finalDocument.geometry.filter((node) => input.editedNodeIds.includes(node.id)),
+        input.regionEvidence.closureTolerance ?? 0.01,
+      ) && unexpectedDanglingEndpoints.length === 0
+    : true;
+  const feedbackPreviewVersionCount = previewVersionCount(input.auditEvents);
+  const regionGateSatisfied = !input.regionEvidence || (
+    regionSelectedBeforeNodes
+    && sharedPolylineSplit
+    && protectedBodyFragmentUnchanged
+    && lineageComplete
+    && editedContourClosed
+    && unexpectedDanglingEndpoints.length === 0
+    && feedbackPreviewVersionCount > 0
+  );
 
   return {
     passed: oldTargetRemoved
@@ -81,7 +131,8 @@ export function evaluateSemanticEditBenchmark(
       && anchorsConnected
       && preservedNodesChanged.length === 0
       && previewVerifiedBeforeCommit
-      && replayExact,
+      && replayExact
+      && regionGateSatisfied,
     oldTargetRemoved,
     newTargetsPresent,
     anchorsConnected,
@@ -92,7 +143,102 @@ export function evaluateSemanticEditBenchmark(
     maxVisibleSilenceMs,
     visibleSilenceBudgetMs,
     visibleFeedbackWithinTarget,
+    regionSelectedBeforeNodes,
+    sharedPolylineSplit,
+    protectedBodyFragmentUnchanged,
+    lineageComplete,
+    editedContourClosed,
+    unexpectedDanglingEndpoints,
+    feedbackPreviewVersionCount,
   };
+}
+
+function regionBeforeSelection(events: readonly DrawingAgentAuditEvent[]): boolean {
+  const region = events.findIndex((event) => event.type === 'region');
+  const selection = events.findIndex((event) => event.type === 'selection');
+  return region >= 0 && selection > region;
+}
+
+function hasTargetAndProtectedLineage(
+  sourceNodeId: string,
+  lineage: readonly SplitLineageEntry[],
+): boolean {
+  const entries = lineage.filter((entry) => entry.sourceNodeId === sourceNodeId);
+  return entries.some((entry) => entry.role === 'target')
+    && entries.some((entry) => entry.role === 'protected');
+}
+
+function completeLineage(
+  initial: DrawingDocument,
+  lineage: readonly SplitLineageEntry[],
+): boolean {
+  const sources = [...new Set(lineage.map((entry) => entry.sourceNodeId))];
+  return sources.length > 0 && sources.every((sourceId) => {
+    const node = initial.geometry.find((geometry) => geometry.id === sourceId);
+    if (!node) return false;
+    const domainEnd = node.type === 'polyline'
+      ? node.closed ? node.vertices.length : node.vertices.length - 1
+      : 1;
+    const ordered = lineage.filter((entry) => entry.sourceNodeId === sourceId)
+      .sort((left, right) => left.sourceRange[0] - right.sourceRange[0]);
+    return Math.abs((ordered[0]?.sourceRange[0] ?? Infinity)) <= 1e-9
+      && Math.abs((ordered.at(-1)?.sourceRange[1] ?? -Infinity) - domainEnd) <= 1e-9
+      && ordered.every((entry, index) => entry.sourceRange[1] > entry.sourceRange[0]
+        && (index === 0
+          || Math.abs(ordered[index - 1].sourceRange[1] - entry.sourceRange[0]) <= 1e-9));
+  });
+}
+
+function contourClosed(nodes: readonly GeometryNode[], tolerance: number): boolean {
+  const endpoints = nodes.flatMap((node): Vec2[] => {
+    switch (node.type) {
+      case 'line': return [node.start, node.end];
+      case 'arc': return [
+        polar(node.center, node.radius, node.startAngle),
+        polar(node.center, node.radius, node.endAngle),
+      ];
+      case 'polyline': return node.closed || node.vertices.length === 0
+        ? [] : [node.vertices[0].point, node.vertices.at(-1)!.point];
+      case 'spline': return node.closed || node.controlPoints.length === 0
+        ? [] : [node.controlPoints[0], node.controlPoints.at(-1)!];
+      case 'ellipse': return node.startParam === undefined && node.endParam === undefined
+        ? [] : sampledEllipseEndpoints(node);
+      case 'point':
+      case 'ray':
+      case 'xline': return [];
+      case 'circle': return [];
+    }
+  });
+  return endpoints.length === 0 || endpoints.every((point, index) => endpoints.some((candidate, other) => (
+    other !== index && distance(point, candidate) <= tolerance
+  )));
+}
+
+function sampledEllipseEndpoints(node: Extract<GeometryNode, { type: 'ellipse' }>): Vec2[] {
+  const point = (parameter: number): Vec2 => {
+    const majorRadius = Math.hypot(...node.majorAxis);
+    const rotation = Math.atan2(node.majorAxis[1], node.majorAxis[0]);
+    const localX = majorRadius * Math.cos(parameter);
+    const localY = majorRadius * node.ratio * Math.sin(parameter);
+    return [
+      node.center[0] + localX * Math.cos(rotation) - localY * Math.sin(rotation),
+      node.center[1] + localX * Math.sin(rotation) + localY * Math.cos(rotation),
+    ];
+  };
+  return [point(node.startParam ?? 0), point(node.endParam ?? Math.PI * 2)];
+}
+
+function previewVersionCount(events: readonly DrawingAgentAuditEvent[]): number {
+  return new Set(events.flatMap((event): string[] => {
+    if (event.type === 'episode' && typeof event.payload.previewVersionId === 'string') {
+      return [event.payload.previewVersionId];
+    }
+    if (event.type !== 'preview') return [];
+    const prepared = event.payload.prepared;
+    if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) return [];
+    const version = (prepared as Record<string, unknown>).previewVersionId;
+    return typeof version === 'string' ? [version] : [];
+  })).size;
 }
 
 function allNodes(document: DrawingDocument): Map<string, unknown> {

@@ -41,6 +41,54 @@ describe('split reference migration', () => {
       document: referencedDocument(true), selection: selection(),
     })).toThrow('SPLIT_REFERENCE_AMBIGUOUS:relation_constraint');
   });
+
+  it('projects nearest-point dimension anchors onto the owning split fragment', () => {
+    const document = referencedDocument(false);
+    const dimension = document.annotations[0];
+    if (dimension.type !== 'dimension') throw new Error('dimension fixture missing');
+    dimension.targets[0] = {
+      geometryId: 'source' as GeometryId,
+      anchor: { kind: 'nearest', point: [5, 2] },
+    };
+
+    const result = materializeSpatialSplits({ document, selection: selection() });
+    const targetId = result.lineage.find((entry) => entry.role === 'target')!.fragmentId;
+    const update = result.commands.find((command) => command.type === 'annotation.update');
+
+    expect(update).toMatchObject({
+      changes: { targets: [
+        { geometryId: targetId, anchor: { kind: 'nearest', point: [5, 2] } },
+        { geometryId: 'source' },
+      ] },
+    });
+  });
+
+  it('keeps a center dimension on the stable protected analytic fragment', () => {
+    const document = referencedDocument(false);
+    document.geometry = [{
+      id: 'source' as GeometryId, type: 'circle', visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] }, center: [0, 0], radius: 10,
+    }];
+    const dimension = document.annotations[0];
+    if (dimension.type !== 'dimension') throw new Error('dimension fixture missing');
+    dimension.targets = [{
+      geometryId: 'source' as GeometryId,
+      anchor: { kind: 'center' },
+    }];
+    const splitSelection = selection();
+    splitSelection.splitPlan[0].ranges = [
+      { range: [0, 0.25], role: 'target' },
+      { range: [0.25, 1], role: 'protected' },
+    ];
+    splitSelection.splitPlan[0].cutParameters = [0.25];
+
+    const result = materializeSpatialSplits({ document, selection: splitSelection });
+    const update = result.commands.find((command) => command.type === 'annotation.update');
+
+    expect(update).toMatchObject({
+      changes: { targets: [{ geometryId: 'source', anchor: { kind: 'center' } }] },
+    });
+  });
 });
 
 function referencedDocument(includeConstraint: boolean): DrawingDocument {

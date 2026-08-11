@@ -7,6 +7,8 @@ import app, { closeAppServices } from '../api/app.js';
 import type { DrawingAgentAuditEvent } from '../api/services/drawing-agent/audit-types.js';
 import { FileDrawingAgentAuditStore } from '../api/services/drawing-agent/file-audit-store.js';
 import { evaluateSemanticEditBenchmark } from '../api/services/drawing-benchmark/semantic-edit.js';
+import { materializeSpatialSplits, type SplitLineageEntry } from '../api/services/drawing-spatial/split-materializer.js';
+import type { SpatialSelection } from '../src/contracts/drawing-spatial-region.js';
 import type { DrawingWorkspaceSnapshot } from '../src/contracts/drawing-application.js';
 import type {
   DrawingAgentProgressEvent,
@@ -16,11 +18,10 @@ import {
   compileDrawingScene,
   type DrawingCommand,
   type DrawingDocument,
-  type Vec2,
 } from '../src/drawing/index.js';
 
 const fixturePath = resolve(process.cwd(), process.argv[2] ?? 'test2.png');
-const outputDirectory = resolve(process.cwd(), '.local/vectorai/baselines/test2-semantic-edit');
+const outputDirectory = resolve(process.cwd(), '.local/vectorai/baselines/test2-region-edit/e2e');
 const auditRoot = resolve(process.cwd(), '.local/vectorai/runs');
 const fixtureBytes = await readFile(fixturePath);
 const server = await listen();
@@ -68,35 +69,56 @@ try {
     `/api/drawings/${encodeURIComponent(drawingId)}`,
   )).workspace;
   const audit = await readSettledAudit(semantic.runId);
-  const intents = editIntents(audit.events);
-  const targetIds = [...new Set(intents.flatMap((intent) => (
-    stringArray(intent.targetNodeIds, 'intent.targetNodeIds')
+  const targetIds = [...new Set(audit.events.flatMap((event) => (
+    event.type === 'intent'
+      ? stringArray(event.payload.targetNodeIds, 'intent.targetNodeIds')
+      : []
   )))];
   const commands = audit.commits.flatMap((commit) => commit.commands);
-  const oldTargetNodeIds = commandIds(commands, 'geometry.delete');
   const editedNodeIds = [...new Set([
-    ...commandIds(commands, 'geometry.update'),
+    ...targetIds,
     ...commands.flatMap((command) => command.type === 'geometry.create' && command.value.id
       ? [command.value.id as string]
       : []),
   ])];
-  const preservedNodeIds = allNodeIds(before.document).filter((id) => !targetIds.includes(id));
-  const anchorPoints = intents.flatMap(intentAnchors);
-  if (anchorPoints.length === 0) throw new Error('TEST2_EDIT_INTENT_HAS_NO_ANCHOR_POINT');
+  const affectedBeforeIds = new Set([
+    ...commandIds(commands, 'geometry.update'),
+    ...commandIds(commands, 'geometry.delete'),
+  ]);
+  const preservedNodeIds = allNodeIds(before.document).filter((id) => !affectedBeforeIds.has(id));
+  const selection = auditSelection(audit.events);
+  const lineage = auditLineage(audit.events);
+  const sharedPolylineNodeId = sharedSplitSource(lineage);
+  const split = materializeSpatialSplits({ document: before.document, selection });
+  const expectedProtectedFragments = Object.fromEntries(split.lineage
+    .filter((entry) => entry.role === 'protected')
+    .map((entry) => {
+      const fragment = split.fragments.find((node) => node.id === entry.fragmentId);
+      if (!fragment) throw new Error(`TEST2_EXPECTED_PROTECTED_FRAGMENT_MISSING:${entry.fragmentId}`);
+      return [entry.fragmentId, fragment];
+    }));
+  const unexpectedDanglingEndpoints = deterministicDanglingEndpoints(audit.events);
   const report = evaluateSemanticEditBenchmark({
     initialDocument: before.document,
     finalDocument: final.document,
     commits: audit.commits,
-    oldTargetNodeIds,
+    oldTargetNodeIds: [],
     editedNodeIds,
     preservedNodeIds,
-    anchors: anchorPoints.map((point) => ({
+    anchors: selection.boundaryAnchors.map((anchor) => ({
       nodeIds: editedNodeIds,
-      point,
+      point: anchor.point,
       tolerance: Math.max(1, 3 / viewport.scale),
     })),
     auditEvents: audit.events,
     progressEvents: semanticEvents,
+    regionEvidence: {
+      sharedPolylineNodeId,
+      expectedProtectedFragments,
+      lineage,
+      unexpectedDanglingEndpoints,
+      closureTolerance: Math.max(1, 3 / viewport.scale),
+    },
   });
   const artifact = {
     fixturePath,
@@ -107,6 +129,8 @@ try {
     finalGeometryCount: final.document.geometry.length,
     reconstructionProgressEvents: reconstructionEvents.length,
     semanticProgressEvents: semanticEvents.length,
+    sharedPolylineNodeId,
+    lineage,
     ...report,
   };
   await mkdir(outputDirectory, { recursive: true });
@@ -234,21 +258,50 @@ async function readSettledAudit(runId: string) {
   return latest;
 }
 
-function editIntents(events: DrawingAgentAuditEvent[]): Record<string, unknown>[] {
-  const intents = events.flatMap((event) => (
-    event.type === 'intent' && record(event.payload.intent) ? [event.payload.intent] : []
-  ));
-  if (intents.length === 0) throw new Error('TEST2_EDIT_INTENT_MISSING');
-  return intents;
+function auditSelection(events: DrawingAgentAuditEvent[]): SpatialSelection {
+  const payload = events.find((event) => event.type === 'selection')?.payload;
+  if (!payload || typeof payload.selectionVersionId !== 'string'
+    || typeof payload.regionId !== 'string' || typeof payload.revision !== 'string'
+    || !Array.isArray(payload.wholeNodes) || !Array.isArray(payload.crossingNodes)
+    || !Array.isArray(payload.boundaryAnchors) || !Array.isArray(payload.splitPlan)) {
+    throw new Error('TEST2_SELECTION_AUDIT_MISSING');
+  }
+  return {
+    regionId: payload.regionId,
+    revision: payload.revision as SpatialSelection['revision'],
+    wholeNodes: payload.wholeNodes as SpatialSelection['wholeNodes'],
+    partialSegments: [],
+    crossingNodes: payload.crossingNodes as SpatialSelection['crossingNodes'],
+    protectedNodes: [],
+    boundaryAnchors: payload.boundaryAnchors as SpatialSelection['boundaryAnchors'],
+    classifications: [],
+    uncertainParts: [],
+    splitPlan: payload.splitPlan as SpatialSelection['splitPlan'],
+  };
 }
 
-function intentAnchors(intent: Record<string, unknown>): Vec2[] {
-  if (!Array.isArray(intent.anchors)) return [];
-  return intent.anchors.flatMap((value) => {
-    if (!record(value) || !Array.isArray(value.point) || value.point.length !== 2) return [];
-    const [x, y] = value.point;
-    return typeof x === 'number' && typeof y === 'number' ? [[x, y] as Vec2] : [];
+function auditLineage(events: DrawingAgentAuditEvent[]): SplitLineageEntry[] {
+  const entries = events.find((event) => event.type === 'lineage')?.payload.entries;
+  if (!Array.isArray(entries)) throw new Error('TEST2_LINEAGE_AUDIT_MISSING');
+  return entries as SplitLineageEntry[];
+}
+
+function sharedSplitSource(lineage: SplitLineageEntry[]): string {
+  const sources = [...new Set(lineage.map((entry) => entry.sourceNodeId))];
+  const source = sources.find((id) => {
+    const entries = lineage.filter((entry) => entry.sourceNodeId === id);
+    return entries.some((entry) => entry.role === 'target')
+      && entries.some((entry) => entry.role === 'protected');
   });
+  if (!source) throw new Error('TEST2_SHARED_POLYLINE_SPLIT_MISSING');
+  return source;
+}
+
+function deterministicDanglingEndpoints(events: DrawingAgentAuditEvent[]) {
+  const value = events.find((event) => event.type === 'verification'
+    && event.payload.phase === 'deterministic-spatial')?.payload.unexpectedDanglingEndpoints;
+  if (!Array.isArray(value)) throw new Error('TEST2_DETERMINISTIC_VERIFICATION_MISSING');
+  return value as Array<readonly [number, number]>;
 }
 
 function commandIds(commands: DrawingCommand[], type: DrawingCommand['type']): string[] {
@@ -291,8 +344,4 @@ function viewportFor(document: DrawingDocument) {
     width,
     height,
   };
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

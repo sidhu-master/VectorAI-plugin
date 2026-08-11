@@ -45,6 +45,9 @@ describe('semantic edit release benchmark', () => {
       preservedNodeIds: ['body', 'fixed_arm'],
       anchors: [{ nodeIds: ['raised_hand'], point: [10, 0], tolerance: 0.01 }],
       auditEvents: auditTimeline([
+        ['region', 80, { id: 'region_arm' }],
+        ['selection', 90, { selectionVersionId: 'selection_1' }],
+        ['episode', 95, { previewVersionId: 'preview_version_1' }],
         ['preview', 100, {}],
         ['verification', 120, { phase: 'preview', satisfied: true }],
         ['commit', 130, { receipt: { status: 'succeeded' } }],
@@ -60,6 +63,8 @@ describe('semantic edit release benchmark', () => {
       previewVerifiedBeforeCommit: true,
       replayExact: true,
       visibleFeedbackWithinTarget: true,
+      regionSelectedBeforeNodes: true,
+      feedbackPreviewVersionCount: 1,
     });
     expect(report.maxVisibleSilenceMs).toBe(25_000);
     expect(report.maxVisibleSilenceMs).toBeLessThanOrEqual(30_000);

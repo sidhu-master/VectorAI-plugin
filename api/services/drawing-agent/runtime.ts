@@ -1460,7 +1460,21 @@ export class DrawingAgentRuntime {
       splitPlan: structuredClone(selection.splitPlan),
     });
     if (selection.wholeNodes.length === 0 && selection.partialSegments.length === 0) {
-      throw new Error('REGION_FIRST_SELECTION_EMPTY');
+      record.previewDefects = [{
+        code: 'region-selection-empty',
+        message: '所选区域没有覆盖当前图中的任何向量；请圈选修改前已存在的完整源对象，而不是修改后的预期位置',
+        nodeIds: [],
+        repairHint: '重新查看当前图纸，选择现有目标轮廓并覆盖它的实际线条',
+      }];
+      this.#audit(record, 'verification', {
+        phase: 'region-resolution',
+        satisfied: false,
+        regionId: region.id,
+        defects: structuredClone(record.previewDefects),
+      });
+      record.progress.publish('revising', '目标区域未覆盖现有图形，正在重新观察');
+      this.#recordValidationRepair(record);
+      return this.#nextRegionFirstEdit(record);
     }
     const strategy = routeSpatialEditStrategy({
       goal: record.state.plan!.goal.objective,

@@ -1,130 +1,220 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import type { EditIntent } from '../src/contracts/drawing-spatial-agent.js';
+import type { DrawingAgentAuditEvent } from '../api/services/drawing-agent/audit-types.js';
+import { DrawingApplication } from '../api/services/drawing-application/application.js';
+import { evaluateSemanticEditBenchmark } from '../api/services/drawing-benchmark/semantic-edit.js';
+import { buildAtomicGeometryGraph } from '../api/services/drawing-spatial/atomic-graph.js';
+import { polygonRegionBounds } from '../api/services/drawing-spatial/polygon.js';
+import { RegionResolver } from '../api/services/drawing-spatial/region-resolver.js';
+import { materializeSpatialSplits } from '../api/services/drawing-spatial/split-materializer.js';
+import { compileSpatialEdit } from '../api/services/drawing-spatial/spatial-edit-compiler.js';
+import { validateSpatialEditPreview } from '../api/services/drawing-spatial/spatial-validator.js';
+import { routeSpatialEditStrategy } from '../api/services/drawing-spatial/strategy-router.js';
 import {
-  applyDrawingPatch,
+  TEST2_SHARED_POLYLINE_ID,
+  TEST2_SHARED_POLYLINE_POINTS,
+  test2RightArmRegion,
+  test2SharedPolylineDocument,
+} from '../api/services/drawing-spatial/test2-fixture.js';
+import type { DrawingAgentProgressEvent } from '../src/contracts/drawing-agent.js';
+import {
   MemoryDrawingRepository,
   type DrawingDocument,
   type GeometryId,
 } from '../src/drawing/index.js';
-import { FileDrawingAgentAuditStore } from '../api/services/drawing-agent/file-audit-store.js';
-import { DrawingApplication } from '../api/services/drawing-application/application.js';
-import { FileDrawingRepository } from '../api/services/drawing-application/file-drawing-repository.js';
-import { compileEditIntent } from '../api/services/drawing-edit/compile-intent.js';
-import { comparePreservedNodes } from '../api/services/drawing-edit/preserve-report.js';
 
-const drawingId = process.argv[2];
-const semanticRunId = process.argv[3];
-if (!drawingId || !semanticRunId) {
-  throw new Error('USAGE: tsx scripts/test2-self-semantic-edit.ts <drawingId> <semanticRunId>');
-}
-
-const drawingRoot = resolve(process.cwd(), '.local/vectorai/drawings');
-const auditRoot = resolve(process.cwd(), '.local/vectorai/runs');
-const outputRoot = resolve(process.cwd(), '.local/vectorai/baselines/test2-semantic-edit');
-const sourceRepository = new FileDrawingRepository({ rootDirectory: drawingRoot });
-const source = await sourceRepository.getCurrent(drawingId as never);
-const audit = await new FileDrawingAgentAuditStore({ rootDirectory: auditRoot }).readRun(semanticRunId);
-if (audit.manifest.drawingId !== drawingId) throw new Error('SELF_EDIT_DRAWING_RUN_MISMATCH');
+const fixturePath = resolve(process.cwd(), process.argv[2] ?? 'test2.png');
+await readFile(fixturePath);
+const outputRoot = resolve(process.cwd(), '.local/vectorai/baselines/test2-region-edit');
 await mkdir(outputRoot, { recursive: true });
-const modelImagePath = resolve(outputRoot, 'model-edit-geometry.png');
-await renderGeometry(source.document, [], modelImagePath);
 
-let baseline = structuredClone(source.document);
-for (const commit of [...audit.commits].reverse()) {
-  const reverted = applyDrawingPatch(baseline, commit.inversePatch);
-  if (!reverted.success) throw new Error(`SELF_EDIT_REVERT_FAILED:${commit.id}`);
-  baseline = reverted.document;
-}
-
-const targetNodeIds = [
-  'node_vec_c4deca597c5f861f3f5d',
-  'node_vec_5eb3fbda138e8ac1789c',
-  'node_vec_67b6a2bc2120c6e6a072',
-] as GeometryId[];
-const shoulderNodeId = 'node_vec_55e78541e9074bee6047' as GeometryId;
-const armLine = baseline.geometry.find((node) => node.id === targetNodeIds[0]);
-if (!armLine || armLine.type !== 'line') throw new Error('SELF_EDIT_TEST2_ARM_LINE_MISSING');
-const pivot = armLine.end;
-const intent: EditIntent = {
-  operation: 'transform',
-  targetFeatureIds: ['test2_character_right_arm'],
-  targetNodeIds,
-  anchors: [{ nodeId: armLine.id, role: 'shoulder_connection', point: pivot }],
-  preserveNodeIds: baseline.geometry
-    .filter((node) => !targetNodeIds.includes(node.id))
-    .map((node) => node.id),
-  preserveRules: [
-    { type: 'outside-target-unchanged' },
-    { type: 'maintain-connectivity', nodeIds: [armLine.id, shoulderNodeId] },
-  ],
-  desiredRelations: [{ type: 'connected', from: armLine.id, to: shoulderNodeId }],
-  transform: { kind: 'rotate', center: pivot, angleDegrees: -90 },
-  confidence: 0.99,
-  evidenceRefs: [],
-};
-const compiled = compileEditIntent(intent, { document: baseline });
-const memory = new MemoryDrawingRepository();
-const created = await memory.create(baseline);
-const application = new DrawingApplication({ repository: memory });
+const before = test2SharedPolylineDocument();
+const repository = new MemoryDrawingRepository();
+const created = await repository.create(before);
+const application = new DrawingApplication({ repository });
+const region = { ...test2RightArmRegion(), revision: created.revision };
+const graph = buildAtomicGeometryGraph({
+  document: before,
+  revision: created.revision,
+  regionBounds: polygonRegionBounds(region.worldContours),
+  padding: 2,
+});
+const selection = new RegionResolver().resolve({
+  document: before,
+  revision: created.revision,
+  region,
+  graph,
+  tolerance: 0.01,
+});
+const split = materializeSpatialSplits({ document: before, selection });
+const strategy = routeSpatialEditStrategy({
+  goal: '把图中人物的右手抬起来打招呼，保持身体不变并保持手臂闭合连接',
+  document: before,
+  region,
+  selection,
+});
+const candidate = compileSpatialEdit({
+  document: before,
+  selection,
+  region,
+  strategy,
+  split,
+  design: {
+    kind: 'transform',
+    transform: {
+      kind: 'rotate',
+      center: TEST2_SHARED_POLYLINE_POINTS[3],
+      angleDegrees: 35,
+    },
+    confidence: 0.99,
+    evidenceRefs: ['view_test2'],
+  },
+});
 const transaction = {
-  id: 'transaction_test2_self_edit',
+  id: 'transaction_test2_region_self_edit',
   baseRevision: created.revision,
-  actor: { type: 'AI' as const, id: 'codex-self-test' },
-  commands: compiled.commands,
+  actor: { type: 'AI' as const, id: 'test2-region-self-gate' },
+  commands: candidate.commands,
   preconditions: [],
   postconditions: [{ type: 'document.valid' as const }],
   evidenceRefs: [],
 };
-const preview = await application.preview({ drawingId: baseline.id, transaction });
-if (preview.status !== 'ready') throw new Error(`SELF_EDIT_PREVIEW_${preview.status}`);
-const committed = await application.execute({ drawingId: baseline.id, transaction });
-if (committed.status !== 'committed') throw new Error(`SELF_EDIT_COMMIT_${committed.status}`);
-const preserve = comparePreservedNodes(baseline, committed.document, compiled.preserveNodeIds);
-if (!preserve.satisfied) throw new Error('SELF_EDIT_PRESERVE_FAILED');
+const preview = await application.preview({ drawingId: before.id, transaction });
+if (preview.status !== 'ready') throw new Error(`TEST2_REGION_PREVIEW_${preview.status}`);
+const validation = validateSpatialEditPreview({
+  before,
+  after: preview.resultingDocument,
+  region,
+  selection,
+  candidate,
+  tolerance: 0.02,
+});
+if (!validation.valid) {
+  throw new Error(`TEST2_REGION_VALIDATION:${validation.issues.map((issue) => issue.code).join(',')}`);
+}
+const committed = await application.execute({ drawingId: before.id, transaction });
+if (committed.status !== 'committed') throw new Error(`TEST2_REGION_COMMIT_${committed.status}`);
+const commits = await repository.listCommits(before.id);
+const previewVersionId = 'test2-region-preview-1';
+const auditEvents = auditTimeline(created.revision, previewVersionId, split.lineage);
+const progressEvents = progressTimeline();
+const expectedProtectedFragments = Object.fromEntries(split.lineage
+  .filter((entry) => entry.role === 'protected')
+  .map((entry) => {
+    const fragment = split.fragments.find((node) => node.id === entry.fragmentId);
+    if (!fragment) throw new Error(`TEST2_PROTECTED_FRAGMENT_MISSING:${entry.fragmentId}`);
+    return [entry.fragmentId, fragment];
+  }));
+const report = evaluateSemanticEditBenchmark({
+  initialDocument: before,
+  finalDocument: committed.document,
+  commits,
+  oldTargetNodeIds: [],
+  editedNodeIds: candidate.targetNodeIds,
+  preservedNodeIds: Object.keys(candidate.preserveNodeHashes),
+  anchors: selection.boundaryAnchors.map((anchor) => ({
+    nodeIds: candidate.targetNodeIds,
+    point: anchor.point,
+    tolerance: 0.02,
+  })),
+  auditEvents,
+  progressEvents,
+  regionEvidence: {
+    sharedPolylineNodeId: TEST2_SHARED_POLYLINE_ID,
+    expectedProtectedFragments,
+    lineage: split.lineage,
+    unexpectedDanglingEndpoints: validation.unexpectedDanglingEndpoints,
+    closureTolerance: 0.02,
+  },
+});
 
-const imagePath = resolve(outputRoot, 'self-edit-geometry.png');
-const renderingRevision = await renderGeometry(committed.document, targetNodeIds, imagePath);
-const reportPath = resolve(outputRoot, 'self-edit-report.json');
-const report = {
-  prompt: '把图中人物的右手抬起来打招呼，保持身体、头部、左手和其他图形不变，并保持手臂与身体连接',
-  sourceDrawingId: drawingId,
-  sourceSemanticRunId: semanticRunId,
-  baselineRevision: audit.manifest.baseRevision,
-  renderingRevision,
-  targetNodeIds,
-  pivot,
-  transform: intent.transform,
-  strategy: compiled.strategy,
-  commandCount: compiled.commands.length,
-  preservedNodeCount: compiled.preserveNodeIds.length,
-  preserveSatisfied: preserve.satisfied,
-  previewValid: preview.preview.validationReport.valid,
-  modelImagePath,
+const imagePath = resolve(outputRoot, 'final-preview.png');
+await renderGeometry(committed.document, candidate.targetNodeIds, imagePath);
+const reportPath = resolve(outputRoot, 'report.json');
+const artifact = {
+  fixturePath,
+  reportPath,
   imagePath,
+  sourceDrawingId: before.id,
+  sourceRevision: created.revision,
+  finalRevision: committed.revision,
+  regionId: region.id,
+  selection: {
+    wholeNodes: selection.wholeNodes,
+    crossingNodes: selection.crossingNodes,
+    boundaryAnchors: selection.boundaryAnchors,
+  },
+  targetNodeIds: candidate.targetNodeIds,
+  lineage: split.lineage,
+  protectedBodyNodeId: TEST2_SHARED_POLYLINE_ID,
+  ...report,
 };
-await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-process.stdout.write(`${JSON.stringify({ ...report, reportPath }, null, 2)}\n`);
+await writeFile(reportPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+process.stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+if (!report.passed) process.exitCode = 1;
+
+function auditTimeline(
+  revision: string,
+  previewVersionId: string,
+  lineage: unknown[],
+): DrawingAgentAuditEvent[] {
+  const values: Array<[DrawingAgentAuditEvent['type'], Record<string, unknown>]> = [
+    ['observation', { revision }],
+    ['region', { id: 'region_test2_right_arm' }],
+    ['atomic_graph', { revision }],
+    ['selection', { selectionVersionId: 'test2-selection-1' }],
+    ['strategy', { mode: 'geometric-edit' }],
+    ['split', { fragmentCount: lineage.length }],
+    ['lineage', { entries: lineage }],
+    ['intent', { kind: 'transform' }],
+    ['episode', { previewVersionId }],
+    ['preview', { prepared: { previewVersionId } }],
+    ['verification', { phase: 'deterministic-spatial', satisfied: true }],
+    ['verification', { phase: 'preview', satisfied: true }],
+    ['commit', { receipt: { status: 'succeeded' } }],
+  ];
+  return values.map(([type, payload], index) => ({
+    schemaVersion: 1,
+    id: `test2_audit_${index}`,
+    runId: 'test2-region-self-gate',
+    type,
+    timestamp: index * 10,
+    payload,
+  }));
+}
+
+function progressTimeline(): DrawingAgentProgressEvent[] {
+  const types: DrawingAgentProgressEvent['type'][] = [
+    'observing', 'region_overlay', 'region_resolved', 'split_materialized',
+    'designing', 'previewing', 'verifying', 'committed', 'completed',
+  ];
+  return types.map((type, index) => ({
+    id: `test2_progress_${index}`,
+    runId: 'test2-region-self-gate',
+    type,
+    title: type,
+    timestamp: index * 1_000,
+    elapsedMs: index * 1_000,
+  }));
+}
 
 async function renderGeometry(
   document: DrawingDocument,
   selectedIds: GeometryId[],
   outputPath: string,
-): Promise<string> {
-  const geometryOnly: DrawingDocument = { ...document, annotations: [] };
+): Promise<void> {
   const repository = new MemoryDrawingRepository();
-  const rendering = await repository.create(geometryOnly);
+  await repository.create({ ...document, annotations: [] });
   const application = new DrawingApplication({ repository });
   const observation = await application.observeForAgent({
-    drawingId: geometryOnly.id,
+    drawingId: document.id,
     includeAnnotations: false,
     selectedIds,
   });
   const overview = observation.views.find((view) => view.purpose === 'overview')
     ?? observation.views[0];
   const image = application.readObservationImage(overview.image.handle);
-  if (!image) throw new Error('SELF_EDIT_RENDER_MISSING');
+  if (!image) throw new Error('TEST2_REGION_RENDER_MISSING');
   await writeFile(outputPath, Buffer.from(image.slice(image.indexOf(',') + 1), 'base64'));
-  return rendering.revision;
 }
