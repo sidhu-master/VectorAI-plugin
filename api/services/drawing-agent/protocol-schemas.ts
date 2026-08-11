@@ -17,6 +17,91 @@ const RELATION_TYPES = [
   'symmetric', 'parallel', 'perpendicular',
 ] as const;
 
+const NORMALIZED_COORDINATE = {
+  type: 'number', minimum: 0, maximum: 1,
+} as const;
+const NORMALIZED_POINT = {
+  type: 'array',
+  items: NORMALIZED_COORDINATE,
+  minItems: 2,
+  maxItems: 2,
+} as const;
+const NORMALIZED_POLYGON = {
+  type: 'array',
+  minItems: 3,
+  items: NORMALIZED_POINT,
+} as const;
+
+export const SEMANTIC_REGION_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_semantic_region',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'label', 'sourceViewId', 'contours', 'holes', 'anchors', 'confidence', 'evidenceRefs',
+    ],
+    properties: {
+      label: STRING,
+      sourceViewId: STRING,
+      contours: { type: 'array', minItems: 1, items: NORMALIZED_POLYGON },
+      holes: { type: 'array', items: NORMALIZED_POLYGON },
+      anchors: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['id', 'role', 'point', 'confidence'],
+          properties: {
+            id: STRING,
+            role: STRING,
+            point: NORMALIZED_POINT,
+            confidence: CONFIDENCE,
+          },
+        },
+      },
+      confidence: CONFIDENCE,
+      evidenceRefs: STRING_ARRAY,
+    },
+  },
+};
+
+const SPATIAL_EDIT_MODES = [
+  'geometric-edit', 'generative-redraw', 'hybrid-edit',
+] as const;
+
+export const SPATIAL_STRATEGY_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_spatial_edit_strategy',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'mode', 'regionId', 'preserveRegionIds', 'boundaryAnchorIds',
+      'requiredGuarantees', 'primaryReason',
+    ],
+    properties: {
+      mode: { type: 'string', enum: SPATIAL_EDIT_MODES },
+      regionId: STRING,
+      preserveRegionIds: STRING_ARRAY,
+      boundaryAnchorIds: STRING_ARRAY,
+      requiredGuarantees: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: [
+            'outside-region-unchanged',
+            'protected-region-unchanged',
+            'maintain-connectivity',
+            'preserve-analytic-geometry',
+            'avoid-visible-seams',
+          ],
+        },
+      },
+      primaryReason: STRING,
+      fallbackMode: { type: 'string', enum: SPATIAL_EDIT_MODES },
+    },
+  },
+};
+
 export const VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA: DrawingResponseSchema = {
   name: 'drawing_visual_feature_graph',
   schema: {

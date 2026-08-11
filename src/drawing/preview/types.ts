@@ -1,4 +1,9 @@
-import type { AnnotationNode, GeometryNode } from '../document/types';
+import type {
+  AnnotationNode,
+  GeometryNode,
+  RevisionId,
+  Vec2,
+} from '../document/types';
 
 export type PerceptionPreviewAction =
   | 'observe'
@@ -20,6 +25,17 @@ export type PerceptionPreviewStage =
   | 'reconciliation'
   | 'edit-preview';
 
+export interface SpatialRegionPreviewOverlay {
+  id: string;
+  revision: RevisionId;
+  previewVersionId: string;
+  label: string;
+  contours: Vec2[][];
+  holes: Vec2[][];
+  anchors: Array<{ id: string; role: string; point: Vec2; confidence: number }>;
+  confidence: number;
+}
+
 export interface PerceptionPreviewDelta {
   runId: string;
   sequence: number;
@@ -30,6 +46,8 @@ export interface PerceptionPreviewDelta {
   hideCommittedIds?: string[];
   showCommittedIds?: string[];
   labelsByNodeId?: Record<string, string>;
+  /** `null` explicitly clears the current region overlay. Raster masks remain server-side. */
+  regionOverlay?: SpatialRegionPreviewOverlay | null;
   source: {
     page: number;
     viewId: string;
