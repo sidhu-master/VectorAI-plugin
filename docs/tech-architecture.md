@@ -162,11 +162,11 @@ MVP 本地仓库至少分离保存：Source Artifact 媒体正文、Drawing Pack
 | 二 | Drawing Application 与本地仓库（应用服务、原子文件快照、重启回放、HTTP Drawing API、浏览器 Client、手工 UI 事务切换） | ✅ 已实现 |
 | 三 | Agent Runtime（Tool Registry、GoalSpec、Workflow Graph、Recovery、Run Control、SSE Progress） | ✅ 已实现 |
 | 四 | 图片感知与线稿矢量化（Source Artifact、Agent 可调 CV、反馈 loop、增量 Preview） | ✅ MVP 主链已实现；DXF/PDF 深度导入仍待完善 |
-| 五 | Vector-Native Spatial Agent（共享 SceneCompiler、服务端 VisualObservation、Grounding、EditIntent、后端 Preview/Verify/Revise/Commit） | ✅ 已实现 |
+| 五 | Vector-Native Spatial Agent（共享 SceneCompiler、服务端 VisualObservation、后端 Preview/Verify/Revise/Commit） | ✅ 已实现 |
 | 六 | 审计与发布门禁（调用级原始回复、Observation/Intent/Verification/Commit、确定性 Replay、test2 语义编辑与 30 秒体验指标） | ✅ 代码已实现；真实模型结果以本地供应商门禁持续验收 |
-| 七 | Region-First Spatial Editing（SemanticRegion、虚拟子图元、Region Resolver、EditEpisode、三策略自动路由） | 📝 设计已确认，待实施 |
+| 七 | Region-First Spatial Editing（SemanticRegion、虚拟子图元、Region Resolver、EditEpisode、三策略自动路由） | ✅ 已实现；确定性工程与创意门禁通过 |
 
-当前正式主链不再依赖 SpatialModel/SpatialIntent。现有视觉语义编辑按 `Observe → Ground nodeIds → EditIntent → Command → Preview → Verify → Commit/Revise` 执行，但 test2 已证明 node-first grounding 无法可靠处理跨越共享 Polyline 的语义部件。下一主链将替换为 `Observe → SemanticRegion → SpatialSelection → Strategy → Preview → Verify → Commit/Revise`。模型仍不能直接改仓库或绕过 Drawing IR 事务。
+当前正式视觉语义主链是 `Observe → SemanticRegion → SpatialSelection → Strategy → Preview → Verify → Commit/Revise`。旧的 node-first VisualFeatureGraph/EditIntent 协议、适配器和编译器已删除；明确 ID 的 Fast Command Lane 继续保留。模型仍不能直接改仓库或绕过 Drawing IR 事务。
 
 ## 15. 模块目录速查
 
@@ -178,7 +178,9 @@ MVP 本地仓库至少分离保存：Source Artifact 媒体正文、Drawing Pack
 - `api/services/drawing-application/`：Drawing Application Service 与文件仓库
 - `api/services/drawing-agent/`：空间 Agent 编排、模型协议、语义适配、预览验证、审计与进度
 - `api/services/drawing-vision/`：服务端 VisualObservation、Grounding 和 revision 绑定图像 handle
-- `api/services/drawing-edit/`：EditIntent 的确定性编译、局部边界和保护对象检查
+- `api/services/drawing-spatial/`：虚拟原子几何、区域解析、按需拆分、空间编译与确定性验证
+- `api/services/drawing-generation/`：可替换局部生图边界、生成资源落盘、矢量化和世界坐标投影
+- `api/services/drawing-edit/`：区域外与保护对象内容哈希检查
 - `api/services/drawing-render/`：RenderScene 的服务端栅格输出
 - `api/services/drawing-perception/`、`drawing-feedback/`、`drawing-cv/`、`drawing-vectorization/`：图片重建工具与反馈 loop
 - `api/services/drawing-benchmark/`：图元拟合和语义编辑发布门禁
@@ -187,7 +189,7 @@ MVP 本地仓库至少分离保存：Source Artifact 媒体正文、Drawing Pack
 
 ## 16. 当前语义编辑发布门禁
 
-`npm run e2e:test2-semantic-edit` 使用本地 `test2.png` 依次执行真实线稿重建和“右手抬起来”语义修改，输出仅保存在忽略目录 `.local/vectorai/baselines/test2-semantic-edit/`。供应商门禁从 Drawing IR、审计和真实 Commit 计算，不接受模型自报成功，必须同时满足：
+`npm run test:test2-self-edit -- test2.png` 是不调用外部模型的 Region-First 工程系统门禁；`npm run e2e:region-hair-edit` 是使用确定性假提供方的生成式/混合式系统门禁。报告仅写入被忽略的 `.local/vectorai/baselines/`。两者从 Drawing IR、审计和真实 Commit 计算，不接受模型自报成功，必须同时满足：
 
 - 被删除的旧目标不存在，新增或更新目标存在；
 - 编辑结果与意图锚点在容差内连接；
@@ -196,17 +198,17 @@ MVP 本地仓库至少分离保存：Source Artifact 媒体正文、Drawing Pack
 - 从编辑前 DrawingDocument 重放该 run 的 Commit 得到完全一致的最终文档；
 - 记录任意两个用户可见进度事件的最大间隔及 `visibleFeedbackWithinTarget`；30 秒是体验目标，不覆盖几何正确性结论。
 
-常规门禁为 `npm test`、`npm run check`、`npm run build` 和 `npm run lint`。真实模型门禁失败时保留 runId、审计、Commit 和报告用于回归，不允许用静态脚本结果替代。
+工程门禁额外验证连续右臂区域先于图元选择、共享 Polyline 只修改局部片段、身体保护片段不变、lineage 完整、修改后无意外悬空端点。创意门禁额外验证混合策略、眼睛/脸部保护、像素结果转为 Drawing IR、同一 Episode 的“头发短一点”Preview v2、Commit replay 与 revert。
 
-当前门禁只证明完整 nodeId 事务链、保护范围和回放机制可工作，不能证明语义部件分割正确。下一版 test2 门禁必须额外验证：连续右臂区域覆盖手掌与上下边界；与身体共用的 Polyline 只拆分并修改局部片段；身体竖线不变；修改后不存在意外悬空端点。
+`npm run e2e:test2-semantic-edit -- test2.png` 继续作为真实外部模型质量门禁。它失败时保留 runId、Episode、审计、Commit 和报告，不降低系统门禁，也不把供应商超时误判成 Drawing Core 错误。
 
 ## 17. 模型替换边界
 
-模型不是 Drawing IR 的组成部分，也不是事务执行者。planner、decision、grounding、intent、candidate、preview verification 和 final acceptance 都是可注入 adapter；默认模型名称来自 `COMPANY_AI_PRIMARY_MODEL`、`COMPANY_AI_PLANNER_MODEL`、`COMPANY_AI_DECISION_MODEL` 和 `COMPANY_AI_REPAIR_MODEL`。替换模型时不修改 Drawing Core、SceneCompiler、EditIntent 编译器或审计格式。
+模型不是 Drawing IR 的组成部分，也不是事务执行者。planner、decision、semantic-region、spatial-design、image-edit、preview verification 和 final acceptance 都是可注入 adapter；默认模型名称来自服务端环境。替换模型时不修改 Drawing Core、SceneCompiler、Spatial Compiler 或审计格式。
 
 模型接收 JSON Schema 约束的结构化协议。协议错误会把精确路径反馈给同一个模型重试；预览缺陷和整图拒绝会进入下一轮 repair 上下文。几何语义任务的视觉 observation 默认移除自动标注，文字、尺寸和标注任务才包含 annotation 平面，从而避免无关 UI 信息污染空间判断。
 
-系统门禁与供应商门禁分离：`npm run test:test2-self-edit -- <drawingId> <semanticRunId>` 只验证指定 node-level EditIntent 能否经过真实编译、Preview、保护检查和 Commit，不证明语义区域完整；`npm run e2e:test2-semantic-edit` 验证当前外部模型，但其通过标准将由下一版 region-first test2 门禁取代。
+系统门禁与供应商门禁分离：工程和创意系统门禁使用固定输入与确定性提供方验证架构；真实模型门禁只衡量当前模型能否提出足够准确的区域、策略和视觉结果。高推理能力主要用于 SemanticRegion、策略与最终视觉验收，求交、拆分、拟合、哈希、回放和 Commit 保持确定性。
 
 ## 18. 区域优先空间编辑
 
@@ -243,10 +245,10 @@ Region Resolver 将区域与按需构建的 Virtual Atomic Geometry Graph 求交
 
 通用验证新增：区域/revision 一致、拆分片段覆盖完整、lineage 可追踪、区域外哈希不变、共享边界关系迁移、无意外悬空端点、生成结果不侵入保护区域。
 
-实施按三条垂直链推进：
+三条垂直链已经落地并进入回归：
 
 1. SemanticRegion + Virtual Atomic Geometry + Region Resolver，以 test2 闭合右臂为门禁。
 2. EditEpisode + 多版本 Preview + 用户反馈重新规划，以“手再高一点”为门禁。
 3. Generative/Hybrid Redraw，以“增加卷发且不遮挡眼睛，随后改短”为门禁。
 
-新门禁通过后删除现有 node-first 视觉修改路径，不长期维护双主链或 Feature Flag。
+旧 node-first 视觉修改路径已删除，不维护双主链或 Feature Flag。

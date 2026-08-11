@@ -170,7 +170,7 @@ export function validateModel(model: SpatialModel): ValidationResult {
 
     // 检查关系 ID 唯一性（在关系范围内）
     // 检查实体引用存在
-    rel.entities.forEach((entityId, j) => {
+    rel.entities.forEach((entityId) => {
       if (!entityIds.has(entityId)) {
         errors.push(`${prefix}: 引用了不存在的实体 ID "${entityId}"`);
       }

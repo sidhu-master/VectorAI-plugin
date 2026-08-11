@@ -124,9 +124,12 @@ function validateBoundaryAnchors(input: {
 }): SpatialValidationIssue[] {
   if (input.selection.boundaryAnchors.length === 0) return [];
   const targets = input.after.geometry.filter((node) => input.candidate.targetNodeIds.includes(node.id));
-  const protectedIds = input.candidate.lineage
-    .filter((entry) => entry.role === 'protected')
-    .map((entry) => entry.fragmentId);
+  const protectedIds = [...new Set([
+    ...input.selection.protectedNodes,
+    ...input.candidate.lineage
+      .filter((entry) => entry.role === 'protected')
+      .map((entry) => entry.fragmentId),
+  ])];
   const protectedNodes = input.after.geometry.filter((node) => protectedIds.includes(node.id));
   return input.selection.boundaryAnchors.flatMap((anchor): SpatialValidationIssue[] => {
     const targetConnected = targets.some((node) => distanceToGeometry(anchor.point, node) <= input.tolerance);

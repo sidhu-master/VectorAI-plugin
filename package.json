@@ -17,6 +17,7 @@
     "benchmark:test2": "tsx scripts/benchmark-test2.ts",
     "e2e:test2-semantic-edit": "tsx scripts/e2e-test2-semantic-edit.ts",
     "test:test2-self-edit": "tsx scripts/test2-self-semantic-edit.ts",
+    "e2e:region-hair-edit": "tsx scripts/e2e-region-hair-edit.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

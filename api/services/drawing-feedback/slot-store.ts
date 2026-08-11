@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import type {
   ObservationSlot,
   SlotCandidateType,
-  SlotEvidenceRef,
   SlotLineageAction,
   SlotObservationInput,
 } from './types.js';

@@ -15,6 +15,14 @@ import type {
 if (!parentPort) throw new Error('CV_WORKER_PARENT_MISSING');
 
 const cv = await openCvModule;
+
+type OpenCvContour = InstanceType<typeof cv.Mat>;
+
+interface OpenCvContourVector {
+  size(): number;
+  get(index: number): OpenCvContour;
+  delete(): void;
+}
 parentPort.postMessage({ type: 'ready' } satisfies CvWorkerMessage);
 parentPort.on('message', (request: CvWorkerRequest) => {
   try {
@@ -38,7 +46,7 @@ parentPort.on('message', (request: CvWorkerRequest) => {
 });
 
 function inspectOverview(request: Extract<CvWorkerRequest, { operation: 'overview' }>) {
-  return withBinaryContours(request, (contours: any) => {
+  return withBinaryContours(request, (contours) => {
     let componentCount = 0;
     let minX = request.width;
     let minY = request.height;
@@ -77,7 +85,7 @@ function inspectOverview(request: Extract<CvWorkerRequest, { operation: 'overvie
 function extractEvidence(
   request: Extract<CvWorkerRequest, { operation: 'extract' }>,
 ): CvWorkerEvidence[] {
-  return withBinaryContours(request, (contours: any) => {
+  return withBinaryContours(request, (contours) => {
     const ranked: Array<{ evidence: CvWorkerEvidence; score: number }> = [];
     for (let index = 0; index < contours.size(); index += 1) {
       const contour = contours.get(index);
@@ -125,7 +133,7 @@ function extractEvidence(
 
 function withBinaryContours<T>(
   request: Extract<CvWorkerRequest, { operation: 'overview' | 'extract' }>,
-  consume: (contours: any) => T,
+  consume: (contours: OpenCvContourVector) => T,
 ): T {
   assertPixelBudget(request);
   const source = cv.matFromArray(
@@ -142,7 +150,7 @@ function withBinaryContours<T>(
     cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
     cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
     cv.findContours(binary, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
-    return consume(contours);
+    return consume(contours as OpenCvContourVector);
   } finally {
     source.delete();
     gray.delete();

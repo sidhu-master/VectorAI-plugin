@@ -4,7 +4,6 @@ import {
   type DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
 import sharp from 'sharp';
-import { DrawingSpatialProtocolError } from '../../../src/contracts/drawing-spatial-agent.js';
 import {
   DrawingSpatialRegionProtocolError,
   type SemanticRegion,
@@ -1837,8 +1836,7 @@ export class DrawingAgentRuntime {
         (signal, onRawReply) => call(signal, onRawReply),
       );
     } catch (error) {
-      if (!(error instanceof DrawingSpatialProtocolError)
-        && !(error instanceof DrawingSpatialRegionProtocolError)
+      if (!(error instanceof DrawingSpatialRegionProtocolError)
         && !(error instanceof DrawingAgentProtocolError)) throw error;
       record.progress.publish('validation', '正在修正空间协议输出', error.message);
       this.#audit(record, 'validation', {

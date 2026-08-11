@@ -623,11 +623,6 @@ function integer(value: unknown, min: number, max: number): number {
   return value as number;
 }
 
-function finiteNumber(value: unknown, min: number, max: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw new Error();
-  return value;
-}
-
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex');
 }

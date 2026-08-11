@@ -2,13 +2,13 @@
 
 > 日期：2026-08-11
 >
-> 状态：用户已确认核心方向，等待书面复核
+> 状态：已实现并进入确定性回归；真实模型质量独立验收
 >
 > 上游架构：`2026-08-11-vector-native-spatial-agent-engine-design.md`
 
 ## 1. 背景与问题
 
-VectorAI 当前的视觉语义编辑先把“右手”等语义绑定到完整 Drawing IR `nodeId`，再生成 EditIntent。这种方式适合完整图元就是正确编辑单位的任务，但不能可靠处理跨图元或只占图元一部分的语义部件。
+VectorAI 旧版视觉语义编辑曾先把“右手”等语义绑定到完整 Drawing IR `nodeId`，再生成节点级意图。这种方式适合完整图元就是正确编辑单位的任务，但不能可靠处理跨图元或只占图元一部分的语义部件，因此已经被本设计替换。
 
 `test2` 的“把人物右手抬起来”暴露了边界：右手下方连接线和身体左侧竖线由同一个五顶点 Polyline 表达。模型选择完整右臂时，如果只选圆弧和上侧手臂线，会留下断开的下侧边界；如果整体选择该 Polyline，又会误改身体轮廓。问题不是单纯模型能力不足，而是系统要求模型在理解语义前先服从既有图元边界。
 
@@ -391,9 +391,9 @@ interface EditEpisode {
 ## 17. 迁移策略
 
 - 明确对象、明确 ID 的 Fast Command Lane 保留。
-- 视觉语义修改从 node-first VisualFeatureGraph 迁移到 region-first SemanticRegion → SpatialSelection。
-- VisualFeatureGraph 可以作为区域解析后的语义摘要，不再要求模型在第一步列举完整 nodeId。
-- 现有 node-first 视觉修改主链在新 test2 门禁通过后删除，不长期维护双路径或 Feature Flag。
+- 视觉语义修改已经切换到 region-first SemanticRegion → SpatialSelection。
+- 区域解析后的语义摘要直接来自 SpatialSelection、lineage 和 EditEpisode，不再维护 VisualFeatureGraph 主协议。
+- 旧 node-first 视觉修改主链、适配器和编译器已经删除，不维护双路径或 Feature Flag。
 - Drawing IR、SceneCompiler、Application、Repository、Commit、审计和前端事务投影继续复用。
 
 实施分三条可独立验收的垂直链：

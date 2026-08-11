@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { compileIntent, resetIdCounter } from '../compiler';
-import type { SpatialIntent } from '../types';
+import type { GeometryEntity, SpatialIntent, SpatialModel } from '../types';
 
 describe('Compiler', () => {
   beforeEach(() => {
@@ -17,7 +17,7 @@ describe('Compiler', () => {
     expect(errors).toHaveLength(0);
     expect(model.entities).toHaveLength(1);
     expect(model.entities[0].type).toBe('circle');
-    const circle = model.entities[0] as any;
+    const circle = entityOfType(model, 0, 'circle');
     expect(circle.center).toEqual([100, 100]);
     expect(circle.radius).toBe(20);
     expect(circle.visible).toBe(true);
@@ -32,7 +32,7 @@ describe('Compiler', () => {
     const { model, errors } = compileIntent(intent);
     expect(errors).toHaveLength(0);
     expect(model.entities[0].type).toBe('point');
-    const point = model.entities[0] as any;
+    const point = entityOfType(model, 0, 'point');
     expect(point.x).toBe(50);
     expect(point.y).toBe(30);
   });
@@ -45,7 +45,7 @@ describe('Compiler', () => {
     };
     const { model, errors } = compileIntent(intent);
     expect(errors).toHaveLength(0);
-    const line = model.entities[0] as any;
+    const line = entityOfType(model, 0, 'line');
     expect(line.start).toEqual([0, 0]);
     expect(line.end).toEqual([100, 0]);
   });
@@ -58,7 +58,7 @@ describe('Compiler', () => {
     };
     const { model, errors } = compileIntent(intent);
     expect(errors).toHaveLength(0);
-    const circle = model.entities[0] as any;
+    const circle = entityOfType(model, 0, 'circle');
     expect(circle.radius).toBe(20); // 40/2
   });
 
@@ -70,7 +70,7 @@ describe('Compiler', () => {
     };
     const { model, errors } = compileIntent(intent);
     expect(errors).toHaveLength(0);
-    const circle = model.entities[0] as any;
+    const circle = entityOfType(model, 0, 'circle');
     expect(circle.radius).toBe(15);
   });
 
@@ -132,8 +132,18 @@ describe('Compiler', () => {
     };
     const { model, errors } = compileIntent(intent);
     expect(errors).toHaveLength(0);
-    const circle = model.entities[0] as any;
+    const circle = entityOfType(model, 0, 'circle');
     expect(circle.center).toEqual([50, 50]);
     expect(circle.radius).toBe(20);
   });
 });
+
+function entityOfType<T extends GeometryEntity['type']>(
+  model: SpatialModel,
+  index: number,
+  type: T,
+): Extract<GeometryEntity, { type: T }> {
+  const entity = model.entities[index];
+  if (!entity || entity.type !== type) throw new Error(`expected ${type}`);
+  return entity as Extract<GeometryEntity, { type: T }>;
+}

@@ -303,5 +303,5 @@ Region Resolver 把区域映射为：
 - 当前权威技术架构为 `docs/tech-architecture.md`。
 - 区域优先编辑的详细设计为 `docs/superpowers/specs/2026-08-11-region-first-spatial-editing-design.md`。
 - 旧 SpatialModel/SpatialIntent 架构只作为历史存档，新代码不得继续扩展。
-- MVP 不维护不合适的双路径或长期 Feature Flag；新垂直门禁通过后删除旧 node-first 视觉修改路径。
+- MVP 不维护不合适的双路径或长期 Feature Flag；旧 node-first 视觉修改路径已在 Region-First 门禁通过后删除。
 - 本地 `test1`、`test2`、运行审计和生成媒体不进入 Git。

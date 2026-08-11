@@ -26,11 +26,13 @@ COMPANY_AI_PLANNER_MODEL=doubao-seed-2.0-lite
 COMPANY_AI_DECISION_MODEL=doubao-seed-2.0-lite
 COMPANY_AI_VISION_MODEL=doubao-seed-2.0-lite
 COMPANY_AI_REPAIR_MODEL=doubao-seed-2.1-turbo
+COMPANY_AI_IMAGE_EDIT_MODEL
+COMPANY_AI_IMAGE_EDIT_URL
 COMPANY_AI_GATEWAY_URL
 COMPANY_INTERNAL_TOKEN
 ```
 
-AI 对话只有一个 Agent 主流程，不提供“普通/Agent”模式切换。纯文字、图片、PDF 及文字与附件的组合输入统一启动 Agent；运行中的纯文字作为安全点追加指令。模型只是可替换的 planner/decision/grounding/design/verification adapter，默认名称由上述环境变量指定；Drawing IR、SceneCompiler、事务、验证、审计与回放不依赖具体模型。低于 0.6 的有效图元作为 candidate 标红，修复轮可切换到 repair 模型。
+AI 对话只有一个 Agent 主流程，不提供“普通/Agent”模式切换。纯文字、图片、PDF 及文字与附件的组合输入统一启动 Agent；运行中的纯文字作为安全点追加指令。模型只是可替换的 planner/decision/semantic-region/spatial-design/image-edit/verification adapter，默认名称由上述环境变量指定；Drawing IR、SceneCompiler、事务、验证、审计与回放不依赖具体模型。低于 0.6 的有效图元作为 candidate 标红，修复轮可切换到 repair 模型。
 
 ## 架构入口
 
@@ -49,7 +51,7 @@ PDF 图纸会在本地服务端通过 Poppler 的 `pdftoppm` 只渲染第一页�
 
 ## Agent Workflow
 
-Agent 默认自动执行。启动请求在意图判断、规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。已有 node-first 语义修改正在迁移为 `Observe → SemanticRegion → SpatialSelection → Strategy → Preview → Verify → Commit/Revise`；任何模型都不能直接改仓库或绕过 Drawing IR 事务。
+Agent 默认自动执行。启动请求在意图判断、规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。视觉语义修改统一使用 `Observe → SemanticRegion → SpatialSelection → Strategy → Preview → Verify → Commit/Revise`；旧 node-first 路径已经删除，任何模型都不能直接改仓库或绕过 Drawing IR 事务。
 
 | 方法 | 路由 | 用途 |
 |---|---|---|
@@ -85,6 +87,8 @@ pnpm test
 pnpm check
 pnpm lint
 pnpm build
+pnpm test:test2-self-edit -- test2.png
+pnpm e2e:region-hair-edit
 ```
 
 <!-- 原 Vite 模板说明保留在下方，后续项目初始化清理时删除。 -->

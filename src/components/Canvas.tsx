@@ -503,7 +503,7 @@ export default function Canvas() {
         setMouseCoords(toWorld(sx, sy));
       }
     },
-    [setMouseCoords, toWorld],
+    [applyAxisLabels, h, setMouseCoords, toWorld, w],
   );
 
   const onMouseUp = (e: React.MouseEvent<SVGSVGElement>) => {
