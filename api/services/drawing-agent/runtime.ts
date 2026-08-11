@@ -62,7 +62,8 @@ interface RuntimeLimitsInput {
   maxPerceptionCommits: number;
 }
 
-type RuntimeApplication = Pick<DrawingApplication, 'summarize' | 'renderForVision'>;
+type RuntimeApplication = Pick<DrawingApplication, 'summarize' | 'renderForVision'>
+  & Partial<Pick<DrawingApplication, 'observeForAgent' | 'readObservationImage'>>;
 
 interface RuntimeTools {
   invoke(input: DrawingToolInvocation): Promise<DrawingToolExecution>;
@@ -1027,11 +1028,37 @@ export class DrawingAgentRuntime {
 
   async #ensureVision(record: RunRecord): Promise<DrawingVisionContext | undefined> {
     const viewport = record.viewport;
-    if (!viewport || record.inputMode === 'analyze_only') {
-      return undefined;
-    }
+    if (record.inputMode === 'analyze_only') return undefined;
     // 仅在 revision 未变化时复用缓存;提交后重新渲染,让模型看到更新后的图纸
     if (record.vision && record.visionRevision === record.state.revision) return record.vision;
+    if (this.#application.observeForAgent && this.#application.readObservationImage) {
+      const observation = await this.#application.observeForAgent({
+        drawingId: record.state.drawingId,
+        selectedIds: record.selectedIds,
+        userViewport: viewport,
+      });
+      const view = observation.views.find((item) => item.purpose === 'target-detail')
+        ?? observation.views.find((item) => item.purpose === 'user-viewport')
+        ?? observation.views[0];
+      const imageDataUrl = view && this.#application.readObservationImage(view.image.handle);
+      if (view && imageDataUrl) {
+        record.vision = {
+          snapshot: {
+            width: view.width,
+            height: view.height,
+            imageDataUrl,
+            rendererVersion: observation.rendererVersion,
+            worldToImage: view.worldToImage,
+            nodes: structuredClone(view.grounding),
+          },
+          selection: [...record.selectedIds],
+          observation,
+        };
+        record.visionRevision = record.state.revision;
+        return record.vision;
+      }
+    }
+    if (!viewport) return undefined;
     const snapshot = await this.#application.renderForVision({
       drawingId: record.state.drawingId,
       viewport,

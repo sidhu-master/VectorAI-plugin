@@ -348,6 +348,27 @@ describe('DrawingApplication', () => {
     expect(wrongDrawing).toEqual({ owned: false, currentRevision: committed.revision });
     expect(oldRevision).not.toHaveProperty('document');
   });
+
+  it('builds an agent observation from the current canonical revision', async () => {
+    const { application } = setup();
+    const workspace = await application.create();
+    const committed = await application.execute({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(workspace.revision, 'circle_observe'),
+    });
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const observation = await application.observeForAgent({
+      drawingId: workspace.document.id,
+      selectedIds: ['circle_observe'],
+    });
+
+    expect(observation.revision).toBe(committed.revision);
+    expect(observation.views.map((view) => view.purpose)).toEqual(['overview', 'target-detail']);
+    expect(observation.vectorDigest.nodes).toEqual([
+      expect.objectContaining({ id: 'circle_observe', type: 'circle' }),
+    ]);
+  });
 });
 
 function circleTransaction(revision: string, id: string): DrawingTransaction {

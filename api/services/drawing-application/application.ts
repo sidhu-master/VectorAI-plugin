@@ -25,6 +25,11 @@ import {
   renderGroundingSnapshot,
   type GroundingSnapshot,
 } from '../drawing-vision/grounding-renderer.js';
+import { DrawingObservationBuilder } from '../drawing-vision/observation-builder.js';
+import type {
+  AgentObservationViewport,
+  VisualObservation,
+} from '../drawing-vision/observation-types.js';
 
 export class DrawingApplicationError extends Error {
   readonly code: 'DRAWING_NOT_FOUND';
@@ -40,15 +45,18 @@ export class DrawingApplication {
   readonly #repository: DrawingRepository;
   readonly #idFactory: IdFactory;
   readonly #now: () => number;
+  readonly #observationBuilder: DrawingObservationBuilder;
 
   constructor(input: {
     repository: DrawingRepository;
     idFactory?: IdFactory;
     now?: () => number;
+    observationBuilder?: DrawingObservationBuilder;
   }) {
     this.#repository = input.repository;
     this.#idFactory = input.idFactory ?? randomIdFactory;
     this.#now = input.now ?? Date.now;
+    this.#observationBuilder = input.observationBuilder ?? new DrawingObservationBuilder();
   }
 
   async create(input: { unit?: 'mm' | 'cm' | 'm' } = {}): Promise<DrawingWorkspaceSnapshot> {
@@ -105,6 +113,7 @@ export class DrawingApplication {
     const workspace = await this.open(input.drawingId);
     return renderGroundingSnapshot({
       document: workspace.document,
+      revision: workspace.revision,
       scale: input.viewport.scale,
       offsetX: input.viewport.offsetX,
       offsetY: input.viewport.offsetY,
@@ -113,6 +122,26 @@ export class DrawingApplication {
       selectedIds: input.selectedIds,
       maxDimension: input.maxDimension,
     });
+  }
+
+  async observeForAgent(input: {
+    drawingId: DrawingId;
+    selectedIds?: string[];
+    targetBounds?: { minX: number; minY: number; maxX: number; maxY: number };
+    userViewport?: AgentObservationViewport;
+  }): Promise<VisualObservation> {
+    const workspace = await this.open(input.drawingId);
+    return this.#observationBuilder.build({
+      document: workspace.document,
+      revision: workspace.revision,
+      selectedIds: input.selectedIds,
+      targetBounds: input.targetBounds,
+      userViewport: input.userViewport,
+    });
+  }
+
+  readObservationImage(handle: string): string | null {
+    return this.#observationBuilder.readImage(handle);
   }
 
   async summarize(input: {

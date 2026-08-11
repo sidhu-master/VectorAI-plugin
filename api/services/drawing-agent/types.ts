@@ -14,6 +14,7 @@ import type {
 } from '../../../src/contracts/drawing-agent.js';
 import type { SourceArtifactReference } from '../source-artifacts/types.js';
 import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer.js';
+import type { VisualObservation } from '../drawing-vision/observation-types.js';
 
 export type DrawingToolCapability =
   | 'query_entities'
@@ -120,6 +121,8 @@ export interface DrawingVisionContext {
   snapshot: GroundingSnapshot;
   /** 用户当前选中的节点 id(用于 selection-scoped 指令) */
   selection: string[];
+  /** Revision-bound server overview/detail observation for semantic editing. */
+  observation?: VisualObservation;
 }
 
 export interface DrawingDecisionInput {

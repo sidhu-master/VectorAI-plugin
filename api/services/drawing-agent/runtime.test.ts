@@ -89,6 +89,10 @@ async function setup(input: {
       worldToImage: [1, 0, 0, -1, 0, 1],
       nodes: [],
     })),
+    ...(input.renderForVision ? {} : {
+      observeForAgent: application.observeForAgent.bind(application),
+      readObservationImage: application.readObservationImage.bind(application),
+    }),
   };
   const tools = new DrawingToolRegistry({
     application: toolApplication,
@@ -750,6 +754,27 @@ describe('DrawingAgentRuntime', () => {
     expect(capturedVision?.snapshot.nodes).toEqual([
       expect.objectContaining({ nodeId: 'existing_line' }),
     ]);
+  });
+
+  it('receives a server overview observation without a browser viewport', async () => {
+    let capturedVision: DrawingDecisionInput['vision'];
+    const decision: DrawingDecisionModelAdapter = {
+      decide: vi.fn(async (input) => {
+        capturedVision = input.vision;
+        return createDecision('circle_1', 0.9);
+      }),
+    };
+    const { runtime, workspace } = await setup({ decision });
+
+    const final = await runtime.start({
+      ...startInput(workspace),
+      goal: '把图形右手抬起来',
+      viewport: undefined,
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(capturedVision?.observation?.views[0].purpose).toBe('overview');
+    expect(capturedVision?.snapshot.imageDataUrl).toMatch(/^data:image\/png;base64,/);
   });
 
   it('does not visually accept a goal that fails deterministic assertions', async () => {
