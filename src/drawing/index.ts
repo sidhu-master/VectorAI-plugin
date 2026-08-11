@@ -34,3 +34,5 @@ export {
 export type * from './repository/replay';
 export type * from './repository/state';
 export type * from './repository/types';
+
+export * from './scene';
