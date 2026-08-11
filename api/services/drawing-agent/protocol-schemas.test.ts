@@ -39,5 +39,7 @@ describe('region-first response schemas', () => {
         required: ['editableFragmentIds', 'anchorIds', 'evidence', 'confidence'],
       },
     });
+    expect(JSON.stringify(FRAGMENT_SELECTION_RESPONSE_SCHEMA.schema))
+      .not.toContain('"minItems":1,"items":{"type":"string"');
   });
 });

@@ -1,4 +1,5 @@
 import type {
+  FragmentAuthorization,
   SemanticRegion,
   SpatialEditMode,
   SpatialEditStrategy,
@@ -61,6 +62,8 @@ export interface CompiledSpatialEditCandidate {
   lineage: SplitLineageEntry[];
   strategy: SpatialEditMode;
   fidelityWarnings: string[];
+  authorizationId: string;
+  selectionProofId: string;
 }
 
 export function compileSpatialEdit(input: {
@@ -69,9 +72,11 @@ export function compileSpatialEdit(input: {
   region: SemanticRegion;
   strategy: SpatialEditStrategy;
   split: MaterializedSplit;
+  authorization: FragmentAuthorization;
   design: SpatialEditDesign;
 }): CompiledSpatialEditCandidate {
   assertScope(input);
+  assertAuthorization(input);
   if (input.design.kind === 'local-redraw') {
     return compileLocalRedraw({ ...input, design: input.design });
   }
@@ -162,6 +167,8 @@ export function compileSpatialEdit(input: {
       ...input.split.fidelityWarnings,
       ...(anchored ? ['ANCHORED_DEFORMATION_APPLIED'] : []),
     ],
+    authorizationId: input.authorization.id,
+    selectionProofId: input.authorization.selectionProofId,
   };
 }
 
@@ -171,6 +178,7 @@ function compileLocalRedraw(input: {
   region: SemanticRegion;
   strategy: SpatialEditStrategy;
   split: MaterializedSplit;
+  authorization: FragmentAuthorization;
   design: Extract<SpatialEditDesign, { kind: 'local-redraw' }>;
 }): CompiledSpatialEditCandidate {
   if (input.design.geometry.length === 0) throw new Error('SPATIAL_REDRAW_EMPTY');
@@ -224,6 +232,8 @@ function compileLocalRedraw(input: {
     lineage: input.design.replaceTarget ? structuredClone(input.split.lineage) : [],
     strategy: input.strategy.mode,
     fidelityWarnings: [...input.split.fidelityWarnings],
+    authorizationId: input.authorization.id,
+    selectionProofId: input.authorization.selectionProofId,
   };
 }
 
@@ -232,11 +242,52 @@ function assertScope(input: {
   selection: SpatialSelection;
   region: SemanticRegion;
   strategy: SpatialEditStrategy;
+  authorization: FragmentAuthorization;
 }): void {
   if (input.document.id !== input.region.drawingId) throw new Error('SPATIAL_EDIT_DRAWING_MISMATCH');
   if (input.selection.revision !== input.region.revision) throw new Error('SPATIAL_EDIT_STALE');
   if (input.selection.regionId !== input.region.id || input.strategy.regionId !== input.region.id) {
     throw new Error('SPATIAL_EDIT_REGION_MISMATCH');
+  }
+  if (input.authorization.revision !== input.selection.revision) {
+    throw new Error('SPATIAL_EDIT_AUTHORIZATION_STALE');
+  }
+  if (input.authorization.regionId !== input.region.id) {
+    throw new Error('SPATIAL_EDIT_AUTHORIZATION_REGION_MISMATCH');
+  }
+}
+
+function assertAuthorization(input: {
+  document: DrawingDocument;
+  selection: SpatialSelection;
+  authorization: FragmentAuthorization;
+}): void {
+  const expected = [
+    ...input.selection.wholeNodes.map((id) => `node:${id}`),
+    ...input.selection.partialSegments.map((segment) => segment.id),
+  ];
+  const authorized = new Set(input.authorization.editableFragmentIds);
+  for (const id of expected) {
+    if (!authorized.has(id)) throw new Error(`SPATIAL_EDIT_UNAUTHORIZED_TARGET:${id}`);
+  }
+  const expectedSet = new Set(expected);
+  for (const id of authorized) {
+    if (!expectedSet.has(id)) throw new Error(`SPATIAL_EDIT_AUTHORIZATION_TARGET_MISSING:${id}`);
+  }
+  const allowedSources = new Set<string>([
+    ...input.selection.wholeNodes,
+    ...input.selection.partialSegments.map((segment) => segment.nodeId),
+  ]);
+  for (const nodeId of input.selection.crossingNodes) {
+    if (!allowedSources.has(nodeId)) throw new Error(`SPATIAL_EDIT_UNAUTHORIZED_SOURCE:${nodeId}`);
+  }
+  const expectedAnchors = new Set(input.selection.boundaryAnchors.map((anchor) => anchor.id));
+  const authorizedAnchors = new Set(input.authorization.boundaryAnchorIds);
+  for (const id of expectedAnchors) {
+    if (!authorizedAnchors.has(id)) throw new Error(`SPATIAL_EDIT_UNAUTHORIZED_ANCHOR:${id}`);
+  }
+  for (const id of authorizedAnchors) {
+    if (!expectedAnchors.has(id)) throw new Error(`SPATIAL_EDIT_AUTHORIZATION_ANCHOR_MISSING:${id}`);
   }
 }
 

@@ -6,9 +6,11 @@ import {
 import sharp from 'sharp';
 import {
   DrawingSpatialRegionProtocolError,
+  type FragmentAuthorization,
   type SemanticRegion,
   type SpatialEditStrategy,
   type SpatialSelection,
+  type TargetHint,
 } from '../../../src/contracts/drawing-spatial-region.js';
 import type {
   Bounds2D,
@@ -22,6 +24,7 @@ import type { DrawingApplication } from '../drawing-application/application.js';
 import type { AffineTransform } from '../drawing-render/rasterize-scene.js';
 import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer.js';
 import type {
+  DrawingFragmentSelectionModelAdapter,
   DrawingSemanticRegionModelAdapter,
   DrawingSpatialDesignModelAdapter,
 } from './semantic-adapters.js';
@@ -29,6 +32,15 @@ import { buildSemanticRegion } from '../drawing-spatial/semantic-region.js';
 import { RegionMediaStore } from '../drawing-spatial/region-media-store.js';
 import { buildAtomicGeometryGraph } from '../drawing-spatial/atomic-graph.js';
 import { RegionResolver } from '../drawing-spatial/region-resolver.js';
+import {
+  authorizeSelection,
+  buildSelectionCandidateSet,
+  renderSelectionProofView,
+} from '../drawing-spatial/selection-authorization.js';
+import {
+  assessSearchEnvelope,
+  localityBudgetFor,
+} from '../drawing-spatial/locality-guard.js';
 import {
   materializeSpatialSplits,
   type MaterializedSplit,
@@ -41,6 +53,7 @@ import {
 } from '../drawing-spatial/spatial-edit-compiler.js';
 import { validateSpatialEditPreview } from '../drawing-spatial/spatial-validator.js';
 import { validateGenerativeGeometry } from '../drawing-spatial/generative-validator.js';
+import { roughGeometryBounds } from '../drawing-spatial/geometry-sampling.js';
 import type { DrawingRegionRedrawService } from '../drawing-generation/redraw-service.js';
 import { buildEpisodeModelContext } from '../drawing-episode/context-builder.js';
 import type { EditEpisodeStore } from '../drawing-episode/file-episode-store.js';
@@ -184,6 +197,7 @@ interface SpatialRepairContext {
   proposalViewId: string;
   region: SemanticRegion;
   selection: SpatialSelection;
+  authorization: FragmentAuthorization;
   split: MaterializedSplit;
   strategy: SpatialEditStrategy;
   targetGeometry: GeometryNode[];
@@ -212,6 +226,7 @@ export interface DrawingAgentRuntimeOptions {
   acceptance?: DrawingAcceptanceModelAdapter;
   previewVerifier?: DrawingPreviewVerificationModelAdapter;
   regionProposer?: DrawingSemanticRegionModelAdapter;
+  fragmentSelector?: DrawingFragmentSelectionModelAdapter;
   spatialDesigner?: DrawingSpatialDesignModelAdapter;
   regionMediaStore?: RegionMediaStore;
   episodeStore?: EditEpisodeStore;
@@ -250,6 +265,7 @@ export class DrawingAgentRuntime {
   readonly #acceptance?: DrawingAcceptanceModelAdapter;
   readonly #previewVerifier?: DrawingPreviewVerificationModelAdapter;
   readonly #regionProposer?: DrawingSemanticRegionModelAdapter;
+  readonly #fragmentSelector?: DrawingFragmentSelectionModelAdapter;
   readonly #spatialDesigner?: DrawingSpatialDesignModelAdapter;
   readonly #regionMediaStore: RegionMediaStore;
   readonly #episodeStore?: EditEpisodeStore;
@@ -274,6 +290,7 @@ export class DrawingAgentRuntime {
     this.#acceptance = options.acceptance;
     this.#previewVerifier = options.previewVerifier;
     this.#regionProposer = options.regionProposer;
+    this.#fragmentSelector = options.fragmentSelector;
     this.#spatialDesigner = options.spatialDesigner;
     this.#regionMediaStore = options.regionMediaStore ?? new RegionMediaStore();
     this.#episodeStore = options.episodeStore;
@@ -1465,7 +1482,7 @@ export class DrawingAgentRuntime {
   }
 
   async #nextRegionFirstEdit(record: RunRecord): Promise<AgentDecision> {
-    if (!this.#regionProposer || !this.#spatialDesigner) {
+    if (!this.#regionProposer || !this.#fragmentSelector || !this.#spatialDesigner) {
       throw new Error('REGION_FIRST_EDIT_ADAPTERS_MISSING');
     }
     if (!this.#application.readObservationImage || !this.#application.open) {
@@ -1511,7 +1528,7 @@ export class DrawingAgentRuntime {
       record.spatialRepairContext = context;
     }
     const {
-      observation, document, episodeId, proposalViewId, region, selection, split,
+      observation, document, episodeId, proposalViewId, region, selection, authorization, split,
       targetGeometry, regionVersion, selectionVersion, selectionVersionId, tolerance,
     } = context;
     let strategy = context.strategy;
@@ -1607,7 +1624,7 @@ export class DrawingAgentRuntime {
     let compiled: CompiledSpatialEditCandidate;
     try {
       compiled = compileSpatialEdit({
-        document, selection, region, strategy, split, design,
+        document, selection, region, strategy, split, authorization, design,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1655,6 +1672,8 @@ export class DrawingAgentRuntime {
       targetNodeIds: compiled.targetNodeIds,
       authorizedBounds: compiled.authorizedBounds,
       commandCount: compiled.commands.length,
+      authorizationId: authorization.id,
+      selectionProofId: authorization.selectionProofId,
       candidateAttempt,
       modelTier: candidateAttempt >= MAX_VALIDATION_REPAIRS + 1 ? 'repair' : 'decision',
     });
@@ -1698,28 +1717,172 @@ export class DrawingAgentRuntime {
     const workspace = await this.#application.open!(record.state.drawingId);
     if (workspace.revision !== record.state.revision) return null;
     const episode = await this.#ensureEpisode(record);
+    const targetHint = targetHintFor(
+      record.state.plan!.goal.objective,
+      record.state.plan!.goal.scope.bounds,
+      record.selectedIds,
+      workspace.document,
+      observation.vectorDigest.bounds,
+    );
+    const budget = localityBudgetFor(targetHint.preferredScale);
+    let accepted: {
+      proposal: Awaited<ReturnType<DrawingSemanticRegionModelAdapter['propose']>>;
+      region: SemanticRegion;
+      graph: ReturnType<typeof buildAtomicGeometryGraph>;
+      rawSelection: SpatialSelection;
+      bounds: Bounds2D;
+      tolerance: number;
+      locality: ReturnType<typeof assessSearchEnvelope>;
+    } | null = null;
+    let envelopeFeedback = structuredClone(repairFeedback);
+    for (let envelopeAttempt = 1; envelopeAttempt <= 2; envelopeAttempt += 1) {
+      record.progress.publish(
+        'grounding',
+        envelopeAttempt === 1 ? '正在定位目标的最小搜索范围' : '正在缩小目标搜索范围',
+        undefined,
+        undefined,
+        candidateProgress(candidateAttempt),
+      );
+      let proposal = await this.#proposeSemanticRegion(
+        record, observation, modelName, envelopeFeedback, targetHint,
+      );
+      if (proposal.confidence < LOW_CONFIDENCE_THRESHOLD) {
+        proposal = await this.#proposeSemanticRegion(record, observation, modelName, [{
+          code: 'low-region-confidence',
+          message: `搜索包络置信度 ${proposal.confidence.toFixed(2)}，请重新检查最小目标边界`,
+          nodeIds: [],
+        }], targetHint);
+      }
+      const region = await buildSemanticRegion({
+        drawingId: record.state.drawingId,
+        observation,
+        proposal,
+        mediaStore: this.#regionMediaStore,
+      });
+      const bounds = semanticRegionBounds(region);
+      const tolerance = spatialTolerance(bounds);
+      const graph = buildAtomicGeometryGraph({
+        document: workspace.document, revision: workspace.revision,
+        regionBounds: bounds, padding: tolerance * 4,
+      });
+      const rawSelection = new RegionResolver().resolve({
+        document: workspace.document, revision: workspace.revision, region, graph, tolerance,
+      });
+      const locality = assessSearchEnvelope({
+        documentBounds: observation.vectorDigest.bounds ?? bounds,
+        envelopeBounds: bounds,
+        targetHint,
+        counts: {
+          wholeNodes: rawSelection.wholeNodes.length,
+          crossingNodes: rawSelection.crossingNodes.length,
+          boundaryAnchors: rawSelection.boundaryAnchors.length,
+          candidateFragments: rawSelection.wholeNodes.length + rawSelection.partialSegments.length,
+        },
+        budget,
+      });
+      this.#audit(record, 'region', {
+        id: region.id, revision: region.revision, label: region.label,
+        sourceViewIds: region.sourceViewIds, maskHandle: region.maskHandle,
+        contourCount: region.worldContours.length, holeCount: region.worldHoles.length,
+        anchorCount: region.anchors.length, confidence: region.confidence,
+        evidenceRefs: region.evidenceRefs, candidateAttempt, envelopeAttempt,
+        targetHint: structuredClone(targetHint), locality: structuredClone(locality),
+      });
+      this.#audit(record, 'atomic_graph', {
+        revision: graph.revision, segmentCount: graph.segments.length,
+        nodeCount: new Set(graph.segments.map((segment) => segment.nodeId)).size,
+        segmentIds: graph.segments.slice(0, 200).map((segment) => segment.id),
+        truncated: graph.segments.length > 200,
+        envelopeAttempt,
+      });
+      if (!locality.accepted) {
+        const detail = locality.issues.map((issue) => issue.message).join('；');
+        record.progress.publish(
+          'search_envelope_rejected', '搜索范围过大，正在精确缩小', detail,
+          undefined, candidateProgress(candidateAttempt),
+        );
+        this.#audit(record, 'verification', {
+          phase: 'search-envelope', satisfied: false, regionId: region.id,
+          issues: structuredClone(locality.issues), metrics: structuredClone(locality.metrics),
+          candidateAttempt, envelopeAttempt,
+        });
+        envelopeFeedback = locality.issues.map((issue) => ({
+          code: issue.code.toLowerCase(),
+          message: issue.message,
+          nodeIds: [],
+          repairHint: '仅覆盖目标部件及其连接点的最小邻域，不要包含头部、躯干或其他部件',
+        }));
+        continue;
+      }
+      accepted = { proposal, region, graph, rawSelection, bounds, tolerance, locality };
+      break;
+    }
+    if (!accepted) throw new Error('SEARCH_ENVELOPE_REJECTED:两次定位仍超过局部编辑预算');
+    const { proposal, region, graph, rawSelection, tolerance, locality } = accepted;
+    const episodeId = `${record.state.runId}:${record.state.currentWorkflowNodeId ?? 'edit'}`;
+    const candidates = buildSelectionCandidateSet({
+      document: workspace.document, selection: rawSelection, graph,
+    });
     record.progress.publish(
-      'grounding', '正在选择完整语义区域', undefined, undefined,
+      'candidate_extraction',
+      `找到 ${candidates.candidates.length} 个局部片段，正在确认目标`,
+      undefined, undefined, candidateProgress(candidateAttempt),
+    );
+    let proof;
+    if (candidates.candidates.length === 0) {
+      if (!isAdditiveRedrawGoal(record.state.plan!.goal.objective)) {
+        throw new Error('REGION_SELECTION_EMPTY');
+      }
+      proof = {
+        editableFragmentIds: [], anchorIds: [], evidence: [], confidence: region.confidence,
+      };
+    } else {
+      const proofView = await renderSelectionProofView({ document: workspace.document, candidates });
+      record.progress.publish(
+        'selecting_fragments', '正在确认需要修改的精确轮廓片段',
+        `${candidates.candidates.length} 个候选`, undefined,
+        candidateProgress(candidateAttempt),
+      );
+      proof = await this.#callSemanticModel(
+        record,
+        'grounding',
+        modelName,
+        (signal, onRawReply, protocolFeedback) => this.#fragmentSelector!.select({
+          goal: record.state.plan!.goal.objective,
+          observation,
+          candidates,
+          proofView,
+          availableAnchors: rawSelection.boundaryAnchors,
+          allowEmptyEditSet: isAdditiveRedrawGoal(record.state.plan!.goal.objective),
+          readImage: this.#application.readObservationImage!.bind(this.#application),
+          modelName,
+          signal,
+          deadlineAt: record.state.limits.deadlineAt,
+          onRawReply,
+          repairFeedback,
+          episodeContext: buildEpisodeModelContext(episode),
+          ...(protocolFeedback ? { protocolFeedback } : {}),
+        }),
+      );
+    }
+    const authorized = authorizeSelection({
+      document: workspace.document,
+      rawSelection,
+      candidates,
+      proof,
+      locality: locality.metrics,
+      maxEditableFragments: budget.maxCandidateFragments,
+    });
+    const selection = authorized.selection;
+    const authorization = authorized.authorization;
+    const selectionVersionId = `${authorization.selectionProofId}:selection:${record.state.revision}`;
+    record.progress.publish(
+      'selection_authorized',
+      `已确认 ${authorization.editableFragmentIds.length} 个可编辑片段`,
+      `其余 ${authorization.protectedFragmentIds.length + selection.protectedNodes.length} 个对象保持不变`,
+      undefined,
       candidateProgress(candidateAttempt),
     );
-    let proposal = await this.#proposeSemanticRegion(
-      record, observation, modelName, repairFeedback,
-    );
-    if (proposal.confidence < LOW_CONFIDENCE_THRESHOLD) {
-      proposal = await this.#proposeSemanticRegion(record, observation, modelName, [{
-        code: 'low-region-confidence',
-        message: `区域选择置信度 ${proposal.confidence.toFixed(2)}，请重新检查完整边界`,
-        nodeIds: [],
-      }]);
-    }
-    const region = await buildSemanticRegion({
-      drawingId: record.state.drawingId,
-      observation,
-      proposal,
-      mediaStore: this.#regionMediaStore,
-    });
-    const episodeId = `${record.state.runId}:${record.state.currentWorkflowNodeId ?? 'edit'}`;
-    const selectionVersionId = `${region.id}:selection:${record.state.revision}`;
     const overlayDelta: PerceptionPreviewDelta = {
       runId: record.state.runId,
       sequence: ++record.perceptionPreviewSequence,
@@ -1736,33 +1899,11 @@ export class DrawingAgentRuntime {
       },
     };
     record.progress.publish(
-      'region_overlay', '已定位目标区域', undefined, overlayDelta,
+      'region_overlay', '已确认目标搜索范围', undefined, overlayDelta,
       candidateProgress(candidateAttempt),
     );
-    this.#audit(record, 'region', {
-      id: region.id, revision: region.revision, label: region.label,
-      sourceViewIds: region.sourceViewIds, maskHandle: region.maskHandle,
-      contourCount: region.worldContours.length, holeCount: region.worldHoles.length,
-      anchorCount: region.anchors.length, confidence: region.confidence,
-      evidenceRefs: region.evidenceRefs, candidateAttempt,
-    });
-    const bounds = semanticRegionBounds(region);
-    const tolerance = spatialTolerance(bounds);
-    const graph = buildAtomicGeometryGraph({
-      document: workspace.document, revision: workspace.revision,
-      regionBounds: bounds, padding: tolerance * 4,
-    });
-    this.#audit(record, 'atomic_graph', {
-      revision: graph.revision, segmentCount: graph.segments.length,
-      nodeCount: new Set(graph.segments.map((segment) => segment.nodeId)).size,
-      segmentIds: graph.segments.slice(0, 200).map((segment) => segment.id),
-      truncated: graph.segments.length > 200,
-    });
-    const selection = new RegionResolver().resolve({
-      document: workspace.document, revision: workspace.revision, region, graph, tolerance,
-    });
     record.progress.publish(
-      'region_resolved', '目标区域已解析为可编辑几何',
+      'region_resolved', '目标片段已解析为可编辑几何',
       `完整图元 ${selection.wholeNodes.length}，跨边界图元 ${selection.crossingNodes.length}`,
       undefined, candidateProgress(candidateAttempt),
     );
@@ -1773,6 +1914,8 @@ export class DrawingAgentRuntime {
       boundaryAnchors: structuredClone(selection.boundaryAnchors),
       uncertainParts: structuredClone(selection.uncertainParts),
       splitPlan: structuredClone(selection.splitPlan), candidateAttempt,
+      selectionProof: structuredClone(proof),
+      authorization: structuredClone(authorization),
     });
     supersedeActive(episode.regionVersions);
     const regionVersion = episode.regionVersions.length + 1;
@@ -1821,6 +1964,7 @@ export class DrawingAgentRuntime {
       proposalViewId: proposal.sourceViewId,
       region,
       selection,
+      authorization,
       split,
       strategy,
       targetGeometry: targetGeometryForDesign(workspace.document, selection, split),
@@ -1908,6 +2052,7 @@ export class DrawingAgentRuntime {
     observation: NonNullable<DrawingVisionContext['observation']>,
     modelName: string,
     repairFeedback: import('./types.js').DrawingPreviewDefect[],
+    targetHint: TargetHint,
   ) {
     return this.#callSemanticModel(
       record,
@@ -1922,6 +2067,7 @@ export class DrawingAgentRuntime {
         deadlineAt: record.state.limits.deadlineAt,
         onRawReply,
         repairFeedback,
+        targetHint,
         ...(record.episode ? { episodeContext: buildEpisodeModelContext(record.episode) } : {}),
         ...(protocolFeedback ? { protocolFeedback } : {}),
       }),
@@ -2464,6 +2610,52 @@ function semanticRegionBounds(region: SemanticRegion): Bounds2D {
     minY: Math.min(...points.map((point) => point[1])),
     maxX: Math.max(...points.map((point) => point[0])),
     maxY: Math.max(...points.map((point) => point[1])),
+  };
+}
+
+function targetHintFor(
+  semanticDescription: string,
+  scopeBounds: Bounds2D | undefined,
+  selectedIds: string[],
+  document: DrawingDocument,
+  documentBounds: Bounds2D | null,
+): TargetHint {
+  const selectedBounds = unionBounds(selectedIds
+    .map((id) => document.geometry.find((node) => node.id === id))
+    .filter((node): node is GeometryNode => node !== undefined)
+    .map((node) => roughGeometryBounds(node))
+    .filter((bounds): bounds is Bounds2D => bounds !== null));
+  const approximateBounds = scopeBounds ?? selectedBounds ?? undefined;
+  return {
+    semanticDescription,
+    ...(approximateBounds ? { approximateBounds } : {}),
+    preferredScale: preferredTargetScale(approximateBounds, documentBounds),
+  };
+}
+
+function preferredTargetScale(
+  target: Bounds2D | undefined,
+  document: Bounds2D | null,
+): TargetHint['preferredScale'] {
+  if (!target || !document) return 'part';
+  const documentArea = Math.max(document.maxX - document.minX, 1)
+    * Math.max(document.maxY - document.minY, 1);
+  const targetArea = Math.max(target.maxX - target.minX, 1)
+    * Math.max(target.maxY - target.minY, 1);
+  const ratio = targetArea / documentArea;
+  if (ratio >= 0.55) return 'drawing';
+  if (ratio >= 0.2) return 'assembly';
+  if (ratio <= 0.015) return 'detail';
+  return 'part';
+}
+
+function unionBounds(values: Bounds2D[]): Bounds2D | null {
+  if (values.length === 0) return null;
+  return {
+    minX: Math.min(...values.map((bounds) => bounds.minX)),
+    minY: Math.min(...values.map((bounds) => bounds.minY)),
+    maxX: Math.max(...values.map((bounds) => bounds.maxX)),
+    maxY: Math.max(...values.map((bounds) => bounds.maxY)),
   };
 }
 

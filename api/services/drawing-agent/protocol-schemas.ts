@@ -68,7 +68,7 @@ export const FRAGMENT_SELECTION_RESPONSE_SCHEMA: DrawingResponseSchema = {
     additionalProperties: false,
     required: ['editableFragmentIds', 'anchorIds', 'evidence', 'confidence'],
     properties: {
-      editableFragmentIds: { type: 'array', minItems: 1, items: STRING, uniqueItems: true },
+      editableFragmentIds: { type: 'array', items: STRING, uniqueItems: true },
       anchorIds: { type: 'array', items: STRING, uniqueItems: true },
       evidence: {
         type: 'array',

@@ -7,6 +7,7 @@ import {
   type IdFactory,
 } from '../../../src/drawing/index.js';
 import type {
+  FragmentAuthorization,
   SemanticRegion,
   SpatialSelection,
 } from '../../../src/contracts/drawing-spatial-region.js';
@@ -70,8 +71,28 @@ export async function runCreativeRegionEditBenchmark(): Promise<CreativeRegionEd
   });
   const firstValidation = validateGenerativeGeometry(validationInput([firstHair]));
   const revisedValidation = validateGenerativeGeometry(validationInput([revisedHair]));
+  const authorization: FragmentAuthorization = {
+    id: 'authorization_hair_additive',
+    revision: opened.revision,
+    regionId: region.id,
+    editableFragmentIds: [],
+    protectedFragmentIds: [],
+    boundaryAnchorIds: ['hairline'],
+    protectedHashes: {},
+    selectionProofId: 'proof_hair_additive',
+    locality: {
+      areaRatio: 0.2,
+      widthRatio: 0.7,
+      heightRatio: 0.3,
+      targetCenterDistanceRatio: 0,
+      wholeNodes: 0,
+      crossingNodes: 0,
+      boundaryAnchors: 1,
+      candidateFragments: 0,
+    },
+  };
   const candidate = compileSpatialEdit({
-    document: initial, selection, region, strategy,
+    document: initial, selection, region, strategy, authorization,
     split: { commands: [], fragments: [], lineage: [], fidelityWarnings: [] },
     design: {
       kind: 'local-redraw', geometry: [revisedHair], replaceTarget: false,

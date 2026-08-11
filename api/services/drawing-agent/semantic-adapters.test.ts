@@ -104,6 +104,37 @@ describe('drawing region-first model adapters', () => {
     expect(received?.responseSchema).toMatchObject({ name: 'drawing_fragment_selection' });
   });
 
+  it('keeps overlapping source geometry protected for an additive redraw', async () => {
+    const complete: DrawingSpatialCompletion = vi.fn(async () => JSON.stringify({
+      editableFragmentIds: [], anchorIds: [], evidence: [], confidence: 0.95,
+    }));
+    const current = observation();
+    const proposal = await new DrawingFragmentSelectionAdapter(complete).select({
+      goal: '给角色增加卷发', observation: current,
+      candidates: {
+        revision: current.revision, regionId: 'region_hair', protectedNodeIds: [],
+        candidates: [{
+          fragmentId: 'fragment_face', sourceNodeId: 'face_source' as never,
+          kind: 'parameter-range', sourceRange: [0, 0.2], start: [20, 40], end: [40, 40],
+          bounds: { minX: 20, minY: 40, maxX: 40, maxY: 50 },
+          adjacentSegmentIds: [], baselineHash: 'hash_face',
+        }],
+      },
+      proofView: {
+        id: 'proof_hair', imageDataUrl: 'data:image/png;base64,BBBB', width: 10, height: 10,
+        mapping: [{
+          label: 'F001', fragmentId: 'fragment_face', sourceNodeId: 'face_source' as never,
+          rgb: [255, 0, 0], bounds: { minX: 20, minY: 40, maxX: 40, maxY: 50 },
+        }],
+      },
+      availableAnchors: [], allowEmptyEditSet: true,
+      readImage: () => 'data:image/png;base64,AAAA', modelName: 'semantic-model',
+      signal: new AbortController().signal, deadlineAt: Date.now() + 1_000,
+    });
+
+    expect(proposal.editableFragmentIds).toEqual([]);
+  });
+
   it('rejects a fragment id not present in the server proof mapping', async () => {
     const complete: DrawingSpatialCompletion = vi.fn(async () => JSON.stringify({
       editableFragmentIds: ['fragment_invented'], anchorIds: [], evidence: [], confidence: 0.8,

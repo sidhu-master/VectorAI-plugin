@@ -58,6 +58,8 @@ describe('validateSpatialEditPreview', () => {
         lineage: [],
         strategy: 'geometric-edit',
         fidelityWarnings: [],
+        authorizationId: 'authorization_fixture',
+        selectionProofId: 'proof_fixture',
       },
       tolerance: 0.01,
     });
@@ -97,6 +99,8 @@ describe('validateSpatialEditPreview', () => {
           sourceRange: [0, 0.4], role: 'target',
         }],
         strategy: 'geometric-edit', fidelityWarnings: [],
+        authorizationId: 'authorization_fixture',
+        selectionProofId: 'proof_fixture',
       },
       tolerance: 0.01,
     });

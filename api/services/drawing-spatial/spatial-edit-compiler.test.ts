@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { FragmentAuthorization, SpatialSelection } from '../../../src/contracts/drawing-spatial-region.js';
 import { previewTransaction, type GeometryId } from '../../../src/drawing/index.js';
 import { buildAtomicGeometryGraph } from './atomic-graph.js';
 import { polygonRegionBounds } from './polygon.js';
@@ -24,7 +25,15 @@ describe('compileSpatialEdit', () => {
       regionId: region.id,
       revision: TEST2_REVISION,
       wholeNodes: [],
-      partialSegments: [],
+      partialSegments: [{
+        id: 'atomic_mid_arm', revision: TEST2_REVISION,
+        nodeId: TEST2_SHARED_POLYLINE_ID, kind: 'parameter-range' as const,
+        parameterRange: [0.5, 1.5] as const,
+        start: [102.924145, 193.702014] as const,
+        end: [110.5964065, 198.76895] as const,
+        bounds: { minX: 102.924145, minY: 193.702014, maxX: 110.5964065, maxY: 198.76895 },
+        adjacentSegmentIds: [],
+      }],
       crossingNodes: [TEST2_SHARED_POLYLINE_ID],
       protectedNodes: before.geometry
         .filter((node) => node.id !== TEST2_SHARED_POLYLINE_ID)
@@ -52,6 +61,7 @@ describe('compileSpatialEdit', () => {
         goal: '调整右臂中段', document: before, region, selection,
       }),
       split,
+      authorization: authorizationFor(selection),
       design: {
         kind: 'transform',
         transform: { kind: 'translate', offset: [1, 1] },
@@ -98,6 +108,7 @@ describe('compileSpatialEdit', () => {
       region,
       strategy,
       split,
+      authorization: authorizationFor(selection),
       design: {
         kind: 'transform', confidence: 0.97, evidenceRefs: ['view_test2'],
         transform: {
@@ -155,6 +166,7 @@ describe('compileSpatialEdit', () => {
     const candidate = compileSpatialEdit({
       document: before, selection, region, strategy,
       split: { commands: [], fragments: [], lineage: [], fidelityWarnings: [] },
+      authorization: authorizationFor(selection),
       design: {
         kind: 'local-redraw', geometry: [hair], replaceTarget: false,
         confidence: 0.92, evidenceRefs: ['generated_source'],
@@ -171,4 +183,60 @@ describe('compileSpatialEdit', () => {
     expect(Object.keys(candidate.preserveNodeHashes)).toHaveLength(before.geometry.length);
     expect(preview.status).toBe('ready');
   });
+
+  it('rejects a selected target that is absent from the fragment authorization', () => {
+    const before = test2SharedPolylineDocument();
+    const region = test2RightArmRegion();
+    const graph = buildAtomicGeometryGraph({
+      document: before, revision: TEST2_REVISION,
+      regionBounds: polygonRegionBounds(region.worldContours), padding: 2,
+    });
+    const selection = new RegionResolver().resolve({
+      document: before, revision: TEST2_REVISION, region, graph, tolerance: 0.01,
+    });
+    const split = materializeSpatialSplits({ document: before, selection });
+    const authorization = authorizationFor(selection);
+    authorization.editableFragmentIds = authorization.editableFragmentIds.filter((id) => (
+      id !== 'node:node_test2_hand_outline'
+    ));
+
+    expect(() => compileSpatialEdit({
+      document: before,
+      selection,
+      region,
+      strategy: routeSpatialEditStrategy({
+        goal: '抬起右手', document: before, region, selection,
+      }),
+      split,
+      authorization,
+      design: {
+        kind: 'transform', transform: { kind: 'translate', offset: [0, 10] },
+        confidence: 0.9, evidenceRefs: ['view_test2'],
+      },
+    })).toThrow('SPATIAL_EDIT_UNAUTHORIZED_TARGET:node:node_test2_hand_outline');
+  });
 });
+
+function authorizationFor(selection: SpatialSelection): FragmentAuthorization {
+  return {
+    id: 'authorization_test',
+    revision: selection.revision,
+    regionId: selection.regionId,
+    editableFragmentIds: [
+      ...selection.wholeNodes.map((id) => `node:${id}`),
+      ...selection.partialSegments.map((segment) => segment.id),
+    ],
+    protectedFragmentIds: [],
+    boundaryAnchorIds: selection.boundaryAnchors.map((anchor) => anchor.id),
+    protectedHashes: {},
+    selectionProofId: 'proof_test',
+    locality: {
+      areaRatio: 0.1, widthRatio: 0.2, heightRatio: 0.3,
+      targetCenterDistanceRatio: null,
+      wholeNodes: selection.wholeNodes.length,
+      crossingNodes: selection.crossingNodes.length,
+      boundaryAnchors: selection.boundaryAnchors.length,
+      candidateFragments: selection.wholeNodes.length + selection.partialSegments.length,
+    },
+  };
+}

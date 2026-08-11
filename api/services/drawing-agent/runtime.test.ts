@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DrawingAgentProtocolError, type AgentDecision, type DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
 import {
   DrawingSpatialRegionProtocolError,
+  type SelectionProofProposal,
   type SemanticRegionProposal,
 } from '../../../src/contracts/drawing-spatial-region';
 import {
@@ -76,6 +77,7 @@ async function setup(input: {
   acceptance?: DrawingAcceptanceModelAdapter;
   previewVerifier?: DrawingPreviewVerificationModelAdapter;
   regionProposer?: { propose(input: unknown): Promise<SemanticRegionProposal> };
+  fragmentSelector?: { select(input: unknown): Promise<SelectionProofProposal> };
   spatialDesigner?: { design(input: unknown): Promise<SpatialEditDesign> };
   redrawService?: { redraw(input: import('../drawing-generation/types').DrawingRegionRedrawInput): Promise<{
     generatedSource: import('../source-artifacts/types').SourceArtifactReference;
@@ -159,6 +161,28 @@ async function setup(input: {
     acceptance: input.acceptance,
     previewVerifier: input.previewVerifier,
     regionProposer: input.regionProposer,
+    fragmentSelector: input.fragmentSelector ?? (input.regionProposer ? {
+      select: vi.fn(async (value: unknown): Promise<SelectionProofProposal> => {
+        const call = value as {
+          candidates: { candidates: Array<{ fragmentId: string }> };
+          availableAnchors: Array<{ id: string }>;
+          allowEmptyEditSet?: boolean;
+        };
+        const editableFragmentIds = call.allowEmptyEditSet
+          ? []
+          : call.candidates.candidates.map((candidate) => candidate.fragmentId);
+        return {
+          editableFragmentIds,
+          anchorIds: call.allowEmptyEditSet
+            ? []
+            : call.availableAnchors.map((anchor) => anchor.id),
+          evidence: editableFragmentIds.map((fragmentId) => ({
+            fragmentId, reason: '测试默认选择', confidence: 0.95,
+          })),
+          confidence: 0.95,
+        };
+      }),
+    } : undefined),
     spatialDesigner: input.spatialDesigner,
     redrawService: input.redrawService,
     episodeStore: input.episodeStore,
@@ -167,6 +191,102 @@ async function setup(input: {
 }
 
 describe('DrawingAgentRuntime', () => {
+  it('rejects an overbroad search envelope before selection or design', async () => {
+    let groundingAttempt = 0;
+    const regionProposer = {
+      propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
+        groundingAttempt += 1;
+        const call = input as {
+          observation: { views: Array<{
+            id: string;
+            grounding: Array<{ nodeId: string; normalized: {
+              left: number; top: number; right: number; bottom: number;
+            } }>;
+          }> };
+        };
+        const view = call.observation.views[0];
+        if (groundingAttempt === 1) {
+          return {
+            label: '过大的右臂区域', sourceViewId: view.id,
+            contours: [[[0.14, 0.14], [0.36, 0.14], [0.33, 0.57], [0.32, 0.75], [0.18, 0.73], [0.17, 0.61], [0.14, 0.61]]],
+            holes: [], anchors: [], confidence: 0.95, evidenceRefs: [view.id],
+          };
+        }
+        const arm = view.grounding.find((node) => node.nodeId === 'arm')!;
+        const pad = 0.015;
+        return {
+          label: '右臂最小搜索包络', sourceViewId: view.id,
+          contours: [[
+            [Math.max(0, arm.normalized.left - pad), Math.max(0, arm.normalized.top - pad)],
+            [Math.min(1, arm.normalized.right + pad), Math.max(0, arm.normalized.top - pad)],
+            [Math.min(1, arm.normalized.right + pad), Math.min(1, arm.normalized.bottom + pad)],
+            [Math.max(0, arm.normalized.left - pad), Math.min(1, arm.normalized.bottom + pad)],
+          ]],
+          holes: [], anchors: [], confidence: 0.95, evidenceRefs: [view.id],
+        };
+      }),
+    };
+    const fragmentSelector = {
+      select: vi.fn(async (input: unknown): Promise<SelectionProofProposal> => {
+        const call = input as { candidates: { candidates: Array<{
+          fragmentId: string; sourceNodeId: string;
+        }> } };
+        const armIds = call.candidates.candidates
+          .filter((candidate) => candidate.sourceNodeId === 'arm')
+          .map((candidate) => candidate.fragmentId);
+        return {
+          editableFragmentIds: armIds, anchorIds: [],
+          evidence: armIds.map((fragmentId) => ({
+            fragmentId, reason: '右臂目标', confidence: 0.96,
+          })),
+          confidence: 0.96,
+        };
+      }),
+    };
+    const spatialDesigner = {
+      design: vi.fn(async (): Promise<SpatialEditDesign> => ({
+        kind: 'transform', transform: { kind: 'translate', offset: [0, 10] },
+        confidence: 0.95, evidenceRefs: [],
+      })),
+    };
+    const plan = createPlan('arm');
+    plan.goal.objective = '把图形的右手抬起来打招呼';
+    plan.goal.scope = { bounds: { minX: 8, minY: 8, maxX: 42, maxY: 16 } };
+    plan.goal.acceptanceCriteria = [{ type: 'document.valid' }];
+    plan.workflow[0].completionCriteria = [{ type: 'document.valid' }];
+    const result = await setup({ plan, regionProposer, fragmentSelector, spatialDesigner });
+    const seeded = await result.application.execute({
+      drawingId: result.workspace.document.id,
+      transaction: {
+        id: 'seed_locality_runtime', baseRevision: result.workspace.revision,
+        actor: { type: 'user', id: 'user' },
+        commands: [{ type: 'geometry.create', value: {
+          id: 'arm' as GeometryId, type: 'line', start: [10, 10], end: [40, 10],
+          visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+        } }, { type: 'geometry.create', value: {
+          id: 'head' as GeometryId, type: 'circle', center: [20, 70], radius: 18,
+          visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+        } }],
+        preconditions: [], postconditions: [], evidenceRefs: [],
+      },
+    });
+    if (seeded.status !== 'committed') throw new Error('expected seed commit');
+    const handle = result.runtime.start({
+      ...startInput(result.workspace), baseRevision: seeded.revision, selectedIds: ['arm'],
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    result.runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    const final = await handle.completion;
+
+    expect(final.status, final.error ?? '').toBe('completed');
+    expect(regionProposer.propose).toHaveBeenCalledTimes(2);
+    expect(fragmentSelector.select).toHaveBeenCalledTimes(1);
+    expect(spatialDesigner.design).toHaveBeenCalledTimes(1);
+    expect(events.map((event) => event.type)).toContain('search_envelope_rejected');
+    expect(events.findIndex((event) => event.type === 'search_envelope_rejected'))
+      .toBeLessThan(events.findIndex((event) => event.type === 'selecting_fragments'));
+  });
   it('allows a six-minute bounded feedback loop while progress owns the 30-second response SLA', async () => {
     const { runtime, workspace } = await setup();
 
@@ -1332,13 +1452,15 @@ describe('DrawingAgentRuntime', () => {
   });
 
   it('routes a creative protected edit through generation, vectorization and the same preview commit path', async () => {
+    const audit = recordingAuditStore();
     const regionProposer = {
       propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
         const viewId = (input as { observation: { views: Array<{ id: string }> } })
           .observation.views[0].id;
         return {
           label: '头发新增区域', sourceViewId: viewId,
-          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          contours: [[[0.28, 0.02], [0.72, 0.02], [0.72, 0.30], [0.28, 0.30]]],
+          holes: [], anchors: [],
           confidence: 0.96, evidenceRefs: [viewId],
         };
       }),
@@ -1391,7 +1513,7 @@ describe('DrawingAgentRuntime', () => {
       summary: '添加卷发并保护脸部',
     };
     const result = await setup({
-      plan, regionProposer, spatialDesigner, redrawService,
+      plan, regionProposer, spatialDesigner, redrawService, auditStore: audit.store,
       previewVerifier: {
         verify: vi.fn(async () => ({ satisfied: true, reason: '满足目标', defects: [] })),
       },
@@ -1416,9 +1538,11 @@ describe('DrawingAgentRuntime', () => {
     result.runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
 
     const final = await handle.completion;
+    await result.runtime.flushAudit(handle.runId);
     const current = await result.application.open(result.workspace.document.id);
 
-    expect(final.status, final.error ?? '').toBe('completed');
+    const verificationAudit = audit.events.filter((event) => event.type === 'verification');
+    expect(final.status, `${final.error ?? ''}\n${JSON.stringify(verificationAudit)}`).toBe('completed');
     expect(redrawService.redraw).toHaveBeenCalledTimes(1);
     expect(spatialDesigner.design).not.toHaveBeenCalled();
     expect(current.document.geometry).toEqual(expect.arrayContaining([

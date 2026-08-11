@@ -7,6 +7,10 @@ import { evaluateSemanticEditBenchmark } from '../api/services/drawing-benchmark
 import { buildAtomicGeometryGraph } from '../api/services/drawing-spatial/atomic-graph.js';
 import { polygonRegionBounds } from '../api/services/drawing-spatial/polygon.js';
 import { RegionResolver } from '../api/services/drawing-spatial/region-resolver.js';
+import {
+  authorizeSelection,
+  buildSelectionCandidateSet,
+} from '../api/services/drawing-spatial/selection-authorization.js';
 import { materializeSpatialSplits } from '../api/services/drawing-spatial/split-materializer.js';
 import { compileSpatialEdit } from '../api/services/drawing-spatial/spatial-edit-compiler.js';
 import { validateSpatialEditPreview } from '../api/services/drawing-spatial/spatial-validator.js';
@@ -40,12 +44,43 @@ const graph = buildAtomicGeometryGraph({
   regionBounds: polygonRegionBounds(region.worldContours),
   padding: 2,
 });
-const selection = new RegionResolver().resolve({
+const rawSelection = new RegionResolver().resolve({
   document: before,
   revision: created.revision,
   region,
   graph,
   tolerance: 0.01,
+});
+const candidateSet = buildSelectionCandidateSet({
+  document: before,
+  selection: rawSelection,
+  graph,
+});
+const { selection, authorization } = authorizeSelection({
+  document: before,
+  rawSelection,
+  candidates: candidateSet,
+  proof: {
+    editableFragmentIds: candidateSet.candidates.map((item) => item.fragmentId),
+    anchorIds: rawSelection.boundaryAnchors.map((anchor) => anchor.id),
+    evidence: candidateSet.candidates.map((item) => ({
+      fragmentId: item.fragmentId,
+      reason: 'test2 deterministic golden target',
+      confidence: 1,
+    })),
+    confidence: 1,
+  },
+  locality: {
+    areaRatio: 0.12,
+    widthRatio: 0.38,
+    heightRatio: 0.42,
+    targetCenterDistanceRatio: 0,
+    wholeNodes: rawSelection.wholeNodes.length,
+    crossingNodes: rawSelection.crossingNodes.length,
+    boundaryAnchors: rawSelection.boundaryAnchors.length,
+    candidateFragments: candidateSet.candidates.length,
+  },
+  maxEditableFragments: 18,
 });
 const split = materializeSpatialSplits({ document: before, selection });
 const strategy = routeSpatialEditStrategy({
@@ -60,6 +95,7 @@ const candidate = compileSpatialEdit({
   region,
   strategy,
   split,
+  authorization,
   design: {
     kind: 'transform',
     transform: {

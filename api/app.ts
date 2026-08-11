@@ -20,6 +20,7 @@ import { DrawingAcceptanceAdapter, DrawingDecisionAdapter, DrawingPlannerAdapter
 import { DrawingToolRegistry } from './services/drawing-agent/tool-registry.js'
 import { DrawingPreviewVerificationAdapter } from './services/drawing-agent/preview-verifier.js'
 import {
+  DrawingFragmentSelectionAdapter,
   DrawingSemanticRegionAdapter,
   DrawingSpatialDesignAdapter,
 } from './services/drawing-agent/semantic-adapters.js'
@@ -139,6 +140,7 @@ const agentRuntime = new DrawingAgentRuntime({
   acceptance: new DrawingAcceptanceAdapter(),
   previewVerifier: new DrawingPreviewVerificationAdapter(),
   regionProposer: new DrawingSemanticRegionAdapter(),
+  fragmentSelector: new DrawingFragmentSelectionAdapter(),
   spatialDesigner: new DrawingSpatialDesignAdapter(),
   ...(regionRedraw ? { redrawService: regionRedraw } : {}),
   episodeStore: new FileEditEpisodeStore({

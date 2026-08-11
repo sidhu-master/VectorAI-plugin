@@ -43,6 +43,7 @@ const FRAGMENT_SELECTION_SYSTEM_PROMPT = `你是 VectorAI 二维语义片段选�
 服务器已经把只读搜索包络内的向量几何拆成带稳定 F 编号和 fragmentId 的原子候选，并渲染为颜色证明图。
 你必须从 allowedFragmentIds 中逐项选择组成用户目标的最小完整语义部件。只能返回精确 fragmentId，不能返回 nodeId、范围、DrawingCommand 或包络内全部内容。
 重叠但未选中的候选必须保持不变；视觉相交不代表拓扑连接。除非候选数据给出邻接或边界锚点，不要把相交图元绑定在一起。
+当 allowEmptyEditSet=true 且目标是纯新增时，可以返回空 editableFragmentIds，把所有已有候选保留为受保护上下文；不要为了满足非空而选择被新内容覆盖或相交的原图元。
 肢体等闭合部件必须同时选择维持完整轮廓所需的上下边界，并选择与身体连接所需的 allowedAnchorIds；头部、躯干、另一只手和标注默认不选。
 其他部分完全不变、保持已有连接和最小影响范围是默认语境，不需要用户重复说明。
 只输出严格 JSON：{"editableFragmentIds":string[],"anchorIds":string[],"evidence":[{"fragmentId":string,"reason":string,"confidence":number}],"confidence":number}。
@@ -92,6 +93,7 @@ export interface DrawingFragmentSelectionModelAdapter {
     candidates: SelectionCandidateSet;
     proofView: SelectionProofView;
     availableAnchors: SpatialBoundaryAnchor[];
+    allowEmptyEditSet?: boolean;
   }): Promise<SelectionProofProposal>;
 }
 
@@ -143,6 +145,7 @@ export class DrawingFragmentSelectionAdapter implements DrawingFragmentSelection
     candidates: SelectionCandidateSet;
     proofView: SelectionProofView;
     availableAnchors: SpatialBoundaryAnchor[];
+    allowEmptyEditSet?: boolean;
   }): Promise<SelectionProofProposal> {
     assertDeadline('selection', input.deadlineAt, this.now);
     const reply = await this.complete({
@@ -172,6 +175,7 @@ export class DrawingFragmentSelectionAdapter implements DrawingFragmentSelection
         })),
         allowedAnchorIds: input.availableAnchors.map((anchor) => anchor.id),
         anchors: input.availableAnchors,
+        allowEmptyEditSet: input.allowEmptyEditSet ?? false,
         defaultInvariants: [
           'unselected-fragments-unchanged',
           'overlap-does-not-imply-shared-authorization',
@@ -193,6 +197,7 @@ export class DrawingFragmentSelectionAdapter implements DrawingFragmentSelection
     return parseSelectionProofProposal(parseJson(reply), {
       allowedFragmentIds: input.candidates.candidates.map((candidate) => candidate.fragmentId),
       allowedAnchorIds: input.availableAnchors.map((anchor) => anchor.id),
+      allowEmptyEditSet: input.allowEmptyEditSet,
     });
   }
 }

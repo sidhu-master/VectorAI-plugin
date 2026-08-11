@@ -59,4 +59,22 @@ describe('assessSearchEnvelope', () => {
     expect(result.accepted).toBe(true);
     expect(result.metrics.targetCenterDistanceRatio).toBeGreaterThan(0.2);
   });
+
+  it('does not inflate locality on the zero-height axis of a one-dimensional drawing', () => {
+    const result = assessSearchEnvelope({
+      documentBounds: { minX: 10, minY: 10, maxX: 40, maxY: 10 },
+      envelopeBounds: { minX: 7.85, minY: -7.85, maxX: 42.15, maxY: 27.85 },
+      targetHint: {
+        semanticDescription: '抬起这条手臂',
+        approximateBounds: { minX: 10, minY: 10, maxX: 40, maxY: 10 },
+        preferredScale: 'drawing',
+      },
+      counts: { wholeNodes: 1, crossingNodes: 0, boundaryAnchors: 0, candidateFragments: 1 },
+      budget: localityBudgetFor('drawing'),
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.metrics.heightRatio).toBe(0);
+    expect(result.metrics.areaRatio).toBeCloseTo(result.metrics.widthRatio);
+  });
 });

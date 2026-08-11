@@ -123,6 +123,19 @@ describe('drawing spatial-region protocol', () => {
     expect(proposal.anchorIds).toEqual(['anchor_shoulder']);
   });
 
+  it('allows an empty editable set only for an explicitly additive edit', () => {
+    const proposal = parseSelectionProofProposal({
+      editableFragmentIds: [], anchorIds: [], evidence: [], confidence: 0.92,
+    }, {
+      allowedFragmentIds: ['fragment_face'],
+      allowedAnchorIds: ['anchor_hairline'],
+      allowEmptyEditSet: true,
+    });
+
+    expect(proposal.editableFragmentIds).toEqual([]);
+    expect(proposal.anchorIds).toEqual([]);
+  });
+
   it.each([
     ['unknown fragment', {
       editableFragmentIds: ['fragment_head'], anchorIds: [], evidence: [], confidence: 0.8,

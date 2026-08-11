@@ -105,6 +105,7 @@ export interface SelectionProofProposal {
 export interface SelectionProofParseContext {
   allowedFragmentIds: readonly string[];
   allowedAnchorIds: readonly string[];
+  allowEmptyEditSet?: boolean;
 }
 
 export interface FragmentAuthorization {
@@ -317,7 +318,7 @@ export function parseSelectionProofProposal(
     'selectionProof.editableFragmentIds',
     context.allowedFragmentIds,
   );
-  if (editableFragmentIds.length === 0) {
+  if (editableFragmentIds.length === 0 && !context.allowEmptyEditSet) {
     fail('selectionProof.editableFragmentIds', '至少需要选择一个可编辑片段');
   }
   const anchorIds = checkedIds(
