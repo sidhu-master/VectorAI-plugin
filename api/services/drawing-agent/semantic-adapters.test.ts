@@ -7,10 +7,40 @@ import {
   DrawingEditIntentAdapter,
   DrawingFeatureGraphAdapter,
   DrawingGeometryCandidateAdapter,
+  DrawingSemanticRegionAdapter,
   type DrawingSpatialCompletion,
 } from './semantic-adapters.js';
 
 describe('drawing semantic model adapters', () => {
+  it('proposes a continuous semantic region without exposing primitive ids', async () => {
+    let received: Parameters<DrawingSpatialCompletion>[0] | undefined;
+    const complete: DrawingSpatialCompletion = vi.fn(async (input) => {
+      received = input;
+      return JSON.stringify({
+        label: 'right arm', sourceViewId: 'view_overview',
+        contours: [[[0.6, 0.3], [0.9, 0.4], [0.9, 0.7], [0.6, 0.6]]],
+        holes: [],
+        anchors: [{ id: 'shoulder', role: 'body-connection', point: [0.61, 0.58], confidence: 0.9 }],
+        confidence: 0.92, evidenceRefs: ['view_overview'],
+      });
+    });
+    const adapter = new DrawingSemanticRegionAdapter(complete);
+
+    const proposal = await adapter.propose({
+      goal: '把右手抬起来打招呼',
+      observation: observation(),
+      readImage: () => 'data:image/png;base64,AAAA',
+      modelName: 'semantic-model',
+      signal: new AbortController().signal,
+      deadlineAt: Date.now() + 1_000,
+    });
+
+    expect(proposal.sourceViewId).toBe('view_overview');
+    expect(received?.systemPrompt).toContain('不考虑现有图元边界');
+    expect(received?.userPrompt).not.toContain('hand_line');
+    expect(received?.responseSchema).toMatchObject({ name: 'drawing_semantic_region' });
+  });
+
   it('resolves visual features only against observed ids and cited views', async () => {
     let received: Parameters<DrawingSpatialCompletion>[0] | undefined;
     const complete: DrawingSpatialCompletion = vi.fn(async (input) => {

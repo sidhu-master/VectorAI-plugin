@@ -5,6 +5,10 @@ import {
   type EditIntent,
   type VisualFeatureGraph,
 } from '../../../src/contracts/drawing-spatial-agent.js';
+import {
+  parseSemanticRegionProposal,
+  type SemanticRegionProposal,
+} from '../../../src/contracts/drawing-spatial-region.js';
 import { parseDrawingToolCommands } from '../../../src/contracts/drawing-agent.js';
 import type { GeometryNode } from '../../../src/drawing/index.js';
 import type { DrawingPreviewDefect } from './types.js';
@@ -16,8 +20,16 @@ import type { VisualObservation } from '../drawing-vision/observation-types.js';
 import {
   EDIT_INTENT_RESPONSE_SCHEMA,
   GEOMETRY_CANDIDATE_RESPONSE_SCHEMA,
+  SEMANTIC_REGION_RESPONSE_SCHEMA,
   VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA,
 } from './protocol-schemas.js';
+
+const REGION_SYSTEM_PROMPT = `你是 VectorAI 二维语义区域选择器。
+根据用户目标和服务器渲染视图，先选择目标在连续二维画面中的完整区域，不考虑现有图元边界，也不要输出任何 nodeId、图元列表或 DrawingCommand。
+轮廓、洞和锚点坐标均使用相对所选视图宽高的 [x,y] 归一化坐标，两个分量必须在 0 到 1 之间。
+区域必须覆盖语义部件的完整外形；需要排除的内部区域写入 holes。evidenceRefs 只能引用输入视图 id。
+只输出严格 JSON：{"label":string,"sourceViewId":string,"contours":[[[number,number],...]],"holes":[[[number,number],...]],"anchors":[{"id":string,"role":string,"point":[number,number],"confidence":number}],"confidence":number,"evidenceRefs":string[]}。
+若输入含 protocolFeedback，必须针对该错误纠正输出。`;
 
 const FEATURE_SYSTEM_PROMPT = `你是 VectorAI 二维空间接地器。
 根据服务器渲染视图、Drawing IR 摘要和 grounding 表，把用户语义映射为 VisualFeatureGraph。
@@ -61,6 +73,10 @@ export interface DrawingFeatureGraphModelAdapter {
   resolve(input: SemanticCallInput): Promise<VisualFeatureGraph>;
 }
 
+export interface DrawingSemanticRegionModelAdapter {
+  propose(input: SemanticCallInput): Promise<SemanticRegionProposal>;
+}
+
 export interface DrawingEditIntentModelAdapter {
   design(input: SemanticCallInput & { featureGraph: VisualFeatureGraph }): Promise<EditIntent>;
 }
@@ -70,6 +86,42 @@ export interface DrawingGeometryCandidateModelAdapter {
     featureGraph: VisualFeatureGraph;
     intent: EditIntent;
   }): Promise<GeometryNode[]>;
+}
+
+export class DrawingSemanticRegionAdapter implements DrawingSemanticRegionModelAdapter {
+  constructor(
+    private readonly complete: DrawingSpatialCompletion = requestDrawingMultimodalCompletion,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async propose(input: SemanticCallInput): Promise<SemanticRegionProposal> {
+    assertDeadline('grounding', input.deadlineAt, this.now);
+    const reply = await this.complete({
+      role: 'grounding',
+      modelName: input.modelName,
+      systemPrompt: REGION_SYSTEM_PROMPT,
+      userPrompt: JSON.stringify({
+        goal: input.goal,
+        revision: input.observation.revision,
+        document: {
+          unit: input.observation.vectorDigest.unit,
+          counts: input.observation.vectorDigest.counts,
+          bounds: input.observation.vectorDigest.bounds,
+        },
+        views: regionObservationMetadata(input.observation),
+        repairFeedback: input.repairFeedback ?? [],
+        ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
+      }),
+      images: observationImages(input.observation, input.readImage),
+      responseSchema: SEMANTIC_REGION_RESPONSE_SCHEMA,
+      signal: input.signal,
+    });
+    input.onRawReply?.('grounding', reply);
+    return parseSemanticRegionProposal(parseJson(reply), {
+      allowedViewIds: input.observation.views.map((view) => view.id),
+      allowedEvidenceRefs: input.observation.views.map((view) => view.id),
+    });
+  }
 }
 
 export class DrawingFeatureGraphAdapter {
@@ -204,6 +256,18 @@ function observationMetadata(observation: VisualObservation): unknown[] {
     worldBounds: view.worldBounds,
     worldToImage: view.worldToImage,
     grounding: view.grounding,
+  }));
+}
+
+function regionObservationMetadata(observation: VisualObservation): unknown[] {
+  return observation.views.map((view) => ({
+    id: view.id,
+    purpose: view.purpose,
+    imageHandle: view.image.handle,
+    width: view.width,
+    height: view.height,
+    worldBounds: view.worldBounds,
+    worldToImage: view.worldToImage,
   }));
 }
 
