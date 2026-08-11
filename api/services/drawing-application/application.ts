@@ -144,6 +144,22 @@ export class DrawingApplication {
     return this.#observationBuilder.readImage(handle);
   }
 
+  observePreviewForAgent(input: {
+    document: Parameters<DrawingObservationBuilder['build']>[0]['document'];
+    revision: Parameters<DrawingObservationBuilder['build']>[0]['revision'];
+    previewHandle: string;
+    selectedIds?: string[];
+    userViewport?: AgentObservationViewport;
+  }): Promise<VisualObservation> {
+    return this.#observationBuilder.build({
+      document: input.document,
+      revision: input.revision,
+      cacheScope: `preview:${input.previewHandle}`,
+      selectedIds: input.selectedIds,
+      userViewport: input.userViewport,
+    });
+  }
+
   async summarize(input: {
     drawingId: DrawingId;
     limit?: number;

@@ -141,7 +141,13 @@ export interface DrawingDecisionInput {
   vision?: DrawingVisionContext;
 }
 
-export type DrawingModelRole = 'planner' | 'decision' | 'acceptance' | 'grounding' | 'design';
+export type DrawingModelRole =
+  | 'planner'
+  | 'decision'
+  | 'acceptance'
+  | 'grounding'
+  | 'design'
+  | 'verification';
 
 export interface DrawingPlannerModelAdapter {
   plan(input: DrawingPlannerInput): Promise<DrawingAgentPlan>;
@@ -171,6 +177,35 @@ export interface DrawingAcceptanceResult {
 
 export interface DrawingAcceptanceModelAdapter {
   accept(input: DrawingAcceptanceInput): Promise<DrawingAcceptanceResult>;
+}
+
+export interface DrawingPreviewDefect {
+  code: string;
+  message: string;
+  nodeIds: string[];
+  repairHint?: string;
+}
+
+export interface DrawingPreviewVerificationInput {
+  goal: string;
+  previewDocument: DrawingDocument;
+  modelName: string;
+  signal: AbortSignal;
+  deadlineAt: number;
+  beforeObservation?: VisualObservation;
+  previewObservation?: VisualObservation;
+  readImage?: (handle: string) => string | null;
+  onRawReply?: (role: DrawingModelRole, reply: string) => void;
+}
+
+export interface DrawingPreviewVerificationResult {
+  satisfied: boolean;
+  reason: string;
+  defects: DrawingPreviewDefect[];
+}
+
+export interface DrawingPreviewVerificationModelAdapter {
+  verify(input: DrawingPreviewVerificationInput): Promise<DrawingPreviewVerificationResult>;
 }
 
 export interface DrawingAgentModelProfile {

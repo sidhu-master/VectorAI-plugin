@@ -50,6 +50,32 @@ describe('DrawingObservationBuilder', () => {
     expect(second.views.map((view) => view.image.handle)).toEqual(first.views.map((view) => view.image.handle));
     expect(render).toHaveBeenCalledTimes(2); // overview + target-detail, then cache hits
   });
+
+  it('isolates preview observations from canonical cache entries at the same revision', async () => {
+    const builder = new DrawingObservationBuilder();
+    const canonical = documentWithCircle();
+    const preview = structuredClone(canonical);
+    preview.geometry.push({
+      id: 'detail_line' as GeometryId,
+      type: 'line', visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      start: [90, 90], end: [110, 110],
+    });
+
+    const before = await builder.build({
+      document: canonical,
+      revision: 'revision_shared' as RevisionId,
+      cacheScope: 'canonical',
+    });
+    const after = await builder.build({
+      document: preview,
+      revision: 'revision_shared' as RevisionId,
+      cacheScope: 'preview:preview_1',
+    });
+
+    expect(after.views[0].image.handle).not.toBe(before.views[0].image.handle);
+    expect(after.vectorDigest.nodes).toHaveLength(before.vectorDigest.nodes.length + 1);
+  });
 });
 
 function documentWithCircle(): DrawingDocument {

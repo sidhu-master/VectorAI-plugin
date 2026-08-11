@@ -26,6 +26,7 @@ const DEFAULT_WORLD_BOUNDS: Bounds2D = { minX: -250, minY: -250, maxX: 250, maxY
 export interface BuildVisualObservationInput {
   document: DrawingDocument;
   revision: RevisionId;
+  cacheScope?: string;
   selectedIds?: string[];
   targetBounds?: Bounds2D;
   userViewport?: AgentObservationViewport;
@@ -230,6 +231,7 @@ function viewCacheKey(input: BuildVisualObservationInput, request: ViewRequest):
   return [
     input.document.id,
     input.revision,
+    input.cacheScope ?? 'canonical',
     request.purpose,
     digest(JSON.stringify(request.viewport)),
     digest(JSON.stringify(request.selectedIds)),

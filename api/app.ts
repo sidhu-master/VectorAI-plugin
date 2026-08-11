@@ -18,6 +18,12 @@ import { DrawingApplication } from './services/drawing-application/application.j
 import { DrawingAgentRuntime } from './services/drawing-agent/runtime.js'
 import { DrawingAcceptanceAdapter, DrawingDecisionAdapter, DrawingPlannerAdapter } from './services/drawing-agent/model-adapters.js'
 import { DrawingToolRegistry } from './services/drawing-agent/tool-registry.js'
+import { DrawingPreviewVerificationAdapter } from './services/drawing-agent/preview-verifier.js'
+import {
+  DrawingEditIntentAdapter,
+  DrawingFeatureGraphAdapter,
+  DrawingGeometryCandidateAdapter,
+} from './services/drawing-agent/semantic-adapters.js'
 import { FileDrawingAgentAuditStore } from './services/drawing-agent/file-audit-store.js'
 import { createDrawingsRouter } from './routes/drawings.js'
 import { DrawingPerceptionPipeline } from './services/drawing-perception/pipeline.js'
@@ -120,6 +126,10 @@ const agentRuntime = new DrawingAgentRuntime({
   planner: new DrawingPlannerAdapter(),
   decision: new DrawingDecisionAdapter(),
   acceptance: new DrawingAcceptanceAdapter(),
+  previewVerifier: new DrawingPreviewVerificationAdapter(),
+  featureResolver: new DrawingFeatureGraphAdapter(),
+  intentDesigner: new DrawingEditIntentAdapter(),
+  candidateDesigner: new DrawingGeometryCandidateAdapter(),
   auditStore,
   sourceArtifacts,
   perception: drawingPerception,

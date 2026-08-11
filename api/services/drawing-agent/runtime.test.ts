@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DrawingAgentProtocolError, type AgentDecision, type DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
+import type { EditIntent, VisualFeatureGraph } from '../../../src/contracts/drawing-spatial-agent';
 import {
   type DrawingTransaction,
   type GeometryId,
@@ -29,6 +30,8 @@ import type {
   DrawingDecisionModelAdapter,
   DrawingPlannerInput,
   DrawingPlannerModelAdapter,
+  DrawingPreviewVerificationInput,
+  DrawingPreviewVerificationModelAdapter,
 } from './types';
 
 function ids(): IdFactory {
@@ -61,6 +64,10 @@ async function setup(input: {
   feedbackLoop?: { run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> };
   stageTimeoutMs?: number;
   acceptance?: DrawingAcceptanceModelAdapter;
+  previewVerifier?: DrawingPreviewVerificationModelAdapter;
+  featureResolver?: { resolve(input: unknown): Promise<VisualFeatureGraph> };
+  intentDesigner?: { design(input: unknown): Promise<EditIntent> };
+  candidateDesigner?: { design(input: unknown): Promise<import('../../../src/drawing').GeometryNode[]> };
   renderForVision?: () => Promise<GroundingSnapshot>;
 } = {}) {
   const idFactory = ids();
@@ -69,6 +76,7 @@ async function setup(input: {
   const workspace = await application.create();
   const order: string[] = [];
   const toolApplication = {
+    open: application.open.bind(application),
     summarize: application.summarize.bind(application),
     query: application.query.bind(application),
     inspect: application.inspect.bind(application),
@@ -91,6 +99,7 @@ async function setup(input: {
     })),
     ...(input.renderForVision ? {} : {
       observeForAgent: application.observeForAgent.bind(application),
+      observePreviewForAgent: application.observePreviewForAgent.bind(application),
       readObservationImage: application.readObservationImage.bind(application),
     }),
   };
@@ -132,6 +141,10 @@ async function setup(input: {
     visionRepairModelName: 'repair-vision-model',
     feedbackLoop: input.feedbackLoop,
     acceptance: input.acceptance,
+    previewVerifier: input.previewVerifier,
+    featureResolver: input.featureResolver,
+    intentDesigner: input.intentDesigner,
+    candidateDesigner: input.candidateDesigner,
   });
   return { application, decision, order, planner, runtime, tools, workspace };
 }
@@ -796,6 +809,120 @@ describe('DrawingAgentRuntime', () => {
 
     expect(final.status).toBe('failed');
     expect(acceptanceCalls).toBe(0);
+  });
+
+  it('rejects a real preview on visual defects and commits only the repaired preview', async () => {
+    const verificationInputs: import('../../../src/drawing').DrawingDocument[] = [];
+    let attempt = 0;
+    const previewVerifier: DrawingPreviewVerificationModelAdapter = {
+      verify: vi.fn(async (input: DrawingPreviewVerificationInput) => {
+        verificationInputs.push(structuredClone(input.previewDocument));
+        attempt += 1;
+        return attempt === 1
+          ? {
+              satisfied: false,
+              reason: '局部形状仍未连接',
+              defects: [{
+                code: 'connectivity', message: '端点未连接', nodeIds: ['circle_1'],
+                repairHint: '重新生成并贴合锚点',
+              }],
+            }
+          : { satisfied: true, reason: '预览满足目标', defects: [] };
+      }),
+    };
+    const { application, runtime, workspace } = await setup({
+      decisions: [createDecision('circle_1', 0.9), createDecision('circle_1', 0.9)],
+      previewVerifier,
+    });
+    const handle = runtime.start(startInput(workspace));
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    const final = await handle.completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.commitCount).toBe(1);
+    expect(previewVerifier.verify).toHaveBeenCalledTimes(2);
+    expect(verificationInputs[0].geometry).toEqual([
+      expect.objectContaining({ id: 'circle_1' }),
+    ]);
+    expect((await application.open(workspace.document.id)).commits).toHaveLength(1);
+    expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
+      'previewing', 'verifying', 'revising', 'committed',
+    ]));
+  });
+
+  it('grounds and compiles a semantic EditIntent before previewing the transaction', async () => {
+    const featureResolver = {
+      resolve: vi.fn(async (): Promise<VisualFeatureGraph> => ({
+        features: [{
+          id: 'right_arm', label: '右臂', nodeIds: ['arm'],
+          bounds: { minX: 10, minY: 10, maxX: 40, maxY: 10 },
+          confidence: 0.95, evidenceRefs: ['view_overview'],
+        }],
+        anchors: [], relations: [],
+      })),
+    };
+    const intentDesigner = {
+      design: vi.fn(async (): Promise<EditIntent> => ({
+        operation: 'transform', targetFeatureIds: ['right_arm'], targetNodeIds: ['arm'],
+        anchors: [], preserveNodeIds: [], preserveRules: [{ type: 'outside-target-unchanged' }],
+        desiredRelations: [],
+        transform: { kind: 'rotate', center: [10, 10], angleDegrees: 90 },
+        confidence: 0.95, evidenceRefs: ['view_overview'],
+      })),
+    };
+    const plan: DrawingAgentPlan = {
+      goal: {
+        id: 'goal_raise_arm', objective: '把右手抬起来',
+        scope: { plane: 'geometry', ids: ['arm'], limit: 10 },
+        acceptanceCriteria: [{ type: 'property.equals', nodeId: 'arm', path: 'end', value: [10, 40] }],
+        riskPolicy: { candidateAllowed: true, maxCommits: 2 },
+      },
+      workflow: [{
+        id: 'edit_arm', capability: 'edit_entities', dependsOn: [],
+        completionCriteria: [{ type: 'property.equals', nodeId: 'arm', path: 'end', value: [10, 40] }],
+        status: 'pending',
+      }],
+      summary: '接地并抬起右臂',
+    };
+    const setupResult = await setup({ plan, featureResolver, intentDesigner });
+    const committed = await setupResult.application.execute({
+      drawingId: setupResult.workspace.document.id,
+      transaction: {
+        id: 'tx_seed_arm', baseRevision: setupResult.workspace.revision,
+        actor: { type: 'user', id: 'user' },
+        commands: [{
+          type: 'geometry.create', value: {
+            id: 'arm' as GeometryId, type: 'line', start: [10, 10], end: [40, 10],
+            visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+          },
+        }],
+        preconditions: [], postconditions: [], evidenceRefs: [],
+      },
+    });
+    if (committed.status !== 'committed') throw new Error('expected seed commit');
+    const handle = setupResult.runtime.start({
+      ...startInput(setupResult.workspace),
+      baseRevision: committed.revision,
+      selectedIds: ['arm'],
+      viewport: undefined,
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    setupResult.runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    const final = await handle.completion;
+    const current = await setupResult.application.open(setupResult.workspace.document.id);
+
+    expect(final.status).toBe('completed');
+    expect(featureResolver.resolve).toHaveBeenCalledTimes(1);
+    expect(intentDesigner.design).toHaveBeenCalledTimes(1);
+    expect(current.document.geometry).toEqual([
+      expect.objectContaining({ id: 'arm', end: [10, 40] }),
+    ]);
+    expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
+      'observing', 'grounding', 'designing', 'previewing', 'committed',
+    ]));
   });
 
   it('owns read-step completion and final verification without extra model decisions', async () => {

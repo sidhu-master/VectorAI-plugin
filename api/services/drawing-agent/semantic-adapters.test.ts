@@ -6,6 +6,7 @@ import type { VisualObservation } from '../drawing-vision/observation-types.js';
 import {
   DrawingEditIntentAdapter,
   DrawingFeatureGraphAdapter,
+  DrawingGeometryCandidateAdapter,
   type DrawingSpatialCompletion,
 } from './semantic-adapters.js';
 
@@ -77,6 +78,41 @@ describe('drawing semantic model adapters', () => {
     });
 
     expect(intent).toMatchObject({ operation: 'local-redraw', targetNodeIds: ['hand_line'] });
+  });
+
+  it('parses candidate geometry as Drawing IR nodes without accepting transaction commands', async () => {
+    const complete: DrawingSpatialCompletion = vi.fn(async () => JSON.stringify({
+      geometry: [{
+        id: 'raised_hand', type: 'line', start: [30, 20], end: [30, 60],
+        visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+      }],
+    }));
+    const adapter = new DrawingGeometryCandidateAdapter(complete);
+
+    const candidates = await adapter.design({
+      goal: '把右手抬起来打招呼',
+      observation: observation(),
+      featureGraph: {
+        features: [{
+          id: 'right_hand', label: '右手', nodeIds: ['hand_line'],
+          bounds: { minX: 20, minY: 10, maxX: 40, maxY: 30 },
+          confidence: 0.9, evidenceRefs: ['view_detail'],
+        }], anchors: [], relations: [],
+      },
+      intent: {
+        operation: 'local-redraw', targetFeatureIds: ['right_hand'],
+        targetNodeIds: ['hand_line'], anchors: [], preserveNodeIds: ['body'],
+        preserveRules: [{ type: 'outside-target-unchanged' }], desiredRelations: [],
+        confidence: 0.9, evidenceRefs: ['view_detail'],
+      },
+      readImage: () => 'data:image/png;base64,AAAA',
+      modelName: 'semantic-model', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 1_000,
+    });
+
+    expect(candidates).toEqual([
+      expect.objectContaining({ id: 'raised_hand', type: 'line', end: [30, 60] }),
+    ]);
   });
 });
 

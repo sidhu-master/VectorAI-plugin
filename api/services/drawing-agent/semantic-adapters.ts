@@ -4,6 +4,9 @@ import {
   type EditIntent,
   type VisualFeatureGraph,
 } from '../../../src/contracts/drawing-spatial-agent.js';
+import { parseDrawingToolCommands } from '../../../src/contracts/drawing-agent.js';
+import type { GeometryNode } from '../../../src/drawing/index.js';
+import type { DrawingPreviewDefect } from './types.js';
 import {
   requestDrawingMultimodalCompletion,
   type DrawingMultimodalCompletionParams,
@@ -20,11 +23,15 @@ const INTENT_SYSTEM_PROMPT = `你是 VectorAI 二维编辑设计器。
 operation 只能是 transform、deform、local-redraw；必须明确目标、锚点、保护对象、关系、置信度和视图证据。
 transform 操作还必须输出 transform 参数。只输出严格 JSON。`;
 
+const CANDIDATE_SYSTEM_PROMPT = `你是 VectorAI 二维局部几何生成器。
+根据已接地的特征和 EditIntent，只生成目标区域内用于 deform/local-redraw 的完整 Drawing IR geometry 节点。
+不得输出 DrawingCommand、事务、标注、关系或未授权区域。只输出严格 JSON：{"geometry":[GeometryNode,...]}`;
+
 export type DrawingSpatialCompletion = (
   input: DrawingMultimodalCompletionParams,
 ) => Promise<string>;
 
-interface SemanticCallInput {
+export interface SemanticCallInput {
   goal: string;
   observation: VisualObservation;
   readImage: (handle: string) => string | null;
@@ -32,6 +39,22 @@ interface SemanticCallInput {
   signal: AbortSignal;
   deadlineAt: number;
   onRawReply?: (role: 'grounding' | 'design', reply: string) => void;
+  repairFeedback?: DrawingPreviewDefect[];
+}
+
+export interface DrawingFeatureGraphModelAdapter {
+  resolve(input: SemanticCallInput): Promise<VisualFeatureGraph>;
+}
+
+export interface DrawingEditIntentModelAdapter {
+  design(input: SemanticCallInput & { featureGraph: VisualFeatureGraph }): Promise<EditIntent>;
+}
+
+export interface DrawingGeometryCandidateModelAdapter {
+  design(input: SemanticCallInput & {
+    featureGraph: VisualFeatureGraph;
+    intent: EditIntent;
+  }): Promise<GeometryNode[]>;
 }
 
 export class DrawingFeatureGraphAdapter {
@@ -51,6 +74,7 @@ export class DrawingFeatureGraphAdapter {
         revision: input.observation.revision,
         vectorDigest: input.observation.vectorDigest,
         views: observationMetadata(input.observation),
+        repairFeedback: input.repairFeedback ?? [],
       }),
       images: observationImages(input.observation, input.readImage),
       signal: input.signal,
@@ -83,6 +107,7 @@ export class DrawingEditIntentAdapter {
         vectorDigest: input.observation.vectorDigest,
         featureGraph: input.featureGraph,
         views: observationMetadata(input.observation),
+        repairFeedback: input.repairFeedback ?? [],
       }),
       images: observationImages(input.observation, input.readImage),
       signal: input.signal,
@@ -92,6 +117,46 @@ export class DrawingEditIntentAdapter {
       allowedNodeIds: observedNodeIds(input.observation),
       allowedFeatureIds: input.featureGraph.features.map((feature) => feature.id),
       allowedEvidenceRefs: input.observation.views.map((view) => view.id),
+    });
+  }
+}
+
+export class DrawingGeometryCandidateAdapter implements DrawingGeometryCandidateModelAdapter {
+  constructor(
+    private readonly complete: DrawingSpatialCompletion = requestDrawingMultimodalCompletion,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async design(input: SemanticCallInput & {
+    featureGraph: VisualFeatureGraph;
+    intent: EditIntent;
+  }): Promise<GeometryNode[]> {
+    assertDeadline('design', input.deadlineAt, this.now);
+    const reply = await this.complete({
+      role: 'design',
+      modelName: input.modelName,
+      systemPrompt: CANDIDATE_SYSTEM_PROMPT,
+      userPrompt: JSON.stringify({
+        goal: input.goal,
+        revision: input.observation.revision,
+        vectorDigest: input.observation.vectorDigest,
+        featureGraph: input.featureGraph,
+        intent: input.intent,
+        views: observationMetadata(input.observation),
+        repairFeedback: input.repairFeedback ?? [],
+      }),
+      images: observationImages(input.observation, input.readImage),
+      signal: input.signal,
+    });
+    input.onRawReply?.('design', reply);
+    const payload = parseCandidatePayload(parseJson(reply));
+    const commands = parseDrawingToolCommands(
+      payload.map((value) => ({ type: 'geometry.create', value })),
+      'candidate.geometry',
+    );
+    return commands.map((command) => {
+      if (command.type !== 'geometry.create') throw new Error('CANDIDATE_GEOMETRY_INVALID');
+      return command.value as GeometryNode;
     });
   }
 }
@@ -137,6 +202,19 @@ function parseJson(reply: string): unknown {
   } catch {
     throw new Error('SPATIAL_MODEL_JSON_INVALID');
   }
+}
+
+function parseCandidatePayload(value: unknown): unknown[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('CANDIDATE_PAYLOAD_INVALID');
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 1 || keys[0] !== 'geometry' || !Array.isArray(record.geometry)) {
+    throw new Error('CANDIDATE_PAYLOAD_INVALID');
+  }
+  if (record.geometry.length === 0) throw new Error('CANDIDATE_GEOMETRY_EMPTY');
+  return record.geometry;
 }
 
 function assertDeadline(stage: string, deadlineAt: number, now: () => number): void {

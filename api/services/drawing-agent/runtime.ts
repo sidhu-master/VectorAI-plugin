@@ -8,6 +8,14 @@ import type {
   PerceptionPreviewNode,
 } from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
+import { compileEditIntent } from '../drawing-edit/compile-intent.js';
+import { comparePreservedNodes } from '../drawing-edit/preserve-report.js';
+import type { CompiledEditCandidate } from '../drawing-edit/strategy-types.js';
+import type {
+  DrawingEditIntentModelAdapter,
+  DrawingFeatureGraphModelAdapter,
+  DrawingGeometryCandidateModelAdapter,
+} from './semantic-adapters.js';
 import type {
   DrawingPerceptionInput,
   DrawingPerceptionOutput,
@@ -44,6 +52,7 @@ import type {
   DrawingAcceptanceModelAdapter,
   DrawingDecisionModelAdapter,
   DrawingPlannerModelAdapter,
+  DrawingPreviewVerificationModelAdapter,
   DrawingToolContext,
   DrawingToolEvidence,
   DrawingToolExecution,
@@ -63,7 +72,10 @@ interface RuntimeLimitsInput {
 }
 
 type RuntimeApplication = Pick<DrawingApplication, 'summarize' | 'renderForVision'>
-  & Partial<Pick<DrawingApplication, 'observeForAgent' | 'readObservationImage'>>;
+  & Partial<Pick<
+    DrawingApplication,
+    'open' | 'observeForAgent' | 'observePreviewForAgent' | 'readObservationImage'
+  >>;
 
 interface RuntimeTools {
   invoke(input: DrawingToolInvocation): Promise<DrawingToolExecution>;
@@ -113,6 +125,8 @@ interface RunRecord {
   perceptionPreviewNodes: Map<string, PerceptionPreviewNode>;
   perceptionPreviewSequence: number;
   feedbackCheckpoint: DrawingFeedbackCheckpoint | null;
+  previewDefects: import('./types.js').DrawingPreviewDefect[];
+  compiledEdit: CompiledEditCandidate | null;
 }
 
 export interface DrawingAgentRunHandle {
@@ -131,6 +145,10 @@ export interface DrawingAgentRuntimeOptions {
   idFactory?: unknown;
   auditStore?: DrawingAgentAuditStore;
   acceptance?: DrawingAcceptanceModelAdapter;
+  previewVerifier?: DrawingPreviewVerificationModelAdapter;
+  featureResolver?: DrawingFeatureGraphModelAdapter;
+  intentDesigner?: DrawingEditIntentModelAdapter;
+  candidateDesigner?: DrawingGeometryCandidateModelAdapter;
   promptHashes?: { planner: string; decision: string };
   sourceArtifacts?: SourceArtifactStore;
   perception?: RuntimePerception;
@@ -163,6 +181,10 @@ export class DrawingAgentRuntime {
   readonly #runs = new Map<string, RunRecord>();
   readonly #auditStore?: DrawingAgentAuditStore;
   readonly #acceptance?: DrawingAcceptanceModelAdapter;
+  readonly #previewVerifier?: DrawingPreviewVerificationModelAdapter;
+  readonly #featureResolver?: DrawingFeatureGraphModelAdapter;
+  readonly #intentDesigner?: DrawingEditIntentModelAdapter;
+  readonly #candidateDesigner?: DrawingGeometryCandidateModelAdapter;
   readonly #promptHashes: { planner: string; decision: string };
   readonly #sourceArtifacts?: SourceArtifactStore;
   readonly #perception?: RuntimePerception;
@@ -181,6 +203,10 @@ export class DrawingAgentRuntime {
     this.#limits = { ...DEFAULT_LIMITS, ...options.limits };
     this.#auditStore = options.auditStore;
     this.#acceptance = options.acceptance;
+    this.#previewVerifier = options.previewVerifier;
+    this.#featureResolver = options.featureResolver;
+    this.#intentDesigner = options.intentDesigner;
+    this.#candidateDesigner = options.candidateDesigner;
     this.#promptHashes = options.promptHashes ?? DRAWING_AGENT_PROMPT_HASHES;
     this.#sourceArtifacts = options.sourceArtifacts;
     this.#perception = options.perception;
@@ -249,6 +275,8 @@ export class DrawingAgentRuntime {
       perceptionPreviewNodes: new Map(),
       perceptionPreviewSequence: 0,
       feedbackCheckpoint: null,
+      previewDefects: [],
+      compiledEdit: null,
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -955,7 +983,10 @@ export class DrawingAgentRuntime {
       if (record.state.needsReplan) return this.#plan(record);
       const budget = decisionBudget(record.state, this.#now());
       if (budget) throw new Error(budget.message);
-      const decision = await this.#nextDecision(record);
+      const decision = workflowNode.capability === 'edit_entities'
+        && this.#featureResolver && this.#intentDesigner
+        ? await this.#nextSemanticEdit(record)
+        : await this.#nextDecision(record);
       if (decision.type === 'query' || decision.type === 'inspect') {
         if (!await this.#safePoint(record, 'before_read')) return false;
         if (record.state.needsReplan) return this.#plan(record);
@@ -973,6 +1004,7 @@ export class DrawingAgentRuntime {
         if (record.state.commitCount >= effectiveCommitLimit(record)) {
           throw new Error(`已达到最大提交次数 ${effectiveCommitLimit(record)}`);
         }
+        record.progress.publish('previewing', '正在生成增量修改预览');
         const preview = await this.#tools.invoke({
           capability: 'preview_transaction', caller: 'model',
           toolCallId: decision.toolCallId,
@@ -1002,9 +1034,16 @@ export class DrawingAgentRuntime {
           if (!this.#recordValidationRepair(record)) return false;
           continue;
         }
+        if (!await this.#verifyPreparedPreview(record, preview)) {
+          this.#discardPrepared(record);
+          record.progress.publish('revising', '预览未通过，正在根据缺陷修正');
+          if (!this.#recordValidationRepair(record)) return false;
+          continue;
+        }
         const committed = await this.#commitPrepared(record, preview.prepared);
         this.#recordTool(record, committed);
         record.prepared = null;
+        record.compiledEdit = null;
         if (isStale(committed)) return this.#recoverStale(record);
         if (committed.receipt.status !== 'succeeded'
           && committed.receipt.status !== 'already_satisfied') {
@@ -1012,6 +1051,7 @@ export class DrawingAgentRuntime {
           continue;
         }
         record.progress.publish('commit', '增量修改已提交');
+        record.progress.publish('committed', '增量修改已通过验证并提交');
         if (!await this.#safePoint(record, 'after_commit')) return false;
         if (record.state.needsReplan) return this.#plan(record);
         this.#transition(record, { type: 'WORKFLOW_NODE_COMPLETED', nodeId });
@@ -1024,6 +1064,88 @@ export class DrawingAgentRuntime {
       if (!this.#recordValidationRepair(record)) return false;
     }
     return record.state.status === 'running';
+  }
+
+  async #verifyPreparedPreview(
+    record: RunRecord,
+    preview: DrawingToolExecution,
+  ): Promise<boolean> {
+    if (!this.#previewVerifier && !record.compiledEdit) return true;
+    if (!preview.previewDocument) throw new Error('预览验证缺少候选文档');
+    record.progress.publish('verifying', '正在验证增量修改预览');
+    if (record.compiledEdit && this.#application.open) {
+      const before = await this.#application.open(record.state.drawingId);
+      const preserve = comparePreservedNodes(
+        before.document,
+        preview.previewDocument,
+        record.compiledEdit.preserveNodeIds,
+      );
+      if (!preserve.satisfied) {
+        record.previewDefects = [{
+          code: 'preserve-violation',
+          message: '预览修改了受保护对象',
+          nodeIds: [...preserve.changedNodeIds, ...preserve.missingNodeIds],
+          repairHint: '仅修改 EditIntent 授权的 targetNodeIds',
+        }];
+        this.#audit(record, 'verification', {
+          phase: 'deterministic-preserve',
+          revision: record.state.revision,
+          satisfied: false,
+          preserve,
+        });
+        return false;
+      }
+    }
+    if (!this.#previewVerifier) {
+      record.previewDefects = [];
+      return true;
+    }
+    const beforeVision = await this.#ensureVision(record);
+    let previewObservation;
+    if (this.#application.observePreviewForAgent && preview.prepared) {
+      const overview = beforeVision?.observation?.views.find((view) => view.purpose === 'overview');
+      previewObservation = await this.#application.observePreviewForAgent({
+        document: preview.previewDocument,
+        revision: record.state.revision,
+        previewHandle: preview.prepared.handle,
+        selectedIds: preview.receipt.affectedNodeIds,
+        ...(overview ? {
+          userViewport: {
+            scale: overview.worldToImage[0],
+            offsetX: overview.worldToImage[4],
+            offsetY: overview.worldToImage[5],
+            width: overview.width,
+            height: overview.height,
+          },
+        } : {}),
+      });
+    }
+    const result = await this.#callModel(
+      record,
+      'verification',
+      record.modelProfile.decision,
+      (signal, onRawReply) => this.#previewVerifier!.verify({
+        goal: record.state.plan!.goal.objective,
+        previewDocument: preview.previewDocument!,
+        modelName: record.modelProfile.decision,
+        signal,
+        deadlineAt: record.state.limits.deadlineAt,
+        beforeObservation: beforeVision?.observation,
+        previewObservation,
+        readImage: this.#application.readObservationImage?.bind(this.#application),
+        onRawReply,
+      }),
+    );
+    this.#audit(record, 'verification', {
+      phase: 'preview',
+      revision: record.state.revision,
+      satisfied: result.satisfied,
+      reason: result.reason,
+      defects: structuredClone(result.defects),
+      affectedNodeIds: preview.receipt.affectedNodeIds,
+    });
+    record.previewDefects = result.satisfied ? [] : structuredClone(result.defects);
+    return result.satisfied;
   }
 
   async #ensureVision(record: RunRecord): Promise<DrawingVisionContext | undefined> {
@@ -1068,6 +1190,129 @@ export class DrawingAgentRuntime {
     record.vision = { snapshot, selection: [...record.selectedIds] };
     record.visionRevision = record.state.revision;
     return record.vision;
+  }
+
+  async #nextSemanticEdit(record: RunRecord): Promise<AgentDecision> {
+    if (!this.#featureResolver || !this.#intentDesigner) {
+      throw new Error('SEMANTIC_EDIT_ADAPTERS_MISSING');
+    }
+    if (!this.#application.readObservationImage || !this.#application.open) {
+      throw new Error('SEMANTIC_EDIT_APPLICATION_CAPABILITY_MISSING');
+    }
+    this.#transition(record, { type: 'DECISION_RECORDED' });
+    record.progress.publish('observing', '正在观察当前二维图纸');
+    const vision = await this.#ensureVision(record);
+    const observation = vision?.observation;
+    if (!observation) throw new Error('SEMANTIC_EDIT_OBSERVATION_MISSING');
+    this.#audit(record, 'observation', {
+      revision: observation.revision,
+      rendererVersion: observation.rendererVersion,
+      selectedIds: observation.selectedIds,
+      views: observation.views.map((view) => ({
+        id: view.id,
+        purpose: view.purpose,
+        imageHandle: view.image.handle,
+        worldBounds: view.worldBounds,
+        groundingCount: view.grounding.length,
+      })),
+      vectorDigest: observation.vectorDigest,
+    });
+    const repairFeedback = structuredClone(record.previewDefects);
+    const modelName = repairFeedback.length > 0
+      ? record.modelProfile.repair
+      : record.modelProfile.decision;
+    record.progress.publish('grounding', '正在定位目标图形与锚点');
+    const featureGraph = await this.#callModel(
+      record,
+      'grounding',
+      modelName,
+      (signal, onRawReply) => this.#featureResolver!.resolve({
+        goal: record.state.plan!.goal.objective,
+        observation,
+        readImage: this.#application.readObservationImage!.bind(this.#application),
+        modelName,
+        signal,
+        deadlineAt: record.state.limits.deadlineAt,
+        onRawReply,
+        repairFeedback,
+      }),
+    );
+    this.#audit(record, 'grounding', { featureGraph: structuredClone(featureGraph) });
+    record.progress.publish('designing', '正在设计受约束的局部修改');
+    const intent = await this.#callModel(
+      record,
+      'design',
+      modelName,
+      (signal, onRawReply) => this.#intentDesigner!.design({
+        goal: record.state.plan!.goal.objective,
+        observation,
+        featureGraph,
+        readImage: this.#application.readObservationImage!.bind(this.#application),
+        modelName,
+        signal,
+        deadlineAt: record.state.limits.deadlineAt,
+        onRawReply,
+        repairFeedback,
+      }),
+    );
+    const candidateGeometry = intent.operation === 'transform'
+      ? undefined
+      : await this.#designCandidateGeometry(
+          record, observation, featureGraph, intent, modelName, repairFeedback,
+        );
+    const workspace = await this.#application.open(record.state.drawingId);
+    if (workspace.revision !== record.state.revision) return {
+      type: 'finish', summary: '图纸版本已变化，需要重新规划',
+    };
+    const compiled = compileEditIntent(intent, {
+      document: workspace.document,
+      ...(candidateGeometry ? { candidateGeometry } : {}),
+    });
+    record.compiledEdit = compiled;
+    this.#audit(record, 'intent', {
+      intent: structuredClone(intent),
+      strategy: compiled.strategy,
+      targetNodeIds: compiled.targetNodeIds,
+      preserveNodeIds: compiled.preserveNodeIds,
+      allowedBounds: compiled.allowedBounds,
+      commandCount: compiled.commands.length,
+    });
+    return {
+      type: 'transact',
+      toolCallId: this.#callId(record, 'semantic_edit'),
+      commands: compiled.commands,
+      confidence: intent.confidence,
+    };
+  }
+
+  async #designCandidateGeometry(
+    record: RunRecord,
+    observation: NonNullable<DrawingVisionContext['observation']>,
+    featureGraph: Awaited<ReturnType<DrawingFeatureGraphModelAdapter['resolve']>>,
+    intent: Awaited<ReturnType<DrawingEditIntentModelAdapter['design']>>,
+    modelName: string,
+    repairFeedback: import('./types.js').DrawingPreviewDefect[],
+  ) {
+    if (!this.#candidateDesigner || !this.#application.readObservationImage) {
+      throw new Error('SEMANTIC_CANDIDATE_ADAPTER_MISSING');
+    }
+    return this.#callModel(
+      record,
+      'design',
+      modelName,
+      (signal, onRawReply) => this.#candidateDesigner!.design({
+        goal: record.state.plan!.goal.objective,
+        observation,
+        featureGraph,
+        intent,
+        readImage: this.#application.readObservationImage!.bind(this.#application),
+        modelName,
+        signal,
+        deadlineAt: record.state.limits.deadlineAt,
+        onRawReply,
+        repairFeedback,
+      }),
+    );
   }
 
   async #nextDecision(record: RunRecord): Promise<AgentDecision> {
