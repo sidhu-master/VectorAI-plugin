@@ -28,6 +28,7 @@ import {
   VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA,
 } from './protocol-schemas.js';
 import type { SpatialEditDesign } from '../drawing-spatial/spatial-edit-compiler.js';
+import type { EpisodeModelContext } from '../drawing-episode/types.js';
 
 const REGION_SYSTEM_PROMPT = `你是 VectorAI 二维语义区域选择器。
 根据用户目标和服务器渲染视图，先选择目标在连续二维画面中的完整区域，不考虑现有图元边界，也不要输出任何 nodeId、图元列表或 DrawingCommand。
@@ -80,6 +81,7 @@ export interface SemanticCallInput {
   onRawReply?: (role: 'grounding' | 'design', reply: string) => void;
   repairFeedback?: DrawingPreviewDefect[];
   protocolFeedback?: string;
+  episodeContext?: EpisodeModelContext;
 }
 
 export interface DrawingFeatureGraphModelAdapter {
@@ -132,6 +134,7 @@ export class DrawingSemanticRegionAdapter implements DrawingSemanticRegionModelA
         },
         views: regionObservationMetadata(input.observation),
         repairFeedback: input.repairFeedback ?? [],
+        ...(input.episodeContext ? { episodeContext: input.episodeContext } : {}),
         ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
       }),
       images: observationImages(input.observation, input.readImage),
@@ -184,6 +187,7 @@ export class DrawingSpatialDesignAdapter implements DrawingSpatialDesignModelAda
         targetGeometry: input.targetGeometry,
         views: observationMetadata(input.observation),
         repairFeedback: input.repairFeedback ?? [],
+        ...(input.episodeContext ? { episodeContext: input.episodeContext } : {}),
         ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
       }),
       images: observationImages(input.observation, input.readImage),

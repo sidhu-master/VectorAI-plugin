@@ -25,6 +25,8 @@ import type {
   DrawingAgentAuditStore,
 } from './audit-types';
 import type { SpatialEditDesign } from '../drawing-spatial/spatial-edit-compiler';
+import type { EditEpisodeStore } from '../drawing-episode/file-episode-store';
+import type { EditEpisode } from '../drawing-episode/types';
 import type { DrawingPerceptionOutput } from '../drawing-perception/pipeline';
 import type {
   DrawingFeedbackOutput,
@@ -75,6 +77,7 @@ async function setup(input: {
   previewVerifier?: DrawingPreviewVerificationModelAdapter;
   regionProposer?: { propose(input: unknown): Promise<SemanticRegionProposal> };
   spatialDesigner?: { design(input: unknown): Promise<SpatialEditDesign> };
+  episodeStore?: EditEpisodeStore;
   renderForVision?: () => Promise<GroundingSnapshot>;
 } = {}) {
   const idFactory = ids();
@@ -151,6 +154,7 @@ async function setup(input: {
     previewVerifier: input.previewVerifier,
     regionProposer: input.regionProposer,
     spatialDesigner: input.spatialDesigner,
+    episodeStore: input.episodeStore,
   });
   return { application, decision, order, planner, runtime, tools, workspace };
 }
@@ -1036,6 +1040,7 @@ describe('DrawingAgentRuntime', () => {
 
   it('runs semantic edits through region selection before previewing the transaction', async () => {
     const audit = recordingAuditStore();
+    const episodes = recordingEpisodeStore();
     const regionInputs: Array<{ protocolFeedback?: string }> = [];
     const regionProposer = {
       propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
@@ -1084,6 +1089,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const setupResult = await setup({
       plan, regionProposer, spatialDesigner, previewVerifier, auditStore: audit.store,
+      episodeStore: episodes.store,
     });
     const committed = await setupResult.application.execute({
       drawingId: setupResult.workspace.document.id,
@@ -1146,6 +1152,13 @@ describe('DrawingAgentRuntime', () => {
       'lineage', 'intent', 'episode', 'preview', 'verification:deterministic-spatial',
       'verification:preview', 'commit',
     ]);
+    expect(episodes.current).toMatchObject({
+      originalGoal: '创建一个圆',
+      status: 'completed',
+      regionVersions: [{ version: 1, status: 'active' }],
+      selectionVersions: [{ version: 1, status: 'active' }],
+      previewVersions: [{ version: 1, status: 'committed' }],
+    });
   });
 
   it('owns read-step completion and final verification without extra model decisions', async () => {
@@ -1622,6 +1635,21 @@ function recordingAuditStore(): {
           commits: structuredClone(commits),
         };
       }),
+    },
+  };
+}
+
+function recordingEpisodeStore(): {
+  store: EditEpisodeStore;
+  readonly current: EditEpisode | null;
+} {
+  let current: EditEpisode | null = null;
+  return {
+    get current() { return current; },
+    store: {
+      create: vi.fn(async (episode) => { current = structuredClone(episode); }),
+      read: vi.fn(async () => structuredClone(current)),
+      save: vi.fn(async (episode) => { current = structuredClone(episode); }),
     },
   };
 }

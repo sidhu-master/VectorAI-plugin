@@ -41,6 +41,7 @@ import { MemoryObservationSlotStore } from './services/drawing-feedback/slot-sto
 import { SourceRasterFeedbackComparator } from './services/drawing-feedback/source-comparator.js'
 import { PythonVectorizationProvider } from './services/drawing-vectorization/python-provider.js'
 import { CleanLineVectorizationService } from './services/drawing-vectorization/service.js'
+import { FileEditEpisodeStore } from './services/drawing-episode/file-episode-store.js'
 
 // load env
 dotenv.config()
@@ -128,6 +129,9 @@ const agentRuntime = new DrawingAgentRuntime({
   previewVerifier: new DrawingPreviewVerificationAdapter(),
   regionProposer: new DrawingSemanticRegionAdapter(),
   spatialDesigner: new DrawingSpatialDesignAdapter(),
+  episodeStore: new FileEditEpisodeStore({
+    rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
+  }),
   auditStore,
   sourceArtifacts,
   perception: drawingPerception,

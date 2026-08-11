@@ -37,6 +37,9 @@ import {
   type CompiledSpatialEditCandidate,
 } from '../drawing-spatial/spatial-edit-compiler.js';
 import { validateSpatialEditPreview } from '../drawing-spatial/spatial-validator.js';
+import { buildEpisodeModelContext } from '../drawing-episode/context-builder.js';
+import type { EditEpisodeStore } from '../drawing-episode/file-episode-store.js';
+import type { EditEpisode } from '../drawing-episode/types.js';
 import type {
   DrawingPerceptionInput,
   DrawingPerceptionOutput,
@@ -102,6 +105,7 @@ interface RuntimeTools {
   invoke(input: DrawingToolInvocation): Promise<DrawingToolExecution>;
   discardPrepared(handle: string): boolean;
   discardRun(runId: string): number;
+  supersedePrepared?(handle: string): boolean;
 }
 
 interface RuntimePerception {
@@ -159,6 +163,8 @@ interface RunRecord {
     tolerance: number;
   } | null;
   spatialPreviewSequence: number;
+  episode: EditEpisode | null;
+  episodeQueue: Promise<void>;
   editPreviewIds: Set<string>;
   editHiddenIds: Set<string>;
 }
@@ -170,7 +176,8 @@ export interface DrawingAgentRunHandle {
 
 export interface DrawingAgentRuntimeOptions {
   application: RuntimeApplication;
-  tools: Pick<DrawingToolRegistry, 'invoke' | 'discardPrepared' | 'discardRun'>;
+  tools: Pick<DrawingToolRegistry, 'invoke' | 'discardPrepared' | 'discardRun'>
+    & Partial<Pick<DrawingToolRegistry, 'supersedePrepared'>>;
   planner: DrawingPlannerModelAdapter;
   decision: DrawingDecisionModelAdapter;
   now?: () => number;
@@ -183,6 +190,7 @@ export interface DrawingAgentRuntimeOptions {
   regionProposer?: DrawingSemanticRegionModelAdapter;
   spatialDesigner?: DrawingSpatialDesignModelAdapter;
   regionMediaStore?: RegionMediaStore;
+  episodeStore?: EditEpisodeStore;
   promptHashes?: { planner: string; decision: string };
   sourceArtifacts?: SourceArtifactStore;
   perception?: RuntimePerception;
@@ -219,6 +227,7 @@ export class DrawingAgentRuntime {
   readonly #regionProposer?: DrawingSemanticRegionModelAdapter;
   readonly #spatialDesigner?: DrawingSpatialDesignModelAdapter;
   readonly #regionMediaStore: RegionMediaStore;
+  readonly #episodeStore?: EditEpisodeStore;
   readonly #promptHashes: { planner: string; decision: string };
   readonly #sourceArtifacts?: SourceArtifactStore;
   readonly #perception?: RuntimePerception;
@@ -241,6 +250,7 @@ export class DrawingAgentRuntime {
     this.#regionProposer = options.regionProposer;
     this.#spatialDesigner = options.spatialDesigner;
     this.#regionMediaStore = options.regionMediaStore ?? new RegionMediaStore();
+    this.#episodeStore = options.episodeStore;
     this.#promptHashes = options.promptHashes ?? DRAWING_AGENT_PROMPT_HASHES;
     this.#sourceArtifacts = options.sourceArtifacts;
     this.#perception = options.perception;
@@ -314,6 +324,8 @@ export class DrawingAgentRuntime {
       compiledEdit: null,
       spatialPreview: null,
       spatialPreviewSequence: 0,
+      episode: null,
+      episodeQueue: Promise.resolve(),
       editPreviewIds: new Set(),
       editHiddenIds: new Set(),
     };
@@ -352,7 +364,8 @@ export class DrawingAgentRuntime {
   }
 
   async flushAudit(runId: string): Promise<void> {
-    await this.#require(runId).auditQueue;
+    const record = this.#require(runId);
+    await Promise.all([record.auditQueue, record.episodeQueue]);
   }
 
   pause(runId: string): DrawingAgentState {
@@ -373,6 +386,27 @@ export class DrawingAgentRuntime {
     const record = this.#require(runId);
     this.#transition(record, { type: 'INSTRUCTION_ADDED', instruction });
     this.#audit(record, 'instruction', { instruction: instruction.trim() });
+    if (record.episode) {
+      const activePreview = record.episode.previewVersions.find((version) => (
+        version.status === 'active'
+      ));
+      if (activePreview) activePreview.status = 'superseded';
+      record.episode.feedbackTurns.push({
+        id: `feedback_${record.episode.feedbackTurns.length + 1}`,
+        text: instruction.trim(),
+        receivedAt: this.#now(),
+        ...(activePreview ? { againstPreviewVersion: activePreview.version } : {}),
+      });
+      record.episode.updatedAt = this.#now();
+      if (record.prepared) {
+        this.#tools.supersedePrepared?.(record.prepared.handle);
+        record.prepared = null;
+        record.compiledEdit = null;
+        record.spatialPreview = null;
+      }
+      this.#persistEpisode(record);
+      record.progress.publish('revising', '已收到新反馈，正在更新当前预览');
+    }
     return record.state;
   }
 
@@ -1166,6 +1200,10 @@ export class DrawingAgentRuntime {
         }
         const committed = await this.#commitPrepared(record, preview.prepared);
         this.#recordTool(record, committed);
+        if (committed.receipt.status === 'succeeded'
+          || committed.receipt.status === 'already_satisfied') {
+          this.#markEpisodePreview(record, 'committed', []);
+        }
         record.prepared = null;
         record.compiledEdit = null;
         record.spatialPreview = null;
@@ -1223,6 +1261,7 @@ export class DrawingAgentRuntime {
           nodeIds: issue.nodeIds,
           repairHint: '保持区域边界连接、保护片段和 lineage 不变后重新设计目标区域',
         }));
+        this.#markEpisodePreview(record, 'rejected', record.previewDefects.map((item) => item.code));
         return false;
       }
     }
@@ -1276,6 +1315,9 @@ export class DrawingAgentRuntime {
       affectedNodeIds: preview.receipt.affectedNodeIds,
     });
     record.previewDefects = result.satisfied ? [] : structuredClone(result.defects);
+    if (!result.satisfied) {
+      this.#markEpisodePreview(record, 'rejected', result.defects.map((defect) => defect.code));
+    }
     return result.satisfied;
   }
 
@@ -1353,6 +1395,7 @@ export class DrawingAgentRuntime {
     if (workspace.revision !== record.state.revision) {
       return { type: 'finish', summary: '图纸版本已变化，需要重新规划' };
     }
+    const episode = await this.#ensureEpisode(record);
     const repairFeedback = structuredClone(record.previewDefects);
     const baseModelName = repairFeedback.length > 0
       ? record.modelProfile.repair
@@ -1459,6 +1502,28 @@ export class DrawingAgentRuntime {
       uncertainParts: structuredClone(selection.uncertainParts),
       splitPlan: structuredClone(selection.splitPlan),
     });
+    supersedeActive(episode.regionVersions);
+    const regionVersion = episode.regionVersions.length + 1;
+    episode.regionVersions.push({
+      version: regionVersion,
+      regionId: region.id,
+      maskHandle: region.maskHandle,
+      status: 'active',
+      createdAt: this.#now(),
+    });
+    supersedeActive(episode.selectionVersions);
+    const selectionVersion = episode.selectionVersions.length + 1;
+    episode.selectionVersions.push({
+      version: selectionVersion,
+      selectionVersionId,
+      regionVersion,
+      status: 'active',
+      targetNodeIds: [...selection.wholeNodes],
+      crossingNodeIds: [...selection.crossingNodes],
+      createdAt: this.#now(),
+    });
+    episode.updatedAt = this.#now();
+    this.#persistEpisode(record);
     if (selection.wholeNodes.length === 0 && selection.partialSegments.length === 0) {
       record.previewDefects = [{
         code: 'region-selection-empty',
@@ -1523,6 +1588,7 @@ export class DrawingAgentRuntime {
         deadlineAt: record.state.limits.deadlineAt,
         onRawReply,
         repairFeedback,
+        episodeContext: buildEpisodeModelContext(episode),
         ...(protocolFeedback ? { protocolFeedback } : {}),
       }),
     );
@@ -1544,6 +1610,22 @@ export class DrawingAgentRuntime {
       strategy,
       tolerance,
     };
+    supersedeActive(episode.previewVersions);
+    const episodePreviewVersion = episode.previewVersions.length + 1;
+    episode.previewVersions.push({
+      version: episodePreviewVersion,
+      previewVersionId,
+      regionVersion,
+      selectionVersion,
+      strategy: strategy.mode,
+      status: 'active',
+      affectedNodeIds: [...compiled.targetNodeIds],
+      diffSummary: `${design.kind}:${compiled.commands.length} commands`,
+      defectCodes: [],
+      createdAt: this.#now(),
+    });
+    episode.updatedAt = this.#now();
+    this.#persistEpisode(record);
     this.#audit(record, 'intent', {
       kind: design.kind,
       confidence: design.confidence,
@@ -1587,6 +1669,7 @@ export class DrawingAgentRuntime {
         deadlineAt: record.state.limits.deadlineAt,
         onRawReply,
         repairFeedback,
+        ...(record.episode ? { episodeContext: buildEpisodeModelContext(record.episode) } : {}),
         ...(protocolFeedback ? { protocolFeedback } : {}),
       }),
     );
@@ -1885,6 +1968,53 @@ export class DrawingAgentRuntime {
     }
   }
 
+  async #ensureEpisode(record: RunRecord): Promise<EditEpisode> {
+    if (record.episode) return record.episode;
+    const stored = await this.#episodeStore?.read(record.state.runId);
+    if (stored) {
+      if (stored.drawingId !== record.state.drawingId) throw new Error('EPISODE_SCOPE_MISMATCH');
+      record.episode = stored;
+      return stored;
+    }
+    const now = this.#now();
+    const episode: EditEpisode = {
+      schemaVersion: 1,
+      id: `episode_${record.state.runId}`,
+      runId: record.state.runId,
+      drawingId: record.state.drawingId,
+      baseRevision: record.state.revision,
+      originalGoal: record.state.objective,
+      status: 'active',
+      regionVersions: [], selectionVersions: [], previewVersions: [], feedbackTurns: [],
+      createdAt: now, updatedAt: now,
+    };
+    record.episode = episode;
+    if (this.#episodeStore) {
+      const snapshot = structuredClone(episode);
+      record.episodeQueue = record.episodeQueue.then(() => this.#episodeStore!.create(snapshot));
+    }
+    return episode;
+  }
+
+  #persistEpisode(record: RunRecord): void {
+    if (!this.#episodeStore || !record.episode) return;
+    const snapshot = structuredClone(record.episode);
+    record.episodeQueue = record.episodeQueue.then(() => this.#episodeStore!.save(snapshot));
+  }
+
+  #markEpisodePreview(
+    record: RunRecord,
+    status: 'rejected' | 'committed',
+    defectCodes: string[],
+  ): void {
+    const preview = record.episode?.previewVersions.find((version) => version.status === 'active');
+    if (!preview || !record.episode) return;
+    preview.status = status;
+    preview.defectCodes = [...new Set(defectCodes)];
+    record.episode.updatedAt = this.#now();
+    this.#persistEpisode(record);
+  }
+
   async #safePoint(record: RunRecord, point: DrawingAgentSafePoint): Promise<boolean> {
     this.#transition(record, { type: 'SAFE_POINT', point });
     if (record.state.status === 'stopped') {
@@ -2000,6 +2130,11 @@ export class DrawingAgentRuntime {
     if (record.resolved) return;
     this.#discardPrepared(record);
     this.#tools.discardRun(record.state.runId);
+    if (record.episode) {
+      record.episode.status = type === 'completed' ? 'completed' : 'failed';
+      record.episode.updatedAt = this.#now();
+      this.#persistEpisode(record);
+    }
     if (type !== 'failed' && record.perceptionPreviewIds.size > 0) {
       this.#publishPerceptionDelta(record, {
         runId: record.state.runId,
@@ -2082,6 +2217,12 @@ function targetGeometryForDesign(
     ...split.fragments.filter((node) => targetFragmentIds.has(node.id)),
   ].filter((node): node is GeometryNode => node !== undefined);
   return [...new Map(targets.map((node) => [node.id, structuredClone(node)])).values()];
+}
+
+function supersedeActive<T extends { status: string }>(versions: T[]): void {
+  versions.forEach((version) => {
+    if (version.status === 'active') version.status = 'superseded';
+  });
 }
 
 function nextWorkflowNode(state: DrawingAgentState) {
