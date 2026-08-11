@@ -85,7 +85,12 @@ function currentStage(input: PresentAgentTaskInput): AgentStageId {
   const semanticStage: Partial<Record<AgentProgressEvent['type'], AgentStageId>> = {
     observing: 'perceive',
     grounding: 'perceive',
+    region_overlay: 'perceive',
+    region_resolved: 'perceive',
+    split_materialized: 'build',
     designing: 'modify',
+    generating: 'modify',
+    vectorizing: 'modify',
     previewing: 'modify',
     verifying: 'verify',
     revising: 'modify',

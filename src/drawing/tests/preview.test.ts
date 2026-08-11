@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { GeometryId, GeometryNode, PerceptionPreviewDelta } from '@/drawing';
+import type {
+  GeometryId,
+  GeometryNode,
+  PerceptionPreviewDelta,
+  SpatialRegionPreviewOverlay,
+} from '@/drawing';
 import {
   applyPerceptionPreviewDelta,
   emptyPerceptionPreview,
@@ -16,6 +21,7 @@ describe('perception preview reducer', () => {
 
     expect(initial).toEqual({
       runId: null, lastSequence: 0, nodes: {}, labelsByNodeId: {},
+      activeOverlay: null, previewVersionId: null,
     });
     expect(observed.nodes.node_obs_1).toMatchObject({ type: 'circle', radius: 4 });
     expect(refined).toMatchObject({ runId: 'run_1', lastSequence: 2 });
@@ -130,7 +136,41 @@ describe('perception preview reducer', () => {
     });
     expect(revised.hiddenCommittedIds).toEqual([]);
   });
+
+  it('atomically replaces the active region and superseded edit-preview nodes', () => {
+    const previewed = applyPerceptionPreviewDelta(emptyPerceptionPreview('run_1'), {
+      ...delta(1, 'preview', [line()]),
+      source: { page: 1, viewId: 'view_1', regionId: 'region_1', stage: 'edit-preview' },
+      hideCommittedIds: ['old_hand'],
+      regionOverlay: regionOverlay('preview_1', 0),
+    });
+    const replaced = applyPerceptionPreviewDelta(previewed, {
+      ...delta(2, 'preview', []),
+      regionOverlay: regionOverlay('preview_2', 20),
+      source: { page: 1, viewId: 'view_1', regionId: 'region_2', stage: 'edit-preview' },
+    });
+
+    expect(replaced.previewVersionId).toBe('preview_2');
+    expect(replaced.activeOverlay?.contours[0][0]).toEqual([20, 0]);
+    expect(replaced.nodes).toEqual({});
+    expect(replaced.hiddenCommittedIds).toEqual([]);
+    const cleared = applyPerceptionPreviewDelta(replaced, {
+      ...delta(3, 'promote', []), regionOverlay: null,
+    });
+    expect(cleared.activeOverlay).toBeNull();
+  });
 });
+
+function regionOverlay(previewVersionId: string, x: number): SpatialRegionPreviewOverlay {
+  return {
+    id: `region_${previewVersionId}`,
+    revision: 'revision_1' as import('@/drawing').RevisionId,
+    previewVersionId,
+    label: '右臂', contours: [[[x, 0], [x + 10, 0], [x + 10, 10]]], holes: [],
+    anchors: [{ id: 'anchor', role: 'shoulder', point: [x, 0] as const, confidence: 1 }],
+    confidence: 0.9,
+  };
+}
 
 function delta(
   sequence: number,

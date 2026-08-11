@@ -7,7 +7,10 @@ import type { DrawingDocument } from '../document/types';
 type AuthoritativeDrawingNodes = Pick<DrawingDocument, 'geometry' | 'annotations'>;
 
 export function emptyPerceptionPreview(runId: string | null): PerceptionPreviewState {
-  return { runId, lastSequence: 0, nodes: {}, labelsByNodeId: {} };
+  return {
+    runId, lastSequence: 0, nodes: {}, labelsByNodeId: {},
+    activeOverlay: null, previewVersionId: null,
+  };
 }
 
 export function applyPerceptionPreviewDelta(
@@ -21,6 +24,18 @@ export function applyPerceptionPreviewDelta(
   const labelsByNodeId = { ...state.labelsByNodeId };
   const stageByNodeId = { ...(state.stageByNodeId ?? {}) };
   const hiddenCommittedIds = new Set(state.hiddenCommittedIds ?? []);
+  const replacingOverlay = delta.regionOverlay !== undefined
+    && delta.regionOverlay !== null
+    && delta.regionOverlay.previewVersionId !== state.previewVersionId;
+  if (replacingOverlay) {
+    Object.entries(stageByNodeId).forEach(([id, stage]) => {
+      if (stage !== 'edit-preview') return;
+      delete nodes[id];
+      delete labelsByNodeId[id];
+      delete stageByNodeId[id];
+    });
+    hiddenCommittedIds.clear();
+  }
   for (const id of delta.showCommittedIds ?? []) hiddenCommittedIds.delete(id);
   for (const id of delta.hideCommittedIds ?? []) hiddenCommittedIds.add(id);
   for (const id of delta.removeIds) {
@@ -40,6 +55,12 @@ export function applyPerceptionPreviewDelta(
     lastSequence: delta.sequence,
     nodes,
     labelsByNodeId,
+    activeOverlay: delta.regionOverlay === undefined
+      ? state.activeOverlay
+      : structuredClone(delta.regionOverlay),
+    previewVersionId: delta.regionOverlay === undefined
+      ? state.previewVersionId
+      : delta.regionOverlay?.previewVersionId ?? null,
     stageByNodeId,
     ...((state.hiddenCommittedIds !== undefined
       || delta.hideCommittedIds !== undefined

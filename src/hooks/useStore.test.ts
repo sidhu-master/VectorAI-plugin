@@ -328,7 +328,29 @@ describe('Drawing Agent workspace integration', () => {
     });
     expect(store.getState().perceptionPreview).toEqual({
       runId: null, lastSequence: 0, nodes: {}, labelsByNodeId: {},
+      activeOverlay: null, previewVersionId: null,
     });
+  });
+
+  it('reconciles completed previews against the canonical drawing instead of blanking first', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
+    agent.emit(perceptionEvent(1, 4));
+
+    agent.emit({
+      id: 'event_completed', runId: 'run_1', type: 'completed', title: '完成',
+      timestamp: 3, elapsedMs: 2,
+    });
+
+    expect(store.getState().perceptionPreview.runId).toBe('run_1');
+    expect(store.getState().perceptionPreview.nodes).toHaveProperty('node_preview_1');
+    expect(store.getState().perceptionPreview.activeOverlay).toBeNull();
   });
 
   it('retains the last rejected preview when a task fails until the user resets it', async () => {

@@ -144,7 +144,13 @@ describe('Agent task presentation', () => {
 
   it.each([
     ['grounding', 'perceive', '正在解析图纸'],
+    ['region_overlay', 'perceive', '正在解析图纸'],
+    ['region_resolved', 'perceive', '正在解析图纸'],
+    ['split_materialized', 'build', '正在构建空间模型'],
     ['designing', 'modify', '正在应用修改'],
+    ['generating', 'modify', '正在应用修改'],
+    ['vectorizing', 'modify', '正在应用修改'],
+    ['previewing', 'modify', '正在应用修改'],
     ['verifying', 'verify', '正在验证结果'],
     ['revising', 'modify', '正在应用修改'],
   ] as const)('maps semantic event %s to %s', (type, stage, heading) => {

@@ -404,8 +404,17 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                   : [...current.agentEvents, event].slice(-100),
                 agentStatus: progressStatus(event.type, current.agentStatus),
                 agentError: event.type === 'failed' ? event.title : current.agentError,
-                perceptionPreview: ['stopped', 'completed'].includes(event.type)
+                perceptionPreview: event.type === 'stopped'
                   ? emptyPerceptionPreview(null)
+                  : event.type === 'completed'
+                    ? {
+                        ...reconcilePerceptionPreview(
+                          current.perceptionPreview,
+                          current.document,
+                        ),
+                        activeOverlay: null,
+                        previewVersionId: null,
+                      }
                   : event.perceptionDelta
                     ? applyPerceptionPreviewDelta(
                       current.perceptionPreview,

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { useStore } from '@/hooks/useStore';
 import type { DrawingRelation } from '@/drawing';
+import type { SpatialRegionPreviewOverlay } from '@/drawing/preview/types';
 import EntityRenderer from './canvas/EntityRenderer';
 import { filterCanvasAnnotations } from './canvas/annotation-visibility';
 import { gridPatternMetrics } from './canvas/grid-pattern';
@@ -105,6 +106,47 @@ export function PerceptionPreviewLayer({
           provisional
           perceptionStage={stageByNodeId?.[entity.id]}
           label={labelsByNodeId[entity.id]}
+        />
+      ))}
+    </g>
+  );
+}
+
+export function SpatialRegionOverlayLayer({
+  overlay,
+  scale,
+}: {
+  overlay: SpatialRegionPreviewOverlay | null;
+  scale: number;
+}) {
+  if (!overlay) return null;
+  const path = [...overlay.contours, ...overlay.holes].map((polygon) => polygon
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point[0]} ${point[1]}`)
+    .join(' ') + ' Z').join(' ');
+  return (
+    <g
+      data-spatial-region-overlay={overlay.previewVersionId}
+      data-region-id={overlay.id}
+      pointerEvents="none"
+    >
+      <path
+        d={path}
+        fill="rgba(67, 149, 217, 0.14)"
+        fillRule="evenodd"
+        stroke="rgba(109, 169, 210, 0.9)"
+        strokeWidth={1.5 / scale}
+        strokeDasharray={`${6 / scale} ${4 / scale}`}
+      />
+      {overlay.anchors.map((anchor) => (
+        <circle
+          key={anchor.id}
+          data-region-anchor={anchor.id}
+          cx={anchor.point[0]}
+          cy={anchor.point[1]}
+          r={4 / scale}
+          fill="#8ec5e8"
+          stroke="#09131b"
+          strokeWidth={1.5 / scale}
         />
       ))}
     </g>
@@ -581,6 +623,7 @@ export default function Canvas() {
         </g>
         {/* 世界坐标组 */}
         <g ref={worldGroupRef} transform={`translate(${offsetX}, ${offsetY}) scale(${scale}, ${-scale})`}>
+          <SpatialRegionOverlayLayer overlay={perceptionPreview.activeOverlay} scale={scale} />
           {entities.map(renderEntity)}
           <PerceptionPreviewLayer
             entities={previewEntities}

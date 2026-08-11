@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import type { AnnotationId, GeometryId } from '@/drawing';
-import { CadGridPattern, PerceptionPreviewLayer } from './Canvas';
+import { CadGridPattern, PerceptionPreviewLayer, SpatialRegionOverlayLayer } from './Canvas';
 import { filterCanvasAnnotations } from './canvas/annotation-visibility';
 
 describe('Canvas infinite grid', () => {
@@ -46,6 +46,28 @@ describe('Canvas progressive perception overlay', () => {
     expect(html).toContain('data-entity-id="node_preview"');
     expect(html).toContain('GEO-0001');
     expect(html).toContain('pointer-events="none"');
+  });
+
+  it('renders the active semantic region and boundary anchors behind preview geometry', () => {
+    const html = renderToStaticMarkup(
+      <svg>
+        <SpatialRegionOverlayLayer
+          scale={2}
+          overlay={{
+            id: 'region_arm', revision: 'revision_1' as import('@/drawing').RevisionId,
+            previewVersionId: 'preview_2', label: '右臂',
+            contours: [[[0, 0], [20, 0], [20, 10], [0, 10]]], holes: [],
+            anchors: [{ id: 'shoulder', role: 'connection', point: [20, 10], confidence: 1 }],
+            confidence: 0.95,
+          }}
+        />
+      </svg>,
+    );
+
+    expect(html).toContain('data-spatial-region-overlay="preview_2"');
+    expect(html).toContain('data-region-id="region_arm"');
+    expect(html).toContain('data-region-anchor="shoulder"');
+    expect(html).toContain('fill-rule="evenodd"');
   });
 });
 

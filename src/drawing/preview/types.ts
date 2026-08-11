@@ -61,6 +61,8 @@ export interface PerceptionPreviewState {
   lastSequence: number;
   nodes: Record<string, PerceptionPreviewNode>;
   labelsByNodeId: Record<string, string>;
+  activeOverlay: SpatialRegionPreviewOverlay | null;
+  previewVersionId: string | null;
   /**
    * 每个预览节点对应的感知阶段（outline 轮廓 / detail 细节 / annotation 标注）。
    * 用于前端按“轮廓 → 细节”分层呈现多轮绘制过程。
