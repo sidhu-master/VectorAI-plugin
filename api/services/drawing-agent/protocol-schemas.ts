@@ -102,6 +102,52 @@ export const SPATIAL_STRATEGY_RESPONSE_SCHEMA: DrawingResponseSchema = {
   },
 };
 
+const SPATIAL_TRANSFORM = {
+  oneOf: [
+    {
+      type: 'object', additionalProperties: false, required: ['kind', 'offset'],
+      properties: { kind: { const: 'translate' }, offset: VEC2 },
+    },
+    {
+      type: 'object', additionalProperties: false,
+      required: ['kind', 'center', 'angleDegrees'],
+      properties: { kind: { const: 'rotate' }, center: VEC2, angleDegrees: NUMBER },
+    },
+    {
+      type: 'object', additionalProperties: false, required: ['kind', 'center', 'factor'],
+      properties: { kind: { const: 'scale' }, center: VEC2, factor: NUMBER },
+    },
+  ],
+} as const;
+
+export const SPATIAL_EDIT_DESIGN_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_spatial_edit_design',
+  schema: {
+    oneOf: [
+      {
+        type: 'object', additionalProperties: false,
+        required: ['kind', 'transform', 'confidence', 'evidenceRefs'],
+        properties: {
+          kind: { const: 'transform' },
+          transform: SPATIAL_TRANSFORM,
+          confidence: CONFIDENCE,
+          evidenceRefs: STRING_ARRAY,
+        },
+      },
+      {
+        type: 'object', additionalProperties: false,
+        required: ['kind', 'geometry', 'confidence', 'evidenceRefs'],
+        properties: {
+          kind: { const: 'replacement' },
+          geometry: { type: 'array', minItems: 1, items: { type: 'object' } },
+          confidence: CONFIDENCE,
+          evidenceRefs: STRING_ARRAY,
+        },
+      },
+    ],
+  },
+};
+
 export const VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA: DrawingResponseSchema = {
   name: 'drawing_visual_feature_graph',
   schema: {

@@ -75,7 +75,9 @@ export function validateSpatialEditPreview(input: {
     input.after.geometry.filter((node) => input.candidate.targetNodeIds.includes(node.id)),
     input.tolerance,
   );
-  if (input.candidate.strategy === 'geometric-edit' && unexpectedDanglingEndpoints.length > 0) {
+  if (input.candidate.strategy === 'geometric-edit'
+    && input.selection.boundaryAnchors.length > 0
+    && unexpectedDanglingEndpoints.length > 0) {
     issues.push(issue(
       'UNEXPECTED_DANGLING_ENDPOINT',
       '目标轮廓存在未连接端点',

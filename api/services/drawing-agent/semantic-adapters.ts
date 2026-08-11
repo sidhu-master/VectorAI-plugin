@@ -7,7 +7,10 @@ import {
 } from '../../../src/contracts/drawing-spatial-agent.js';
 import {
   parseSemanticRegionProposal,
+  type SemanticRegion,
   type SemanticRegionProposal,
+  type SpatialEditStrategy,
+  type SpatialSelection,
 } from '../../../src/contracts/drawing-spatial-region.js';
 import { parseDrawingToolCommands } from '../../../src/contracts/drawing-agent.js';
 import type { GeometryNode } from '../../../src/drawing/index.js';
@@ -20,9 +23,11 @@ import type { VisualObservation } from '../drawing-vision/observation-types.js';
 import {
   EDIT_INTENT_RESPONSE_SCHEMA,
   GEOMETRY_CANDIDATE_RESPONSE_SCHEMA,
+  SPATIAL_EDIT_DESIGN_RESPONSE_SCHEMA,
   SEMANTIC_REGION_RESPONSE_SCHEMA,
   VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA,
 } from './protocol-schemas.js';
+import type { SpatialEditDesign } from '../drawing-spatial/spatial-edit-compiler.js';
 
 const REGION_SYSTEM_PROMPT = `你是 VectorAI 二维语义区域选择器。
 根据用户目标和服务器渲染视图，先选择目标在连续二维画面中的完整区域，不考虑现有图元边界，也不要输出任何 nodeId、图元列表或 DrawingCommand。
@@ -53,6 +58,13 @@ const CANDIDATE_SYSTEM_PROMPT = `你是 VectorAI 二维局部几何生成器。
 每个 geometry 节点必须有稳定 id、type、visible、quality 及该类型的完整参数。
 只输出严格 JSON：{"geometry":[GeometryNode,...]}。若输入含 protocolFeedback，必须针对该错误纠正输出。`;
 
+const SPATIAL_DESIGN_SYSTEM_PROMPT = `你是 VectorAI Region-First 二维编辑设计器。
+目标区域已经先在连续画面中选定，并由服务器解析成目标图元/局部片段。你只能设计该区域的修改，不能重新选择 nodeId，不能输出 DrawingCommand、事务或完整文档。
+geometric-edit 优先输出 transform；generative-redraw 或 hybrid-edit 可输出 replacement，但必须为每个输入 targetGeometry 返回同 id、同图元协议的完整 GeometryNode，并保持 boundaryAnchors 连通。
+transform 只允许 translate、rotate、scale。所有坐标必须是 [x,y] 数字数组。evidenceRefs 只能引用输入视图 id。
+只输出严格 JSON：transform 为 {"kind":"transform","transform":object,"confidence":number,"evidenceRefs":string[]}；重绘为 {"kind":"replacement","geometry":GeometryNode[],"confidence":number,"evidenceRefs":string[]}。
+若输入含 protocolFeedback，必须针对该错误纠正输出。`;
+
 export type DrawingSpatialCompletion = (
   input: DrawingMultimodalCompletionParams,
 ) => Promise<string>;
@@ -75,6 +87,15 @@ export interface DrawingFeatureGraphModelAdapter {
 
 export interface DrawingSemanticRegionModelAdapter {
   propose(input: SemanticCallInput): Promise<SemanticRegionProposal>;
+}
+
+export interface DrawingSpatialDesignModelAdapter {
+  design(input: SemanticCallInput & {
+    region: SemanticRegion;
+    selection: SpatialSelection;
+    strategy: SpatialEditStrategy;
+    targetGeometry: GeometryNode[];
+  }): Promise<SpatialEditDesign>;
 }
 
 export interface DrawingEditIntentModelAdapter {
@@ -121,6 +142,55 @@ export class DrawingSemanticRegionAdapter implements DrawingSemanticRegionModelA
       allowedViewIds: input.observation.views.map((view) => view.id),
       allowedEvidenceRefs: input.observation.views.map((view) => view.id),
     });
+  }
+}
+
+export class DrawingSpatialDesignAdapter implements DrawingSpatialDesignModelAdapter {
+  constructor(
+    private readonly complete: DrawingSpatialCompletion = requestDrawingMultimodalCompletion,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async design(input: SemanticCallInput & {
+    region: SemanticRegion;
+    selection: SpatialSelection;
+    strategy: SpatialEditStrategy;
+    targetGeometry: GeometryNode[];
+  }): Promise<SpatialEditDesign> {
+    assertDeadline('design', input.deadlineAt, this.now);
+    const reply = await this.complete({
+      role: 'design',
+      modelName: input.modelName,
+      systemPrompt: SPATIAL_DESIGN_SYSTEM_PROMPT,
+      userPrompt: JSON.stringify({
+        goal: input.goal,
+        revision: input.observation.revision,
+        region: {
+          id: input.region.id,
+          label: input.region.label,
+          worldContours: input.region.worldContours,
+          worldHoles: input.region.worldHoles,
+          anchors: input.region.anchors,
+          confidence: input.region.confidence,
+        },
+        selection: {
+          wholeNodes: input.selection.wholeNodes,
+          crossingNodes: input.selection.crossingNodes,
+          boundaryAnchors: input.selection.boundaryAnchors,
+          uncertainParts: input.selection.uncertainParts,
+        },
+        strategy: input.strategy,
+        targetGeometry: input.targetGeometry,
+        views: observationMetadata(input.observation),
+        repairFeedback: input.repairFeedback ?? [],
+        ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
+      }),
+      images: observationImages(input.observation, input.readImage),
+      responseSchema: SPATIAL_EDIT_DESIGN_RESPONSE_SCHEMA,
+      signal: input.signal,
+    });
+    input.onRawReply?.('design', reply);
+    return parseSpatialEditDesign(parseJson(reply), input);
   }
 }
 
@@ -306,6 +376,134 @@ function parseCandidatePayload(value: unknown): unknown[] {
     throw new DrawingSpatialProtocolError('candidate.geometry', '不能为空');
   }
   return record.geometry;
+}
+
+function parseSpatialEditDesign(
+  value: unknown,
+  input: { observation: VisualObservation; targetGeometry: GeometryNode[] },
+): SpatialEditDesign {
+  const record = strictRecord(value, 'spatialDesign');
+  const kind = record.kind;
+  const confidence = finiteConfidence(record.confidence, 'spatialDesign.confidence');
+  const evidenceRefs = stringList(record.evidenceRefs, 'spatialDesign.evidenceRefs');
+  const allowedEvidence = new Set(input.observation.views.map((view) => view.id));
+  const unknownEvidence = evidenceRefs.find((id) => !allowedEvidence.has(id));
+  if (unknownEvidence) {
+    throw new DrawingSpatialProtocolError(
+      'spatialDesign.evidenceRefs',
+      `引用了未观察到的视图 ${unknownEvidence}`,
+    );
+  }
+  if (kind === 'transform') {
+    exactKeys(record, ['kind', 'transform', 'confidence', 'evidenceRefs'], 'spatialDesign');
+    return {
+      kind,
+      transform: parseSpatialTransform(record.transform),
+      confidence,
+      evidenceRefs,
+    };
+  }
+  if (kind === 'replacement') {
+    exactKeys(record, ['kind', 'geometry', 'confidence', 'evidenceRefs'], 'spatialDesign');
+    if (!Array.isArray(record.geometry) || record.geometry.length === 0) {
+      throw new DrawingSpatialProtocolError('spatialDesign.geometry', '必须是非空数组');
+    }
+    const commands = parseDrawingToolCommands(
+      record.geometry.map((geometry) => ({ type: 'geometry.create', value: geometry })),
+      'spatialDesign.geometry',
+    );
+    const geometry = commands.map((command) => {
+      if (command.type !== 'geometry.create') throw new Error('SPATIAL_DESIGN_GEOMETRY_INVALID');
+      return command.value as GeometryNode;
+    });
+    const expectedIds = new Set(input.targetGeometry.map((node) => node.id));
+    const receivedIds = new Set(geometry.map((node) => node.id));
+    if (expectedIds.size !== receivedIds.size
+      || [...expectedIds].some((id) => !receivedIds.has(id))) {
+      throw new DrawingSpatialProtocolError(
+        'spatialDesign.geometry',
+        'replacement 必须逐一返回 targetGeometry 的原 id',
+      );
+    }
+    return { kind, geometry, confidence, evidenceRefs };
+  }
+  throw new DrawingSpatialProtocolError('spatialDesign.kind', '必须是 transform 或 replacement');
+}
+
+function parseSpatialTransform(
+  value: unknown,
+): Extract<SpatialEditDesign, { kind: 'transform' }>['transform'] {
+  const transform = strictRecord(value, 'spatialDesign.transform');
+  if (transform.kind === 'translate') {
+    exactKeys(transform, ['kind', 'offset'], 'spatialDesign.transform');
+    return { kind: 'translate', offset: vec2(transform.offset, 'spatialDesign.transform.offset') };
+  }
+  if (transform.kind === 'rotate') {
+    exactKeys(transform, ['kind', 'center', 'angleDegrees'], 'spatialDesign.transform');
+    return {
+      kind: 'rotate',
+      center: vec2(transform.center, 'spatialDesign.transform.center'),
+      angleDegrees: finiteNumber(transform.angleDegrees, 'spatialDesign.transform.angleDegrees'),
+    };
+  }
+  if (transform.kind === 'scale') {
+    exactKeys(transform, ['kind', 'center', 'factor'], 'spatialDesign.transform');
+    const factor = finiteNumber(transform.factor, 'spatialDesign.transform.factor');
+    if (factor <= 0) {
+      throw new DrawingSpatialProtocolError('spatialDesign.transform.factor', '必须大于 0');
+    }
+    return {
+      kind: 'scale', center: vec2(transform.center, 'spatialDesign.transform.center'), factor,
+    };
+  }
+  throw new DrawingSpatialProtocolError(
+    'spatialDesign.transform.kind',
+    '必须是 translate、rotate 或 scale',
+  );
+}
+
+function strictRecord(value: unknown, path: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new DrawingSpatialProtocolError(path, '必须是对象');
+  }
+  return value as Record<string, unknown>;
+}
+
+function exactKeys(value: Record<string, unknown>, keys: string[], path: string): void {
+  const expected = new Set(keys);
+  const unknown = Object.keys(value).find((key) => !expected.has(key));
+  const missing = keys.find((key) => !(key in value));
+  if (unknown) throw new DrawingSpatialProtocolError(`${path}.${unknown}`, '字段不受支持');
+  if (missing) throw new DrawingSpatialProtocolError(`${path}.${missing}`, '字段缺失');
+}
+
+function vec2(value: unknown, path: string): [number, number] {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new DrawingSpatialProtocolError(path, '必须是 [x,y] 数组');
+  }
+  return [finiteNumber(value[0], `${path}[0]`), finiteNumber(value[1], `${path}[1]`)];
+}
+
+function finiteNumber(value: unknown, path: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new DrawingSpatialProtocolError(path, '必须是有限数值');
+  }
+  return value;
+}
+
+function finiteConfidence(value: unknown, path: string): number {
+  const result = finiteNumber(value, path);
+  if (result < 0 || result > 1) {
+    throw new DrawingSpatialProtocolError(path, '必须在 0 到 1 之间');
+  }
+  return result;
+}
+
+function stringList(value: unknown, path: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.length === 0)) {
+    throw new DrawingSpatialProtocolError(path, '必须是非空字符串数组');
+  }
+  return [...new Set(value)];
 }
 
 function assertDeadline(stage: string, deadlineAt: number, now: () => number): void {

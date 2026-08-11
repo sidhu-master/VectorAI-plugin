@@ -8,6 +8,7 @@ import {
   DrawingFeatureGraphAdapter,
   DrawingGeometryCandidateAdapter,
   DrawingSemanticRegionAdapter,
+  DrawingSpatialDesignAdapter,
   type DrawingSpatialCompletion,
 } from './semantic-adapters.js';
 
@@ -155,6 +156,58 @@ describe('drawing semantic model adapters', () => {
     expect(candidates).toEqual([
       expect.objectContaining({ id: 'raised_hand', type: 'line', end: [30, 60] }),
     ]);
+  });
+
+  it('designs only the already-resolved region targets', async () => {
+    let received: Parameters<DrawingSpatialCompletion>[0] | undefined;
+    const complete: DrawingSpatialCompletion = vi.fn(async (input) => {
+      received = input;
+      return JSON.stringify({
+        kind: 'transform',
+        transform: { kind: 'rotate', center: [30, 20], angleDegrees: 45 },
+        confidence: 0.94,
+        evidenceRefs: ['view_detail'],
+      });
+    });
+    const adapter = new DrawingSpatialDesignAdapter(complete);
+
+    const design = await adapter.design({
+      goal: '把右手抬起来打招呼',
+      observation: observation(),
+      region: {
+        id: 'region_right_arm', drawingId: observation().drawingId,
+        revision: observation().revision, label: '右臂', sourceViewIds: ['view_detail'],
+        maskHandle: 'region_mask_1',
+        worldContours: [[[20, 10], [40, 10], [40, 30], [20, 30]]],
+        worldHoles: [], anchors: [], confidence: 0.93, evidenceRefs: ['view_detail'],
+      },
+      selection: {
+        regionId: 'region_right_arm', revision: observation().revision,
+        wholeNodes: ['hand_line' as import('../../../src/drawing').GeometryId],
+        partialSegments: [], crossingNodes: [], protectedNodes: ['body'],
+        boundaryAnchors: [], classifications: [], uncertainParts: [], splitPlan: [],
+      },
+      strategy: {
+        mode: 'geometric-edit', regionId: 'region_right_arm', preserveRegionIds: [],
+        boundaryAnchorIds: [], requiredGuarantees: ['outside-region-unchanged'],
+        primaryReason: '确定性几何变换',
+      },
+      targetGeometry: [{
+        id: 'hand_line' as import('../../../src/drawing').GeometryId,
+        type: 'line', start: [20, 10], end: [40, 30], visible: true,
+        quality: { status: 'confirmed', evidenceRefs: [] },
+      }],
+      readImage: () => 'data:image/png;base64,AAAA',
+      modelName: 'semantic-model', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 1_000,
+    });
+
+    expect(design).toMatchObject({
+      kind: 'transform', transform: { kind: 'rotate', angleDegrees: 45 },
+    });
+    expect(received?.userPrompt).toContain('region_right_arm');
+    expect(received?.systemPrompt).toContain('不能重新选择 nodeId');
+    expect(received?.responseSchema).toMatchObject({ name: 'drawing_spatial_edit_design' });
   });
 });
 

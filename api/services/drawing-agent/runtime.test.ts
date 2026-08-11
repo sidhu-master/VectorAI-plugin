@@ -5,10 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DrawingAgentProtocolError, type AgentDecision, type DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
 import {
-  DrawingSpatialProtocolError,
-  type EditIntent,
-  type VisualFeatureGraph,
-} from '../../../src/contracts/drawing-spatial-agent';
+  DrawingSpatialRegionProtocolError,
+  type SemanticRegionProposal,
+} from '../../../src/contracts/drawing-spatial-region';
 import {
   type DrawingTransaction,
   type GeometryId,
@@ -20,7 +19,12 @@ import { DrawingApplication } from '../drawing-application/application';
 import { DrawingToolRegistry } from './tool-registry';
 import { DrawingAgentRuntime } from './runtime';
 import { FileDrawingAgentAuditStore } from './file-audit-store';
-import type { DrawingAgentAuditStore } from './audit-types';
+import type {
+  DrawingAgentAuditEvent,
+  DrawingAgentAuditManifest,
+  DrawingAgentAuditStore,
+} from './audit-types';
+import type { SpatialEditDesign } from '../drawing-spatial/spatial-edit-compiler';
 import type { DrawingPerceptionOutput } from '../drawing-perception/pipeline';
 import type {
   DrawingFeedbackOutput,
@@ -69,9 +73,8 @@ async function setup(input: {
   stageTimeoutMs?: number;
   acceptance?: DrawingAcceptanceModelAdapter;
   previewVerifier?: DrawingPreviewVerificationModelAdapter;
-  featureResolver?: { resolve(input: unknown): Promise<VisualFeatureGraph> };
-  intentDesigner?: { design(input: unknown): Promise<EditIntent> };
-  candidateDesigner?: { design(input: unknown): Promise<import('../../../src/drawing').GeometryNode[]> };
+  regionProposer?: { propose(input: unknown): Promise<SemanticRegionProposal> };
+  spatialDesigner?: { design(input: unknown): Promise<SpatialEditDesign> };
   renderForVision?: () => Promise<GroundingSnapshot>;
 } = {}) {
   const idFactory = ids();
@@ -146,9 +149,8 @@ async function setup(input: {
     feedbackLoop: input.feedbackLoop,
     acceptance: input.acceptance,
     previewVerifier: input.previewVerifier,
-    featureResolver: input.featureResolver,
-    intentDesigner: input.intentDesigner,
-    candidateDesigner: input.candidateDesigner,
+    regionProposer: input.regionProposer,
+    spatialDesigner: input.spatialDesigner,
   });
   return { application, decision, order, planner, runtime, tools, workspace };
 }
@@ -852,28 +854,27 @@ describe('DrawingAgentRuntime', () => {
   });
 
   it('returns final whole-drawing rejection feedback to the next semantic repair pass', async () => {
-    const featureInputs: Array<{
+    const regionInputs: Array<{
       repairFeedback?: Array<{ code: string; message: string }>;
       modelName?: string;
     }> = [];
-    const featureResolver = {
-      resolve: vi.fn(async (input: unknown): Promise<VisualFeatureGraph> => {
-        featureInputs.push(input as typeof featureInputs[number]);
+    const regionProposer = {
+      propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
+        const call = input as typeof regionInputs[number] & {
+          observation: { views: Array<{ id: string }> };
+        };
+        regionInputs.push(call);
+        const viewId = call.observation.views[0].id;
         return {
-          features: [{
-            id: 'right_arm', label: '右臂', nodeIds: ['arm'],
-            bounds: { minX: 10, minY: 10, maxX: 40, maxY: 10 },
-            confidence: 0.95, evidenceRefs: ['view_overview'],
-          }],
-          anchors: [], relations: [],
+          label: '右臂', sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          confidence: 0.95, evidenceRefs: [viewId],
         };
       }),
     };
-    const intentDesigner = {
-      design: vi.fn(async (): Promise<EditIntent> => ({
-        operation: 'transform', targetFeatureIds: ['right_arm'], targetNodeIds: ['arm'],
-        anchors: [], preserveNodeIds: [], preserveRules: [{ type: 'outside-target-unchanged' }],
-        desiredRelations: [], transform: { kind: 'translate', offset: [0, 1] },
+    const spatialDesigner = {
+      design: vi.fn(async (): Promise<SpatialEditDesign> => ({
+        kind: 'transform', transform: { kind: 'translate', offset: [0, 1] },
         confidence: 0.95, evidenceRefs: ['view_overview'],
       })),
     };
@@ -898,7 +899,7 @@ describe('DrawingAgentRuntime', () => {
       }],
       summary: '根据整图反馈修正右臂',
     };
-    const setupResult = await setup({ plan, featureResolver, intentDesigner, acceptance });
+    const setupResult = await setup({ plan, regionProposer, spatialDesigner, acceptance });
     const seeded = await setupResult.application.execute({
       drawingId: setupResult.workspace.document.id,
       transaction: {
@@ -923,13 +924,13 @@ describe('DrawingAgentRuntime', () => {
     }).completion;
 
     expect(final.status, final.error ?? '').toBe('completed');
-    expect(featureResolver.resolve).toHaveBeenCalledTimes(2);
-    expect(featureInputs[1].repairFeedback).toEqual([
+    expect(regionProposer.propose).toHaveBeenCalledTimes(2);
+    expect(regionInputs[1].repairFeedback).toEqual([
       expect.objectContaining({
         code: 'final-visual-rejection', message: '整图中右手仍然下垂',
       }),
     ]);
-    expect(featureInputs[1].modelName).toBe('repair-model');
+    expect(regionInputs[1].modelName).toBe('repair-model');
   });
 
   it('gives a corrective replan a fresh plan-local commit budget without exceeding the run cap', async () => {
@@ -1033,33 +1034,34 @@ describe('DrawingAgentRuntime', () => {
     ]));
   });
 
-  it('grounds and compiles a semantic EditIntent before previewing the transaction', async () => {
-    const featureInputs: Array<{ protocolFeedback?: string }> = [];
-    const featureResolver = {
-      resolve: vi.fn(async (input: unknown): Promise<VisualFeatureGraph> => {
-        featureInputs.push(input as { protocolFeedback?: string });
-        if (featureInputs.length === 1) {
-          throw new DrawingSpatialProtocolError(
-            'featureGraph.anchors[0].point',
+  it('runs semantic edits through region selection before previewing the transaction', async () => {
+    const audit = recordingAuditStore();
+    const regionInputs: Array<{ protocolFeedback?: string }> = [];
+    const regionProposer = {
+      propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
+        const call = input as { protocolFeedback?: string; observation: {
+          views: Array<{ id: string }>;
+        } };
+        regionInputs.push(call);
+        if (regionInputs.length === 1) {
+          throw new DrawingSpatialRegionProtocolError(
+            'regionProposal.contours[0][0]',
             '坐标必须使用 [x,y] 数组',
           );
         }
+        const viewId = call.observation.views[0].id;
         return {
-        features: [{
-          id: 'right_arm', label: '右臂', nodeIds: ['arm'],
-          bounds: { minX: 10, minY: 10, maxX: 40, maxY: 10 },
-          confidence: 0.95, evidenceRefs: ['view_overview'],
-        }],
-          anchors: [], relations: [],
+          label: '右臂', sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          confidence: 0.95, evidenceRefs: [viewId],
         };
       }),
     };
-    const intentDesigner = {
-      design: vi.fn(async (): Promise<EditIntent> => ({
-        operation: 'transform', targetFeatureIds: ['right_arm'], targetNodeIds: ['arm'],
-        anchors: [], preserveNodeIds: [], preserveRules: [{ type: 'outside-target-unchanged' }],
-        desiredRelations: [],
-        transform: { kind: 'rotate', center: [10, 10], angleDegrees: 90 },
+    const spatialDesigner = {
+      design: vi.fn(async (): Promise<SpatialEditDesign> => ({
+        kind: 'transform', transform: {
+          kind: 'rotate', center: [10, 10], angleDegrees: 90,
+        },
         confidence: 0.95, evidenceRefs: ['view_overview'],
       })),
     };
@@ -1077,7 +1079,12 @@ describe('DrawingAgentRuntime', () => {
       }],
       summary: '接地并抬起右臂',
     };
-    const setupResult = await setup({ plan, featureResolver, intentDesigner });
+    const previewVerifier: DrawingPreviewVerificationModelAdapter = {
+      verify: vi.fn(async () => ({ satisfied: true, reason: '视觉预览满足目标', defects: [] })),
+    };
+    const setupResult = await setup({
+      plan, regionProposer, spatialDesigner, previewVerifier, auditStore: audit.store,
+    });
     const committed = await setupResult.application.execute({
       drawingId: setupResult.workspace.document.id,
       transaction: {
@@ -1103,19 +1110,42 @@ describe('DrawingAgentRuntime', () => {
     setupResult.runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
 
     const final = await handle.completion;
+    await setupResult.runtime.flushAudit(handle.runId);
     const current = await setupResult.application.open(setupResult.workspace.document.id);
 
     expect(final.status).toBe('completed');
-    expect(featureResolver.resolve).toHaveBeenCalledTimes(2);
-    expect(featureInputs[0].protocolFeedback).toBeUndefined();
-    expect(featureInputs[1].protocolFeedback).toContain('必须使用 [x,y] 数组');
-    expect(intentDesigner.design).toHaveBeenCalledTimes(1);
+    expect(regionProposer.propose).toHaveBeenCalledTimes(2);
+    expect(regionInputs[0].protocolFeedback).toBeUndefined();
+    expect(regionInputs[1].protocolFeedback).toContain('必须使用 [x,y] 数组');
+    expect(spatialDesigner.design).toHaveBeenCalledTimes(1);
     expect(current.document.geometry).toEqual([
       expect.objectContaining({ id: 'arm', end: [10, 40] }),
     ]);
-    expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
-      'observing', 'grounding', 'designing', 'previewing', 'committed',
-    ]));
+    const semanticOrder = events.map((event) => event.type).filter((type) => [
+      'observing', 'grounding', 'region_overlay', 'region_resolved',
+      'split_materialized', 'designing', 'previewing', 'verifying', 'committed',
+    ].includes(type));
+    expect(semanticOrder).toEqual([
+      'observing', 'grounding', 'region_overlay', 'region_resolved',
+      'split_materialized', 'designing', 'previewing', 'verifying', 'committed',
+    ]);
+    const overlay = events.find((event) => event.type === 'region_overlay');
+    expect(overlay?.perceptionDelta?.regionOverlay).toMatchObject({
+      label: '右臂', confidence: 0.95,
+    });
+    expect(JSON.stringify(events)).not.toContain('repair-model');
+    const auditOrder = audit.events.map((event) => event.type === 'verification'
+      ? `verification:${String(event.payload.phase)}`
+      : event.type).filter((type) => [
+        'observation', 'region', 'atomic_graph', 'selection', 'strategy', 'split',
+        'lineage', 'intent', 'episode', 'preview', 'verification:deterministic-spatial',
+        'verification:preview', 'commit',
+      ].includes(type));
+    expect(auditOrder).toEqual([
+      'observation', 'region', 'atomic_graph', 'selection', 'strategy', 'split',
+      'lineage', 'intent', 'episode', 'preview', 'verification:deterministic-spatial',
+      'verification:preview', 'commit',
+    ]);
   });
 
   it('owns read-step completion and final verification without extra model decisions', async () => {
@@ -1569,6 +1599,32 @@ describe('DrawingAgentRuntime', () => {
     }
   });
 });
+
+function recordingAuditStore(): {
+  store: DrawingAgentAuditStore;
+  events: DrawingAgentAuditEvent[];
+} {
+  let manifest: DrawingAgentAuditManifest | null = null;
+  const events: DrawingAgentAuditEvent[] = [];
+  const commits: import('../../../src/drawing').DrawingCommit[] = [];
+  return {
+    events,
+    store: {
+      startRun: vi.fn(async (value) => { manifest = structuredClone(value); }),
+      updateManifest: vi.fn(async (value) => { manifest = structuredClone(value); }),
+      appendEvent: vi.fn(async (event) => { events.push(structuredClone(event)); }),
+      saveCommit: vi.fn(async (_runId, commit) => { commits.push(structuredClone(commit)); }),
+      readRun: vi.fn(async () => {
+        if (!manifest) throw new Error('audit manifest missing');
+        return {
+          manifest: structuredClone(manifest),
+          events: structuredClone(events),
+          commits: structuredClone(commits),
+        };
+      }),
+    },
+  };
+}
 
 function startInput(workspace: Awaited<ReturnType<DrawingApplication['create']>>) {
   return {

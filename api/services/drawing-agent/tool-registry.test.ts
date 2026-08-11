@@ -215,6 +215,55 @@ describe('DrawingToolRegistry', () => {
     expect((await application.open(workspace.document.id)).commits).toHaveLength(1);
   });
 
+  it('allows only the latest active preview version in an episode to commit', async () => {
+    const { application, context, registry, workspace } = await setup();
+    const previewContext = {
+      episodeId: 'episode_raise_arm',
+      regionId: 'region_right_arm',
+      selectionVersionId: 'selection_1',
+      strategy: 'geometric-edit' as const,
+      lineage: [],
+    };
+    const first = await registry.invoke({
+      capability: 'preview_transaction', caller: 'model', toolCallId: 'call_preview_1', context,
+      input: {
+        commands: circleTransaction(context.revision, 'circle_first').commands,
+        postconditions: [{ type: 'node.exists', nodeId: 'circle_first' }],
+        previewContext: { ...previewContext, previewVersionId: 'preview_version_1' },
+      },
+    });
+    const second = await registry.invoke({
+      capability: 'preview_transaction', caller: 'model', toolCallId: 'call_preview_2', context,
+      input: {
+        commands: circleTransaction(context.revision, 'circle_second').commands,
+        postconditions: [{ type: 'node.exists', nodeId: 'circle_second' }],
+        previewContext: { ...previewContext, previewVersionId: 'preview_version_2' },
+      },
+    });
+    if (!first.prepared || !second.prepared) throw new Error('expected prepared previews');
+
+    expect(first.prepared).toMatchObject({
+      ...previewContext,
+      previewVersionId: 'preview_version_1',
+    });
+    const superseded = await registry.invoke({
+      capability: 'commit_transaction', caller: 'runtime', toolCallId: 'commit_old', context,
+      input: { previewHandle: first.prepared.handle },
+    });
+    expect(superseded.receipt).toMatchObject({
+      status: 'rejected', outcome: { kind: 'error', codes: ['PREVIEW_SUPERSEDED'] },
+    });
+
+    const committed = await registry.invoke({
+      capability: 'commit_transaction', caller: 'runtime', toolCallId: 'commit_latest', context,
+      input: { previewHandle: second.prepared.handle },
+    });
+    expect(committed.receipt.status).toBe('succeeded');
+    expect((await application.open(workspace.document.id)).document.geometry).toEqual([
+      expect.objectContaining({ id: 'circle_second' }),
+    ]);
+  });
+
   it('returns a structured stale result when the drawing changes after preview', async () => {
     const { application, context, registry, workspace } = await setup();
     const prepared = await registry.invoke({

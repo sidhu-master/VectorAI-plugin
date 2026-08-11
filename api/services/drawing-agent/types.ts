@@ -15,6 +15,7 @@ import type {
 import type { SourceArtifactReference } from '../source-artifacts/types.js';
 import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer.js';
 import type { VisualObservation } from '../drawing-vision/observation-types.js';
+import type { SpatialEditMode } from '../../../src/contracts/drawing-spatial-region.js';
 
 export type DrawingToolCapability =
   | 'query_entities'
@@ -80,6 +81,28 @@ export interface PreparedDrawingTransaction {
   runId: string;
   drawingId: DrawingId;
   baseRevision: RevisionId;
+  episodeId?: string;
+  previewVersionId?: string;
+  regionId?: string;
+  selectionVersionId?: string;
+  strategy?: SpatialEditMode;
+  lineage?: SpatialPreviewLineage[];
+}
+
+export interface SpatialPreviewLineage {
+  sourceNodeId: string;
+  fragmentId: string;
+  sourceRange: readonly [number, number];
+  role: 'target' | 'protected';
+}
+
+export interface SpatialPreviewContext {
+  episodeId: string;
+  previewVersionId: string;
+  regionId: string;
+  selectionVersionId: string;
+  strategy: SpatialEditMode;
+  lineage: SpatialPreviewLineage[];
 }
 
 export interface DrawingToolExecution {

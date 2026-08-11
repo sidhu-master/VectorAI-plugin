@@ -26,6 +26,7 @@ import type {
   DrawingToolReceipt,
   DrawingToolStatus,
   PreparedDrawingTransaction,
+  SpatialPreviewContext,
 } from './types.js';
 
 export const DRAWING_TOOL_DEFINITIONS: readonly DrawingToolDefinition[] = Object.freeze([
@@ -53,6 +54,7 @@ type ParsedInput =
       capability: 'preview_transaction';
       commands: DrawingTransaction['commands'];
       postconditions: DrawingAssertion[];
+      previewContext?: SpatialPreviewContext;
     }
   | { capability: 'commit_transaction'; previewHandle: string }
   | { capability: 'verify_goal'; assertions: DrawingAssertion[] };
@@ -63,6 +65,8 @@ export class DrawingToolRegistry {
   readonly #now: () => number;
   readonly #handleFactory: () => string;
   readonly #previews = new Map<string, StoredPreview>();
+  readonly #latestPreviewByEpisode = new Map<string, string>();
+  readonly #supersededHandles = new Set<string>();
 
   constructor(input: {
     application: DrawingToolApplication;
@@ -116,14 +120,27 @@ export class DrawingToolRegistry {
   }
 
   discardPrepared(handle: string): boolean {
+    const prepared = this.#previews.get(handle);
+    if (prepared?.episodeId && this.#latestPreviewByEpisode.get(prepared.episodeId) === handle) {
+      this.#latestPreviewByEpisode.delete(prepared.episodeId);
+    }
+    this.#supersededHandles.delete(handle);
     return this.#previews.delete(handle);
+  }
+
+  supersedePrepared(handle: string): boolean {
+    const prepared = this.#previews.get(handle);
+    if (!prepared) return false;
+    this.#previews.delete(handle);
+    this.#supersededHandles.add(handle);
+    return true;
   }
 
   discardRun(runId: string): number {
     let discarded = 0;
     for (const [handle, preview] of this.#previews) {
       if (preview.runId !== runId) continue;
-      this.#previews.delete(handle);
+      this.discardPrepared(handle);
       discarded += 1;
     }
     return discarded;
@@ -224,7 +241,13 @@ export class DrawingToolRegistry {
       baseRevision: invocation.context.revision,
       transaction,
       affectedNodeIds: [...result.preview.affectedNodeIds],
+      ...(input.previewContext ? structuredClone(input.previewContext) : {}),
     };
+    if (prepared.episodeId) {
+      const previous = this.#latestPreviewByEpisode.get(prepared.episodeId);
+      if (previous && previous !== prepared.handle) this.supersedePrepared(previous);
+      this.#latestPreviewByEpisode.set(prepared.episodeId, prepared.handle);
+    }
     this.#previews.set(prepared.handle, prepared);
     return {
       receipt: this.#receipt({
@@ -250,6 +273,9 @@ export class DrawingToolRegistry {
     startedAt: number,
     previewHandle: string,
   ): Promise<DrawingToolExecution> {
+    if (this.#supersededHandles.delete(previewHandle)) {
+      return this.#error(invocation, tool, inputDigest, startedAt, 'PREVIEW_SUPERSEDED', 'replan');
+    }
     const prepared = this.#previews.get(previewHandle);
     if (!prepared) {
       return this.#error(invocation, tool, inputDigest, startedAt, 'PREVIEW_NOT_FOUND', 'replan');
@@ -263,7 +289,13 @@ export class DrawingToolRegistry {
         invocation, tool, inputDigest, startedAt, 'PREVIEW_SCOPE_MISMATCH', 'requery',
       );
     }
+    if (prepared.episodeId
+      && this.#latestPreviewByEpisode.get(prepared.episodeId) !== previewHandle) {
+      this.#previews.delete(previewHandle);
+      return this.#error(invocation, tool, inputDigest, startedAt, 'PREVIEW_SUPERSEDED', 'replan');
+    }
     this.#previews.delete(previewHandle);
+    if (prepared.episodeId) this.#latestPreviewByEpisode.delete(prepared.episodeId);
     const result = await this.#application.execute({
       drawingId: prepared.drawingId,
       transaction: structuredClone(prepared.transaction),
@@ -452,11 +484,14 @@ function parseInput(capability: DrawingToolCapability, value: unknown): ParsedIn
       exact(input, ['nodeId'], 'input');
       return { capability, nodeId: nonEmptyString(input.nodeId, 'input.nodeId') };
     case 'preview_transaction':
-      exact(input, ['commands', 'postconditions'], 'input');
+      exactWithOptional(input, ['commands', 'postconditions'], ['previewContext'], 'input');
       return {
         capability,
         commands: parseDrawingToolCommands(input.commands, 'input.commands'),
         postconditions: parseDrawingToolAssertions(input.postconditions, 'input.postconditions'),
+        ...(input.previewContext === undefined
+          ? {}
+          : { previewContext: parsePreviewContext(input.previewContext) }),
       };
     case 'commit_transaction':
       exact(input, ['previewHandle'], 'input');
@@ -494,6 +529,67 @@ function exact(value: Record<string, unknown>, keys: string[], path: string): vo
   if (missing) throw new DrawingAgentProtocolError(`${path}.${missing}`, '字段缺失');
 }
 
+function exactWithOptional(
+  value: Record<string, unknown>,
+  required: string[],
+  optional: string[],
+  path: string,
+): void {
+  const allowed = new Set([...required, ...optional]);
+  const unknown = Object.keys(value).find((key) => !allowed.has(key));
+  if (unknown) throw new DrawingAgentProtocolError(`${path}.${unknown}`, '字段不受支持');
+  const missing = required.find((key) => !(key in value));
+  if (missing) throw new DrawingAgentProtocolError(`${path}.${missing}`, '字段缺失');
+}
+
+function parsePreviewContext(value: unknown): SpatialPreviewContext {
+  const input = record(value, 'input.previewContext');
+  exact(input, [
+    'episodeId', 'previewVersionId', 'regionId', 'selectionVersionId', 'strategy', 'lineage',
+  ], 'input.previewContext');
+  const strategies = new Set(['geometric-edit', 'generative-redraw', 'hybrid-edit']);
+  const strategy = nonEmptyString(input.strategy, 'input.previewContext.strategy');
+  if (!strategies.has(strategy)) {
+    throw new DrawingAgentProtocolError('input.previewContext.strategy', '编辑策略不受支持');
+  }
+  if (!Array.isArray(input.lineage)) {
+    throw new DrawingAgentProtocolError('input.previewContext.lineage', '必须是数组');
+  }
+  return {
+    episodeId: nonEmptyString(input.episodeId, 'input.previewContext.episodeId'),
+    previewVersionId: nonEmptyString(
+      input.previewVersionId,
+      'input.previewContext.previewVersionId',
+    ),
+    regionId: nonEmptyString(input.regionId, 'input.previewContext.regionId'),
+    selectionVersionId: nonEmptyString(
+      input.selectionVersionId,
+      'input.previewContext.selectionVersionId',
+    ),
+    strategy: strategy as SpatialPreviewContext['strategy'],
+    lineage: input.lineage.map((item, index) => parsePreviewLineage(item, index)),
+  };
+}
+
+function parsePreviewLineage(value: unknown, index: number): SpatialPreviewContext['lineage'][number] {
+  const path = `input.previewContext.lineage[${index}]`;
+  const input = record(value, path);
+  exact(input, ['sourceNodeId', 'fragmentId', 'sourceRange', 'role'], path);
+  if (!Array.isArray(input.sourceRange) || input.sourceRange.length !== 2
+    || input.sourceRange.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
+    throw new DrawingAgentProtocolError(`${path}.sourceRange`, '必须是两个有限数值');
+  }
+  if (input.role !== 'target' && input.role !== 'protected') {
+    throw new DrawingAgentProtocolError(`${path}.role`, '必须是 target 或 protected');
+  }
+  return {
+    sourceNodeId: nonEmptyString(input.sourceNodeId, `${path}.sourceNodeId`),
+    fragmentId: nonEmptyString(input.fragmentId, `${path}.fragmentId`),
+    sourceRange: [input.sourceRange[0] as number, input.sourceRange[1] as number],
+    role: input.role,
+  };
+}
+
 function nonEmptyString(value: unknown, path: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new DrawingAgentProtocolError(path, '必须是非空字符串');
@@ -520,6 +616,12 @@ function publicPrepared(preview: StoredPreview): PreparedDrawingTransaction {
     runId: preview.runId,
     drawingId: preview.drawingId,
     baseRevision: preview.baseRevision,
+    ...(preview.episodeId ? { episodeId: preview.episodeId } : {}),
+    ...(preview.previewVersionId ? { previewVersionId: preview.previewVersionId } : {}),
+    ...(preview.regionId ? { regionId: preview.regionId } : {}),
+    ...(preview.selectionVersionId ? { selectionVersionId: preview.selectionVersionId } : {}),
+    ...(preview.strategy ? { strategy: preview.strategy } : {}),
+    ...(preview.lineage ? { lineage: structuredClone(preview.lineage) } : {}),
   };
 }
 

@@ -4,20 +4,39 @@ import {
   type DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
 import { DrawingSpatialProtocolError } from '../../../src/contracts/drawing-spatial-agent.js';
+import {
+  DrawingSpatialRegionProtocolError,
+  type SemanticRegion,
+  type SpatialEditStrategy,
+  type SpatialSelection,
+} from '../../../src/contracts/drawing-spatial-region.js';
 import type {
+  Bounds2D,
+  DrawingDocument,
+  GeometryNode,
   PerceptionPreviewDelta,
   PerceptionPreviewNode,
 } from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
 import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer.js';
-import { compileEditIntent } from '../drawing-edit/compile-intent.js';
-import { comparePreservedNodes } from '../drawing-edit/preserve-report.js';
-import type { CompiledEditCandidate } from '../drawing-edit/strategy-types.js';
 import type {
-  DrawingEditIntentModelAdapter,
-  DrawingFeatureGraphModelAdapter,
-  DrawingGeometryCandidateModelAdapter,
+  DrawingSemanticRegionModelAdapter,
+  DrawingSpatialDesignModelAdapter,
 } from './semantic-adapters.js';
+import { buildSemanticRegion } from '../drawing-spatial/semantic-region.js';
+import { RegionMediaStore } from '../drawing-spatial/region-media-store.js';
+import { buildAtomicGeometryGraph } from '../drawing-spatial/atomic-graph.js';
+import { RegionResolver } from '../drawing-spatial/region-resolver.js';
+import {
+  materializeSpatialSplits,
+  type MaterializedSplit,
+} from '../drawing-spatial/split-materializer.js';
+import { routeSpatialEditStrategy } from '../drawing-spatial/strategy-router.js';
+import {
+  compileSpatialEdit,
+  type CompiledSpatialEditCandidate,
+} from '../drawing-spatial/spatial-edit-compiler.js';
+import { validateSpatialEditPreview } from '../drawing-spatial/spatial-validator.js';
 import type {
   DrawingPerceptionInput,
   DrawingPerceptionOutput,
@@ -129,7 +148,17 @@ interface RunRecord {
   perceptionPreviewSequence: number;
   feedbackCheckpoint: DrawingFeedbackCheckpoint | null;
   previewDefects: import('./types.js').DrawingPreviewDefect[];
-  compiledEdit: CompiledEditCandidate | null;
+  compiledEdit: CompiledSpatialEditCandidate | null;
+  spatialPreview: {
+    episodeId: string;
+    previewVersionId: string;
+    selectionVersionId: string;
+    region: SemanticRegion;
+    selection: SpatialSelection;
+    strategy: SpatialEditStrategy;
+    tolerance: number;
+  } | null;
+  spatialPreviewSequence: number;
   editPreviewIds: Set<string>;
   editHiddenIds: Set<string>;
 }
@@ -151,9 +180,9 @@ export interface DrawingAgentRuntimeOptions {
   auditStore?: DrawingAgentAuditStore;
   acceptance?: DrawingAcceptanceModelAdapter;
   previewVerifier?: DrawingPreviewVerificationModelAdapter;
-  featureResolver?: DrawingFeatureGraphModelAdapter;
-  intentDesigner?: DrawingEditIntentModelAdapter;
-  candidateDesigner?: DrawingGeometryCandidateModelAdapter;
+  regionProposer?: DrawingSemanticRegionModelAdapter;
+  spatialDesigner?: DrawingSpatialDesignModelAdapter;
+  regionMediaStore?: RegionMediaStore;
   promptHashes?: { planner: string; decision: string };
   sourceArtifacts?: SourceArtifactStore;
   perception?: RuntimePerception;
@@ -187,9 +216,9 @@ export class DrawingAgentRuntime {
   readonly #auditStore?: DrawingAgentAuditStore;
   readonly #acceptance?: DrawingAcceptanceModelAdapter;
   readonly #previewVerifier?: DrawingPreviewVerificationModelAdapter;
-  readonly #featureResolver?: DrawingFeatureGraphModelAdapter;
-  readonly #intentDesigner?: DrawingEditIntentModelAdapter;
-  readonly #candidateDesigner?: DrawingGeometryCandidateModelAdapter;
+  readonly #regionProposer?: DrawingSemanticRegionModelAdapter;
+  readonly #spatialDesigner?: DrawingSpatialDesignModelAdapter;
+  readonly #regionMediaStore: RegionMediaStore;
   readonly #promptHashes: { planner: string; decision: string };
   readonly #sourceArtifacts?: SourceArtifactStore;
   readonly #perception?: RuntimePerception;
@@ -209,9 +238,9 @@ export class DrawingAgentRuntime {
     this.#auditStore = options.auditStore;
     this.#acceptance = options.acceptance;
     this.#previewVerifier = options.previewVerifier;
-    this.#featureResolver = options.featureResolver;
-    this.#intentDesigner = options.intentDesigner;
-    this.#candidateDesigner = options.candidateDesigner;
+    this.#regionProposer = options.regionProposer;
+    this.#spatialDesigner = options.spatialDesigner;
+    this.#regionMediaStore = options.regionMediaStore ?? new RegionMediaStore();
     this.#promptHashes = options.promptHashes ?? DRAWING_AGENT_PROMPT_HASHES;
     this.#sourceArtifacts = options.sourceArtifacts;
     this.#perception = options.perception;
@@ -283,6 +312,8 @@ export class DrawingAgentRuntime {
       feedbackCheckpoint: null,
       previewDefects: [],
       compiledEdit: null,
+      spatialPreview: null,
+      spatialPreviewSequence: 0,
       editPreviewIds: new Set(),
       editHiddenIds: new Set(),
     };
@@ -850,6 +881,7 @@ export class DrawingAgentRuntime {
       upserts: [],
       removeIds: [...record.editPreviewIds],
       showCommittedIds: [...record.editHiddenIds],
+      regionOverlay: null,
       source: {
         page: 1,
         viewId: 'agent-edit-preview',
@@ -1059,8 +1091,8 @@ export class DrawingAgentRuntime {
       const budget = decisionBudget(record.state, this.#now());
       if (budget) throw new Error(budget.message);
       const decision = workflowNode.capability === 'edit_entities'
-        && this.#featureResolver && this.#intentDesigner
-        ? await this.#nextSemanticEdit(record)
+        && this.#regionProposer && this.#spatialDesigner
+        ? await this.#nextRegionFirstEdit(record)
         : await this.#nextDecision(record);
       if (decision.type === 'query' || decision.type === 'inspect') {
         if (!await this.#safePoint(record, 'before_read')) return false;
@@ -1084,7 +1116,20 @@ export class DrawingAgentRuntime {
           capability: 'preview_transaction', caller: 'model',
           toolCallId: decision.toolCallId,
           context: this.#toolContext(record),
-          input: { commands: decision.commands, postconditions: workflowNode.completionCriteria },
+          input: {
+            commands: decision.commands,
+            postconditions: workflowNode.completionCriteria,
+            ...(record.spatialPreview ? {
+              previewContext: {
+                episodeId: record.spatialPreview.episodeId,
+                previewVersionId: record.spatialPreview.previewVersionId,
+                regionId: record.spatialPreview.region.id,
+                selectionVersionId: record.spatialPreview.selectionVersionId,
+                strategy: record.spatialPreview.strategy.mode,
+                lineage: record.compiledEdit?.lineage ?? [],
+              },
+            } : {}),
+          },
         });
         this.#recordTool(record, preview);
         record.prepared = preview.prepared ?? null;
@@ -1123,6 +1168,7 @@ export class DrawingAgentRuntime {
         this.#recordTool(record, committed);
         record.prepared = null;
         record.compiledEdit = null;
+        record.spatialPreview = null;
         if (isStale(committed)) return this.#recoverStale(record);
         if (committed.receipt.status !== 'succeeded'
           && committed.receipt.status !== 'already_satisfied') {
@@ -1153,26 +1199,30 @@ export class DrawingAgentRuntime {
     if (!this.#previewVerifier && !record.compiledEdit) return true;
     if (!preview.previewDocument) throw new Error('预览验证缺少候选文档');
     record.progress.publish('verifying', '正在验证增量修改预览');
-    if (record.compiledEdit && this.#application.open) {
+    if (record.compiledEdit && record.spatialPreview && this.#application.open) {
       const before = await this.#application.open(record.state.drawingId);
-      const preserve = comparePreservedNodes(
-        before.document,
-        preview.previewDocument,
-        record.compiledEdit.preserveNodeIds,
-      );
-      if (!preserve.satisfied) {
-        record.previewDefects = [{
-          code: 'preserve-violation',
-          message: '预览修改了受保护对象',
-          nodeIds: [...preserve.changedNodeIds, ...preserve.missingNodeIds],
-          repairHint: '仅修改 EditIntent 授权的 targetNodeIds',
-        }];
-        this.#audit(record, 'verification', {
-          phase: 'deterministic-preserve',
-          revision: record.state.revision,
-          satisfied: false,
-          preserve,
-        });
+      const deterministic = validateSpatialEditPreview({
+        before: before.document,
+        after: preview.previewDocument,
+        region: record.spatialPreview.region,
+        selection: record.spatialPreview.selection,
+        candidate: record.compiledEdit,
+        tolerance: record.spatialPreview.tolerance,
+      });
+      this.#audit(record, 'verification', {
+        phase: 'deterministic-spatial',
+        revision: record.state.revision,
+        satisfied: deterministic.valid,
+        issues: structuredClone(deterministic.issues),
+        unexpectedDanglingEndpoints: structuredClone(deterministic.unexpectedDanglingEndpoints),
+      });
+      if (!deterministic.valid) {
+        record.previewDefects = deterministic.issues.map((issue) => ({
+          code: issue.code,
+          message: issue.message,
+          nodeIds: issue.nodeIds,
+          repairHint: '保持区域边界连接、保护片段和 lineage 不变后重新设计目标区域',
+        }));
         return false;
       }
     }
@@ -1274,18 +1324,18 @@ export class DrawingAgentRuntime {
     return record.vision;
   }
 
-  async #nextSemanticEdit(record: RunRecord): Promise<AgentDecision> {
-    if (!this.#featureResolver || !this.#intentDesigner) {
-      throw new Error('SEMANTIC_EDIT_ADAPTERS_MISSING');
+  async #nextRegionFirstEdit(record: RunRecord): Promise<AgentDecision> {
+    if (!this.#regionProposer || !this.#spatialDesigner) {
+      throw new Error('REGION_FIRST_EDIT_ADAPTERS_MISSING');
     }
     if (!this.#application.readObservationImage || !this.#application.open) {
-      throw new Error('SEMANTIC_EDIT_APPLICATION_CAPABILITY_MISSING');
+      throw new Error('REGION_FIRST_APPLICATION_CAPABILITY_MISSING');
     }
     this.#transition(record, { type: 'DECISION_RECORDED' });
     record.progress.publish('observing', '正在观察当前二维图纸');
     const vision = await this.#ensureVision(record);
     const observation = vision?.observation;
-    if (!observation) throw new Error('SEMANTIC_EDIT_OBSERVATION_MISSING');
+    if (!observation) throw new Error('REGION_FIRST_OBSERVATION_MISSING');
     this.#audit(record, 'observation', {
       revision: observation.revision,
       rendererVersion: observation.rendererVersion,
@@ -1299,39 +1349,162 @@ export class DrawingAgentRuntime {
       })),
       vectorDigest: observation.vectorDigest,
     });
+    const workspace = await this.#application.open(record.state.drawingId);
+    if (workspace.revision !== record.state.revision) {
+      return { type: 'finish', summary: '图纸版本已变化，需要重新规划' };
+    }
     const repairFeedback = structuredClone(record.previewDefects);
-    const modelName = repairFeedback.length > 0
+    const baseModelName = repairFeedback.length > 0
       ? record.modelProfile.repair
       : record.modelProfile.decision;
-    record.progress.publish('grounding', '正在定位目标图形与锚点');
-    const featureGraph = await this.#callSemanticModel(
-      record,
-      'grounding',
-      modelName,
-      (signal, onRawReply, protocolFeedback) => this.#featureResolver!.resolve({
-        goal: record.state.plan!.goal.objective,
-        observation,
-        readImage: this.#application.readObservationImage!.bind(this.#application),
-        modelName,
-        signal,
-        deadlineAt: record.state.limits.deadlineAt,
-        onRawReply,
-        repairFeedback,
-        ...(protocolFeedback ? { protocolFeedback } : {}),
-      }),
+    record.progress.publish('grounding', '正在选择完整语义区域');
+    let proposal = await this.#proposeSemanticRegion(
+      record, observation, baseModelName, repairFeedback,
     );
-    this.#audit(record, 'grounding', { featureGraph: structuredClone(featureGraph) });
-    record.progress.publish('designing', '正在设计受约束的局部修改');
-    const intent = await this.#callSemanticModel(
+    if (proposal.confidence < LOW_CONFIDENCE_THRESHOLD
+      && baseModelName !== record.modelProfile.repair) {
+      this.#transition(record, {
+        type: 'RECOVERY_RECORDED', recovery: 'lowConfidenceEscalations',
+      });
+      proposal = await this.#proposeSemanticRegion(
+        record,
+        observation,
+        record.modelProfile.repair,
+        [{
+          code: 'low-region-confidence',
+          message: `区域选择置信度 ${proposal.confidence.toFixed(2)}，请重新检查完整边界`,
+          nodeIds: [],
+        }],
+      );
+    }
+    const region = await buildSemanticRegion({
+      drawingId: record.state.drawingId,
+      observation,
+      proposal,
+      mediaStore: this.#regionMediaStore,
+    });
+    const episodeId = `${record.state.runId}:${record.state.currentWorkflowNodeId ?? 'edit'}`;
+    const previewVersionId = `${episodeId}:preview:${++record.spatialPreviewSequence}`;
+    const selectionVersionId = `${region.id}:selection:${record.state.revision}`;
+    const overlayDelta: PerceptionPreviewDelta = {
+      runId: record.state.runId,
+      sequence: ++record.perceptionPreviewSequence,
+      action: 'preview',
+      slotIds: [], upserts: [], removeIds: [],
+      regionOverlay: {
+        id: region.id,
+        revision: region.revision,
+        previewVersionId,
+        label: region.label,
+        contours: structuredClone(region.worldContours),
+        holes: structuredClone(region.worldHoles),
+        anchors: structuredClone(region.anchors),
+        confidence: region.confidence,
+      },
+      source: {
+        page: 1,
+        viewId: proposal.sourceViewId,
+        regionId: region.id,
+        stage: 'edit-preview',
+      },
+    };
+    record.progress.publish('region_overlay', '已定位目标区域', undefined, overlayDelta);
+    this.#audit(record, 'region', {
+      id: region.id,
+      revision: region.revision,
+      label: region.label,
+      sourceViewIds: region.sourceViewIds,
+      maskHandle: region.maskHandle,
+      contourCount: region.worldContours.length,
+      holeCount: region.worldHoles.length,
+      anchorCount: region.anchors.length,
+      confidence: region.confidence,
+      evidenceRefs: region.evidenceRefs,
+    });
+    const bounds = semanticRegionBounds(region);
+    const tolerance = spatialTolerance(bounds);
+    const graph = buildAtomicGeometryGraph({
+      document: workspace.document,
+      revision: workspace.revision,
+      regionBounds: bounds,
+      padding: tolerance * 4,
+    });
+    this.#audit(record, 'atomic_graph', {
+      revision: graph.revision,
+      segmentCount: graph.segments.length,
+      nodeCount: new Set(graph.segments.map((segment) => segment.nodeId)).size,
+      segmentIds: graph.segments.slice(0, 200).map((segment) => segment.id),
+      truncated: graph.segments.length > 200,
+    });
+    const selection = new RegionResolver().resolve({
+      document: workspace.document,
+      revision: workspace.revision,
+      region,
+      graph,
+      tolerance,
+    });
+    record.progress.publish(
+      'region_resolved',
+      '目标区域已解析为可编辑几何',
+      `完整图元 ${selection.wholeNodes.length}，跨边界图元 ${selection.crossingNodes.length}`,
+    );
+    this.#audit(record, 'selection', {
+      selectionVersionId,
+      regionId: selection.regionId,
+      revision: selection.revision,
+      wholeNodes: selection.wholeNodes,
+      crossingNodes: selection.crossingNodes,
+      protectedNodeCount: selection.protectedNodes.length,
+      boundaryAnchors: structuredClone(selection.boundaryAnchors),
+      uncertainParts: structuredClone(selection.uncertainParts),
+      splitPlan: structuredClone(selection.splitPlan),
+    });
+    if (selection.wholeNodes.length === 0 && selection.partialSegments.length === 0) {
+      throw new Error('REGION_FIRST_SELECTION_EMPTY');
+    }
+    const strategy = routeSpatialEditStrategy({
+      goal: record.state.plan!.goal.objective,
+      document: workspace.document,
+      region,
+      selection,
+    });
+    this.#audit(record, 'strategy', structuredClone(strategy) as unknown as Record<string, unknown>);
+    const split = materializeSpatialSplits({ document: workspace.document, selection });
+    record.progress.publish(
+      'split_materialized',
+      split.commands.length > 0 ? '已准备跨边界图元拆分' : '目标边界无需拆分',
+      split.fidelityWarnings.join('；') || undefined,
+    );
+    this.#audit(record, 'split', {
+      commandCount: split.commands.length,
+      fragmentCount: split.fragments.length,
+      fidelityWarnings: split.fidelityWarnings,
+    });
+    this.#audit(record, 'lineage', {
+      regionId: region.id,
+      entries: structuredClone(split.lineage),
+    });
+    const targetGeometry = targetGeometryForDesign(workspace.document, selection, split);
+    record.progress.publish(
+      strategy.mode === 'geometric-edit' ? 'designing' : 'generating',
+      strategy.mode === 'geometric-edit' ? '正在设计区域几何修改' : '正在生成区域重绘方案',
+    );
+    const designModelName = region.confidence < LOW_CONFIDENCE_THRESHOLD
+      ? record.modelProfile.repair
+      : baseModelName;
+    const design = await this.#callSemanticModel(
       record,
       'design',
-      modelName,
-      (signal, onRawReply, protocolFeedback) => this.#intentDesigner!.design({
+      designModelName,
+      (signal, onRawReply, protocolFeedback) => this.#spatialDesigner!.design({
         goal: record.state.plan!.goal.objective,
         observation,
-        featureGraph,
+        region,
+        selection,
+        strategy,
+        targetGeometry,
         readImage: this.#application.readObservationImage!.bind(this.#application),
-        modelName,
+        modelName: designModelName,
         signal,
         deadlineAt: record.state.limits.deadlineAt,
         onRawReply,
@@ -1339,56 +1512,61 @@ export class DrawingAgentRuntime {
         ...(protocolFeedback ? { protocolFeedback } : {}),
       }),
     );
-    const candidateGeometry = intent.operation === 'transform'
-      ? undefined
-      : await this.#designCandidateGeometry(
-          record, observation, featureGraph, intent, modelName, repairFeedback,
-        );
-    const workspace = await this.#application.open(record.state.drawingId);
-    if (workspace.revision !== record.state.revision) return {
-      type: 'finish', summary: '图纸版本已变化，需要重新规划',
-    };
-    const compiled = compileEditIntent(intent, {
+    const compiled = compileSpatialEdit({
       document: workspace.document,
-      ...(candidateGeometry ? { candidateGeometry } : {}),
+      selection,
+      region,
+      strategy,
+      split,
+      design,
     });
     record.compiledEdit = compiled;
+    record.spatialPreview = {
+      episodeId,
+      previewVersionId,
+      selectionVersionId,
+      region,
+      selection,
+      strategy,
+      tolerance,
+    };
     this.#audit(record, 'intent', {
-      intent: structuredClone(intent),
-      strategy: compiled.strategy,
+      kind: design.kind,
+      confidence: design.confidence,
+      evidenceRefs: design.evidenceRefs,
       targetNodeIds: compiled.targetNodeIds,
-      preserveNodeIds: compiled.preserveNodeIds,
-      allowedBounds: compiled.allowedBounds,
+      authorizedBounds: compiled.authorizedBounds,
       commandCount: compiled.commands.length,
+    });
+    this.#audit(record, 'episode', {
+      episodeId,
+      previewVersionId,
+      selectionVersionId,
+      regionId: region.id,
+      strategy: strategy.mode,
+      repairFeedback,
     });
     return {
       type: 'transact',
-      toolCallId: this.#callId(record, 'semantic_edit'),
+      toolCallId: this.#callId(record, 'region_edit'),
       commands: compiled.commands,
-      confidence: intent.confidence,
+      confidence: design.confidence,
     };
   }
 
-  async #designCandidateGeometry(
+  async #proposeSemanticRegion(
     record: RunRecord,
     observation: NonNullable<DrawingVisionContext['observation']>,
-    featureGraph: Awaited<ReturnType<DrawingFeatureGraphModelAdapter['resolve']>>,
-    intent: Awaited<ReturnType<DrawingEditIntentModelAdapter['design']>>,
     modelName: string,
     repairFeedback: import('./types.js').DrawingPreviewDefect[],
   ) {
-    if (!this.#candidateDesigner || !this.#application.readObservationImage) {
-      throw new Error('SEMANTIC_CANDIDATE_ADAPTER_MISSING');
-    }
     return this.#callSemanticModel(
       record,
-      'design',
+      'grounding',
       modelName,
-      (signal, onRawReply, protocolFeedback) => this.#candidateDesigner!.design({
+      (signal, onRawReply, protocolFeedback) => this.#regionProposer!.propose({
         goal: record.state.plan!.goal.objective,
         observation,
-        featureGraph,
-        intent,
         readImage: this.#application.readObservationImage!.bind(this.#application),
         modelName,
         signal,
@@ -1419,6 +1597,7 @@ export class DrawingAgentRuntime {
       );
     } catch (error) {
       if (!(error instanceof DrawingSpatialProtocolError)
+        && !(error instanceof DrawingSpatialRegionProtocolError)
         && !(error instanceof DrawingAgentProtocolError)) throw error;
       record.progress.publish('validation', '正在修正空间协议输出', error.message);
       this.#audit(record, 'validation', {
@@ -1671,7 +1850,19 @@ export class DrawingAgentRuntime {
         : execution.receipt.capability === 'verify_goal'
           ? 'validation'
           : 'tool_call';
-    this.#audit(record, type, { receipt: structuredClone(execution.receipt) });
+    this.#audit(record, type, {
+      receipt: structuredClone(execution.receipt),
+      ...(execution.prepared ? {
+        prepared: {
+          handle: execution.prepared.handle,
+          episodeId: execution.prepared.episodeId,
+          previewVersionId: execution.prepared.previewVersionId,
+          regionId: execution.prepared.regionId,
+          selectionVersionId: execution.prepared.selectionVersionId,
+          strategy: execution.prepared.strategy,
+        },
+      } : {}),
+    });
     if (execution.commit) {
       this.#enqueueAudit(record, () => this.#auditStore!.saveCommit(
         record.state.runId,
@@ -1761,6 +1952,8 @@ export class DrawingAgentRuntime {
   #discardPrepared(record: RunRecord): void {
     if (record.prepared) this.#tools.discardPrepared(record.prepared.handle);
     record.prepared = null;
+    record.compiledEdit = null;
+    record.spatialPreview = null;
   }
 
   #callId(record: RunRecord, prefix: string): string {
@@ -1845,6 +2038,36 @@ export class DrawingAgentRuntime {
     if (!this.#auditStore) return;
     record.auditQueue = record.auditQueue.then(operation);
   }
+}
+
+function semanticRegionBounds(region: SemanticRegion): Bounds2D {
+  const points = region.worldContours.flatMap((contour) => contour);
+  if (points.length === 0) throw new Error('SEMANTIC_REGION_BOUNDS_EMPTY');
+  return {
+    minX: Math.min(...points.map((point) => point[0])),
+    minY: Math.min(...points.map((point) => point[1])),
+    maxX: Math.max(...points.map((point) => point[0])),
+    maxY: Math.max(...points.map((point) => point[1])),
+  };
+}
+
+function spatialTolerance(bounds: Bounds2D): number {
+  return Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1) * 1e-6;
+}
+
+function targetGeometryForDesign(
+  document: DrawingDocument,
+  selection: SpatialSelection,
+  split: MaterializedSplit,
+): GeometryNode[] {
+  const targetFragmentIds = new Set(split.lineage
+    .filter((entry) => entry.role === 'target')
+    .map((entry) => entry.fragmentId));
+  const targets = [
+    ...selection.wholeNodes.map((id) => document.geometry.find((node) => node.id === id)),
+    ...split.fragments.filter((node) => targetFragmentIds.has(node.id)),
+  ].filter((node): node is GeometryNode => node !== undefined);
+  return [...new Map(targets.map((node) => [node.id, structuredClone(node)])).values()];
 }
 
 function nextWorkflowNode(state: DrawingAgentState) {
