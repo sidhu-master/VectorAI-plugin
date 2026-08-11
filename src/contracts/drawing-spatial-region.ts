@@ -103,6 +103,7 @@ export interface SpatialSelection {
   crossingNodes: GeometryId[];
   protectedNodes: string[];
   boundaryAnchors: SpatialBoundaryAnchor[];
+  classifications: SelectionCandidate[];
   uncertainParts: SelectionCandidate[];
   splitPlan: VirtualSplitPlan[];
 }

@@ -94,7 +94,7 @@ describe('drawing spatial-region protocol', () => {
       regionId: 'region_arm',
       revision: 'revision_old' as RevisionId,
       wholeNodes: [], partialSegments: [], crossingNodes: [], protectedNodes: [],
-      boundaryAnchors: [], uncertainParts: [], splitPlan: [],
+      boundaryAnchors: [], classifications: [], uncertainParts: [], splitPlan: [],
     } satisfies SpatialSelection;
 
     expect(() => assertSelectionRevision(selection, 'revision_new' as RevisionId))
