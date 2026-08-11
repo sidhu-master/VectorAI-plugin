@@ -46,6 +46,79 @@ export interface SemanticRegion {
   evidenceRefs: string[];
 }
 
+/** Coarse semantic hint used to constrain observation, never to grant write access. */
+export interface TargetHint {
+  semanticDescription: string;
+  approximateBounds?: Bounds2D;
+  preferredScale: 'detail' | 'part' | 'assembly' | 'drawing';
+}
+
+export interface LocalityBudget {
+  maxAreaRatio: number;
+  maxSpanRatio: number;
+  maxWholeNodes: number;
+  maxCrossingNodes: number;
+  maxBoundaryAnchors: number;
+  maxCandidateFragments: number;
+}
+
+export interface LocalityMetrics {
+  areaRatio: number;
+  widthRatio: number;
+  heightRatio: number;
+  targetCenterDistanceRatio: number | null;
+  wholeNodes: number;
+  crossingNodes: number;
+  boundaryAnchors: number;
+  candidateFragments: number;
+}
+
+export type LocalityIssueCode =
+  | 'ENVELOPE_AREA_EXCEEDED'
+  | 'ENVELOPE_SPAN_EXCEEDED'
+  | 'ENVELOPE_COMPLEXITY_EXCEEDED';
+
+export interface LocalityIssue {
+  code: LocalityIssueCode;
+  message: string;
+}
+
+export interface SearchEnvelopeAssessment {
+  accepted: boolean;
+  metrics: LocalityMetrics;
+  issues: LocalityIssue[];
+}
+
+export interface SelectionProofEvidence {
+  fragmentId: string;
+  reason: string;
+  confidence: number;
+}
+
+export interface SelectionProofProposal {
+  editableFragmentIds: string[];
+  anchorIds: string[];
+  evidence: SelectionProofEvidence[];
+  confidence: number;
+}
+
+export interface SelectionProofParseContext {
+  allowedFragmentIds: readonly string[];
+  allowedAnchorIds: readonly string[];
+}
+
+export interface FragmentAuthorization {
+  id: string;
+  revision: RevisionId;
+  regionId: string;
+  editableFragmentIds: string[];
+  protectedFragmentIds: string[];
+  boundaryAnchorIds: string[];
+  protectedHashes: Record<string, string>;
+  selectionProofId: string;
+  locality: LocalityMetrics;
+}
+
 export interface AtomicSegmentRef {
   id: string;
   revision: RevisionId;
@@ -228,6 +301,51 @@ export function parseSpatialEditStrategy(
       ] as const, `strategy.requiredGuarantees[${index}]`)),
     primaryReason: string(strategy.primaryReason, 'strategy.primaryReason'),
     ...(fallbackMode ? { fallbackMode } : {}),
+  };
+}
+
+export function parseSelectionProofProposal(
+  value: unknown,
+  context: SelectionProofParseContext,
+): SelectionProofProposal {
+  const proof = object(value, 'selectionProof');
+  exact(proof, [
+    'editableFragmentIds', 'anchorIds', 'evidence', 'confidence',
+  ], 'selectionProof');
+  const editableFragmentIds = checkedIds(
+    proof.editableFragmentIds,
+    'selectionProof.editableFragmentIds',
+    context.allowedFragmentIds,
+  );
+  if (editableFragmentIds.length === 0) {
+    fail('selectionProof.editableFragmentIds', '至少需要选择一个可编辑片段');
+  }
+  const anchorIds = checkedIds(
+    proof.anchorIds,
+    'selectionProof.anchorIds',
+    context.allowedAnchorIds,
+  );
+  const evidence = array(proof.evidence, 'selectionProof.evidence').map((item, index) => {
+    const path = `selectionProof.evidence[${index}]`;
+    const record = object(item, path);
+    exact(record, ['fragmentId', 'reason', 'confidence'], path);
+    const fragmentId = checkedId(
+      record.fragmentId,
+      `${path}.fragmentId`,
+      editableFragmentIds,
+    );
+    return {
+      fragmentId,
+      reason: string(record.reason, `${path}.reason`),
+      confidence: confidence(record.confidence, `${path}.confidence`),
+    };
+  });
+  unique(evidence.map((item) => item.fragmentId), 'selectionProof.evidence');
+  return {
+    editableFragmentIds,
+    anchorIds,
+    evidence,
+    confidence: confidence(proof.confidence, 'selectionProof.confidence'),
   };
 }
 

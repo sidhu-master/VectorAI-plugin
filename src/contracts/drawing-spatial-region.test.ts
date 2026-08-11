@@ -4,6 +4,7 @@ import type { RevisionId } from '@/drawing';
 import {
   assertSelectionRevision,
   DrawingSpatialRegionProtocolError,
+  parseSelectionProofProposal,
   parseSemanticRegionProposal,
   parseSpatialEditStrategy,
   type SpatialSelection,
@@ -102,5 +103,45 @@ describe('drawing spatial-region protocol', () => {
         'selection.revision',
         'SPATIAL_SELECTION_STALE: expected revision_new, received revision_old',
       ));
+  });
+
+  it('accepts only allowlisted fragment and anchor ids in a selection proof', () => {
+    const proposal = parseSelectionProofProposal({
+      editableFragmentIds: ['fragment_arm_upper', 'fragment_arm_lower'],
+      anchorIds: ['anchor_shoulder'],
+      evidence: [
+        { fragmentId: 'fragment_arm_upper', reason: '右臂上边界', confidence: 0.96 },
+        { fragmentId: 'fragment_arm_lower', reason: '右臂下边界', confidence: 0.94 },
+      ],
+      confidence: 0.95,
+    }, {
+      allowedFragmentIds: ['fragment_arm_upper', 'fragment_arm_lower', 'fragment_body'],
+      allowedAnchorIds: ['anchor_shoulder'],
+    });
+
+    expect(proposal.editableFragmentIds).toEqual(['fragment_arm_upper', 'fragment_arm_lower']);
+    expect(proposal.anchorIds).toEqual(['anchor_shoulder']);
+  });
+
+  it.each([
+    ['unknown fragment', {
+      editableFragmentIds: ['fragment_head'], anchorIds: [], evidence: [], confidence: 0.8,
+    }, 'selectionProof.editableFragmentIds[0]'],
+    ['duplicate fragment', {
+      editableFragmentIds: ['fragment_arm', 'fragment_arm'], anchorIds: [], evidence: [], confidence: 0.8,
+    }, 'selectionProof.editableFragmentIds'],
+    ['empty selection', {
+      editableFragmentIds: [], anchorIds: [], evidence: [], confidence: 0.8,
+    }, 'selectionProof.editableFragmentIds'],
+    ['evidence for unselected fragment', {
+      editableFragmentIds: ['fragment_arm'], anchorIds: [],
+      evidence: [{ fragmentId: 'fragment_body', reason: '错误证据', confidence: 0.8 }],
+      confidence: 0.8,
+    }, 'selectionProof.evidence[0].fragmentId'],
+  ])('rejects %s in a selection proof', (_name, value, path) => {
+    expect(() => parseSelectionProofProposal(value, {
+      allowedFragmentIds: ['fragment_arm', 'fragment_body'],
+      allowedAnchorIds: ['anchor_shoulder'],
+    })).toThrow(expect.objectContaining({ path }));
   });
 });
