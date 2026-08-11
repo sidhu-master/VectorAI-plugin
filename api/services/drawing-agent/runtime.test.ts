@@ -22,6 +22,7 @@ import type {
   DrawingFeedbackRunInput,
 } from '../drawing-feedback/loop-controller';
 import type { SourceArtifactStore } from '../source-artifacts/types';
+import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer';
 import type {
   DrawingAcceptanceModelAdapter,
   DrawingDecisionInput,
@@ -60,18 +61,7 @@ async function setup(input: {
   feedbackLoop?: { run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> };
   stageTimeoutMs?: number;
   acceptance?: DrawingAcceptanceModelAdapter;
-  renderForVision?: () => Promise<{
-    width: number;
-    height: number;
-    imageDataUrl: string;
-    nodes: Array<{
-      nodeId: string;
-      type: string;
-      bounds: { x: number; y: number; width: number; height: number };
-      normalized: { left: number; top: number; right: number; bottom: number };
-      selected: boolean;
-    }>;
-  }>;
+  renderForVision?: () => Promise<GroundingSnapshot>;
 } = {}) {
   const idFactory = ids();
   const repository = new MemoryDrawingRepository({ idFactory, now: () => 100 });
@@ -92,7 +82,12 @@ async function setup(input: {
     },
     // 视觉接地快照在 runtime 测试中未启用(不传 viewport),占位即可
     renderForVision: input.renderForVision ?? (async () => ({
-      width: 1, height: 1, imageDataUrl: 'data:image/png;base64,', nodes: [],
+      width: 1,
+      height: 1,
+      imageDataUrl: 'data:image/png;base64,',
+      rendererVersion: 'scene-1.0',
+      worldToImage: [1, 0, 0, -1, 0, 1],
+      nodes: [],
     })),
   };
   const tools = new DrawingToolRegistry({
@@ -728,12 +723,19 @@ describe('DrawingAgentRuntime', () => {
         width: 100,
         height: 100,
         imageDataUrl: 'data:image/png;base64,AAAA',
+        rendererVersion: 'scene-1.0',
+        worldToImage: [1, 0, 0, -1, 0, 100],
         nodes: [{
+          label: 'G001',
           nodeId: 'existing_line',
           type: 'line',
+          rgb: [255, 0, 0],
           bounds: { x: 10, y: 10, width: 30, height: 2 },
+          worldBounds: { minX: 10, minY: 88, maxX: 40, maxY: 90 },
           normalized: { left: 0.1, top: 0.1, right: 0.4, bottom: 0.12 },
           selected: false,
+          zOrder: 0,
+          clipped: false,
         }],
       }),
     });

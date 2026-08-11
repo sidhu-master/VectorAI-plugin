@@ -21,10 +21,18 @@ describe('renderGroundingSnapshot', () => {
     expect(snapshot.imageDataUrl.startsWith('data:image/png;base64,')).toBe(true);
     expect(snapshot.width).toBe(100);
     expect(snapshot.height).toBe(100);
+    expect(snapshot.rendererVersion).toBe('scene-1.0');
 
     const line = snapshot.nodes.find((node) => node.nodeId === 'line_a');
     expect(line).toBeDefined();
     expect(line!.type).toBe('line');
+    expect(line).toMatchObject({
+      label: 'G001',
+      rgb: expect.arrayContaining([expect.any(Number)]),
+      worldBounds: { minX: 10, minY: 10, maxX: 30, maxY: 10 },
+      zOrder: 0,
+      clipped: false,
+    });
     expect(line!.bounds.x).toBe(9); // 10 - stamp 半径 1
     expect(line!.bounds.y).toBe(89); // Y 翻转(90 - 1)
     expect(line!.bounds.width).toBeGreaterThanOrEqual(21);
@@ -36,6 +44,21 @@ describe('renderGroundingSnapshot', () => {
     expect(circle!.bounds.x).toBeLessThanOrEqual(42);
     expect(circle!.bounds.width).toBeGreaterThanOrEqual(17);
     expect(circle!.bounds.width).toBeLessThanOrEqual(20);
+  });
+
+  it('does not create phantom grounding entries for fully offscreen nodes', async () => {
+    const snapshot = await renderGroundingSnapshot({
+      document: documentWith([geometry({
+        id: 'offscreen', type: 'circle', center: [500, 500], radius: 20,
+      })]),
+      scale: 1,
+      offsetX: 0,
+      offsetY: 100,
+      width: 100,
+      height: 100,
+    });
+
+    expect(snapshot.nodes).toEqual([]);
   });
 
   it('flags selected nodes and renders them highlighted', async () => {

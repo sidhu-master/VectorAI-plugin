@@ -34,6 +34,22 @@ describe('renderDrawingRegion', () => {
     expect(pixel(rendered.planes.geometry, 100, 15, 90)).toBe(1);
     expect(pixel(rendered.planes.geometry, 100, 15, 10)).toBe(0);
   });
+
+  it('renders polyline bulges as analytic arcs instead of straight chords', () => {
+    const rendered = renderDrawingRegion(documentWith([geometry({
+      id: 'bulged_polyline',
+      type: 'polyline',
+      vertices: [{ point: [10, 40], bulge: 1 }, { point: [30, 40] }],
+      closed: false,
+    })]), {
+      region: { x: 0, y: 0, width: 100, height: 100 },
+      documentToSource: [1, 0, 0, -1, 0, 100],
+      strokeWidthPixels: 1,
+    });
+
+    expect(pixel(rendered.planes.geometry, 100, 20, 70)).toBe(1);
+    expect(pixel(rendered.planes.geometry, 100, 20, 60)).toBe(0);
+  });
 });
 
 function allGeometry(): GeometryNode[] {
