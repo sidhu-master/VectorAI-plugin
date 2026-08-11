@@ -31,7 +31,8 @@ const REGION_SYSTEM_PROMPT = `你是 VectorAI 二维语义区域选择器。
 
 const SPATIAL_DESIGN_SYSTEM_PROMPT = `你是 VectorAI Region-First 二维编辑设计器。
 目标区域已经先在连续画面中选定，并由服务器解析成目标图元或局部片段。你只能设计该区域的修改，不能重新选择 nodeId，不能输出 DrawingCommand、事务或完整文档。
-geometric-edit 优先输出 transform；只有在局部生图服务不可用时，generative-redraw 或 hybrid-edit 才可输出 replacement。存在 targetGeometry 时，必须逐一返回同 id、同图元协议的完整 GeometryNode；targetGeometry 为空时，允许使用全新的唯一 id 新增 GeometryNode。两种情况都必须保持 boundaryAnchors 连通。
+默认且不可省略的约束是：区域外内容完全不变、保护片段完全不变、保持已有连接关系、不得产生新的悬空端点，并且除非用户明确要求，否则保持原图样式。用户不需要重复说明这些约束。
+geometric-edit 优先输出 transform；服务器会把高层 transform 确定性编译为保持边界锚点的局部形变。只有 transform 无法表达目标，或局部生图服务不可用时，generative-redraw 或 hybrid-edit 才可输出 replacement。存在 targetGeometry 时，必须逐一返回同 id、同图元协议的完整 GeometryNode；targetGeometry 为空时，允许使用全新的唯一 id 新增 GeometryNode。两种情况都必须保持 boundaryAnchors 连通。
 transform 只允许 translate、rotate、scale。所有坐标必须是 [x,y] 数字数组。evidenceRefs 只能引用输入视图 id。
 只输出严格 JSON：transform 为 {"kind":"transform","transform":object,"confidence":number,"evidenceRefs":string[]}；替换为 {"kind":"replacement","geometry":GeometryNode[],"confidence":number,"evidenceRefs":string[]}。
 若输入含 protocolFeedback，必须针对该错误纠正输出。`;
@@ -138,6 +139,13 @@ export class DrawingSpatialDesignAdapter implements DrawingSpatialDesignModelAda
           uncertainParts: input.selection.uncertainParts,
         },
         strategy: input.strategy,
+        defaultInvariants: [
+          'outside-region-unchanged',
+          'protected-region-unchanged',
+          'maintain-existing-connectivity',
+          'no-new-dangling-endpoints',
+          'preserve-style-unless-requested',
+        ],
         targetGeometry: input.targetGeometry,
         views: observationMetadata(input.observation),
         repairFeedback: input.repairFeedback ?? [],

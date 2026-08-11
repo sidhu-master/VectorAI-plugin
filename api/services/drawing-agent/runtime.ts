@@ -16,6 +16,7 @@ import type {
   GeometryNode,
   PerceptionPreviewDelta,
   PerceptionPreviewNode,
+  RevisionId,
 } from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
 import type { AffineTransform } from '../drawing-render/rasterize-scene.js';
@@ -171,6 +172,25 @@ interface RunRecord {
   episodeQueue: Promise<void>;
   editPreviewIds: Set<string>;
   editHiddenIds: Set<string>;
+  spatialRepairContext: SpatialRepairContext | null;
+  spatialCandidateAttempt: number;
+}
+
+interface SpatialRepairContext {
+  revision: RevisionId;
+  observation: NonNullable<DrawingVisionContext['observation']>;
+  document: DrawingDocument;
+  episodeId: string;
+  proposalViewId: string;
+  region: SemanticRegion;
+  selection: SpatialSelection;
+  split: MaterializedSplit;
+  strategy: SpatialEditStrategy;
+  targetGeometry: GeometryNode[];
+  regionVersion: number;
+  selectionVersion: number;
+  selectionVersionId: string;
+  tolerance: number;
 }
 
 export interface DrawingAgentRunHandle {
@@ -335,6 +355,8 @@ export class DrawingAgentRuntime {
       episodeQueue: Promise.resolve(),
       editPreviewIds: new Set(),
       editHiddenIds: new Set(),
+      spatialRepairContext: null,
+      spatialCandidateAttempt: 0,
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -392,6 +414,7 @@ export class DrawingAgentRuntime {
   addInstruction(runId: string, instruction: string): DrawingAgentState {
     const record = this.#require(runId);
     this.#transition(record, { type: 'INSTRUCTION_ADDED', instruction });
+    this.#resetSpatialRepair(record);
     this.#audit(record, 'instruction', { instruction: instruction.trim() });
     if (record.episode) {
       const activePreview = record.episode.previewVersions.find((version) => (
@@ -913,7 +936,12 @@ export class DrawingAgentRuntime {
   }
 
   #clearEditPreview(record: RunRecord, action: 'promote' | 'reject'): void {
-    if (record.editPreviewIds.size === 0 && record.editHiddenIds.size === 0) return;
+    if (
+      record.editPreviewIds.size === 0
+      && record.editHiddenIds.size === 0
+      && !record.spatialPreview
+      && !record.spatialRepairContext
+    ) return;
     this.#publishPerceptionDelta(record, {
       runId: record.state.runId,
       sequence: 0,
@@ -1152,7 +1180,13 @@ export class DrawingAgentRuntime {
         if (record.state.commitCount >= effectiveCommitLimit(record)) {
           throw new Error(`已达到最大提交次数 ${effectiveCommitLimit(record)}`);
         }
-        record.progress.publish('previewing', '正在生成增量修改预览');
+        record.progress.publish(
+          'previewing',
+          '正在生成增量修改预览',
+          undefined,
+          undefined,
+          candidateProgressFor(record),
+        );
         const preview = await this.#tools.invoke({
           capability: 'preview_transaction', caller: 'model',
           toolCallId: decision.toolCallId,
@@ -1174,7 +1208,13 @@ export class DrawingAgentRuntime {
         });
         this.#recordTool(record, preview);
         record.prepared = preview.prepared ?? null;
-        record.progress.publish('validation', '增量修改预览完成');
+        record.progress.publish(
+          'validation',
+          '增量修改预览完成',
+          undefined,
+          undefined,
+          candidateProgressFor(record),
+        );
         if (preview.prepared && preview.previewDocument) {
           await this.#publishEditPreview(record, preview, false);
         }
@@ -1201,7 +1241,13 @@ export class DrawingAgentRuntime {
         if (!await this.#verifyPreparedPreview(record, preview)) {
           await this.#publishEditPreview(record, preview, true);
           this.#discardPrepared(record);
-          record.progress.publish('revising', '预览未通过，正在根据缺陷修正');
+          record.progress.publish(
+            'revising',
+            '预览未通过，正在根据缺陷修正',
+            record.previewDefects.map((defect) => defect.message).join('；') || undefined,
+            undefined,
+            candidateProgressFor(record),
+          );
           if (!this.#recordValidationRepair(record)) return false;
           continue;
         }
@@ -1223,6 +1269,7 @@ export class DrawingAgentRuntime {
         record.progress.publish('commit', '增量修改已提交');
         record.progress.publish('committed', '增量修改已通过验证并提交');
         this.#clearEditPreview(record, 'promote');
+        this.#resetSpatialRepair(record);
         if (!await this.#safePoint(record, 'after_commit')) return false;
         if (record.state.needsReplan) return this.#plan(record);
         this.#transition(record, { type: 'WORKFLOW_NODE_COMPLETED', nodeId });
@@ -1243,7 +1290,13 @@ export class DrawingAgentRuntime {
   ): Promise<boolean> {
     if (!this.#previewVerifier && !record.compiledEdit) return true;
     if (!preview.previewDocument) throw new Error('预览验证缺少候选文档');
-    record.progress.publish('verifying', '正在验证增量修改预览');
+    record.progress.publish(
+      'verifying',
+      '正在验证增量修改预览',
+      undefined,
+      undefined,
+      candidateProgressFor(record),
+    );
     if (record.compiledEdit && record.spatialPreview && this.#application.open) {
       const before = await this.#application.open(record.state.drawingId);
       const deterministic = validateSpatialEditPreview({
@@ -1419,163 +1472,49 @@ export class DrawingAgentRuntime {
       throw new Error('REGION_FIRST_APPLICATION_CAPABILITY_MISSING');
     }
     this.#transition(record, { type: 'DECISION_RECORDED' });
-    record.progress.publish('observing', '正在观察当前二维图纸');
-    const vision = await this.#ensureVision(record);
-    const observation = vision?.observation;
-    if (!observation) throw new Error('REGION_FIRST_OBSERVATION_MISSING');
-    this.#audit(record, 'observation', {
-      revision: observation.revision,
-      rendererVersion: observation.rendererVersion,
-      selectedIds: observation.selectedIds,
-      views: observation.views.map((view) => ({
-        id: view.id,
-        purpose: view.purpose,
-        imageHandle: view.image.handle,
-        worldBounds: view.worldBounds,
-        groundingCount: view.grounding.length,
-      })),
-      vectorDigest: observation.vectorDigest,
-    });
-    const workspace = await this.#application.open(record.state.drawingId);
-    if (workspace.revision !== record.state.revision) {
-      return { type: 'finish', summary: '图纸版本已变化，需要重新规划' };
+    record.spatialCandidateAttempt += 1;
+    const candidateAttempt = record.spatialCandidateAttempt;
+    if (candidateAttempt > MAX_VALIDATION_REPAIRS + 1) {
+      throw new Error(`空间编辑已生成 ${MAX_VALIDATION_REPAIRS + 1} 个候选，仍未通过验证`);
     }
-    const episode = await this.#ensureEpisode(record);
     const repairFeedback = structuredClone(record.previewDefects);
-    const baseModelName = repairFeedback.length > 0
+    const modelName = candidateAttempt >= MAX_VALIDATION_REPAIRS + 1
       ? record.modelProfile.repair
       : record.modelProfile.decision;
-    record.progress.publish('grounding', '正在选择完整语义区域');
-    let proposal = await this.#proposeSemanticRegion(
-      record, observation, baseModelName, repairFeedback,
-    );
-    if (proposal.confidence < LOW_CONFIDENCE_THRESHOLD
-      && baseModelName !== record.modelProfile.repair) {
-      this.#transition(record, {
-        type: 'RECOVERY_RECORDED', recovery: 'lowConfidenceEscalations',
-      });
-      proposal = await this.#proposeSemanticRegion(
-        record,
-        observation,
-        record.modelProfile.repair,
-        [{
-          code: 'low-region-confidence',
-          message: `区域选择置信度 ${proposal.confidence.toFixed(2)}，请重新检查完整边界`,
-          nodeIds: [],
-        }],
+    const reusable = record.spatialRepairContext
+      && record.spatialRepairContext.revision === record.state.revision
+      && shouldReuseSpatialContext(repairFeedback);
+    let context = reusable ? record.spatialRepairContext : null;
+    if (context) {
+      record.progress.publish(
+        'revising',
+        '正在基于验证结果修复当前区域',
+        repairFeedback.map((item) => item.message).join('；') || undefined,
+        undefined,
+        candidateProgress(candidateAttempt),
       );
+      this.#audit(record, 'state', {
+        event: 'SPATIAL_REPAIR_CONTEXT_REUSED',
+        revision: context.revision,
+        regionId: context.region.id,
+        selectionVersionId: context.selectionVersionId,
+        candidateAttempt,
+      });
+    } else {
+      context = await this.#prepareSpatialRepairContext(
+        record,
+        modelName,
+        repairFeedback,
+        candidateAttempt,
+      );
+      if (!context) return { type: 'finish', summary: '图纸版本已变化，需要重新规划' };
+      record.spatialRepairContext = context;
     }
-    const region = await buildSemanticRegion({
-      drawingId: record.state.drawingId,
-      observation,
-      proposal,
-      mediaStore: this.#regionMediaStore,
-    });
-    const episodeId = `${record.state.runId}:${record.state.currentWorkflowNodeId ?? 'edit'}`;
-    const previewVersionId = `${episodeId}:preview:${++record.spatialPreviewSequence}`;
-    const selectionVersionId = `${region.id}:selection:${record.state.revision}`;
-    const overlayDelta: PerceptionPreviewDelta = {
-      runId: record.state.runId,
-      sequence: ++record.perceptionPreviewSequence,
-      action: 'preview',
-      slotIds: [], upserts: [], removeIds: [],
-      regionOverlay: {
-        id: region.id,
-        revision: region.revision,
-        previewVersionId,
-        label: region.label,
-        contours: structuredClone(region.worldContours),
-        holes: structuredClone(region.worldHoles),
-        anchors: structuredClone(region.anchors),
-        confidence: region.confidence,
-      },
-      source: {
-        page: 1,
-        viewId: proposal.sourceViewId,
-        regionId: region.id,
-        stage: 'edit-preview',
-      },
-    };
-    record.progress.publish('region_overlay', '已定位目标区域', undefined, overlayDelta);
-    this.#audit(record, 'region', {
-      id: region.id,
-      revision: region.revision,
-      label: region.label,
-      sourceViewIds: region.sourceViewIds,
-      maskHandle: region.maskHandle,
-      contourCount: region.worldContours.length,
-      holeCount: region.worldHoles.length,
-      anchorCount: region.anchors.length,
-      confidence: region.confidence,
-      evidenceRefs: region.evidenceRefs,
-    });
-    const bounds = semanticRegionBounds(region);
-    const tolerance = spatialTolerance(bounds);
-    const graph = buildAtomicGeometryGraph({
-      document: workspace.document,
-      revision: workspace.revision,
-      regionBounds: bounds,
-      padding: tolerance * 4,
-    });
-    this.#audit(record, 'atomic_graph', {
-      revision: graph.revision,
-      segmentCount: graph.segments.length,
-      nodeCount: new Set(graph.segments.map((segment) => segment.nodeId)).size,
-      segmentIds: graph.segments.slice(0, 200).map((segment) => segment.id),
-      truncated: graph.segments.length > 200,
-    });
-    const selection = new RegionResolver().resolve({
-      document: workspace.document,
-      revision: workspace.revision,
-      region,
-      graph,
-      tolerance,
-    });
-    record.progress.publish(
-      'region_resolved',
-      '目标区域已解析为可编辑几何',
-      `完整图元 ${selection.wholeNodes.length}，跨边界图元 ${selection.crossingNodes.length}`,
-    );
-    this.#audit(record, 'selection', {
-      selectionVersionId,
-      regionId: selection.regionId,
-      revision: selection.revision,
-      wholeNodes: selection.wholeNodes,
-      crossingNodes: selection.crossingNodes,
-      protectedNodeCount: selection.protectedNodes.length,
-      boundaryAnchors: structuredClone(selection.boundaryAnchors),
-      uncertainParts: structuredClone(selection.uncertainParts),
-      splitPlan: structuredClone(selection.splitPlan),
-    });
-    supersedeActive(episode.regionVersions);
-    const regionVersion = episode.regionVersions.length + 1;
-    episode.regionVersions.push({
-      version: regionVersion,
-      regionId: region.id,
-      maskHandle: region.maskHandle,
-      status: 'active',
-      createdAt: this.#now(),
-    });
-    supersedeActive(episode.selectionVersions);
-    const selectionVersion = episode.selectionVersions.length + 1;
-    episode.selectionVersions.push({
-      version: selectionVersion,
-      selectionVersionId,
-      regionVersion,
-      status: 'active',
-      targetNodeIds: [...selection.wholeNodes],
-      crossingNodeIds: [...selection.crossingNodes],
-      createdAt: this.#now(),
-    });
-    episode.updatedAt = this.#now();
-    this.#persistEpisode(record);
-    let strategy = routeSpatialEditStrategy({
-      goal: record.state.plan!.goal.objective,
-      document: workspace.document,
-      region,
-      selection,
-    });
-    this.#audit(record, 'strategy', structuredClone(strategy) as unknown as Record<string, unknown>);
+    const {
+      observation, document, episodeId, proposalViewId, region, selection, split,
+      targetGeometry, regionVersion, selectionVersion, selectionVersionId, tolerance,
+    } = context;
+    let strategy = context.strategy;
     if (selection.wholeNodes.length === 0 && selection.partialSegments.length === 0
       && strategy.mode === 'geometric-edit') {
       record.previewDefects = [{
@@ -1590,36 +1529,29 @@ export class DrawingAgentRuntime {
         regionId: region.id,
         defects: structuredClone(record.previewDefects),
       });
-      record.progress.publish('revising', '目标区域未覆盖现有图形，正在重新观察');
+      record.progress.publish(
+        'revising',
+        '目标区域未覆盖现有图形，正在重新观察',
+        undefined,
+        undefined,
+        candidateProgress(candidateAttempt),
+      );
+      record.spatialRepairContext = null;
       this.#recordValidationRepair(record);
       return this.#nextRegionFirstEdit(record);
     }
-    const split = materializeSpatialSplits({ document: workspace.document, selection });
-    record.progress.publish(
-      'split_materialized',
-      split.commands.length > 0 ? '已准备跨边界图元拆分' : '目标边界无需拆分',
-      split.fidelityWarnings.join('；') || undefined,
-    );
-    this.#audit(record, 'split', {
-      commandCount: split.commands.length,
-      fragmentCount: split.fragments.length,
-      fidelityWarnings: split.fidelityWarnings,
-    });
-    this.#audit(record, 'lineage', {
-      regionId: region.id,
-      entries: structuredClone(split.lineage),
-    });
-    const targetGeometry = targetGeometryForDesign(workspace.document, selection, split);
-    const designModelName = region.confidence < LOW_CONFIDENCE_THRESHOLD
-      ? record.modelProfile.repair
-      : baseModelName;
+    const previewVersionId = `${episodeId}:preview:${++record.spatialPreviewSequence}`;
+    const episode = await this.#ensureEpisode(record);
     let design: SpatialEditDesign | undefined;
     if (strategy.mode !== 'geometric-edit' && this.#redrawService) {
-      record.progress.publish('generating', '正在生成区域重绘方案');
+      record.progress.publish(
+        'generating', '正在生成区域重绘方案', undefined, undefined,
+        candidateProgress(candidateAttempt),
+      );
       try {
         design = await this.#generateSpatialRedraw({
-          record, observation, proposalViewId: proposal.sourceViewId,
-          region, strategy, designModelName,
+          record, observation, proposalViewId,
+          region, strategy, designModelName: modelName,
         });
       } catch (error) {
         if (!strategy.fallbackMode) throw error;
@@ -1628,7 +1560,10 @@ export class DrawingAgentRuntime {
           error: error instanceof Error ? error.message : String(error),
           fallbackMode: strategy.fallbackMode,
         });
-        record.progress.publish('revising', '局部生成不可用，正在改用几何方案');
+        record.progress.publish(
+          'revising', '局部生成不可用，正在改用几何方案', undefined, undefined,
+          candidateProgress(candidateAttempt),
+        );
         strategy = { ...strategy, mode: strategy.fallbackMode };
       }
     }
@@ -1637,14 +1572,20 @@ export class DrawingAgentRuntime {
         this.#audit(record, 'generation', {
           event: 'GENERATION_PROVIDER_UNAVAILABLE', fallbackMode: 'geometric-edit',
         });
-        record.progress.publish('revising', '局部生成服务未配置，正在改用几何方案');
+        record.progress.publish(
+          'revising', '局部生成服务未配置，正在改用几何方案', undefined, undefined,
+          candidateProgress(candidateAttempt),
+        );
         strategy = { ...strategy, mode: 'geometric-edit' };
       }
-      record.progress.publish('designing', '正在设计区域几何修改');
+      record.progress.publish(
+        'designing', '正在设计区域几何修改', undefined, undefined,
+        candidateProgress(candidateAttempt),
+      );
       design = await this.#callSemanticModel(
         record,
         'design',
-        designModelName,
+        modelName,
         (signal, onRawReply, protocolFeedback) => this.#spatialDesigner!.design({
           goal: record.state.plan!.goal.objective,
           observation,
@@ -1653,7 +1594,7 @@ export class DrawingAgentRuntime {
           strategy,
           targetGeometry,
           readImage: this.#application.readObservationImage!.bind(this.#application),
-          modelName: designModelName,
+          modelName,
           signal,
           deadlineAt: record.state.limits.deadlineAt,
           onRawReply,
@@ -1663,14 +1604,24 @@ export class DrawingAgentRuntime {
         }),
       );
     }
-    const compiled = compileSpatialEdit({
-      document: workspace.document,
-      selection,
-      region,
-      strategy,
-      split,
-      design,
-    });
+    let compiled: CompiledSpatialEditCandidate;
+    try {
+      compiled = compileSpatialEdit({
+        document, selection, region, strategy, split, design,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      record.previewDefects = [{
+        code: 'spatial-compile-failed', message, nodeIds: [],
+        repairHint: '保持已有选区与锚点，改用可编译的局部形变或替换几何',
+      }];
+      record.progress.publish(
+        'revising', '候选无法编译，正在重新设计', message, undefined,
+        candidateProgress(candidateAttempt),
+      );
+      this.#recordValidationRepair(record);
+      return this.#nextRegionFirstEdit(record);
+    }
     record.compiledEdit = compiled;
     record.spatialPreview = {
       episodeId,
@@ -1704,6 +1655,8 @@ export class DrawingAgentRuntime {
       targetNodeIds: compiled.targetNodeIds,
       authorizedBounds: compiled.authorizedBounds,
       commandCount: compiled.commands.length,
+      candidateAttempt,
+      modelTier: candidateAttempt >= MAX_VALIDATION_REPAIRS + 1 ? 'repair' : 'decision',
     });
     this.#audit(record, 'episode', {
       episodeId,
@@ -1712,12 +1665,169 @@ export class DrawingAgentRuntime {
       regionId: region.id,
       strategy: strategy.mode,
       repairFeedback,
+      candidateAttempt,
     });
     return {
       type: 'transact',
       toolCallId: this.#callId(record, 'region_edit'),
       commands: compiled.commands,
       confidence: design.confidence,
+    };
+  }
+
+  async #prepareSpatialRepairContext(
+    record: RunRecord,
+    modelName: string,
+    repairFeedback: import('./types.js').DrawingPreviewDefect[],
+    candidateAttempt: number,
+  ): Promise<SpatialRepairContext | null> {
+    record.progress.publish('observing', '正在观察当前二维图纸');
+    const vision = await this.#ensureVision(record);
+    const observation = vision?.observation;
+    if (!observation) throw new Error('REGION_FIRST_OBSERVATION_MISSING');
+    this.#audit(record, 'observation', {
+      revision: observation.revision,
+      rendererVersion: observation.rendererVersion,
+      selectedIds: observation.selectedIds,
+      views: observation.views.map((view) => ({
+        id: view.id, purpose: view.purpose, imageHandle: view.image.handle,
+        worldBounds: view.worldBounds, groundingCount: view.grounding.length,
+      })),
+      vectorDigest: observation.vectorDigest,
+    });
+    const workspace = await this.#application.open!(record.state.drawingId);
+    if (workspace.revision !== record.state.revision) return null;
+    const episode = await this.#ensureEpisode(record);
+    record.progress.publish(
+      'grounding', '正在选择完整语义区域', undefined, undefined,
+      candidateProgress(candidateAttempt),
+    );
+    let proposal = await this.#proposeSemanticRegion(
+      record, observation, modelName, repairFeedback,
+    );
+    if (proposal.confidence < LOW_CONFIDENCE_THRESHOLD) {
+      proposal = await this.#proposeSemanticRegion(record, observation, modelName, [{
+        code: 'low-region-confidence',
+        message: `区域选择置信度 ${proposal.confidence.toFixed(2)}，请重新检查完整边界`,
+        nodeIds: [],
+      }]);
+    }
+    const region = await buildSemanticRegion({
+      drawingId: record.state.drawingId,
+      observation,
+      proposal,
+      mediaStore: this.#regionMediaStore,
+    });
+    const episodeId = `${record.state.runId}:${record.state.currentWorkflowNodeId ?? 'edit'}`;
+    const selectionVersionId = `${region.id}:selection:${record.state.revision}`;
+    const overlayDelta: PerceptionPreviewDelta = {
+      runId: record.state.runId,
+      sequence: ++record.perceptionPreviewSequence,
+      action: 'preview', slotIds: [], upserts: [], removeIds: [],
+      regionOverlay: {
+        id: region.id, revision: region.revision,
+        previewVersionId: `${episodeId}:region:${candidateAttempt}`,
+        label: region.label, contours: structuredClone(region.worldContours),
+        holes: structuredClone(region.worldHoles), anchors: structuredClone(region.anchors),
+        confidence: region.confidence,
+      },
+      source: {
+        page: 1, viewId: proposal.sourceViewId, regionId: region.id, stage: 'edit-preview',
+      },
+    };
+    record.progress.publish(
+      'region_overlay', '已定位目标区域', undefined, overlayDelta,
+      candidateProgress(candidateAttempt),
+    );
+    this.#audit(record, 'region', {
+      id: region.id, revision: region.revision, label: region.label,
+      sourceViewIds: region.sourceViewIds, maskHandle: region.maskHandle,
+      contourCount: region.worldContours.length, holeCount: region.worldHoles.length,
+      anchorCount: region.anchors.length, confidence: region.confidence,
+      evidenceRefs: region.evidenceRefs, candidateAttempt,
+    });
+    const bounds = semanticRegionBounds(region);
+    const tolerance = spatialTolerance(bounds);
+    const graph = buildAtomicGeometryGraph({
+      document: workspace.document, revision: workspace.revision,
+      regionBounds: bounds, padding: tolerance * 4,
+    });
+    this.#audit(record, 'atomic_graph', {
+      revision: graph.revision, segmentCount: graph.segments.length,
+      nodeCount: new Set(graph.segments.map((segment) => segment.nodeId)).size,
+      segmentIds: graph.segments.slice(0, 200).map((segment) => segment.id),
+      truncated: graph.segments.length > 200,
+    });
+    const selection = new RegionResolver().resolve({
+      document: workspace.document, revision: workspace.revision, region, graph, tolerance,
+    });
+    record.progress.publish(
+      'region_resolved', '目标区域已解析为可编辑几何',
+      `完整图元 ${selection.wholeNodes.length}，跨边界图元 ${selection.crossingNodes.length}`,
+      undefined, candidateProgress(candidateAttempt),
+    );
+    this.#audit(record, 'selection', {
+      selectionVersionId, regionId: selection.regionId, revision: selection.revision,
+      wholeNodes: selection.wholeNodes, crossingNodes: selection.crossingNodes,
+      protectedNodeCount: selection.protectedNodes.length,
+      boundaryAnchors: structuredClone(selection.boundaryAnchors),
+      uncertainParts: structuredClone(selection.uncertainParts),
+      splitPlan: structuredClone(selection.splitPlan), candidateAttempt,
+    });
+    supersedeActive(episode.regionVersions);
+    const regionVersion = episode.regionVersions.length + 1;
+    episode.regionVersions.push({
+      version: regionVersion, regionId: region.id, maskHandle: region.maskHandle,
+      status: 'active', createdAt: this.#now(),
+    });
+    supersedeActive(episode.selectionVersions);
+    const selectionVersion = episode.selectionVersions.length + 1;
+    episode.selectionVersions.push({
+      version: selectionVersion, selectionVersionId, regionVersion, status: 'active',
+      targetNodeIds: [...selection.wholeNodes], crossingNodeIds: [...selection.crossingNodes],
+      createdAt: this.#now(),
+    });
+    episode.updatedAt = this.#now();
+    this.#persistEpisode(record);
+    const strategy = routeSpatialEditStrategy({
+      goal: record.state.plan!.goal.objective,
+      document: workspace.document,
+      region,
+      selection,
+    });
+    this.#audit(record, 'strategy', {
+      ...structuredClone(strategy), candidateAttempt,
+    } as unknown as Record<string, unknown>);
+    const split = materializeSpatialSplits({ document: workspace.document, selection });
+    record.progress.publish(
+      'split_materialized',
+      split.commands.length > 0 ? '已准备跨边界图元拆分' : '目标边界无需拆分',
+      split.fidelityWarnings.join('；') || undefined,
+      undefined,
+      candidateProgress(candidateAttempt),
+    );
+    this.#audit(record, 'split', {
+      commandCount: split.commands.length, fragmentCount: split.fragments.length,
+      fidelityWarnings: split.fidelityWarnings,
+    });
+    this.#audit(record, 'lineage', {
+      regionId: region.id, entries: structuredClone(split.lineage),
+    });
+    return {
+      revision: workspace.revision,
+      observation,
+      document: workspace.document,
+      episodeId,
+      proposalViewId: proposal.sourceViewId,
+      region,
+      selection,
+      split,
+      strategy,
+      targetGeometry: targetGeometryForDesign(workspace.document, selection, split),
+      regionVersion,
+      selectionVersion,
+      selectionVersionId,
+      tolerance,
     };
   }
 
@@ -2060,6 +2170,7 @@ export class DrawingAgentRuntime {
   }
 
   async #recoverStale(record: RunRecord): Promise<boolean> {
+    this.#resetSpatialRepair(record);
     this.#transition(record, { type: 'RECOVERY_RECORDED', recovery: 'staleRecoveries' });
     const summary = await this.#application.summarize({ drawingId: record.state.drawingId, limit: 100 });
     this.#transition(record, { type: 'REPLAN_REQUIRED', revision: summary.revision });
@@ -2067,6 +2178,13 @@ export class DrawingAgentRuntime {
   }
 
   #recordValidationRepair(record: RunRecord): boolean {
+    if (record.spatialCandidateAttempt > 0) {
+      if (record.spatialCandidateAttempt >= MAX_VALIDATION_REPAIRS + 1) {
+        throw new Error(`空间编辑已生成 ${MAX_VALIDATION_REPAIRS + 1} 个候选，仍未通过验证`);
+      }
+      this.#transition(record, { type: 'RECOVERY_RECORDED', recovery: 'validationRepairs' });
+      return true;
+    }
     if (record.state.recovery.validationRepairs >= MAX_VALIDATION_REPAIRS) {
       throw new Error(`事务验证修复已达到上限 ${MAX_VALIDATION_REPAIRS}`);
     }
@@ -2242,6 +2360,11 @@ export class DrawingAgentRuntime {
     record.spatialPreview = null;
   }
 
+  #resetSpatialRepair(record: RunRecord): void {
+    record.spatialRepairContext = null;
+    record.spatialCandidateAttempt = 0;
+  }
+
   #callId(record: RunRecord, prefix: string): string {
     record.sequence += 1;
     return `${prefix}_${record.sequence}`;
@@ -2270,7 +2393,9 @@ export class DrawingAgentRuntime {
     title: string,
   ): void {
     if (record.resolved) return;
+    this.#clearEditPreview(record, 'reject');
     this.#discardPrepared(record);
+    this.#resetSpatialRepair(record);
     this.#tools.discardRun(record.state.runId);
     if (record.episode) {
       record.episode.status = type === 'completed' ? 'completed' : 'failed';
@@ -2395,6 +2520,29 @@ function targetGeometryForDesign(
     ...split.fragments.filter((node) => targetFragmentIds.has(node.id)),
   ].filter((node): node is GeometryNode => node !== undefined);
   return [...new Map(targets.map((node) => [node.id, structuredClone(node)])).values()];
+}
+
+function candidateProgress(candidateAttempt: number) {
+  return {
+    candidateAttempt,
+    maxCandidateAttempts: MAX_VALIDATION_REPAIRS + 1,
+  };
+}
+
+function candidateProgressFor(record: RunRecord) {
+  return record.spatialCandidateAttempt > 0
+    ? candidateProgress(record.spatialCandidateAttempt)
+    : undefined;
+}
+
+function shouldReuseSpatialContext(
+  repairFeedback: import('./types.js').DrawingPreviewDefect[],
+): boolean {
+  if (repairFeedback.length === 0) return false;
+  return !repairFeedback.some((defect) => (
+    /region-selection|selection-empty|wrong-target|target-not-found|stale|final-visual-rejection/i
+      .test(defect.code)
+  ));
 }
 
 function supersedeActive<T extends { status: string }>(versions: T[]): void {

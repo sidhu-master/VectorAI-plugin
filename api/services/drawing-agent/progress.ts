@@ -9,6 +9,11 @@ export type AgentProgressEvent = DrawingAgentProgressEvent;
 
 type ProgressListener = (event: AgentProgressEvent) => void;
 
+export interface AgentProgressMetadata {
+  candidateAttempt?: number;
+  maxCandidateAttempts?: number;
+}
+
 const TERMINAL_TYPES = new Set<AgentProgressEventType>(['stopped', 'completed', 'failed']);
 
 export class RunProgressChannel {
@@ -37,6 +42,7 @@ export class RunProgressChannel {
     title: string,
     detail?: string,
     perceptionDelta?: PerceptionPreviewDelta,
+    metadata?: AgentProgressMetadata,
   ): AgentProgressEvent {
     this.clearHeartbeat();
     const timestamp = this.now();
@@ -49,6 +55,12 @@ export class RunProgressChannel {
       ...(perceptionDelta === undefined
         ? {}
         : { perceptionDelta: structuredClone(perceptionDelta) }),
+      ...(metadata?.candidateAttempt === undefined
+        ? {}
+        : { candidateAttempt: metadata.candidateAttempt }),
+      ...(metadata?.maxCandidateAttempts === undefined
+        ? {}
+        : { maxCandidateAttempts: metadata.maxCandidateAttempts }),
       timestamp,
       elapsedMs: Math.max(0, timestamp - this.startedAt),
     };

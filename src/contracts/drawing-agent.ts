@@ -45,6 +45,8 @@ export interface DrawingAgentProgressEvent {
   title: string;
   detail?: string;
   perceptionDelta?: PerceptionPreviewDelta;
+  candidateAttempt?: number;
+  maxCandidateAttempts?: number;
   timestamp: number;
   elapsedMs: number;
 }

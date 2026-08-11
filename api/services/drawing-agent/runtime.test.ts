@@ -941,7 +941,7 @@ describe('DrawingAgentRuntime', () => {
         code: 'final-visual-rejection', message: '整图中右手仍然下垂',
       }),
     ]);
-    expect(regionInputs[1].modelName).toBe('repair-model');
+    expect(regionInputs[1].modelName).toBe('lite-model');
   });
 
   it('gives a corrective replan a fresh plan-local commit budget without exceeding the run cap', async () => {
@@ -1131,6 +1131,9 @@ describe('DrawingAgentRuntime', () => {
     expect(regionInputs[0].protocolFeedback).toBeUndefined();
     expect(regionInputs[1].protocolFeedback).toContain('必须使用 [x,y] 数组');
     expect(spatialDesigner.design).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === 'designing').map((event) => (
+      (event as typeof event & { candidateAttempt?: number }).candidateAttempt
+    ))).toEqual([1]);
     expect(current.document.geometry).toEqual([
       expect.objectContaining({ id: 'arm', end: [10, 40] }),
     ]);
@@ -1166,6 +1169,166 @@ describe('DrawingAgentRuntime', () => {
       selectionVersions: [{ version: 1, status: 'active' }],
       previewVersions: [{ version: 1, status: 'committed' }],
     });
+  });
+
+  it('reuses one grounded region and escalates semantic candidates Lite, Lite, then repair', async () => {
+    const designInputs: Array<{
+      modelName: string;
+      repairFeedback?: Array<{ code: string; message: string }>;
+    }> = [];
+    const regionProposer = {
+      propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
+        const viewId = (input as { observation: { views: Array<{ id: string }> } })
+          .observation.views[0].id;
+        return {
+          label: '右臂', sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          confidence: 0.95, evidenceRefs: [viewId],
+        };
+      }),
+    };
+    const spatialDesigner = {
+      design: vi.fn(async (input: unknown): Promise<SpatialEditDesign> => {
+        const call = input as typeof designInputs[number];
+        designInputs.push({
+          modelName: call.modelName,
+          ...(call.repairFeedback ? {
+            repairFeedback: structuredClone(call.repairFeedback),
+          } : {}),
+        });
+        return {
+          kind: 'transform', transform: { kind: 'translate', offset: [0, 1] },
+          confidence: 0.95, evidenceRefs: ['view_overview'],
+        };
+      }),
+    };
+    let verificationAttempt = 0;
+    const previewVerifier: DrawingPreviewVerificationModelAdapter = {
+      verify: vi.fn(async () => {
+        verificationAttempt += 1;
+        return verificationAttempt < 3
+          ? {
+              satisfied: false,
+              reason: '手臂连接仍需修复',
+              defects: [{
+                code: 'connectivity', message: `第 ${verificationAttempt} 个候选连接不正确`,
+                nodeIds: ['arm'], repairHint: '保持连接后重新设计',
+              }],
+            }
+          : { satisfied: true, reason: '连接与姿态均满足', defects: [] };
+      }),
+    };
+    const plan: DrawingAgentPlan = {
+      goal: {
+        id: 'goal_bounded_arm_repair', objective: '把图形的右手抬起来打招呼',
+        scope: { plane: 'geometry', ids: ['arm'] },
+        acceptanceCriteria: [{ type: 'document.valid' }],
+        riskPolicy: { candidateAllowed: true, maxCommits: 1 },
+      },
+      workflow: [{
+        id: 'edit_arm', capability: 'edit_entities', dependsOn: [],
+        completionCriteria: [{ type: 'document.valid' }], status: 'pending',
+      }],
+      summary: '保持连接并抬起右手',
+    };
+    const result = await setup({ plan, regionProposer, spatialDesigner, previewVerifier });
+    const seeded = await result.application.execute({
+      drawingId: result.workspace.document.id,
+      transaction: {
+        id: 'seed_bounded_arm', baseRevision: result.workspace.revision,
+        actor: { type: 'user', id: 'user' },
+        commands: [{
+          type: 'geometry.create', value: {
+            id: 'arm' as GeometryId, type: 'line', start: [10, 10], end: [40, 10],
+            visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+          },
+        }],
+        preconditions: [], postconditions: [], evidenceRefs: [],
+      },
+    });
+    if (seeded.status !== 'committed') throw new Error('expected arm seed');
+    const handle = result.runtime.start({
+      ...startInput(result.workspace), baseRevision: seeded.revision, selectedIds: ['arm'],
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    result.runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    const final = await handle.completion;
+
+    expect(final.status, final.error ?? '').toBe('completed');
+    expect(regionProposer.propose).toHaveBeenCalledTimes(1);
+    expect(designInputs.map((input) => input.modelName)).toEqual([
+      'lite-model', 'lite-model', 'repair-model',
+    ]);
+    expect(designInputs[1].repairFeedback).toContainEqual(expect.objectContaining({
+      code: 'connectivity', message: '第 1 个候选连接不正确',
+    }));
+    expect(events.filter((event) => event.type === 'designing').map((event) => (
+      (event as typeof event & { candidateAttempt?: number }).candidateAttempt
+    ))).toEqual([1, 2, 3]);
+  });
+
+  it('clears the rejected edit overlay before a bounded semantic repair run fails', async () => {
+    const regionProposer = {
+      propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
+        const viewId = (input as { observation: { views: Array<{ id: string }> } })
+          .observation.views[0].id;
+        return {
+          label: '目标', sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          confidence: 0.95, evidenceRefs: [viewId],
+        };
+      }),
+    };
+    const spatialDesigner = {
+      design: vi.fn(async (): Promise<SpatialEditDesign> => ({
+        kind: 'transform', transform: { kind: 'translate', offset: [0, 1] },
+        confidence: 0.95, evidenceRefs: ['view_overview'],
+      })),
+    };
+    const plan = createPlan('arm');
+    plan.goal.objective = '修改手臂';
+    plan.goal.acceptanceCriteria = [{ type: 'document.valid' }];
+    plan.workflow[0].completionCriteria = [{ type: 'document.valid' }];
+    const result = await setup({
+      plan, regionProposer, spatialDesigner,
+      previewVerifier: {
+        verify: vi.fn(async () => ({
+          satisfied: false, reason: '始终拒绝',
+          defects: [{ code: 'connectivity', message: '连接断开', nodeIds: ['arm'] }],
+        })),
+      },
+    });
+    const seeded = await result.application.execute({
+      drawingId: result.workspace.document.id,
+      transaction: {
+        id: 'seed_failed_arm', baseRevision: result.workspace.revision,
+        actor: { type: 'user', id: 'user' },
+        commands: [{ type: 'geometry.create', value: {
+          id: 'arm' as GeometryId, type: 'line', start: [0, 0], end: [10, 0],
+          visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+        } }],
+        preconditions: [], postconditions: [], evidenceRefs: [],
+      },
+    });
+    if (seeded.status !== 'committed') throw new Error('expected arm seed');
+    const handle = result.runtime.start({
+      ...startInput(result.workspace), baseRevision: seeded.revision, selectedIds: ['arm'],
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    result.runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    const final = await handle.completion;
+    const failedIndex = events.findIndex((event) => event.type === 'failed');
+    const clearIndex = events.findIndex((event) => (
+      event.type === 'perception_delta'
+      && event.perceptionDelta?.action === 'reject'
+      && (event.perceptionDelta.removeIds.length > 0 || event.perceptionDelta.regionOverlay === null)
+    ));
+
+    expect(final.status).toBe('failed');
+    expect(clearIndex).toBeGreaterThanOrEqual(0);
+    expect(clearIndex).toBeLessThan(failedIndex);
   });
 
   it('routes a creative protected edit through generation, vectorization and the same preview commit path', async () => {

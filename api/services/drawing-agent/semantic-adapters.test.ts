@@ -76,7 +76,9 @@ describe('drawing region-first model adapters', () => {
       kind: 'transform', transform: { kind: 'rotate', angleDegrees: 45 },
     });
     expect(received?.userPrompt).toContain('region_right_arm');
+    expect(received?.userPrompt).toContain('maintain-existing-connectivity');
     expect(received?.systemPrompt).toContain('不能重新选择 nodeId');
+    expect(received?.systemPrompt).toContain('区域外内容完全不变');
     expect(received?.responseSchema).toMatchObject({ name: 'drawing_spatial_edit_design' });
   });
 
