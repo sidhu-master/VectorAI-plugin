@@ -19,6 +19,10 @@ import {
   drawingNodeContentHash,
   type PreservedNodeHashes,
 } from '../drawing-edit/preserve-report.js';
+import {
+  applyAnchoredDeformation,
+  transformMovesAnyAnchor,
+} from './anchored-deformation.js';
 import { roughGeometryBounds } from './geometry-sampling.js';
 import { transformGeometryNode, type SpatialTransform } from './geometry-transform.js';
 import type {
@@ -78,24 +82,48 @@ export function compileSpatialEdit(input: {
     ...input.selection.wholeNodes,
     ...targetFragmentIds,
   ])] as GeometryId[];
+  const originalTargetGeometry = [
+    ...targetFragmentIds.map((id) => input.split.fragments.find((node) => node.id === id)),
+    ...input.selection.wholeNodes.map((id) => (
+      input.document.geometry.find((node) => node.id === id)
+    )),
+  ].filter(isGeometry);
+  const deformationTolerance = spatialEditTolerance(input.region);
+  const boundaryAnchorPoints = input.selection.boundaryAnchors.map((anchor) => anchor.point);
+  const anchored = input.design.kind === 'transform'
+    && boundaryAnchorPoints.length > 0
+    && transformMovesAnyAnchor(input.design.transform, boundaryAnchorPoints, deformationTolerance);
+  const designTarget = (node: GeometryNode): GeometryNode => (
+    anchored && input.design.kind === 'transform'
+      ? applyAnchoredDeformation(node, input.design.transform, {
+          anchors: boundaryAnchorPoints,
+          targetGeometry: originalTargetGeometry,
+          tolerance: deformationTolerance,
+        })
+      : designedGeometry(node, input.design)
+  );
   const transformedFragments = new Map<string, GeometryNode>();
   for (const fragment of input.split.fragments) {
     const target = targetFragmentIds.includes(fragment.id);
     transformedFragments.set(fragment.id, target
-      ? designedGeometry(fragment, input.design)
+      ? designTarget(fragment)
       : structuredClone(fragment));
   }
   const splitCommands = input.split.commands.map((command): DrawingCommand => {
     if (command.type !== 'geometry.create' || !command.value.id) return structuredClone(command);
     const replacement = transformedFragments.get(command.value.id);
+    const target = targetFragmentIds.includes(command.value.id);
     return replacement
-      ? { type: 'geometry.create', value: withDesignQuality(replacement, input.design) }
+      ? {
+          type: 'geometry.create',
+          value: target ? withDesignQuality(replacement, input.design) : structuredClone(replacement),
+        }
       : structuredClone(command);
   });
   const wholeCommands = input.selection.wholeNodes.map((id) => {
     const before = input.document.geometry.find((node) => node.id === id);
     if (!before) throw new Error(`SPATIAL_TARGET_NOT_FOUND:${id}`);
-    const after = withDesignQuality(designedGeometry(before, input.design), input.design);
+    const after = withDesignQuality(designTarget(before), input.design);
     return updateGeometry(before, after);
   });
   const commands = [...splitCommands, ...wholeCommands];
@@ -118,7 +146,7 @@ export function compileSpatialEdit(input: {
     ...targetFragmentIds.map((id) => transformedFragments.get(id)).filter(isGeometry),
     ...input.selection.wholeNodes.map((id) => {
       const node = input.document.geometry.find((item) => item.id === id);
-      return node ? designedGeometry(node, input.design) : undefined;
+      return node ? designTarget(node) : undefined;
     }).filter(isGeometry),
   ];
   return {
@@ -130,7 +158,10 @@ export function compileSpatialEdit(input: {
     authorizedBounds: authorizedBounds(input.region, targetGeometry),
     lineage: structuredClone(input.split.lineage),
     strategy: input.strategy.mode,
-    fidelityWarnings: [...input.split.fidelityWarnings],
+    fidelityWarnings: [
+      ...input.split.fidelityWarnings,
+      ...(anchored ? ['ANCHORED_DEFORMATION_APPLIED'] : []),
+    ],
   };
 }
 
@@ -271,6 +302,15 @@ function authorizedBounds(region: SemanticRegion, targets: GeometryNode[]): Boun
     maxX: bounds.maxX + padding,
     maxY: bounds.maxY + padding,
   };
+}
+
+function spatialEditTolerance(region: SemanticRegion): number {
+  const points = region.worldContours.flatMap((contour) => contour);
+  const width = Math.max(...points.map((point) => point[0]))
+    - Math.min(...points.map((point) => point[0]));
+  const height = Math.max(...points.map((point) => point[1]))
+    - Math.min(...points.map((point) => point[1]));
+  return Math.max(width, height, 1) * 1e-6;
 }
 
 function allNodeIds(document: DrawingDocument): string[] {

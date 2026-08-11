@@ -17,6 +17,66 @@ import {
 } from './test2-fixture.js';
 
 describe('compileSpatialEdit', () => {
+  it('does not attach design confidence to a protected fragment created by a split', () => {
+    const before = test2SharedPolylineDocument();
+    const region = test2RightArmRegion();
+    const selection = {
+      regionId: region.id,
+      revision: TEST2_REVISION,
+      wholeNodes: [],
+      partialSegments: [],
+      crossingNodes: [TEST2_SHARED_POLYLINE_ID],
+      protectedNodes: before.geometry
+        .filter((node) => node.id !== TEST2_SHARED_POLYLINE_ID)
+        .map((node) => node.id),
+      boundaryAnchors: [],
+      classifications: [],
+      uncertainParts: [],
+      splitPlan: [{
+        nodeId: TEST2_SHARED_POLYLINE_ID,
+        revision: TEST2_REVISION,
+        ranges: [
+          { range: [0, 0.5] as const, role: 'protected' as const },
+          { range: [0.5, 1.5] as const, role: 'target' as const },
+          { range: [1.5, 4] as const, role: 'protected' as const },
+        ],
+        cutParameters: [0.5, 1.5],
+      }],
+    };
+    const split = materializeSpatialSplits({ document: before, selection });
+    const candidate = compileSpatialEdit({
+      document: before,
+      selection,
+      region,
+      strategy: routeSpatialEditStrategy({
+        goal: '调整右臂中段', document: before, region, selection,
+      }),
+      split,
+      design: {
+        kind: 'transform',
+        transform: { kind: 'translate', offset: [1, 1] },
+        confidence: 0.97,
+        evidenceRefs: ['view_test2'],
+      },
+    });
+    const preview = previewTransaction({ document: before, currentRevision: TEST2_REVISION }, {
+      id: 'transaction_protected_quality', baseRevision: TEST2_REVISION,
+      actor: { type: 'AI', id: 'test' }, commands: candidate.commands,
+      preconditions: [], postconditions: [{ type: 'document.valid' }], evidenceRefs: [],
+    });
+
+    expect(preview.status).toBe('ready');
+    if (preview.status !== 'ready') return;
+    const createdProtectedId = split.lineage.find((entry) => (
+      entry.role === 'protected' && entry.fragmentId !== TEST2_SHARED_POLYLINE_ID
+    ))?.fragmentId;
+    const protectedAfter = preview.resultingDocument.geometry.find((node) => (
+      node.id === createdProtectedId
+    ));
+    const protectedBefore = split.fragments.find((node) => node.id === createdProtectedId);
+    expect(protectedAfter?.quality).toEqual(protectedBefore?.quality);
+  });
+
   it('raises the complete test2 arm while retaining the protected body fragment', () => {
     const before = test2SharedPolylineDocument();
     const region = test2RightArmRegion();

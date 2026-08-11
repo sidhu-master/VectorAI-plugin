@@ -7,7 +7,7 @@ import type {
 import type { DrawingDocument } from '../../../src/drawing/index.js';
 
 const CREATIVE_PATTERN = /发型|头发|卷发|刘海|表情|装饰|纹样|自然形|外观|创意|画一个|增加.*帽/;
-const ENGINEERING_PATTERN = /工程图|孔|槽|尺寸|半径|直径|角度|对齐|平行|垂直|旋转|平移|缩放|连接|闭合|精确/;
+const ENGINEERING_PATTERN = /工程图|孔|槽|尺寸|半径|直径|角度|对齐|平行|垂直|旋转|平移|缩放|精确/;
 const PROTECTION_PATTERN = /不遮挡|不要改变|保持|保留|不能覆盖|避开|保护/;
 
 export function routeSpatialEditStrategy(input: {
@@ -19,9 +19,21 @@ export function routeSpatialEditStrategy(input: {
   proposedMode?: SpatialEditMode;
 }): SpatialEditStrategy {
   const creative = CREATIVE_PATTERN.test(input.goal);
+  const targetNodeIds = new Set([
+    ...input.selection.wholeNodes,
+    ...input.selection.crossingNodes,
+  ]);
+  const hasLocalDimension = input.document.annotations.some((node) => (
+    node.type === 'dimension'
+    && node.targets.some((target) => targetNodeIds.has(target.geometryId))
+  ));
+  const hasLocalConstraint = input.document.relations.some((relation) => (
+    relation.plane === 'constraint'
+    && relation.geometryIds.some((id) => targetNodeIds.has(id))
+  ));
   const hasHardGeometry = ENGINEERING_PATTERN.test(input.goal)
-    || input.document.annotations.some((node) => node.type === 'dimension')
-    || input.document.relations.some((relation) => relation.plane === 'constraint');
+    || hasLocalDimension
+    || hasLocalConstraint;
   const preserveRegionIds = [...new Set(input.protectedRegionIds ?? [])];
   const protectedIntent = preserveRegionIds.length > 0 || PROTECTION_PATTERN.test(input.goal);
 

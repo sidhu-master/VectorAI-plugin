@@ -71,10 +71,22 @@ export function validateSpatialEditPreview(input: {
     }
   }
   issues.push(...validateBoundaryAnchors(input));
+  const baselineTargetIds = new Set([
+    ...input.selection.wholeNodes,
+    ...input.selection.crossingNodes,
+  ]);
+  const baselineDanglingEndpoints = danglingEndpoints(
+    input.before.geometry.filter((node) => baselineTargetIds.has(node.id)),
+    input.tolerance,
+  );
+  const expectedBoundaryPoints = input.selection.boundaryAnchors.map((anchor) => anchor.point);
   const unexpectedDanglingEndpoints = danglingEndpoints(
     input.after.geometry.filter((node) => input.candidate.targetNodeIds.includes(node.id)),
     input.tolerance,
-  );
+  ).filter((point) => (
+    !nearAny(point, baselineDanglingEndpoints, input.tolerance)
+    && !nearAny(point, expectedBoundaryPoints, input.tolerance)
+  ));
   if (input.candidate.strategy === 'geometric-edit'
     && input.selection.boundaryAnchors.length > 0
     && unexpectedDanglingEndpoints.length > 0) {
@@ -85,6 +97,10 @@ export function validateSpatialEditPreview(input: {
     ));
   }
   return { valid: issues.length === 0, issues, unexpectedDanglingEndpoints };
+}
+
+function nearAny(point: Vec2, candidates: Vec2[], tolerance: number): boolean {
+  return candidates.some((candidate) => distance(point, candidate) <= tolerance);
 }
 
 function validateLineage(

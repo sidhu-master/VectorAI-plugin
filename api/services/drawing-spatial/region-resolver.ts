@@ -54,7 +54,11 @@ export class RegionResolver {
 
     for (const node of input.document.geometry) {
       const segments = input.graph.segmentsFor(node.id);
-      const owned = segments.flatMap((segment) => partitionSegment(segment, input.region));
+      const owned = segments.flatMap((segment) => partitionSegment(
+        segment,
+        input.region,
+        input.tolerance,
+      ));
       const target = owned.filter((item) => item.role === 'target');
       const protectedRanges = owned.filter((item) => item.role === 'protected');
       const confidence = ownershipConfidence(input.region.confidence, target, input.tolerance);
@@ -112,7 +116,11 @@ function assertScope(input: {
   }
 }
 
-function partitionSegment(segment: AtomicGraphSegment, region: SemanticRegion): OwnedRange[] {
+function partitionSegment(
+  segment: AtomicGraphSegment,
+  region: SemanticRegion,
+  tolerance: number,
+): OwnedRange[] {
   if (segment.kind === 'whole-node' || segment.samples.length < 2) {
     const role = pointInPolygonRegion(
       segment.start,
@@ -128,7 +136,7 @@ function partitionSegment(segment: AtomicGraphSegment, region: SemanticRegion): 
       splitInsideAtomicSegment: false,
     }];
   }
-  const cuts = uniqueSorted([
+  const cuts = snapEndpointCuts(uniqueSorted([
     0,
     ...segment.samples.slice(1).flatMap((end, index) => (
       segmentRegionIntersections(
@@ -139,7 +147,7 @@ function partitionSegment(segment: AtomicGraphSegment, region: SemanticRegion): 
       ).map((value) => (index + value) / (segment.samples.length - 1))
     )),
     1,
-  ]);
+  ]), segment.samples, tolerance);
   const partitions: OwnedRange[] = [];
   for (let index = 1; index < cuts.length; index += 1) {
     const startParameter = cuts[index - 1];
@@ -161,6 +169,39 @@ function partitionSegment(segment: AtomicGraphSegment, region: SemanticRegion): 
     });
   }
   return mergeOwnedRanges(partitions);
+}
+
+function snapEndpointCuts(values: number[], samples: Vec2[], tolerance: number): number[] {
+  const totalLength = sampledPathLength(samples);
+  if (totalLength <= 0) return uniqueSorted(values);
+  const snapDistance = Math.max(tolerance * 10, totalLength * 0.005);
+  return uniqueSorted(values.map((value) => {
+    const distanceFromStart = sampledPathLengthAt(samples, value);
+    if (distanceFromStart <= snapDistance) return 0;
+    if (totalLength - distanceFromStart <= snapDistance) return 1;
+    return value;
+  }));
+}
+
+function sampledPathLength(samples: Vec2[]): number {
+  return samples.slice(1).reduce((total, point, index) => (
+    total + distance(samples[index], point)
+  ), 0);
+}
+
+function sampledPathLengthAt(samples: Vec2[], parameter: number): number {
+  if (samples.length < 2) return 0;
+  const scaled = Math.max(0, Math.min(1, parameter)) * (samples.length - 1);
+  const wholeSegments = Math.min(samples.length - 1, Math.floor(scaled));
+  let length = 0;
+  for (let index = 0; index < wholeSegments; index += 1) {
+    length += distance(samples[index], samples[index + 1]);
+  }
+  if (wholeSegments < samples.length - 1) {
+    length += distance(samples[wholeSegments], samples[wholeSegments + 1])
+      * (scaled - wholeSegments);
+  }
+  return length;
 }
 
 function intervalRef(

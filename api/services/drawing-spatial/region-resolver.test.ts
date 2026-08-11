@@ -13,6 +13,39 @@ import {
 } from './test2-fixture.js';
 
 describe('RegionResolver', () => {
+  it('snaps a boundary cut near an entity endpoint instead of creating a tiny target sliver', () => {
+    const document = test2SharedPolylineDocument();
+    document.geometry = [{
+      id: 'line_endpoint_sliver' as never,
+      type: 'line', start: [0, 0], end: [100, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const region = {
+      ...test2RightArmRegion(),
+      label: 'endpoint sliver',
+      worldContours: [[
+        [99.75, -1] as const,
+        [101, -1] as const,
+        [101, 1] as const,
+        [99.75, 1] as const,
+      ]],
+      anchors: [],
+    };
+    const graph = buildAtomicGeometryGraph({
+      document,
+      revision: TEST2_REVISION,
+      regionBounds: polygonRegionBounds(region.worldContours),
+    });
+
+    const selection = new RegionResolver().resolve({
+      document, revision: TEST2_REVISION, region, graph, tolerance: 0.01,
+    });
+
+    expect(selection.crossingNodes).toEqual([]);
+    expect(selection.splitPlan).toEqual([]);
+    expect(selection.protectedNodes).toEqual(['line_endpoint_sliver']);
+  });
+
   it('selects the lower arm inside a Polyline shared with the protected body', () => {
     const document = test2SharedPolylineDocument();
     const region = test2RightArmRegion();

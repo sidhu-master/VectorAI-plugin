@@ -9,6 +9,30 @@ import {
 } from './test2-fixture.js';
 
 describe('routeSpatialEditStrategy', () => {
+  it('ignores auto dimensions that do not reference the local target', () => {
+    const document = test2SharedPolylineDocument();
+    document.annotations.push({
+      id: 'dimension_unrelated_face' as never,
+      type: 'dimension',
+      dimensionKind: 'diameter',
+      associationStatus: 'resolved',
+      targets: [{ geometryId: 'node_test2_face' as GeometryId, anchor: { kind: 'center' } }],
+      textPosition: [80, 245],
+      definitionPoints: [[60, 220], [100, 220]],
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    });
+
+    const strategy = routeSpatialEditStrategy({
+      goal: '把右手抬起来打招呼',
+      document,
+      region: test2RightArmRegion(),
+      selection: selection(),
+    });
+
+    expect(strategy.primaryReason).not.toContain('工程几何');
+  });
+
   it('forces engineering geometry with constraints onto the geometric path', () => {
     const document = test2SharedPolylineDocument();
     document.relations.push({
