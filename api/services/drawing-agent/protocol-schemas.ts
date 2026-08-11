@@ -61,6 +61,33 @@ export const SEMANTIC_REGION_RESPONSE_SCHEMA: DrawingResponseSchema = {
   },
 };
 
+export const FRAGMENT_SELECTION_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_fragment_selection',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['editableFragmentIds', 'anchorIds', 'evidence', 'confidence'],
+    properties: {
+      editableFragmentIds: { type: 'array', minItems: 1, items: STRING, uniqueItems: true },
+      anchorIds: { type: 'array', items: STRING, uniqueItems: true },
+      evidence: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['fragmentId', 'reason', 'confidence'],
+          properties: {
+            fragmentId: STRING,
+            reason: STRING,
+            confidence: CONFIDENCE,
+          },
+        },
+      },
+      confidence: CONFIDENCE,
+    },
+  },
+};
+
 const SPATIAL_EDIT_MODES = [
   'geometric-edit', 'generative-redraw', 'hybrid-edit',
 ] as const;

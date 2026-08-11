@@ -1,10 +1,14 @@
 import {
   DrawingSpatialRegionProtocolError,
+  parseSelectionProofProposal,
   parseSemanticRegionProposal,
+  type SelectionProofProposal,
   type SemanticRegion,
   type SemanticRegionProposal,
   type SpatialEditStrategy,
   type SpatialSelection,
+  type SpatialBoundaryAnchor,
+  type TargetHint,
 } from '../../../src/contracts/drawing-spatial-region.js';
 import { parseDrawingToolCommands } from '../../../src/contracts/drawing-agent.js';
 import type { GeometryNode } from '../../../src/drawing/index.js';
@@ -14,19 +18,34 @@ import {
 } from '../ai-gateway.js';
 import type { EpisodeModelContext } from '../drawing-episode/types.js';
 import type { SpatialEditDesign } from '../drawing-spatial/spatial-edit-compiler.js';
+import type {
+  SelectionCandidateSet,
+  SelectionProofView,
+} from '../drawing-spatial/selection-authorization.js';
 import type { VisualObservation } from '../drawing-vision/observation-types.js';
 import {
+  FRAGMENT_SELECTION_RESPONSE_SCHEMA,
   SEMANTIC_REGION_RESPONSE_SCHEMA,
   SPATIAL_EDIT_DESIGN_RESPONSE_SCHEMA,
 } from './protocol-schemas.js';
 import type { DrawingPreviewDefect } from './types.js';
 
-const REGION_SYSTEM_PROMPT = `你是 VectorAI 二维语义区域选择器。
-根据用户目标和服务器渲染视图，先选择目标在连续二维画面中的完整区域，不考虑现有图元边界，也不要输出任何 nodeId、图元列表或 DrawingCommand。
-区域必须圈选当前图中已经存在、即将被修改的源对象；如果目标是新增外观，则圈选允许新增内容出现的完整空域和连接边界，不能把区域缩成已有图元的包围盒。
+const REGION_SYSTEM_PROMPT = `你是 VectorAI 二维语义搜索包络定位器。
+根据用户目标、targetHint 和服务器渲染视图，输出能够观察目标及其连接处的最小连续搜索包络，不考虑现有图元边界，也不要输出任何 nodeId、图元列表或 DrawingCommand。
+搜索包络只用于读取局部上下文，不代表修改授权；包络内的对象不会因此被修改，后续会另行选择精确原子片段。
+包络必须覆盖当前图中已经存在的目标源对象和必要连接边界，但不得为了“完整”而包含头部、躯干或其他无关大部件。如果目标是新增外观，则圈选允许新增内容出现的最小空域和连接边界。
 轮廓、洞和锚点坐标均使用相对所选视图宽高的 [x,y] 归一化坐标，两个分量必须在 0 到 1 之间。
-区域必须覆盖语义部件的完整外形；需要排除的内部区域写入 holes。evidenceRefs 只能引用输入视图 id。
+需要排除的内部区域写入 holes。evidenceRefs 只能引用输入视图 id。
 只输出严格 JSON：{"label":string,"sourceViewId":string,"contours":[[[number,number],...]],"holes":[[[number,number],...]],"anchors":[{"id":string,"role":string,"point":[number,number],"confidence":number}],"confidence":number,"evidenceRefs":string[]}。
+若输入含 protocolFeedback，必须针对该错误纠正输出。`;
+
+const FRAGMENT_SELECTION_SYSTEM_PROMPT = `你是 VectorAI 二维语义片段选择器。
+服务器已经把只读搜索包络内的向量几何拆成带稳定 F 编号和 fragmentId 的原子候选，并渲染为颜色证明图。
+你必须从 allowedFragmentIds 中逐项选择组成用户目标的最小完整语义部件。只能返回精确 fragmentId，不能返回 nodeId、范围、DrawingCommand 或包络内全部内容。
+重叠但未选中的候选必须保持不变；视觉相交不代表拓扑连接。除非候选数据给出邻接或边界锚点，不要把相交图元绑定在一起。
+肢体等闭合部件必须同时选择维持完整轮廓所需的上下边界，并选择与身体连接所需的 allowedAnchorIds；头部、躯干、另一只手和标注默认不选。
+其他部分完全不变、保持已有连接和最小影响范围是默认语境，不需要用户重复说明。
+只输出严格 JSON：{"editableFragmentIds":string[],"anchorIds":string[],"evidence":[{"fragmentId":string,"reason":string,"confidence":number}],"confidence":number}。
 若输入含 protocolFeedback，必须针对该错误纠正输出。`;
 
 const SPATIAL_DESIGN_SYSTEM_PROMPT = `你是 VectorAI Region-First 二维编辑设计器。
@@ -52,6 +71,7 @@ export interface SemanticCallInput {
   repairFeedback?: DrawingPreviewDefect[];
   protocolFeedback?: string;
   episodeContext?: EpisodeModelContext;
+  targetHint?: TargetHint;
 }
 
 export interface DrawingSemanticRegionModelAdapter {
@@ -65,6 +85,14 @@ export interface DrawingSpatialDesignModelAdapter {
     strategy: SpatialEditStrategy;
     targetGeometry: GeometryNode[];
   }): Promise<SpatialEditDesign>;
+}
+
+export interface DrawingFragmentSelectionModelAdapter {
+  select(input: SemanticCallInput & {
+    candidates: SelectionCandidateSet;
+    proofView: SelectionProofView;
+    availableAnchors: SpatialBoundaryAnchor[];
+  }): Promise<SelectionProofProposal>;
 }
 
 export class DrawingSemanticRegionAdapter implements DrawingSemanticRegionModelAdapter {
@@ -87,6 +115,7 @@ export class DrawingSemanticRegionAdapter implements DrawingSemanticRegionModelA
           counts: input.observation.vectorDigest.counts,
           bounds: input.observation.vectorDigest.bounds,
         },
+        ...(input.targetHint ? { targetHint: input.targetHint } : {}),
         views: regionObservationMetadata(input.observation),
         repairFeedback: input.repairFeedback ?? [],
         ...(input.episodeContext ? { episodeContext: input.episodeContext } : {}),
@@ -100,6 +129,70 @@ export class DrawingSemanticRegionAdapter implements DrawingSemanticRegionModelA
     return parseSemanticRegionProposal(parseJson(reply), {
       allowedViewIds: input.observation.views.map((view) => view.id),
       allowedEvidenceRefs: input.observation.views.map((view) => view.id),
+    });
+  }
+}
+
+export class DrawingFragmentSelectionAdapter implements DrawingFragmentSelectionModelAdapter {
+  constructor(
+    private readonly complete: DrawingSpatialCompletion = requestDrawingMultimodalCompletion,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async select(input: SemanticCallInput & {
+    candidates: SelectionCandidateSet;
+    proofView: SelectionProofView;
+    availableAnchors: SpatialBoundaryAnchor[];
+  }): Promise<SelectionProofProposal> {
+    assertDeadline('selection', input.deadlineAt, this.now);
+    const reply = await this.complete({
+      role: 'grounding',
+      modelName: input.modelName,
+      systemPrompt: FRAGMENT_SELECTION_SYSTEM_PROMPT,
+      userPrompt: JSON.stringify({
+        goal: input.goal,
+        revision: input.candidates.revision,
+        regionId: input.candidates.regionId,
+        proofView: {
+          id: input.proofView.id,
+          width: input.proofView.width,
+          height: input.proofView.height,
+          mapping: input.proofView.mapping,
+        },
+        allowedFragmentIds: input.candidates.candidates.map((candidate) => candidate.fragmentId),
+        candidates: input.candidates.candidates.map((candidate) => ({
+          fragmentId: candidate.fragmentId,
+          sourceNodeId: candidate.sourceNodeId,
+          kind: candidate.kind,
+          sourceRange: candidate.sourceRange,
+          start: candidate.start,
+          end: candidate.end,
+          bounds: candidate.bounds,
+          adjacentSegmentIds: candidate.adjacentSegmentIds,
+        })),
+        allowedAnchorIds: input.availableAnchors.map((anchor) => anchor.id),
+        anchors: input.availableAnchors,
+        defaultInvariants: [
+          'unselected-fragments-unchanged',
+          'overlap-does-not-imply-shared-authorization',
+          'maintain-existing-connectivity',
+          'minimum-complete-semantic-part',
+        ],
+        repairFeedback: input.repairFeedback ?? [],
+        ...(input.episodeContext ? { episodeContext: input.episodeContext } : {}),
+        ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
+      }),
+      images: [
+        { id: input.proofView.id, dataUrl: input.proofView.imageDataUrl },
+        ...observationImages(input.observation, input.readImage),
+      ],
+      responseSchema: FRAGMENT_SELECTION_RESPONSE_SCHEMA,
+      signal: input.signal,
+    });
+    input.onRawReply?.('grounding', reply);
+    return parseSelectionProofProposal(parseJson(reply), {
+      allowedFragmentIds: input.candidates.candidates.map((candidate) => candidate.fragmentId),
+      allowedAnchorIds: input.availableAnchors.map((anchor) => anchor.id),
     });
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  FRAGMENT_SELECTION_RESPONSE_SCHEMA,
   SEMANTIC_REGION_RESPONSE_SCHEMA,
   SPATIAL_STRATEGY_RESPONSE_SCHEMA,
 } from './protocol-schemas';
@@ -26,6 +27,16 @@ describe('region-first response schemas', () => {
           type: 'string',
           enum: ['geometric-edit', 'generative-redraw', 'hybrid-edit'],
         },
+      },
+    });
+  });
+
+  it('requires exact fragment ids, anchors, evidence, and confidence', () => {
+    expect(FRAGMENT_SELECTION_RESPONSE_SCHEMA).toMatchObject({
+      name: 'drawing_fragment_selection',
+      schema: {
+        type: 'object', additionalProperties: false,
+        required: ['editableFragmentIds', 'anchorIds', 'evidence', 'confidence'],
       },
     });
   });

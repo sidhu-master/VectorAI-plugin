@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RevisionId } from '../../../src/drawing/index.js';
 import type { VisualObservation } from '../drawing-vision/observation-types.js';
 import {
+  DrawingFragmentSelectionAdapter,
   DrawingSemanticRegionAdapter,
   DrawingSpatialDesignAdapter,
   type DrawingSpatialCompletion,
@@ -23,14 +24,114 @@ describe('drawing region-first model adapters', () => {
     });
     const proposal = await new DrawingSemanticRegionAdapter(complete).propose({
       goal: '把右手抬起来打招呼', observation: observation(),
+      targetHint: {
+        semanticDescription: '把右手抬起来打招呼', preferredScale: 'part',
+        approximateBounds: { minX: 60, minY: 30, maxX: 90, maxY: 70 },
+      },
       readImage: () => 'data:image/png;base64,AAAA', modelName: 'semantic-model',
       signal: new AbortController().signal, deadlineAt: Date.now() + 1_000,
     });
 
     expect(proposal.sourceViewId).toBe('view_overview');
-    expect(received?.systemPrompt).toContain('不考虑现有图元边界');
+    expect(received?.systemPrompt).toContain('搜索包络');
+    expect(received?.systemPrompt).toContain('不代表修改授权');
+    expect(received?.userPrompt).toContain('preferredScale');
+    expect(received?.userPrompt).toContain('"minX":60');
     expect(received?.userPrompt).not.toContain('hand_line');
     expect(received?.responseSchema).toMatchObject({ name: 'drawing_semantic_region' });
+  });
+
+  it('selects exact editable fragments from a server-rendered proof view', async () => {
+    let received: Parameters<DrawingSpatialCompletion>[0] | undefined;
+    const complete: DrawingSpatialCompletion = vi.fn(async (input) => {
+      received = input;
+      return JSON.stringify({
+        editableFragmentIds: ['fragment_arm'],
+        anchorIds: ['anchor_shoulder'],
+        evidence: [{
+          fragmentId: 'fragment_arm', reason: 'F001 是与肩部连接的右臂轮廓', confidence: 0.96,
+        }],
+        confidence: 0.96,
+      });
+    });
+    const current = observation();
+    const proposal = await new DrawingFragmentSelectionAdapter(complete).select({
+      goal: '把右手抬起来打招呼',
+      observation: current,
+      candidates: {
+        revision: current.revision,
+        regionId: 'region_arm',
+        protectedNodeIds: [],
+        candidates: [{
+          fragmentId: 'fragment_arm', sourceNodeId: 'arm_source' as never,
+          kind: 'vertex-range', sourceRange: [0, 2],
+          start: [20, 20], end: [40, 30],
+          bounds: { minX: 20, minY: 20, maxX: 40, maxY: 30 },
+          adjacentSegmentIds: ['fragment_body'], baselineHash: 'hash_arm',
+        }, {
+          fragmentId: 'fragment_head', sourceNodeId: 'head_source' as never,
+          kind: 'whole-node', start: [10, 50], end: [10, 50],
+          bounds: { minX: 0, minY: 40, maxX: 20, maxY: 60 },
+          adjacentSegmentIds: [], baselineHash: 'hash_head',
+        }],
+      },
+      proofView: {
+        id: 'proof_view_1', imageDataUrl: 'data:image/png;base64,BBBB',
+        width: 100, height: 100,
+        mapping: [{
+          label: 'F001', fragmentId: 'fragment_arm', sourceNodeId: 'arm_source' as never,
+          rgb: [255, 0, 0], bounds: { minX: 20, minY: 20, maxX: 40, maxY: 30 },
+        }, {
+          label: 'F002', fragmentId: 'fragment_head', sourceNodeId: 'head_source' as never,
+          rgb: [0, 255, 0], bounds: { minX: 0, minY: 40, maxX: 20, maxY: 60 },
+        }],
+      },
+      availableAnchors: [{
+        id: 'anchor_shoulder', role: 'shared-boundary', point: [40, 30], confidence: 1,
+      }],
+      readImage: () => 'data:image/png;base64,AAAA',
+      modelName: 'semantic-model', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 1_000,
+    });
+
+    expect(proposal.editableFragmentIds).toEqual(['fragment_arm']);
+    expect(received?.images).toContainEqual({
+      id: 'proof_view_1', dataUrl: 'data:image/png;base64,BBBB',
+    });
+    expect(received?.userPrompt).toContain('fragment_arm');
+    expect(received?.userPrompt).toContain('fragment_head');
+    expect(received?.systemPrompt).toContain('重叠但未选中的候选必须保持不变');
+    expect(received?.responseSchema).toMatchObject({ name: 'drawing_fragment_selection' });
+  });
+
+  it('rejects a fragment id not present in the server proof mapping', async () => {
+    const complete: DrawingSpatialCompletion = vi.fn(async () => JSON.stringify({
+      editableFragmentIds: ['fragment_invented'], anchorIds: [], evidence: [], confidence: 0.8,
+    }));
+    const current = observation();
+
+    await expect(new DrawingFragmentSelectionAdapter(complete).select({
+      goal: '抬起右手', observation: current,
+      candidates: {
+        revision: current.revision, regionId: 'region_arm', protectedNodeIds: [],
+        candidates: [{
+          fragmentId: 'fragment_arm', sourceNodeId: 'arm_source' as never,
+          kind: 'whole-node', start: [0, 0], end: [1, 1],
+          bounds: { minX: 0, minY: 0, maxX: 1, maxY: 1 },
+          adjacentSegmentIds: [], baselineHash: 'hash',
+        }],
+      },
+      proofView: {
+        id: 'proof_view_1', imageDataUrl: 'data:image/png;base64,BBBB', width: 10, height: 10,
+        mapping: [{
+          label: 'F001', fragmentId: 'fragment_arm', sourceNodeId: 'arm_source' as never,
+          rgb: [255, 0, 0], bounds: { minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        }],
+      },
+      availableAnchors: [], readImage: () => 'data:image/png;base64,AAAA',
+      modelName: 'semantic-model', signal: new AbortController().signal,
+      deadlineAt: Date.now() + 1_000,
+    })).rejects.toThrow('fragment_invented');
   });
 
   it('designs only the targets already resolved from the semantic region', async () => {
