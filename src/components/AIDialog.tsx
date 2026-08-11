@@ -3,10 +3,13 @@
  * 支持文字输入 + 图片上传/粘贴（先预览，发送时才分析）
  */
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Paperclip, Send, Sparkles, X } from 'lucide-react';
+import {
+  Loader2, Paperclip, Pause, Play, RotateCcw, Send, Sparkles, X,
+} from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { ChatMessage } from '@/hooks/useStore';
-import ConstructionTimeline from './ConstructionTimeline';
+import ComposerTaskStatus from './ComposerTaskStatus';
+import { composerPrimaryAction } from './agent/composer-primary-action';
 
 interface PendingImage {
   base64: string;
@@ -58,10 +61,12 @@ function Message({ msg }: { msg: ChatMessage }) {
 export default function AIDialog() {
   const aiMessages = useStore((s) => s.aiMessages);
   const submitAgentInput = useStore((s) => s.submitAgentInput);
-  const taskPlan = useStore((s) => s.taskPlan);
   const agentStatus = useStore((s) => s.agentStatus);
   const agentRunId = useStore((s) => s.agentRunId);
   const agentEvents = useStore((s) => s.agentEvents);
+  const pauseAgent = useStore((s) => s.pauseAgent);
+  const resumeAgent = useStore((s) => s.resumeAgent);
+  const retryAgent = useStore((s) => s.retryAgent);
 
   const [input, setInput] = useState('');
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
@@ -74,6 +79,12 @@ export default function AIDialog() {
 
   const agentActive = !!agentRunId && !['stopped', 'complete', 'error'].includes(agentStatus);
   const starting = agentStatus === 'planning' && !agentRunId;
+  const hasContent = Boolean(input.trim() || pendingImage);
+  const primaryAction = composerPrimaryAction({
+    status: agentStatus,
+    hasRun: Boolean(agentRunId),
+    hasContent,
+  });
 
   const handleSend = () => {
     const text = input.trim();
@@ -82,6 +93,13 @@ export default function AIDialog() {
     void submitAgentInput(text || undefined, pendingImage?.base64, pendingImage?.mimeType);
     setPendingImage(null);
     setInput('');
+  };
+
+  const handlePrimaryAction = () => {
+    if (primaryAction === 'send') handleSend();
+    if (primaryAction === 'pause') void pauseAgent();
+    if (primaryAction === 'resume') void resumeAgent();
+    if (primaryAction === 'retry') void retryAgent();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -140,8 +158,6 @@ export default function AIDialog() {
         </div>
       </div>
 
-      {(agentRunId || taskPlan) && <ConstructionTimeline />}
-
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {aiMessages.length === 0 && !pendingImage && (
           <div className="flex h-full min-h-44 flex-col items-center justify-center px-7 text-center">
@@ -158,6 +174,8 @@ export default function AIDialog() {
       </div>
 
       <div className="shrink-0 border-t border-white/[0.06] bg-base-700 p-3">
+        <ComposerTaskStatus />
+
         {/* 图片预览 */}
         {pendingImage && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/[0.08] bg-base-800 p-2">
@@ -214,13 +232,31 @@ export default function AIDialog() {
               <Paperclip size={14} />
             </button>
             <button
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent text-base-900 transition hover:bg-accent-light disabled:cursor-not-allowed disabled:bg-white/[0.06] disabled:text-slate-700"
-              onClick={handleSend}
-              disabled={starting || (!input.trim() && !pendingImage)}
-              title={pendingImage ? '发送并分析图片' : '发送'}
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:bg-white/[0.06] disabled:text-slate-700 ${
+                primaryAction === 'pause'
+                  ? 'bg-white/[0.09] text-slate-200 hover:bg-white/[0.14]'
+                  : 'bg-accent text-base-900 hover:bg-accent-light'
+              }`}
+              onClick={handlePrimaryAction}
+              disabled={primaryAction === 'waiting' || primaryAction === 'disabled'}
+              title={primaryAction === 'pause'
+                ? '暂停任务'
+                : primaryAction === 'resume'
+                  ? '继续任务'
+                  : primaryAction === 'retry'
+                    ? '重试任务'
+                    : primaryAction === 'waiting'
+                      ? '等待当前操作完成'
+                      : pendingImage ? '发送并分析图片' : '发送'}
             >
-              {starting ? (
+              {primaryAction === 'waiting' ? (
                 <Loader2 size={13} className="animate-spin" />
+              ) : primaryAction === 'pause' ? (
+                <Pause size={13} />
+              ) : primaryAction === 'resume' ? (
+                <Play size={13} />
+              ) : primaryAction === 'retry' ? (
+                <RotateCcw size={13} />
               ) : (
                 <Send size={13} />
               )}
