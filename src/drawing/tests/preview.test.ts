@@ -114,6 +114,22 @@ describe('perception preview reducer', () => {
     expect(reconciled.nodes).toEqual({});
     expect(reconciled.labelsByNodeId).toEqual({});
   });
+
+  it('hides replaced canonical nodes during preview and restores them on revision', () => {
+    const initial = emptyPerceptionPreview('run_1');
+    const previewed = applyPerceptionPreviewDelta(initial, {
+      ...delta(1, 'preview', [line()]),
+      hideCommittedIds: ['old_hand'],
+    });
+
+    expect(previewed.hiddenCommittedIds).toEqual(['old_hand']);
+    const revised = applyPerceptionPreviewDelta(previewed, {
+      ...delta(2, 'revise', []),
+      removeIds: ['node_obs_2'],
+      showCommittedIds: ['old_hand'],
+    });
+    expect(revised.hiddenCommittedIds).toEqual([]);
+  });
 });
 
 function delta(

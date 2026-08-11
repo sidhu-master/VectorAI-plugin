@@ -127,6 +127,8 @@ interface RunRecord {
   feedbackCheckpoint: DrawingFeedbackCheckpoint | null;
   previewDefects: import('./types.js').DrawingPreviewDefect[];
   compiledEdit: CompiledEditCandidate | null;
+  editPreviewIds: Set<string>;
+  editHiddenIds: Set<string>;
 }
 
 export interface DrawingAgentRunHandle {
@@ -277,6 +279,8 @@ export class DrawingAgentRuntime {
       feedbackCheckpoint: null,
       previewDefects: [],
       compiledEdit: null,
+      editPreviewIds: new Set(),
+      editHiddenIds: new Set(),
     };
     this.#runs.set(input.runId, record);
     this.#enqueueAudit(record, () => this.#auditStore!.startRun({
@@ -772,6 +776,8 @@ export class DrawingAgentRuntime {
       slotIds: [...delta.slotIds],
       upsertIds: delta.upserts.map((node) => node.id),
       removeIds: [...delta.removeIds],
+      hideCommittedIds: [...(delta.hideCommittedIds ?? [])],
+      showCommittedIds: [...(delta.showCommittedIds ?? [])],
       entityTypes: delta.upserts.map((node) => node.type),
       entities: delta.upserts.map((node) => ({
         id: node.id,
@@ -783,6 +789,71 @@ export class DrawingAgentRuntime {
       })),
       source: structuredClone(delta.source),
     });
+  }
+
+  async #publishEditPreview(
+    record: RunRecord,
+    execution: DrawingToolExecution,
+    rejected: boolean,
+  ): Promise<void> {
+    if (!execution.previewDocument || !this.#application.open) return;
+    const workspace = await this.#application.open(record.state.drawingId);
+    const affected = new Set(execution.receipt.affectedNodeIds);
+    const currentNodes = [...workspace.document.geometry, ...workspace.document.annotations];
+    const previewNodes = [
+      ...execution.previewDocument.geometry,
+      ...execution.previewDocument.annotations,
+    ].filter((node) => affected.has(node.id)).map((node) => {
+      const clone = structuredClone(node);
+      if (rejected) clone.quality = {
+        ...clone.quality,
+        status: 'candidate',
+        confidence: Math.min(clone.quality.confidence ?? 0.59, 0.59),
+      };
+      return clone;
+    });
+    const hidden = currentNodes
+      .filter((node) => affected.has(node.id))
+      .map((node) => node.id);
+    const previousPreviewIds = [...record.editPreviewIds];
+    const previousHiddenIds = [...record.editHiddenIds];
+    record.editPreviewIds = new Set(previewNodes.map((node) => node.id));
+    record.editHiddenIds = new Set(hidden);
+    this.#publishPerceptionDelta(record, {
+      runId: record.state.runId,
+      sequence: 0,
+      action: rejected ? 'revise' : 'preview',
+      slotIds: [...affected],
+      upserts: previewNodes,
+      removeIds: previousPreviewIds,
+      showCommittedIds: previousHiddenIds,
+      hideCommittedIds: hidden,
+      source: {
+        page: 1,
+        viewId: 'agent-edit-preview',
+        stage: 'edit-preview',
+      },
+    }, 'primary');
+  }
+
+  #clearEditPreview(record: RunRecord, action: 'promote' | 'reject'): void {
+    if (record.editPreviewIds.size === 0 && record.editHiddenIds.size === 0) return;
+    this.#publishPerceptionDelta(record, {
+      runId: record.state.runId,
+      sequence: 0,
+      action,
+      slotIds: [],
+      upserts: [],
+      removeIds: [...record.editPreviewIds],
+      showCommittedIds: [...record.editHiddenIds],
+      source: {
+        page: 1,
+        viewId: 'agent-edit-preview',
+        stage: 'reconciliation',
+      },
+    }, 'primary');
+    record.editPreviewIds.clear();
+    record.editHiddenIds.clear();
   }
 
   #removeFeedbackPreviews(
@@ -1014,6 +1085,9 @@ export class DrawingAgentRuntime {
         this.#recordTool(record, preview);
         record.prepared = preview.prepared ?? null;
         record.progress.publish('validation', '增量修改预览完成');
+        if (preview.prepared && preview.previewDocument) {
+          await this.#publishEditPreview(record, preview, false);
+        }
         if (!await this.#safePoint(record, 'after_preview')) return false;
         if (record.state.needsReplan) return this.#plan(record);
         if (!preview.prepared) {
@@ -1035,6 +1109,7 @@ export class DrawingAgentRuntime {
           continue;
         }
         if (!await this.#verifyPreparedPreview(record, preview)) {
+          await this.#publishEditPreview(record, preview, true);
           this.#discardPrepared(record);
           record.progress.publish('revising', '预览未通过，正在根据缺陷修正');
           if (!this.#recordValidationRepair(record)) return false;
@@ -1052,6 +1127,7 @@ export class DrawingAgentRuntime {
         }
         record.progress.publish('commit', '增量修改已提交');
         record.progress.publish('committed', '增量修改已通过验证并提交');
+        this.#clearEditPreview(record, 'promote');
         if (!await this.#safePoint(record, 'after_commit')) return false;
         if (record.state.needsReplan) return this.#plan(record);
         this.#transition(record, { type: 'WORKFLOW_NODE_COMPLETED', nodeId });

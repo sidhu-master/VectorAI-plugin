@@ -52,6 +52,13 @@ const EVENT_TITLES: Record<AgentProgressEvent['type'], string> = {
   tool_finished: '步骤执行完成',
   validation: '正在验证结果',
   commit: '已保存增量修改',
+  observing: '正在观察二维图纸',
+  grounding: '正在定位目标与锚点',
+  designing: '正在设计局部修改',
+  previewing: '正在生成修改预览',
+  verifying: '正在校验修改预览',
+  revising: '正在根据缺陷修正',
+  committed: '修改已验证并保存',
   perception_delta: '正在绘制识别结果',
   heartbeat: '仍在处理',
   paused: '任务已暂停',
@@ -70,6 +77,19 @@ function formatElapsed(milliseconds: number): string {
 
 function currentStage(input: PresentAgentTaskInput): AgentStageId {
   if (input.status === 'planning') return 'understand';
+  const semanticStage: Partial<Record<AgentProgressEvent['type'], AgentStageId>> = {
+    observing: 'perceive',
+    grounding: 'perceive',
+    designing: 'modify',
+    previewing: 'modify',
+    verifying: 'verify',
+    revising: 'modify',
+    committed: 'verify',
+  };
+  const latestSemantic = [...input.events].reverse()
+    .map((event) => semanticStage[event.type])
+    .find((stage): stage is AgentStageId => stage !== undefined);
+  if (latestSemantic) return latestSemantic;
   if (!input.plan) {
     // 图片/PDF 感知型任务没有 GoalSpec（不经过文字 planner），直接进入感知阶段，
     // 避免一直卡在“理解需求”。
@@ -110,8 +130,8 @@ function headingFor(status: AgentUiStatus, stage: AgentStageId): string {
 
 function detailTone(type: AgentProgressEvent['type']): PresentedAgentDetail['tone'] {
   if (type === 'failed') return 'danger';
-  if (type === 'paused' || type === 'validation') return 'warning';
-  if (type === 'completed' || type === 'commit') return 'success';
+  if (type === 'paused' || type === 'validation' || type === 'revising') return 'warning';
+  if (type === 'completed' || type === 'commit' || type === 'committed') return 'success';
   return 'neutral';
 }
 

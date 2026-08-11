@@ -711,6 +711,8 @@ describe('DrawingAgentRuntime', () => {
     const { application, order, runtime, workspace } = await setup();
 
     const handle = runtime.start(startInput(workspace));
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
     const final = await handle.completion;
 
     expect(final.status).toBe('completed');
@@ -724,6 +726,12 @@ describe('DrawingAgentRuntime', () => {
     expect((await application.open(workspace.document.id)).commits[0].actor).toEqual({
       type: 'AI', id: 'run_1',
     });
+    const previewEvent = events.find((event) => (
+      event.type === 'perception_delta' && event.perceptionDelta?.action === 'preview'
+    ));
+    expect(previewEvent?.perceptionDelta?.upserts).toEqual([
+      expect.objectContaining({ id: 'circle_1' }),
+    ]);
   });
 
   it('renders vision for a text-only instruction on an existing drawing', async () => {

@@ -16,7 +16,7 @@ interface EntityRendererProps {
   onPointerDown?: (event: MouseEvent<SVGGElement>) => void;
   provisional?: boolean;
   label?: string;
-  perceptionStage?: 'outline' | 'detail' | 'annotation' | 'reconciliation';
+  perceptionStage?: 'outline' | 'detail' | 'annotation' | 'reconciliation' | 'edit-preview';
 }
 
 /**

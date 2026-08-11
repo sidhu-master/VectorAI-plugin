@@ -1,39 +1,11 @@
-import type { PerceptionPreviewDelta } from '../../../src/drawing/index.js';
+import type {
+  DrawingAgentProgressEvent,
+  DrawingAgentProgressEventType,
+  PerceptionPreviewDelta,
+} from '../../../src/contracts/drawing-agent.js';
 
-export type AgentProgressEventType =
-  | 'accepted'
-  | 'planning'
-  | 'model_started'
-  | 'model_finished'
-  | 'tool_started'
-  | 'tool_finished'
-  | 'validation'
-  | 'commit'
-  | 'observing'
-  | 'grounding'
-  | 'designing'
-  | 'previewing'
-  | 'verifying'
-  | 'revising'
-  | 'committed'
-  | 'perception_delta'
-  | 'heartbeat'
-  | 'paused'
-  | 'resumed'
-  | 'stopped'
-  | 'completed'
-  | 'failed';
-
-export interface AgentProgressEvent {
-  id: string;
-  runId: string;
-  type: AgentProgressEventType;
-  title: string;
-  detail?: string;
-  perceptionDelta?: PerceptionPreviewDelta;
-  timestamp: number;
-  elapsedMs: number;
-}
+export type AgentProgressEventType = DrawingAgentProgressEventType;
+export type AgentProgressEvent = DrawingAgentProgressEvent;
 
 type ProgressListener = (event: AgentProgressEvent) => void;
 

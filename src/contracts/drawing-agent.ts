@@ -3,10 +3,46 @@ import type {
   DrawingCommand,
   DrawingId,
   DrawingSelector,
+  PerceptionPreviewDelta,
   RevisionId,
 } from '@/drawing';
 
-export type { PerceptionPreviewDelta } from '@/drawing';
+export type { PerceptionPreviewDelta };
+
+export type DrawingAgentProgressEventType =
+  | 'accepted'
+  | 'planning'
+  | 'model_started'
+  | 'model_finished'
+  | 'tool_started'
+  | 'tool_finished'
+  | 'validation'
+  | 'commit'
+  | 'observing'
+  | 'grounding'
+  | 'designing'
+  | 'previewing'
+  | 'verifying'
+  | 'revising'
+  | 'committed'
+  | 'perception_delta'
+  | 'heartbeat'
+  | 'paused'
+  | 'resumed'
+  | 'stopped'
+  | 'completed'
+  | 'failed';
+
+export interface DrawingAgentProgressEvent {
+  id: string;
+  runId: string;
+  type: DrawingAgentProgressEventType;
+  title: string;
+  detail?: string;
+  perceptionDelta?: PerceptionPreviewDelta;
+  timestamp: number;
+  elapsedMs: number;
+}
 
 export type DrawingAgentRunStatus =
   | 'planning'

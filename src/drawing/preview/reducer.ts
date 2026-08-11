@@ -20,6 +20,9 @@ export function applyPerceptionPreviewDelta(
   const nodes = { ...state.nodes };
   const labelsByNodeId = { ...state.labelsByNodeId };
   const stageByNodeId = { ...(state.stageByNodeId ?? {}) };
+  const hiddenCommittedIds = new Set(state.hiddenCommittedIds ?? []);
+  for (const id of delta.showCommittedIds ?? []) hiddenCommittedIds.delete(id);
+  for (const id of delta.hideCommittedIds ?? []) hiddenCommittedIds.add(id);
   for (const id of delta.removeIds) {
     delete nodes[id];
     delete labelsByNodeId[id];
@@ -38,6 +41,11 @@ export function applyPerceptionPreviewDelta(
     nodes,
     labelsByNodeId,
     stageByNodeId,
+    ...((state.hiddenCommittedIds !== undefined
+      || delta.hideCommittedIds !== undefined
+      || delta.showCommittedIds !== undefined)
+      ? { hiddenCommittedIds: [...hiddenCommittedIds] }
+      : {}),
   };
 }
 
@@ -76,6 +84,7 @@ export function reconcilePerceptionPreview(
     nodes,
     labelsByNodeId,
     ...(stageByNodeId === undefined ? {} : { stageByNodeId }),
+    ...(state.hiddenCommittedIds === undefined ? {} : { hiddenCommittedIds: [] }),
   };
 }
 

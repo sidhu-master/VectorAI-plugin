@@ -7,7 +7,9 @@ export type PerceptionPreviewAction =
   | 'merge'
   | 'split'
   | 'reject'
-  | 'promote';
+  | 'promote'
+  | 'preview'
+  | 'revise';
 
 export type PerceptionPreviewNode = GeometryNode | AnnotationNode;
 
@@ -15,7 +17,8 @@ export type PerceptionPreviewStage =
   | 'outline'
   | 'detail'
   | 'annotation'
-  | 'reconciliation';
+  | 'reconciliation'
+  | 'edit-preview';
 
 export interface PerceptionPreviewDelta {
   runId: string;
@@ -24,6 +27,8 @@ export interface PerceptionPreviewDelta {
   slotIds: string[];
   upserts: PerceptionPreviewNode[];
   removeIds: string[];
+  hideCommittedIds?: string[];
+  showCommittedIds?: string[];
   labelsByNodeId?: Record<string, string>;
   source: {
     page: number;
@@ -43,4 +48,5 @@ export interface PerceptionPreviewState {
    * 用于前端按“轮廓 → 细节”分层呈现多轮绘制过程。
    */
   stageByNodeId?: Record<string, PerceptionPreviewStage>;
+  hiddenCommittedIds?: string[];
 }

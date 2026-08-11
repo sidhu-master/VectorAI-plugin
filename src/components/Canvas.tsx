@@ -90,7 +90,7 @@ export function PerceptionPreviewLayer({
 }: {
   entities: DrawingRenderable[];
   labelsByNodeId: Record<string, string>;
-  stageByNodeId?: Record<string, 'outline' | 'detail' | 'annotation' | 'reconciliation'>;
+  stageByNodeId?: Record<string, 'outline' | 'detail' | 'annotation' | 'reconciliation' | 'edit-preview'>;
   scale: number;
   viewport: { minX: number; minY: number; maxX: number; maxY: number };
 }) {
@@ -127,9 +127,12 @@ export default function Canvas() {
   const setMouseCoords = useStore((s) => s.setMouseCoords);
 
   const { scale, offsetX, offsetY } = canvasTransform;
-  const entities = useMemo<DrawingRenderable[]>(() => filterCanvasAnnotations(document
-    ? [...document.geometry, ...document.annotations]
-    : [], showAnnotations), [document, showAnnotations]);
+  const entities = useMemo<DrawingRenderable[]>(() => {
+    const hidden = new Set(perceptionPreview.hiddenCommittedIds ?? []);
+    return filterCanvasAnnotations(document
+      ? [...document.geometry, ...document.annotations].filter((node) => !hidden.has(node.id))
+      : [], showAnnotations);
+  }, [document, perceptionPreview.hiddenCommittedIds, showAnnotations]);
   const previewEntities = useMemo<DrawingRenderable[]>(
     () => filterCanvasAnnotations(Object.values(perceptionPreview.nodes), showAnnotations),
     [perceptionPreview.nodes, showAnnotations],

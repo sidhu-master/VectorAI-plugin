@@ -141,4 +141,22 @@ describe('Agent task presentation', () => {
     expect(presentation.summary).toBe('已完成 12 次增量修改 · 用时 42s');
     expect(presentation.stages.every((stage) => stage.status === 'completed')).toBe(true);
   });
+
+  it.each([
+    ['grounding', 'perceive', '正在解析图纸'],
+    ['designing', 'modify', '正在应用修改'],
+    ['verifying', 'verify', '正在验证结果'],
+    ['revising', 'modify', '正在应用修改'],
+  ] as const)('maps semantic event %s to %s', (type, stage, heading) => {
+    const presentation = presentAgentTask({
+      plan: reconstructPlan,
+      status: 'running',
+      currentStepIndex: 0,
+      commitCount: 0,
+      events: [event(type, 5_000)],
+    });
+
+    expect(presentation.stages.find((item) => item.status === 'current')?.id).toBe(stage);
+    expect(presentation.heading).toBe(heading);
+  });
 });
