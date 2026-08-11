@@ -32,7 +32,9 @@ export function previewTransaction(
     });
   }
 
-  if (transaction.postconditions.length > 0) {
+  // 仅当没有任何待执行命令时,若后置条件已在当前文档上满足,才短路为 already_satisfied。
+  // 若存在实际命令(新建/修改/删除),必须真正应用并校验应用后的结果,不能被宽松断言吞掉。
+  if (transaction.commands.length === 0 && transaction.postconditions.length > 0) {
     const currentOutcome = evaluateOutcome(context.document, transaction.postconditions);
     if (currentOutcome.satisfied) return { status: 'already_satisfied', outcome: currentOutcome };
   }

@@ -120,6 +120,7 @@ export default function Canvas() {
   const showAnnotations = useStore((s) => s.showAnnotations);
   const canvasTransform = useStore((s) => s.canvasTransform);
   const setCanvasTransform = useStore((s) => s.setCanvasTransform);
+  const setViewportSize = useStore((s) => s.setViewportSize);
   const selectEntity = useStore((s) => s.selectEntity);
   const selectEntities = useStore((s) => s.selectEntities);
   const clearSelection = useStore((s) => s.clearSelection);
@@ -144,6 +145,12 @@ export default function Canvas() {
   const screenOverlayRef = useRef<SVGGElement>(null);
   const minorGridPatternRef = useRef<SVGPatternElement>(null);
   const majorGridPatternRef = useRef<SVGPatternElement>(null);
+  const committedAxisLabelsRef = useRef<SVGGElement>(null);
+  const liveAxisLabelsRef = useRef<SVGGElement>(null);
+  const axisLineXRef = useRef<SVGLineElement>(null);
+  const axisLineYRef = useRef<SVGLineElement>(null);
+  const liveAxisLabelRafRef = useRef<number | null>(null);
+  const pendingLiveTransformRef = useRef<{ scale: number; offsetX: number; offsetY: number } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
   // 交互状态
@@ -174,6 +181,7 @@ export default function Canvas() {
   }, [setCanvasTransform]);
   useEffect(() => () => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    if (liveAxisLabelRafRef.current != null) cancelAnimationFrame(liveAxisLabelRafRef.current);
   }, []);
 
   // 框选状态
@@ -184,12 +192,17 @@ export default function Canvas() {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const update = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    const update = () => {
+      const width = el.clientWidth;
+      const height = el.clientHeight;
+      setSize({ w: width, h: height });
+      if (width > 0 && height > 0) setViewportSize({ width, height });
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [setViewportSize]);
 
   const { w, h } = size;
 
@@ -223,6 +236,56 @@ export default function Canvas() {
     x: (sx - offsetX) / scale,
     y: (offsetY - sy) / scale,
   }), [offsetX, offsetY, scale]);
+
+  // 按给定变换向目标 <g> 重建坐标轴标签（用于拖拽中实时更新，避免依赖 React state）
+  const applyAxisLabels = useCallback((target: SVGGElement, transform: { scale: number; offsetX: number; offsetY: number }) => {
+    const { scale: sc, offsetX: ox, offsetY: oy } = transform;
+    while (target.firstChild) target.removeChild(target.firstChild);
+    if (!w || !h) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const mk = (x: number, y: number, text: string, anchor: string) => {
+      const el = window.document.createElementNS(NS, 'text');
+      el.setAttribute('x', String(x));
+      el.setAttribute('y', String(y));
+      el.setAttribute('class', 'fill-slate-700 font-mono');
+      el.setAttribute('font-size', '9');
+      el.setAttribute('text-anchor', anchor);
+      el.textContent = text;
+      return el;
+    };
+    const worldLeft = -ox / sc;
+    const worldRight = (w - ox) / sc;
+    const worldBottom = (oy - h) / sc;
+    const worldTop = oy / sc;
+    const x0 = Math.ceil(worldLeft / 50) * 50;
+    const x1 = Math.floor(worldRight / 50) * 50;
+    for (let x = x0; x <= x1; x += 50) {
+      if (x === 0) continue;
+      target.appendChild(mk(ox + x * sc, oy + 12, String(x), 'middle'));
+    }
+    const y0 = Math.ceil(worldBottom / 50) * 50;
+    const y1 = Math.floor(worldTop / 50) * 50;
+    for (let y = y0; y <= y1; y += 50) {
+      if (y === 0) continue;
+      target.appendChild(mk(ox + 4, oy - y * sc - 3, String(y), 'start'));
+    }
+  }, [w, h]);
+
+  // 拖拽结束后恢复已提交标签、清空实时标签
+  const resetLiveAxisLabels = useCallback(() => {
+    if (liveAxisLabelRafRef.current != null) {
+      cancelAnimationFrame(liveAxisLabelRafRef.current);
+      liveAxisLabelRafRef.current = null;
+    }
+    pendingLiveTransformRef.current = null;
+    const committed = committedAxisLabelsRef.current;
+    if (committed) committed.style.display = '';
+    const live = liveAxisLabelsRef.current;
+    if (live) {
+      live.style.display = 'none';
+      while (live.firstChild) live.removeChild(live.firstChild);
+    }
+  }, []);
 
   const worldLeft = w ? -offsetX / scale : 0;
   const worldRight = w ? (w - offsetX) / scale : 0;
@@ -369,6 +432,26 @@ export default function Canvas() {
             'transform',
             `translate(${preview.deltaX}, ${preview.deltaY})`,
           );
+          // 隐藏已提交标签，改用实时标签跟随（rAF 节流，每帧重建一次）
+          const committed = committedAxisLabelsRef.current;
+          if (committed) committed.style.display = 'none';
+          const live = liveAxisLabelsRef.current;
+          if (live) live.style.display = '';
+          pendingLiveTransformRef.current = preview.transform;
+          if (liveAxisLabelRafRef.current == null) {
+            liveAxisLabelRafRef.current = requestAnimationFrame(() => {
+              liveAxisLabelRafRef.current = null;
+              const t = pendingLiveTransformRef.current;
+              if (t && liveAxisLabelsRef.current) applyAxisLabels(liveAxisLabelsRef.current, t);
+            });
+          }
+          // 坐标轴线条始终满屏:原点越界时贴到屏幕边缘
+          const axisY = Math.max(0, Math.min(h, preview.transform.offsetY));
+          const axisX = Math.max(0, Math.min(w, preview.transform.offsetX));
+          axisLineXRef.current?.setAttribute('y1', String(axisY));
+          axisLineXRef.current?.setAttribute('y2', String(axisY));
+          axisLineYRef.current?.setAttribute('x1', String(axisX));
+          axisLineYRef.current?.setAttribute('x2', String(axisX));
         }
       } else {
         // 悬停：更新坐标
@@ -421,6 +504,7 @@ export default function Canvas() {
       panSessionRef.current?.finish();
       panSessionRef.current = null;
       screenOverlayRef.current?.removeAttribute('transform');
+      resetLiveAxisLabels();
       setCursor('grab');
       // 如果没移动过，视为点击背景 -> 清空选择
       if (!hasMovedRef.current) {
@@ -434,6 +518,7 @@ export default function Canvas() {
       panSessionRef.current?.finish();
       panSessionRef.current = null;
       screenOverlayRef.current?.removeAttribute('transform');
+      resetLiveAxisLabels();
     }
     isDraggingRef.current = false;
     isSelectingRef.current = false;
@@ -470,10 +555,29 @@ export default function Canvas() {
           minorPatternRef={minorGridPatternRef}
           majorPatternRef={majorGridPatternRef}
         />
+        {/* 坐标轴线条(屏幕坐标,始终满屏;原点越界时贴边) */}
+        <g data-cad-axes="true" pointerEvents="none">
+          <line
+            ref={axisLineXRef}
+            x1={0}
+            y1={Math.max(0, Math.min(h, offsetY))}
+            x2={w}
+            y2={Math.max(0, Math.min(h, offsetY))}
+            stroke="rgba(148,163,184,0.3)"
+            strokeWidth={1}
+          />
+          <line
+            ref={axisLineYRef}
+            x1={Math.max(0, Math.min(w, offsetX))}
+            y1={0}
+            x2={Math.max(0, Math.min(w, offsetX))}
+            y2={h}
+            stroke="rgba(148,163,184,0.3)"
+            strokeWidth={1}
+          />
+        </g>
         {/* 世界坐标组 */}
         <g ref={worldGroupRef} transform={`translate(${offsetX}, ${offsetY}) scale(${scale}, ${-scale})`}>
-          <line x1={worldLeft} y1={0} x2={worldRight} y2={0} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <line x1={0} y1={worldBottom} x2={0} y2={worldTop} stroke="rgba(148,163,184,0.16)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           {entities.map(renderEntity)}
           <PerceptionPreviewLayer
             entities={previewEntities}
@@ -487,9 +591,11 @@ export default function Canvas() {
 
         {/* 屏幕坐标叠加层 */}
         <g ref={screenOverlayRef}>
-          <g>{axisLabels}</g>
+          <g ref={committedAxisLabelsRef}>{axisLabels}</g>
           <g>{relationLabels}</g>
         </g>
+        {/* 拖拽中实时更新的坐标轴标签（独立于叠加层平移，按实时变换重建） */}
+        <g ref={liveAxisLabelsRef} style={{ display: 'none' }} />
 
         {/* 框选矩形 */}
         {selRect && selRect.w > 1 && selRect.h > 1 && (

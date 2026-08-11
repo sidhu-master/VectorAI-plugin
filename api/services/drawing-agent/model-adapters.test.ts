@@ -4,10 +4,12 @@ import type { DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
 import type { DrawingId, RevisionId } from '../../../src/drawing/index';
 import type { DrawingToolReceipt } from './types';
 import {
+  DrawingAcceptanceAdapter,
   DrawingDecisionAdapter,
   DrawingPlannerAdapter,
   selectDrawingFeedbackModel,
   type DrawingAgentCompletion,
+  type DrawingVisionCompletion,
 } from './model-adapters';
 
 const revision = 'revision_1' as RevisionId;
@@ -104,7 +106,7 @@ describe('drawing-native model adapters', () => {
       received = input;
       return '```json\n{"type":"inspect","toolCallId":"call_2","nodeId":"circle_1"}\n```';
     });
-    const adapter = new DrawingDecisionAdapter(complete, () => 100);
+    const adapter = new DrawingDecisionAdapter(complete, undefined, () => 100);
     const receipt = toolReceipt();
 
     const decision = await adapter.decide({
@@ -142,6 +144,48 @@ describe('drawing-native model adapters', () => {
     expect(received?.userPrompt).not.toContain('decision-model');
   });
 
+  it('routes decisions through the vision completion when a snapshot is provided', async () => {
+    let received: Parameters<DrawingVisionCompletion>[0] | undefined;
+    const completeVision: DrawingVisionCompletion = vi.fn(async (input) => {
+      received = input;
+      return '{"type":"transact","toolCallId":"call_v","commands":[{"type":"geometry.update","id":"line_a","changes":{"end":[40,10]}}]}';
+    });
+    const textComplete: DrawingAgentCompletion = vi.fn(async () => {
+      throw new Error('text completion must not be used when vision is present');
+    });
+    const adapter = new DrawingDecisionAdapter(textComplete, completeVision);
+
+    const decision = await adapter.decide({
+      plan: validPlan,
+      currentWorkflowNodeId: 'inspect_circle', revision,
+      pendingInstructions: [], recentReceipts: [], toolEvidence: [],
+      attempt: 1, modelName: 'decision-model',
+      signal: new AbortController().signal, deadlineAt: Date.now() + 1000,
+      vision: {
+        selection: ['line_a'],
+        snapshot: {
+          width: 100, height: 100,
+          imageDataUrl: 'data:image/png;base64,AAAA',
+          nodes: [{
+            nodeId: 'line_a', type: 'line',
+            bounds: { x: 0, y: 0, width: 10, height: 3 }, selected: true,
+          }],
+        },
+      },
+    } as never);
+
+    expect(completeVision).toHaveBeenCalledTimes(1);
+    expect(textComplete).not.toHaveBeenCalled();
+    expect(received?.image).toBe('AAAA');
+    expect(received?.systemPrompt).toContain('grounding');
+    expect(received?.userPrompt).toContain('line_a');
+    expect(received?.userPrompt).toContain('"selection"');
+    expect(decision).toEqual({
+      type: 'transact', toolCallId: 'call_v',
+      commands: [{ type: 'geometry.update', id: 'line_a', changes: { end: [40, 10] } }],
+    });
+  });
+
   it('propagates strict parser failures instead of accepting a legacy Spatial Intent', async () => {
     const adapter = new DrawingPlannerAdapter(async () => JSON.stringify({
       operation: 'modify', objects: [], spatialModel: { entities: [] },
@@ -174,6 +218,61 @@ describe('drawing-native model adapters', () => {
       'planner deadline exceeded',
     );
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits the raw planner reply through onRawReply', async () => {
+    const raw = JSON.stringify(validPlan);
+    const adapter = new DrawingPlannerAdapter(async () => raw, () => 100);
+    const calls: string[] = [];
+    adapter.onRawReply = (role, reply) => calls.push(reply);
+
+    await adapter.plan(plannerInput());
+
+    expect(calls).toEqual([raw]);
+  });
+
+  it('emits the raw decision reply through onRawReply', async () => {
+    const raw = '{"type":"finish","summary":"done"}';
+    const adapter = new DrawingDecisionAdapter(async () => raw, undefined, () => 100);
+    const calls: string[] = [];
+    adapter.onRawReply = (role, reply) => calls.push(reply);
+
+    await adapter.decide({
+      plan: validPlan,
+      currentWorkflowNodeId: 'inspect_circle',
+      revision,
+      pendingInstructions: [], recentReceipts: [], toolEvidence: [],
+      attempt: 1, modelName: 'decision-model',
+      signal: new AbortController().signal, deadlineAt: 1000,
+    } as never);
+
+    expect(calls).toEqual([raw]);
+  });
+
+  it('parses acceptance verdicts and emits the raw reply through onRawReply', async () => {
+    const reply = '{"satisfied":false,"reason":"手没有抬起"}';
+    const adapter = new DrawingAcceptanceAdapter(async () => reply);
+    const calls: string[] = [];
+    adapter.onRawReply = (role, value) => calls.push(value);
+
+    const result = await adapter.accept({
+      goal: '把右手改成向上打招呼', modelName: 'accept-model',
+      image: 'data:image/png;base64,AAAA', width: 100, height: 100,
+    });
+
+    expect(result).toEqual({ satisfied: false, reason: '手没有抬起' });
+    expect(calls).toEqual([reply]);
+
+    const ok = await adapter.accept({
+      goal: 'g', modelName: 'm',
+      image: 'data:image/png;base64,AAAA', width: 10, height: 10,
+    });
+    const yes = new DrawingAcceptanceAdapter(async () => '{"satisfied":true,"reason":"手已抬起"}');
+    expect(await yes.accept({
+      goal: 'g', modelName: 'm',
+      image: 'data:image/png;base64,AAAA', width: 10, height: 10,
+    })).toEqual({ satisfied: true, reason: '手已抬起' });
+    expect(ok.satisfied).toBe(false);
   });
 
   it('bounds oversized tool evidence before it enters the model context', async () => {

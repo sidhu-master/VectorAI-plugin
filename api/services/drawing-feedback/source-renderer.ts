@@ -202,7 +202,7 @@ function transformDirection(transform: AffineTransform, direction: Vec2): Vec2 {
   ];
 }
 
-function sampleCircle(center: Vec2, radius: number): Vec2[] {
+export function sampleCircle(center: Vec2, radius: number): Vec2[] {
   const count = Math.max(24, Math.ceil(2 * Math.PI * radius * 2));
   return Array.from({ length: count + 1 }, (_, index) => {
     const angle = index * Math.PI * 2 / count;
@@ -210,7 +210,7 @@ function sampleCircle(center: Vec2, radius: number): Vec2[] {
   });
 }
 
-function sampleArc(
+export function sampleArc(
   center: Vec2,
   radius: number,
   startDegrees: number,
@@ -229,7 +229,7 @@ function sampleArc(
   });
 }
 
-function sampleEllipse(node: Extract<GeometryNode, { type: 'ellipse' }>): Vec2[] {
+export function sampleEllipse(node: Extract<GeometryNode, { type: 'ellipse' }>): Vec2[] {
   const majorRadius = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
   if (!(majorRadius > 0)) return [];
   const major: Vec2 = [node.majorAxis[0] / majorRadius, node.majorAxis[1] / majorRadius];
@@ -249,7 +249,7 @@ function sampleEllipse(node: Extract<GeometryNode, { type: 'ellipse' }>): Vec2[]
   });
 }
 
-function sampleSpline(points: readonly Vec2[], closed: boolean): Vec2[] {
+export function sampleSpline(points: readonly Vec2[], closed: boolean): Vec2[] {
   if (points.length < 2) return [...points];
   if (points.length === 2) return [points[0], points[1]];
   const output: Vec2[] = [points[0]];

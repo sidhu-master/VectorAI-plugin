@@ -16,7 +16,7 @@ import { createAgentRunsRouter } from './routes/agent-runs.js'
 import { FileDrawingRepository } from './services/drawing-application/file-drawing-repository.js'
 import { DrawingApplication } from './services/drawing-application/application.js'
 import { DrawingAgentRuntime } from './services/drawing-agent/runtime.js'
-import { DrawingDecisionAdapter, DrawingPlannerAdapter } from './services/drawing-agent/model-adapters.js'
+import { DrawingAcceptanceAdapter, DrawingDecisionAdapter, DrawingPlannerAdapter } from './services/drawing-agent/model-adapters.js'
 import { DrawingToolRegistry } from './services/drawing-agent/tool-registry.js'
 import { FileDrawingAgentAuditStore } from './services/drawing-agent/file-audit-store.js'
 import { createDrawingsRouter } from './routes/drawings.js'
@@ -119,6 +119,7 @@ const agentRuntime = new DrawingAgentRuntime({
   tools: drawingTools,
   planner: new DrawingPlannerAdapter(),
   decision: new DrawingDecisionAdapter(),
+  acceptance: new DrawingAcceptanceAdapter(),
   auditStore,
   sourceArtifacts,
   perception: drawingPerception,

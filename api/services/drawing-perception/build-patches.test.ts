@@ -135,6 +135,46 @@ describe('observation-to-DrawingCommand resolver', () => {
       expect.stringContaining('circle_missing_radius'),
     ]);
   });
+
+  it('defaults arc counterClockwise to true when the model omits it', () => {
+    const arcObs: GeometryObservation = {
+      ...baseObservation('arc_1', 0.9), type: 'arc',
+      measuredParams: { center: [0.5, 0.5], radius: 0.2, startAngle: 0, endAngle: 3.1416 },
+    };
+    const result = buildObservationCommandBatches({
+      geometry: [arcObs], annotations: [], associations: [],
+      topology: { components: [{
+        id: 'component_arc', viewId: 'view_1', observationIds: ['arc_1'], closed: false,
+      }] },
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.batches[0].commands[0]).toEqual(expect.objectContaining({
+      type: 'geometry.create',
+      value: expect.objectContaining({
+        type: 'arc', center: [0.5, 0.5], radius: 0.2,
+        startAngle: 0, endAngle: 3.1416, counterClockwise: true,
+      }),
+    }));
+
+    const ccw = buildObservationCommandBatches({
+      geometry: [{
+        ...arcObs,
+        measuredParams: {
+          center: [0.5, 0.5], radius: 0.2,
+          startAngle: 0, endAngle: 3.1416, counterClockwise: false,
+        },
+      }],
+      annotations: [], associations: [],
+      topology: { components: [{
+        id: 'component_arc', viewId: 'view_1', observationIds: ['arc_1'], closed: false,
+      }] },
+    });
+    expect(ccw.batches[0].commands[0]).toMatchObject({
+      type: 'geometry.create',
+      value: expect.objectContaining({ counterClockwise: false }),
+    });
+  });
 });
 
 function baseObservation(id: string, confidence: number) {

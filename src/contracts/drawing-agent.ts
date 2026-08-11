@@ -287,12 +287,27 @@ function parseAssertion(value: unknown, path: string): DrawingAssertion {
       exact(assertion, ['type'], path);
       return { type };
     case 'selection.count':
-      exact(assertion, ['type', 'selector', 'equals'], path);
-      return {
-        type,
-        selector: parseSelector(assertion.selector, `${path}.selector`),
-        equals: nonNegativeInteger(assertion.equals, `${path}.equals`),
-      };
+      exact(assertion, ['type', 'selector', 'equals', 'min'], path);
+      {
+        const selector = parseSelector(assertion.selector, `${path}.selector`);
+        const hasEquals = 'equals' in assertion;
+        const hasMin = 'min' in assertion;
+        if (hasEquals === hasMin) {
+          fail(path, 'selection.count 必须且只能提供 equals 或 min 之一');
+        }
+        if (hasEquals) {
+          return {
+            type,
+            selector,
+            equals: nonNegativeInteger(assertion.equals, `${path}.equals`),
+          };
+        }
+        return {
+          type,
+          selector,
+          min: nonNegativeInteger(assertion.min, `${path}.min`),
+        };
+      }
     default:
       fail(`${path}.type`, `不支持的断言类型 ${type}`);
   }

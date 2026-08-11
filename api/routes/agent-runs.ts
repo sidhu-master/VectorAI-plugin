@@ -13,7 +13,7 @@ import type { SourceArtifactStore } from '../services/source-artifacts/types.js'
 const TERMINAL_STATUSES = new Set<DrawingAgentRunStatus>(['stopped', 'completed', 'failed']);
 const TERMINAL_EVENTS = new Set<AgentProgressEvent['type']>(['stopped', 'completed', 'failed']);
 const ALLOWED_START_KEYS = new Set([
-  'drawingId', 'baseRevision', 'goal', 'selectedIds', 'stableRules', 'attachment',
+  'drawingId', 'baseRevision', 'goal', 'selectedIds', 'stableRules', 'viewport', 'attachment',
 ]);
 
 export function createAgentRunsRouter(
@@ -41,9 +41,11 @@ export function createAgentRunsRouter(
     const attachment = parseAttachment(body.attachment);
     const selectedIds = optionalStringArray(body.selectedIds);
     const stableRules = optionalStringArray(body.stableRules);
+    const viewport = parseViewport(body.viewport);
     if (
       !drawingId || !baseRevision || goal === null || (!goal && !attachment)
       || attachment === null || selectedIds === null || stableRules === null
+      || viewport === null
     ) {
       invalid(
         res,
@@ -94,6 +96,7 @@ export function createAgentRunsRouter(
       modelProfile: { ...modelProfile },
       ...(selectedIds ? { selectedIds } : {}),
       ...(stableRules ? { stableRules } : {}),
+      ...(viewport ? { viewport } : {}),
       ...(source ? { source } : {}),
     });
     res.status(202).json({ success: true, runId });
@@ -215,6 +218,36 @@ function optionalStringArray(value: unknown): string[] | undefined | null {
   if (!Array.isArray(value) || value.length > 100) return null;
   const normalized = value.map(nonEmptyString);
   return normalized.some((item) => item === null) ? null : normalized as string[];
+}
+
+function parseViewport(value: unknown): {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+} | undefined | null {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return null;
+  const scale = finiteNumber(value.scale);
+  const offsetX = finiteNumber(value.offsetX);
+  const offsetY = finiteNumber(value.offsetY);
+  const width = positiveNumber(value.width);
+  const height = positiveNumber(value.height);
+  if (scale === null || offsetX === null || offsetY === null
+    || width === null || height === null || width > 8192 || height > 8192) {
+    return null;
+  }
+  return { scale, offsetX, offsetY, width, height };
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function positiveNumber(value: unknown): number | null {
+  const number = finiteNumber(value);
+  return number !== null && number > 0 ? number : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

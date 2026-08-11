@@ -196,5 +196,15 @@ describe('evaluateAssertion', () => {
     expect(evaluateAssertion(document, {
       type: 'selection.count', selector: { plane: 'geometry', types: ['circle'] }, equals: 1,
     })).toBe(true);
+    // min 语义:至少 N 条,即使实际条数多于 min 也通过
+    expect(evaluateAssertion(document, {
+      type: 'selection.count', selector: { plane: 'geometry', types: ['circle'] }, min: 1,
+    })).toBe(true);
+    expect(evaluateAssertion(document, {
+      type: 'selection.count', selector: { plane: 'geometry', types: ['line'] }, min: 0,
+    })).toBe(true);
+    expect(evaluateAssertion(document, {
+      type: 'selection.count', selector: { plane: 'geometry', types: ['circle'] }, min: 2,
+    })).toBe(false);
   });
 });

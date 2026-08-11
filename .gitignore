@@ -28,6 +28,11 @@ dist-ssr
 
 # VectorAI local runtime artifacts
 .local/
+tmp/
+
+# Local real-flow drawing fixtures
+test1.jpg
+test2.png
 
 # Python-generated caches
 __pycache__/

@@ -76,6 +76,10 @@ async function setup(input: {
       order.push('commit');
       return application.execute(call);
     },
+    // 视觉接地快照在 runtime 测试中未启用(不传 viewport),占位即可
+    renderForVision: async () => ({
+      width: 1, height: 1, imageDataUrl: 'data:image/png;base64,', nodes: [],
+    }),
   };
   const tools = new DrawingToolRegistry({
     application: toolApplication,
@@ -758,8 +762,8 @@ describe('DrawingAgentRuntime', () => {
     expect((await application.open(workspace.document.id)).document.geometry).toEqual([]);
   });
 
-  it('completes an already-satisfied transaction without adding a commit', async () => {
-    const { application, order, runtime, workspace } = await setup();
+  it('does not add a commit when an already-satisfied goal is re-proposed with a colliding id', async () => {
+    const { application, runtime, workspace } = await setup();
     const seeded = await application.execute({
       drawingId: workspace.document.id,
       transaction: circleTransaction(workspace.revision, 'circle_1'),
@@ -769,9 +773,9 @@ describe('DrawingAgentRuntime', () => {
 
     const final = await runtime.start(startInput(current)).completion;
 
+    // 模型重提了与已存在节点 id 冲突的 create:不产生重复提交,且目标本就满足→正常完成
     expect(final.status).toBe('completed');
     expect(final.commitCount).toBe(0);
-    expect(order).toEqual(['preview', 'preview']);
     expect((await application.open(workspace.document.id)).commits).toHaveLength(1);
   });
 

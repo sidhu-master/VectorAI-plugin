@@ -41,12 +41,15 @@ import {
 } from './state.js';
 import type { DrawingToolRegistry } from './tool-registry.js';
 import type {
+  DrawingAcceptanceModelAdapter,
   DrawingDecisionModelAdapter,
   DrawingPlannerModelAdapter,
   DrawingToolContext,
   DrawingToolEvidence,
   DrawingToolExecution,
   DrawingToolInvocation,
+  DrawingVisionContext,
+  DrawingModelRole,
   PreparedDrawingTransaction,
   StartDrawingAgentRunInput,
 } from './types.js';
@@ -59,7 +62,7 @@ interface RuntimeLimitsInput {
   maxPerceptionCommits: number;
 }
 
-type RuntimeApplication = Pick<DrawingApplication, 'summarize'>;
+type RuntimeApplication = Pick<DrawingApplication, 'summarize' | 'renderForVision'>;
 
 interface RuntimeTools {
   invoke(input: DrawingToolInvocation): Promise<DrawingToolExecution>;
@@ -92,6 +95,9 @@ interface RunRecord {
   selectedIds: string[];
   stableRules: string[];
   source: StartDrawingAgentRunInput['source'];
+  viewport: StartDrawingAgentRunInput['viewport'];
+  vision: DrawingVisionContext | null;
+  visionRevision: string | null;
   inputMode: DrawingInputMode;
   planningObjective: string;
   perceptionCompleted: boolean;
@@ -123,6 +129,7 @@ export interface DrawingAgentRuntimeOptions {
   limits?: Partial<RuntimeLimitsInput>;
   idFactory?: unknown;
   auditStore?: DrawingAgentAuditStore;
+  acceptance?: DrawingAcceptanceModelAdapter;
   promptHashes?: { planner: string; decision: string };
   sourceArtifacts?: SourceArtifactStore;
   perception?: RuntimePerception;
@@ -141,6 +148,8 @@ const DEFAULT_LIMITS: RuntimeLimitsInput = {
 };
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 const MAX_VALIDATION_REPAIRS = 2;
+/** planner 输出坏 JSON 时的 schema 纠错重试次数(最后一次用更高配的 repair 模型) */
+const MAX_PLANNER_SCHEMA_CORRECTIONS = 3;
 
 export class DrawingAgentRuntime {
   readonly #application: RuntimeApplication;
@@ -152,6 +161,7 @@ export class DrawingAgentRuntime {
   readonly #limits: RuntimeLimitsInput;
   readonly #runs = new Map<string, RunRecord>();
   readonly #auditStore?: DrawingAgentAuditStore;
+  readonly #acceptance?: DrawingAcceptanceModelAdapter;
   readonly #promptHashes: { planner: string; decision: string };
   readonly #sourceArtifacts?: SourceArtifactStore;
   readonly #perception?: RuntimePerception;
@@ -169,6 +179,7 @@ export class DrawingAgentRuntime {
     this.#stageTimeoutMs = options.stageTimeoutMs ?? 120_000;
     this.#limits = { ...DEFAULT_LIMITS, ...options.limits };
     this.#auditStore = options.auditStore;
+    this.#acceptance = options.acceptance;
     this.#promptHashes = options.promptHashes ?? DRAWING_AGENT_PROMPT_HASHES;
     this.#sourceArtifacts = options.sourceArtifacts;
     this.#perception = options.perception;
@@ -220,6 +231,9 @@ export class DrawingAgentRuntime {
       selectedIds: [...(input.selectedIds ?? [])],
       stableRules: [...(input.stableRules ?? [])],
       source: input.source ? structuredClone(input.source) : undefined,
+      viewport: input.viewport ? { ...input.viewport } : undefined,
+      vision: null,
+      visionRevision: null,
       inputMode: interpretation.mode,
       planningObjective: interpretation.modificationGoal ?? input.goal.trim(),
       perceptionCompleted: !input.source,
@@ -336,7 +350,12 @@ export class DrawingAgentRuntime {
           if (!record.state.plan?.workflow.every((node) => node.status === 'completed')) {
             throw new Error('工作流依赖无法继续');
           }
-          if (!await this.#verifyGoal(record)) return;
+          if (!await this.#verifyGoal(record)) {
+            // 视觉验收未满足且任务仍在运行 → 重新规划再改;受决策预算约束,避免死循环
+            if (record.state.status !== 'running') return;
+            this.#transition(record, { type: 'REPLAN_REQUIRED', revision: record.state.revision });
+            continue;
+          }
           this.#transition(record, { type: 'COMPLETED' });
           this.#finish(record, 'completed', '任务已完成');
           return;
@@ -875,37 +894,39 @@ export class DrawingAgentRuntime {
       ...record.state.activeInstructions,
     ].filter(Boolean).join('\n');
     let plan;
-    try {
-      plan = await this.#callModel(record, 'planner', record.modelProfile.planner, (signal) => (
-        this.#planner.plan({
-          objective: record.planningObjective,
-          ...(baseInstruction ? { instruction: baseInstruction } : {}),
-          drawingId: record.state.drawingId,
-          revision: summary.revision,
-          summary: summary.summary,
-          modelName: record.modelProfile.planner,
-          signal,
-          deadlineAt: record.state.limits.deadlineAt,
-        })
-      ));
-    } catch (error) {
-      if (!(error instanceof DrawingAgentProtocolError) || record.state.recovery.schemaCorrections >= 1) {
-        throw error;
+    const schemaErrors: string[] = [];
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const instruction = [
+          baseInstruction,
+          ...schemaErrors.map((message) => `上次输出不符合协议：${message}`),
+          ...(schemaErrors.length > 0
+            ? ['请严格按协议输出合法 JSON。特别注意 selection.count 的 min/equals 必须与 selector 平级（{"type":"selection.count","selector":{...},"min":N}），不要嵌套进 selector 里。']
+            : []),
+        ].filter(Boolean).join('\n');
+        // 最后一次纠错使用更高配的 repair 模型,提高输出合法 JSON 的概率
+        const modelName = attempt === MAX_PLANNER_SCHEMA_CORRECTIONS
+          ? record.modelProfile.repair
+          : record.modelProfile.planner;
+        plan = await this.#callModel(record, this.#planner, 'planner', modelName, (signal) => (
+          this.#planner.plan({
+            objective: record.planningObjective,
+            ...(instruction ? { instruction } : {}),
+            drawingId: record.state.drawingId,
+            revision: summary.revision,
+            summary: summary.summary,
+            modelName,
+            signal,
+            deadlineAt: record.state.limits.deadlineAt,
+          })
+        ));
+        break;
+      } catch (error) {
+        if (!(error instanceof DrawingAgentProtocolError)) throw error;
+        if (attempt >= MAX_PLANNER_SCHEMA_CORRECTIONS) throw error;
+        this.#transition(record, { type: 'RECOVERY_RECORDED', recovery: 'schemaCorrections' });
+        schemaErrors.push(error.message);
       }
-      this.#transition(record, { type: 'RECOVERY_RECORDED', recovery: 'schemaCorrections' });
-      plan = await this.#callModel(record, 'planner', record.modelProfile.planner, (signal) => (
-        this.#planner.plan({
-          objective: record.planningObjective,
-          instruction: [baseInstruction, `上次输出不符合协议：${error.message}，请只返回合法 JSON。`]
-            .filter(Boolean).join('\n'),
-          drawingId: record.state.drawingId,
-          revision: summary.revision,
-          summary: summary.summary,
-          modelName: record.modelProfile.planner,
-          signal,
-          deadlineAt: record.state.limits.deadlineAt,
-        })
-      ));
     }
     if (record.state.status === 'stopping') return false;
     this.#installPlan(record, plan);
@@ -922,7 +943,8 @@ export class DrawingAgentRuntime {
       if (!workflowNode) throw new Error(`Workflow node not found: ${nodeId}`);
       if (workflowNode.capability === 'verify_goal') {
         if (!await this.#verifyWorkflowNode(record, nodeId)) {
-          throw new Error(`工作流节点 ${nodeId} 验收条件未满足`);
+          this.#transition(record, { type: 'REPLAN_REQUIRED', revision: record.state.revision });
+          return this.#plan(record);
         }
         this.#transition(record, { type: 'WORKFLOW_NODE_COMPLETED', nodeId });
         return true;
@@ -939,7 +961,8 @@ export class DrawingAgentRuntime {
         this.#recordTool(record, execution);
         if (execution.receipt.status === 'not_found') return this.#recoverStale(record);
         if (!await this.#verifyWorkflowNode(record, nodeId)) {
-          throw new Error(`工作流节点 ${nodeId} 验收条件未满足`);
+          this.#transition(record, { type: 'REPLAN_REQUIRED', revision: record.state.revision });
+          return this.#plan(record);
         }
         this.#transition(record, { type: 'WORKFLOW_NODE_COMPLETED', nodeId });
         return true;
@@ -1001,10 +1024,29 @@ export class DrawingAgentRuntime {
     return record.state.status === 'running';
   }
 
+  async #ensureVision(record: RunRecord): Promise<DrawingVisionContext | undefined> {
+    const viewport = record.viewport;
+    if (!viewport || record.inputMode === 'analyze_only' || record.inputMode === 'text_only') {
+      return undefined;
+    }
+    // 仅在 revision 未变化时复用缓存;提交后重新渲染,让模型看到更新后的图纸
+    if (record.vision && record.visionRevision === record.state.revision) return record.vision;
+    const snapshot = await this.#application.renderForVision({
+      drawingId: record.state.drawingId,
+      viewport,
+      selectedIds: record.selectedIds,
+      maxDimension: 1536,
+    });
+    record.vision = { snapshot, selection: [...record.selectedIds] };
+    record.visionRevision = record.state.revision;
+    return record.vision;
+  }
+
   async #nextDecision(record: RunRecord): Promise<AgentDecision> {
     const call = async (modelName: string) => {
       this.#transition(record, { type: 'DECISION_RECORDED' });
-      const decision = await this.#callModel(record, 'decision', modelName, (signal) => this.#decision.decide({
+      const vision = await this.#ensureVision(record);
+      const decision = await this.#callModel(record, this.#decision, 'decision', modelName, (signal) => this.#decision.decide({
         plan: record.state.plan!,
         currentWorkflowNodeId: record.state.currentWorkflowNodeId!,
         revision: record.state.revision,
@@ -1015,6 +1057,7 @@ export class DrawingAgentRuntime {
         modelName,
         signal,
         deadlineAt: record.state.limits.deadlineAt,
+        vision,
       }));
       assertDecisionMatchesCapability(record, decision);
       this.#audit(record, 'decision', { decision: structuredClone(decision) });
@@ -1119,6 +1162,10 @@ export class DrawingAgentRuntime {
   }
 
   async #verifyGoal(record: RunRecord): Promise<boolean> {
+    // 视觉型 run:以视觉模型对"渲染出的当前图纸"是否满足目标为准
+    if (record.viewport && this.#acceptance) {
+      return this.#verifyGoalVisual(record);
+    }
     if (!await this.#safePoint(record, 'before_read')) return false;
     const result = await this.#tools.invoke({
       capability: 'verify_goal', caller: 'runtime',
@@ -1131,6 +1178,35 @@ export class DrawingAgentRuntime {
       throw new Error('最终验收条件未满足');
     }
     return true;
+  }
+
+  async #verifyGoalVisual(record: RunRecord): Promise<boolean> {
+    const viewport = record.viewport!;
+    const snapshot = await this.#application.renderForVision({
+      drawingId: record.state.drawingId,
+      viewport,
+      selectedIds: record.selectedIds,
+      maxDimension: 1536,
+    });
+    record.vision = { snapshot, selection: [...record.selectedIds] };
+    const result = await this.#callModel(record, this.#acceptance!, 'acceptance', record.modelProfile.decision, (signal) => (
+      this.#acceptance!.accept({
+        goal: record.state.plan!.goal.objective,
+        modelName: record.modelProfile.decision,
+        image: snapshot.imageDataUrl,
+        width: snapshot.width,
+        height: snapshot.height,
+        signal,
+        deadlineAt: record.state.limits.deadlineAt,
+      })
+    ));
+    this.#audit(record, 'state', {
+      event: 'VISUAL_ACCEPTANCE',
+      revision: record.state.revision,
+      satisfied: result.satisfied,
+      reason: result.reason,
+    });
+    return result.satisfied;
   }
 
   async #recoverStale(record: RunRecord): Promise<boolean> {
@@ -1187,7 +1263,8 @@ export class DrawingAgentRuntime {
 
   async #callModel<T>(
     record: RunRecord,
-    role: 'planner' | 'decision',
+    adapter: DrawingPlannerModelAdapter | DrawingDecisionModelAdapter | DrawingAcceptanceModelAdapter,
+    role: DrawingModelRole,
     _modelName: string,
     call: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
@@ -1200,14 +1277,28 @@ export class DrawingAgentRuntime {
     ));
     (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
     record.progress.publish('model_started', role === 'planner' ? '正在规划' : '正在决定下一步');
+    const previous = adapter.onRawReply;
+    adapter.onRawReply = (replyRole, reply) => this.#auditRaw(record, replyRole, reply);
     try {
       const result = await call(controller.signal);
       record.progress.publish('model_finished', role === 'planner' ? '规划完成' : '决策完成');
       return result;
     } finally {
+      adapter.onRawReply = previous;
       clearTimeout(timer);
       if (record.activeController === controller) record.activeController = null;
     }
+  }
+
+  /** 把模型原始返回写入审计(截断以避免审计体积过大),用于排查模型输出问题 */
+  #auditRaw(record: RunRecord, role: DrawingModelRole, reply: string): void {
+    const MAX_LENGTH = 8_000;
+    const truncated = reply.length > MAX_LENGTH;
+    this.#audit(record, 'model', {
+      role,
+      reply: truncated ? `${reply.slice(0, MAX_LENGTH)}…[truncated ${reply.length}]` : reply,
+      truncated,
+    });
   }
 
   #toolContext(record: RunRecord): DrawingToolContext {

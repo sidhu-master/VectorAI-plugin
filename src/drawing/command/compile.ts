@@ -107,8 +107,11 @@ export function evaluateAssertion(
     }
     case 'document.valid':
       return validateDrawingDocument(document).valid;
-    case 'selection.count':
-      return queryDrawing(document, assertion.selector).items.length === assertion.equals;
+    case 'selection.count': {
+      const count = queryDrawing(document, assertion.selector).items.length;
+      if ('min' in assertion) return count >= assertion.min;
+      return count === assertion.equals;
+    }
   }
 }
 

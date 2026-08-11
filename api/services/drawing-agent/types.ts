@@ -13,6 +13,7 @@ import type {
   DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
 import type { SourceArtifactReference } from '../source-artifacts/types.js';
+import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer.js';
 
 export type DrawingToolCapability =
   | 'query_entities'
@@ -113,6 +114,13 @@ export interface DrawingToolEvidence {
   output?: DrawingQueryResult | DrawingInspectResult | null;
 }
 
+export interface DrawingVisionContext {
+  /** 当前图纸的渲染快照 + 确定性 nodeId↔图像区域接地映射 */
+  snapshot: GroundingSnapshot;
+  /** 用户当前选中的节点 id(用于 selection-scoped 指令) */
+  selection: string[];
+}
+
 export interface DrawingDecisionInput {
   plan: DrawingAgentPlan;
   currentWorkflowNodeId: string;
@@ -124,14 +132,45 @@ export interface DrawingDecisionInput {
   modelName: string;
   signal: AbortSignal;
   deadlineAt: number;
+  /** 视觉接地上下文:提供当前图纸渲染图 + nodeId 映射 + 选区 */
+  vision?: DrawingVisionContext;
 }
+
+export type DrawingModelRole = 'planner' | 'decision' | 'acceptance';
 
 export interface DrawingPlannerModelAdapter {
   plan(input: DrawingPlannerInput): Promise<DrawingAgentPlan>;
+  /** 注入方(runtime)可设置,在拿到模型原始返回时回调,用于审计/排查 */
+  onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
 
 export interface DrawingDecisionModelAdapter {
   decide(input: DrawingDecisionInput): Promise<AgentDecision>;
+  /** 注入方(runtime)可设置,在拿到模型原始返回时回调,用于审计/排查 */
+  onRawReply?: (role: DrawingModelRole, reply: string) => void;
+}
+
+/** 视觉验收:对渲染出的当前图纸做"目标是否已满足"的判定 */
+export interface DrawingAcceptanceInput {
+  goal: string;
+  modelName: string;
+  /** 当前图纸渲染图(data URL) */
+  image: string;
+  width: number;
+  height: number;
+  signal?: AbortSignal;
+  deadlineAt?: number;
+}
+
+export interface DrawingAcceptanceResult {
+  satisfied: boolean;
+  reason: string;
+}
+
+export interface DrawingAcceptanceModelAdapter {
+  accept(input: DrawingAcceptanceInput): Promise<DrawingAcceptanceResult>;
+  /** 注入方(runtime)可设置,在拿到模型原始返回时回调,用于审计/排查 */
+  onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
 
 export interface DrawingAgentModelProfile {
@@ -149,4 +188,6 @@ export interface StartDrawingAgentRunInput {
   selectedIds?: string[];
   stableRules?: string[];
   source?: SourceArtifactReference;
+  /** 当前画布视口(世界→屏幕),用于后端渲染"用户所见"的图纸快照 */
+  viewport?: { scale: number; offsetX: number; offsetY: number; width: number; height: number };
 }

@@ -10,6 +10,7 @@ export type DrawingAgentAuditEventType =
   | 'instruction'
   | 'plan'
   | 'decision'
+  | 'model'
   | 'tool_call'
   | 'cv_tool'
   | 'preview'

@@ -202,6 +202,23 @@ describe('DrawingVisionTools', () => {
     });
   });
 
+  it('keeps valid annotations and drops only invalid ones instead of failing the batch', async () => {
+    const tools = new DrawingVisionTools(async () => JSON.stringify({ annotations: [
+      {
+        id: 'obs_ann_view_1_0001', viewId: 'view_1', kind: 'linear', rawText: '50',
+        value: 50, imageBounds: [0.1, 0.1, 0.2, 0.05], arrowheads: [], confidence: 0.9,
+      },
+      {
+        id: 'obs_ann_view_1_0002', viewId: 'view_1', kind: 'diameter', rawText: 'Ø10',
+        value: 10, imageBounds: [0.8, 0.8, 0.4, 0.4], arrowheads: [], confidence: 0.9,
+      },
+    ] }));
+
+    const annotations = await tools.extractAnnotations({ ...input, viewId: 'view_1' });
+    expect(annotations).toHaveLength(1);
+    expect(annotations[0]).toMatchObject({ id: 'obs_ann_view_1_0001', rawText: '50' });
+  });
+
   it('expands the observation contracts instead of referring to undeclared type names', async () => {
     const complete = vi.fn<DrawingVisionCompletion>(async ({ tool }) => tool === 'extract_annotations'
       ? '{"annotations":[]}'

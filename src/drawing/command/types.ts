@@ -44,7 +44,8 @@ export type DrawingAssertion =
   | { type: 'node.absent'; nodeId: string }
   | { type: 'property.equals'; nodeId: string; path: string; value: unknown }
   | { type: 'document.valid' }
-  | { type: 'selection.count'; selector: DrawingSelector; equals: number };
+  | { type: 'selection.count'; selector: DrawingSelector; equals: number }
+  | { type: 'selection.count'; selector: DrawingSelector; min: number };
 
 export interface DrawingCommandError {
   commandIndex: number;

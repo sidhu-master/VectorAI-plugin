@@ -62,6 +62,7 @@ export interface AppState {
   aiError: string | null;
 
   canvasTransform: { scale: number; offsetX: number; offsetY: number };
+  viewportSize: { width: number; height: number };
   showGrid: boolean;
   showRelations: boolean;
   showAnnotations: boolean;
@@ -85,6 +86,7 @@ export interface AppState {
   selectEntities: (ids: string[]) => void;
   clearSelection: () => void;
   setCanvasTransform: (transform: Partial<AppState['canvasTransform']>) => void;
+  setViewportSize: (size: { width: number; height: number }) => void;
   toggleAnnotations: () => void;
   setMouseCoords: (coords: { x: number; y: number } | null) => void;
 
@@ -160,6 +162,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       aiStatus: 'idle',
       aiError: null,
       canvasTransform: { scale: 1, offsetX: 80, offsetY: 500 },
+      viewportSize: { width: 0, height: 0 },
       showGrid: true,
       showRelations: true,
       showAnnotations: true,
@@ -324,6 +327,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       setCanvasTransform: (transform) => set((state) => ({
         canvasTransform: { ...state.canvasTransform, ...transform },
       })),
+      setViewportSize: (size) => set({ viewportSize: size }),
       toggleAnnotations: () => set((state) => ({
         showAnnotations: !state.showAnnotations,
         selectedIds: state.showAnnotations
@@ -349,7 +353,11 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       startAgent: async (prompt, image, mimeType) => {
         const goal = prompt?.trim() ?? '';
         const state = get();
-        if ((!goal && !image) || !state.document || !state.revision) return;
+        if (!goal && !image) return;
+        if (!state.document || !state.revision) {
+          set({ agentError: '请先加载或创建图纸，再发送指令' });
+          return;
+        }
         unsubscribeAgent?.();
         unsubscribeAgent = null;
         const userMessage = chatMessage('user', goal || '上传图纸并重建', now);
@@ -370,6 +378,15 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
             baseRevision: state.revision,
             goal,
             selectedIds: [...state.selectedIds],
+            viewport: state.viewportSize.width > 0 && state.viewportSize.height > 0
+              ? {
+                  scale: state.canvasTransform.scale,
+                  offsetX: state.canvasTransform.offsetX,
+                  offsetY: state.canvasTransform.offsetY,
+                  width: state.viewportSize.width,
+                  height: state.viewportSize.height,
+                }
+              : undefined,
             ...(image ? {
               attachment: { data: image, mimeType: mimeType || 'image/png', page: 1 },
             } : {}),

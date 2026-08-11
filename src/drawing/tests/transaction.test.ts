@@ -156,12 +156,31 @@ describe('previewTransaction', () => {
     expect(result).toMatchObject({ status: 'ready', preview: { candidate: true } });
   });
 
-  it('short-circuits an already-satisfied goal before allocating IDs', () => {
+  it('applies real commands even when a postcondition is already satisfied', () => {
     const { document, transaction } = fixture();
     transaction.commands = [{
       type: 'geometry.create',
       value: { type: 'point', visible: true, quality: confirmed, x: 1, y: 2 },
     }];
+    transaction.postconditions = [{
+      type: 'property.equals', nodeId: 'circle_1', path: 'radius', value: 25,
+    }];
+    const next = vi.fn(() => 'point_1' as const);
+
+    const result = previewTransaction(
+      { document, currentRevision: 'rev_1' as RevisionId },
+      transaction,
+      { next },
+    );
+
+    // 有实际命令时必须真正应用,不能被"后置条件已满足"短路吞掉
+    expect(result.status).toBe('ready');
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('short-circuits an already-satisfied goal only when there are no commands', () => {
+    const { document, transaction } = fixture();
+    transaction.commands = [];
     transaction.postconditions = [{
       type: 'property.equals', nodeId: 'circle_1', path: 'radius', value: 25,
     }];

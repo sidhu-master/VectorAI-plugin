@@ -272,10 +272,12 @@ function geometryValue(
     case 'circle': return isPoint(params.center) && positive(params.radius)
       ? { ...common, type, center: params.center, radius: params.radius } : null;
     case 'arc': return isPoint(params.center) && positive(params.radius)
-      && finite(params.startAngle) && finite(params.endAngle) && typeof params.counterClockwise === 'boolean'
+      && finite(params.startAngle) && finite(params.endAngle)
       ? { ...common, type, center: params.center, radius: params.radius,
         startAngle: params.startAngle, endAngle: params.endAngle,
-        counterClockwise: params.counterClockwise } : null;
+        counterClockwise: typeof params.counterClockwise === 'boolean'
+          ? params.counterClockwise
+          : true } : null;
     case 'ellipse': return isPoint(params.center) && isPoint(params.majorAxis) && positive(params.ratio)
       ? { ...common, type, center: params.center, majorAxis: params.majorAxis, ratio: params.ratio,
         ...(finite(params.startParam) ? { startParam: params.startParam } : {}),

@@ -287,10 +287,22 @@ export class DrawingVisionTools {
     if (!Array.isArray(annotations)) {
       throw new DrawingVisionOutputError('extract_annotations', ['annotations 必须是数组']);
     }
-    const errors = annotations.flatMap((annotation, index) =>
-      validateAnnotationObservation(annotation).errors.map((error) => `annotations[${index}]: ${error}`));
-    if (errors.length > 0) throw new DrawingVisionOutputError('extract_annotations', errors);
-    return structuredClone(annotations as AnnotationObservation[]);
+    // 局部容错：丢弃无效条目、保留有效条目，避免单个越界项导致整批标注丢失。
+    // 仅当全部条目都无效时抛错，从而触发上层重试一次。
+    const errors: string[] = [];
+    const valid: AnnotationObservation[] = [];
+    annotations.forEach((annotation, index) => {
+      const itemErrors = validateAnnotationObservation(annotation).errors;
+      if (itemErrors.length > 0) {
+        errors.push(`annotations[${index}]: ${itemErrors.join('; ')}`);
+      } else {
+        valid.push(annotation as AnnotationObservation);
+      }
+    });
+    if (annotations.length > 0 && valid.length === 0) {
+      throw new DrawingVisionOutputError('extract_annotations', errors);
+    }
+    return structuredClone(valid);
   }
 
   async assessCoverage(

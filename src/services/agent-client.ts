@@ -35,6 +35,7 @@ export interface StartAgentInput {
   goal: string;
   selectedIds?: string[];
   stableRules?: string[];
+  viewport?: { scale: number; offsetX: number; offsetY: number; width: number; height: number };
   attachment?: {
     data: string;
     mimeType: string;

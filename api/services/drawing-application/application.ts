@@ -21,6 +21,10 @@ import type {
   DrawingSummaryWorkspaceResult,
   DrawingWorkspaceSnapshot,
 } from '../../../src/contracts/drawing-application.js';
+import {
+  renderGroundingSnapshot,
+  type GroundingSnapshot,
+} from '../drawing-vision/grounding-renderer.js';
 
 export class DrawingApplicationError extends Error {
   readonly code: 'DRAWING_NOT_FOUND';
@@ -90,6 +94,25 @@ export class DrawingApplication {
       revision: workspace.revision,
       result: queryDrawing(workspace.document, structuredClone(input.selector)),
     };
+  }
+
+  async renderForVision(input: {
+    drawingId: DrawingId;
+    viewport: { scale: number; offsetX: number; offsetY: number; width: number; height: number };
+    selectedIds?: string[];
+    maxDimension?: number;
+  }): Promise<GroundingSnapshot> {
+    const workspace = await this.open(input.drawingId);
+    return renderGroundingSnapshot({
+      document: workspace.document,
+      scale: input.viewport.scale,
+      offsetX: input.viewport.offsetX,
+      offsetY: input.viewport.offsetY,
+      width: input.viewport.width,
+      height: input.viewport.height,
+      selectedIds: input.selectedIds,
+      maxDimension: input.maxDimension,
+    });
   }
 
   async summarize(input: {
