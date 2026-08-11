@@ -38,6 +38,7 @@ interface ScenePrimitiveBase {
   nodeType: string;
   plane: ScenePlane;
   role: SceneStyleRole;
+  semanticRole?: string;
   quality: NodeQuality;
 }
 

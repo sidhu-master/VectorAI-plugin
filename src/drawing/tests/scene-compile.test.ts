@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  AnnotationNode,
   DrawingDocument,
   GeometryNode,
   RevisionId,
@@ -32,6 +33,35 @@ describe('compileDrawingScene', () => {
     expect(scene.worldBounds).toEqual({
       minX: 0, minY: -100, maxX: 100, maxY: 100,
     });
+  });
+
+  it('compiles text and dimensions into shared annotation primitives', () => {
+    const scene = compileDrawingScene(documentWith([], annotations()), {
+      revision: 'revision_scene_2' as RevisionId,
+      viewBounds: { minX: -100, minY: -100, maxX: 100, maxY: 100 },
+      scale: 2,
+    });
+    const label = scene.primitives.filter((item) => item.nodeId === 'label');
+    const dimension = scene.primitives.filter((item) => item.nodeId === 'dimension_linear');
+
+    expect(label).toEqual([
+      expect.objectContaining({
+        kind: 'text', content: 'R20', position: [12, 8],
+        height: 5, rotation: 15, alignment: 'center',
+      }),
+    ]);
+    expect(dimension.map((item) => item.semanticRole)).toEqual([
+      'dimension-extension',
+      'dimension-extension',
+      'dimension-measure',
+      'dimension-arrow',
+      'dimension-arrow',
+      'dimension-text',
+    ]);
+    expect(dimension.at(-1)).toMatchObject({
+      kind: 'text', content: '25 mm', position: [12.5, 15], height: 5.5,
+    });
+    expect(scene.nodeIndex.dimension_linear.primitiveKeys).toHaveLength(6);
   });
 
   it('keeps analytic arcs and polyline bulges as shared arc commands', () => {
@@ -111,12 +141,43 @@ function allGeometry(): GeometryNode[] {
   ];
 }
 
-function documentWith(geometry: GeometryNode[]): DrawingDocument {
+function annotations(): AnnotationNode[] {
+  const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+  return [{
+    id: 'label' as never,
+    type: 'text',
+    visible: true,
+    quality,
+    content: 'R20',
+    position: [12, 8],
+    height: 5,
+    rotation: 15,
+    alignment: 'center',
+    verticalAlignment: 'middle',
+  }, {
+    id: 'dimension_linear' as never,
+    type: 'dimension',
+    visible: true,
+    quality,
+    dimensionKind: 'linear',
+    associationStatus: 'resolved',
+    targets: [],
+    observedValue: 25,
+    unit: 'mm',
+    textPosition: [12.5, 15],
+    definitionPoints: [[0, 0], [25, 0], [0, 10], [25, 10]],
+  }];
+}
+
+function documentWith(
+  geometry: GeometryNode[],
+  annotations: AnnotationNode[] = [],
+): DrawingDocument {
   return {
     protocol: 'VectorAI-Drawing', schemaVersion: '1.0', id: 'drawing_scene' as never,
     metadata: { createdAt: 1, updatedAt: 1 },
     unitSystem: { length: 'mm', angle: 'deg' },
     coordinateFrames: [{ id: 'document', kind: 'document', transform: [1, 0, 0, 1, 0, 0] }],
-    geometry, annotations: [], relations: [], features: [],
+    geometry, annotations, relations: [], features: [],
   };
 }
