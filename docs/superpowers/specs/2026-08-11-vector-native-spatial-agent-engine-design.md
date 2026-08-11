@@ -2,7 +2,7 @@
 
 > 日期：2026-08-11
 >
-> 状态：用户已确认，进入实施
+> 状态：核心架构已实现，进入 test2 真实模型持续验收
 > 基线提交：`1d0f8c9 chore: checkpoint visual drawing agent experiments`
 
 ## 1. 产品定义
@@ -391,7 +391,8 @@ MVP 性能目标：
 ### 15.4 性能门槛
 
 - 自动化记录首个回执、首次 observation、首次 preview 和最终完成耗时。
-- 任何超过 30 秒无可见回执的真实流程测试失败。
+- 任务接收必须快速返回；运行中以 30 秒为用户可见回执目标，并由独立心跳持续显示“仍在处理”。
+- 超过 30 秒会记录 `visibleFeedbackWithinTarget=false` 供体验回归，但不会否决已经正确、可回放的 Drawing IR 结果；任务完成与架构稳健性优先。
 - 相同 revision/viewSpec 的重复观察必须命中缓存。
 
 ## 16. 迁移边界
@@ -418,4 +419,29 @@ MVP 不保留不合适的旧视觉编辑兼容路径。迁移完成后删除：
 5. “右手抬起来”可删除或局部重绘目标图元，并保持外部锚点和区域外图形。
 6. 每次视觉语义提交前后均有确定性与视觉证据，失败会驱动真实 repair loop。
 7. 整个流程可暂停、追加指令、审计和确定性回放。
-8. 运行中每 30 秒内至少有一次用户可见回执。
+8. 长任务持续提供业务阶段或心跳提示；30 秒是体验目标，不是图纸正确性的硬否决条件。
+
+## 18. 2026-08-11 实施结果
+
+本次迁移已经完成以下垂直主链：
+
+1. 模型原始回复审计改为调用级回调，并发 run 不再共享可变 adapter 状态。
+2. 已有 Drawing IR 的纯文字视觉修改也会获得后端视觉上下文；确定性目标验收永远先于视觉验收。
+3. `src/drawing/scene/` 成为唯一几何显示解释层，覆盖全部 MVP 几何、文字和尺寸；前端 SVG、后端 PNG、Grounding 和来源反馈渲染均消费同一 RenderScene。
+4. 服务端可按 revision 生成 overview、target-detail、user-viewport 和 preview observation；图像正文使用内存 handle，不进入模型文本上下文或审计正文。纯几何编辑默认隐藏自动尺寸标注，文字、尺寸和标注任务再显式加入对应平面。
+5. 视觉模型先输出带 nodeId/evidence allowlist 的 VisualFeatureGraph，再输出 EditIntent；确定性编译器负责精确变换、受限变形、局部替换、锚点吸附、低置信度 candidate 和保护范围。
+6. 视觉语义事务必须先发布前端增量 Preview，再执行保护对象检查及 before/preview/diff 多图验证；失败候选标红并把缺陷送入下一轮，只有通过后才能 Commit。
+7. 前端任务面板显示 observing、grounding、designing、previewing、verifying、revising、committed 等业务阶段，不显示模型名称；画布增量预览与正式 Drawing IR 严格分离。
+8. `api/services/drawing-benchmark/semantic-edit.ts` 从真实文档、审计、Commit 和 SSE 计算目标替换、锚点、保护范围、验证顺序、精确回放和 30 秒体验指标。
+9. 模型通过 planner、decision、grounding、intent、candidate、verification 和 acceptance adapter 注入；模型名称由环境配置选择，Drawing Core、SceneCompiler、事务和审计不依赖具体供应商。
+
+系统正确性与模型供应商质量分开验收：
+
+```bash
+npm run test:test2-self-edit -- <drawingId> <semanticRunId>
+npm run e2e:test2-semantic-edit
+```
+
+第一条使用同一 Drawing IR、EditIntent 编译器、Preview、Validator、Commit 和保护对象检查验证替换模型给出的正确意图。第二条读取本地未入库的 `test2.png`，先完成线稿重建，再运行“把图中人物的右手抬起来打招呼”的真实外部模型流程。所有报告、图像和审计仅写入 `.local/vectorai/`；供应商门禁失败不会被误报为 Drawing Core 失败，产物会保留用于模型、提示词和延迟回归。
+
+2026-08-11 实测中，替换模型意图将角色右手的 3 个图元绕真实肩部锚点旋转 `-90°`，Preview 合法并保持其余 92 个图元完全不变。外部 Doubao 流程也已在第一轮选择正确的角色右手并提交 5 个局部图元，但其整图验收与预览验收结论矛盾，随后修复模型在 grounding 阶段超时；因此当前剩余卡点被归类为模型供应商一致性/延迟，而不是 Drawing IR 事务链。

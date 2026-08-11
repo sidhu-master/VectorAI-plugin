@@ -133,6 +133,8 @@ export interface DrawingDecisionInput {
   recentReceipts: DrawingToolReceipt[];
   toolEvidence: DrawingToolEvidence[];
   attempt: number;
+  /** 上一次返回违反协议时的精确错误；仅在有界纠错重试中提供。 */
+  protocolFeedback?: string;
   modelName: string;
   signal: AbortSignal;
   deadlineAt: number;

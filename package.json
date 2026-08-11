@@ -15,6 +15,8 @@
     "test:drawing": "tsx scripts/test-drawing.ts",
     "setup:vectorization": "bash scripts/setup-vectorization-python.sh",
     "benchmark:test2": "tsx scripts/benchmark-test2.ts",
+    "e2e:test2-semantic-edit": "tsx scripts/e2e-test2-semantic-edit.ts",
+    "test:test2-self-edit": "tsx scripts/test2-self-semantic-edit.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

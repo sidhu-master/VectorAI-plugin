@@ -17,6 +17,12 @@ export interface DrawingVisionCompletionParams {
   image: string;
   mimeType: string;
   signal: AbortSignal;
+  responseSchema?: DrawingResponseSchema;
+}
+
+export interface DrawingResponseSchema {
+  name: string;
+  schema: Record<string, unknown>;
 }
 
 export interface DrawingMultimodalCompletionParams {
@@ -26,6 +32,7 @@ export interface DrawingMultimodalCompletionParams {
   userPrompt: string;
   images: Array<{ id: string; dataUrl: string }>;
   signal: AbortSignal;
+  responseSchema?: DrawingResponseSchema;
 }
 
 export async function requestDrawingMultimodalCompletion(
@@ -51,6 +58,7 @@ export async function requestDrawingMultimodalCompletion(
         system_context: input.systemPrompt,
         model_role: input.role,
         model: input.modelName,
+        ...responseFormat(input.responseSchema),
       }),
       signal: input.signal,
     });
@@ -68,6 +76,7 @@ export async function requestDrawingMultimodalCompletion(
       ],
       temperature: 0.1,
       max_tokens: 4096,
+      ...responseFormat(input.responseSchema),
     }),
     signal: input.signal,
   });
@@ -95,6 +104,7 @@ export async function requestDrawingVisionCompletion(
       ],
       temperature: 0.1,
       max_tokens: 4096,
+      ...responseFormat(input.responseSchema),
     }),
     signal: input.signal,
   });
@@ -107,6 +117,7 @@ export interface DrawingAgentCompletionParams {
   systemPrompt: string;
   userPrompt: string;
   signal: AbortSignal;
+  responseSchema?: DrawingResponseSchema;
 }
 
 /** Model selection remains internal and is never projected into public task events. */
@@ -126,6 +137,7 @@ export async function requestDrawingAgentCompletion(
         system_context: input.systemPrompt,
         model_role: input.role,
         model: input.modelName,
+        ...responseFormat(input.responseSchema),
       }),
       signal: input.signal,
     });
@@ -152,10 +164,20 @@ export async function requestDrawingAgentCompletion(
       ],
       temperature: input.role === 'planner' ? 0.2 : 0.1,
       max_tokens: 4096,
+      ...responseFormat(input.responseSchema),
     }),
     signal: input.signal,
   });
   return completionContent(response, 'Drawing Agent');
+}
+
+function responseFormat(schema?: DrawingResponseSchema): Record<string, unknown> {
+  return schema ? {
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: schema.name, strict: true, schema: schema.schema },
+    },
+  } : {};
 }
 
 async function companyCompletionContent(response: Response, label: string): Promise<string> {

@@ -126,6 +126,7 @@ export class DrawingApplication {
 
   async observeForAgent(input: {
     drawingId: DrawingId;
+    includeAnnotations?: boolean;
     selectedIds?: string[];
     targetBounds?: { minX: number; minY: number; maxX: number; maxY: number };
     userViewport?: AgentObservationViewport;
@@ -134,6 +135,7 @@ export class DrawingApplication {
     return this.#observationBuilder.build({
       document: workspace.document,
       revision: workspace.revision,
+      includeAnnotations: input.includeAnnotations,
       selectedIds: input.selectedIds,
       targetBounds: input.targetBounds,
       userViewport: input.userViewport,
@@ -148,6 +150,7 @@ export class DrawingApplication {
     document: Parameters<DrawingObservationBuilder['build']>[0]['document'];
     revision: Parameters<DrawingObservationBuilder['build']>[0]['revision'];
     previewHandle: string;
+    includeAnnotations?: boolean;
     selectedIds?: string[];
     userViewport?: AgentObservationViewport;
   }): Promise<VisualObservation> {
@@ -155,6 +158,7 @@ export class DrawingApplication {
       document: input.document,
       revision: input.revision,
       cacheScope: `preview:${input.previewHandle}`,
+      includeAnnotations: input.includeAnnotations,
       selectedIds: input.selectedIds,
       userViewport: input.userViewport,
     });

@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DrawingAgentProtocolError, type AgentDecision, type DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
-import type { EditIntent, VisualFeatureGraph } from '../../../src/contracts/drawing-spatial-agent';
+import {
+  DrawingSpatialProtocolError,
+  type EditIntent,
+  type VisualFeatureGraph,
+} from '../../../src/contracts/drawing-spatial-agent';
 import {
   type DrawingTransaction,
   type GeometryId,
@@ -150,6 +154,15 @@ async function setup(input: {
 }
 
 describe('DrawingAgentRuntime', () => {
+  it('allows a six-minute bounded feedback loop while progress owns the 30-second response SLA', async () => {
+    const { runtime, workspace } = await setup();
+
+    const handle = runtime.start(startInput(workspace));
+
+    expect(runtime.getState(handle.runId)?.limits.deadlineAt).toBe(360_100);
+    expect((await handle.completion).status).toBe('completed');
+  });
+
   it('uses the feedback loop as the only source-backed reconstruction path when configured', async () => {
     let feedbackCalls = 0;
     let perceptionCalls = 0;
@@ -175,7 +188,7 @@ describe('DrawingAgentRuntime', () => {
       ...startInput(workspace), goal: '', source: sourceReference(),
     }).completion;
 
-    expect(final.status).toBe('completed');
+    expect(final.status, final.error ?? '').toBe('completed');
     expect(feedbackCalls).toBe(1);
     expect(perceptionCalls).toBe(0);
     expect(final.analysisSummary).toBe('来源反馈已收敛');
@@ -819,6 +832,166 @@ describe('DrawingAgentRuntime', () => {
     expect(acceptanceCalls).toBe(0);
   });
 
+  it('uses the canonical server overview for final visual acceptance', async () => {
+    let acceptedWidth = 0;
+    const acceptance: DrawingAcceptanceModelAdapter = {
+      accept: vi.fn(async (input) => {
+        acceptedWidth = input.width;
+        return { satisfied: true, reason: '整图满足目标' };
+      }),
+    };
+    const { runtime, workspace } = await setup({ acceptance });
+
+    const final = await runtime.start({
+      ...startInput(workspace),
+      viewport: { scale: 1, offsetX: 0, offsetY: 100, width: 100, height: 100 },
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(acceptedWidth).toBeGreaterThan(1);
+  });
+
+  it('returns final whole-drawing rejection feedback to the next semantic repair pass', async () => {
+    const featureInputs: Array<{
+      repairFeedback?: Array<{ code: string; message: string }>;
+      modelName?: string;
+    }> = [];
+    const featureResolver = {
+      resolve: vi.fn(async (input: unknown): Promise<VisualFeatureGraph> => {
+        featureInputs.push(input as typeof featureInputs[number]);
+        return {
+          features: [{
+            id: 'right_arm', label: '右臂', nodeIds: ['arm'],
+            bounds: { minX: 10, minY: 10, maxX: 40, maxY: 10 },
+            confidence: 0.95, evidenceRefs: ['view_overview'],
+          }],
+          anchors: [], relations: [],
+        };
+      }),
+    };
+    const intentDesigner = {
+      design: vi.fn(async (): Promise<EditIntent> => ({
+        operation: 'transform', targetFeatureIds: ['right_arm'], targetNodeIds: ['arm'],
+        anchors: [], preserveNodeIds: [], preserveRules: [{ type: 'outside-target-unchanged' }],
+        desiredRelations: [], transform: { kind: 'translate', offset: [0, 1] },
+        confidence: 0.95, evidenceRefs: ['view_overview'],
+      })),
+    };
+    let acceptanceCalls = 0;
+    const acceptance: DrawingAcceptanceModelAdapter = {
+      accept: vi.fn(async () => {
+        acceptanceCalls += 1;
+        return acceptanceCalls === 1
+          ? { satisfied: false, reason: '整图中右手仍然下垂' }
+          : { satisfied: true, reason: '整图中右手已经抬起' };
+      }),
+    };
+    const plan: DrawingAgentPlan = {
+      goal: {
+        id: 'goal_visual_repair', objective: '把右手抬起来', scope: { ids: ['arm'] },
+        acceptanceCriteria: [{ type: 'document.valid' }],
+        riskPolicy: { candidateAllowed: true, maxCommits: 1 },
+      },
+      workflow: [{
+        id: 'edit_arm', capability: 'edit_entities', dependsOn: [],
+        completionCriteria: [{ type: 'document.valid' }], status: 'pending',
+      }],
+      summary: '根据整图反馈修正右臂',
+    };
+    const setupResult = await setup({ plan, featureResolver, intentDesigner, acceptance });
+    const seeded = await setupResult.application.execute({
+      drawingId: setupResult.workspace.document.id,
+      transaction: {
+        id: 'tx_seed_arm_feedback', baseRevision: setupResult.workspace.revision,
+        actor: { type: 'user', id: 'user' },
+        commands: [{
+          type: 'geometry.create', value: {
+            id: 'arm' as GeometryId, type: 'line', start: [10, 10], end: [40, 10],
+            visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+          },
+        }],
+        preconditions: [], postconditions: [], evidenceRefs: [],
+      },
+    });
+    if (seeded.status !== 'committed') throw new Error('expected seed commit');
+
+    const final = await setupResult.runtime.start({
+      ...startInput(setupResult.workspace),
+      baseRevision: seeded.revision,
+      selectedIds: ['arm'],
+      viewport: { scale: 1, offsetX: 0, offsetY: 100, width: 100, height: 100 },
+    }).completion;
+
+    expect(final.status, final.error ?? '').toBe('completed');
+    expect(featureResolver.resolve).toHaveBeenCalledTimes(2);
+    expect(featureInputs[1].repairFeedback).toEqual([
+      expect.objectContaining({
+        code: 'final-visual-rejection', message: '整图中右手仍然下垂',
+      }),
+    ]);
+    expect(featureInputs[1].modelName).toBe('repair-model');
+  });
+
+  it('gives a corrective replan a fresh plan-local commit budget without exceeding the run cap', async () => {
+    const plans = [createPlan('circle_1'), createPlan('circle_2')];
+    plans.forEach((plan) => { plan.goal.riskPolicy.maxCommits = 1; });
+    const planner: DrawingPlannerModelAdapter = {
+      plan: vi.fn(async () => structuredClone(plans.shift()!)),
+    };
+    let acceptanceCalls = 0;
+    const acceptance: DrawingAcceptanceModelAdapter = {
+      accept: vi.fn(async () => {
+        acceptanceCalls += 1;
+        return acceptanceCalls === 1
+          ? { satisfied: false, reason: '第一次提交仍未满足视觉目标' }
+          : { satisfied: true, reason: '修正后满足视觉目标' };
+      }),
+    };
+    const { application, runtime, workspace } = await setup({
+      planner,
+      decisions: [createDecision('circle_1', 0.9), createDecision('circle_2', 0.9)],
+      acceptance,
+      limits: { maxCommits: 2 },
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace),
+      viewport: { scale: 1, offsetX: 0, offsetY: 100, width: 100, height: 100 },
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.commitCount).toBe(2);
+    expect(planner.plan).toHaveBeenCalledTimes(2);
+    expect((await application.open(workspace.document.id)).commits).toHaveLength(2);
+  });
+
+  it('replans an unmet deterministic final assertion instead of terminating the feedback loop', async () => {
+    const first = createPlan('circle_1');
+    first.goal.acceptanceCriteria = [{ type: 'node.exists', nodeId: 'circle_2' }];
+    first.goal.riskPolicy.maxCommits = 1;
+    const second = createPlan('circle_2');
+    second.goal.riskPolicy.maxCommits = 1;
+    const plans = [first, second];
+    const planner: DrawingPlannerModelAdapter = {
+      plan: vi.fn(async () => structuredClone(plans.shift()!)),
+    };
+    const { application, runtime, workspace } = await setup({
+      planner,
+      decisions: [createDecision('circle_1', 0.9), createDecision('circle_2', 0.9)],
+      limits: { maxCommits: 2 },
+    });
+
+    const final = await runtime.start(startInput(workspace)).completion;
+
+    expect(final.status).toBe('completed');
+    expect(final.commitCount).toBe(2);
+    expect(planner.plan).toHaveBeenCalledTimes(2);
+    expect((await application.open(workspace.document.id)).document.geometry).toEqual([
+      expect.objectContaining({ id: 'circle_1' }),
+      expect.objectContaining({ id: 'circle_2' }),
+    ]);
+  });
+
   it('rejects a real preview on visual defects and commits only the repaired preview', async () => {
     const verificationInputs: import('../../../src/drawing').DrawingDocument[] = [];
     let attempt = 0;
@@ -861,15 +1034,25 @@ describe('DrawingAgentRuntime', () => {
   });
 
   it('grounds and compiles a semantic EditIntent before previewing the transaction', async () => {
+    const featureInputs: Array<{ protocolFeedback?: string }> = [];
     const featureResolver = {
-      resolve: vi.fn(async (): Promise<VisualFeatureGraph> => ({
+      resolve: vi.fn(async (input: unknown): Promise<VisualFeatureGraph> => {
+        featureInputs.push(input as { protocolFeedback?: string });
+        if (featureInputs.length === 1) {
+          throw new DrawingSpatialProtocolError(
+            'featureGraph.anchors[0].point',
+            '坐标必须使用 [x,y] 数组',
+          );
+        }
+        return {
         features: [{
           id: 'right_arm', label: '右臂', nodeIds: ['arm'],
           bounds: { minX: 10, minY: 10, maxX: 40, maxY: 10 },
           confidence: 0.95, evidenceRefs: ['view_overview'],
         }],
-        anchors: [], relations: [],
-      })),
+          anchors: [], relations: [],
+        };
+      }),
     };
     const intentDesigner = {
       design: vi.fn(async (): Promise<EditIntent> => ({
@@ -923,7 +1106,9 @@ describe('DrawingAgentRuntime', () => {
     const current = await setupResult.application.open(setupResult.workspace.document.id);
 
     expect(final.status).toBe('completed');
-    expect(featureResolver.resolve).toHaveBeenCalledTimes(1);
+    expect(featureResolver.resolve).toHaveBeenCalledTimes(2);
+    expect(featureInputs[0].protocolFeedback).toBeUndefined();
+    expect(featureInputs[1].protocolFeedback).toContain('必须使用 [x,y] 数组');
     expect(intentDesigner.design).toHaveBeenCalledTimes(1);
     expect(current.document.geometry).toEqual([
       expect.objectContaining({ id: 'arm', end: [10, 40] }),
@@ -987,11 +1172,15 @@ describe('DrawingAgentRuntime', () => {
       decide: vi.fn(async () => createDecision('circle_1', 0.9)),
     };
     const { application, order, runtime, workspace } = await setup({ plan, decision });
+    const progress = runtime.start(startInput(workspace));
 
-    const final = await runtime.start(startInput(workspace)).completion;
+    const final = await progress.completion;
 
     expect(final.status).toBe('failed');
     expect(final.error).toContain('query_entities');
+    expect(runtime.getProgress(progress.runId)?.events().at(-1)).toMatchObject({
+      type: 'failed', detail: expect.stringContaining('query_entities'),
+    });
     expect(order).toEqual([]);
     expect((await application.open(workspace.document.id)).document.geometry).toEqual([]);
   });
@@ -1176,6 +1365,32 @@ describe('DrawingAgentRuntime', () => {
     expect(calls).toHaveLength(2);
     expect(calls[1].instruction).toContain('输出不符合');
     expect(final.recovery.schemaCorrections).toBe(1);
+  });
+
+  it('returns the exact decision protocol failure to the same model retry', async () => {
+    const calls: DrawingDecisionInput[] = [];
+    const decision: DrawingDecisionModelAdapter = {
+      decide: vi.fn(async (input) => {
+        calls.push(input);
+        if (calls.length === 1) {
+          throw new DrawingAgentProtocolError(
+            'decision.type',
+            '工作流能力 edit_entities 不允许 inspect 决策',
+          );
+        }
+        return createDecision('circle_1', 0.9);
+      }),
+    };
+    const { runtime, workspace } = await setup({ decision });
+
+    const final = await runtime.start(startInput(workspace)).completion;
+
+    expect(final.status).toBe('completed');
+    expect(calls).toHaveLength(2);
+    expect(calls[0].protocolFeedback).toBeUndefined();
+    expect(calls[1].protocolFeedback).toContain('edit_entities');
+    expect(calls[1].protocolFeedback).toContain('不允许 inspect');
+    expect(calls.map((call) => call.modelName)).toEqual(['lite-model', 'lite-model']);
   });
 
   it('refreshes the revision and replans after a stale commit', async () => {

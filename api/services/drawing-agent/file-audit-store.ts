@@ -183,7 +183,7 @@ export class FileDrawingAgentAuditStore implements DrawingAgentAuditStore {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     }
-    return Promise.all(names.map(async (name) => {
+    const commits = await Promise.all(names.map(async (name) => {
       const value = await readJson(join(directory, name), `Commit ${name}`);
       if (!looksLikeCommit(value)
         || `${value.id}.json` !== basename(name)
@@ -192,6 +192,7 @@ export class FileDrawingAgentAuditStore implements DrawingAgentAuditStore {
       }
       return structuredClone(value as unknown as DrawingCommit);
     }));
+    return orderCommitChain(commits);
   }
 
   #runDirectory(runId: string): string {
@@ -211,6 +212,33 @@ export class FileDrawingAgentAuditStore implements DrawingAgentAuditStore {
   }
 }
 
+function orderCommitChain(commits: DrawingCommit[]): DrawingCommit[] {
+  if (commits.length < 2) return commits;
+  const resultingRevisions = new Set(commits.map((commit) => commit.resultingRevision));
+  const roots = commits.filter((commit) => !resultingRevisions.has(commit.parentRevision));
+  if (roots.length !== 1) {
+    throw new DrawingAgentAuditLoadError('Commit 历史不存在唯一的起始版本');
+  }
+  const byParent = new Map<string, DrawingCommit>();
+  for (const commit of commits) {
+    if (byParent.has(commit.parentRevision)) {
+      throw new DrawingAgentAuditLoadError(`Commit 历史在版本 ${commit.parentRevision} 发生分叉`);
+    }
+    byParent.set(commit.parentRevision, commit);
+  }
+  const ordered: DrawingCommit[] = [];
+  let current: DrawingCommit | undefined = roots[0];
+  while (current) {
+    ordered.push(current);
+    byParent.delete(current.parentRevision);
+    current = byParent.get(current.resultingRevision);
+  }
+  if (ordered.length !== commits.length) {
+    throw new DrawingAgentAuditLoadError('Commit 历史版本链断裂');
+  }
+  return ordered;
+}
+
 function sanitize(value: unknown, secrets: Set<string>, path: string): unknown {
   if (Array.isArray(value)) {
     return value.map((item, index) => sanitize(item, secrets, `${path}[${index}]`));
@@ -226,7 +254,10 @@ function sanitize(value: unknown, secrets: Set<string>, path: string): unknown {
 }
 
 function isMediaBody(key: string): boolean {
-  const reference = key.includes('hash') || key.includes('sha256') || key.includes('reference');
+  const reference = key.includes('hash')
+    || key.includes('sha256')
+    || key.includes('reference')
+    || key.includes('handle');
   const bounds = key.endsWith('bounds');
   return !reference && !bounds && (
     key.includes('image') || key.includes('screenshot') || key.includes('pdfbody')

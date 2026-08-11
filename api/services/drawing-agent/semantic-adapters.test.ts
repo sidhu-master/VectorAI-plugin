@@ -34,6 +34,7 @@ describe('drawing semantic model adapters', () => {
       modelName: 'semantic-model',
       signal: new AbortController().signal,
       deadlineAt: Date.now() + 1_000,
+      protocolFeedback: 'featureGraph.anchors[0].point 必须使用 [x,y] 数组',
     });
 
     expect(graph.features[0].nodeIds).toEqual(['hand_line']);
@@ -43,6 +44,17 @@ describe('drawing semantic model adapters', () => {
     ]);
     expect(received?.userPrompt).toContain('hand_line');
     expect(received?.systemPrompt).toContain('不得编造 nodeId');
+    expect(received?.systemPrompt).toContain('point:[x,y]');
+    expect(received?.userPrompt).toContain('必须使用 [x,y] 数组');
+    expect(received?.responseSchema).toMatchObject({
+      name: 'drawing_visual_feature_graph',
+      schema: {
+        properties: {
+          anchors: { items: { properties: { point: { minItems: 2, maxItems: 2 } } } },
+          relations: { items: { properties: { type: { enum: expect.arrayContaining(['connected']) } } } },
+        },
+      },
+    });
   });
 
   it('designs an EditIntent and never accepts a low-level DrawingCommand', async () => {

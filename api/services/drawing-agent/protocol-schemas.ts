@@ -1,0 +1,321 @@
+import type { DrawingResponseSchema } from '../ai-gateway.js';
+
+const STRING = { type: 'string', minLength: 1 } as const;
+const NUMBER = { type: 'number' } as const;
+const CONFIDENCE = { type: 'number', minimum: 0, maximum: 1 } as const;
+const VEC2 = {
+  type: 'array', items: NUMBER, minItems: 2, maxItems: 2,
+} as const;
+const BOUNDS = {
+  type: 'object', additionalProperties: false,
+  required: ['minX', 'minY', 'maxX', 'maxY'],
+  properties: { minX: NUMBER, minY: NUMBER, maxX: NUMBER, maxY: NUMBER },
+} as const;
+const STRING_ARRAY = { type: 'array', items: STRING } as const;
+const RELATION_TYPES = [
+  'connected', 'coincident', 'adjacent', 'contains',
+  'symmetric', 'parallel', 'perpendicular',
+] as const;
+
+export const VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_visual_feature_graph',
+  schema: {
+    type: 'object', additionalProperties: false,
+    required: ['features', 'anchors', 'relations'],
+    properties: {
+      features: {
+        type: 'array',
+        items: {
+          type: 'object', additionalProperties: false,
+          required: ['id', 'label', 'nodeIds', 'bounds', 'confidence', 'evidenceRefs'],
+          properties: {
+            id: STRING, label: STRING, nodeIds: STRING_ARRAY, bounds: BOUNDS,
+            confidence: CONFIDENCE, evidenceRefs: STRING_ARRAY,
+          },
+        },
+      },
+      anchors: {
+        type: 'array',
+        items: {
+          type: 'object', additionalProperties: false,
+          required: ['id', 'nodeId', 'role', 'point', 'confidence', 'evidenceRefs'],
+          properties: {
+            id: STRING, nodeId: STRING, role: STRING, point: VEC2,
+            confidence: CONFIDENCE, evidenceRefs: STRING_ARRAY,
+          },
+        },
+      },
+      relations: {
+        type: 'array',
+        items: {
+          type: 'object', additionalProperties: false,
+          required: ['type', 'from', 'to', 'confidence'],
+          properties: {
+            type: { type: 'string', enum: RELATION_TYPES },
+            from: STRING, to: STRING, confidence: CONFIDENCE,
+          },
+        },
+      },
+    },
+  },
+};
+
+const ANCHOR = {
+  type: 'object', additionalProperties: false,
+  required: ['nodeId', 'role'],
+  properties: { nodeId: STRING, role: STRING, point: VEC2 },
+} as const;
+const PRESERVE_RULE = {
+  oneOf: [
+    {
+      type: 'object', additionalProperties: false, required: ['type'],
+      properties: { type: { const: 'outside-target-unchanged' } },
+    },
+    {
+      type: 'object', additionalProperties: false, required: ['type', 'nodeIds'],
+      properties: {
+        type: { type: 'string', enum: ['nodes-unchanged', 'maintain-connectivity'] },
+        nodeIds: STRING_ARRAY,
+      },
+    },
+  ],
+} as const;
+const DESIRED_RELATION = {
+  type: 'object', additionalProperties: false, required: ['type', 'from', 'to'],
+  properties: {
+    type: { type: 'string', enum: RELATION_TYPES }, from: STRING, to: STRING,
+  },
+} as const;
+const TRANSFORM = {
+  oneOf: [
+    {
+      type: 'object', additionalProperties: false, required: ['kind', 'offset'],
+      properties: { kind: { const: 'translate' }, offset: VEC2 },
+    },
+    {
+      type: 'object', additionalProperties: false,
+      required: ['kind', 'center', 'angleDegrees'],
+      properties: { kind: { const: 'rotate' }, center: VEC2, angleDegrees: NUMBER },
+    },
+    {
+      type: 'object', additionalProperties: false,
+      required: ['kind', 'center', 'factor'],
+      properties: {
+        kind: { const: 'scale' }, center: VEC2,
+        factor: { type: 'number', exclusiveMinimum: 0 },
+      },
+    },
+  ],
+} as const;
+
+export const EDIT_INTENT_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_edit_intent',
+  schema: {
+    type: 'object', additionalProperties: false,
+    required: [
+      'operation', 'targetFeatureIds', 'targetNodeIds', 'anchors', 'preserveNodeIds',
+      'preserveRules', 'desiredRelations', 'confidence', 'evidenceRefs',
+    ],
+    properties: {
+      operation: { type: 'string', enum: ['transform', 'deform', 'local-redraw'] },
+      targetFeatureIds: STRING_ARRAY,
+      targetNodeIds: STRING_ARRAY,
+      anchors: { type: 'array', items: ANCHOR },
+      preserveNodeIds: STRING_ARRAY,
+      preserveRules: { type: 'array', items: PRESERVE_RULE },
+      desiredRelations: { type: 'array', items: DESIRED_RELATION },
+      transform: TRANSFORM,
+      confidence: CONFIDENCE,
+      evidenceRefs: STRING_ARRAY,
+    },
+  },
+};
+
+const QUALITY = {
+  type: 'object', additionalProperties: false,
+  required: ['status', 'evidenceRefs'],
+  properties: {
+    status: { type: 'string', enum: ['confirmed', 'candidate'] },
+    confidence: CONFIDENCE,
+    evidenceRefs: STRING_ARRAY,
+  },
+} as const;
+
+function geometrySchema(
+  type: string,
+  required: string[],
+  properties: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    type: 'object', additionalProperties: false,
+    required: ['id', 'type', 'visible', 'quality', ...required],
+    properties: {
+      id: STRING, type: { const: type }, visible: { type: 'boolean' }, quality: QUALITY,
+      ...properties,
+    },
+  };
+}
+
+const GEOMETRY = {
+  oneOf: [
+    geometrySchema('point', ['x', 'y'], { x: NUMBER, y: NUMBER }),
+    geometrySchema('line', ['start', 'end'], { start: VEC2, end: VEC2 }),
+    geometrySchema('ray', ['origin', 'direction'], { origin: VEC2, direction: VEC2 }),
+    geometrySchema('xline', ['origin', 'direction'], { origin: VEC2, direction: VEC2 }),
+    geometrySchema('circle', ['center', 'radius'], {
+      center: VEC2, radius: { type: 'number', exclusiveMinimum: 0 },
+    }),
+    geometrySchema('arc', [
+      'center', 'radius', 'startAngle', 'endAngle', 'counterClockwise',
+    ], {
+      center: VEC2, radius: { type: 'number', exclusiveMinimum: 0 },
+      startAngle: NUMBER, endAngle: NUMBER, counterClockwise: { type: 'boolean' },
+    }),
+    geometrySchema('ellipse', ['center', 'majorAxis', 'ratio'], {
+      center: VEC2, majorAxis: VEC2,
+      ratio: { type: 'number', exclusiveMinimum: 0 },
+      startParam: NUMBER, endParam: NUMBER,
+    }),
+    geometrySchema('polyline', ['vertices', 'closed'], {
+      vertices: {
+        type: 'array', minItems: 1,
+        items: {
+          type: 'object', additionalProperties: false, required: ['point'],
+          properties: { point: VEC2, bulge: NUMBER },
+        },
+      },
+      closed: { type: 'boolean' },
+    }),
+    geometrySchema('spline', [
+      'degree', 'controlPoints', 'knots', 'closed', 'periodic',
+    ], {
+      degree: { type: 'integer', minimum: 1 },
+      controlPoints: { type: 'array', minItems: 2, items: VEC2 },
+      knots: { type: 'array', items: NUMBER },
+      weights: { type: 'array', items: NUMBER },
+      closed: { type: 'boolean' }, periodic: { type: 'boolean' },
+    }),
+  ],
+} as const;
+
+export const GEOMETRY_CANDIDATE_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_geometry_candidate',
+  schema: {
+    type: 'object', additionalProperties: false, required: ['geometry'],
+    properties: { geometry: { type: 'array', minItems: 1, items: GEOMETRY } },
+  },
+};
+
+const SELECTOR = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    plane: { type: 'string', enum: ['geometry', 'annotation', 'relation', 'feature'] },
+    ids: STRING_ARRAY, types: STRING_ARRAY,
+    qualityStatus: { type: 'string', enum: ['confirmed', 'candidate'] },
+    bounds: BOUNDS, relationKind: STRING,
+    limit: { type: 'integer', minimum: 1 },
+  },
+} as const;
+
+const ASSERTION = {
+  oneOf: [
+    {
+      type: 'object', additionalProperties: false, required: ['type', 'nodeId'],
+      properties: {
+        type: { type: 'string', enum: ['node.exists', 'node.absent'] }, nodeId: STRING,
+      },
+    },
+    {
+      type: 'object', additionalProperties: false,
+      required: ['type', 'nodeId', 'path', 'value'],
+      properties: {
+        type: { const: 'property.equals' }, nodeId: STRING, path: STRING, value: {},
+      },
+    },
+    {
+      type: 'object', additionalProperties: false, required: ['type'],
+      properties: { type: { const: 'document.valid' } },
+    },
+    {
+      type: 'object', additionalProperties: false,
+      required: ['type', 'selector', 'equals'],
+      properties: {
+        type: { const: 'selection.count' }, selector: SELECTOR,
+        equals: { type: 'integer', minimum: 0 },
+      },
+    },
+    {
+      type: 'object', additionalProperties: false,
+      required: ['type', 'selector', 'min'],
+      properties: {
+        type: { const: 'selection.count' }, selector: SELECTOR,
+        min: { type: 'integer', minimum: 0 },
+      },
+    },
+  ],
+} as const;
+
+export const PLANNER_RESPONSE_SCHEMA: DrawingResponseSchema = {
+  name: 'drawing_agent_plan',
+  schema: {
+    type: 'object', additionalProperties: false, required: ['goal', 'workflow', 'summary'],
+    properties: {
+      goal: {
+        type: 'object', additionalProperties: false,
+        required: ['id', 'objective', 'scope', 'acceptanceCriteria', 'riskPolicy'],
+        properties: {
+          id: STRING, objective: STRING, scope: SELECTOR,
+          acceptanceCriteria: { type: 'array', minItems: 1, items: ASSERTION },
+          riskPolicy: {
+            type: 'object', additionalProperties: false,
+            required: ['candidateAllowed', 'maxCommits'],
+            properties: {
+              candidateAllowed: { type: 'boolean' },
+              maxCommits: { type: 'integer', minimum: 1 },
+            },
+          },
+        },
+      },
+      workflow: {
+        type: 'array', minItems: 1,
+        items: {
+          type: 'object', additionalProperties: false,
+          required: ['id', 'capability', 'dependsOn', 'completionCriteria', 'status'],
+          properties: {
+            id: STRING,
+            capability: {
+              type: 'string',
+              enum: ['query_entities', 'inspect_entity', 'edit_entities', 'verify_goal'],
+            },
+            dependsOn: STRING_ARRAY,
+            completionCriteria: { type: 'array', items: ASSERTION },
+            status: { const: 'pending' },
+          },
+        },
+      },
+      summary: STRING,
+    },
+  },
+};
+
+export function decisionResponseSchema(
+  capability: 'query_entities' | 'inspect_entity' | 'edit_entities' | 'verify_goal',
+): DrawingResponseSchema | undefined {
+  if (capability === 'query_entities') return {
+    name: 'drawing_agent_decision_query_entities',
+    schema: {
+      type: 'object', additionalProperties: false,
+      required: ['type', 'toolCallId', 'selector'],
+      properties: { type: { const: 'query' }, toolCallId: STRING, selector: SELECTOR },
+    },
+  };
+  if (capability === 'inspect_entity') return {
+    name: 'drawing_agent_decision_inspect_entity',
+    schema: {
+      type: 'object', additionalProperties: false,
+      required: ['type', 'toolCallId', 'nodeId'],
+      properties: { type: { const: 'inspect' }, toolCallId: STRING, nodeId: STRING },
+    },
+  };
+  return undefined;
+}

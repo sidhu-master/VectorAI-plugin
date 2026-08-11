@@ -90,6 +90,19 @@ describe('drawing-native model adapters', () => {
 
     expect(result).toEqual(validPlan);
     expect(received).toMatchObject({ role: 'planner', modelName: 'internal-model-name', signal });
+    expect(received?.responseSchema).toMatchObject({
+      name: 'drawing_agent_plan',
+      schema: {
+        properties: {
+          goal: {
+            properties: {
+              scope: { properties: { ids: expect.any(Object), types: expect.any(Object) } },
+            },
+          },
+          workflow: { minItems: 1 },
+        },
+      },
+    });
     expect(received?.systemPrompt).toContain('Drawing IR');
     expect(received?.systemPrompt).toContain('不得输出 commit');
     expect(received?.systemPrompt).toContain('{"type":"selection.count","selector":DrawingSelector,"equals":non_negative_integer}');
@@ -142,6 +155,35 @@ describe('drawing-native model adapters', () => {
     expect(received?.userPrompt).not.toContain('DRAWING_DOCUMENT');
     expect(received?.userPrompt).not.toContain('DRAWING_HISTORY');
     expect(received?.userPrompt).not.toContain('decision-model');
+    expect(received?.responseSchema).toMatchObject({
+      name: 'drawing_agent_decision_inspect_entity',
+      schema: { properties: { type: { const: 'inspect' } } },
+    });
+  });
+
+  it('includes the exact protocol correction in a decision retry', async () => {
+    let received: Parameters<DrawingAgentCompletion>[0] | undefined;
+    const adapter = new DrawingDecisionAdapter(async (input) => {
+      received = input;
+      return '{"type":"inspect","toolCallId":"inspect_retry","nodeId":"circle_1"}';
+    }, undefined, () => 100);
+
+    await adapter.decide({
+      plan: validPlan,
+      currentWorkflowNodeId: 'inspect_circle',
+      revision,
+      pendingInstructions: [],
+      recentReceipts: [],
+      toolEvidence: [],
+      attempt: 2,
+      protocolFeedback: 'decision.type: 工作流能力 inspect_entity 不允许 transact 决策',
+      modelName: 'decision-model',
+      signal: new AbortController().signal,
+      deadlineAt: 1_000,
+    });
+
+    expect(received?.userPrompt).toContain('inspect_entity');
+    expect(received?.userPrompt).toContain('不允许 transact');
   });
 
   it('routes decisions through the vision completion when a snapshot is provided', async () => {

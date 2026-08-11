@@ -79,6 +79,7 @@ describe('FileDrawingAgentAuditStore', () => {
       apiKey: 'secret-key',
       headers: { authorization: 'Bearer secret', sessionSecret: 'secret-session' },
       sourceSha256: 'safe-hash',
+      imageHandle: 'observation_view_1',
     }));
 
     const stored = (await store.readRun('run_1')).events[0];
@@ -86,6 +87,7 @@ describe('FileDrawingAgentAuditStore', () => {
       apiKey: '[REDACTED]',
       headers: { authorization: '[REDACTED]', sessionSecret: '[REDACTED]' },
       sourceSha256: 'safe-hash',
+      imageHandle: 'observation_view_1',
     });
     await expect(store.appendEvent(event('event_media', 'tool_call', 3, {
       imageBase64: 'large-body',
@@ -115,6 +117,20 @@ describe('FileDrawingAgentAuditStore', () => {
     expect(serialized).not.toContain('SpatialModel');
     expect(serialized).not.toContain('SpatialCommit');
     expect(serialized).not.toContain('"entities"');
+  });
+
+  it('loads commits in revision-chain order instead of filename order', async () => {
+    const store = new FileDrawingAgentAuditStore({ rootDirectory });
+    await store.startRun(manifest());
+    const commits = await createNonLexicalCommits();
+    await Promise.all(commits.map((commit) => store.saveCommit('run_1', commit)));
+
+    const restarted = new FileDrawingAgentAuditStore({ rootDirectory });
+
+    expect((await restarted.readRun('run_1')).commits.map((commit) => commit.id)).toEqual([
+      'commit_z',
+      'commit_a',
+    ]);
   });
 });
 
@@ -181,4 +197,46 @@ async function createCommit(): Promise<DrawingCommit> {
   });
   if (result.status !== 'committed') throw new Error('expected commit');
   return result.commit;
+}
+
+async function createNonLexicalCommits(): Promise<DrawingCommit[]> {
+  let sequence = 0;
+  let commitSequence = 0;
+  const idFactory: IdFactory = { next: (kind) => {
+    if (kind === 'commit') return commitSequence++ === 0 ? 'commit_z' : 'commit_a';
+    return `${kind}_${++sequence}`;
+  } };
+  const repository = new MemoryDrawingRepository({ idFactory, now: () => 5 });
+  const application = new DrawingApplication({ repository, idFactory, now: () => 1 });
+  const workspace = await application.create();
+  const first = await application.execute({
+    drawingId: workspace.document.id,
+    transaction: {
+      id: 'transaction_first', baseRevision: workspace.revision,
+      actor: { type: 'AI', id: 'drawing-agent' },
+      commands: [{
+        type: 'geometry.create',
+        value: {
+          id: 'point_1' as GeometryId,
+          type: 'point', visible: true,
+          quality: { status: 'confirmed', evidenceRefs: [] }, x: 0, y: 0,
+        },
+      }],
+      preconditions: [], postconditions: [], evidenceRefs: [],
+    },
+  });
+  if (first.status !== 'committed') throw new Error('expected first commit');
+  const second = await application.execute({
+    drawingId: workspace.document.id,
+    transaction: {
+      id: 'transaction_second', baseRevision: first.revision,
+      actor: { type: 'AI', id: 'drawing-agent' },
+      commands: [{
+        type: 'geometry.update', id: 'point_1' as GeometryId, changes: { x: 1 },
+      }],
+      preconditions: [], postconditions: [], evidenceRefs: [],
+    },
+  });
+  if (second.status !== 'committed') throw new Error('expected second commit');
+  return [first.commit, second.commit];
 }

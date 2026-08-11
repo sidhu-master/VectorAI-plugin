@@ -27,6 +27,7 @@ export interface BuildVisualObservationInput {
   document: DrawingDocument;
   revision: RevisionId;
   cacheScope?: string;
+  includeAnnotations?: boolean;
   selectedIds?: string[];
   targetBounds?: Bounds2D;
   userViewport?: AgentObservationViewport;
@@ -48,16 +49,20 @@ export class DrawingObservationBuilder {
   }
 
   async build(input: BuildVisualObservationInput): Promise<VisualObservation> {
+    const document = input.includeAnnotations === false
+      ? { ...input.document, annotations: [] }
+      : input.document;
+    const renderInput = document === input.document ? input : { ...input, document };
     const selectedIds = [...new Set(input.selectedIds ?? [])].sort();
-    const baseScene = compileDrawingScene(input.document, { revision: input.revision });
+    const baseScene = compileDrawingScene(document, { revision: input.revision });
     const documentBounds = baseScene.worldBounds ?? DEFAULT_WORLD_BOUNDS;
     const vectorDigest: VisualVectorDigest = {
       unit: input.document.unitSystem.length,
       counts: {
-        geometry: input.document.geometry.length,
-        annotation: input.document.annotations.length,
-        relation: input.document.relations.length,
-        feature: input.document.features.length,
+        geometry: document.geometry.length,
+        annotation: document.annotations.length,
+        relation: document.relations.length,
+        feature: document.features.length,
       },
       bounds: baseScene.worldBounds ? { ...baseScene.worldBounds } : null,
       nodes: Object.values(baseScene.nodeIndex).map((node) => ({
@@ -88,7 +93,7 @@ export class DrawingObservationBuilder {
         selectedIds,
       });
     }
-    const views = await Promise.all(requests.map((request) => this.#buildView(input, request)));
+    const views = await Promise.all(requests.map((request) => this.#buildView(renderInput, request)));
     return {
       drawingId: input.document.id,
       revision: input.revision,
@@ -232,6 +237,7 @@ function viewCacheKey(input: BuildVisualObservationInput, request: ViewRequest):
     input.document.id,
     input.revision,
     input.cacheScope ?? 'canonical',
+    input.includeAnnotations === false ? 'geometry-only' : 'all-planes',
     request.purpose,
     digest(JSON.stringify(request.viewport)),
     digest(JSON.stringify(request.selectedIds)),

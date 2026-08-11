@@ -1,6 +1,7 @@
 import {
   parseEditIntent,
   parseVisualFeatureGraph,
+  DrawingSpatialProtocolError,
   type EditIntent,
   type VisualFeatureGraph,
 } from '../../../src/contracts/drawing-spatial-agent.js';
@@ -12,20 +13,33 @@ import {
   type DrawingMultimodalCompletionParams,
 } from '../ai-gateway.js';
 import type { VisualObservation } from '../drawing-vision/observation-types.js';
+import {
+  EDIT_INTENT_RESPONSE_SCHEMA,
+  GEOMETRY_CANDIDATE_RESPONSE_SCHEMA,
+  VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA,
+} from './protocol-schemas.js';
 
 const FEATURE_SYSTEM_PROMPT = `你是 VectorAI 二维空间接地器。
 根据服务器渲染视图、Drawing IR 摘要和 grounding 表，把用户语义映射为 VisualFeatureGraph。
 只能引用输入中真实存在的 nodeId 和 view id，不得编造 nodeId，不得输出 DrawingCommand。
-只输出严格 JSON：{features:[{id,label,nodeIds,bounds,confidence,evidenceRefs}],anchors:[{id,nodeId,role,point,confidence,evidenceRefs}],relations:[{type,from,to,confidence}]}`;
+Vec2 必须是 [x,y] 数字数组，anchor 必须写 point:[x,y]，不能写 {x,y}。Bounds 必须是 {minX,minY,maxX,maxY}。
+relations 的 from/to 可以引用本次 features/anchors 的 id 或输入中的 nodeId。
+只输出严格 JSON：{"features":[{"id":string,"label":string,"nodeIds":string[],"bounds":{"minX":number,"minY":number,"maxX":number,"maxY":number},"confidence":number,"evidenceRefs":string[]}],"anchors":[{"id":string,"nodeId":string,"role":string,"point":[number,number],"confidence":number,"evidenceRefs":string[]}],"relations":[{"type":string,"from":string,"to":string,"confidence":number}]}
+若输入含 protocolFeedback，必须针对该错误纠正输出。`;
 
 const INTENT_SYSTEM_PROMPT = `你是 VectorAI 二维编辑设计器。
 根据已接地的 VisualFeatureGraph 设计任务级 EditIntent，禁止输出任何 DrawingCommand、commit 或完整文档。
 operation 只能是 transform、deform、local-redraw；必须明确目标、锚点、保护对象、关系、置信度和视图证据。
-transform 操作还必须输出 transform 参数。只输出严格 JSON。`;
+所有坐标必须是 [x,y] 数字数组，不能写 {x,y}。transform 操作还必须输出 transform 参数。
+desiredRelations 的 from/to 可以引用 VisualFeatureGraph 中的 feature id、anchor id 或已观察到的 nodeId。
+只输出严格 JSON：{"operation":"transform"|"deform"|"local-redraw","targetFeatureIds":string[],"targetNodeIds":string[],"anchors":[{"nodeId":string,"role":string,"point"?:[number,number]}],"preserveNodeIds":string[],"preserveRules":object[],"desiredRelations":object[],"transform"?:object,"confidence":number,"evidenceRefs":string[]}
+若输入含 protocolFeedback，必须针对该错误纠正输出。`;
 
 const CANDIDATE_SYSTEM_PROMPT = `你是 VectorAI 二维局部几何生成器。
 根据已接地的特征和 EditIntent，只生成目标区域内用于 deform/local-redraw 的完整 Drawing IR geometry 节点。
-不得输出 DrawingCommand、事务、标注、关系或未授权区域。只输出严格 JSON：{"geometry":[GeometryNode,...]}`;
+不得输出 DrawingCommand、事务、标注、关系或未授权区域。所有点必须使用 [x,y] 数字数组。
+每个 geometry 节点必须有稳定 id、type、visible、quality 及该类型的完整参数。
+只输出严格 JSON：{"geometry":[GeometryNode,...]}。若输入含 protocolFeedback，必须针对该错误纠正输出。`;
 
 export type DrawingSpatialCompletion = (
   input: DrawingMultimodalCompletionParams,
@@ -40,6 +54,7 @@ export interface SemanticCallInput {
   deadlineAt: number;
   onRawReply?: (role: 'grounding' | 'design', reply: string) => void;
   repairFeedback?: DrawingPreviewDefect[];
+  protocolFeedback?: string;
 }
 
 export interface DrawingFeatureGraphModelAdapter {
@@ -75,8 +90,10 @@ export class DrawingFeatureGraphAdapter {
         vectorDigest: input.observation.vectorDigest,
         views: observationMetadata(input.observation),
         repairFeedback: input.repairFeedback ?? [],
+        ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
       }),
       images: observationImages(input.observation, input.readImage),
+      responseSchema: VISUAL_FEATURE_GRAPH_RESPONSE_SCHEMA,
       signal: input.signal,
     });
     input.onRawReply?.('grounding', reply);
@@ -108,14 +125,17 @@ export class DrawingEditIntentAdapter {
         featureGraph: input.featureGraph,
         views: observationMetadata(input.observation),
         repairFeedback: input.repairFeedback ?? [],
+        ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
       }),
       images: observationImages(input.observation, input.readImage),
+      responseSchema: EDIT_INTENT_RESPONSE_SCHEMA,
       signal: input.signal,
     });
     input.onRawReply?.('design', reply);
     return parseEditIntent(parseJson(reply), {
       allowedNodeIds: observedNodeIds(input.observation),
       allowedFeatureIds: input.featureGraph.features.map((feature) => feature.id),
+      allowedAnchorIds: input.featureGraph.anchors.map((anchor) => anchor.id),
       allowedEvidenceRefs: input.observation.views.map((view) => view.id),
     });
   }
@@ -144,8 +164,10 @@ export class DrawingGeometryCandidateAdapter implements DrawingGeometryCandidate
         intent: input.intent,
         views: observationMetadata(input.observation),
         repairFeedback: input.repairFeedback ?? [],
+        ...(input.protocolFeedback ? { protocolFeedback: input.protocolFeedback } : {}),
       }),
       images: observationImages(input.observation, input.readImage),
+      responseSchema: GEOMETRY_CANDIDATE_RESPONSE_SCHEMA,
       signal: input.signal,
     });
     input.onRawReply?.('design', reply);
@@ -199,21 +221,26 @@ function parseJson(reply: string): unknown {
     : trimmed;
   try {
     return JSON.parse(source);
-  } catch {
-    throw new Error('SPATIAL_MODEL_JSON_INVALID');
+  } catch (error) {
+    throw new DrawingSpatialProtocolError(
+      'response.json',
+      error instanceof Error ? error.message : '模型返回了非法 JSON',
+    );
   }
 }
 
 function parseCandidatePayload(value: unknown): unknown[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('CANDIDATE_PAYLOAD_INVALID');
+    throw new DrawingSpatialProtocolError('candidate', '必须是对象');
   }
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
   if (keys.length !== 1 || keys[0] !== 'geometry' || !Array.isArray(record.geometry)) {
-    throw new Error('CANDIDATE_PAYLOAD_INVALID');
+    throw new DrawingSpatialProtocolError('candidate', '只允许 geometry 数组');
   }
-  if (record.geometry.length === 0) throw new Error('CANDIDATE_GEOMETRY_EMPTY');
+  if (record.geometry.length === 0) {
+    throw new DrawingSpatialProtocolError('candidate.geometry', '不能为空');
+  }
   return record.geometry;
 }
 

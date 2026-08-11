@@ -102,6 +102,10 @@ describe('Drawing Agent AI Gateway', () => {
       systemPrompt: 'system',
       userPrompt: 'ground these views',
       images: [{ id: 'overview', dataUrl: 'data:image/png;base64,AAAA' }],
+      responseSchema: {
+        name: 'feature_graph',
+        schema: { type: 'object', properties: { features: { type: 'array' } } },
+      },
       signal: new AbortController().signal,
     });
 
@@ -115,6 +119,50 @@ describe('Drawing Agent AI Gateway', () => {
         { type: 'text', text: '图像引用: overview' },
         { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
       ] }],
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'feature_graph', strict: true,
+          schema: { type: 'object', properties: { features: { type: 'array' } } },
+        },
+      },
+    });
+  });
+
+  it('passes a strict response schema to the direct model endpoint', async () => {
+    delete process.env.COMPANY_AI_GATEWAY_URL;
+    delete process.env.COMPANY_INTERNAL_TOKEN;
+    process.env.COMPANY_AI_BASE_URL = 'http://models.local/v1/';
+    process.env.COMPANY_AI_API_KEY = 'api-key';
+    const fetchMock = vi.fn(async (
+      _url: string | URL | Request,
+      _init?: RequestInit,
+    ) => {
+      void _url;
+      void _init;
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: '{"type":"connected"}' } }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestDrawingMultimodalCompletion({
+      role: 'grounding', modelName: 'model', systemPrompt: 'system', userPrompt: 'user',
+      images: [], signal: new AbortController().signal,
+      responseSchema: {
+        name: 'relation',
+        schema: { type: 'object', properties: { type: { enum: ['connected'] } } },
+      },
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1];
+    if (!init) throw new Error('expected fetch call');
+    expect(JSON.parse(init.body as string).response_format).toEqual({
+      type: 'json_schema',
+      json_schema: {
+        name: 'relation', strict: true,
+        schema: { type: 'object', properties: { type: { enum: ['connected'] } } },
+      },
     });
   });
 });

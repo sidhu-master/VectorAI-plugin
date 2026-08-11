@@ -3,11 +3,13 @@ import {
   type AgentDecision,
   type DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
+import { DrawingSpatialProtocolError } from '../../../src/contracts/drawing-spatial-agent.js';
 import type {
   PerceptionPreviewDelta,
   PerceptionPreviewNode,
 } from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
+import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer.js';
 import { compileEditIntent } from '../drawing-edit/compile-intent.js';
 import { comparePreservedNodes } from '../drawing-edit/preserve-report.js';
 import type { CompiledEditCandidate } from '../drawing-edit/strategy-types.js';
@@ -115,6 +117,7 @@ interface RunRecord {
   planningObjective: string;
   perceptionCompleted: boolean;
   commitBaseline: number;
+  planCommitBaseline: number;
   perceptionBatchIds: Set<string>;
   perceptionEntityCount: number;
   perceptionLowConfidenceCount: number;
@@ -164,7 +167,7 @@ const DEFAULT_LIMITS: RuntimeLimitsInput = {
   maxDecisions: 40,
   maxCommits: 8,
   maxConsecutiveReads: 8,
-  wallClockMs: 240_000,
+  wallClockMs: 360_000,
   maxPerceptionCommits: 128,
 };
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
@@ -267,6 +270,7 @@ export class DrawingAgentRuntime {
       planningObjective: interpretation.modificationGoal ?? input.goal.trim(),
       perceptionCompleted: !input.source,
       commitBaseline: 0,
+      planCommitBaseline: 0,
       perceptionBatchIds: new Set(),
       perceptionEntityCount: 0,
       perceptionLowConfidenceCount: 0,
@@ -1184,6 +1188,7 @@ export class DrawingAgentRuntime {
         document: preview.previewDocument,
         revision: record.state.revision,
         previewHandle: preview.prepared.handle,
+        includeAnnotations: shouldIncludeAnnotations(record),
         selectedIds: preview.receipt.affectedNodeIds,
         ...(overview ? {
           userViewport: {
@@ -1232,6 +1237,7 @@ export class DrawingAgentRuntime {
     if (this.#application.observeForAgent && this.#application.readObservationImage) {
       const observation = await this.#application.observeForAgent({
         drawingId: record.state.drawingId,
+        includeAnnotations: shouldIncludeAnnotations(record),
         selectedIds: record.selectedIds,
         userViewport: viewport,
       });
@@ -1298,11 +1304,11 @@ export class DrawingAgentRuntime {
       ? record.modelProfile.repair
       : record.modelProfile.decision;
     record.progress.publish('grounding', '正在定位目标图形与锚点');
-    const featureGraph = await this.#callModel(
+    const featureGraph = await this.#callSemanticModel(
       record,
       'grounding',
       modelName,
-      (signal, onRawReply) => this.#featureResolver!.resolve({
+      (signal, onRawReply, protocolFeedback) => this.#featureResolver!.resolve({
         goal: record.state.plan!.goal.objective,
         observation,
         readImage: this.#application.readObservationImage!.bind(this.#application),
@@ -1311,15 +1317,16 @@ export class DrawingAgentRuntime {
         deadlineAt: record.state.limits.deadlineAt,
         onRawReply,
         repairFeedback,
+        ...(protocolFeedback ? { protocolFeedback } : {}),
       }),
     );
     this.#audit(record, 'grounding', { featureGraph: structuredClone(featureGraph) });
     record.progress.publish('designing', '正在设计受约束的局部修改');
-    const intent = await this.#callModel(
+    const intent = await this.#callSemanticModel(
       record,
       'design',
       modelName,
-      (signal, onRawReply) => this.#intentDesigner!.design({
+      (signal, onRawReply, protocolFeedback) => this.#intentDesigner!.design({
         goal: record.state.plan!.goal.objective,
         observation,
         featureGraph,
@@ -1329,6 +1336,7 @@ export class DrawingAgentRuntime {
         deadlineAt: record.state.limits.deadlineAt,
         onRawReply,
         repairFeedback,
+        ...(protocolFeedback ? { protocolFeedback } : {}),
       }),
     );
     const candidateGeometry = intent.operation === 'transform'
@@ -1372,11 +1380,11 @@ export class DrawingAgentRuntime {
     if (!this.#candidateDesigner || !this.#application.readObservationImage) {
       throw new Error('SEMANTIC_CANDIDATE_ADAPTER_MISSING');
     }
-    return this.#callModel(
+    return this.#callSemanticModel(
       record,
       'design',
       modelName,
-      (signal, onRawReply) => this.#candidateDesigner!.design({
+      (signal, onRawReply, protocolFeedback) => this.#candidateDesigner!.design({
         goal: record.state.plan!.goal.objective,
         observation,
         featureGraph,
@@ -1387,12 +1395,48 @@ export class DrawingAgentRuntime {
         deadlineAt: record.state.limits.deadlineAt,
         onRawReply,
         repairFeedback,
+        ...(protocolFeedback ? { protocolFeedback } : {}),
       }),
     );
   }
 
+  async #callSemanticModel<T>(
+    record: RunRecord,
+    role: 'grounding' | 'design',
+    modelName: string,
+    call: (
+      signal: AbortSignal,
+      onRawReply: (replyRole: DrawingModelRole, reply: string) => void,
+      protocolFeedback?: string,
+    ) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.#callModel(
+        record,
+        role,
+        modelName,
+        (signal, onRawReply) => call(signal, onRawReply),
+      );
+    } catch (error) {
+      if (!(error instanceof DrawingSpatialProtocolError)
+        && !(error instanceof DrawingAgentProtocolError)) throw error;
+      record.progress.publish('validation', '正在修正空间协议输出', error.message);
+      this.#audit(record, 'validation', {
+        event: 'SEMANTIC_PROTOCOL_RETRY',
+        role,
+        message: error.message,
+      });
+      return this.#callModel(
+        record,
+        role,
+        modelName,
+        (signal, onRawReply) => call(signal, onRawReply, error.message),
+      );
+    }
+  }
+
   async #nextDecision(record: RunRecord): Promise<AgentDecision> {
-    const call = async (modelName: string) => {
+    const call = async (modelName: string, protocolFeedback?: string) => {
       this.#transition(record, { type: 'DECISION_RECORDED' });
       const vision = await this.#ensureVision(record);
       const decision = await this.#callModel(record, 'decision', modelName, (signal, onRawReply) => this.#decision.decide({
@@ -1403,6 +1447,7 @@ export class DrawingAgentRuntime {
         recentReceipts: [...record.state.recentReceipts],
         toolEvidence: [...record.toolEvidence],
         attempt: record.state.decisionCount + 1,
+        ...(protocolFeedback ? { protocolFeedback } : {}),
         modelName,
         signal,
         deadlineAt: record.state.limits.deadlineAt,
@@ -1421,7 +1466,7 @@ export class DrawingAgentRuntime {
         throw error;
       }
       this.#transition(record, { type: 'RECOVERY_RECORDED', recovery: 'schemaCorrections' });
-      decision = await call(record.modelProfile.decision);
+      decision = await call(record.modelProfile.decision, error.message);
     }
     if (
       decision.type === 'transact'
@@ -1521,7 +1566,8 @@ export class DrawingAgentRuntime {
     });
     this.#recordTool(record, result);
     if (result.receipt.status !== 'already_satisfied') {
-      throw new Error('最终验收条件未满足');
+      record.progress.publish('revising', '最终确定性验收未满足，正在重新规划');
+      return false;
     }
     // 视觉验收是 Drawing IR 确定性验收之后的附加条件，不能替代向量合法性。
     if (record.viewport && this.#acceptance) {
@@ -1532,13 +1578,42 @@ export class DrawingAgentRuntime {
 
   async #verifyGoalVisual(record: RunRecord): Promise<boolean> {
     const viewport = record.viewport!;
-    const snapshot = await this.#application.renderForVision({
-      drawingId: record.state.drawingId,
-      viewport,
-      selectedIds: record.selectedIds,
-      maxDimension: 1536,
-    });
-    record.vision = { snapshot, selection: [...record.selectedIds] };
+    let snapshot: GroundingSnapshot | undefined;
+    if (this.#application.observeForAgent && this.#application.readObservationImage) {
+      const observation = await this.#application.observeForAgent({
+        drawingId: record.state.drawingId,
+        includeAnnotations: shouldIncludeAnnotations(record),
+        selectedIds: record.selectedIds,
+        userViewport: viewport,
+      });
+      const overview = observation.views.find((view) => view.purpose === 'overview')
+        ?? observation.views[0];
+      const imageDataUrl = overview
+        ? this.#application.readObservationImage(overview.image.handle)
+        : null;
+      if (overview && imageDataUrl) {
+        snapshot = {
+          width: overview.width,
+          height: overview.height,
+          imageDataUrl,
+          rendererVersion: observation.rendererVersion,
+          worldToImage: overview.worldToImage,
+          nodes: structuredClone(overview.grounding),
+        };
+        record.vision = { snapshot, selection: [...record.selectedIds], observation };
+        record.visionRevision = observation.revision;
+      }
+    }
+    if (!snapshot) {
+      snapshot = await this.#application.renderForVision({
+        drawingId: record.state.drawingId,
+        viewport,
+        selectedIds: record.selectedIds,
+        maxDimension: 1536,
+      });
+      record.vision = { snapshot, selection: [...record.selectedIds] };
+      record.visionRevision = record.state.revision;
+    }
     const result = await this.#callModel(record, 'acceptance', record.modelProfile.decision, (signal, onRawReply) => (
       this.#acceptance!.accept({
         goal: record.state.plan!.goal.objective,
@@ -1557,6 +1632,12 @@ export class DrawingAgentRuntime {
       satisfied: result.satisfied,
       reason: result.reason,
     });
+    record.previewDefects = result.satisfied ? [] : [{
+      code: 'final-visual-rejection',
+      message: result.reason || '整图视觉验收未满足目标',
+      nodeIds: [],
+      repairHint: '基于最新整图重新接地目标，避免重复上一轮无效的局部变换',
+    }];
     return result.satisfied;
   }
 
@@ -1665,6 +1746,7 @@ export class DrawingAgentRuntime {
   }
 
   #installPlan(record: RunRecord, plan: DrawingAgentPlan): void {
+    record.planCommitBaseline = record.state.commitCount;
     this.#transition(record, { type: 'PLAN_READY', plan });
     this.#audit(record, 'plan', { plan: structuredClone(plan) });
     this.#enqueueAudit(record, async () => {
@@ -1726,7 +1808,11 @@ export class DrawingAgentRuntime {
         },
       }, 'primary');
     }
-    record.progress.publish(type, title);
+    record.progress.publish(
+      type,
+      title,
+      type === 'failed' ? record.state.error ?? undefined : undefined,
+    );
     record.resolved = true;
     record.resolveCompletion(record.state);
   }
@@ -1794,10 +1880,14 @@ function decisionBudget(state: DrawingAgentState, now: number) {
   return budget?.code === 'MAX_COMMITS' ? null : budget;
 }
 
+function shouldIncludeAnnotations(record: RunRecord): boolean {
+  return /文字|文本|标注|尺寸|注释|text|annotation|dimension/i.test(record.planningObjective);
+}
+
 function effectiveCommitLimit(record: RunRecord): number {
-  return record.commitBaseline + Math.min(
-    record.state.limits.maxCommits,
-    record.state.plan?.goal.riskPolicy.maxCommits ?? Infinity,
+  return Math.min(
+    record.commitBaseline + record.state.limits.maxCommits,
+    record.planCommitBaseline + (record.state.plan?.goal.riskPolicy.maxCommits ?? Infinity),
   );
 }
 

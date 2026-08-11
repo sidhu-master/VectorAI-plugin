@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  type AnnotationId,
   type DrawingDocument,
   type GeometryId,
   type RevisionId,
@@ -49,6 +50,36 @@ describe('DrawingObservationBuilder', () => {
     expect(second.views.map((view) => view.cacheKey)).toEqual(first.views.map((view) => view.cacheKey));
     expect(second.views.map((view) => view.image.handle)).toEqual(first.views.map((view) => view.image.handle));
     expect(render).toHaveBeenCalledTimes(2); // overview + target-detail, then cache hits
+  });
+
+  it('builds a geometry-clean model view without mutating canonical annotations', async () => {
+    const builder = new DrawingObservationBuilder();
+    const document = documentWithCircle();
+    document.annotations.push({
+      id: 'dimension_label' as AnnotationId,
+      type: 'text', visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      content: 'R20', position: [100, 130], height: 5, rotation: 0,
+      alignment: 'center', verticalAlignment: 'middle',
+    });
+
+    const clean = await builder.build({
+      document,
+      revision: 'revision_clean_geometry' as RevisionId,
+      includeAnnotations: false,
+    });
+    const full = await builder.build({
+      document,
+      revision: 'revision_clean_geometry' as RevisionId,
+      includeAnnotations: true,
+    });
+
+    expect(clean.vectorDigest.counts.annotation).toBe(0);
+    expect(clean.vectorDigest.nodes.map((node) => node.id)).not.toContain('dimension_label');
+    expect(clean.views[0].grounding.map((node) => node.nodeId)).not.toContain('dimension_label');
+    expect(full.vectorDigest.counts.annotation).toBe(1);
+    expect(full.views[0].image.handle).not.toBe(clean.views[0].image.handle);
+    expect(document.annotations).toHaveLength(1);
   });
 
   it('isolates preview observations from canonical cache entries at the same revision', async () => {

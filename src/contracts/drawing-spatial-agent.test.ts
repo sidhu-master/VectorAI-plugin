@@ -14,17 +14,21 @@ describe('drawing spatial-agent protocol', () => {
       anchors: [{ nodeId: 'arm_line', role: 'wrist', point: [30, 20] }],
       preserveNodeIds: ['body'],
       preserveRules: [{ type: 'outside-target-unchanged' }],
-      desiredRelations: [{ type: 'connected', from: 'arm_line', to: 'hand_line' }],
+      desiredRelations: [{ type: 'connected', from: 'wrist_anchor', to: 'arm_line' }],
       confidence: 0.91,
       evidenceRefs: ['view_detail'],
     }, {
       allowedNodeIds: ['hand_line', 'arm_line', 'body'],
       allowedFeatureIds: ['right_hand'],
+      allowedAnchorIds: ['wrist_anchor'],
       allowedEvidenceRefs: ['view_detail'],
     });
 
     expect(intent).toMatchObject({ operation: 'local-redraw', confidence: 0.91 });
     expect(intent.anchors[0]).toEqual({ nodeId: 'arm_line', role: 'wrist', point: [30, 20] });
+    expect(intent.desiredRelations[0]).toEqual({
+      type: 'connected', from: 'wrist_anchor', to: 'arm_line',
+    });
   });
 
   it('parses a feature graph grounded in observed node and view ids', () => {
@@ -38,13 +42,18 @@ describe('drawing spatial-agent protocol', () => {
         id: 'wrist', nodeId: 'arm_line', role: 'wrist', point: [30, 20],
         confidence: 0.9, evidenceRefs: ['view_detail'],
       }],
-      relations: [{ type: 'connected', from: 'arm_line', to: 'hand_line', confidence: 0.86 }],
+      relations: [
+        { type: 'connected', from: 'right_hand', to: 'arm_line', confidence: 0.86 },
+        { type: 'coincident', from: 'wrist', to: 'arm_line', confidence: 0.9 },
+      ],
     }, {
       allowedNodeIds: ['hand_line', 'arm_line'],
       allowedEvidenceRefs: ['view_detail'],
     });
 
     expect(graph.features[0]).toMatchObject({ id: 'right_hand', nodeIds: ['hand_line'] });
+    expect(graph.relations[0]).toMatchObject({ from: 'right_hand', to: 'arm_line' });
+    expect(graph.relations[1]).toMatchObject({ from: 'wrist', to: 'arm_line' });
   });
 
   it.each([

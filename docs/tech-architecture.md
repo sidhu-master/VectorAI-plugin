@@ -1,7 +1,7 @@
 # VectorAI 技术架构（图纸即代码）
 
 **状态：** 当前权威技术文档
-**权威设计来源：** [`docs/superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md`](./superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md)（北极星系统架构）
+**权威设计来源：** [`docs/superpowers/specs/2026-08-11-vector-native-spatial-agent-engine-design.md`](./superpowers/specs/2026-08-11-vector-native-spatial-agent-engine-design.md)（当前空间 Agent 架构）；[`docs/superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md`](./superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md) 保留 Drawing Core 的北极星原则。
 **历史备份：** 旧 SpatialIntent / SpatialModel 0.2 / 文字步骤 Agent 架构已废弃，存档于 [`docs/superpowers/specs/2026-08-08-legacy-tech-architecture.md`](./superpowers/specs/2026-08-08-legacy-tech-architecture.md)，新开发不得扩展其中旧协议。
 
 ## 1. 愿景
@@ -154,21 +154,47 @@ MVP 本地仓库至少分离保存：Source Artifact 媒体正文、Drawing Pack
 |---|---|---|
 | 一 | Drawing Core V1（IR、稳定 ID、查询、类型化 Command、事务 Preview、可逆 Patch、分层 Validator、In-memory Repository、Revert Commit、确定性 Replay） | ✅ 已实现 |
 | 二 | Drawing Application 与本地仓库（应用服务、原子文件快照、重启回放、HTTP Drawing API、浏览器 Client、手工 UI 事务切换） | ✅ 已实现 |
-| 三 | Agent Runtime 重建（Tool Registry、Fast Command Lane、GoalSpec、Workflow Graph、Runner、Recovery、Run Control、Progress） | ⬜ 未开始 |
-| 四 | 导入与感知重建（Source Artifact Store、DXF Importer、PDF 解析与栅格回退、Image Observation Pipeline、Source Map、Resolver、坐标标定、拓扑组件事务） | ⬜ 未开始 |
-| 五 | 表示、审计与回归闭环（SVG/DXF/PDF Adapter、Fidelity Report、统一 Drawing Audit、三种 Replay、黄金样例、性能预算、Preview/Commit Diff） | ⬜ 未开始 |
+| 三 | Agent Runtime（Tool Registry、GoalSpec、Workflow Graph、Recovery、Run Control、SSE Progress） | ✅ 已实现 |
+| 四 | 图片感知与线稿矢量化（Source Artifact、Agent 可调 CV、反馈 loop、增量 Preview） | ✅ MVP 主链已实现；DXF/PDF 深度导入仍待完善 |
+| 五 | Vector-Native Spatial Agent（共享 SceneCompiler、服务端 VisualObservation、Grounding、EditIntent、后端 Preview/Verify/Revise/Commit） | ✅ 已实现 |
+| 六 | 审计与发布门禁（调用级原始回复、Observation/Intent/Verification/Commit、确定性 Replay、test2 语义编辑与 30 秒体验指标） | ✅ 代码已实现；真实模型结果以本地供应商门禁持续验收 |
 
-当前阶段一、二已完成；服务端旧 Agent Runtime、Agent 审计与模型适配仍依赖 SpatialModel/SpatialIntent（为隔离暂存，未删除），它们已与当前 UI 图纸修改主链隔离。迁移完成条件与详细设计见北极星文档第 18–20 节。
+当前正式主链不再依赖 SpatialModel/SpatialIntent。视觉语义编辑按 `Observe → Ground → EditIntent → Command → Preview → Deterministic Verify → Visual Verify → Commit/Revise` 执行；模型不能直接改仓库或绕过 Drawing IR 事务。图片重建和既有图纸语义修改是两条可串联但可独立回归的流程。
 
 ## 15. 模块目录速查
 
-- `src/core/`：Spatial Core（旧协议，仅阶段三迁移前临时保留，与 UI 主链隔离）
 - `src/drawing/`：Canonical Drawing Core（command/transaction/validation/document/repository/query/preview）
+- `src/drawing/scene/`：前后端共享的 RenderScene 编译与 SVG 路径序列化
 - `src/contracts/`：Drawing 应用契约类型
 - `src/services/drawing-client.ts`：浏览器 Drawing API Client
 - `src/hooks/drawing-store.ts`：工作区投影、revision、commits 与交互状态（Zustand，非权威）
 - `api/services/drawing-application/`：Drawing Application Service 与文件仓库
-- `api/services/drawing-agent/`：服务端旧 Agent Runtime（待阶段三重建）
-- `api/services/drawing-perception/`：图纸感知（待阶段四重建）
+- `api/services/drawing-agent/`：空间 Agent 编排、模型协议、语义适配、预览验证、审计与进度
+- `api/services/drawing-vision/`：服务端 VisualObservation、Grounding 和 revision 绑定图像 handle
+- `api/services/drawing-edit/`：EditIntent 的确定性编译、局部边界和保护对象检查
+- `api/services/drawing-render/`：RenderScene 的服务端栅格输出
+- `api/services/drawing-perception/`、`drawing-feedback/`、`drawing-cv/`、`drawing-vectorization/`：图片重建工具与反馈 loop
+- `api/services/drawing-benchmark/`：图元拟合和语义编辑发布门禁
 - `api/routes/drawings.ts`、`agent-runs.ts`、`ai.ts`、`auth.ts`：HTTP 路由
 - `docs/superpowers/`：权威设计文档与实施计划
+
+## 16. 当前语义编辑发布门禁
+
+`npm run e2e:test2-semantic-edit` 使用本地 `test2.png` 依次执行真实线稿重建和“右手抬起来”语义修改，输出仅保存在忽略目录 `.local/vectorai/baselines/test2-semantic-edit/`。供应商门禁从 Drawing IR、审计和真实 Commit 计算，不接受模型自报成功，必须同时满足：
+
+- 被删除的旧目标不存在，新增或更新目标存在；
+- 编辑结果与意图锚点在容差内连接；
+- 目标集合外的图元内容没有变化；
+- 成功的 before/preview/diff 视觉验证早于每次 Commit；
+- 从编辑前 DrawingDocument 重放该 run 的 Commit 得到完全一致的最终文档；
+- 记录任意两个用户可见进度事件的最大间隔及 `visibleFeedbackWithinTarget`；30 秒是体验目标，不覆盖几何正确性结论。
+
+常规门禁为 `npm test`、`npm run check`、`npm run build` 和 `npm run lint`。真实模型门禁失败时保留 runId、审计、Commit 和报告用于回归，不允许用静态脚本结果替代。
+
+## 17. 模型替换边界
+
+模型不是 Drawing IR 的组成部分，也不是事务执行者。planner、decision、grounding、intent、candidate、preview verification 和 final acceptance 都是可注入 adapter；默认模型名称来自 `COMPANY_AI_PRIMARY_MODEL`、`COMPANY_AI_PLANNER_MODEL`、`COMPANY_AI_DECISION_MODEL` 和 `COMPANY_AI_REPAIR_MODEL`。替换模型时不修改 Drawing Core、SceneCompiler、EditIntent 编译器或审计格式。
+
+模型接收 JSON Schema 约束的结构化协议。协议错误会把精确路径反馈给同一个模型重试；预览缺陷和整图拒绝会进入下一轮 repair 上下文。几何语义任务的视觉 observation 默认移除自动标注，文字、尺寸和标注任务才包含 annotation 平面，从而避免无关 UI 信息污染空间判断。
+
+系统门禁与供应商门禁分离：`npm run test:test2-self-edit -- <drawingId> <semanticRunId>` 验证正确 EditIntent 能否经过真实编译、Preview、保护检查和 Commit；`npm run e2e:test2-semantic-edit` 验证当前外部模型是否能自主产生并收敛到正确意图。

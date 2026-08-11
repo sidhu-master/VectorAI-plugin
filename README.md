@@ -1,6 +1,6 @@
 # VectorAI Spatial Protocol Engine
 
-VectorAI 是 AI 原生二维空间协议引擎。AI 通过可验证的 SpatialPatch 增量构建 SpatialModel，而不是直接生成不可编辑的图片。
+VectorAI 是 AI 原生二维空间协议引擎。AI 通过可验证的 Drawing IR 增量事务理解、维护和修改真实二维图纸，而不是直接生成不可编辑的图片。
 
 ## 本地开发
 
@@ -22,23 +22,25 @@ COMPANY_AI_BASE_URL
 COMPANY_AI_API_KEY
 COMPANY_AI_MODEL_NAME=doubao-seed-2.0-lite
 COMPANY_AI_PRIMARY_MODEL=doubao-seed-2.0-lite
+COMPANY_AI_PLANNER_MODEL=doubao-seed-2.0-lite
+COMPANY_AI_DECISION_MODEL=doubao-seed-2.0-lite
 COMPANY_AI_VISION_MODEL=doubao-seed-2.0-lite
 COMPANY_AI_REPAIR_MODEL=doubao-seed-2.1-turbo
 COMPANY_AI_GATEWAY_URL
 COMPANY_INTERNAL_TOKEN
 ```
 
-AI 对话只有一个 Agent 主流程，默认使用 Lite，不提供“普通/Agent”模式切换。纯文字、图片、PDF 及文字与附件的组合输入统一启动 Agent；运行中的纯文字作为安全点追加指令。二维图纸走专用感知管线，按页级分析、视图拆分、几何/OCR 并行检测、拓扑与尺寸关联、最多 25 图元的增量 Patch 顺序执行；旧的单体图纸 Prompt 和 `/api/ai/perceive` 不再是前端调用路径。低于 0.6 的有效图元直接提交并标红；文字任务的低置信度有效结果才升级一次 Turbo。未配置模型服务时，文字生成进入演示模式；图片/PDF 感知需要可用的视觉模型配置。
+AI 对话只有一个 Agent 主流程，不提供“普通/Agent”模式切换。纯文字、图片、PDF 及文字与附件的组合输入统一启动 Agent；运行中的纯文字作为安全点追加指令。模型只是可替换的 planner/decision/grounding/design/verification adapter，默认名称由上述环境变量指定；Drawing IR、SceneCompiler、事务、验证、审计与回放不依赖具体模型。低于 0.6 的有效图元作为 candidate 标红，修复轮可切换到 repair 模型。
 
 ## 架构入口
 
 - `docs/prd.md`：产品范围
 - `docs/tech-architecture.md`：技术架构
-- `src/core/`：平台无关 Spatial Core
-- `src/core/patch/`：增量 Patch、验证、应用和逆操作
-- `src/core/history/`：SpatialCommit 与 Undo/Redo
-- `api/services/audit/`：本地审计、脱敏和回放
-- `api/services/drawing-perception/`：图纸资产缓存、视觉工具、拓扑、尺寸关联与 Patch 编排
+- `src/drawing/`：Canonical Drawing IR、Command、事务、验证、Commit 与回放
+- `src/drawing/scene/`：前后端共享 SceneCompiler
+- `api/services/drawing-agent/`：空间 Agent、模型协议、Preview/Verify/Revise/Commit 与审计
+- `api/services/drawing-vision/`：服务端 overview/detail observation 与 Grounding
+- `api/services/drawing-perception/`、`drawing-feedback/`：图片重建工具与反馈 loop
 
 本地运行记录写入 `.local/vectorai/runs/`，该目录不会进入 Git。审计载荷会移除令牌、API Key 和媒体正文。
 
@@ -46,7 +48,7 @@ PDF 图纸会在本地服务端通过 Poppler 的 `pdftoppm` 只渲染第一页�
 
 ## Agent Workflow
 
-Agent 默认自动执行。启动请求在意图判断、规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。文字与图纸同时提交时，Lite 模型先判断任务属于分析、重建还是修改；修改任务固定先重建基准 `SpatialModel`，再针对该模型提交一个描述完整用户目标的局部修改 Patch。相对修改不会被拆成多个重复执行步骤，避免“扩大 10%”被连续复合应用。意图判断失败会记录错误并回退到安全的确定性路径。
+Agent 默认自动执行。启动请求在意图判断、规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。已有图纸语义修改固定经过 `Observe → Ground → EditIntent → Command → Preview → Verify → Commit/Revise`，任何模型都不能直接改仓库或绕过 Drawing IR 事务。
 
 | 方法 | 路由 | 用途 |
 |---|---|---|
@@ -58,7 +60,7 @@ Agent 默认自动执行。启动请求在意图判断、规划和图纸转换�
 | `POST` | `/api/agent/runs/:runId/stop` | 中止当前调用且不提交半成品 |
 | `POST` | `/api/agent/runs/:runId/instructions` | 追加在下一个安全点生效的指令 |
 
-有效运行在连续静默 25 秒时发送 heartbeat，因此用户可见回执间隔保持在 30 秒以内。干净线稿会先提取单像素中心线和拓扑链，再把每条链作为 Polyline 底稿逐条预览、提交，随后通过局部验证把同一对象原位提升为直线、圆、圆弧或椭圆；不能可靠拟合的部分保持为 Polyline。每一步都有独立事务、证据句柄和检查点，暂停后不会重复绘制。图纸任务按稳定 observation/entity ID 提交独立组件，单个组件失败不会回滚之前的提交；图片正文只存在于运行期缓存，终止后释放。
+有效运行在连续静默 25 秒时发送 heartbeat，以 30 秒内出现可见回执为体验目标；目标超时会记录指标，但不会否决正确的 Drawing IR 结果。干净线稿会先提取单像素中心线和拓扑链，再把每条链作为 Polyline 底稿逐条预览、提交，随后通过局部验证把同一对象原位提升为直线、圆、圆弧或椭圆；不能可靠拟合的部分保持为 Polyline。每一步都有独立事务、证据句柄和检查点，暂停后不会重复绘制。
 
 用本地图纸运行非 CI 基准（结果只写入被 Git 忽略的 `.local/vectorai/baselines/`）：
 
@@ -66,7 +68,7 @@ Agent 默认自动执行。启动请求在意图判断、规划和图纸转换�
 pnpm test:drawing -- test1.jpg
 ```
 
-命令逐行输出受理延迟、首个 Patch 延迟、各感知阶段耗时、Patch 批次数、观测/尺寸关联数量、低置信度与局部工具错误数量，不输出图片正文。正式服务的普通模型阶段 deadline 默认 120 秒，图纸感知总 deadline 默认 240 秒；期间仍以结构化阶段事件和 25 秒 heartbeat 保持可见回执。
+命令逐行输出受理延迟、首个事务预览延迟、各感知阶段耗时、提交批次数、低置信度与局部工具错误数量，不输出图片正文。正式服务的单模型阶段 deadline 默认 120 秒，Agent 总 deadline 默认 360 秒；期间仍以结构化阶段事件和 25 秒 heartbeat 保持可见回执。
 
 检查某次本地运行：
 

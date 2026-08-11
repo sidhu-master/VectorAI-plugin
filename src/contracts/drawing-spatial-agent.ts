@@ -66,6 +66,7 @@ export interface EditIntent {
 export interface SpatialParseContext {
   allowedNodeIds?: readonly string[];
   allowedFeatureIds?: readonly string[];
+  allowedAnchorIds?: readonly string[];
   allowedEvidenceRefs?: readonly string[];
 }
 
@@ -119,14 +120,23 @@ export function parseVisualFeatureGraph(
     };
   });
   unique(anchors.map((anchor) => anchor.id), 'featureGraph.anchors', 'anchor id');
+  unique([
+    ...features.map((feature) => feature.id),
+    ...anchors.map((anchor) => anchor.id),
+  ], 'featureGraph', 'feature/anchor id');
+  const relationIds = [...new Set([
+    ...(context.allowedNodeIds ?? []),
+    ...features.map((feature) => feature.id),
+    ...anchors.map((anchor) => anchor.id),
+  ])];
   const relations = array(graph.relations, 'featureGraph.relations').map((item, index) => {
     const path = `featureGraph.relations[${index}]`;
     const relation = object(item, path);
     exact(relation, ['type', 'from', 'to', 'confidence'], path);
     return {
       type: enumValue(relation.type, RELATIONS, `${path}.type`),
-      from: checkedId(relation.from, `${path}.from`, context.allowedNodeIds),
-      to: checkedId(relation.to, `${path}.to`, context.allowedNodeIds),
+      from: checkedId(relation.from, `${path}.from`, relationIds),
+      to: checkedId(relation.to, `${path}.to`, relationIds),
       confidence: confidence(relation.confidence, `${path}.confidence`),
     };
   });
@@ -169,6 +179,13 @@ export function parseEditIntent(
   });
   const preserveRules = array(intent.preserveRules, 'intent.preserveRules')
     .map((item, index) => parsePreserveRule(item, `intent.preserveRules[${index}]`, context));
+  const relationIds = context.allowedNodeIds || context.allowedFeatureIds || context.allowedAnchorIds
+    ? [...new Set([
+        ...(context.allowedNodeIds ?? []),
+        ...(context.allowedFeatureIds ?? []),
+        ...(context.allowedAnchorIds ?? []),
+      ])]
+    : undefined;
   const desiredRelations = array(intent.desiredRelations, 'intent.desiredRelations')
     .map((item, index) => {
       const path = `intent.desiredRelations[${index}]`;
@@ -176,8 +193,8 @@ export function parseEditIntent(
       exact(relation, ['type', 'from', 'to'], path);
       return {
         type: enumValue(relation.type, RELATIONS, `${path}.type`),
-        from: checkedId(relation.from, `${path}.from`, context.allowedNodeIds),
-        to: checkedId(relation.to, `${path}.to`, context.allowedNodeIds),
+        from: checkedId(relation.from, `${path}.from`, relationIds),
+        to: checkedId(relation.to, `${path}.to`, relationIds),
       };
     });
   return {

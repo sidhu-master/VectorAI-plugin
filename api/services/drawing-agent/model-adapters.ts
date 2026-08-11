@@ -23,6 +23,7 @@ import type {
   DrawingToolReceipt,
   DrawingAgentModelProfile,
 } from './types.js';
+import { decisionResponseSchema, PLANNER_RESPONSE_SCHEMA } from './protocol-schemas.js';
 
 export type DrawingFeedbackEscalationReason =
   | 'repeated_non_improvement'
@@ -60,6 +61,7 @@ DrawingAssertion 必须精确使用以下五种形状之一，不得添加额外
 {"type":"selection.count","selector":DrawingSelector,"min":non_negative_integer}
 selection.count 的 equals 与 min 二选一：equals 表示精确条数，min 表示至少 N 条。对"区域定位/找某个对象"这类无法预先确定精确数量的节点，务必用 min（如 min:1，表示该区域至少有一条即通过），不要用 equals 猜测精确数量。
 对新建且尚无稳定 ID 的图元，使用 selection.count 或 document.valid，不要在计划中虚构 nodeId。
+对于“抬手、调整姿态、改得更自然”等依赖视觉语义的目标，不得臆造坐标 bounds 或精确数量来代替语义验收；最终 acceptanceCriteria 使用 document.valid 及能由现有 Drawing IR 证明的不变量，语义是否完成由运行时的预览视觉验证和最终视觉验收判断。
 工作流 capability 只能是 query_entities、inspect_entity、edit_entities、verify_goal；新建、修改、删除都使用 edit_entities。修改必须是局部增量。
 已有对象只能引用摘要里出现的稳定 ID，不得编造待修改或待删除对象的 ID。新建图元可不提供 ID。
 低置信度结果允许作为 candidate，但必须安排验证。不得输出 commit；提交由运行时在预览安全点后执行。
@@ -86,7 +88,8 @@ point 用 x,y；line 用 start,end；ray/xline 用 origin,direction；arc 用 ce
 
 修改和删除只可使用工具证据中出现的稳定 ID，不得猜测 ID。每次 transact 必须最小化改动并满足当前工作流节点的验收条件。
 不得请求或输出 commit_transaction、previewHandle、完整图纸、SpatialModel 或 SpatialIntent。transact 会由运行时自动预览，提交由运行时在安全点执行。
-如果证据不足，先 query 或 inspect；如果目标已由回执证明，才 finish。`;
+如果证据不足，先 query 或 inspect；如果目标已由回执证明，才 finish。
+若输入包含 protocolFeedback，说明上一次输出违反当前工作流或 JSON 协议；本次必须按该错误纠正，不得重复同类决策。`;
 
 export const DRAWING_AGENT_PROMPT_HASHES = Object.freeze({
   planner: createHash('sha256').update(PLANNER_SYSTEM_PROMPT).digest('hex'),
@@ -124,7 +127,8 @@ DrawingCommand 只允许:
 二维几何精确形状：point 用 x,y；line 用 start,end；circle 用 center,radius；arc 用 center,radius,startAngle,endAngle,counterClockwise；ellipse 用 center,majorAxis,ratio,startParam?,endParam?；polyline 用 vertices:[{"point":[x,y],"bulge"?:number}],closed；spline 用 degree,controlPoints,knots,weights?,closed,periodic。文字用 annotation.create + type:text + content,position,height,rotation,alignment,verticalAlignment,maxWidth?。
 修改和删除只可使用 grounding 中出现的稳定 ID，不得猜测 ID。每次 transact 必须最小化改动并满足当前工作流节点的验收条件。
 不得请求或输出 commit_transaction、previewHandle、完整图纸。transact 会由运行时自动预览，提交由运行时在安全点执行。
-如果证据不足，先 query 或 inspect；如果目标已由回执证明，才 finish。`;
+如果证据不足，先 query 或 inspect；如果目标已由回执证明，才 finish。
+若输入包含 protocolFeedback，说明上一次输出违反当前工作流或 JSON 协议；本次必须按该错误纠正，不得重复同类决策。`;
 
 export class DrawingPlannerAdapter implements DrawingPlannerModelAdapter {
   constructor(
@@ -157,6 +161,7 @@ export class DrawingPlannerAdapter implements DrawingPlannerModelAdapter {
         },
       }),
       signal: input.signal,
+      responseSchema: PLANNER_RESPONSE_SCHEMA,
     });
     input.onRawReply?.('planner', reply);
     return parseAgentPlan(parseJsonReply(reply));
@@ -181,10 +186,14 @@ export class DrawingDecisionAdapter implements DrawingDecisionModelAdapter {
       currentWorkflowNode: boundedJson(currentNode),
       revision: input.revision,
       attempt: input.attempt,
+      ...(input.protocolFeedback
+        ? { protocolFeedback: truncate(input.protocolFeedback) }
+        : {}),
       pendingInstructions: input.pendingInstructions.slice(-MAX_CONTEXT_ITEMS).map(truncate),
       recentReceipts: input.recentReceipts.slice(-MAX_CONTEXT_ITEMS).map(publicReceipt),
       toolEvidence: input.toolEvidence.slice(-MAX_CONTEXT_ITEMS).map(publicEvidence),
     };
+    const responseSchema = decisionResponseSchema(currentNode.capability);
     if (input.vision) {
       const { image, mimeType } = splitDataUrl(input.vision.snapshot.imageDataUrl);
       const reply = await this.completeVision({
@@ -199,6 +208,7 @@ export class DrawingDecisionAdapter implements DrawingDecisionModelAdapter {
         image,
         mimeType,
         signal: input.signal,
+        ...(responseSchema ? { responseSchema } : {}),
       });
       input.onRawReply?.('decision', reply);
       return parseAgentDecision(parseJsonReply(reply));
@@ -209,6 +219,7 @@ export class DrawingDecisionAdapter implements DrawingDecisionModelAdapter {
       systemPrompt: DECISION_SYSTEM_PROMPT,
       userPrompt: JSON.stringify(baseInput),
       signal: input.signal,
+      ...(responseSchema ? { responseSchema } : {}),
     });
     input.onRawReply?.('decision', reply);
     return parseAgentDecision(parseJsonReply(reply));
