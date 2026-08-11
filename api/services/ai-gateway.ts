@@ -19,6 +19,61 @@ export interface DrawingVisionCompletionParams {
   signal: AbortSignal;
 }
 
+export interface DrawingMultimodalCompletionParams {
+  role: 'grounding' | 'design' | 'verification';
+  modelName: string;
+  systemPrompt: string;
+  userPrompt: string;
+  images: Array<{ id: string; dataUrl: string }>;
+  signal: AbortSignal;
+}
+
+export async function requestDrawingMultimodalCompletion(
+  input: DrawingMultimodalCompletionParams,
+): Promise<string> {
+  const content = [
+    { type: 'text', text: input.userPrompt },
+    ...input.images.flatMap((image) => [
+      { type: 'text', text: `图像引用: ${image.id}` },
+      { type: 'image_url', image_url: { url: image.dataUrl } },
+    ]),
+  ];
+  const gatewayUrl = process.env.COMPANY_AI_GATEWAY_URL;
+  const internalToken = process.env.COMPANY_INTERNAL_TOKEN;
+  if (gatewayUrl && internalToken) {
+    const response = await fetch(`${gatewayUrl.replace(/\/+$/, '')}/internal/company/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-token': internalToken },
+      body: JSON.stringify({
+        product: 'vectorai',
+        scene: `drawing_agent_${input.role}`,
+        messages: [{ role: 'user', content }],
+        system_context: input.systemPrompt,
+        model_role: input.role,
+        model: input.modelName,
+      }),
+      signal: input.signal,
+    });
+    return companyCompletionContent(response, 'Drawing Multimodal Gateway');
+  }
+  const { baseUrl, apiKey } = directModelConfig();
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: input.modelName,
+      messages: [
+        { role: 'system', content: input.systemPrompt },
+        { role: 'user', content },
+      ],
+      temperature: 0.1,
+      max_tokens: 4096,
+    }),
+    signal: input.signal,
+  });
+  return completionContent(response, 'Drawing Multimodal');
+}
+
 export async function requestDrawingVisionCompletion(
   input: DrawingVisionCompletionParams,
 ): Promise<string> {
@@ -101,6 +156,18 @@ export async function requestDrawingAgentCompletion(
     signal: input.signal,
   });
   return completionContent(response, 'Drawing Agent');
+}
+
+async function companyCompletionContent(response: Response, label: string): Promise<string> {
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`${label} 错误: ${response.status} ${detail.slice(0, 200)}`);
+  }
+  const data = await response.json();
+  if (!data.ok || typeof data.reply !== 'string' || data.reply.trim() === '') {
+    throw new Error(data.message || `${label} 返回空内容`);
+  }
+  return data.reply;
 }
 
 function directModelConfig(): { baseUrl: string; apiKey: string } {

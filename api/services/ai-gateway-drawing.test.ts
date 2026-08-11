@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { requestDrawingAgentCompletion } from './ai-gateway';
+import {
+  requestDrawingAgentCompletion,
+  requestDrawingMultimodalCompletion,
+} from './ai-gateway';
 
 const originalEnv = { ...process.env };
 
@@ -75,6 +78,43 @@ describe('Drawing Agent AI Gateway', () => {
         { role: 'system', content: 'system' },
         { role: 'user', content: 'user' },
       ],
+    });
+  });
+
+  it('sends multiple grounded images through the configured company gateway', async () => {
+    process.env.COMPANY_AI_GATEWAY_URL = 'http://gateway.local/';
+    process.env.COMPANY_INTERNAL_TOKEN = 'internal-token';
+    const fetchMock = vi.fn(async (
+      _url: string | URL | Request,
+      _init?: RequestInit,
+    ) => {
+      void _url;
+      void _init;
+      return new Response(JSON.stringify({
+        ok: true, reply: '{"features":[]}',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await requestDrawingMultimodalCompletion({
+      role: 'grounding',
+      modelName: 'doubao-seed-2.1-turbo',
+      systemPrompt: 'system',
+      userPrompt: 'ground these views',
+      images: [{ id: 'overview', dataUrl: 'data:image/png;base64,AAAA' }],
+      signal: new AbortController().signal,
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1];
+    if (!init) throw new Error('expected fetch call');
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      scene: 'drawing_agent_grounding', model_role: 'grounding',
+      model: 'doubao-seed-2.1-turbo',
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'ground these views' },
+        { type: 'text', text: '图像引用: overview' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+      ] }],
     });
   });
 });

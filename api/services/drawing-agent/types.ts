@@ -141,7 +141,7 @@ export interface DrawingDecisionInput {
   vision?: DrawingVisionContext;
 }
 
-export type DrawingModelRole = 'planner' | 'decision' | 'acceptance';
+export type DrawingModelRole = 'planner' | 'decision' | 'acceptance' | 'grounding' | 'design';
 
 export interface DrawingPlannerModelAdapter {
   plan(input: DrawingPlannerInput): Promise<DrawingAgentPlan>;
