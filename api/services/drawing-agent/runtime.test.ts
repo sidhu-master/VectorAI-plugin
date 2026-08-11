@@ -23,6 +23,7 @@ import type {
 } from '../drawing-feedback/loop-controller';
 import type { SourceArtifactStore } from '../source-artifacts/types';
 import type {
+  DrawingAcceptanceModelAdapter,
   DrawingDecisionInput,
   DrawingDecisionModelAdapter,
   DrawingPlannerInput,
@@ -58,6 +59,19 @@ async function setup(input: {
   }): AsyncIterable<DrawingPerceptionOutput> };
   feedbackLoop?: { run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> };
   stageTimeoutMs?: number;
+  acceptance?: DrawingAcceptanceModelAdapter;
+  renderForVision?: () => Promise<{
+    width: number;
+    height: number;
+    imageDataUrl: string;
+    nodes: Array<{
+      nodeId: string;
+      type: string;
+      bounds: { x: number; y: number; width: number; height: number };
+      normalized: { left: number; top: number; right: number; bottom: number };
+      selected: boolean;
+    }>;
+  }>;
 } = {}) {
   const idFactory = ids();
   const repository = new MemoryDrawingRepository({ idFactory, now: () => 100 });
@@ -77,9 +91,9 @@ async function setup(input: {
       return application.execute(call);
     },
     // 视觉接地快照在 runtime 测试中未启用(不传 viewport),占位即可
-    renderForVision: async () => ({
+    renderForVision: input.renderForVision ?? (async () => ({
       width: 1, height: 1, imageDataUrl: 'data:image/png;base64,', nodes: [],
-    }),
+    })),
   };
   const tools = new DrawingToolRegistry({
     application: toolApplication,
@@ -118,6 +132,7 @@ async function setup(input: {
     visionModelName: 'vision-model',
     visionRepairModelName: 'repair-vision-model',
     feedbackLoop: input.feedbackLoop,
+    acceptance: input.acceptance,
   });
   return { application, decision, order, planner, runtime, tools, workspace };
 }
@@ -697,6 +712,63 @@ describe('DrawingAgentRuntime', () => {
     expect((await application.open(workspace.document.id)).commits[0].actor).toEqual({
       type: 'AI', id: 'run_1',
     });
+  });
+
+  it('renders vision for a text-only instruction on an existing drawing', async () => {
+    let capturedVision: DrawingDecisionInput['vision'];
+    const decision: DrawingDecisionModelAdapter = {
+      decide: vi.fn(async (input) => {
+        capturedVision = input.vision;
+        return createDecision('circle_1', 0.9);
+      }),
+    };
+    const { runtime, workspace } = await setup({
+      decision,
+      renderForVision: async () => ({
+        width: 100,
+        height: 100,
+        imageDataUrl: 'data:image/png;base64,AAAA',
+        nodes: [{
+          nodeId: 'existing_line',
+          type: 'line',
+          bounds: { x: 10, y: 10, width: 30, height: 2 },
+          normalized: { left: 0.1, top: 0.1, right: 0.4, bottom: 0.12 },
+          selected: false,
+        }],
+      }),
+    });
+
+    const final = await runtime.start({
+      ...startInput(workspace),
+      goal: '把现有图形的右手抬起来',
+      viewport: { scale: 1, offsetX: 0, offsetY: 100, width: 100, height: 100 },
+    }).completion;
+
+    expect(final.status).toBe('completed');
+    expect(capturedVision?.snapshot.nodes).toEqual([
+      expect.objectContaining({ nodeId: 'existing_line' }),
+    ]);
+  });
+
+  it('does not visually accept a goal that fails deterministic assertions', async () => {
+    const plan = createPlan('circle_1');
+    plan.goal.acceptanceCriteria = [{ type: 'node.exists', nodeId: 'required_other_node' }];
+    let acceptanceCalls = 0;
+    const acceptance: DrawingAcceptanceModelAdapter = {
+      accept: vi.fn(async () => {
+        acceptanceCalls += 1;
+        return { satisfied: true, reason: '视觉上看起来完成' };
+      }),
+    };
+    const { runtime, workspace } = await setup({ plan, acceptance });
+
+    const final = await runtime.start({
+      ...startInput(workspace),
+      viewport: { scale: 1, offsetX: 0, offsetY: 100, width: 100, height: 100 },
+    }).completion;
+
+    expect(final.status).toBe('failed');
+    expect(acceptanceCalls).toBe(0);
   });
 
   it('owns read-step completion and final verification without extra model decisions', async () => {

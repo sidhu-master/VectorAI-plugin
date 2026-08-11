@@ -1027,7 +1027,7 @@ export class DrawingAgentRuntime {
 
   async #ensureVision(record: RunRecord): Promise<DrawingVisionContext | undefined> {
     const viewport = record.viewport;
-    if (!viewport || record.inputMode === 'analyze_only' || record.inputMode === 'text_only') {
+    if (!viewport || record.inputMode === 'analyze_only') {
       return undefined;
     }
     // 仅在 revision 未变化时复用缓存;提交后重新渲染,让模型看到更新后的图纸
@@ -1164,10 +1164,6 @@ export class DrawingAgentRuntime {
   }
 
   async #verifyGoal(record: RunRecord): Promise<boolean> {
-    // 视觉型 run:以视觉模型对"渲染出的当前图纸"是否满足目标为准
-    if (record.viewport && this.#acceptance) {
-      return this.#verifyGoalVisual(record);
-    }
     if (!await this.#safePoint(record, 'before_read')) return false;
     const result = await this.#tools.invoke({
       capability: 'verify_goal', caller: 'runtime',
@@ -1178,6 +1174,10 @@ export class DrawingAgentRuntime {
     this.#recordTool(record, result);
     if (result.receipt.status !== 'already_satisfied') {
       throw new Error('最终验收条件未满足');
+    }
+    // 视觉验收是 Drawing IR 确定性验收之后的附加条件，不能替代向量合法性。
+    if (record.viewport && this.#acceptance) {
+      return this.#verifyGoalVisual(record);
     }
     return true;
   }
