@@ -17,7 +17,6 @@ import type {
   DrawingAcceptanceResult,
   DrawingDecisionInput,
   DrawingDecisionModelAdapter,
-  DrawingModelRole,
   DrawingPlannerInput,
   DrawingPlannerModelAdapter,
   DrawingToolEvidence,
@@ -128,8 +127,6 @@ DrawingCommand 只允许:
 如果证据不足，先 query 或 inspect；如果目标已由回执证明，才 finish。`;
 
 export class DrawingPlannerAdapter implements DrawingPlannerModelAdapter {
-  onRawReply?: (role: DrawingModelRole, reply: string) => void;
-
   constructor(
     private readonly complete: DrawingAgentCompletion = requestDrawingAgentCompletion,
     private readonly now: () => number = Date.now,
@@ -161,14 +158,12 @@ export class DrawingPlannerAdapter implements DrawingPlannerModelAdapter {
       }),
       signal: input.signal,
     });
-    this.onRawReply?.('planner', reply);
+    input.onRawReply?.('planner', reply);
     return parseAgentPlan(parseJsonReply(reply));
   }
 }
 
 export class DrawingDecisionAdapter implements DrawingDecisionModelAdapter {
-  onRawReply?: (role: DrawingModelRole, reply: string) => void;
-
   constructor(
     private readonly complete: DrawingAgentCompletion = requestDrawingAgentCompletion,
     private readonly completeVision: DrawingVisionCompletion = requestDrawingVisionCompletion,
@@ -205,7 +200,7 @@ export class DrawingDecisionAdapter implements DrawingDecisionModelAdapter {
         mimeType,
         signal: input.signal,
       });
-      this.onRawReply?.('decision', reply);
+      input.onRawReply?.('decision', reply);
       return parseAgentDecision(parseJsonReply(reply));
     }
     const reply = await this.complete({
@@ -215,7 +210,7 @@ export class DrawingDecisionAdapter implements DrawingDecisionModelAdapter {
       userPrompt: JSON.stringify(baseInput),
       signal: input.signal,
     });
-    this.onRawReply?.('decision', reply);
+    input.onRawReply?.('decision', reply);
     return parseAgentDecision(parseJsonReply(reply));
   }
 }
@@ -228,8 +223,6 @@ const ACCEPTANCE_SYSTEM_PROMPT = `你是 VectorAI Drawing Agent 的视觉验收�
 不要输出任何其它内容。`;
 
 export class DrawingAcceptanceAdapter implements DrawingAcceptanceModelAdapter {
-  onRawReply?: (role: DrawingModelRole, reply: string) => void;
-
   constructor(
     private readonly completeVision: DrawingVisionCompletion = requestDrawingVisionCompletion,
   ) {}
@@ -250,7 +243,7 @@ export class DrawingAcceptanceAdapter implements DrawingAcceptanceModelAdapter {
       mimeType,
       signal: input.signal,
     });
-    this.onRawReply?.('acceptance', reply);
+    input.onRawReply?.('acceptance', reply);
     const parsed = parseJsonReply(reply) as { satisfied?: unknown; reason?: unknown };
     return {
       satisfied: parsed.satisfied === true,

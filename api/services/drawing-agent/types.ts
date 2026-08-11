@@ -107,6 +107,7 @@ export interface DrawingPlannerInput {
   modelName: string;
   signal: AbortSignal;
   deadlineAt: number;
+  onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
 
 export interface DrawingToolEvidence {
@@ -132,6 +133,7 @@ export interface DrawingDecisionInput {
   modelName: string;
   signal: AbortSignal;
   deadlineAt: number;
+  onRawReply?: (role: DrawingModelRole, reply: string) => void;
   /** 视觉接地上下文:提供当前图纸渲染图 + nodeId 映射 + 选区 */
   vision?: DrawingVisionContext;
 }
@@ -140,14 +142,10 @@ export type DrawingModelRole = 'planner' | 'decision' | 'acceptance';
 
 export interface DrawingPlannerModelAdapter {
   plan(input: DrawingPlannerInput): Promise<DrawingAgentPlan>;
-  /** 注入方(runtime)可设置,在拿到模型原始返回时回调,用于审计/排查 */
-  onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
 
 export interface DrawingDecisionModelAdapter {
   decide(input: DrawingDecisionInput): Promise<AgentDecision>;
-  /** 注入方(runtime)可设置,在拿到模型原始返回时回调,用于审计/排查 */
-  onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
 
 /** 视觉验收:对渲染出的当前图纸做"目标是否已满足"的判定 */
@@ -160,6 +158,7 @@ export interface DrawingAcceptanceInput {
   height: number;
   signal?: AbortSignal;
   deadlineAt?: number;
+  onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
 
 export interface DrawingAcceptanceResult {
@@ -169,8 +168,6 @@ export interface DrawingAcceptanceResult {
 
 export interface DrawingAcceptanceModelAdapter {
   accept(input: DrawingAcceptanceInput): Promise<DrawingAcceptanceResult>;
-  /** 注入方(runtime)可设置,在拿到模型原始返回时回调,用于审计/排查 */
-  onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
 
 export interface DrawingAgentModelProfile {

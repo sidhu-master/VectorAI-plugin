@@ -220,45 +220,59 @@ describe('drawing-native model adapters', () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
-  it('emits the raw planner reply through onRawReply', async () => {
+  it('emits the raw planner reply through the current call context', async () => {
     const raw = JSON.stringify(validPlan);
     const adapter = new DrawingPlannerAdapter(async () => raw, () => 100);
     const calls: string[] = [];
-    adapter.onRawReply = (role, reply) => calls.push(reply);
 
-    await adapter.plan(plannerInput());
+    await adapter.plan({
+      ...plannerInput(),
+      onRawReply: (_role, reply) => calls.push(reply),
+    } as never);
 
     expect(calls).toEqual([raw]);
   });
 
-  it('emits the raw decision reply through onRawReply', async () => {
+  it('isolates raw decision replies between concurrent call contexts', async () => {
     const raw = '{"type":"finish","summary":"done"}';
     const adapter = new DrawingDecisionAdapter(async () => raw, undefined, () => 100);
-    const calls: string[] = [];
-    adapter.onRawReply = (role, reply) => calls.push(reply);
+    const firstCalls: string[] = [];
+    const secondCalls: string[] = [];
 
-    await adapter.decide({
+    const input = {
       plan: validPlan,
       currentWorkflowNodeId: 'inspect_circle',
       revision,
       pendingInstructions: [], recentReceipts: [], toolEvidence: [],
       attempt: 1, modelName: 'decision-model',
       signal: new AbortController().signal, deadlineAt: 1000,
-    } as never);
+    };
 
-    expect(calls).toEqual([raw]);
+    await Promise.all([
+      adapter.decide({
+        ...input,
+        onRawReply: (_role, reply) => firstCalls.push(reply),
+      } as never),
+      adapter.decide({
+        ...input,
+        onRawReply: (_role, reply) => secondCalls.push(reply),
+      } as never),
+    ]);
+
+    expect(firstCalls).toEqual([raw]);
+    expect(secondCalls).toEqual([raw]);
   });
 
-  it('parses acceptance verdicts and emits the raw reply through onRawReply', async () => {
+  it('parses acceptance verdicts and emits the raw reply through the current call context', async () => {
     const reply = '{"satisfied":false,"reason":"手没有抬起"}';
     const adapter = new DrawingAcceptanceAdapter(async () => reply);
     const calls: string[] = [];
-    adapter.onRawReply = (role, value) => calls.push(value);
 
     const result = await adapter.accept({
       goal: '把右手改成向上打招呼', modelName: 'accept-model',
       image: 'data:image/png;base64,AAAA', width: 100, height: 100,
-    });
+      onRawReply: (_role, value) => calls.push(value),
+    } as never);
 
     expect(result).toEqual({ satisfied: false, reason: '手没有抬起' });
     expect(calls).toEqual([reply]);

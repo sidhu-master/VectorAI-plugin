@@ -908,7 +908,7 @@ export class DrawingAgentRuntime {
         const modelName = attempt === MAX_PLANNER_SCHEMA_CORRECTIONS
           ? record.modelProfile.repair
           : record.modelProfile.planner;
-        plan = await this.#callModel(record, this.#planner, 'planner', modelName, (signal) => (
+        plan = await this.#callModel(record, 'planner', modelName, (signal, onRawReply) => (
           this.#planner.plan({
             objective: record.planningObjective,
             ...(instruction ? { instruction } : {}),
@@ -918,6 +918,7 @@ export class DrawingAgentRuntime {
             modelName,
             signal,
             deadlineAt: record.state.limits.deadlineAt,
+            onRawReply,
           })
         ));
         break;
@@ -1046,7 +1047,7 @@ export class DrawingAgentRuntime {
     const call = async (modelName: string) => {
       this.#transition(record, { type: 'DECISION_RECORDED' });
       const vision = await this.#ensureVision(record);
-      const decision = await this.#callModel(record, this.#decision, 'decision', modelName, (signal) => this.#decision.decide({
+      const decision = await this.#callModel(record, 'decision', modelName, (signal, onRawReply) => this.#decision.decide({
         plan: record.state.plan!,
         currentWorkflowNodeId: record.state.currentWorkflowNodeId!,
         revision: record.state.revision,
@@ -1058,6 +1059,7 @@ export class DrawingAgentRuntime {
         signal,
         deadlineAt: record.state.limits.deadlineAt,
         vision,
+        onRawReply,
       }));
       assertDecisionMatchesCapability(record, decision);
       this.#audit(record, 'decision', { decision: structuredClone(decision) });
@@ -1189,7 +1191,7 @@ export class DrawingAgentRuntime {
       maxDimension: 1536,
     });
     record.vision = { snapshot, selection: [...record.selectedIds] };
-    const result = await this.#callModel(record, this.#acceptance!, 'acceptance', record.modelProfile.decision, (signal) => (
+    const result = await this.#callModel(record, 'acceptance', record.modelProfile.decision, (signal, onRawReply) => (
       this.#acceptance!.accept({
         goal: record.state.plan!.goal.objective,
         modelName: record.modelProfile.decision,
@@ -1198,6 +1200,7 @@ export class DrawingAgentRuntime {
         height: snapshot.height,
         signal,
         deadlineAt: record.state.limits.deadlineAt,
+        onRawReply,
       })
     ));
     this.#audit(record, 'state', {
@@ -1263,10 +1266,12 @@ export class DrawingAgentRuntime {
 
   async #callModel<T>(
     record: RunRecord,
-    adapter: DrawingPlannerModelAdapter | DrawingDecisionModelAdapter | DrawingAcceptanceModelAdapter,
     role: DrawingModelRole,
     _modelName: string,
-    call: (signal: AbortSignal) => Promise<T>,
+    call: (
+      signal: AbortSignal,
+      onRawReply: (replyRole: DrawingModelRole, reply: string) => void,
+    ) => Promise<T>,
   ): Promise<T> {
     const remaining = record.state.limits.deadlineAt - this.#now();
     if (remaining <= 0) throw new Error('任务已超过运行截止时间');
@@ -1277,14 +1282,14 @@ export class DrawingAgentRuntime {
     ));
     (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
     record.progress.publish('model_started', role === 'planner' ? '正在规划' : '正在决定下一步');
-    const previous = adapter.onRawReply;
-    adapter.onRawReply = (replyRole, reply) => this.#auditRaw(record, replyRole, reply);
     try {
-      const result = await call(controller.signal);
+      const result = await call(
+        controller.signal,
+        (replyRole, reply) => this.#auditRaw(record, replyRole, reply),
+      );
       record.progress.publish('model_finished', role === 'planner' ? '规划完成' : '决策完成');
       return result;
     } finally {
-      adapter.onRawReply = previous;
       clearTimeout(timer);
       if (record.activeController === controller) record.activeController = null;
     }

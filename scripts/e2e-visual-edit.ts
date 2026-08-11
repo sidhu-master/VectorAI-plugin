@@ -180,19 +180,17 @@ async function main() {
 
   const decisions = buildDecisions();
   const planner: DrawingPlannerModelAdapter = {
-    onRawReply: undefined,
-    plan: async () => {
+    plan: async (input) => {
       const plan = visualEditPlan();
-      planner.onRawReply?.('planner', JSON.stringify(plan));
+      input.onRawReply?.('planner', JSON.stringify(plan));
       return plan;
     },
   };
   const decision: DrawingDecisionModelAdapter = {
-    onRawReply: undefined,
-    decide: async () => {
+    decide: async (input) => {
       const next = decisions.shift();
       if (!next) return { type: 'finish', summary: '完成' };
-      decision.onRawReply?.('decision', JSON.stringify(next));
+      input.onRawReply?.('decision', JSON.stringify(next));
       return next;
     },
   };
@@ -200,7 +198,6 @@ async function main() {
   const auditStore = new MemoryAuditStore();
   let acceptanceCalls = 0;
   const acceptance: DrawingAcceptanceModelAdapter = {
-    onRawReply: undefined,
     accept: async () => {
       acceptanceCalls += 1;
       return acceptanceCalls === 1
