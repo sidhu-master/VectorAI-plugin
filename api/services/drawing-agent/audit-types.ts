@@ -21,6 +21,7 @@ export type DrawingAgentAuditEventType =
   | 'atomic_graph'
   | 'selection'
   | 'strategy'
+  | 'generation'
   | 'split'
   | 'lineage'
   | 'episode'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { previewTransaction } from '../../../src/drawing/index.js';
+import { previewTransaction, type GeometryId } from '../../../src/drawing/index.js';
 import { buildAtomicGeometryGraph } from './atomic-graph.js';
 import { polygonRegionBounds } from './polygon.js';
 import { RegionResolver } from './region-resolver.js';
@@ -72,5 +72,43 @@ describe('compileSpatialEdit', () => {
       candidate,
       tolerance: 0.02,
     })).toMatchObject({ valid: true, issues: [], unexpectedDanglingEndpoints: [] });
+  });
+
+  it('adds generated vector geometry without rewriting the existing primitive ownership model', () => {
+    const before = test2SharedPolylineDocument();
+    const region = test2RightArmRegion();
+    const selection = {
+      regionId: region.id, revision: TEST2_REVISION,
+      wholeNodes: [], partialSegments: [], crossingNodes: [], protectedNodes: [],
+      boundaryAnchors: [], classifications: [], uncertainParts: [], splitPlan: [],
+    };
+    const strategy = routeSpatialEditStrategy({
+      goal: '给角色增加卷发', document: before, region, selection,
+    });
+    const hair = {
+      id: 'node_generated_hair' as GeometryId, type: 'polyline' as const,
+      vertices: [{ point: [102, 202] as const }, { point: [108, 208] as const }, { point: [115, 202] as const }],
+      closed: false, visible: true,
+      quality: { status: 'confirmed' as const, confidence: 0.92, evidenceRefs: [] },
+    };
+
+    const candidate = compileSpatialEdit({
+      document: before, selection, region, strategy,
+      split: { commands: [], fragments: [], lineage: [], fidelityWarnings: [] },
+      design: {
+        kind: 'local-redraw', geometry: [hair], replaceTarget: false,
+        confidence: 0.92, evidenceRefs: ['generated_source'],
+      },
+    });
+    const preview = previewTransaction({ document: before, currentRevision: TEST2_REVISION }, {
+      id: 'transaction_add_hair', baseRevision: TEST2_REVISION,
+      actor: { type: 'AI', id: 'test' }, commands: candidate.commands,
+      preconditions: [], postconditions: [{ type: 'document.valid' }], evidenceRefs: [],
+    });
+
+    expect(candidate.commands).toEqual([{ type: 'geometry.create', value: expect.objectContaining({ id: hair.id }) }]);
+    expect(candidate.targetNodeIds).toEqual([hair.id]);
+    expect(Object.keys(candidate.preserveNodeHashes)).toHaveLength(before.geometry.length);
+    expect(preview.status).toBe('ready');
   });
 });

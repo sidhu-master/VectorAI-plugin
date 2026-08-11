@@ -26,4 +26,5 @@ export interface DrawingRegionRedrawInput extends DrawingRegionImageEditInput {
   authorizedContours: Vec2[][];
   authorizedHoles: Vec2[][];
   maxPixels: number;
+  onStage?: (stage: 'generated' | 'vectorizing') => void;
 }

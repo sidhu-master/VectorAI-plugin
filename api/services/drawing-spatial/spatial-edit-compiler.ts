@@ -38,6 +38,13 @@ export type SpatialEditDesign =
       geometry: GeometryNode[];
       confidence: number;
       evidenceRefs: string[];
+    }
+  | {
+      kind: 'local-redraw';
+      geometry: GeometryNode[];
+      replaceTarget: boolean;
+      confidence: number;
+      evidenceRefs: string[];
     };
 
 export interface CompiledSpatialEditCandidate {
@@ -61,6 +68,9 @@ export function compileSpatialEdit(input: {
   design: SpatialEditDesign;
 }): CompiledSpatialEditCandidate {
   assertScope(input);
+  if (input.design.kind === 'local-redraw') {
+    return compileLocalRedraw({ ...input, design: input.design });
+  }
   const targetFragmentIds = input.split.lineage
     .filter((entry) => entry.role === 'target')
     .map((entry) => entry.fragmentId);
@@ -124,6 +134,68 @@ export function compileSpatialEdit(input: {
   };
 }
 
+function compileLocalRedraw(input: {
+  document: DrawingDocument;
+  selection: SpatialSelection;
+  region: SemanticRegion;
+  strategy: SpatialEditStrategy;
+  split: MaterializedSplit;
+  design: Extract<SpatialEditDesign, { kind: 'local-redraw' }>;
+}): CompiledSpatialEditCandidate {
+  if (input.design.geometry.length === 0) throw new Error('SPATIAL_REDRAW_EMPTY');
+  const generatedIds = new Set<string>();
+  for (const node of input.design.geometry) {
+    if (generatedIds.has(node.id)) throw new Error(`SPATIAL_REDRAW_ID_DUPLICATE:${node.id}`);
+    if (input.document.geometry.some((existing) => existing.id === node.id)) {
+      throw new Error(`SPATIAL_REDRAW_ID_COLLISION:${node.id}`);
+    }
+    generatedIds.add(node.id);
+  }
+  const targetFragmentIds = new Set(input.split.lineage
+    .filter((entry) => entry.role === 'target')
+    .map((entry) => entry.fragmentId));
+  const retainedSplitCommands = input.design.replaceTarget
+    ? input.split.commands.filter((command) => !(
+        command.type === 'geometry.create' && targetFragmentIds.has(command.value.id)
+      ))
+    : [];
+  const deleteWholeTargets: DrawingCommand[] = input.design.replaceTarget
+    ? input.selection.wholeNodes.map((id) => ({ type: 'geometry.delete' as const, id }))
+    : [];
+  const createGenerated: DrawingCommand[] = input.design.geometry.map((node) => ({
+    type: 'geometry.create' as const,
+    value: withDesignQuality(node, input.design),
+  }));
+  const commands = [...retainedSplitCommands, ...deleteWholeTargets, ...createGenerated];
+  const affectedExistingIds = new Set<string>(commands.flatMap((command) => {
+    if ('id' in command && input.document.geometry.some((node) => node.id === command.id)) {
+      return [command.id];
+    }
+    return [];
+  }));
+  const preservedIds = allNodeIds(input.document).filter((id) => !affectedExistingIds.has(id));
+  const protectedFragmentHashes = input.design.replaceTarget
+    ? Object.fromEntries(input.split.lineage
+        .filter((entry) => entry.role === 'protected')
+        .map((entry) => {
+          const node = input.split.fragments.find((fragment) => fragment.id === entry.fragmentId);
+          if (!node) throw new Error(`PROTECTED_FRAGMENT_MISSING:${entry.fragmentId}`);
+          return [entry.fragmentId, drawingNodeContentHash(node)];
+        }))
+    : {};
+  return {
+    baseRevision: input.selection.revision,
+    commands,
+    targetNodeIds: input.design.geometry.map((node) => node.id),
+    preserveNodeHashes: collectPreservedNodeHashes(input.document, preservedIds),
+    protectedFragmentHashes,
+    authorizedBounds: authorizedBounds(input.region, []),
+    lineage: input.design.replaceTarget ? structuredClone(input.split.lineage) : [],
+    strategy: input.strategy.mode,
+    fidelityWarnings: [...input.split.fidelityWarnings],
+  };
+}
+
 function assertScope(input: {
   document: DrawingDocument;
   selection: SpatialSelection;
@@ -139,6 +211,7 @@ function assertScope(input: {
 
 function designedGeometry(node: GeometryNode, design: SpatialEditDesign): GeometryNode {
   if (design.kind === 'transform') return transformGeometryNode(node, design.transform);
+  if (design.kind === 'local-redraw') throw new Error('SPATIAL_REDRAW_REQUIRES_LOCAL_COMPILER');
   const replacement = design.geometry.find((item) => item.id === node.id);
   if (!replacement) throw new Error(`SPATIAL_REPLACEMENT_MISSING:${node.id}`);
   return structuredClone(replacement);

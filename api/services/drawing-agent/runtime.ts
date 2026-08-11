@@ -3,6 +3,7 @@ import {
   type AgentDecision,
   type DrawingAgentPlan,
 } from '../../../src/contracts/drawing-agent.js';
+import sharp from 'sharp';
 import { DrawingSpatialProtocolError } from '../../../src/contracts/drawing-spatial-agent.js';
 import {
   DrawingSpatialRegionProtocolError,
@@ -18,6 +19,7 @@ import type {
   PerceptionPreviewNode,
 } from '../../../src/drawing/index.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
+import type { AffineTransform } from '../drawing-render/rasterize-scene.js';
 import type { GroundingSnapshot } from '../drawing-vision/grounding-renderer.js';
 import type {
   DrawingSemanticRegionModelAdapter,
@@ -35,8 +37,11 @@ import { routeSpatialEditStrategy } from '../drawing-spatial/strategy-router.js'
 import {
   compileSpatialEdit,
   type CompiledSpatialEditCandidate,
+  type SpatialEditDesign,
 } from '../drawing-spatial/spatial-edit-compiler.js';
 import { validateSpatialEditPreview } from '../drawing-spatial/spatial-validator.js';
+import { validateGenerativeGeometry } from '../drawing-spatial/generative-validator.js';
+import type { DrawingRegionRedrawService } from '../drawing-generation/redraw-service.js';
 import { buildEpisodeModelContext } from '../drawing-episode/context-builder.js';
 import type { EditEpisodeStore } from '../drawing-episode/file-episode-store.js';
 import type { EditEpisode } from '../drawing-episode/types.js';
@@ -191,6 +196,7 @@ export interface DrawingAgentRuntimeOptions {
   spatialDesigner?: DrawingSpatialDesignModelAdapter;
   regionMediaStore?: RegionMediaStore;
   episodeStore?: EditEpisodeStore;
+  redrawService?: Pick<DrawingRegionRedrawService, 'redraw'>;
   promptHashes?: { planner: string; decision: string };
   sourceArtifacts?: SourceArtifactStore;
   perception?: RuntimePerception;
@@ -228,6 +234,7 @@ export class DrawingAgentRuntime {
   readonly #spatialDesigner?: DrawingSpatialDesignModelAdapter;
   readonly #regionMediaStore: RegionMediaStore;
   readonly #episodeStore?: EditEpisodeStore;
+  readonly #redrawService?: Pick<DrawingRegionRedrawService, 'redraw'>;
   readonly #promptHashes: { planner: string; decision: string };
   readonly #sourceArtifacts?: SourceArtifactStore;
   readonly #perception?: RuntimePerception;
@@ -251,6 +258,7 @@ export class DrawingAgentRuntime {
     this.#spatialDesigner = options.spatialDesigner;
     this.#regionMediaStore = options.regionMediaStore ?? new RegionMediaStore();
     this.#episodeStore = options.episodeStore;
+    this.#redrawService = options.redrawService;
     this.#promptHashes = options.promptHashes ?? DRAWING_AGENT_PROMPT_HASHES;
     this.#sourceArtifacts = options.sourceArtifacts;
     this.#perception = options.perception;
@@ -1264,6 +1272,44 @@ export class DrawingAgentRuntime {
         this.#markEpisodePreview(record, 'rejected', record.previewDefects.map((item) => item.code));
         return false;
       }
+      if (record.spatialPreview.strategy.mode !== 'geometric-edit') {
+        const protectedIds = new Set([
+          ...Object.keys(record.compiledEdit.preserveNodeHashes),
+          ...Object.keys(record.compiledEdit.protectedFragmentHashes),
+        ]);
+        const generative = validateGenerativeGeometry({
+          geometry: preview.previewDocument.geometry.filter((node) => (
+            record.compiledEdit!.targetNodeIds.includes(node.id)
+          )),
+          protectedGeometry: preview.previewDocument.geometry.filter((node) => (
+            protectedIds.has(node.id)
+          )),
+          contours: record.spatialPreview.region.worldContours,
+          holes: record.spatialPreview.region.worldHoles,
+          boundaryAnchors: [
+            ...record.spatialPreview.selection.boundaryAnchors,
+            ...record.spatialPreview.region.anchors,
+          ].map((anchor) => ({ id: anchor.id, point: anchor.point })),
+          tolerance: record.spatialPreview.tolerance,
+        });
+        this.#audit(record, 'verification', {
+          phase: 'deterministic-generative',
+          revision: record.state.revision,
+          satisfied: generative.valid,
+          issues: structuredClone(generative.issues),
+          connectedAnchorIds: [...generative.connectedAnchorIds],
+        });
+        if (!generative.valid) {
+          record.previewDefects = generative.issues.map((issue) => ({
+            code: issue.code,
+            message: issue.message,
+            nodeIds: issue.nodeIds,
+            repairHint: '把生成结果限制在目标区域内，避开保护轮廓并重新贴合边界锚点',
+          }));
+          this.#markEpisodePreview(record, 'rejected', record.previewDefects.map((item) => item.code));
+          return false;
+        }
+      }
     }
     if (!this.#previewVerifier) {
       record.previewDefects = [];
@@ -1524,7 +1570,15 @@ export class DrawingAgentRuntime {
     });
     episode.updatedAt = this.#now();
     this.#persistEpisode(record);
-    if (selection.wholeNodes.length === 0 && selection.partialSegments.length === 0) {
+    let strategy = routeSpatialEditStrategy({
+      goal: record.state.plan!.goal.objective,
+      document: workspace.document,
+      region,
+      selection,
+    });
+    this.#audit(record, 'strategy', structuredClone(strategy) as unknown as Record<string, unknown>);
+    if (selection.wholeNodes.length === 0 && selection.partialSegments.length === 0
+      && strategy.mode === 'geometric-edit') {
       record.previewDefects = [{
         code: 'region-selection-empty',
         message: '所选区域没有覆盖当前图中的任何向量；请圈选修改前已存在的完整源对象，而不是修改后的预期位置',
@@ -1541,13 +1595,6 @@ export class DrawingAgentRuntime {
       this.#recordValidationRepair(record);
       return this.#nextRegionFirstEdit(record);
     }
-    const strategy = routeSpatialEditStrategy({
-      goal: record.state.plan!.goal.objective,
-      document: workspace.document,
-      region,
-      selection,
-    });
-    this.#audit(record, 'strategy', structuredClone(strategy) as unknown as Record<string, unknown>);
     const split = materializeSpatialSplits({ document: workspace.document, selection });
     record.progress.publish(
       'split_materialized',
@@ -1564,34 +1611,59 @@ export class DrawingAgentRuntime {
       entries: structuredClone(split.lineage),
     });
     const targetGeometry = targetGeometryForDesign(workspace.document, selection, split);
-    record.progress.publish(
-      strategy.mode === 'geometric-edit' ? 'designing' : 'generating',
-      strategy.mode === 'geometric-edit' ? '正在设计区域几何修改' : '正在生成区域重绘方案',
-    );
     const designModelName = region.confidence < LOW_CONFIDENCE_THRESHOLD
       ? record.modelProfile.repair
       : baseModelName;
-    const design = await this.#callSemanticModel(
-      record,
-      'design',
-      designModelName,
-      (signal, onRawReply, protocolFeedback) => this.#spatialDesigner!.design({
-        goal: record.state.plan!.goal.objective,
-        observation,
-        region,
-        selection,
-        strategy,
-        targetGeometry,
-        readImage: this.#application.readObservationImage!.bind(this.#application),
-        modelName: designModelName,
-        signal,
-        deadlineAt: record.state.limits.deadlineAt,
-        onRawReply,
-        repairFeedback,
-        episodeContext: buildEpisodeModelContext(episode),
-        ...(protocolFeedback ? { protocolFeedback } : {}),
-      }),
-    );
+    let design: SpatialEditDesign | undefined;
+    if (strategy.mode !== 'geometric-edit' && this.#redrawService) {
+      record.progress.publish('generating', '正在生成区域重绘方案');
+      try {
+        design = await this.#generateSpatialRedraw({
+          record, observation, proposalViewId: proposal.sourceViewId,
+          region, strategy, designModelName,
+        });
+      } catch (error) {
+        if (!strategy.fallbackMode) throw error;
+        this.#audit(record, 'generation', {
+          event: 'GENERATION_FALLBACK',
+          error: error instanceof Error ? error.message : String(error),
+          fallbackMode: strategy.fallbackMode,
+        });
+        record.progress.publish('revising', '局部生成不可用，正在改用几何方案');
+        strategy = { ...strategy, mode: strategy.fallbackMode };
+      }
+    }
+    if (!design) {
+      if (strategy.mode !== 'geometric-edit' && !this.#redrawService) {
+        this.#audit(record, 'generation', {
+          event: 'GENERATION_PROVIDER_UNAVAILABLE', fallbackMode: 'geometric-edit',
+        });
+        record.progress.publish('revising', '局部生成服务未配置，正在改用几何方案');
+        strategy = { ...strategy, mode: 'geometric-edit' };
+      }
+      record.progress.publish('designing', '正在设计区域几何修改');
+      design = await this.#callSemanticModel(
+        record,
+        'design',
+        designModelName,
+        (signal, onRawReply, protocolFeedback) => this.#spatialDesigner!.design({
+          goal: record.state.plan!.goal.objective,
+          observation,
+          region,
+          selection,
+          strategy,
+          targetGeometry,
+          readImage: this.#application.readObservationImage!.bind(this.#application),
+          modelName: designModelName,
+          signal,
+          deadlineAt: record.state.limits.deadlineAt,
+          onRawReply,
+          repairFeedback,
+          episodeContext: buildEpisodeModelContext(episode),
+          ...(protocolFeedback ? { protocolFeedback } : {}),
+        }),
+      );
+    }
     const compiled = compileSpatialEdit({
       document: workspace.document,
       selection,
@@ -1647,6 +1719,78 @@ export class DrawingAgentRuntime {
       toolCallId: this.#callId(record, 'region_edit'),
       commands: compiled.commands,
       confidence: design.confidence,
+    };
+  }
+
+  async #generateSpatialRedraw(input: {
+    record: RunRecord;
+    observation: NonNullable<DrawingVisionContext['observation']>;
+    proposalViewId: string;
+    region: SemanticRegion;
+    strategy: SpatialEditStrategy;
+    designModelName: string;
+  }): Promise<SpatialEditDesign> {
+    const view = input.observation.views.find((item) => item.id === input.proposalViewId);
+    if (!view) throw new Error(`GENERATION_VIEW_MISSING:${input.proposalViewId}`);
+    const dataUrl = this.#application.readObservationImage?.(view.image.handle);
+    const cropPng = dataUrl ? pngFromDataUrl(dataUrl) : null;
+    const maskPng = this.#regionMediaStore.read(input.region.maskHandle);
+    if (!cropPng || !maskPng) throw new Error('GENERATION_MEDIA_MISSING');
+    const protectedMaskPng = await sharp(maskPng).grayscale().negate().png().toBuffer();
+    let vectorizingPublished = false;
+    const redraw = await this.#callModel(
+      input.record,
+      'design',
+      input.designModelName,
+      (signal) => this.#redrawService!.redraw({
+        prompt: [
+          input.record.state.plan!.goal.objective,
+          `只修改语义区域“${input.region.label}”，区域外像素必须保持。`,
+          `必须满足：${input.strategy.requiredGuarantees.join('、') || '区域外不变'}。`,
+          '输出白底黑线的干净二维线稿，不添加文字、水印、阴影或填充。',
+        ].join('\n'),
+        cropPng,
+        maskPng,
+        protectedMaskPng,
+        seed: stableGenerationSeed(input.record.state.runId, input.region.id),
+        signal,
+        deadlineAt: input.record.state.limits.deadlineAt,
+        cropPixelToWorld: invertAffine(view.worldToImage),
+        authorizedContours: structuredClone(input.region.worldContours),
+        authorizedHoles: structuredClone(input.region.worldHoles),
+        maxPixels: Math.min(4_000_000, view.width * view.height),
+        onStage: (stage) => {
+          if (stage === 'vectorizing') {
+            vectorizingPublished = true;
+            input.record.progress.publish('vectorizing', '正在转换为可编辑图形');
+          }
+        },
+      }),
+    );
+    if (!vectorizingPublished) {
+      input.record.progress.publish('vectorizing', '已转换为可编辑图形');
+    }
+    const confidenceValues = redraw.geometry
+      .map((node) => node.quality.confidence)
+      .filter((value): value is number => value !== undefined && Number.isFinite(value));
+    const confidence = confidenceValues.length > 0
+      ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
+      : 0.5;
+    this.#audit(input.record, 'generation', {
+      event: 'GENERATION_VECTORIZED',
+      providerRequestId: redraw.providerRequestId,
+      generatedSourceId: redraw.generatedSource.sourceId,
+      pipelineVersion: redraw.pipelineVersion,
+      geometryIds: redraw.geometry.map((node) => node.id),
+      geometryTypes: redraw.geometry.map((node) => node.type),
+      replaceTarget: !isAdditiveRedrawGoal(input.record.state.plan!.goal.objective),
+    });
+    return {
+      kind: 'local-redraw',
+      geometry: structuredClone(redraw.geometry),
+      replaceTarget: !isAdditiveRedrawGoal(input.record.state.plan!.goal.objective),
+      confidence,
+      evidenceRefs: [redraw.generatedSource.sourceId],
     };
   }
 
@@ -2202,6 +2346,42 @@ function semanticRegionBounds(region: SemanticRegion): Bounds2D {
 
 function spatialTolerance(bounds: Bounds2D): number {
   return Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1) * 1e-6;
+}
+
+function pngFromDataUrl(value: string): Buffer | null {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(value);
+  if (!match) return null;
+  const bytes = Buffer.from(match[1], 'base64');
+  return bytes.byteLength > 0 ? bytes : null;
+}
+
+function invertAffine(transform: AffineTransform): AffineTransform {
+  const [a, b, c, d, e, f] = transform;
+  const determinant = a * d - b * c;
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) {
+    throw new Error('GENERATION_TRANSFORM_SINGULAR');
+  }
+  return [
+    d / determinant,
+    -b / determinant,
+    -c / determinant,
+    a / determinant,
+    (c * f - d * e) / determinant,
+    (b * e - a * f) / determinant,
+  ];
+}
+
+function stableGenerationSeed(runId: string, regionId: string): number {
+  let hash = 2_166_136_261;
+  for (const character of `${runId}\0${regionId}`) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return hash >>> 0;
+}
+
+function isAdditiveRedrawGoal(goal: string): boolean {
+  return /增加|添加|加上|新增|画上|戴上|长出/.test(goal);
 }
 
 function targetGeometryForDesign(

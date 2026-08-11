@@ -42,6 +42,8 @@ import { SourceRasterFeedbackComparator } from './services/drawing-feedback/sour
 import { PythonVectorizationProvider } from './services/drawing-vectorization/python-provider.js'
 import { CleanLineVectorizationService } from './services/drawing-vectorization/service.js'
 import { FileEditEpisodeStore } from './services/drawing-episode/file-episode-store.js'
+import { GatewayDrawingRegionImageEditProvider } from './services/drawing-generation/gateway-provider.js'
+import { DrawingRegionRedrawService } from './services/drawing-generation/redraw-service.js'
 
 // load env
 dotenv.config()
@@ -81,6 +83,15 @@ const cleanLineVectorization = vectorizationProvider
       provider: vectorizationProvider,
       sources: sourceCvGateway,
       evidence: cvEvidenceStore,
+    })
+  : undefined
+const regionRedraw = cleanLineVectorization
+  ? new DrawingRegionRedrawService({
+      provider: new GatewayDrawingRegionImageEditProvider({
+        modelName: process.env.COMPANY_AI_IMAGE_EDIT_MODEL || primaryModel,
+      }),
+      sourceArtifacts,
+      vectorization: cleanLineVectorization,
     })
   : undefined
 const cvCropStore = new FileCvCropStore({
@@ -129,6 +140,7 @@ const agentRuntime = new DrawingAgentRuntime({
   previewVerifier: new DrawingPreviewVerificationAdapter(),
   regionProposer: new DrawingSemanticRegionAdapter(),
   spatialDesigner: new DrawingSpatialDesignAdapter(),
+  ...(regionRedraw ? { redrawService: regionRedraw } : {}),
   episodeStore: new FileEditEpisodeStore({
     rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
   }),

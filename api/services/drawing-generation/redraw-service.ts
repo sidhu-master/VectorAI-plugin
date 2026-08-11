@@ -47,6 +47,8 @@ export class DrawingRegionRedrawService {
     const generatedSource = await this.#sourceArtifacts.put({
       data: generated.png.toString('base64'), mimeType: 'image/png', page: 1,
     });
+    input.onStage?.('generated');
+    input.onStage?.('vectorizing');
     const vectorized = await this.#vectorization.vectorizeSource({
       sourceId: generatedSource.sourceId,
       maxPixels: input.maxPixels,

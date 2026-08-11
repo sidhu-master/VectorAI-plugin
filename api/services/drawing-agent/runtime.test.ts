@@ -77,6 +77,12 @@ async function setup(input: {
   previewVerifier?: DrawingPreviewVerificationModelAdapter;
   regionProposer?: { propose(input: unknown): Promise<SemanticRegionProposal> };
   spatialDesigner?: { design(input: unknown): Promise<SpatialEditDesign> };
+  redrawService?: { redraw(input: import('../drawing-generation/types').DrawingRegionRedrawInput): Promise<{
+    generatedSource: import('../source-artifacts/types').SourceArtifactReference;
+    providerRequestId: string;
+    pipelineVersion: string;
+    geometry: import('../../../src/drawing').GeometryNode[];
+  }> };
   episodeStore?: EditEpisodeStore;
   renderForVision?: () => Promise<GroundingSnapshot>;
 } = {}) {
@@ -154,6 +160,7 @@ async function setup(input: {
     previewVerifier: input.previewVerifier,
     regionProposer: input.regionProposer,
     spatialDesigner: input.spatialDesigner,
+    redrawService: input.redrawService,
     episodeStore: input.episodeStore,
   });
   return { application, decision, order, planner, runtime, tools, workspace };
@@ -1159,6 +1166,105 @@ describe('DrawingAgentRuntime', () => {
       selectionVersions: [{ version: 1, status: 'active' }],
       previewVersions: [{ version: 1, status: 'committed' }],
     });
+  });
+
+  it('routes a creative protected edit through generation, vectorization and the same preview commit path', async () => {
+    const regionProposer = {
+      propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
+        const viewId = (input as { observation: { views: Array<{ id: string }> } })
+          .observation.views[0].id;
+        return {
+          label: '头发新增区域', sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          confidence: 0.96, evidenceRefs: [viewId],
+        };
+      }),
+    };
+    const spatialDesigner = {
+      design: vi.fn(async (): Promise<SpatialEditDesign> => ({
+        kind: 'transform', transform: { kind: 'translate', offset: [1, 1] },
+        confidence: 0.9, evidenceRefs: [],
+      })),
+    };
+    const redrawService = {
+      redraw: vi.fn(async (input: import('../drawing-generation/types').DrawingRegionRedrawInput) => {
+        const points = input.authorizedContours.flat();
+        const minX = Math.min(...points.map((point) => point[0]));
+        const maxX = Math.max(...points.map((point) => point[0]));
+        const minY = Math.min(...points.map((point) => point[1]));
+        const maxY = Math.max(...points.map((point) => point[1]));
+        const width = maxX - minX;
+        const height = maxY - minY;
+        return {
+          generatedSource: {
+            sourceId: 'source_0123456789abcdef01234567', sha256: 'a'.repeat(64),
+            mimeType: 'image/png' as const, byteLength: 100, page: 1,
+          },
+          providerRequestId: 'provider_hair_1', pipelineVersion: 'fixture-v1',
+          geometry: [{
+            id: 'generated_hair' as GeometryId, type: 'polyline' as const, closed: false,
+            vertices: [
+              { point: [minX + width * 0.2, maxY - height * 0.08] as const },
+              { point: [minX + width * 0.5, maxY - height * 0.02] as const },
+              { point: [minX + width * 0.8, maxY - height * 0.08] as const },
+            ],
+            visible: true,
+            quality: { status: 'confirmed' as const, confidence: 0.94, evidenceRefs: [] },
+          }],
+        };
+      }),
+    };
+    const plan: DrawingAgentPlan = {
+      goal: {
+        id: 'goal_hair', objective: '给角色增加卷发，但不遮挡眼睛和脸部轮廓',
+        scope: { plane: 'geometry' },
+        acceptanceCriteria: [{ type: 'node.exists', nodeId: 'generated_hair' }],
+        riskPolicy: { candidateAllowed: true, maxCommits: 2 },
+      },
+      workflow: [{
+        id: 'edit_hair', capability: 'edit_entities', dependsOn: [],
+        completionCriteria: [{ type: 'node.exists', nodeId: 'generated_hair' }], status: 'pending',
+      }],
+      summary: '添加卷发并保护脸部',
+    };
+    const result = await setup({
+      plan, regionProposer, spatialDesigner, redrawService,
+      previewVerifier: {
+        verify: vi.fn(async () => ({ satisfied: true, reason: '满足目标', defects: [] })),
+      },
+    });
+    const seeded = await result.application.execute({
+      drawingId: result.workspace.document.id,
+      transaction: {
+        id: 'seed_face', baseRevision: result.workspace.revision,
+        actor: { type: 'user', id: 'user' },
+        commands: [{ type: 'geometry.create', value: {
+          id: 'face' as GeometryId, type: 'circle', center: [50, 50], radius: 10,
+          visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+        } }],
+        preconditions: [], postconditions: [], evidenceRefs: [],
+      },
+    });
+    if (seeded.status !== 'committed') throw new Error('expected face seed');
+    const handle = result.runtime.start({
+      ...startInput(result.workspace), baseRevision: seeded.revision,
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    result.runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    const final = await handle.completion;
+    const current = await result.application.open(result.workspace.document.id);
+
+    expect(final.status, final.error ?? '').toBe('completed');
+    expect(redrawService.redraw).toHaveBeenCalledTimes(1);
+    expect(spatialDesigner.design).not.toHaveBeenCalled();
+    expect(current.document.geometry).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'face' }),
+      expect.objectContaining({ id: 'generated_hair', type: 'polyline' }),
+    ]));
+    expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
+      'generating', 'vectorizing', 'previewing', 'verifying', 'committed',
+    ]));
   });
 
   it('owns read-step completion and final verification without extra model decisions', async () => {
