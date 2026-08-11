@@ -1,14 +1,10 @@
-/** Agent Workflow 的阶段式、可审计任务卡。 */
+/** Agent Workflow 的实时状态卡：只显示当前真实动作，完整事件保留在审计记录。 */
+import { useEffect, useState } from 'react';
 import {
-  AlertTriangle, Check, ChevronDown, Circle, Loader2, Pause, Play, RotateCcw, Square, X,
+  AlertTriangle, Check, Loader2, Pause, Play, RotateCcw, Square, X,
 } from 'lucide-react';
 import { useStore, type AgentUiStatus } from '@/hooks/useStore';
-import {
-  presentAgentTask,
-  type PresentedAgentDetail,
-  type PresentedAgentStage,
-  type PresentedAgentTask,
-} from './agent/task-presentation';
+import { presentAgentTask, type PresentedAgentTask } from './agent/task-presentation';
 import { commitsForAgentRun } from './agent/run-commits';
 
 interface ConstructionTimelineViewProps {
@@ -21,27 +17,19 @@ interface ConstructionTimelineViewProps {
   error: string | null;
   onPauseOrResume: () => void;
   onStop: () => void;
+  onRetry: () => void;
   onReset: () => void;
 }
 
-function StageIcon({ stage }: { stage: PresentedAgentStage }) {
-  if (stage.status === 'completed') {
-    return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/[0.07] text-slate-300"><Check size={11} /></span>;
-  }
-  if (stage.status === 'current') {
-    return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-accent"><Loader2 size={11} className="animate-spin" /></span>;
-  }
-  if (stage.status === 'failed') {
-    return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-danger/10 text-danger"><X size={11} /></span>;
-  }
-  return <span className="flex h-5 w-5 items-center justify-center text-slate-700"><Circle size={7} /></span>;
-}
-
-function detailTone(detail: PresentedAgentDetail): string {
-  if (detail.tone === 'danger') return 'text-danger';
-  if (detail.tone === 'warning') return 'text-amber-400';
-  if (detail.tone === 'success') return 'text-emerald-400';
-  return 'text-slate-400';
+function StatusIcon({ presentation, status }: {
+  presentation: PresentedAgentTask;
+  status: AgentUiStatus;
+}) {
+  if (presentation.tone === 'danger') return <AlertTriangle size={14} className="text-danger" />;
+  if (presentation.tone === 'success') return <Check size={14} className="text-emerald-400" />;
+  if (status === 'paused') return <Pause size={13} className="text-amber-400" />;
+  if (status === 'stopped') return <Square size={11} className="text-slate-500" />;
+  return <Loader2 size={14} className="animate-spin text-accent" />;
 }
 
 export function ConstructionTimelineView({
@@ -54,66 +42,67 @@ export function ConstructionTimelineView({
   error,
   onPauseOrResume,
   onStop,
+  onRetry,
   onReset,
 }: ConstructionTimelineViewProps) {
   return (
     <section className="mx-3 mt-3 overflow-hidden rounded-xl border border-white/[0.08] bg-base-800 shadow-lg shadow-black/10" aria-label="AI 任务进度">
-      <div className="flex items-start justify-between gap-3 px-3.5 pb-3 pt-3.5">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-3 px-3.5 py-3.5">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            {active && status !== 'paused' ? <Loader2 size={13} className="shrink-0 animate-spin text-accent" /> : <Check size={13} className="shrink-0 text-slate-500" />}
-            <h2 className="truncate text-[13px] font-medium text-slate-100">{presentation.heading}</h2>
+            <StatusIcon presentation={presentation} status={status} />
+            <h2 className="truncate text-[13px] font-medium text-slate-100">
+              {presentation.heading}
+            </h2>
           </div>
-          <p className="mt-1 pl-5 text-[11px] text-slate-500">{presentation.summary}</p>
+          <div className="mt-1.5 flex items-center gap-2 pl-[22px] text-[10px] text-slate-500">
+            <span>已运行 {presentation.elapsed}</span>
+            {presentation.attemptLabel && (
+              <>
+                <span className="h-0.5 w-0.5 rounded-full bg-slate-600" />
+                <span>{presentation.attemptLabel}</span>
+              </>
+            )}
+          </div>
         </div>
-        <button type="button" className="rounded-md p-1 text-slate-600 transition hover:bg-white/[0.05] hover:text-slate-300" onClick={onReset} title="清除任务">
-          <RotateCcw size={12} />
+        <button
+          type="button"
+          className="rounded-md p-1 text-slate-600 transition hover:bg-white/[0.05] hover:text-slate-300"
+          onClick={onReset}
+          title="清除任务"
+        >
+          <X size={13} />
         </button>
       </div>
 
-      <div className="space-y-0.5 border-y border-white/[0.06] bg-black/10 px-3 py-2.5">
-        {presentation.stages.map((stage) => (
-          <div key={stage.id} className={`flex items-center gap-2.5 rounded-lg px-1 py-1.5 ${stage.status === 'current' ? 'bg-white/[0.035]' : ''}`}>
-            <StageIcon stage={stage} />
-            <span className={`text-[11px] ${
-              stage.status === 'current' ? 'font-medium text-slate-100'
-                : stage.status === 'failed' ? 'text-danger'
-                  : stage.status === 'completed' ? 'text-slate-400' : 'text-slate-600'
-            }`}>{stage.label}</span>
-          </div>
-        ))}
-      </div>
+      {presentation.detail && (
+        <div className={`border-t px-3.5 py-2.5 text-[11px] leading-[17px] ${
+          presentation.tone === 'danger'
+            ? 'border-danger/15 bg-danger/[0.05] text-red-300'
+            : 'border-white/[0.06] bg-black/10 text-slate-400'
+        }`}>
+          {presentation.detail}
+        </div>
+      )}
 
       {lowConfidence && (
-        <div className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/[0.06] px-2.5 py-2 text-[11px] leading-4 text-red-300">
+        <div className="mx-3 mb-3 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger/[0.06] px-2.5 py-2 text-[11px] leading-4 text-red-300">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           发现低置信度图元，已在画布中标红，请重点检查。
         </div>
       )}
 
-      {error && (
-        <div className="mx-3 mt-3 rounded-lg border border-danger/20 bg-danger/[0.06] px-2.5 py-2 text-[11px] leading-4 text-red-300">
-          任务执行未完成。可重试，详细原因已保存在本地审计记录中。
+      {status === 'error' && error && (
+        <div className="flex gap-2 border-t border-white/[0.06] p-3">
+          <button
+            type="button"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent py-2 text-[11px] font-medium text-white transition hover:bg-accent/90"
+            onClick={onRetry}
+          >
+            <RotateCcw size={11} />
+            重试
+          </button>
         </div>
-      )}
-
-      {presentation.details.length > 0 && (
-        <details className="group px-3 py-2.5">
-          <summary className="flex cursor-pointer list-none items-center justify-between text-[11px] text-slate-500 transition hover:text-slate-300">
-            <span>执行详情</span>
-            <ChevronDown size={12} className="transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="mt-2 max-h-36 space-y-2 overflow-y-auto border-l border-white/[0.08] pl-2.5">
-            {presentation.details.map((detail) => (
-              <div key={detail.id} className="flex items-baseline justify-between gap-3 text-[10px]">
-                <span className={detailTone(detail)}>{detail.title}</span>
-                <span className="shrink-0 font-mono text-slate-600">
-                  {detail.duration ?? detail.elapsed}
-                </span>
-              </div>
-            ))}
-          </div>
-        </details>
       )}
 
       {active && (
@@ -141,9 +130,19 @@ export function ConstructionTimelineView({
   );
 }
 
+function useLiveNow(active: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return nowMs;
+}
+
 export default function ConstructionTimeline() {
   const taskPlan = useStore((state) => state.taskPlan);
-  const currentStepIndex = useStore((state) => state.currentStepIndex);
   const agentRunId = useStore((state) => state.agentRunId);
   const agentEvents = useStore((state) => state.agentEvents);
   const agentStatus = useStore((state) => state.agentStatus);
@@ -153,11 +152,14 @@ export default function ConstructionTimeline() {
   const pauseAgent = useStore((state) => state.pauseAgent);
   const resumeAgent = useStore((state) => state.resumeAgent);
   const stopAgent = useStore((state) => state.stopAgent);
+  const retryAgent = useStore((state) => state.retryAgent);
   const resetAgent = useStore((state) => state.resetAgent);
+  const active = !['stopped', 'complete', 'error'].includes(agentStatus);
+  const liveElapsed = ['planning', 'running', 'pause_requested', 'stopping'].includes(agentStatus);
+  const nowMs = useLiveNow(liveElapsed);
 
   if (!agentRunId && !taskPlan) return null;
 
-  const active = !['stopped', 'complete', 'error'].includes(agentStatus);
   const canPause = agentStatus === 'planning' || agentStatus === 'running';
   const canResume = agentStatus === 'paused';
   const runCommits = commitsForAgentRun(commits, agentRunId);
@@ -166,11 +168,10 @@ export default function ConstructionTimeline() {
     || Boolean(document && [...document.geometry, ...document.annotations]
       .some((node) => node.quality.status === 'candidate'));
   const presentation = presentAgentTask({
-    plan: taskPlan,
     status: agentStatus,
-    currentStepIndex,
     events: agentEvents,
-    commitCount: runCommits.length,
+    error: agentError,
+    nowMs,
   });
 
   return (
@@ -184,6 +185,7 @@ export default function ConstructionTimeline() {
       error={agentError}
       onPauseOrResume={() => void (canResume ? resumeAgent() : pauseAgent())}
       onStop={() => void stopAgent()}
+      onRetry={() => void retryAgent()}
       onReset={resetAgent}
     />
   );

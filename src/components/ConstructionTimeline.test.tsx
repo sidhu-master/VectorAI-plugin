@@ -5,17 +5,11 @@ import { ConstructionTimelineView } from './ConstructionTimeline';
 import { commitsForAgentRun } from './agent/run-commits';
 
 const presentation: PresentedAgentTask = {
-  heading: '正在解析图纸',
-  summary: '已运行 12s',
+  heading: '正在验证手臂连接',
+  detail: '检查边界锚点与悬空端点',
   elapsed: '12s',
-  stages: [
-    { id: 'understand', label: '理解需求', status: 'completed' },
-    { id: 'perceive', label: '解析图纸', status: 'current' },
-    { id: 'build', label: '构建模型', status: 'pending' },
-    { id: 'modify', label: '应用修改', status: 'pending' },
-    { id: 'verify', label: '验证完成', status: 'pending' },
-  ],
-  details: [{ id: 'safe', title: '推理完成', elapsed: '12s', duration: '11.5s', tone: 'neutral' }],
+  attemptLabel: '第 2/3 次尝试',
+  tone: 'active',
 };
 
 describe('ConstructionTimelineView', () => {
@@ -30,7 +24,7 @@ describe('ConstructionTimelineView', () => {
       .toEqual(['commit_2']);
   });
 
-  it('renders a restrained task card with one details disclosure and no duplicate composer', () => {
+  it('renders one restrained live status without a duplicate composer', () => {
     const html = renderToStaticMarkup(
       <ConstructionTimelineView
         presentation={presentation}
@@ -42,16 +36,47 @@ describe('ConstructionTimelineView', () => {
         error={null}
         onPauseOrResume={() => undefined}
         onStop={() => undefined}
+        onRetry={() => undefined}
         onReset={() => undefined}
       />,
     );
 
-    expect(html).toContain('正在解析图纸');
-    expect(html).toContain('执行详情');
+    expect(html).toContain('正在验证手臂连接');
+    expect(html).toContain('检查边界锚点与悬空端点');
+    expect(html).toContain('第 2/3 次尝试');
     expect(html).toContain('暂停');
     expect(html).toContain('停止');
     expect(html).not.toContain('<input');
     expect(html).not.toContain('Agent 执行记录');
     expect(html).not.toContain('doubao');
+  });
+
+  it('renders the exact failure and a retry action without an event list', () => {
+    const html = renderToStaticMarkup(
+      <ConstructionTimelineView
+        presentation={{
+          heading: '任务执行失败',
+          detail: 'grounding timeout：目标区域识别超时',
+          elapsed: '31s',
+          attemptLabel: null,
+          tone: 'danger',
+        }}
+        status="error"
+        active={false}
+        canPause={false}
+        canResume={false}
+        lowConfidence={false}
+        error="grounding timeout：目标区域识别超时"
+        onPauseOrResume={() => undefined}
+        onStop={() => undefined}
+        onRetry={() => undefined}
+        onReset={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('grounding timeout：目标区域识别超时');
+    expect(html).toContain('重试');
+    expect(html).not.toContain('执行详情');
+    expect(html).not.toContain('理解需求');
   });
 });
