@@ -2,7 +2,7 @@
 
 > 日期：2026-08-11
 >
-> 状态：待用户书面复核
+> 状态：用户已确认，进入实施
 > 基线提交：`1d0f8c9 chore: checkpoint visual drawing agent experiments`
 
 ## 1. 产品定义
