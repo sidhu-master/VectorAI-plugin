@@ -2,7 +2,7 @@
 
 > 日期：2026-08-11
 >
-> 状态：核心架构已实现，进入 test2 真实模型持续验收
+> 状态：共享渲染、事务与视觉反馈基座已实现；node-first 语义选择由 `2026-08-11-region-first-spatial-editing-design.md` 接替
 > 基线提交：`1d0f8c9 chore: checkpoint visual drawing agent experiments`
 
 ## 1. 产品定义
@@ -442,6 +442,6 @@ npm run test:test2-self-edit -- <drawingId> <semanticRunId>
 npm run e2e:test2-semantic-edit
 ```
 
-第一条使用同一 Drawing IR、EditIntent 编译器、Preview、Validator、Commit 和保护对象检查验证替换模型给出的正确意图。第二条读取本地未入库的 `test2.png`，先完成线稿重建，再运行“把图中人物的右手抬起来打招呼”的真实外部模型流程。所有报告、图像和审计仅写入 `.local/vectorai/`；供应商门禁失败不会被误报为 Drawing Core 失败，产物会保留用于模型、提示词和延迟回归。
+第一条使用同一 Drawing IR、EditIntent 编译器、Preview、Validator、Commit 和保护对象检查验证指定 node-level 意图的事务执行能力，不代表语义部件选择完整。第二条读取本地未入库的 `test2.png`，先完成线稿重建，再运行“把图中人物的右手抬起来打招呼”的真实外部模型流程。所有报告、图像和审计仅写入 `.local/vectorai/`；供应商门禁失败不会被误报为 Drawing Core 失败，产物会保留用于模型、提示词和延迟回归。
 
-2026-08-11 实测中，替换模型意图将角色右手的 3 个图元绕真实肩部锚点旋转 `-90°`，Preview 合法并保持其余 92 个图元完全不变。外部 Doubao 流程也已在第一轮选择正确的角色右手并提交 5 个局部图元，但其整图验收与预览验收结论矛盾，随后修复模型在 grounding 阶段超时；因此当前剩余卡点被归类为模型供应商一致性/延迟，而不是 Drawing IR 事务链。
+2026-08-11 实测证明替换模型意图可以把 3 个目标图元经过真实 Preview、Validator 和 Commit，并保持其余 92 个完整节点不变；外部 Doubao 流程也能提交 5 个局部图元。但进一步人工验收发现，右手下方连接线与身体竖线属于同一个共享 Polyline，两种 node-first 方案都漏掉了其中的局部手臂片段，导致修改后轮廓没有闭合。结论因此拆分为：Drawing IR 事务、保护和回放链已经打通；完整语义部件选择尚未打通，不能归因于模型供应商。后续必须采用 Region-First SemanticRegion → SpatialSelection → 虚拟子图元拆分方案，并以闭合右臂和未变化身体轮廓作为新门禁。

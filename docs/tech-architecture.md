@@ -1,7 +1,7 @@
 # VectorAI 技术架构（图纸即代码）
 
 **状态：** 当前权威技术文档
-**权威设计来源：** [`docs/superpowers/specs/2026-08-11-vector-native-spatial-agent-engine-design.md`](./superpowers/specs/2026-08-11-vector-native-spatial-agent-engine-design.md)（当前空间 Agent 架构）；[`docs/superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md`](./superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md) 保留 Drawing Core 的北极星原则。
+**权威设计来源：** [`docs/superpowers/specs/2026-08-11-region-first-spatial-editing-design.md`](./superpowers/specs/2026-08-11-region-first-spatial-editing-design.md)（区域优先空间编辑）；[`docs/superpowers/specs/2026-08-11-vector-native-spatial-agent-engine-design.md`](./superpowers/specs/2026-08-11-vector-native-spatial-agent-engine-design.md)（共享渲染与空间 Agent 基座）；[`docs/superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md`](./superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md) 保留 Drawing Core 北极星原则。
 **历史备份：** 旧 SpatialIntent / SpatialModel 0.2 / 文字步骤 Agent 架构已废弃，存档于 [`docs/superpowers/specs/2026-08-08-legacy-tech-architecture.md`](./superpowers/specs/2026-08-08-legacy-tech-architecture.md)，新开发不得扩展其中旧协议。
 
 ## 1. 愿景
@@ -39,7 +39,10 @@ flowchart LR
 
     SOURCE["DXF / PDF / Image"] --> INGEST["Import & Perception"]
     INGEST --> EVIDENCE["Observation / Evidence"]
-    EVIDENCE --> RESOLVE["Resolver / Compiler"]
+    EVIDENCE --> REGION["Semantic Region"]
+    REGION --> RESOLVE["Region Resolver / Compiler"]
+    CORE --> ATOMIC["Virtual Atomic Geometry"]
+    ATOMIC --> RESOLVE
     RESOLVE --> CMD
 
     CORE --> REPO["Drawing Repository"]
@@ -55,6 +58,7 @@ flowchart LR
 - Agent 依赖公开工具和 Application 接口，不访问内部数组。
 - UI 保存工作区投影与交互状态，不成为第二个 Drawing 权威。
 - Importer 和 Perception 只产生 Observation/Evidence，不直接修改正式文档。
+- SemanticRegion、Mask 和虚拟子图元是 revision-bound 运行证据，不成为第四种正式图纸真相。
 - 所有入口最终汇入同一个 Drawing Application。
 
 ## 4. Canonical Drawing IR
@@ -101,12 +105,14 @@ AI 和 UI 不得直接改写 DrawingDocument。Command 表达“想做什么”�
 - **Fast Command Lane**：创建、删除和明确对象修改；流程为理解目标 → 查询对象 → 类型化工具 → Preview → Commit。
 - **Workflow Lane**：图片/PDF 感知、复杂多对象任务和分析后修改；流程为输入意图判断 → 感知/查询 → GoalSpec → Workflow Graph → 工具调用 → 持续验收。
 - 图片和文字联合输入由 Input Interpreter 判断分析、重建、分析后修改或把图片作为参考，不要求用户操作业务开关。
+- 视觉语义修改不再要求模型先选择完整 nodeId：模型先提出连续 SemanticRegion，系统再解析完整图元、局部参数片段、共享边界和保护对象。
+- Strategy Router 自动选择 `geometric-edit`、`generative-redraw` 或 `hybrid-edit`，用户界面不提供技术策略开关。
 
 Tool Registry 首批工具：`query_entities`、`inspect_entity`、`measure_geometry`、`query_topology`、`create_geometry`、`update_geometry`、`delete_geometry`、`create_annotation`、`preview_transaction`、`commit_transaction`、`verify_goal` 及图纸导入与感知工具。每个工具拥有严格 Schema、能力版本、读写属性、超时策略和 Receipt。
 
 失败恢复顺序：Schema/参数错误同模型修正一次 → 目标过期重新查询 → 节点设计错误重新规划 → 模型明确 `confidence < 0.6` 才允许 Turbo 升级一次 → 仍不安全则暂停并保留已验证 Commit。普通 JSON 错误、工具异常和几何验证失败不触发 Turbo。
 
-运行控制：安全点位于工具调用前、Preview 后和 Commit 后；支持暂停、继续、停止、追加指令。热上下文只包含 GoalSpec、稳定规则、当前 revision、最近 Receipts、已完成目标摘要、当前查询结果、用户选择和必要的局部媒体引用。
+运行控制：安全点位于工具调用前、Preview 后和 Commit 后；支持暂停、继续、停止、追加指令。每次语义修改建立持久化 EditEpisode，保存区域、拆分、策略、Preview 和用户反馈版本；热上下文只包含当前有效版本、最近反馈、未解决缺陷和旧方案压缩摘要。
 
 ## 7. 图纸导入与感知
 
@@ -158,8 +164,9 @@ MVP 本地仓库至少分离保存：Source Artifact 媒体正文、Drawing Pack
 | 四 | 图片感知与线稿矢量化（Source Artifact、Agent 可调 CV、反馈 loop、增量 Preview） | ✅ MVP 主链已实现；DXF/PDF 深度导入仍待完善 |
 | 五 | Vector-Native Spatial Agent（共享 SceneCompiler、服务端 VisualObservation、Grounding、EditIntent、后端 Preview/Verify/Revise/Commit） | ✅ 已实现 |
 | 六 | 审计与发布门禁（调用级原始回复、Observation/Intent/Verification/Commit、确定性 Replay、test2 语义编辑与 30 秒体验指标） | ✅ 代码已实现；真实模型结果以本地供应商门禁持续验收 |
+| 七 | Region-First Spatial Editing（SemanticRegion、虚拟子图元、Region Resolver、EditEpisode、三策略自动路由） | 📝 设计已确认，待实施 |
 
-当前正式主链不再依赖 SpatialModel/SpatialIntent。视觉语义编辑按 `Observe → Ground → EditIntent → Command → Preview → Deterministic Verify → Visual Verify → Commit/Revise` 执行；模型不能直接改仓库或绕过 Drawing IR 事务。图片重建和既有图纸语义修改是两条可串联但可独立回归的流程。
+当前正式主链不再依赖 SpatialModel/SpatialIntent。现有视觉语义编辑按 `Observe → Ground nodeIds → EditIntent → Command → Preview → Verify → Commit/Revise` 执行，但 test2 已证明 node-first grounding 无法可靠处理跨越共享 Polyline 的语义部件。下一主链将替换为 `Observe → SemanticRegion → SpatialSelection → Strategy → Preview → Verify → Commit/Revise`。模型仍不能直接改仓库或绕过 Drawing IR 事务。
 
 ## 15. 模块目录速查
 
@@ -191,10 +198,55 @@ MVP 本地仓库至少分离保存：Source Artifact 媒体正文、Drawing Pack
 
 常规门禁为 `npm test`、`npm run check`、`npm run build` 和 `npm run lint`。真实模型门禁失败时保留 runId、审计、Commit 和报告用于回归，不允许用静态脚本结果替代。
 
+当前门禁只证明完整 nodeId 事务链、保护范围和回放机制可工作，不能证明语义部件分割正确。下一版 test2 门禁必须额外验证：连续右臂区域覆盖手掌与上下边界；与身体共用的 Polyline 只拆分并修改局部片段；身体竖线不变；修改后不存在意外悬空端点。
+
 ## 17. 模型替换边界
 
 模型不是 Drawing IR 的组成部分，也不是事务执行者。planner、decision、grounding、intent、candidate、preview verification 和 final acceptance 都是可注入 adapter；默认模型名称来自 `COMPANY_AI_PRIMARY_MODEL`、`COMPANY_AI_PLANNER_MODEL`、`COMPANY_AI_DECISION_MODEL` 和 `COMPANY_AI_REPAIR_MODEL`。替换模型时不修改 Drawing Core、SceneCompiler、EditIntent 编译器或审计格式。
 
 模型接收 JSON Schema 约束的结构化协议。协议错误会把精确路径反馈给同一个模型重试；预览缺陷和整图拒绝会进入下一轮 repair 上下文。几何语义任务的视觉 observation 默认移除自动标注，文字、尺寸和标注任务才包含 annotation 平面，从而避免无关 UI 信息污染空间判断。
 
-系统门禁与供应商门禁分离：`npm run test:test2-self-edit -- <drawingId> <semanticRunId>` 验证正确 EditIntent 能否经过真实编译、Preview、保护检查和 Commit；`npm run e2e:test2-semantic-edit` 验证当前外部模型是否能自主产生并收敛到正确意图。
+系统门禁与供应商门禁分离：`npm run test:test2-self-edit -- <drawingId> <semanticRunId>` 只验证指定 node-level EditIntent 能否经过真实编译、Preview、保护检查和 Commit，不证明语义区域完整；`npm run e2e:test2-semantic-edit` 验证当前外部模型，但其通过标准将由下一版 region-first test2 门禁取代。
+
+## 18. 区域优先空间编辑
+
+### 18.1 连续区域是 AI 的工作空间
+
+视觉模型首先输出 revision-bound `SemanticRegion`，包括 Mask handle、世界坐标轮廓、正负选择点、语义锚点、置信度和证据。它回答“哪里是右臂/头发”，不在第一步枚举完整 nodeId。
+
+Region Resolver 将区域与按需构建的 Virtual Atomic Geometry Graph 求交，形成 `SpatialSelection`：
+
+- `wholeNodes`：完整位于区域内的图元。
+- `partialSegments`：Polyline 顶点区间或曲线参数区间。
+- `crossingNodes`：穿越区域边界、需要拆分的图元。
+- `protectedNodes`：区域外或显式保护对象。
+- `boundaryAnchors`：修改后必须重新连接的边界锚点。
+- `splitPlan`：只在 Preview 中物化的虚拟拆分计划。
+
+虚拟子图元按 `revision + nodeId + parameter range` 确定性引用，不预先打碎 Drawing IR。只有修改真正涉及共享图元时，编译器才创建拆分、保留、变换或重建 Commands，并记录 lineage。
+
+### 18.2 自动策略路由
+
+- `geometric-edit`：工程图和精度敏感任务，使用拆分、变换、约束变形、锚点吸附和解析图元拟合。
+- `generative-redraw`：发型、表情和装饰等自由视觉任务，局部生图后线稿化、矢量化并对齐 Drawing IR 边界。
+- `hybrid-edit`：确定性层保护安装孔、尺寸、眼睛等硬区域，生成模型只修改剩余自由区域。
+
+用户不操作策略开关。三条路径共享同一个 Preview、验证、Commit、Undo 和审计协议。
+
+### 18.3 EditEpisode 与多轮反馈
+
+每次语义修改建立 EditEpisode，持久化原始目标、区域版本、选择版本、策略决定、Preview 版本、用户反馈和 Commit。用户反馈会使当前 Preview 失去自动提交资格，并在安全点基于同一 Episode 重新规划；已经提交的结果通过新的纠正 Commit 修改，不重写历史。
+
+画布只显示最新 active Preview，任务详情可以查看历史区域、拆分理由、Diff 和验证结果。完整历史保存在本地审计中，模型热上下文只携带当前有效版本和压缩摘要。
+
+### 18.4 验证与实施顺序
+
+通用验证新增：区域/revision 一致、拆分片段覆盖完整、lineage 可追踪、区域外哈希不变、共享边界关系迁移、无意外悬空端点、生成结果不侵入保护区域。
+
+实施按三条垂直链推进：
+
+1. SemanticRegion + Virtual Atomic Geometry + Region Resolver，以 test2 闭合右臂为门禁。
+2. EditEpisode + 多版本 Preview + 用户反馈重新规划，以“手再高一点”为门禁。
+3. Generative/Hybrid Redraw，以“增加卷发且不遮挡眼睛，随后改短”为门禁。
+
+新门禁通过后删除现有 node-first 视觉修改路径，不长期维护双主链或 Feature Flag。

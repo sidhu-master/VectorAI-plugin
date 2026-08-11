@@ -36,6 +36,7 @@ AI 对话只有一个 Agent 主流程，不提供“普通/Agent”模式切换�
 
 - `docs/prd.md`：产品范围
 - `docs/tech-architecture.md`：技术架构
+- `docs/superpowers/specs/2026-08-11-region-first-spatial-editing-design.md`：区域优先编辑、虚拟子图元和多轮反馈设计
 - `src/drawing/`：Canonical Drawing IR、Command、事务、验证、Commit 与回放
 - `src/drawing/scene/`：前后端共享 SceneCompiler
 - `api/services/drawing-agent/`：空间 Agent、模型协议、Preview/Verify/Revise/Commit 与审计
@@ -48,11 +49,11 @@ PDF 图纸会在本地服务端通过 Poppler 的 `pdftoppm` 只渲染第一页�
 
 ## Agent Workflow
 
-Agent 默认自动执行。启动请求在意图判断、规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。已有图纸语义修改固定经过 `Observe → Ground → EditIntent → Command → Preview → Verify → Commit/Revise`，任何模型都不能直接改仓库或绕过 Drawing IR 事务。
+Agent 默认自动执行。启动请求在意图判断、规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。已有 node-first 语义修改正在迁移为 `Observe → SemanticRegion → SpatialSelection → Strategy → Preview → Verify → Commit/Revise`；任何模型都不能直接改仓库或绕过 Drawing IR 事务。
 
 | 方法 | 路由 | 用途 |
 |---|---|---|
-| `POST` | `/api/agent/runs` | 启动任务，可携带当前 `spatialModel`、图片或 PDF |
+| `POST` | `/api/agent/runs` | 在指定 Drawing revision 上启动任务，可携带图片或 PDF |
 | `GET` | `/api/agent/runs/:runId/events` | SSE 进度流和最近 100 条事件回放 |
 | `GET` | `/api/agent/runs/:runId` | 获取计划、游标和已提交模型 |
 | `POST` | `/api/agent/runs/:runId/pause` | 请求在安全点暂停 |

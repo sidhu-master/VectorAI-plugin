@@ -1,278 +1,307 @@
-## 1. 产品概述
+# VectorAI 产品需求文档
 
-VectorAI Spatial Protocol MVP v0.1 - AI 原生二维空间协议引擎。
+> 产品阶段：MVP
+>
+> 更新日期：2026-08-11
+>
+> 当前产品方向：AI 与真实二维空间交互的 Drawing IR 引擎
 
-- 用户通过**自然语言或图片/PDF/CAD截图**输入需求，AI 通过**Spatial Agent Workflow** 逐步构建空间模型，而非一次性生成
-- 核心资产是 Spatial Core：平台无关的空间协议层，包含 Intent Validator、Compiler、Geometry Validator、SpatialModel、Constraint System、Representation，不依赖 UI
-- 协议从第一天起是三层结构：**Semantic Layer -> Spatial Model Layer -> Representation Layer**
-- AI 制图的核心特征：**猜测 -> 验证 -> 修正**（类工程设计流程），SpatialModel 支持增量更新和版本历史
-- 第一版目标：证明 AI 生成的是结构化空间，而不是图片
-- 目标用户：工科学生、CAD 初学者、工程新人
+## 1. 产品愿景
 
-## 2. 核心功能
+VectorAI 的目标是让 AI 像理解、维护和修改代码一样理解、维护和修改真实二维图纸。
 
-### 2.1 功能模块
+用户通过自然语言、图片、PDF 或 CAD 数据表达目标。AI 可以观察图纸、选择二维区域、查询向量与拓扑、逐步生成 Preview、验证结果并提交增量修改。正式结果不是不可编辑图片，而是可查询、可修改、可撤销、可审计、可回放的 Drawing IR。
 
-1. **主工作区**：SVG 画布渲染、对象列表、基础参数编辑、关系可视化、DXF 导出
-2. **Spatial Perception Layer（空间感知层）**：图片/PDF/CAD截图 -> 输入规范化 -> Vision 分析 -> Spatial Intent
-3. **Spatial Agent Workflow（空间智能工作流）**：首版核心能力。AI 逐步构建 Spatial Model，分阶段自动执行，以可审计提交进行增量更新，并带验证闭环
+产品不仅服务传统 CAD 操作，也要成为通用的 AI 二维空间交互引擎：
 
-### 2.2 Spatial Agent Workflow 架构
+- 对工程图，优先保持解析几何、尺寸、连接和拓扑一致性。
+- 对卡通、线稿和创意图形，允许局部生成式重绘后再矢量化。
+- 对混合任务，同时保护工程约束并给予 AI 局部视觉创作能力。
 
-AI 不直接生成最终图纸，而是**逐步构建** Spatial Model。
+## 2. 目标用户与首版场景
 
-```
-用户输入 / 图片
-         |
-         ↓
-  Spatial Harness
-         |
-         ↓
-  Task Planner（任务规划）
-         |
-         ↓
-  多阶段 Spatial Intent（增量操作）
-         |
-         ↓
-  Action Executor -> Spatial Model 增量更新
-         |
-         ↓
-  Verification Loop（验证闭环）
-         |
-         ↓
-  Render + Human Feedback
-```
+目标用户：
 
-#### 2.2.1 Task Planner（任务规划器）
+- 工科学生、CAD 初学者和工程新人。
+- 需要通过自然语言快速修改二维工程图的人。
+- 希望在可编辑向量图上进行 AI 创作的人。
 
-大目标拆小任务。
+首版必须跑通两个代表场景：
 
-```json
-{
-  "task": "reconstruct_drawing",
-  "steps": [
-    { "id": 1, "action": "extract_outline", "description": "识别整体轮廓" },
-    { "id": 2, "action": "detect_features", "description": "识别孔/槽/圆角" },
-    { "id": 3, "action": "apply_dimensions", "description": "识别尺寸标注" },
-    { "id": 4, "action": "build_constraints", "description": "建立约束关系" },
-    { "id": 5, "action": "verify_model", "description": "工程验证" }
-  ]
-}
-```
+1. **工程几何编辑**：在 `test2` 向量线稿上执行“把人物右手抬起来打招呼，保持其他图形不变并保持手臂闭合连接”。
+2. **创意局部重绘**：执行“给角色增加卷发，但不要遮挡眼睛和脸部轮廓”，生成后重新矢量化并允许继续修改。
 
-#### 2.2.2 Action Executor（操作执行器）
+`test1` 原始图和 `test2` 干净线稿继续作为来源重建与语义编辑的本地黄金样例。
 
-AI 不直接修改或重新生成整个模型，而是产生可验证的 **Spatial Patch**（类似 git diff）：
+## 3. 核心产品原则
 
-```json
-{ "type": "entity.add", "entity": { "id": "hole_001", "type": "circle", "center": [50,50], "radius": 5 } }
-{ "type": "entity.update", "entityId": "hole_001", "changes": { "radius": 10 } }
-{ "type": "entity.delete", "entityId": "line_003" }
-```
+### 3.1 Drawing IR 是唯一编辑真相
 
-每个通过验证的 Patch 形成一条不可变 `SpatialCommit`，包含父提交、正向 Patch、逆 Patch、验证报告和置信度。提交历史用于审计、回放、Undo/Redo 和后续版本分支。
+- 前后端使用同一 Drawing IR。
+- SVG、PNG、Mask、生成图和 DXF 都是派生表示或证据，不反向成为正式编辑状态。
+- AI 与用户的所有正式修改必须经过 Drawing Command、Preview、Verify 和 Commit。
+- 每个 Commit 保存正向和逆向 Patch，可用于 Undo、Redo、审计和回放。
 
-#### 2.2.3 Verification Loop（验证闭环）
+### 3.2 AI 默认自动执行
 
-工程场景与普通 AI 的最大区别 - 类似 CI/CD：
+- 用户不需要选择“普通模式/Agent 模式”。
+- 用户不需要选择“工程编辑/生成式重绘”技术策略。
+- 任务受理后自动观察、规划、预览、验证和提交。
+- 用户可以随时暂停、停止或追加新指令。
+- 用户可在 Preview 阶段提出修改意见，Agent 基于同一任务上下文重新规划。
 
-```
-AI 提出修改
-  ↓
-Validator（几何检查）
-  ↓
-Constraint 检查（约束冲突）
-  ↓
-通过 → 生成 SpatialCommit 并提交
-  ↓
-失败 → 反馈结构化错误给 AI → 修正 → 有限重试
-```
+### 3.3 语义区域先于图元选择
 
-首版每阶段最多自动修正两次；仍失败时暂停并等待用户处理。未通过验证的临时模型不得提交。
+AI 首先在连续二维空间里选择“右臂”“头发”“门洞”等语义区域，不要求这些区域与现有图元边界一致。系统随后把区域解析为完整图元、局部线段、共享边界和保护对象。
 
-#### 2.2.4 Human Feedback Manager（人工反馈管理）
+完整图元仍是优先编辑单位，但不是唯一编辑单位。穿越目标区域的 Polyline、Spline、Arc 等可以先以虚拟子片段表示，只在实际 Preview 中按需拆分。
 
-AI 发现不确定项时主动暴露：
-- 尺寸无法确定 -> "继续推测" / "等待人工确认"
-- 约束冲突 -> 列出选项供用户选择
-- 低置信度结果 -> 首版标红并允许继续自动执行；后续升级为用户确认门禁
+### 3.4 猜测、验证、修正
 
-#### 2.2.5 自动执行与用户干预
+AI 可以提出候选，但不能自报成功。系统必须通过 Drawing IR、拓扑、保护范围、before/preview/diff 和视觉验收判断结果。
 
-- Agent 默认自动连续执行，每个模型请求和 Patch 提交边界为安全点
-- 用户可请求暂停，当前原子操作结束后停止进入下一阶段
-- 用户可继续或立即停止；立即停止会取消当前请求且不提交未完成 Patch
-- 用户可随时追加指令，系统在下一安全点基于当前模型重新规划剩余步骤
-- UI 展示阶段目标、决策摘要、Patch 差异、验证结果和置信度，不展示模型内部隐藏推理原文
+低置信度结果允许作为 candidate 进入 Preview 或 Commit，并在 UI 标红；不能把猜测伪装成精确工程结果。
 
-### 2.3 图片转 CAD 的分阶段流程
+## 4. MVP 功能范围
 
-```
-Phase 0: 理解    -> 图纸类型、视图数量、单位、标注区域
-Phase 1: 骨架    -> 只生成主要轮廓，提示用户确认
-Phase 2: 特征    -> 增加孔、槽、圆角
-Phase 3: 尺寸    -> 识别长度、半径、角度
-Phase 4: 约束    -> 建立平行、对称、相等
-Phase 5: 工程验证 -> 检查闭合、尺寸冲突、约束冲突
+### 4.1 二维 Drawing IR
+
+首版支持：
+
+- 几何：Point、Line、Ray、XLine、Circle、Arc、Ellipse、Polyline、Spline。
+- 标注：Text、Dimension。
+- 关系：连接、相交、包含、邻接，以及基础工程约束协议。
+- Feature：可把多个几何或局部片段关联为任务语义部件。
+- 坐标系与单位：文档坐标、来源坐标、视图变换和缺省尺度可追踪。
+
+首版不做：
+
+- 任何 3D。
+- 图层、图块和填充的可编辑语义。
+- DWG 原生读写。
+- 完整参数化约束求解器。
+- 多人协作、远程同步和分支合并。
+- 建筑平面图的大量专用领域规则；协议保持兼容。
+
+### 4.2 输入与重建
+
+- 支持文字、图片、PDF 及文字与附件组合输入。
+- 结构化 CAD 输入优先使用确定性解析，不用视觉模型重新猜测原生对象。
+- 图片和栅格 PDF 使用来源分析、局部 CV、线稿矢量化和 AI 反馈 loop。
+- 干净线稿先生成中心线/轮廓底稿，再提升为直线、圆、圆弧、椭圆等解析图元。
+- 无法可靠拟合的部分允许保留为 Polyline 或 Spline。
+- 没有可靠单位时使用 provisional 坐标系，默认尺度保证画布可见，后续通过明确尺寸校准。
+
+### 4.3 Agent Workflow
+
+统一流程：
+
+```text
+理解用户目标
+→ 观察 Drawing IR 与视觉图
+→ 选择连续语义区域
+→ 解析图元、子片段、共享边界和锚点
+→ 自动选择编辑策略
+→ 生成增量 Preview
+→ 几何、拓扑与视觉验证
+→ Commit 或根据反馈重新规划
 ```
 
-### 2.4 Spatial Perception Layer
+Agent 可以调用 CV、空间查询、拓扑查询、渲染、矢量化和事务工具。模型不能直接写仓库。
 
+### 4.4 三种自动编辑策略
+
+#### 精确几何编辑
+
+适用于工程图和明确几何修改。支持整体变换、受约束变形、共享图元拆分、局部重建、锚点吸附和解析图元拟合。
+
+#### 生成式局部重绘
+
+适用于发型、表情、装饰和自由形状。系统限定目标 Mask 与保护区域，局部生成候选，再执行线稿化、矢量化、边界对齐和 Drawing IR 替换。
+
+#### 混合编辑
+
+适用于同时包含硬约束和创意内容的任务。确定性系统先锁定安装孔、眼睛、尺寸边界等保护对象，生成模型只修改授权区域。
+
+用户不操作策略开关；Agent 自动选择并可在反馈轮中切换策略。
+
+### 4.5 区域优先选择与虚拟子图元
+
+AI 输出 SemanticRegion：区域 Mask、世界坐标轮廓、正负选择点、边界锚点、置信度和证据。
+
+Region Resolver 把区域映射为：
+
+- 完整位于区域内的图元。
+- 完整位于区域外的保护图元。
+- 穿越区域边界的局部参数片段。
+- 同时服务目标部件与保护部件的共享边界。
+- 无法确定归属的低置信度候选。
+
+子片段默认只在运行时虚拟存在。只有候选事务真正修改共享图元时，系统才在 Preview 中物化拆分，避免提前打碎整张 Drawing IR。
+
+### 4.6 Preview 与用户反馈
+
+- AI 的局部修改在画布上以增量 Preview 显示。
+- 自动拆分不逐点询问用户，直接进入 Preview。
+- 当前 Preview 不等于正式 Commit，可以被后续版本替换。
+- 用户可说“手臂再高一点”“头发短一点”等自然语言反馈。
+- 系统保留原始目标、区域版本、拆分计划、策略、候选事务、before/preview/diff、验证结果和历史反馈。
+- 新反馈进入同一个 EditEpisode，模型基于完整上下文重新规划，不从零开始。
+- 若反馈到来时上一版已经提交，则通过新的纠正 Commit 修改，不重写历史。
+
+### 4.7 验证与低置信度
+
+每次候选至少检查：
+
+- Drawing IR schema、数值和引用合法。
+- `baseRevision` 没有过期。
+- 实际改动只发生在授权区域。
+- 区域外图元内容不变。
+- 拆分片段完整覆盖原图元，不丢段、不重叠。
+- 要求连接的锚点相接，不产生意外悬空端点。
+- 旧目标没有重复残留。
+- 生成式结果不侵入保护区域且没有明显接缝。
+- before/preview/diff 的视觉结果满足用户目标。
+
+低置信度候选标红。用户后续反馈优先修正当前候选；模型、提示词或生成器可以替换，但验证标准不降低。
+
+### 4.8 可审计与可回归
+
+每个 Run/EditEpisode 保存：
+
+- 原始目标和所有用户反馈。
+- Drawing ID、base revision 和来源证据。
+- 模型角色与配置摘要、Prompt hash、原始返回和结构化结果。
+- SemanticRegion、区域求交、虚拟拆分和策略选择。
+- Preview Commands、before/preview/diff 和验证结果。
+- Commit、前后 revision、正向/逆向 Patch 和耗时。
+
+审计不保存 API Key、Authorization、媒体 base64 或隐藏思维链。完整状态可在不调用模型的情况下确定性回放。
+
+## 5. 用户交互
+
+### 5.1 主工作区
+
+- 深色 CAD 风格工作区。
+- 中央二维画布支持网格、坐标轴、缩放、平移、选择和增量 Preview。
+- 右侧 AI 面板支持文字、图片/PDF 上传、任务记录、暂停、停止和追加指令。
+- 自动标注可以整体显示或隐藏。
+- 用户不看到模型名称，也不看到内部隐藏推理。
+
+### 5.2 任务面板
+
+使用业务语言显示：
+
+- 正在理解任务。
+- 正在观察图纸。
+- 正在选择目标区域。
+- 正在解析区域边界。
+- 正在拆分共享轮廓。
+- 正在进行精确几何调整。
+- 正在生成局部外观。
+- 正在转换为可编辑图形。
+- 正在验证预览。
+- 已根据反馈重新规划。
+- 修改已提交。
+- 仍在处理。
+
+任务详情可查看区域、拆分理由、Preview Diff、验证问题和历史版本。画布只显示当前有效 Preview，不同时堆叠旧候选。
+
+### 5.3 自动执行与运行控制
+
+- `POST` 受理任务后快速返回 runId。
+- Agent 在工具调用前、Preview 后和 Commit 后提供安全点。
+- 暂停在安全点生效；停止中止当前调用且不提交半成品。
+- 用户追加指令后，当前 Preview 立即失去自动提交资格，并在安全点重新规划。
+- 运行中由业务阶段和独立 heartbeat 持续反馈。
+- 30 秒是可见反馈体验目标，不是图纸正确性的硬否决条件。
+
+## 6. 核心用户流程
+
+### 6.1 图片/PDF 重建
+
+```text
+上传来源
+→ 快速受理
+→ 来源分析与清洁线稿
+→ 中心线/轮廓矢量化
+→ 逐步 Preview 与提交
+→ 图元提升与拓扑建立
+→ 最终 Drawing IR
 ```
-           User Input
-               │
-        ┌──────┴──────┐
-        │             │
-    Text Input    Image Input
-        │             │
-        ↓             ↓
-  AI Gateway    Vision Pipeline
-                     │
-          ┌──────────┼──────────┐
-          │          │          │
-   Drawing      Spatial     Confidence
-   Parser     Reconstruction  System
-          │          │          │
-          └──────────┼──────────┘
-                     │
-                     ↓
-              Spatial Intent
-                     │
-                     ↓
-         Spatial Agent Workflow
+
+### 6.2 工程语义修改
+
+```text
+“把右手抬起来”
+→ 选择连续右臂区域
+→ 发现下侧连接与身体共用 Polyline
+→ 虚拟拆分共享边界
+→ 生成闭合连接的几何候选
+→ Preview + 拓扑/视觉验证
+→ Commit 或根据反馈修正
 ```
 
-#### Drawing Parser（图纸解析器）
-识别图元（线、圆、弧）和标注（R10、50mm、2x）
+### 6.3 创意语义修改
 
-#### Spatial Reconstruction（空间重建）
-恢复设计意图（Vision -> Semantic -> Geometry），而非简单描图
-
-#### Confidence System（置信度系统）
-- > 0.8（绿色）：自动进入模型
-- 0.6-0.8（黄色）：标黄高亮，进入模型但需关注
-- < 0.6（红色）：首版允许进入模型但持续标红；后续升级为等待用户确认
-
-感知结果列表：每项含图元类型、参数摘要和置信度色标。首版保留“全部确认/确认选中”入口，但 Agent 自动流程不以人工确认作为默认门禁。
-
-### 2.5 MVP 边界
-
-**必须完成：**
-- AI 文字输入 -> Spatial Intent 生成（含 confidence）
-- 图片输入 -> Vision Pipeline -> Spatial Intent 生成
-- Intent Validator -> Compiler -> Geometry Validator 流水线
-- SpatialModel + SpatialPatch（实体/关系的 add/update/delete 局部操作）
-- 几何实体：Point / Line / Circle
-- 关系实现：`radius` + `distance`
-- SVG Render + 多选 + 拖拽
-- DXF Export
-- 感知结果面板 + 批量确认
-- Agent Workflow：Task Planner + Action Executor + Verification Loop
-- 自动连续执行 + 暂停/继续/立即停止/追加指令
-- Spatial Patch + SpatialCommit + 本地审计记录
-- Undo/Redo（基于正向/逆向 Patch）和快照接口
-- 图片与 PDF 输入；PDF 首版采用服务端逐页栅格化并复用 Vision Pipeline
-- 低置信度实体/关系/提交标红
-- Agent 确定性回放测试与图片/PDF 黄金样例
-- 任务接收后 1 秒内显示已受理状态；长流程至少每 30 秒产生一次可见进度回执
-- 有界上下文、显式工具注册表和结构化工具回执
-
-**暂不实现（协议预留）：**
-- Constraint Solver
-- Semantic Mapping
-- B-Rep / STEP Export / CAD Plugin / C++ Kernel
-- 建筑平面图专用识别规则和大量领域适配（协议保持兼容）
-- PDF 矢量对象/文字层原生解析
-- 数据库或云端审计存储
-
-### 2.6 页面详情
-
-| 页面名称 | 模块名称 | 功能描述 |
-|----------|----------|----------|
-| 主工作区 | 顶部工具栏 | 品牌标识、AI 连接状态、DXF 导出、缩放控制 |
-| 主工作区 | AI 对话面板 | 文字输入、图片上传/粘贴（先预览后发送）、对话历史、置信度显示 |
-| 主工作区 | SVG 画布 | 网格、坐标轴、实体渲染、缩放平移、多选(Ctrl+点击/框选)、关系可视化 |
-| 主工作区 | 对象列表 | 扁平列表、类型图标、显示切换、删除 |
-| 主工作区 | 参数编辑面板 | 选中实体参数编辑、实时预览 |
-| 主工作区 | 底部状态栏 | 鼠标坐标、单位、缩放比例、实体数量 |
-| 主工作区 | 感知面板 | 识别结果列表、置信度色标、勾选、全部确认/确认选中/拒绝 |
-| 主工作区 | Construction Timeline | 分阶段进度、执行轨迹、Patch 差异、验证/重试、提交历史、暂停/继续/停止/追加指令 |
-
-## 3. 核心流程
-
-**文字路径（MVP）：**
-用户输入 -> AI Gateway -> LLM -> Spatial Intent -> Intent Validator -> Compiler -> Geometry Validator -> SpatialModel -> SVG 渲染
-
-**感知路径（MVP）：**
-图片 -> Vision Pipeline -> Spatial Intent -> Spatial Core -> 感知面板（置信度+确认）-> SpatialModel -> SVG 渲染
-
-**Agent Workflow 路径（MVP）：**
-图片/文字 -> Task Planner（分阶段）-> 每阶段 Action Executor（增量操作）-> Verification Loop（验证闭环）-> SpatialModel 增量更新 -> Construction Timeline + Human Feedback
-
-```mermaid
-flowchart TD
-    A["用户输入"] --> B{"输入类型"}
-    B -->|文字| C["AI Gateway -> LLM"]
-    B -->|图片/PDF| D["Vision Pipeline"]
-    D --> D1["Drawing Parser"]
-    D1 --> D2["Spatial Reconstruction"]
-    D2 --> D3["Confidence System"]
-    D3 --> E["Spatial Intent"]
-    C --> E
-    E --> F{"Intent Validator"}
-    F -->|意图错误| G["返回错误"]
-    F -->|合法| H["Compiler"]
-    H --> I{"Geometry Validator"}
-    I -->|非法| G
-    I -->|合法| J["SpatialModel"]
-    G --> A
-    J --> K["SVG 渲染"]
-    K --> L["用户编辑/确认"]
-    L --> M["DXF 导出"]
-    L --> A
-
-    E --> W1["Task Planner"]
-    W1 --> W2["Action Executor (Spatial Patch)"]
-    W2 --> W3["Verification Loop"]
-    W3 --> W4["SpatialCommit + Audit"]
-    W4 --> J
-    W4 --> W5["Construction Timeline"]
+```text
+“给角色增加卷发，不遮挡眼睛”
+→ 选择头部外围生成区域
+→ 锁定眼睛和脸部保护区域
+→ 局部生成候选
+→ 线稿化与矢量化
+→ Drawing IR Preview
+→ 用户要求“短一点”
+→ 复用同一 EditEpisode 修正
+→ Commit
 ```
 
-## 4. 界面设计
+## 7. MVP 验收标准
 
-### 4.1 设计风格
+### 7.1 Drawing Core
 
-- **风格定位**：技术蓝图风格，深色专业制图环境
-- **主色调**：深海军蓝 `#0a0f1a` + 青色 `#22d3ee`
-- **辅助色**：琥珀 `#f59e0b`（选中）、朱红 `#ef4444`（错误）
-- **关系色**：紫色 `#a78bfa`
-- **置信色**：绿 `#22c55e`（>0.8）/ 黄 `#eab308`（0.6-0.8）/ 红 `#ef4444`（<0.6）
-- **字体**：JetBrains Mono + Sora
-- **布局**：三栏（左实体列表 + 中画布 + 右AI对话），顶部工具栏 + 底部状态栏
+- Drawing IR 是前后端唯一正式状态。
+- AI 修改全部经过 Command → Preview → Verify → Commit。
+- Commit 可逆、可回放，Revision 冲突不能静默覆盖。
+- 前后端使用同一 SceneCompiler 解释几何。
 
-### 4.2 页面设计概览
+### 7.2 test1/test2 来源重建
 
-| 模块 | UI 元素 |
-|------|---------|
-| 顶部工具栏 | Logo、AI状态、导出、缩放 |
-| AI 对话面板 | 文字输入+图片上传、消息气泡、Intent折叠、置信度标签、加载骨架 |
-| SVG 画布 | 网格、坐标轴、实体描边、选中虚线、关系连线、框选矩形 |
-| 对象列表 | 类型图标、显示切换、删除、选中计数 |
-| 参数编辑面板 | 实体参数输入框 |
-| 感知面板 | 图片预览、结果列表、置信度色标、勾选、确认按钮 |
-| 状态栏 | 坐标、单位、缩放、计数 |
-| Construction Timeline | ✓/●/○ 阶段进度、结构化执行轨迹、增量差异、验证结果、提交历史和运行控制 |
+- `test1` 能逐步形成可见、可编辑的 Drawing IR。
+- `test2` 干净线稿能稳定拟合主要直线、圆、圆弧和自由曲线。
+- 不能拟合的部分保留为可编辑 Polyline/Spline，不得丢失。
+- 复杂图纸可以按区域、拓扑组件和反馈 loop 逐步完成。
 
-### 4.3 首版领域边界
+### 7.3 test2 右臂编辑
 
-- 优先覆盖二维机械工程图
-- 建筑平面图在 Point/Line/Circle/Relation 和表示层保持协议兼容
-- 若建筑兼容需要墙体、门窗、房间语义或专用识别规则的大量适配，可延后至独立版本
-- 产品中“AI 思考过程”统一表述为“执行轨迹”或“决策摘要”
+- AI 首先选择连续右臂区域，不直接依赖完整 nodeId 列表。
+- 系统识别共享 Polyline 的局部手臂片段并按需拆分。
+- 身体竖线和区域外图形保持不变。
+- 修改后手掌、上下手臂边界和身体锚点连接，不出现意外悬空端点。
+- 用户反馈“手再高一点”能基于同一 Episode 生成新 Preview。
+- 最终 Commit 可撤销、可回放。
 
-### 4.4 响应式与视觉细节
+### 7.4 创意发型编辑
 
-桌面优先 1024px+，画布自适应，面板可折叠。网格线、坐标轴、选中虚线流动、关系呼吸动画、置信度色标、低置信度高亮。
+- Agent 自动选择生成式或混合策略，无 UI 开关。
+- 头发生成不遮挡眼睛和脸部保护区域。
+- 生成结果重新矢量化并可继续编辑。
+- 用户反馈“头发短一点”复用现有区域、候选和 Diff。
+- 最终 Commit 可撤销、可回放。
 
-Agent 运行时通过进度流持续更新 Construction Timeline。用户不需要等待完整任务完成才看到结果；规划、工具调用、验证、提交和等待心跳都必须形成结构化回执。
+### 7.5 体验、审计与模型替换
+
+- 任务快速受理并持续显示可见进度。
+- 任务面板不展示模型名称或隐藏思维链。
+- 低置信度结果标红。
+- 失败流程保留 runId、Episode、区域、Preview、验证和模型结果用于回归。
+- 系统正确性门禁与具体模型供应商门禁分离。
+- 需要部件分割、区域归属、创意策略或整图视觉验收时使用高推理模型；确定性几何工具不依赖高推理模型。
+
+## 8. 文档与研发约束
+
+- 当前权威技术架构为 `docs/tech-architecture.md`。
+- 区域优先编辑的详细设计为 `docs/superpowers/specs/2026-08-11-region-first-spatial-editing-design.md`。
+- 旧 SpatialModel/SpatialIntent 架构只作为历史存档，新代码不得继续扩展。
+- MVP 不维护不合适的双路径或长期 Feature Flag；新垂直门禁通过后删除旧 node-first 视觉修改路径。
+- 本地 `test1`、`test2`、运行审计和生成媒体不进入 Git。
