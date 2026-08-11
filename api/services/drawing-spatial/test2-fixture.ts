@@ -34,9 +34,17 @@ export function test2SharedPolylineDocument(): DrawingDocument {
       },
       {
         id: 'node_test2_hand_outline' as GeometryId,
-        type: 'line', visible: true,
+        type: 'polyline', visible: true,
         quality: { status: 'confirmed', evidenceRefs: [] },
-        start: [104, 196], end: [114, 203],
+        vertices: [
+          TEST2_SHARED_POLYLINE_POINTS[0],
+          [99, 197] as const,
+          [102, 199] as const,
+          [116, 210] as const,
+          [122, 207] as const,
+          TEST2_SHARED_POLYLINE_POINTS[3],
+        ].map((point) => ({ point })),
+        closed: false,
       },
       {
         id: 'node_test2_face' as GeometryId,

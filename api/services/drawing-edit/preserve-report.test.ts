@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DrawingDocument, GeometryId } from '../../../src/drawing/index.js';
-import { comparePreservedNodes } from './preserve-report.js';
+import {
+  collectPreservedNodeHashes,
+  comparePreservedNodeHashes,
+  comparePreservedNodes,
+  drawingNodeContentHash,
+} from './preserve-report.js';
 
 describe('comparePreservedNodes', () => {
   it('reports changed and missing protected nodes independently', () => {
@@ -13,6 +18,20 @@ describe('comparePreservedNodes', () => {
       changedNodeIds: ['body'],
       missingNodeIds: ['label'],
     });
+  });
+
+  it('uses canonical node hashes to verify protected content', () => {
+    const before = documentWith(5, true);
+    const same = structuredClone(before);
+    const changed = documentWith(6, true);
+    const hashes = collectPreservedNodeHashes(before, ['body', 'label']);
+
+    expect(drawingNodeContentHash(before.geometry[0]))
+      .toBe(drawingNodeContentHash(structuredClone(before.geometry[0])));
+    expect(comparePreservedNodeHashes(same, hashes)).toEqual({
+      satisfied: true, changedNodeIds: [], missingNodeIds: [],
+    });
+    expect(comparePreservedNodeHashes(changed, hashes).changedNodeIds).toEqual(['body']);
   });
 });
 

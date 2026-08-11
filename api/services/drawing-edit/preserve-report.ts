@@ -1,9 +1,46 @@
+import { createHash } from 'node:crypto';
+
 import type { DrawingDocument } from '../../../src/drawing/index.js';
 
 export interface PreserveReport {
   satisfied: boolean;
   changedNodeIds: string[];
   missingNodeIds: string[];
+}
+
+export type PreservedNodeHashes = Record<string, string>;
+
+export function drawingNodeContentHash(node: unknown): string {
+  return createHash('sha256').update(canonicalJson(node)).digest('hex');
+}
+
+export function collectPreservedNodeHashes(
+  document: DrawingDocument,
+  nodeIds: readonly string[],
+): PreservedNodeHashes {
+  return Object.fromEntries([...new Set(nodeIds)].map((id) => {
+    const node = findNode(document, id);
+    if (!node) throw new Error(`PRESERVED_NODE_MISSING:${id}`);
+    return [id, drawingNodeContentHash(node)];
+  }));
+}
+
+export function comparePreservedNodeHashes(
+  document: DrawingDocument,
+  hashes: PreservedNodeHashes,
+): PreserveReport {
+  const changedNodeIds: string[] = [];
+  const missingNodeIds: string[] = [];
+  for (const [id, hash] of Object.entries(hashes)) {
+    const node = findNode(document, id);
+    if (!node) missingNodeIds.push(id);
+    else if (drawingNodeContentHash(node) !== hash) changedNodeIds.push(id);
+  }
+  return {
+    satisfied: changedNodeIds.length === 0 && missingNodeIds.length === 0,
+    changedNodeIds,
+    missingNodeIds,
+  };
 }
 
 export function comparePreservedNodes(
@@ -52,4 +89,13 @@ function deepEqual(left: unknown, right: unknown): boolean {
   return keys.length === Object.keys(rightRecord).length
     && keys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
       && deepEqual(leftRecord[key], rightRecord[key]));
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => (
+    `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+  )).join(',')}}`;
 }
