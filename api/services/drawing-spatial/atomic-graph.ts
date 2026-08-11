@@ -73,7 +73,7 @@ export function buildAtomicGeometryGraph(input: {
       samples: sample.samples,
     }));
   });
-  connectAdjacentSegments(segments, geometryEpsilon(input.regionBounds));
+  connectAdjacentSegments(segments, geometryEpsilon(input.regionBounds), input.document);
   const graph = new AtomicGeometryGraph(input.revision, segments);
   const documentCache = graphCache.get(input.document) ?? new Map<string, AtomicGeometryGraph>();
   documentCache.set(cacheKey, graph);
@@ -96,7 +96,19 @@ function atomicId(
   })).digest('hex').slice(0, 24)}`;
 }
 
-function connectAdjacentSegments(segments: AtomicGraphSegment[], epsilon: number): void {
+function connectAdjacentSegments(
+  segments: AtomicGraphSegment[],
+  epsilon: number,
+  document: DrawingDocument,
+): void {
+  const explicitConnections = new Set(document.relations
+    .filter((relation): relation is Extract<typeof relation, { plane: 'topology' }> => (
+      relation.plane === 'topology'
+    ))
+    .filter((relation) => relation.kind === 'connected')
+    .flatMap((relation) => relation.nodeIds.flatMap((left, leftIndex) => (
+      relation.nodeIds.slice(leftIndex + 1).map((right) => connectionKey(left, right))
+    ))));
   const endpoints = new Map<string, AtomicGraphSegment[]>();
   for (const segment of segments) {
     for (const point of [segment.start, segment.end]) {
@@ -108,11 +120,19 @@ function connectAdjacentSegments(segments: AtomicGraphSegment[], epsilon: number
     for (const segment of connected) {
       const adjacent = new Set(segment.adjacentSegmentIds);
       connected.forEach((candidate) => {
-        if (candidate.id !== segment.id) adjacent.add(candidate.id);
+        if (candidate.id === segment.id) return;
+        if (candidate.nodeId === segment.nodeId
+          || explicitConnections.has(connectionKey(segment.nodeId, candidate.nodeId))) {
+          adjacent.add(candidate.id);
+        }
       });
       segment.adjacentSegmentIds = [...adjacent].sort();
     }
   }
+}
+
+function connectionKey(left: string, right: string): string {
+  return left < right ? `${left}\u0000${right}` : `${right}\u0000${left}`;
 }
 
 function endpointKey(point: Vec2, epsilon: number): string {

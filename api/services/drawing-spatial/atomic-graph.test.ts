@@ -61,7 +61,7 @@ describe('Virtual Atomic Geometry Graph', () => {
     expect(graph.segmentsFor('polyline')).not.toEqual([]);
   });
 
-  it('derives deterministic ids and endpoint adjacency across source nodes', () => {
+  it('derives deterministic ids without inventing topology from a visual endpoint overlap', () => {
     const input = {
       document: fixtureDocument(),
       revision: 'revision_atomic' as RevisionId,
@@ -76,6 +76,28 @@ describe('Virtual Atomic Geometry Graph', () => {
     expect(first.segments.map((segment) => segment.id))
       .toEqual(second.segments.map((segment) => segment.id));
     expect(line.id).toMatch(/^atomic_[a-f0-9]{24}$/);
+    expect(line.adjacentSegmentIds).not.toContain(polyline.id);
+    expect(polyline.adjacentSegmentIds).not.toContain(line.id);
+  });
+
+  it('connects endpoint-overlapping source nodes only when Drawing IR declares topology', () => {
+    const document = fixtureDocument();
+    document.relations.push({
+      id: 'relation_line_polyline' as never,
+      type: 'topology', plane: 'topology', kind: 'connected',
+      nodeIds: ['line', 'polyline'],
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    });
+    const graph = buildAtomicGeometryGraph({
+      document,
+      revision: 'revision_atomic_connected' as RevisionId,
+      regionBounds: { minX: -20, minY: -20, maxX: 40, maxY: 40 },
+      curveSamples: 16,
+    });
+    const line = graph.segmentsFor('line')[0];
+    const polyline = graph.segmentsFor('polyline')[0];
+
     expect(line.adjacentSegmentIds).toContain(polyline.id);
     expect(polyline.adjacentSegmentIds).toContain(line.id);
   });
