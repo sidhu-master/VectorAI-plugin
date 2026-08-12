@@ -17,12 +17,15 @@ import type { CompiledSpatialEditCandidate } from './spatial-edit-compiler.js';
 
 export interface SpatialValidationIssue {
   code: string;
+  severity: 'error' | 'warning';
   message: string;
   nodeIds: string[];
 }
 
 export interface SpatialValidationReport {
+  /** Compatibility alias: only protocol-hard failures make this false. */
   valid: boolean;
+  hardValid: boolean;
   issues: SpatialValidationIssue[];
   unexpectedDanglingEndpoints: Vec2[];
 }
@@ -38,7 +41,7 @@ export function validateSpatialEditPreview(input: {
   const issues: SpatialValidationIssue[] = [];
   if (input.region.revision !== input.selection.revision
     || input.candidate.baseRevision !== input.selection.revision) {
-    issues.push(issue('SPATIAL_EDIT_STALE', '区域、选择和候选版本不一致'));
+    issues.push(hardIssue('SPATIAL_EDIT_STALE', '区域、选择和候选版本不一致'));
   }
   const preserved = comparePreservedNodeHashes(input.after, input.candidate.preserveNodeHashes);
   if (!preserved.satisfied) issues.push(issue(
@@ -55,10 +58,12 @@ export function validateSpatialEditPreview(input: {
   issues.push(...validateLineage(input.before, input.after, input.candidate));
   const documentReport = validateDrawingDocument(input.after);
   documentReport.issues.filter((item) => item.severity === 'error').forEach((item) => {
-    issues.push(issue(item.code, item.message, item.nodeIds));
+    issues.push(hardIssue(item.code, item.message, item.nodeIds));
   });
   for (const node of input.after.geometry) {
-    if (!finiteGeometry(node)) issues.push(issue('NON_FINITE_GEOMETRY', '图元包含非有限坐标', [node.id]));
+    if (!finiteGeometry(node)) {
+      issues.push(hardIssue('NON_FINITE_GEOMETRY', '图元包含非有限坐标', [node.id]));
+    }
     if (zeroLengthGeometry(node, input.tolerance)) {
       issues.push(issue('ZERO_LENGTH_GEOMETRY', '图元长度或半径低于容差', [node.id]));
     }
@@ -96,7 +101,8 @@ export function validateSpatialEditPreview(input: {
       input.candidate.targetNodeIds,
     ));
   }
-  return { valid: issues.length === 0, issues, unexpectedDanglingEndpoints };
+  const hardValid = issues.every((item) => item.severity !== 'error');
+  return { valid: hardValid, hardValid, issues, unexpectedDanglingEndpoints };
 }
 
 function nearAny(point: Vec2, candidates: Vec2[], tolerance: number): boolean {
@@ -270,5 +276,9 @@ function distance(left: Vec2, right: Vec2): number {
 }
 
 function issue(code: string, message: string, nodeIds: string[] = []): SpatialValidationIssue {
-  return { code, message, nodeIds: [...new Set(nodeIds)] };
+  return { code, severity: 'warning', message, nodeIds: [...new Set(nodeIds)] };
+}
+
+function hardIssue(code: string, message: string, nodeIds: string[] = []): SpatialValidationIssue {
+  return { code, severity: 'error', message, nodeIds: [...new Set(nodeIds)] };
 }
