@@ -1,4 +1,5 @@
 import type {
+  DrawingAgentCanvasOverlay,
   DrawingAgentProgressEvent,
   DrawingAgentProgressEventType,
   PerceptionPreviewDelta,
@@ -12,6 +13,7 @@ type ProgressListener = (event: AgentProgressEvent) => void;
 export interface AgentProgressMetadata {
   candidateAttempt?: number;
   maxCandidateAttempts?: number;
+  overlay?: DrawingAgentCanvasOverlay;
 }
 
 const TERMINAL_TYPES = new Set<AgentProgressEventType>(['stopped', 'completed', 'failed']);
@@ -61,6 +63,9 @@ export class RunProgressChannel {
       ...(metadata?.maxCandidateAttempts === undefined
         ? {}
         : { maxCandidateAttempts: metadata.maxCandidateAttempts }),
+      ...(metadata?.overlay === undefined
+        ? {}
+        : { overlay: structuredClone(metadata.overlay) }),
       timestamp,
       elapsedMs: Math.max(0, timestamp - this.startedAt),
     };

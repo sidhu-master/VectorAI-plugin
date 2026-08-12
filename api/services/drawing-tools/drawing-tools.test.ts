@@ -161,6 +161,13 @@ describe('DrawingModelTools', () => {
         diagnostics: expect.arrayContaining([
           expect.objectContaining({ code: 'ANNOTATION_REMOVED' }),
         ]),
+        previewDelta: {
+          upserts: [
+            expect.objectContaining({ id: 'line_a', end: [10, 10] }),
+            expect.objectContaining({ id: 'line_b', end: [20, 15] }),
+          ],
+          removeIds: ['dimension_a'],
+        },
         observation: expect.objectContaining({
           revision: base.revision,
           views: expect.arrayContaining([
@@ -223,6 +230,32 @@ describe('DrawingModelTools', () => {
       },
     });
     expect(rejected.output).not.toHaveProperty('previewHandle');
+  });
+
+  it('lets the runtime inspect a scoped candidate transaction without exposing a second document', async () => {
+    const { base, drawingTools, invoke } = await setup();
+    await invoke('preview_transaction', {
+      summary: 'runtime policy candidate',
+      commands: [{ type: 'geometry.update', id: 'line_a', changes: { end: [9, 3] } }],
+      preconditions: [], postconditions: [{ type: 'document.valid' }], evidenceRefs: [],
+    });
+
+    const candidate = drawingTools.readCandidate({
+      ...base, previewHandle: 'preview_1',
+    });
+
+    expect(candidate).toMatchObject({
+      previewHandle: 'preview_1', baseRevision: base.revision,
+      affectedNodeIds: ['line_a'],
+      transaction: {
+        baseRevision: base.revision,
+        commands: [{ type: 'geometry.update', id: 'line_a' }],
+      },
+    });
+    expect(candidate).not.toHaveProperty('document');
+    expect(drawingTools.readCandidate({
+      ...base, runId: 'another_run', previewHandle: 'preview_1',
+    })).toBeNull();
   });
 });
 

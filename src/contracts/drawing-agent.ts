@@ -22,10 +22,7 @@ export type DrawingAgentProgressEventType =
   | 'grounding'
   | 'region_overlay'
   | 'search_envelope_rejected'
-  | 'candidate_extraction'
-  | 'selecting_fragments'
-  | 'selection_authorized'
-  | 'region_resolved'
+  | 'topology_resolved'
   | 'split_materialized'
   | 'designing'
   | 'generating'
@@ -49,11 +46,21 @@ export interface DrawingAgentProgressEvent {
   title: string;
   detail?: string;
   perceptionDelta?: PerceptionPreviewDelta;
+  overlay?: DrawingAgentCanvasOverlay;
   candidateAttempt?: number;
   maxCandidateAttempts?: number;
   timestamp: number;
   elapsedMs: number;
 }
+
+/** Ephemeral evidence the model is currently inspecting; never an edit authorization. */
+export type DrawingAgentCanvasOverlay =
+  | { kind: 'nodes'; nodeIds: string[]; role: 'observed' | 'considered' | 'changed' }
+  | { kind: 'paths'; paths: Array<{ id: string; nodeIds: string[]; points?: readonly [number, number][] }>; role: 'candidate' | 'inspected' }
+  | { kind: 'points'; points: Array<{ id: string; point: readonly [number, number]; role?: string }> }
+  | { kind: 'preview'; previewHandle: string; affectedNodeIds: string[] }
+  | { kind: 'diagnostics'; nodeIds: string[]; codes: string[] }
+  | { kind: 'clear' };
 
 export type DrawingAgentRunStatus =
   | 'planning'
@@ -105,6 +112,44 @@ export type AgentDecision =
       commands: DrawingCommand[];
       confidence?: number;
     }
+  | { type: 'finish'; summary: string };
+
+export const DRAWING_MODEL_TOOL_NAMES = [
+  'render_drawing',
+  'query_nodes',
+  'inspect_nodes',
+  'measure_geometry',
+  'compare_views',
+  'build_topology',
+  'trace_paths',
+  'find_interfaces',
+  'inspect_fragment',
+  'materialize_split',
+  'preview_transaction',
+  'redraw_region',
+  'vectorize_image',
+  'fit_geometry',
+  'recompute_annotations',
+  'evaluate_preview',
+  'commit_preview',
+] as const;
+
+export type DrawingModelToolName = typeof DRAWING_MODEL_TOOL_NAMES[number];
+
+export interface HumanDecisionDraft {
+  kind: HumanDecisionKind;
+  question: string;
+  reason: string;
+  options: HumanDecisionOption[];
+  recommendedOptionId?: string;
+  affectedResources: HumanDecisionAffectedResource[];
+  previewHandle?: string;
+}
+
+export type DrawingAgentAction =
+  | { type: 'tool'; toolCallId: string; tool: DrawingModelToolName; input: unknown }
+  | { type: 'request-human-decision'; request: HumanDecisionDraft }
+  | { type: 'commit'; previewHandle: string; summary: string; confidence?: number }
   | { type: 'finish'; summary: string };
 
 export type HumanDecisionKind =
@@ -187,6 +232,14 @@ export interface DrawingAgentRunView {
   analysisSummary: string | null;
   pendingInstructions: string[];
   pendingDecision: HumanDecisionRequest | null;
+  /** Current revision-bound candidate. It is a handle, never a second drawing document. */
+  currentPreviewHandle?: string | null;
+  /** Latest real action shown beside the composer; never contains hidden reasoning. */
+  latestActivity?: {
+    title: string;
+    detail?: string;
+    actionKind: 'model' | 'tool' | 'preview' | 'decision' | 'commit';
+  } | null;
   error: string | null;
 }
 
@@ -316,6 +369,95 @@ export function parsePermissionGrant(value: unknown): PermissionGrant {
     resourceIds,
     effect: enumValue(grant.effect, ['allow', 'deny'] as const, `${path}.effect`),
     scope: enumValue(grant.scope, ['candidate'] as const, `${path}.scope`),
+  };
+}
+
+export function parseDrawingAgentAction(value: unknown): DrawingAgentAction {
+  const action = object(value, 'action');
+  const type = nonEmptyString(action.type, 'action.type');
+  switch (type) {
+    case 'tool':
+      exact(action, ['type', 'toolCallId', 'tool', 'input'], 'action');
+      return {
+        type,
+        toolCallId: nonEmptyString(action.toolCallId, 'action.toolCallId'),
+        tool: enumValue(action.tool, DRAWING_MODEL_TOOL_NAMES, 'action.tool'),
+        input: jsonValue(action.input, 'action.input'),
+      };
+    case 'request-human-decision':
+      exact(action, ['type', 'request'], 'action');
+      return { type, request: parseHumanDecisionDraft(action.request) };
+    case 'commit': {
+      exact(action, ['type', 'previewHandle', 'summary', 'confidence'], 'action');
+      const actionConfidence = optionalFinite(action.confidence, 'action.confidence');
+      if (actionConfidence !== undefined && (actionConfidence < 0 || actionConfidence > 1)) {
+        fail('action.confidence', '置信度必须在 0 到 1 之间');
+      }
+      return {
+        type,
+        previewHandle: nonEmptyString(action.previewHandle, 'action.previewHandle'),
+        summary: nonEmptyString(action.summary, 'action.summary'),
+        ...(actionConfidence === undefined ? {} : { confidence: actionConfidence }),
+      };
+    }
+    case 'finish':
+      exact(action, ['type', 'summary'], 'action');
+      return { type, summary: nonEmptyString(action.summary, 'action.summary') };
+    default:
+      fail('action.type', `不支持的动作类型 ${type}`);
+  }
+}
+
+function parseHumanDecisionDraft(value: unknown): HumanDecisionDraft {
+  const path = 'action.request';
+  const request = object(value, path);
+  exact(request, [
+    'kind', 'question', 'reason', 'options', 'recommendedOptionId',
+    'affectedResources', 'previewHandle',
+  ], path);
+  const kind = enumValue(request.kind, HUMAN_DECISION_KINDS, `${path}.kind`);
+  const options = array(request.options, `${path}.options`).map((option, index) => (
+    parseHumanDecisionOption(option, `${path}.options[${index}]`)
+  ));
+  if (options.length === 0) fail(`${path}.options`, '至少需要一个选项');
+  const optionIds = new Set<string>();
+  options.forEach((option, index) => {
+    if (optionIds.has(option.id)) fail(`${path}.options[${index}].id`, '选项 ID 重复');
+    optionIds.add(option.id);
+  });
+  const expectedEffectType: Record<HumanDecisionKind, DecisionEffect['type']> = {
+    'grant-permission': 'permission',
+    'choose-option': 'option',
+    'confirm-intent': 'intent',
+    'provide-context': 'context',
+    'accept-risk': 'risk',
+  };
+  options.forEach((option, index) => {
+    if (option.effect && option.effect.type !== expectedEffectType[kind]) {
+      fail(`${path}.options[${index}].effect.type`, '效果类型与请求类型不匹配');
+    }
+  });
+  const recommendedOptionId = optionalNonEmptyString(
+    request.recommendedOptionId,
+    `${path}.recommendedOptionId`,
+  );
+  if (recommendedOptionId !== undefined && !optionIds.has(recommendedOptionId)) {
+    fail(`${path}.recommendedOptionId`, '推荐选项不存在');
+  }
+  return {
+    kind,
+    question: nonEmptyString(request.question, `${path}.question`),
+    reason: nonEmptyString(request.reason, `${path}.reason`),
+    options,
+    ...(recommendedOptionId === undefined ? {} : { recommendedOptionId }),
+    affectedResources: array(request.affectedResources, `${path}.affectedResources`)
+      .map((resource, index) => parseAffectedResource(
+        resource,
+        `${path}.affectedResources[${index}]`,
+      )),
+    ...(request.previewHandle === undefined
+      ? {}
+      : { previewHandle: nonEmptyString(request.previewHandle, `${path}.previewHandle`) }),
   };
 }
 

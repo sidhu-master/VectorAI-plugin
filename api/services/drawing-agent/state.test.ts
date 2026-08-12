@@ -7,8 +7,12 @@ import type {
 import type { DrawingId, RevisionId } from '../../../src/drawing';
 import {
   checkDrawingAgentBudget,
+  checkModelLedDrawingAgentBudget,
   createDrawingAgentState,
+  createModelLedDrawingAgentState,
   reduceDrawingAgentState,
+  reduceModelLedDrawingAgentState,
+  toModelLedDrawingAgentRunView,
   toDrawingAgentRunView,
 } from './state';
 import type { DrawingToolReceipt } from './types';
@@ -152,6 +156,108 @@ describe('Drawing Agent state machine', () => {
   });
 });
 
+describe('Model-led Drawing Agent state machine', () => {
+  it('starts directly in a bounded tool loop without exposing a workflow or model', () => {
+    const state = modelLedInitial();
+    const view = toModelLedDrawingAgentRunView(state);
+
+    expect(state).toMatchObject({
+      status: 'running', episodeId: 'episode_run_1', currentPreviewHandle: null,
+      recentToolResults: [], candidateDigests: [], actionCount: 0, toolCallCount: 0,
+    });
+    expect(view).toMatchObject({
+      runId: 'run_1', drawingId, revision, status: 'running',
+      goal: null, workflow: [], currentPreviewHandle: null,
+    });
+    expect(JSON.stringify(view)).not.toMatch(/model|document|history/i);
+  });
+
+  it('tracks real tool receipts, current Preview, diagnostics and duplicate candidates', () => {
+    let state = modelLedInitial();
+    state = reduceModelLed(state, { type: 'ACTION_STARTED', title: '正在查看拓扑', actionKind: 'tool' });
+    state = reduceModelLed(state, {
+      type: 'MODEL_TOOL_RECORDED',
+      result: modelToolResult('query_nodes', 'read', ['line_a']),
+    });
+    state = reduceModelLed(state, {
+      type: 'PREVIEW_READY', previewHandle: 'preview_1', candidateDigest: 'digest_a',
+    });
+    state = reduceModelLed(state, {
+      type: 'DIAGNOSTICS_RECORDED', diagnostics: [{
+        code: 'NEW_DANGLING_ENDPOINT', severity: 'warning', nodeIds: ['line_a'],
+      }],
+    });
+    state = reduceModelLed(state, {
+      type: 'PREVIEW_READY', previewHandle: 'preview_2', candidateDigest: 'digest_a',
+    });
+
+    expect(state).toMatchObject({
+      currentPreviewHandle: 'preview_2', actionCount: 1, toolCallCount: 1,
+      consecutiveReadCount: 1, duplicateCandidateCount: 1,
+      latestActivity: { title: '正在查看拓扑' },
+    });
+    expect(state.recentDiagnostics).toEqual([
+      { code: 'NEW_DANGLING_ENDPOINT', severity: 'warning', nodeIds: ['line_a'] },
+    ]);
+  });
+
+  it('waits for an exact Human Decision, can pause there, and resumes with queued feedback', () => {
+    let state = modelLedInitial();
+    state = reduceModelLed(state, { type: 'HUMAN_DECISION_REQUIRED', request });
+    state = reduceModelLed(state, { type: 'INSTRUCTION_ADDED', instruction: '保留其他部分' });
+    state = reduceModelLed(state, { type: 'PAUSE_REQUESTED' });
+
+    expect(state).toMatchObject({
+      status: 'paused', pendingDecision: request,
+      pendingInstructions: ['保留其他部分'],
+    });
+    state = reduceModelLed(state, { type: 'RESUME' });
+    expect(state.status).toBe('waiting_for_user');
+    expect(reduceModelLedDrawingAgentState(state, {
+      type: 'HUMAN_DECISION_RESOLVED', requestId: 'wrong', grants: [],
+    }).error?.code).toBe('INVALID_TRANSITION');
+    state = reduceModelLed(state, {
+      type: 'HUMAN_DECISION_RESOLVED', requestId: request.id, grants: [],
+    });
+    expect(state).toMatchObject({ status: 'running', pendingDecision: null });
+  });
+
+  it('stops from waiting and reports action/tool/read/commit/deadline budgets', () => {
+    let waiting = reduceModelLed(modelLedInitial(), {
+      type: 'HUMAN_DECISION_REQUIRED', request,
+    });
+    waiting = reduceModelLed(waiting, { type: 'STOP_REQUESTED' });
+    expect(waiting.status).toBe('stopped');
+
+    const budgeted = modelLedInitial({
+      limits: {
+        maxActions: 1, maxToolCalls: 1, maxConsecutiveReads: 1,
+        maxCommits: 1, maxProtocolCorrections: 1, deadlineAt: 100,
+      },
+    });
+    expect(checkModelLedDrawingAgentBudget({ ...budgeted, actionCount: 1 }, 0)?.code)
+      .toBe('MAX_ACTIONS');
+    expect(checkModelLedDrawingAgentBudget({ ...budgeted, toolCallCount: 1 }, 0)?.code)
+      .toBe('MAX_TOOL_CALLS');
+    expect(checkModelLedDrawingAgentBudget({ ...budgeted, consecutiveReadCount: 1 }, 0)?.code)
+      .toBe('MAX_CONSECUTIVE_READS');
+    expect(checkModelLedDrawingAgentBudget({ ...budgeted, commitCount: 1 }, 0)?.code)
+      .toBe('MAX_COMMITS');
+    expect(checkModelLedDrawingAgentBudget(budgeted, 100)?.code).toBe('DEADLINE_EXCEEDED');
+  });
+
+  it('completes without any workflow node after a commit or a read-only finish', () => {
+    let state = reduceModelLed(modelLedInitial(), {
+      type: 'COMMIT_RECORDED', revision: 'revision_2' as RevisionId,
+    });
+    state = reduceModelLed(state, { type: 'COMPLETED', summary: '已完成编辑' });
+    expect(state).toMatchObject({
+      status: 'completed', revision: 'revision_2', commitCount: 1,
+      analysisSummary: '已完成编辑', currentPreviewHandle: null,
+    });
+  });
+});
+
 const plan: DrawingAgentPlan = {
   goal: {
     id: 'goal_1', objective: '修改圆', scope: { ids: ['circle_1'] },
@@ -225,5 +331,40 @@ function receipt(
       ? { kind: 'commit', committed: true, commitId: 'commit_1' }
       : { kind: 'query', count: 0, truncated: false },
     durationMs: 1, status: 'succeeded', retry: { allowed: false },
+  };
+}
+
+function modelLedInitial(overrides: Record<string, unknown> = {}) {
+  return createModelLedDrawingAgentState({
+    runId: 'run_1', episodeId: 'episode_run_1', drawingId, revision,
+    objective: '修改当前图形', createdAt: 0,
+    limits: {
+      maxActions: 30, maxToolCalls: 24, maxConsecutiveReads: 8,
+      maxCommits: 2, maxProtocolCorrections: 2, deadlineAt: 1_000,
+    },
+    ...overrides,
+  } as never);
+}
+
+function reduceModelLed(
+  state: ReturnType<typeof modelLedInitial>,
+  event: Parameters<typeof reduceModelLedDrawingAgentState>[1],
+) {
+  const result = reduceModelLedDrawingAgentState(state, event);
+  if (result.error) throw new Error(result.error.message);
+  return result.state;
+}
+
+function modelToolResult(tool: string, access: 'read' | 'write', affectedNodeIds: string[]) {
+  return {
+    schemaVersion: 1 as const,
+    receipt: {
+      schemaVersion: 1 as const,
+      runId: 'run_1', episodeId: 'episode_run_1', drawingId,
+      toolCallId: 'model_call_1', tool, toolVersion: '1.0.0', access,
+      status: 'succeeded' as const, revisionBefore: revision, revisionAfter: revision,
+      affectedNodeIds, inputDigest: 'sha256:input', outputDigest: 'sha256:output', durationMs: 1,
+    },
+    output: { ok: true },
   };
 }

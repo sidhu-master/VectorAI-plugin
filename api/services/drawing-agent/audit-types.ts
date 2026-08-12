@@ -30,7 +30,9 @@ export type DrawingAgentAuditEventType =
   | 'commit'
   | 'replan'
   | 'perception'
-  | 'state';
+  | 'state'
+  | 'model_action'
+  | 'human_decision';
 
 export interface DrawingAgentAuditManifest {
   schemaVersion: 1;

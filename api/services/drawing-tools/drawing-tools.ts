@@ -50,6 +50,16 @@ interface StoredCandidate {
   affectedNodeIds: string[];
 }
 
+export interface DrawingModelCandidateSnapshot {
+  previewHandle: string;
+  runId: string;
+  episodeId: string;
+  drawingId: DrawingId;
+  baseRevision: RevisionId;
+  transaction: DrawingTransaction;
+  affectedNodeIds: string[];
+}
+
 interface PreviewTransactionInput {
   summary: string;
   confidence?: number;
@@ -127,6 +137,30 @@ export class DrawingModelTools {
       discarded += 1;
     }
     return discarded;
+  }
+
+  readCandidate(input: {
+    runId: string;
+    episodeId: string;
+    drawingId: DrawingId;
+    revision: RevisionId;
+    previewHandle: string;
+  }): DrawingModelCandidateSnapshot | null {
+    const candidate = this.#candidates.get(input.previewHandle);
+    if (!candidate
+      || candidate.runId !== input.runId
+      || candidate.episodeId !== input.episodeId
+      || candidate.drawingId !== input.drawingId
+      || candidate.baseRevision !== input.revision) return null;
+    return {
+      previewHandle: candidate.handle,
+      runId: candidate.runId,
+      episodeId: candidate.episodeId,
+      drawingId: candidate.drawingId,
+      baseRevision: candidate.baseRevision,
+      transaction: structuredClone(candidate.transaction),
+      affectedNodeIds: [...candidate.affectedNodeIds],
+    };
   }
 
   async previewCandidate(input: {
@@ -334,6 +368,7 @@ export class DrawingModelTools {
         transaction: candidate.transaction,
         tolerance: this.#tolerance,
       });
+      const previewDelta = drawingPreviewDelta(workspace.document, preview.resultingDocument);
       const observation = input.includeRender
         ? await this.#application.observePreviewForAgent({
             document: preview.resultingDocument,
@@ -348,6 +383,7 @@ export class DrawingModelTools {
         output: {
           previewHandle: candidate.handle,
           ...report,
+          previewDelta,
           validationReport: structuredClone(preview.preview.validationReport),
           outcomeReport: structuredClone(preview.preview.outcomeReport),
           ...(observation ? { observation } : {}),
@@ -418,6 +454,25 @@ export class DrawingModelTools {
     }
     return candidate;
   }
+}
+
+function drawingPreviewDelta(before: DrawingDocument, after: DrawingDocument): {
+  upserts: Array<GeometryNode | DrawingDocument['annotations'][number]>;
+  removeIds: string[];
+} {
+  const beforeNodes = new Map(
+    [...before.geometry, ...before.annotations].map((node) => [node.id, node] as const),
+  );
+  const afterNodes = new Map(
+    [...after.geometry, ...after.annotations].map((node) => [node.id, node] as const),
+  );
+  return {
+    upserts: [...afterNodes.values()].filter((node) => {
+      const prior = beforeNodes.get(node.id);
+      return prior === undefined || JSON.stringify(prior) !== JSON.stringify(node);
+    }).map((node) => structuredClone(node)),
+    removeIds: [...beforeNodes.keys()].filter((id) => !afterNodes.has(id)).sort(),
+  };
 }
 
 function define<I, O>(
