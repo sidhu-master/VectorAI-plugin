@@ -2,6 +2,7 @@ import type {
   DrawingAgentPlan,
   DrawingAgentRunStatus,
   DrawingAgentRunView,
+  HumanDecisionRequest,
   WorkflowNode,
 } from '../../../src/contracts/drawing-agent.js';
 import type { DrawingId, RevisionId } from '../../../src/drawing/index.js';
@@ -44,6 +45,7 @@ export interface DrawingAgentState {
   needsReplan: boolean;
   commitCount: number;
   analysisSummary: string | null;
+  pendingDecision: HumanDecisionRequest | null;
   decisionCount: number;
   consecutiveReadCount: number;
   recovery: DrawingAgentRecoveryState;
@@ -62,6 +64,8 @@ export type DrawingAgentEvent =
   | { type: 'SAFE_POINT'; point: DrawingAgentSafePoint }
   | { type: 'RESUME' }
   | { type: 'INSTRUCTION_ADDED'; instruction: string }
+  | { type: 'HUMAN_DECISION_REQUIRED'; request: HumanDecisionRequest }
+  | { type: 'HUMAN_DECISION_RESOLVED'; requestId: string }
   | { type: 'STOP_REQUESTED' }
   | { type: 'WORKFLOW_NODE_STARTED'; nodeId: string }
   | { type: 'WORKFLOW_NODE_COMPLETED'; nodeId: string }
@@ -113,6 +117,7 @@ export function createDrawingAgentState(input: {
     needsReplan: false,
     commitCount: 0,
     analysisSummary: null,
+    pendingDecision: null,
     decisionCount: 0,
     consecutiveReadCount: 0,
     recovery: {
@@ -188,6 +193,28 @@ export function reduceDrawingAgentState(
         pendingInstructions: [...state.pendingInstructions, instruction],
       });
     }
+
+    case 'HUMAN_DECISION_REQUIRED':
+      if (state.status !== 'running' || state.pendingDecision !== null) {
+        return invalid(state, event.type);
+      }
+      if (event.request.revision !== state.revision) return invalid(state, event.type);
+      return valid(state, {
+        ...state,
+        status: 'waiting_for_user',
+        pendingDecision: structuredClone(event.request),
+      });
+
+    case 'HUMAN_DECISION_RESOLVED':
+      if (state.status !== 'waiting_for_user'
+        || state.pendingDecision?.id !== event.requestId) {
+        return invalid(state, event.type);
+      }
+      return valid(state, {
+        ...state,
+        status: 'running',
+        pendingDecision: null,
+      });
 
     case 'STOP_REQUESTED':
       if (state.status === 'paused') return valid(state, { ...state, status: 'stopped' });
@@ -304,6 +331,7 @@ export function toDrawingAgentRunView(state: DrawingAgentState): DrawingAgentRun
     commitCount: state.commitCount,
     analysisSummary: state.analysisSummary,
     pendingInstructions: [...state.pendingInstructions],
+    pendingDecision: state.pendingDecision ? structuredClone(state.pendingDecision) : null,
     error: state.error,
   };
 }

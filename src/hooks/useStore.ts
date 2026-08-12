@@ -51,7 +51,7 @@ interface AgentSubmission {
 }
 
 export type AgentUiStatus =
-  | 'idle' | 'planning' | 'running' | 'pause_requested' | 'paused'
+  | 'idle' | 'planning' | 'running' | 'waiting_for_user' | 'pause_requested' | 'paused'
   | 'stopping' | 'stopped' | 'complete' | 'error';
 
 export interface AppState {
@@ -598,7 +598,7 @@ function errorMessage(error: unknown): string {
 
 function isAgentActiveStatus(status: AgentUiStatus): boolean {
   return status === 'planning' || status === 'running' || status === 'pause_requested'
-    || status === 'paused' || status === 'stopping';
+    || status === 'waiting_for_user' || status === 'paused' || status === 'stopping';
 }
 
 function projectAgentRun(run: DrawingAgentRunView): Partial<AppState> {

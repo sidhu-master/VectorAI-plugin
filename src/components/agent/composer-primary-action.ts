@@ -15,6 +15,7 @@ export function composerPrimaryAction(input: {
 }): ComposerPrimaryAction {
   if (input.status === 'planning' && !input.hasRun) return 'waiting';
   if (input.status === 'pause_requested' || input.status === 'stopping') return 'waiting';
+  if (input.status === 'waiting_for_user') return input.hasContent ? 'send' : 'disabled';
   if (input.status === 'running' || input.status === 'planning') {
     return input.hasContent ? 'send' : 'pause';
   }

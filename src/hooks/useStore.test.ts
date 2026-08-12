@@ -695,6 +695,7 @@ function agentRunView(status: import('@/contracts/drawing-agent').DrawingAgentRu
     runId: 'run_1', drawingId, revision: revision1, status,
     goal: null, workflow: [], currentWorkflowNodeId: null,
     commitCount: 0, analysisSummary: null, pendingInstructions: [], error: null,
+    pendingDecision: null,
   };
 }
 

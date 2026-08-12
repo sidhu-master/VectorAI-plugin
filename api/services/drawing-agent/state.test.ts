@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
+import type {
+  DrawingAgentPlan,
+  HumanDecisionRequest,
+} from '../../../src/contracts/drawing-agent';
 import type { DrawingId, RevisionId } from '../../../src/drawing';
 import {
   checkDrawingAgentBudget,
@@ -55,6 +58,23 @@ describe('Drawing Agent state machine', () => {
     expect(requested.status).toBe('pause_requested');
     expect(paused).toMatchObject({ status: 'paused', lastSafePoint: 'after_preview' });
     expect(stopped.status).toBe('stopped');
+  });
+
+  it('waits on a Human Decision and resumes only after that exact request resolves', () => {
+    const running = reduce(initial(), { type: 'PLAN_READY', plan });
+    const waiting = reduce(running, { type: 'HUMAN_DECISION_REQUIRED', request });
+    const publicView = toDrawingAgentRunView(waiting);
+
+    expect(waiting).toMatchObject({ status: 'waiting_for_user', pendingDecision: request });
+    expect(publicView).toMatchObject({ status: 'waiting_for_user', pendingDecision: request });
+    expect(reduceDrawingAgentState(waiting, {
+      type: 'HUMAN_DECISION_RESOLVED', requestId: 'another_request',
+    }).error).toMatchObject({ code: 'INVALID_TRANSITION' });
+
+    const resumed = reduce(waiting, {
+      type: 'HUMAN_DECISION_RESOLVED', requestId: request.id,
+    });
+    expect(resumed).toMatchObject({ status: 'running', pendingDecision: null });
   });
 
   it('moves a running stop through the next safe point without committing more work', () => {
@@ -146,6 +166,29 @@ const plan: DrawingAgentPlan = {
     completionCriteria: [{ type: 'document.valid' }], status: 'pending',
   }],
   summary: '检查并修改圆',
+};
+
+const request: HumanDecisionRequest = {
+  id: 'request_1', episodeId: 'episode_1', revision,
+  candidateId: 'candidate_1', transactionDigest: 'a'.repeat(64),
+  kind: 'grant-permission', question: '允许解除当前约束吗？',
+  reason: '候选事务需要删除一个已有约束',
+  options: [{
+    id: 'allow', label: '仅允许本次',
+    effect: {
+      type: 'permission', decision: 'allow',
+      actions: ['constraint.delete'], resourceIds: ['constraint_1'],
+    },
+  }, {
+    id: 'deny', label: '不允许',
+    effect: {
+      type: 'permission', decision: 'deny',
+      actions: ['constraint.delete'], resourceIds: ['constraint_1'],
+    },
+  }],
+  recommendedOptionId: 'allow',
+  affectedResources: [{ plane: 'relation', ids: ['constraint_1'], action: 'constraint.delete' }],
+  expiresWhenRevisionChanges: true,
 };
 
 function initial(overrides: Record<string, unknown> = {}) {

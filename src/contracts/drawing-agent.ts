@@ -58,6 +58,7 @@ export interface DrawingAgentProgressEvent {
 export type DrawingAgentRunStatus =
   | 'planning'
   | 'running'
+  | 'waiting_for_user'
   | 'pause_requested'
   | 'paused'
   | 'stopping'
@@ -106,6 +107,73 @@ export type AgentDecision =
     }
   | { type: 'finish'; summary: string };
 
+export type HumanDecisionKind =
+  | 'grant-permission'
+  | 'choose-option'
+  | 'confirm-intent'
+  | 'provide-context'
+  | 'accept-risk';
+
+export type DecisionEffect =
+  | {
+      type: 'permission';
+      decision: 'allow' | 'deny';
+      actions: string[];
+      resourceIds: string[];
+    }
+  | { type: 'option'; value: string }
+  | { type: 'intent'; decision: 'confirm' | 'reject' }
+  | { type: 'context'; key: string; value?: unknown }
+  | { type: 'risk'; decision: 'accept' | 'reject'; riskIds: string[] };
+
+export interface HumanDecisionOption {
+  id: string;
+  label: string;
+  description?: string;
+  effect?: DecisionEffect;
+}
+
+export interface HumanDecisionAffectedResource {
+  plane?: 'geometry' | 'annotation' | 'relation' | 'feature' | 'external';
+  ids?: string[];
+  action?: string;
+}
+
+export interface HumanDecisionRequest {
+  id: string;
+  episodeId: string;
+  revision: RevisionId;
+  candidateId?: string;
+  transactionDigest?: string;
+  kind: HumanDecisionKind;
+  question: string;
+  reason: string;
+  options: HumanDecisionOption[];
+  recommendedOptionId?: string;
+  affectedResources: HumanDecisionAffectedResource[];
+  previewHandle?: string;
+  expiresWhenRevisionChanges: true;
+}
+
+export interface HumanDecisionResponse {
+  requestId: string;
+  selectedOptionId: string;
+  additionalInstruction?: string;
+  decidedAt: number;
+}
+
+export interface PermissionGrant {
+  id: string;
+  requestId: string;
+  episodeId: string;
+  revision: RevisionId;
+  transactionDigest: string;
+  actions: string[];
+  resourceIds: string[];
+  effect: 'allow' | 'deny';
+  scope: 'candidate';
+}
+
 /** Public run projection. It intentionally carries no document or drawing history. */
 export interface DrawingAgentRunView {
   runId: string;
@@ -118,6 +186,7 @@ export interface DrawingAgentRunView {
   commitCount: number;
   analysisSummary: string | null;
   pendingInstructions: string[];
+  pendingDecision: HumanDecisionRequest | null;
   error: string | null;
 }
 
@@ -133,6 +202,122 @@ const WORKFLOW_CAPABILITIES = [
   'query_entities', 'inspect_entity', 'edit_entities', 'verify_goal',
 ] as const;
 const PLANES = ['geometry', 'annotation', 'relation', 'feature'] as const;
+const HUMAN_DECISION_KINDS = [
+  'grant-permission', 'choose-option', 'confirm-intent', 'provide-context', 'accept-risk',
+] as const;
+const DECISION_RESOURCE_PLANES = [...PLANES, 'external'] as const;
+
+export function parseHumanDecisionRequest(value: unknown): HumanDecisionRequest {
+  const path = 'humanDecisionRequest';
+  const request = object(value, path);
+  exact(request, [
+    'id', 'episodeId', 'revision', 'candidateId', 'transactionDigest', 'kind',
+    'question', 'reason', 'options', 'recommendedOptionId', 'affectedResources',
+    'previewHandle', 'expiresWhenRevisionChanges',
+  ], path);
+  const options = array(request.options, `${path}.options`).map((option, index) => (
+    parseHumanDecisionOption(option, `${path}.options[${index}]`)
+  ));
+  if (options.length === 0) fail(`${path}.options`, '至少需要一个选项');
+  const optionIds = new Set<string>();
+  options.forEach((option, index) => {
+    if (optionIds.has(option.id)) fail(`${path}.options[${index}].id`, '选项 ID 重复');
+    optionIds.add(option.id);
+  });
+  const recommendedOptionId = optionalNonEmptyString(
+    request.recommendedOptionId,
+    `${path}.recommendedOptionId`,
+  );
+  if (recommendedOptionId !== undefined && !optionIds.has(recommendedOptionId)) {
+    fail(`${path}.recommendedOptionId`, '推荐选项不存在');
+  }
+  const kind = enumValue(request.kind, HUMAN_DECISION_KINDS, `${path}.kind`);
+  const expectedEffectType: Record<HumanDecisionKind, DecisionEffect['type']> = {
+    'grant-permission': 'permission',
+    'choose-option': 'option',
+    'confirm-intent': 'intent',
+    'provide-context': 'context',
+    'accept-risk': 'risk',
+  };
+  options.forEach((option, index) => {
+    if (option.effect && option.effect.type !== expectedEffectType[kind]) {
+      fail(`${path}.options[${index}].effect.type`, '效果类型与请求类型不匹配');
+    }
+  });
+  if (request.expiresWhenRevisionChanges !== true) {
+    fail(`${path}.expiresWhenRevisionChanges`, '候选请求必须随版本变化失效');
+  }
+  return {
+    id: nonEmptyString(request.id, `${path}.id`),
+    episodeId: nonEmptyString(request.episodeId, `${path}.episodeId`),
+    revision: nonEmptyString(request.revision, `${path}.revision`) as RevisionId,
+    ...(request.candidateId === undefined
+      ? {}
+      : { candidateId: nonEmptyString(request.candidateId, `${path}.candidateId`) }),
+    ...(request.transactionDigest === undefined
+      ? {}
+      : { transactionDigest: digest(request.transactionDigest, `${path}.transactionDigest`) }),
+    kind,
+    question: nonEmptyString(request.question, `${path}.question`),
+    reason: nonEmptyString(request.reason, `${path}.reason`),
+    options,
+    ...(recommendedOptionId === undefined ? {} : { recommendedOptionId }),
+    affectedResources: array(request.affectedResources, `${path}.affectedResources`)
+      .map((resource, index) => parseAffectedResource(
+        resource,
+        `${path}.affectedResources[${index}]`,
+      )),
+    ...(request.previewHandle === undefined
+      ? {}
+      : { previewHandle: nonEmptyString(request.previewHandle, `${path}.previewHandle`) }),
+    expiresWhenRevisionChanges: true,
+  };
+}
+
+export function parseHumanDecisionResponse(value: unknown): HumanDecisionResponse {
+  const path = 'humanDecisionResponse';
+  const response = object(value, path);
+  exact(response, [
+    'requestId', 'selectedOptionId', 'additionalInstruction', 'decidedAt',
+  ], path);
+  const decidedAt = finite(response.decidedAt, `${path}.decidedAt`);
+  if (decidedAt < 0) fail(`${path}.decidedAt`, '时间不能小于零');
+  return {
+    requestId: nonEmptyString(response.requestId, `${path}.requestId`),
+    selectedOptionId: nonEmptyString(response.selectedOptionId, `${path}.selectedOptionId`),
+    ...(response.additionalInstruction === undefined
+      ? {}
+      : {
+          additionalInstruction: nonEmptyString(
+            response.additionalInstruction,
+            `${path}.additionalInstruction`,
+          ),
+        }),
+    decidedAt,
+  };
+}
+
+export function parsePermissionGrant(value: unknown): PermissionGrant {
+  const path = 'permissionGrant';
+  const grant = object(value, path);
+  exact(grant, [
+    'id', 'requestId', 'episodeId', 'revision', 'transactionDigest',
+    'actions', 'resourceIds', 'effect', 'scope',
+  ], path);
+  const actions = nonEmptyStringArray(grant.actions, `${path}.actions`);
+  const resourceIds = nonEmptyStringArray(grant.resourceIds, `${path}.resourceIds`);
+  return {
+    id: nonEmptyString(grant.id, `${path}.id`),
+    requestId: nonEmptyString(grant.requestId, `${path}.requestId`),
+    episodeId: nonEmptyString(grant.episodeId, `${path}.episodeId`),
+    revision: nonEmptyString(grant.revision, `${path}.revision`) as RevisionId,
+    transactionDigest: digest(grant.transactionDigest, `${path}.transactionDigest`),
+    actions,
+    resourceIds,
+    effect: enumValue(grant.effect, ['allow', 'deny'] as const, `${path}.effect`),
+    scope: enumValue(grant.scope, ['candidate'] as const, `${path}.scope`),
+  };
+}
 
 export function parseAgentPlan(value: unknown): DrawingAgentPlan {
   const plan = object(value, 'plan');
@@ -221,6 +406,79 @@ export function parseDrawingToolAssertions(
   path = 'assertions',
 ): DrawingAssertion[] {
   return parseAssertions(value, path);
+}
+
+function parseHumanDecisionOption(value: unknown, path: string): HumanDecisionOption {
+  const option = object(value, path);
+  exact(option, ['id', 'label', 'description', 'effect'], path);
+  return {
+    id: nonEmptyString(option.id, `${path}.id`),
+    label: nonEmptyString(option.label, `${path}.label`),
+    ...(option.description === undefined
+      ? {}
+      : { description: nonEmptyString(option.description, `${path}.description`) }),
+    ...(option.effect === undefined ? {} : { effect: parseDecisionEffect(option.effect, `${path}.effect`) }),
+  };
+}
+
+function parseDecisionEffect(value: unknown, path: string): DecisionEffect {
+  const effect = object(value, path);
+  const type = nonEmptyString(effect.type, `${path}.type`);
+  switch (type) {
+    case 'permission':
+      exact(effect, ['type', 'decision', 'actions', 'resourceIds'], path);
+      return {
+        type,
+        decision: enumValue(effect.decision, ['allow', 'deny'] as const, `${path}.decision`),
+        actions: nonEmptyStringArray(effect.actions, `${path}.actions`),
+        resourceIds: nonEmptyStringArray(effect.resourceIds, `${path}.resourceIds`),
+      };
+    case 'option':
+      exact(effect, ['type', 'value'], path);
+      return { type, value: nonEmptyString(effect.value, `${path}.value`) };
+    case 'intent':
+      exact(effect, ['type', 'decision'], path);
+      return {
+        type,
+        decision: enumValue(effect.decision, ['confirm', 'reject'] as const, `${path}.decision`),
+      };
+    case 'context':
+      exact(effect, ['type', 'key', 'value'], path);
+      return {
+        type,
+        key: nonEmptyString(effect.key, `${path}.key`),
+        ...(effect.value === undefined ? {} : { value: jsonValue(effect.value, `${path}.value`) }),
+      };
+    case 'risk':
+      exact(effect, ['type', 'decision', 'riskIds'], path);
+      return {
+        type,
+        decision: enumValue(effect.decision, ['accept', 'reject'] as const, `${path}.decision`),
+        riskIds: nonEmptyStringArray(effect.riskIds, `${path}.riskIds`),
+      };
+    default:
+      fail(`${path}.type`, `不支持的决定效果 ${type}`);
+  }
+}
+
+function parseAffectedResource(
+  value: unknown,
+  path: string,
+): HumanDecisionAffectedResource {
+  const resource = object(value, path);
+  exact(resource, ['plane', 'ids', 'action'], path);
+  if (resource.plane === undefined && resource.ids === undefined && resource.action === undefined) {
+    fail(path, '影响资源不能为空');
+  }
+  return {
+    ...(resource.plane === undefined
+      ? {}
+      : { plane: enumValue(resource.plane, DECISION_RESOURCE_PLANES, `${path}.plane`) }),
+    ...(resource.ids === undefined ? {} : { ids: nonEmptyStringArray(resource.ids, `${path}.ids`) }),
+    ...(resource.action === undefined
+      ? {}
+      : { action: nonEmptyString(resource.action, `${path}.action`) }),
+  };
 }
 
 function parseGoal(value: unknown, path: string): GoalSpec {
@@ -617,6 +875,13 @@ function stringArray(value: unknown, path: string): string[] {
   return array(value, path).map((item, index) => nonEmptyString(item, `${path}[${index}]`));
 }
 
+function nonEmptyStringArray(value: unknown, path: string): string[] {
+  const values = stringArray(value, path);
+  if (values.length === 0) fail(path, '不能为空');
+  if (new Set(values).size !== values.length) fail(path, '不能包含重复值');
+  return values;
+}
+
 function numberArray(value: unknown, path: string): number[] {
   return array(value, path).map((item, index) => finite(item, `${path}[${index}]`));
 }
@@ -634,6 +899,16 @@ function vec2(value: unknown, path: string): readonly [number, number] {
 function nonEmptyString(value: unknown, path: string): string {
   if (typeof value !== 'string' || !value.trim()) fail(path, '必须是非空字符串');
   return value;
+}
+
+function optionalNonEmptyString(value: unknown, path: string): string | undefined {
+  return value === undefined ? undefined : nonEmptyString(value, path);
+}
+
+function digest(value: unknown, path: string): string {
+  const result = nonEmptyString(value, path);
+  if (!/^[a-f0-9]{64}$/i.test(result)) fail(path, '必须是 64 位摘要');
+  return result;
 }
 
 function boolean(value: unknown, path: string): boolean {

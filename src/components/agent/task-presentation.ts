@@ -26,6 +26,7 @@ const STATUS_HEADINGS: Record<AgentUiStatus, string> = {
   idle: '任务待命',
   planning: '正在准备任务',
   running: '正在执行任务',
+  waiting_for_user: '等待你的确认',
   pause_requested: '正在安全暂停',
   paused: '任务已暂停',
   stopping: '正在停止任务',
@@ -58,6 +59,7 @@ function presentationTone(status: AgentUiStatus): PresentedAgentTask['tone'] {
   if (status === 'error') return 'danger';
   if (status === 'complete') return 'success';
   if (status === 'paused') return 'paused';
+  if (status === 'waiting_for_user') return 'paused';
   if (status === 'stopped' || status === 'idle') return 'neutral';
   return 'active';
 }

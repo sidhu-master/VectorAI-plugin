@@ -65,6 +65,7 @@ describe('Agent task presentation', () => {
   it.each([
     ['planning', '正在准备任务', 'active'],
     ['paused', '任务已暂停', 'paused'],
+    ['waiting_for_user', '等待你的确认', 'paused'],
     ['complete', '任务已完成', 'success'],
     ['stopped', '任务已停止', 'neutral'],
   ] as const)('presents %s without a fabricated stage list', (status, heading, tone) => {

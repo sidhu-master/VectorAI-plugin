@@ -13,14 +13,16 @@ function StatusIcon({ presentation, status }: {
 }) {
   if (presentation.tone === 'danger') return <AlertTriangle size={13} className="text-danger" />;
   if (presentation.tone === 'success') return <Check size={13} className="text-emerald-400" />;
-  if (status === 'paused') return <Pause size={12} className="text-amber-400" />;
+  if (status === 'paused' || status === 'waiting_for_user') {
+    return <Pause size={12} className="text-amber-400" />;
+  }
   if (status === 'stopped') return <Square size={10} className="text-slate-500" />;
   return <Loader2 size={13} className="animate-spin text-accent" />;
 }
 
 function isActive(status: AgentUiStatus): boolean {
   return status === 'planning' || status === 'running' || status === 'pause_requested'
-    || status === 'paused' || status === 'stopping';
+    || status === 'waiting_for_user' || status === 'paused' || status === 'stopping';
 }
 
 export function ComposerTaskStatusView({

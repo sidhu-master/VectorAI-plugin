@@ -3,6 +3,9 @@ import {
   DrawingAgentProtocolError,
   parseAgentDecision,
   parseAgentPlan,
+  parseHumanDecisionRequest,
+  parseHumanDecisionResponse,
+  parsePermissionGrant,
 } from './drawing-agent';
 
 const validPlan = {
@@ -29,6 +32,100 @@ const validPlan = {
 };
 
 describe('Drawing Agent shared protocol', () => {
+  it.each([
+    ['grant-permission', {
+      type: 'permission', decision: 'allow',
+      actions: ['constraint.delete'], resourceIds: ['constraint_1'],
+    }],
+    ['choose-option', { type: 'option', value: 'redraw' }],
+    ['confirm-intent', { type: 'intent', decision: 'confirm' }],
+    ['provide-context', { type: 'context', key: 'design-standard' }],
+    ['accept-risk', { type: 'risk', decision: 'accept', riskIds: ['open-endpoint'] }],
+  ])('parses an exact %s Human Decision request', (kind, effect) => {
+    const input = {
+      id: `request_${kind}`,
+      episodeId: 'episode_1',
+      revision: 'revision_1',
+      candidateId: 'candidate_1',
+      transactionDigest: 'a'.repeat(64),
+      kind,
+      question: '请确认本次候选操作',
+      reason: '继续需要用户提供一项决定',
+      options: [{
+        id: 'continue', label: '继续', description: '只作用于当前候选', effect,
+      }],
+      recommendedOptionId: 'continue',
+      affectedResources: [{
+        plane: kind === 'provide-context' ? 'external' : 'relation',
+        ids: kind === 'provide-context' ? ['design-standard'] : ['constraint_1'],
+        action: kind,
+      }],
+      previewHandle: 'preview_1',
+      expiresWhenRevisionChanges: true,
+    };
+
+    const parsed = parseHumanDecisionRequest(input);
+
+    expect(parsed).toEqual(input);
+    expect(parsed).not.toBe(input);
+    expect(parsed.options[0]).not.toBe(input.options[0]);
+  });
+
+  it('parses an exact response and candidate-scoped permission grant', () => {
+    expect(parseHumanDecisionResponse({
+      requestId: 'request_1', selectedOptionId: 'allow_once',
+      additionalInstruction: '只处理当前候选', decidedAt: 100,
+    })).toEqual({
+      requestId: 'request_1', selectedOptionId: 'allow_once',
+      additionalInstruction: '只处理当前候选', decidedAt: 100,
+    });
+
+    expect(parsePermissionGrant({
+      id: 'grant_1', requestId: 'request_1', episodeId: 'episode_1',
+      revision: 'revision_1', transactionDigest: 'b'.repeat(64),
+      actions: ['constraint.delete'], resourceIds: ['constraint_1'],
+      effect: 'allow', scope: 'candidate',
+    })).toEqual({
+      id: 'grant_1', requestId: 'request_1', episodeId: 'episode_1',
+      revision: 'revision_1', transactionDigest: 'b'.repeat(64),
+      actions: ['constraint.delete'], resourceIds: ['constraint_1'],
+      effect: 'allow', scope: 'candidate',
+    });
+  });
+
+  it.each([
+    ['unknown request field', {
+      id: 'request_1', episodeId: 'episode_1', revision: 'revision_1',
+      kind: 'confirm-intent', question: '继续吗', reason: '意图不明确',
+      options: [{ id: 'yes', label: '继续' }], affectedResources: [],
+      expiresWhenRevisionChanges: true, hiddenReasoning: 'secret',
+    }, 'humanDecisionRequest.hiddenReasoning'],
+    ['empty options', {
+      id: 'request_1', episodeId: 'episode_1', revision: 'revision_1',
+      kind: 'confirm-intent', question: '继续吗', reason: '意图不明确',
+      options: [], affectedResources: [], expiresWhenRevisionChanges: true,
+    }, 'humanDecisionRequest.options'],
+    ['missing recommended option', {
+      id: 'request_1', episodeId: 'episode_1', revision: 'revision_1',
+      kind: 'choose-option', question: '选哪个', reason: '有多个方案',
+      options: [{ id: 'one', label: '方案一' }], recommendedOptionId: 'missing',
+      affectedResources: [], expiresWhenRevisionChanges: true,
+    }, 'humanDecisionRequest.recommendedOptionId'],
+    ['effect incompatible with request kind', {
+      id: 'request_1', episodeId: 'episode_1', revision: 'revision_1',
+      kind: 'grant-permission', question: '允许吗', reason: '需要权限',
+      options: [{
+        id: 'yes', label: '允许',
+        effect: { type: 'risk', decision: 'accept', riskIds: ['risk_1'] },
+      }],
+      affectedResources: [], expiresWhenRevisionChanges: true,
+    }, 'humanDecisionRequest.options[0].effect.type'],
+  ])('rejects %s', (_name, input, path) => {
+    expect(() => parseHumanDecisionRequest(input)).toThrow(expect.objectContaining({
+      name: 'DrawingAgentProtocolError', path,
+    }));
+  });
+
   it('parses a complete GoalSpec and workflow without sharing input references', () => {
     const parsed = parseAgentPlan(validPlan);
 

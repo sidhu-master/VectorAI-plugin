@@ -24,6 +24,8 @@ describe('composerPrimaryAction', () => {
     [{ status: 'error', hasRun: true, hasContent: false }, 'retry'],
     [{ status: 'error', hasRun: true, hasContent: true }, 'send'],
     [{ status: 'planning', hasRun: false, hasContent: true }, 'waiting'],
+    [{ status: 'waiting_for_user', hasRun: true, hasContent: false }, 'disabled'],
+    [{ status: 'waiting_for_user', hasRun: true, hasContent: true }, 'send'],
     [{ status: 'idle', hasRun: false, hasContent: false }, 'disabled'],
     [{ status: 'idle', hasRun: false, hasContent: true }, 'send'],
   ] as const)('maps %o to %s', (input, expected) => {
@@ -50,5 +52,21 @@ describe('ComposerTaskStatusView', () => {
     expect(html).not.toContain('暂停');
     expect(html).not.toContain('Agent 执行记录');
     expect(html).not.toContain('doubao');
+  });
+
+  it('keeps a task awaiting a user decision attached to the active run', () => {
+    const html = renderToStaticMarkup(
+      <ComposerTaskStatusView
+        presentation={{ ...presentation, heading: '等待你的确认', tone: 'paused' }}
+        status="waiting_for_user"
+        lowConfidence={false}
+        onStop={() => undefined}
+        onReset={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('等待你的确认');
+    expect(html).toContain('停止');
+    expect(html).not.toContain('清除任务状态');
   });
 });
