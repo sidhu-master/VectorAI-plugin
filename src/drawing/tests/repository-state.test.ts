@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createEmptyDrawing, type IdFactory } from '../document/create';
-import type { CommitId, DrawingId, GeometryId, RevisionId } from '../document/types';
+import type {
+  CommitId,
+  DrawingId,
+  EvidenceId,
+  GeometryId,
+  RevisionId,
+} from '../document/types';
+import { replayDrawingCommits } from '../repository/replay';
 import {
   commitRepositoryState,
   createRepositoryState,
@@ -105,6 +112,43 @@ describe('repository state transitions', () => {
     expect(reverted.state.commits).toHaveLength(2);
     expect(reverted.state.commits[0]).toEqual(committed.state.commits[0]);
     expect(committed.state.document.geometry).toHaveLength(1);
+  });
+
+  it('keeps transaction intent and lineage through commit, revert, and replay', () => {
+    const { state, transaction } = fixture();
+    const metadata = {
+      episodeId: 'episode_repository',
+      summary: 'Create the replacement circle.',
+      confidence: 0.91,
+      lineage: [{
+        sourceIds: ['source_curve'],
+        resultIds: ['circle_1'],
+        operation: 'replace' as const,
+        sourceRanges: [{ nodeId: 'source_curve', range: [0.2, 0.8] as [number, number] }],
+        evidenceRefs: ['evidence_1' as EvidenceId],
+      }],
+      decisionGrantRefs: ['grant_1'],
+      diagnosticAcknowledgements: ['diagnostic_1'],
+    };
+    transaction.metadata = metadata;
+    const expectedMetadata = structuredClone(metadata);
+    const dependencies = { idFactory: ids(), now: () => 100 };
+
+    const committed = commitRepositoryState(state, transaction, dependencies);
+    if (committed.result.status !== 'committed') throw new Error('expected commit');
+    transaction.metadata.summary = 'mutated by caller';
+    const reverted = revertRepositoryState(committed.state, {
+      drawingId: 'drawing_state' as DrawingId,
+      commitId: committed.result.commit.id,
+      actor: { type: 'user', id: 'reviewer' },
+    }, dependencies);
+    if (reverted.result.status !== 'committed') throw new Error('expected revert');
+    const replayed = replayDrawingCommits(state.initialDocument, reverted.state.commits);
+
+    expect(committed.result.commit.metadata).toEqual(expectedMetadata);
+    expect(committed.result.commit.metadata?.summary).toBe('Create the replacement circle.');
+    expect(reverted.state.commits[0].metadata).toEqual(committed.result.commit.metadata);
+    expect(replayed).toMatchObject({ success: true, document: { geometry: [] } });
   });
 
   it('returns isolated state and result objects', () => {

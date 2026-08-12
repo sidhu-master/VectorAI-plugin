@@ -12,6 +12,23 @@ export interface Actor {
   id: string;
 }
 
+export interface DrawingLineageRecord {
+  sourceIds: string[];
+  resultIds: string[];
+  operation: 'preserve' | 'transform' | 'split' | 'merge' | 'replace' | 'redraw';
+  sourceRanges?: Array<{ nodeId: string; range: [number, number] }>;
+  evidenceRefs: EvidenceId[];
+}
+
+export interface DrawingTransactionMetadata {
+  episodeId: string;
+  summary: string;
+  confidence?: number;
+  lineage?: DrawingLineageRecord[];
+  decisionGrantRefs?: string[];
+  diagnosticAcknowledgements?: string[];
+}
+
 export interface DrawingTransaction {
   id: string;
   baseRevision: RevisionId;
@@ -21,6 +38,7 @@ export interface DrawingTransaction {
   preconditions: DrawingAssertion[];
   postconditions: DrawingAssertion[];
   evidenceRefs: EvidenceId[];
+  metadata?: DrawingTransactionMetadata;
 }
 
 export interface DrawingError {
@@ -46,6 +64,7 @@ export interface TransactionPreview {
   validationReport: ValidationReport;
   outcomeReport: GoalOutcomeReport;
   candidate: boolean;
+  metadata?: DrawingTransactionMetadata;
 }
 
 export type TransactionResult =

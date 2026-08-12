@@ -72,6 +72,12 @@ export function commitRepositoryState(
     validationReport: clone(preview.preview.validationReport),
     outcomeReport: clone(preview.preview.outcomeReport),
     evidenceRefs: clone(transaction.evidenceRefs),
+    ...(preview.preview.metadata === undefined
+      ? {}
+      : { metadata: clone(preview.preview.metadata) }),
+    ...(preview.preview.metadata?.confidence === undefined
+      ? {}
+      : { confidence: preview.preview.metadata.confidence }),
     timestamp: dependencies.now(),
   };
   const nextState: DrawingRepositoryState = {

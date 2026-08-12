@@ -36,6 +36,10 @@ const PATCH_OPERATION_TYPES = new Set<DrawingPatchOperation['type']>([
   'feature.add', 'feature.update', 'feature.delete',
 ]);
 
+const LINEAGE_OPERATIONS = new Set([
+  'preserve', 'transform', 'split', 'merge', 'replace', 'redraw',
+]);
+
 export interface AtomicJsonWriter {
   write(targetPath: string, json: string): Promise<void>;
 }
@@ -318,7 +322,57 @@ function looksLikeCommit(value: unknown, drawingId: DrawingId): boolean {
     && validOperations(value.patch.operations)
     && validOperations(value.inversePatch.operations)
     && Array.isArray(value.commands)
-    && Array.isArray(value.evidenceRefs);
+    && Array.isArray(value.evidenceRefs)
+    && value.evidenceRefs.every((reference) => typeof reference === 'string')
+    && looksLikeTransactionMetadata(value.metadata);
+}
+
+function looksLikeTransactionMetadata(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)
+    || typeof value.episodeId !== 'string'
+    || typeof value.summary !== 'string'
+    || !optionalProbability(value.confidence)
+    || !optionalStringArray(value.decisionGrantRefs)
+    || !optionalStringArray(value.diagnosticAcknowledgements)) {
+    return false;
+  }
+  if (value.lineage === undefined) return true;
+  return Array.isArray(value.lineage) && value.lineage.every((record) => (
+    isRecord(record)
+    && stringArray(record.sourceIds)
+    && stringArray(record.resultIds)
+    && typeof record.operation === 'string'
+    && LINEAGE_OPERATIONS.has(record.operation)
+    && stringArray(record.evidenceRefs)
+    && looksLikeSourceRanges(record.sourceRanges)
+  ));
+}
+
+function looksLikeSourceRanges(value: unknown): boolean {
+  if (value === undefined) return true;
+  return Array.isArray(value) && value.every((range) => (
+    isRecord(range)
+    && typeof range.nodeId === 'string'
+    && Array.isArray(range.range)
+    && range.range.length === 2
+    && range.range.every((coordinate) => (
+      typeof coordinate === 'number' && Number.isFinite(coordinate)
+    ))
+  ));
+}
+
+function optionalProbability(value: unknown): boolean {
+  return value === undefined
+    || (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1);
+}
+
+function optionalStringArray(value: unknown): boolean {
+  return value === undefined || stringArray(value);
+}
+
+function stringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
 function validOperations(value: unknown): boolean {

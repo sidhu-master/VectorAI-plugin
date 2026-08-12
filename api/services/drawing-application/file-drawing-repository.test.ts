@@ -6,7 +6,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createEmptyDrawing, type IdFactory } from '../../../src/drawing/document/create';
-import type { DrawingId, GeometryId } from '../../../src/drawing/document/types';
+import type {
+  DrawingId,
+  EvidenceId,
+  GeometryId,
+} from '../../../src/drawing/document/types';
 import type { DrawingTransaction } from '../../../src/drawing/transaction/types';
 import {
   FileDrawingRepository,
@@ -98,6 +102,45 @@ describe('FileDrawingRepository', () => {
       committed.commit,
       reverted.commit,
     ]);
+  });
+
+  it('persists model transaction metadata and rejects corrupt lineage on restart', async () => {
+    const rootDirectory = await temporaryRoot();
+    const document = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_metadata' }, now: () => 1,
+    });
+    const repository = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 100 });
+    const opened = await repository.create(document);
+    const transaction = createCircle(opened.revision);
+    transaction.metadata = {
+      episodeId: 'episode_file',
+      summary: 'Fit and replace the observed contour.',
+      confidence: 0.88,
+      lineage: [{
+        sourceIds: ['raster_contour_1'],
+        resultIds: ['circle_1'],
+        operation: 'replace',
+        evidenceRefs: ['evidence_file_1' as EvidenceId],
+      }],
+      decisionGrantRefs: ['grant_file_1'],
+    };
+    const committed = await repository.commit(transaction);
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const reopened = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 200 });
+    expect((await reopened.listCommits(document.id))[0].metadata).toEqual(transaction.metadata);
+
+    const path = snapshotPath(rootDirectory, document.id);
+    const snapshot = JSON.parse(await readFile(path, 'utf8')) as {
+      commits: Array<{ metadata: { lineage: Array<{ operation: string }> } }>;
+    };
+    snapshot.commits[0].metadata.lineage[0].operation = 'invented-operation';
+    await writeFile(path, JSON.stringify(snapshot));
+    const corrupt = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 300 });
+
+    await expect(corrupt.getCurrent(document.id)).rejects.toMatchObject({
+      code: 'CORRUPT_SNAPSHOT',
+    });
   });
 
   it('serializes concurrent commits so one stale transaction is rejected', async () => {

@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createEmptyDrawing } from '../document/create';
-import type { DrawingDocument, GeometryId, RevisionId } from '../document/types';
+import type {
+  AnnotationId,
+  DrawingDocument,
+  EvidenceId,
+  FeatureId,
+  GeometryId,
+  RelationId,
+  RevisionId,
+} from '../document/types';
 import { previewTransaction } from '../transaction/execute';
 import type { DrawingTransaction } from '../transaction/types';
 
@@ -134,6 +142,109 @@ describe('previewTransaction', () => {
       resultingDocument: { geometry: [expect.objectContaining({ radius: 30 })] },
     });
     expect(document).toEqual(original);
+  });
+
+  it('preserves model intent and lineage for an atomic redraw across every drawing plane', () => {
+    const { document, transaction } = fixture();
+    document.annotations.push({
+      id: 'text_1' as AnnotationId,
+      type: 'text', visible: true, quality: confirmed,
+      content: 'old', position: [0, 0], height: 2, rotation: 0,
+      alignment: 'left', verticalAlignment: 'baseline',
+    });
+    document.relations.push({
+      id: 'association_1' as RelationId,
+      type: 'association', visible: true, quality: confirmed,
+      plane: 'association', kind: 'annotation-target',
+      annotationId: 'text_1' as AnnotationId,
+      geometryIds: ['circle_1' as GeometryId],
+    });
+    document.features.push({
+      id: 'feature_1' as FeatureId,
+      type: 'feature', visible: true, quality: confirmed,
+      semanticType: 'old-part',
+      geometryIds: ['circle_1' as GeometryId],
+      annotationIds: ['text_1' as AnnotationId],
+      relationIds: ['association_1' as RelationId],
+      properties: {},
+    });
+    transaction.commands = [
+      { type: 'relation.delete', id: 'association_1' as RelationId },
+      { type: 'feature.delete', id: 'feature_1' as FeatureId },
+      { type: 'annotation.delete', id: 'text_1' as AnnotationId },
+      { type: 'geometry.delete', id: 'circle_1' as GeometryId },
+      {
+        type: 'geometry.create',
+        value: {
+          id: 'line_2' as GeometryId,
+          type: 'line', visible: true, quality: confirmed,
+          start: [0, 0], end: [20, 10],
+        },
+      },
+      {
+        type: 'annotation.create',
+        value: {
+          id: 'text_2' as AnnotationId,
+          type: 'text', visible: true, quality: confirmed,
+          content: 'new', position: [10, 5], height: 2, rotation: 0,
+          alignment: 'center', verticalAlignment: 'middle',
+        },
+      },
+      {
+        type: 'relation.create',
+        value: {
+          id: 'association_2' as RelationId,
+          type: 'association', visible: true, quality: confirmed,
+          plane: 'association', kind: 'annotation-target',
+          annotationId: 'text_2' as AnnotationId,
+          geometryIds: ['line_2' as GeometryId],
+        },
+      },
+      {
+        type: 'feature.create',
+        value: {
+          id: 'feature_2' as FeatureId,
+          type: 'feature', visible: true, quality: confirmed,
+          semanticType: 'redrawn-part',
+          geometryIds: ['line_2' as GeometryId],
+          annotationIds: ['text_2' as AnnotationId],
+          relationIds: ['association_2' as RelationId],
+          properties: {},
+        },
+      },
+    ];
+    transaction.preconditions = [];
+    transaction.postconditions = [
+      { type: 'node.absent', nodeId: 'circle_1' },
+      { type: 'node.exists', nodeId: 'feature_2' },
+      { type: 'document.valid' },
+    ];
+    const metadata = {
+      episodeId: 'episode_1',
+      summary: 'Replace the selected part with a newly drawn structure.',
+      confidence: 0.82,
+      lineage: [{
+        sourceIds: ['circle_1', 'text_1', 'association_1', 'feature_1'],
+        resultIds: ['line_2', 'text_2', 'association_2', 'feature_2'],
+        operation: 'redraw' as const,
+        evidenceRefs: ['evidence_render_1' as EvidenceId],
+      }],
+      decisionGrantRefs: ['grant_1'],
+      diagnosticAcknowledgements: ['diagnostic_1'],
+    };
+    (transaction as DrawingTransaction & { metadata?: typeof metadata }).metadata = metadata;
+
+    const result = previewTransaction({
+      document, currentRevision: 'rev_1' as RevisionId,
+    }, transaction);
+
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') throw new Error('expected ready preview');
+    expect((result.preview as unknown as { metadata?: unknown }).metadata).toEqual(metadata);
+    expect(result.preview.affectedNodeIds).toEqual(expect.arrayContaining([
+      'circle_1', 'text_1', 'association_1', 'feature_1',
+      'line_2', 'text_2', 'association_2', 'feature_2',
+    ]));
   });
 
   it('marks previews containing candidate nodes for user-visible review', () => {

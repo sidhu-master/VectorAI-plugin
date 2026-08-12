@@ -11,6 +11,7 @@ import type {
   Actor,
   DrawingError,
   DrawingTransaction,
+  DrawingTransactionMetadata,
   GoalOutcomeReport,
 } from '../transaction/types';
 import type { ValidationReport } from '../validation/types';
@@ -28,6 +29,7 @@ export interface DrawingCommit {
   validationReport: ValidationReport;
   outcomeReport: GoalOutcomeReport;
   evidenceRefs: EvidenceId[];
+  metadata?: DrawingTransactionMetadata;
   confidence?: number;
   timestamp: number;
 }

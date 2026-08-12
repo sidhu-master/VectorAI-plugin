@@ -156,6 +156,9 @@ export function previewTransaction(
       validationReport,
       outcomeReport,
       candidate,
+      ...(transaction.metadata === undefined
+        ? {}
+        : { metadata: structuredClone(transaction.metadata) }),
     },
     resultingDocument: applied.document,
   };
