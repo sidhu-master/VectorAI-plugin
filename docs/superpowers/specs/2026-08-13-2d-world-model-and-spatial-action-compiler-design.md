@@ -16,6 +16,8 @@ VectorAI 不再把系统定义成“AI 直接操作一组 Drawing IR 图元”�
 
 Drawing IR 仍是唯一编辑真相。二维世界模型是绑定 revision 的派生表示，不建立第二份可独立写入的图纸。模型负责语义理解、对象选择、设计目标、动作选择和 Preview 验收；程序负责坐标、精确几何、拓扑、约束求解、动作编译、事务和诊断。
 
+三维场景图、任务驱动语义地图和时空世界模型的补充调研进一步确认了该方向，并增加四项约束：语义粒度必须随任务变化、局部世界必须显式说明是否读取完整、Preview 必须可作为反事实世界查询、Grounding 判断必须保留可修订的证据历史。这四项都是现有世界模型的按需投影或元数据，不增加四个固定串行阶段。
+
 本设计解决的核心问题不是某个“抬手”样例，而是视觉语义与真实二维结构之间存在的普遍错位：
 
 - 一个语义对象可能只覆盖一个图元的局部参数区间。
@@ -100,7 +102,8 @@ flowchart LR
 
     WMC --> WORLD["Revision-bound 2D World Model"]
     GROUND --> WORLD
-    WORLD --> QUERY["World Model Query"]
+    WORLD --> TASKVIEW["Task-Relevant View"]
+    TASKVIEW --> QUERY["World Model Query"]
     QUERY --> MODEL
 
     WORLD --> AFFORD["Action Proposal / Feasibility"]
@@ -108,8 +111,9 @@ flowchart LR
     MODEL --> ACTION["Spatial Action IR"]
     ACTION --> COMPILER["Spatial Action Compiler"]
     COMPILER --> PREVIEW["Drawing Transaction Preview"]
+    PREVIEW --> BRANCH["Counterfactual World Branch"]
 
-    PREVIEW --> VERIFY["Structural + Visual Feedback"]
+    BRANCH --> VERIFY["Structural + Visual Feedback"]
     VERIFY --> RENDER
     VERIFY --> MODEL
     MODEL -->|"accept"| COMMIT["Atomic Commit + Inverse Patch"]
@@ -124,6 +128,8 @@ flowchart LR
 4. `WorldModelQuery`：向模型提供紧凑、可分页、可引用的场景和局部结构。
 5. `ActionProposalService`：给出多种可执行候选及影响分析，不替模型选择。
 6. `SpatialActionCompiler`：把空间目标编译为原子 Drawing Transaction Preview。
+7. `TaskRelevantView`：按当前任务临时组织语义对象、部件与上下文，不把任务期理解写成永久本体。
+8. `CounterfactualWorldBranch`：让模型在提交前查询候选事务造成的几何、拓扑和语义变化。
 
 ## 5. 二维世界模型
 
@@ -207,6 +213,7 @@ interface SemanticEntityHypothesis {
   interfaceRefs: string[];
   confidence: number;
   provenance: GroundingProvenance;
+  supersedes?: string[];
 }
 ```
 
@@ -219,7 +226,58 @@ interface SemanticEntityHypothesis {
 - 默认只在当前 EditEpisode 内存在；只有模型或用户明确提升时，才写成持久 Feature/association relation。
 - Grounding 不产生编辑授权，只产生 Evidence。
 
-### 5.4 Coordinate Frame Graph
+Grounding 使用追加式 Evidence 记录而不是反复复制完整对象：
+
+```ts
+interface GroundingEvidenceEvent {
+  id: string;
+  episodeId: string;
+  drawingId: string;
+  revision: string;
+  hypothesisId: string;
+  kind: 'proposed' | 'selected' | 'refined' | 'rejected' | 'superseded' | 'promoted';
+  evidenceRefs: string[];
+  supportDelta?: { added: string[]; removed: string[] };
+  reasonCode: string;
+  createdAt: string;
+}
+```
+
+当前 Grounding 状态由事件折叠得到，模型上下文只接收最新候选和相对上一轮的 Evidence Delta；完整历史留在审计和回归中。revision 改变后通过 lineage、SourceSpan 和局部重查生成新假设，并用 `supersedes` 关联旧假设，不能假设旧语义 ID 永久正确。
+
+### 5.4 Task-Relevant View：按任务形成语义粒度
+
+三维场景图研究表明，正确的语义粒度取决于当前任务，而不是固定对象分类。二维图纸中的“右臂”“外轮廓”“房间边界”“同轴孔组”都可能只在某次任务中成立。系统因此不预先要求 Drawing IR 永久保存完整部件本体，而是从 Semantic Grounding Graph、Arrangement 和当前目标按需投影 `TaskRelevantView`：
+
+```ts
+interface TaskRelevantView {
+  id: string;
+  episodeId: string;
+  drawingId: string;
+  revision: string;
+  goalDigest: string;
+  entities: SemanticEntityHypothesis[];
+  relations: Array<{
+    kind: 'part-of' | 'contains' | 'boundary-of' | 'interface-with' | 'context-for';
+    from: string;
+    to: string;
+    confidence: number;
+  }>;
+  abstraction: 'detail' | 'part' | 'object' | 'region';
+  evidenceDigest: string;
+}
+```
+
+规则：
+
+- `TaskRelevantView` 是查询投影，不是第四份可写图纸，也不新增永久 plane。
+- 同一 SourceSpan 可以在本任务中属于“手臂”，在另一任务中属于“角色外轮廓”；两者不冲突。
+- 模型可以 `expand` 查看更细 SourceSpan/HalfEdge，也可以 `contract` 为部件、对象或区域摘要。
+- 程序使用邻接、包含、接口、视觉相似度和任务相关性提出分组；模型负责选择、合并、排除或命名。
+- 任务结束后默认只保留 Evidence/审计。只有模型或用户明确要求复用，才把稳定关系提升为 Authoring Graph 的 Feature/association。
+- 系统不为每个点、像素或原子边永久保存稠密语义 embedding；需要时由 Grounding Provider 生成局部候选并缓存引用。
+
+### 5.5 Coordinate Frame Graph
 
 任何空间引用必须带 frame 或绑定 Observation：
 
@@ -297,6 +355,24 @@ Overlay 来源于后端 Evidence Event，不根据固定 UI 阶段伪造。模�
 7. 一张最相关 Observation。
 
 每个 Slice 包含 drawing、revision、frame、compiler version、input digest 和 continuation token。模型可以继续查询、扩大区域或沿路径读取，复杂图纸不随节点总数线性增加单轮上下文。
+
+Slice 还必须说明“系统对当前范围知道多少”，避免把尚未读取误认为空白：
+
+```ts
+interface WorldModelKnowledgeState {
+  state: 'resolved' | 'partial' | 'unknown' | 'stale';
+  scopeDigest: string;
+  unresolvedBoundaryRefs: string[];
+  continuationToken?: string;
+  reason?: string;
+}
+```
+
+- `resolved` 只表示当前查询范围内、当前 compiler 能处理的 Drawing IR 已检查完，不代表语义判断绝对正确。
+- `partial` 表示结果可立即使用，但还有边界、分页或相邻组件没有展开。
+- `unknown` 表示 Source 尚未矢量化、能力不支持或缺少必要证据；缺失对象不能解释为不存在。
+- `stale` 表示 revision、frame、compiler version 或 input digest 已变化，引用必须重定位。
+- 只有当未解析范围与当前目标、保持接口或预期影响相交时才继续展开，不能为了声明整图完整而阻塞局部编辑。
 
 ## 8. 空间动作与可供性
 
@@ -381,6 +457,31 @@ Compiler 使用可替换后端：
 
 Compiler 不直接 Commit，只产生 Preview 候选。
 
+### 8.4 Counterfactual World Branch
+
+Preview 不只保存 Commands 和一张候选图，而是以 `baseRevision + transaction digest` 标识一条只读反事实分支：
+
+```ts
+interface CounterfactualWorldBranch {
+  id: string;
+  baseRevision: string;
+  transactionDigest: string;
+  resultingDocumentHandle: string;
+  affectedScope: {
+    nodeIds: string[];
+    sourceSpanRefs: string[];
+    bounds: [number, number, number, number];
+  };
+  knowledge: WorldModelKnowledgeState;
+  arrangementDeltaHandle: string;
+  semanticSupportDeltaHandle: string;
+  diagnosticHandle: string;
+  observationHandle: string;
+}
+```
+
+该分支复用事务引擎已经产生的临时 DrawingDocument，只增量重建受 Patch 影响的空间索引、Arrangement 分片和语义支持映射。模型可以查询“新增/删除了哪些边”“哪些闭环或接口改变”“目标外发生了什么”，不需要为每个 Preview 全量编译整张世界模型。分支不会成为正式 revision；Commit 后由正式 Drawing IR 重新派生，放弃或替换 Preview 时可直接释放。
+
 ## 9. Agent Loop 与真实进度
 
 ```text
@@ -398,6 +499,42 @@ Compiler 不直接 Commit，只产生 Preview 候选。
 → 模型继续修正、请求用户决定或 Commit
 ```
 
+上面是能力闭环，不是每次必须逐项执行的固定 Workflow。Runtime 使用证据驱动的升级策略：
+
+### 9.1 快速路径
+
+满足以下条件时，把初始观察、局部 Slice、Semantic candidates 和 Action Proposals 并行构建后合并成一次紧凑决策输入：
+
+- 用户给出稳定引用、当前明确选择，或局部 Grounding 只有一个明显候选。
+- 目标与保持接口所在范围为 `resolved`，或未解析边界与本次影响范围不相交。
+- Compiler 存在 `ready` Proposal，且不需要解除用户约束。
+- 当前 revision 的相关缓存可复用。
+
+模型可以在同一次决策中选择语义候选和 Spatial Action Program；程序随即编译并渲染 Counterfactual Preview。明确数值操作且确定性 postconditions 足够时可以直接提交；视觉设计、重绘或语义目标仍需要一次 Preview 视觉验收。正常任务不为了建立完整语义层级、读取整图或证明全局正确而额外调用模型。
+
+### 9.2 按需升级
+
+只有下列证据实际阻碍当前动作时才升级：
+
+1. 候选歧义：增加 Pick/Coverage、局部放大或局部开放语义证据。
+2. `partial/unknown` 与目标或保持边界相交：展开相邻 Slice，不扫描无关区域。
+3. Action 不可行或需要放宽约束：换 Compiler Proposal，必要时请求 Human Decision。
+4. Counterfactual Preview 出现目标未达成、拓扑破坏或意外范围：只重算受影响分支并重新规划。
+5. 同一候选无改善：停止重复调用，改变证据、方法或明确失败。
+
+升级是单调增加相关证据，不是每次从 overview 重新开始。Runtime 将 Slice、Grounding、Arrangement、Observation 和 Preview 派生结果按 revision/input digest 缓存。
+
+### 9.3 调用与延迟原则
+
+- 不以“绝对完整”作为执行前置条件；只要求当前动作依赖的事实足够。
+- 不使用独立模型分别完成意图、Grounding、动作选择和格式修复；兼容时合并为一次结构化决策。
+- 坐标、拓扑、候选差异、影响范围、约束和 postconditions 由程序预计算，避免模型反复推导。
+- 只发送最新 TaskRelevantView、Evidence Delta 和一张最相关 Observation，不重放完整 GroundingHistory。
+- 确定性只读工具可以并行；模型调用、写事务和需要前序视觉结果的步骤保持串行。
+- 30 秒是可见反馈目标，不是强制终止。超过目标时发布真实状态、可暂停点和已完成证据。
+- 清晰局部任务在首个 Preview 前以一次模型决策为基线；语义/重绘任务通常只再增加一次 Preview 视觉验收。额外轮次记录 `escalationReason`、新增 Evidence refs 和诊断变化。
+- GroundingHistory、可重建的 Counterfactual 派生缓存和大体积审计媒体异步落盘，不占据首个 Preview 的同步关键路径；revision、事务、授权和必要 Evidence 索引仍同步持久化。
+
 UI 只显示最新真实事件，不显示固定流程文案。核心事件包括：
 
 ```text
@@ -414,7 +551,7 @@ transaction.committed
 human-decision.requested
 ```
 
-每个事件可以携带 Overlay、Observation 或 Preview handle。发送按钮在运行中显示暂停/停止；失败状态提供基于同一 Episode 的重试，不丢失 Evidence Ledger。
+每个事件可以携带 Overlay、Observation 或 Preview handle。发送按钮在运行中显示暂停/停止；失败状态提供基于同一 Episode 的重试，不丢失 Evidence Ledger。快速路径可以跳过没有实际发生的事件，UI 不伪造阶段完整性。
 
 ## 10. 复杂图纸的渐进世界模型
 
@@ -443,10 +580,12 @@ human-decision.requested
 - `GROUNDING_AMBIGUOUS`：返回有限候选、差异、局部放大和正/负提示选项。
 - `GROUNDING_UNSUPPORTED`：保留栅格语义对象，建议 redraw/vectorize，不伪造向量支持集。
 - `WORLD_MODEL_STALE`：revision 改变，失效相关 Slice 并按 Patch 增量重建。
+- `WORLD_MODEL_INCOMPLETE`：只有相关未解析边界阻碍当前动作时返回 continuation；无关 `partial/unknown` 不作为错误。
 - `ARRANGEMENT_INEXACT`：标记采样误差和受影响 SourceSpan；不能静默升级为精确事实。
 - `ACTION_INFEASIBLE`：返回失败后端、约束冲突和其他 Proposal。
 - `ACTION_AMBIGUOUS`：返回多个 Preview 或需要模型选择的自由参数。
 - `PREVIEW_INVALID`：只拒绝 Schema、数值、引用、revision 或权限非法的候选。
+- `COUNTERFACTUAL_STALE`：base revision、transaction digest 或相关派生缓存已改变，废弃该 Preview 分支并基于当前 revision 重编译。
 - `NO_PROGRESS`：依据 Grounding、Action Program 和 Preview digest 检测重复，不依据固定任务阶段。
 
 以上错误均不改变 Canonical Drawing IR。
@@ -457,11 +596,13 @@ human-decision.requested
 
 - 用户目标和追加反馈。
 - Observation、Pick Map 与 Coverage 查询摘要。
-- Semantic Entity candidates、选择、排除项和置信度。
+- Semantic Entity candidates、选择、排除项、置信度、Evidence Delta 与 supersedes 关系。
+- TaskRelevantView 的粒度、临时 part-of/contains 关系及提升决定。
+- WorldModelSlice 的 `resolved/partial/unknown/stale` 状态和继续读取理由。
 - Entity 到 SourceSpan/HalfEdge/Face 的支持映射。
 - Action Proposals 与模型选择。
 - Spatial Action Program、Compiler version 和输入 digest。
-- Preview Commands、lineage、结构诊断和视觉判断。
+- Preview Commands、lineage、Counterfactual World Branch、结构诊断和视觉判断。
 - 用户决定、Commit 和 inverse Patch。
 
 回归评分分离为：
@@ -472,6 +613,9 @@ human-decision.requested
 4. `Preservation Fidelity`：目标外像素、图元、关系和接口是否保持。
 5. `Goal Satisfaction`：Preview 是否达到用户意图。
 6. `Loop Convergence`：模型调用数、重试数、首个真实 Overlay 和最终 Preview 时间。
+7. `Evidence Efficiency`：进入模型的字节数、视觉数量、无关 Slice 展开量、确定性计算时间和每次升级带来的诊断改善。
+
+效率回归额外断言：清晰局部任务首个 Preview 前不超过一次模型决策；任何后续模型调用都有明确升级原因和非空 Evidence Delta；异步审计失败不能污染 Drawing IR，但必须产生可重试诊断。
 
 `test2` 抬手只作为第一个通用基准。回归集必须增加：局部图元区间、视觉重叠、闭合轮廓、工程约束、自由重绘、文字/尺寸和复杂图纸渐进读取。
 
@@ -526,12 +670,14 @@ MVP 不同时维护新旧两条生产主链。旧类型只可短期存在于迁�
 ### 阶段 A2：二维世界模型基础
 
 - 定义 Frame、Arrangement、SourceSpan、Semantic Entity 和 Slice 契约。
+- Slice 从第一版起携带 `resolved/partial/unknown/stale`，但只实现当前任务需要的局部完整度计算。
 - 为当前支持图元建立精确交点、原子边、来源历史和 incidence/connected 区分。
 - 保持现有 Drawing IR 与 UI 行为不变，先完成确定性回归。
 
 ### 阶段 B：无坐标 Grounding
 
 - 增加 Pick Map、CoverageIndex、候选 Overlay 和多候选 Grounding 工具。
+- 增加 Episode-scoped TaskRelevantView 与追加式 Grounding Evidence Event；不建立全图永久语义本体。
 - 模型从“画轮廓和锚点”迁移到“选择、合并、排除语义候选”。
 - Canvas 展示真实 Grounding Event。
 
@@ -540,11 +686,13 @@ MVP 不同时维护新旧两条生产主链。旧类型只可短期存在于迁�
 - 定义 Spatial Action Program 和 Action Proposal。
 - 把现有 transform/split/replacement/redraw 接到统一 Compiler。
 - 接入约束求解技术验证和 Raw Transaction escape hatch。
+- 复用临时 DrawingDocument 建立 Counterfactual World Branch，并优先完成受影响范围的增量拓扑/接口查询。
 
 ### 阶段 D：闭环与旧链删除
 
 - Runtime 使用 World Model → Grounding → Action → Preview → Verify 主链。
 - 完成 Grounding Ledger、分层评分和复杂图纸渐进 Slice。
+- 固化快速路径、按需升级条件和 Evidence Efficiency 回归，避免新能力变成固定调用链。
 - 删除旧 SemanticRegion/唯一授权链和相关提示词。
 
 每个阶段都必须产生可独立回归的工作软件，不等待全部阶段完成后才首次预览。
@@ -559,6 +707,9 @@ MVP 不同时维护新旧两条生产主链。旧类型只可短期存在于迁�
 - 工程图的精确编辑和自由图形的生成式重绘共享同一世界模型、事务和反馈 Loop。
 - 大图纸通过重叠 Slice 渐进读取，单轮上下文不随整图规模线性增长。
 - 新模型接入只替换 Grounding/Planning/Verification Provider，不重写 Drawing Core。
+- 明确、局部、可执行的任务走快速路径，不因完整世界建模或完整审计历史增加固定模型轮次。
+- `partial/unknown` 只在与目标或保持范围相交时触发继续读取，缺少无关区域的完整性不阻塞 Preview。
+- Preview 的 Arrangement、语义支持和诊断按受影响范围增量派生，不为每个候选全量重建整图。
 
 ## 18. 研究依据
 
@@ -571,6 +722,13 @@ MVP 不同时维护新旧两条生产主链。旧类型只可短期存在于迁�
 - [SayCan](https://say-can.github.io/)：语义有用性与环境可执行性分离。
 - [NLMap-SayCan](https://nlmap-saycan.github.io/)：开放词汇、可查询的场景表示。
 - [VoxPoser](https://voxposer.github.io/)：模型表达目标与约束，规划器计算真实执行轨迹。
+- [Hydra++](https://hydra-plusplus.github.io/)：同时保留可推理的场景层级与可操作的精确对象几何。
+- [Clio](https://arxiv.org/abs/2404.13696)：根据当前任务动态选择开放语义场景图的粒度和保留范围。
+- [SayPlan](https://sayplan.github.io/)：折叠全局图、按需展开任务相关子图，并用场景图模拟反馈迭代规划。
+- [ConceptGraphs](https://concept-graphs.github.io/)：由多视图基础模型证据构造紧凑、开放词汇的对象关系图。
+- [Khronos](https://github.com/MIT-SPARK/Khronos)：可随新观测修订的时空场景状态和证据历史。
+- [OctoMap](https://octomap.github.io/)：多分辨率空间中显式区分已占用、空闲与未知，避免把未观测误认为空白。
+- [LERF](https://www.lerf.io/)：连续多尺度开放语义场适合产生局部相关性证据，但不替代具有边界的可编辑结构。
 - [OpenUSD](https://openusd.org/release/intro.html)：authoring、派生/组合视图和稳定关系的分层思想。
 - [SVG 2 Coordinates](https://www.w3.org/TR/SVG/coords.html)：显式 viewport、user coordinate system 与变换。
 - [ROS tf2](https://docs.ros.org/en/jazzy/p/tf2/generated/doxygen/html/index.html)：带时间/状态的坐标框架树与确定性变换。

@@ -63,6 +63,8 @@ Harness 负责：
 
 模型看到的语义对象不等同于 Drawing IR 图元。一个语义对象可以只覆盖一个图元的局部参数区间，一个图元也可以同时支持多个语义对象。系统通过 Semantic Entity、SourceSpan、HalfEdge、Face 和显式接口建立多对多映射，不允许区域、Mask、包围盒或几何相交自动变成共同修改授权。
 
+语义对象的粒度取决于当前任务。同一组几何可以在一次任务中被理解为“手臂”，在另一次任务中被理解为“角色外轮廓”。这种 Task-Relevant View 默认只存在于当前 Episode，不要求用户预先整理对象，也不为追求完整本体而阻塞编辑。
+
 ### 3.3 少量硬门禁，其他问题反馈模型
 
 系统只硬阻止：
@@ -97,6 +99,8 @@ Harness 负责：
 - 当前图纸读取、预览、测量和拓扑分析不得为了取得最新 revision 反复加载全部 Commit 历史。
 - 模型上下文不发送要求模型手算的仿射公式；视觉选点以 Observation 绑定的归一化引用进入后端确定性解析。
 - 工具常驻上下文只提供紧凑能力目录，完整输入契约按模型选择懒加载，不在每轮发送全部联合 Schema。
+- 每个局部工作集显式标记 `resolved | partial | unknown | stale`；系统不得把尚未读取或尚未矢量化解释为没有图元。
+- 只有未解析部分与当前目标、保持接口或影响范围相交时才继续展开；无关区域不阻塞局部 Preview。
 
 ### 3.7 无坐标优先的视觉 Grounding
 
@@ -111,6 +115,8 @@ Harness 负责：
 - 模型选择候选或编写新的 Spatial Action Program；程序负责把目标关系、保持接口和方法降低为 Drawing Commands。
 - 动作候选不构成写权限。模型可以组合工具、调整目标，或直接提交合法的底层 Drawing Transaction。
 - 平面世界模型中的分析切分不会改写正式图纸；只有 Preview 真正编辑局部参数区间时，才物化必要切分。
+- Preview 同时形成一条只读反事实世界分支，模型可以查询候选事务导致的几何、拓扑、语义支持和诊断变化，再决定修正或提交。
+- 反事实分支只增量重算 Patch 影响范围，不为每个候选重新读取和编译整张图纸。
 
 ## 4. MVP 功能范围
 
@@ -160,6 +166,8 @@ Harness 负责：
 ```
 
 模型每轮选择一个显式工具或状态动作。工具返回 revision-bound receipt 和结构化证据。固定 Planner DAG 不再限制模型下一步必须调用什么。
+
+该流程是可用能力闭环，不是固定串行清单。明确引用、高置信局部候选、相关范围已读取且存在可执行动作时，系统并行准备局部证据并走快速路径：模型可在一次决策中完成候选选择和动作规划，随后直接生成 Preview。只有候选歧义、相关范围未解析、动作不可行或 Preview 出现问题时，才按需增加 Grounding、Slice 展开或模型轮次。
 
 ### 4.4 模型空间工具
 
@@ -241,7 +249,9 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 - 模型角色、配置摘要、Prompt hash 和原始结构化动作。
 - 工具版本、输入摘要、receipt、Observation、Pick/Coverage 查询和真实耗时。
 - Semantic Entity candidates、支持/排除映射、WorldModelSlice 和 Spatial Action Program。
+- Task-Relevant View、Slice 完整度、Grounding Evidence Delta 与被替代假设。
 - Action Proposals、Commands、lineage、before/preview/diff、诊断和提交理由。
+- Counterfactual World Branch 的受影响范围、Arrangement/语义支持增量和查询结果。
 - Human Decision 请求、响应和精确授权范围。
 - Commit、前后 revision、正向/逆向 Patch 和进度事件。
 
@@ -256,6 +266,10 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 - HTTP 受理与首个状态目标小于 1 秒；活跃任务最长约 25 秒产生进度或 heartbeat。
 - 30 秒是可见反馈体验目标，不是正确性的硬超时。
 - 上下文预算回归需要覆盖 100+ 节点和本地最大真实快照；单轮图像数必须 `<= 1`，精确节点数受工作集上限约束。
+- 普通明确任务不因审计、语义分层或整图完整性增加固定模型调用；坐标、拓扑、影响和约束由程序预计算后一次提供。
+- 首轮可并行的渲染、空间索引、候选生成和确定性诊断应并行执行；后续只传 Evidence Delta，不重复传输完整历史。
+- 清晰局部任务的首个 Preview 前目标为一次模型决策；语义/重绘任务通常再使用一次 Preview 视觉验收，额外轮次必须由歧义、相关未解析边界、不可行动作或 Preview 缺陷触发并审计。
+- GroundingHistory、Counterfactual 派生缓存和审计媒体异步落盘，不得位于首个 Preview 的同步关键路径；事务、revision 和必要 Evidence 元数据仍同步保证一致性。
 
 ## 6. MVP 验收标准
 
@@ -281,6 +295,10 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 - 重叠结构不会因 Pick、Mask、包围盒或几何 incidence 自动共同修改。
 - 分析切分不改变正式 Drawing IR；只有 Preview 需要时才物化局部切分。
 - 模型可选择 Action Proposal，也可组合工具或直接 Preview Raw Transaction。
+- 模型能按当前任务将多个 SourceSpan 临时组成部件，并在需要时展开或折叠语义粒度，不要求永久 Feature。
+- `partial/unknown` 不会被误认为空白，也不会在与当前任务无关时拖慢局部修改。
+- Preview 可查询受影响拓扑和语义支持的增量结果，不需要提交后才发现结构变化。
+- 回归能证明清晰局部任务在首个 Preview 前不超过一次模型决策，且每个额外轮次都有非空升级原因和新增 Evidence Delta。
 - 拓扑或视觉工具结果不会成为不可扩大的硬选区。
 - 自动标注不会改变模型编辑策略。
 - 模型可以删除错误拟合的图元并重建完整语义部件。
