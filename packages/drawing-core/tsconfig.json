@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "tsBuildInfoFile": "../../node_modules/.tmp/drawing-core.tsbuildinfo"
+  },
+  "include": ["src"]
+}

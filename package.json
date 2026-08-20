@@ -1,8 +1,9 @@
 {
-  "name": "trae-project",
+  "name": "vectorai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "license": "Apache-2.0",
   "scripts": {
     "client:dev": "vite",
     "build": "tsc -b && vite build",
