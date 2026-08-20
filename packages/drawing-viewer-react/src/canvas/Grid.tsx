@@ -3,6 +3,8 @@
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 import { useId } from 'react';
 
+import { gridPatternMetrics } from './grid-pattern';
+
 export function CadGrid({
   viewport,
   showGrid,
@@ -13,9 +15,7 @@ export function CadGrid({
   showAxes: boolean;
 }) {
   const id = useId().replace(/:/g, '');
-  const minorWorld = gridWorldStep(viewport.scale);
-  const minor = minorWorld * viewport.scale;
-  const major = minor * 5;
+  const metrics = gridPatternMetrics(viewport);
   const minorId = `vai-grid-minor-${id}`;
   const majorId = `vai-grid-major-${id}`;
   return (
@@ -23,15 +23,31 @@ export function CadGrid({
       {showGrid ? (
         <>
           <defs>
-            <pattern id={minorId} width={minor} height={minor} patternUnits="userSpaceOnUse" x={modulo(viewport.x, minor)} y={modulo(viewport.y, minor)}>
-              <path d={`M ${minor} 0 L 0 0 0 ${minor}`} className="vai-grid__minor" fill="none" />
+            <pattern
+              id={minorId}
+              data-grid-pattern="minor"
+              width={metrics.minorSize}
+              height={metrics.minorSize}
+              patternUnits="userSpaceOnUse"
+              x={metrics.minorX}
+              y={metrics.minorY}
+            >
+              <path d={`M ${metrics.minorSize} 0 H 0 V ${metrics.minorSize}`} className="vai-grid__minor" fill="none" />
             </pattern>
-            <pattern id={majorId} width={major} height={major} patternUnits="userSpaceOnUse" x={modulo(viewport.x, major)} y={modulo(viewport.y, major)}>
-              <rect width={major} height={major} fill={`url(#${minorId})`} />
-              <path d={`M ${major} 0 L 0 0 0 ${major}`} className="vai-grid__major" fill="none" />
+            <pattern
+              id={majorId}
+              data-grid-pattern="major"
+              width={metrics.majorSize}
+              height={metrics.majorSize}
+              patternUnits="userSpaceOnUse"
+              x={metrics.majorX}
+              y={metrics.majorY}
+            >
+              <path d={`M ${metrics.majorSize} 0 H 0 V ${metrics.majorSize}`} className="vai-grid__major" fill="none" />
             </pattern>
           </defs>
-          <rect width="100%" height="100%" fill={`url(#${majorId})`} />
+          <rect data-grid-layer="minor" width="100%" height="100%" fill={`url(#${minorId})`} />
+          <rect data-grid-layer="major" width="100%" height="100%" fill={`url(#${majorId})`} />
         </>
       ) : null}
       {showAxes ? (
@@ -44,17 +60,4 @@ export function CadGrid({
       ) : null}
     </g>
   );
-}
-
-function gridWorldStep(scale: number): number {
-  const targetWorld = 24 / Math.max(scale, 0.001);
-  const exponent = Math.floor(Math.log10(targetWorld));
-  const magnitude = 10 ** exponent;
-  const normalized = targetWorld / magnitude;
-  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-  return step * magnitude;
-}
-
-function modulo(value: number, divisor: number): number {
-  return ((value % divisor) + divisor) % divisor;
 }
