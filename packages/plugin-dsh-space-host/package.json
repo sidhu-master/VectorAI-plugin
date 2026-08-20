@@ -1,0 +1,27 @@
+{
+  "name": "@vectorai/plugin-dsh-space-host",
+  "version": "0.1.0-alpha.0",
+  "description": "DeepSeek Harness host adapter for VectorAI two-dimensional spaces",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-attachment": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.8",
+    "@vectorai/drawing-core": "workspace:*",
+    "@vectorai/plugin-space-contracts": "workspace:*"
+  }
+}
