@@ -105,6 +105,26 @@ describe('InMemoryDrawingRepository', () => {
       provisional: true,
     });
     expect(drawings.getProjection('session-a')?.ref).toEqual(result.ref);
+    expect(drawings.getSnapshot('session-a')).toMatchObject({
+      version: 1,
+      ref: result.ref,
+      source: {
+        id: 'source',
+        mediaType: 'image/png',
+        bytes: 4,
+        width: 120,
+        height: 80,
+        name: 'source.png',
+      },
+      capabilities: {
+        edit: true,
+        delete: true,
+        annotations: true,
+        sourceUnderlay: true,
+      },
+      provisional: true,
+    });
+    expect(drawings.getSnapshot('session-a')?.source).not.toHaveProperty('dataUrl');
     expect(drawings.summarize('session-a')).toEqual({
       ref: result.ref,
       unit: 'mm',
@@ -112,6 +132,77 @@ describe('InMemoryDrawingRepository', () => {
       geometryByType: { line: 4 },
       provisional: true,
     });
+  });
+
+  it('commits workspace commands atomically and advances the revision', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+
+    const result = drawings.commit('session-a', {
+      expectedRevision: 1,
+      commands: [{
+        type: 'node.update',
+        id: 'top',
+        changes: { visible: false },
+        expected: { visible: true },
+      }],
+    });
+
+    expect(result.status).toBe('committed');
+    if (result.status !== 'committed') throw new Error('expected committed result');
+    expect(result.snapshot.ref.revision).toBe(2);
+    expect(result.snapshot.document.geometry.find((node) => node.id === 'top')?.visible).toBe(false);
+    expect(drawings.getSnapshot('session-a')?.ref.revision).toBe(2);
+  });
+
+  it('returns the authoritative snapshot for stale revisions without mutating', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+
+    const result = drawings.commit('session-a', {
+      expectedRevision: 0,
+      commands: [{ type: 'node.delete', id: 'top' }],
+    });
+
+    expect(result).toMatchObject({
+      status: 'conflict',
+      snapshot: { ref: { revision: 1 } },
+    });
+    expect(drawings.getSnapshot('session-a')?.document.geometry).toHaveLength(4);
+  });
+
+  it('rejects failed preconditions and leaves the document unchanged', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+
+    const result = drawings.commit('session-a', {
+      expectedRevision: 1,
+      commands: [{
+        type: 'node.update',
+        id: 'top',
+        changes: { visible: false },
+        expected: { visible: false },
+      }],
+    });
+
+    expect(result).toEqual({
+      status: 'rejected',
+      message: 'Precondition failed for node top property visible',
+      code: 'PRECONDITION_FAILED',
+    });
+    expect(drawings.getSnapshot('session-a')?.document.geometry[0]?.visible).toBe(true);
   });
 
   it('reuses an import of the same attachment without vectorizing twice', async () => {
@@ -171,9 +262,11 @@ describe('InMemoryDrawingRepository', () => {
     });
 
     expect(drawings.getProjection('session-b')).toBeNull();
+    expect(drawings.getSnapshot('session-b')).toBeNull();
     drawings.disposeSession('session-a');
 
     expect(drawings.getPending('session-a')).toBeNull();
     expect(drawings.getProjection('session-a')).toBeNull();
+    expect(drawings.getSnapshot('session-a')).toBeNull();
   });
 });

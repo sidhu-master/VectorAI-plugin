@@ -6,7 +6,12 @@ import type {
   DrawingCanvasProjection,
   DrawingImportResult,
   DrawingSummary,
+  DrawingWorkspaceCommand,
+  DrawingWorkspaceCommitRequest,
+  DrawingWorkspaceCommitResult,
+  DrawingWorkspaceSnapshot,
 } from '@vectorai/plugin-space-contracts';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { ImageVectorizer } from './vectorizer';
 
@@ -16,6 +21,9 @@ interface DrawingEntry {
   attachmentId: string;
   document: DrawingDocument;
   projection: DrawingCanvasProjection;
+  revision: number;
+  source: NonNullable<DrawingWorkspaceSnapshot['source']>;
+  provisional: boolean;
 }
 
 export class InMemoryDrawingRepository {
@@ -80,6 +88,16 @@ export class InMemoryDrawingRepository {
       attachmentId,
       document: structuredClone(vectorized.document),
       projection,
+      revision: 1,
+      source: {
+        id: attachmentId,
+        mediaType: attachment.mediaType,
+        bytes: attachment.bytes,
+        width: attachment.width,
+        height: attachment.height,
+        ...(attachment.name === undefined ? {} : { name: attachment.name }),
+      },
+      provisional: vectorized.provisional,
     });
     return {
       status: 'imported',
@@ -91,6 +109,40 @@ export class InMemoryDrawingRepository {
   getProjection(sessionId: string): DrawingCanvasProjection | null {
     const entry = this.#drawings.get(sessionId);
     return entry === undefined ? null : structuredClone(entry.projection);
+  }
+
+  getSnapshot(sessionId: string): DrawingWorkspaceSnapshot | null {
+    const entry = this.#drawings.get(sessionId);
+    if (entry === undefined) return null;
+    return snapshotOf(entry);
+  }
+
+  commit(
+    sessionId: string,
+    request: DrawingWorkspaceCommitRequest,
+  ): DrawingWorkspaceCommitResult {
+    const entry = this.#drawings.get(sessionId);
+    if (entry === undefined) {
+      return { status: 'rejected', message: 'No drawing is loaded', code: 'DRAWING_REQUIRED' };
+    }
+    if (request.expectedRevision !== entry.revision) {
+      return {
+        status: 'conflict',
+        message: `Expected revision ${request.expectedRevision}, current revision is ${entry.revision}`,
+        snapshot: snapshotOf(entry),
+      };
+    }
+
+    const document = structuredClone(entry.document);
+    for (const command of request.commands) {
+      const rejection = applyCommand(document, command);
+      if (rejection !== null) return rejection;
+    }
+    document.metadata.updatedAt = Date.now();
+    entry.document = document;
+    entry.revision += 1;
+    entry.projection.ref.revision = entry.revision;
+    return { status: 'committed', snapshot: snapshotOf(entry) };
   }
 
   summarize(sessionId: string): DrawingSummary | null {
@@ -113,4 +165,103 @@ export class InMemoryDrawingRepository {
     this.#pending.delete(sessionId);
     this.#drawings.delete(sessionId);
   }
+}
+
+function snapshotOf(entry: DrawingEntry): DrawingWorkspaceSnapshot {
+  return structuredClone({
+    version: 1,
+    ref: { drawingId: entry.projection.ref.drawingId, revision: entry.revision },
+    document: entry.document,
+    source: entry.source,
+    capabilities: {
+      edit: true,
+      delete: true,
+      annotations: true,
+      sourceUnderlay: true,
+    },
+    provisional: entry.provisional,
+  });
+}
+
+function applyCommand(
+  document: DrawingDocument,
+  command: DrawingWorkspaceCommand,
+): Extract<DrawingWorkspaceCommitResult, { status: 'rejected' }> | null {
+  if (command.type === 'node.delete') return deleteNode(document, command.id);
+  const node = findNode(document, command.id);
+  if (node === undefined) {
+    return { status: 'rejected', message: `Node ${command.id} was not found`, code: 'NODE_NOT_FOUND' };
+  }
+
+  if (command.type === 'annotation.move-text') {
+    const key = node.type === 'text' ? 'position' : node.type === 'dimension' ? 'textPosition' : null;
+    if (key === null) {
+      return { status: 'rejected', message: `Node ${command.id} has no movable text`, code: 'INVALID_COMMAND' };
+    }
+    if (!isDeepStrictEqual(node[key], command.expectedPosition)) {
+      return {
+        status: 'rejected',
+        message: `Precondition failed for node ${command.id} property ${key}`,
+        code: 'PRECONDITION_FAILED',
+      };
+    }
+    node[key] = structuredClone(command.position) as never;
+    return null;
+  }
+
+  const mutable = node as unknown as Record<string, unknown>;
+  for (const [key, expected] of Object.entries(command.expected)) {
+    if (!isDeepStrictEqual(mutable[key], expected)) {
+      return {
+        status: 'rejected',
+        message: `Precondition failed for node ${command.id} property ${key}`,
+        code: 'PRECONDITION_FAILED',
+      };
+    }
+  }
+  for (const [key, value] of Object.entries(command.changes)) {
+    if (key === 'id' || key === 'type' || key === 'plane' || !(key in mutable)) {
+      return {
+        status: 'rejected',
+        message: `Property ${key} cannot be updated on node ${command.id}`,
+        code: 'INVALID_COMMAND',
+      };
+    }
+    mutable[key] = structuredClone(value);
+  }
+  return null;
+}
+
+function findNode(document: DrawingDocument, id: string) {
+  return [
+    ...document.geometry,
+    ...document.annotations,
+    ...document.relations,
+    ...document.features,
+  ].find((node) => node.id === id);
+}
+
+function deleteNode(
+  document: DrawingDocument,
+  id: string,
+): Extract<DrawingWorkspaceCommitResult, { status: 'rejected' }> | null {
+  const node = findNode(document, id);
+  if (node === undefined) {
+    return { status: 'rejected', message: `Node ${id} was not found`, code: 'NODE_NOT_FOUND' };
+  }
+  document.geometry = document.geometry.filter((candidate) => candidate.id !== id);
+  document.annotations = document.annotations.filter((candidate) => candidate.id !== id);
+  document.relations = document.relations.filter((relation) => {
+    if (relation.id === id) return false;
+    if (relation.type === 'topology' || relation.type === 'semantic') return !relation.nodeIds.includes(id);
+    if (relation.type === 'constraint') return !relation.geometryIds.includes(id as never);
+    return relation.annotationId !== id && !relation.geometryIds.includes(id as never);
+  });
+  document.features = document.features.filter((feature) => (
+    feature.id !== id
+    && !feature.geometryIds.includes(id as never)
+    && !feature.annotationIds.includes(id as never)
+    && !feature.relationIds.includes(id as never)
+  ));
+  return null;
 }

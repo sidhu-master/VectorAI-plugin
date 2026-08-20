@@ -4,15 +4,21 @@ import { describe, expect, it } from 'vitest';
 import { TYPERT } from './typert';
 
 describe('TYPERT host contribution', () => {
-  it('publishes the drawing projection route with strict codecs', () => {
-    const invocation = TYPERT.invocations[0];
+  it('publishes session-scoped snapshot and commit routes with strict codecs', () => {
+    const [snapshot, commit] = TYPERT.invocations;
 
-    expect(invocation.id).toBe(
-      '@vectorai/plugin-dsh-space-host#drawingSpace/getProjection',
+    expect(snapshot?.id).toBe(
+      '@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot',
     );
-    expect(invocation.parameters[0]?.codec.mode).toBe('strict');
-    expect(invocation.result.mode).toBe('strict');
-    expect(invocation.result.schema.parse(null)).toBeNull();
-    expect(() => invocation.parameters[0]?.codec.schema.parse('')).toThrow();
+    expect(snapshot?.invocation).toMatchObject({ kind: 'context', context: 'agent' });
+    expect(snapshot?.scope).toEqual({ context: 'agent', wire: 'agentId' });
+    expect(snapshot?.parameters[0]).toMatchObject({ source: 'lookup', lookup: 'agent' });
+    expect(snapshot?.result.mode).toBe('strict');
+    expect(snapshot?.result.schema.parse(null)).toBeNull();
+    expect(() => snapshot?.parameters[0]?.codec.schema.parse('')).toThrow();
+
+    expect(commit?.id).toBe('@vectorai/plugin-dsh-space-host#drawingSpace/commit');
+    expect(commit?.parameters[1]?.codec.mode).toBe('strict');
+    expect(commit?.result.mode).toBe('strict');
   });
 });

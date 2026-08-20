@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Context } from '@deepseek-ai/cordis';
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { DrawingCanvasProjection } from '@vectorai/plugin-space-contracts';
+import type { Agent } from '@deepseek-ai/dsh-agent';
+import { RemoteScope, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
+import type {
+  DrawingWorkspaceCommitRequest,
+  DrawingWorkspaceCommitResult,
+  DrawingWorkspaceSnapshot,
+} from '@vectorai/plugin-space-contracts';
 
 import { createPreStepIntake } from './intake';
 import { InMemoryDrawingRepository } from './repository';
@@ -33,9 +38,14 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     });
   }
 
-  @Remote
-  getProjection(sessionId: string): DrawingCanvasProjection | null {
-    return this.drawings.getProjection(sessionId);
+  @RemoteScope('agent')
+  getSnapshot(agent: Agent): DrawingWorkspaceSnapshot | null {
+    return this.drawings.getSnapshot(String(agent.id));
+  }
+
+  @RemoteScope('agent')
+  commit(agent: Agent, request: DrawingWorkspaceCommitRequest): DrawingWorkspaceCommitResult {
+    return this.drawings.commit(String(agent.id), request);
   }
 }
 
