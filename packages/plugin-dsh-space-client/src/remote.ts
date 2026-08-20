@@ -56,7 +56,7 @@ export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
     service: 'drawingSpace',
     namespace: 'drawingSpace',
     method: 'getSnapshot',
-    invocation: { kind: 'context', context: 'agent', wire: 'agentId', codec: agentCodec },
+    invocation: { kind: 'direct' },
     scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter],
     result: {
@@ -69,7 +69,7 @@ export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
     service: 'drawingSpace',
     namespace: 'drawingSpace',
     method: 'commit',
-    invocation: { kind: 'context', context: 'agent', wire: 'agentId', codec: agentCodec },
+    invocation: { kind: 'direct' },
     scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter, {
       name: 'request',

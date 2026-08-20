@@ -91,19 +91,6 @@ function appendPartitionSupplements(goal: string, docs: PartitionSupplementDoc[]
   return parts.filter(Boolean).join('\n\n');
 }
 
-/** 合并分区补充文档：同名覆盖，其余追加 */
-function mergePartitionSupplements(
-  current: PartitionSupplementDoc[],
-  incoming: PartitionSupplementDoc[],
-): PartitionSupplementDoc[] {
-  const merged = [...current];
-  for (const doc of incoming) {
-    const index = merged.findIndex((item) => item.name === doc.name);
-    if (index >= 0) merged[index] = doc;
-    else merged.push(doc);
-  }
-  return merged;
-}
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';

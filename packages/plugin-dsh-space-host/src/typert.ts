@@ -30,7 +30,7 @@ export const TYPERT = {
     service: 'drawingSpace',
     namespace: 'drawingSpace',
     method: 'getSnapshot',
-    invocation: { kind: 'context', context: 'agent', wire: 'agentId', codec: agentCodec },
+    invocation: { kind: 'direct' },
     scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter],
     result: {
@@ -48,7 +48,7 @@ export const TYPERT = {
     service: 'drawingSpace',
     namespace: 'drawingSpace',
     method: 'commit',
-    invocation: { kind: 'context', context: 'agent', wire: 'agentId', codec: agentCodec },
+    invocation: { kind: 'direct' },
     scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter, {
       name: 'request',

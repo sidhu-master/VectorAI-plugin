@@ -3,7 +3,6 @@
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import {
   createDrawingWorkspaceStore,
-  type DrawingWorkspaceCommitRequest,
   type DrawingWorkspaceCommitResult,
   type DrawingWorkspacePort,
   type DrawingWorkspaceSnapshot,
@@ -44,7 +43,7 @@ class TestPort implements DrawingWorkspacePort {
     return this.value;
   }
 
-  async commit(_request: DrawingWorkspaceCommitRequest): Promise<DrawingWorkspaceCommitResult> {
+  async commit(): Promise<DrawingWorkspaceCommitResult> {
     if (this.value === null) return { status: 'rejected', message: 'no drawing' };
     return { status: 'committed', snapshot: this.value };
   }

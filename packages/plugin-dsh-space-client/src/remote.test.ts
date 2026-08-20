@@ -13,6 +13,7 @@ describe('DRAWING_SPACE_REMOTE', () => {
 
     expect(snapshot?.parameters[0]?.codec.mode).toBe('strict');
     expect(snapshot?.result.mode).toBe('strict');
+    expect(snapshot?.invocation).toEqual({ kind: 'direct' });
     expect(snapshot?.scope).toEqual({ context: 'agent', wire: 'agentId' });
     expect(commit?.parameters[1]?.codec.mode).toBe('strict');
     expect(commit?.result.mode).toBe('strict');

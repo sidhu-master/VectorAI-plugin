@@ -8,7 +8,6 @@ import {
 } from '@vectorai/drawing-core';
 import {
   createDrawingWorkspaceStore,
-  type DrawingWorkspaceCommitRequest,
   type DrawingWorkspaceCommitResult,
   type DrawingWorkspacePort,
   type DrawingWorkspaceSnapshot,
@@ -56,7 +55,7 @@ class CanvasPort implements DrawingWorkspacePort {
     return this.value;
   }
 
-  async commit(_request: DrawingWorkspaceCommitRequest): Promise<DrawingWorkspaceCommitResult> {
+  async commit(): Promise<DrawingWorkspaceCommitResult> {
     return { status: 'committed', snapshot: this.value };
   }
 

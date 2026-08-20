@@ -2,7 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { RemoteScope, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
+import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type {
   DrawingWorkspaceCommitRequest,
   DrawingWorkspaceCommitResult,
@@ -38,12 +38,12 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     });
   }
 
-  @RemoteScope('agent')
+  @Remote
   getSnapshot(agent: Agent): DrawingWorkspaceSnapshot | null {
     return this.drawings.getSnapshot(String(agent.id));
   }
 
-  @RemoteScope('agent')
+  @Remote
   commit(agent: Agent, request: DrawingWorkspaceCommitRequest): DrawingWorkspaceCommitResult {
     return this.drawings.commit(String(agent.id), request);
   }

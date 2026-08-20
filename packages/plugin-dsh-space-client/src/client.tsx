@@ -21,6 +21,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { createDshDrawingWorkspacePort } from './dsh-workspace-port';
 import { DRAWING_SPACE_REMOTE } from './remote';
 
+// DSH discovers entry metadata and lifecycle exports from this client module.
+// eslint-disable-next-line react-refresh/only-export-components
 export const inject = ['slots', 'remote', 'conversation'];
 
 interface DrawingConversationViewProps extends ConvViewProps {
@@ -54,6 +56,7 @@ export function DrawingConversationView({
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export async function apply(ctx: Context) {
   const remote = ctx.get('remote');
   const slots = ctx.get('slots');

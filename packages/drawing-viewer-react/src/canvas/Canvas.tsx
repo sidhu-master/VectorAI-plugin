@@ -20,7 +20,6 @@ import {
   nodeBounds,
   nodesInWorldBox,
   screenToWorld,
-  worldToScreen,
   zoomViewportAt,
   type Bounds2D,
 } from './geometry';

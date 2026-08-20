@@ -32,6 +32,8 @@ export function DrawingWorkspaceProvider({
   );
 }
 
+// Provider modules intentionally co-locate their typed Context hook.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useDrawingWorkspaceStore(): DrawingWorkspaceStore {
   const store = useContext(DrawingWorkspaceStoreContext);
   if (store === null) {

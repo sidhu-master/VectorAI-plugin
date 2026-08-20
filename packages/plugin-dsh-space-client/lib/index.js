@@ -1,5 +1,5 @@
 const inject = [];
-function apply(_ctx) {
+function apply() {
 }
 export {
   apply,

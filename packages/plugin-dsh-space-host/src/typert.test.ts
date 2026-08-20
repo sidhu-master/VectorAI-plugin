@@ -10,7 +10,7 @@ describe('TYPERT host contribution', () => {
     expect(snapshot?.id).toBe(
       '@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot',
     );
-    expect(snapshot?.invocation).toMatchObject({ kind: 'context', context: 'agent' });
+    expect(snapshot?.invocation).toEqual({ kind: 'direct' });
     expect(snapshot?.scope).toEqual({ context: 'agent', wire: 'agentId' });
     expect(snapshot?.parameters[0]).toMatchObject({ source: 'lookup', lookup: 'agent' });
     expect(snapshot?.result.mode).toBe('strict');
