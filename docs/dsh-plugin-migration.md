@@ -1,6 +1,6 @@
 # VectorAI → DeepSeek Harness 插件迁移方案
 
-> 状态：迁移架构基线（待实现）
+> 状态：共享 Drawing Workspace 与 DSH 第一层插件已实现；本地计算导入器和第二层工程标注待后续切片
 >
 > 日期：2026-08-20
 >
@@ -78,11 +78,12 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 
 ### 3.3 实施进度
 
-- Phase 0（进行中）：Apache-2.0、NOTICE 与 pnpm workspace 已建立。
-- Phase 1（进行中）：Drawing Document 叶子模块已迁入 `@vectorai/drawing-core`；旧路径为兼容转发层。
-- 新增 package dependency boundary，禁止生产代码依赖 DSH、React、Express、Node runtime 或旧应用层。
-- 当前验证：171 个测试文件、1058 个测试通过；TypeScript 检查通过；lint 仍为基线已有的 2 个警告和 1 个错误。
-- 下一提取单元：Command → Patch → Validation → Transaction。
+- Apache-2.0、NOTICE、pnpm workspace 与迁移分支已经建立。
+- Canonical Drawing Document 已迁入 `@vectorai/drawing-core`，共享无头状态位于 `@vectorai/drawing-workspace`。
+- 网站与 DSH 已切换到 `@vectorai/drawing-viewer-react`：坐标轴、网格、拖放视口、选择、对象属性和标注都走同一实现。
+- DSH Host 使用按 Agent/session 隔离的完整快照和 expected-revision 原子提交；Client 通过 durable attachment ref 加载原图，不传输 base64 快照。
+- DSH 第一层插件不启动 VectorAI Express 或云端服务；网站旧 Agent/Express 仍作为迁移兼容 Adapter 保留。
+- 第二层 Engineering Annotation 保持独立插件边界，下一切片实现本地识别、测量、布局和自动标注工具。
 
 ## 4. 目标架构
 

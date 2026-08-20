@@ -14,9 +14,17 @@ import { WorkspaceStatus } from './panels/WorkspaceStatus';
 import { WorkspaceToolbar } from './panels/WorkspaceToolbar';
 
 export interface PreviewOverlayContext {
-  readonly snapshot: DrawingWorkspaceSnapshot;
-  readonly viewport: DrawingWorkspaceViewport;
+  readonly snapshot: DeepReadonly<DrawingWorkspaceSnapshot>;
+  readonly viewport: DeepReadonly<DrawingWorkspaceViewport>;
 }
+
+export type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer Item)[]
+    ? readonly DeepReadonly<Item>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+      : T;
 
 export interface PreviewOverlayContribution {
   readonly id: string;

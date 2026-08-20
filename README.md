@@ -2,6 +2,8 @@
 
 VectorAI 是 AI 原生二维空间协议引擎。AI 通过可验证的 Drawing IR 增量事务理解、维护和修改真实二维图纸，而不是直接生成不可编辑的图片。
 
+当前迁移分支已提供不依赖 VectorAI 云端或 Express 的 DeepSeek Harness 2D Space 插件，以及网站和 DSH 共用的本地 Drawing Workspace/Viewer。DSH 与网站使用不同 Adapter 和各自独立的本地仓库，不做隐式跨端同步。架构说明见 [`docs/architecture/drawing-workspace.md`](docs/architecture/drawing-workspace.md)；第二层自动工程标注边界见 [`docs/architecture/engineering-annotation-plugin.md`](docs/architecture/engineering-annotation-plugin.md)。
+
 ## 本地开发
 
 ```bash
@@ -11,6 +13,7 @@ pnpm dev
 ```
 
 前端默认运行在 Vite 开发端口，`/api` 代理到本地 Express 服务 `http://localhost:3001`。
+这是迁移期间保留的网站兼容路径；新的 DSH 插件运行路径不启动或调用该服务。
 `setup:vectorization` 会在 `.local/vectorai/cv-venv/` 创建隔离的 Python 环境并安装中心线矢量化依赖；服务启动后复用一个常驻 Python 进程，不会为每条线重复启动解释器。若该环境不可用，服务仍能启动，但模型调用 `vectorize_image` 时会收到能力不可用的工具结果并自行换方案。
 
 ## 环境变量

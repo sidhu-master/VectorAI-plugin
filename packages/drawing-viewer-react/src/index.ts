@@ -14,6 +14,7 @@ export {
 } from './canvas/geometry';
 export type { Bounds2D, DrawingRenderable } from './canvas/geometry';
 export type {
+  DeepReadonly,
   DrawingWorkspaceProps,
   PreviewOverlayContext,
   PreviewOverlayContribution,
