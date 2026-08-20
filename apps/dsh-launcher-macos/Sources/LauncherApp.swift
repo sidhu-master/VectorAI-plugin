@@ -86,6 +86,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var startupDeadline = Date.distantPast
     private var healthRequestInFlight = false
     private var isShuttingDown = false
+    private var titlebarMouseMonitor: Any?
 
     private lazy var logURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
@@ -107,6 +108,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        removeTitlebarMouseMonitor()
         shutdownServer()
     }
 
@@ -139,6 +141,32 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         window.contentView = webView
         window.delegate = self
         window.isReleasedWhenClosed = false
+        installTitlebarMouseMonitor()
+    }
+
+    private func installTitlebarMouseMonitor() {
+        titlebarMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
+            [weak self] event in
+            guard
+                let self,
+                event.window === self.window,
+                WindowChromeInteraction.shouldZoom(
+                    clickCount: event.clickCount,
+                    locationY: Double(event.locationInWindow.y),
+                    contentLayoutMaxY: Double(self.window.contentLayoutRect.maxY)
+                )
+            else {
+                return event
+            }
+            self.window.zoom(nil)
+            return nil
+        }
+    }
+
+    private func removeTitlebarMouseMonitor() {
+        guard let titlebarMouseMonitor else { return }
+        NSEvent.removeMonitor(titlebarMouseMonitor)
+        self.titlebarMouseMonitor = nil
     }
 
     private func startServer() {

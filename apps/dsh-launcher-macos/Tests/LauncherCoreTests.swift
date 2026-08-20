@@ -135,6 +135,33 @@ private func testWorkspacePatchCommandUsesResolvedExecutables() throws {
     )
 }
 
+private func testTitlebarDoubleClickRequestsWindowZoomOnlyInChrome() throws {
+    try expect(
+        WindowChromeInteraction.shouldZoom(
+            clickCount: 2,
+            locationY: 800,
+            contentLayoutMaxY: 788
+        ),
+        "a titlebar double-click must request native window zoom"
+    )
+    try expect(
+        !WindowChromeInteraction.shouldZoom(
+            clickCount: 1,
+            locationY: 800,
+            contentLayoutMaxY: 788
+        ),
+        "a single titlebar click must remain available to the web view"
+    )
+    try expect(
+        !WindowChromeInteraction.shouldZoom(
+            clickCount: 2,
+            locationY: 500,
+            contentLayoutMaxY: 788
+        ),
+        "a canvas double-click must remain available to fit the drawing"
+    )
+}
+
 private func testPortProbeRejectsAnOccupiedLoopbackPort() throws {
     let descriptor = socket(AF_INET, SOCK_STREAM, 0)
     guard descriptor >= 0 else {
@@ -305,6 +332,7 @@ private struct LauncherCoreTestRunner {
             ("DSH command pins version and disables browser", testDSHCommandPinsVersionAndDisablesBrowser),
             ("cached DSH resolver selects only pinned executable", testCachedDSHResolverSelectsOnlyPinnedExecutable),
             ("workspace patch command uses resolved executables", testWorkspacePatchCommandUsesResolvedExecutables),
+            ("titlebar double-click zooms only in native chrome", testTitlebarDoubleClickRequestsWindowZoomOnlyInChrome),
             ("port probe rejects occupied loopback port", testPortProbeRejectsAnOccupiedLoopbackPort),
             ("port probe allows immediate restart after close", testPortProbeAllowsImmediateRestartAfterServerCloses),
             ("managed process stops its group and leaves outsiders alive", testManagedProcessStopsItsWholeGroupAndLeavesOutsidersAlive),

@@ -51,6 +51,16 @@ struct WorkspacePatchCommand {
     }
 }
 
+enum WindowChromeInteraction {
+    static func shouldZoom(
+        clickCount: Int,
+        locationY: Double,
+        contentLayoutMaxY: Double
+    ) -> Bool {
+        clickCount == 2 && locationY >= contentLayoutMaxY
+    }
+}
+
 enum CachedDSHResolver {
     private static let pinnedVersion = "0.1.0-rc.8"
 

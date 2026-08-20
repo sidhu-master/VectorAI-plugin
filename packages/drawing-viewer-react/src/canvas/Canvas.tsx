@@ -25,7 +25,12 @@ import {
 } from './geometry';
 
 type DragState =
-  | { kind: 'pan'; start: Vec2; viewport: DrawingWorkspaceViewport }
+  | {
+    kind: 'pan';
+    start: Vec2;
+    viewport: DrawingWorkspaceViewport;
+    clearSelectionOnClick: boolean;
+  }
   | { kind: 'box'; start: Vec2; current: Vec2; additive: boolean }
   | { kind: 'annotation'; id: string; startWorld: Vec2; currentWorld: Vec2 };
 
@@ -101,7 +106,12 @@ export function Canvas() {
       && !spacePressed.current;
     if (event.button === 1 || (event.button === 0 && !boxSelect)) {
       event.preventDefault();
-      dragRef.current = { kind: 'pan', start: point, viewport };
+      dragRef.current = {
+        kind: 'pan',
+        start: point,
+        viewport,
+        clearSelectionOnClick: event.button === 0 && isBlankCanvasTarget(event),
+      };
       return;
     }
     if (!boxSelect) return;
@@ -137,6 +147,12 @@ export function Canvas() {
     const drag = dragRef.current;
     dragRef.current = null;
     if (drag === null) return;
+    if (drag.kind === 'pan') {
+      const point = eventScreenPoint(event);
+      const distance = Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]);
+      if (drag.clearSelectionOnClick && distance < 3) setSelection([]);
+      return;
+    }
     if (drag.kind === 'box') {
       const point = eventScreenPoint(event);
       const distance = Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]);
@@ -341,4 +357,10 @@ function normalizeBounds(first: Vec2, second: Vec2): Bounds2D {
     maxX: Math.max(first[0], second[0]),
     maxY: Math.max(first[1], second[1]),
   };
+}
+
+function isBlankCanvasTarget(event: MouseEvent<SVGSVGElement>): boolean {
+  if (event.target === event.currentTarget) return true;
+  const target = event.target as EventTarget & { dataset?: { canvasBackground?: string } };
+  return target.dataset?.canvasBackground === 'true';
 }

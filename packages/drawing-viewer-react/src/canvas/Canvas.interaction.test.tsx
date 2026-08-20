@@ -134,6 +134,29 @@ describe('shared Canvas interaction', () => {
     act(() => renderer.unmount());
   });
 
+  it('clears all selected entities when the blank canvas is clicked', async () => {
+    const { store, renderer } = await renderCanvas();
+    const line = renderer.root.findByProps({ 'data-entity-id': 'line-1' });
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const backgroundTarget = { dataset: { canvasBackground: 'true' } };
+
+    act(() => line.props.onClick({ stopPropagation, metaKey: false, ctrlKey: false }));
+    act(() => svg.props.onMouseDown?.({
+      currentTarget: svgTarget,
+      target: backgroundTarget,
+      clientX: 700,
+      clientY: 500,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      preventDefault,
+    }));
+    act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 700, clientY: 500 }));
+
+    expect(store.getState().selectedIds).toEqual([]);
+    act(() => renderer.unmount());
+  });
+
   it('box-selects with Ctrl+left drag and clears selection with Escape', async () => {
     const { store, renderer } = await renderCanvas();
     const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
