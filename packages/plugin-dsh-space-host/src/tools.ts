@@ -38,7 +38,11 @@ export function createDrawingImportTool(
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Drawing ${value.ref.drawingId} revision ${value.ref.revision} ${value.status}. The current geometry is provisional.`,
+        text: `Drawing ${value.ref.drawingId} revision ${value.ref.revision} ${value.status}. ${
+          value.provisional
+            ? 'The current geometry is provisional.'
+            : 'Local vectorization completed; geometry is ready for inspection and editing.'
+        }`,
       }],
     },
     async execute(_args, exec) {

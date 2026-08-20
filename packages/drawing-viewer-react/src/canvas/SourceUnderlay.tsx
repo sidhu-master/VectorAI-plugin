@@ -1,17 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { DrawingDocument } from '@vectorai/drawing-core';
 import type { DrawingSourceRef, DrawingSourceResource } from '@vectorai/drawing-workspace';
 
 export function SourceUnderlay({
   source,
   resource,
+  document,
 }: {
   source: DrawingSourceRef;
   resource: DrawingSourceResource;
+  document: DrawingDocument;
 }) {
+  const sourceFrame = document.coordinateFrames.find((frame) => (
+    frame.kind === 'source' && frame.id === `frame_source_${safeId(source.id)}`
+  )) ?? document.coordinateFrames.find((frame) => frame.kind === 'source');
+  const transform = sourceFrame?.transform;
   return (
-    <g data-source-underlay={source.id} pointerEvents="none" opacity={0.72}>
-      <g transform={`translate(0 ${source.height}) scale(1 -1)`}>
+    <g data-source-underlay={source.id} pointerEvents="none" opacity={0.28}>
+      <g transform={transform === undefined
+        ? `translate(0 ${source.height}) scale(1 -1)`
+        : `matrix(${transform.join(' ')})`}>
         <image
           href={resource.url}
           x={0}
@@ -23,4 +32,8 @@ export function SourceUnderlay({
       </g>
     </g>
   );
+}
+
+function safeId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '_');
 }

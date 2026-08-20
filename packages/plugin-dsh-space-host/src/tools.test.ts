@@ -7,11 +7,12 @@ import type {
 } from '@deepseek-ai/dsh-attachment';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import type { DrawingImportResult } from '@vectorai/plugin-space-contracts';
+import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import { InMemoryDrawingRepository } from './repository';
 import { createDrawingImportTool, createDrawingSummarizeTool } from './tools';
-import { ProvisionalFootprintVectorizer } from './vectorizer';
+import type { ImageVectorizer } from './vectorizer';
 
 function attachment(id = 'source'): ImageAttachmentRef {
   return {
@@ -40,9 +41,40 @@ function exec(sessionId?: string, signal = new AbortController().signal): ToolRu
 
 function repository() {
   return new InMemoryDrawingRepository({
-    vectorizer: new ProvisionalFootprintVectorizer(),
+    vectorizer: fixtureVectorizer(),
     drawingId: () => 'drawing-source',
   });
+}
+
+function fixtureVectorizer(): ImageVectorizer {
+  return {
+    async vectorize({ drawingId, attachment: source }) {
+      const document = createEmptyDrawing({ idFactory: { next: () => drawingId }, now: () => 1 });
+      const lines: Array<[
+        string,
+        readonly [number, number],
+        readonly [number, number],
+      ]> = [
+        ['top', [0, 0], [source.width, 0]],
+        ['right', [source.width, 0], [source.width, source.height]],
+        ['bottom', [source.width, source.height], [0, source.height]],
+        ['left', [0, source.height], [0, 0]],
+      ];
+      document.geometry = lines.map(([id, start, end]) => ({
+        id: id as typeof document.geometry[number]['id'],
+        type: 'line' as const,
+        start,
+        end,
+        visible: true,
+        quality: { status: 'candidate' as const, confidence: 0.25, evidenceRefs: [] },
+      }));
+      return {
+        document,
+        bounds: { minX: 0, minY: 0, maxX: source.width, maxY: source.height },
+        provisional: true,
+      };
+    },
+  };
 }
 
 describe('drawing tools', () => {

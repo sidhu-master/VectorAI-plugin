@@ -39,6 +39,12 @@ function workspaceSnapshot(): DrawingWorkspaceSnapshot {
     type: 'topology', plane: 'topology', kind: 'connected',
     nodeIds: ['line-1', 'circle-1'], visible: true, quality,
   } as DrawingRelation];
+  document.coordinateFrames.push({
+    id: 'frame_source_source-1',
+    kind: 'source',
+    parentId: 'frame_document',
+    transform: [5, 0, 0, -5, 0, 400],
+  });
   return {
     version: 1,
     ref: { drawingId: 'drawing-1', revision: 4 },
@@ -85,6 +91,7 @@ describe('shared Canvas rendering', () => {
     expect(markup).toContain('data-axis="x"');
     expect(markup).toContain('data-axis="y"');
     expect(markup).toContain('href="blob:source-1"');
+    expect(markup).toContain('transform="matrix(5 0 0 -5 0 400)"');
     expect(markup).toContain('data-entity-id="line-1"');
     expect(markup).toContain('data-entity-id="circle-1"');
     expect(markup).toContain('data-entity-id="text-1"');

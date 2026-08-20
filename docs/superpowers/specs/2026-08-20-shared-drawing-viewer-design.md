@@ -300,19 +300,19 @@ area.
 
 ## 11. Vectorization Boundary
 
-Viewer parity and vectorization quality are separate concerns.
+Image import must produce actual local geometry before the Host publishes a
+ready snapshot. A four-edge source footprint is not vectorization and is not
+an acceptable completion state.
 
-This migration makes every imported Drawing—provisional or fully vectorized—
-use the complete shared workspace. The existing Slice 1 image vectorizer still
-produces four candidate boundary lines until the local WASM extraction slice
-replaces it. The Viewer will therefore expose those four entities and their
-properties immediately, but it cannot invent the website's current
-server-derived line extraction.
+The DSH Host reuses the existing deterministic clean-line Python/OpenCV worker
+without Express or a VectorAI cloud call. It promotes fitted strokes to line,
+circle, arc and ellipse nodes, retains polyline fallbacks, maps source pixels
+into the 500 mm document frame, and records the matching source-image frame so
+the underlay and selectable geometry remain coincident.
 
-Migrating image/DXF/PDF processing to local Web/WASM adapters remains a
-separate implementation plan. The `ImageVectorizer` port and complete
-`DrawingDocument` snapshot ensure that work does not require another Viewer
-rewrite.
+The worker script ships inside the Host build. `ImageVectorizer` remains the
+port for future WASM, DXF and PDF adapters; replacing the compute backend must
+not require another Viewer rewrite.
 
 ## 12. Testing Strategy
 
@@ -347,7 +347,8 @@ property values, and post-commit revision behavior.
 ### 12.4 Integration tests
 
 - existing website Viewer behavior remains green after switching components;
-- DSH import opens the shared workspace with source and candidate entities;
+- DSH import opens the shared workspace with the source and locally extracted
+  analytic/polyline entities;
 - DSH property edit increments the Host revision and survives tab remount;
 - a tool-side commit refreshes the open Viewer;
 - unloading the Engineering Annotation plugin leaves committed annotations
@@ -391,7 +392,8 @@ long-lived duplicate Viewer implementation is retained.
 
 - live synchronization between a standalone website window and a DSH session;
 - automatic engineering annotation generation in the first layer;
-- completing WASM image/DXF/PDF vectorization in this Viewer migration;
+- adding WASM, DXF and PDF compute backends beyond the shipped local image
+  vectorizer;
 - preserving the website's separate AI chat inside the DSH drawing tab;
 - optimistic mutation of authoritative Drawing state;
 - introducing a VectorAI HTTP server or background cloud service.

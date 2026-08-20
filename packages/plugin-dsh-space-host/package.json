@@ -21,6 +21,7 @@
   "files": [
     "lib/index.js",
     "lib/typert.js",
+    "lib/vectorai_vectorizer.py",
     "src/**/*.ts"
   ],
   "scripts": {

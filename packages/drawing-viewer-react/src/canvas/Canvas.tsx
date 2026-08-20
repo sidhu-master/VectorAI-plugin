@@ -205,7 +205,11 @@ export function Canvas() {
         />
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale} ${-viewport.scale})`}>
           {display.sourceUnderlay && snapshot.source !== undefined && sourceResource !== null ? (
-            <SourceUnderlay source={snapshot.source} resource={sourceResource} />
+            <SourceUnderlay
+              source={snapshot.source}
+              resource={sourceResource}
+              document={snapshot.document}
+            />
           ) : null}
           {display.relations ? <RelationLayer document={snapshot.document} viewport={viewport} /> : null}
           {entities.map((node) => (

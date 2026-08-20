@@ -109,6 +109,9 @@ describe('DrawingWorkspaceProvider', () => {
     expect(emptyMarkup).toContain('data-workspace-state="empty"');
     expect(emptyMarkup).toContain('还没有图纸');
     expect(readyMarkup).toContain('data-workspace-state="ready"');
+    expect(readyMarkup).toContain('data-layout="website-parity"');
+    expect(readyMarkup).toContain('data-panel="inspector"');
+    expect(readyMarkup).toMatch(/data-panel="inspector"[\s\S]*vai-object-list[\s\S]*vai-inspector[\s\S]*data-canvas-root="true"/);
     expect(readyMarkup).toContain('ready-drawing');
     expect(errorMarkup).toContain('data-workspace-state="error"');
     expect(errorMarkup).toContain('offline');

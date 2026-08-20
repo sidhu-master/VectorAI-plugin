@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -27,6 +27,11 @@ await Promise.all([
     external: deepseekExternal,
   }),
 ]);
+
+await copyFile(
+  join(root, 'python/vectorai_vectorizer.py'),
+  join(hostDir, 'lib/vectorai_vectorizer.py'),
+);
 
 await buildLibrary({
   entry: join(hostDir, 'src/typert.ts'),

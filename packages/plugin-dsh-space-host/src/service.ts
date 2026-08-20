@@ -12,7 +12,7 @@ import type {
 import { createPreStepIntake } from './intake';
 import { InMemoryDrawingRepository } from './repository';
 import { createDrawingImportTool, createDrawingSummarizeTool } from './tools';
-import { ProvisionalFootprintVectorizer } from './vectorizer';
+import { LocalCleanLineVectorizer } from './vectorizer';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -28,7 +28,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, 'drawingSpace');
     this.drawings = new InMemoryDrawingRepository({
-      vectorizer: new ProvisionalFootprintVectorizer(),
+      vectorizer: new LocalCleanLineVectorizer(),
     });
     ctx.tools.register(createDrawingImportTool(this.drawings, ctx.attachments));
     ctx.tools.register(createDrawingSummarizeTool(this.drawings));

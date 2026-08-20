@@ -73,25 +73,36 @@ export function DrawingWorkspace({
   }
 
   return (
-    <section className="vai-workspace" aria-label="图纸工作区" data-workspace-state="ready">
+    <section
+      className="vai-workspace"
+      aria-label="图纸工作区"
+      data-workspace-state="ready"
+      data-layout="website-parity"
+    >
       <header className="vai-workspace__header">
-        <strong className="vai-workspace__drawing-id">{snapshot.ref.drawingId}</strong>
-        <span>Revision {snapshot.ref.revision}</span>
-        {snapshot.provisional ? <span className="vai-workspace__badge">候选几何</span> : null}
+        <div className="vai-workspace__identity">
+          <strong className="vai-workspace__drawing-id">{snapshot.ref.drawingId}</strong>
+          <span>R{snapshot.ref.revision}</span>
+          {snapshot.provisional ? <span className="vai-workspace__badge">候选几何</span> : null}
+        </div>
+        <WorkspaceToolbar />
+        <div className="vai-workspace__panel-toggles">
+          <button type="button" aria-pressed={objectsOpen} onClick={() => setObjectsOpen(!objectsOpen)}>对象</button>
+          <button type="button" aria-pressed={inspectorOpen} onClick={() => setInspectorOpen(!inspectorOpen)}>属性</button>
+        </div>
         {busy ? <span className="vai-workspace__busy">正在保存…</span> : null}
       </header>
       {error === null ? null : (
         <div className="vai-workspace__error" role="alert">{error.message}</div>
       )}
-      <div className="vai-workspace__controls">
-        <button type="button" aria-pressed={objectsOpen} onClick={() => setObjectsOpen(!objectsOpen)}>对象</button>
-        <WorkspaceToolbar />
-        <button type="button" aria-pressed={inspectorOpen} onClick={() => setInspectorOpen(!inspectorOpen)}>属性</button>
-      </div>
       <div className="vai-workspace__body" data-workspace-region="viewer">
-        {objectsOpen ? <ObjectList /> : null}
+        {objectsOpen || inspectorOpen ? (
+          <aside className="vai-inspector-stack" data-panel="inspector" aria-label="对象与属性">
+            {objectsOpen ? <ObjectList /> : null}
+            {inspectorOpen ? <PropertyInspector /> : null}
+          </aside>
+        ) : null}
         <Canvas />
-        {inspectorOpen ? <PropertyInspector /> : null}
         {previewContributions.map((contribution) => (
           <div key={contribution.id} data-preview-overlay={contribution.id}>
             {contribution.render({ snapshot, viewport })}

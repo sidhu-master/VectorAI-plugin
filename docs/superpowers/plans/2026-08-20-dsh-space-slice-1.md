@@ -10,6 +10,13 @@
 
 **Specs:** `docs/dsh-plugin-migration.md`, `docs/superpowers/specs/2026-08-20-dsh-drawing-interaction-design.md`
 
+> **Superseded implementation note (2026-08-20):** The provisional four-edge
+> footprint described in this historical Slice 1 plan has been removed from
+> the shipped Host. `LocalCleanLineVectorizer` now runs the packaged local
+> Python/OpenCV worker and returns analytic/polyline geometry plus topology and
+> compound-path features. The footprint remains described below only as the
+> original seam-proving step, not as current product behavior.
+
 ## Global Constraints
 
 - Work only on `codex/dsh-plugin-migration`.
