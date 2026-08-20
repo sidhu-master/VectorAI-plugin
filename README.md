@@ -16,6 +16,25 @@ pnpm dev
 这是迁移期间保留的网站兼容路径；新的 DSH 插件运行路径不启动或调用该服务。
 `setup:vectorization` 会在 `.local/vectorai/cv-venv/` 创建隔离的 Python 环境并安装中心线矢量化依赖；服务启动后复用一个常驻 Python 进程，不会为每条线重复启动解释器。若该环境不可用，服务仍能启动，但模型调用 `vectorize_image` 时会收到能力不可用的工具结果并自行换方案。
 
+### DSH rc.8 内联画布
+
+DSH `0.1.0-rc.8` 尚未公开可组合“会话工作区 + 原生聊天”的布局插槽。本地 DSH.app 启动前会运行受版本保护的兼容补丁：保留左侧 DSH 会话栏，在中间渲染 VectorAI 画布，并在右侧保留原生聊天；桌面宽度可拖动分隔条，窄窗口自动上下排列。
+
+```bash
+pnpm patch:dsh-workspace -- --dsh-bin "$(command -v dsh)"
+```
+
+补丁仅接受 rc.8 的已知代码锚点，首次修改前会生成 `client.js.vectorai-workspace.bak`，重复执行不会重复写入；版本或锚点不匹配时会中止。VectorAI Client 注册的是会话级 `conversation.workspace`，不再创建独立“图纸”标签。此兼容代码只存在于 DSH Adapter/启动路径，后续 DSH 提供正式布局 API 后可以直接移除。
+
+本机原生 DSH.app 使用独立的 WKWebView 非持久网页数据仓库，避免服务重启后继续复用旧插件模块；启动 DSH 前会运行同一个版本保护补丁器。窗口关闭时原生启动器终止其创建的整个 DSH 进程组，不会留下终端黑窗或孤立的 3080 服务。
+
+原生启动器源码、进程管理测试和可复现构建位于 [`apps/dsh-launcher-macos`](apps/dsh-launcher-macos)：
+
+```bash
+pnpm test:dsh-launcher
+pnpm build:dsh-launcher
+```
+
 ## 环境变量
 
 在未提交到 Git 的 `.env` 中按需要配置：

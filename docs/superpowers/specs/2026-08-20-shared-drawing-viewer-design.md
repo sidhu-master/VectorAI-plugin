@@ -263,10 +263,12 @@ Geometry rendering, hit testing, selection, pan, grid, and annotation-label
 utilities move with their natural owner. Agent-specific perception overlays
 remain outside the base Viewer and later adapt to `DrawingPreviewLayerHost`.
 
-The DSH `conversation.view` renders `DrawingWorkspace` in the available tab
-area. It does not create another chat column. On narrow widths the object list
-and inspector collapse into drawers; the Canvas always retains the primary
-area.
+The DSH client registers `DrawingWorkspace` in the session-scoped
+`conversation.workspace` slot. The conversation shell composes the workspace
+beside the native DSH chat, with a draggable desktop separator and a stacked
+narrow layout. The existing DSH navigation/sidebar remains owned by DSH. On
+narrow widths the object list and inspector collapse into drawers; the Canvas
+always retains the primary area.
 
 ## 9. Editing Semantics
 
@@ -379,7 +381,7 @@ long-lived duplicate Viewer implementation is retained.
   status information.
 - Supported property edits, visibility, delete, and annotation-text movement
   increment the authoritative Host revision.
-- Remounting the DSH tab reloads the edited state.
+- Remounting the DSH session workspace reloads the edited state.
 - Selection and viewport do not alter the Drawing revision.
 - The same fixture produces equal entity ids, bounds, and property values in
   website and DSH adapter tests.
@@ -394,6 +396,6 @@ long-lived duplicate Viewer implementation is retained.
 - automatic engineering annotation generation in the first layer;
 - adding WASM, DXF and PDF compute backends beyond the shipped local image
   vectorizer;
-- preserving the website's separate AI chat inside the DSH drawing tab;
+- replacing or duplicating DSH's native chat inside the shared Viewer;
 - optimistic mutation of authoritative Drawing state;
 - introducing a VectorAI HTTP server or background cloud service.

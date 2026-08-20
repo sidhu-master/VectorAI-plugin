@@ -82,6 +82,7 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 - Canonical Drawing Document 已迁入 `@vectorai/drawing-core`，共享无头状态位于 `@vectorai/drawing-workspace`。
 - 网站与 DSH 已切换到 `@vectorai/drawing-viewer-react`：坐标轴、网格、拖放视口、选择、对象属性和标注都走同一实现。
 - DSH Host 使用按 Agent/session 隔离的完整快照和 expected-revision 原子提交；Client 通过 durable attachment ref 加载原图，不传输 base64 快照。
+- DSH Client 已从独立 `conversation.view` 标签迁移到会话级 `conversation.workspace`：左侧保留 DSH 会话栏，中间显示共享画布，右侧保留 DSH 原生聊天，桌面端分隔宽度可调，窄窗口自动上下排列。
 - 新增宿主无关的 `@vectorai/drawing-spatial`，第一层已公开 revision-bound `world-slice`、node 和 neighbors 查询。
 - 第一层已实现 Host 权威的会话态 Preview：`node.create/update/delete` 等命令先进入候选，画布显示 created/updated/deleted diff，Commit 才原子增加一个正式 revision，Discard 不修改正式图纸。
 - `drawing_query`、`drawing_preview_transaction`、`drawing_commit_preview`、`drawing_discard_preview` 与 Typert Remote 使用同一套 strict codec；第二层可以只依赖公开 contracts 创建标注和关系。
@@ -158,7 +159,7 @@ VectorAI/
 │   ├── engineering-annotation/      # 识别、测量、布局、覆盖率、标注计划
 │   ├── plugin-space-contracts/      # Layer 1 对外稳定契约
 │   ├── plugin-dsh-space-host/       # DSH Host/Cordis 服务与工具
-│   ├── plugin-dsh-space-client/     # DSH conversation.view 画布
+│   ├── plugin-dsh-space-client/     # DSH conversation.workspace 内联画布
 │   ├── plugin-dsh-annotation/       # Layer 2 DSH 工具与提示说明
 │   ├── adapter-web/                 # 浏览器文件、存储、Worker、下载
 │   └── test-contracts/              # 跨 Adapter 的共享契约测试
@@ -243,7 +244,7 @@ DSH Host 插件是 Cordis 组合中的进程级能力，负责：
 
 ### 6.4 DSH Client 插件
 
-DSH rc.8 的浏览器端允许插件向 session-scoped `conversation.view` slot 注册新视图。画布插件应增加一个“图纸”标签，而不是替换整个会话 UI。
+DSH rc.8 提供 session-scoped `conversation.view`，但该插槽只能创建独立标签，不能把插件内容与原生聊天组合在同一会话页。当前兼容 Adapter 以受版本保护、可备份、可重复执行的本地补丁声明 `conversation.workspace`：画布占中间工作区，原生聊天位于右侧，两者共用当前 session。补丁仅接受 rc.8 的已知源码锚点，DSH 版本或结构变化时直接拒绝，而不会猜测性修改宿主。
 
 Client 插件负责：
 
@@ -253,7 +254,7 @@ Client 插件负责：
 - 对纯浏览器计算可直接调度 Web Worker/OffscreenCanvas；需要持久化或宿主权限的操作交给 Host。
 - 会话切换时绑定相应 DrawingRef；没有图纸时显示空画布导入状态。
 
-DSH 当前仍是 release candidate。所有 slot、Remote 和 Cordis 细节只能存在于 `plugin-dsh-space-host/client`，不能出现在业务内核。
+DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布局兼容补丁细节只能存在于 Adapter/启动路径，不能进入业务内核。DSH 提供正式可组合布局 API 后删除该补丁，`conversation.workspace` 注册组件无需改变共享 Viewer。
 
 ### 6.5 第一层模型工具边界
 
@@ -488,9 +489,9 @@ ProjectManifest
 工作：
 
 - 创建 DSH Host、Client 和 contracts 三个包。
-- 在 `conversation.view` 注册图纸画布。
+- 在会话级 `conversation.workspace` 注册图纸画布，并与原生聊天同页组合。
 - 实现一个来源导入、`drawing_summarize/query`、一个 Preview/Commit 回路。
-- 通过 DSH profile 安装本地 workspace 包，不修改 DSH 本体。
+- 通过 DSH profile 安装本地 workspace 包；rc.8 临时由受版本保护的启动补丁增加组合布局插槽。
 
 退出条件：用户可在 DSH 会话中导入一张图、看到画布、让模型查询 bounds、预览一个事务并提交；关闭 DSH 后数据可恢复。
 
@@ -601,7 +602,7 @@ ProjectManifest
 1. 建立 workspace 与 `drawing-core`、`plugin-space-contracts`。
 2. 从 `src/drawing` 提取最小 Document/Transaction/SceneCompiler。
 3. 创建 DSH Host 插件，提供内存 Repository 和 `drawing_summarize/query/preview/commit`。
-4. 创建 DSH Client 插件，在 `conversation.view` 显示一个共享 Canvas。
+4. 创建 DSH Client 插件，在 `conversation.workspace` 显示一个与原生聊天同页的共享 Canvas。
 5. 导入一个仓库内合法 DXF fixture。
 6. 让 DSH Agent 查询整图 bounds，把一条确定性标注线作为 Preview 显示，然后 Commit。
 7. 同一核心通过静态 Web Adapter 跑一个 smoke page。
@@ -614,10 +615,10 @@ ProjectManifest
 
 - `@vectorai/plugin-space-contracts`：宿主无关的 JSON contract 与共享 TypeRT 严格 schema；
 - `@vectorai/plugin-dsh-space-host`：图片接入、会话内存 Repository、`drawing_import`、`drawing_summarize` 和 Remote Host；
-- `@vectorai/plugin-dsh-space-client`：`conversation.view` 的“图纸”画布与 Remote Client；
+- `@vectorai/plugin-dsh-space-client`：`conversation.workspace` 内联共享画布与 Remote Client；
 - `@vectorai/plugin-dsh-space`：把 Host/Client 装入 DSH profile 的 bundle patch。
 
-真实 DSH `0.1.0-rc.8` mount smoke 已验证 `vectorai-space-host`、`vectorai-space-client`、严格 TypeRT Remote 路由和“图纸”空画布。此切片不启动 VectorAI Express/HTTP 服务，也不调用 VectorAI 云端。
+真实 DSH `0.1.0-rc.8` mount smoke 已验证 `vectorai-space-host`、`vectorai-space-client`、严格 TypeRT Remote 路由和共享画布。当前布局由 `scripts/dsh-inline-workspace-patch.mjs` 增加会话级工作区插槽，首次写入自动备份，未知版本/结构拒绝修改。此切片不启动 VectorAI Express/HTTP 服务，也不调用 VectorAI 云端。
 
 当前边界与限制：
 
@@ -644,4 +645,4 @@ ProjectManifest
 
 已确认根许可证使用 Apache-2.0，第一层和第二层先采用同仓库 pnpm workspace 多包发布；第二层不是第一层示例，而是只依赖第一层公开契约的独立可安装插件。
 
-下一步由用户在正式 DSH 窗口完成一次“发送图片 → `drawing_import` → 图纸预览 → `drawing_summarize` → 重启恢复”验收，再推进第二层自动标注与 DXF/PDF/WASM adapter。
+当前正式 DSH.app 已完成“本地矢量图纸恢复 → 内联图纸预览 → 原生聊天同页 → 分隔条调整”验收。下一步继续补齐第一层导入入口与剩余网站能力，再推进第二层自动标注与 DXF/PDF/WASM adapter。
