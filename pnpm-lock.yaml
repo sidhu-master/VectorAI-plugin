@@ -123,6 +123,15 @@ importers:
 
   packages/drawing-core: {}
 
+  packages/drawing-workspace:
+    dependencies:
+      '@vectorai/drawing-core':
+        specifier: workspace:*
+        version: link:../drawing-core
+      zustand:
+        specifier: ^5.0.3
+        version: 5.0.14(@types/react@18.3.31)(react@18.3.1)
+
   packages/plugin-dsh-space:
     dependencies:
       '@vectorai/plugin-dsh-space-client':
