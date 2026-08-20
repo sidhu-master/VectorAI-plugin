@@ -74,6 +74,14 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 
 这些不是同一种迁移问题。算法要提取，宿主能力要适配，自建 Agent 能力要删除，Node 专属实现要换成本地 Web/WASM 实现。
 
+### 3.3 实施进度
+
+- Phase 0（进行中）：Apache-2.0、NOTICE 与 pnpm workspace 已建立。
+- Phase 1（进行中）：Drawing Document 叶子模块已迁入 `@vectorai/drawing-core`；旧路径为兼容转发层。
+- 新增 package dependency boundary，禁止生产代码依赖 DSH、React、Express、Node runtime 或旧应用层。
+- 当前验证：171 个测试文件、1058 个测试通过；TypeScript 检查通过；lint 仍为基线已有的 2 个警告和 1 个错误。
+- 下一提取单元：Command → Patch → Validation → Transaction。
+
 ## 4. 目标架构
 
 ```mermaid

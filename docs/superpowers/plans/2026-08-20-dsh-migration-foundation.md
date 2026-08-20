@@ -35,7 +35,7 @@
 - Consumes: the root pnpm installation and existing `tsconfig.json`.
 - Produces: workspace package name `@vectorai/drawing-core` and SPDX license identifier `Apache-2.0`.
 
-- [ ] **Step 1: Add the license files**
+- [x] **Step 1: Add the license files**
 
 Copy the unmodified official Apache License 2.0 text from `https://www.apache.org/licenses/LICENSE-2.0.txt` into root `LICENSE`. Add this root `NOTICE`:
 
@@ -46,7 +46,7 @@ Copyright 2026 VectorAI contributors
 This product includes software developed by the VectorAI contributors.
 ```
 
-- [ ] **Step 2: Add workspace discovery**
+- [x] **Step 2: Add workspace discovery**
 
 Create `pnpm-workspace.yaml`:
 
@@ -62,7 +62,7 @@ Change the root package name from `trae-project` to `vectorai`, keep it private,
 "license": "Apache-2.0"
 ```
 
-- [ ] **Step 3: Add the drawing-core package metadata**
+- [x] **Step 3: Add the drawing-core package metadata**
 
 Create `packages/drawing-core/package.json`:
 
@@ -99,7 +99,7 @@ Create `packages/drawing-core/tsconfig.json`:
 }
 ```
 
-- [ ] **Step 4: Verify metadata**
+- [x] **Step 4: Verify metadata**
 
 Run:
 
@@ -110,7 +110,7 @@ pnpm --filter @vectorai/drawing-core exec tsc -p tsconfig.json --noEmit
 
 Expected: pnpm lists both `vectorai` and `@vectorai/drawing-core`. The package check may report missing `src` until Task 2; package discovery itself must succeed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add LICENSE NOTICE pnpm-workspace.yaml package.json packages/drawing-core/package.json packages/drawing-core/tsconfig.json
@@ -135,7 +135,7 @@ git commit -m "chore: establish Apache workspace foundation"
 - Consumes: existing `DrawingDocument`, branded IDs, `IdFactory`, `randomIdFactory`, and `createEmptyDrawing` behavior.
 - Produces: `@vectorai/drawing-core` root exports and `@vectorai/drawing-core/document` exports for the document leaf module.
 
-- [ ] **Step 1: Write the failing behavior test**
+- [x] **Step 1: Write the failing behavior test**
 
 Create `packages/drawing-core/src/document/document.test.ts`:
 
@@ -172,7 +172,7 @@ describe('@vectorai/drawing-core document', () => {
 });
 ```
 
-- [ ] **Step 2: Write the failing package boundary test**
+- [x] **Step 2: Write the failing package boundary test**
 
 Create `packages/drawing-core/src/dependency-boundary.test.ts`. It must recursively read non-test `.ts` files under its own `src`, assert that `document/create.ts` and `document/types.ts` exist, parse static and dynamic import specifiers, and expect no specifier matching:
 
@@ -188,7 +188,7 @@ const forbidden = [
 
 The failure before extraction must be an assertion that the two required production files are absent, not a syntax/configuration error.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run:
 
@@ -198,7 +198,7 @@ pnpm vitest run packages/drawing-core/src/document/document.test.ts packages/dra
 
 Expected: FAIL because `./create` and the required package production files do not exist.
 
-- [ ] **Step 4: Move the canonical source and add exports**
+- [x] **Step 4: Move the canonical source and add exports**
 
 Move the two existing source files unchanged into the package. Add `packages/drawing-core/src/document/index.ts`:
 
@@ -227,7 +227,7 @@ Recreate `src/drawing/document/types.ts` as:
 export type * from '../../../packages/drawing-core/src/document/types';
 ```
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run:
 
@@ -238,7 +238,7 @@ pnpm --filter @vectorai/drawing-core check
 
 Expected: all three test files pass and the package type-check exits 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/drawing-core/src src/drawing/document
@@ -257,7 +257,7 @@ git commit -m "refactor: extract drawing document core package"
 - Consumes: the new package exports and legacy compatibility wrappers.
 - Produces: verified migration status and a clean starting point for extracting Command/Patch/Transaction next.
 
-- [ ] **Step 1: Run focused Drawing Core regression**
+- [x] **Step 1: Run focused Drawing Core regression**
 
 Run:
 
@@ -267,7 +267,7 @@ pnpm vitest run src/drawing/tests packages/drawing-core/src
 
 Expected: every Drawing Core and package test passes.
 
-- [ ] **Step 2: Run repository checks**
+- [x] **Step 2: Run repository checks**
 
 Run:
 
@@ -279,7 +279,7 @@ pnpm lint
 
 Expected: tests and TypeScript pass. Lint may retain only the three baseline findings recorded in `docs/dsh-plugin-migration.md`; no new finding may originate under `packages/drawing-core`.
 
-- [ ] **Step 3: Update migration status**
+- [x] **Step 3: Update migration status**
 
 Add an implementation status section to `docs/dsh-plugin-migration.md` recording:
 
@@ -293,7 +293,7 @@ Add an implementation status section to `docs/dsh-plugin-migration.md` recording
 
 Mark completed checkboxes in this plan based only on commands actually run.
 
-- [ ] **Step 4: Verify the final diff**
+- [x] **Step 4: Verify the final diff**
 
 Run:
 
@@ -305,7 +305,7 @@ git diff --stat HEAD
 
 Expected: no whitespace errors; only the intended documentation status change remains after the two implementation commits.
 
-- [ ] **Step 5: Commit the status update**
+- [x] **Step 5: Commit the status update**
 
 ```bash
 git add docs/dsh-plugin-migration.md docs/superpowers/plans/2026-08-20-dsh-migration-foundation.md
