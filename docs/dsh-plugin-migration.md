@@ -7,6 +7,8 @@
 > 基线提交：`90d254e`（`feat: establish pre-DSH migration baseline`）
 >
 > 目标分支：`codex/dsh-plugin-migration`
+>
+> DSH 交互协议：[`图纸上传、矢量化、分区与标注交互设计`](./superpowers/specs/2026-08-20-dsh-drawing-interaction-design.md)
 
 ## 1. 结论
 
@@ -162,6 +164,8 @@ VectorAI/
 ```
 
 `plugin-space-contracts` 是两层插件的防火墙。第二层不得从第一层内部目录深层导入，也不得直接读取 DSH session 文件或 Web 存储。
+
+Git 层面先保持一个 monorepo，但第一层和第二层是两个正式、独立安装和独立版本化的插件；第二层不是示例。第三方用法放在 `examples/minimal-space-consumer`，CI 将第二层和示例都作为只依赖公开 contracts 的外部消费者验证。
 
 ## 6. 第一层插件：2D Space & Canvas
 
