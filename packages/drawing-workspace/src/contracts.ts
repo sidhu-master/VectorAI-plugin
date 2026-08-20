@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DrawingDocument, Vec2 } from '@vectorai/drawing-core';
+import type {
+  AnnotationNode,
+  DrawingDocument,
+  DrawingRelation,
+  GeometryNode,
+  SemanticFeature,
+  Vec2,
+} from '@vectorai/drawing-core';
 
 export interface DrawingWorkspaceRef {
   drawingId: string;
@@ -38,6 +45,10 @@ export interface DrawingWorkspaceSnapshot {
 }
 
 export type DrawingWorkspaceCommand =
+  | { type: 'node.create'; plane: 'geometry'; node: GeometryNode }
+  | { type: 'node.create'; plane: 'annotation'; node: AnnotationNode }
+  | { type: 'node.create'; plane: 'relation'; node: DrawingRelation }
+  | { type: 'node.create'; plane: 'feature'; node: SemanticFeature }
   | { type: 'node.update'; id: string; changes: Record<string, unknown>; expected: Record<string, unknown> }
   | { type: 'node.delete'; id: string }
   | { type: 'annotation.move-text'; id: string; position: Vec2; expectedPosition: Vec2 };
@@ -52,8 +63,45 @@ export type DrawingWorkspaceCommitResult =
   | { status: 'conflict'; message: string; snapshot?: DrawingWorkspaceSnapshot }
   | { status: 'rejected'; message: string; code?: string };
 
+export interface DrawingWorkspacePreviewDiff {
+  createdNodeIds: string[];
+  updatedNodeIds: string[];
+  deletedNodeIds: string[];
+}
+
+export interface DrawingWorkspacePreview {
+  version: 1;
+  handle: string;
+  baseRef: DrawingWorkspaceRef;
+  commands: DrawingWorkspaceCommand[];
+  candidate: DrawingWorkspaceSnapshot;
+  diff: DrawingWorkspacePreviewDiff;
+  createdAt: number;
+  summary?: string;
+}
+
+export interface DrawingWorkspacePreviewCreateRequest {
+  ref: DrawingWorkspaceRef;
+  commands: DrawingWorkspaceCommand[];
+  summary?: string;
+}
+
+export type DrawingWorkspacePreviewCreateResult =
+  | { status: 'previewed'; preview: DrawingWorkspacePreview }
+  | { status: 'conflict'; message: string; snapshot?: DrawingWorkspaceSnapshot }
+  | { status: 'rejected'; message: string; code?: string };
+
+export interface DrawingWorkspacePreviewControlRequest {
+  handle: string;
+}
+
+export type DrawingWorkspacePreviewDiscardResult =
+  | { status: 'discarded'; ref: DrawingWorkspaceRef }
+  | { status: 'rejected'; message: string; code?: string };
+
 export interface DrawingWorkspacePort {
   load(signal?: AbortSignal): Promise<DrawingWorkspaceSnapshot | null>;
+  loadPreview?(signal?: AbortSignal): Promise<DrawingWorkspacePreview | null>;
   commit(
     request: DrawingWorkspaceCommitRequest,
     signal?: AbortSignal,

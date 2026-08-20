@@ -13,6 +13,7 @@ import {
   type DrawingWorkspaceCommitRequest,
   type DrawingWorkspaceCommitResult,
   type DrawingWorkspacePort,
+  type DrawingWorkspacePreview,
   type DrawingWorkspaceSnapshot,
 } from './index';
 
@@ -51,6 +52,7 @@ function snapshot(
 
 class TestPort implements DrawingWorkspacePort {
   current: DrawingWorkspaceSnapshot | null;
+  preview: DrawingWorkspacePreview | null = null;
   commits: DrawingWorkspaceCommitRequest[] = [];
   listeners = new Set<() => void>();
   loadSource?: DrawingWorkspacePort['loadSource'];
@@ -61,6 +63,10 @@ class TestPort implements DrawingWorkspacePort {
 
   async load(): Promise<DrawingWorkspaceSnapshot | null> {
     return this.current === null ? null : structuredClone(this.current);
+  }
+
+  async loadPreview(): Promise<DrawingWorkspacePreview | null> {
+    return this.preview === null ? null : structuredClone(this.preview);
   }
 
   async commit(request: DrawingWorkspaceCommitRequest): Promise<DrawingWorkspaceCommitResult> {
@@ -123,6 +129,32 @@ describe('createDrawingWorkspaceStore', () => {
 
     expect(store.getState().status).toBe('ready');
     expect(store.getState().snapshot?.ref).toEqual({ drawingId: 'drawing-1', revision: 4 });
+  });
+
+  it('keeps the formal snapshot separate while displaying the current Preview candidate', async () => {
+    const port = new TestPort(snapshot(1, ['line-formal']));
+    port.preview = {
+      version: 1,
+      handle: 'preview-1',
+      baseRef: { drawingId: 'drawing-1', revision: 1 },
+      commands: [{ type: 'node.delete', id: 'line-formal' }],
+      candidate: snapshot(1, ['line-candidate']),
+      diff: {
+        createdNodeIds: ['line-candidate'],
+        updatedNodeIds: [],
+        deletedNodeIds: ['line-formal'],
+      },
+      createdAt: 42,
+    };
+    const store = createDrawingWorkspaceStore({ port });
+
+    await store.getState().load();
+    store.getState().setSelection(['line-candidate', 'line-formal']);
+
+    expect(store.getState().snapshot?.document.geometry[0]?.id).toBe('line-formal');
+    expect(store.getState().preview?.handle).toBe('preview-1');
+    expect(store.getState().displaySnapshot?.document.geometry[0]?.id).toBe('line-candidate');
+    expect(store.getState().selectedIds).toEqual(['line-candidate']);
   });
 
   it('keeps viewport, pointer, toggles, and selection local to one store', async () => {

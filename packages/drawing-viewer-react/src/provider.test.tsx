@@ -5,6 +5,7 @@ import {
   createDrawingWorkspaceStore,
   type DrawingWorkspaceCommitResult,
   type DrawingWorkspacePort,
+  type DrawingWorkspacePreview,
   type DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -36,7 +37,11 @@ function snapshot(drawingId: string, revision: number): DrawingWorkspaceSnapshot
 class TestPort implements DrawingWorkspacePort {
   readonly listeners = new Set<() => void>();
 
-  constructor(readonly value: DrawingWorkspaceSnapshot | null, readonly failure?: Error) {}
+  constructor(
+    readonly value: DrawingWorkspaceSnapshot | null,
+    readonly failure?: Error,
+    readonly preview: DrawingWorkspacePreview | null = null,
+  ) {}
 
   async load(): Promise<DrawingWorkspaceSnapshot | null> {
     if (this.failure !== undefined) throw this.failure;
@@ -46,6 +51,10 @@ class TestPort implements DrawingWorkspacePort {
   async commit(): Promise<DrawingWorkspaceCommitResult> {
     if (this.value === null) return { status: 'rejected', message: 'no drawing' };
     return { status: 'committed', snapshot: this.value };
+  }
+
+  async loadPreview(): Promise<DrawingWorkspacePreview | null> {
+    return this.preview;
   }
 
   subscribe(listener: () => void): () => void {
@@ -132,5 +141,47 @@ describe('DrawingWorkspaceProvider', () => {
 
     expect(markup).toContain('data-preview-overlay="annotation-preview"');
     expect(markup).toContain('overlay-drawing');
+  });
+
+  it('renders the candidate document with an explicit Preview state and diff markers', async () => {
+    const formal = snapshot('preview-drawing', 2);
+    formal.document.geometry = [{
+      id: 'formal-line' as never,
+      type: 'line', start: [0, 0], end: [10, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const candidate = structuredClone(formal);
+    candidate.document.geometry = [{
+      id: 'candidate-line' as never,
+      type: 'line', start: [0, 0], end: [20, 0], visible: true,
+      quality: { status: 'candidate', evidenceRefs: [] },
+    }];
+    const preview: DrawingWorkspacePreview = {
+      version: 1,
+      handle: 'preview-2',
+      baseRef: formal.ref,
+      commands: [{ type: 'node.delete', id: 'formal-line' }],
+      candidate,
+      diff: {
+        createdNodeIds: ['candidate-line'],
+        updatedNodeIds: [],
+        deletedNodeIds: ['formal-line'],
+      },
+      createdAt: 42,
+    };
+    const store = createDrawingWorkspaceStore({ port: new TestPort(formal, undefined, preview) });
+    await store.getState().load();
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <DrawingWorkspace />
+      </DrawingWorkspaceProvider>,
+    );
+
+    expect(markup).toContain('data-preview-state="current"');
+    expect(markup).toContain('候选 Preview');
+    expect(markup).toContain('data-entity-id="candidate-line"');
+    expect(markup).toContain('data-preview-diff="created"');
+    expect(markup).toContain('data-preview-diff="deleted"');
   });
 });

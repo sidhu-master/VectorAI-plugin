@@ -7,6 +7,11 @@ export type {
   DrawingWorkspaceCommand,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspaceCommitResult,
+  DrawingWorkspacePreview,
+  DrawingWorkspacePreviewControlRequest,
+  DrawingWorkspacePreviewCreateRequest,
+  DrawingWorkspacePreviewCreateResult,
+  DrawingWorkspacePreviewDiscardResult,
   DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
 
@@ -172,6 +177,16 @@ const relationSchema = z.discriminatedUnion('plane', [
   }).strict(),
 ]);
 
+const featureSchema = z.object({
+  ...baseNodeShape,
+  type: z.literal('feature'),
+  semanticType: z.string(),
+  geometryIds: z.array(idSchema),
+  annotationIds: z.array(idSchema),
+  relationIds: z.array(idSchema),
+  properties: z.record(z.string(), z.unknown()),
+}).strict();
+
 export const drawingDocumentSchema = z.object({
   protocol: z.literal('VectorAI-Drawing'),
   schemaVersion: z.literal('1.0'),
@@ -187,16 +202,79 @@ export const drawingDocumentSchema = z.object({
   geometry: z.array(geometrySchema),
   annotations: z.array(annotationSchema),
   relations: z.array(relationSchema),
-  features: z.array(z.object({
-    ...baseNodeShape,
-    type: z.literal('feature'),
-    semanticType: z.string(),
-    geometryIds: z.array(idSchema),
-    annotationIds: z.array(idSchema),
-    relationIds: z.array(idSchema),
-    properties: z.record(z.string(), z.unknown()),
-  }).strict()),
+  features: z.array(featureSchema),
 }).strict();
+
+export const drawingRefSchema = z.object({
+  drawingId: idSchema,
+  revision: z.number().int().nonnegative(),
+}).strict();
+
+export const bounds2DSchema = z.object({
+  minX: z.number(),
+  minY: z.number(),
+  maxX: z.number(),
+  maxY: z.number(),
+}).strict().refine(({ minX, minY, maxX, maxY }) => (
+  minX <= maxX && minY <= maxY
+), { message: 'INVALID_QUERY_BOUNDS' });
+
+const drawingPlaneSchema = z.enum(['geometry', 'annotation', 'relation', 'feature']);
+const drawingSpatialNodeSchema = z.discriminatedUnion('plane', [
+  z.object({ plane: z.literal('geometry'), node: geometrySchema }).strict(),
+  z.object({ plane: z.literal('annotation'), node: annotationSchema }).strict(),
+  z.object({ plane: z.literal('relation'), node: relationSchema }).strict(),
+  z.object({ plane: z.literal('feature'), node: featureSchema }).strict(),
+]);
+
+export const drawingQueryRequestSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('world-slice'),
+    ref: drawingRefSchema,
+    bounds: bounds2DSchema,
+    planes: z.array(drawingPlaneSchema).min(1).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+  }).strict(),
+  z.object({
+    kind: z.literal('node'),
+    ref: drawingRefSchema,
+    id: idSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal('neighbors'),
+    ref: drawingRefSchema,
+    nodeId: idSchema,
+    limit: z.number().int().min(1).max(200).optional(),
+  }).strict(),
+]);
+
+export const drawingQueryResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('world-slice'),
+    ref: drawingRefSchema,
+    bounds: bounds2DSchema,
+    nodes: z.array(drawingSpatialNodeSchema),
+    totalByPlane: z.object({
+      geometry: z.number().int().nonnegative(),
+      annotation: z.number().int().nonnegative(),
+      relation: z.number().int().nonnegative(),
+      feature: z.number().int().nonnegative(),
+    }).strict(),
+    truncated: z.boolean(),
+  }).strict(),
+  z.object({
+    kind: z.literal('node'),
+    ref: drawingRefSchema,
+    node: drawingSpatialNodeSchema.nullable(),
+  }).strict(),
+  z.object({
+    kind: z.literal('neighbors'),
+    ref: drawingRefSchema,
+    nodeId: idSchema,
+    nodes: z.array(drawingSpatialNodeSchema),
+    truncated: z.boolean(),
+  }).strict(),
+]);
 
 const drawingSourceRefSchema = z.object({
   id: idSchema,
@@ -221,7 +299,23 @@ export const drawingWorkspaceSnapshotSchema = z.object({
   provisional: z.boolean().optional(),
 }).strict().nullable();
 
-const workspaceCommandSchema = z.discriminatedUnion('type', [
+const nodeCreateCommandSchema = z.object({
+  type: z.literal('node.create'),
+  plane: z.enum(['geometry', 'annotation', 'relation', 'feature']),
+  node: z.union([geometrySchema, annotationSchema, relationSchema, featureSchema]),
+}).strict().superRefine(({ plane, node }, context) => {
+  const matches = plane === 'geometry'
+    ? geometrySchema.safeParse(node).success
+    : plane === 'annotation'
+      ? annotationSchema.safeParse(node).success
+      : plane === 'relation'
+        ? relationSchema.safeParse(node).success
+        : featureSchema.safeParse(node).success;
+  if (!matches) context.addIssue({ code: 'custom', message: 'NODE_PLANE_MISMATCH' });
+});
+
+const workspaceCommandSchema = z.union([
+  nodeCreateCommandSchema,
   z.object({
     type: z.literal('node.update'),
     id: idSchema,
@@ -248,10 +342,47 @@ export const drawingWorkspaceCommitResultSchema = z.discriminatedUnion('status',
   z.object({ status: z.literal('rejected'), message: z.string(), code: z.string().optional() }).strict(),
 ]);
 
+export const drawingPreviewCreateRequestSchema = z.object({
+  ref: drawingRefSchema,
+  commands: z.array(workspaceCommandSchema).min(1),
+  summary: z.string().min(1).optional(),
+}).strict();
+
+export const drawingPreviewSchema = z.object({
+  version: z.literal(1),
+  handle: idSchema,
+  baseRef: drawingRefSchema,
+  commands: z.array(workspaceCommandSchema).min(1),
+  candidate: drawingWorkspaceSnapshotSchema.unwrap(),
+  diff: z.object({
+    createdNodeIds: z.array(idSchema),
+    updatedNodeIds: z.array(idSchema),
+    deletedNodeIds: z.array(idSchema),
+  }).strict(),
+  createdAt: z.number(),
+  summary: z.string().min(1).optional(),
+}).strict();
+
+export const drawingPreviewCreateResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('previewed'), preview: drawingPreviewSchema }).strict(),
+  z.object({ status: z.literal('conflict'), message: z.string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  z.object({ status: z.literal('rejected'), message: z.string(), code: z.string().optional() }).strict(),
+]);
+
+export const drawingPreviewControlRequestSchema = z.object({ handle: idSchema }).strict();
+
+export const drawingPreviewDiscardResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('discarded'), ref: drawingRefSchema }).strict(),
+  z.object({ status: z.literal('rejected'), message: z.string(), code: z.string().optional() }).strict(),
+]);
+
 export interface DrawingRef {
   drawingId: string;
   revision: number;
 }
+
+export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
+export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;
 
 export interface Bounds2D {
   minX: number;

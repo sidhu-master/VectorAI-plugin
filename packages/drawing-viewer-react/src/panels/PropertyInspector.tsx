@@ -21,7 +21,9 @@ interface EditableProperty {
 }
 
 export function PropertyInspector() {
-  const snapshot = useDrawingWorkspace((state) => state.snapshot);
+  const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+  const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+  const preview = useDrawingWorkspace((state) => state.preview);
   const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
   const busy = useDrawingWorkspace((state) => state.busy);
   const updateNode = useDrawingWorkspace((state) => state.updateNode);
@@ -46,7 +48,7 @@ export function PropertyInspector() {
               <PropertyField
                 key={property.key}
                 property={property}
-                disabled={busy || !snapshot.capabilities.edit}
+                disabled={busy || preview !== null || !formalSnapshot?.capabilities.edit}
                 commit={(value) => { void updateNode(node.id, property.change(value)); }}
               />
             ))}

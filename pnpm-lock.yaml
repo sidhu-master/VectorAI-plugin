@@ -129,6 +129,12 @@ importers:
 
   packages/drawing-core: {}
 
+  packages/drawing-spatial:
+    dependencies:
+      '@vectorai/drawing-core':
+        specifier: workspace:*
+        version: link:../drawing-core
+
   packages/drawing-viewer-react:
     dependencies:
       '@vectorai/drawing-core':
@@ -253,6 +259,9 @@ importers:
       '@vectorai/drawing-core':
         specifier: workspace:*
         version: link:../drawing-core
+      '@vectorai/drawing-spatial':
+        specifier: workspace:*
+        version: link:../drawing-spatial
       '@vectorai/plugin-space-contracts':
         specifier: workspace:*
         version: link:../plugin-space-contracts

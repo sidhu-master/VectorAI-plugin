@@ -5,7 +5,7 @@ import { TYPERT } from './typert';
 
 describe('TYPERT host contribution', () => {
   it('publishes session-scoped snapshot and commit routes with strict codecs', () => {
-    const [snapshot, commit] = TYPERT.invocations;
+    const [snapshot, commit, query, getPreview, createPreview, commitPreview, discardPreview] = TYPERT.invocations;
 
     expect(snapshot?.id).toBe(
       '@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot',
@@ -20,5 +20,13 @@ describe('TYPERT host contribution', () => {
     expect(commit?.id).toBe('@vectorai/plugin-dsh-space-host#drawingSpace/commit');
     expect(commit?.parameters[1]?.codec.mode).toBe('strict');
     expect(commit?.result.mode).toBe('strict');
+
+    expect(query?.id).toBe('@vectorai/plugin-dsh-space-host#drawingSpace/query');
+    expect(query?.parameters[1]?.codec.mode).toBe('strict');
+    expect(query?.result.mode).toBe('strict');
+    expect(getPreview?.method).toBe('getPreview');
+    expect(createPreview?.method).toBe('createPreview');
+    expect(commitPreview?.method).toBe('commitPreview');
+    expect(discardPreview?.method).toBe('discardPreview');
   });
 });

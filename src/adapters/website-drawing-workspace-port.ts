@@ -134,6 +134,10 @@ function translateCommands(
 ): { commands: DrawingCommand[] } | { error: string } {
   const translated: DrawingCommand[] = [];
   for (const command of commands) {
+    if (command.type === 'node.create') {
+      translated.push(createCommand(command));
+      continue;
+    }
     const plane = nodePlane(document, command.id);
     if (plane === null) return { error: `节点 ${command.id} 不存在` };
     if (command.type === 'node.update') {
@@ -163,6 +167,17 @@ function translateCommands(
     }
   }
   return { commands: translated };
+}
+
+function createCommand(
+  command: Extract<DrawingWorkspaceCommand, { type: 'node.create' }>,
+): DrawingCommand {
+  switch (command.plane) {
+    case 'geometry': return { type: 'geometry.create', value: command.node };
+    case 'annotation': return { type: 'annotation.create', value: command.node };
+    case 'relation': return { type: 'relation.create', value: command.node };
+    case 'feature': return { type: 'feature.create', value: command.node };
+  }
 }
 
 type NodePlane = 'geometry' | 'annotation' | 'relation' | 'feature';

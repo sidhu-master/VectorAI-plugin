@@ -4,7 +4,7 @@ import { useDrawingWorkspace } from '../hooks';
 import { fitViewportToDrawing } from '../canvas/geometry';
 
 export function WorkspaceToolbar() {
-  const snapshot = useDrawingWorkspace((state) => state.snapshot);
+  const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const display = useDrawingWorkspace((state) => state.display);
   const setViewport = useDrawingWorkspace((state) => state.setViewport);

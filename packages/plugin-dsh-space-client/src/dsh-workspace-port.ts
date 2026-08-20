@@ -6,6 +6,7 @@ import type {
   DrawingWorkspaceCommitRequest,
   DrawingWorkspaceCommitResult,
   DrawingWorkspacePort,
+  DrawingWorkspacePreview,
   DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
 
@@ -15,6 +16,7 @@ export interface DshDrawingSpaceRemote {
     sessionId: string,
     request: DrawingWorkspaceCommitRequest,
   ): Promise<RemoteResult<DrawingWorkspaceCommitResult>>;
+  getPreview?(sessionId: string): Promise<RemoteResult<DrawingWorkspacePreview | null>>;
 }
 
 export function createDshDrawingWorkspacePort(input: {
@@ -33,6 +35,13 @@ export function createDshDrawingWorkspacePort(input: {
     async commit(request, signal) {
       signal?.throwIfAborted();
       const result = await remote.commit(sessionId, request);
+      signal?.throwIfAborted();
+      return unwrap(result);
+    },
+    async loadPreview(signal) {
+      signal?.throwIfAborted();
+      if (remote.getPreview === undefined) return null;
+      const result = await remote.getPreview(sessionId);
       signal?.throwIfAborted();
       return unwrap(result);
     },

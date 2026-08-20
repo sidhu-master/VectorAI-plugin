@@ -2,10 +2,19 @@
 
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { DrawingDocument } from '@vectorai/drawing-core';
+import { queryDrawing, type DrawingSpatialQuery } from '@vectorai/drawing-spatial';
+import { drawingDocumentSchema } from '@vectorai/plugin-space-contracts';
 import type {
   Bounds2D,
   DrawingImportResult,
+  DrawingQueryRequest,
+  DrawingQueryResult,
   DrawingSummary,
+  DrawingWorkspacePreview,
+  DrawingWorkspacePreviewControlRequest,
+  DrawingWorkspacePreviewCreateRequest,
+  DrawingWorkspacePreviewCreateResult,
+  DrawingWorkspacePreviewDiscardResult,
   DrawingWorkspaceCommand,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspaceCommitResult,
@@ -35,20 +44,27 @@ export interface DrawingRepositoryStorage {
 export class InMemoryDrawingRepository {
   readonly #pending = new Map<string, ImageAttachmentRef>();
   readonly #drawings = new Map<string, DrawingEntry>();
+  readonly #previews = new Map<string, DrawingWorkspacePreview>();
   readonly #vectorizer: ImageVectorizer;
   readonly #drawingId: (sessionId: string, attachment: ImageAttachmentRef) => string;
   readonly #storage?: DrawingRepositoryStorage;
+  readonly #previewHandle: () => string;
+  readonly #now: () => number;
 
   constructor(input: {
     vectorizer: ImageVectorizer;
     drawingId?: (sessionId: string, attachment: ImageAttachmentRef) => string;
     storage?: DrawingRepositoryStorage;
+    previewHandle?: () => string;
+    now?: () => number;
   }) {
     this.#vectorizer = input.vectorizer;
     this.#drawingId = input.drawingId ?? ((_sessionId, attachment) => (
       `drawing_${String(attachment.attachmentId)}`
     ));
     this.#storage = input.storage;
+    this.#previewHandle = input.previewHandle ?? (() => `preview_${globalThis.crypto.randomUUID()}`);
+    this.#now = input.now ?? Date.now;
   }
 
   bindPending(sessionId: string, attachment: ImageAttachmentRef): void {
@@ -103,6 +119,7 @@ export class InMemoryDrawingRepository {
     };
     this.#storage?.save(sessionId, structuredClone(entry));
     this.#drawings.set(sessionId, entry);
+    this.#previews.delete(sessionId);
     return {
       status: 'imported',
       ref: { drawingId, revision: 1 },
@@ -137,7 +154,9 @@ export class InMemoryDrawingRepository {
       const rejection = applyCommand(document, command);
       if (rejection !== null) return rejection;
     }
-    document.metadata.updatedAt = Date.now();
+    const invalid = validateDocument(document);
+    if (invalid !== null) return invalid;
+    document.metadata.updatedAt = this.#now();
     const nextEntry: DrawingEntry = {
       ...entry,
       document,
@@ -145,6 +164,7 @@ export class InMemoryDrawingRepository {
     };
     this.#storage?.save(sessionId, structuredClone(nextEntry));
     this.#drawings.set(sessionId, nextEntry);
+    this.#previews.delete(sessionId);
     return { status: 'committed', snapshot: snapshotOf(nextEntry) };
   }
 
@@ -164,9 +184,138 @@ export class InMemoryDrawingRepository {
     };
   }
 
+  query(sessionId: string, request: DrawingQueryRequest): DrawingQueryResult {
+    const entry = this.#getDrawing(sessionId);
+    if (entry === null) throw new Error('DRAWING_REQUIRED');
+    if (
+      request.ref.drawingId !== entry.drawingId
+      || request.ref.revision !== entry.revision
+    ) {
+      throw new Error('DRAWING_STALE');
+    }
+    const result = queryDrawing(entry.document, spatialQueryOf(request));
+    return structuredClone({ ...result, ref: request.ref } as DrawingQueryResult);
+  }
+
+  createPreview(
+    sessionId: string,
+    request: DrawingWorkspacePreviewCreateRequest,
+  ): DrawingWorkspacePreviewCreateResult {
+    const entry = this.#getDrawing(sessionId);
+    if (entry === null) {
+      return { status: 'rejected', message: 'No drawing is loaded', code: 'DRAWING_REQUIRED' };
+    }
+    if (
+      request.ref.drawingId !== entry.drawingId
+      || request.ref.revision !== entry.revision
+    ) {
+      return {
+        status: 'conflict',
+        message: `Preview base ${request.ref.drawingId}@${request.ref.revision} is stale`,
+        snapshot: snapshotOf(entry),
+      };
+    }
+
+    const document = structuredClone(entry.document);
+    for (const command of request.commands) {
+      const rejection = applyCommand(document, command);
+      if (rejection !== null) return rejection;
+    }
+    const invalid = validateDocument(document);
+    if (invalid !== null) return invalid;
+    const createdAt = this.#now();
+    document.metadata.updatedAt = createdAt;
+    const preview: DrawingWorkspacePreview = {
+      version: 1,
+      handle: this.#previewHandle(),
+      baseRef: structuredClone(request.ref),
+      commands: structuredClone(request.commands),
+      candidate: snapshotOf({ ...entry, document }),
+      diff: diffDocuments(entry.document, document),
+      createdAt,
+      ...(request.summary === undefined ? {} : { summary: request.summary }),
+    };
+    this.#previews.set(sessionId, preview);
+    return { status: 'previewed', preview: structuredClone(preview) };
+  }
+
+  getPreview(sessionId: string): DrawingWorkspacePreview | null {
+    const preview = this.#previews.get(sessionId);
+    if (preview === undefined) return null;
+    const entry = this.#getDrawing(sessionId);
+    if (
+      entry === null
+      || preview.baseRef.drawingId !== entry.drawingId
+      || preview.baseRef.revision !== entry.revision
+    ) {
+      this.#previews.delete(sessionId);
+      return null;
+    }
+    return structuredClone(preview);
+  }
+
+  commitPreview(
+    sessionId: string,
+    request: DrawingWorkspacePreviewControlRequest,
+  ): DrawingWorkspaceCommitResult {
+    const current = this.#previews.get(sessionId);
+    if (current === undefined) {
+      return { status: 'rejected', message: 'No current Preview exists', code: 'PREVIEW_NOT_FOUND' };
+    }
+    if (current.handle !== request.handle) {
+      return {
+        status: 'rejected',
+        message: `Preview ${request.handle} is not current`,
+        code: 'PREVIEW_NOT_CURRENT',
+      };
+    }
+    const entry = this.#getDrawing(sessionId);
+    if (
+      entry === null
+      || current.baseRef.drawingId !== entry.drawingId
+      || current.baseRef.revision !== entry.revision
+    ) {
+      this.#previews.delete(sessionId);
+      return { status: 'rejected', message: 'Preview base revision is stale', code: 'PREVIEW_STALE' };
+    }
+    const document = structuredClone(current.candidate.document);
+    const invalid = validateDocument(document);
+    if (invalid !== null) return invalid;
+    document.metadata.updatedAt = this.#now();
+    const nextEntry: DrawingEntry = {
+      ...entry,
+      document,
+      revision: entry.revision + 1,
+    };
+    this.#storage?.save(sessionId, structuredClone(nextEntry));
+    this.#drawings.set(sessionId, nextEntry);
+    this.#previews.delete(sessionId);
+    return { status: 'committed', snapshot: snapshotOf(nextEntry) };
+  }
+
+  discardPreview(
+    sessionId: string,
+    request: DrawingWorkspacePreviewControlRequest,
+  ): DrawingWorkspacePreviewDiscardResult {
+    const current = this.#previews.get(sessionId);
+    if (current === undefined) {
+      return { status: 'rejected', message: 'No current Preview exists', code: 'PREVIEW_NOT_FOUND' };
+    }
+    if (current.handle !== request.handle) {
+      return {
+        status: 'rejected',
+        message: `Preview ${request.handle} is not current`,
+        code: 'PREVIEW_NOT_CURRENT',
+      };
+    }
+    this.#previews.delete(sessionId);
+    return { status: 'discarded', ref: structuredClone(current.baseRef) };
+  }
+
   disposeSession(sessionId: string): void {
     this.#pending.delete(sessionId);
     this.#drawings.delete(sessionId);
+    this.#previews.delete(sessionId);
   }
 
   #getDrawing(sessionId: string): DrawingEntry | null {
@@ -176,6 +325,23 @@ export class InMemoryDrawingRepository {
     if (restored !== null) this.#drawings.set(sessionId, structuredClone(restored));
     return restored;
   }
+}
+
+function spatialQueryOf(request: DrawingQueryRequest): DrawingSpatialQuery {
+  if (request.kind === 'node') return { kind: 'node', id: request.id };
+  if (request.kind === 'neighbors') {
+    return {
+      kind: 'neighbors',
+      nodeId: request.nodeId,
+      ...(request.limit === undefined ? {} : { limit: request.limit }),
+    };
+  }
+  return {
+    kind: 'world-slice',
+    bounds: structuredClone(request.bounds),
+    ...(request.planes === undefined ? {} : { planes: [...request.planes] }),
+    ...(request.limit === undefined ? {} : { limit: request.limit }),
+  };
 }
 
 function snapshotOf(entry: DrawingEntry): DrawingWorkspaceSnapshot {
@@ -198,6 +364,7 @@ function applyCommand(
   document: DrawingDocument,
   command: DrawingWorkspaceCommand,
 ): Extract<DrawingWorkspaceCommitResult, { status: 'rejected' }> | null {
+  if (command.type === 'node.create') return createNode(document, command);
   if (command.type === 'node.delete') return deleteNode(document, command.id);
   const node = findNode(document, command.id);
   if (node === undefined) {
@@ -243,6 +410,24 @@ function applyCommand(
   return null;
 }
 
+function createNode(
+  document: DrawingDocument,
+  command: Extract<DrawingWorkspaceCommand, { type: 'node.create' }>,
+): Extract<DrawingWorkspaceCommitResult, { status: 'rejected' }> | null {
+  if (findNode(document, command.node.id) !== undefined) {
+    return {
+      status: 'rejected',
+      message: `Node ${command.node.id} already exists`,
+      code: 'NODE_ALREADY_EXISTS',
+    };
+  }
+  if (command.plane === 'geometry') document.geometry.push(structuredClone(command.node));
+  else if (command.plane === 'annotation') document.annotations.push(structuredClone(command.node));
+  else if (command.plane === 'relation') document.relations.push(structuredClone(command.node));
+  else document.features.push(structuredClone(command.node));
+  return null;
+}
+
 function findNode(document: DrawingDocument, id: string) {
   return [
     ...document.geometry,
@@ -275,4 +460,86 @@ function deleteNode(
     && !feature.relationIds.includes(id as never)
   ));
   return null;
+}
+
+function diffDocuments(
+  before: DrawingDocument,
+  after: DrawingDocument,
+): DrawingWorkspacePreview['diff'] {
+  const beforeNodes = new Map(allNodes(before).map((node) => [node.id, node]));
+  const afterNodes = new Map(allNodes(after).map((node) => [node.id, node]));
+  return {
+    createdNodeIds: [...afterNodes.keys()].filter((id) => !beforeNodes.has(id)),
+    updatedNodeIds: [...afterNodes.keys()].filter((id) => (
+      beforeNodes.has(id) && !isDeepStrictEqual(beforeNodes.get(id), afterNodes.get(id))
+    )),
+    deletedNodeIds: [...beforeNodes.keys()].filter((id) => !afterNodes.has(id)),
+  };
+}
+
+function allNodes(document: DrawingDocument) {
+  return [
+    ...document.geometry,
+    ...document.annotations,
+    ...document.relations,
+    ...document.features,
+  ];
+}
+
+function validateDocument(
+  document: DrawingDocument,
+): Extract<DrawingWorkspaceCommitResult, { status: 'rejected' }> | null {
+  if (!drawingDocumentSchema.safeParse(document).success) {
+    return { status: 'rejected', message: 'Candidate Drawing is invalid', code: 'INVALID_DOCUMENT' };
+  }
+  const ids = allNodes(document).map(({ id }) => id);
+  if (new Set(ids).size !== ids.length) {
+    return { status: 'rejected', message: 'Drawing node ids must be unique', code: 'NODE_ALREADY_EXISTS' };
+  }
+  const geometryIds = new Set(document.geometry.map(({ id }) => id));
+  const annotationIds = new Set(document.annotations.map(({ id }) => id));
+  const relationIds = new Set(document.relations.map(({ id }) => id));
+  const featureIds = new Set(document.features.map(({ id }) => id));
+  const nodeIds = new Set<string>(ids);
+  const missing = (id: string, expected: Set<string>) => !expected.has(id);
+
+  for (const annotation of document.annotations) {
+    const targets = annotation.type === 'dimension'
+      ? annotation.targets.map(({ geometryId }) => geometryId)
+      : annotation.type === 'leader'
+        ? [annotation.target.geometryId]
+        : annotation.type === 'centerline'
+          ? annotation.targets
+          : [];
+    if (targets.some((id) => missing(id, geometryIds))) return danglingReference(annotation.id);
+  }
+  for (const relation of document.relations) {
+    const valid = relation.type === 'topology'
+      ? relation.nodeIds.every((id) => nodeIds.has(id))
+      : relation.type === 'constraint'
+        ? relation.geometryIds.every((id) => geometryIds.has(id))
+        : relation.type === 'association'
+          ? annotationIds.has(relation.annotationId)
+            && relation.geometryIds.every((id) => geometryIds.has(id))
+          : featureIds.has(relation.featureId) && relation.nodeIds.every((id) => nodeIds.has(id));
+    if (!valid) return danglingReference(relation.id);
+  }
+  for (const feature of document.features) {
+    if (
+      feature.geometryIds.some((id) => missing(id, geometryIds))
+      || feature.annotationIds.some((id) => missing(id, annotationIds))
+      || feature.relationIds.some((id) => missing(id, relationIds))
+    ) return danglingReference(feature.id);
+  }
+  return null;
+}
+
+function danglingReference(
+  id: string,
+): Extract<DrawingWorkspaceCommitResult, { status: 'rejected' }> {
+  return {
+    status: 'rejected',
+    message: `Node ${id} contains a dangling reference`,
+    code: 'DANGLING_REFERENCE',
+  };
 }

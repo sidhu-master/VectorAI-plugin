@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _pending, _drawings, _vectorizer, _drawingId, _storage, _InMemoryDrawingRepository_instances, getDrawing_fn, _directory, _FileDrawingRepositoryStorage_instances, path_fn, _process, _timeoutMs, _pending2, _closed, _stderr, _PythonVectorizationProvider_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs2, _commit_dec, _getSnapshot_dec, _a2, _init;
+var _pending, _drawings, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, _directory, _FileDrawingRepositoryStorage_instances, path_fn, _process, _timeoutMs, _pending2, _closed, _stderr, _PythonVectorizationProvider_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs2, _discardPreview_dec, _commitPreview_dec, _createPreview_dec, _getPreview_dec, _query_dec, _commit_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -95,219 +95,203 @@ function createPreStepIntake(repository) {
     return { kind: "enter", messages: [...decision.messages, context] };
   };
 }
-class InMemoryDrawingRepository {
-  constructor(input) {
-    __privateAdd(this, _InMemoryDrawingRepository_instances);
-    __privateAdd(this, _pending, /* @__PURE__ */ new Map());
-    __privateAdd(this, _drawings, /* @__PURE__ */ new Map());
-    __privateAdd(this, _vectorizer);
-    __privateAdd(this, _drawingId);
-    __privateAdd(this, _storage);
-    __privateSet(this, _vectorizer, input.vectorizer);
-    __privateSet(this, _drawingId, input.drawingId ?? ((_sessionId, attachment) => `drawing_${String(attachment.attachmentId)}`));
-    __privateSet(this, _storage, input.storage);
+const DEFAULT_LIMIT = 100;
+const MAX_LIMIT = 200;
+const PLANE_ORDER = ["geometry", "annotation", "relation", "feature"];
+function queryDrawing(document, query) {
+  if (query.kind === "node") {
+    return { kind: "node", node: cloneResult(findNode$1(document, query.id)) };
   }
-  bindPending(sessionId, attachment) {
-    __privateGet(this, _pending).set(sessionId, structuredClone(attachment));
-  }
-  getPending(sessionId) {
-    const attachment = __privateGet(this, _pending).get(sessionId);
-    return attachment === void 0 ? null : structuredClone(attachment);
-  }
-  async importPending(sessionId, input) {
+  if (query.kind === "neighbors") return queryNeighbors(document, query);
+  return queryWorldSlice(document, query);
+}
+function queryWorldSlice(document, query) {
+  validateBounds(query.bounds);
+  const limit = validateLimit(query.limit);
+  const selectedPlanes = new Set(query.planes ?? PLANE_ORDER);
+  const direct = /* @__PURE__ */ new Map();
+  direct.set("geometry", selectedPlanes.has("geometry") ? document.geometry.filter((node) => intersectsNode(node, query.bounds)).map((node) => ({ plane: "geometry", node })) : []);
+  direct.set("annotation", selectedPlanes.has("annotation") ? document.annotations.filter((node) => intersectsNode(node, query.bounds)).map((node) => ({ plane: "annotation", node })) : []);
+  const directNodeIds = /* @__PURE__ */ new Set([
+    ...(direct.get("geometry") ?? []).map(({ node }) => node.id),
+    ...(direct.get("annotation") ?? []).map(({ node }) => node.id)
+  ]);
+  const relations = selectedPlanes.has("relation") ? document.relations.filter((node) => referencedIds(node).some((id) => directNodeIds.has(id) || referencedNodeIntersects(document, id, query.bounds))).map((node) => ({ plane: "relation", node })) : [];
+  direct.set("relation", relations);
+  const matchedIds = /* @__PURE__ */ new Set([...directNodeIds, ...relations.map(({ node }) => node.id)]);
+  direct.set("feature", selectedPlanes.has("feature") ? document.features.filter((node) => referencedIds(node).some((id) => matchedIds.has(id) || referencedNodeIntersects(document, id, query.bounds))).map((node) => ({ plane: "feature", node })) : []);
+  const totalByPlane = Object.fromEntries(PLANE_ORDER.map((plane) => {
     var _a3;
-    const attachment = __privateGet(this, _pending).get(sessionId);
-    if (attachment === void 0) throw new Error("PENDING_DRAWING_SOURCE_REQUIRED");
-    const attachmentId = String(attachment.attachmentId);
-    const current = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
-    if ((current == null ? void 0 : current.attachmentId) === attachmentId) {
-      return {
-        status: "already-imported",
-        ref: { drawingId: current.drawingId, revision: current.revision },
-        provisional: current.provisional
-      };
-    }
-    input.signal.throwIfAborted();
-    const drawingId = __privateGet(this, _drawingId).call(this, sessionId, attachment);
-    const vectorized = await __privateGet(this, _vectorizer).vectorize({
-      drawingId,
-      attachment: structuredClone(attachment),
-      data: input.data.slice(),
-      signal: input.signal
-    });
-    input.signal.throwIfAborted();
-    const entry = {
-      attachmentId,
-      document: structuredClone(vectorized.document),
-      drawingId,
-      bounds: structuredClone(vectorized.bounds),
-      revision: 1,
-      source: {
-        id: attachmentId,
-        mediaType: attachment.mediaType,
-        bytes: attachment.bytes,
-        width: attachment.width,
-        height: attachment.height,
-        ...attachment.name === void 0 ? {} : { name: attachment.name }
-      },
-      provisional: vectorized.provisional
-    };
-    (_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.save(sessionId, structuredClone(entry));
-    __privateGet(this, _drawings).set(sessionId, entry);
-    return {
-      status: "imported",
-      ref: { drawingId, revision: 1 },
-      provisional: vectorized.provisional
-    };
-  }
-  getSnapshot(sessionId) {
-    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
-    if (entry === null) return null;
-    return snapshotOf(entry);
-  }
-  commit(sessionId, request) {
-    var _a3;
-    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
-    if (entry === null) {
-      return { status: "rejected", message: "No drawing is loaded", code: "DRAWING_REQUIRED" };
-    }
-    if (request.expectedRevision !== entry.revision) {
-      return {
-        status: "conflict",
-        message: `Expected revision ${request.expectedRevision}, current revision is ${entry.revision}`,
-        snapshot: snapshotOf(entry)
-      };
-    }
-    const document = structuredClone(entry.document);
-    for (const command of request.commands) {
-      const rejection = applyCommand(document, command);
-      if (rejection !== null) return rejection;
-    }
-    document.metadata.updatedAt = Date.now();
-    const nextEntry = {
-      ...entry,
-      document,
-      revision: entry.revision + 1
-    };
-    (_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.save(sessionId, structuredClone(nextEntry));
-    __privateGet(this, _drawings).set(sessionId, nextEntry);
-    return { status: "committed", snapshot: snapshotOf(nextEntry) };
-  }
-  summarize(sessionId) {
-    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
-    if (entry === null) return null;
-    const geometryByType = {};
-    for (const node of entry.document.geometry) {
-      geometryByType[node.type] = (geometryByType[node.type] ?? 0) + 1;
-    }
-    return {
-      ref: { drawingId: entry.drawingId, revision: entry.revision },
-      unit: entry.document.unitSystem.length,
-      bounds: structuredClone(entry.bounds),
-      geometryByType,
-      provisional: entry.provisional
-    };
-  }
-  disposeSession(sessionId) {
-    __privateGet(this, _pending).delete(sessionId);
-    __privateGet(this, _drawings).delete(sessionId);
-  }
+    return [
+      plane,
+      ((_a3 = direct.get(plane)) == null ? void 0 : _a3.length) ?? 0
+    ];
+  }));
+  const all = PLANE_ORDER.flatMap((plane) => direct.get(plane) ?? []);
+  return {
+    kind: "world-slice",
+    bounds: structuredClone(query.bounds),
+    nodes: structuredClone(all.slice(0, limit)),
+    totalByPlane,
+    truncated: all.length > limit
+  };
 }
-_pending = new WeakMap();
-_drawings = new WeakMap();
-_vectorizer = new WeakMap();
-_drawingId = new WeakMap();
-_storage = new WeakMap();
-_InMemoryDrawingRepository_instances = new WeakSet();
-getDrawing_fn = function(sessionId) {
-  var _a3;
-  const current = __privateGet(this, _drawings).get(sessionId);
-  if (current !== void 0) return current;
-  const restored = ((_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.load(sessionId)) ?? null;
-  if (restored !== null) __privateGet(this, _drawings).set(sessionId, structuredClone(restored));
-  return restored;
-};
-function snapshotOf(entry) {
-  return structuredClone({
-    version: 1,
-    ref: { drawingId: entry.drawingId, revision: entry.revision },
-    document: entry.document,
-    source: entry.source,
-    capabilities: {
-      edit: true,
-      delete: true,
-      annotations: true,
-      sourceUnderlay: true
-    },
-    provisional: entry.provisional
-  });
+function queryNeighbors(document, query) {
+  const limit = validateLimit(query.limit);
+  if (findNode$1(document, query.nodeId) === null) {
+    return { kind: "neighbors", nodeId: query.nodeId, nodes: [], truncated: false };
+  }
+  const related = document.relations.filter((node) => referencedIds(node).includes(query.nodeId));
+  const features = document.features.filter((node) => referencedIds(node).includes(query.nodeId) || related.some((relation) => node.relationIds.includes(relation.id)));
+  const ids = /* @__PURE__ */ new Set();
+  for (const node of [...related, ...features]) {
+    for (const id of referencedIds(node)) ids.add(id);
+  }
+  ids.delete(query.nodeId);
+  const nodes = orderedNodes(document).filter(({ node }) => ids.has(node.id) || related.some((relation) => relation.id === node.id) || features.some((feature) => feature.id === node.id));
+  return {
+    kind: "neighbors",
+    nodeId: query.nodeId,
+    nodes: structuredClone(nodes.slice(0, limit)),
+    truncated: nodes.length > limit
+  };
 }
-function applyCommand(document, command) {
-  if (command.type === "node.delete") return deleteNode(document, command.id);
-  const node = findNode(document, command.id);
-  if (node === void 0) {
-    return { status: "rejected", message: `Node ${command.id} was not found`, code: "NODE_NOT_FOUND" };
-  }
-  if (command.type === "annotation.move-text") {
-    const key = node.type === "text" ? "position" : node.type === "dimension" ? "textPosition" : null;
-    if (key === null) {
-      return { status: "rejected", message: `Node ${command.id} has no movable text`, code: "INVALID_COMMAND" };
-    }
-    if (!isDeepStrictEqual(node[key], command.expectedPosition)) {
-      return {
-        status: "rejected",
-        message: `Precondition failed for node ${command.id} property ${key}`,
-        code: "PRECONDITION_FAILED"
-      };
-    }
-    node[key] = structuredClone(command.position);
-    return null;
-  }
-  const mutable = node;
-  for (const [key, expected] of Object.entries(command.expected)) {
-    if (!isDeepStrictEqual(mutable[key], expected)) {
-      return {
-        status: "rejected",
-        message: `Precondition failed for node ${command.id} property ${key}`,
-        code: "PRECONDITION_FAILED"
-      };
-    }
-  }
-  for (const [key, value] of Object.entries(command.changes)) {
-    if (key === "id" || key === "type" || key === "plane" || !(key in mutable)) {
-      return {
-        status: "rejected",
-        message: `Property ${key} cannot be updated on node ${command.id}`,
-        code: "INVALID_COMMAND"
-      };
-    }
-    mutable[key] = structuredClone(value);
-  }
-  return null;
+function findNode$1(document, id) {
+  return orderedNodes(document).find(({ node }) => node.id === id) ?? null;
 }
-function findNode(document, id) {
+function orderedNodes(document) {
   return [
-    ...document.geometry,
-    ...document.annotations,
-    ...document.relations,
-    ...document.features
-  ].find((node) => node.id === id);
+    ...document.geometry.map((node) => ({ plane: "geometry", node })),
+    ...document.annotations.map((node) => ({ plane: "annotation", node })),
+    ...document.relations.map((node) => ({ plane: "relation", node })),
+    ...document.features.map((node) => ({ plane: "feature", node }))
+  ];
 }
-function deleteNode(document, id) {
-  const node = findNode(document, id);
-  if (node === void 0) {
-    return { status: "rejected", message: `Node ${id} was not found`, code: "NODE_NOT_FOUND" };
+function cloneResult(result) {
+  return result === null ? null : structuredClone(result);
+}
+function validateBounds(bounds2) {
+  const values = [bounds2.minX, bounds2.minY, bounds2.maxX, bounds2.maxY];
+  if (!values.every(Number.isFinite) || bounds2.minX > bounds2.maxX || bounds2.minY > bounds2.maxY) {
+    throw new Error("INVALID_QUERY_BOUNDS");
   }
-  document.geometry = document.geometry.filter((candidate) => candidate.id !== id);
-  document.annotations = document.annotations.filter((candidate) => candidate.id !== id);
-  document.relations = document.relations.filter((relation) => {
-    if (relation.id === id) return false;
-    if (relation.type === "topology" || relation.type === "semantic") return !relation.nodeIds.includes(id);
-    if (relation.type === "constraint") return !relation.geometryIds.includes(id);
-    return relation.annotationId !== id && !relation.geometryIds.includes(id);
-  });
-  document.features = document.features.filter((feature) => feature.id !== id && !feature.geometryIds.includes(id) && !feature.annotationIds.includes(id) && !feature.relationIds.includes(id));
-  return null;
+}
+function validateLimit(limit) {
+  const value = limit ?? DEFAULT_LIMIT;
+  if (!Number.isInteger(value) || value < 1) throw new Error("INVALID_QUERY_LIMIT");
+  if (value > MAX_LIMIT) throw new Error("QUERY_LIMIT_EXCEEDED");
+  return value;
+}
+function referencedNodeIntersects(document, id, bounds2) {
+  const result = findNode$1(document, id);
+  return result !== null && (result.plane === "geometry" || result.plane === "annotation") && intersectsNode(result.node, bounds2);
+}
+function referencedIds(node) {
+  if (node.type === "topology") return node.nodeIds;
+  if (node.type === "constraint") return node.geometryIds;
+  if (node.type === "association") return [node.annotationId, ...node.geometryIds];
+  if (node.type === "semantic") return [node.featureId, ...node.nodeIds];
+  return [...node.geometryIds, ...node.annotationIds, ...node.relationIds];
+}
+function intersectsNode(node, query) {
+  if (node.type === "ray") return infiniteLineIntersects(node.origin, node.direction, query, true);
+  if (node.type === "xline") return infiniteLineIntersects(node.origin, node.direction, query, false);
+  return intersects(boundsOfNode(node), query);
+}
+function boundsOfNode(node) {
+  switch (node.type) {
+    case "point":
+      return fromPoints([[node.x, node.y]]);
+    case "line":
+      return fromPoints([node.start, node.end]);
+    case "circle":
+      return radiusBounds(node.center, node.radius);
+    case "arc":
+      return arcBounds(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise);
+    case "ellipse": {
+      const [ax, ay] = node.majorAxis;
+      const bx = -ay * node.ratio;
+      const by = ax * node.ratio;
+      return {
+        minX: node.center[0] - Math.hypot(ax, bx),
+        minY: node.center[1] - Math.hypot(ay, by),
+        maxX: node.center[0] + Math.hypot(ax, bx),
+        maxY: node.center[1] + Math.hypot(ay, by)
+      };
+    }
+    case "polyline":
+      return fromPoints(node.vertices.map(({ point }) => point));
+    case "spline":
+      return fromPoints(node.controlPoints);
+    case "text": {
+      const width = node.maxWidth ?? Math.max(node.height, node.content.length * node.height * 0.6);
+      return expandPoint(node.position, width, node.height);
+    }
+    case "dimension":
+      return fromPoints([...node.definitionPoints, node.textPosition]);
+    case "leader":
+      return fromPoints(node.points);
+    case "centerline":
+      return fromPoints([node.start, node.end]);
+    case "section-hatch":
+      return fromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+  }
+}
+function fromPoints(points2) {
+  if (points2.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  return {
+    minX: Math.min(...points2.map(([x]) => x)),
+    minY: Math.min(...points2.map(([, y]) => y)),
+    maxX: Math.max(...points2.map(([x]) => x)),
+    maxY: Math.max(...points2.map(([, y]) => y))
+  };
+}
+function radiusBounds([x, y], radius) {
+  return { minX: x - radius, minY: y - radius, maxX: x + radius, maxY: y + radius };
+}
+function arcBounds(center, radius, startAngle, endAngle, counterClockwise) {
+  const angles = [startAngle, endAngle];
+  for (const angle of [0, 90, 180, 270]) {
+    if (angleOnArc(angle, startAngle, endAngle, counterClockwise)) angles.push(angle);
+  }
+  return fromPoints(angles.map((angle) => {
+    const radians = angle * Math.PI / 180;
+    return [center[0] + radius * Math.cos(radians), center[1] + radius * Math.sin(radians)];
+  }));
+}
+function angleOnArc(angle, start, end, counterClockwise) {
+  const normalize = (value) => (value % 360 + 360) % 360;
+  const a = normalize(angle);
+  const s = normalize(start);
+  const e = normalize(end);
+  if (counterClockwise) return normalize(a - s) <= normalize(e - s);
+  return normalize(s - a) <= normalize(s - e);
+}
+function expandPoint([x, y], width, height) {
+  return { minX: x - width, minY: y - height, maxX: x + width, maxY: y + height };
+}
+function intersects(a, b) {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+}
+function infiniteLineIntersects(origin, direction, bounds2, ray) {
+  const [dx, dy] = direction;
+  if (dx === 0 && dy === 0) return intersects(fromPoints([origin]), bounds2);
+  let low = ray ? 0 : Number.NEGATIVE_INFINITY;
+  let high = Number.POSITIVE_INFINITY;
+  for (const [coordinate, delta, min, max] of [
+    [origin[0], dx, bounds2.minX, bounds2.maxX],
+    [origin[1], dy, bounds2.minY, bounds2.maxY]
+  ]) {
+    if (delta === 0) {
+      if (coordinate < min || coordinate > max) return false;
+      continue;
+    }
+    const first = (min - coordinate) / delta;
+    const second = (max - coordinate) / delta;
+    low = Math.max(low, Math.min(first, second));
+    high = Math.min(high, Math.max(first, second));
+  }
+  return low <= high;
 }
 var _a$1;
 function $constructor(name, initializer2, params) {
@@ -5330,6 +5314,15 @@ const relationSchema = discriminatedUnion("plane", [
     nodeIds: array(idSchema)
   }).strict()
 ]);
+const featureSchema = object({
+  ...baseNodeShape,
+  type: literal("feature"),
+  semanticType: string(),
+  geometryIds: array(idSchema),
+  annotationIds: array(idSchema),
+  relationIds: array(idSchema),
+  properties: record(string(), unknown())
+}).strict();
 const drawingDocumentSchema = object({
   protocol: literal("VectorAI-Drawing"),
   schemaVersion: literal("1.0"),
@@ -5345,16 +5338,72 @@ const drawingDocumentSchema = object({
   geometry: array(geometrySchema),
   annotations: array(annotationSchema),
   relations: array(relationSchema),
-  features: array(object({
-    ...baseNodeShape,
-    type: literal("feature"),
-    semanticType: string(),
-    geometryIds: array(idSchema),
-    annotationIds: array(idSchema),
-    relationIds: array(idSchema),
-    properties: record(string(), unknown())
-  }).strict())
+  features: array(featureSchema)
 }).strict();
+const drawingRefSchema$1 = object({
+  drawingId: idSchema,
+  revision: number().int().nonnegative()
+}).strict();
+const bounds2DSchema = object({
+  minX: number(),
+  minY: number(),
+  maxX: number(),
+  maxY: number()
+}).strict().refine(({ minX, minY, maxX, maxY }) => minX <= maxX && minY <= maxY, { message: "INVALID_QUERY_BOUNDS" });
+const drawingPlaneSchema = _enum(["geometry", "annotation", "relation", "feature"]);
+const drawingSpatialNodeSchema = discriminatedUnion("plane", [
+  object({ plane: literal("geometry"), node: geometrySchema }).strict(),
+  object({ plane: literal("annotation"), node: annotationSchema }).strict(),
+  object({ plane: literal("relation"), node: relationSchema }).strict(),
+  object({ plane: literal("feature"), node: featureSchema }).strict()
+]);
+const drawingQueryRequestSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("world-slice"),
+    ref: drawingRefSchema$1,
+    bounds: bounds2DSchema,
+    planes: array(drawingPlaneSchema).min(1).optional(),
+    limit: number().int().min(1).max(200).optional()
+  }).strict(),
+  object({
+    kind: literal("node"),
+    ref: drawingRefSchema$1,
+    id: idSchema
+  }).strict(),
+  object({
+    kind: literal("neighbors"),
+    ref: drawingRefSchema$1,
+    nodeId: idSchema,
+    limit: number().int().min(1).max(200).optional()
+  }).strict()
+]);
+discriminatedUnion("kind", [
+  object({
+    kind: literal("world-slice"),
+    ref: drawingRefSchema$1,
+    bounds: bounds2DSchema,
+    nodes: array(drawingSpatialNodeSchema),
+    totalByPlane: object({
+      geometry: number().int().nonnegative(),
+      annotation: number().int().nonnegative(),
+      relation: number().int().nonnegative(),
+      feature: number().int().nonnegative()
+    }).strict(),
+    truncated: boolean()
+  }).strict(),
+  object({
+    kind: literal("node"),
+    ref: drawingRefSchema$1,
+    node: drawingSpatialNodeSchema.nullable()
+  }).strict(),
+  object({
+    kind: literal("neighbors"),
+    ref: drawingRefSchema$1,
+    nodeId: idSchema,
+    nodes: array(drawingSpatialNodeSchema),
+    truncated: boolean()
+  }).strict()
+]);
 const drawingSourceRefSchema = object({
   id: idSchema,
   mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
@@ -5376,7 +5425,16 @@ const drawingWorkspaceSnapshotSchema = object({
   }).strict(),
   provisional: boolean().optional()
 }).strict().nullable();
-const workspaceCommandSchema = discriminatedUnion("type", [
+const nodeCreateCommandSchema = object({
+  type: literal("node.create"),
+  plane: _enum(["geometry", "annotation", "relation", "feature"]),
+  node: union([geometrySchema, annotationSchema, relationSchema, featureSchema])
+}).strict().superRefine(({ plane, node }, context) => {
+  const matches = plane === "geometry" ? geometrySchema.safeParse(node).success : plane === "annotation" ? annotationSchema.safeParse(node).success : plane === "relation" ? relationSchema.safeParse(node).success : featureSchema.safeParse(node).success;
+  if (!matches) context.addIssue({ code: "custom", message: "NODE_PLANE_MISMATCH" });
+});
+const workspaceCommandSchema = union([
+  nodeCreateCommandSchema,
   object({
     type: literal("node.update"),
     id: idSchema,
@@ -5400,7 +5458,445 @@ discriminatedUnion("status", [
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
+const drawingPreviewCreateRequestSchema = object({
+  ref: drawingRefSchema$1,
+  commands: array(workspaceCommandSchema).min(1),
+  summary: string().min(1).optional()
+}).strict();
+const drawingPreviewSchema = object({
+  version: literal(1),
+  handle: idSchema,
+  baseRef: drawingRefSchema$1,
+  commands: array(workspaceCommandSchema).min(1),
+  candidate: drawingWorkspaceSnapshotSchema.unwrap(),
+  diff: object({
+    createdNodeIds: array(idSchema),
+    updatedNodeIds: array(idSchema),
+    deletedNodeIds: array(idSchema)
+  }).strict(),
+  createdAt: number(),
+  summary: string().min(1).optional()
+}).strict();
+discriminatedUnion("status", [
+  object({ status: literal("previewed"), preview: drawingPreviewSchema }).strict(),
+  object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+]);
+const drawingPreviewControlRequestSchema = object({ handle: idSchema }).strict();
+discriminatedUnion("status", [
+  object({ status: literal("discarded"), ref: drawingRefSchema$1 }).strict(),
+  object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+]);
 string().min(1);
+class InMemoryDrawingRepository {
+  constructor(input) {
+    __privateAdd(this, _InMemoryDrawingRepository_instances);
+    __privateAdd(this, _pending, /* @__PURE__ */ new Map());
+    __privateAdd(this, _drawings, /* @__PURE__ */ new Map());
+    __privateAdd(this, _previews, /* @__PURE__ */ new Map());
+    __privateAdd(this, _vectorizer);
+    __privateAdd(this, _drawingId);
+    __privateAdd(this, _storage);
+    __privateAdd(this, _previewHandle);
+    __privateAdd(this, _now);
+    __privateSet(this, _vectorizer, input.vectorizer);
+    __privateSet(this, _drawingId, input.drawingId ?? ((_sessionId, attachment) => `drawing_${String(attachment.attachmentId)}`));
+    __privateSet(this, _storage, input.storage);
+    __privateSet(this, _previewHandle, input.previewHandle ?? (() => `preview_${globalThis.crypto.randomUUID()}`));
+    __privateSet(this, _now, input.now ?? Date.now);
+  }
+  bindPending(sessionId, attachment) {
+    __privateGet(this, _pending).set(sessionId, structuredClone(attachment));
+  }
+  getPending(sessionId) {
+    const attachment = __privateGet(this, _pending).get(sessionId);
+    return attachment === void 0 ? null : structuredClone(attachment);
+  }
+  async importPending(sessionId, input) {
+    var _a3;
+    const attachment = __privateGet(this, _pending).get(sessionId);
+    if (attachment === void 0) throw new Error("PENDING_DRAWING_SOURCE_REQUIRED");
+    const attachmentId = String(attachment.attachmentId);
+    const current = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if ((current == null ? void 0 : current.attachmentId) === attachmentId) {
+      return {
+        status: "already-imported",
+        ref: { drawingId: current.drawingId, revision: current.revision },
+        provisional: current.provisional
+      };
+    }
+    input.signal.throwIfAborted();
+    const drawingId = __privateGet(this, _drawingId).call(this, sessionId, attachment);
+    const vectorized = await __privateGet(this, _vectorizer).vectorize({
+      drawingId,
+      attachment: structuredClone(attachment),
+      data: input.data.slice(),
+      signal: input.signal
+    });
+    input.signal.throwIfAborted();
+    const entry = {
+      attachmentId,
+      document: structuredClone(vectorized.document),
+      drawingId,
+      bounds: structuredClone(vectorized.bounds),
+      revision: 1,
+      source: {
+        id: attachmentId,
+        mediaType: attachment.mediaType,
+        bytes: attachment.bytes,
+        width: attachment.width,
+        height: attachment.height,
+        ...attachment.name === void 0 ? {} : { name: attachment.name }
+      },
+      provisional: vectorized.provisional
+    };
+    (_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.save(sessionId, structuredClone(entry));
+    __privateGet(this, _drawings).set(sessionId, entry);
+    __privateGet(this, _previews).delete(sessionId);
+    return {
+      status: "imported",
+      ref: { drawingId, revision: 1 },
+      provisional: vectorized.provisional
+    };
+  }
+  getSnapshot(sessionId) {
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if (entry === null) return null;
+    return snapshotOf(entry);
+  }
+  commit(sessionId, request) {
+    var _a3;
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if (entry === null) {
+      return { status: "rejected", message: "No drawing is loaded", code: "DRAWING_REQUIRED" };
+    }
+    if (request.expectedRevision !== entry.revision) {
+      return {
+        status: "conflict",
+        message: `Expected revision ${request.expectedRevision}, current revision is ${entry.revision}`,
+        snapshot: snapshotOf(entry)
+      };
+    }
+    const document = structuredClone(entry.document);
+    for (const command of request.commands) {
+      const rejection = applyCommand(document, command);
+      if (rejection !== null) return rejection;
+    }
+    const invalid = validateDocument(document);
+    if (invalid !== null) return invalid;
+    document.metadata.updatedAt = __privateGet(this, _now).call(this);
+    const nextEntry = {
+      ...entry,
+      document,
+      revision: entry.revision + 1
+    };
+    (_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.save(sessionId, structuredClone(nextEntry));
+    __privateGet(this, _drawings).set(sessionId, nextEntry);
+    __privateGet(this, _previews).delete(sessionId);
+    return { status: "committed", snapshot: snapshotOf(nextEntry) };
+  }
+  summarize(sessionId) {
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if (entry === null) return null;
+    const geometryByType = {};
+    for (const node of entry.document.geometry) {
+      geometryByType[node.type] = (geometryByType[node.type] ?? 0) + 1;
+    }
+    return {
+      ref: { drawingId: entry.drawingId, revision: entry.revision },
+      unit: entry.document.unitSystem.length,
+      bounds: structuredClone(entry.bounds),
+      geometryByType,
+      provisional: entry.provisional
+    };
+  }
+  query(sessionId, request) {
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if (entry === null) throw new Error("DRAWING_REQUIRED");
+    if (request.ref.drawingId !== entry.drawingId || request.ref.revision !== entry.revision) {
+      throw new Error("DRAWING_STALE");
+    }
+    const result = queryDrawing(entry.document, spatialQueryOf(request));
+    return structuredClone({ ...result, ref: request.ref });
+  }
+  createPreview(sessionId, request) {
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if (entry === null) {
+      return { status: "rejected", message: "No drawing is loaded", code: "DRAWING_REQUIRED" };
+    }
+    if (request.ref.drawingId !== entry.drawingId || request.ref.revision !== entry.revision) {
+      return {
+        status: "conflict",
+        message: `Preview base ${request.ref.drawingId}@${request.ref.revision} is stale`,
+        snapshot: snapshotOf(entry)
+      };
+    }
+    const document = structuredClone(entry.document);
+    for (const command of request.commands) {
+      const rejection = applyCommand(document, command);
+      if (rejection !== null) return rejection;
+    }
+    const invalid = validateDocument(document);
+    if (invalid !== null) return invalid;
+    const createdAt = __privateGet(this, _now).call(this);
+    document.metadata.updatedAt = createdAt;
+    const preview = {
+      version: 1,
+      handle: __privateGet(this, _previewHandle).call(this),
+      baseRef: structuredClone(request.ref),
+      commands: structuredClone(request.commands),
+      candidate: snapshotOf({ ...entry, document }),
+      diff: diffDocuments(entry.document, document),
+      createdAt,
+      ...request.summary === void 0 ? {} : { summary: request.summary }
+    };
+    __privateGet(this, _previews).set(sessionId, preview);
+    return { status: "previewed", preview: structuredClone(preview) };
+  }
+  getPreview(sessionId) {
+    const preview = __privateGet(this, _previews).get(sessionId);
+    if (preview === void 0) return null;
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if (entry === null || preview.baseRef.drawingId !== entry.drawingId || preview.baseRef.revision !== entry.revision) {
+      __privateGet(this, _previews).delete(sessionId);
+      return null;
+    }
+    return structuredClone(preview);
+  }
+  commitPreview(sessionId, request) {
+    var _a3;
+    const current = __privateGet(this, _previews).get(sessionId);
+    if (current === void 0) {
+      return { status: "rejected", message: "No current Preview exists", code: "PREVIEW_NOT_FOUND" };
+    }
+    if (current.handle !== request.handle) {
+      return {
+        status: "rejected",
+        message: `Preview ${request.handle} is not current`,
+        code: "PREVIEW_NOT_CURRENT"
+      };
+    }
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if (entry === null || current.baseRef.drawingId !== entry.drawingId || current.baseRef.revision !== entry.revision) {
+      __privateGet(this, _previews).delete(sessionId);
+      return { status: "rejected", message: "Preview base revision is stale", code: "PREVIEW_STALE" };
+    }
+    const document = structuredClone(current.candidate.document);
+    const invalid = validateDocument(document);
+    if (invalid !== null) return invalid;
+    document.metadata.updatedAt = __privateGet(this, _now).call(this);
+    const nextEntry = {
+      ...entry,
+      document,
+      revision: entry.revision + 1
+    };
+    (_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.save(sessionId, structuredClone(nextEntry));
+    __privateGet(this, _drawings).set(sessionId, nextEntry);
+    __privateGet(this, _previews).delete(sessionId);
+    return { status: "committed", snapshot: snapshotOf(nextEntry) };
+  }
+  discardPreview(sessionId, request) {
+    const current = __privateGet(this, _previews).get(sessionId);
+    if (current === void 0) {
+      return { status: "rejected", message: "No current Preview exists", code: "PREVIEW_NOT_FOUND" };
+    }
+    if (current.handle !== request.handle) {
+      return {
+        status: "rejected",
+        message: `Preview ${request.handle} is not current`,
+        code: "PREVIEW_NOT_CURRENT"
+      };
+    }
+    __privateGet(this, _previews).delete(sessionId);
+    return { status: "discarded", ref: structuredClone(current.baseRef) };
+  }
+  disposeSession(sessionId) {
+    __privateGet(this, _pending).delete(sessionId);
+    __privateGet(this, _drawings).delete(sessionId);
+    __privateGet(this, _previews).delete(sessionId);
+  }
+}
+_pending = new WeakMap();
+_drawings = new WeakMap();
+_previews = new WeakMap();
+_vectorizer = new WeakMap();
+_drawingId = new WeakMap();
+_storage = new WeakMap();
+_previewHandle = new WeakMap();
+_now = new WeakMap();
+_InMemoryDrawingRepository_instances = new WeakSet();
+getDrawing_fn = function(sessionId) {
+  var _a3;
+  const current = __privateGet(this, _drawings).get(sessionId);
+  if (current !== void 0) return current;
+  const restored = ((_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.load(sessionId)) ?? null;
+  if (restored !== null) __privateGet(this, _drawings).set(sessionId, structuredClone(restored));
+  return restored;
+};
+function spatialQueryOf(request) {
+  if (request.kind === "node") return { kind: "node", id: request.id };
+  if (request.kind === "neighbors") {
+    return {
+      kind: "neighbors",
+      nodeId: request.nodeId,
+      ...request.limit === void 0 ? {} : { limit: request.limit }
+    };
+  }
+  return {
+    kind: "world-slice",
+    bounds: structuredClone(request.bounds),
+    ...request.planes === void 0 ? {} : { planes: [...request.planes] },
+    ...request.limit === void 0 ? {} : { limit: request.limit }
+  };
+}
+function snapshotOf(entry) {
+  return structuredClone({
+    version: 1,
+    ref: { drawingId: entry.drawingId, revision: entry.revision },
+    document: entry.document,
+    source: entry.source,
+    capabilities: {
+      edit: true,
+      delete: true,
+      annotations: true,
+      sourceUnderlay: true
+    },
+    provisional: entry.provisional
+  });
+}
+function applyCommand(document, command) {
+  if (command.type === "node.create") return createNode(document, command);
+  if (command.type === "node.delete") return deleteNode(document, command.id);
+  const node = findNode(document, command.id);
+  if (node === void 0) {
+    return { status: "rejected", message: `Node ${command.id} was not found`, code: "NODE_NOT_FOUND" };
+  }
+  if (command.type === "annotation.move-text") {
+    const key = node.type === "text" ? "position" : node.type === "dimension" ? "textPosition" : null;
+    if (key === null) {
+      return { status: "rejected", message: `Node ${command.id} has no movable text`, code: "INVALID_COMMAND" };
+    }
+    if (!isDeepStrictEqual(node[key], command.expectedPosition)) {
+      return {
+        status: "rejected",
+        message: `Precondition failed for node ${command.id} property ${key}`,
+        code: "PRECONDITION_FAILED"
+      };
+    }
+    node[key] = structuredClone(command.position);
+    return null;
+  }
+  const mutable = node;
+  for (const [key, expected] of Object.entries(command.expected)) {
+    if (!isDeepStrictEqual(mutable[key], expected)) {
+      return {
+        status: "rejected",
+        message: `Precondition failed for node ${command.id} property ${key}`,
+        code: "PRECONDITION_FAILED"
+      };
+    }
+  }
+  for (const [key, value] of Object.entries(command.changes)) {
+    if (key === "id" || key === "type" || key === "plane" || !(key in mutable)) {
+      return {
+        status: "rejected",
+        message: `Property ${key} cannot be updated on node ${command.id}`,
+        code: "INVALID_COMMAND"
+      };
+    }
+    mutable[key] = structuredClone(value);
+  }
+  return null;
+}
+function createNode(document, command) {
+  if (findNode(document, command.node.id) !== void 0) {
+    return {
+      status: "rejected",
+      message: `Node ${command.node.id} already exists`,
+      code: "NODE_ALREADY_EXISTS"
+    };
+  }
+  if (command.plane === "geometry") document.geometry.push(structuredClone(command.node));
+  else if (command.plane === "annotation") document.annotations.push(structuredClone(command.node));
+  else if (command.plane === "relation") document.relations.push(structuredClone(command.node));
+  else document.features.push(structuredClone(command.node));
+  return null;
+}
+function findNode(document, id) {
+  return [
+    ...document.geometry,
+    ...document.annotations,
+    ...document.relations,
+    ...document.features
+  ].find((node) => node.id === id);
+}
+function deleteNode(document, id) {
+  const node = findNode(document, id);
+  if (node === void 0) {
+    return { status: "rejected", message: `Node ${id} was not found`, code: "NODE_NOT_FOUND" };
+  }
+  document.geometry = document.geometry.filter((candidate) => candidate.id !== id);
+  document.annotations = document.annotations.filter((candidate) => candidate.id !== id);
+  document.relations = document.relations.filter((relation) => {
+    if (relation.id === id) return false;
+    if (relation.type === "topology" || relation.type === "semantic") return !relation.nodeIds.includes(id);
+    if (relation.type === "constraint") return !relation.geometryIds.includes(id);
+    return relation.annotationId !== id && !relation.geometryIds.includes(id);
+  });
+  document.features = document.features.filter((feature) => feature.id !== id && !feature.geometryIds.includes(id) && !feature.annotationIds.includes(id) && !feature.relationIds.includes(id));
+  return null;
+}
+function diffDocuments(before, after) {
+  const beforeNodes = new Map(allNodes(before).map((node) => [node.id, node]));
+  const afterNodes = new Map(allNodes(after).map((node) => [node.id, node]));
+  return {
+    createdNodeIds: [...afterNodes.keys()].filter((id) => !beforeNodes.has(id)),
+    updatedNodeIds: [...afterNodes.keys()].filter((id) => beforeNodes.has(id) && !isDeepStrictEqual(beforeNodes.get(id), afterNodes.get(id))),
+    deletedNodeIds: [...beforeNodes.keys()].filter((id) => !afterNodes.has(id))
+  };
+}
+function allNodes(document) {
+  return [
+    ...document.geometry,
+    ...document.annotations,
+    ...document.relations,
+    ...document.features
+  ];
+}
+function validateDocument(document) {
+  if (!drawingDocumentSchema.safeParse(document).success) {
+    return { status: "rejected", message: "Candidate Drawing is invalid", code: "INVALID_DOCUMENT" };
+  }
+  const ids = allNodes(document).map(({ id }) => id);
+  if (new Set(ids).size !== ids.length) {
+    return { status: "rejected", message: "Drawing node ids must be unique", code: "NODE_ALREADY_EXISTS" };
+  }
+  const geometryIds = new Set(document.geometry.map(({ id }) => id));
+  const annotationIds = new Set(document.annotations.map(({ id }) => id));
+  const relationIds = new Set(document.relations.map(({ id }) => id));
+  const featureIds = new Set(document.features.map(({ id }) => id));
+  const nodeIds = new Set(ids);
+  const missing = (id, expected) => !expected.has(id);
+  for (const annotation of document.annotations) {
+    const targets = annotation.type === "dimension" ? annotation.targets.map(({ geometryId }) => geometryId) : annotation.type === "leader" ? [annotation.target.geometryId] : annotation.type === "centerline" ? annotation.targets : [];
+    if (targets.some((id) => missing(id, geometryIds))) return danglingReference(annotation.id);
+  }
+  for (const relation of document.relations) {
+    const valid = relation.type === "topology" ? relation.nodeIds.every((id) => nodeIds.has(id)) : relation.type === "constraint" ? relation.geometryIds.every((id) => geometryIds.has(id)) : relation.type === "association" ? annotationIds.has(relation.annotationId) && relation.geometryIds.every((id) => geometryIds.has(id)) : featureIds.has(relation.featureId) && relation.nodeIds.every((id) => nodeIds.has(id));
+    if (!valid) return danglingReference(relation.id);
+  }
+  for (const feature of document.features) {
+    if (feature.geometryIds.some((id) => missing(id, geometryIds)) || feature.annotationIds.some((id) => missing(id, annotationIds)) || feature.relationIds.some((id) => missing(id, relationIds))) return danglingReference(feature.id);
+  }
+  return null;
+}
+function danglingReference(id) {
+  return {
+    status: "rejected",
+    message: `Node ${id} contains a dangling reference`,
+    code: "DANGLING_REFERENCE"
+  };
+}
 class FileDrawingRepositoryStorage {
   constructor(directory) {
     __privateAdd(this, _FileDrawingRepositoryStorage_instances);
@@ -5564,6 +6060,170 @@ function createDrawingSummarizeTool(drawings) {
       const summary = drawings.summarize(String(sessionId));
       if (summary === null) throw new Error("DRAWING_REQUIRED");
       return summary;
+    }
+  });
+}
+function createDrawingQueryTool(drawings) {
+  return defineTool({
+    name: "drawing_query",
+    description: "Query the active local VectorAI Drawing at an exact drawingId and revision. Use world-slice for bounded spatial context, node for one object, or neighbors for directly related objects.",
+    parameters: {
+      kind: {
+        type: "string",
+        enum: ["world-slice", "node", "neighbors"],
+        required: true
+      },
+      ref: {
+        type: "object",
+        properties: drawingRefSchema.properties,
+        additionalProperties: false,
+        required: true
+      },
+      bounds: {
+        type: "object",
+        properties: {
+          minX: { type: "number", required: true },
+          minY: { type: "number", required: true },
+          maxX: { type: "number", required: true },
+          maxY: { type: "number", required: true }
+        },
+        additionalProperties: false
+      },
+      planes: {
+        type: "array",
+        items: { type: "string", enum: ["geometry", "annotation", "relation", "feature"] }
+      },
+      limit: { type: "integer" },
+      id: { type: "string" },
+      nodeId: { type: "string" }
+    },
+    output: {
+      schema: { type: "json" },
+      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+    },
+    async execute(args, exec) {
+      var _a3;
+      const sessionId = (_a3 = exec.agent) == null ? void 0 : _a3.id;
+      if (sessionId === void 0) throw new Error("DRAWING_SESSION_REQUIRED");
+      const request = drawingQueryRequestSchema.parse(args);
+      return drawings.query(String(sessionId), request);
+    }
+  });
+}
+function createDrawingPreviewTool(drawings) {
+  return defineTool({
+    name: "drawing_preview_transaction",
+    description: "Create or replace the current local Drawing Preview from an exact formal revision. This does not modify the formal drawing until drawing_commit_preview is called.",
+    parameters: {
+      ref: {
+        type: "object",
+        properties: drawingRefSchema.properties,
+        additionalProperties: false,
+        required: true
+      },
+      commands: { type: "array", items: { type: "json" }, required: true },
+      summary: { type: "string" }
+    },
+    output: {
+      schema: { type: "json" },
+      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+    },
+    async execute(args, exec) {
+      var _a3;
+      const sessionId = (_a3 = exec.agent) == null ? void 0 : _a3.id;
+      if (sessionId === void 0) throw new Error("DRAWING_SESSION_REQUIRED");
+      const request = drawingPreviewCreateRequestSchema.parse(args);
+      return previewReceipt(drawings.createPreview(String(sessionId), request));
+    }
+  });
+}
+function createDrawingCommitPreviewTool(drawings) {
+  return defineTool({
+    name: "drawing_commit_preview",
+    description: "Commit the current local Drawing Preview as one new formal revision. The opaque Preview handle must still be current.",
+    parameters: { handle: { type: "string", required: true } },
+    output: {
+      schema: { type: "json" },
+      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+    },
+    async execute(args, exec) {
+      var _a3;
+      const sessionId = (_a3 = exec.agent) == null ? void 0 : _a3.id;
+      if (sessionId === void 0) throw new Error("DRAWING_SESSION_REQUIRED");
+      const request = drawingPreviewControlRequestSchema.parse(args);
+      return commitReceipt(drawings.commitPreview(String(sessionId), request));
+    }
+  });
+}
+function previewReceipt(result) {
+  if (result.status === "previewed") {
+    const { preview } = result;
+    return {
+      status: "previewed",
+      preview: {
+        version: preview.version,
+        handle: preview.handle,
+        baseRef: {
+          drawingId: preview.baseRef.drawingId,
+          revision: preview.baseRef.revision
+        },
+        diff: {
+          createdNodeIds: [...preview.diff.createdNodeIds],
+          updatedNodeIds: [...preview.diff.updatedNodeIds],
+          deletedNodeIds: [...preview.diff.deletedNodeIds]
+        },
+        createdAt: preview.createdAt,
+        ...preview.summary === void 0 ? {} : { summary: preview.summary }
+      }
+    };
+  }
+  if (result.status === "conflict") {
+    return {
+      status: "conflict",
+      message: result.message,
+      ...result.snapshot === void 0 ? {} : { ref: {
+        drawingId: result.snapshot.ref.drawingId,
+        revision: result.snapshot.ref.revision
+      } }
+    };
+  }
+  return { status: "rejected", message: result.message, ...result.code === void 0 ? {} : { code: result.code } };
+}
+function commitReceipt(result) {
+  if (result.status === "committed") return {
+    status: "committed",
+    ref: {
+      drawingId: result.snapshot.ref.drawingId,
+      revision: result.snapshot.ref.revision
+    }
+  };
+  if (result.status === "conflict") {
+    return {
+      status: "conflict",
+      message: result.message,
+      ...result.snapshot === void 0 ? {} : { ref: {
+        drawingId: result.snapshot.ref.drawingId,
+        revision: result.snapshot.ref.revision
+      } }
+    };
+  }
+  return { status: "rejected", message: result.message, ...result.code === void 0 ? {} : { code: result.code } };
+}
+function createDrawingDiscardPreviewTool(drawings) {
+  return defineTool({
+    name: "drawing_discard_preview",
+    description: "Discard the current local Drawing Preview without changing the formal drawing revision.",
+    parameters: { handle: { type: "string", required: true } },
+    output: {
+      schema: { type: "json" },
+      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+    },
+    async execute(args, exec) {
+      var _a3;
+      const sessionId = (_a3 = exec.agent) == null ? void 0 : _a3.id;
+      if (sessionId === void 0) throw new Error("DRAWING_SESSION_REQUIRED");
+      const request = drawingPreviewControlRequestSchema.parse(args);
+      return drawings.discardPreview(String(sessionId), request);
     }
   });
 }
@@ -6107,7 +6767,7 @@ function normalizeDegrees(value) {
 function round(value) {
   return Math.round(value * 1e6) / 1e6;
 }
-class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _commit_dec = [Remote], _a2) {
+class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _commit_dec = [Remote], _query_dec = [Remote], _getPreview_dec = [Remote], _createPreview_dec = [Remote], _commitPreview_dec = [Remote], _discardPreview_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingSpace");
     __runInitializers(_init, 5, this);
@@ -6118,6 +6778,10 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
     });
     ctx.tools.register(createDrawingImportTool(this.drawings, ctx.attachments));
     ctx.tools.register(createDrawingSummarizeTool(this.drawings));
+    ctx.tools.register(createDrawingQueryTool(this.drawings));
+    ctx.tools.register(createDrawingPreviewTool(this.drawings));
+    ctx.tools.register(createDrawingCommitPreviewTool(this.drawings));
+    ctx.tools.register(createDrawingDiscardPreviewTool(this.drawings));
     ctx.on("agent/pre-step", createPreStepIntake(this.drawings));
     ctx.on("session/disposed", (session) => {
       this.drawings.disposeSession(String(session.id));
@@ -6129,10 +6793,30 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
   commit(agent, request) {
     return this.drawings.commit(String(agent.id), request);
   }
+  query(agent, request) {
+    return this.drawings.query(String(agent.id), request);
+  }
+  getPreview(agent) {
+    return this.drawings.getPreview(String(agent.id));
+  }
+  createPreview(agent, request) {
+    return this.drawings.createPreview(String(agent.id), request);
+  }
+  commitPreview(agent, request) {
+    return this.drawings.commitPreview(String(agent.id), request);
+  }
+  discardPreview(agent, request) {
+    return this.drawings.discardPreview(String(agent.id), request);
+  }
 }
 _init = __decoratorStart(_a2);
 __decorateElement(_init, 1, "getSnapshot", _getSnapshot_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "commit", _commit_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "query", _query_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "getPreview", _getPreview_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "createPreview", _createPreview_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "commitPreview", _commitPreview_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "discardPreview", _discardPreview_dec, DrawingSpaceHostService);
 __decoratorMetadata(_init, DrawingSpaceHostService);
 __publicField(DrawingSpaceHostService, "inject", ["tools", "attachments"]);
 export {

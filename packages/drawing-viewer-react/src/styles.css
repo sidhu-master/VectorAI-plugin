@@ -63,6 +63,31 @@
   background: rgba(230, 161, 93, 0.1);
 }
 
+.vai-workspace__badge--preview {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(14, 165, 233, 0.14);
+  color: #7dd3fc;
+}
+
+.vai-entity--preview-created,
+.vai-entity--preview-updated {
+  color: #38bdf8;
+  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));
+}
+
+.vai-entity--preview-before {
+  opacity: 0.28;
+  color: #f59e0b;
+  pointer-events: none;
+}
+
+.vai-entity--preview-deleted {
+  opacity: 0.24;
+  color: #fb7185;
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
 .vai-workspace__busy {
   margin-left: auto;
 }

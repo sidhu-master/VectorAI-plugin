@@ -59,10 +59,14 @@ function vectorizer(): ImageVectorizer & { calls: string[] } {
   };
 }
 
-function repository(imageVectorizer: ImageVectorizer = vectorizer()) {
+function repository(
+  imageVectorizer: ImageVectorizer = vectorizer(),
+  previewOptions: { previewHandle?: () => string; now?: () => number } = {},
+) {
   return new InMemoryDrawingRepository({
     vectorizer: imageVectorizer,
     drawingId: (_sessionId, source) => `drawing_${String(source.attachmentId)}`,
+    ...previewOptions,
   });
 }
 
@@ -252,5 +256,239 @@ describe('InMemoryDrawingRepository', () => {
 
     expect(drawings.getPending('session-a')).toBeNull();
     expect(drawings.getSnapshot('session-a')).toBeNull();
+  });
+
+  it('queries the exact current Drawing revision and clones the result', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+
+    const request = {
+      kind: 'world-slice' as const,
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      bounds: { minX: -1, minY: -1, maxX: 121, maxY: 1 },
+      limit: 20,
+    };
+    const first = drawings.query('session-a', request);
+
+    expect(first.ref).toEqual(request.ref);
+    expect(first.kind).toBe('world-slice');
+    if (first.kind !== 'world-slice') throw new Error('expected world slice');
+    expect(first.nodes.map(({ node }) => node.id)).toEqual(['top', 'right', 'left']);
+    (first.nodes[0]?.node as { visible: boolean }).visible = false;
+    const second = drawings.query('session-a', request);
+    if (second.kind !== 'world-slice') throw new Error('expected world slice');
+    expect(second.nodes[0]?.node.visible).toBe(true);
+  });
+
+  it('rejects queries for missing, stale and different drawings', async () => {
+    const drawings = repository();
+    const query = {
+      kind: 'node' as const,
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      id: 'top',
+    };
+
+    expect(() => drawings.query('session-a', query)).toThrow('DRAWING_REQUIRED');
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+
+    expect(() => drawings.query('session-a', {
+      ...query,
+      ref: { ...query.ref, revision: 0 },
+    })).toThrow('DRAWING_STALE');
+    expect(() => drawings.query('session-a', {
+      ...query,
+      ref: { ...query.ref, drawingId: 'drawing_other' },
+    })).toThrow('DRAWING_STALE');
+  });
+
+  it('creates a Preview without changing the formal snapshot', async () => {
+    const drawings = repository(vectorizer(), {
+      previewHandle: () => 'preview-1',
+      now: () => 42,
+    });
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+
+    const result = drawings.createPreview('session-a', {
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      summary: 'hide top edge',
+      commands: [{
+        type: 'node.update',
+        id: 'top',
+        changes: { visible: false },
+        expected: { visible: true },
+      }],
+    });
+
+    expect(result.status).toBe('previewed');
+    if (result.status !== 'previewed') throw new Error('expected previewed result');
+    expect(result.preview).toMatchObject({
+      handle: 'preview-1',
+      baseRef: { drawingId: 'drawing_source', revision: 1 },
+      createdAt: 42,
+      summary: 'hide top edge',
+      diff: { createdNodeIds: [], updatedNodeIds: ['top'], deletedNodeIds: [] },
+    });
+    expect(result.preview.candidate.document.geometry[0]?.visible).toBe(false);
+    expect(drawings.getSnapshot('session-a')?.document.geometry[0]?.visible).toBe(true);
+    expect(drawings.getSnapshot('session-a')?.ref.revision).toBe(1);
+  });
+
+  it('previews newly created annotation and relation nodes through public commands', async () => {
+    const drawings = repository(vectorizer(), { previewHandle: () => 'preview-create' });
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+
+    const result = drawings.createPreview('session-a', {
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      commands: [{
+        type: 'node.create',
+        plane: 'annotation',
+        node: {
+          id: 'label-1' as never,
+          type: 'text',
+          content: 'TOP',
+          position: [60, 5],
+          height: 3,
+          rotation: 0,
+          alignment: 'center',
+          verticalAlignment: 'middle',
+          visible: true,
+          quality: { status: 'candidate', evidenceRefs: [] },
+        },
+      }, {
+        type: 'node.create',
+        plane: 'relation',
+        node: {
+          id: 'association-1' as never,
+          type: 'association',
+          plane: 'association',
+          kind: 'annotation-target',
+          annotationId: 'label-1' as never,
+          geometryIds: ['top' as never],
+          visible: true,
+          quality: { status: 'candidate', evidenceRefs: [] },
+        },
+      }],
+    });
+
+    expect(result.status).toBe('previewed');
+    if (result.status !== 'previewed') throw new Error('expected previewed result');
+    expect(result.preview.diff.createdNodeIds).toEqual(['label-1', 'association-1']);
+    expect(result.preview.candidate.document.annotations[0]?.id).toBe('label-1');
+    expect(result.preview.candidate.document.relations[0]?.id).toBe('association-1');
+    expect(drawings.getSnapshot('session-a')?.document.annotations).toEqual([]);
+  });
+
+  it('commits one current Preview as exactly one formal revision', async () => {
+    const drawings = repository(vectorizer(), { previewHandle: () => 'preview-commit' });
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+    drawings.createPreview('session-a', {
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      commands: [{ type: 'node.delete', id: 'top' }, { type: 'node.delete', id: 'bottom' }],
+    });
+
+    const result = drawings.commitPreview('session-a', { handle: 'preview-commit' });
+
+    expect(result.status).toBe('committed');
+    if (result.status !== 'committed') throw new Error('expected committed result');
+    expect(result.snapshot.ref.revision).toBe(2);
+    expect(result.snapshot.document.geometry.map(({ id }) => id)).toEqual(['right', 'left']);
+    expect(drawings.getPreview('session-a')).toBeNull();
+  });
+
+  it('discards a Preview without changing the formal revision', async () => {
+    const drawings = repository(vectorizer(), { previewHandle: () => 'preview-discard' });
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+    drawings.createPreview('session-a', {
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      commands: [{ type: 'node.delete', id: 'top' }],
+    });
+
+    expect(drawings.discardPreview('session-a', { handle: 'preview-discard' })).toEqual({
+      status: 'discarded',
+      ref: { drawingId: 'drawing_source', revision: 1 },
+    });
+    expect(drawings.getPreview('session-a')).toBeNull();
+    expect(drawings.getSnapshot('session-a')?.document.geometry).toHaveLength(4);
+  });
+
+  it('replaces the current Preview and rejects old or foreign handles', async () => {
+    const handles = ['preview-old', 'preview-new'];
+    const drawings = repository(vectorizer(), { previewHandle: () => handles.shift() ?? 'preview-extra' });
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+    const request = {
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      commands: [{ type: 'node.delete' as const, id: 'top' }],
+    };
+    drawings.createPreview('session-a', request);
+    drawings.createPreview('session-a', request);
+
+    expect(drawings.commitPreview('session-a', { handle: 'preview-old' })).toEqual({
+      status: 'rejected',
+      message: 'Preview preview-old is not current',
+      code: 'PREVIEW_NOT_CURRENT',
+    });
+    expect(drawings.discardPreview('session-b', { handle: 'preview-new' })).toEqual({
+      status: 'rejected',
+      message: 'No current Preview exists',
+      code: 'PREVIEW_NOT_FOUND',
+    });
+  });
+
+  it('invalidates Preview after a direct formal commit or new import', async () => {
+    const drawings = repository(vectorizer(), { previewHandle: () => 'preview-stale' });
+    drawings.bindPending('session-a', attachment('source'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]),
+      signal: new AbortController().signal,
+    });
+    const previewRequest = {
+      ref: { drawingId: 'drawing_source', revision: 1 },
+      commands: [{ type: 'node.delete' as const, id: 'top' }],
+    };
+    drawings.createPreview('session-a', previewRequest);
+    drawings.commit('session-a', {
+      expectedRevision: 1,
+      commands: [{ type: 'node.delete', id: 'bottom' }],
+    });
+    expect(drawings.getPreview('session-a')).toBeNull();
+
+    drawings.createPreview('session-a', {
+      ...previewRequest,
+      ref: { ...previewRequest.ref, revision: 2 },
+    });
+    drawings.bindPending('session-a', attachment('replacement'));
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([2]),
+      signal: new AbortController().signal,
+    });
+    expect(drawings.getPreview('session-a')).toBeNull();
   });
 });

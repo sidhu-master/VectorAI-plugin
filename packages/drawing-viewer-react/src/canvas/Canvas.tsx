@@ -30,7 +30,9 @@ type DragState =
   | { kind: 'annotation'; id: string; startWorld: Vec2; currentWorld: Vec2 };
 
 export function Canvas() {
-  const snapshot = useDrawingWorkspace((state) => state.snapshot);
+  const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+  const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+  const preview = useDrawingWorkspace((state) => state.preview);
   const sourceResource = useDrawingWorkspace((state) => state.sourceResource);
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -78,6 +80,12 @@ export function Canvas() {
     ...snapshot.document.geometry,
     ...(display.annotations ? snapshot.document.annotations : []),
   ];
+  const previewBeforeEntities = preview === null || formalSnapshot === null ? [] : [
+    ...formalSnapshot.document.geometry,
+    ...(display.annotations ? formalSnapshot.document.annotations : []),
+  ].filter((node) => (
+    preview.diff.updatedNodeIds.includes(node.id) || preview.diff.deletedNodeIds.includes(node.id)
+  ));
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
@@ -224,12 +232,27 @@ export function Canvas() {
             />
           ) : null}
           {display.relations ? <RelationLayer document={snapshot.document} viewport={viewport} /> : null}
+          {previewBeforeEntities.map((node) => (
+            <EntityRenderer
+              key={`preview-before:${node.id}`}
+              node={node}
+              viewport={viewport}
+              selected={false}
+              previewDiff={preview?.diff.deletedNodeIds.includes(node.id) ? 'deleted' : 'before'}
+              onSelect={() => {}}
+            />
+          ))}
           {entities.map((node) => (
             <EntityRenderer
               key={node.id}
               node={node}
               viewport={viewport}
               selected={selectedIds.includes(node.id)}
+              previewDiff={preview?.diff.createdNodeIds.includes(node.id)
+                ? 'created'
+                : preview?.diff.updatedNodeIds.includes(node.id)
+                  ? 'updated'
+                  : undefined}
               onSelect={(event) => handleEntitySelect(node.id, event)}
               onTextPointerDown={node.type === 'text' || node.type === 'dimension'
                 ? (event) => handleAnnotationPointerDown(node, event)

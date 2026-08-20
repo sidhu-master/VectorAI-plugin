@@ -5019,6 +5019,15 @@ const relationSchema = discriminatedUnion("plane", [
     nodeIds: array(idSchema)
   }).strict()
 ]);
+const featureSchema = object({
+  ...baseNodeShape,
+  type: literal("feature"),
+  semanticType: string(),
+  geometryIds: array(idSchema),
+  annotationIds: array(idSchema),
+  relationIds: array(idSchema),
+  properties: record(string(), unknown())
+}).strict();
 const drawingDocumentSchema = object({
   protocol: literal("VectorAI-Drawing"),
   schemaVersion: literal("1.0"),
@@ -5034,16 +5043,72 @@ const drawingDocumentSchema = object({
   geometry: array(geometrySchema),
   annotations: array(annotationSchema),
   relations: array(relationSchema),
-  features: array(object({
-    ...baseNodeShape,
-    type: literal("feature"),
-    semanticType: string(),
-    geometryIds: array(idSchema),
-    annotationIds: array(idSchema),
-    relationIds: array(idSchema),
-    properties: record(string(), unknown())
-  }).strict())
+  features: array(featureSchema)
 }).strict();
+const drawingRefSchema = object({
+  drawingId: idSchema,
+  revision: number().int().nonnegative()
+}).strict();
+const bounds2DSchema = object({
+  minX: number(),
+  minY: number(),
+  maxX: number(),
+  maxY: number()
+}).strict().refine(({ minX, minY, maxX, maxY }) => minX <= maxX && minY <= maxY, { message: "INVALID_QUERY_BOUNDS" });
+const drawingPlaneSchema = _enum(["geometry", "annotation", "relation", "feature"]);
+const drawingSpatialNodeSchema = discriminatedUnion("plane", [
+  object({ plane: literal("geometry"), node: geometrySchema }).strict(),
+  object({ plane: literal("annotation"), node: annotationSchema }).strict(),
+  object({ plane: literal("relation"), node: relationSchema }).strict(),
+  object({ plane: literal("feature"), node: featureSchema }).strict()
+]);
+const drawingQueryRequestSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("world-slice"),
+    ref: drawingRefSchema,
+    bounds: bounds2DSchema,
+    planes: array(drawingPlaneSchema).min(1).optional(),
+    limit: number().int().min(1).max(200).optional()
+  }).strict(),
+  object({
+    kind: literal("node"),
+    ref: drawingRefSchema,
+    id: idSchema
+  }).strict(),
+  object({
+    kind: literal("neighbors"),
+    ref: drawingRefSchema,
+    nodeId: idSchema,
+    limit: number().int().min(1).max(200).optional()
+  }).strict()
+]);
+const drawingQueryResultSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("world-slice"),
+    ref: drawingRefSchema,
+    bounds: bounds2DSchema,
+    nodes: array(drawingSpatialNodeSchema),
+    totalByPlane: object({
+      geometry: number().int().nonnegative(),
+      annotation: number().int().nonnegative(),
+      relation: number().int().nonnegative(),
+      feature: number().int().nonnegative()
+    }).strict(),
+    truncated: boolean()
+  }).strict(),
+  object({
+    kind: literal("node"),
+    ref: drawingRefSchema,
+    node: drawingSpatialNodeSchema.nullable()
+  }).strict(),
+  object({
+    kind: literal("neighbors"),
+    ref: drawingRefSchema,
+    nodeId: idSchema,
+    nodes: array(drawingSpatialNodeSchema),
+    truncated: boolean()
+  }).strict()
+]);
 const drawingSourceRefSchema = object({
   id: idSchema,
   mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
@@ -5065,7 +5130,16 @@ const drawingWorkspaceSnapshotSchema = object({
   }).strict(),
   provisional: boolean().optional()
 }).strict().nullable();
-const workspaceCommandSchema = discriminatedUnion("type", [
+const nodeCreateCommandSchema = object({
+  type: literal("node.create"),
+  plane: _enum(["geometry", "annotation", "relation", "feature"]),
+  node: union([geometrySchema, annotationSchema, relationSchema, featureSchema])
+}).strict().superRefine(({ plane, node }, context) => {
+  const matches = plane === "geometry" ? geometrySchema.safeParse(node).success : plane === "annotation" ? annotationSchema.safeParse(node).success : plane === "relation" ? relationSchema.safeParse(node).success : featureSchema.safeParse(node).success;
+  if (!matches) context.addIssue({ code: "custom", message: "NODE_PLANE_MISMATCH" });
+});
+const workspaceCommandSchema = union([
+  nodeCreateCommandSchema,
   object({
     type: literal("node.update"),
     id: idSchema,
@@ -5087,6 +5161,35 @@ const drawingWorkspaceCommitRequestSchema = object({
 const drawingWorkspaceCommitResultSchema = discriminatedUnion("status", [
   object({ status: literal("committed"), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+]);
+const drawingPreviewCreateRequestSchema = object({
+  ref: drawingRefSchema,
+  commands: array(workspaceCommandSchema).min(1),
+  summary: string().min(1).optional()
+}).strict();
+const drawingPreviewSchema = object({
+  version: literal(1),
+  handle: idSchema,
+  baseRef: drawingRefSchema,
+  commands: array(workspaceCommandSchema).min(1),
+  candidate: drawingWorkspaceSnapshotSchema.unwrap(),
+  diff: object({
+    createdNodeIds: array(idSchema),
+    updatedNodeIds: array(idSchema),
+    deletedNodeIds: array(idSchema)
+  }).strict(),
+  createdAt: number(),
+  summary: string().min(1).optional()
+}).strict();
+const drawingPreviewCreateResultSchema = discriminatedUnion("status", [
+  object({ status: literal("previewed"), preview: drawingPreviewSchema }).strict(),
+  object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+]);
+const drawingPreviewControlRequestSchema = object({ handle: idSchema }).strict();
+const drawingPreviewDiscardResultSchema = discriminatedUnion("status", [
+  object({ status: literal("discarded"), ref: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
 const drawingSessionIdSchema = string().min(1);
@@ -5151,6 +5254,98 @@ const TYPERT = {
       line: 45,
       column: 3
     }
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/query",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "query",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, {
+      name: "request",
+      wire: "request",
+      source: "json",
+      codec: {
+        mode: "strict",
+        typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryRequest",
+        schema: drawingQueryRequestSchema
+      }
+    }],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult",
+      schema: drawingQueryResultSchema
+    },
+    sourceLocation: {
+      file: "packages/plugin-dsh-space-host/src/service.ts",
+      line: 60,
+      column: 3
+    }
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "getPreview",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null",
+      schema: drawingPreviewSchema.nullable()
+    },
+    sourceLocation: serviceLocation(65)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/createPreview",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "createPreview",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest(
+      "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateRequest",
+      drawingPreviewCreateRequestSchema
+    )],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateResult",
+      schema: drawingPreviewCreateResultSchema
+    },
+    sourceLocation: serviceLocation(70)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/commitPreview",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "commitPreview",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest(
+      "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
+      drawingPreviewControlRequestSchema
+    )],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
+      schema: drawingWorkspaceCommitResultSchema
+    },
+    sourceLocation: serviceLocation(78)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardPreview",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "discardPreview",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest(
+      "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
+      drawingPreviewControlRequestSchema
+    )],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewDiscardResult",
+      schema: drawingPreviewDiscardResultSchema
+    },
+    sourceLocation: serviceLocation(86)
   }],
   model: {
     services: [],
@@ -5158,6 +5353,17 @@ const TYPERT = {
     objects: []
   }
 };
+function jsonRequest(typeSymbol, schema) {
+  return {
+    name: "request",
+    wire: "request",
+    source: "json",
+    codec: { mode: "strict", typeSymbol, schema }
+  };
+}
+function serviceLocation(line) {
+  return { file: "packages/plugin-dsh-space-host/src/service.ts", line, column: 3 };
+}
 export {
   TYPERT,
   TYPERT as default

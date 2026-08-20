@@ -89,6 +89,35 @@ describe('website drawing workspace port', () => {
     }
   });
 
+  it('translates a shared node.create into the website canonical create command', async () => {
+    const { store, committed } = stateStore();
+    const port = createWebsiteDrawingWorkspacePort(store);
+    await port.load();
+    const annotation = {
+      id: 'label-1' as never,
+      type: 'text' as const,
+      content: 'TOP',
+      position: [10, 30] as const,
+      height: 3,
+      rotation: 0,
+      alignment: 'center' as const,
+      verticalAlignment: 'middle' as const,
+      visible: true,
+      quality: { status: 'candidate' as const, evidenceRefs: [] },
+    };
+
+    const result = await port.commit({
+      expectedRevision: 1,
+      commands: [{ type: 'node.create', plane: 'annotation', node: annotation }],
+    });
+
+    expect(result.status).toBe('committed');
+    expect(committed).toEqual([{
+      type: 'annotation.create',
+      value: annotation,
+    }].map((command) => [command]));
+  });
+
   it('returns the latest authoritative snapshot instead of applying a stale request', async () => {
     const { store, committed } = stateStore();
     const port = createWebsiteDrawingWorkspacePort(store);

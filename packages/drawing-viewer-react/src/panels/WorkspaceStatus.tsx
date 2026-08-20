@@ -4,6 +4,8 @@ import { useDrawingWorkspace } from '../hooks';
 
 export function WorkspaceStatus() {
   const snapshot = useDrawingWorkspace((state) => state.snapshot);
+  const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+  const preview = useDrawingWorkspace((state) => state.preview);
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const mouseWorld = useDrawingWorkspace((state) => state.mouseWorld);
   const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -13,7 +15,8 @@ export function WorkspaceStatus() {
     <footer className="vai-status" aria-label="图纸状态">
       <span>{snapshot.ref.drawingId}</span>
       <span>Revision {snapshot.ref.revision}</span>
-      <span>{snapshot.document.unitSystem.length}</span>
+      <span>{displaySnapshot?.document.unitSystem.length ?? snapshot.document.unitSystem.length}</span>
+      {preview === null ? null : <span>Preview {preview.handle}</span>}
       <span>{Math.round(viewport.scale * 100)}%</span>
       <span>{selectedIds.length} 个已选</span>
       <span className="vai-status__coords">

@@ -7,6 +7,7 @@ import type {
   DrawingSourceResource,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspacePort,
+  DrawingWorkspacePreview,
   DrawingWorkspaceSnapshot,
 } from './contracts';
 import {
@@ -41,6 +42,8 @@ export interface DrawingWorkspaceDisplay {
 export interface DrawingWorkspaceState {
   status: DrawingWorkspaceStatus;
   snapshot: DrawingWorkspaceSnapshot | null;
+  preview: DrawingWorkspacePreview | null;
+  displaySnapshot: DrawingWorkspaceSnapshot | null;
   sourceResource: DrawingSourceResource | null;
   busy: boolean;
   error: DrawingWorkspaceError | null;
@@ -90,8 +93,13 @@ export function createDrawingWorkspaceStore(input: {
   let sourceResource: DrawingSourceResource | null = null;
 
   const store = createStore<DrawingWorkspaceState>((set, get) => {
-    const replaceSnapshot = async (snapshot: DrawingWorkspaceSnapshot | null): Promise<void> => {
-      const nextIds = snapshot === null ? new Set<string>() : drawingNodeIds(snapshot);
+    const replaceSnapshot = async (
+      snapshot: DrawingWorkspaceSnapshot | null,
+      preview: DrawingWorkspacePreview | null = null,
+    ): Promise<void> => {
+      const currentPreview = previewMatchesSnapshot(preview, snapshot) ? preview : null;
+      const displaySnapshot = currentPreview?.candidate ?? snapshot;
+      const nextIds = displaySnapshot === null ? new Set<string>() : drawingNodeIds(displaySnapshot);
       const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
       const previousSource = sourceResource;
       let nextSource: DrawingSourceResource | null = null;
@@ -113,6 +121,8 @@ export function createDrawingWorkspaceStore(input: {
       sourceResource = nextSource;
       set({
         snapshot,
+        preview: currentPreview,
+        displaySnapshot,
         sourceResource: nextSource,
         selectedIds,
         status: snapshot === null ? 'empty' : 'ready',
@@ -126,9 +136,12 @@ export function createDrawingWorkspaceStore(input: {
       requestController = controller;
       if (initial) set({ status: 'loading', error: null });
       try {
-        const snapshot = await port.load(controller.signal);
+        const [snapshot, preview] = await Promise.all([
+          port.load(controller.signal),
+          port.loadPreview?.(controller.signal) ?? Promise.resolve(null),
+        ]);
         if (controller.signal.aborted || disposed) return;
-        await replaceSnapshot(snapshot);
+        await replaceSnapshot(snapshot, preview);
       } catch (error) {
         if (controller.signal.aborted || disposed) return;
         set({
@@ -141,6 +154,8 @@ export function createDrawingWorkspaceStore(input: {
     return {
       status: 'idle',
       snapshot: null,
+      preview: null,
+      displaySnapshot: null,
       sourceResource: null,
       busy: false,
       error: null,
@@ -173,7 +188,7 @@ export function createDrawingWorkspaceStore(input: {
           }, controller.signal);
           if (controller.signal.aborted || disposed) return false;
           if (result.status === 'committed') {
-            await replaceSnapshot(result.snapshot);
+            await replaceSnapshot(result.snapshot, null);
             return true;
           }
           if (result.status === 'conflict') {
@@ -217,7 +232,9 @@ export function createDrawingWorkspaceStore(input: {
         set({ mouseWorld: point === null ? null : [...point] as Vec2 });
       },
       setSelection(ids) {
-        set({ selectedIds: [...new Set(ids)] });
+        const displaySnapshot = get().displaySnapshot;
+        const available = displaySnapshot === null ? new Set<string>() : drawingNodeIds(displaySnapshot);
+        set({ selectedIds: [...new Set(ids)].filter((id) => available.has(id)) });
       },
       setDisplay(display) {
         set({ display: { ...get().display, ...display } });
@@ -248,6 +265,16 @@ function drawingNodeIds(snapshot: DrawingWorkspaceSnapshot): Set<string> {
     ...document.relations.map((node) => node.id),
     ...document.features.map((node) => node.id),
   ]);
+}
+
+function previewMatchesSnapshot(
+  preview: DrawingWorkspacePreview | null,
+  snapshot: DrawingWorkspaceSnapshot | null,
+): boolean {
+  return preview !== null
+    && snapshot !== null
+    && preview.baseRef.drawingId === snapshot.ref.drawingId
+    && preview.baseRef.revision === snapshot.ref.revision;
 }
 
 function errorMessage(error: unknown): string {

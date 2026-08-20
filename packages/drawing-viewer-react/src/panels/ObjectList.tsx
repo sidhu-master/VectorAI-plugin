@@ -12,7 +12,9 @@ import { useDrawingWorkspace } from '../hooks';
 type DrawingNode = GeometryNode | AnnotationNode | DrawingRelation | SemanticFeature;
 
 export function ObjectList() {
-  const snapshot = useDrawingWorkspace((state) => state.snapshot);
+  const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+  const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+  const preview = useDrawingWorkspace((state) => state.preview);
   const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
   const busy = useDrawingWorkspace((state) => state.busy);
   const setSelection = useDrawingWorkspace((state) => state.setSelection);
@@ -58,7 +60,7 @@ export function ObjectList() {
                   type="button"
                   className="vai-icon-button"
                   aria-label={`${node.visible ? '隐藏' : '显示'} ${node.id}`}
-                  disabled={busy || !snapshot.capabilities.edit}
+                  disabled={busy || preview !== null || !formalSnapshot?.capabilities.edit}
                   onClick={() => { void updateNode(node.id, { visible: !node.visible }); }}
                 >
                   {node.visible ? '◉' : '○'}
@@ -67,7 +69,7 @@ export function ObjectList() {
                   type="button"
                   className="vai-icon-button vai-icon-button--danger"
                   aria-label={`删除 ${node.id}`}
-                  disabled={busy || !snapshot.capabilities.delete}
+                  disabled={busy || preview !== null || !formalSnapshot?.capabilities.delete}
                   onClick={() => { void deleteNodes([node.id]); }}
                 >
                   ×

@@ -279,10 +279,11 @@ window.__ModuleLoader__.load({
       viewport,
       selected,
       onSelect,
-      onTextPointerDown
+      onTextPointerDown,
+      previewDiff
     }) {
       if (!node.visible) return null;
-      const className = `vai-entity vai-entity--${node.quality.status}${selected ? " vai-entity--selected" : ""}`;
+      const className = `vai-entity vai-entity--${node.quality.status}${selected ? " vai-entity--selected" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
       const interactiveText = (node.type === "text" || node.type === "dimension") && onTextPointerDown !== void 0;
       return /* @__PURE__ */ jsxRuntime.jsx(
         "g",
@@ -291,6 +292,7 @@ window.__ModuleLoader__.load({
           "data-entity-id": node.id,
           "data-entity-type": node.type,
           "data-selected": selected || void 0,
+          "data-preview-diff": previewDiff,
           onClick: onSelect,
           onMouseDown: interactiveText ? onTextPointerDown : void 0,
           children: renderNode(node, viewport)
@@ -493,7 +495,9 @@ window.__ModuleLoader__.load({
       return value.replace(/[^a-zA-Z0-9_-]/g, "_");
     }
     function Canvas() {
-      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
       const sourceResource = useDrawingWorkspace((state) => state.sourceResource);
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -536,6 +540,10 @@ window.__ModuleLoader__.load({
         ...snapshot.document.geometry,
         ...display.annotations ? snapshot.document.annotations : []
       ];
+      const previewBeforeEntities = preview === null || formalSnapshot === null ? [] : [
+        ...formalSnapshot.document.geometry,
+        ...display.annotations ? formalSnapshot.document.annotations : []
+      ].filter((node) => preview.diff.updatedNodeIds.includes(node.id) || preview.diff.deletedNodeIds.includes(node.id));
       const handleWheel = (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -680,12 +688,25 @@ window.__ModuleLoader__.load({
                     }
                   ) : null,
                   display.relations ? /* @__PURE__ */ jsxRuntime.jsx(RelationLayer, { document: snapshot.document, viewport }) : null,
+                  previewBeforeEntities.map((node) => /* @__PURE__ */ jsxRuntime.jsx(
+                    EntityRenderer,
+                    {
+                      node,
+                      viewport,
+                      selected: false,
+                      previewDiff: (preview == null ? void 0 : preview.diff.deletedNodeIds.includes(node.id)) ? "deleted" : "before",
+                      onSelect: () => {
+                      }
+                    },
+                    `preview-before:${node.id}`
+                  )),
                   entities.map((node) => /* @__PURE__ */ jsxRuntime.jsx(
                     EntityRenderer,
                     {
                       node,
                       viewport,
                       selected: selectedIds.includes(node.id),
+                      previewDiff: (preview == null ? void 0 : preview.diff.createdNodeIds.includes(node.id)) ? "created" : (preview == null ? void 0 : preview.diff.updatedNodeIds.includes(node.id)) ? "updated" : void 0,
                       onSelect: (event) => handleEntitySelect(node.id, event),
                       onTextPointerDown: node.type === "text" || node.type === "dimension" ? (event) => handleAnnotationPointerDown(node, event) : void 0
                     },
@@ -762,7 +783,9 @@ window.__ModuleLoader__.load({
       };
     }
     function ObjectList() {
-      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
       const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
       const busy = useDrawingWorkspace((state) => state.busy);
       const setSelection = useDrawingWorkspace((state) => state.setSelection);
@@ -813,7 +836,7 @@ window.__ModuleLoader__.load({
                     type: "button",
                     className: "vai-icon-button",
                     "aria-label": `${node.visible ? "隐藏" : "显示"} ${node.id}`,
-                    disabled: busy || !snapshot.capabilities.edit,
+                    disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.edit),
                     onClick: () => {
                       void updateNode(node.id, { visible: !node.visible });
                     },
@@ -826,7 +849,7 @@ window.__ModuleLoader__.load({
                     type: "button",
                     className: "vai-icon-button vai-icon-button--danger",
                     "aria-label": `删除 ${node.id}`,
-                    disabled: busy || !snapshot.capabilities.delete,
+                    disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.delete),
                     onClick: () => {
                       void deleteNodes([node.id]);
                     },
@@ -845,7 +868,9 @@ window.__ModuleLoader__.load({
       return /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-object-row__glyph", "aria-hidden": "true", children: glyph });
     }
     function PropertyInspector() {
-      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
       const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
       const busy = useDrawingWorkspace((state) => state.busy);
       const updateNode = useDrawingWorkspace((state) => state.updateNode);
@@ -868,7 +893,7 @@ window.__ModuleLoader__.load({
             PropertyField,
             {
               property,
-              disabled: busy || !snapshot.capabilities.edit,
+              disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.edit),
               commit: (value) => {
                 void updateNode(node.id, property.change(value));
               }
@@ -1019,6 +1044,8 @@ window.__ModuleLoader__.load({
     }
     function WorkspaceStatus() {
       const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const mouseWorld = useDrawingWorkspace((state) => state.mouseWorld);
       const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -1030,7 +1057,11 @@ window.__ModuleLoader__.load({
           "Revision ",
           snapshot.ref.revision
         ] }),
-        /* @__PURE__ */ jsxRuntime.jsx("span", { children: snapshot.document.unitSystem.length }),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: (displaySnapshot == null ? void 0 : displaySnapshot.document.unitSystem.length) ?? snapshot.document.unitSystem.length }),
+        preview === null ? null : /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          "Preview ",
+          preview.handle
+        ] }),
         /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
           Math.round(viewport.scale * 100),
           "%"
@@ -1044,7 +1075,7 @@ window.__ModuleLoader__.load({
       ] });
     }
     function WorkspaceToolbar() {
-      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const display = useDrawingWorkspace((state) => state.display);
       const setViewport = useDrawingWorkspace((state) => state.setViewport);
@@ -1087,6 +1118,8 @@ window.__ModuleLoader__.load({
       const [inspectorOpen, setInspectorOpen] = react.useState(true);
       const status = useDrawingWorkspace((state) => state.status);
       const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const busy = useDrawingWorkspace((state) => state.busy);
       const error = useDrawingWorkspace((state) => state.error);
@@ -1106,6 +1139,7 @@ window.__ModuleLoader__.load({
           "aria-label": "图纸工作区",
           "data-workspace-state": "ready",
           "data-layout": "website-parity",
+          "data-preview-state": preview === null ? void 0 : "current",
           children: [
             /* @__PURE__ */ jsxRuntime.jsxs("header", { className: "vai-workspace__header", children: [
               /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__identity", children: [
@@ -1114,7 +1148,8 @@ window.__ModuleLoader__.load({
                   "R",
                   snapshot.ref.revision
                 ] }),
-                snapshot.provisional ? /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge", children: "候选几何" }) : null
+                snapshot.provisional ? /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge", children: "候选几何" }) : null,
+                preview === null ? null : /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge vai-workspace__badge--preview", children: "候选 Preview" })
               ] }),
               /* @__PURE__ */ jsxRuntime.jsx(WorkspaceToolbar, {}),
               /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__panel-toggles", children: [
@@ -1130,7 +1165,7 @@ window.__ModuleLoader__.load({
                 inspectorOpen ? /* @__PURE__ */ jsxRuntime.jsx(PropertyInspector, {}) : null
               ] }) : null,
               /* @__PURE__ */ jsxRuntime.jsx(Canvas, {}),
-              previewContributions.map((contribution) => /* @__PURE__ */ jsxRuntime.jsx("div", { "data-preview-overlay": contribution.id, children: contribution.render({ snapshot, viewport }) }, contribution.id))
+              previewContributions.map((contribution) => /* @__PURE__ */ jsxRuntime.jsx("div", { "data-preview-overlay": contribution.id, children: contribution.render({ snapshot: displaySnapshot ?? snapshot, viewport }) }, contribution.id))
             ] }),
             /* @__PURE__ */ jsxRuntime.jsx(WorkspaceStatus, {})
           ]
@@ -1240,8 +1275,10 @@ window.__ModuleLoader__.load({
       let requestController;
       let sourceResource = null;
       const store = createStore((set, get) => {
-        const replaceSnapshot = async (snapshot) => {
-          const nextIds = snapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(snapshot);
+        const replaceSnapshot = async (snapshot, preview = null) => {
+          const currentPreview = previewMatchesSnapshot(preview, snapshot) ? preview : null;
+          const displaySnapshot = (currentPreview == null ? void 0 : currentPreview.candidate) ?? snapshot;
+          const nextIds = displaySnapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(displaySnapshot);
           const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
           const previousSource = sourceResource;
           let nextSource = null;
@@ -1261,21 +1298,27 @@ window.__ModuleLoader__.load({
           sourceResource = nextSource;
           set({
             snapshot,
+            preview: currentPreview,
+            displaySnapshot,
             sourceResource: nextSource,
             selectedIds,
             status: snapshot === null ? "empty" : "ready"
           });
         };
         const refresh = async (initial) => {
+          var _a2;
           if (disposed) return;
           requestController == null ? void 0 : requestController.abort();
           const controller = new AbortController();
           requestController = controller;
           if (initial) set({ status: "loading", error: null });
           try {
-            const snapshot = await port.load(controller.signal);
+            const [snapshot, preview] = await Promise.all([
+              port.load(controller.signal),
+              ((_a2 = port.loadPreview) == null ? void 0 : _a2.call(port, controller.signal)) ?? Promise.resolve(null)
+            ]);
             if (controller.signal.aborted || disposed) return;
-            await replaceSnapshot(snapshot);
+            await replaceSnapshot(snapshot, preview);
           } catch (error) {
             if (controller.signal.aborted || disposed) return;
             set({
@@ -1287,6 +1330,8 @@ window.__ModuleLoader__.load({
         return {
           status: "idle",
           snapshot: null,
+          preview: null,
+          displaySnapshot: null,
           sourceResource: null,
           busy: false,
           error: null,
@@ -1319,7 +1364,7 @@ window.__ModuleLoader__.load({
               }, controller.signal);
               if (controller.signal.aborted || disposed) return false;
               if (result.status === "committed") {
-                await replaceSnapshot(result.snapshot);
+                await replaceSnapshot(result.snapshot, null);
                 return true;
               }
               if (result.status === "conflict") {
@@ -1363,7 +1408,9 @@ window.__ModuleLoader__.load({
             set({ mouseWorld: point === null ? null : [...point] });
           },
           setSelection(ids) {
-            set({ selectedIds: [...new Set(ids)] });
+            const displaySnapshot = get().displaySnapshot;
+            const available = displaySnapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(displaySnapshot);
+            set({ selectedIds: [...new Set(ids)].filter((id) => available.has(id)) });
           },
           setDisplay(display) {
             set({ display: { ...get().display, ...display } });
@@ -1393,6 +1440,9 @@ window.__ModuleLoader__.load({
         ...document.features.map((node) => node.id)
       ]);
     }
+    function previewMatchesSnapshot(preview, snapshot) {
+      return preview !== null && snapshot !== null && preview.baseRef.drawingId === snapshot.ref.drawingId && preview.baseRef.revision === snapshot.ref.revision;
+    }
     function errorMessage(error) {
       return error instanceof Error ? error.message : String(error);
     }
@@ -1408,6 +1458,13 @@ window.__ModuleLoader__.load({
         async commit(request, signal) {
           signal == null ? void 0 : signal.throwIfAborted();
           const result = await remote.commit(sessionId, request);
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async loadPreview(signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          if (remote.getPreview === void 0) return null;
+          const result = await remote.getPreview(sessionId);
           signal == null ? void 0 : signal.throwIfAborted();
           return unwrap(result);
         },
@@ -6453,6 +6510,15 @@ window.__ModuleLoader__.load({
         nodeIds: array(idSchema)
       }).strict()
     ]);
+    const featureSchema = object({
+      ...baseNodeShape,
+      type: literal("feature"),
+      semanticType: string(),
+      geometryIds: array(idSchema),
+      annotationIds: array(idSchema),
+      relationIds: array(idSchema),
+      properties: record(string(), unknown())
+    }).strict();
     const drawingDocumentSchema = object({
       protocol: literal("VectorAI-Drawing"),
       schemaVersion: literal("1.0"),
@@ -6468,16 +6534,72 @@ window.__ModuleLoader__.load({
       geometry: array(geometrySchema),
       annotations: array(annotationSchema),
       relations: array(relationSchema),
-      features: array(object({
-        ...baseNodeShape,
-        type: literal("feature"),
-        semanticType: string(),
-        geometryIds: array(idSchema),
-        annotationIds: array(idSchema),
-        relationIds: array(idSchema),
-        properties: record(string(), unknown())
-      }).strict())
+      features: array(featureSchema)
     }).strict();
+    const drawingRefSchema = object({
+      drawingId: idSchema,
+      revision: number().int().nonnegative()
+    }).strict();
+    const bounds2DSchema = object({
+      minX: number(),
+      minY: number(),
+      maxX: number(),
+      maxY: number()
+    }).strict().refine(({ minX, minY, maxX, maxY }) => minX <= maxX && minY <= maxY, { message: "INVALID_QUERY_BOUNDS" });
+    const drawingPlaneSchema = _enum(["geometry", "annotation", "relation", "feature"]);
+    const drawingSpatialNodeSchema = discriminatedUnion("plane", [
+      object({ plane: literal("geometry"), node: geometrySchema }).strict(),
+      object({ plane: literal("annotation"), node: annotationSchema }).strict(),
+      object({ plane: literal("relation"), node: relationSchema }).strict(),
+      object({ plane: literal("feature"), node: featureSchema }).strict()
+    ]);
+    const drawingQueryRequestSchema = discriminatedUnion("kind", [
+      object({
+        kind: literal("world-slice"),
+        ref: drawingRefSchema,
+        bounds: bounds2DSchema,
+        planes: array(drawingPlaneSchema).min(1).optional(),
+        limit: number().int().min(1).max(200).optional()
+      }).strict(),
+      object({
+        kind: literal("node"),
+        ref: drawingRefSchema,
+        id: idSchema
+      }).strict(),
+      object({
+        kind: literal("neighbors"),
+        ref: drawingRefSchema,
+        nodeId: idSchema,
+        limit: number().int().min(1).max(200).optional()
+      }).strict()
+    ]);
+    const drawingQueryResultSchema = discriminatedUnion("kind", [
+      object({
+        kind: literal("world-slice"),
+        ref: drawingRefSchema,
+        bounds: bounds2DSchema,
+        nodes: array(drawingSpatialNodeSchema),
+        totalByPlane: object({
+          geometry: number().int().nonnegative(),
+          annotation: number().int().nonnegative(),
+          relation: number().int().nonnegative(),
+          feature: number().int().nonnegative()
+        }).strict(),
+        truncated: boolean()
+      }).strict(),
+      object({
+        kind: literal("node"),
+        ref: drawingRefSchema,
+        node: drawingSpatialNodeSchema.nullable()
+      }).strict(),
+      object({
+        kind: literal("neighbors"),
+        ref: drawingRefSchema,
+        nodeId: idSchema,
+        nodes: array(drawingSpatialNodeSchema),
+        truncated: boolean()
+      }).strict()
+    ]);
     const drawingSourceRefSchema = object({
       id: idSchema,
       mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
@@ -6499,7 +6621,16 @@ window.__ModuleLoader__.load({
       }).strict(),
       provisional: boolean().optional()
     }).strict().nullable();
-    const workspaceCommandSchema = discriminatedUnion("type", [
+    const nodeCreateCommandSchema = object({
+      type: literal("node.create"),
+      plane: _enum(["geometry", "annotation", "relation", "feature"]),
+      node: union([geometrySchema, annotationSchema, relationSchema, featureSchema])
+    }).strict().superRefine(({ plane, node }, context) => {
+      const matches = plane === "geometry" ? geometrySchema.safeParse(node).success : plane === "annotation" ? annotationSchema.safeParse(node).success : plane === "relation" ? relationSchema.safeParse(node).success : featureSchema.safeParse(node).success;
+      if (!matches) context.addIssue({ code: "custom", message: "NODE_PLANE_MISMATCH" });
+    });
+    const workspaceCommandSchema = union([
+      nodeCreateCommandSchema,
       object({
         type: literal("node.update"),
         id: idSchema,
@@ -6521,6 +6652,35 @@ window.__ModuleLoader__.load({
     const drawingWorkspaceCommitResultSchema = discriminatedUnion("status", [
       object({ status: literal("committed"), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
       object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+      object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+    ]);
+    const drawingPreviewCreateRequestSchema = object({
+      ref: drawingRefSchema,
+      commands: array(workspaceCommandSchema).min(1),
+      summary: string().min(1).optional()
+    }).strict();
+    const drawingPreviewSchema = object({
+      version: literal(1),
+      handle: idSchema,
+      baseRef: drawingRefSchema,
+      commands: array(workspaceCommandSchema).min(1),
+      candidate: drawingWorkspaceSnapshotSchema.unwrap(),
+      diff: object({
+        createdNodeIds: array(idSchema),
+        updatedNodeIds: array(idSchema),
+        deletedNodeIds: array(idSchema)
+      }).strict(),
+      createdAt: number(),
+      summary: string().min(1).optional()
+    }).strict();
+    const drawingPreviewCreateResultSchema = discriminatedUnion("status", [
+      object({ status: literal("previewed"), preview: drawingPreviewSchema }).strict(),
+      object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+      object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+    ]);
+    const drawingPreviewControlRequestSchema = object({ handle: idSchema }).strict();
+    const drawingPreviewDiscardResultSchema = discriminatedUnion("status", [
+      object({ status: literal("discarded"), ref: drawingRefSchema }).strict(),
       object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
     ]);
     const drawingSessionIdSchema = string().min(1);
@@ -6573,8 +6733,99 @@ window.__ModuleLoader__.load({
           typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
           schema: drawingWorkspaceCommitResultSchema
         }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/query",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "query",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, {
+          name: "request",
+          wire: "request",
+          source: "json",
+          codec: {
+            mode: "strict",
+            typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryRequest",
+            schema: drawingQueryRequestSchema
+          }
+        }],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult",
+          schema: drawingQueryResultSchema
+        }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "getPreview",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null",
+          schema: drawingPreviewSchema.nullable()
+        }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/createPreview",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "createPreview",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, jsonRequest(
+          "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateRequest",
+          drawingPreviewCreateRequestSchema
+        )],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateResult",
+          schema: drawingPreviewCreateResultSchema
+        }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/commitPreview",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "commitPreview",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, jsonRequest(
+          "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
+          drawingPreviewControlRequestSchema
+        )],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
+          schema: drawingWorkspaceCommitResultSchema
+        }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardPreview",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "discardPreview",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, jsonRequest(
+          "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
+          drawingPreviewControlRequestSchema
+        )],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewDiscardResult",
+          schema: drawingPreviewDiscardResultSchema
+        }
       }]
     };
+    function jsonRequest(typeSymbol, schema) {
+      return {
+        name: "request",
+        wire: "request",
+        source: "json",
+        codec: { mode: "strict", typeSymbol, schema }
+      };
+    }
     const inject = ["slots", "remote", "conversation"];
     function DrawingConversationView({
       useSession,
@@ -6631,7 +6882,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset.vectoraiDshSpace = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(140, 154, 172, 0.12);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(140, 154, 172, 0.24);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(108, 175, 221, 0.72);\n  stroke-width: 1.25;\n}\n\n.vai-grid__axes text {\n  fill: #7fc1ec;\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: calc(100dvh - 202px);\n  min-height: 320px;\n  overflow: hidden;\n}\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(140, 154, 172, 0.12);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(140, 154, 172, 0.24);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(108, 175, 221, 0.72);\n  stroke-width: 1.25;\n}\n\n.vai-grid__axes text {\n  fill: #7fc1ec;\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: calc(100dvh - 202px);\n  min-height: 320px;\n  overflow: hidden;\n}\n";
       document.head.append(style);
       var dispose;
       try {

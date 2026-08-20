@@ -11,7 +11,14 @@ import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import { InMemoryDrawingRepository } from './repository';
-import { createDrawingImportTool, createDrawingSummarizeTool } from './tools';
+import {
+  createDrawingImportTool,
+  createDrawingCommitPreviewTool,
+  createDrawingDiscardPreviewTool,
+  createDrawingPreviewTool,
+  createDrawingQueryTool,
+  createDrawingSummarizeTool,
+} from './tools';
 import type { ImageVectorizer } from './vectorizer';
 
 function attachment(id = 'source'): ImageAttachmentRef {
@@ -135,6 +142,100 @@ describe('drawing tools', () => {
       ref: imported.ref,
       geometryByType: { line: 4 },
       provisional: true,
+    });
+  });
+
+  it('binds drawing_query to the owning Agent and exact Drawing ref', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment());
+    const importTool = createDrawingImportTool(drawings, {
+      async readImage(ref) {
+        return { ref, data: new Uint8Array([1]) };
+      },
+    });
+    await importTool.execute({}, exec('session-a'));
+    const tool = createDrawingQueryTool(drawings);
+    const request = {
+      kind: 'world-slice' as const,
+      ref: { drawingId: 'drawing-source', revision: 1 },
+      bounds: { minX: -1, minY: -1, maxX: 121, maxY: 1 },
+      planes: ['geometry'] as const,
+      limit: 20,
+    };
+
+    await expect(tool.execute(request, exec())).rejects.toThrow('DRAWING_SESSION_REQUIRED');
+    const result = await tool.execute(request, exec('session-a'));
+
+    expect(result).toMatchObject({
+      kind: 'world-slice',
+      ref: request.ref,
+      totalByPlane: { geometry: 3 },
+      truncated: false,
+    });
+  });
+
+  it('creates and commits a Preview through session-bound DSH tools', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment());
+    const importTool = createDrawingImportTool(drawings, {
+      async readImage(ref) {
+        return { ref, data: new Uint8Array([1]) };
+      },
+    });
+    await importTool.execute({}, exec('session-a'));
+    const previewTool = createDrawingPreviewTool(drawings);
+    const commitTool = createDrawingCommitPreviewTool(drawings);
+
+    const preview = await previewTool.execute({
+      ref: { drawingId: 'drawing-source', revision: 1 },
+      summary: 'hide top',
+      commands: [{
+        type: 'node.update',
+        id: 'top',
+        changes: { visible: false },
+        expected: { visible: true },
+      }],
+    }, exec('session-a'));
+
+    expect(preview).toMatchObject({
+      status: 'previewed',
+      preview: {
+        baseRef: { drawingId: 'drawing-source', revision: 1 },
+        diff: { updatedNodeIds: ['top'] },
+      },
+    });
+    expect((preview as { preview: object }).preview).not.toHaveProperty('candidate');
+    expect((preview as { preview: object }).preview).not.toHaveProperty('commands');
+    const handle = (preview as { preview: { handle: string } }).preview.handle;
+    const committed = await commitTool.execute({ handle }, exec('session-a'));
+    expect(committed).toMatchObject({
+      status: 'committed',
+      ref: { drawingId: 'drawing-source', revision: 2 },
+    });
+    expect(committed as object).not.toHaveProperty('snapshot');
+  });
+
+  it('discards only the owning session current Preview', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment());
+    await createDrawingImportTool(drawings, {
+      async readImage(ref) {
+        return { ref, data: new Uint8Array([1]) };
+      },
+    }).execute({}, exec('session-a'));
+    const preview = await createDrawingPreviewTool(drawings).execute({
+      ref: { drawingId: 'drawing-source', revision: 1 },
+      commands: [{ type: 'node.delete', id: 'top' }],
+    }, exec('session-a'));
+    const handle = (preview as { preview: { handle: string } }).preview.handle;
+    const discardTool = createDrawingDiscardPreviewTool(drawings);
+
+    expect(await discardTool.execute({ handle }, exec('session-b'))).toMatchObject({
+      status: 'rejected', code: 'PREVIEW_NOT_FOUND',
+    });
+    expect(await discardTool.execute({ handle }, exec('session-a'))).toEqual({
+      status: 'discarded',
+      ref: { drawingId: 'drawing-source', revision: 1 },
     });
   });
 });

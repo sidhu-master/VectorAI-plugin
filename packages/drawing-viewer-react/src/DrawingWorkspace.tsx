@@ -44,6 +44,8 @@ export function DrawingWorkspace({
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const status = useDrawingWorkspace((state) => state.status);
   const snapshot = useDrawingWorkspace((state) => state.snapshot);
+  const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+  const preview = useDrawingWorkspace((state) => state.preview);
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const busy = useDrawingWorkspace((state) => state.busy);
   const error = useDrawingWorkspace((state) => state.error);
@@ -78,12 +80,14 @@ export function DrawingWorkspace({
       aria-label="图纸工作区"
       data-workspace-state="ready"
       data-layout="website-parity"
+      data-preview-state={preview === null ? undefined : 'current'}
     >
       <header className="vai-workspace__header">
         <div className="vai-workspace__identity">
           <strong className="vai-workspace__drawing-id">{snapshot.ref.drawingId}</strong>
           <span>R{snapshot.ref.revision}</span>
           {snapshot.provisional ? <span className="vai-workspace__badge">候选几何</span> : null}
+          {preview === null ? null : <span className="vai-workspace__badge vai-workspace__badge--preview">候选 Preview</span>}
         </div>
         <WorkspaceToolbar />
         <div className="vai-workspace__panel-toggles">
@@ -105,7 +109,7 @@ export function DrawingWorkspace({
         <Canvas />
         {previewContributions.map((contribution) => (
           <div key={contribution.id} data-preview-overlay={contribution.id}>
-            {contribution.render({ snapshot, viewport })}
+            {contribution.render({ snapshot: displaySnapshot ?? snapshot, viewport })}
           </div>
         ))}
       </div>

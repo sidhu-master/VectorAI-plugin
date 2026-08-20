@@ -1,6 +1,6 @@
 # VectorAI → DeepSeek Harness 插件迁移方案
 
-> 状态：共享 Drawing Workspace 与 DSH 第一层插件已实现；本地计算导入器和第二层工程标注待后续切片
+> 状态：第一层图片导入、空间查询、Preview/Commit/Discard 与共享画布已实现；DXF/PDF、Undo/Redo、导出和第二层工程标注待后续切片
 >
 > 日期：2026-08-20
 >
@@ -82,6 +82,9 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 - Canonical Drawing Document 已迁入 `@vectorai/drawing-core`，共享无头状态位于 `@vectorai/drawing-workspace`。
 - 网站与 DSH 已切换到 `@vectorai/drawing-viewer-react`：坐标轴、网格、拖放视口、选择、对象属性和标注都走同一实现。
 - DSH Host 使用按 Agent/session 隔离的完整快照和 expected-revision 原子提交；Client 通过 durable attachment ref 加载原图，不传输 base64 快照。
+- 新增宿主无关的 `@vectorai/drawing-spatial`，第一层已公开 revision-bound `world-slice`、node 和 neighbors 查询。
+- 第一层已实现 Host 权威的会话态 Preview：`node.create/update/delete` 等命令先进入候选，画布显示 created/updated/deleted diff，Commit 才原子增加一个正式 revision，Discard 不修改正式图纸。
+- `drawing_query`、`drawing_preview_transaction`、`drawing_commit_preview`、`drawing_discard_preview` 与 Typert Remote 使用同一套 strict codec；第二层可以只依赖公开 contracts 创建标注和关系。
 - DSH 第一层插件不启动 VectorAI Express 或云端服务；网站旧 Agent/Express 仍作为迁移兼容 Adapter 保留。
 - 第二层 Engineering Annotation 保持独立插件边界，下一切片实现本地识别、测量、布局和自动标注工具。
 
@@ -258,7 +261,7 @@ DSH 当前仍是 release candidate。所有 slot、Remote 和 Cordis 细节只�
 
 | 工具 | 类型 | 作用 |
 |---|---|---|
-| `drawing_open` | 读/初始化 | 把一个附件或本地来源导入为 Drawing |
+| `drawing_import` | 读/初始化 | 把当前 DSH 会话的最新图片附件导入为 Drawing |
 | `drawing_summarize` | 只读 | 返回单位、bounds、plane/type 计数与 revision |
 | `drawing_query` | 只读 | 执行 bounds、node、topology、path 等有界查询 |
 | `drawing_observe` | 只读 | 创建绑定 revision/viewport 的观察结果 |

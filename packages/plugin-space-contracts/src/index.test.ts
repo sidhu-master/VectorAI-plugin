@@ -4,6 +4,10 @@ import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import {
+  drawingQueryRequestSchema,
+  drawingQueryResultSchema,
+  drawingPreviewCreateRequestSchema,
+  drawingPreviewSchema,
   drawingWorkspaceCommitRequestSchema,
   drawingWorkspaceCommitResultSchema,
   drawingWorkspaceSnapshotSchema,
@@ -70,5 +74,111 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(drawingWorkspaceCommitResultSchema.parse({
       status: 'rejected', message: 'invalid', code: 'INVALID_COMMAND',
     }).status).toBe('rejected');
+  });
+
+  it('accepts strict revision-bound world-slice queries', () => {
+    const request = {
+      kind: 'world-slice' as const,
+      ref: { drawingId: 'drawing-1', revision: 3 },
+      bounds: { minX: 0, minY: 1, maxX: 10, maxY: 11 },
+      planes: ['geometry', 'annotation'] as const,
+      limit: 20,
+    };
+
+    expect(drawingQueryRequestSchema.parse(request)).toEqual(request);
+    expect(() => drawingQueryRequestSchema.parse({ ...request, unknown: true })).toThrow();
+    expect(() => drawingQueryRequestSchema.parse({
+      ...request,
+      bounds: { ...request.bounds, unknown: true },
+    })).toThrow();
+  });
+
+  it('validates strict query results containing Drawing nodes', () => {
+    const line = {
+      id: 'line-1',
+      type: 'line' as const,
+      start: [0, 0] as const,
+      end: [10, 10] as const,
+      visible: true,
+      quality: { status: 'confirmed' as const, evidenceRefs: [] },
+    };
+    const result = {
+      kind: 'world-slice' as const,
+      ref: { drawingId: 'drawing-1', revision: 3 },
+      bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
+      nodes: [{ plane: 'geometry' as const, node: line }],
+      totalByPlane: { geometry: 1, annotation: 0, relation: 0, feature: 0 },
+      truncated: false,
+    };
+
+    expect(drawingQueryResultSchema.parse(result)).toEqual(result);
+    expect(() => drawingQueryResultSchema.parse({
+      ...result,
+      nodes: [{ plane: 'geometry', node: { ...line, unknown: true } }],
+    })).toThrow();
+  });
+
+  it('accepts node.create only with a matching strict plane node', () => {
+    const text = {
+      id: 'text-new',
+      type: 'text' as const,
+      content: '10',
+      position: [5, 6] as const,
+      height: 2,
+      rotation: 0,
+      alignment: 'center' as const,
+      verticalAlignment: 'middle' as const,
+      visible: true,
+      quality: { status: 'candidate' as const, evidenceRefs: [] },
+    };
+    const request = {
+      expectedRevision: 1,
+      commands: [{ type: 'node.create' as const, plane: 'annotation' as const, node: text }],
+    };
+
+    expect(drawingWorkspaceCommitRequestSchema.parse(request)).toEqual(request);
+    expect(() => drawingWorkspaceCommitRequestSchema.parse({
+      ...request,
+      commands: [{ ...request.commands[0], plane: 'geometry' }],
+    })).toThrow();
+    expect(() => drawingWorkspaceCommitRequestSchema.parse({
+      ...request,
+      commands: [{ ...request.commands[0], node: { ...text, unknown: true } }],
+    })).toThrow();
+  });
+
+  it('validates strict Preview creation and candidate projection', () => {
+    const request = {
+      ref: { drawingId: 'drawing-1', revision: 1 },
+      summary: 'hide one line',
+      commands: [{
+        type: 'node.update' as const,
+        id: 'line-1',
+        changes: { visible: false },
+        expected: { visible: true },
+      }],
+    };
+    const preview = {
+      version: 1 as const,
+      handle: 'preview-1',
+      baseRef: request.ref,
+      commands: request.commands,
+      candidate: snapshot(),
+      diff: {
+        createdNodeIds: [],
+        updatedNodeIds: ['line-1'],
+        deletedNodeIds: [],
+      },
+      createdAt: 42,
+      summary: request.summary,
+    };
+
+    expect(drawingPreviewCreateRequestSchema.parse(request)).toEqual(request);
+    expect(drawingPreviewSchema.parse(preview)).toEqual(preview);
+    expect(() => drawingPreviewCreateRequestSchema.parse({ ...request, unknown: true })).toThrow();
+    expect(() => drawingPreviewSchema.parse({
+      ...preview,
+      diff: { ...preview.diff, unknown: true },
+    })).toThrow();
   });
 });

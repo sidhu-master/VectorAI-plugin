@@ -9,7 +9,7 @@ import {
 
 describe('DRAWING_SPACE_REMOTE', () => {
   it('uses strict codecs for every JSON field exposed to the DSH client gateway', () => {
-    const [snapshot, commit] = DRAWING_SPACE_REMOTE.descriptors;
+    const [snapshot, commit, query, getPreview, createPreview, commitPreview, discardPreview] = DRAWING_SPACE_REMOTE.descriptors;
 
     expect(snapshot?.parameters[0]?.codec.mode).toBe('strict');
     expect(snapshot?.result.mode).toBe('strict');
@@ -17,6 +17,15 @@ describe('DRAWING_SPACE_REMOTE', () => {
     expect(snapshot?.scope).toEqual({ context: 'agent', wire: 'agentId' });
     expect(commit?.parameters[1]?.codec.mode).toBe('strict');
     expect(commit?.result.mode).toBe('strict');
+    expect(query?.method).toBe('query');
+    expect(query?.parameters[1]?.codec.mode).toBe('strict');
+    expect(query?.result.mode).toBe('strict');
+    expect(getPreview?.method).toBe('getPreview');
+    expect(getPreview?.result.mode).toBe('strict');
+    expect(createPreview?.parameters[1]?.codec.mode).toBe('strict');
+    expect(createPreview?.result.mode).toBe('strict');
+    expect(commitPreview?.parameters[1]?.codec.mode).toBe('strict');
+    expect(discardPreview?.result.mode).toBe('strict');
   });
 
   it('accepts a complete workspace snapshot or null and rejects malformed snapshots', () => {

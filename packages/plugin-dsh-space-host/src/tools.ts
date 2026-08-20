@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment';
-import { defineTool } from '@deepseek-ai/dsh-tools';
+import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools';
+import {
+  drawingPreviewControlRequestSchema,
+  drawingPreviewCreateRequestSchema,
+  drawingQueryRequestSchema,
+  type DrawingWorkspacePreviewCreateRequest,
+  type DrawingWorkspacePreviewCreateResult,
+  type DrawingWorkspaceCommitResult,
+} from '@vectorai/plugin-space-contracts';
 
 import type { InMemoryDrawingRepository } from './repository';
 
@@ -101,6 +109,172 @@ export function createDrawingSummarizeTool(drawings: InMemoryDrawingRepository) 
       const summary = drawings.summarize(String(sessionId));
       if (summary === null) throw new Error('DRAWING_REQUIRED');
       return summary;
+    },
+  });
+}
+
+export function createDrawingQueryTool(drawings: InMemoryDrawingRepository) {
+  return defineTool({
+    name: 'drawing_query',
+    description: 'Query the active local VectorAI Drawing at an exact drawingId and revision. Use world-slice for bounded spatial context, node for one object, or neighbors for directly related objects.',
+    parameters: {
+      kind: {
+        type: 'string',
+        enum: ['world-slice', 'node', 'neighbors'],
+        required: true,
+      },
+      ref: {
+        type: 'object',
+        properties: drawingRefSchema.properties,
+        additionalProperties: false,
+        required: true,
+      },
+      bounds: {
+        type: 'object',
+        properties: {
+          minX: { type: 'number', required: true },
+          minY: { type: 'number', required: true },
+          maxX: { type: 'number', required: true },
+          maxY: { type: 'number', required: true },
+        },
+        additionalProperties: false,
+      },
+      planes: {
+        type: 'array',
+        items: { type: 'string', enum: ['geometry', 'annotation', 'relation', 'feature'] },
+      },
+      limit: { type: 'integer' },
+      id: { type: 'string' },
+      nodeId: { type: 'string' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    async execute(args, exec) {
+      const sessionId = exec.agent?.id;
+      if (sessionId === undefined) throw new Error('DRAWING_SESSION_REQUIRED');
+      const request = drawingQueryRequestSchema.parse(args);
+      return drawings.query(String(sessionId), request) as unknown as JsonValue;
+    },
+  });
+}
+
+export function createDrawingPreviewTool(drawings: InMemoryDrawingRepository) {
+  return defineTool({
+    name: 'drawing_preview_transaction',
+    description: 'Create or replace the current local Drawing Preview from an exact formal revision. This does not modify the formal drawing until drawing_commit_preview is called.',
+    parameters: {
+      ref: {
+        type: 'object',
+        properties: drawingRefSchema.properties,
+        additionalProperties: false,
+        required: true,
+      },
+      commands: { type: 'array', items: { type: 'json' }, required: true },
+      summary: { type: 'string' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    async execute(args, exec) {
+      const sessionId = exec.agent?.id;
+      if (sessionId === undefined) throw new Error('DRAWING_SESSION_REQUIRED');
+      const request = drawingPreviewCreateRequestSchema.parse(args) as DrawingWorkspacePreviewCreateRequest;
+      return previewReceipt(drawings.createPreview(String(sessionId), request));
+    },
+  });
+}
+
+export function createDrawingCommitPreviewTool(drawings: InMemoryDrawingRepository) {
+  return defineTool({
+    name: 'drawing_commit_preview',
+    description: 'Commit the current local Drawing Preview as one new formal revision. The opaque Preview handle must still be current.',
+    parameters: { handle: { type: 'string', required: true } },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    async execute(args, exec) {
+      const sessionId = exec.agent?.id;
+      if (sessionId === undefined) throw new Error('DRAWING_SESSION_REQUIRED');
+      const request = drawingPreviewControlRequestSchema.parse(args);
+      return commitReceipt(drawings.commitPreview(String(sessionId), request));
+    },
+  });
+}
+
+function previewReceipt(result: DrawingWorkspacePreviewCreateResult): JsonValue {
+  if (result.status === 'previewed') {
+    const { preview } = result;
+    return {
+      status: 'previewed',
+      preview: {
+        version: preview.version,
+        handle: preview.handle,
+        baseRef: {
+          drawingId: preview.baseRef.drawingId,
+          revision: preview.baseRef.revision,
+        },
+        diff: {
+          createdNodeIds: [...preview.diff.createdNodeIds],
+          updatedNodeIds: [...preview.diff.updatedNodeIds],
+          deletedNodeIds: [...preview.diff.deletedNodeIds],
+        },
+        createdAt: preview.createdAt,
+        ...(preview.summary === undefined ? {} : { summary: preview.summary }),
+      },
+    };
+  }
+  if (result.status === 'conflict') {
+    return {
+      status: 'conflict',
+      message: result.message,
+      ...(result.snapshot === undefined ? {} : { ref: {
+        drawingId: result.snapshot.ref.drawingId,
+        revision: result.snapshot.ref.revision,
+      } }),
+    };
+  }
+  return { status: 'rejected', message: result.message, ...(result.code === undefined ? {} : { code: result.code }) };
+}
+
+function commitReceipt(result: DrawingWorkspaceCommitResult): JsonValue {
+  if (result.status === 'committed') return {
+    status: 'committed',
+    ref: {
+      drawingId: result.snapshot.ref.drawingId,
+      revision: result.snapshot.ref.revision,
+    },
+  };
+  if (result.status === 'conflict') {
+    return {
+      status: 'conflict',
+      message: result.message,
+      ...(result.snapshot === undefined ? {} : { ref: {
+        drawingId: result.snapshot.ref.drawingId,
+        revision: result.snapshot.ref.revision,
+      } }),
+    };
+  }
+  return { status: 'rejected', message: result.message, ...(result.code === undefined ? {} : { code: result.code }) };
+}
+
+export function createDrawingDiscardPreviewTool(drawings: InMemoryDrawingRepository) {
+  return defineTool({
+    name: 'drawing_discard_preview',
+    description: 'Discard the current local Drawing Preview without changing the formal drawing revision.',
+    parameters: { handle: { type: 'string', required: true } },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    async execute(args, exec) {
+      const sessionId = exec.agent?.id;
+      if (sessionId === undefined) throw new Error('DRAWING_SESSION_REQUIRED');
+      const request = drawingPreviewControlRequestSchema.parse(args);
+      return drawings.discardPreview(String(sessionId), request) as unknown as JsonValue;
     },
   });
 }

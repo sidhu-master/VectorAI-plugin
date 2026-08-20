@@ -48,6 +48,27 @@ describe('createDshDrawingWorkspacePort', () => {
     expect(commit).toHaveBeenCalledWith('session-1', request);
   });
 
+  it('loads the current session Preview separately from the formal snapshot', async () => {
+    const preview = {
+      version: 1 as const,
+      handle: 'preview-1',
+      baseRef: { drawingId: 'drawing-1', revision: 1 },
+      commands: [{ type: 'node.delete' as const, id: 'line-1' }],
+      candidate: snapshot(),
+      diff: { createdNodeIds: [], updatedNodeIds: [], deletedNodeIds: ['line-1'] },
+      createdAt: 42,
+    };
+    const getPreview = vi.fn(async () => ({ ok: true as const, value: preview }));
+    const port = createDshDrawingWorkspacePort({
+      sessionId: 'session-1',
+      remote: { getSnapshot: vi.fn(), commit: vi.fn(), getPreview },
+      resolveImage: vi.fn(),
+    });
+
+    await expect(port.loadPreview?.()).resolves.toEqual(preview);
+    expect(getPreview).toHaveBeenCalledWith('session-1');
+  });
+
   it('resolves the durable attachment through the DSH conversation service', async () => {
     const resolveImage = vi.fn(async () => 'blob:dsh-source');
     const port = createDshDrawingWorkspacePort({
