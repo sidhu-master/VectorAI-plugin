@@ -1963,6 +1963,74 @@ const $ZodUnion = /* @__PURE__ */ $constructor("$ZodUnion", (inst, def) => {
     });
   };
 });
+const $ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("$ZodDiscriminatedUnion", (inst, def) => {
+  def.inclusive = false;
+  $ZodUnion.init(inst, def);
+  const _super = inst._zod.parse;
+  defineLazy(inst._zod, "propValues", () => {
+    const propValues = {};
+    for (const option of def.options) {
+      const pv = option._zod.propValues;
+      if (!pv || Object.keys(pv).length === 0)
+        throw new Error(`Invalid discriminated union option at index "${def.options.indexOf(option)}"`);
+      for (const [k, v] of Object.entries(pv)) {
+        if (!propValues[k])
+          propValues[k] = /* @__PURE__ */ new Set();
+        for (const val of v) {
+          propValues[k].add(val);
+        }
+      }
+    }
+    return propValues;
+  });
+  const disc = cached(() => {
+    var _a2;
+    const opts = def.options;
+    const map = /* @__PURE__ */ new Map();
+    for (const o of opts) {
+      const values = (_a2 = o._zod.propValues) == null ? void 0 : _a2[def.discriminator];
+      if (!values || values.size === 0)
+        throw new Error(`Invalid discriminated union option at index "${def.options.indexOf(o)}"`);
+      for (const v of values) {
+        if (map.has(v)) {
+          throw new Error(`Duplicate discriminator value "${String(v)}"`);
+        }
+        map.set(v, o);
+      }
+    }
+    return map;
+  });
+  inst._zod.parse = (payload, ctx) => {
+    const input = payload.value;
+    if (!isObject(input)) {
+      payload.issues.push({
+        code: "invalid_type",
+        expected: "object",
+        input,
+        inst
+      });
+      return payload;
+    }
+    const opt = disc.value.get(input == null ? void 0 : input[def.discriminator]);
+    if (opt) {
+      return opt._zod.run(payload, ctx);
+    }
+    if (def.unionFallback || ctx.direction === "backward") {
+      return _super(payload, ctx);
+    }
+    payload.issues.push({
+      code: "invalid_union",
+      errors: [],
+      note: "No matching discriminator",
+      discriminator: def.discriminator,
+      options: Array.from(disc.value.keys()),
+      input,
+      path: [def.discriminator],
+      inst
+    });
+    return payload;
+  };
+});
 const $ZodIntersection = /* @__PURE__ */ $constructor("$ZodIntersection", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, ctx) => {
@@ -2167,6 +2235,132 @@ function handleTupleResults(itemResults, final, items, input, optoutStart) {
   }
   return final;
 }
+const $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
+  $ZodType.init(inst, def);
+  inst._zod.parse = (payload, ctx) => {
+    const input = payload.value;
+    if (!isPlainObject(input)) {
+      payload.issues.push({
+        expected: "record",
+        code: "invalid_type",
+        input,
+        inst
+      });
+      return payload;
+    }
+    const proms = [];
+    const values = def.keyType._zod.values;
+    if (values) {
+      payload.value = {};
+      const recordKeys = /* @__PURE__ */ new Set();
+      for (const key of values) {
+        if (typeof key === "string" || typeof key === "number" || typeof key === "symbol") {
+          recordKeys.add(typeof key === "number" ? key.toString() : key);
+          const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+          if (keyResult instanceof Promise) {
+            throw new Error("Async schemas not supported in object keys currently");
+          }
+          if (keyResult.issues.length) {
+            payload.issues.push({
+              code: "invalid_key",
+              origin: "record",
+              issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
+              input: key,
+              path: [key],
+              inst
+            });
+            continue;
+          }
+          const outKey = keyResult.value;
+          const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+          if (result instanceof Promise) {
+            proms.push(result.then((result2) => {
+              if (result2.issues.length) {
+                payload.issues.push(...prefixIssues(key, result2.issues));
+              }
+              payload.value[outKey] = result2.value;
+            }));
+          } else {
+            if (result.issues.length) {
+              payload.issues.push(...prefixIssues(key, result.issues));
+            }
+            payload.value[outKey] = result.value;
+          }
+        }
+      }
+      let unrecognized;
+      for (const key in input) {
+        if (!recordKeys.has(key)) {
+          unrecognized = unrecognized ?? [];
+          unrecognized.push(key);
+        }
+      }
+      if (unrecognized && unrecognized.length > 0) {
+        payload.issues.push({
+          code: "unrecognized_keys",
+          input,
+          inst,
+          keys: unrecognized
+        });
+      }
+    } else {
+      payload.value = {};
+      for (const key of Reflect.ownKeys(input)) {
+        if (key === "__proto__")
+          continue;
+        if (!Object.prototype.propertyIsEnumerable.call(input, key))
+          continue;
+        let keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+        if (keyResult instanceof Promise) {
+          throw new Error("Async schemas not supported in object keys currently");
+        }
+        const checkNumericKey = typeof key === "string" && number$1.test(key) && keyResult.issues.length;
+        if (checkNumericKey) {
+          const retryResult = def.keyType._zod.run({ value: Number(key), issues: [] }, ctx);
+          if (retryResult instanceof Promise) {
+            throw new Error("Async schemas not supported in object keys currently");
+          }
+          if (retryResult.issues.length === 0) {
+            keyResult = retryResult;
+          }
+        }
+        if (keyResult.issues.length) {
+          if (def.mode === "loose") {
+            payload.value[key] = input[key];
+          } else {
+            payload.issues.push({
+              code: "invalid_key",
+              origin: "record",
+              issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
+              input: key,
+              path: [key],
+              inst
+            });
+          }
+          continue;
+        }
+        const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+        if (result instanceof Promise) {
+          proms.push(result.then((result2) => {
+            if (result2.issues.length) {
+              payload.issues.push(...prefixIssues(key, result2.issues));
+            }
+            payload.value[keyResult.value] = result2.value;
+          }));
+        } else {
+          if (result.issues.length) {
+            payload.issues.push(...prefixIssues(key, result.issues));
+          }
+          payload.value[keyResult.value] = result.value;
+        }
+      }
+    }
+    if (proms.length) {
+      return Promise.all(proms).then(() => payload);
+    }
+    return payload;
+  };
+});
 const $ZodEnum = /* @__PURE__ */ $constructor("$ZodEnum", (inst, def) => {
   $ZodType.init(inst, def);
   const values = getEnumValues(def.entries);
@@ -3658,6 +3852,42 @@ const tupleProcessor = (schema, ctx, _json, params) => {
   if (typeof maximum === "number")
     json.maxItems = maximum;
 };
+const recordProcessor = (schema, ctx, _json, params) => {
+  const json = _json;
+  const def = schema._zod.def;
+  json.type = "object";
+  const keyType = def.keyType;
+  const keyBag = keyType._zod.bag;
+  const patterns = keyBag == null ? void 0 : keyBag.patterns;
+  if (def.mode === "loose" && patterns && patterns.size > 0) {
+    const valueSchema = process(def.valueType, ctx, {
+      ...params,
+      path: [...params.path, "patternProperties", "*"]
+    });
+    json.patternProperties = {};
+    for (const pattern of patterns) {
+      json.patternProperties[pattern.source] = valueSchema;
+    }
+  } else {
+    if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
+      json.propertyNames = process(def.keyType, ctx, {
+        ...params,
+        path: [...params.path, "propertyNames"]
+      });
+    }
+    json.additionalProperties = process(def.valueType, ctx, {
+      ...params,
+      path: [...params.path, "additionalProperties"]
+    });
+  }
+  const keyValues = keyType._zod.values;
+  if (keyValues) {
+    const validKeyValues = [...keyValues].filter((v) => typeof v === "string" || typeof v === "number");
+    if (validKeyValues.length > 0) {
+      json.required = validKeyValues;
+    }
+  }
+};
 const nullableProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   const inner = process(def.innerType, ctx, params);
@@ -4326,6 +4556,18 @@ function union(options, params) {
     ...normalizeParams(params)
   });
 }
+const ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("ZodDiscriminatedUnion", (inst, def) => {
+  ZodUnion.init(inst, def);
+  $ZodDiscriminatedUnion.init(inst, def);
+});
+function discriminatedUnion(discriminator, options, params) {
+  return new ZodDiscriminatedUnion({
+    type: "union",
+    options,
+    discriminator,
+    ...normalizeParams(params)
+  });
+}
 const ZodIntersection = /* @__PURE__ */ $constructor("ZodIntersection", (inst, def) => {
   $ZodIntersection.init(inst, def);
   ZodType.init(inst, def);
@@ -4355,6 +4597,29 @@ function tuple(items, _paramsOrRest, _params) {
     type: "tuple",
     items,
     rest,
+    ...normalizeParams(params)
+  });
+}
+const ZodRecord = /* @__PURE__ */ $constructor("ZodRecord", (inst, def) => {
+  $ZodRecord.init(inst, def);
+  ZodType.init(inst, def);
+  inst._zod.processJSONSchema = (ctx, json, params) => recordProcessor(inst, ctx, json, params);
+  inst.keyType = def.keyType;
+  inst.valueType = def.valueType;
+});
+function record(keyType, valueType, params) {
+  if (!valueType || !valueType._zod) {
+    return new ZodRecord({
+      type: "record",
+      keyType: string(),
+      valueType: keyType,
+      ...normalizeParams(valueType)
+    });
+  }
+  return new ZodRecord({
+    type: "record",
+    keyType,
+    valueType,
     ...normalizeParams(params)
   });
 }
@@ -4597,70 +4862,293 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
-const drawingSessionIdSchema = string().min(1);
-const drawingCanvasProjectionSchema = object({
+const idSchema = string().min(1);
+const vec2Schema = tuple([number(), number()]);
+const qualitySchema = object({
+  status: _enum(["confirmed", "candidate"]),
+  confidence: number().optional(),
+  evidenceRefs: array(idSchema)
+}).strict();
+const baseNodeShape = {
+  id: idSchema,
+  visible: boolean(),
+  quality: qualitySchema
+};
+const geometrySchema = discriminatedUnion("type", [
+  object({ ...baseNodeShape, type: literal("point"), x: number(), y: number() }).strict(),
+  object({ ...baseNodeShape, type: literal("line"), start: vec2Schema, end: vec2Schema }).strict(),
+  object({ ...baseNodeShape, type: literal("ray"), origin: vec2Schema, direction: vec2Schema }).strict(),
+  object({ ...baseNodeShape, type: literal("xline"), origin: vec2Schema, direction: vec2Schema }).strict(),
+  object({ ...baseNodeShape, type: literal("circle"), center: vec2Schema, radius: number() }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("arc"),
+    center: vec2Schema,
+    radius: number(),
+    startAngle: number(),
+    endAngle: number(),
+    counterClockwise: boolean()
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("ellipse"),
+    center: vec2Schema,
+    majorAxis: vec2Schema,
+    ratio: number(),
+    startParam: number().optional(),
+    endParam: number().optional()
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("polyline"),
+    vertices: array(object({ point: vec2Schema, bulge: number().optional() }).strict()),
+    closed: boolean()
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("spline"),
+    degree: number().int().nonnegative(),
+    controlPoints: array(vec2Schema),
+    knots: array(number()),
+    weights: array(number()).optional(),
+    closed: boolean(),
+    periodic: boolean()
+  }).strict()
+]);
+const entityAnchorSchema = discriminatedUnion("kind", [
+  object({ kind: _enum(["start", "end", "center"]) }).strict(),
+  object({ kind: literal("vertex"), index: number().int().nonnegative() }).strict(),
+  object({ kind: literal("curve-parameter"), parameter: number() }).strict(),
+  object({ kind: literal("nearest"), point: vec2Schema }).strict()
+]);
+const dimensionTargetSchema = object({
+  geometryId: idSchema,
+  anchor: entityAnchorSchema
+}).strict();
+const dimensionCandidateSchema = object({
+  targets: array(dimensionTargetSchema),
+  score: number(),
+  reasons: array(string())
+}).strict();
+const annotationSchema = discriminatedUnion("type", [
+  object({
+    ...baseNodeShape,
+    type: literal("text"),
+    content: string(),
+    position: vec2Schema,
+    height: number(),
+    rotation: number(),
+    alignment: _enum(["left", "center", "right"]),
+    verticalAlignment: _enum(["baseline", "bottom", "middle", "top"]),
+    maxWidth: number().optional()
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("dimension"),
+    dimensionKind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+    associationStatus: _enum(["resolved", "ambiguous", "conflict"]),
+    targets: array(dimensionTargetSchema),
+    candidates: array(dimensionCandidateSchema).optional(),
+    observedValue: number().optional(),
+    computedValue: number().optional(),
+    displayText: string().optional(),
+    unit: _enum(["mm", "cm", "m", "deg"]).optional(),
+    tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+    prefix: string().optional(),
+    suffix: string().optional(),
+    textPosition: vec2Schema,
+    definitionPoints: array(vec2Schema)
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("leader"),
+    target: dimensionTargetSchema,
+    points: array(vec2Schema),
+    content: string(),
+    textHeight: number()
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("centerline"),
+    targets: array(idSchema),
+    start: vec2Schema,
+    end: vec2Schema,
+    extension: number()
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("section-hatch"),
+    pattern: string(),
+    angle: number(),
+    spacing: number(),
+    segments: array(object({ start: vec2Schema, end: vec2Schema }).strict())
+  }).strict()
+]);
+const relationSchema = discriminatedUnion("plane", [
+  object({
+    ...baseNodeShape,
+    type: literal("topology"),
+    plane: literal("topology"),
+    kind: _enum(["connected", "closed", "contains", "intersects"]),
+    nodeIds: array(idSchema)
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("constraint"),
+    plane: literal("constraint"),
+    kind: _enum(["horizontal", "vertical", "parallel", "perpendicular", "tangent", "concentric", "equal", "distance", "radius", "angle", "symmetry"]),
+    geometryIds: array(idSchema),
+    value: number().optional(),
+    property: string().optional(),
+    status: _enum(["defined", "satisfied", "violated", "unsolved"])
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("association"),
+    plane: literal("association"),
+    kind: literal("annotation-target"),
+    annotationId: idSchema,
+    geometryIds: array(idSchema)
+  }).strict(),
+  object({
+    ...baseNodeShape,
+    type: literal("semantic"),
+    plane: literal("semantic"),
+    kind: literal("feature-member"),
+    featureId: idSchema,
+    nodeIds: array(idSchema)
+  }).strict()
+]);
+const drawingDocumentSchema = object({
+  protocol: literal("VectorAI-Drawing"),
+  schemaVersion: literal("1.0"),
+  id: idSchema,
+  metadata: object({ createdAt: number(), updatedAt: number() }).strict(),
+  unitSystem: object({ length: _enum(["mm", "cm", "m"]), angle: literal("deg") }).strict(),
+  coordinateFrames: array(object({
+    id: idSchema,
+    kind: _enum(["document", "source", "page", "view", "provisional"]),
+    transform: tuple([number(), number(), number(), number(), number(), number()]),
+    parentId: idSchema.optional()
+  }).strict()),
+  geometry: array(geometrySchema),
+  annotations: array(annotationSchema),
+  relations: array(relationSchema),
+  features: array(object({
+    ...baseNodeShape,
+    type: literal("feature"),
+    semanticType: string(),
+    geometryIds: array(idSchema),
+    annotationIds: array(idSchema),
+    relationIds: array(idSchema),
+    properties: record(string(), unknown())
+  }).strict())
+}).strict();
+const drawingSourceRefSchema = object({
+  id: idSchema,
+  mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+  bytes: number().int().nonnegative().optional(),
+  width: number().positive(),
+  height: number().positive(),
+  name: string().optional()
+}).strict();
+const drawingWorkspaceSnapshotSchema = object({
   version: literal(1),
-  ref: object({
-    drawingId: string().min(1),
-    revision: number().int().nonnegative()
-  }),
-  source: object({
-    attachmentId: string().min(1),
-    mediaType: union([
-      literal("image/png"),
-      literal("image/jpeg"),
-      literal("image/webp"),
-      literal("image/gif")
-    ]),
-    width: number().positive(),
-    height: number().positive(),
-    name: string().optional(),
-    dataUrl: string().min(1)
-  }),
-  bounds: object({
-    minX: number(),
-    minY: number(),
-    maxX: number(),
-    maxY: number()
-  }),
-  geometry: array(object({
-    id: string().min(1),
-    type: literal("line"),
-    start: tuple([number(), number()]),
-    end: tuple([number(), number()]),
-    status: union([literal("candidate"), literal("confirmed")]),
-    confidence: number().optional()
-  })),
-  provisional: boolean()
-}).nullable();
+  ref: object({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
+  document: drawingDocumentSchema,
+  source: drawingSourceRefSchema.optional(),
+  capabilities: object({
+    edit: boolean(),
+    delete: boolean(),
+    annotations: boolean(),
+    sourceUnderlay: boolean()
+  }).strict(),
+  provisional: boolean().optional()
+}).strict().nullable();
+const workspaceCommandSchema = discriminatedUnion("type", [
+  object({
+    type: literal("node.update"),
+    id: idSchema,
+    changes: record(string(), unknown()),
+    expected: record(string(), unknown())
+  }).strict(),
+  object({ type: literal("node.delete"), id: idSchema }).strict(),
+  object({
+    type: literal("annotation.move-text"),
+    id: idSchema,
+    position: vec2Schema,
+    expectedPosition: vec2Schema
+  }).strict()
+]);
+const drawingWorkspaceCommitRequestSchema = object({
+  expectedRevision: number().int().nonnegative(),
+  commands: array(workspaceCommandSchema).min(1)
+}).strict();
+const drawingWorkspaceCommitResultSchema = discriminatedUnion("status", [
+  object({ status: literal("committed"), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
+  object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+]);
+const drawingSessionIdSchema = string().min(1);
+const agentCodec = {
+  mode: "strict",
+  typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
+  schema: drawingSessionIdSchema
+};
+const agentParameter = {
+  name: "agent",
+  wire: "agentId",
+  source: "lookup",
+  lookup: "agent",
+  codec: agentCodec
+};
 const TYPERT = {
   package: "@vectorai/plugin-dsh-space-host",
   face: "host",
   schemas: [],
   invocations: [{
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getProjection",
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot",
     service: "drawingSpace",
     namespace: "drawingSpace",
-    method: "getProjection",
-    invocation: { kind: "direct" },
-    parameters: [{
-      name: "sessionId",
-      wire: "sessionId",
+    method: "getSnapshot",
+    invocation: { kind: "context", context: "agent", wire: "agentId", codec: agentCodec },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null",
+      schema: drawingWorkspaceSnapshotSchema
+    },
+    sourceLocation: {
+      file: "packages/plugin-dsh-space-host/src/service.ts",
+      line: 40,
+      column: 3
+    }
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/commit",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "commit",
+    invocation: { kind: "context", context: "agent", wire: "agentId", codec: agentCodec },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, {
+      name: "request",
+      wire: "request",
       source: "json",
       codec: {
         mode: "strict",
-        typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
-        schema: drawingSessionIdSchema
+        typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest",
+        schema: drawingWorkspaceCommitRequestSchema
       }
     }],
     result: {
       mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingCanvasProjection|null",
-      schema: drawingCanvasProjectionSchema
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
+      schema: drawingWorkspaceCommitResultSchema
     },
     sourceLocation: {
       file: "packages/plugin-dsh-space-host/src/service.ts",
-      line: 36,
+      line: 45,
       column: 3
     }
   }],

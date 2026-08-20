@@ -7,85 +7,1395 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const jsxRuntime = require("react/jsx-runtime");
     const react = require("react");
-    const shellStyle = {
-      boxSizing: "border-box",
-      width: "100%",
-      height: "100%",
-      minHeight: 0,
-      display: "flex",
-      flexDirection: "column",
-      color: "var(--dsw-alias-label-primary, #1f2329)",
-      background: "var(--dsw-alias-bg-base, #f5f6f8)"
-    };
-    const headerStyle = {
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
-      minHeight: 48,
-      padding: "0 16px",
-      borderBottom: "1px solid var(--dsw-alias-border-l1, #dde1e7)",
-      background: "var(--dsw-alias-bg-elevated, #fff)",
-      fontSize: 13
-    };
-    function DrawingCanvas({ projection, loading = false, error = null }) {
-      if (projection === null) {
-        return /* @__PURE__ */ jsxRuntime.jsx("section", { style: shellStyle, "aria-label": "图纸画布", children: /* @__PURE__ */ jsxRuntime.jsxs("div", { style: { margin: "auto", textAlign: "center", padding: 32 }, children: [
-          /* @__PURE__ */ jsxRuntime.jsx("div", { style: { fontSize: 16, fontWeight: 600 }, children: "还没有已导入的图纸" }),
-          /* @__PURE__ */ jsxRuntime.jsx("div", { style: { marginTop: 8, fontSize: 13, opacity: 0.65 }, children: loading ? "正在读取本地图纸…" : "在聊天中发送一张图纸图片开始。" }),
-          error === null ? null : /* @__PURE__ */ jsxRuntime.jsx("div", { role: "alert", style: { marginTop: 12, color: "#c62828" }, children: error })
-        ] }) });
+    const DrawingWorkspaceStoreContext = react.createContext(null);
+    function DrawingWorkspaceProvider({
+      store,
+      autoLoad = true,
+      children
+    }) {
+      react.useEffect(() => {
+        if (autoLoad) void store.getState().load();
+        return () => store.getState().destroy();
+      }, [autoLoad, store]);
+      return /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspaceStoreContext.Provider, { value: store, children });
+    }
+    function useDrawingWorkspaceStore() {
+      const store = react.useContext(DrawingWorkspaceStoreContext);
+      if (store === null) {
+        throw new Error("Drawing workspace components require DrawingWorkspaceProvider");
       }
-      const { bounds } = projection;
-      const width = Math.max(1, bounds.maxX - bounds.minX);
-      const height = Math.max(1, bounds.maxY - bounds.minY);
-      return /* @__PURE__ */ jsxRuntime.jsxs("section", { style: shellStyle, "aria-label": "图纸画布", children: [
-        /* @__PURE__ */ jsxRuntime.jsxs("header", { style: headerStyle, children: [
-          /* @__PURE__ */ jsxRuntime.jsx("strong", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: projection.ref.drawingId }),
-          /* @__PURE__ */ jsxRuntime.jsxs("span", { style: { opacity: 0.65 }, children: [
-            "Revision ",
-            projection.ref.revision
+      return store;
+    }
+    function useDrawingWorkspace(selector) {
+      const store = useDrawingWorkspaceStore();
+      return react.useSyncExternalStore(
+        store.subscribe,
+        () => selector(store.getState()),
+        () => selector(store.getState())
+      );
+    }
+    function CadGrid({
+      viewport,
+      showGrid,
+      showAxes
+    }) {
+      const id = react.useId().replace(/:/g, "");
+      const minorWorld = gridWorldStep(viewport.scale);
+      const minor = minorWorld * viewport.scale;
+      const major = minor * 5;
+      const minorId = `vai-grid-minor-${id}`;
+      const majorId = `vai-grid-major-${id}`;
+      return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-cad-grid": "true", pointerEvents: "none", children: [
+        showGrid ? /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntime.jsxs("defs", { children: [
+            /* @__PURE__ */ jsxRuntime.jsx("pattern", { id: minorId, width: minor, height: minor, patternUnits: "userSpaceOnUse", x: modulo$2(viewport.x, minor), y: modulo$2(viewport.y, minor), children: /* @__PURE__ */ jsxRuntime.jsx("path", { d: `M ${minor} 0 L 0 0 0 ${minor}`, className: "vai-grid__minor", fill: "none" }) }),
+            /* @__PURE__ */ jsxRuntime.jsxs("pattern", { id: majorId, width: major, height: major, patternUnits: "userSpaceOnUse", x: modulo$2(viewport.x, major), y: modulo$2(viewport.y, major), children: [
+              /* @__PURE__ */ jsxRuntime.jsx("rect", { width: major, height: major, fill: `url(#${minorId})` }),
+              /* @__PURE__ */ jsxRuntime.jsx("path", { d: `M ${major} 0 L 0 0 0 ${major}`, className: "vai-grid__major", fill: "none" })
+            ] })
           ] }),
-          projection.provisional ? /* @__PURE__ */ jsxRuntime.jsx("span", { style: { borderRadius: 999, padding: "3px 8px", color: "#8a5100", background: "#fff1cf" }, children: "候选几何" }) : null,
-          loading ? /* @__PURE__ */ jsxRuntime.jsx("span", { style: { marginLeft: "auto", opacity: 0.65 }, children: "更新中…" }) : null
-        ] }),
-        error === null ? null : /* @__PURE__ */ jsxRuntime.jsx("div", { role: "alert", style: { padding: "8px 16px", color: "#c62828", background: "#fff1f0", fontSize: 12 }, children: error }),
-        /* @__PURE__ */ jsxRuntime.jsx("div", { style: { flex: 1, minHeight: 0, padding: 16, overflow: "hidden" }, children: /* @__PURE__ */ jsxRuntime.jsxs(
-          "svg",
-          {
-            viewBox: `${bounds.minX} ${bounds.minY} ${width} ${height}`,
-            preserveAspectRatio: "xMidYMid meet",
-            style: { width: "100%", height: "100%", display: "block", background: "#fff", boxShadow: "0 4px 18px rgba(31,35,41,.12)" },
-            "aria-label": projection.source.name ?? "导入图纸",
-            children: [
-              /* @__PURE__ */ jsxRuntime.jsx(
-                "image",
-                {
-                  href: projection.source.dataUrl,
-                  x: bounds.minX,
-                  y: bounds.minY,
-                  width,
-                  height,
-                  preserveAspectRatio: "none"
-                }
-              ),
-              projection.geometry.map((line) => /* @__PURE__ */ jsxRuntime.jsx(
-                "line",
-                {
-                  x1: line.start[0],
-                  y1: line.start[1],
-                  x2: line.end[0],
-                  y2: line.end[1],
-                  stroke: line.status === "candidate" ? "#ff8a00" : "#1677ff",
-                  strokeWidth: 2,
-                  strokeDasharray: line.status === "candidate" ? "7 5" : void 0,
-                  vectorEffect: "non-scaling-stroke"
-                },
-                line.id
-              ))
-            ]
-          }
-        ) })
+          /* @__PURE__ */ jsxRuntime.jsx("rect", { width: "100%", height: "100%", fill: `url(#${majorId})` })
+        ] }) : null,
+        showAxes ? /* @__PURE__ */ jsxRuntime.jsxs("g", { className: "vai-grid__axes", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("line", { "data-axis": "x", x1: 0, y1: viewport.y, x2: "100%", y2: viewport.y, vectorEffect: "non-scaling-stroke" }),
+          /* @__PURE__ */ jsxRuntime.jsx("line", { "data-axis": "y", x1: viewport.x, y1: 0, x2: viewport.x, y2: "100%", vectorEffect: "non-scaling-stroke" }),
+          /* @__PURE__ */ jsxRuntime.jsx("text", { "data-axis-label": "x", x: Math.max(8, viewport.width - 18), y: viewport.y - 7, children: "X" }),
+          /* @__PURE__ */ jsxRuntime.jsx("text", { "data-axis-label": "y", x: viewport.x + 7, y: 14, children: "Y" })
+        ] }) : null
       ] });
+    }
+    function gridWorldStep(scale) {
+      const targetWorld = 24 / Math.max(scale, 1e-3);
+      const exponent = Math.floor(Math.log10(targetWorld));
+      const magnitude = 10 ** exponent;
+      const normalized = targetWorld / magnitude;
+      const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+      return step * magnitude;
+    }
+    function modulo$2(value, divisor) {
+      return (value % divisor + divisor) % divisor;
+    }
+    const MIN_SCALE = 0.01;
+    const MAX_SCALE = 1e3;
+    function screenToWorld(point, viewport) {
+      return [
+        (point[0] - viewport.x) / viewport.scale,
+        (viewport.y - point[1]) / viewport.scale
+      ];
+    }
+    function zoomViewportAt(viewport, screenPoint, factor) {
+      const anchor = screenToWorld(screenPoint, viewport);
+      const scale = clamp(viewport.scale * factor, MIN_SCALE, MAX_SCALE);
+      return {
+        ...viewport,
+        scale,
+        x: screenPoint[0] - anchor[0] * scale,
+        y: screenPoint[1] + anchor[1] * scale
+      };
+    }
+    function fitViewportToDrawing(document, size, padding = 1.2) {
+      const bounds = drawingBounds(document) ?? { minX: -50, minY: -50, maxX: 50, maxY: 50 };
+      const boundsWidth = Math.max(bounds.maxX - bounds.minX, 1);
+      const boundsHeight = Math.max(bounds.maxY - bounds.minY, 1);
+      const safePadding = Number.isFinite(padding) && padding > 0 ? padding : 1.2;
+      const scale = clamp(Math.min(
+        Math.max(size.width, 1) / (boundsWidth * safePadding),
+        Math.max(size.height, 1) / (boundsHeight * safePadding)
+      ), MIN_SCALE, MAX_SCALE);
+      const centerX = (bounds.minX + bounds.maxX) / 2;
+      const centerY = (bounds.minY + bounds.maxY) / 2;
+      return {
+        x: size.width / 2 - centerX * scale,
+        y: size.height / 2 + centerY * scale,
+        scale,
+        width: size.width,
+        height: size.height
+      };
+    }
+    function drawingBounds(document) {
+      const bounds = [...document.geometry, ...document.annotations].filter((node) => node.visible).map(nodeBounds).filter((value) => value !== null);
+      return unionBounds(bounds);
+    }
+    function nodesInWorldBox(document, box) {
+      return [...document.geometry, ...document.annotations].filter((node) => node.visible).filter((node) => {
+        const bounds = nodeBounds(node);
+        return bounds !== null && boundsIntersect(bounds, box);
+      }).map((node) => node.id);
+    }
+    function nodeBounds(node) {
+      switch (node.type) {
+        case "point":
+          return boundsFromPoints([[node.x, node.y]]);
+        case "line":
+          return boundsFromPoints([node.start, node.end]);
+        case "ray":
+        case "xline":
+          return null;
+        case "circle":
+          return finiteCircleBounds(node.center, node.radius);
+        case "arc":
+          return arcBounds(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise);
+        case "ellipse":
+          return ellipseBounds(node);
+        case "polyline":
+          return boundsFromPoints(node.vertices.map((vertex) => vertex.point));
+        case "spline":
+          return boundsFromPoints(node.controlPoints);
+        case "text":
+          return textBounds(node);
+        case "dimension":
+          return boundsFromPoints([...node.definitionPoints, node.textPosition]);
+        case "leader":
+          return boundsFromPoints(node.points);
+        case "centerline":
+          return extendedLineBounds(node.start, node.end, node.extension);
+        case "section-hatch":
+          return boundsFromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+      }
+    }
+    function worldBoundsForViewport(viewport) {
+      const first = screenToWorld([0, 0], viewport);
+      const second = screenToWorld([viewport.width, viewport.height], viewport);
+      return normalizeBounds$1(first, second);
+    }
+    function finiteCircleBounds(center, radius) {
+      if (!finitePoint(center) || !Number.isFinite(radius) || radius < 0) return null;
+      return {
+        minX: center[0] - radius,
+        minY: center[1] - radius,
+        maxX: center[0] + radius,
+        maxY: center[1] + radius
+      };
+    }
+    function arcBounds(center, radius, start, end, counterClockwise) {
+      if (finiteCircleBounds(center, radius) === null || !Number.isFinite(start) || !Number.isFinite(end)) {
+        return null;
+      }
+      const candidates = [start, end, ...[0, 90, 180, 270].filter((angle) => angleOnArc(angle, start, end, counterClockwise))];
+      return boundsFromPoints(candidates.map((angle) => {
+        const radians = angle * Math.PI / 180;
+        return [center[0] + Math.cos(radians) * radius, center[1] + Math.sin(radians) * radius];
+      }));
+    }
+    function ellipseBounds(node) {
+      if (!finitePoint(node.center) || !finitePoint(node.majorAxis) || !Number.isFinite(node.ratio) || node.ratio <= 0) return null;
+      const [axisX, axisY] = node.majorAxis;
+      const majorRadius = Math.hypot(axisX, axisY);
+      if (majorRadius === 0) return null;
+      const minorRadius = majorRadius * node.ratio;
+      const minorX = -axisY / majorRadius * minorRadius;
+      const minorY = axisX / majorRadius * minorRadius;
+      const extentX = Math.hypot(axisX, minorX);
+      const extentY = Math.hypot(axisY, minorY);
+      return {
+        minX: node.center[0] - extentX,
+        minY: node.center[1] - extentY,
+        maxX: node.center[0] + extentX,
+        maxY: node.center[1] + extentY
+      };
+    }
+    function textBounds(node) {
+      if (!finitePoint(node.position) || !Number.isFinite(node.height) || !Number.isFinite(node.rotation)) {
+        return null;
+      }
+      const width = node.maxWidth ?? node.content.length * node.height * 0.6;
+      const left = node.alignment === "center" ? -width / 2 : node.alignment === "right" ? -width : 0;
+      const bottom = node.verticalAlignment === "top" ? -node.height : node.verticalAlignment === "middle" ? -node.height / 2 : node.verticalAlignment === "baseline" ? -node.height : 0;
+      const radians = node.rotation * Math.PI / 180;
+      const cos = Math.cos(radians);
+      const sin = Math.sin(radians);
+      return boundsFromPoints([
+        [left, bottom],
+        [left + width, bottom],
+        [left + width, bottom + node.height],
+        [left, bottom + node.height]
+      ].map(([x, y]) => [
+        node.position[0] + x * cos - y * sin,
+        node.position[1] + x * sin + y * cos
+      ]));
+    }
+    function extendedLineBounds(start, end, extension) {
+      const dx = end[0] - start[0];
+      const dy = end[1] - start[1];
+      const length = Math.hypot(dx, dy);
+      if (!(length > 0)) return boundsFromPoints([start]);
+      return boundsFromPoints([
+        [start[0] - dx / length * extension, start[1] - dy / length * extension],
+        [end[0] + dx / length * extension, end[1] + dy / length * extension]
+      ]);
+    }
+    function boundsFromPoints(points) {
+      if (points.length === 0 || points.some((point) => !finitePoint(point))) return null;
+      return {
+        minX: Math.min(...points.map((point) => point[0])),
+        minY: Math.min(...points.map((point) => point[1])),
+        maxX: Math.max(...points.map((point) => point[0])),
+        maxY: Math.max(...points.map((point) => point[1]))
+      };
+    }
+    function unionBounds(bounds) {
+      if (bounds.length === 0) return null;
+      return bounds.reduce((combined, current) => ({
+        minX: Math.min(combined.minX, current.minX),
+        minY: Math.min(combined.minY, current.minY),
+        maxX: Math.max(combined.maxX, current.maxX),
+        maxY: Math.max(combined.maxY, current.maxY)
+      }));
+    }
+    function normalizeBounds$1(first, second) {
+      return {
+        minX: Math.min(first[0], second[0]),
+        minY: Math.min(first[1], second[1]),
+        maxX: Math.max(first[0], second[0]),
+        maxY: Math.max(first[1], second[1])
+      };
+    }
+    function boundsIntersect(first, second) {
+      return first.minX <= second.maxX && first.maxX >= second.minX && first.minY <= second.maxY && first.maxY >= second.minY;
+    }
+    function angleOnArc(angle, start, end, counterClockwise) {
+      const normalizedAngle = normalizeAngle(angle);
+      const normalizedStart = normalizeAngle(start);
+      const normalizedEnd = normalizeAngle(end);
+      if (counterClockwise) {
+        return modulo$1(normalizedAngle - normalizedStart, 360) <= modulo$1(normalizedEnd - normalizedStart, 360);
+      }
+      return modulo$1(normalizedStart - normalizedAngle, 360) <= modulo$1(normalizedStart - normalizedEnd, 360);
+    }
+    function normalizeAngle(value) {
+      return modulo$1(value, 360);
+    }
+    function modulo$1(value, divisor) {
+      return (value % divisor + divisor) % divisor;
+    }
+    function finitePoint(point) {
+      return Number.isFinite(point[0]) && Number.isFinite(point[1]);
+    }
+    function clamp(value, minimum, maximum) {
+      return Math.max(minimum, Math.min(maximum, value));
+    }
+    function EntityRenderer({
+      node,
+      viewport,
+      selected,
+      onSelect,
+      onTextPointerDown
+    }) {
+      if (!node.visible) return null;
+      const className = `vai-entity vai-entity--${node.quality.status}${selected ? " vai-entity--selected" : ""}`;
+      const interactiveText = (node.type === "text" || node.type === "dimension") && onTextPointerDown !== void 0;
+      return /* @__PURE__ */ jsxRuntime.jsx(
+        "g",
+        {
+          className,
+          "data-entity-id": node.id,
+          "data-entity-type": node.type,
+          "data-selected": selected || void 0,
+          onClick: onSelect,
+          onMouseDown: interactiveText ? onTextPointerDown : void 0,
+          children: renderNode(node, viewport)
+        }
+      );
+    }
+    function renderNode(node, viewport) {
+      const vectorStroke = { vectorEffect: "non-scaling-stroke" };
+      switch (node.type) {
+        case "point":
+          return /* @__PURE__ */ jsxRuntime.jsx("circle", { cx: node.x, cy: node.y, r: 3 / viewport.scale, ...vectorStroke });
+        case "line":
+          return /* @__PURE__ */ jsxRuntime.jsx("line", { x1: node.start[0], y1: node.start[1], x2: node.end[0], y2: node.end[1], ...vectorStroke });
+        case "ray":
+        case "xline": {
+          const points = clipExtendedLine(node.origin, node.direction, worldBoundsForViewport(viewport), node.type === "ray");
+          return points === null ? null : /* @__PURE__ */ jsxRuntime.jsx("line", { x1: points[0][0], y1: points[0][1], x2: points[1][0], y2: points[1][1], ...vectorStroke });
+        }
+        case "circle":
+          return /* @__PURE__ */ jsxRuntime.jsx("circle", { cx: node.center[0], cy: node.center[1], r: node.radius, fill: "none", ...vectorStroke });
+        case "arc":
+          return /* @__PURE__ */ jsxRuntime.jsx("path", { d: arcPath(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise), fill: "none", ...vectorStroke });
+        case "ellipse": {
+          const radiusX = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+          const rotation = Math.atan2(node.majorAxis[1], node.majorAxis[0]) * 180 / Math.PI;
+          return /* @__PURE__ */ jsxRuntime.jsx(
+            "ellipse",
+            {
+              cx: node.center[0],
+              cy: node.center[1],
+              rx: radiusX,
+              ry: radiusX * node.ratio,
+              transform: `rotate(${rotation} ${node.center[0]} ${node.center[1]})`,
+              fill: "none",
+              ...vectorStroke
+            }
+          );
+        }
+        case "polyline":
+          return /* @__PURE__ */ jsxRuntime.jsx("path", { d: polylinePath(node), fill: "none", ...vectorStroke });
+        case "spline":
+          return /* @__PURE__ */ jsxRuntime.jsx("path", { d: splinePath(node.controlPoints, node.closed), fill: "none", ...vectorStroke });
+        case "text":
+          return /* @__PURE__ */ jsxRuntime.jsx(WorldText, { position: node.position, rotation: node.rotation, height: node.height, align: node.alignment, children: node.content });
+        case "dimension":
+          return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+            node.definitionPoints.length > 1 ? /* @__PURE__ */ jsxRuntime.jsx("polyline", { points: pointsAttribute(node.definitionPoints), fill: "none", ...vectorStroke }) : null,
+            /* @__PURE__ */ jsxRuntime.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
+          ] });
+        case "leader": {
+          const textPosition = node.points.at(-1) ?? [0, 0];
+          return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+            /* @__PURE__ */ jsxRuntime.jsx("polyline", { points: pointsAttribute(node.points), fill: "none", ...vectorStroke }),
+            /* @__PURE__ */ jsxRuntime.jsx(WorldText, { position: textPosition, height: node.textHeight, align: "left", children: node.content })
+          ] });
+        }
+        case "centerline": {
+          const bounds = nodeBounds(node);
+          return bounds === null ? null : /* @__PURE__ */ jsxRuntime.jsx(
+            "line",
+            {
+              x1: bounds.minX,
+              y1: bounds.minY,
+              x2: bounds.maxX,
+              y2: bounds.maxY,
+              strokeDasharray: "10 4 2 4",
+              ...vectorStroke
+            }
+          );
+        }
+        case "section-hatch":
+          return /* @__PURE__ */ jsxRuntime.jsx("g", { "data-section-hatch": node.pattern, children: node.segments.map((segment, index) => /* @__PURE__ */ jsxRuntime.jsx(
+            "line",
+            {
+              x1: segment.start[0],
+              y1: segment.start[1],
+              x2: segment.end[0],
+              y2: segment.end[1],
+              ...vectorStroke
+            },
+            index
+          )) });
+      }
+    }
+    function WorldText({
+      position,
+      rotation = 0,
+      height,
+      align,
+      children
+    }) {
+      return /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${position[0]} ${position[1]}) rotate(${-rotation}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntime.jsx(
+        "text",
+        {
+          fontSize: height,
+          textAnchor: align === "center" ? "middle" : align === "right" ? "end" : "start",
+          children
+        }
+      ) });
+    }
+    function dimensionLabel(node) {
+      if (node.displayText !== void 0) return node.displayText;
+      const value = node.observedValue ?? node.computedValue;
+      if (value === void 0) return "—";
+      return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
+    }
+    function pointsAttribute(points) {
+      return points.map((point) => `${point[0]},${point[1]}`).join(" ");
+    }
+    function splinePath(points, closed) {
+      if (points.length === 0) return "";
+      if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
+      if (points.length === 2) return `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]}${closed ? " Z" : ""}`;
+      const commands = [`M ${points[0][0]} ${points[0][1]}`];
+      for (let index = 1; index < points.length - 1; index += 1) {
+        const control = points[index];
+        const next = points[index + 1];
+        const end = index === points.length - 2 ? next : [(control[0] + next[0]) / 2, (control[1] + next[1]) / 2];
+        commands.push(`Q ${control[0]} ${control[1]} ${end[0]} ${end[1]}`);
+      }
+      if (closed) commands.push("Z");
+      return commands.join(" ");
+    }
+    function polylinePath(node) {
+      if (node.vertices.length === 0) return "";
+      const output = [`M ${node.vertices[0].point[0]} ${node.vertices[0].point[1]}`];
+      const segments = node.closed ? node.vertices.length : node.vertices.length - 1;
+      for (let index = 0; index < segments; index += 1) {
+        const current = node.vertices[index];
+        const next = node.vertices[(index + 1) % node.vertices.length];
+        if (current.bulge !== void 0 && Math.abs(current.bulge) > 1e-9) {
+          const radius = Math.hypot(
+            next.point[0] - current.point[0],
+            next.point[1] - current.point[1]
+          ) * (1 + current.bulge * current.bulge) / (4 * Math.abs(current.bulge));
+          output.push(`A ${radius} ${radius} 0 ${Math.abs(current.bulge) > 1 ? 1 : 0} ${current.bulge > 0 ? 1 : 0} ${next.point[0]} ${next.point[1]}`);
+        } else {
+          output.push(`L ${next.point[0]} ${next.point[1]}`);
+        }
+      }
+      if (node.closed) output.push("Z");
+      return output.join(" ");
+    }
+    function arcPath(center, radius, start, end, counterClockwise) {
+      const point = (angle) => {
+        const radians = angle * Math.PI / 180;
+        return [center[0] + radius * Math.cos(radians), center[1] + radius * Math.sin(radians)];
+      };
+      const first = point(start);
+      const last = point(end);
+      const span = counterClockwise ? modulo(end - start, 360) : modulo(start - end, 360);
+      return `M ${first[0]} ${first[1]} A ${radius} ${radius} 0 ${span > 180 ? 1 : 0} ${counterClockwise ? 1 : 0} ${last[0]} ${last[1]}`;
+    }
+    function clipExtendedLine(origin, direction, bounds, ray) {
+      if (Math.hypot(direction[0], direction[1]) <= 1e-9) return null;
+      let minimum = ray ? 0 : Number.NEGATIVE_INFINITY;
+      let maximum = Number.POSITIVE_INFINITY;
+      for (const [axisOrigin, axisDirection, low, high] of [
+        [origin[0], direction[0], bounds.minX, bounds.maxX],
+        [origin[1], direction[1], bounds.minY, bounds.maxY]
+      ]) {
+        if (Math.abs(axisDirection) <= 1e-9) {
+          if (axisOrigin < low || axisOrigin > high) return null;
+          continue;
+        }
+        const first = (low - axisOrigin) / axisDirection;
+        const second = (high - axisOrigin) / axisDirection;
+        minimum = Math.max(minimum, Math.min(first, second));
+        maximum = Math.min(maximum, Math.max(first, second));
+      }
+      if (minimum > maximum) return null;
+      return [
+        [origin[0] + direction[0] * minimum, origin[1] + direction[1] * minimum],
+        [origin[0] + direction[0] * maximum, origin[1] + direction[1] * maximum]
+      ];
+    }
+    function modulo(value, divisor) {
+      return (value % divisor + divisor) % divisor;
+    }
+    function SourceUnderlay({
+      source,
+      resource
+    }) {
+      return /* @__PURE__ */ jsxRuntime.jsx("g", { "data-source-underlay": source.id, pointerEvents: "none", opacity: 0.72, children: /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(0 ${source.height}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntime.jsx(
+        "image",
+        {
+          href: resource.url,
+          x: 0,
+          y: 0,
+          width: source.width,
+          height: source.height,
+          preserveAspectRatio: "none"
+        }
+      ) }) });
+    }
+    function Canvas() {
+      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const sourceResource = useDrawingWorkspace((state) => state.sourceResource);
+      const viewport = useDrawingWorkspace((state) => state.viewport);
+      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
+      const display = useDrawingWorkspace((state) => state.display);
+      const setViewport = useDrawingWorkspace((state) => state.setViewport);
+      const setMouseWorld = useDrawingWorkspace((state) => state.setMouseWorld);
+      const setSelection = useDrawingWorkspace((state) => state.setSelection);
+      const moveAnnotationText = useDrawingWorkspace((state) => state.moveAnnotationText);
+      const containerRef = react.useRef(null);
+      const dragRef = react.useRef(null);
+      const spacePressed = react.useRef(false);
+      const [selectionBox, setSelectionBox] = react.useState(null);
+      const document = snapshot == null ? void 0 : snapshot.document;
+      react.useEffect(() => {
+        const element = containerRef.current;
+        if (element === null || document === void 0 || typeof ResizeObserver === "undefined") return;
+        const resize = () => {
+          const { width, height } = element.getBoundingClientRect();
+          if (!(width > 0 && height > 0)) return;
+          if (viewport.width === 0 || viewport.height === 0) {
+            setViewport(fitViewportToDrawing(document, { width, height }));
+          } else if (viewport.width !== width || viewport.height !== height) {
+            setViewport({ ...viewport, width, height });
+          }
+        };
+        resize();
+        const observer = new ResizeObserver(resize);
+        observer.observe(element);
+        return () => observer.disconnect();
+      }, [document, setViewport, viewport]);
+      if (snapshot === null) return null;
+      const entities = [
+        ...snapshot.document.geometry,
+        ...display.annotations ? snapshot.document.annotations : []
+      ];
+      const handleWheel = (event) => {
+        event.preventDefault();
+        const point = eventScreenPoint(event);
+        setViewport(zoomViewportAt(viewport, point, Math.exp(-event.deltaY * 15e-4)));
+      };
+      const handleBackgroundMouseDown = (event) => {
+        const point = eventScreenPoint(event);
+        if (event.button === 1 || event.button === 0 && spacePressed.current) {
+          event.preventDefault();
+          dragRef.current = { kind: "pan", start: point, viewport };
+          return;
+        }
+        if (event.button !== 0) return;
+        dragRef.current = {
+          kind: "box",
+          start: point,
+          current: point,
+          additive: event.metaKey || event.ctrlKey
+        };
+        setSelectionBox({ start: point, current: point });
+      };
+      const handleMouseMove = (event) => {
+        const point = eventScreenPoint(event);
+        setMouseWorld(screenToWorld(point, viewport));
+        const drag = dragRef.current;
+        if (drag === null) return;
+        if (drag.kind === "pan") {
+          setViewport({
+            ...drag.viewport,
+            x: drag.viewport.x + point[0] - drag.start[0],
+            y: drag.viewport.y + point[1] - drag.start[1]
+          });
+          return;
+        }
+        if (drag.kind === "box") {
+          drag.current = point;
+          setSelectionBox({ start: drag.start, current: point });
+          return;
+        }
+        drag.currentWorld = screenToWorld(point, viewport);
+      };
+      const handleMouseUp = (event) => {
+        const drag = dragRef.current;
+        dragRef.current = null;
+        if (drag === null) return;
+        if (drag.kind === "box") {
+          const point = eventScreenPoint(event);
+          const distance = Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]);
+          if (distance < 3) {
+            if (!drag.additive) setSelection([]);
+          } else {
+            const first = screenToWorld(drag.start, viewport);
+            const second = screenToWorld(point, viewport);
+            const ids = nodesInWorldBox(snapshot.document, normalizeBounds(first, second));
+            setSelection(drag.additive ? [...selectedIds, ...ids] : ids);
+          }
+          setSelectionBox(null);
+          return;
+        }
+        if (drag.kind === "annotation") {
+          if (Math.hypot(
+            drag.currentWorld[0] - drag.startWorld[0],
+            drag.currentWorld[1] - drag.startWorld[1]
+          ) > 1e-3) {
+            void moveAnnotationText(drag.id, drag.currentWorld);
+          }
+        }
+      };
+      const handleKeyDown = (event) => {
+        if (event.code === "Space") {
+          spacePressed.current = true;
+          event.preventDefault();
+        }
+        if (event.key === "Escape") {
+          dragRef.current = null;
+          setSelectionBox(null);
+          setSelection([]);
+        }
+      };
+      const handleEntitySelect = (id, event) => {
+        event.stopPropagation();
+        if (event.metaKey || event.ctrlKey) {
+          setSelection(selectedIds.includes(id) ? selectedIds.filter((selectedId) => selectedId !== id) : [...selectedIds, id]);
+        } else {
+          setSelection([id]);
+        }
+      };
+      const handleAnnotationPointerDown = (annotation, event) => {
+        if (event.button !== 0) return;
+        event.stopPropagation();
+        const point = eventScreenPoint(event);
+        const world = screenToWorld(point, viewport);
+        dragRef.current = { kind: "annotation", id: annotation.id, startWorld: world, currentWorld: world };
+        setSelection([annotation.id]);
+      };
+      return /* @__PURE__ */ jsxRuntime.jsx(
+        "div",
+        {
+          ref: containerRef,
+          className: "vai-canvas",
+          "data-canvas-root": "true",
+          role: "application",
+          "aria-label": "可交互图纸画布",
+          tabIndex: 0,
+          onKeyDown: handleKeyDown,
+          onKeyUp: (event) => {
+            if (event.code === "Space") spacePressed.current = false;
+          },
+          children: /* @__PURE__ */ jsxRuntime.jsxs(
+            "svg",
+            {
+              className: "vai-canvas__svg",
+              width: "100%",
+              height: "100%",
+              "aria-label": "图纸画布",
+              onWheel: handleWheel,
+              onMouseMove: handleMouseMove,
+              onMouseUp: handleMouseUp,
+              onMouseLeave: () => setMouseWorld(null),
+              onDoubleClick: () => setViewport(fitViewportToDrawing(snapshot.document, viewport)),
+              children: [
+                /* @__PURE__ */ jsxRuntime.jsx(CadGrid, { viewport, showGrid: display.grid, showAxes: display.axes }),
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  "rect",
+                  {
+                    "data-canvas-background": "true",
+                    width: "100%",
+                    height: "100%",
+                    fill: "transparent",
+                    onMouseDown: handleBackgroundMouseDown
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntime.jsxs("g", { transform: `translate(${viewport.x} ${viewport.y}) scale(${viewport.scale} ${-viewport.scale})`, children: [
+                  display.sourceUnderlay && snapshot.source !== void 0 && sourceResource !== null ? /* @__PURE__ */ jsxRuntime.jsx(SourceUnderlay, { source: snapshot.source, resource: sourceResource }) : null,
+                  display.relations ? /* @__PURE__ */ jsxRuntime.jsx(RelationLayer, { document: snapshot.document, viewport }) : null,
+                  entities.map((node) => /* @__PURE__ */ jsxRuntime.jsx(
+                    EntityRenderer,
+                    {
+                      node,
+                      viewport,
+                      selected: selectedIds.includes(node.id),
+                      onSelect: (event) => handleEntitySelect(node.id, event),
+                      onTextPointerDown: node.type === "text" || node.type === "dimension" ? (event) => handleAnnotationPointerDown(node, event) : void 0
+                    },
+                    node.id
+                  ))
+                ] }),
+                selectionBox === null ? null : /* @__PURE__ */ jsxRuntime.jsx(SelectionBox, { box: selectionBox })
+              ]
+            }
+          )
+        }
+      );
+    }
+    function RelationLayer({
+      document,
+      viewport
+    }) {
+      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-relations", children: document.relations.filter((relation) => relation.visible).flatMap((relation) => {
+        const centers = relationNodeIds(relation).flatMap((id) => {
+          const node = [...document.geometry, ...document.annotations].find((candidate) => candidate.id === id);
+          const bounds = node === void 0 ? null : nodeBounds(node);
+          return bounds === null ? [] : [[(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2]];
+        });
+        return centers.slice(1).map((center, index) => {
+          const start = centers[index];
+          const midpoint = [(start[0] + center[0]) / 2, (start[1] + center[1]) / 2];
+          return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-relation-id": relation.id, children: [
+            /* @__PURE__ */ jsxRuntime.jsx("line", { x1: start[0], y1: start[1], x2: center[0], y2: center[1], vectorEffect: "non-scaling-stroke" }),
+            /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${midpoint[0]} ${midpoint[1]}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntime.jsx("text", { fontSize: 10 / Math.max(viewport.scale, 1e-3), textAnchor: "middle", children: relation.kind }) })
+          ] }, `${relation.id}:${index}`);
+        });
+      }) });
+    }
+    function SelectionBox({ box }) {
+      const x = Math.min(box.start[0], box.current[0]);
+      const y = Math.min(box.start[1], box.current[1]);
+      return /* @__PURE__ */ jsxRuntime.jsx(
+        "rect",
+        {
+          "data-selection-box": "true",
+          x,
+          y,
+          width: Math.abs(box.current[0] - box.start[0]),
+          height: Math.abs(box.current[1] - box.start[1]),
+          className: "vai-canvas__selection-box",
+          pointerEvents: "none"
+        }
+      );
+    }
+    function relationNodeIds(relation) {
+      switch (relation.type) {
+        case "topology":
+          return relation.nodeIds;
+        case "constraint":
+          return relation.geometryIds;
+        case "association":
+          return [relation.annotationId, ...relation.geometryIds];
+        case "semantic":
+          return relation.nodeIds;
+      }
+    }
+    function eventScreenPoint(event) {
+      const target = event.currentTarget;
+      const svg = target.tagName.toLowerCase() === "svg" ? target : target.ownerSVGElement;
+      const rect = (svg == null ? void 0 : svg.getBoundingClientRect()) ?? { left: 0, top: 0 };
+      return [event.clientX - rect.left, event.clientY - rect.top];
+    }
+    function normalizeBounds(first, second) {
+      return {
+        minX: Math.min(first[0], second[0]),
+        minY: Math.min(first[1], second[1]),
+        maxX: Math.max(first[0], second[0]),
+        maxY: Math.max(first[1], second[1])
+      };
+    }
+    function ObjectList() {
+      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      const setSelection = useDrawingWorkspace((state) => state.setSelection);
+      const updateNode = useDrawingWorkspace((state) => state.updateNode);
+      const deleteNodes = useDrawingWorkspace((state) => state.deleteNodes);
+      if (snapshot === null) return null;
+      const groups = [
+        { label: "几何图元", nodes: snapshot.document.geometry },
+        { label: "标注", nodes: snapshot.document.annotations },
+        { label: "关系", nodes: snapshot.document.relations },
+        { label: "语义特征", nodes: snapshot.document.features }
+      ];
+      return /* @__PURE__ */ jsxRuntime.jsxs("aside", { className: "vai-panel vai-object-list", "aria-label": "图纸对象", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-panel__title", children: "对象" }),
+        /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-object-list__scroll", children: groups.map((group) => /* @__PURE__ */ jsxRuntime.jsxs("section", { className: "vai-object-group", children: [
+          /* @__PURE__ */ jsxRuntime.jsxs("h3", { children: [
+            group.label,
+            /* @__PURE__ */ jsxRuntime.jsx("span", { children: group.nodes.length })
+          ] }),
+          group.nodes.length === 0 ? /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-object-group__empty", children: "无" }) : group.nodes.map((node) => /* @__PURE__ */ jsxRuntime.jsxs(
+            "div",
+            {
+              className: `vai-object-row${selectedIds.includes(node.id) ? " vai-object-row--selected" : ""}`,
+              "data-object-id": node.id,
+              children: [
+                /* @__PURE__ */ jsxRuntime.jsxs(
+                  "button",
+                  {
+                    type: "button",
+                    className: "vai-object-row__main",
+                    onClick: (event) => {
+                      if (event.metaKey || event.ctrlKey) {
+                        setSelection(selectedIds.includes(node.id) ? selectedIds.filter((id) => id !== node.id) : [...selectedIds, node.id]);
+                      } else setSelection([node.id]);
+                    },
+                    children: [
+                      /* @__PURE__ */ jsxRuntime.jsx(ObjectGlyph, { type: node.type }),
+                      /* @__PURE__ */ jsxRuntime.jsxs("span", { className: "vai-object-row__identity", children: [
+                        /* @__PURE__ */ jsxRuntime.jsx("strong", { children: node.id }),
+                        /* @__PURE__ */ jsxRuntime.jsx("small", { children: node.type })
+                      ] })
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    className: "vai-icon-button",
+                    "aria-label": `${node.visible ? "隐藏" : "显示"} ${node.id}`,
+                    disabled: busy || !snapshot.capabilities.edit,
+                    onClick: () => {
+                      void updateNode(node.id, { visible: !node.visible });
+                    },
+                    children: node.visible ? "◉" : "○"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    className: "vai-icon-button vai-icon-button--danger",
+                    "aria-label": `删除 ${node.id}`,
+                    disabled: busy || !snapshot.capabilities.delete,
+                    onClick: () => {
+                      void deleteNodes([node.id]);
+                    },
+                    children: "×"
+                  }
+                )
+              ]
+            },
+            node.id
+          ))
+        ] }, group.label)) })
+      ] });
+    }
+    function ObjectGlyph({ type }) {
+      const glyph = type === "circle" ? "○" : type === "point" ? "·" : type === "text" ? "T" : type === "dimension" ? "↔" : type === "feature" ? "◇" : type === "topology" || type === "constraint" || type === "association" || type === "semantic" ? "⌁" : "∕";
+      return /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-object-row__glyph", "aria-hidden": "true", children: glyph });
+    }
+    function PropertyInspector() {
+      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      const updateNode = useDrawingWorkspace((state) => state.updateNode);
+      if (snapshot === null) return null;
+      const node = locateNode(snapshot.document, selectedIds[0]);
+      return /* @__PURE__ */ jsxRuntime.jsxs("aside", { className: "vai-panel vai-inspector", "aria-label": "图元属性", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-panel__title", children: "图元属性" }),
+        node === null ? /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-panel__empty", children: "选择图元查看和编辑属性" }) : /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-inspector__scroll", children: [
+          /* @__PURE__ */ jsxRuntime.jsxs("dl", { className: "vai-inspector__identity", children: [
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "ID" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.id }),
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "类型" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.type }),
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "状态" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.quality.status }),
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "置信度" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.quality.confidence === void 0 ? "—" : `${Math.round(node.quality.confidence * 100)}%` })
+          ] }),
+          /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-inspector__fields", children: editableProperties(node).map((property) => /* @__PURE__ */ jsxRuntime.jsx(
+            PropertyField,
+            {
+              property,
+              disabled: busy || !snapshot.capabilities.edit,
+              commit: (value) => {
+                void updateNode(node.id, property.change(value));
+              }
+            },
+            property.key
+          )) }),
+          /* @__PURE__ */ jsxRuntime.jsxs("details", { className: "vai-inspector__raw", children: [
+            /* @__PURE__ */ jsxRuntime.jsx("summary", { children: "完整属性" }),
+            /* @__PURE__ */ jsxRuntime.jsx("pre", { children: JSON.stringify(node, null, 2) })
+          ] })
+        ] })
+      ] });
+    }
+    function PropertyField({
+      property,
+      disabled,
+      commit
+    }) {
+      if (property.kind === "boolean") {
+        return /* @__PURE__ */ jsxRuntime.jsxs("label", { className: "vai-field vai-field--check", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("span", { children: property.label }),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "input",
+            {
+              type: "checkbox",
+              defaultChecked: Boolean(property.value),
+              disabled,
+              onChange: (event) => commit(event.currentTarget.checked)
+            }
+          )
+        ] });
+      }
+      return /* @__PURE__ */ jsxRuntime.jsxs("label", { className: "vai-field", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: property.label }),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "input",
+          {
+            type: property.kind,
+            defaultValue: String(property.value),
+            disabled,
+            step: property.kind === "number" ? "any" : void 0,
+            onBlur: (event) => {
+              const value = property.kind === "number" ? Number(event.currentTarget.value) : event.currentTarget.value;
+              if (property.kind === "number" && !Number.isFinite(value)) return;
+              if (value !== property.value) commit(value);
+            }
+          }
+        )
+      ] });
+    }
+    function editableProperties(node) {
+      const fields = [booleanField("visible", "可见", node.visible, "visible")];
+      switch (node.type) {
+        case "point":
+          return [...fields, numberField("x", "X", node.x, "x"), numberField("y", "Y", node.y, "y")];
+        case "line":
+          return [...fields, ...vec2Fields("start", "起点", node.start), ...vec2Fields("end", "终点", node.end)];
+        case "ray":
+        case "xline":
+          return [...fields, ...vec2Fields("origin", "原点", node.origin), ...vec2Fields("direction", "方向", node.direction)];
+        case "circle":
+          return [...fields, ...vec2Fields("center", "圆心", node.center), numberField("radius", "半径", node.radius, "radius")];
+        case "arc":
+          return [
+            ...fields,
+            ...vec2Fields("center", "圆心", node.center),
+            numberField("radius", "半径", node.radius, "radius"),
+            numberField("startAngle", "起始角", node.startAngle, "startAngle"),
+            numberField("endAngle", "结束角", node.endAngle, "endAngle"),
+            booleanField("counterClockwise", "逆时针", node.counterClockwise, "counterClockwise")
+          ];
+        case "ellipse":
+          return [
+            ...fields,
+            ...vec2Fields("center", "中心", node.center),
+            ...vec2Fields("majorAxis", "主轴", node.majorAxis),
+            numberField("ratio", "轴比", node.ratio, "ratio")
+          ];
+        case "polyline":
+          return [...fields, booleanField("closed", "闭合", node.closed, "closed")];
+        case "spline":
+          return [
+            ...fields,
+            numberField("degree", "阶数", node.degree, "degree"),
+            booleanField("closed", "闭合", node.closed, "closed"),
+            booleanField("periodic", "周期", node.periodic, "periodic")
+          ];
+        case "text":
+          return [
+            ...fields,
+            textField("content", "文字", node.content, "content"),
+            ...vec2Fields("position", "位置", node.position),
+            numberField("height", "字高", node.height, "height"),
+            numberField("rotation", "旋转", node.rotation, "rotation")
+          ];
+        case "dimension":
+          return [
+            ...fields,
+            textField("displayText", "显示文字", node.displayText ?? "", "displayText"),
+            ...vec2Fields("textPosition", "文字位置", node.textPosition),
+            textField("prefix", "前缀", node.prefix ?? "", "prefix"),
+            textField("suffix", "后缀", node.suffix ?? "", "suffix")
+          ];
+        case "leader":
+          return [
+            ...fields,
+            textField("content", "文字", node.content, "content"),
+            numberField("textHeight", "字高", node.textHeight, "textHeight")
+          ];
+        case "centerline":
+          return [...fields, numberField("extension", "延伸", node.extension, "extension")];
+        case "section-hatch":
+          return [
+            ...fields,
+            textField("pattern", "图案", node.pattern, "pattern"),
+            numberField("angle", "角度", node.angle, "angle"),
+            numberField("spacing", "间距", node.spacing, "spacing")
+          ];
+        case "topology":
+        case "constraint":
+        case "association":
+        case "semantic":
+        case "feature":
+          return fields;
+      }
+    }
+    function vec2Fields(key, label, value) {
+      return [0, 1].map((index) => ({
+        key: `${key}.${index}`,
+        label: `${label} ${index === 0 ? "X" : "Y"}`,
+        value: value[index],
+        kind: "number",
+        change: (next) => ({ [key]: value.map((item, itemIndex) => itemIndex === index ? Number(next) : item) })
+      }));
+    }
+    function numberField(key, label, value, property) {
+      return { key, label, value, kind: "number", change: (next) => ({ [property]: Number(next) }) };
+    }
+    function textField(key, label, value, property) {
+      return { key, label, value, kind: "text", change: (next) => ({ [property]: String(next) }) };
+    }
+    function booleanField(key, label, value, property) {
+      return { key, label, value, kind: "boolean", change: (next) => ({ [property]: Boolean(next) }) };
+    }
+    function locateNode(document, id) {
+      if (id === void 0) return null;
+      return document.geometry.find((node) => node.id === id) ?? document.annotations.find((node) => node.id === id) ?? document.relations.find((node) => node.id === id) ?? document.features.find((node) => node.id === id) ?? null;
+    }
+    function WorkspaceStatus() {
+      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const viewport = useDrawingWorkspace((state) => state.viewport);
+      const mouseWorld = useDrawingWorkspace((state) => state.mouseWorld);
+      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      if (snapshot === null) return null;
+      return /* @__PURE__ */ jsxRuntime.jsxs("footer", { className: "vai-status", "aria-label": "图纸状态", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: snapshot.ref.drawingId }),
+        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          "Revision ",
+          snapshot.ref.revision
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: snapshot.document.unitSystem.length }),
+        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          Math.round(viewport.scale * 100),
+          "%"
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          selectedIds.length,
+          " 个已选"
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-status__coords", children: mouseWorld === null ? "X —  Y —" : `X ${mouseWorld[0].toFixed(3)}  Y ${mouseWorld[1].toFixed(3)}` }),
+        busy ? /* @__PURE__ */ jsxRuntime.jsx("span", { children: "正在保存…" }) : null
+      ] });
+    }
+    function WorkspaceToolbar() {
+      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const viewport = useDrawingWorkspace((state) => state.viewport);
+      const display = useDrawingWorkspace((state) => state.display);
+      const setViewport = useDrawingWorkspace((state) => state.setViewport);
+      const setDisplay = useDrawingWorkspace((state) => state.setDisplay);
+      if (snapshot === null) return null;
+      const toggles = [
+        ["grid", "网格"],
+        ["axes", "坐标轴"],
+        ["relations", "关系"],
+        ["annotations", "标注"],
+        ["sourceUnderlay", "源图"]
+      ];
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-toolbar", role: "toolbar", "aria-label": "图纸视图工具", children: [
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => setViewport(fitViewportToDrawing(snapshot.document, viewport)),
+            children: "适配图纸"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
+        toggles.map(([key, label]) => /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            "aria-pressed": display[key],
+            onClick: () => setDisplay({ [key]: !display[key] }),
+            children: label
+          },
+          key
+        ))
+      ] });
+    }
+    function DrawingWorkspace({
+      previewContributions = [],
+      emptyMessage = "还没有图纸"
+    }) {
+      const [objectsOpen, setObjectsOpen] = react.useState(true);
+      const [inspectorOpen, setInspectorOpen] = react.useState(true);
+      const status = useDrawingWorkspace((state) => state.status);
+      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const viewport = useDrawingWorkspace((state) => state.viewport);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      const error = useDrawingWorkspace((state) => state.error);
+      if (status === "idle" || status === "loading") {
+        return /* @__PURE__ */ jsxRuntime.jsx("section", { className: "vai-workspace", "aria-label": "图纸工作区", "data-workspace-state": "loading", children: /* @__PURE__ */ jsxRuntime.jsx(WorkspaceState, { title: "正在读取本地图纸…" }) });
+      }
+      if (status === "error" && snapshot === null) {
+        return /* @__PURE__ */ jsxRuntime.jsx("section", { className: "vai-workspace", "aria-label": "图纸工作区", "data-workspace-state": "error", children: /* @__PURE__ */ jsxRuntime.jsx(WorkspaceState, { title: "图纸读取失败", detail: error == null ? void 0 : error.message, alert: true }) });
+      }
+      if (snapshot === null) {
+        return /* @__PURE__ */ jsxRuntime.jsx("section", { className: "vai-workspace", "aria-label": "图纸工作区", "data-workspace-state": "empty", children: /* @__PURE__ */ jsxRuntime.jsx(WorkspaceState, { title: emptyMessage, detail: "导入图片或工程图文件后即可开始。" }) });
+      }
+      return /* @__PURE__ */ jsxRuntime.jsxs("section", { className: "vai-workspace", "aria-label": "图纸工作区", "data-workspace-state": "ready", children: [
+        /* @__PURE__ */ jsxRuntime.jsxs("header", { className: "vai-workspace__header", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("strong", { className: "vai-workspace__drawing-id", children: snapshot.ref.drawingId }),
+          /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+            "Revision ",
+            snapshot.ref.revision
+          ] }),
+          snapshot.provisional ? /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge", children: "候选几何" }) : null,
+          busy ? /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__busy", children: "正在保存…" }) : null
+        ] }),
+        error === null ? null : /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-workspace__error", role: "alert", children: error.message }),
+        /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__controls", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": objectsOpen, onClick: () => setObjectsOpen(!objectsOpen), children: "对象" }),
+          /* @__PURE__ */ jsxRuntime.jsx(WorkspaceToolbar, {}),
+          /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": inspectorOpen, onClick: () => setInspectorOpen(!inspectorOpen), children: "属性" })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__body", "data-workspace-region": "viewer", children: [
+          objectsOpen ? /* @__PURE__ */ jsxRuntime.jsx(ObjectList, {}) : null,
+          /* @__PURE__ */ jsxRuntime.jsx(Canvas, {}),
+          inspectorOpen ? /* @__PURE__ */ jsxRuntime.jsx(PropertyInspector, {}) : null,
+          previewContributions.map((contribution) => /* @__PURE__ */ jsxRuntime.jsx("div", { "data-preview-overlay": contribution.id, children: contribution.render({ snapshot, viewport }) }, contribution.id))
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsx(WorkspaceStatus, {})
+      ] });
+    }
+    function WorkspaceState({
+      title,
+      detail,
+      alert = false
+    }) {
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__state", role: alert ? "alert" : void 0, children: [
+        /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-workspace__state-title", children: title }),
+        detail === void 0 ? null : /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-workspace__state-detail", children: detail })
+      ] });
+    }
+    const IMMUTABLE_NODE_FIELDS = /* @__PURE__ */ new Set(["id", "type", "plane"]);
+    function buildNodeUpdateCommand(document, id, changes) {
+      const node = findDrawingNode(document, id);
+      if (node === null) return null;
+      const fields = Object.keys(changes);
+      if (fields.length === 0) return null;
+      const immutableField = fields.find((field) => IMMUTABLE_NODE_FIELDS.has(field));
+      if (immutableField !== void 0) {
+        throw new Error(`IMMUTABLE_DRAWING_NODE_FIELD:${immutableField}`);
+      }
+      const record2 = node;
+      return {
+        type: "node.update",
+        id,
+        changes: clone$1(changes),
+        expected: Object.fromEntries(fields.map((field) => [field, clone$1(record2[field])]))
+      };
+    }
+    function buildNodeDeleteCommands(document, ids) {
+      const uniqueIds = [...new Set(ids)];
+      return uniqueIds.flatMap((id) => findDrawingNode(document, id) === null ? [] : [{ type: "node.delete", id }]);
+    }
+    function buildAnnotationTextMoveCommand(document, id, position) {
+      const annotation = document.annotations.find((node) => node.id === id);
+      if (annotation === void 0) return null;
+      const expectedPosition = annotationTextPosition(annotation);
+      if (expectedPosition === null) return null;
+      return {
+        type: "annotation.move-text",
+        id,
+        position: [...position],
+        expectedPosition: [...expectedPosition]
+      };
+    }
+    function findDrawingNode(document, id) {
+      return document.geometry.find((node) => node.id === id) ?? document.annotations.find((node) => node.id === id) ?? document.relations.find((node) => node.id === id) ?? document.features.find((node) => node.id === id) ?? null;
+    }
+    function annotationTextPosition(annotation) {
+      switch (annotation.type) {
+        case "text":
+          return annotation.position;
+        case "dimension":
+          return annotation.textPosition;
+        default:
+          return null;
+      }
+    }
+    function clone$1(value) {
+      return value === void 0 ? value : structuredClone(value);
+    }
+    const createStoreImpl = (createState) => {
+      let state;
+      const listeners = /* @__PURE__ */ new Set();
+      const setState = (partial2, replace) => {
+        const nextState = typeof partial2 === "function" ? partial2(state) : partial2;
+        if (!Object.is(nextState, state)) {
+          const previousState = state;
+          state = (replace != null ? replace : typeof nextState !== "object" || nextState === null) ? nextState : Object.assign({}, state, nextState);
+          listeners.forEach((listener) => listener(state, previousState));
+        }
+      };
+      const getState = () => state;
+      const getInitialState = () => initialState;
+      const subscribe = (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      };
+      const api = { setState, getState, getInitialState, subscribe };
+      const initialState = state = createState(setState, getState, api);
+      return api;
+    };
+    const createStore = ((createState) => createState ? createStoreImpl(createState) : createStoreImpl);
+    const DEFAULT_VIEWPORT = {
+      x: 0,
+      y: 0,
+      scale: 1,
+      width: 0,
+      height: 0
+    };
+    const DEFAULT_DISPLAY = {
+      grid: true,
+      axes: true,
+      relations: true,
+      annotations: true,
+      sourceUnderlay: true
+    };
+    function createDrawingWorkspaceStore(input) {
+      const { port } = input;
+      let disposed = false;
+      let unsubscribe;
+      let requestController;
+      let sourceResource = null;
+      const store = createStore((set, get) => {
+        const replaceSnapshot = async (snapshot) => {
+          const nextIds = snapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(snapshot);
+          const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
+          const previousSource = sourceResource;
+          let nextSource = null;
+          if ((snapshot == null ? void 0 : snapshot.source) !== void 0 && port.loadSource !== void 0) {
+            try {
+              nextSource = await port.loadSource(snapshot.source, requestController == null ? void 0 : requestController.signal);
+            } catch (error) {
+              if ((requestController == null ? void 0 : requestController.signal.aborted) || disposed) return;
+              set({ error: { code: "source_failed", message: errorMessage(error) } });
+            }
+          }
+          if (disposed) {
+            nextSource == null ? void 0 : nextSource.dispose();
+            return;
+          }
+          if (previousSource !== nextSource) previousSource == null ? void 0 : previousSource.dispose();
+          sourceResource = nextSource;
+          set({
+            snapshot,
+            sourceResource: nextSource,
+            selectedIds,
+            status: snapshot === null ? "empty" : "ready"
+          });
+        };
+        const refresh = async (initial) => {
+          if (disposed) return;
+          requestController == null ? void 0 : requestController.abort();
+          const controller = new AbortController();
+          requestController = controller;
+          if (initial) set({ status: "loading", error: null });
+          try {
+            const snapshot = await port.load(controller.signal);
+            if (controller.signal.aborted || disposed) return;
+            await replaceSnapshot(snapshot);
+          } catch (error) {
+            if (controller.signal.aborted || disposed) return;
+            set({
+              status: get().snapshot === null ? "error" : get().status,
+              error: { code: "load_failed", message: errorMessage(error) }
+            });
+          }
+        };
+        return {
+          status: "idle",
+          snapshot: null,
+          sourceResource: null,
+          busy: false,
+          error: null,
+          viewport: { ...DEFAULT_VIEWPORT },
+          selectedIds: [],
+          mouseWorld: null,
+          display: { ...DEFAULT_DISPLAY },
+          async load() {
+            disposed = false;
+            if (unsubscribe === void 0 && port.subscribe !== void 0) {
+              unsubscribe = port.subscribe(() => {
+                void refresh(false);
+              });
+            }
+            await refresh(true);
+          },
+          async refresh() {
+            await refresh(false);
+          },
+          async commit(request) {
+            const current = get().snapshot;
+            if (current === null || disposed) return false;
+            set({ busy: true, error: null });
+            const controller = new AbortController();
+            requestController = controller;
+            try {
+              const result = await port.commit({
+                expectedRevision: current.ref.revision,
+                commands: request.commands
+              }, controller.signal);
+              if (controller.signal.aborted || disposed) return false;
+              if (result.status === "committed") {
+                await replaceSnapshot(result.snapshot);
+                return true;
+              }
+              if (result.status === "conflict") {
+                if (result.snapshot !== void 0) await replaceSnapshot(result.snapshot);
+                else await refresh(false);
+                set({ error: { code: "revision_conflict", message: result.message } });
+                return false;
+              }
+              set({ error: { code: "commit_failed", message: result.message } });
+              return false;
+            } catch (error) {
+              if (controller.signal.aborted || disposed) return false;
+              set({ error: { code: "commit_failed", message: errorMessage(error) } });
+              return false;
+            } finally {
+              if (!disposed) set({ busy: false });
+            }
+          },
+          async updateNode(id, changes) {
+            const snapshot = get().snapshot;
+            if (snapshot === null || !snapshot.capabilities.edit) return false;
+            const command = buildNodeUpdateCommand(snapshot.document, id, changes);
+            return command === null ? false : get().commit({ commands: [command] });
+          },
+          async deleteNodes(ids) {
+            const snapshot = get().snapshot;
+            if (snapshot === null || !snapshot.capabilities.delete) return false;
+            const commands = buildNodeDeleteCommands(snapshot.document, ids);
+            return commands.length === 0 ? false : get().commit({ commands });
+          },
+          async moveAnnotationText(id, position) {
+            const snapshot = get().snapshot;
+            if (snapshot === null || !snapshot.capabilities.annotations) return false;
+            const command = buildAnnotationTextMoveCommand(snapshot.document, id, position);
+            return command === null ? false : get().commit({ commands: [command] });
+          },
+          setViewport(viewport) {
+            set({ viewport: { ...viewport } });
+          },
+          setMouseWorld(point) {
+            set({ mouseWorld: point === null ? null : [...point] });
+          },
+          setSelection(ids) {
+            set({ selectedIds: [...new Set(ids)] });
+          },
+          setDisplay(display) {
+            set({ display: { ...get().display, ...display } });
+          },
+          clearError() {
+            set({ error: null });
+          },
+          destroy() {
+            if (disposed) return;
+            disposed = true;
+            requestController == null ? void 0 : requestController.abort();
+            unsubscribe == null ? void 0 : unsubscribe();
+            unsubscribe = void 0;
+            sourceResource == null ? void 0 : sourceResource.dispose();
+            sourceResource = null;
+          }
+        };
+      });
+      return store;
+    }
+    function drawingNodeIds(snapshot) {
+      const { document } = snapshot;
+      return /* @__PURE__ */ new Set([
+        ...document.geometry.map((node) => node.id),
+        ...document.annotations.map((node) => node.id),
+        ...document.relations.map((node) => node.id),
+        ...document.features.map((node) => node.id)
+      ]);
+    }
+    function errorMessage(error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    function createDshDrawingWorkspacePort(input) {
+      const { sessionId, remote, resolveImage } = input;
+      return {
+        async load(signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          const result = await remote.getSnapshot(sessionId);
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async commit(request, signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          const result = await remote.commit(sessionId, request);
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async loadSource(source, signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          const attachment = {
+            attachmentId: source.id,
+            mediaType: source.mediaType,
+            bytes: source.bytes ?? 0,
+            width: source.width,
+            height: source.height,
+            ...source.name === void 0 ? {} : { name: source.name }
+          };
+          const url = await resolveImage(sessionId, attachment);
+          signal == null ? void 0 : signal.throwIfAborted();
+          return { url, dispose() {
+          } };
+        }
+      };
+    }
+    function unwrap(result) {
+      if (result.ok === true) return result.value;
+      throw new Error(result.error.message);
     }
     var _a$1;
     function $constructor(name, initializer2, params) {
@@ -2052,6 +3362,74 @@ window.__ModuleLoader__.load({
         });
       };
     });
+    const $ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("$ZodDiscriminatedUnion", (inst, def) => {
+      def.inclusive = false;
+      $ZodUnion.init(inst, def);
+      const _super = inst._zod.parse;
+      defineLazy(inst._zod, "propValues", () => {
+        const propValues = {};
+        for (const option of def.options) {
+          const pv = option._zod.propValues;
+          if (!pv || Object.keys(pv).length === 0)
+            throw new Error(`Invalid discriminated union option at index "${def.options.indexOf(option)}"`);
+          for (const [k, v] of Object.entries(pv)) {
+            if (!propValues[k])
+              propValues[k] = /* @__PURE__ */ new Set();
+            for (const val of v) {
+              propValues[k].add(val);
+            }
+          }
+        }
+        return propValues;
+      });
+      const disc = cached(() => {
+        var _a2;
+        const opts = def.options;
+        const map = /* @__PURE__ */ new Map();
+        for (const o of opts) {
+          const values = (_a2 = o._zod.propValues) == null ? void 0 : _a2[def.discriminator];
+          if (!values || values.size === 0)
+            throw new Error(`Invalid discriminated union option at index "${def.options.indexOf(o)}"`);
+          for (const v of values) {
+            if (map.has(v)) {
+              throw new Error(`Duplicate discriminator value "${String(v)}"`);
+            }
+            map.set(v, o);
+          }
+        }
+        return map;
+      });
+      inst._zod.parse = (payload, ctx) => {
+        const input = payload.value;
+        if (!isObject(input)) {
+          payload.issues.push({
+            code: "invalid_type",
+            expected: "object",
+            input,
+            inst
+          });
+          return payload;
+        }
+        const opt = disc.value.get(input == null ? void 0 : input[def.discriminator]);
+        if (opt) {
+          return opt._zod.run(payload, ctx);
+        }
+        if (def.unionFallback || ctx.direction === "backward") {
+          return _super(payload, ctx);
+        }
+        payload.issues.push({
+          code: "invalid_union",
+          errors: [],
+          note: "No matching discriminator",
+          discriminator: def.discriminator,
+          options: Array.from(disc.value.keys()),
+          input,
+          path: [def.discriminator],
+          inst
+        });
+        return payload;
+      };
+    });
     const $ZodIntersection = /* @__PURE__ */ $constructor("$ZodIntersection", (inst, def) => {
       $ZodType.init(inst, def);
       inst._zod.parse = (payload, ctx) => {
@@ -2256,6 +3634,132 @@ window.__ModuleLoader__.load({
       }
       return final;
     }
+    const $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
+      $ZodType.init(inst, def);
+      inst._zod.parse = (payload, ctx) => {
+        const input = payload.value;
+        if (!isPlainObject(input)) {
+          payload.issues.push({
+            expected: "record",
+            code: "invalid_type",
+            input,
+            inst
+          });
+          return payload;
+        }
+        const proms = [];
+        const values = def.keyType._zod.values;
+        if (values) {
+          payload.value = {};
+          const recordKeys = /* @__PURE__ */ new Set();
+          for (const key of values) {
+            if (typeof key === "string" || typeof key === "number" || typeof key === "symbol") {
+              recordKeys.add(typeof key === "number" ? key.toString() : key);
+              const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+              if (keyResult instanceof Promise) {
+                throw new Error("Async schemas not supported in object keys currently");
+              }
+              if (keyResult.issues.length) {
+                payload.issues.push({
+                  code: "invalid_key",
+                  origin: "record",
+                  issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
+                  input: key,
+                  path: [key],
+                  inst
+                });
+                continue;
+              }
+              const outKey = keyResult.value;
+              const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+              if (result instanceof Promise) {
+                proms.push(result.then((result2) => {
+                  if (result2.issues.length) {
+                    payload.issues.push(...prefixIssues(key, result2.issues));
+                  }
+                  payload.value[outKey] = result2.value;
+                }));
+              } else {
+                if (result.issues.length) {
+                  payload.issues.push(...prefixIssues(key, result.issues));
+                }
+                payload.value[outKey] = result.value;
+              }
+            }
+          }
+          let unrecognized;
+          for (const key in input) {
+            if (!recordKeys.has(key)) {
+              unrecognized = unrecognized ?? [];
+              unrecognized.push(key);
+            }
+          }
+          if (unrecognized && unrecognized.length > 0) {
+            payload.issues.push({
+              code: "unrecognized_keys",
+              input,
+              inst,
+              keys: unrecognized
+            });
+          }
+        } else {
+          payload.value = {};
+          for (const key of Reflect.ownKeys(input)) {
+            if (key === "__proto__")
+              continue;
+            if (!Object.prototype.propertyIsEnumerable.call(input, key))
+              continue;
+            let keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+            if (keyResult instanceof Promise) {
+              throw new Error("Async schemas not supported in object keys currently");
+            }
+            const checkNumericKey = typeof key === "string" && number$1.test(key) && keyResult.issues.length;
+            if (checkNumericKey) {
+              const retryResult = def.keyType._zod.run({ value: Number(key), issues: [] }, ctx);
+              if (retryResult instanceof Promise) {
+                throw new Error("Async schemas not supported in object keys currently");
+              }
+              if (retryResult.issues.length === 0) {
+                keyResult = retryResult;
+              }
+            }
+            if (keyResult.issues.length) {
+              if (def.mode === "loose") {
+                payload.value[key] = input[key];
+              } else {
+                payload.issues.push({
+                  code: "invalid_key",
+                  origin: "record",
+                  issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
+                  input: key,
+                  path: [key],
+                  inst
+                });
+              }
+              continue;
+            }
+            const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+            if (result instanceof Promise) {
+              proms.push(result.then((result2) => {
+                if (result2.issues.length) {
+                  payload.issues.push(...prefixIssues(key, result2.issues));
+                }
+                payload.value[keyResult.value] = result2.value;
+              }));
+            } else {
+              if (result.issues.length) {
+                payload.issues.push(...prefixIssues(key, result.issues));
+              }
+              payload.value[keyResult.value] = result.value;
+            }
+          }
+        }
+        if (proms.length) {
+          return Promise.all(proms).then(() => payload);
+        }
+        return payload;
+      };
+    });
     const $ZodEnum = /* @__PURE__ */ $constructor("$ZodEnum", (inst, def) => {
       $ZodType.init(inst, def);
       const values = getEnumValues(def.entries);
@@ -3747,6 +5251,42 @@ window.__ModuleLoader__.load({
       if (typeof maximum === "number")
         json.maxItems = maximum;
     };
+    const recordProcessor = (schema, ctx, _json, params) => {
+      const json = _json;
+      const def = schema._zod.def;
+      json.type = "object";
+      const keyType = def.keyType;
+      const keyBag = keyType._zod.bag;
+      const patterns = keyBag == null ? void 0 : keyBag.patterns;
+      if (def.mode === "loose" && patterns && patterns.size > 0) {
+        const valueSchema = process(def.valueType, ctx, {
+          ...params,
+          path: [...params.path, "patternProperties", "*"]
+        });
+        json.patternProperties = {};
+        for (const pattern of patterns) {
+          json.patternProperties[pattern.source] = valueSchema;
+        }
+      } else {
+        if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
+          json.propertyNames = process(def.keyType, ctx, {
+            ...params,
+            path: [...params.path, "propertyNames"]
+          });
+        }
+        json.additionalProperties = process(def.valueType, ctx, {
+          ...params,
+          path: [...params.path, "additionalProperties"]
+        });
+      }
+      const keyValues = keyType._zod.values;
+      if (keyValues) {
+        const validKeyValues = [...keyValues].filter((v) => typeof v === "string" || typeof v === "number");
+        if (validKeyValues.length > 0) {
+          json.required = validKeyValues;
+        }
+      }
+    };
     const nullableProcessor = (schema, ctx, json, params) => {
       const def = schema._zod.def;
       const inner = process(def.innerType, ctx, params);
@@ -4415,6 +5955,18 @@ window.__ModuleLoader__.load({
         ...normalizeParams(params)
       });
     }
+    const ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("ZodDiscriminatedUnion", (inst, def) => {
+      ZodUnion.init(inst, def);
+      $ZodDiscriminatedUnion.init(inst, def);
+    });
+    function discriminatedUnion(discriminator, options, params) {
+      return new ZodDiscriminatedUnion({
+        type: "union",
+        options,
+        discriminator,
+        ...normalizeParams(params)
+      });
+    }
     const ZodIntersection = /* @__PURE__ */ $constructor("ZodIntersection", (inst, def) => {
       $ZodIntersection.init(inst, def);
       ZodType.init(inst, def);
@@ -4444,6 +5996,29 @@ window.__ModuleLoader__.load({
         type: "tuple",
         items,
         rest,
+        ...normalizeParams(params)
+      });
+    }
+    const ZodRecord = /* @__PURE__ */ $constructor("ZodRecord", (inst, def) => {
+      $ZodRecord.init(inst, def);
+      ZodType.init(inst, def);
+      inst._zod.processJSONSchema = (ctx, json, params) => recordProcessor(inst, ctx, json, params);
+      inst.keyType = def.keyType;
+      inst.valueType = def.valueType;
+    });
+    function record(keyType, valueType, params) {
+      if (!valueType || !valueType._zod) {
+        return new ZodRecord({
+          type: "record",
+          keyType: string(),
+          valueType: keyType,
+          ...normalizeParams(valueType)
+        });
+      }
+      return new ZodRecord({
+        type: "record",
+        keyType,
+        valueType,
         ...normalizeParams(params)
       });
     }
@@ -4686,111 +6261,327 @@ window.__ModuleLoader__.load({
     function superRefine(fn, params) {
       return /* @__PURE__ */ _superRefine(fn, params);
     }
-    const drawingSessionIdSchema = string().min(1);
-    const drawingCanvasProjectionSchema = object({
+    const idSchema = string().min(1);
+    const vec2Schema = tuple([number(), number()]);
+    const qualitySchema = object({
+      status: _enum(["confirmed", "candidate"]),
+      confidence: number().optional(),
+      evidenceRefs: array(idSchema)
+    }).strict();
+    const baseNodeShape = {
+      id: idSchema,
+      visible: boolean(),
+      quality: qualitySchema
+    };
+    const geometrySchema = discriminatedUnion("type", [
+      object({ ...baseNodeShape, type: literal("point"), x: number(), y: number() }).strict(),
+      object({ ...baseNodeShape, type: literal("line"), start: vec2Schema, end: vec2Schema }).strict(),
+      object({ ...baseNodeShape, type: literal("ray"), origin: vec2Schema, direction: vec2Schema }).strict(),
+      object({ ...baseNodeShape, type: literal("xline"), origin: vec2Schema, direction: vec2Schema }).strict(),
+      object({ ...baseNodeShape, type: literal("circle"), center: vec2Schema, radius: number() }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("arc"),
+        center: vec2Schema,
+        radius: number(),
+        startAngle: number(),
+        endAngle: number(),
+        counterClockwise: boolean()
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("ellipse"),
+        center: vec2Schema,
+        majorAxis: vec2Schema,
+        ratio: number(),
+        startParam: number().optional(),
+        endParam: number().optional()
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("polyline"),
+        vertices: array(object({ point: vec2Schema, bulge: number().optional() }).strict()),
+        closed: boolean()
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("spline"),
+        degree: number().int().nonnegative(),
+        controlPoints: array(vec2Schema),
+        knots: array(number()),
+        weights: array(number()).optional(),
+        closed: boolean(),
+        periodic: boolean()
+      }).strict()
+    ]);
+    const entityAnchorSchema = discriminatedUnion("kind", [
+      object({ kind: _enum(["start", "end", "center"]) }).strict(),
+      object({ kind: literal("vertex"), index: number().int().nonnegative() }).strict(),
+      object({ kind: literal("curve-parameter"), parameter: number() }).strict(),
+      object({ kind: literal("nearest"), point: vec2Schema }).strict()
+    ]);
+    const dimensionTargetSchema = object({
+      geometryId: idSchema,
+      anchor: entityAnchorSchema
+    }).strict();
+    const dimensionCandidateSchema = object({
+      targets: array(dimensionTargetSchema),
+      score: number(),
+      reasons: array(string())
+    }).strict();
+    const annotationSchema = discriminatedUnion("type", [
+      object({
+        ...baseNodeShape,
+        type: literal("text"),
+        content: string(),
+        position: vec2Schema,
+        height: number(),
+        rotation: number(),
+        alignment: _enum(["left", "center", "right"]),
+        verticalAlignment: _enum(["baseline", "bottom", "middle", "top"]),
+        maxWidth: number().optional()
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("dimension"),
+        dimensionKind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+        associationStatus: _enum(["resolved", "ambiguous", "conflict"]),
+        targets: array(dimensionTargetSchema),
+        candidates: array(dimensionCandidateSchema).optional(),
+        observedValue: number().optional(),
+        computedValue: number().optional(),
+        displayText: string().optional(),
+        unit: _enum(["mm", "cm", "m", "deg"]).optional(),
+        tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+        prefix: string().optional(),
+        suffix: string().optional(),
+        textPosition: vec2Schema,
+        definitionPoints: array(vec2Schema)
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("leader"),
+        target: dimensionTargetSchema,
+        points: array(vec2Schema),
+        content: string(),
+        textHeight: number()
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("centerline"),
+        targets: array(idSchema),
+        start: vec2Schema,
+        end: vec2Schema,
+        extension: number()
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("section-hatch"),
+        pattern: string(),
+        angle: number(),
+        spacing: number(),
+        segments: array(object({ start: vec2Schema, end: vec2Schema }).strict())
+      }).strict()
+    ]);
+    const relationSchema = discriminatedUnion("plane", [
+      object({
+        ...baseNodeShape,
+        type: literal("topology"),
+        plane: literal("topology"),
+        kind: _enum(["connected", "closed", "contains", "intersects"]),
+        nodeIds: array(idSchema)
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("constraint"),
+        plane: literal("constraint"),
+        kind: _enum(["horizontal", "vertical", "parallel", "perpendicular", "tangent", "concentric", "equal", "distance", "radius", "angle", "symmetry"]),
+        geometryIds: array(idSchema),
+        value: number().optional(),
+        property: string().optional(),
+        status: _enum(["defined", "satisfied", "violated", "unsolved"])
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("association"),
+        plane: literal("association"),
+        kind: literal("annotation-target"),
+        annotationId: idSchema,
+        geometryIds: array(idSchema)
+      }).strict(),
+      object({
+        ...baseNodeShape,
+        type: literal("semantic"),
+        plane: literal("semantic"),
+        kind: literal("feature-member"),
+        featureId: idSchema,
+        nodeIds: array(idSchema)
+      }).strict()
+    ]);
+    const drawingDocumentSchema = object({
+      protocol: literal("VectorAI-Drawing"),
+      schemaVersion: literal("1.0"),
+      id: idSchema,
+      metadata: object({ createdAt: number(), updatedAt: number() }).strict(),
+      unitSystem: object({ length: _enum(["mm", "cm", "m"]), angle: literal("deg") }).strict(),
+      coordinateFrames: array(object({
+        id: idSchema,
+        kind: _enum(["document", "source", "page", "view", "provisional"]),
+        transform: tuple([number(), number(), number(), number(), number(), number()]),
+        parentId: idSchema.optional()
+      }).strict()),
+      geometry: array(geometrySchema),
+      annotations: array(annotationSchema),
+      relations: array(relationSchema),
+      features: array(object({
+        ...baseNodeShape,
+        type: literal("feature"),
+        semanticType: string(),
+        geometryIds: array(idSchema),
+        annotationIds: array(idSchema),
+        relationIds: array(idSchema),
+        properties: record(string(), unknown())
+      }).strict())
+    }).strict();
+    const drawingSourceRefSchema = object({
+      id: idSchema,
+      mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+      bytes: number().int().nonnegative().optional(),
+      width: number().positive(),
+      height: number().positive(),
+      name: string().optional()
+    }).strict();
+    const drawingWorkspaceSnapshotSchema = object({
       version: literal(1),
-      ref: object({
-        drawingId: string().min(1),
-        revision: number().int().nonnegative()
-      }),
-      source: object({
-        attachmentId: string().min(1),
-        mediaType: union([
-          literal("image/png"),
-          literal("image/jpeg"),
-          literal("image/webp"),
-          literal("image/gif")
-        ]),
-        width: number().positive(),
-        height: number().positive(),
-        name: string().optional(),
-        dataUrl: string().min(1)
-      }),
-      bounds: object({
-        minX: number(),
-        minY: number(),
-        maxX: number(),
-        maxY: number()
-      }),
-      geometry: array(object({
-        id: string().min(1),
-        type: literal("line"),
-        start: tuple([number(), number()]),
-        end: tuple([number(), number()]),
-        status: union([literal("candidate"), literal("confirmed")]),
-        confidence: number().optional()
-      })),
-      provisional: boolean()
-    }).nullable();
+      ref: object({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
+      document: drawingDocumentSchema,
+      source: drawingSourceRefSchema.optional(),
+      capabilities: object({
+        edit: boolean(),
+        delete: boolean(),
+        annotations: boolean(),
+        sourceUnderlay: boolean()
+      }).strict(),
+      provisional: boolean().optional()
+    }).strict().nullable();
+    const workspaceCommandSchema = discriminatedUnion("type", [
+      object({
+        type: literal("node.update"),
+        id: idSchema,
+        changes: record(string(), unknown()),
+        expected: record(string(), unknown())
+      }).strict(),
+      object({ type: literal("node.delete"), id: idSchema }).strict(),
+      object({
+        type: literal("annotation.move-text"),
+        id: idSchema,
+        position: vec2Schema,
+        expectedPosition: vec2Schema
+      }).strict()
+    ]);
+    const drawingWorkspaceCommitRequestSchema = object({
+      expectedRevision: number().int().nonnegative(),
+      commands: array(workspaceCommandSchema).min(1)
+    }).strict();
+    const drawingWorkspaceCommitResultSchema = discriminatedUnion("status", [
+      object({ status: literal("committed"), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
+      object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+      object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+    ]);
+    const drawingSessionIdSchema = string().min(1);
+    const agentCodec = {
+      mode: "strict",
+      typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
+      schema: drawingSessionIdSchema
+    };
+    const agentParameter = {
+      name: "agent",
+      wire: "agentId",
+      source: "lookup",
+      lookup: "agent",
+      codec: agentCodec
+    };
     const DRAWING_SPACE_REMOTE = {
       package: "@vectorai/plugin-dsh-space-host",
       descriptors: [{
-        id: "@vectorai/plugin-dsh-space-host#drawingSpace/getProjection",
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot",
         service: "drawingSpace",
         namespace: "drawingSpace",
-        method: "getProjection",
-        invocation: { kind: "direct" },
-        parameters: [{
-          name: "sessionId",
-          wire: "sessionId",
+        method: "getSnapshot",
+        invocation: { kind: "context", context: "agent", wire: "agentId", codec: agentCodec },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null",
+          schema: drawingWorkspaceSnapshotSchema
+        }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/commit",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "commit",
+        invocation: { kind: "context", context: "agent", wire: "agentId", codec: agentCodec },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, {
+          name: "request",
+          wire: "request",
           source: "json",
           codec: {
             mode: "strict",
-            typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
-            schema: drawingSessionIdSchema
+            typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest",
+            schema: drawingWorkspaceCommitRequestSchema
           }
         }],
         result: {
           mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingCanvasProjection|null",
-          schema: drawingCanvasProjectionSchema
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
+          schema: drawingWorkspaceCommitResultSchema
         }
       }]
     };
-    const inject = ["slots", "remote"];
+    const inject = ["slots", "remote", "conversation"];
     function DrawingConversationView({
       useSession,
-      loadDrawing
+      workspacePort,
+      releaseSources
     }) {
       const runningCallCount = useSession((snapshot) => snapshot.runningCalls.length);
-      const [projection, setProjection] = react.useState(null);
-      const [loading, setLoading] = react.useState(true);
-      const [error, setError] = react.useState(null);
-      const reload = react.useCallback(async () => {
-        setLoading(true);
-        try {
-          const result = await loadDrawing();
-          if ("value" in result) {
-            setProjection(result.value);
-            setError(null);
-          } else {
-            setError(result.error.message);
-          }
-        } catch (cause) {
-          setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-          setLoading(false);
-        }
-      }, [loadDrawing]);
+      const store = react.useMemo(
+        () => createDrawingWorkspaceStore({ port: workspacePort }),
+        [workspacePort]
+      );
+      const didObserveInitialCallCount = react.useRef(false);
       react.useEffect(() => {
-        void reload();
-      }, [reload, runningCallCount]);
-      return /* @__PURE__ */ jsxRuntime.jsx(DrawingCanvas, { projection, loading, error });
+        if (didObserveInitialCallCount.current) void store.getState().refresh();
+        else didObserveInitialCallCount.current = true;
+      }, [runningCallCount, store]);
+      react.useEffect(() => releaseSources, [releaseSources]);
+      return /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspaceProvider, { store, children: /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspace, { emptyMessage: "还没有已导入的图纸" }) });
     }
     async function apply(ctx) {
       const remote = ctx.get("remote");
       const slots = ctx.get("slots");
       const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
-      const viewFiber = ctx.inject(["remote.drawingSpace"], (scope) => {
+      const viewFiber = ctx.inject(["remote.drawingSpace", "conversation"], (scope) => {
         const drawingSpace = scope.get("remote").drawingSpace;
+        const conversation = scope.get("conversation");
         return slots.inject("conversation.view", () => slots.register({
           name: "conversation.view",
           id: "drawing",
           order: 20,
           label: () => "图纸",
-          inject: (sessionId) => ({
-            loadDrawing: () => drawingSpace.getProjection(String(sessionId))
-          })
+          inject: (sessionId) => {
+            const id = String(sessionId);
+            return {
+              workspacePort: createDshDrawingWorkspacePort({
+                sessionId: id,
+                remote: drawingSpace,
+                resolveImage: (ownerId, attachment) => conversation.resolveImage(ownerId, attachment)
+              }),
+              releaseSources: () => conversation.releaseSessionImages(id)
+            };
+          }
         }, DrawingConversationView));
       });
       return async () => {
@@ -4801,6 +6592,27 @@ window.__ModuleLoader__.load({
     exports.DrawingConversationView = DrawingConversationView;
     exports.apply = apply;
     exports.inject = inject;
+    var originalApply = module.exports.apply;
+    module.exports.apply = async (ctx) => {
+      var style = document.createElement("style");
+      style.dataset.vectoraiDshSpace = "true";
+      style.textContent = ".vai-workspace {\n  --vai-bg: var(--dsw-alias-bg-base, #f4f6f8);\n  --vai-panel: var(--dsw-alias-bg-elevated, #ffffff);\n  --vai-border: var(--dsw-alias-border-l1, #dce1e8);\n  --vai-text: var(--dsw-alias-label-primary, #20242a);\n  --vai-muted: var(--dsw-alias-label-secondary, #69717d);\n  --vai-accent: #1677ff;\n  --vai-danger: #c73832;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  gap: 10px;\n  padding: 0 14px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 8px;\n  color: #8a5100;\n  background: #fff1cf;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__controls {\n  display: flex;\n  min-height: 38px;\n  align-items: center;\n  gap: 6px;\n  padding: 4px 8px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-workspace button {\n  border: 1px solid var(--vai-border);\n  border-radius: 5px;\n  padding: 5px 8px;\n  color: inherit;\n  background: var(--vai-panel);\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: color-mix(in srgb, var(--vai-accent), transparent 50%);\n  color: var(--vai-accent);\n  background: color-mix(in srgb, var(--vai-accent), transparent 92%);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-panel {\n  display: flex;\n  width: 220px;\n  min-width: 180px;\n  min-height: 0;\n  flex-direction: column;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-inspector {\n  width: 250px;\n  border-right: 0;\n  border-left: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  padding: 10px 12px;\n  border-bottom: 1px solid var(--vai-border);\n  font-weight: 650;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: var(--vai-muted);\n  font-size: 11px;\n  font-weight: 650;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  padding: 2px 5px;\n}\n\n.vai-object-row--selected {\n  background: color-mix(in srgb, var(--vai-accent), transparent 90%);\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-bg);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-panel {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-inspector {\n    right: 0;\n    box-shadow: -4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(140, 154, 172, 0.12);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(140, 154, 172, 0.24);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(108, 175, 221, 0.72);\n  stroke-width: 1.25;\n}\n\n.vai-grid__axes text {\n  fill: #7fc1ec;\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n";
+      document.head.append(style);
+      var dispose;
+      try {
+        dispose = await originalApply(ctx);
+      } catch (error) {
+        style.remove();
+        throw error;
+      }
+      return async () => {
+        try {
+          await dispose?.();
+        } finally {
+          style.remove();
+        }
+      };
+    };
     return module.exports;
   }
 });

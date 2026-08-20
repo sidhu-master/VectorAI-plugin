@@ -3,7 +3,7 @@
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { DrawingDocument } from '@vectorai/drawing-core';
 import type {
-  DrawingCanvasProjection,
+  Bounds2D,
   DrawingImportResult,
   DrawingSummary,
   DrawingWorkspaceCommand,
@@ -20,7 +20,8 @@ export type { ImageVectorizer } from './vectorizer';
 interface DrawingEntry {
   attachmentId: string;
   document: DrawingDocument;
-  projection: DrawingCanvasProjection;
+  drawingId: string;
+  bounds: Bounds2D;
   revision: number;
   source: NonNullable<DrawingWorkspaceSnapshot['source']>;
   provisional: boolean;
@@ -62,8 +63,8 @@ export class InMemoryDrawingRepository {
     if (current?.attachmentId === attachmentId) {
       return {
         status: 'already-imported',
-        ref: structuredClone(current.projection.ref),
-        provisional: current.projection.provisional,
+        ref: { drawingId: current.drawingId, revision: current.revision },
+        provisional: current.provisional,
       };
     }
 
@@ -76,18 +77,11 @@ export class InMemoryDrawingRepository {
       signal: input.signal,
     });
     input.signal.throwIfAborted();
-    const projection: DrawingCanvasProjection = {
-      version: 1,
-      ref: { drawingId, revision: 1 },
-      source: structuredClone(vectorized.source),
-      bounds: structuredClone(vectorized.bounds),
-      geometry: structuredClone(vectorized.geometry),
-      provisional: vectorized.provisional,
-    };
     this.#drawings.set(sessionId, {
       attachmentId,
       document: structuredClone(vectorized.document),
-      projection,
+      drawingId,
+      bounds: structuredClone(vectorized.bounds),
       revision: 1,
       source: {
         id: attachmentId,
@@ -101,14 +95,9 @@ export class InMemoryDrawingRepository {
     });
     return {
       status: 'imported',
-      ref: structuredClone(projection.ref),
-      provisional: projection.provisional,
+      ref: { drawingId, revision: 1 },
+      provisional: vectorized.provisional,
     };
-  }
-
-  getProjection(sessionId: string): DrawingCanvasProjection | null {
-    const entry = this.#drawings.get(sessionId);
-    return entry === undefined ? null : structuredClone(entry.projection);
   }
 
   getSnapshot(sessionId: string): DrawingWorkspaceSnapshot | null {
@@ -141,7 +130,6 @@ export class InMemoryDrawingRepository {
     document.metadata.updatedAt = Date.now();
     entry.document = document;
     entry.revision += 1;
-    entry.projection.ref.revision = entry.revision;
     return { status: 'committed', snapshot: snapshotOf(entry) };
   }
 
@@ -153,11 +141,11 @@ export class InMemoryDrawingRepository {
       geometryByType[node.type] = (geometryByType[node.type] ?? 0) + 1;
     }
     return {
-      ref: structuredClone(entry.projection.ref),
+      ref: { drawingId: entry.drawingId, revision: entry.revision },
       unit: entry.document.unitSystem.length,
-      bounds: structuredClone(entry.projection.bounds),
+      bounds: structuredClone(entry.bounds),
       geometryByType,
-      provisional: entry.projection.provisional,
+      provisional: entry.provisional,
     };
   }
 
@@ -170,7 +158,7 @@ export class InMemoryDrawingRepository {
 function snapshotOf(entry: DrawingEntry): DrawingWorkspaceSnapshot {
   return structuredClone({
     version: 1,
-    ref: { drawingId: entry.projection.ref.drawingId, revision: entry.revision },
+    ref: { drawingId: entry.drawingId, revision: entry.revision },
     document: entry.document,
     source: entry.source,
     capabilities: {

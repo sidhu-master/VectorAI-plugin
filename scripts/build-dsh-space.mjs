@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -52,7 +52,13 @@ try {
     ),
   });
   const commonJs = await readFile(join(temporary, 'client.cjs'), 'utf8');
-  const wrapped = `window.__ModuleLoader__.load({\n  id: "@vectorai/plugin-dsh-space-client",\n  factory: (require) => {\n    var module = { exports: {} };\n    var exports = module.exports;\n${indent(commonJs, 4)}\n    return module.exports;\n  }\n});\n`;
+  const outputFiles = await readdir(temporary);
+  const cssFiles = outputFiles.filter((file) => file.endsWith('.css'));
+  if (cssFiles.length !== 1) {
+    throw new Error(`Expected one DSH client CSS asset, found: ${outputFiles.join(', ')}`);
+  }
+  const css = await readFile(join(temporary, cssFiles[0]), 'utf8');
+  const wrapped = wrapClient(commonJs, css);
   if (/\b(?:import|require)\(["']node:/.test(wrapped)) {
     throw new Error('DSH client bundle contains a Node builtin import');
   }
@@ -89,4 +95,38 @@ async function buildLibrary({ entry, outDir, fileName, format, external, emptyOu
 function indent(text, spaces) {
   const prefix = ' '.repeat(spaces);
   return text.trimEnd().split('\n').map((line) => `${prefix}${line}`).join('\n');
+}
+
+function wrapClient(commonJs, css) {
+  return `window.__ModuleLoader__.load({
+  id: "@vectorai/plugin-dsh-space-client",
+  factory: (require) => {
+    var module = { exports: {} };
+    var exports = module.exports;
+${indent(commonJs, 4)}
+    var originalApply = module.exports.apply;
+    module.exports.apply = async (ctx) => {
+      var style = document.createElement("style");
+      style.dataset.vectoraiDshSpace = "true";
+      style.textContent = ${JSON.stringify(css)};
+      document.head.append(style);
+      var dispose;
+      try {
+        dispose = await originalApply(ctx);
+      } catch (error) {
+        style.remove();
+        throw error;
+      }
+      return async () => {
+        try {
+          await dispose?.();
+        } finally {
+          style.remove();
+        }
+      };
+    };
+    return module.exports;
+  }
+});
+`;
 }

@@ -10,15 +10,11 @@ import {
 } from '@vectorai/drawing-core';
 import type {
   Bounds2D,
-  DrawingCanvasLine,
-  DrawingSourceRaster,
 } from '@vectorai/plugin-space-contracts';
 
 export interface VectorizedImage {
   document: DrawingDocument;
-  source: DrawingSourceRaster;
   bounds: Bounds2D;
-  geometry: DrawingCanvasLine[];
   provisional: boolean;
 }
 
@@ -62,28 +58,24 @@ export class ProvisionalFootprintVectorizer implements ImageVectorizer {
 
     return {
       document,
-      source: {
-        attachmentId: String(input.attachment.attachmentId),
-        mediaType: input.attachment.mediaType,
-        width,
-        height,
-        ...(input.attachment.name === undefined ? {} : { name: input.attachment.name }),
-        dataUrl: `data:${input.attachment.mediaType};base64,${Buffer.from(input.data).toString('base64')}`,
-      },
       bounds: { minX: 0, minY: 0, maxX: width, maxY: height },
-      geometry: lines,
       provisional: true,
     };
   }
 }
 
-function footprintLines(width: number, height: number): DrawingCanvasLine[] {
-  const candidate = (id: string, start: readonly [number, number], end: readonly [number, number]): DrawingCanvasLine => ({
+interface FootprintLine {
+  id: string;
+  start: readonly [number, number];
+  end: readonly [number, number];
+  confidence: number;
+}
+
+function footprintLines(width: number, height: number): FootprintLine[] {
+  const candidate = (id: string, start: readonly [number, number], end: readonly [number, number]): FootprintLine => ({
     id,
-    type: 'line',
     start,
     end,
-    status: 'candidate',
     confidence: 0.25,
   });
   return [

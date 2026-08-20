@@ -52,21 +52,7 @@ function vectorizer(): ImageVectorizer & { calls: string[] } {
       }));
       return {
         document,
-        source: {
-          attachmentId: String(source.attachmentId),
-          mediaType: source.mediaType,
-          width: source.width,
-          height: source.height,
-          name: source.name,
-          dataUrl: 'data:image/png;base64,AQIDBA==',
-        },
         bounds: { minX: 0, minY: 0, maxX: source.width, maxY: source.height },
-        geometry: [
-          { id: 'top', type: 'line', start: [0, 0], end: [120, 0], status: 'candidate' },
-          { id: 'right', type: 'line', start: [120, 0], end: [120, 80], status: 'candidate' },
-          { id: 'bottom', type: 'line', start: [120, 80], end: [0, 80], status: 'candidate' },
-          { id: 'left', type: 'line', start: [0, 80], end: [0, 0], status: 'candidate' },
-        ],
         provisional: true,
       };
     },
@@ -104,7 +90,7 @@ describe('InMemoryDrawingRepository', () => {
       ref: { drawingId: 'drawing_source', revision: 1 },
       provisional: true,
     });
-    expect(drawings.getProjection('session-a')?.ref).toEqual(result.ref);
+    expect(drawings.getSnapshot('session-a')?.ref).toEqual(result.ref);
     expect(drawings.getSnapshot('session-a')).toMatchObject({
       version: 1,
       ref: result.ref,
@@ -233,7 +219,7 @@ describe('InMemoryDrawingRepository', () => {
       data: new Uint8Array([1]),
       signal: new AbortController().signal,
     })).rejects.toThrow('vectorizer failed');
-    expect(drawings.getProjection('session-a')).toBeNull();
+    expect(drawings.getSnapshot('session-a')).toBeNull();
   });
 
   it('does not commit a drawing when cancellation wins after vectorization', async () => {
@@ -250,7 +236,7 @@ describe('InMemoryDrawingRepository', () => {
       data: new Uint8Array([1]),
       signal: controller.signal,
     })).rejects.toThrow('cancelled');
-    expect(drawings.getProjection('session-a')).toBeNull();
+    expect(drawings.getSnapshot('session-a')).toBeNull();
   });
 
   it('isolates sessions and removes all state on disposal', async () => {
@@ -261,12 +247,10 @@ describe('InMemoryDrawingRepository', () => {
       signal: new AbortController().signal,
     });
 
-    expect(drawings.getProjection('session-b')).toBeNull();
     expect(drawings.getSnapshot('session-b')).toBeNull();
     drawings.disposeSession('session-a');
 
     expect(drawings.getPending('session-a')).toBeNull();
-    expect(drawings.getProjection('session-a')).toBeNull();
     expect(drawings.getSnapshot('session-a')).toBeNull();
   });
 });

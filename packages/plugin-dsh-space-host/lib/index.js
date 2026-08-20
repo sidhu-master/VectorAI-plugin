@@ -47,9 +47,10 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _pending, _drawings, _vectorizer, _drawingId, _getProjection_dec, _a, _init;
-import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
+var _pending, _drawings, _vectorizer, _drawingId, _commit_dec, _getSnapshot_dec, _a, _init;
+import { TypertRemoteService, RemoteScope } from "@deepseek-ai/dsh-typert-protocol";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { isDeepStrictEqual } from "node:util";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 const PLUGIN_NAME = "@vectorai/plugin-dsh-space-host";
 const INSTRUCTION = [
@@ -111,8 +112,8 @@ class InMemoryDrawingRepository {
     if ((current == null ? void 0 : current.attachmentId) === attachmentId) {
       return {
         status: "already-imported",
-        ref: structuredClone(current.projection.ref),
-        provisional: current.projection.provisional
+        ref: { drawingId: current.drawingId, revision: current.revision },
+        provisional: current.provisional
       };
     }
     input.signal.throwIfAborted();
@@ -124,28 +125,54 @@ class InMemoryDrawingRepository {
       signal: input.signal
     });
     input.signal.throwIfAborted();
-    const projection = {
-      version: 1,
-      ref: { drawingId, revision: 1 },
-      source: structuredClone(vectorized.source),
-      bounds: structuredClone(vectorized.bounds),
-      geometry: structuredClone(vectorized.geometry),
-      provisional: vectorized.provisional
-    };
     __privateGet(this, _drawings).set(sessionId, {
       attachmentId,
       document: structuredClone(vectorized.document),
-      projection
+      drawingId,
+      bounds: structuredClone(vectorized.bounds),
+      revision: 1,
+      source: {
+        id: attachmentId,
+        mediaType: attachment.mediaType,
+        bytes: attachment.bytes,
+        width: attachment.width,
+        height: attachment.height,
+        ...attachment.name === void 0 ? {} : { name: attachment.name }
+      },
+      provisional: vectorized.provisional
     });
     return {
       status: "imported",
-      ref: structuredClone(projection.ref),
-      provisional: projection.provisional
+      ref: { drawingId, revision: 1 },
+      provisional: vectorized.provisional
     };
   }
-  getProjection(sessionId) {
+  getSnapshot(sessionId) {
     const entry = __privateGet(this, _drawings).get(sessionId);
-    return entry === void 0 ? null : structuredClone(entry.projection);
+    if (entry === void 0) return null;
+    return snapshotOf(entry);
+  }
+  commit(sessionId, request) {
+    const entry = __privateGet(this, _drawings).get(sessionId);
+    if (entry === void 0) {
+      return { status: "rejected", message: "No drawing is loaded", code: "DRAWING_REQUIRED" };
+    }
+    if (request.expectedRevision !== entry.revision) {
+      return {
+        status: "conflict",
+        message: `Expected revision ${request.expectedRevision}, current revision is ${entry.revision}`,
+        snapshot: snapshotOf(entry)
+      };
+    }
+    const document = structuredClone(entry.document);
+    for (const command of request.commands) {
+      const rejection = applyCommand(document, command);
+      if (rejection !== null) return rejection;
+    }
+    document.metadata.updatedAt = Date.now();
+    entry.document = document;
+    entry.revision += 1;
+    return { status: "committed", snapshot: snapshotOf(entry) };
   }
   summarize(sessionId) {
     const entry = __privateGet(this, _drawings).get(sessionId);
@@ -155,11 +182,11 @@ class InMemoryDrawingRepository {
       geometryByType[node.type] = (geometryByType[node.type] ?? 0) + 1;
     }
     return {
-      ref: structuredClone(entry.projection.ref),
+      ref: { drawingId: entry.drawingId, revision: entry.revision },
       unit: entry.document.unitSystem.length,
-      bounds: structuredClone(entry.projection.bounds),
+      bounds: structuredClone(entry.bounds),
       geometryByType,
-      provisional: entry.projection.provisional
+      provisional: entry.provisional
     };
   }
   disposeSession(sessionId) {
@@ -171,6 +198,88 @@ _pending = new WeakMap();
 _drawings = new WeakMap();
 _vectorizer = new WeakMap();
 _drawingId = new WeakMap();
+function snapshotOf(entry) {
+  return structuredClone({
+    version: 1,
+    ref: { drawingId: entry.drawingId, revision: entry.revision },
+    document: entry.document,
+    source: entry.source,
+    capabilities: {
+      edit: true,
+      delete: true,
+      annotations: true,
+      sourceUnderlay: true
+    },
+    provisional: entry.provisional
+  });
+}
+function applyCommand(document, command) {
+  if (command.type === "node.delete") return deleteNode(document, command.id);
+  const node = findNode(document, command.id);
+  if (node === void 0) {
+    return { status: "rejected", message: `Node ${command.id} was not found`, code: "NODE_NOT_FOUND" };
+  }
+  if (command.type === "annotation.move-text") {
+    const key = node.type === "text" ? "position" : node.type === "dimension" ? "textPosition" : null;
+    if (key === null) {
+      return { status: "rejected", message: `Node ${command.id} has no movable text`, code: "INVALID_COMMAND" };
+    }
+    if (!isDeepStrictEqual(node[key], command.expectedPosition)) {
+      return {
+        status: "rejected",
+        message: `Precondition failed for node ${command.id} property ${key}`,
+        code: "PRECONDITION_FAILED"
+      };
+    }
+    node[key] = structuredClone(command.position);
+    return null;
+  }
+  const mutable = node;
+  for (const [key, expected] of Object.entries(command.expected)) {
+    if (!isDeepStrictEqual(mutable[key], expected)) {
+      return {
+        status: "rejected",
+        message: `Precondition failed for node ${command.id} property ${key}`,
+        code: "PRECONDITION_FAILED"
+      };
+    }
+  }
+  for (const [key, value] of Object.entries(command.changes)) {
+    if (key === "id" || key === "type" || key === "plane" || !(key in mutable)) {
+      return {
+        status: "rejected",
+        message: `Property ${key} cannot be updated on node ${command.id}`,
+        code: "INVALID_COMMAND"
+      };
+    }
+    mutable[key] = structuredClone(value);
+  }
+  return null;
+}
+function findNode(document, id) {
+  return [
+    ...document.geometry,
+    ...document.annotations,
+    ...document.relations,
+    ...document.features
+  ].find((node) => node.id === id);
+}
+function deleteNode(document, id) {
+  const node = findNode(document, id);
+  if (node === void 0) {
+    return { status: "rejected", message: `Node ${id} was not found`, code: "NODE_NOT_FOUND" };
+  }
+  document.geometry = document.geometry.filter((candidate) => candidate.id !== id);
+  document.annotations = document.annotations.filter((candidate) => candidate.id !== id);
+  document.relations = document.relations.filter((relation) => {
+    if (relation.id === id) return false;
+    if (relation.type === "topology" || relation.type === "semantic") return !relation.nodeIds.includes(id);
+    if (relation.type === "constraint") return !relation.geometryIds.includes(id);
+    return relation.annotationId !== id && !relation.geometryIds.includes(id);
+  });
+  document.features = document.features.filter((feature) => feature.id !== id && !feature.geometryIds.includes(id) && !feature.annotationIds.includes(id) && !feature.relationIds.includes(id));
+  return null;
+}
 const drawingRefSchema = {
   type: "object",
   properties: {
@@ -313,16 +422,7 @@ class ProvisionalFootprintVectorizer {
     }));
     return {
       document,
-      source: {
-        attachmentId: String(input.attachment.attachmentId),
-        mediaType: input.attachment.mediaType,
-        width,
-        height,
-        ...input.attachment.name === void 0 ? {} : { name: input.attachment.name },
-        dataUrl: `data:${input.attachment.mediaType};base64,${Buffer.from(input.data).toString("base64")}`
-      },
       bounds: { minX: 0, minY: 0, maxX: width, maxY: height },
-      geometry: lines,
       provisional: true
     };
   }
@@ -330,10 +430,8 @@ class ProvisionalFootprintVectorizer {
 function footprintLines(width, height) {
   const candidate = (id, start, end) => ({
     id,
-    type: "line",
     start,
     end,
-    status: "candidate",
     confidence: 0.25
   });
   return [
@@ -343,7 +441,7 @@ function footprintLines(width, height) {
     candidate("source-boundary-left", [0, height], [0, 0])
   ];
 }
-class DrawingSpaceHostService extends (_a = TypertRemoteService, _getProjection_dec = [Remote], _a) {
+class DrawingSpaceHostService extends (_a = TypertRemoteService, _getSnapshot_dec = [RemoteScope("agent")], _commit_dec = [RemoteScope("agent")], _a) {
   constructor(ctx) {
     super(ctx, "drawingSpace");
     __runInitializers(_init, 5, this);
@@ -358,12 +456,16 @@ class DrawingSpaceHostService extends (_a = TypertRemoteService, _getProjection_
       this.drawings.disposeSession(String(session.id));
     });
   }
-  getProjection(sessionId) {
-    return this.drawings.getProjection(sessionId);
+  getSnapshot(agent) {
+    return this.drawings.getSnapshot(String(agent.id));
+  }
+  commit(agent, request) {
+    return this.drawings.commit(String(agent.id), request);
   }
 }
 _init = __decoratorStart(_a);
-__decorateElement(_init, 1, "getProjection", _getProjection_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "getSnapshot", _getSnapshot_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "commit", _commit_dec, DrawingSpaceHostService);
 __decoratorMetadata(_init, DrawingSpaceHostService);
 __publicField(DrawingSpaceHostService, "inject", ["tools", "attachments"]);
 export {

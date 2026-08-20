@@ -1,72 +1,87 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Context } from '@deepseek-ai/cordis';
-import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client';
-import type { DrawingCanvasProjection } from '@vectorai/plugin-space-contracts';
-import { useCallback, useEffect, useState } from 'react';
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
+import type {
+  ConversationController,
+  ConvViewProps,
+} from '@deepseek-ai/dsh-client-ui-conversation/client';
+import type { SessionId } from '@deepseek-ai/dsh-session';
+import {
+  DrawingWorkspace,
+  DrawingWorkspaceProvider,
+} from '@vectorai/drawing-viewer-react';
+import '@vectorai/drawing-viewer-react/styles.css';
+import {
+  createDrawingWorkspaceStore,
+  type DrawingWorkspacePort,
+} from '@vectorai/drawing-workspace';
+import { useEffect, useMemo, useRef } from 'react';
 
-import { DrawingCanvas } from './DrawingCanvas';
+import { createDshDrawingWorkspacePort } from './dsh-workspace-port';
 import { DRAWING_SPACE_REMOTE } from './remote';
 
-export const inject = ['slots', 'remote'];
+export const inject = ['slots', 'remote', 'conversation'];
 
 interface DrawingConversationViewProps extends ConvViewProps {
-  loadDrawing: () => Promise<{
-    readonly ok: true;
-    readonly value: DrawingCanvasProjection | null;
-  } | {
-    readonly ok: false;
-    readonly error: { readonly message: string };
-  }>;
+  workspacePort: DrawingWorkspacePort;
+  releaseSources(): void;
 }
 
 export function DrawingConversationView({
   useSession,
-  loadDrawing,
+  workspacePort,
+  releaseSources,
 }: DrawingConversationViewProps) {
   const runningCallCount = useSession((snapshot) => snapshot.runningCalls.length);
-  const [projection, setProjection] = useState<DrawingCanvasProjection | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await loadDrawing();
-      if ('value' in result) {
-        setProjection(result.value);
-        setError(null);
-      } else {
-        setError(result.error.message);
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(false);
-    }
-  }, [loadDrawing]);
+  const store = useMemo(
+    () => createDrawingWorkspaceStore({ port: workspacePort }),
+    [workspacePort],
+  );
+  const didObserveInitialCallCount = useRef(false);
 
   useEffect(() => {
-    void reload();
-  }, [reload, runningCallCount]);
+    if (didObserveInitialCallCount.current) void store.getState().refresh();
+    else didObserveInitialCallCount.current = true;
+  }, [runningCallCount, store]);
 
-  return <DrawingCanvas projection={projection} loading={loading} error={error} />;
+  useEffect(() => releaseSources, [releaseSources]);
+
+  return (
+    <DrawingWorkspaceProvider store={store}>
+      <DrawingWorkspace emptyMessage="还没有已导入的图纸" />
+    </DrawingWorkspaceProvider>
+  );
 }
 
 export async function apply(ctx: Context) {
   const remote = ctx.get('remote');
   const slots = ctx.get('slots');
   const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
-  const viewFiber = ctx.inject(['remote.drawingSpace'], (scope) => {
+  const viewFiber = ctx.inject(['remote.drawingSpace', 'conversation'], (scope) => {
     const drawingSpace = scope.get('remote').drawingSpace;
+    const conversation = scope.get('conversation') as unknown as Pick<
+      ConversationController,
+      'resolveImage' | 'releaseSessionImages'
+    >;
     return slots.inject('conversation.view', () => slots.register({
       name: 'conversation.view',
       id: 'drawing',
       order: 20,
       label: () => '图纸',
-      inject: (sessionId) => ({
-        loadDrawing: () => drawingSpace.getProjection(String(sessionId)),
-      }),
+      inject: (sessionId) => {
+        const id = String(sessionId);
+        return {
+          workspacePort: createDshDrawingWorkspacePort({
+            sessionId: id,
+            remote: drawingSpace,
+            resolveImage: (ownerId: string, attachment: ImageAttachmentRef) => (
+              conversation.resolveImage(ownerId as SessionId, attachment)
+            ),
+          }),
+          releaseSources: () => conversation.releaseSessionImages(id as SessionId),
+        };
+      },
     }, DrawingConversationView));
   });
   return async () => {
