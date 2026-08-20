@@ -244,6 +244,12 @@ importers:
 
   packages/plugin-space-contracts:
     dependencies:
+      '@vectorai/drawing-core':
+        specifier: workspace:*
+        version: link:../drawing-core
+      '@vectorai/drawing-workspace':
+        specifier: workspace:*
+        version: link:../drawing-workspace
       zod:
         specifier: 4.4.3
         version: 4.4.3

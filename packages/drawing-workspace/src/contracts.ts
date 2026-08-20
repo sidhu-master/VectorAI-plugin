@@ -10,6 +10,7 @@ export interface DrawingWorkspaceRef {
 export interface DrawingSourceRef {
   id: string;
   mediaType: string;
+  bytes?: number;
   width: number;
   height: number;
   name?: string;
