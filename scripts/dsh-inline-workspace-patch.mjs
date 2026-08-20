@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 
 const SUPPORTED_VERSION = '0.1.0-rc.8';
 const PATCH_MARKER = 'data-vectorai-dsh-workspace-patch';
+const LEGACY_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8"`;
+const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
 
 const ROOT_STATE_ANCHOR = `
 \t\t\tconst [pendingWorkspaceId, setPendingWorkspaceId] = (0, react.useState)();
@@ -115,9 +117,7 @@ const WORKSPACE_CSS = `
   }
 }`;
 
-const ROOT_STATE_REPLACEMENT = `${ROOT_STATE_ANCHOR}
-\t\t\tconst [workspaceChatWidth, setWorkspaceChatWidth] = (0, react.useState)(440);
-\t\t\tconst resizeWorkspaceChat = (0, react.useCallback)((event) => {
+const LEGACY_RESIZE_HANDLER = `\t\t\tconst resizeWorkspaceChat = (0, react.useCallback)((event) => {
 \t\t\t\tconst handle = event.currentTarget;
 \t\t\t\tconst pointerId = event.pointerId;
 \t\t\t\tconst startX = event.clientX;
@@ -135,7 +135,44 @@ const ROOT_STATE_REPLACEMENT = `${ROOT_STATE_ANCHOR}
 \t\t\t\thandle.addEventListener("pointermove", move);
 \t\t\t\thandle.addEventListener("pointerup", finish, { once: true });
 \t\t\t\thandle.addEventListener("pointercancel", finish, { once: true });
-\t\t\t}, [workspaceChatWidth]);
+\t\t\t}, [workspaceChatWidth]);`;
+
+const ROBUST_RESIZE_HANDLER = `\t\t\tconst resizeWorkspaceChat = (0, react.useCallback)((event) => {
+\t\t\t\tevent.preventDefault();
+\t\t\t\tconst handle = event.currentTarget;
+\t\t\t\tconst pointerId = event.pointerId;
+\t\t\t\tconst startX = event.clientX;
+\t\t\t\tconst startWidth = workspaceChatWidth;
+\t\t\t\tlet finished = false;
+\t\t\t\tlet move;
+\t\t\t\tconst finish = () => {
+\t\t\t\t\tif (finished) return;
+\t\t\t\t\tfinished = true;
+\t\t\t\t\thandle.removeEventListener("pointermove", move);
+\t\t\t\t\thandle.removeEventListener("pointerup", finish);
+\t\t\t\t\thandle.removeEventListener("pointercancel", finish);
+\t\t\t\t\thandle.removeEventListener("lostpointercapture", finish);
+\t\t\t\t\twindow.removeEventListener("blur", finish);
+\t\t\t\t\tif (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+\t\t\t\t};
+\t\t\t\tmove = (next) => {
+\t\t\t\t\tif ((next.buttons & 1) === 0) {
+\t\t\t\t\t\tfinish();
+\t\t\t\t\t\treturn;
+\t\t\t\t\t}
+\t\t\t\t\tsetWorkspaceChatWidth(Math.min(640, Math.max(360, startWidth - (next.clientX - startX))));
+\t\t\t\t};
+\t\t\t\thandle.setPointerCapture(pointerId);
+\t\t\t\thandle.addEventListener("pointermove", move);
+\t\t\t\thandle.addEventListener("pointerup", finish, { once: true });
+\t\t\t\thandle.addEventListener("pointercancel", finish, { once: true });
+\t\t\t\thandle.addEventListener("lostpointercapture", finish, { once: true });
+\t\t\t\twindow.addEventListener("blur", finish, { once: true });
+\t\t\t}, [workspaceChatWidth]);`;
+
+const ROOT_STATE_REPLACEMENT = `${ROOT_STATE_ANCHOR}
+\t\t\tconst [workspaceChatWidth, setWorkspaceChatWidth] = (0, react.useState)(440);
+${ROBUST_RESIZE_HANDLER}
 \t\t\tconst resizeWorkspaceChatByKey = (0, react.useCallback)((event) => {
 \t\t\t\tif (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 \t\t\t\tevent.preventDefault();
@@ -151,7 +188,7 @@ const ROOT_RETURN_REPLACEMENT = `
 \t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t"data-phase": phase,
 \t\t\t\t"data-conversation-workspace-layout": "",
-\t\t\t\t"${PATCH_MARKER}": "rc.8",
+\t\t\t\t"${PATCH_MARKER}": "rc.8-v2",
 \t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("style", { children: workspaceLayoutStyles }), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-pane": "",
 \t\t\t\t\tchildren: workspacePane
@@ -189,7 +226,17 @@ const ROOT_CHILD_REPLACEMENT = `
 \t\t\t\t\t"conversation.session.header": {`;
 
 export function patchConversationClient(source) {
-  if (source.includes(PATCH_MARKER)) return { status: 'already-patched', source };
+  if (source.includes(PATCH_MARKER)) {
+    if (source.includes(CURRENT_PATCH_MARKER) && source.includes(ROBUST_RESIZE_HANDLER)) {
+      return { status: 'already-patched', source };
+    }
+    if (source.includes(LEGACY_PATCH_MARKER) && source.includes(LEGACY_RESIZE_HANDLER)) {
+      let upgraded = replaceExactlyOnce(source, LEGACY_RESIZE_HANDLER, ROBUST_RESIZE_HANDLER);
+      upgraded = replaceExactlyOnce(upgraded, LEGACY_PATCH_MARKER, CURRENT_PATCH_MARKER);
+      return { status: 'upgraded', source: upgraded };
+    }
+    throw new Error('DSH_WORKSPACE_PATCH_UPGRADE_MISMATCH');
+  }
   let patched = replaceExactlyOnce(source, ROOT_STATE_ANCHOR, ROOT_STATE_REPLACEMENT);
   patched = replaceExactlyOnce(patched, ROOT_RETURN_ANCHOR, ROOT_RETURN_REPLACEMENT);
   patched = replaceExactlyOnce(patched, ROOT_CHILD_ANCHOR, ROOT_CHILD_REPLACEMENT);

@@ -36,6 +36,30 @@ function rc8Fixture(): string {
   return [ROOT_STATE_ANCHOR, ROOT_RETURN_ANCHOR, ROOT_CHILD_ANCHOR].join('\n');
 }
 
+function legacyPatchedResizeFixture(): string {
+  return `
+\t\t\tconst resizeWorkspaceChat = (0, react.useCallback)((event) => {
+\t\t\t\tconst handle = event.currentTarget;
+\t\t\t\tconst pointerId = event.pointerId;
+\t\t\t\tconst startX = event.clientX;
+\t\t\t\tconst startWidth = workspaceChatWidth;
+\t\t\t\tconst move = (next) => {
+\t\t\t\t\tsetWorkspaceChatWidth(Math.min(640, Math.max(360, startWidth - (next.clientX - startX))));
+\t\t\t\t};
+\t\t\t\tconst finish = () => {
+\t\t\t\t\thandle.removeEventListener("pointermove", move);
+\t\t\t\t\thandle.removeEventListener("pointerup", finish);
+\t\t\t\t\thandle.removeEventListener("pointercancel", finish);
+\t\t\t\t\tif (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+\t\t\t\t};
+\t\t\t\thandle.setPointerCapture(pointerId);
+\t\t\t\thandle.addEventListener("pointermove", move);
+\t\t\t\thandle.addEventListener("pointerup", finish, { once: true });
+\t\t\t\thandle.addEventListener("pointercancel", finish, { once: true });
+\t\t\t}, [workspaceChatWidth]);
+\t\t\t"data-vectorai-dsh-workspace-patch": "rc.8"`;
+}
+
 describe('patchConversationClient', () => {
   it('adds one generic workspace slot and split conversation shell', () => {
     const result = patchConversationClient(rc8Fixture());
@@ -47,6 +71,28 @@ describe('patchConversationClient', () => {
     expect(result.source).toContain('data-conversation-workspace-resizer');
     expect(result.source).toContain('data-conversation-chat-pane');
     expect(result.source).toContain('Math.min(640, Math.max(360');
+    expect(result.source).toContain('(next.buttons & 1) === 0');
+    expect(result.source).toContain('lostpointercapture');
+    expect(result.source).toContain('window.addEventListener("blur", finish');
+  });
+
+  it('upgrades the installed rc.8 resize handler and then remains idempotent', () => {
+    const result = patchConversationClient(legacyPatchedResizeFixture());
+
+    expect(result.status).toBe('upgraded');
+    expect(result.source).toContain('(next.buttons & 1) === 0');
+    expect(result.source).toContain('lostpointercapture');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v2"');
+    expect(patchConversationClient(result.source)).toEqual({
+      status: 'already-patched',
+      source: result.source,
+    });
+  });
+
+  it('refuses an unknown marked patch instead of silently accepting it', () => {
+    expect(() => patchConversationClient('data-vectorai-dsh-workspace-patch')).toThrow(
+      'DSH_WORKSPACE_PATCH_UPGRADE_MISMATCH',
+    );
   });
 
   it('is idempotent after the workspace marker exists', () => {
