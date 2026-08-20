@@ -4,10 +4,14 @@ import type {
   DrawingWorkspaceSnapshot,
   DrawingWorkspaceViewport,
 } from '@vectorai/drawing-workspace';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { useDrawingWorkspace } from './hooks';
 import { Canvas } from './canvas/Canvas';
+import { ObjectList } from './panels/ObjectList';
+import { PropertyInspector } from './panels/PropertyInspector';
+import { WorkspaceStatus } from './panels/WorkspaceStatus';
+import { WorkspaceToolbar } from './panels/WorkspaceToolbar';
 
 export interface PreviewOverlayContext {
   readonly snapshot: DrawingWorkspaceSnapshot;
@@ -28,6 +32,8 @@ export function DrawingWorkspace({
   previewContributions = [],
   emptyMessage = '还没有图纸',
 }: DrawingWorkspaceProps) {
+  const [objectsOpen, setObjectsOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const status = useDrawingWorkspace((state) => state.status);
   const snapshot = useDrawingWorkspace((state) => state.snapshot);
   const viewport = useDrawingWorkspace((state) => state.viewport);
@@ -69,14 +75,22 @@ export function DrawingWorkspace({
       {error === null ? null : (
         <div className="vai-workspace__error" role="alert">{error.message}</div>
       )}
+      <div className="vai-workspace__controls">
+        <button type="button" aria-pressed={objectsOpen} onClick={() => setObjectsOpen(!objectsOpen)}>对象</button>
+        <WorkspaceToolbar />
+        <button type="button" aria-pressed={inspectorOpen} onClick={() => setInspectorOpen(!inspectorOpen)}>属性</button>
+      </div>
       <div className="vai-workspace__body" data-workspace-region="viewer">
+        {objectsOpen ? <ObjectList /> : null}
         <Canvas />
+        {inspectorOpen ? <PropertyInspector /> : null}
         {previewContributions.map((contribution) => (
           <div key={contribution.id} data-preview-overlay={contribution.id}>
             {contribution.render({ snapshot, viewport })}
           </div>
         ))}
       </div>
+      <WorkspaceStatus />
     </section>
   );
 }

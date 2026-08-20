@@ -24,3 +24,7 @@ export {
   useDrawingWorkspaceStore,
 } from './provider';
 export type { DrawingWorkspaceProviderProps } from './provider';
+export { ObjectList } from './panels/ObjectList';
+export { PropertyInspector } from './panels/PropertyInspector';
+export { WorkspaceStatus } from './panels/WorkspaceStatus';
+export { WorkspaceToolbar } from './panels/WorkspaceToolbar';
