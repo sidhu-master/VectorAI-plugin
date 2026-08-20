@@ -68,10 +68,85 @@
   flex: 1;
 }
 
-.vai-workspace__canvas-placeholder {
+.vai-canvas {
+  position: relative;
   min-width: 0;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
+  outline: none;
+  background: #101419;
+}
+
+.vai-canvas:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--vai-accent);
+}
+
+.vai-canvas__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  touch-action: none;
+}
+
+.vai-grid__minor {
+  stroke: rgba(140, 154, 172, 0.12);
+  stroke-width: 1;
+}
+
+.vai-grid__major {
+  stroke: rgba(140, 154, 172, 0.24);
+  stroke-width: 1;
+}
+
+.vai-grid__axes line {
+  stroke: rgba(108, 175, 221, 0.72);
+  stroke-width: 1.25;
+}
+
+.vai-grid__axes text {
+  fill: #7fc1ec;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.vai-entity {
+  cursor: pointer;
+  fill: #d7e0ea;
+  stroke: #d7e0ea;
+  stroke-width: 1.35;
+}
+
+.vai-entity--candidate {
+  stroke: #e6a15d;
+  stroke-dasharray: 6 4;
+}
+
+.vai-entity--selected {
+  fill: #72b9e8;
+  stroke: #72b9e8;
+  stroke-width: 2;
+}
+
+.vai-entity text {
+  fill: currentColor;
+  stroke: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.vai-relations {
+  color: #88a5bb;
+  fill: #88a5bb;
+  stroke: #88a5bb;
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.vai-canvas__selection-box {
+  fill: rgba(22, 119, 255, 0.16);
+  stroke: #4ea0ff;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
 }
 
 .vai-workspace__state {

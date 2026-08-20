@@ -7,6 +7,7 @@ import type {
 import type { ReactNode } from 'react';
 
 import { useDrawingWorkspace } from './hooks';
+import { Canvas } from './canvas/Canvas';
 
 export interface PreviewOverlayContext {
   readonly snapshot: DrawingWorkspaceSnapshot;
@@ -69,7 +70,7 @@ export function DrawingWorkspace({
         <div className="vai-workspace__error" role="alert">{error.message}</div>
       )}
       <div className="vai-workspace__body" data-workspace-region="viewer">
-        <div className="vai-workspace__canvas-placeholder" aria-label="图纸画布" />
+        <Canvas />
         {previewContributions.map((contribution) => (
           <div key={contribution.id} data-preview-overlay={contribution.id}>
             {contribution.render({ snapshot, viewport })}
