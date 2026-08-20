@@ -1,0 +1,20 @@
+{
+  "name": "@vectorai/plugin-dsh-space",
+  "version": "0.1.0-alpha.0",
+  "description": "Installable DeepSeek Harness bundle for VectorAI 2D Space and Canvas",
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": [
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dependencies": {
+    "@vectorai/plugin-dsh-space-client": "workspace:*",
+    "@vectorai/plugin-dsh-space-host": "workspace:*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

@@ -3,30 +3,13 @@
 import {
   drawingCanvasProjectionSchema,
   drawingSessionIdSchema,
-  type DrawingCanvasProjection,
 } from '@vectorai/plugin-space-contracts';
-import type {
-  RemoteResult,
-  TypertRemoteContribution,
-} from '@deepseek-ai/dsh-typert-protocol';
 
-declare module '@deepseek-ai/dsh-typert-protocol' {
-  interface TypertRemoteNamespaceMap {
-    drawingSpace: {
-      getProjection(sessionId: string): Promise<RemoteResult<DrawingCanvasProjection | null>>;
-    };
-  }
-
-  interface TypertRemoteMap {
-    'drawingSpace/getProjection': (
-      sessionId: string,
-    ) => Promise<RemoteResult<DrawingCanvasProjection | null>>;
-  }
-}
-
-export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
+export const TYPERT = {
   package: '@vectorai/plugin-dsh-space-host',
-  descriptors: [{
+  face: 'host',
+  schemas: [],
+  invocations: [{
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getProjection',
     service: 'drawingSpace',
     namespace: 'drawingSpace',
@@ -47,5 +30,17 @@ export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
       typeSymbol: '@vectorai/plugin-space-contracts#DrawingCanvasProjection|null',
       schema: drawingCanvasProjectionSchema,
     },
+    sourceLocation: {
+      file: 'packages/plugin-dsh-space-host/src/service.ts',
+      line: 36,
+      column: 3,
+    },
   }],
-};
+  model: {
+    services: [],
+    events: [],
+    objects: [],
+  },
+} as const;
+
+export default TYPERT;

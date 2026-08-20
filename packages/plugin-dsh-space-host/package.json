@@ -5,10 +5,24 @@
   "type": "module",
   "license": "Apache-2.0",
   "sideEffects": false,
+  "main": "./lib/index.js",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./typert": {
+      "types": "./src/typert.ts",
+      "default": "./lib/typert.js"
+    },
+    "./package.json": "./package.json"
   },
   "types": "./src/index.ts",
+  "files": [
+    "lib/index.js",
+    "lib/typert.js",
+    "src/**/*.ts"
+  ],
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src"

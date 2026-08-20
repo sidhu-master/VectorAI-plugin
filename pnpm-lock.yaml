@@ -123,6 +123,15 @@ importers:
 
   packages/drawing-core: {}
 
+  packages/plugin-dsh-space:
+    dependencies:
+      '@vectorai/plugin-dsh-space-client':
+        specifier: workspace:*
+        version: link:../plugin-dsh-space-client
+      '@vectorai/plugin-dsh-space-host':
+        specifier: workspace:*
+        version: link:../plugin-dsh-space-host
+
   packages/plugin-dsh-space-client:
     dependencies:
       '@deepseek-ai/cordis':
@@ -190,7 +199,11 @@ importers:
         specifier: workspace:*
         version: link:../plugin-space-contracts
 
-  packages/plugin-space-contracts: {}
+  packages/plugin-space-contracts:
+    dependencies:
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
 packages:
 

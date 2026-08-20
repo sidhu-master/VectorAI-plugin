@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { z } from 'zod';
+
 export interface DrawingRef {
   drawingId: string;
   revision: number;
@@ -52,3 +54,41 @@ export interface DrawingImportResult {
   ref: DrawingRef;
   provisional: boolean;
 }
+
+export const drawingSessionIdSchema = z.string().min(1);
+
+export const drawingCanvasProjectionSchema = z.object({
+  version: z.literal(1),
+  ref: z.object({
+    drawingId: z.string().min(1),
+    revision: z.number().int().nonnegative(),
+  }),
+  source: z.object({
+    attachmentId: z.string().min(1),
+    mediaType: z.union([
+      z.literal('image/png'),
+      z.literal('image/jpeg'),
+      z.literal('image/webp'),
+      z.literal('image/gif'),
+    ]),
+    width: z.number().positive(),
+    height: z.number().positive(),
+    name: z.string().optional(),
+    dataUrl: z.string().min(1),
+  }),
+  bounds: z.object({
+    minX: z.number(),
+    minY: z.number(),
+    maxX: z.number(),
+    maxY: z.number(),
+  }),
+  geometry: z.array(z.object({
+    id: z.string().min(1),
+    type: z.literal('line'),
+    start: z.tuple([z.number(), z.number()]),
+    end: z.tuple([z.number(), z.number()]),
+    status: z.union([z.literal('candidate'), z.literal('confirmed')]),
+    confidence: z.number().optional(),
+  })),
+  provisional: z.boolean(),
+}).nullable();

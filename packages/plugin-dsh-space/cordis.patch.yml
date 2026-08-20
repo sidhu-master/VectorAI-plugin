@@ -1,0 +1,8 @@
+# VectorAI 2D Space for the DSH Web profile. The Host owns tools and Drawing
+# state; the Client row is discovered by dsh-client-modules through dsh.client.
+- insert:
+    - id: vectorai-space-host
+      name: '@vectorai/plugin-dsh-space-host'
+
+    - id: vectorai-space-client
+      name: '@vectorai/plugin-dsh-space-client'

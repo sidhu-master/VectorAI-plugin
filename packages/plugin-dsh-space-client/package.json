@@ -5,11 +5,18 @@
   "type": "module",
   "license": "Apache-2.0",
   "sideEffects": false,
-  "main": "./src/index.ts",
+  "main": "./lib/index.js",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.tsx"
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./src/client.tsx",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
   },
   "dsh": {
     "client": {
@@ -24,6 +31,12 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src"
   },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-api-remotes": "0.1.0-rc.8",

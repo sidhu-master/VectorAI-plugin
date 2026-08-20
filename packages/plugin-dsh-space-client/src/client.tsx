@@ -54,18 +54,23 @@ export function DrawingConversationView({
 }
 
 export async function apply(ctx: Context) {
-  const disposeRemote = await ctx.remote.$mount(DRAWING_SPACE_REMOTE);
-  const disposeSlot = ctx.slots.inject('conversation.view', () => ctx.slots.register({
-    name: 'conversation.view',
-    id: 'drawing',
-    order: 20,
-    label: () => '图纸',
-    inject: (sessionId) => ({
-      loadDrawing: () => ctx.remote.drawingSpace.getProjection(String(sessionId)),
-    }),
-  }, DrawingConversationView));
+  const remote = ctx.get('remote');
+  const slots = ctx.get('slots');
+  const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
+  const viewFiber = ctx.inject(['remote.drawingSpace'], (scope) => {
+    const drawingSpace = scope.get('remote').drawingSpace;
+    return slots.inject('conversation.view', () => slots.register({
+      name: 'conversation.view',
+      id: 'drawing',
+      order: 20,
+      label: () => '图纸',
+      inject: (sessionId) => ({
+        loadDrawing: () => drawingSpace.getProjection(String(sessionId)),
+      }),
+    }, DrawingConversationView));
+  });
   return async () => {
-    await disposeSlot();
+    await viewFiber.dispose();
     await disposeRemote();
   };
 }

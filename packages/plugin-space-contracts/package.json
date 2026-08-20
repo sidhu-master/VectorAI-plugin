@@ -9,6 +9,9 @@
     ".": "./src/index.ts"
   },
   "types": "./src/index.ts",
+  "dependencies": {
+    "zod": "4.4.3"
+  },
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit"
   }
