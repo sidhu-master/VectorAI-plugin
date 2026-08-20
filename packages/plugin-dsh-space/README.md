@@ -18,6 +18,13 @@ Published packages will resolve those dependencies normally.
 
 The bundle adds the `drawing_import` and `drawing_summarize` tools plus a session-scoped “图纸” conversation view. The view uses the shared VectorAI workspace: axes, adaptive grid, pan/zoom, click and box selection, object browser, property inspector, source underlay, annotation rendering, and revision-aware manual edits are available in DSH.
 
-Drawing state and rendering remain local. The Host stores one authoritative Drawing per DSH session, the source raster stays in DSH's attachment store, and the Client resolves a temporary authorized URL only while the view is mounted. The bundle adds no HTTP, Express, or VectorAI cloud service.
+Drawing state and rendering remain local. The Host persists one authoritative
+Drawing per DSH session under `~/.dsh/vectorai/drawings/`, the source raster
+stays in DSH's attachment store, and the Client resolves a temporary authorized
+URL only while the view is mounted. The bundle adds no HTTP, Express, or
+VectorAI cloud service.
 
-The current image vectorizer creates a provisional source-boundary Drawing. Improving image/PDF/DXF reconstruction is a separate local-compute slice and does not require another Viewer migration.
+The image importer runs the packaged local Python/OpenCV clean-line worker and
+produces analytic line/circle/arc/ellipse nodes, polyline fallbacks, topology
+relations, and compound-path features. PDF, DXF, and optional WASM compute
+backends remain separate adapters and do not require another Viewer migration.

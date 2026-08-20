@@ -618,9 +618,9 @@ ProjectManifest
 
 当前边界与限制：
 
-- 矢量化仍是明确标记为 `provisional` 的图片外框四线实现，只用于证明二维数据、工具和画布闭环；
-- Drawing 状态仍在 Host 内存中，重启 DSH 后不会恢复；
-- DXF/PDF、WASM 线条提取、Preview/Commit 与自动标注仍属于后续切片；
+- 图片导入已使用随 Host 打包的本地 Python/OpenCV clean-line worker，输出解析图元、Polyline 兜底、拓扑关系和 compound-path 特征；
+- Drawing 状态按 DSH session 哈希键原子写入 `~/.dsh/vectorai/drawings/`，重启 DSH 后可恢复；
+- DXF/PDF、可选 WASM 后端、自动标注仍属于后续切片；
 - 本地 workspace 安装需把 bundle、Host、Client 三个路径一起加入 profile；发布到 npm 后由普通包依赖解析。
 
 ## 20. Definition of Done
@@ -641,4 +641,4 @@ ProjectManifest
 
 已确认根许可证使用 Apache-2.0，第一层和第二层先采用同仓库 pnpm workspace 多包发布；第二层不是第一层示例，而是只依赖第一层公开契约的独立可安装插件。
 
-下一步先由用户在正式 DSH 窗口完成一次“发送图片 → `drawing_import` → 图纸预览 → `drawing_summarize`”验收，再进入 WASM 矢量化和持久化切片。
+下一步由用户在正式 DSH 窗口完成一次“发送图片 → `drawing_import` → 图纸预览 → `drawing_summarize` → 重启恢复”验收，再推进第二层自动标注与 DXF/PDF/WASM adapter。

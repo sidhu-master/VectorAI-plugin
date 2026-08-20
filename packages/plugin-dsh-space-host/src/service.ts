@@ -8,9 +8,12 @@ import type {
   DrawingWorkspaceCommitResult,
   DrawingWorkspaceSnapshot,
 } from '@vectorai/plugin-space-contracts';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 
 import { createPreStepIntake } from './intake';
 import { InMemoryDrawingRepository } from './repository';
+import { FileDrawingRepositoryStorage } from './repository-storage';
 import { createDrawingImportTool, createDrawingSummarizeTool } from './tools';
 import { LocalCleanLineVectorizer } from './vectorizer';
 
@@ -29,6 +32,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     super(ctx, 'drawingSpace');
     this.drawings = new InMemoryDrawingRepository({
       vectorizer: new LocalCleanLineVectorizer(),
+      storage: new FileDrawingRepositoryStorage(resolve(homedir(), '.dsh/vectorai/drawings')),
     });
     ctx.tools.register(createDrawingImportTool(this.drawings, ctx.attachments));
     ctx.tools.register(createDrawingSummarizeTool(this.drawings));

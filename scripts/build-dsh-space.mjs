@@ -28,6 +28,7 @@ await Promise.all([
   }),
 ]);
 
+await stripTrailingWhitespace(join(hostDir, 'lib/index.js'));
 await copyFile(
   join(root, 'python/vectorai_vectorizer.py'),
   join(hostDir, 'lib/vectorai_vectorizer.py'),
@@ -95,6 +96,11 @@ async function buildLibrary({ entry, outDir, fileName, format, external, emptyOu
       },
     },
   });
+}
+
+async function stripTrailingWhitespace(path) {
+  const source = await readFile(path, 'utf8');
+  await writeFile(path, source.replace(/[ \t]+$/gm, ''));
 }
 
 function indent(text, spaces) {

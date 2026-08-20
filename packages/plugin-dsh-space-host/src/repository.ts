@@ -17,7 +17,7 @@ import type { ImageVectorizer } from './vectorizer';
 
 export type { ImageVectorizer } from './vectorizer';
 
-interface DrawingEntry {
+export interface DrawingEntry {
   attachmentId: string;
   document: DrawingDocument;
   drawingId: string;
@@ -27,20 +27,28 @@ interface DrawingEntry {
   provisional: boolean;
 }
 
+export interface DrawingRepositoryStorage {
+  load(sessionId: string): DrawingEntry | null;
+  save(sessionId: string, entry: DrawingEntry): void;
+}
+
 export class InMemoryDrawingRepository {
   readonly #pending = new Map<string, ImageAttachmentRef>();
   readonly #drawings = new Map<string, DrawingEntry>();
   readonly #vectorizer: ImageVectorizer;
   readonly #drawingId: (sessionId: string, attachment: ImageAttachmentRef) => string;
+  readonly #storage?: DrawingRepositoryStorage;
 
   constructor(input: {
     vectorizer: ImageVectorizer;
     drawingId?: (sessionId: string, attachment: ImageAttachmentRef) => string;
+    storage?: DrawingRepositoryStorage;
   }) {
     this.#vectorizer = input.vectorizer;
     this.#drawingId = input.drawingId ?? ((_sessionId, attachment) => (
       `drawing_${String(attachment.attachmentId)}`
     ));
+    this.#storage = input.storage;
   }
 
   bindPending(sessionId: string, attachment: ImageAttachmentRef): void {
@@ -59,7 +67,7 @@ export class InMemoryDrawingRepository {
     const attachment = this.#pending.get(sessionId);
     if (attachment === undefined) throw new Error('PENDING_DRAWING_SOURCE_REQUIRED');
     const attachmentId = String(attachment.attachmentId);
-    const current = this.#drawings.get(sessionId);
+    const current = this.#getDrawing(sessionId);
     if (current?.attachmentId === attachmentId) {
       return {
         status: 'already-imported',
@@ -77,7 +85,7 @@ export class InMemoryDrawingRepository {
       signal: input.signal,
     });
     input.signal.throwIfAborted();
-    this.#drawings.set(sessionId, {
+    const entry: DrawingEntry = {
       attachmentId,
       document: structuredClone(vectorized.document),
       drawingId,
@@ -92,7 +100,9 @@ export class InMemoryDrawingRepository {
         ...(attachment.name === undefined ? {} : { name: attachment.name }),
       },
       provisional: vectorized.provisional,
-    });
+    };
+    this.#storage?.save(sessionId, structuredClone(entry));
+    this.#drawings.set(sessionId, entry);
     return {
       status: 'imported',
       ref: { drawingId, revision: 1 },
@@ -101,8 +111,8 @@ export class InMemoryDrawingRepository {
   }
 
   getSnapshot(sessionId: string): DrawingWorkspaceSnapshot | null {
-    const entry = this.#drawings.get(sessionId);
-    if (entry === undefined) return null;
+    const entry = this.#getDrawing(sessionId);
+    if (entry === null) return null;
     return snapshotOf(entry);
   }
 
@@ -110,8 +120,8 @@ export class InMemoryDrawingRepository {
     sessionId: string,
     request: DrawingWorkspaceCommitRequest,
   ): DrawingWorkspaceCommitResult {
-    const entry = this.#drawings.get(sessionId);
-    if (entry === undefined) {
+    const entry = this.#getDrawing(sessionId);
+    if (entry === null) {
       return { status: 'rejected', message: 'No drawing is loaded', code: 'DRAWING_REQUIRED' };
     }
     if (request.expectedRevision !== entry.revision) {
@@ -128,14 +138,19 @@ export class InMemoryDrawingRepository {
       if (rejection !== null) return rejection;
     }
     document.metadata.updatedAt = Date.now();
-    entry.document = document;
-    entry.revision += 1;
-    return { status: 'committed', snapshot: snapshotOf(entry) };
+    const nextEntry: DrawingEntry = {
+      ...entry,
+      document,
+      revision: entry.revision + 1,
+    };
+    this.#storage?.save(sessionId, structuredClone(nextEntry));
+    this.#drawings.set(sessionId, nextEntry);
+    return { status: 'committed', snapshot: snapshotOf(nextEntry) };
   }
 
   summarize(sessionId: string): DrawingSummary | null {
-    const entry = this.#drawings.get(sessionId);
-    if (entry === undefined) return null;
+    const entry = this.#getDrawing(sessionId);
+    if (entry === null) return null;
     const geometryByType: Record<string, number> = {};
     for (const node of entry.document.geometry) {
       geometryByType[node.type] = (geometryByType[node.type] ?? 0) + 1;
@@ -152,6 +167,14 @@ export class InMemoryDrawingRepository {
   disposeSession(sessionId: string): void {
     this.#pending.delete(sessionId);
     this.#drawings.delete(sessionId);
+  }
+
+  #getDrawing(sessionId: string): DrawingEntry | null {
+    const current = this.#drawings.get(sessionId);
+    if (current !== undefined) return current;
+    const restored = this.#storage?.load(sessionId) ?? null;
+    if (restored !== null) this.#drawings.set(sessionId, structuredClone(restored));
+    return restored;
   }
 }
 
