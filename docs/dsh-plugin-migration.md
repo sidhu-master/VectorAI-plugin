@@ -568,9 +568,9 @@ ProjectManifest
 
 ## 17. 开源发布
 
-当前根目录尚未发现 LICENSE。对外发布前必须完成：
+根目录已采用 Apache-2.0。对外发布前还必须完成：
 
-- 选择并提交根 LICENSE；建议在确认商业策略后选择 Apache-2.0 或 MIT。
+- 保持根 LICENSE、各发布包 `license` 字段与源码 SPDX 标识一致为 Apache-2.0。
 - 为插件包填写 `license`、`repository`、`exports`、`files` 和 `engines`。
 - 审计 `sharp`、OpenCV.js、PDF.js/PDFium、字体、测试图纸和 DXF fixture 的许可证/再分发权。
 - 不提交模型密钥、内部网关地址、用户图纸、绝对路径或 DSH settings。
@@ -604,6 +604,24 @@ ProjectManifest
 
 这个切片的验收不是“自动标注做完”，而是证明以下事实：同一个 Drawing Core 能被 DSH 和静态网站消费；DSH 有真实二维空间与可预览画布；没有 VectorAI Express 服务参与。
 
+### 19.1 2026-08-20 Slice 1 实施状态
+
+当前已完成第一条更窄的 DSH 纵向闭环，代码位于同仓库的四个包：
+
+- `@vectorai/plugin-space-contracts`：宿主无关的 JSON contract 与共享 TypeRT 严格 schema；
+- `@vectorai/plugin-dsh-space-host`：图片接入、会话内存 Repository、`drawing_import`、`drawing_summarize` 和 Remote Host；
+- `@vectorai/plugin-dsh-space-client`：`conversation.view` 的“图纸”画布与 Remote Client；
+- `@vectorai/plugin-dsh-space`：把 Host/Client 装入 DSH profile 的 bundle patch。
+
+真实 DSH `0.1.0-rc.8` mount smoke 已验证 `vectorai-space-host`、`vectorai-space-client`、严格 TypeRT Remote 路由和“图纸”空画布。此切片不启动 VectorAI Express/HTTP 服务，也不调用 VectorAI 云端。
+
+当前边界与限制：
+
+- 矢量化仍是明确标记为 `provisional` 的图片外框四线实现，只用于证明二维数据、工具和画布闭环；
+- Drawing 状态仍在 Host 内存中，重启 DSH 后不会恢复；
+- DXF/PDF、WASM 线条提取、Preview/Commit 与自动标注仍属于后续切片；
+- 本地 workspace 安装需把 bundle、Host、Client 三个路径一起加入 profile；发布到 npm 后由普通包依赖解析。
+
 ## 20. Definition of Done
 
 整个迁移完成必须同时满足：
@@ -618,11 +636,8 @@ ProjectManifest
 - 仓库具有明确开源许可证、依赖合规记录和无密钥发布检查。
 - 文档、示例和一键安装流程可由干净机器复现。
 
-## 21. 下一步决策
+## 21. 已确认决策与下一步
 
-开始 Phase 0/1 前只需要确认两项产品级选择：
+已确认根许可证使用 Apache-2.0，第一层和第二层先采用同仓库 pnpm workspace 多包发布；第二层不是第一层示例，而是只依赖第一层公开契约的独立可安装插件。
 
-1. 根许可证使用 Apache-2.0 还是 MIT。
-2. DSH 插件是同仓库多包发布，还是从本仓库同步到独立插件仓库。
-
-其余技术决策可以先按本文的“同仓库 pnpm workspace + Adapter 隔离 + 契约测试”推进，不阻塞第一条纵向切片。
+下一步先由用户在正式 DSH 窗口完成一次“发送图片 → `drawing_import` → 图纸预览 → `drawing_summarize`”验收，再进入 WASM 矢量化和持久化切片。

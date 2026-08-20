@@ -4,7 +4,7 @@
 
 **Goal:** Deliver the first installable DSH Space plugin slice: one DSH image attachment becomes a pending drawing source, the Agent is instructed to call the visible `drawing_import` tool, an in-memory session repository owns the imported Drawing, a `conversation.view` tab previews it, and `drawing_summarize` reports the same authoritative revision.
 
-**Architecture:** Four workspace packages separate the public wire contract, DSH Host adapter, DSH Client adapter, and installable profile bundle. The Host uses DSH's durable `ImageAttachmentRef` and `ctx.attachments.readImage()`; no HTTP/Express endpoint is added. A Typert source-mode Remote method returns a session-scoped, JSON-only Canvas projection. Slice 1 intentionally uses a provisional image-footprint vectorizer (four candidate boundary lines over the source raster) behind an injected `ImageVectorizer` port, proving the complete integration seam without presenting the boundary as final engineering geometry. The later WASM vectorizer replaces this port without changing tools, Remote, or Canvas.
+**Architecture:** Four workspace packages separate the public wire contract, DSH Host adapter, DSH Client adapter, and installable profile bundle. The Host uses DSH's durable `ImageAttachmentRef` and `ctx.attachments.readImage()`; no HTTP/Express endpoint is added. A strict-codec TypeRT Remote method returns a session-scoped, JSON-only Canvas projection. Slice 1 intentionally uses a provisional image-footprint vectorizer (four candidate boundary lines over the source raster) behind an injected `ImageVectorizer` port, proving the complete integration seam without presenting the boundary as final engineering geometry. The later WASM vectorizer replaces this port without changing tools, Remote, or Canvas.
 
 **Tech Stack:** TypeScript 5.8, React 18, Vitest 3, pnpm workspaces, DSH `0.1.0-rc.8`, Cordis 4, Vite library build
 
@@ -40,11 +40,11 @@
 - `ImageVectorizer.vectorize({ attachment, data, signal })`
 - `InMemoryDrawingRepository.bindPending/getPending/importPending/getProjection/summarize/disposeSession`
 
-- [ ] **Step 1: Add contract metadata and pure JSON types**
+- [x] **Step 1: Add contract metadata and pure JSON types**
 
-Create `@vectorai/plugin-space-contracts` with no runtime dependencies. The Canvas projection includes an image data URL, intrinsic pixel bounds, and only JSON-safe line geometry for this slice.
+Create `@vectorai/plugin-space-contracts` with no DSH/runtime-host dependencies. It owns the shared Zod v4 wire schemas required by TypeRT strict codecs. The Canvas projection includes an image data URL, intrinsic pixel bounds, and only JSON-safe line geometry for this slice.
 
-- [ ] **Step 2: Write repository RED tests**
+- [x] **Step 2: Write repository RED tests**
 
 Tests must prove independently derived behavior:
 
@@ -63,20 +63,20 @@ pnpm vitest run packages/plugin-dsh-space-host/src/repository.test.ts
 
 Expected RED: module-not-found for `./repository`, not a test configuration error.
 
-- [ ] **Step 3: Implement the minimal repository and vectorizer port**
+- [x] **Step 3: Implement the minimal repository and vectorizer port**
 
 The repository accepts an injected vectorizer and id/time factories. Commit state only after vectorization resolves and `signal.throwIfAborted()` succeeds. Clone all returned projections so callers cannot mutate authoritative state.
 
 The default provisional vectorizer creates a `DrawingDocument` with four candidate `line` nodes around `[0, 0, width, height]`, `unitSystem.length = 'mm'`, and returns a `DrawingCanvasProjection` containing `data:<mediaType>;base64,...`. Its summary says `provisional: true`.
 
-- [ ] **Step 4: Run GREEN and package checks**
+- [x] **Step 4: Run GREEN and package checks**
 
 ```bash
 pnpm vitest run packages/plugin-dsh-space-host/src/repository.test.ts
 pnpm --filter @vectorai/plugin-space-contracts check
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/plugin-space-contracts packages/plugin-dsh-space-host/src/repository.ts packages/plugin-dsh-space-host/src/repository.test.ts packages/plugin-dsh-space-host/src/vectorizer.ts
@@ -104,7 +104,7 @@ git commit -m "feat: add session drawing repository"
 - `createDrawingSummarizeTool(repository)` registers `drawing_summarize` with `{}` arguments.
 - `DrawingSpaceHostService.getProjection(sessionId)` is a direct Typert Remote method.
 
-- [ ] **Step 1: Write intake RED tests**
+- [x] **Step 1: Write intake RED tests**
 
 Prove that the intake:
 
@@ -116,11 +116,11 @@ Prove that the intake:
 
 Run the test and observe a failure because `./intake` is absent.
 
-- [ ] **Step 2: Implement intake GREEN**
+- [x] **Step 2: Implement intake GREEN**
 
 Use `createUserMessage()` and a DSH plugin source `{ kind: 'plugin', plugin: '@vectorai/plugin-dsh-space-host', form: 'snapshot', sections: [...] }`. Do not modify the user's original image block.
 
-- [ ] **Step 3: Write tool RED tests**
+- [x] **Step 3: Write tool RED tests**
 
 Call each real `defineTool` definition's `execute()` with a complete fake `ToolRunContext`. Prove:
 
@@ -130,11 +130,11 @@ Call each real `defineTool` definition's `execute()` with a complete fake `ToolR
 4. `drawing_summarize` reports `DRAWING_REQUIRED` before import;
 5. after import it returns the same ref and literal `geometryByType.line = 4`.
 
-- [ ] **Step 4: Implement tools and Host service GREEN**
+- [x] **Step 4: Implement tools and Host service GREEN**
 
 `DrawingSpaceHostService` extends `TypertRemoteService`, injects `tools` and `attachments`, owns the repository, registers both tools and `agent/pre-step`, cleans session state on `session/disposed`, and exposes a decorated source-mode Remote `getProjection(sessionId: string)`. Its `dispose` path is owned by Cordis effects.
 
-- [ ] **Step 5: Check Host package and commit**
+- [x] **Step 5: Check Host package and commit**
 
 ```bash
 pnpm vitest run packages/plugin-dsh-space-host/src/intake.test.ts packages/plugin-dsh-space-host/src/tools.test.ts packages/plugin-dsh-space-host/src/repository.test.ts
@@ -161,7 +161,7 @@ git commit -m "feat: integrate drawing tools with DSH host"
 - `DrawingSpaceRemote.getProjection(sessionId)`
 - Client `apply(ctx)` mounts the Remote contribution then registers `id: 'drawing'` in `conversation.view`.
 
-- [ ] **Step 1: Write Canvas RED tests**
+- [x] **Step 1: Write Canvas RED tests**
 
 Using `react-dom/server`, prove:
 
@@ -170,13 +170,13 @@ Using `react-dom/server`, prove:
 3. the header exposes drawing id, revision, and an explicit provisional badge;
 4. Remote errors render without discarding a previously loaded projection.
 
-- [ ] **Step 2: Implement the pure Canvas GREEN**
+- [x] **Step 2: Implement the pure Canvas GREEN**
 
 Use an SVG `<image>` plus line overlays with `vectorEffect="non-scaling-stroke"`. Keep styling inline so the out-of-tree client bundle has no unserved CSS asset.
 
-- [ ] **Step 3: Implement Remote mounting and slot registration**
+- [x] **Step 3: Implement Remote mounting and slot registration**
 
-Provide one source-mode descriptor for `drawingSpace/getProjection` with JSON codecs. `apply(ctx)` first awaits `ctx.remote.$mount(contribution)`, then uses:
+Provide matching Host and Client descriptors for `drawingSpace/getProjection` with shared strict Zod codecs. `apply(ctx)` first awaits `remote.$mount(contribution)`, then starts a nested `remote.drawingSpace`-injected Cordis fiber before registering the view:
 
 ```ts
 ctx.slots.inject('conversation.view', () => ctx.slots.register({
@@ -185,14 +185,14 @@ ctx.slots.inject('conversation.view', () => ctx.slots.register({
   order: 20,
   label: () => '图纸',
   inject: (sessionId) => ({
-    loadDrawing: () => ctx.remote.drawingSpace.getProjection(sessionId),
+    loadDrawing: () => drawingSpace.getProjection(sessionId),
   }),
 }, DrawingConversationView));
 ```
 
 The view loads on mount and reloads when the DSH conversation snapshot changes from a running tool call to a settled result.
 
-- [ ] **Step 4: Check and commit**
+- [x] **Step 4: Check and commit**
 
 ```bash
 pnpm vitest run packages/plugin-dsh-space-client/src/DrawingCanvas.test.tsx
@@ -218,30 +218,32 @@ git commit -m "feat: add DSH drawing canvas view"
 - Patch inserts `@vectorai/plugin-dsh-space-host` and `@vectorai/plugin-dsh-space-client` rows.
 - Client package declares `dsh.client.platform = 'web'`, exports `./client`, and injects the DSH Remote and conversation packages.
 
-- [ ] **Step 1: Add exact rc.8 dependencies and bundle metadata**
+- [x] **Step 1: Add exact rc.8 dependencies and bundle metadata**
 
 Pin all DSH dependencies to `0.1.0-rc.8`; do not use `latest`. The installable bundle depends on the two adapter packages, and its patch inserts both rows with stable ids.
 
-- [ ] **Step 2: Add the out-of-tree build**
+- [x] **Step 2: Add the out-of-tree build**
 
 Use Vite's library API to emit:
 
 - Host ESM: `packages/plugin-dsh-space-host/lib/index.js`;
+- Host TypeRT manifest: `packages/plugin-dsh-space-host/lib/typert.js`;
 - Client Node no-op ESM: `packages/plugin-dsh-space-client/lib/index.js`;
 - Client lazy-CJS factory: `packages/plugin-dsh-space-client/lib/client.js`, wrapped as `window.__ModuleLoader__.load({ id: '@vectorai/plugin-dsh-space-client', factory(require) { ... } })`.
 
 Externalize React and DSH browser modules from the Client bundle; inline VectorAI contract code. Fail the build if the generated Client bundle lacks the ModuleLoader wrapper or contains Node builtin imports.
 
-- [ ] **Step 3: Build and inspect artifacts**
+- [x] **Step 3: Build and inspect artifacts**
 
 ```bash
 pnpm build:dsh-space
 node --check packages/plugin-dsh-space-host/lib/index.js
+node --check packages/plugin-dsh-space-host/lib/typert.js
 node --check packages/plugin-dsh-space-client/lib/index.js
 node --check packages/plugin-dsh-space-client/lib/client.js
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add package.json pnpm-lock.yaml scripts/build-dsh-space.mjs packages/plugin-dsh-space packages/plugin-dsh-space-host/package.json packages/plugin-dsh-space-client/package.json
@@ -256,7 +258,7 @@ git commit -m "build: package DSH space plugin"
 - Modify: `docs/dsh-plugin-migration.md`
 - Modify: `docs/superpowers/plans/2026-08-20-dsh-space-slice-1.md`
 
-- [ ] **Step 1: Run focused and full regression**
+- [x] **Step 1: Run focused and full regression**
 
 ```bash
 pnpm --filter @vectorai/plugin-space-contracts check
@@ -267,16 +269,27 @@ pnpm check
 pnpm install --frozen-lockfile
 ```
 
-- [ ] **Step 2: Install the local bundle into DSH Web**
+- [x] **Step 2: Install the local bundle into DSH Web**
 
 From the repository root:
 
 ```bash
-dsh plugin --profile web add ./packages/plugin-dsh-space
+dsh plugin --profile web add --ignore-workspace-root-check \
+  ./packages/plugin-dsh-space \
+  ./packages/plugin-dsh-space-host \
+  ./packages/plugin-dsh-space-client
 dsh --profile web --dump-config
 ```
 
 Verify the composed tree contains both `vectorai-space-host` and `vectorai-space-client`. This intentionally changes the user's local DSH Web profile; record the exact dependency and bundle entry added.
+
+Verified local profile dependencies:
+
+- `@vectorai/plugin-dsh-space` → repository bundle path;
+- `@vectorai/plugin-dsh-space-host` → repository Host path;
+- `@vectorai/plugin-dsh-space-client` → repository Client path.
+
+`dsh --profile web --dump-config` contains `vectorai-space-host` and `vectorai-space-client`.
 
 - [ ] **Step 3: Run live UI smoke**
 
@@ -290,11 +303,13 @@ Start DSH with `--no-open`, open the local URL, send one supported image, and ve
 
 If the selected model ignores the injected instruction, capture the transcript and treat it as an Agent-prompt defect; do not hide the import inside the Client.
 
-- [ ] **Step 4: Record Slice 1 status and limitations**
+Mount/UI subset verified on `http://127.0.0.1:3090`: the plugin booted without a current loader error, “图纸” appeared beside “对话/轨迹”, the accessible Canvas rendered its empty state, and `drawingSpace/getProjection` returned through the Host TypeRT route. Sending a new image and model prompt remains a user-triggered acceptance step because it transmits content to the configured model.
+
+- [x] **Step 4: Record Slice 1 status and limitations**
 
 Document that image-footprint geometry is a provisional integration vectorizer, memory state does not yet survive a Host restart, and generic DXF/PDF plus WASM line extraction remain Slice 2 work.
 
-- [ ] **Step 5: Final verification and commit**
+- [x] **Step 5: Final verification and commit**
 
 ```bash
 git diff --check
