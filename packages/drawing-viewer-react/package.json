@@ -1,0 +1,29 @@
+{
+  "name": "@vectorai/drawing-viewer-react",
+  "version": "0.1.0-alpha.0",
+  "description": "Reusable React drawing workspace for VectorAI hosts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": ["./src/styles.css"],
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@vectorai/drawing-core": "workspace:*",
+    "@vectorai/drawing-workspace": "workspace:*",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@types/react-test-renderer": "18.3.1",
+    "react-test-renderer": "18.3.1"
+  }
+}
