@@ -234,6 +234,38 @@ describe('canonical drawing workspace store', () => {
     expect(store.getState().document?.geometry[0]).toMatchObject({ radius: 8 });
   });
 
+  it('commits an adapter-provided canonical command batch atomically', async () => {
+    const client = drawingClientDouble();
+    client.execute.mockImplementation(async (_id, transaction) => {
+      const next = structuredClone(workspace().document);
+      const circle = next.geometry[0];
+      if (circle.type !== 'circle') throw new Error('fixture must be a circle');
+      circle.radius = 11;
+      return committed(next, transaction.baseRevision);
+    });
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      storage: memoryStorage(),
+      idFactory: { next: (kind) => `${kind}_adapter` },
+    });
+    await store.getState().initializeDrawing();
+
+    const result = await store.getState().commitDrawingCommands([{
+      type: 'geometry.update', id: geometryId,
+      changes: { radius: 11 }, expected: { radius: 5 },
+    }]);
+
+    expect(result).toBe(true);
+    expect(client.execute).toHaveBeenCalledWith(drawingId, expect.objectContaining({
+      id: 'transaction_adapter',
+      commands: [{
+        type: 'geometry.update', id: geometryId,
+        changes: { radius: 11 }, expected: { radius: 5 },
+      }],
+    }));
+    expect(store.getState().document?.geometry[0]).toMatchObject({ radius: 11 });
+  });
+
   it('retains the visible revision and document when a transaction is stale', async () => {
     const client = drawingClientDouble();
     client.execute.mockResolvedValueOnce({

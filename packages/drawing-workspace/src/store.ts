@@ -149,6 +149,7 @@ export function createDrawingWorkspaceStore(input: {
       mouseWorld: null,
       display: { ...DEFAULT_DISPLAY },
       async load() {
+        disposed = false;
         if (unsubscribe === undefined && port.subscribe !== undefined) {
           unsubscribe = port.subscribe(() => {
             void refresh(false);

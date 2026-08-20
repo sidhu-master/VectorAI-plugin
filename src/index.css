@@ -1,3 +1,5 @@
+@import "@vectorai/drawing-viewer-react/styles.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

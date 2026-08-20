@@ -259,4 +259,17 @@ describe('createDrawingWorkspaceStore', () => {
 
     expect(disposed).toEqual(['source-1', 'source-2']);
   });
+
+  it('can load again after cleanup when React StrictMode remounts the same store', async () => {
+    const port = new TestPort(snapshot(1));
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().destroy();
+    port.current = snapshot(2);
+
+    await store.getState().load();
+
+    expect(store.getState().snapshot?.ref.revision).toBe(2);
+    expect(port.listeners.size).toBe(1);
+  });
 });

@@ -3,23 +3,23 @@
  */
 import TopToolbar from '@/components/TopToolbar';
 import AIDialog from '@/components/AIDialog';
-import Canvas from '@/components/Canvas';
-import { CanvasErrorBoundary } from '@/components/CanvasErrorBoundary';
-import ObjectList from '@/components/ObjectList';
-import ParameterEditor from '@/components/ParameterEditor';
-import StatusBar from '@/components/StatusBar';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
+import {
+  DrawingWorkspace,
+  DrawingWorkspaceProvider,
+} from '@vectorai/drawing-viewer-react';
+import {
+  createDrawingWorkspaceStore,
+  type DrawingWorkspaceStore,
+} from '@vectorai/drawing-workspace';
+import { createWebsiteDrawingWorkspacePort } from '@/adapters/website-drawing-workspace-port';
 
 export default function Home() {
   const initializeDrawing = useStore((state) => state.initializeDrawing);
   const drawingStatus = useStore((state) => state.drawingStatus);
   const drawingError = useStore((state) => state.drawingError);
-  const canvasResetKey = useStore((state) => (
-    `${state.revision ?? 'none'}:${state.document?.geometry.length ?? 0}:${state.document?.annotations.length ?? 0}`
-  ));
-
   useEffect(() => {
     void initializeDrawing();
   }, [initializeDrawing]);
@@ -52,31 +52,31 @@ export default function Home() {
     );
   }
 
-  return <HomeWorkspace canvasResetKey={canvasResetKey} />;
+  return <HomeWorkspace />;
 }
 
-export function HomeWorkspace({ canvasResetKey }: { canvasResetKey: string }) {
+export function HomeWorkspace({ workspaceStore }: { workspaceStore?: DrawingWorkspaceStore } = {}) {
+  const websiteWorkspaceStore = useMemo(() => createDrawingWorkspaceStore({
+    port: createWebsiteDrawingWorkspacePort(useStore),
+  }), []);
+  const activeWorkspaceStore = workspaceStore ?? websiteWorkspaceStore;
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-base-900 text-slate-200" aria-label="CAD 工作区">
       <TopToolbar />
 
       <main className="flex min-h-0 flex-1 overflow-hidden">
-        {/* 左栏：实体列表 + 参数编辑 */}
-        <aside data-panel="inspector" className="hidden w-60 shrink-0 flex-col border-r border-white/[0.07] bg-base-700 lg:flex">
-          <ObjectList />
-          <ParameterEditor />
-        </aside>
+        <section
+          data-panel="drawing-workspace"
+          data-host-adapter="website"
+          className="min-w-0 flex-1"
+        >
+          <DrawingWorkspaceProvider store={activeWorkspaceStore}>
+            <DrawingWorkspace />
+          </DrawingWorkspaceProvider>
+        </section>
 
-        {/* 中栏：SVG 画布 */}
-        <CanvasErrorBoundary resetKey={canvasResetKey}>
-          <Canvas />
-        </CanvasErrorBoundary>
-
-        {/* 右栏：AI 对话 */}
         <AIDialog />
       </main>
-
-      <StatusBar />
     </div>
   );
 }

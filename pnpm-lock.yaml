@@ -11,6 +11,12 @@ importers:
       '@techstark/opencv-js':
         specifier: 5.0.0-release.1
         version: 5.0.0-release.1
+      '@vectorai/drawing-viewer-react':
+        specifier: workspace:*
+        version: link:packages/drawing-viewer-react
+      '@vectorai/drawing-workspace':
+        specifier: workspace:*
+        version: link:packages/drawing-workspace
       clsx:
         specifier: ^2.1.1
         version: 2.1.1

@@ -160,6 +160,7 @@ export interface AppState {
   decisionSubmitting: boolean;
 
   initializeDrawing: () => Promise<void>;
+  commitDrawingCommands: (commands: DrawingCommand[]) => Promise<boolean>;
   updateNode: (id: string, changes: Record<string, unknown>) => Promise<void>;
   deleteNode: (id: string) => Promise<void>;
   clearDrawing: () => Promise<void>;
@@ -267,9 +268,9 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       previewSettleTimers.add(timer);
     };
 
-    const executeCommands = async (commands: DrawingCommand[]) => {
+    const executeCommands = async (commands: DrawingCommand[]): Promise<boolean> => {
       const state = get();
-      if (!state.document || !state.revision || state.drawingBusy || commands.length === 0) return;
+      if (!state.document || !state.revision || state.drawingBusy || commands.length === 0) return false;
       set({ drawingBusy: true, drawingError: null });
       try {
         const transaction = createWorkspaceTransaction({
@@ -280,7 +281,10 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         });
         const result = await drawings.execute(state.document.id, transaction);
         const latest = get();
-        if (!latest.document || !latest.revision) return;
+        if (!latest.document || !latest.revision) {
+          set({ drawingBusy: false, drawingError: '图纸在事务提交期间已关闭' });
+          return false;
+        }
         const applied = applyWorkspaceResult({
           document: latest.document,
           revision: latest.revision,
@@ -292,8 +296,10 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           drawingError: applied.error,
           selectedIds: applied.error ? latest.selectedIds : [],
         });
+        return applied.error === null;
       } catch (error) {
         set({ drawingBusy: false, drawingError: errorMessage(error) });
+        return false;
       }
     };
 
@@ -536,6 +542,8 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         })().finally(() => { initializationPromise = null; });
         return initializationPromise;
       },
+
+      commitDrawingCommands: (commands) => executeCommands(commands),
 
       updateNode: async (id, changes) => {
         const document = get().document;
