@@ -60,6 +60,13 @@ describe('client apply', () => {
     } as unknown as Context;
 
     const dispose = await apply(ctx);
+    expect(slots.inject).toHaveBeenCalledWith(
+      'conversation.workspace',
+      expect.any(Function),
+    );
+    expect(registration).toMatchObject({ name: 'conversation.workspace' });
+    expect(registration).not.toHaveProperty('id');
+    expect(registration).not.toHaveProperty('label');
     pluginActive = false;
     const injected = registration?.inject('session-1');
     expect(injected?.workspacePort.load).toBeTypeOf('function');

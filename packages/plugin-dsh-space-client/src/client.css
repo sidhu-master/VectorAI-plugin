@@ -2,7 +2,8 @@
 
 .vai-dsh-workspace-host {
   width: 100%;
-  height: calc(100dvh - 202px);
-  min-height: 320px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }

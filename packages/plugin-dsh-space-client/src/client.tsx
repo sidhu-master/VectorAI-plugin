@@ -4,7 +4,6 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type {
   ConversationController,
-  ConvViewProps,
 } from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import {
@@ -21,12 +20,13 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import { createDshDrawingWorkspacePort } from './dsh-workspace-port';
 import { DRAWING_SPACE_REMOTE } from './remote';
+import type { DrawingWorkspaceSlotProps } from './workspace-slot';
 
 // DSH discovers entry metadata and lifecycle exports from this client module.
 // eslint-disable-next-line react-refresh/only-export-components
 export const inject = ['slots', 'remote', 'conversation'];
 
-interface DrawingConversationViewProps extends ConvViewProps {
+interface DrawingConversationViewProps extends DrawingWorkspaceSlotProps {
   workspacePort: DrawingWorkspacePort;
   releaseSources(): void;
 }
@@ -70,11 +70,8 @@ export async function apply(ctx: Context) {
       ConversationController,
       'resolveImage' | 'releaseSessionImages'
     >;
-    return slots.inject('conversation.view', () => slots.register({
-      name: 'conversation.view',
-      id: 'drawing',
-      order: 20,
-      label: () => '图纸',
+    return slots.inject('conversation.workspace', () => slots.register({
+      name: 'conversation.workspace',
       inject: (sessionId) => {
         const id = String(sessionId);
         return {
