@@ -48,6 +48,14 @@ export function Canvas() {
 
   useEffect(() => {
     const element = containerRef.current;
+    if (element === null) return;
+    const preventConversationScroll = (event: globalThis.WheelEvent) => event.preventDefault();
+    element.addEventListener('wheel', preventConversationScroll, { passive: false });
+    return () => element.removeEventListener('wheel', preventConversationScroll);
+  }, []);
+
+  useEffect(() => {
+    const element = containerRef.current;
     if (element === null || document === undefined || typeof ResizeObserver === 'undefined') return;
     const resize = () => {
       const { width, height } = element.getBoundingClientRect();
@@ -73,21 +81,25 @@ export function Canvas() {
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
+    event.stopPropagation();
     const point = eventScreenPoint(event);
-    setViewport(zoomViewportAt(viewport, point, Math.exp(-event.deltaY * 0.0015)));
+    setViewport(zoomViewportAt(viewport, point, event.deltaY < 0 ? 1.1 : 1 / 1.1));
   };
 
-  const handleBackgroundMouseDown = (event: MouseEvent<SVGRectElement>) => {
+  const handleCanvasMouseDown = (event: MouseEvent<SVGSVGElement>) => {
     const point = eventScreenPoint(event);
-    if (event.button === 1 || (event.button === 0 && spacePressed.current)) {
+    const boxSelect = event.button === 0
+      && (event.metaKey || event.ctrlKey)
+      && !spacePressed.current;
+    if (event.button === 1 || (event.button === 0 && !boxSelect)) {
       event.preventDefault();
       dragRef.current = { kind: 'pan', start: point, viewport };
       return;
     }
-    if (event.button !== 0) return;
+    if (!boxSelect) return;
     dragRef.current = {
       kind: 'box', start: point, current: point,
-      additive: event.metaKey || event.ctrlKey,
+      additive: true,
     };
     setSelectionBox({ start: point, current: point });
   };
@@ -190,6 +202,7 @@ export function Canvas() {
         height="100%"
         aria-label="图纸画布"
         onWheel={handleWheel}
+        onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={() => setMouseWorld(null)}
@@ -201,7 +214,6 @@ export function Canvas() {
           width="100%"
           height="100%"
           fill="transparent"
-          onMouseDown={handleBackgroundMouseDown}
         />
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale} ${-viewport.scale})`}>
           {display.sourceUnderlay && snapshot.source !== undefined && sourceResource !== null ? (

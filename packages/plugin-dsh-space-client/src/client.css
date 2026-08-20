@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.vai-dsh-workspace-host {
+  width: 100%;
+  height: calc(100dvh - 202px);
+  min-height: 320px;
+  overflow: hidden;
+}

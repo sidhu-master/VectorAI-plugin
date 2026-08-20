@@ -13,7 +13,7 @@ import {
   type DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
 import TestRenderer, { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { DrawingWorkspaceProvider } from '../provider';
 import { Canvas } from './Canvas';
@@ -77,7 +77,6 @@ const svgTarget = {
   tagName: 'svg',
   getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
 };
-const rectTarget = { tagName: 'rect', ownerSVGElement: svgTarget };
 const groupTarget = { tagName: 'g', ownerSVGElement: svgTarget };
 const stopPropagation = () => {};
 const preventDefault = () => {};
@@ -92,13 +91,34 @@ describe('shared Canvas interaction', () => {
       currentTarget: svgTarget,
       clientX: 500,
       clientY: 240,
-      deltaY: -200,
+      deltaY: -800,
       preventDefault,
+      stopPropagation,
     }));
 
-    expect(store.getState().viewport.scale).toBeGreaterThan(2);
+    expect(store.getState().viewport.scale).toBeCloseTo(2.2);
     expect(screenToWorld([500, 240], store.getState().viewport)[0]).toBeCloseTo(before[0]);
     expect(screenToWorld([500, 240], store.getState().viewport)[1]).toBeCloseTo(before[1]);
+    act(() => renderer.unmount());
+  });
+
+  it('consumes wheel input so the DSH conversation does not scroll', async () => {
+    const { renderer } = await renderCanvas();
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const wheelPreventDefault = vi.fn();
+    const wheelStopPropagation = vi.fn();
+
+    act(() => svg.props.onWheel({
+      currentTarget: svgTarget,
+      clientX: 500,
+      clientY: 240,
+      deltaY: 100,
+      preventDefault: wheelPreventDefault,
+      stopPropagation: wheelStopPropagation,
+    }));
+
+    expect(wheelPreventDefault).toHaveBeenCalledOnce();
+    expect(wheelStopPropagation).toHaveBeenCalledOnce();
     act(() => renderer.unmount());
   });
 
@@ -114,19 +134,19 @@ describe('shared Canvas interaction', () => {
     act(() => renderer.unmount());
   });
 
-  it('box-selects intersecting entities and clears selection with Escape', async () => {
+  it('box-selects with Ctrl+left drag and clears selection with Escape', async () => {
     const { store, renderer } = await renderCanvas();
-    const background = renderer.root.findByProps({ 'data-canvas-background': 'true' });
     const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
     const canvas = renderer.root.findByProps({ 'data-canvas-root': 'true' });
 
-    act(() => background.props.onMouseDown({
-      currentTarget: rectTarget,
+    act(() => svg.props.onMouseDown?.({
+      currentTarget: svgTarget,
+      target: svgTarget,
       clientX: 470,
       clientY: 250,
       button: 0,
       metaKey: false,
-      ctrlKey: false,
+      ctrlKey: true,
     }));
     act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 530, clientY: 190 }));
     act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 530, clientY: 190 }));
@@ -139,13 +159,35 @@ describe('shared Canvas interaction', () => {
     act(() => renderer.unmount());
   });
 
-  it('pans with the middle mouse button', async () => {
+  it('pans with plain left drag even when the drag starts on geometry', async () => {
     const { store, renderer } = await renderCanvas();
-    const background = renderer.root.findByProps({ 'data-canvas-background': 'true' });
     const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
 
-    act(() => background.props.onMouseDown({
-      currentTarget: rectTarget,
+    act(() => svg.props.onMouseDown?.({
+      currentTarget: svgTarget,
+      target: groupTarget,
+      clientX: 100,
+      clientY: 100,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      preventDefault,
+    }));
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 130, clientY: 140 }));
+    act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 130, clientY: 140 }));
+
+    expect(store.getState().viewport.x).toBe(430);
+    expect(store.getState().viewport.y).toBe(340);
+    act(() => renderer.unmount());
+  });
+
+  it('pans with the middle mouse button', async () => {
+    const { store, renderer } = await renderCanvas();
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+
+    act(() => svg.props.onMouseDown?.({
+      currentTarget: svgTarget,
+      target: svgTarget,
       clientX: 100,
       clientY: 100,
       button: 1,

@@ -12,6 +12,7 @@ import {
   DrawingWorkspaceProvider,
 } from '@vectorai/drawing-viewer-react';
 import '@vectorai/drawing-viewer-react/styles.css';
+import './client.css';
 import {
   createDrawingWorkspaceStore,
   type DrawingWorkspacePort,
@@ -50,9 +51,11 @@ export function DrawingConversationView({
   useEffect(() => releaseSources, [releaseSources]);
 
   return (
-    <DrawingWorkspaceProvider store={store}>
-      <DrawingWorkspace emptyMessage="还没有已导入的图纸" />
-    </DrawingWorkspaceProvider>
+    <div className="vai-dsh-workspace-host">
+      <DrawingWorkspaceProvider store={store}>
+        <DrawingWorkspace emptyMessage="还没有已导入的图纸" />
+      </DrawingWorkspaceProvider>
+    </div>
   );
 }
 
