@@ -4,7 +4,6 @@ import {
   createEmptyDrawing,
   previewTransaction,
   type DrawingDocument,
-  type DrawingId,
   type DrawingTransaction,
   type GeometryId,
   type RevisionId,
@@ -28,6 +27,8 @@ describe('CounterfactualWorldService', () => {
 
     const service = new CounterfactualWorldService({ handleFactory: () => 'branch_1' });
     const branch = service.create({
+      runId: 'run_1',
+      episodeId: 'episode_1',
       baseDocument: before,
       baseRevision: revision,
       preview,
@@ -57,6 +58,8 @@ describe('CounterfactualWorldService', () => {
       type: 'geometry.delete', id: 'line_deleted' as GeometryId,
     });
     const branch = new CounterfactualWorldService({ handleFactory: () => 'branch_delete' }).create({
+      runId: 'run_delete',
+      episodeId: 'episode_delete',
       baseDocument: before,
       baseRevision: revision,
       preview,
@@ -78,6 +81,7 @@ describe('CounterfactualWorldService', () => {
     const service = new CounterfactualWorldService({ handleFactory: () => 'branch_1' });
     const branch = service.create({
       runId: 'run_1',
+      episodeId: 'episode_1',
       baseDocument: before,
       baseRevision: revision,
       preview: readyPreview(before, revision, {
@@ -87,6 +91,12 @@ describe('CounterfactualWorldService', () => {
     });
 
     expect(service.get(branch.id, { revision, transactionDigest: digest })).toMatchObject({ id: branch.id });
+    expect(service.inspectScoped(branch.id, {
+      runId: 'run_1', episodeId: 'episode_1', drawingId: before.id, revision,
+    })).toMatchObject({ id: branch.id, transactionDigest: digest });
+    expect(() => service.inspectScoped(branch.id, {
+      runId: 'run_1', episodeId: 'episode_other', drawingId: before.id, revision,
+    })).toThrow(/COUNTERFACTUAL_SCOPE_MISMATCH/);
     expect(() => service.get(branch.id, {
       revision: 'revision_other' as RevisionId,
       transactionDigest: digest,

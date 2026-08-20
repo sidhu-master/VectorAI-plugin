@@ -6,9 +6,7 @@ import type { Server } from 'node:http';
 import app, { closeAppServices } from '../api/app.js';
 import type { DrawingAgentAuditEvent } from '../api/services/drawing-agent/audit-types.js';
 import { FileDrawingAgentAuditStore } from '../api/services/drawing-agent/file-audit-store.js';
-import { evaluateSemanticEditBenchmark } from '../api/services/drawing-benchmark/semantic-edit.js';
-import { materializeSpatialSplits, type SplitLineageEntry } from '../api/services/drawing-spatial/split-materializer.js';
-import type { SpatialSelection } from '../src/contracts/drawing-spatial-region.js';
+import { DrawingApplication } from '../api/services/drawing-application/application.js';
 import type { DrawingWorkspaceSnapshot } from '../src/contracts/drawing-application.js';
 import type {
   DrawingAgentProgressEvent,
@@ -16,8 +14,10 @@ import type {
 } from '../src/contracts/drawing-agent.js';
 import {
   compileDrawingScene,
+  MemoryDrawingRepository,
   type DrawingCommand,
   type DrawingDocument,
+  type GeometryId,
 } from '../src/drawing/index.js';
 
 const fixturePath = resolve(process.cwd(), process.argv[2] ?? 'test2.png');
@@ -41,7 +41,9 @@ try {
   const reconstruction = await startRun({
     drawingId,
     baseRevision: created.workspace.revision,
-    goal: '根据这张干净线稿创建完整、可编辑的 Drawing IR 图纸',
+    // Match the real image-only UI path: reconstruction is an internal interpretation,
+    // not a synthetic user message and does not require a model routing turn.
+    goal: '',
     attachment: { data: fixtureBytes.toString('base64'), mimeType: 'image/png', page: 1 },
   });
   runContext.reconstructionRunId = reconstruction.runId;
@@ -57,7 +59,11 @@ try {
   const semantic = await startRun({
     drawingId,
     baseRevision: before.revision,
-    goal: '把图中人物的右手抬起来打招呼，保持身体、头部、左手和其他图形不变，并保持手臂与身体连接',
+    goal: '把图中人物的右手抬起来打招呼',
+    stableRules: [
+      '除非用户明确要求，否则保持非目标内容、已有连接关系、轮廓连续性与原图样式不变',
+      '不得产生新的悬空端点；标注是次要派生信息，不能阻止几何编辑',
+    ],
     viewport,
   });
   runContext.semanticRunId = semantic.runId;
@@ -69,57 +75,17 @@ try {
     `/api/drawings/${encodeURIComponent(drawingId)}`,
   )).workspace;
   const audit = await readSettledAudit(semantic.runId);
-  const targetIds = [...new Set(audit.events.flatMap((event) => (
-    event.type === 'intent'
-      ? stringArray(event.payload.targetNodeIds, 'intent.targetNodeIds')
-      : []
-  )))];
   const commands = audit.commits.flatMap((commit) => commit.commands);
-  const editedNodeIds = [...new Set([
-    ...targetIds,
-    ...commands.flatMap((command) => command.type === 'geometry.create' && command.value.id
-      ? [command.value.id as string]
-      : []),
-  ])];
-  const affectedBeforeIds = new Set([
-    ...commandIds(commands, 'geometry.update'),
-    ...commandIds(commands, 'geometry.delete'),
-  ]);
-  const preservedNodeIds = allNodeIds(before.document).filter((id) => !affectedBeforeIds.has(id));
-  const selection = auditSelection(audit.events);
-  const lineage = auditLineage(audit.events);
-  const sharedPolylineNodeId = sharedSplitSource(lineage);
-  const split = materializeSpatialSplits({ document: before.document, selection });
-  const expectedProtectedFragments = Object.fromEntries(split.lineage
-    .filter((entry) => entry.role === 'protected')
-    .map((entry) => {
-      const fragment = split.fragments.find((node) => node.id === entry.fragmentId);
-      if (!fragment) throw new Error(`TEST2_EXPECTED_PROTECTED_FRAGMENT_MISSING:${entry.fragmentId}`);
-      return [entry.fragmentId, fragment];
-    }));
-  const unexpectedDanglingEndpoints = deterministicDanglingEndpoints(audit.events);
-  const report = evaluateSemanticEditBenchmark({
-    initialDocument: before.document,
-    finalDocument: final.document,
-    commits: audit.commits,
-    oldTargetNodeIds: [],
-    editedNodeIds,
-    preservedNodeIds,
-    anchors: selection.boundaryAnchors.map((anchor) => ({
-      nodeIds: editedNodeIds,
-      point: anchor.point,
-      tolerance: Math.max(1, 3 / viewport.scale),
-    })),
+  const assessment = assessSemanticEdit({
+    before: before.document,
+    after: final.document,
+    commands,
     auditEvents: audit.events,
     progressEvents: semanticEvents,
-    regionEvidence: {
-      sharedPolylineNodeId,
-      expectedProtectedFragments,
-      lineage,
-      unexpectedDanglingEndpoints,
-      closureTolerance: Math.max(1, 3 / viewport.scale),
-    },
   });
+  const imagePath = resolve(outputDirectory, 'final-preview.png');
+  await mkdir(outputDirectory, { recursive: true });
+  await renderGeometry(final.document, assessment.affectedNodeIds, imagePath);
   const artifact = {
     fixturePath,
     drawingId,
@@ -129,15 +95,13 @@ try {
     finalGeometryCount: final.document.geometry.length,
     reconstructionProgressEvents: reconstructionEvents.length,
     semanticProgressEvents: semanticEvents.length,
-    sharedPolylineNodeId,
-    lineage,
-    ...report,
+    imagePath,
+    ...assessment,
   };
-  await mkdir(outputDirectory, { recursive: true });
   const reportPath = resolve(outputDirectory, 'report.json');
   await writeFile(reportPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
   process.stdout.write(`${JSON.stringify({ reportPath, ...artifact }, null, 2)}\n`);
-  if (!report.passed) process.exitCode = 1;
+  if (!assessment.passed) process.exitCode = 1;
 } catch (error) {
   const failure = {
     ...runContext,
@@ -258,72 +222,225 @@ async function readSettledAudit(runId: string) {
   return latest;
 }
 
-function auditSelection(events: DrawingAgentAuditEvent[]): SpatialSelection {
-  const payload = events.find((event) => event.type === 'selection')?.payload;
-  if (!payload || typeof payload.selectionVersionId !== 'string'
-    || typeof payload.regionId !== 'string' || typeof payload.revision !== 'string'
-    || !Array.isArray(payload.wholeNodes) || !Array.isArray(payload.crossingNodes)
-    || !Array.isArray(payload.boundaryAnchors) || !Array.isArray(payload.splitPlan)) {
-    throw new Error('TEST2_SELECTION_AUDIT_MISSING');
-  }
+function assessSemanticEdit(input: {
+  before: DrawingDocument;
+  after: DrawingDocument;
+  commands: DrawingCommand[];
+  auditEvents: DrawingAgentAuditEvent[];
+  progressEvents: DrawingAgentProgressEvent[];
+}) {
+  const affectedNodeIds = [...new Set(input.commands.flatMap(commandNodeIds))];
+  const updatedNodeIds = [...new Set(input.commands.flatMap((command) => (
+    command.type === 'geometry.update' ? [command.id as string] : []
+  )))];
+  const beforeGeometry = new Map(input.before.geometry.map((node) => [node.id as string, node]));
+  const afterGeometry = new Map(input.after.geometry.map((node) => [node.id as string, node]));
+  const movedCircles = updatedNodeIds.flatMap((id) => {
+    const before = beforeGeometry.get(id);
+    const after = afterGeometry.get(id);
+    return before?.type === 'circle' && after?.type === 'circle'
+      ? [{ id, before, after }]
+      : [];
+  });
+  const carrier = movedCircles[0];
+  const sceneBounds = compileDrawingScene(input.before, {
+    revision: 'benchmark_before' as never,
+  }).worldBounds;
+  const drawingCenterX = sceneBounds ? (sceneBounds.minX + sceneBounds.maxX) / 2 : 0;
+  const worldDelta = carrier
+    ? [
+        carrier.after.center[0] - carrier.before.center[0],
+        carrier.after.center[1] - carrier.before.center[1],
+      ] as const
+    : null;
+  const interfaceDeviations = carrier
+    ? input.commands.flatMap((command) => endpointBoundaryDeviations(
+        command,
+        afterGeometry,
+        carrier.after.center,
+        carrier.after.radius,
+      ))
+    : [];
+  const beforeNodes = nodeSnapshotMap(input.before);
+  const afterNodes = nodeSnapshotMap(input.after);
+  const affected = new Set(affectedNodeIds);
+  const changedProtectedIds = [...beforeNodes].flatMap(([id, value]) => (
+    affected.has(id) || afterNodes.get(id) === value ? [] : [id]
+  ));
+
+  const commitActionIndex = lastIndexMatching(input.auditEvents, (event) => (
+    event.type === 'model_action' && event.payload.type === 'commit'
+  ));
+  const commitAction = commitActionIndex >= 0 ? input.auditEvents[commitActionIndex] : undefined;
+  const committedPreviewHandle = typeof commitAction?.payload.previewHandle === 'string'
+    ? commitAction.payload.previewHandle
+    : null;
+  const visualVerificationIndex = lastIndexMatching(input.auditEvents, (event) => (
+    event.type === 'verification'
+    && event.payload.phase === 'preview-final'
+    && event.payload.satisfied === true
+    && (!committedPreviewHandle || event.payload.previewHandle === committedPreviewHandle)
+  ));
+  const reviewResultIndex = lastIndexMatching(input.auditEvents, (event) => (
+    event.type === 'verification'
+    && event.payload.phase === 'preview-review-result'
+    && (!committedPreviewHandle || event.payload.previewHandle === committedPreviewHandle)
+  ));
+  const commitIndex = lastIndexMatching(input.auditEvents, (event) => event.type === 'commit');
+  const visualVerification = visualVerificationIndex >= 0
+    ? input.auditEvents[visualVerificationIndex]
+    : undefined;
+  const reviewResult = reviewResultIndex >= 0
+    ? input.auditEvents[reviewResultIndex]
+    : undefined;
+  const reviewResultHandle = typeof reviewResult?.payload.previewHandle === 'string'
+    ? reviewResult.payload.previewHandle
+    : null;
+
+  const previewProgressIndex = input.progressEvents.findIndex((event) => (
+    event.type === 'previewing' && Boolean(event.perceptionDelta)
+  ));
+  const verifyProgressIndex = input.progressEvents.findIndex((event, index) => (
+    index > previewProgressIndex && event.type === 'verifying'
+  ));
+  const committedProgressIndex = input.progressEvents.findIndex((event) => event.type === 'committed');
+  const tolerance = carrier ? Math.max(0.5, carrier.after.radius * 0.02) : 0.5;
+
+  const checks = [
+    {
+      id: 'single-analytic-carrier-selected',
+      passed: movedCircles.length === 1,
+      detail: `movedCircles=${movedCircles.map((item) => item.id).join(',') || 'none'}`,
+    },
+    {
+      id: 'world-direction-is-visual-up',
+      passed: Boolean(worldDelta && worldDelta[1] > 0),
+      detail: `worldDelta=${JSON.stringify(worldDelta)}`,
+    },
+    {
+      id: 'anatomical-right-hand-was-grounded-on-viewer-left',
+      passed: Boolean(carrier && carrier.before.center[0] < drawingCenterX),
+      detail: `carrierX=${carrier?.before.center[0] ?? 'none'}, drawingCenterX=${drawingCenterX}`,
+    },
+    {
+      id: 'moved-arm-interfaces-remain-on-hand-boundary',
+      passed: interfaceDeviations.length >= 2
+        && interfaceDeviations.every((value) => value <= tolerance),
+      detail: `deviations=${JSON.stringify(interfaceDeviations)}, tolerance=${tolerance}`,
+    },
+    {
+      id: 'non-target-drawing-nodes-unchanged',
+      passed: changedProtectedIds.length === 0,
+      detail: `unexpectedChanges=${changedProtectedIds.join(',') || 'none'}`,
+    },
+    {
+      id: 'semantic-write-is-bounded-to-updates',
+      passed: input.commands.length >= 2
+        && input.commands.length <= 6
+        && input.commands.every((command) => command.type === 'geometry.update'),
+      detail: `commands=${input.commands.map((command) => command.type).join(',')}`,
+    },
+    {
+      id: 'visual-verification-precedes-commit',
+      passed: visualVerificationIndex >= 0
+        && reviewResultIndex > visualVerificationIndex
+        && commitActionIndex > reviewResultIndex
+        && commitIndex > commitActionIndex,
+      detail: `auditIndices=${visualVerificationIndex}/${reviewResultIndex}/${commitActionIndex}/${commitIndex}`,
+    },
+    {
+      id: 'review-result-is-bound-to-committed-preview',
+      passed: Boolean(
+        reviewResultHandle
+        && reviewResultHandle === visualVerification?.payload.previewHandle
+        && reviewResultHandle === committedPreviewHandle
+        && typeof reviewResult?.payload.transactionDigest === 'string'
+        && reviewResult?.payload.revision === input.auditEvents[visualVerificationIndex]?.payload.beforeRevision,
+      ),
+      detail: `reviewed=${reviewResultHandle ?? 'none'}, committed=${committedPreviewHandle ?? 'none'}`,
+    },
+    {
+      id: 'canvas-streams-preview-before-verification-and-commit',
+      passed: previewProgressIndex >= 0
+        && verifyProgressIndex > previewProgressIndex
+        && committedProgressIndex > verifyProgressIndex,
+      detail: `progressIndices=${previewProgressIndex}/${verifyProgressIndex}/${committedProgressIndex}`,
+    },
+  ];
   return {
-    regionId: payload.regionId,
-    revision: payload.revision as SpatialSelection['revision'],
-    wholeNodes: payload.wholeNodes as SpatialSelection['wholeNodes'],
-    partialSegments: [],
-    crossingNodes: payload.crossingNodes as SpatialSelection['crossingNodes'],
-    protectedNodes: [],
-    boundaryAnchors: payload.boundaryAnchors as SpatialSelection['boundaryAnchors'],
-    classifications: [],
-    uncertainParts: [],
-    splitPlan: payload.splitPlan as SpatialSelection['splitPlan'],
+    passed: checks.every((check) => check.passed),
+    score: checks.filter((check) => check.passed).length / checks.length,
+    affectedNodeIds,
+    carrierNodeId: carrier?.id ?? null,
+    worldDelta,
+    verificationModel: typeof reviewResult?.payload.modelName === 'string'
+      ? reviewResult.payload.modelName
+      : null,
+    checks,
   };
 }
 
-function auditLineage(events: DrawingAgentAuditEvent[]): SplitLineageEntry[] {
-  const entries = events.find((event) => event.type === 'lineage')?.payload.entries;
-  if (!Array.isArray(entries)) throw new Error('TEST2_LINEAGE_AUDIT_MISSING');
-  return entries as SplitLineageEntry[];
+function commandNodeIds(command: DrawingCommand): string[] {
+  if (command.type === 'geometry.create') return [command.value.id as string];
+  return 'id' in command ? [command.id as string] : [];
 }
 
-function sharedSplitSource(lineage: SplitLineageEntry[]): string {
-  const sources = [...new Set(lineage.map((entry) => entry.sourceNodeId))];
-  const source = sources.find((id) => {
-    const entries = lineage.filter((entry) => entry.sourceNodeId === id);
-    return entries.some((entry) => entry.role === 'target')
-      && entries.some((entry) => entry.role === 'protected');
-  });
-  if (!source) throw new Error('TEST2_SHARED_POLYLINE_SPLIT_MISSING');
-  return source;
-}
-
-function deterministicDanglingEndpoints(events: DrawingAgentAuditEvent[]) {
-  const value = events.find((event) => event.type === 'verification'
-    && event.payload.phase === 'deterministic-spatial')?.payload.unexpectedDanglingEndpoints;
-  if (!Array.isArray(value)) throw new Error('TEST2_DETERMINISTIC_VERIFICATION_MISSING');
-  return value as Array<readonly [number, number]>;
-}
-
-function commandIds(commands: DrawingCommand[], type: DrawingCommand['type']): string[] {
-  return commands.flatMap((command) => command.type === type && 'id' in command
-    ? [command.id as string]
-    : []);
-}
-
-function stringArray(value: unknown, path: string): string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new Error(`TEST2_AUDIT_INVALID:${path}`);
-  }
-  return value;
-}
-
-function allNodeIds(document: DrawingDocument): string[] {
+function endpointBoundaryDeviations(
+  command: DrawingCommand,
+  geometry: ReadonlyMap<string, DrawingDocument['geometry'][number]>,
+  center: readonly [number, number],
+  radius: number,
+): number[] {
+  if (command.type !== 'geometry.update') return [];
+  const line = geometry.get(command.id as string);
+  if (line?.type !== 'line') return [];
+  const changes = asRecord(command.changes);
   return [
+    ...(changes && 'start' in changes ? [line.start] : []),
+    ...(changes && 'end' in changes ? [line.end] : []),
+  ].map((point) => Math.abs(Math.hypot(point[0] - center[0], point[1] - center[1]) - radius));
+}
+
+function nodeSnapshotMap(document: DrawingDocument): Map<string, string> {
+  return new Map([
     ...document.geometry,
     ...document.annotations,
     ...document.relations,
     ...document.features,
-  ].map((node) => node.id as string);
+  ].map((node) => [node.id as string, JSON.stringify(node)]));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function lastIndexMatching<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index])) return index;
+  }
+  return -1;
+}
+
+async function renderGeometry(
+  document: DrawingDocument,
+  selectedIds: string[],
+  outputPath: string,
+): Promise<void> {
+  const repository = new MemoryDrawingRepository();
+  await repository.create({ ...document, annotations: [] });
+  const application = new DrawingApplication({ repository });
+  const observation = await application.observeForAgent({
+    drawingId: document.id,
+    includeAnnotations: false,
+    selectedIds: selectedIds as GeometryId[],
+  });
+  const overview = observation.views.find((view) => view.purpose === 'overview')
+    ?? observation.views[0];
+  const image = application.readObservationImage(overview.image.handle);
+  if (!image) throw new Error('TEST2_FINAL_RENDER_MISSING');
+  await writeFile(outputPath, Buffer.from(image.slice(image.indexOf(',') + 1), 'base64'));
 }
 
 function viewportFor(document: DrawingDocument) {

@@ -16,7 +16,7 @@ import {
   DrawingAgentAuditPayloadError,
   FileDrawingAgentAuditStore,
 } from './file-audit-store';
-import type { DrawingAgentAuditManifest } from './audit-types';
+import type { DrawingAgentAuditEventType, DrawingAgentAuditManifest } from './audit-types';
 
 let rootDirectory: string;
 
@@ -95,6 +95,22 @@ describe('FileDrawingAgentAuditStore', () => {
     expect((await store.readRun('run_1')).events).toHaveLength(1);
   });
 
+  it('persists numeric image telemetry without treating metrics as media bodies', async () => {
+    const store = new FileDrawingAgentAuditStore({ rootDirectory });
+    await store.startRun(manifest());
+
+    await store.appendEvent(event('event_model_call', 'model_call', 4, {
+      transport: 'direct-llm', role: 'design', status: 'succeeded',
+      requestBytes: 117_945, imageCount: 1, imageBytes: 37_629,
+      imagePixels: 1_048_576, ttfbMs: 21_300, totalMs: 22_100,
+    }));
+
+    expect((await store.readRun('run_1')).events[0].payload).toMatchObject({
+      requestBytes: 117_945, imageCount: 1, imageBytes: 37_629,
+      imagePixels: 1_048_576, ttfbMs: 21_300, totalMs: 22_100,
+    });
+  });
+
   it('reports malformed audit files instead of silently skipping them', async () => {
     const store = new FileDrawingAgentAuditStore({ rootDirectory });
     await store.startRun(manifest());
@@ -149,6 +165,7 @@ function manifest(): DrawingAgentAuditManifest {
       planner: 'doubao-seed-2.0-lite',
       decision: 'doubao-seed-2.0-lite',
       repair: 'doubao-seed-2.1-turbo',
+      reviewer: 'doubao-seed-2.1-turbo',
     },
     goalSpec: null,
   };
@@ -156,7 +173,7 @@ function manifest(): DrawingAgentAuditManifest {
 
 function event(
   id: string,
-  type: 'instruction' | 'plan' | 'tool_call' | 'commit' | 'state',
+  type: DrawingAgentAuditEventType,
   timestamp: number,
   payload: Record<string, unknown>,
 ) {

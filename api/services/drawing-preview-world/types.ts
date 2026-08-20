@@ -21,6 +21,7 @@ export interface CounterfactualWorldDelta {
 export interface CounterfactualWorldBranch {
   id: string;
   runId?: string;
+  episodeId?: string;
   drawingId: DrawingId;
   baseRevision: RevisionId;
   transactionDigest: string;

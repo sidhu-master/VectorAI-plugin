@@ -50,6 +50,8 @@ export async function buildSemanticRegion(input: {
     drawingId: input.drawingId,
     revision: input.observation.revision,
     label: input.proposal.label,
+    operation: input.proposal.operation,
+    preferredEditMode: input.proposal.preferredEditMode,
     sourceViewIds: [view.id],
     maskHandle: input.mediaStore.put(scope, mask),
     worldContours,

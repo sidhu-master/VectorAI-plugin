@@ -66,11 +66,32 @@ export class WorldModelCompiler {
       geometry: document.geometry,
       topology: document.relations.filter((relation) => relation.type === 'topology'),
     });
-    const scopeDigest = digest({ revision, request });
+    const scopeDigest = digest({
+      drawingId: document.id,
+      revision,
+      compilerVersion: WORLD_MODEL_COMPILER_VERSION,
+      scope: {
+        nodeIds: request.nodeIds,
+        bounds: request.bounds,
+        curveSamples,
+        tolerance,
+      },
+    });
     const requestedIds = request.nodeIds ? new Set(request.nodeIds) : null;
     const byId = new Map(document.geometry.map((node) => [node.id as string, node]));
     const diagnostics: WorldModelDiagnostic[] = [];
     const unresolved = new Set<string>();
+    const pageOffset = parseContinuationOffset(request.continuationToken, scopeDigest);
+    const continuationInvalid = pageOffset === null;
+    if (continuationInvalid) {
+      diagnostics.push({
+        code: 'WORLD_MODEL_CONTINUATION_INVALID',
+        severity: 'warning',
+        message: 'The continuation token does not belong to this drawing revision and scope.',
+        nodeIds: [],
+        sourceSpanIds: [],
+      });
+    }
 
     if (requestedIds) {
       for (const nodeId of requestedIds) {
@@ -92,8 +113,10 @@ export class WorldModelCompiler {
       const bounds = roughGeometryBounds(node);
       return bounds ? boundsIntersect(bounds, request.bounds) : true;
     });
-    const selected = eligible.slice(0, limit);
-    for (const omitted of eligible.slice(limit)) unresolved.add(`node:${omitted.id}`);
+    const offset = continuationInvalid ? 0 : pageOffset;
+    const selected = continuationInvalid ? [] : eligible.slice(offset, offset + limit);
+    for (const omitted of eligible.slice(0, offset)) unresolved.add(`node:${omitted.id}`);
+    for (const omitted of eligible.slice(offset + limit)) unresolved.add(`node:${omitted.id}`);
 
     const drafts: SpanDraft[] = [];
     for (const node of selected) {
@@ -181,14 +204,17 @@ export class WorldModelCompiler {
       connectedEdges,
     ));
 
-    const continuationToken = unresolved.size > 0
-      ? `world:${scopeDigest.slice(7, 31)}:${selected.length}`
+    const nextOffset = offset + selected.length;
+    const continuationToken = !continuationInvalid && nextOffset < eligible.length
+      ? `world:${scopeDigest.slice(7, 31)}:${nextOffset}`
       : undefined;
-    const state: WorldModelKnowledgeStateKind = unresolved.size === 0
-      ? 'resolved'
-      : sourceSpans.length > 0
-        ? 'partial'
-        : 'unknown';
+    const state: WorldModelKnowledgeStateKind = continuationInvalid
+      ? 'stale'
+      : unresolved.size === 0
+        ? 'resolved'
+        : sourceSpans.length > 0
+          ? 'partial'
+          : 'unknown';
     const scopeBounds = request.bounds ?? unionBounds(sourceSpans.map((span) => span.bounds));
     return {
       drawingId: document.id,
@@ -216,12 +242,22 @@ export class WorldModelCompiler {
         ...(state === 'resolved' ? {} : {
           reason: state === 'partial'
             ? 'The bounded result is usable, but relevant geometry remains unresolved.'
-            : 'No finite, supported geometry was resolved for the requested scope.',
+            : state === 'stale'
+              ? 'The continuation token is stale or belongs to a different world-model scope.'
+              : 'No finite, supported geometry was resolved for the requested scope.',
         }),
       },
       ...(continuationToken ? { continuationToken } : {}),
     };
   }
+}
+
+function parseContinuationOffset(token: string | undefined, scopeDigest: string): number | null {
+  if (token === undefined) return 0;
+  const match = /^world:([a-f0-9]{24}):(\d+)$/i.exec(token);
+  if (!match || match[1] !== scopeDigest.slice(7, 31)) return null;
+  const offset = Number(match[2]);
+  return Number.isSafeInteger(offset) && offset >= 0 ? offset : null;
 }
 
 function draftsForNode(

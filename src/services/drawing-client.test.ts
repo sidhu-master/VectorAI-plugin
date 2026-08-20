@@ -89,6 +89,54 @@ describe('DrawingClient', () => {
     );
   });
 
+  it('clears a drawing through the atomic server operation', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({
+      success: true,
+      workspace,
+      stoppedRunIds: ['run_1'],
+    }, 200));
+    const client = new DrawingClient({ fetcher });
+
+    expect(await client.clear(workspace.document.id)).toEqual(workspace);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/drawings/drawing%20%2F%20one/clear',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ actor: { type: 'user', id: 'local-user' } }),
+      }),
+    );
+  });
+
+  it('imports DXF through the deterministic drawing endpoint', async () => {
+    const receipt = {
+      source: { sourceId: 'source_1', fileName: 'shaft.dxf' },
+      projection: { projectedGeometryCount: 134, projectedAnnotationCount: 0 },
+      annotation: {
+        generatedCount: 24, pendingCount: 5, conflictCount: 2, coverage: { valid: true },
+      },
+      recognition: { regions: [] },
+    };
+    const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse({
+      success: true, workspace, receipt,
+    }, 200));
+    const client = new DrawingClient({ fetcher });
+    const file = { fileName: 'shaft.dxf', data: 'MApFT0Y=', mimeType: 'application/dxf' };
+    const engineeringDocument = {
+      fileName: 'shaft.txt', data: 'W2RyYXdpbmdd', mimeType: 'text/plain',
+    };
+
+    expect(await client.importDxf(workspace.document.id, file, engineeringDocument))
+      .toEqual({ workspace, receipt });
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/drawings/drawing%20%2F%20one/imports/dxf',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ file, engineeringDocument }),
+      }),
+    );
+  });
+
   it('surfaces the server safe error message for a failed response', async () => {
     const fetcher = vi.fn(async () => jsonResponse({
       success: false,

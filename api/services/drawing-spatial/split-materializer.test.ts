@@ -8,29 +8,21 @@ import type {
 } from '../../../src/drawing/index.js';
 import { previewTransaction } from '../../../src/drawing/index.js';
 import type { SpatialSelection } from '../../../src/contracts/drawing-spatial-region.js';
-import { buildAtomicGeometryGraph } from './atomic-graph.js';
-import { polygonRegionBounds } from './polygon.js';
-import { RegionResolver } from './region-resolver.js';
 import { materializeSpatialSplits } from './split-materializer.js';
 import {
   TEST2_REVISION,
   TEST2_SHARED_POLYLINE_ID,
   TEST2_SHARED_POLYLINE_POINTS,
-  test2RightArmRegion,
   test2SharedPolylineDocument,
 } from './test2-fixture.js';
 
 describe('materializeSpatialSplits', () => {
   it('keeps test2 body on the original id and creates a target lower-arm fragment', () => {
     const document = test2SharedPolylineDocument();
-    const region = test2RightArmRegion();
-    const graph = buildAtomicGeometryGraph({
-      document, revision: TEST2_REVISION,
-      regionBounds: polygonRegionBounds(region.worldContours), padding: 2,
-    });
-    const selection = new RegionResolver().resolve({
-      document, revision: TEST2_REVISION, region, graph, tolerance: 0.01,
-    });
+    const selection = splitSelection(TEST2_SHARED_POLYLINE_ID, TEST2_REVISION, [
+      { range: [0, 3], role: 'target' },
+      { range: [3, 4], role: 'protected' },
+    ]);
 
     const result = materializeSpatialSplits({ document, selection });
     const protectedFragment = result.fragments.find((node) => node.id === TEST2_SHARED_POLYLINE_ID);

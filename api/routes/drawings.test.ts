@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DrawingApplication } from '../services/drawing-application/application';
 import { DrawingApplicationError } from '../services/drawing-application/application';
 import { DrawingRepositoryLoadError } from '../services/drawing-application/file-drawing-repository';
+import { DxfImportError } from '../services/drawing-dxf/coordinator';
 import { createDrawingsRouter } from './drawings';
 import type { RepositoryCommitResult } from '../../src/drawing';
 
@@ -92,6 +93,91 @@ describe('drawing routes', () => {
     expect(application.revert).not.toHaveBeenCalled();
   });
 
+  it('stops active drawing runs before atomically clearing the drawing', async () => {
+    const application = applicationDouble();
+    const stopActiveRuns = vi.fn(async () => ['run_active']);
+    const baseUrl = await startServer(application, stopActiveRuns);
+
+    const response = await fetch(`${baseUrl}/api/drawings/drawing_1/clear`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor: { type: 'user', id: 'local-user' } }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true, workspace, stoppedRunIds: ['run_active'],
+    });
+    expect(stopActiveRuns).toHaveBeenCalledWith('drawing_1');
+    expect(application.clear).toHaveBeenCalledWith({
+      drawingId: 'drawing_1', actor: { type: 'user', id: 'local-user' },
+    });
+    expect(stopActiveRuns.mock.invocationCallOrder[0]).toBeLessThan(
+      application.clear.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('routes a DXF and optional engineering document through the deterministic importer', async () => {
+    const application = applicationDouble();
+    const dxfImports = {
+      import: vi.fn(async () => ({
+        workspace,
+        receipt: {
+          source: { sourceId: 'source_1', fileName: 'shaft.dxf' },
+          manifest: { blockCount: 3 },
+        },
+      })),
+    };
+    const baseUrl = await startServer(application, undefined, dxfImports);
+    const file = {
+      fileName: 'shaft.dxf', data: 'MApFT0Y=', mimeType: 'application/dxf',
+    };
+    const engineeringDocument = {
+      fileName: 'shaft.txt', data: 'W2RyYXdpbmdd', mimeType: 'text/plain',
+    };
+
+    const response = await fetch(`${baseUrl}/api/drawings/drawing_path/imports/dxf`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, engineeringDocument }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      success: true,
+      workspace,
+      receipt: { source: { sourceId: 'source_1', fileName: 'shaft.dxf' } },
+    });
+    expect(dxfImports.import).toHaveBeenCalledWith({
+      drawingId: 'drawing_path', ...file, engineeringDocument,
+    });
+  });
+
+  it('validates DXF envelopes and maps deterministic import failures', async () => {
+    const application = applicationDouble();
+    const dxfImports = {
+      import: vi.fn()
+        .mockRejectedValue(new DxfImportError('DXF_PARSE_FAILED', 'DXF 解析失败')),
+    };
+    const baseUrl = await startServer(application, undefined, dxfImports);
+
+    const invalidResponse = await fetch(`${baseUrl}/api/drawings/drawing_1/imports/dxf`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: { fileName: 'bad.dxf' } }),
+    });
+    const failedResponse = await fetch(`${baseUrl}/api/drawings/drawing_1/imports/dxf`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file: { fileName: 'bad.dxf', data: 'MA==', mimeType: 'application/dxf' },
+      }),
+    });
+
+    expect(invalidResponse.status).toBe(400);
+    expect(failedResponse.status).toBe(400);
+    expect(await failedResponse.json()).toEqual({
+      success: false,
+      error: { code: 'DXF_PARSE_FAILED', message: 'DXF 解析失败' },
+    });
+  });
+
   it('maps missing drawings and corrupt local state to safe status codes', async () => {
     const application = applicationDouble();
     application.open
@@ -138,13 +224,25 @@ function applicationDouble() {
       void input;
       return { status: 'already_satisfied', outcome: { satisfied: true, assertions: [] } };
     }),
+    clear: vi.fn(async (input: unknown) => {
+      void input;
+      return workspace;
+    }),
   };
 }
 
-async function startServer(application: ReturnType<typeof applicationDouble>): Promise<string> {
+async function startServer(
+  application: ReturnType<typeof applicationDouble>,
+  stopActiveRuns?: (drawingId: string) => Promise<string[]>,
+  dxfImports?: { import(input: unknown): Promise<unknown> },
+): Promise<string> {
   const app = express();
   app.use(express.json());
-  app.use('/api/drawings', createDrawingsRouter(application as unknown as DrawingApplication));
+  app.use('/api/drawings', createDrawingsRouter(
+    application as unknown as DrawingApplication,
+    stopActiveRuns ? { stopActiveRuns } : undefined,
+    dxfImports as never,
+  ));
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });

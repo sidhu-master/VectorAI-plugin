@@ -7,6 +7,7 @@ import type {
 } from '../document/types';
 import type { DrawingError } from '../transaction/types';
 import {
+  clearRepositoryState,
   commitRepositoryState,
   createRepositoryState,
   revertRepositoryState,
@@ -51,6 +52,13 @@ export class MemoryDrawingRepository implements DrawingRepository {
     return { document: clone(stored.document), revision: stored.revision };
   }
 
+  getCurrentCheckpoint(drawingId: DrawingId): Promise<{
+    document: DrawingDocument;
+    revision: RevisionId;
+  }> {
+    return this.getCurrent(drawingId);
+  }
+
   async commit(transaction: Parameters<DrawingRepository['commit']>[0]): Promise<RepositoryCommitResult> {
     const drawingId = this.#revisionOwners.get(transaction.baseRevision);
     if (!drawingId) {
@@ -83,6 +91,22 @@ export class MemoryDrawingRepository implements DrawingRepository {
       });
     }
     const transition = revertRepositoryState(stored, input, {
+      idFactory: this.#idFactory,
+      now: this.#now,
+    });
+    if (transition.result.status !== 'committed') return clone(transition.result);
+    this.#drawings.set(input.drawingId, clone(transition.state));
+    this.#revisionOwners.set(transition.result.revision, input.drawingId);
+    return clone(transition.result);
+  }
+
+  async clear(input: Parameters<DrawingRepository['clear']>[0]): Promise<RepositoryCommitResult> {
+    const stored = this.#drawings.get(input.drawingId);
+    if (!stored) return rejected({
+      code: 'DRAWING_NOT_FOUND', stage: 'revision', retryable: false, nodeIds: [],
+      message: `图纸 ${input.drawingId} 不存在`, suggestedAction: 'pause',
+    });
+    const transition = clearRepositoryState(stored, input, {
       idFactory: this.#idFactory,
       now: this.#now,
     });

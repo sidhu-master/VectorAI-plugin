@@ -46,6 +46,7 @@ export interface RenderGroundingSnapshotInput {
   selectedIds?: string[];
   maxDimension?: number;
   background?: readonly [number, number, number];
+  strokeColor?: readonly [number, number, number];
 }
 
 export async function renderGroundingSnapshot(
@@ -78,7 +79,10 @@ export async function renderGroundingSnapshot(
     height,
     worldToImage,
     background: [...(input.background ?? [13, 16, 20]), 255] as const,
-    colorForPrimitive: (primitive) => [...palette.get(primitive.nodeId)!, 255] as const,
+    colorForPrimitive: (primitive) => [
+      ...(input.strokeColor ?? palette.get(primitive.nodeId)!),
+      255,
+    ] as const,
     strokeWidthPixels: (primitive) => selected.has(primitive.nodeId) ? 2 : 1,
   });
   const visibleNodeIds = nodeIds.filter((nodeId) => raster.nodeBounds.has(nodeId));

@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1920, height=1080">
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "PingFang SC";
+        src: local("PingFang SC");
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      body {
+        font-family: "PingFang SC", sans-serif;
+        color: #d8dee7;
+      }
+
+      code,
+      pre,
+      .monospace {
+        font-family: "JetBrains Mono", monospace;
+      }
+
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      .scene-content {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        padding: 92px 126px;
+        gap: 28px;
+        box-sizing: border-box;
+      }
+
+      .eyebrow {
+        position: absolute;
+        left: 128px;
+        top: 88px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        letter-spacing: 0.15em;
+        color: #8dbddd;
+      }
+
+      .eyebrow-rule {
+        width: 86px;
+        height: 2px;
+        background: #6da9d2;
+        transform-origin: left center;
+      }
+
+      .logic-title {
+        position: absolute;
+        left: 126px;
+        top: 142px;
+        font-size: 70px;
+        line-height: 1.08;
+        letter-spacing: -0.04em;
+        font-weight: 900;
+        color: #d8dee7;
+        text-shadow: 0 3px 20px rgba(9, 11, 14, 0.78);
+      }
+
+      .logic-title .different {
+        color: #ef6a6a;
+      }
+
+      .panel {
+        background: rgba(9, 11, 14, 0.88);
+        border: 1px solid rgba(109, 169, 210, 0.54);
+        box-shadow: 0 18px 60px rgba(9, 11, 14, 0.28);
+        backdrop-filter: blur(14px);
+      }
+
+      #pixel-scene {
+        position: absolute;
+        left: 126px;
+        bottom: 110px;
+        width: 1668px;
+        height: 590px;
+        display: grid;
+        grid-template-columns: 0.88fr 1.12fr;
+        gap: 28px;
+      }
+
+      .pixel-copy {
+        border-radius: 24px;
+        padding: 54px 56px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+
+      .section-tag {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        letter-spacing: 0.11em;
+        color: #ef6a6a;
+      }
+
+      .pixel-copy h2 {
+        max-width: 540px;
+        font-size: 68px;
+        line-height: 1.1;
+        letter-spacing: -0.04em;
+        font-weight: 900;
+        color: #d8dee7;
+      }
+
+      .pixel-copy p {
+        max-width: 550px;
+        font-size: 28px;
+        line-height: 1.55;
+        font-weight: 350;
+        color: #b9c6d1;
+      }
+
+      .pixel-board {
+        position: relative;
+        border-radius: 24px;
+        padding: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .pixel-board::before {
+        content: "PIXEL OUTPUT";
+        position: absolute;
+        right: 28px;
+        top: 24px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        letter-spacing: 0.12em;
+        color: #7893a6;
+      }
+
+      .pixel-grid {
+        display: grid;
+        grid-template-columns: repeat(12, 30px);
+        grid-template-rows: repeat(8, 30px);
+        gap: 5px;
+        transform: rotate(-2deg);
+      }
+
+      .pixel-cell {
+        width: 30px;
+        height: 30px;
+        border-radius: 3px;
+        background: rgba(120, 147, 166, 0.16);
+        border: 1px solid rgba(120, 147, 166, 0.2);
+        will-change: transform, opacity;
+      }
+
+      .pixel-cell.hot {
+        background: #ef6a6a;
+        border-color: #ef6a6a;
+        box-shadow: 0 0 14px rgba(239, 106, 106, 0.35);
+      }
+
+      #not-equal {
+        position: absolute;
+        left: 560px;
+        top: 430px;
+        display: flex;
+        align-items: center;
+        gap: 34px;
+        padding: 30px 46px;
+        border-radius: 999px;
+        background: rgba(9, 11, 14, 0.92);
+        border: 1px solid rgba(239, 106, 106, 0.58);
+        box-shadow: 0 18px 56px rgba(9, 11, 14, 0.38);
+      }
+
+      #not-equal strong {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 86px;
+        line-height: 1;
+        color: #ef6a6a;
+      }
+
+      #not-equal span {
+        font-size: 30px;
+        font-weight: 700;
+        color: #d8dee7;
+      }
+
+      #vector-scene {
+        position: absolute;
+        inset: 0;
+      }
+
+      #not-equal,
+      #vector-scene,
+      #final-lockup {
+        opacity: 0;
+        visibility: hidden;
+      }
+
+      .prompt-pill {
+        position: absolute;
+        left: 126px;
+        top: 116px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 20px 28px;
+        border-radius: 999px;
+        background: rgba(9, 11, 14, 0.9);
+        border: 1px solid #6da9d2;
+        box-shadow: 0 0 34px rgba(109, 169, 210, 0.16);
+        font-size: 30px;
+        font-weight: 700;
+      }
+
+      .prompt-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #8dbddd;
+        box-shadow: 0 0 0 8px rgba(141, 189, 221, 0.12);
+      }
+
+      .pipeline {
+        position: absolute;
+        left: 126px;
+        right: 126px;
+        top: 252px;
+        height: 154px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 64px;
+      }
+
+      .stage {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 10px;
+        padding: 28px 32px;
+        border-radius: 18px;
+        background: rgba(9, 11, 14, 0.89);
+        border: 1px solid rgba(109, 169, 210, 0.5);
+        box-shadow: 0 12px 38px rgba(9, 11, 14, 0.24);
+      }
+
+      .stage:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        left: calc(100% + 1px);
+        top: 50%;
+        width: 64px;
+        height: 2px;
+        background: #6da9d2;
+        transform-origin: left center;
+        transform: scaleX(var(--connector-scale, 1));
+      }
+
+      .stage-index {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 17px;
+        letter-spacing: 0.1em;
+        color: #8dbddd;
+      }
+
+      .stage-name {
+        font-size: 34px;
+        font-weight: 800;
+        color: #d8dee7;
+      }
+
+      .stage-state {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        color: #9aafbd;
+      }
+
+      .vector-panel {
+        position: absolute;
+        left: 126px;
+        right: 126px;
+        bottom: 86px;
+        height: 520px;
+        border-radius: 24px;
+        overflow: hidden;
+      }
+
+      .vector-panel-header {
+        position: absolute;
+        left: 34px;
+        right: 34px;
+        top: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        z-index: 2;
+      }
+
+      .vector-panel-header strong {
+        font-size: 26px;
+        font-weight: 800;
+      }
+
+      .vector-panel-header span {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 16px;
+        color: #8dbddd;
+      }
+
+      .vector-canvas {
+        width: 100%;
+        height: 100%;
+      }
+
+      .grid-line {
+        stroke: rgba(120, 147, 166, 0.16);
+        stroke-width: 1;
+      }
+
+      .axis-line {
+        stroke: rgba(120, 147, 166, 0.42);
+        stroke-width: 2;
+        stroke-dasharray: 8 10;
+      }
+
+      .arm-line {
+        stroke: #d8dee7;
+        stroke-width: 8;
+        stroke-linecap: round;
+      }
+
+      .arm-node {
+        fill: #090b0e;
+        stroke: #8dbddd;
+        stroke-width: 5;
+      }
+
+      .guide-line {
+        stroke: #ef6a6a;
+        stroke-width: 3;
+        stroke-dasharray: 9 9;
+      }
+
+      .measure-line {
+        stroke: #6da9d2;
+        stroke-width: 3;
+        stroke-dasharray: 7 7;
+      }
+
+      .svg-label {
+        fill: #8dbddd;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+      }
+
+      #final-lockup {
+        position: absolute;
+        left: 126px;
+        right: 126px;
+        bottom: 82px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 34px 42px;
+        border-radius: 22px;
+        background: rgba(9, 11, 14, 0.92);
+        border: 1px solid #6da9d2;
+        box-shadow: 0 20px 70px rgba(9, 11, 14, 0.35);
+      }
+
+      #final-lockup strong {
+        font-size: 48px;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+      }
+
+      #final-lockup span {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 20px;
+        color: #8dbddd;
+      }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-3x1a" id="root" data-composition-id="main" data-start="0" data-duration="26" data-width="1920" data-height="1080">
+      <div data-hf-id="hf-cn5c" class="scene-content">
+        <div data-hf-id="hf-bfqg" id="opening-label" class="eyebrow">
+          <span data-hf-id="hf-6bbd" class="eyebrow-rule"></span>
+          <span data-hf-id="hf-r7ve">VECTORAI / LOGIC 01</span>
+        </div>
+        <h1 data-hf-id="hf-kadw" id="opening-title" class="logic-title">它和 AI 生图，<span data-hf-id="hf-5qhv" class="different">不是同一种逻辑</span></h1>
+
+        <section data-hf-id="hf-t5nw" id="pixel-scene">
+          <div data-hf-id="hf-7xz4" class="pixel-copy panel">
+            <div data-hf-id="hf-tsu5" class="section-tag">GENERATIVE IMAGE</div>
+            <h2 data-hf-id="hf-wwf0">提示词进入模型，直接得到像素结果</h2>
+            <p data-hf-id="hf-kiw5">输出是一张新的图片，画面中的结构并不是可独立编辑的矢量对象。</p>
+          </div>
+          <div data-hf-id="hf-n10d" class="pixel-board panel">
+            <div data-hf-id="hf-qt3i" id="pixel-grid" class="pixel-grid" aria-label="像素图生成示意"></div>
+          </div>
+        </section>
+
+        <div data-hf-id="hf-wryf" id="not-equal">
+          <strong data-hf-id="hf-sr1a">≠</strong>
+          <span data-hf-id="hf-80t9">维构 AI 不是重新生成一张图</span>
+        </div>
+
+        <section data-hf-id="hf-wl3j" id="vector-scene">
+          <div data-hf-id="hf-daju" class="prompt-pill">
+            <span data-hf-id="hf-rugt" class="prompt-dot"></span>
+            <span data-hf-id="hf-zkqi">“把右手抬起来”</span>
+          </div>
+
+          <div data-hf-id="hf-vcte" class="pipeline">
+            <div data-hf-id="hf-z4x3" class="stage" id="stage-semantic">
+              <span data-hf-id="hf-410k" class="stage-index">01 / REASON</span>
+              <span data-hf-id="hf-ghin" class="stage-name">语义推理</span>
+              <span data-hf-id="hf-3wth" class="stage-state">TARGET: RIGHT_ARM</span>
+            </div>
+            <div data-hf-id="hf-hi6v" class="stage" id="stage-geometry">
+              <span data-hf-id="hf-btcb" class="stage-index">02 / MAP</span>
+              <span data-hf-id="hf-f4b4" class="stage-name">图元映射</span>
+              <span data-hf-id="hf-yh3u" class="stage-state">4 NODES RESOLVED</span>
+            </div>
+            <div data-hf-id="hf-7vu5" class="stage" id="stage-spatial">
+              <span data-hf-id="hf-csr9" class="stage-index">03 / SOLVE</span>
+              <span data-hf-id="hf-ta5l" class="stage-name">空间计算</span>
+              <span data-hf-id="hf-fsq7" class="stage-state">ΔX + ΔY</span>
+            </div>
+            <div data-hf-id="hf-bhjz" class="stage" id="stage-connect">
+              <span data-hf-id="hf-7bf5" class="stage-index">04 / CONNECT</span>
+              <span data-hf-id="hf-2ch9" class="stage-name">连接求解</span>
+              <span data-hf-id="hf-h90p" class="stage-state">ENDPOINTS LOCKED</span>
+            </div>
+          </div>
+
+          <div data-hf-id="hf-0smu" class="vector-panel panel">
+            <div data-hf-id="hf-eb46" class="vector-panel-header">
+              <strong data-hf-id="hf-yrgn">真实矢量图元 · 空间求解预览</strong>
+              <span data-hf-id="hf-r9nq">FRAME: DRAWING_WORLD / UNIT: MM</span>
+            </div>
+            <svg data-hf-id="hf-gs7d" class="vector-canvas" viewBox="0 0 1668 520" role="img" aria-label="矢量手臂节点完成空间变换并保持连接">
+              <g data-hf-id="hf-arij" id="grid" />
+              <line data-hf-id="hf-kd2l" class="axis-line" x1="70" y1="430" x2="1590" y2="430" />
+              <line data-hf-id="hf-mpow" class="axis-line" x1="230" y1="88" x2="230" y2="470" />
+
+              <g data-hf-id="hf-kigp" id="body-context">
+                <path data-hf-id="hf-nk4d" d="M420 430 C450 340 510 276 610 250 C690 230 760 242 824 274" fill="none" stroke="rgba(120,147,166,.42)" stroke-width="8" stroke-linecap="round" />
+                <circle data-hf-id="hf-9cnu" cx="538" cy="182" r="76" fill="none" stroke="rgba(120,147,166,.42)" stroke-width="8" />
+              </g>
+
+              <line data-hf-id="hf-9m75" id="arm-1" class="arm-line" x1="824" y1="274" x2="1010" y2="330" />
+              <line data-hf-id="hf-wpvu" id="arm-2" class="arm-line" x1="1010" y1="330" x2="1188" y2="382" />
+              <line data-hf-id="hf-n80z" id="arm-3" class="arm-line" x1="1188" y1="382" x2="1304" y2="400" />
+
+              <line data-hf-id="hf-f25w" id="guide-original" class="guide-line" x1="1010" y1="330" x2="1304" y2="400" />
+              <line data-hf-id="hf-yw6b" id="measure-x" class="measure-line" x1="1010" y1="330" x2="1188" y2="330" />
+              <line data-hf-id="hf-tcfr" id="measure-y" class="measure-line" x1="1188" y1="330" x2="1188" y2="382" />
+
+              <circle data-hf-id="hf-cb77" id="node-shoulder" class="arm-node" cx="824" cy="274" r="10" />
+              <circle data-hf-id="hf-lnz3" id="node-elbow" class="arm-node" cx="1010" cy="330" r="10" />
+              <circle data-hf-id="hf-eg80" id="node-wrist" class="arm-node" cx="1188" cy="382" r="10" />
+              <circle data-hf-id="hf-0mkb" id="node-hand" class="arm-node" cx="1304" cy="400" r="10" />
+
+              <text data-hf-id="hf-vp7n" id="coord-elbow" class="svg-label" x="1034" y="316">E (1010, 330)</text>
+              <text data-hf-id="hf-idhm" id="coord-wrist" class="svg-label" x="1214" y="372">W (1188, 382)</text>
+              <text data-hf-id="hf-o65q" id="locked-label" class="svg-label" x="1340" y="390">CONNECTED</text>
+            </svg>
+          </div>
+        </section>
+
+        <div data-hf-id="hf-hdoe" id="final-lockup">
+          <strong data-hf-id="hf-2xt7">语义理解 → 可执行的矢量修改</strong>
+          <span data-hf-id="hf-0750">EDITABLE / REVERSIBLE / DETERMINISTIC</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const hotCells = new Set([
+        8, 9, 10, 19, 20, 21, 30, 31, 32, 42, 43, 44,
+        53, 54, 55, 64, 65, 66, 75, 76, 77, 86, 87, 88,
+      ]);
+      const pixelGrid = document.querySelector("#pixel-grid");
+      for (let index = 0; index < 96; index += 1) {
+        const cell = document.createElement("span");
+        cell.className = hotCells.has(index) ? "pixel-cell hot" : "pixel-cell";
+        pixelGrid.appendChild(cell);
+      }
+
+      const svgGrid = document.querySelector("#grid");
+      for (let x = 70; x <= 1590; x += 80) {
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", String(x));
+        line.setAttribute("y1", "80");
+        line.setAttribute("x2", String(x));
+        line.setAttribute("y2", "470");
+        line.setAttribute("class", "grid-line");
+        svgGrid.appendChild(line);
+      }
+      for (let y = 110; y <= 430; y += 80) {
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", "70");
+        line.setAttribute("y1", String(y));
+        line.setAttribute("x2", "1590");
+        line.setAttribute("y2", String(y));
+        line.setAttribute("class", "grid-line");
+        svgGrid.appendChild(line);
+      }
+
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({
+        paused: true,
+        defaults: { duration: 0.5, ease: "power3.out" },
+      });
+
+      tl.from("#opening-label", { x: -48, autoAlpha: 0, duration: 0.48, ease: "expo.out" }, 0.2);
+      tl.from(".eyebrow-rule", { scaleX: 0, duration: 0.62, ease: "power4.out" }, 0.25);
+      tl.from("#opening-title", { y: 48, autoAlpha: 0, duration: 0.72, ease: "power3.out" }, 0.42);
+
+      tl.from(".pixel-copy", { x: -80, autoAlpha: 0, duration: 0.72, ease: "expo.out" }, 1.4);
+      tl.from(".pixel-board", { scale: 0.94, autoAlpha: 0, duration: 0.62, ease: "back.out(1.2)" }, 1.58);
+      tl.from(".section-tag", { x: -26, autoAlpha: 0, duration: 0.52, ease: "sine.out" }, 1.72);
+      tl.from(".pixel-copy h2", { y: 34, autoAlpha: 0, duration: 0.62, ease: "power4.out" }, 1.88);
+      tl.from(".pixel-copy p", { x: 30, autoAlpha: 0, duration: 0.45, ease: "circ.out" }, 2.12);
+      tl.from(".pixel-cell", {
+        scale: 0,
+        autoAlpha: 0,
+        rotation: -12,
+        duration: 0.24,
+        stagger: { each: 0.018, from: "center" },
+        ease: "back.out(1.6)",
+      }, 2.0);
+      tl.to(".pixel-cell.hot", { scale: 1.12, duration: 0.32, stagger: 0.018, ease: "power2.inOut" }, 4.4);
+      tl.to(".pixel-cell.hot", { scale: 1, duration: 0.28, stagger: 0.014, ease: "sine.inOut", overwrite: "auto" }, 4.74);
+
+      tl.to(["#opening-label", "#opening-title", "#pixel-scene"], {
+        x: -120,
+        autoAlpha: 0,
+        duration: 0.42,
+        ease: "power3.in",
+      }, 6.15);
+      tl.fromTo(
+        "#not-equal",
+        { scale: 0.76, rotation: -3, autoAlpha: 0 },
+        { scale: 1, rotation: 0, autoAlpha: 1, duration: 0.56, ease: "back.out(1.8)" },
+        6.55,
+      );
+      tl.from("#not-equal span", { x: 36, autoAlpha: 0, duration: 0.42, ease: "expo.out" }, 6.8);
+      tl.to("#not-equal strong", { scale: 1.14, duration: 0.26, ease: "power2.inOut" }, 7.5);
+      tl.to("#not-equal strong", { scale: 1, duration: 0.22, ease: "sine.inOut" }, 7.76);
+      tl.to("#not-equal", { y: -30, autoAlpha: 0, duration: 0.38, ease: "power3.in" }, 8.35);
+
+      tl.set("#vector-scene", { autoAlpha: 1 }, 8.58);
+      tl.from(".prompt-pill", { x: -70, autoAlpha: 0, duration: 0.62, ease: "expo.out" }, 8.62);
+      tl.from(".prompt-dot", { scale: 0, duration: 0.42, ease: "back.out(2)" }, 8.82);
+      tl.to(".prompt-dot", { scale: 1.35, duration: 0.26, ease: "power2.inOut" }, 9.42);
+      tl.to(".prompt-dot", { scale: 1, duration: 0.28, ease: "sine.inOut" }, 9.68);
+
+      tl.from("#stage-semantic", { y: 48, autoAlpha: 0, duration: 0.56, ease: "power4.out" }, 9.5);
+      tl.from("#stage-geometry", { x: -50, autoAlpha: 0, duration: 0.48, ease: "circ.out" }, 10.45);
+      tl.from("#stage-spatial", { scale: 0.88, autoAlpha: 0, duration: 0.52, ease: "back.out(1.4)" }, 11.45);
+      tl.from("#stage-connect", { x: 56, autoAlpha: 0, duration: 0.5, ease: "expo.out" }, 12.45);
+      tl.from(".stage:not(:last-child)", { "--connector-scale": 0, duration: 0.4, stagger: 0.9 }, 10.05);
+      tl.to("#stage-semantic", { borderColor: "#8dbddd", duration: 0.24, ease: "power2.inOut" }, 10.06);
+      tl.to("#stage-geometry", { borderColor: "#8dbddd", duration: 0.24, ease: "power2.inOut" }, 11.03);
+      tl.to("#stage-spatial", { borderColor: "#8dbddd", duration: 0.24, ease: "power2.inOut" }, 12.03);
+      tl.to("#stage-connect", { borderColor: "#8dbddd", duration: 0.24, ease: "power2.inOut" }, 13.02);
+
+      tl.from(".vector-panel", { y: 74, autoAlpha: 0, duration: 0.7, ease: "power4.out" }, 13.25);
+      tl.from(".vector-panel-header strong", { x: -34, autoAlpha: 0, duration: 0.42, ease: "expo.out" }, 13.55);
+      tl.from(".vector-panel-header span", { x: 34, autoAlpha: 0, duration: 0.38, ease: "circ.out" }, 13.68);
+      tl.from("#grid .grid-line", { autoAlpha: 0, duration: 0.26, stagger: 0.018, ease: "none" }, 13.72);
+      tl.from(".axis-line", { strokeDashoffset: 60, autoAlpha: 0, duration: 0.48, stagger: 0.12, ease: "power2.out" }, 14.05);
+      tl.from("#body-context", { autoAlpha: 0, duration: 0.44, ease: "sine.out" }, 14.25);
+      tl.from(".arm-line", { strokeDasharray: 420, strokeDashoffset: 420, duration: 0.72, stagger: 0.14, ease: "power2.out" }, 14.4);
+      tl.from(".arm-node", { scale: 0, transformOrigin: "center", duration: 0.36, stagger: 0.12, ease: "back.out(1.8)" }, 14.72);
+      tl.from(["#guide-original", "#measure-x", "#measure-y"], { autoAlpha: 0, strokeDashoffset: 42, duration: 0.38, stagger: 0.16, ease: "power1.out" }, 15.15);
+      tl.from(["#coord-elbow", "#coord-wrist", "#locked-label"], { y: 16, autoAlpha: 0, duration: 0.34, stagger: 0.14, ease: "power3.out" }, 15.42);
+
+      tl.to("#arm-1", { attr: { x2: 1000, y2: 232 }, duration: 1.0, ease: "power3.inOut" }, 17.0);
+      tl.to("#node-elbow", { attr: { cx: 1000, cy: 232 }, duration: 1.0, ease: "power3.inOut" }, 17.0);
+      tl.to("#arm-2", { attr: { x1: 1000, y1: 232, x2: 1156, y2: 142 }, duration: 1.12, ease: "power3.inOut" }, 17.0);
+      tl.to("#node-wrist", { attr: { cx: 1156, cy: 142 }, duration: 1.12, ease: "power3.inOut" }, 17.0);
+      tl.to("#arm-3", { attr: { x1: 1156, y1: 142, x2: 1272, y2: 112 }, duration: 1.2, ease: "power3.inOut" }, 17.0);
+      tl.to("#node-hand", { attr: { cx: 1272, cy: 112 }, duration: 1.2, ease: "power3.inOut" }, 17.0);
+      tl.to("#coord-elbow", { attr: { x: 1022, y: 216 }, duration: 1.0, ease: "power3.inOut" }, 17.0);
+      tl.to("#coord-wrist", { attr: { x: 1182, y: 136 }, duration: 1.12, ease: "power3.inOut" }, 17.0);
+      tl.to("#locked-label", { attr: { x: 1302, y: 106 }, duration: 1.2, ease: "power3.inOut" }, 17.0);
+      tl.to("#stage-spatial", { boxShadow: "0 0 34px rgba(109,169,210,.34)", duration: 0.34, ease: "power2.inOut" }, 17.15);
+      tl.to("#stage-connect", { boxShadow: "0 0 34px rgba(109,169,210,.34)", duration: 0.34, ease: "power2.inOut" }, 18.0);
+      tl.to("#guide-original", { autoAlpha: 0.34, duration: 0.3, ease: "sine.inOut" }, 18.2);
+      tl.to("#node-hand", { scale: 1.5, transformOrigin: "center", duration: 0.25, ease: "power2.inOut" }, 18.32);
+      tl.to("#node-hand", { scale: 1, duration: 0.32, ease: "back.out(1.5)" }, 18.57);
+
+      tl.to([".prompt-pill", ".pipeline"], { y: -24, autoAlpha: 0, duration: 0.38, ease: "power3.in" }, 21.0);
+      tl.to(".vector-panel", { y: 24, scale: 0.98, autoAlpha: 0, duration: 0.46, ease: "power3.in" }, 21.08);
+      tl.fromTo(
+        "#final-lockup",
+        { y: 50, scale: 0.96, autoAlpha: 0 },
+        { y: 0, scale: 1, autoAlpha: 1, duration: 0.62, ease: "back.out(1.2)" },
+        21.56,
+      );
+      tl.from("#final-lockup strong", { x: -38, autoAlpha: 0, duration: 0.46, ease: "expo.out" }, 21.8);
+      tl.from("#final-lockup span", { x: 38, autoAlpha: 0, duration: 0.42, ease: "circ.out" }, 21.96);
+      tl.to("#final-lockup", { autoAlpha: 0, y: -18, duration: 0.52, ease: "power3.in" }, 25.2);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

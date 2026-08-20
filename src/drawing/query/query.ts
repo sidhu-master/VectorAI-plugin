@@ -129,9 +129,13 @@ function summarize(item: LocatedNode): string {
   if (item.plane === 'geometry') return summarizeGeometry(node as GeometryNode);
   if (item.plane === 'annotation') {
     const annotation = node as AnnotationNode;
-    return annotation.type === 'text'
-      ? `text "${annotation.content}" at=[${annotation.position.join(',')}]`
-      : `dimension ${annotation.dimensionKind} targets=${annotation.targets.length}`;
+    switch (annotation.type) {
+      case 'text': return `text "${annotation.content}" at=[${annotation.position.join(',')}]`;
+      case 'dimension': return `dimension ${annotation.dimensionKind} targets=${annotation.targets.length}`;
+      case 'leader': return `leader "${annotation.content}" target=${annotation.target.geometryId}`;
+      case 'centerline': return `centerline targets=${annotation.targets.length}`;
+      case 'section-hatch': return `section-hatch ${annotation.pattern} segments=${annotation.segments.length}`;
+    }
   }
   if (item.plane === 'feature') {
     const feature = node as SemanticFeature;

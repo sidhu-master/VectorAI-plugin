@@ -166,8 +166,15 @@ function regionOverlay(previewVersionId: string, x: number): SpatialRegionPrevie
     id: `region_${previewVersionId}`,
     revision: 'revision_1' as import('@/drawing').RevisionId,
     previewVersionId,
+    attempt: 1,
+    status: 'proposed',
     label: '右臂', contours: [[[x, 0], [x + 10, 0], [x + 10, 10]]], holes: [],
-    anchors: [{ id: 'anchor', role: 'shoulder', point: [x, 0] as const, confidence: 1 }],
+    anchors: [{
+      id: 'anchor', role: 'boundary', point: [x, 0] as const, confidence: 1,
+      snapStatus: 'pending',
+    }],
+    paths: [],
+    issues: [],
     confidence: 0.9,
   };
 }

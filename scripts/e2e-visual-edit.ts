@@ -222,7 +222,10 @@ async function main() {
     drawingId: workspace.document.id,
     baseRevision: workspace.revision,
     goal: '将图中人物的右手修改为向上打招呼的姿势',
-    modelProfile: { planner: 'lite-model', decision: 'lite-model', repair: 'repair-model' },
+    modelProfile: {
+      planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
+      reviewer: 'review-model',
+    },
     viewport: { scale: 1, offsetX: 0, offsetY: 580, width: 500, height: 600 },
   });
   const final = await run.completion;

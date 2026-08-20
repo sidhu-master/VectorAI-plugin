@@ -128,7 +128,6 @@ describe('repository state transitions', () => {
         evidenceRefs: ['evidence_1' as EvidenceId],
       }],
       decisionGrantRefs: ['grant_1'],
-      diagnosticAcknowledgements: ['diagnostic_1'],
     };
     transaction.metadata = metadata;
     const expectedMetadata = structuredClone(metadata);

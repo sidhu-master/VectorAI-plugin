@@ -34,6 +34,14 @@ tmp/
 test1.jpg
 test2.png
 
+# Local debugging and agent scratch state
+.probe-*
+.superpowers/
+
+# Reproducible HyperFrames preview/render artifacts
+video-assets/hyperframes/*/.thumbnails/
+video-assets/hyperframes/*/renders/
+
 # Python-generated caches
 __pycache__/
 *.py[cod]

@@ -7,7 +7,7 @@ import type {
   GeometryId,
   GeometryNode,
 } from '../document/types';
-import { geometryBounds } from '../query/bounds';
+import { annotationBounds, geometryBounds } from '../query/bounds';
 import { inspectNode, queryDrawing } from '../query/query';
 
 const confirmed = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -136,5 +136,31 @@ describe('queryDrawing', () => {
     expect(inspected?.node).toEqual(document.geometry[4]);
     expect(inspected?.node).not.toBe(document.geometry[4]);
     expect(inspected?.bounds).toEqual({ minX: 8, minY: 8, maxX: 12, maxY: 12 });
+  });
+});
+
+describe('annotationBounds', () => {
+  it('includes the complete leader path and centerline extension', () => {
+    expect(annotationBounds({
+      id: 'leader_bounds' as AnnotationId,
+      type: 'leader',
+      visible: true,
+      quality: confirmed,
+      target: { geometryId: 'circle_1' as GeometryId, anchor: { kind: 'center' } },
+      points: [[2, 3], [8, 9], [12, 9]],
+      content: 'R2',
+      textHeight: 2,
+    })).toEqual({ minX: 2, minY: 3, maxX: 14.4, maxY: 11 });
+
+    expect(annotationBounds({
+      id: 'centerline_bounds' as AnnotationId,
+      type: 'centerline',
+      visible: true,
+      quality: confirmed,
+      targets: ['circle_1' as GeometryId],
+      start: [5, 5],
+      end: [15, 5],
+      extension: 2,
+    })).toEqual({ minX: 3, minY: 5, maxX: 17, maxY: 5 });
   });
 });

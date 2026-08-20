@@ -8,6 +8,7 @@ import type { AffineTransform } from '../drawing-render/rasterize-scene.js';
 import { pointInPolygonRegion } from '../drawing-spatial/polygon.js';
 import { stableVectorNodeId } from '../drawing-vectorization/build-steps.js';
 import type {
+  CleanLineStrokePiece,
   PersistedCleanLineStrokeChain,
   PersistedCleanLineVectorizationResult,
 } from '../drawing-vectorization/types.js';
@@ -83,32 +84,37 @@ function projectChain(
   chain: PersistedCleanLineStrokeChain,
   input: Parameters<typeof projectGeneratedVectorization>[0],
 ): GeometryNode[] {
-  const points = chain.simplified.map((point) => transformPoint(input.cropPixelToWorld, point));
   const inside = (point: Vec2) => pointInPolygonRegion(
     point, input.authorizedContours, input.authorizedHoles,
   );
-  if (points.length < 2) return [];
-  if (points.every(inside) && chain.candidate) {
-    const analytic = analyticNode(chain, input.cropPixelToWorld, points);
-    if (analytic) return [analytic];
-  }
-  return insideRuns(points, inside).map((run, index) => ({
-    ...commonNode(chain, index),
-    type: 'polyline' as const,
-    vertices: run.map((point) => ({ point })),
-    closed: chain.closed && run.length === points.length,
-  }));
+  return chain.pieces.flatMap((piece) => {
+    const points = piece.simplified.map((point) => (
+      transformPoint(input.cropPixelToWorld, point)
+    ));
+    if (points.length < 2) return [];
+    if (points.every(inside) && piece.candidate) {
+      const analytic = analyticNode(chain, piece, input.cropPixelToWorld, points);
+      if (analytic) return [analytic];
+    }
+    return insideRuns(points, inside).map((run, index) => ({
+      ...commonNode(chain, piece, index),
+      type: 'polyline' as const,
+      vertices: run.map((point) => ({ point })),
+      closed: piece.closed && run.length === points.length,
+    }));
+  });
 }
 
 function analyticNode(
   chain: PersistedCleanLineStrokeChain,
+  piece: CleanLineStrokePiece,
   transform: AffineTransform,
   projectedPoints: Vec2[],
 ): GeometryNode | null {
-  const candidate = chain.candidate;
+  const candidate = piece.candidate;
   if (!candidate) return null;
   const parameters = candidate.parameters;
-  const common = commonNode(chain);
+  const common = commonNode(chain, piece);
   const scale = uniformScale(transform);
   switch (candidate.type) {
     case 'line': {
@@ -149,9 +155,13 @@ function analyticNode(
   }
 }
 
-function commonNode(chain: PersistedCleanLineStrokeChain, suffix?: number) {
-  const confidence = chain.candidate?.confidence ?? chain.evidence.confidence;
-  const baseId = stableVectorNodeId(chain.evidence.sourceId, chain.id);
+function commonNode(
+  chain: PersistedCleanLineStrokeChain,
+  piece: CleanLineStrokePiece,
+  suffix?: number,
+) {
+  const confidence = piece.candidate?.confidence ?? chain.evidence.confidence;
+  const baseId = stableVectorNodeId(chain.evidence.sourceId, piece.id);
   return {
     id: `${baseId}${suffix === undefined ? '' : `_${suffix}`}` as GeometryId,
     visible: true,

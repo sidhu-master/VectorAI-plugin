@@ -11,7 +11,7 @@ pnpm dev
 ```
 
 前端默认运行在 Vite 开发端口，`/api` 代理到本地 Express 服务 `http://localhost:3001`。
-`setup:vectorization` 会在 `.local/vectorai/cv-venv/` 创建隔离的 Python 环境并安装中心线矢量化依赖；服务启动后复用一个常驻 Python 进程，不会为每条线重复启动解释器。若该环境不可用，服务仍能启动，并回退到原有的模型反馈循环。
+`setup:vectorization` 会在 `.local/vectorai/cv-venv/` 创建隔离的 Python 环境并安装中心线矢量化依赖；服务启动后复用一个常驻 Python 进程，不会为每条线重复启动解释器。若该环境不可用，服务仍能启动，但模型调用 `vectorize_image` 时会收到能力不可用的工具结果并自行换方案。
 
 ## 环境变量
 
@@ -22,23 +22,21 @@ COMPANY_AI_BASE_URL
 COMPANY_AI_API_KEY
 COMPANY_AI_MODEL_NAME=doubao-seed-2.0-lite
 COMPANY_AI_PRIMARY_MODEL=doubao-seed-2.0-lite
-COMPANY_AI_PLANNER_MODEL=doubao-seed-2.0-lite
-COMPANY_AI_DECISION_MODEL=doubao-seed-2.0-lite
-COMPANY_AI_VISION_MODEL=doubao-seed-2.0-lite
-COMPANY_AI_REPAIR_MODEL=doubao-seed-2.1-turbo
+COMPANY_AI_SPATIAL_MODEL=doubao-seed-2.1-turbo
+COMPANY_AI_REVIEW_MODEL=doubao-seed-2.1-turbo
 COMPANY_AI_IMAGE_EDIT_MODEL
 COMPANY_AI_IMAGE_EDIT_URL
 COMPANY_AI_GATEWAY_URL
 COMPANY_INTERNAL_TOKEN
 ```
 
-AI 对话只有一个 Agent 主流程，不提供“普通/Agent”模式切换。纯文字、图片、PDF 及文字与附件的组合输入统一启动 Agent；运行中的纯文字作为安全点追加指令。模型只是可替换的 planner/decision/semantic-region/spatial-design/image-edit/verification adapter，默认名称由上述环境变量指定；Drawing IR、SceneCompiler、事务、验证、审计与回放不依赖具体模型。低于 0.6 的有效图元作为 candidate 标红，修复轮可切换到 repair 模型。
+AI 对话只有一个 Agent 主流程，不提供“普通/Agent”模式切换。纯文字、图片、PDF 及文字与附件的组合输入统一启动 Agent；运行中的纯文字作为下一轮指令追加。模型是可替换的单动作决策边界；Drawing IR、SceneCompiler、工具、事务、验证、Human Decision、审计与回放不依赖具体模型。`COMPANY_AI_SPATIAL_MODEL` 负责空间理解与 Drawing IR 规划；`COMPANY_AI_REVIEW_MODEL` 是独立第三方检查者，只比较同视口的 `before | after` 是否满足当前用户指令，并把意见返回主模型，不参与编辑、授权或 Commit 门禁。确定性几何诊断负责快速前置检查。模型名称不会出现在任务 UI。低于 0.6 的有效图元作为 candidate 标红。
 
 ## 架构入口
 
 - `docs/prd.md`：产品范围
 - `docs/tech-architecture.md`：技术架构
-- `docs/superpowers/specs/2026-08-11-region-first-spatial-editing-design.md`：区域优先编辑、虚拟子图元和多轮反馈设计
+- `docs/superpowers/specs/2026-08-13-2d-world-model-and-spatial-action-compiler-design.md`：任务驱动 2D World Model、临时语义视图和空间动作设计
 - `src/drawing/`：Canonical Drawing IR、Command、事务、验证、Commit 与回放
 - `src/drawing/scene/`：前后端共享 SceneCompiler
 - `api/services/drawing-agent/`：空间 Agent、模型协议、Preview/Verify/Revise/Commit 与审计
@@ -51,19 +49,22 @@ PDF 图纸会在本地服务端通过 Poppler 的 `pdftoppm` 只渲染第一页�
 
 ## Agent Workflow
 
-Agent 默认自动执行。启动请求在意图判断、规划和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的决策摘要、工具状态和验证结果，不包含模型隐藏推理。视觉语义修改统一使用 `Observe → SemanticRegion → SpatialSelection → Strategy → Preview → Verify → Commit/Revise`；旧 node-first 路径已经删除，任何模型都不能直接改仓库或绕过 Drawing IR 事务。
+Agent 默认自动执行。启动请求在意图判断和图纸转换前返回 `runId`，前端随后通过 SSE 接收结构化执行记录；这些记录是可审计的动作摘要、真实工具状态和诊断结果，不包含模型隐藏推理。生产快路径是 `Observation + bounded World Model → 一次模型选择/规划 → Free Drawing Transaction Preview → 立即画布增量 → Commit`。每轮上下文显式给出正式 revision 与当前 Preview 两种编辑基线；模型可用 `preview_transaction` 舍弃候选重做，或用 `revise_preview` 保留候选并只提交纠正。后端把候选修订合成为可独立提交的 canonical 事务。模型只在相关空间事实为 partial/unknown、目标依赖视觉语义、候选出现新缺陷或用户追加反馈时按需查询 Grounding、旧拓扑适配器、Counterfactual World 或 `evaluate_preview`；这些额外轮次都记录 `escalationReason + Evidence Delta`，不组成固定流水线。
+
+复杂图纸通过与 drawing、revision、空间范围和编译器版本绑定的 continuation token 真实分页读取；跨范围或跨 revision 的 token 返回 stale，不会把未读区域误报为空。CV、重叠分区、路径追踪、拆分、重绘、矢量化和拟合都是模型可选工具；工具结果不拥有写权限，任何修改最终都必须经过 Drawing IR Preview 和原子 Commit。
 
 | 方法 | 路由 | 用途 |
 |---|---|---|
 | `POST` | `/api/agent/runs` | 在指定 Drawing revision 上启动任务，可携带图片或 PDF |
 | `GET` | `/api/agent/runs/:runId/events` | SSE 进度流和最近 100 条事件回放 |
-| `GET` | `/api/agent/runs/:runId` | 获取计划、游标和已提交模型 |
+| `GET` | `/api/agent/runs/:runId` | 获取当前状态、最新动作和候选句柄 |
 | `POST` | `/api/agent/runs/:runId/pause` | 请求在安全点暂停 |
 | `POST` | `/api/agent/runs/:runId/resume` | 继续执行 |
 | `POST` | `/api/agent/runs/:runId/stop` | 中止当前调用且不提交半成品 |
 | `POST` | `/api/agent/runs/:runId/instructions` | 追加在下一个安全点生效的指令 |
+| `POST` | `/api/agent/runs/:runId/decisions/:requestId/respond` | 响应通用用户决定并继续同一任务 |
 
-有效运行在连续静默 25 秒时发送 heartbeat，以 30 秒内出现可见回执为体验目标；目标超时会记录指标，但不会否决正确的 Drawing IR 结果。干净线稿会先提取单像素中心线和拓扑链，再把每条链作为 Polyline 底稿逐条预览、提交，随后通过局部验证把同一对象原位提升为直线、圆、圆弧或椭圆；不能可靠拟合的部分保持为 Polyline。每一步都有独立事务、证据句柄和检查点，暂停后不会重复绘制。
+有效运行在连续静默 25 秒时发送 heartbeat，以 30 秒内出现可见回执为体验目标；这不是正确性的硬超时。每轮模型只选择一个工具动作，画布显示查询节点、关键点、路径和当前 Preview；模型可多轮观察、修改、诊断和重新预览。干净线稿可以通过矢量化工具提取中心线和拓扑链，自适应分段后形成直线、圆、圆弧、椭圆或 Polyline piece，并由 CompoundPath 保持逻辑整体。
 
 用本地图纸运行非 CI 基准（结果只写入被 Git 忽略的 `.local/vectorai/baselines/`）：
 
@@ -71,7 +72,7 @@ Agent 默认自动执行。启动请求在意图判断、规划和图纸转换�
 pnpm test:drawing -- test1.jpg
 ```
 
-命令逐行输出受理延迟、首个事务预览延迟、各感知阶段耗时、提交批次数、低置信度与局部工具错误数量，不输出图片正文。正式服务的单模型阶段 deadline 默认 120 秒，Agent 总 deadline 默认 360 秒；期间仍以结构化阶段事件和 25 秒 heartbeat 保持可见回执。
+命令逐行输出受理延迟、首个事务预览延迟、各感知阶段耗时、提交批次数、低置信度与局部工具错误数量，不输出图片正文。正式服务的高级空间模型单次调用 deadline 默认 120 秒，Agent 总 deadline 默认 15 分钟；期间仍以结构化阶段事件和 25 秒 heartbeat 保持可见回执。
 
 检查某次本地运行：
 
@@ -79,6 +80,14 @@ pnpm test:drawing -- test1.jpg
 find .local/vectorai/runs -maxdepth 2 -type f -print
 tail -n 20 .local/vectorai/runs/<runId>/events.jsonl
 ```
+
+不调用外部模型，使用本地最大 Drawing 快照回归 Agent 上下文预算：
+
+```bash
+pnpm benchmark:agent-context
+```
+
+输出当前 checkpoint 冷读、空间索引、观察渲染、Prompt/Schema 字节、工作集节点和单轮图像指标。
 
 ## 验证
 

@@ -30,20 +30,48 @@ export function evaluateDrawingPreview(
       undeclaredNodeIds,
     ));
   }
-  const beforeDangling = danglingEndpoints(input.before.geometry, input.tolerance);
-  const afterDangling = danglingEndpoints(input.after.geometry, input.tolerance);
+  const connectionTolerance = relativeConnectionTolerance(
+    input.after.geometry,
+    input.tolerance,
+  );
+  const beforeDangling = danglingEndpoints(input.before.geometry, connectionTolerance);
+  const afterDangling = danglingEndpoints(input.after.geometry, connectionTolerance);
   const unexpectedDanglingEndpoints = afterDangling.filter((point) => (
-    !nearAny(point, beforeDangling, input.tolerance)
+    !nearAny(point, beforeDangling, connectionTolerance)
   ));
   if (unexpectedDanglingEndpoints.length > 0) {
     diagnostics.push(diagnostic(
       'NEW_DANGLING_ENDPOINT',
       'warning',
       '候选修改产生了新的未连接端点',
-      geometryIdsNear(input.after.geometry, unexpectedDanglingEndpoints, input.tolerance),
-      { points: structuredClone(unexpectedDanglingEndpoints) },
+      geometryIdsNear(input.after.geometry, unexpectedDanglingEndpoints, connectionTolerance),
+      {
+        points: structuredClone(unexpectedDanglingEndpoints),
+        tolerance: connectionTolerance,
+      },
     ));
   }
+  const brokenConnections = brokenExistingConnections(
+    input.before.geometry,
+    input.after.geometry,
+    changedNodeIds,
+    connectionTolerance,
+  );
+  for (const connection of brokenConnections) {
+    diagnostics.push(diagnostic(
+      'BROKEN_EXISTING_CONNECTION',
+      'warning',
+      '候选修改破坏了原有图元接触关系',
+      connection.nodeIds,
+      { point: structuredClone(connection.point), tolerance: connectionTolerance },
+    ));
+  }
+  diagnostics.push(...geometryLengthDistortionDiagnostics(
+    input.before.geometry,
+    input.after.geometry,
+    changedNodeIds,
+    connectionTolerance,
+  ));
 
   for (const annotation of changedById(input.before.annotations, input.after.annotations)) {
     diagnostics.push(diagnostic(
@@ -133,12 +161,148 @@ function changedById<T extends { id: string }>(
 }
 
 function danglingEndpoints(nodes: GeometryNode[], tolerance: number): Vec2[] {
-  const endpoints = nodes.flatMap(geometryEndpoints);
-  return endpoints.filter((point, index) => (
-    !endpoints.some((candidate, candidateIndex) => (
-      candidateIndex !== index && distance(point, candidate) <= tolerance
-    ))
+  const endpoints = nodes.flatMap((node) => (
+    geometryEndpoints(node).map((point) => ({ nodeId: node.id, point }))
   ));
+  const sampledCurves = new Map(nodes.map((node) => [node.id, geometrySamples(node)]));
+  return endpoints.filter(({ nodeId, point }, index) => {
+    if (endpoints.some((candidate, candidateIndex) => (
+      candidateIndex !== index && distance(point, candidate.point) <= tolerance
+    ))) return false;
+    return !nodes.some((node) => (
+      node.id !== nodeId
+      && pointToPolylineDistance(point, sampledCurves.get(node.id) ?? []) <= tolerance
+    ));
+  }).map(({ point }) => point);
+}
+
+function brokenExistingConnections(
+  before: GeometryNode[],
+  after: GeometryNode[],
+  changedNodeIds: string[],
+  tolerance: number,
+): Array<{ nodeIds: string[]; point: Vec2 }> {
+  const changed = new Set(changedNodeIds);
+  const afterById = new Map(after.map((node) => [node.id, node]));
+  const beforeSamples = new Map(before.map((node) => [node.id, geometrySamples(node)]));
+  const afterSamples = new Map(after.map((node) => [node.id, geometrySamples(node)]));
+  const broken: Array<{ nodeIds: string[]; point: Vec2 }> = [];
+  for (const endpointNode of before) {
+    for (const point of geometryEndpoints(endpointNode)) {
+      for (const contactedCurve of before) {
+        if (contactedCurve.id === endpointNode.id) continue;
+        if (pointToPolylineDistance(point, beforeSamples.get(contactedCurve.id) ?? []) > tolerance) {
+          continue;
+        }
+        if (!changed.has(endpointNode.id) && !changed.has(contactedCurve.id)) continue;
+        const endpointAfter = afterById.get(endpointNode.id);
+        const curveAfter = afterById.get(contactedCurve.id);
+        if (!endpointAfter || !curveAfter) continue;
+        const remainsConnected = geometryEndpoints(endpointAfter).some((afterPoint) => (
+          pointToPolylineDistance(afterPoint, afterSamples.get(curveAfter.id) ?? []) <= tolerance
+        ));
+        if (!remainsConnected) {
+          broken.push({
+            nodeIds: [endpointNode.id, contactedCurve.id].sort(),
+            point,
+          });
+        }
+      }
+    }
+  }
+  return broken.filter((item, index, values) => values.findIndex((candidate) => (
+    candidate.nodeIds.join('\u0000') === item.nodeIds.join('\u0000')
+  )) === index);
+}
+
+function geometryLengthDistortionDiagnostics(
+  before: GeometryNode[],
+  after: GeometryNode[],
+  changedNodeIds: string[],
+  tolerance: number,
+): DrawingDiagnostic[] {
+  const beforeById = new Map<string, GeometryNode>(before.map((node) => [node.id, node]));
+  const afterById = new Map<string, GeometryNode>(after.map((node) => [node.id, node]));
+  const drawingDiagonal = geometryDrawingDiagonal(after);
+  const minimumReferenceLength = Math.max(tolerance, drawingDiagonal * 0.001);
+  return changedNodeIds.flatMap((nodeId): DrawingDiagnostic[] => {
+    const beforeNode = beforeById.get(nodeId);
+    const afterNode = afterById.get(nodeId);
+    if (!beforeNode || !afterNode) return [];
+    const beforeLength = geometryPathLength(beforeNode);
+    const afterLength = geometryPathLength(afterNode);
+    if (beforeLength < minimumReferenceLength || afterLength < minimumReferenceLength) return [];
+    const lengthRatio = afterLength / beforeLength;
+    const scaleFactor = Math.max(lengthRatio, 1 / lengthRatio);
+    const normalizedLengthChange = Math.abs(afterLength - beforeLength)
+      / Math.max(drawingDiagonal, minimumReferenceLength);
+    if (scaleFactor < 3 || normalizedLengthChange < 0.02) return [];
+    return [{
+      code: 'GEOMETRY_LENGTH_DISTORTION',
+      severity: 'warning',
+      message: '候选使图元路径长度发生显著变化，需要模型根据目标与视觉结果复核',
+      nodeIds: [nodeId],
+      facts: {
+        beforeLength: metric(beforeLength),
+        afterLength: metric(afterLength),
+        lengthRatio: metric(lengthRatio),
+        scaleFactor: metric(scaleFactor),
+        drawingDiagonal: metric(drawingDiagonal),
+        normalizedLengthChange: metric(normalizedLengthChange),
+      },
+    }];
+  });
+}
+
+function geometrySamples(node: GeometryNode): Vec2[] {
+  const bounds = roughGeometryBounds(node) ?? { minX: -1, minY: -1, maxX: 1, maxY: 1 };
+  return sampleGeometryRanges(node, { curveSamples: 192, localBounds: bounds })
+    .flatMap((range, index) => index === 0 ? range.samples : range.samples.slice(1));
+}
+
+function geometryPathLength(node: GeometryNode): number {
+  const samples = geometrySamples(node);
+  let length = 0;
+  for (let index = 1; index < samples.length; index += 1) {
+    length += distance(samples[index - 1], samples[index]);
+  }
+  return length;
+}
+
+function pointToPolylineDistance(point: Vec2, samples: Vec2[]): number {
+  if (samples.length === 0) return Number.POSITIVE_INFINITY;
+  if (samples.length === 1) return distance(point, samples[0]);
+  let nearest = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < samples.length; index += 1) {
+    nearest = Math.min(nearest, pointToSegmentDistance(point, samples[index - 1], samples[index]));
+  }
+  return nearest;
+}
+
+function pointToSegmentDistance(point: Vec2, start: Vec2, end: Vec2): number {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return distance(point, start);
+  const parameter = Math.max(0, Math.min(1, (
+    (point[0] - start[0]) * dx + (point[1] - start[1]) * dy
+  ) / lengthSquared));
+  return distance(point, [start[0] + dx * parameter, start[1] + dy * parameter]);
+}
+
+function relativeConnectionTolerance(nodes: GeometryNode[], minimum: number): number {
+  const diagonal = geometryDrawingDiagonal(nodes);
+  return Math.max(minimum, diagonal * 0.002);
+}
+
+function geometryDrawingDiagonal(nodes: GeometryNode[]): number {
+  const bounds = nodes.flatMap((node) => roughGeometryBounds(node) ?? []);
+  if (bounds.length === 0) return 0;
+  const minX = Math.min(...bounds.map((item) => item.minX));
+  const minY = Math.min(...bounds.map((item) => item.minY));
+  const maxX = Math.max(...bounds.map((item) => item.maxX));
+  const maxY = Math.max(...bounds.map((item) => item.maxY));
+  return Math.hypot(maxX - minX, maxY - minY);
 }
 
 function geometryEndpoints(node: GeometryNode): Vec2[] {
@@ -183,6 +347,10 @@ function nearAny(point: Vec2, candidates: Vec2[], tolerance: number): boolean {
 
 function distance(left: Vec2, right: Vec2): number {
   return Math.hypot(left[0] - right[0], left[1] - right[1]);
+}
+
+function metric(value: number): number {
+  return Number(value.toFixed(6));
 }
 
 function diagnostic(

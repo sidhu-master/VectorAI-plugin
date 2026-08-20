@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { DrawingId, RevisionId } from '../../../src/drawing/index';
 import {
   ModelDrawingToolRegistry,
+  ModelToolExecutionError,
   ModelToolInputError,
   type ModelDrawingToolDefinition,
 } from './registry';
@@ -57,6 +58,24 @@ function tool(input: Partial<ModelDrawingToolDefinition<{ value: number }, unkno
 }
 
 describe('ModelDrawingToolRegistry', () => {
+  it('publishes the model-readable description and strict input schema in the catalog', () => {
+    const registry = new ModelDrawingToolRegistry({
+      tools: [tool({
+        description: 'Read an integer counter.',
+        inputSchema: {
+          type: 'object', additionalProperties: false,
+          required: ['value'], properties: { value: { type: 'integer' } },
+        },
+      })],
+      getCurrentRevision: async () => revision,
+    });
+
+    expect(registry.catalog()).toEqual([expect.objectContaining({
+      name: 'read_counter', description: 'Read an integer counter.',
+      inputSchema: expect.objectContaining({ required: ['value'] }),
+    })]);
+  });
+
   it('executes a tool call at most once and emits a versioned audit receipt', async () => {
     const execute = vi.fn(tool().execute);
     const registry = new ModelDrawingToolRegistry({
@@ -90,7 +109,11 @@ describe('ModelDrawingToolRegistry', () => {
     expect(duplicate).toMatchObject({
       receipt: {
         status: 'rejected',
-        error: { code: 'DUPLICATE_TOOL_CALL_ID', retryable: false },
+        error: {
+          code: 'DUPLICATE_TOOL_CALL_ID', retryable: true,
+          detail: 'Retry with a new toolCallId; tool call ids are single-use within a run.',
+          suggestedAction: 'retry',
+        },
       },
     });
     expect(execute).toHaveBeenCalledTimes(1);
@@ -112,7 +135,11 @@ describe('ModelDrawingToolRegistry', () => {
     const stale = await registry.invoke(invocation({ toolCallId: 'call_stale' }));
 
     expect(malformed.receipt).toMatchObject({
-      status: 'rejected', error: { code: 'TOOL_INPUT_INVALID', retryable: true },
+      status: 'rejected',
+      error: {
+        code: 'TOOL_INPUT_INVALID', retryable: true,
+        detail: 'input must contain only integer value',
+      },
     });
     expect(JSON.stringify(malformed)).not.toContain('hiddenInstruction');
     expect(stale.receipt).toMatchObject({
@@ -208,6 +235,77 @@ describe('ModelDrawingToolRegistry', () => {
       status: 'failed', error: { code: 'TOOL_EXECUTION_FAILED', retryable: true },
     });
     expect(JSON.stringify(failed)).not.toContain('secret provider credential');
+  });
+
+  it('returns bounded compiler feedback from an explicitly audit-safe execution error', async () => {
+    const registry = new ModelDrawingToolRegistry({
+      tools: [tool({
+        name: 'compiler',
+        execute: async () => {
+          throw new ModelToolExecutionError({
+            code: 'SPATIAL_PROGRAM_INVALID',
+            message: 'Connected carrier translation mixes unrelated nodes: body_line',
+            retryable: true,
+            suggestedAction: 'replan',
+          });
+        },
+      })],
+      getCurrentRevision: async () => revision,
+    });
+
+    const result = await registry.invoke(invocation({ toolCallId: 'compile_1', tool: 'compiler' }));
+
+    expect(result.receipt).toMatchObject({
+      status: 'rejected',
+      error: {
+        code: 'SPATIAL_PROGRAM_INVALID',
+        retryable: true,
+        detail: 'Connected carrier translation mixes unrelated nodes: body_line',
+        suggestedAction: 'replan',
+      },
+    });
+  });
+
+  it('does not report a side-effecting write as timed out while it can still commit', async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    let aborted = false;
+    const registry = new ModelDrawingToolRegistry({
+      tools: [tool({
+        name: 'slow_write', access: 'write', timeoutMs: 10,
+        execute: ({ signal }) => new Promise((resolve) => {
+          signal.addEventListener('abort', () => { aborted = true; });
+          release = () => resolve({
+            output: { status: 'committed' },
+            revisionAfter: 'revision_2' as RevisionId,
+            affectedNodeIds: ['line_1'],
+          });
+        }),
+      })],
+      getCurrentRevision: async () => revision,
+    });
+
+    let settled = false;
+    const pending = registry.invoke(invocation({
+      toolCallId: 'slow_write_1', tool: 'slow_write',
+    })).then((result) => {
+      settled = true;
+      return result;
+    });
+    await vi.advanceTimersByTimeAsync(11);
+
+    expect(aborted).toBe(true);
+    expect(settled).toBe(false);
+    release?.();
+    const result = await pending;
+    vi.useRealTimers();
+
+    expect(result).toMatchObject({
+      receipt: {
+        status: 'succeeded', revisionAfter: 'revision_2', affectedNodeIds: ['line_1'],
+      },
+      output: { status: 'committed' },
+    });
   });
 
   it('always reads canonical state through the handler instead of caching a document', async () => {

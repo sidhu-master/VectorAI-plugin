@@ -189,20 +189,63 @@ function validateSpline(
 function validateAnnotations(annotations: AnnotationNode[]): ValidationIssue[] {
   return annotations.flatMap((node, index) => {
     const path = `annotations[${index}]`;
-    if (node.type === 'text') {
-      return [
-        ...(!node.content.trim()
-          ? [error('EMPTY_TEXT', `${path}.content`, '文字内容不能为空', [node.id])]
-          : []),
-        ...(!finitePoint(node.position) || !isFiniteNumber(node.rotation)
-          ? [invalidPoint(path, node.id)]
-          : []),
-        ...(!isFiniteNumber(node.height) || node.height <= 0
-          ? [error('INVALID_TEXT_HEIGHT', `${path}.height`, '文字高度必须大于零', [node.id])]
-          : []),
-      ];
+    switch (node.type) {
+      case 'text':
+        return [
+          ...(!node.content.trim()
+            ? [error('EMPTY_TEXT', `${path}.content`, '文字内容不能为空', [node.id])]
+            : []),
+          ...(!finitePoint(node.position) || !isFiniteNumber(node.rotation)
+            ? [invalidPoint(path, node.id)]
+            : []),
+          ...(!isFiniteNumber(node.height) || node.height <= 0
+            ? [error('INVALID_TEXT_HEIGHT', `${path}.height`, '文字高度必须大于零', [node.id])]
+            : []),
+        ];
+      case 'dimension': return validateDimension(node, path);
+      case 'leader':
+        return [
+          ...(!node.content.trim()
+            ? [error('EMPTY_TEXT', `${path}.content`, '引线文字不能为空', [node.id])]
+            : []),
+          ...(node.points.length < 2 || node.points.some((point) => !finitePoint(point))
+            ? [error('INVALID_LEADER_PATH', `${path}.points`, '引线至少需要两个有效点', [node.id])]
+            : []),
+          ...(!isFiniteNumber(node.textHeight) || node.textHeight <= 0
+            ? [error('INVALID_TEXT_HEIGHT', `${path}.textHeight`, '引线文字高度必须大于零', [node.id])]
+            : []),
+        ];
+      case 'centerline':
+        return [
+          ...(!finitePoint(node.start) || !finitePoint(node.end)
+            || distance(node.start, node.end) <= 0
+            ? [error('INVALID_CENTERLINE', path, '中心线端点必须有效且不能重合', [node.id])]
+            : []),
+          ...(!isFiniteNumber(node.extension) || node.extension < 0
+            ? [error('INVALID_CENTERLINE_EXTENSION', `${path}.extension`, '中心线延伸量不能为负数', [node.id])]
+            : []),
+          ...(node.targets.length === 0
+            ? [error('CENTERLINE_TARGET_REQUIRED', `${path}.targets`, '中心线必须引用几何目标', [node.id])]
+            : []),
+        ];
+      case 'section-hatch':
+        return [
+          ...(!node.pattern.trim()
+            ? [error('INVALID_SECTION_HATCH_PATTERN', `${path}.pattern`, '剖面线图案不能为空', [node.id])]
+            : []),
+          ...(!isFiniteNumber(node.angle)
+            ? [error('INVALID_ANGLE', `${path}.angle`, '剖面线角度必须是有限数字', [node.id])]
+            : []),
+          ...(!isFiniteNumber(node.spacing) || node.spacing <= 0
+            ? [error('INVALID_SECTION_HATCH_SPACING', `${path}.spacing`, '剖面线间距必须大于零', [node.id])]
+            : []),
+          ...(node.segments.length === 0 || node.segments.some(({ start, end }) => (
+            !finitePoint(start) || !finitePoint(end) || distance(start, end) <= 0
+          ))
+            ? [error('INVALID_SECTION_HATCH_SEGMENTS', `${path}.segments`, '剖面线必须包含有效且非退化的线段', [node.id])]
+            : []),
+        ];
     }
-    return validateDimension(node, path);
   });
 }
 
@@ -269,11 +312,12 @@ function validateReferences(document: DrawingDocument): ValidationIssue[] {
   ]);
 
   document.annotations.forEach((annotation, index) => {
-    if (annotation.type !== 'dimension') return;
-    const targets = [
-      ...annotation.targets,
-      ...(annotation.candidates?.flatMap((candidate) => candidate.targets) ?? []),
-    ];
+    const targets = annotation.type === 'dimension'
+      ? [
+        ...annotation.targets,
+        ...(annotation.candidates?.flatMap((candidate) => candidate.targets) ?? []),
+      ]
+      : annotation.type === 'leader' ? [annotation.target] : [];
     targets.forEach((target, targetIndex) => {
       const targetGeometry = geometry.get(target.geometryId);
       if (!targetGeometry) {
@@ -287,6 +331,13 @@ function validateReferences(document: DrawingDocument): ValidationIssue[] {
         ));
       }
     });
+    if (annotation.type === 'centerline') {
+      annotation.targets.forEach((id, targetIndex) => {
+        if (!geometry.has(id)) {
+          issues.push(missing(`annotations[${index}].targets[${targetIndex}]`, id, annotation.id));
+        }
+      });
+    }
   });
 
   document.relations.forEach((relation, index) => {

@@ -1,0 +1,84 @@
+# DXF工程数据文档
+# 编码：UTF-8；长度单位：mm；角度单位：deg
+# 本文档只填写齿轮、花键、轴承等重要工程区域。
+# 常规轴段不需要填写，由系统从DXF自动识别。
+
+[drawing]
+# 可选。没有图号时可以留空。
+drawing_id=
+drawing_name=样本图001.dxf
+unit=mm
+
+# 坐标基准必须统一使用“零件轴向最左端”。
+axis_origin=left_end
+
+# auto表示允许系统自动识别正向、反向和镜像关系。
+orientation=auto
+
+# -------------------- 齿轮区域示例 --------------------
+[region:gear:G01]
+name=一级齿轮
+
+# 区域中心到零件轴向最左端的距离。
+center_z=91
+
+# 区域轴向宽度。
+width=55
+
+# 外径。未知时可以留空，不得填写估计值。
+outer_diameter=57.03
+
+# 可选工程参数。
+module=
+teeth=
+pressure_angle=
+helix_angle=
+
+# 可选备注，不参与主要数值计算。
+note=
+
+# -------------------- 花键区域示例 --------------------
+[region:spline:S01]
+name=外花键
+center_z=29.25
+width=24.5
+outer_diameter=45
+
+# 可选工程参数。
+spline_type=
+module=
+teeth=
+fit=
+note=
+
+# -------------------- 轴承位置示例 --------------------
+[region:bearing:B01]
+name=左轴承位
+center_z=8.5
+width=17
+outer_diameter=35
+
+# 可选工程参数。
+bearing_model=
+fit=
+roughness=
+note=
+
+[region:bearing:B02]
+name=右轴承位
+center_z=161.50
+width=23
+outer_diameter=35
+
+# 可选工程参数。
+bearing_model=
+fit=
+roughness=
+note=
+
+# -------------------- 增加更多区域 --------------------
+# 复制对应段落，并使用不重复的区域ID，例如：
+# [region:gear:G02]
+# [region:spline:S02]
+# [region:bearing:B02]
+

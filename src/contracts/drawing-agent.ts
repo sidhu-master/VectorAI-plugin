@@ -5,6 +5,7 @@ import type {
   DrawingSelector,
   PerceptionPreviewDelta,
   RevisionId,
+  Vec2,
 } from '@/drawing';
 
 export type { PerceptionPreviewDelta };
@@ -14,6 +15,8 @@ export type DrawingAgentProgressEventType =
   | 'planning'
   | 'model_started'
   | 'model_finished'
+  | 'protocol_repairing'
+  | 'protocol_recovered'
   | 'tool_started'
   | 'tool_finished'
   | 'validation'
@@ -54,10 +57,52 @@ export interface DrawingAgentProgressEvent {
 }
 
 /** Ephemeral evidence the model is currently inspecting; never an edit authorization. */
+export type DrawingAgentSpatialStrokeRole =
+  | 'target'
+  | 'boundary'
+  | 'interface'
+  | 'context'
+  | 'excluded'
+  | 'before'
+  | 'after';
+
+export interface DrawingAgentSpatialStroke {
+  id: string;
+  ref?: string;
+  nodeId?: string;
+  role: DrawingAgentSpatialStrokeRole;
+  points: Vec2[];
+  closed?: boolean;
+  confidence?: number;
+}
+
+export interface DrawingAgentSpatialMarker {
+  id: string;
+  ref?: string;
+  role: 'seed' | 'interface' | 'anchor' | 'target' | 'warning';
+  point: Vec2;
+}
+
+export interface DrawingAgentSpatialVector {
+  id: string;
+  role: 'motion' | 'constraint';
+  from: Vec2;
+  to: Vec2;
+}
+
 export type DrawingAgentCanvasOverlay =
   | { kind: 'nodes'; nodeIds: string[]; role: 'observed' | 'considered' | 'changed' }
   | { kind: 'paths'; paths: Array<{ id: string; nodeIds: string[]; points?: readonly [number, number][] }>; role: 'candidate' | 'inspected' }
   | { kind: 'points'; points: Array<{ id: string; point: readonly [number, number]; role?: string }> }
+  | {
+      kind: 'spatial';
+      phase: 'observing' | 'grounding' | 'planning' | 'previewing' | 'verifying';
+      label?: string;
+      strokes: DrawingAgentSpatialStroke[];
+      markers: DrawingAgentSpatialMarker[];
+      vectors: DrawingAgentSpatialVector[];
+      truncated?: boolean;
+    }
   | { kind: 'preview'; previewHandle: string; affectedNodeIds: string[] }
   | { kind: 'diagnostics'; nodeIds: string[]; codes: string[] }
   | { kind: 'clear' };
@@ -119,15 +164,29 @@ export const DRAWING_MODEL_TOOL_NAMES = [
   'query_nodes',
   'inspect_nodes',
   'measure_geometry',
-  'compare_views',
+  'inspect_source_overview',
+  'create_observation_region',
+  'inspect_source_crop',
+  'extract_cv_evidence',
+  'read_cv_evidence',
+  'build_world_slice',
+  'inspect_world_slice',
+  'ground_semantic_entities',
+  'refine_semantic_entity',
+  'propose_spatial_actions',
+  'inspect_counterfactual_world',
   'build_topology',
   'trace_paths',
   'find_interfaces',
   'inspect_fragment',
   'materialize_split',
+  'preview_spatial_program',
+  'preview_connected_transform',
   'preview_transaction',
+  'revise_preview',
   'redraw_region',
   'vectorize_image',
+  'preview_vectorization_batch',
   'fit_geometry',
   'recompute_annotations',
   'evaluate_preview',
@@ -149,7 +208,12 @@ export interface HumanDecisionDraft {
 export type DrawingAgentAction =
   | { type: 'tool'; toolCallId: string; tool: DrawingModelToolName; input: unknown }
   | { type: 'request-human-decision'; request: HumanDecisionDraft }
-  | { type: 'commit'; previewHandle: string; summary: string; confidence?: number }
+  | {
+      type: 'commit';
+      previewHandle: string;
+      summary: string;
+      confidence?: number;
+    }
   | { type: 'finish'; summary: string };
 
 export type HumanDecisionKind =
@@ -813,6 +877,7 @@ function parseCreateValue(
   };
   const annotationKeys: Record<string, string[]> = {
     text: ['content', 'position', 'height', 'rotation', 'alignment', 'verticalAlignment', 'maxWidth'],
+    'section-hatch': ['pattern', 'angle', 'spacing', 'segments'],
     dimension: [
       'dimensionKind', 'associationStatus', 'targets', 'candidates', 'observedValue',
       'computedValue', 'displayText', 'unit', 'tolerance', 'prefix', 'suffix',
@@ -886,6 +951,21 @@ function validateAnnotationNode(node: Record<string, unknown>, type: string, pat
     enumValue(node.alignment, ['left', 'center', 'right'] as const, `${path}.alignment`);
     enumValue(node.verticalAlignment, ['baseline', 'bottom', 'middle', 'top'] as const, `${path}.verticalAlignment`);
     optionalFinite(node.maxWidth, `${path}.maxWidth`);
+    return;
+  }
+  if (type === 'section-hatch') {
+    nonEmptyString(node.pattern, `${path}.pattern`);
+    finite(node.angle, `${path}.angle`);
+    positive(node.spacing, `${path}.spacing`);
+    const segments = array(node.segments, `${path}.segments`);
+    if (segments.length === 0) fail(`${path}.segments`, '剖面线至少需要一个线段');
+    segments.forEach((segment, index) => {
+      const segmentPath = `${path}.segments[${index}]`;
+      const parsed = object(segment, segmentPath);
+      exact(parsed, ['start', 'end'], segmentPath);
+      vec2(parsed.start, `${segmentPath}.start`);
+      vec2(parsed.end, `${segmentPath}.end`);
+    });
     return;
   }
   enumValue(node.dimensionKind, [

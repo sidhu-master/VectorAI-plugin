@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interpretDrawingInput } from './input-interpreter';
+import { interpretDrawingInput, referencesCurrentSelection } from './input-interpreter';
 
 describe('Drawing Agent combined-input interpreter', () => {
   it.each([
@@ -14,5 +14,16 @@ describe('Drawing Agent combined-input interpreter', () => {
     }],
   ])('classifies %# without a user-facing switch', (input, expected) => {
     expect(interpretDrawingInput(input)).toEqual(expected);
+  });
+});
+
+describe('Drawing Agent selection reference', () => {
+  it.each([
+    ['把右手抬起来打招呼', false],
+    ['修改选中的对象', true],
+    ['把所选图元向右移动 10mm', true],
+    ['rotate the selected geometry', true],
+  ])('classifies %s as explicit=%s', (goal, expected) => {
+    expect(referencesCurrentSelection(goal)).toBe(expected);
   });
 });

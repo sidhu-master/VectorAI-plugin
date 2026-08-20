@@ -13,7 +13,9 @@ export function applyAnchoredDeformation(
   context: AnchoredDeformationContext,
 ): GeometryNode {
   const clone = structuredClone(node);
-  const influence = deformationInfluence(context);
+  // 每个可编辑图元分别从固定接口归一化到自由端，避免同一选择中更远的
+  // 图元放大全局距离上限，并保证相邻目标图元在共享端点处使用一致变换。
+  const influence = deformationInfluence({ ...context, targetGeometry: [node] });
   const movePoint = (point: Vec2): Vec2 => {
     const weight = influence(point);
     if (weight === 0) return [...point];

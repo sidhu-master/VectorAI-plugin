@@ -129,9 +129,10 @@ describe('EntityRenderer', () => {
     expect(linearHtml).toContain('data-dimension-role="extension"');
     expect(linearHtml).toContain('data-dimension-role="measure"');
     expect(linearHtml).toContain('data-dimension-role="arrow"');
-    expect(linearHtml).toContain('fill="#df78ca"');
+    expect(linearHtml).toContain('fill="#a66c9c"');
     expect(diameterHtml).toContain('data-dimension-role="center-mark"');
-    expect(diameterHtml).toContain('stroke="#63c991"');
+    expect(diameterHtml).toContain('stroke="#4f9274"');
+    expect(diameterHtml).toContain('opacity="0.68"');
   });
 
   it('renders every part of a low-confidence dimension in the danger color', () => {
@@ -149,6 +150,64 @@ describe('EntityRenderer', () => {
 
     expect(html).toContain('data-dimension-role="center-mark"');
     expect(html).toContain('stroke="#f87171"');
-    expect(html).not.toContain('stroke="#63c991"');
+    expect(html).not.toContain('stroke="#4f9274"');
+  });
+
+  it('recomputes dimension geometry from a text drag offset instead of translating the group', () => {
+    const linear: DrawingRenderable = {
+      ...common,
+      id: aid('dimension-drag'), type: 'dimension', dimensionKind: 'linear',
+      associationStatus: 'resolved', targets: [], computedValue: 10, displayText: '10',
+      definitionPoints: [[0, 0], [10, 0], [0, 5], [10, 5]], textPosition: [5, 5],
+    };
+    const html = renderToStaticMarkup(
+      <svg>
+        <EntityRenderer
+          entity={linear}
+          scale={1}
+          viewport={viewport}
+          annotationTextOnly
+          onPointerDown={() => undefined}
+          textOffset={[0, 6]}
+        />
+      </svg>,
+    );
+
+    // 不再整体平移标注组（避免文字位移 2 倍）
+    expect(html).not.toContain('translate(0 6)');
+    // 延长线起点固定在几何上：M 0 0 / M 10 0 仍在原位
+    expect(html).toContain('M 0 0');
+    expect(html).toContain('M 10 0');
+    // 标注线跟随文字平移到 y=11（原 y=5 + 偏移 6）
+    expect(html).toContain('M 0 11');
+    expect(html).toContain('M 10 11');
+    // 文字位置只偏移一次
+    expect(html).toContain('translate(5 11)');
+  });
+
+  it('keeps the leader arrow tip anchored while shifting its text end', () => {
+    const leader: DrawingRenderable = {
+      ...common,
+      id: aid('leader-1'), type: 'leader', target: { geometryId: gid('line-1'), anchor: { kind: 'center' } },
+      points: [[0, 0], [4, 4], [8, 4]],
+      content: 'NOTE', textHeight: 2,
+    };
+    const html = renderToStaticMarkup(
+      <svg>
+        <EntityRenderer
+          entity={leader}
+          scale={1}
+          viewport={viewport}
+          annotationTextOnly
+          onPointerDown={() => undefined}
+          textOffset={[2, 1]}
+        />
+      </svg>,
+    );
+
+    // 箭头端（首点）固定在几何上，文字端跟随偏移 (2,1)
+    expect(html).toContain('M 0 0 L 6 5 L 10 5');
+    expect(html).toContain('translate(10 5)');
+    expect(html).not.toContain('translate(2 1)');
   });
 });

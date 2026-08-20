@@ -30,6 +30,7 @@ export interface WorldModelDiagnostic {
   code:
     | 'WORLD_MODEL_NODE_NOT_FOUND'
     | 'WORLD_MODEL_UNBOUNDED_GEOMETRY'
+    | 'WORLD_MODEL_CONTINUATION_INVALID'
     | 'ARRANGEMENT_SAMPLED_FALLBACK'
     | 'ARRANGEMENT_INEXACT';
   severity: 'info' | 'warning' | 'error';

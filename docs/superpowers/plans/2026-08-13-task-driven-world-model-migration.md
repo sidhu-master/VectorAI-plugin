@@ -33,7 +33,7 @@
 - Consumes: `DrawingDocument`, `RevisionId`, `Bounds2D`, and existing geometry bounds/sampling helpers.
 - Produces: `WorldModelCompiler.compile(document, revision, request): WorldModelSlice`; `WorldModelSlice` contains `SourceSpan`, directed half-edges, authored/incidence connections, diagnostics, and `WorldModelKnowledgeState`.
 
-- [ ] **Step 1: Write failing tests for revision identity and knowledge semantics**
+- [x] **Step 1: Write failing tests for revision identity and knowledge semantics**
 
 ```ts
 it('returns resolved only when the requested local scope is fully compiled', () => {
@@ -49,17 +49,17 @@ it('marks truncated and unsupported scope as partial rather than empty', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run: `pnpm vitest run api/services/drawing-world-model/compiler.test.ts`
 
 Expected: FAIL because `drawing-world-model/compiler.ts` does not exist.
 
-- [ ] **Step 3: Implement immutable contracts and the minimum compiler**
+- [x] **Step 3: Implement immutable contracts and the minimum compiler**
 
 Implement deterministic IDs from revision, node ID, and parameter range; keep `incidence` separate from authored `connected`; report sampled fallback and truncation explicitly. Do not claim faces or analytic intersections that were not compiled.
 
-- [ ] **Step 4: Run the test and verify GREEN**
+- [x] **Step 4: Run the test and verify GREEN**
 
 Run: `pnpm vitest run api/services/drawing-world-model/compiler.test.ts`
 
@@ -79,7 +79,7 @@ Expected: PASS.
 - Consumes: current `WorldModelSlice`, semantic hypotheses, and append-only evidence events.
 - Produces: `GroundingLedger.append/fold/delta`, `createTaskRelevantView`, and temporary `part-of | contains | boundary-of | interface-with | context-for` relations.
 
-- [ ] **Step 1: Write failing tests for superseding and task-scoped grouping**
+- [x] **Step 1: Write failing tests for superseding and task-scoped grouping**
 
 ```ts
 it('folds support deltas without replaying superseded supports', () => {
@@ -95,17 +95,17 @@ it('groups the same spans differently for different goals without mutating Drawi
 });
 ```
 
-- [ ] **Step 2: Run both tests and verify RED**
+- [x] **Step 2: Run both tests and verify RED**
 
 Run: `pnpm vitest run api/services/drawing-grounding/ledger.test.ts api/services/drawing-grounding/task-relevant-view.test.ts`
 
 Expected: FAIL because the modules do not exist.
 
-- [ ] **Step 3: Implement append-only folding and task projection**
+- [x] **Step 3: Implement append-only folding and task projection**
 
 Store only event deltas; expose full history to audit and only `current + deltaSince(cursor)` to model context. Reject cross-revision events and dangling semantic relations.
 
-- [ ] **Step 4: Run both tests and verify GREEN**
+- [x] **Step 4: Run both tests and verify GREEN**
 
 Run: `pnpm vitest run api/services/drawing-grounding/ledger.test.ts api/services/drawing-grounding/task-relevant-view.test.ts`
 
@@ -125,7 +125,7 @@ Expected: PASS.
 - Consumes: transaction Preview result, base document/revision, resulting temporary document, and `WorldModelCompiler`.
 - Produces: `CounterfactualWorldBranch` with affected bounds/nodes, world-model delta, knowledge state, and stable query handle.
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 ```ts
 it('derives only the affected local world from a ready preview', () => {
@@ -139,21 +139,21 @@ it('rejects a branch when base revision or digest changes', () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `pnpm vitest run api/services/drawing-preview-world/service.test.ts`
 
 Expected: FAIL because the service does not exist.
 
-- [ ] **Step 3: Implement branch creation and local delta**
+- [x] **Step 3: Implement branch creation and local delta**
 
 Reuse the temporary `resultingDocument`; calculate affected bounds from Patch nodes and compile only an expanded local scope. Store handles in memory with revision/digest guards; never create a canonical revision.
 
-- [ ] **Step 4: Expose the branch from `preview_transaction` and `evaluate_preview`**
+- [x] **Step 4: Expose the branch from `preview_transaction` and `evaluate_preview`**
 
 Return `counterfactualBranchId`, affected scope, topology/support summary, and knowledge state. Keep full documents private.
 
-- [ ] **Step 5: Run service and drawing-tool tests**
+- [x] **Step 5: Run service and drawing-tool tests**
 
 Run: `pnpm vitest run api/services/drawing-preview-world/service.test.ts api/services/drawing-tools/drawing-tools.test.ts`
 
@@ -177,25 +177,25 @@ Expected: PASS.
 - Consumes: Drawing Application current checkpoint, world compiler, Grounding Ledger, and existing topology/transaction tools.
 - Produces model tools: `build_world_slice`, `inspect_world_slice`, `ground_semantic_entities`, `refine_semantic_entity`, `propose_spatial_actions`, and `inspect_counterfactual_world`.
 
-- [ ] **Step 1: Write failing contract and tool tests**
+- [x] **Step 1: Write failing contract and tool tests**
 
 Assert that all tools return drawing/revision/compiler/input digest, Knowledge State, bounded result counts, and continuation rather than silent truncation.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `pnpm vitest run api/services/drawing-world-model/tools.test.ts api/services/drawing-spatial-actions/proposals.test.ts src/contracts/drawing-agent.test.ts`
 
 Expected: FAIL because new tools are not registered.
 
-- [ ] **Step 3: Implement bounded read tools and non-authorizing proposals**
+- [x] **Step 3: Implement bounded read tools and non-authorizing proposals**
 
 Action proposals may rank `transform | deform | solve | replace | redraw | hybrid | raw`, but only describe feasibility, cost, affected refs, and diagnostics. They never create write authorization.
 
-- [ ] **Step 4: Register compact catalog contracts**
+- [x] **Step 4: Register compact catalog contracts**
 
 Keep full input schema lazy-loaded through the existing capability catalog. Do not add all tool contracts to every model request.
 
-- [ ] **Step 5: Run tool and contract tests**
+- [x] **Step 5: Run tool and contract tests**
 
 Run: `pnpm vitest run api/services/drawing-world-model/tools.test.ts api/services/drawing-spatial-actions/proposals.test.ts src/contracts/drawing-agent.test.ts api/services/drawing-tools/registry.test.ts`
 
@@ -215,7 +215,7 @@ Expected: PASS.
 - Consumes: current `WorldModelSlice`, `TaskRelevantView`, Grounding Evidence Delta, tool results, and Preview branch summaries.
 - Produces: one compact model context plus audited `escalationReason`, without mandatory extra planner/grounder/verifier calls.
 
-- [ ] **Step 1: Write failing fast-path tests**
+- [x] **Step 1: Write failing fast-path tests**
 
 ```ts
 it('provides world slice and action facts in the first model decision', async () => {
@@ -229,21 +229,21 @@ it('requires reason and evidence before an extra decision', async () => {
 });
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `pnpm vitest run api/services/drawing-agent/model-loop-runtime.test.ts api/services/drawing-agent/model-loop-adapter.test.ts`
 
 Expected: FAIL on missing world-model context/escalation contract.
 
-- [ ] **Step 3: Integrate the fast path**
+- [x] **Step 3: Integrate the fast path**
 
 Build deterministic evidence concurrently where possible, send one Observation and one bounded Slice, then let the existing model select a target and action in one decision. Reuse caches across later turns; emit no synthetic stages.
 
-- [ ] **Step 4: Add evidence-driven escalation accounting**
+- [x] **Step 4: Add evidence-driven escalation accounting**
 
 Extra model turns must point to ambiguity, relevant incomplete knowledge, infeasible action, Preview defect, user instruction, or protocol repair and include new evidence/diagnostic digest.
 
-- [ ] **Step 5: Run runtime/adapter tests**
+- [x] **Step 5: Run runtime/adapter tests**
 
 Run: `pnpm vitest run api/services/drawing-agent/model-loop-runtime.test.ts api/services/drawing-agent/model-loop-adapter.test.ts api/services/drawing-agent/context-budget.test.ts`
 

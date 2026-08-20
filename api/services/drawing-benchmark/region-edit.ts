@@ -7,8 +7,8 @@ import {
   type IdFactory,
 } from '../../../src/drawing/index.js';
 import type {
-  FragmentAuthorization,
   SemanticRegion,
+  SpatialEditAuthorization,
   SpatialSelection,
 } from '../../../src/contracts/drawing-spatial-region.js';
 import type {
@@ -39,10 +39,11 @@ export async function runCreativeRegionEditBenchmark(): Promise<CreativeRegionEd
   const opened = await repository.create(initial);
   const region: SemanticRegion = {
     id: 'region_hair', drawingId: initial.id, revision: opened.revision,
-    label: '头发新增区域', sourceViewIds: ['overview'], maskHandle: 'mask_hair',
+    label: '头发新增区域', operation: 'add-new', preferredEditMode: 'hybrid-edit',
+    sourceViewIds: ['overview'], maskHandle: 'mask_hair',
     worldContours: [[[15, 70], [85, 70], [85, 100], [15, 100]]],
     worldHoles: [],
-    anchors: [{ id: 'hairline', role: 'face-connection', point: [50, 75] as const, confidence: 1 }],
+    anchors: [{ id: 'hairline', role: 'boundary', point: [50, 75] as const, confidence: 1 }],
     confidence: 1, evidenceRefs: ['overview'],
   };
   const selection: SpatialSelection = {
@@ -55,7 +56,6 @@ export async function runCreativeRegionEditBenchmark(): Promise<CreativeRegionEd
     classifications: [], uncertainParts: [], splitPlan: [],
   };
   const strategy = routeSpatialEditStrategy({
-    goal: '给角色增加卷发，但不遮挡眼睛和脸部轮廓',
     document: initial, region, selection,
     protectedRegionIds: ['region_eyes', 'region_face'],
   });
@@ -71,15 +71,15 @@ export async function runCreativeRegionEditBenchmark(): Promise<CreativeRegionEd
   });
   const firstValidation = validateGenerativeGeometry(validationInput([firstHair]));
   const revisedValidation = validateGenerativeGeometry(validationInput([revisedHair]));
-  const authorization: FragmentAuthorization = {
+  const authorization: SpatialEditAuthorization = {
     id: 'authorization_hair_additive',
     revision: opened.revision,
     regionId: region.id,
-    editableFragmentIds: [],
-    protectedFragmentIds: [],
+    editableTargetIds: [],
+    protectedTargetIds: [],
     boundaryAnchorIds: ['hairline'],
     protectedHashes: {},
-    selectionProofId: 'proof_hair_additive',
+    topologyResolutionId: 'topology_resolution_hair_additive',
     locality: {
       areaRatio: 0.2,
       widthRatio: 0.7,

@@ -110,15 +110,23 @@ type ParsedInvocation =
     }
   | { capability: 'compare_region'; sourceId: string; regionId: string; revision: string };
 
-const OVERVIEW_BUDGET_LIMIT = {
-  maxPixels: 2_000_000, maxResults: 256, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
-} satisfies CvToolBudget;
-const CROP_BUDGET_LIMIT = {
-  maxPixels: 2_000_000, maxResults: 8, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
-} satisfies CvToolBudget;
-const EXTRACT_BUDGET_LIMIT = {
-  maxPixels: 1_000_000, maxResults: 16, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
-} satisfies CvToolBudget;
+export const CV_TOOL_BUDGETS = Object.freeze({
+  inspect_source_overview: Object.freeze({
+    maxPixels: 2_000_000, maxResults: 256, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+  }),
+  inspect_source_crop: Object.freeze({
+    maxPixels: 2_000_000, maxResults: 8, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+  }),
+  cv_extract_evidence: Object.freeze({
+    maxPixels: 1_000_000, maxResults: 16, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+  }),
+  cv_fit_primitive: Object.freeze({
+    maxPixels: 1_000_000, maxResults: 16, maxSamplesPerResult: 2_048, timeoutMs: 10_000,
+  }),
+} satisfies Record<
+  'inspect_source_overview' | 'inspect_source_crop' | 'cv_extract_evidence' | 'cv_fit_primitive',
+  CvToolBudget
+>);
 
 export class DrawingCvToolRegistry {
   readonly #provider: DrawingCvProvider;
@@ -404,7 +412,7 @@ function parseInvocation(capability: CvToolCapability, value: unknown): ParsedIn
       exactKeys(input, ['sourceId', 'budget']);
       return {
         capability, sourceId: safeId(input.sourceId),
-        budget: budget(input.budget, OVERVIEW_BUDGET_LIMIT),
+        budget: budget(input.budget, CV_TOOL_BUDGETS.inspect_source_overview),
       };
     case 'inspect_source_crop':
       exactKeys(input, ['sourceId', 'regionId', 'budget']);
@@ -412,7 +420,7 @@ function parseInvocation(capability: CvToolCapability, value: unknown): ParsedIn
         capability,
         sourceId: safeId(input.sourceId),
         regionId: safeId(input.regionId),
-        budget: budget(input.budget, CROP_BUDGET_LIMIT),
+        budget: budget(input.budget, CV_TOOL_BUDGETS.inspect_source_crop),
       };
     case 'create_observation_region':
       exactOptionalKeys(
@@ -441,7 +449,7 @@ function parseInvocation(capability: CvToolCapability, value: unknown): ParsedIn
         capability,
         sourceId: safeId(input.sourceId),
         regionId: safeId(input.regionId),
-        budget: budget(input.budget, EXTRACT_BUDGET_LIMIT),
+        budget: budget(input.budget, CV_TOOL_BUDGETS.cv_extract_evidence),
       };
     case 'cv_read_evidence_page':
       exactKeys(input, ['handle', 'offset', 'limit']);
@@ -457,7 +465,7 @@ function parseInvocation(capability: CvToolCapability, value: unknown): ParsedIn
         capability,
         handle: boundedString(input.handle, 1, 80),
         primitiveType: primitiveType(input.primitiveType),
-        budget: budget(input.budget, EXTRACT_BUDGET_LIMIT),
+        budget: budget(input.budget, CV_TOOL_BUDGETS.cv_fit_primitive),
       };
     case 'compare_region':
       exactKeys(input, ['sourceId', 'regionId', 'revision']);

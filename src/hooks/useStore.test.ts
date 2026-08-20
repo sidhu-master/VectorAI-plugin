@@ -22,6 +22,15 @@ const revision1 = 'revision_1' as RevisionId;
 const revision2 = 'revision_2' as RevisionId;
 
 describe('canonical drawing workspace store', () => {
+  it('keeps internal topology relation overlays hidden in the normal canvas view', () => {
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      storage: memoryStorage(),
+    });
+
+    expect(store.getState().showRelations).toBe(false);
+  });
+
   it('toggles all canvas annotations as a view preference without changing Drawing IR', async () => {
     const store = createAppStore({
       drawingClient: drawingClientDouble() as unknown as DrawingClient,
@@ -73,6 +82,63 @@ describe('canonical drawing workspace store', () => {
     expect(client.open).not.toHaveBeenCalled();
     expect(client.create).toHaveBeenCalledWith('mm');
     expect(storage.getItem(ACTIVE_DRAWING_STORAGE_KEY)).toBe(drawingId);
+  });
+
+  it('imports a DXF deterministically, updates the workspace, and shows real file cards', async () => {
+    const client = drawingClientDouble();
+    const imported = workspace();
+    imported.revision = revision2;
+    client.importDxf.mockResolvedValueOnce({
+      workspace: imported,
+      receipt: {
+        source: { sourceId: 'source_1', fileName: 'shaft.dxf' },
+        projection: { projectedGeometryCount: 134, projectedAnnotationCount: 28 },
+        annotation: {
+          generatedCount: 24,
+          pendingCount: 5,
+          conflictCount: 2,
+          coverage: { valid: true },
+        },
+        recognition: {
+          regions: [
+            { id: 'B01', status: 'confirmed' as const },
+            { id: 'G01', status: 'conflict' as const },
+          ],
+        },
+      },
+    });
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: client as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    const file = { fileName: 'shaft.dxf', data: 'MApFT0Y=', mimeType: 'application/dxf' };
+    const document = { fileName: 'shaft.txt', data: 'W2RyYXdpbmdd', mimeType: 'text/plain' };
+
+    await store.getState().importDxf(file, document);
+
+    expect(client.importDxf).toHaveBeenCalledWith(drawingId, file, document);
+    expect(agent.start).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({
+      revision: revision2,
+      drawingBusy: false,
+      drawingError: null,
+    });
+    expect(store.getState().aiMessages).toEqual([
+      expect.objectContaining({
+        role: 'user', content: '',
+        files: [
+          { name: 'shaft.dxf', mimeType: 'application/dxf' },
+          { name: 'shaft.txt', mimeType: 'text/plain' },
+        ],
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringMatching(/134 个图元.*24 项源标注.*自动标注将在分区确认后生成/),
+      }),
+    ]);
   });
 
   it('coalesces concurrent initialization from React development effects', async () => {
@@ -191,32 +257,23 @@ describe('canonical drawing workspace store', () => {
     expect(store.getState().drawingError).toBe('版本已变化');
   });
 
-  it('clears against the latest repository revision instead of the visible stale revision', async () => {
+  it('clears through the server-owned atomic operation', async () => {
     const client = drawingClientDouble();
-    client.open.mockResolvedValueOnce({ ...workspace(), revision: revision2 });
-    client.execute.mockImplementationOnce(async (_id, transaction) => {
-      const empty = structuredClone(workspace().document);
-      empty.geometry = [];
-      return committed(empty, transaction.baseRevision);
+    const empty = structuredClone(workspace().document);
+    empty.geometry = [];
+    client.clear.mockResolvedValueOnce({
+      document: empty, revision: revision2, commits: [],
     });
     const store = createAppStore({
       drawingClient: client as unknown as DrawingClient,
       storage: memoryStorage(),
-      idFactory: { next: (kind) => `${kind}_clear` },
     });
     await store.getState().initializeDrawing();
 
     await store.getState().clearDrawing();
 
-    expect(client.open).toHaveBeenCalledWith(drawingId);
-    expect(client.execute).toHaveBeenCalledWith(
-      drawingId,
-      expect.objectContaining({
-        id: 'transaction_clear',
-        baseRevision: revision2,
-        commands: [{ type: 'geometry.delete', id: geometryId }],
-      }),
-    );
+    expect(client.clear).toHaveBeenCalledWith(drawingId);
+    expect(client.execute).not.toHaveBeenCalled();
     expect(store.getState().document?.geometry).toEqual([]);
     expect(store.getState().drawingBusy).toBe(false);
   });
@@ -230,6 +287,11 @@ describe('canonical drawing workspace store', () => {
       revision: revision2,
       commits: [],
     });
+    client.clear.mockResolvedValueOnce({
+      document: empty,
+      revision: revision2,
+      commits: [],
+    });
     const store = createAppStore({
       drawingClient: client as unknown as DrawingClient,
       storage: memoryStorage(),
@@ -238,6 +300,7 @@ describe('canonical drawing workspace store', () => {
 
     await store.getState().clearDrawing();
 
+    expect(client.clear).toHaveBeenCalledWith(drawingId);
     expect(client.execute).not.toHaveBeenCalled();
     expect(store.getState()).toMatchObject({
       document: empty,
@@ -271,6 +334,74 @@ describe('canonical drawing workspace store', () => {
 });
 
 describe('Drawing Agent workspace integration', () => {
+  it('projects a pending Human Decision and resumes the same run after responding', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    await store.getState().submitAgentInput('修改受约束的图形');
+    const pendingDecision = {
+      id: 'decision_1', episodeId: 'episode_1', revision: revision1,
+      kind: 'grant-permission' as const,
+      question: '是否允许当前候选修改受保护内容？', reason: '需要一次性权限',
+      options: [{ id: 'allow_once', label: '仅允许本次' }, { id: 'deny', label: '不允许' }],
+      affectedResources: [{ plane: 'relation' as const, ids: ['constraint_1'], action: 'constraint.delete' }],
+      previewHandle: 'preview_1', expiresWhenRevisionChanges: true as const,
+    };
+    agent.getRun.mockResolvedValueOnce({
+      ...agentRunView('waiting_for_user'), pendingDecision,
+    });
+
+    agent.emit({
+      id: 'event_waiting', runId: 'run_1', type: 'validation',
+      title: '需要你确认后继续', timestamp: 2, elapsedMs: 1,
+    });
+    await waitUntil(() => store.getState().pendingAgentDecision?.id === 'decision_1');
+    expect(store.getState()).toMatchObject({
+      agentStatus: 'waiting_for_user', pendingAgentDecision: pendingDecision,
+    });
+
+    await store.getState().respondToAgentDecision('allow_once', '其他部分保持不变');
+
+    expect(agent.respondToDecision).toHaveBeenCalledWith('run_1', 'decision_1', {
+      selectedOptionId: 'allow_once', additionalInstruction: '其他部分保持不变',
+    });
+    expect(store.getState()).toMatchObject({
+      agentStatus: 'running', pendingAgentDecision: null,
+    });
+  });
+
+  it('keeps model tool overlays separate from user selection and clears them at terminal state', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+    store.getState().selectEntity(geometryId, false);
+    await store.getState().submitAgentInput('检查图形');
+    agent.emit({
+      id: 'event_overlay', runId: 'run_1', type: 'topology_resolved',
+      title: '路径候选已找到', timestamp: 2, elapsedMs: 1,
+      overlay: {
+        kind: 'paths', role: 'candidate',
+        paths: [{ id: 'path_1', nodeIds: [geometryId], points: [[0, 0], [5, 0]] }],
+      },
+    });
+
+    expect(store.getState().agentCanvasOverlay).toMatchObject({ kind: 'paths' });
+    expect(store.getState().selectedIds).toEqual([geometryId]);
+    agent.emit({
+      id: 'event_done_overlay', runId: 'run_1', type: 'completed',
+      title: '完成', timestamp: 3, elapsedMs: 2,
+    });
+    expect(store.getState().agentCanvasOverlay).toBeNull();
+  });
+
   it('projects ordered perception deltas without mutating the canonical drawing', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
@@ -353,7 +484,7 @@ describe('Drawing Agent workspace integration', () => {
     expect(store.getState().perceptionPreview.activeOverlay).toBeNull();
   });
 
-  it('clears the last rejected preview when a task fails', async () => {
+  it('retains the last rejected spatial evidence while clearing provisional geometry on failure', async () => {
     const agent = agentClientDouble();
     const store = createAppStore({
       drawingClient: drawingClientDouble() as unknown as DrawingClient,
@@ -364,13 +495,34 @@ describe('Drawing Agent workspace integration', () => {
     await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
     agent.emit(perceptionEvent(1, 4));
     agent.emit({
+      id: 'event_rejected_overlay', runId: 'run_1', type: 'search_envelope_rejected',
+      title: '拓扑路径不完整', timestamp: 2, elapsedMs: 1,
+      perceptionDelta: {
+        runId: 'run_1', sequence: 2, action: 'preview', slotIds: [], upserts: [], removeIds: [],
+        regionOverlay: {
+          id: 'region_rejected', revision: revision1,
+          previewVersionId: 'preview_rejected', label: '右手', attempt: 2,
+          status: 'rejected', contours: [[[0, 0], [10, 0], [10, 10]]], holes: [],
+          anchors: [{
+            id: 'seed', role: 'target-seed', point: [5, 5], confidence: 0.8,
+            snapStatus: 'missed',
+          }],
+          paths: [], issues: [{ code: 'TARGET_ANCHOR_MISSING', message: '目标点未吸附' }],
+          confidence: 0.8,
+        },
+        source: { page: 1, viewId: 'view_1', regionId: 'region_rejected', stage: 'edit-preview' },
+      },
+    });
+    agent.emit({
       id: 'event_failed', runId: 'run_1', type: 'failed', title: '未收敛',
-      timestamp: 2, elapsedMs: 1,
+      timestamp: 3, elapsedMs: 2,
     });
 
-    expect(store.getState().perceptionPreview).toEqual({
-      runId: null, lastSequence: 0, nodes: {}, labelsByNodeId: {},
-      activeOverlay: null, previewVersionId: null,
+    expect(store.getState().perceptionPreview.nodes).toEqual({});
+    expect(store.getState().perceptionPreview.labelsByNodeId).toEqual({});
+    expect(store.getState().perceptionPreview.hiddenCommittedIds ?? []).toEqual([]);
+    expect(store.getState().perceptionPreview.activeOverlay).toMatchObject({
+      id: 'region_rejected', status: 'rejected', attempt: 2,
     });
   });
 
@@ -438,9 +590,13 @@ describe('Drawing Agent workspace integration', () => {
 
     await store.getState().submitAgentInput('创建一个圆');
 
-    expect(agent.start).toHaveBeenCalledWith({
+    expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({
       drawingId, baseRevision: revision1, goal: '创建一个圆', selectedIds: [],
-    });
+      stableRules: expect.arrayContaining([
+        expect.stringContaining('保持非目标内容'),
+        expect.stringContaining('不得产生新的悬空端点'),
+      ]),
+    }));
     expect(store.getState()).toMatchObject({
       agentStatus: 'planning',
       agentRunId: 'run_1',
@@ -460,11 +616,53 @@ describe('Drawing Agent workspace integration', () => {
 
     await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
 
-    expect(agent.start).toHaveBeenCalledWith({
+    expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({
       drawingId, baseRevision: revision1, goal: '分析图纸', selectedIds: [],
       attachment: { data: 'aW1hZ2U=', mimeType: 'image/png', page: 1 },
-    });
+      stableRules: expect.any(Array),
+    }));
     expect(store.getState().agentError).toBeNull();
+  });
+
+  it('keeps the inferred reconstruction goal out of the user message for an image-only upload', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().submitAgentInput(undefined, 'aW1hZ2U=', 'image/png');
+
+    expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({
+      drawingId, baseRevision: revision1,
+      goal: '',
+      attachment: { data: 'aW1hZ2U=', mimeType: 'image/png', page: 1 },
+    }));
+    expect(store.getState().aiMessages).toContainEqual(expect.objectContaining({
+      role: 'user', content: '', image: 'aW1hZ2U=', mimeType: 'image/png',
+    }));
+    expect(store.getState().aiMessages).not.toContainEqual(expect.objectContaining({
+      role: 'user', content: '解析并重建上传的二维图纸',
+    }));
+  });
+
+  it('keeps user text and the uploaded image together in one user message', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().submitAgentInput('把这张图转成矢量图', 'aW1hZ2U=', 'image/png');
+
+    expect(store.getState().aiMessages).toContainEqual(expect.objectContaining({
+      role: 'user', content: '把这张图转成矢量图',
+      image: 'aW1hZ2U=', mimeType: 'image/png',
+    }));
   });
 
   it('refreshes the canonical workspace on commit and ignores documents in Agent responses', async () => {
@@ -485,7 +683,7 @@ describe('Drawing Agent workspace integration', () => {
     await store.getState().submitAgentInput('半径改成 8');
 
     agent.emit({
-      id: 'event_commit', runId: 'run_1', type: 'commit', title: '已提交',
+      id: 'event_commit', runId: 'run_1', type: 'committed', title: '已提交',
       timestamp: 2, elapsedMs: 1,
     });
     await waitUntil(() => store.getState().revision === revision2);
@@ -499,7 +697,8 @@ describe('Drawing Agent workspace integration', () => {
     expect(store.getState().document?.geometry[0]).toMatchObject({ radius: 8 });
   });
 
-  it('keeps a promoted preview visible until its committed node arrives', async () => {
+  it('keeps a committed preview visible for the canvas transition before reconciling it', async () => {
+    vi.useFakeTimers();
     const agent = agentClientDouble();
     const drawings = drawingClientDouble();
     const promotedId = 'geometry_promoted' as GeometryId;
@@ -517,13 +716,14 @@ describe('Drawing Agent workspace integration', () => {
       drawingClient: drawings as unknown as DrawingClient,
       agentClient: agent as unknown as AgentClient,
       storage: memoryStorage({ [ACTIVE_DRAWING_STORAGE_KEY]: drawingId }),
+      previewSettleMs: 400,
     });
     await store.getState().initializeDrawing();
     await store.getState().submitAgentInput('分析图纸', 'aW1hZ2U=', 'image/png');
 
     agent.emit(perceptionEventForId(1, promotedId, 'observe'));
     agent.emit({
-      id: 'event_commit_atomic', runId: 'run_1', type: 'commit', title: '已提交',
+      id: 'event_commit_atomic', runId: 'run_1', type: 'committed', title: '已提交',
       timestamp: 2, elapsedMs: 1,
     });
     agent.emit(perceptionEventForId(2, promotedId, 'promote'));
@@ -534,7 +734,13 @@ describe('Drawing Agent workspace integration', () => {
     expect(store.getState().document?.geometry).toContainEqual(
       expect.objectContaining({ id: promotedId }),
     );
+    expect(store.getState().perceptionPreview.nodes).toHaveProperty(promotedId);
+
+    await vi.advanceTimersByTimeAsync(399);
+    expect(store.getState().perceptionPreview.nodes).toHaveProperty(promotedId);
+    await vi.advanceTimersByTimeAsync(1);
     expect(store.getState().perceptionPreview.nodes).not.toHaveProperty(promotedId);
+    vi.useRealTimers();
   });
 
   it('routes new text to the active run as an instruction', async () => {
@@ -667,6 +873,23 @@ function drawingClientDouble(overrides: { commits?: DrawingCommit[] } = {}) {
       status: 'already_satisfied' as const,
       outcome: { satisfied: true, assertions: [] },
     })),
+    clear: vi.fn<(id: DrawingId) => Promise<ReturnType<typeof workspace>>>(
+      async () => workspace(overrides),
+    ),
+    importDxf: vi.fn(async () => ({
+      workspace: workspace(overrides),
+      receipt: {
+        source: { sourceId: 'source_default', fileName: 'drawing.dxf' },
+        projection: { projectedGeometryCount: 0, projectedAnnotationCount: 0 },
+        annotation: {
+          generatedCount: 0,
+          pendingCount: 0,
+          conflictCount: 0,
+          coverage: { valid: true },
+        },
+        recognition: { regions: [] },
+      },
+    })),
   };
 }
 
@@ -687,6 +910,7 @@ function agentClientDouble() {
     resume: vi.fn(async () => agentRunView('running')),
     stop: vi.fn(async () => agentRunView('stopping')),
     addInstruction: vi.fn(async () => agentRunView('running')),
+    respondToDecision: vi.fn(async () => agentRunView('running')),
   };
 }
 

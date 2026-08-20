@@ -6,10 +6,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { DrawingAgentProtocolError, type AgentDecision, type DrawingAgentPlan } from '../../../src/contracts/drawing-agent';
 import {
   DrawingSpatialRegionProtocolError,
-  type SelectionProofProposal,
   type SemanticRegionProposal,
 } from '../../../src/contracts/drawing-spatial-region';
 import {
+  type AnnotationId,
   type DrawingTransaction,
   type GeometryId,
   type IdFactory,
@@ -77,7 +77,6 @@ async function setup(input: {
   acceptance?: DrawingAcceptanceModelAdapter;
   previewVerifier?: DrawingPreviewVerificationModelAdapter;
   regionProposer?: { propose(input: unknown): Promise<SemanticRegionProposal> };
-  fragmentSelector?: { select(input: unknown): Promise<SelectionProofProposal> };
   spatialDesigner?: { design(input: unknown): Promise<SpatialEditDesign> };
   redrawService?: { redraw(input: import('../drawing-generation/types').DrawingRegionRedrawInput): Promise<{
     generatedSource: import('../source-artifacts/types').SourceArtifactReference;
@@ -161,28 +160,6 @@ async function setup(input: {
     acceptance: input.acceptance,
     previewVerifier: input.previewVerifier,
     regionProposer: input.regionProposer,
-    fragmentSelector: input.fragmentSelector ?? (input.regionProposer ? {
-      select: vi.fn(async (value: unknown): Promise<SelectionProofProposal> => {
-        const call = value as {
-          candidates: { candidates: Array<{ fragmentId: string }> };
-          availableAnchors: Array<{ id: string }>;
-          allowEmptyEditSet?: boolean;
-        };
-        const editableFragmentIds = call.allowEmptyEditSet
-          ? []
-          : call.candidates.candidates.map((candidate) => candidate.fragmentId);
-        return {
-          editableFragmentIds,
-          anchorIds: call.allowEmptyEditSet
-            ? []
-            : call.availableAnchors.map((anchor) => anchor.id),
-          evidence: editableFragmentIds.map((fragmentId) => ({
-            fragmentId, reason: '测试默认选择', confidence: 0.95,
-          })),
-          confidence: 0.95,
-        };
-      }),
-    } : undefined),
     spatialDesigner: input.spatialDesigner,
     redrawService: input.redrawService,
     episodeStore: input.episodeStore,
@@ -191,6 +168,30 @@ async function setup(input: {
 }
 
 describe('DrawingAgentRuntime', () => {
+  it.each([
+    ['把右手抬起来打招呼', false],
+    ['修改选中的对象', true],
+  ])('treats selection as a hard planning scope only when the goal references it: %s', async (
+    goal,
+    expectedHardScope,
+  ) => {
+    const plannerInputs: DrawingPlannerInput[] = [];
+    const planner: DrawingPlannerModelAdapter = {
+      plan: vi.fn(async (input) => {
+        plannerInputs.push(input);
+        return createPlan('circle_1');
+      }),
+    };
+    const { runtime, workspace } = await setup({ planner });
+
+    await runtime.start({
+      ...startInput(workspace), goal, selectedIds: ['stale_line'],
+    }).completion;
+
+    expect(plannerInputs[0].instruction?.includes('stale_line') ?? false)
+      .toBe(expectedHardScope);
+  });
+
   it('rejects an overbroad search envelope before selection or design', async () => {
     let groundingAttempt = 0;
     const regionProposer = {
@@ -205,41 +206,34 @@ describe('DrawingAgentRuntime', () => {
           }> };
         };
         const view = call.observation.views[0];
+        const arm = view.grounding.find((node) => node.nodeId === 'arm')!;
+        const targetSeed = [
+          (arm.normalized.left + arm.normalized.right) / 2,
+          (arm.normalized.top + arm.normalized.bottom) / 2,
+        ] as [number, number];
         if (groundingAttempt === 1) {
           return {
-            label: '过大的右臂区域', sourceViewId: view.id,
+            label: '过大的目标区域', operation: 'modify-existing',
+            preferredEditMode: 'geometric-edit', sourceViewId: view.id,
             contours: [[[0.14, 0.14], [0.36, 0.14], [0.33, 0.57], [0.32, 0.75], [0.18, 0.73], [0.17, 0.61], [0.14, 0.61]]],
-            holes: [], anchors: [], confidence: 0.95, evidenceRefs: [view.id],
+            holes: [],
+            anchors: [{ id: 'target', role: 'target-seed', point: targetSeed, confidence: 0.98 }],
+            confidence: 0.95, evidenceRefs: [view.id],
           };
         }
-        const arm = view.grounding.find((node) => node.nodeId === 'arm')!;
         const pad = 0.015;
         return {
-          label: '右臂最小搜索包络', sourceViewId: view.id,
+          label: '目标最小搜索包络', operation: 'modify-existing',
+          preferredEditMode: 'geometric-edit', sourceViewId: view.id,
           contours: [[
             [Math.max(0, arm.normalized.left - pad), Math.max(0, arm.normalized.top - pad)],
             [Math.min(1, arm.normalized.right + pad), Math.max(0, arm.normalized.top - pad)],
             [Math.min(1, arm.normalized.right + pad), Math.min(1, arm.normalized.bottom + pad)],
             [Math.max(0, arm.normalized.left - pad), Math.min(1, arm.normalized.bottom + pad)],
           ]],
-          holes: [], anchors: [], confidence: 0.95, evidenceRefs: [view.id],
-        };
-      }),
-    };
-    const fragmentSelector = {
-      select: vi.fn(async (input: unknown): Promise<SelectionProofProposal> => {
-        const call = input as { candidates: { candidates: Array<{
-          fragmentId: string; sourceNodeId: string;
-        }> } };
-        const armIds = call.candidates.candidates
-          .filter((candidate) => candidate.sourceNodeId === 'arm')
-          .map((candidate) => candidate.fragmentId);
-        return {
-          editableFragmentIds: armIds, anchorIds: [],
-          evidence: armIds.map((fragmentId) => ({
-            fragmentId, reason: '右臂目标', confidence: 0.96,
-          })),
-          confidence: 0.96,
+          holes: [],
+          anchors: [{ id: 'target', role: 'target-seed', point: targetSeed, confidence: 0.98 }],
+          confidence: 0.95, evidenceRefs: [view.id],
         };
       }),
     };
@@ -254,7 +248,7 @@ describe('DrawingAgentRuntime', () => {
     plan.goal.scope = { bounds: { minX: 8, minY: 8, maxX: 42, maxY: 16 } };
     plan.goal.acceptanceCriteria = [{ type: 'document.valid' }];
     plan.workflow[0].completionCriteria = [{ type: 'document.valid' }];
-    const result = await setup({ plan, regionProposer, fragmentSelector, spatialDesigner });
+    const result = await setup({ plan, regionProposer, spatialDesigner });
     const seeded = await result.application.execute({
       drawingId: result.workspace.document.id,
       transaction: {
@@ -281,12 +275,26 @@ describe('DrawingAgentRuntime', () => {
 
     expect(final.status, final.error ?? '').toBe('completed');
     expect(regionProposer.propose).toHaveBeenCalledTimes(2);
-    expect(fragmentSelector.select).toHaveBeenCalledTimes(1);
     expect(spatialDesigner.design).toHaveBeenCalledTimes(1);
     expect(events.map((event) => event.type)).toContain('search_envelope_rejected');
     expect(events.findIndex((event) => event.type === 'search_envelope_rejected'))
-      .toBeLessThan(events.findIndex((event) => event.type === 'selecting_fragments'));
+      .toBeLessThan(events.findIndex((event) => event.type === 'topology_resolved'));
+    const overlays = events.flatMap((event) => event.perceptionDelta?.regionOverlay
+      ? [{ event: event.type, overlay: event.perceptionDelta.regionOverlay }]
+      : []);
+    expect(overlays.map(({ event, overlay }) => `${event}:${overlay.status}`)).toEqual([
+      'region_overlay:proposed',
+      'search_envelope_rejected:rejected',
+      'region_overlay:proposed',
+      'topology_resolved:tracing',
+      'region_overlay:accepted',
+    ]);
+    expect(overlays[1].overlay.paths).not.toEqual([]);
+    expect(overlays[1].overlay.anchors).toEqual([
+      expect.objectContaining({ id: 'target', snapStatus: 'snapped', snappedPoint: expect.any(Array) }),
+    ]);
   });
+
   it('allows a six-minute bounded feedback loop while progress owns the 30-second response SLA', async () => {
     const { runtime, workspace } = await setup();
 
@@ -327,12 +335,11 @@ describe('DrawingAgentRuntime', () => {
     expect(final.analysisSummary).toBe('来源反馈已收敛');
   });
 
-  it('publishes clean-line vectorization stages as visible progress', async () => {
+  it('publishes direct vector batch stages as visible progress', async () => {
     const feedbackLoop = {
       async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
         yield { kind: 'state', stage: 'VECTORIZE_SOURCE', iteration: 0 };
-        yield { kind: 'state', stage: 'DRAW_VECTOR_DRAFT', iteration: 0 };
-        yield { kind: 'state', stage: 'PROMOTE_PRIMITIVE', iteration: 0 };
+        yield { kind: 'state', stage: 'COMMIT_VECTOR_BATCH', iteration: 0 };
         yield {
           kind: 'completed', revision: input.revision,
           unresolvedRequired: 0, summary: '矢量化完成',
@@ -351,8 +358,7 @@ describe('DrawingAgentRuntime', () => {
     expect(final.status).toBe('completed');
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'tool_started', title: '正在提取图纸中心线' }),
-      expect.objectContaining({ type: 'tool_started', title: '正在逐条绘制矢量底稿' }),
-      expect.objectContaining({ type: 'validation', title: '正在提升为规范图元' }),
+      expect.objectContaining({ type: 'tool_started', title: '正在分批绘制最终图元' }),
     ]));
   });
 
@@ -457,6 +463,67 @@ describe('DrawingAgentRuntime', () => {
       type: 'model_started', title: '正在选择下一观察目标',
     }));
     expect(events.filter((event) => event.type === 'planning')).toEqual([]);
+  });
+
+  it('publishes a multi-annotation proposal and commit as one truthful batch update', async () => {
+    const feedbackLoop = {
+      async *run(input: DrawingFeedbackRunInput): AsyncIterable<DrawingFeedbackOutput> {
+        yield {
+          kind: 'proposal', slotId: 'annotation:a',
+          slotIds: ['annotation:a', 'annotation:b'],
+          nodes: [{
+            id: 'feedback_preview_annotation:a' as AnnotationId,
+            type: 'text', visible: true, content: 'A', position: [0, 0], height: 2,
+            rotation: 0, alignment: 'left', verticalAlignment: 'baseline',
+            quality: { status: 'candidate', confidence: 0.9, evidenceRefs: [] },
+          }, {
+            id: 'feedback_preview_annotation:b' as AnnotationId,
+            type: 'text', visible: true, content: 'B', position: [4, 0], height: 2,
+            rotation: 0, alignment: 'left', verticalAlignment: 'baseline',
+            quality: { status: 'candidate', confidence: 0.9, evidenceRefs: [] },
+          }],
+          labelsByNodeId: {
+            'feedback_preview_annotation:a': 'A',
+            'feedback_preview_annotation:b': 'B',
+          },
+        };
+        yield {
+          kind: 'commit', revision: input.revision,
+          slotIds: ['annotation:a', 'annotation:b'],
+          execution: {
+            receipt: {
+              toolCallId: 'commit_annotations', capability: 'commit_transaction', version: '1.0.0',
+              access: 'write', revisionBefore: input.revision,
+              revisionAfter: input.revision, inputDigest: 'in',
+              affectedNodeIds: [], status: 'already_satisfied',
+              outcome: { kind: 'commit', committed: false },
+              durationMs: 1, retry: { allowed: false },
+            },
+          },
+        };
+        yield {
+          kind: 'completed', revision: input.revision,
+          unresolvedRequired: 0, summary: '标注完成',
+        };
+      },
+    };
+    const { runtime, workspace } = await setup({ feedbackLoop });
+    const handle = runtime.start({
+      ...startInput(workspace), goal: '', source: sourceReference(),
+    });
+    const events: import('./progress').AgentProgressEvent[] = [];
+    runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
+
+    expect((await handle.completion).status).toBe('completed');
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'perception_delta',
+      perceptionDelta: expect.objectContaining({
+        slotIds: ['annotation:a', 'annotation:b'],
+      }),
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'commit', title: '已提交 2 个自动标注',
+    }));
   });
 
   it('keeps a rejected proposal visible in red through terminal failure', async () => {
@@ -984,7 +1051,7 @@ describe('DrawingAgentRuntime', () => {
     expect(acceptedWidth).toBeGreaterThan(1);
   });
 
-  it('returns final whole-drawing rejection feedback to the next semantic repair pass', async () => {
+  it('rejects a wrong whole-drawing preview before commit and repairs the same authorized region', async () => {
     const regionInputs: Array<{
       repairFeedback?: Array<{ code: string; message: string }>;
       modelName?: string;
@@ -997,17 +1064,26 @@ describe('DrawingAgentRuntime', () => {
         regionInputs.push(call);
         const viewId = call.observation.views[0].id;
         return {
-          label: '右臂', sourceViewId: viewId,
-          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          label: '右臂', operation: 'modify-existing', preferredEditMode: 'geometric-edit',
+          sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [],
+          anchors: [{ id: 'target', role: 'target-seed', point: [0.5, 0.5], confidence: 0.98 }],
           confidence: 0.95, evidenceRefs: [viewId],
         };
       }),
     };
+    const designInputs: Array<{
+      repairFeedback?: Array<{ code: string; message: string }>;
+      modelName?: string;
+    }> = [];
     const spatialDesigner = {
-      design: vi.fn(async (): Promise<SpatialEditDesign> => ({
+      design: vi.fn(async (input: unknown): Promise<SpatialEditDesign> => {
+        designInputs.push(input as typeof designInputs[number]);
+        return ({
         kind: 'transform', transform: { kind: 'translate', offset: [0, 1] },
         confidence: 0.95, evidenceRefs: ['view_overview'],
-      })),
+        });
+      }),
     };
     let acceptanceCalls = 0;
     const acceptance: DrawingAcceptanceModelAdapter = {
@@ -1020,7 +1096,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const plan: DrawingAgentPlan = {
       goal: {
-        id: 'goal_visual_repair', objective: '把右手抬起来', scope: { ids: ['arm'] },
+        id: 'goal_visual_repair', objective: '把选中的右手抬起来', scope: { ids: ['arm'] },
         acceptanceCriteria: [{ type: 'document.valid' }],
         riskPolicy: { candidateAllowed: true, maxCommits: 1 },
       },
@@ -1055,13 +1131,17 @@ describe('DrawingAgentRuntime', () => {
     }).completion;
 
     expect(final.status, final.error ?? '').toBe('completed');
-    expect(regionProposer.propose).toHaveBeenCalledTimes(2);
-    expect(regionInputs[1].repairFeedback).toEqual([
+    expect(regionProposer.propose).toHaveBeenCalledTimes(1);
+    expect(spatialDesigner.design).toHaveBeenCalledTimes(2);
+    expect(designInputs[1].repairFeedback).toEqual([
       expect.objectContaining({
-        code: 'final-visual-rejection', message: '整图中右手仍然下垂',
+        code: 'preview-visual-rejection', message: '整图中右手仍然下垂',
       }),
     ]);
-    expect(regionInputs[1].modelName).toBe('lite-model');
+    expect(designInputs[1].modelName).toBe('lite-model');
+    expect(acceptanceCalls).toBe(3);
+    expect((await setupResult.application.open(setupResult.workspace.document.id)).commits)
+      .toHaveLength(2);
   });
 
   it('gives a corrective replan a fresh plan-local commit budget without exceeding the run cap', async () => {
@@ -1183,8 +1263,10 @@ describe('DrawingAgentRuntime', () => {
         }
         const viewId = call.observation.views[0].id;
         return {
-          label: '右臂', sourceViewId: viewId,
-          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          label: '右臂', operation: 'modify-existing', preferredEditMode: 'geometric-edit',
+          sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [],
+          anchors: [{ id: 'target', role: 'target-seed', point: [0.5, 0.5], confidence: 0.98 }],
           confidence: 0.95, evidenceRefs: [viewId],
         };
       }),
@@ -1199,7 +1281,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const plan: DrawingAgentPlan = {
       goal: {
-        id: 'goal_raise_arm', objective: '把右手抬起来',
+        id: 'goal_raise_arm', objective: '把选中的右手抬起来',
         scope: { plane: 'geometry', ids: ['arm'], limit: 10 },
         acceptanceCriteria: [{ type: 'property.equals', nodeId: 'arm', path: 'end', value: [10, 40] }],
         riskPolicy: { candidateAllowed: true, maxCommits: 2 },
@@ -1258,27 +1340,32 @@ describe('DrawingAgentRuntime', () => {
       expect.objectContaining({ id: 'arm', end: [10, 40] }),
     ]);
     const semanticOrder = events.map((event) => event.type).filter((type) => [
-      'observing', 'grounding', 'region_overlay', 'region_resolved',
+      'observing', 'grounding', 'topology_resolved', 'region_overlay',
       'split_materialized', 'designing', 'previewing', 'verifying', 'committed',
     ].includes(type));
     expect(semanticOrder).toEqual([
-      'observing', 'grounding', 'region_overlay', 'region_resolved',
+      'observing', 'grounding', 'region_overlay', 'topology_resolved', 'region_overlay',
       'split_materialized', 'designing', 'previewing', 'verifying', 'committed',
     ]);
-    const overlay = events.find((event) => event.type === 'region_overlay');
-    expect(overlay?.perceptionDelta?.regionOverlay).toMatchObject({
-      label: '右臂', confidence: 0.95,
+    const overlays = events.filter((event) => event.type === 'region_overlay');
+    expect(overlays.map((event) => event.perceptionDelta?.regionOverlay?.status)).toEqual([
+      'proposed', 'accepted',
+    ]);
+    expect(overlays[1]?.perceptionDelta?.regionOverlay).toMatchObject({
+      label: '右臂', confidence: 0.95, status: 'accepted',
     });
     expect(JSON.stringify(events)).not.toContain('repair-model');
     const auditOrder = audit.events.map((event) => event.type === 'verification'
       ? `verification:${String(event.payload.phase)}`
       : event.type).filter((type) => [
-        'observation', 'region', 'atomic_graph', 'selection', 'strategy', 'split',
+        'observation', 'region', 'atomic_graph', 'verification:topology-resolution',
+        'selection', 'strategy', 'split',
         'lineage', 'intent', 'episode', 'preview', 'verification:deterministic-spatial',
         'verification:preview', 'commit',
       ].includes(type));
     expect(auditOrder).toEqual([
-      'observation', 'region', 'atomic_graph', 'selection', 'strategy', 'split',
+      'observation', 'region', 'atomic_graph', 'verification:topology-resolution',
+      'selection', 'strategy', 'split',
       'lineage', 'intent', 'episode', 'preview', 'verification:deterministic-spatial',
       'verification:preview', 'commit',
     ]);
@@ -1291,6 +1378,84 @@ describe('DrawingAgentRuntime', () => {
     });
   });
 
+  it('does not use planner-guessed geometric selectors as semantic preview postconditions', async () => {
+    const regionProposer = {
+      propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
+        const view = (input as { observation: { views: Array<{
+          id: string;
+          grounding: Array<{ nodeId: string; normalized: {
+            left: number; top: number; right: number; bottom: number;
+          } }>;
+        }> } }).observation.views[0];
+        const arm = view.grounding.find((item) => item.nodeId === 'arm')!;
+        const center = [
+          (arm.normalized.left + arm.normalized.right) / 2,
+          (arm.normalized.top + arm.normalized.bottom) / 2,
+        ] as [number, number];
+        return {
+          label: '视觉定位目标', operation: 'modify-existing',
+          preferredEditMode: 'geometric-edit', sourceViewId: view.id,
+          contours: [[
+            [Math.max(0, center[0] - 0.03), Math.max(0, center[1] - 0.03)],
+            [Math.min(1, center[0] + 0.03), Math.max(0, center[1] - 0.03)],
+            [Math.min(1, center[0] + 0.03), Math.min(1, center[1] + 0.03)],
+            [Math.max(0, center[0] - 0.03), Math.min(1, center[1] + 0.03)],
+          ]], holes: [],
+          anchors: [{ id: 'target', role: 'target-seed', point: center, confidence: 0.99 }],
+          confidence: 0.99, evidenceRefs: [view.id],
+        };
+      }),
+    };
+    const spatialDesigner = {
+      design: vi.fn(async (): Promise<SpatialEditDesign> => ({
+        kind: 'transform', transform: { kind: 'translate', offset: [0, 1] },
+        confidence: 0.95, evidenceRefs: ['view_overview'],
+      })),
+    };
+    const plan: DrawingAgentPlan = {
+      goal: {
+        id: 'semantic_goal', objective: '视觉修改目标', scope: { plane: 'geometry' },
+        acceptanceCriteria: [{ type: 'document.valid' }],
+        riskPolicy: { candidateAllowed: true, maxCommits: 1 },
+      },
+      workflow: [{
+        id: 'semantic_edit', capability: 'edit_entities', dependsOn: [],
+        completionCriteria: [{
+          type: 'selection.count',
+          selector: { plane: 'geometry', bounds: { minX: 999, minY: 999, maxX: 1000, maxY: 1000 } },
+          equals: 1,
+        }],
+        status: 'pending',
+      }],
+      summary: '视觉修改目标',
+    };
+    const result = await setup({
+      plan, regionProposer, spatialDesigner,
+      previewVerifier: { verify: vi.fn(async () => ({
+        satisfied: true, reason: '视觉预览正确', defects: [],
+      })) },
+    });
+    const seeded = await result.application.execute({
+      drawingId: result.workspace.document.id,
+      transaction: {
+        id: 'seed_semantic_postcondition', baseRevision: result.workspace.revision,
+        actor: { type: 'user', id: 'user' },
+        commands: [{ type: 'geometry.create', value: {
+          id: 'arm' as GeometryId, type: 'line', start: [0, 0], end: [10, 0],
+          visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+        } }],
+        preconditions: [], postconditions: [], evidenceRefs: [],
+      },
+    });
+    if (seeded.status !== 'committed') throw new Error('expected seed commit');
+
+    const final = await result.runtime.start({
+      ...startInput(result.workspace), baseRevision: seeded.revision,
+    }).completion;
+
+    expect(final.status, final.error ?? '').toBe('completed');
+  });
+
   it('reuses one grounded region and escalates semantic candidates Lite, Lite, then repair', async () => {
     const designInputs: Array<{
       modelName: string;
@@ -1301,8 +1466,10 @@ describe('DrawingAgentRuntime', () => {
         const viewId = (input as { observation: { views: Array<{ id: string }> } })
           .observation.views[0].id;
         return {
-          label: '右臂', sourceViewId: viewId,
-          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          label: '右臂', operation: 'modify-existing', preferredEditMode: 'geometric-edit',
+          sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [],
+          anchors: [{ id: 'target', role: 'target-seed', point: [0.5, 0.5], confidence: 0.98 }],
           confidence: 0.95, evidenceRefs: [viewId],
         };
       }),
@@ -1340,7 +1507,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const plan: DrawingAgentPlan = {
       goal: {
-        id: 'goal_bounded_arm_repair', objective: '把图形的右手抬起来打招呼',
+        id: 'goal_bounded_arm_repair', objective: '把选中的右手抬起来打招呼',
         scope: { plane: 'geometry', ids: ['arm'] },
         acceptanceCriteria: [{ type: 'document.valid' }],
         riskPolicy: { candidateAllowed: true, maxCommits: 1 },
@@ -1388,14 +1555,16 @@ describe('DrawingAgentRuntime', () => {
     ))).toEqual([1, 2, 3]);
   });
 
-  it('clears the rejected edit overlay before a bounded semantic repair run fails', async () => {
+  it('retains the last rejected grounding overlay when a bounded semantic repair run fails', async () => {
     const regionProposer = {
       propose: vi.fn(async (input: unknown): Promise<SemanticRegionProposal> => {
         const viewId = (input as { observation: { views: Array<{ id: string }> } })
           .observation.views[0].id;
         return {
-          label: '目标', sourceViewId: viewId,
-          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [], anchors: [],
+          label: '目标', operation: 'modify-existing', preferredEditMode: 'geometric-edit',
+          sourceViewId: viewId,
+          contours: [[[0, 0], [1, 0], [1, 1], [0, 1]]], holes: [],
+          anchors: [{ id: 'target', role: 'target-seed', point: [0.5, 0.5], confidence: 0.98 }],
           confidence: 0.95, evidenceRefs: [viewId],
         };
       }),
@@ -1440,15 +1609,19 @@ describe('DrawingAgentRuntime', () => {
 
     const final = await handle.completion;
     const failedIndex = events.findIndex((event) => event.type === 'failed');
-    const clearIndex = events.findIndex((event) => (
-      event.type === 'perception_delta'
-      && event.perceptionDelta?.action === 'reject'
-      && (event.perceptionDelta.removeIds.length > 0 || event.perceptionDelta.regionOverlay === null)
+    let rejectedIndex = -1;
+    events.forEach((event, index) => {
+      if (event.perceptionDelta?.regionOverlay?.status === 'rejected') rejectedIndex = index;
+    });
+    const laterClearIndex = events.findIndex((event, index) => (
+      index > rejectedIndex
+      && event.perceptionDelta?.regionOverlay === null
     ));
 
     expect(final.status).toBe('failed');
-    expect(clearIndex).toBeGreaterThanOrEqual(0);
-    expect(clearIndex).toBeLessThan(failedIndex);
+    expect(rejectedIndex).toBeGreaterThanOrEqual(0);
+    expect(rejectedIndex).toBeLessThan(failedIndex);
+    expect(laterClearIndex).toBe(-1);
   });
 
   it('routes a creative protected edit through generation, vectorization and the same preview commit path', async () => {
@@ -1458,7 +1631,8 @@ describe('DrawingAgentRuntime', () => {
         const viewId = (input as { observation: { views: Array<{ id: string }> } })
           .observation.views[0].id;
         return {
-          label: '头发新增区域', sourceViewId: viewId,
+          label: '头发新增区域', operation: 'add-new', preferredEditMode: 'generative-redraw',
+          sourceViewId: viewId,
           contours: [[[0.28, 0.02], [0.72, 0.02], [0.72, 0.30], [0.28, 0.30]]],
           holes: [], anchors: [],
           confidence: 0.96, evidenceRefs: [viewId],
@@ -1776,7 +1950,10 @@ describe('DrawingAgentRuntime', () => {
 
     const final = await runtime.start({
       ...startInput(workspace),
-      modelProfile: { planner: 'lite-model', decision: 'lite-model', repair: 'repair-model' },
+      modelProfile: {
+        planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
+        reviewer: 'review-model',
+      },
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -1926,6 +2103,7 @@ describe('DrawingAgentRuntime', () => {
       expect(audit.manifest.goalSpec?.id).toBe('goal_1');
       expect(audit.manifest.modelProfile).toEqual({
         planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
+        reviewer: 'review-model',
       });
       expect(audit.events.map((event) => event.type)).toEqual(expect.arrayContaining([
         'plan', 'decision', 'preview', 'commit', 'validation', 'state',
@@ -2051,7 +2229,10 @@ function startInput(workspace: Awaited<ReturnType<DrawingApplication['create']>>
   return {
     runId: 'run_1', drawingId: workspace.document.id, baseRevision: workspace.revision,
     goal: '创建一个圆',
-    modelProfile: { planner: 'lite-model', decision: 'lite-model', repair: 'repair-model' },
+    modelProfile: {
+      planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
+      reviewer: 'review-model',
+    },
   };
 }
 

@@ -4,13 +4,9 @@ import { resolve } from 'node:path';
 import type { DrawingAgentAuditEvent } from '../api/services/drawing-agent/audit-types.js';
 import { DrawingApplication } from '../api/services/drawing-application/application.js';
 import { evaluateSemanticEditBenchmark } from '../api/services/drawing-benchmark/semantic-edit.js';
-import { buildAtomicGeometryGraph } from '../api/services/drawing-spatial/atomic-graph.js';
-import { polygonRegionBounds } from '../api/services/drawing-spatial/polygon.js';
-import { RegionResolver } from '../api/services/drawing-spatial/region-resolver.js';
-import {
-  authorizeSelection,
-  buildSelectionCandidateSet,
-} from '../api/services/drawing-spatial/selection-authorization.js';
+import { buildGeometryTopologyGraph } from '../api/services/drawing-spatial/atomic-graph.js';
+import { TopologyPartResolver } from '../api/services/drawing-spatial/topology-part-resolver.js';
+import { authorizeTopologySelection } from '../api/services/drawing-spatial/topology-authorization.js';
 import { materializeSpatialSplits } from '../api/services/drawing-spatial/split-materializer.js';
 import { compileSpatialEdit } from '../api/services/drawing-spatial/spatial-edit-compiler.js';
 import { validateSpatialEditPreview } from '../api/services/drawing-spatial/spatial-validator.js';
@@ -37,54 +33,55 @@ const before = test2SharedPolylineDocument();
 const repository = new MemoryDrawingRepository();
 const created = await repository.create(before);
 const application = new DrawingApplication({ repository });
-const region = { ...test2RightArmRegion(), revision: created.revision };
-const graph = buildAtomicGeometryGraph({
+const region = {
+  ...test2RightArmRegion(),
+  revision: created.revision,
+  anchors: [{
+    id: 'target_seed', role: 'target-seed' as const,
+    point: [116, 210] as const, confidence: 1,
+  }, {
+    id: 'target_boundary', role: 'boundary' as const,
+    point: TEST2_SHARED_POLYLINE_POINTS[3], confidence: 1,
+  }, {
+    id: 'protected_seed', role: 'protected-seed' as const,
+    point: [118.992468, 100] as const, confidence: 1,
+  }],
+};
+const graph = buildGeometryTopologyGraph({
+  document: before, revision: created.revision,
+});
+const resolution = new TopologyPartResolver().resolve({
   document: before,
   revision: created.revision,
-  regionBounds: polygonRegionBounds(region.worldContours),
-  padding: 2,
-});
-const rawSelection = new RegionResolver().resolve({
-  document: before,
-  revision: created.revision,
-  region,
   graph,
-  tolerance: 0.01,
+  anchors: region.anchors,
+  searchBounds: { minX: 95, minY: 65, maxX: 125, maxY: 215 },
+  tolerance: graph.tolerance,
+  maxSegments: 128,
+  selectionScopeId: region.id,
 });
-const candidateSet = buildSelectionCandidateSet({
+if (!resolution.accepted) {
+  throw new Error(`TEST2_TOPOLOGY_RESOLUTION:${resolution.issues.map((issue) => issue.code).join(',')}`);
+}
+const selection = resolution.selection;
+const authorization = authorizeTopologySelection({
   document: before,
-  selection: rawSelection,
   graph,
-});
-const { selection, authorization } = authorizeSelection({
-  document: before,
-  rawSelection,
-  candidates: candidateSet,
-  proof: {
-    editableFragmentIds: candidateSet.candidates.map((item) => item.fragmentId),
-    anchorIds: rawSelection.boundaryAnchors.map((anchor) => anchor.id),
-    evidence: candidateSet.candidates.map((item) => ({
-      fragmentId: item.fragmentId,
-      reason: 'test2 deterministic golden target',
-      confidence: 1,
-    })),
-    confidence: 1,
-  },
+  selection,
+  selectedSegmentIds: resolution.selectedSegmentIds,
   locality: {
     areaRatio: 0.12,
     widthRatio: 0.38,
     heightRatio: 0.42,
     targetCenterDistanceRatio: 0,
-    wholeNodes: rawSelection.wholeNodes.length,
-    crossingNodes: rawSelection.crossingNodes.length,
-    boundaryAnchors: rawSelection.boundaryAnchors.length,
-    candidateFragments: candidateSet.candidates.length,
+    wholeNodes: selection.wholeNodes.length,
+    crossingNodes: selection.crossingNodes.length,
+    boundaryAnchors: selection.boundaryAnchors.length,
+    candidateFragments: resolution.selectedSegmentIds.length,
   },
-  maxEditableFragments: 18,
 });
 const split = materializeSpatialSplits({ document: before, selection });
 const strategy = routeSpatialEditStrategy({
-  goal: '把图中人物的右手抬起来打招呼，保持身体不变并保持手臂闭合连接',
   document: before,
   region,
   selection,
@@ -222,7 +219,7 @@ function auditTimeline(
 
 function progressTimeline(): DrawingAgentProgressEvent[] {
   const types: DrawingAgentProgressEvent['type'][] = [
-    'observing', 'region_overlay', 'region_resolved', 'split_materialized',
+    'observing', 'region_overlay', 'topology_resolved', 'split_materialized',
     'designing', 'previewing', 'verifying', 'committed', 'completed',
   ];
   return types.map((type, index) => ({

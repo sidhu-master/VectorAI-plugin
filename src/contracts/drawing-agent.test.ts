@@ -3,6 +3,7 @@ import {
   DrawingAgentProtocolError,
   parseAgentDecision,
   parseAgentPlan,
+  parseDrawingAgentAction,
   parseHumanDecisionRequest,
   parseHumanDecisionResponse,
   parsePermissionGrant,
@@ -32,6 +33,100 @@ const validPlan = {
 };
 
 describe('Drawing Agent shared protocol', () => {
+  it.each([
+    {
+      input: {
+        type: 'tool', toolCallId: 'call_world', tool: 'build_world_slice',
+        input: { nodeIds: ['geometry_1'], limit: 50 },
+      },
+      expected: { type: 'tool', tool: 'build_world_slice' },
+    },
+    {
+      input: {
+        type: 'tool', toolCallId: 'call_1', tool: 'trace_paths',
+        input: { seedPoints: [[0, 0]], stopPoints: [], directionHints: [], maxDepth: 8, maxCandidates: 4 },
+      },
+      expected: { type: 'tool', tool: 'trace_paths' },
+    },
+    {
+      input: {
+        type: 'request-human-decision',
+        request: {
+          kind: 'grant-permission',
+          question: '是否允许删除当前候选中的约束？',
+          reason: '候选事务需要改变已有约束的含义',
+          options: [
+            {
+              id: 'allow_once', label: '本次允许',
+              effect: {
+                type: 'permission', decision: 'allow',
+                actions: ['constraint.delete'], resourceIds: ['constraint_1'],
+              },
+            },
+            {
+              id: 'deny', label: '不允许',
+              effect: {
+                type: 'permission', decision: 'deny',
+                actions: ['constraint.delete'], resourceIds: ['constraint_1'],
+              },
+            },
+          ],
+          recommendedOptionId: 'allow_once',
+          affectedResources: [{ plane: 'relation', ids: ['constraint_1'], action: 'constraint.delete' }],
+          previewHandle: 'preview_1',
+        },
+      },
+      expected: { type: 'request-human-decision', request: { kind: 'grant-permission' } },
+    },
+    {
+      input: {
+        type: 'commit', previewHandle: 'preview_1', summary: '接受当前候选', confidence: 0.86,
+      },
+      expected: {
+        type: 'commit', previewHandle: 'preview_1',
+      },
+    },
+    {
+      input: {
+        type: 'tool', toolCallId: 'batch_1', tool: 'preview_vectorization_batch',
+        input: { candidateHandle: 'generation_1', batchIndex: 0 },
+      },
+      expected: { type: 'tool', tool: 'preview_vectorization_batch' },
+    },
+    {
+      input: {
+        type: 'tool', toolCallId: 'revise_1', tool: 'revise_preview',
+        input: {
+          basePreviewHandle: 'preview_1', baseTransactionDigest: 'sha256:preview',
+          summary: '修订当前候选', corrections: [], evidenceRefs: [],
+        },
+      },
+      expected: { type: 'tool', tool: 'revise_preview' },
+    },
+    {
+      input: { type: 'finish', summary: '只读分析完成' },
+      expected: { type: 'finish', summary: '只读分析完成' },
+    },
+  ])('parses a strict model-led $expected.type action', ({ input, expected }) => {
+    expect(parseDrawingAgentAction(input)).toMatchObject(expected);
+  });
+
+  it.each([
+    [{ type: 'tool', toolCallId: 'call', tool: 'unknown', input: {} }, 'action.tool'],
+    [{ type: 'tool', toolCallId: 'call', tool: 'query_nodes', input: {}, reasoning: 'hidden' }, 'action.reasoning'],
+    [{ type: 'commit', previewHandle: 'preview', summary: 'ok', confidence: 2 }, 'action.confidence'],
+    [{
+      type: 'request-human-decision',
+      request: {
+        kind: 'grant-permission', question: '允许吗', reason: '需要权限',
+        options: [{ id: 'yes', label: '允许', effect: { type: 'option', value: 'yes' } }],
+        affectedResources: [],
+      },
+    }, 'action.request.options[0].effect.type'],
+  ])('rejects an invalid model-led action at %s', (input, path) => {
+    expect(() => parseDrawingAgentAction(input)).toThrow(expect.objectContaining({ path }));
+  });
+
   it.each([
     ['grant-permission', {
       type: 'permission', decision: 'allow',

@@ -98,6 +98,7 @@ export type DrawingFeedbackOutput =
   | {
       kind: 'proposal';
       slotId: string;
+      slotIds?: string[];
       regionId?: string;
       nodes: PerceptionPreviewNode[];
       labelsByNodeId: Record<string, string>;
@@ -121,8 +122,7 @@ export type DrawingFeedbackOutput =
 export type FeedbackStage =
   | 'OBSERVE'
   | 'VECTORIZE_SOURCE'
-  | 'DRAW_VECTOR_DRAFT'
-  | 'PROMOTE_PRIMITIVE'
+  | 'COMMIT_VECTOR_BATCH'
   | 'ANNOTATE_GEOMETRY'
   | 'SELECT_TARGET'
   | 'ACQUIRE_EVIDENCE'
@@ -261,7 +261,7 @@ export class DrawingFeedbackLoop {
           if (annotated.terminal) return;
           yield {
             kind: 'completed', revision, unresolvedRequired: 0,
-            summary: `已完成 ${vectorizationCompletedStepIds.length} 个可审计矢量化步骤和 ${annotated.committedCount} 个自动标注`,
+            summary: `已完成 ${vectorizationCompletedStepIds.length} 个可审计矢量化批次和 ${annotated.committedCount} 个自动标注`,
           };
           return;
         }
@@ -781,6 +781,12 @@ export class DrawingFeedbackLoop {
       return { revision, completedStepIds: [...completed], terminal: false };
     }
     const steps = buildVectorizationSteps(vectorized);
+    const existing = await this.#application.open(state.input.drawingId);
+    const replaceCommands = existing.document.geometry.length > 0
+      && existing.document.geometry.every((node) => node.id.startsWith('node_vec_'))
+      ? drawingReplacementCommands(existing.document)
+      : [];
+    const vectorNodeCount = steps.reduce((sum, step) => sum + step.previewNodes.length, 0);
     yield {
       kind: 'audit',
       type: 'state',
@@ -788,18 +794,20 @@ export class DrawingFeedbackLoop {
         event: 'VECTORIZATION_INVENTORY',
         pipelineVersion: vectorized.pipelineVersion,
         chainCount: vectorized.chains.length,
-        stepCount: steps.length,
+        batchCount: steps.length,
+        vectorNodeCount,
         medianLineWidthPx: vectorized.medianLineWidthPx,
       },
     };
     await this.#record('vectorization_inventory', {
       pipelineVersion: vectorized.pipelineVersion,
       chainCount: vectorized.chains.length,
-      stepCount: steps.length,
+      batchCount: steps.length,
+      vectorNodeCount,
       medianLineWidthPx: vectorized.medianLineWidthPx,
     });
     for (const step of steps) {
-      const stepId = `${step.kind}:${step.chainId}`;
+      const stepId = `final-batch:${step.batchIndex}`;
       if (completed.has(stepId)) continue;
       if (state.input.signal.aborted) {
         yield { kind: 'stopped', revision };
@@ -823,66 +831,68 @@ export class DrawingFeedbackLoop {
       }
       yield {
         kind: 'state',
-        stage: step.kind === 'draft' ? 'DRAW_VECTOR_DRAFT' : 'PROMOTE_PRIMITIVE',
+        stage: 'COMMIT_VECTOR_BATCH',
         iteration: state.iteration,
       };
-      const existingSlot = this.#slots.observe(step.slotObservation);
-      const slot = step.kind === 'promotion'
-        ? this.#slots.observe(step.slotObservation, { preferredSlotId: existingSlot.id })
-        : existingSlot;
-      if (step.kind === 'draft') {
-        yield {
-          kind: 'inventory',
-          slotIds: [slot.id],
-          candidateCount: 1,
-        };
-      }
+      const slots = step.chains.map((chain) => this.#slots.observe(chain.slotObservation));
+      const slotIds = slots.map((slot) => slot.id);
+      yield {
+        kind: 'inventory',
+        slotIds,
+        candidateCount: step.chains.length,
+      };
       const preview = await this.#drawingTools.invoke({
         capability: 'preview_transaction',
         caller: 'model',
         toolCallId: `vectorize:${stepId}:preview`,
         context: toolContext(state.input, revision),
-        input: { commands: step.commands, postconditions: [] },
+        input: {
+          commands: step.batchIndex === 0
+            ? [...replaceCommands, ...step.commands]
+            : step.commands,
+          postconditions: [],
+        },
       });
       state.recentReceipts.push(preview.receipt);
       state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
       yield { kind: 'drawing_tool', execution: preview };
       if (!preview.prepared || !preview.previewDocument) {
-        completed.add(stepId);
         yield {
           kind: 'audit',
           type: 'validation',
           payload: {
             event: 'VECTORIZATION_STEP_REJECTED',
             stepId,
-            chainId: step.chainId,
+            batchIndex: step.batchIndex,
+            chainIds: [...step.chainIds],
             kind: step.kind,
             status: preview.receipt.status,
           },
         };
         await this.#record('vectorization_step_rejected', {
           stepId,
-          chainId: step.chainId,
+          batchIndex: step.batchIndex,
+          chainIds: [...step.chainIds],
           kind: step.kind,
           status: preview.receipt.status,
         });
-        yield { kind: 'correction', action: 'reject', slotIds: [slot.id] };
-        continue;
+        yield { kind: 'correction', action: 'reject', slotIds };
+        yield {
+          kind: 'failed', code: 'VECTORIZATION_BATCH_REJECTED',
+          message: `矢量化批次 ${step.batchIndex + 1} 未通过事务预览`,
+        };
+        return { revision, completedStepIds: [...completed], terminal: true };
       }
-      const proposal = projectFeedbackTransactionPreview({
-        document: preview.previewDocument,
-        affectedNodeIds: preview.receipt.affectedNodeIds,
-        slotId: slot.id,
-        confidence: step.confidence,
-        evidenceRefs: slot.evidenceRefs,
-      });
-      if (proposal.nodes.length > 0) {
-        const label = step.kind === 'draft' ? '矢量底稿' : '规范图元';
+      const proposalNodeIds = new Set(step.previewNodes.map((node) => node.id));
+      const proposalNodes = preview.previewDocument.geometry
+        .filter((node) => proposalNodeIds.has(node.id))
+        .map((node) => structuredClone(node));
+      if (proposalNodes.length > 0) {
         yield {
           kind: 'proposal',
-          slotId: slot.id,
-          nodes: proposal.nodes,
-          labelsByNodeId: Object.fromEntries(proposal.nodes.map((node) => [node.id, label])),
+          slotId: slotIds[0] ?? `vector-batch:${step.batchIndex}`,
+          nodes: proposalNodes,
+          labelsByNodeId: {},
         };
       }
       const committed = await this.#drawingTools.invoke({
@@ -896,25 +906,38 @@ export class DrawingFeedbackLoop {
       state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
       if (committed.receipt.status !== 'succeeded'
         && committed.receipt.status !== 'already_satisfied') {
-        completed.add(stepId);
-        yield { kind: 'correction', action: 'reject', slotIds: [slot.id] };
-        continue;
+        yield { kind: 'correction', action: 'reject', slotIds };
+        yield {
+          kind: 'failed', code: 'VECTORIZATION_BATCH_COMMIT_FAILED',
+          message: `矢量化批次 ${step.batchIndex + 1} 未能提交`,
+        };
+        return { revision, completedStepIds: [...completed], terminal: true };
       }
       revision = committed.receipt.revisionAfter ?? revision;
-      const action = step.kind === 'draft' ? 'create' as const : 'retype' as const;
-      this.#slots.recordDrawingChange(slot.id, {
-        action,
-        ...(step.kind === 'promotion' ? { removedDrawingEntityIds: [step.previewNode.id] } : {}),
-        addedDrawingEntityIds: [step.previewNode.id],
+      step.chains.forEach((chain, index) => {
+        const slot = slots[index];
+        if (!slot) return;
+        this.#slots.recordDrawingChange(slot.id, {
+          action: 'create',
+          addedDrawingEntityIds: [...chain.nodeIds],
+        });
       });
       completed.add(stepId);
       await this.#record('vectorization_step_committed', {
         stepId,
-        chainId: step.chainId,
+        batchIndex: step.batchIndex,
+        chainIds: [...step.chainIds],
         kind: step.kind,
-        nodeId: step.previewNode.id,
-        nodeType: step.previewNode.type,
+        chainCount: step.chains.length,
+        nodeIds: step.previewNodes.map((node) => node.id),
+        nodeTypes: step.previewNodes.map((node) => node.type),
         validation: structuredClone(step.validation),
+        chains: step.chains.map((chain) => ({
+          chainId: chain.chainId,
+          nodeIds: [...chain.nodeIds],
+          confidence: chain.confidence,
+          validation: structuredClone(chain.validation),
+        })),
         commitId: committed.commit?.id,
         revision,
       });
@@ -924,11 +947,19 @@ export class DrawingFeedbackLoop {
         payload: {
           event: 'VECTORIZATION_STEP_COMMITTED',
           stepId,
-          chainId: step.chainId,
+          batchIndex: step.batchIndex,
+          chainIds: [...step.chainIds],
           kind: step.kind,
-          nodeId: step.previewNode.id,
-          nodeType: step.previewNode.type,
+          chainCount: step.chains.length,
+          nodeIds: step.previewNodes.map((node) => node.id),
+          nodeTypes: step.previewNodes.map((node) => node.type),
           validation: structuredClone(step.validation),
+          chains: step.chains.map((chain) => ({
+            chainId: chain.chainId,
+            nodeIds: [...chain.nodeIds],
+            confidence: chain.confidence,
+            validation: structuredClone(chain.validation),
+          })),
           commitId: committed.commit?.id,
           revision,
         },
@@ -937,10 +968,10 @@ export class DrawingFeedbackLoop {
         kind: 'commit',
         commitId: committed.commit?.id,
         revision,
-        slotIds: [slot.id],
+        slotIds,
         execution: committed,
       };
-      yield { kind: 'correction', action, slotIds: [slot.id] };
+      yield { kind: 'correction', action: 'create', slotIds };
       yield {
         kind: 'checkpoint',
         checkpoint: makeCheckpoint({
@@ -1001,127 +1032,126 @@ export class DrawingFeedbackLoop {
       geometryCount: workspace.document.geometry.length,
     });
 
-    for (const step of steps) {
-      if (state.input.signal.aborted) {
-        yield { kind: 'stopped', revision };
-        return { revision, committedCount, terminal: true };
-      }
-      if (state.input.shouldPause?.()) {
-        const checkpoint = makeCheckpoint({
-          input: state.input,
-          revision,
-          iteration: state.iteration,
-          recentReceipts: state.recentReceipts,
-          requestedCrops: state.requestedCrops,
-          controllerFeedback: state.controllerFeedback,
-          nonImprovingBySlot: state.nonImprovingBySlot,
-          residual: state.residual,
-          unresolvedRequired: state.unresolvedRequired,
-          vectorizationCompletedStepIds: state.vectorizationCompletedStepIds,
-        });
-        yield { kind: 'paused', checkpoint };
-        return { revision, committedCount, terminal: true };
-      }
-
-      const slotId = `annotation:${step.annotation.id}`;
-      const preview = await this.#drawingTools.invoke({
-        capability: 'preview_transaction',
-        caller: 'model',
-        toolCallId: `${step.id}:preview`,
-        context: toolContext(state.input, revision),
-        input: { commands: step.commands, postconditions: [] },
-      });
-      state.recentReceipts.push(preview.receipt);
-      state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
-      yield { kind: 'drawing_tool', execution: preview };
-      if (!preview.prepared || !preview.previewDocument) {
-        yield { kind: 'correction', action: 'reject', slotIds: [slotId] };
-        await this.#record('automatic_annotation_rejected', {
-          stepId: step.id,
-          annotationId: step.annotation.id,
-          status: preview.receipt.status,
-        });
-        continue;
-      }
-
-      const proposal = projectFeedbackTransactionPreview({
-        document: preview.previewDocument,
-        affectedNodeIds: preview.receipt.affectedNodeIds,
-        slotId,
-        confidence: step.annotation.quality.confidence ?? 1,
-        evidenceRefs: step.annotation.quality.evidenceRefs,
-      });
-      if (proposal.nodes.length > 0) {
-        yield {
-          kind: 'proposal',
-          slotId,
-          nodes: proposal.nodes,
-          labelsByNodeId: Object.fromEntries(proposal.nodes.map((node) => [node.id, step.label])),
-        };
-      }
-
-      const committed = await this.#drawingTools.invoke({
-        capability: 'commit_transaction',
-        caller: 'runtime',
-        toolCallId: `${step.id}:commit`,
-        context: toolContext(state.input, revision),
-        input: { previewHandle: preview.prepared.handle },
-      });
-      state.recentReceipts.push(committed.receipt);
-      state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
-      if (committed.receipt.status !== 'succeeded'
-        && committed.receipt.status !== 'already_satisfied') {
-        yield { kind: 'correction', action: 'reject', slotIds: [slotId] };
-        continue;
-      }
-
-      revision = committed.receipt.revisionAfter ?? revision;
-      committedCount += 1;
-      await this.#record('automatic_annotation_committed', {
-        stepId: step.id,
-        annotationId: step.annotation.id,
-        dimensionKind: step.annotation.dimensionKind,
-        displayText: step.annotation.displayText,
-        commitId: committed.commit?.id,
+    if (state.input.signal.aborted) {
+      yield { kind: 'stopped', revision };
+      return { revision, committedCount, terminal: true };
+    }
+    if (state.input.shouldPause?.()) {
+      const checkpoint = makeCheckpoint({
+        input: state.input,
         revision,
+        iteration: state.iteration,
+        recentReceipts: state.recentReceipts,
+        requestedCrops: state.requestedCrops,
+        controllerFeedback: state.controllerFeedback,
+        nonImprovingBySlot: state.nonImprovingBySlot,
+        residual: state.residual,
+        unresolvedRequired: state.unresolvedRequired,
+        vectorizationCompletedStepIds: state.vectorizationCompletedStepIds,
       });
+      yield { kind: 'paused', checkpoint };
+      return { revision, committedCount, terminal: true };
+    }
+
+    const slotIds = steps.map((step) => `annotation:${step.annotation.id}`);
+    const preview = await this.#drawingTools.invoke({
+      capability: 'preview_transaction',
+      caller: 'model',
+      toolCallId: 'auto-annotation:batch:preview',
+      context: toolContext(state.input, revision),
+      input: { commands: steps.flatMap((step) => step.commands), postconditions: [] },
+    });
+    state.recentReceipts.push(preview.receipt);
+    state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
+    yield { kind: 'drawing_tool', execution: preview };
+    if (!preview.prepared || !preview.previewDocument) {
+      yield { kind: 'correction', action: 'reject', slotIds };
+      await this.#record('automatic_annotation_batch_rejected', {
+        annotationIds: steps.map((step) => step.annotation.id),
+        status: preview.receipt.status,
+      });
+      return { revision, committedCount, terminal: false };
+    }
+
+    const proposalNodes = preview.previewDocument.annotations.filter((annotation) => (
+      steps.some((step) => step.annotation.id === annotation.id)
+    )).map((annotation) => structuredClone(annotation));
+    if (proposalNodes.length > 0) {
       yield {
-        kind: 'audit',
-        type: 'validation',
-        payload: {
-          event: 'AUTOMATIC_ANNOTATION_COMMITTED',
-          stepId: step.id,
-          annotationId: step.annotation.id,
-          dimensionKind: step.annotation.dimensionKind,
-          displayText: step.annotation.displayText,
-          commitId: committed.commit?.id,
-          revision,
-        },
-      };
-      yield {
-        kind: 'commit',
-        commitId: committed.commit?.id,
-        revision,
-        slotIds: [slotId],
-        execution: committed,
-      };
-      yield { kind: 'correction', action: 'create', slotIds: [slotId] };
-      yield {
-        kind: 'checkpoint',
-        checkpoint: makeCheckpoint({
-          input: state.input,
-          revision,
-          iteration: state.iteration,
-          recentReceipts: state.recentReceipts,
-          requestedCrops: state.requestedCrops,
-          controllerFeedback: state.controllerFeedback,
-          nonImprovingBySlot: state.nonImprovingBySlot,
-          residual: state.residual,
-          unresolvedRequired: state.unresolvedRequired,
-          vectorizationCompletedStepIds: state.vectorizationCompletedStepIds,
-        }),
+        kind: 'proposal',
+        slotId: slotIds[0],
+        slotIds,
+        nodes: proposalNodes,
+        labelsByNodeId: Object.fromEntries(steps.map((step) => [
+          step.annotation.id,
+          step.label,
+        ])),
       };
     }
+
+    const committed = await this.#drawingTools.invoke({
+      capability: 'commit_transaction',
+      caller: 'runtime',
+      toolCallId: 'auto-annotation:batch:commit',
+      context: toolContext(state.input, revision),
+      input: { previewHandle: preview.prepared.handle },
+    });
+    state.recentReceipts.push(committed.receipt);
+    state.recentReceipts.splice(0, Math.max(0, state.recentReceipts.length - 8));
+    if (committed.receipt.status !== 'succeeded'
+      && committed.receipt.status !== 'already_satisfied') {
+      yield { kind: 'correction', action: 'reject', slotIds };
+      return { revision, committedCount, terminal: false };
+    }
+
+    revision = committed.receipt.revisionAfter ?? revision;
+    committedCount = steps.length;
+    const annotationAudit = steps.map((step) => ({
+      stepId: step.id,
+      annotationId: step.annotation.id,
+      dimensionKind: step.annotation.dimensionKind,
+      displayText: step.annotation.displayText,
+    }));
+    await this.#record('automatic_annotation_batch_committed', {
+      annotationCount: steps.length,
+      annotations: structuredClone(annotationAudit),
+      commitId: committed.commit?.id,
+      revision,
+    });
+    yield {
+      kind: 'audit',
+      type: 'validation',
+      payload: {
+        event: 'AUTOMATIC_ANNOTATION_BATCH_COMMITTED',
+        annotationCount: steps.length,
+        annotations: structuredClone(annotationAudit),
+        commitId: committed.commit?.id,
+        revision,
+      },
+    };
+    yield {
+      kind: 'commit',
+      commitId: committed.commit?.id,
+      revision,
+      slotIds,
+      execution: committed,
+    };
+    yield { kind: 'correction', action: 'create', slotIds };
+    yield {
+      kind: 'checkpoint',
+      checkpoint: makeCheckpoint({
+        input: state.input,
+        revision,
+        iteration: state.iteration,
+        recentReceipts: state.recentReceipts,
+        requestedCrops: state.requestedCrops,
+        controllerFeedback: state.controllerFeedback,
+        nonImprovingBySlot: state.nonImprovingBySlot,
+        residual: state.residual,
+        unresolvedRequired: state.unresolvedRequired,
+        vectorizationCompletedStepIds: state.vectorizationCompletedStepIds,
+      }),
+    };
     return { revision, committedCount, terminal: false };
   }
 
@@ -1519,4 +1549,21 @@ function repeatedToolFailureCount(receipts: unknown[], target: CvToolExecution['
       && receipt.status === target.status
       && JSON.stringify(receipt.errorCodes) === JSON.stringify(target.errorCodes);
   }).length;
+}
+
+function drawingReplacementCommands(document: DrawingDocument): DrawingCommand[] {
+  return [
+    ...document.relations.map((node): DrawingCommand => ({
+      type: 'relation.delete', id: node.id,
+    })),
+    ...document.features.map((node): DrawingCommand => ({
+      type: 'feature.delete', id: node.id,
+    })),
+    ...document.annotations.map((node): DrawingCommand => ({
+      type: 'annotation.delete', id: node.id,
+    })),
+    ...document.geometry.map((node): DrawingCommand => ({
+      type: 'geometry.delete', id: node.id,
+    })),
+  ];
 }

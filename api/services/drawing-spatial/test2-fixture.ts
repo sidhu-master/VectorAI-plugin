@@ -63,6 +63,8 @@ export function test2RightArmRegion(confidence = 0.95): SemanticRegion {
     drawingId: 'drawing_test2_region' as DrawingId,
     revision: TEST2_REVISION,
     label: 'right arm',
+    operation: 'modify-existing',
+    preferredEditMode: 'geometric-edit',
     sourceViewIds: ['view_test2'],
     maskHandle: 'region_mask_test2',
     worldContours: [[
@@ -77,7 +79,7 @@ export function test2RightArmRegion(confidence = 0.95): SemanticRegion {
     ]],
     worldHoles: [],
     anchors: [{
-      id: 'anchor_test2_shoulder', role: 'body-connection',
+      id: 'anchor_test2_shoulder', role: 'boundary',
       point: [118.992468, 203.546338], confidence: 0.98,
     }],
     confidence,

@@ -86,6 +86,7 @@ export interface GroundingLedgerDelta {
 export type TaskSemanticRelationKind =
   | 'part-of'
   | 'contains'
+  | 'connected-to'
   | 'boundary-of'
   | 'interface-with'
   | 'context-for';

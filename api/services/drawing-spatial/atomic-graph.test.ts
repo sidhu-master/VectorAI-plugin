@@ -6,143 +6,107 @@ import type {
   GeometryNode,
   RevisionId,
 } from '../../../src/drawing/index.js';
-import { buildAtomicGeometryGraph } from './atomic-graph.js';
+import { buildGeometryTopologyGraph } from './atomic-graph.js';
 
-describe('Virtual Atomic Geometry Graph', () => {
-  it('lazily expands every finite 2D geometry family without changing Drawing IR', () => {
+describe('GeometryTopologyGraph', () => {
+  it('indexes the complete revision instead of clipping geometry to a search region', () => {
     const document = fixtureDocument();
     const before = structuredClone(document);
-    const graph = buildAtomicGeometryGraph({
+    const graph = buildGeometryTopologyGraph({
       document,
-      revision: 'revision_atomic' as RevisionId,
-      regionBounds: { minX: -20, minY: -20, maxX: 40, maxY: 40 },
-      padding: 2,
+      revision: 'revision_topology' as RevisionId,
       curveSamples: 16,
     });
 
     expect(document).toEqual(before);
-    expect(graph.segmentsFor('point')).toHaveLength(1);
     expect(graph.segmentsFor('line')).toHaveLength(1);
+    expect(graph.segmentsFor('far_line')).toHaveLength(1);
     expect(graph.segmentsFor('polyline')).toHaveLength(2);
-    expect(graph.segmentsFor('circle').length).toBeGreaterThanOrEqual(16);
-    expect(graph.segmentsFor('arc').length).toBeGreaterThanOrEqual(4);
-    expect(graph.segmentsFor('ellipse').length).toBeGreaterThanOrEqual(16);
-    expect(graph.segmentsFor('spline').length).toBeGreaterThanOrEqual(2);
-    expect(graph.segmentsFor('far_line')).toEqual([]);
-    expect(graph.segmentsFor('polyline')[0]).toMatchObject({
-      kind: 'vertex-range', vertexRange: [0, 1], revision: 'revision_atomic',
-    });
-    expect(graph.segmentsFor('circle')[0]).toMatchObject({
-      kind: 'parameter-range', parameterRange: [0, expect.any(Number)],
-    });
+    expect(graph.vertices.length).toBeGreaterThan(0);
   });
 
-  it('samples bulge segments as arcs instead of endpoint-only chords', () => {
-    const graph = buildAtomicGeometryGraph({
+  it('connects coincident endpoints across primitives but not interior visual crossings', () => {
+    const graph = buildGeometryTopologyGraph({
       document: fixtureDocument(),
-      revision: 'revision_atomic' as RevisionId,
-      regionBounds: { minX: -20, minY: -20, maxX: 40, maxY: 40 },
+      revision: 'revision_topology' as RevisionId,
       curveSamples: 16,
-    });
-
-    const bulge = graph.segmentsFor('polyline')[0];
-    expect(bulge.samples.length).toBeGreaterThan(2);
-    expect(bulge.samples.some((point) => Math.abs(point[1]) > 0.01)).toBe(true);
-  });
-
-  it('keeps a bulge whose arc crosses the region even when its endpoints do not', () => {
-    const graph = buildAtomicGeometryGraph({
-      document: fixtureDocument(),
-      revision: 'revision_atomic' as RevisionId,
-      regionBounds: { minX: 14, minY: -3, maxX: 16, maxY: -2 },
-      curveSamples: 32,
-    });
-
-    expect(graph.segmentsFor('polyline')).not.toEqual([]);
-  });
-
-  it('derives deterministic ids without inventing topology from a visual endpoint overlap', () => {
-    const input = {
-      document: fixtureDocument(),
-      revision: 'revision_atomic' as RevisionId,
-      regionBounds: { minX: -20, minY: -20, maxX: 40, maxY: 40 },
-      curveSamples: 16,
-    };
-    const first = buildAtomicGeometryGraph(input);
-    const second = buildAtomicGeometryGraph(input);
-    const line = first.segmentsFor('line')[0];
-    const polyline = first.segmentsFor('polyline')[0];
-
-    expect(first.segments.map((segment) => segment.id))
-      .toEqual(second.segments.map((segment) => segment.id));
-    expect(line.id).toMatch(/^atomic_[a-f0-9]{24}$/);
-    expect(line.adjacentSegmentIds).not.toContain(polyline.id);
-    expect(polyline.adjacentSegmentIds).not.toContain(line.id);
-  });
-
-  it('connects endpoint-overlapping source nodes only when Drawing IR declares topology', () => {
-    const document = fixtureDocument();
-    document.relations.push({
-      id: 'relation_line_polyline' as never,
-      type: 'topology', plane: 'topology', kind: 'connected',
-      nodeIds: ['line', 'polyline'],
-      visible: true,
-      quality: { status: 'confirmed', evidenceRefs: [] },
-    });
-    const graph = buildAtomicGeometryGraph({
-      document,
-      revision: 'revision_atomic_connected' as RevisionId,
-      regionBounds: { minX: -20, minY: -20, maxX: 40, maxY: 40 },
-      curveSamples: 16,
+      tolerance: 0.001,
     });
     const line = graph.segmentsFor('line')[0];
     const polyline = graph.segmentsFor('polyline')[0];
+    const crossing = graph.segmentsFor('crossing')[0];
 
     expect(line.adjacentSegmentIds).toContain(polyline.id);
     expect(polyline.adjacentSegmentIds).toContain(line.id);
+    expect(line.adjacentSegmentIds).not.toContain(crossing.id);
+    expect(crossing.adjacentSegmentIds).not.toContain(line.id);
   });
 
-  it('reuses an identical revision-bound lazy graph request', () => {
+  it('uses an explicit topology relation even when connected endpoints are not coincident', () => {
+    const document = fixtureDocument();
+    document.geometry.push(node({
+      id: 'related', type: 'line', start: [10.2, 0], end: [20, 0],
+    }));
+    document.relations.push({
+      id: 'relation_line_related' as never,
+      type: 'topology', plane: 'topology', kind: 'connected',
+      nodeIds: ['line', 'related'], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    });
+    const graph = buildGeometryTopologyGraph({
+      document,
+      revision: 'revision_explicit' as RevisionId,
+      tolerance: 0.001,
+    });
+
+    expect(graph.segmentsFor('line')[0].adjacentSegmentIds)
+      .toContain(graph.segmentsFor('related')[0].id);
+  });
+
+  it('caches by document revision and sampling contract', () => {
     const input = {
       document: fixtureDocument(),
-      revision: 'revision_atomic' as RevisionId,
-      regionBounds: { minX: -20, minY: -20, maxX: 40, maxY: 40 },
+      revision: 'revision_topology' as RevisionId,
       curveSamples: 16,
+      tolerance: 0.001,
     };
 
-    expect(buildAtomicGeometryGraph(input)).toBe(buildAtomicGeometryGraph(input));
+    expect(buildGeometryTopologyGraph(input)).toBe(buildGeometryTopologyGraph(input));
+    expect(buildGeometryTopologyGraph({ ...input, revision: 'revision_next' as RevisionId }))
+      .not.toBe(buildGeometryTopologyGraph(input));
+  });
+
+  it('uses a drawing-scale fitting tolerance when none is supplied', () => {
+    const document = fixtureDocument();
+    document.geometry.push(node({
+      id: 'near_join', type: 'line', start: [10.4, 0], end: [20, 0],
+    }));
+    const graph = buildGeometryTopologyGraph({
+      document,
+      revision: 'revision_scaled_tolerance' as RevisionId,
+      curveSamples: 16,
+    });
+
+    expect(graph.tolerance).toBeGreaterThan(0.4);
+    expect(graph.segmentsFor('line')[0].adjacentSegmentIds)
+      .toContain(graph.segmentsFor('near_join')[0].id);
   });
 });
 
 function fixtureDocument(): DrawingDocument {
   return {
     protocol: 'VectorAI-Drawing', schemaVersion: '1.0',
-    id: 'drawing_atomic' as DrawingDocument['id'],
+    id: 'drawing_topology' as DrawingDocument['id'],
     metadata: { createdAt: 1, updatedAt: 1 },
     unitSystem: { length: 'mm', angle: 'deg' },
     coordinateFrames: [{ id: 'document', kind: 'document', transform: [1, 0, 0, 1, 0, 0] }],
     geometry: [
-      node({ id: 'point', type: 'point', x: 1, y: 1 }),
       node({ id: 'line', type: 'line', start: [0, 0], end: [10, 0] }),
       node({
         id: 'polyline', type: 'polyline', closed: false,
-        vertices: [
-          { point: [10, 0], bulge: 0.5 },
-          { point: [20, 0] },
-          { point: [25, 5] },
-        ],
+        vertices: [{ point: [10, 0] }, { point: [20, 0] }, { point: [25, 5] }],
       }),
-      node({ id: 'circle', type: 'circle', center: [10, 15], radius: 4 }),
-      node({
-        id: 'arc', type: 'arc', center: [20, 15], radius: 5,
-        startAngle: 0, endAngle: 180, counterClockwise: true,
-      }),
-      node({ id: 'ellipse', type: 'ellipse', center: [10, 28], majorAxis: [5, 0], ratio: 0.5 }),
-      node({
-        id: 'spline', type: 'spline', degree: 2,
-        controlPoints: [[20, 25], [25, 35], [30, 25]],
-        knots: [0, 0, 0, 1, 1, 1], closed: false, periodic: false,
-      }),
+      node({ id: 'crossing', type: 'line', start: [5, -5], end: [5, 5] }),
       node({ id: 'far_line', type: 'line', start: [1_000, 1_000], end: [1_010, 1_000] }),
     ],
     annotations: [], relations: [], features: [],

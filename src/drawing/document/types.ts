@@ -143,7 +143,39 @@ export interface DimensionAnnotation extends BaseNode<AnnotationId, 'dimension'>
   definitionPoints: Vec2[];
 }
 
-export type AnnotationNode = TextAnnotation | DimensionAnnotation;
+export interface LeaderAnnotation extends BaseNode<AnnotationId, 'leader'> {
+  target: DimensionTarget;
+  points: Vec2[];
+  content: string;
+  textHeight: number;
+}
+
+export interface CenterlineAnnotation extends BaseNode<AnnotationId, 'centerline'> {
+  targets: GeometryId[];
+  start: Vec2;
+  end: Vec2;
+  extension: number;
+}
+
+export interface SectionHatchSegment {
+  start: Vec2;
+  end: Vec2;
+}
+
+/** A grouped, display-only projection of a real DXF hatch boundary/pattern. */
+export interface SectionHatchAnnotation extends BaseNode<AnnotationId, 'section-hatch'> {
+  pattern: string;
+  angle: number;
+  spacing: number;
+  segments: SectionHatchSegment[];
+}
+
+export type AnnotationNode =
+  | TextAnnotation
+  | DimensionAnnotation
+  | LeaderAnnotation
+  | CenterlineAnnotation
+  | SectionHatchAnnotation;
 
 export interface TopologyRelation extends BaseNode<RelationId, 'topology'> {
   plane: 'topology';

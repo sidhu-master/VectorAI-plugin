@@ -84,7 +84,7 @@ export function commitRepositoryState(
     initialDocument: clone(state.initialDocument),
     document: clone(preview.resultingDocument),
     revision: resultingRevision,
-    commits: [...clone(state.commits), clone(commit)],
+    commits: [...state.commits, clone(commit)],
   };
 
   return {
@@ -178,7 +178,7 @@ export function revertRepositoryState(
     initialDocument: clone(state.initialDocument),
     document: clone(applied.document),
     revision: resultingRevision,
-    commits: [...clone(state.commits), clone(commit)],
+    commits: [...state.commits, clone(commit)],
   };
 
   return {
@@ -190,6 +190,43 @@ export function revertRepositoryState(
     },
     state: clone(nextState),
   };
+}
+
+export function clearRepositoryState(
+  state: DrawingRepositoryState,
+  input: { drawingId: DrawingId; actor: Actor },
+  dependencies: RepositoryTransitionDependencies,
+): RepositoryStateTransition {
+  if (state.document.id !== input.drawingId) {
+    return unchanged(state, {
+      code: 'DRAWING_NOT_FOUND', stage: 'revision', retryable: false, nodeIds: [],
+      message: `图纸 ${input.drawingId} 不存在`, suggestedAction: 'pause',
+    });
+  }
+  const commands = [
+    ...state.document.relations.map((node) => ({ type: 'relation.delete' as const, id: node.id })),
+    ...state.document.features.map((node) => ({ type: 'feature.delete' as const, id: node.id })),
+    ...state.document.annotations.map((node) => ({ type: 'annotation.delete' as const, id: node.id })),
+    ...state.document.geometry.map((node) => ({ type: 'geometry.delete' as const, id: node.id })),
+  ];
+  if (commands.length === 0) {
+    return {
+      result: { status: 'already_satisfied', outcome: { satisfied: true, assertions: [] } },
+      state: clone(state),
+    };
+  }
+  return commitRepositoryState(state, {
+    id: dependencies.idFactory.next('transaction'),
+    baseRevision: state.revision,
+    actor: clone(input.actor),
+    commands,
+    preconditions: [],
+    postconditions: [...commands.map((command) => ({
+      type: 'node.absent' as const,
+      nodeId: command.id,
+    })), { type: 'document.valid' as const }],
+    evidenceRefs: [],
+  }, dependencies);
 }
 
 function unchanged(

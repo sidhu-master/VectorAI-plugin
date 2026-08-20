@@ -8,15 +8,28 @@ import type {
 
 export type NormalizedPoint = readonly [number, number];
 
+export type SemanticAnchorRole =
+  | 'target-seed'
+  | 'boundary'
+  | 'required'
+  | 'protected-seed';
+
+export type SemanticSpatialOperation =
+  | 'modify-existing'
+  | 'add-new'
+  | 'replace-existing';
+
 export interface SemanticAnchorProposal {
   id: string;
-  role: string;
+  role: SemanticAnchorRole;
   point: NormalizedPoint;
   confidence: number;
 }
 
 export interface SemanticRegionProposal {
   label: string;
+  operation: SemanticSpatialOperation;
+  preferredEditMode: SpatialEditMode;
   sourceViewId: string;
   contours: NormalizedPoint[][];
   holes: NormalizedPoint[][];
@@ -27,7 +40,7 @@ export interface SemanticRegionProposal {
 
 export interface SemanticAnchor {
   id: string;
-  role: string;
+  role: SemanticAnchorRole;
   point: Vec2;
   confidence: number;
 }
@@ -37,6 +50,8 @@ export interface SemanticRegion {
   drawingId: DrawingId;
   revision: RevisionId;
   label: string;
+  operation: SemanticSpatialOperation;
+  preferredEditMode: SpatialEditMode;
   sourceViewIds: string[];
   maskHandle: string;
   worldContours: Vec2[][];
@@ -89,34 +104,15 @@ export interface SearchEnvelopeAssessment {
   issues: LocalityIssue[];
 }
 
-export interface SelectionProofEvidence {
-  fragmentId: string;
-  reason: string;
-  confidence: number;
-}
-
-export interface SelectionProofProposal {
-  editableFragmentIds: string[];
-  anchorIds: string[];
-  evidence: SelectionProofEvidence[];
-  confidence: number;
-}
-
-export interface SelectionProofParseContext {
-  allowedFragmentIds: readonly string[];
-  allowedAnchorIds: readonly string[];
-  allowEmptyEditSet?: boolean;
-}
-
-export interface FragmentAuthorization {
+export interface SpatialEditAuthorization {
   id: string;
   revision: RevisionId;
   regionId: string;
-  editableFragmentIds: string[];
-  protectedFragmentIds: string[];
+  editableTargetIds: string[];
+  protectedTargetIds: string[];
   boundaryAnchorIds: string[];
   protectedHashes: Record<string, string>;
-  selectionProofId: string;
+  topologyResolutionId: string;
   locality: LocalityMetrics;
 }
 
@@ -227,7 +223,8 @@ export function parseSemanticRegionProposal(
 ): SemanticRegionProposal {
   const proposal = object(value, 'regionProposal');
   exact(proposal, [
-    'label', 'sourceViewId', 'contours', 'holes', 'anchors', 'confidence', 'evidenceRefs',
+    'label', 'operation', 'preferredEditMode', 'sourceViewId',
+    'contours', 'holes', 'anchors', 'confidence', 'evidenceRefs',
   ], 'regionProposal');
   const contours = polygons(proposal.contours, 'regionProposal.contours');
   if (contours.length === 0) fail('regionProposal.contours', '至少需要一个区域轮廓');
@@ -237,7 +234,9 @@ export function parseSemanticRegionProposal(
     exact(anchor, ['id', 'role', 'point', 'confidence'], path);
     return {
       id: string(anchor.id, `${path}.id`),
-      role: string(anchor.role, `${path}.role`),
+      role: enumValue(anchor.role, [
+        'target-seed', 'boundary', 'required', 'protected-seed',
+      ] as const, `${path}.role`),
       point: normalizedPoint(anchor.point, `${path}.point`),
       confidence: confidence(anchor.confidence, `${path}.confidence`),
     };
@@ -245,6 +244,12 @@ export function parseSemanticRegionProposal(
   unique(anchors.map((anchor) => anchor.id), 'regionProposal.anchors');
   return {
     label: string(proposal.label, 'regionProposal.label'),
+    operation: enumValue(proposal.operation, [
+      'modify-existing', 'add-new', 'replace-existing',
+    ] as const, 'regionProposal.operation'),
+    preferredEditMode: enumValue(proposal.preferredEditMode, [
+      'geometric-edit', 'generative-redraw', 'hybrid-edit',
+    ] as const, 'regionProposal.preferredEditMode'),
     sourceViewId: checkedId(
       proposal.sourceViewId,
       'regionProposal.sourceViewId',
@@ -302,51 +307,6 @@ export function parseSpatialEditStrategy(
       ] as const, `strategy.requiredGuarantees[${index}]`)),
     primaryReason: string(strategy.primaryReason, 'strategy.primaryReason'),
     ...(fallbackMode ? { fallbackMode } : {}),
-  };
-}
-
-export function parseSelectionProofProposal(
-  value: unknown,
-  context: SelectionProofParseContext,
-): SelectionProofProposal {
-  const proof = object(value, 'selectionProof');
-  exact(proof, [
-    'editableFragmentIds', 'anchorIds', 'evidence', 'confidence',
-  ], 'selectionProof');
-  const editableFragmentIds = checkedIds(
-    proof.editableFragmentIds,
-    'selectionProof.editableFragmentIds',
-    context.allowedFragmentIds,
-  );
-  if (editableFragmentIds.length === 0 && !context.allowEmptyEditSet) {
-    fail('selectionProof.editableFragmentIds', '至少需要选择一个可编辑片段');
-  }
-  const anchorIds = checkedIds(
-    proof.anchorIds,
-    'selectionProof.anchorIds',
-    context.allowedAnchorIds,
-  );
-  const evidence = array(proof.evidence, 'selectionProof.evidence').map((item, index) => {
-    const path = `selectionProof.evidence[${index}]`;
-    const record = object(item, path);
-    exact(record, ['fragmentId', 'reason', 'confidence'], path);
-    const fragmentId = checkedId(
-      record.fragmentId,
-      `${path}.fragmentId`,
-      editableFragmentIds,
-    );
-    return {
-      fragmentId,
-      reason: string(record.reason, `${path}.reason`),
-      confidence: confidence(record.confidence, `${path}.confidence`),
-    };
-  });
-  unique(evidence.map((item) => item.fragmentId), 'selectionProof.evidence');
-  return {
-    editableFragmentIds,
-    anchorIds,
-    evidence,
-    confidence: confidence(proof.confidence, 'selectionProof.confidence'),
   };
 }
 

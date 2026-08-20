@@ -44,6 +44,7 @@ describe('drawing-native model adapters', () => {
       planner: 'doubao-seed-2.0-lite',
       decision: 'doubao-seed-2.0-lite',
       repair: 'doubao-seed-2.1-turbo',
+      reviewer: 'doubao-seed-2.1-turbo',
     };
     expect(selectDrawingFeedbackModel(profile)).toBe('doubao-seed-2.0-lite');
     expect(selectDrawingFeedbackModel(profile, 'repeated_non_improvement'))

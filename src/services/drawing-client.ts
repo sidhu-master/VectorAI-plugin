@@ -9,6 +9,45 @@ import type {
 
 type Fetcher = typeof fetch;
 
+export interface DxfUploadFile {
+  fileName: string;
+  data: string;
+  mimeType: string;
+}
+
+export interface DxfImportReceipt {
+  source: {
+    sourceId: string;
+    fileName: string;
+    sha256?: string;
+    byteLength?: number;
+  };
+  engineeringDocument?: { sourceId: string; fileName: string };
+  manifest?: {
+    pairCount: number;
+    blockCount: number;
+    modelSpaceEntityCount: number;
+    nestedInsertCount: number;
+    xdataApplications: string[];
+  };
+  projection: {
+    projectedGeometryCount: number;
+    projectedAnnotationCount: number;
+    [key: string]: unknown;
+  };
+  recognition: {
+    regions: Array<{ id: string; status: 'confirmed' | 'candidate' | 'conflict' }>;
+    [key: string]: unknown;
+  };
+  annotation: {
+    generatedCount: number;
+    pendingCount: number;
+    conflictCount: number;
+    coverage: { valid: boolean; [key: string]: unknown };
+  };
+  diagnostics?: Array<{ code: string; message: string }>;
+}
+
 export class DrawingClientError extends Error {
   constructor(
     message: string,
@@ -63,6 +102,34 @@ export class DrawingClient {
       jsonRequest({ commitId, actor }),
     );
     return data.result;
+  }
+
+  async clear(drawingId: DrawingId): Promise<DrawingWorkspaceSnapshot> {
+    const data = await this.request<{
+      success: true;
+      workspace: DrawingWorkspaceSnapshot;
+      stoppedRunIds: string[];
+    }>(
+      `/api/drawings/${encodeURIComponent(drawingId)}/clear`,
+      jsonRequest({ actor: { type: 'user', id: 'local-user' } }),
+    );
+    return data.workspace;
+  }
+
+  async importDxf(
+    drawingId: DrawingId,
+    file: DxfUploadFile,
+    engineeringDocument?: DxfUploadFile,
+  ): Promise<{ workspace: DrawingWorkspaceSnapshot; receipt: DxfImportReceipt }> {
+    const data = await this.request<{
+      success: true;
+      workspace: DrawingWorkspaceSnapshot;
+      receipt: DxfImportReceipt;
+    }>(
+      `/api/drawings/${encodeURIComponent(drawingId)}/imports/dxf`,
+      jsonRequest({ file, ...(engineeringDocument ? { engineeringDocument } : {}) }),
+    );
+    return { workspace: data.workspace, receipt: data.receipt };
   }
 
   private async request<T>(url: string, init?: RequestInit): Promise<T> {

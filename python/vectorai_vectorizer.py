@@ -20,7 +20,7 @@ import numpy as np
 from skimage.morphology import skeletonize
 
 
-PIPELINE_VERSION = "clean-line-v1"
+PIPELINE_VERSION = "clean-line-v5"
 Point = tuple[int, int]
 
 
@@ -28,6 +28,8 @@ Point = tuple[int, int]
 class TracedChain:
     points: tuple[tuple[float, float], ...]
     closed: bool
+    cycle_assembly: dict | None = None
+    continuation_assembly: dict | None = None
 
 
 def vectorize_image_bytes(
@@ -83,11 +85,22 @@ def vectorize_mask(
     scale_x = output_width / analysis_width
     scale_y = output_height / analysis_height
     scale_mean = (scale_x + scale_y) / 2.0
+    drawing_diagonal = math.hypot(output_width, output_height)
 
     skeleton = skeletonize(foreground)
     median_line_width = estimate_line_width(foreground, skeleton)
-    traced = trace_stroke_chains(skeleton)
-    minimum_length = max(3.0, median_line_width * 1.25)
+    traced = assemble_smooth_continuations(
+        trace_stroke_chains(skeleton),
+        median_line_width=median_line_width,
+        drawing_diagonal=math.hypot(analysis_width, analysis_height),
+    )
+    traced = assemble_closed_cycles(
+        traced,
+        median_line_width=median_line_width,
+        drawing_diagonal=math.hypot(analysis_width, analysis_height),
+    )
+    output_line_width = median_line_width * scale_mean
+    minimum_length = max(output_line_width * 1.25, drawing_diagonal * 0.0003)
     chains: list[dict] = []
     for chain in traced:
         if path_length(chain.points) < minimum_length:
@@ -99,15 +112,20 @@ def vectorize_mask(
         simplified = simplify_points(
             source_points,
             closed=chain.closed,
-            tolerance=max(0.75, median_line_width * scale_mean * 0.22),
+            tolerance=max(output_line_width * 0.22, drawing_diagonal * 0.00015),
         )
         if len(simplified) < 2:
             continue
-        candidate = fit_best_candidate(
+        decomposition = decompose_chain(
             source_points,
             closed=chain.closed,
-            median_line_width=median_line_width * scale_mean,
+            median_line_width=output_line_width,
+            drawing_diagonal=drawing_diagonal,
         )
+        if chain.cycle_assembly is not None:
+            decomposition["segmentation"]["cycleAssembly"] = chain.cycle_assembly
+        if chain.continuation_assembly is not None:
+            decomposition["segmentation"]["continuationAssembly"] = chain.continuation_assembly
         bounds = point_bounds(source_points)
         stable_geometry = {
             "closed": chain.closed,
@@ -123,7 +141,8 @@ def vectorize_mask(
                 "samples": [[round(float(x), 6), round(float(y), 6)] for x, y in source_points],
                 "simplified": [[round(float(x), 6), round(float(y), 6)] for x, y in simplified],
                 "bounds": [round(value, 6) for value in bounds],
-                "candidate": candidate,
+                "pieces": decomposition["pieces"],
+                "segmentation": decomposition["segmentation"],
             }
         )
     chains.sort(
@@ -140,7 +159,7 @@ def vectorize_mask(
         "width": output_width,
         "height": output_height,
         "analysisScale": round(scale_mean, 9),
-        "medianLineWidthPx": round(median_line_width * scale_mean, 6),
+        "medianLineWidthPx": round(output_line_width, 6),
         "chains": chains,
     }
 
@@ -257,6 +276,207 @@ def trace_stroke_chains(skeleton: np.ndarray) -> list[TracedChain]:
     return chains
 
 
+def assemble_closed_cycles(
+    chains: list[TracedChain],
+    median_line_width: float,
+    drawing_diagonal: float,
+) -> list[TracedChain]:
+    """Join complementary graph branches only when their union fits one circle."""
+    if median_line_width <= 0 or drawing_diagonal <= 0:
+        raise ValueError("CYCLE_ASSEMBLY_SCALE_INVALID")
+    endpoint_tolerance = max(0.25 * median_line_width, 0.0001 * drawing_diagonal)
+    fit_tolerance = adaptive_fit_tolerance(median_line_width, drawing_diagonal)
+    candidates: list[tuple[float, int, int, TracedChain]] = []
+    for left_index, left in enumerate(chains):
+        if left.closed or len(left.points) < 3:
+            continue
+        for right_index in range(left_index + 1, len(chains)):
+            right = chains[right_index]
+            if right.closed or len(right.points) < 3:
+                continue
+            combined = complementary_cycle_points(left, right, endpoint_tolerance)
+            if combined is None:
+                continue
+            fit = fit_circle(combined)
+            if fit is None or fit["fitErrorP95"] > fit_tolerance:
+                continue
+            bounds = point_bounds(combined)
+            diameter = 2.0 * float(fit["parameters"]["radius"])
+            if diameter > max(bounds[2], bounds[3]) * 1.2:
+                continue
+            candidates.append((
+                float(fit["fitErrorP95"]),
+                left_index,
+                right_index,
+                TracedChain(
+                    points=tuple(map(tuple, combined)),
+                    closed=True,
+                    cycle_assembly={
+                        "sourceChainCount": 2,
+                        "endpointTolerancePx": round(float(endpoint_tolerance), 6),
+                        "fitTolerancePx": round(float(fit_tolerance), 6),
+                        "fitErrorP95": round(float(fit["fitErrorP95"]), 6),
+                        "reason": "shared-endpoints-circle-fit",
+                    },
+                ),
+            ))
+
+    consumed: set[int] = set()
+    cycles: list[TracedChain] = []
+    for _error, left_index, right_index, cycle in sorted(candidates):
+        if left_index in consumed or right_index in consumed:
+            continue
+        consumed.update((left_index, right_index))
+        cycles.append(cycle)
+    return [chain for index, chain in enumerate(chains) if index not in consumed] + cycles
+
+
+def assemble_smooth_continuations(
+    chains: list[TracedChain],
+    median_line_width: float,
+    drawing_diagonal: float,
+) -> list[TracedChain]:
+    """Reconnect analytic paths split only because a skeleton node has branches."""
+    if median_line_width <= 0 or drawing_diagonal <= 0:
+        raise ValueError("CONTINUATION_ASSEMBLY_SCALE_INVALID")
+    endpoint_tolerance = max(0.25 * median_line_width, 0.0001 * drawing_diagonal)
+    tangent_window = max(2.0 * median_line_width, 0.0015 * drawing_diagonal)
+    minimum_span = max(2.0 * median_line_width, 0.001 * drawing_diagonal)
+    minimum_cosine = math.cos(math.radians(35.0))
+    fit_tolerance = adaptive_fit_tolerance(median_line_width, drawing_diagonal)
+    current = list(chains)
+
+    while True:
+        candidates: list[tuple[float, int, int, TracedChain]] = []
+        for left_index, left in enumerate(current):
+            if left.closed or path_length(left.points) < minimum_span:
+                continue
+            for right_index in range(left_index + 1, len(current)):
+                right = current[right_index]
+                if right.closed or path_length(right.points) < minimum_span:
+                    continue
+                joined = join_at_shared_endpoint(left, right, endpoint_tolerance)
+                if joined is None:
+                    continue
+                combined, shared_index = joined
+                incoming = tangent_before(combined, shared_index, tangent_window)
+                outgoing = tangent_after(combined, shared_index, tangent_window)
+                if incoming is None or outgoing is None:
+                    continue
+                tangent_cosine = float(np.dot(incoming, outgoing))
+                if tangent_cosine < minimum_cosine:
+                    continue
+                fit = fit_best_candidate(
+                    combined,
+                    closed=False,
+                    median_line_width=median_line_width,
+                    drawing_diagonal=drawing_diagonal,
+                )
+                if fit is None or fit["type"] not in ("line", "arc"):
+                    continue
+                fit_error = float(fit["fitErrorP95"])
+                score = fit_error / fit_tolerance + (1.0 - tangent_cosine)
+                source_count = continuation_source_count(left) + continuation_source_count(right)
+                candidates.append((
+                    score,
+                    left_index,
+                    right_index,
+                    TracedChain(
+                        points=tuple(map(tuple, combined)),
+                        closed=False,
+                        continuation_assembly={
+                            "sourceChainCount": source_count,
+                            "endpointTolerancePx": round(float(endpoint_tolerance), 6),
+                            "fitTolerancePx": round(float(fit_tolerance), 6),
+                            "fitErrorP95": round(fit_error, 6),
+                            "tangentCosine": round(tangent_cosine, 6),
+                            "modelType": fit["type"],
+                            "reason": "shared-endpoint-smooth-analytic-fit",
+                        },
+                    ),
+                ))
+
+        consumed: set[int] = set()
+        assembled: list[TracedChain] = []
+        for _score, left_index, right_index, chain in sorted(candidates):
+            if left_index in consumed or right_index in consumed:
+                continue
+            consumed.update((left_index, right_index))
+            assembled.append(chain)
+        if not assembled:
+            return current
+        current = [chain for index, chain in enumerate(current) if index not in consumed] + assembled
+
+
+def join_at_shared_endpoint(
+    left: TracedChain,
+    right: TracedChain,
+    endpoint_tolerance: float,
+) -> tuple[np.ndarray, int] | None:
+    left_points = np.asarray(left.points, dtype=np.float64)
+    right_points = np.asarray(right.points, dtype=np.float64)
+    orientations = (
+        (left_points, right_points),
+        (left_points, right_points[::-1]),
+        (left_points[::-1], right_points),
+        (left_points[::-1], right_points[::-1]),
+    )
+    matches: list[tuple[float, np.ndarray, int]] = []
+    for before, after in orientations:
+        distance = float(np.linalg.norm(before[-1] - after[0]))
+        if distance > endpoint_tolerance:
+            continue
+        shared = (before[-1] + after[0]) / 2.0
+        combined = np.vstack((before[:-1], shared, after[1:]))
+        matches.append((distance, combined, len(before) - 1))
+    if not matches:
+        return None
+    _distance, combined, shared_index = min(matches, key=lambda item: item[0])
+    return combined, shared_index
+
+
+def tangent_before(points: np.ndarray, index: int, window: float) -> np.ndarray | None:
+    anchor = points[index]
+    for candidate in range(index - 1, -1, -1):
+        vector = anchor - points[candidate]
+        length = float(np.linalg.norm(vector))
+        if length >= window or candidate == 0:
+            return vector / length if length > 1e-12 else None
+    return None
+
+
+def tangent_after(points: np.ndarray, index: int, window: float) -> np.ndarray | None:
+    anchor = points[index]
+    for candidate in range(index + 1, len(points)):
+        vector = points[candidate] - anchor
+        length = float(np.linalg.norm(vector))
+        if length >= window or candidate == len(points) - 1:
+            return vector / length if length > 1e-12 else None
+    return None
+
+
+def continuation_source_count(chain: TracedChain) -> int:
+    if chain.continuation_assembly is None:
+        return 1
+    return int(chain.continuation_assembly["sourceChainCount"])
+
+
+def complementary_cycle_points(
+    left: TracedChain,
+    right: TracedChain,
+    endpoint_tolerance: float,
+) -> np.ndarray | None:
+    left_points = np.asarray(left.points, dtype=np.float64)
+    right_points = np.asarray(right.points, dtype=np.float64)
+    for oriented in (right_points[::-1], right_points):
+        if (
+            np.linalg.norm(left_points[0] - oriented[-1]) <= endpoint_tolerance
+            and np.linalg.norm(left_points[-1] - oriented[0]) <= endpoint_tolerance
+        ):
+            return np.vstack((left_points, oriented[1:-1]))
+    return None
+
+
 def pixel_neighbors(point: Point, pixels: set[Point]) -> Iterable[Point]:
     x, y = point
     for dy in (-1, 0, 1):
@@ -293,15 +513,452 @@ def connected_clusters(
     return clusters
 
 
+def decompose_chain(
+    points: np.ndarray,
+    closed: bool,
+    median_line_width: float,
+    drawing_diagonal: float,
+) -> dict:
+    """Decompose one traced stroke without using absolute pixel thresholds."""
+    samples = np.asarray(points, dtype=np.float64)
+    if samples.ndim != 2 or samples.shape[1] != 2 or len(samples) < 2:
+        raise ValueError("CHAIN_POINTS_INVALID")
+    if not np.all(np.isfinite(samples)):
+        raise ValueError("CHAIN_POINTS_NON_FINITE")
+    if median_line_width <= 0 or drawing_diagonal <= 0:
+        raise ValueError("CHAIN_SCALE_INVALID")
+
+    chain_length = closed_path_length(samples, closed)
+    fit_tolerance = adaptive_fit_tolerance(median_line_width, drawing_diagonal)
+    near_window = max(2.0 * median_line_width, 0.0025 * drawing_diagonal)
+    far_window = max(4.0 * median_line_width, 0.005 * drawing_diagonal)
+    minimum_span = max(
+        4.0 * median_line_width,
+        0.005 * drawing_diagonal,
+        0.03 * chain_length,
+    )
+    segmentation = {
+        "algorithmVersion": PIPELINE_VERSION,
+        "drawingDiagonalPx": round(float(drawing_diagonal), 6),
+        "chainLengthPx": round(float(chain_length), 6),
+        "fitTolerancePx": round(float(fit_tolerance), 6),
+        "nearWindowPx": round(float(near_window), 6),
+        "farWindowPx": round(float(far_window), 6),
+        "minimumSpanPx": round(float(minimum_span), 6),
+        "splitPenalty": 1.5,
+        "decisions": [],
+    }
+    whole_candidate = fit_best_candidate(
+        samples,
+        closed=closed,
+        median_line_width=median_line_width,
+        drawing_diagonal=drawing_diagonal,
+    )
+    if whole_candidate is not None:
+        return {
+            "pieces": [build_chain_piece(
+                samples,
+                closed=closed,
+                start_index=0,
+                end_index=len(samples) - 1,
+                wraps=closed,
+                median_line_width=median_line_width,
+                drawing_diagonal=drawing_diagonal,
+                candidate=whole_candidate,
+            )],
+            "segmentation": segmentation,
+        }
+
+    split_indices, decisions = adaptive_split_indices(
+        samples,
+        closed=closed,
+        median_line_width=median_line_width,
+        drawing_diagonal=drawing_diagonal,
+        near_window=near_window,
+        far_window=far_window,
+        minimum_span=minimum_span,
+        fit_tolerance=fit_tolerance,
+    )
+    segmentation["decisions"] = decisions
+    if closed and len(split_indices) < 2:
+        split_indices = []
+    ranges = piece_ranges(len(samples), split_indices, closed)
+    pieces = []
+    for start_index, end_index, wraps in ranges:
+        piece_points = range_points(samples, start_index, end_index, wraps)
+        candidate = fit_best_candidate(
+            piece_points,
+            closed=closed and len(ranges) == 1,
+            median_line_width=median_line_width,
+            drawing_diagonal=drawing_diagonal,
+        )
+        pieces.append(build_chain_piece(
+            piece_points,
+            closed=closed and len(ranges) == 1,
+            start_index=start_index,
+            end_index=end_index,
+            wraps=wraps,
+            median_line_width=median_line_width,
+            drawing_diagonal=drawing_diagonal,
+            candidate=candidate,
+        ))
+    return {"pieces": pieces, "segmentation": segmentation}
+
+
+def adaptive_split_indices(
+    points: np.ndarray,
+    closed: bool,
+    median_line_width: float,
+    drawing_diagonal: float,
+    near_window: float,
+    far_window: float,
+    minimum_span: float,
+    fit_tolerance: float,
+) -> tuple[list[int], list[dict]]:
+    chain_length = closed_path_length(points, closed)
+    locations = vertex_locations(points, closed)
+    proposals: list[dict] = []
+    for index in range(len(points)):
+        if not closed and (
+            locations[index] < minimum_span
+            or chain_length - locations[index] < minimum_span
+        ):
+            continue
+        near_angle = tangent_change(points, index, near_window, closed)
+        far_angle = tangent_change(points, index, far_window, closed)
+        maximum_angle = max(near_angle, far_angle)
+        stability = min(near_angle, far_angle) / max(maximum_angle, 1e-12)
+        if min(near_angle, far_angle) < 28.0 or stability < 0.78:
+            continue
+        proposals.append({
+            "sampleIndex": index,
+            "nearAngleDegrees": near_angle,
+            "farAngleDegrees": far_angle,
+            "stability": stability,
+            "cornerScore": min(near_angle, far_angle) + 0.25 * maximum_angle,
+        })
+
+    corner_zone = max(median_line_width, 0.001 * drawing_diagonal)
+    proposals = non_maximum_suppression(
+        proposals,
+        locations,
+        chain_length,
+        corner_zone,
+        closed,
+    )
+    refined: list[dict] = []
+    refinement_radius = 2.0 * median_line_width
+    support = max(8.0 * median_line_width, 0.01 * drawing_diagonal, 0.08 * chain_length)
+    for proposal in proposals:
+        candidates = nearby_indices(
+            locations,
+            proposal["sampleIndex"],
+            refinement_radius,
+            chain_length,
+            closed,
+        )
+        best: dict | None = None
+        for index in candidates:
+            if not closed and (
+                locations[index] < minimum_span
+                or chain_length - locations[index] < minimum_span
+            ):
+                continue
+            before = directional_window(points, index, support, -1, closed)
+            after = directional_window(points, index, support, 1, closed)
+            if len(before) < 4 or len(after) < 4:
+                continue
+            combined = np.vstack((before[:-1], after))
+            left_candidate = fit_best_candidate(
+                before,
+                closed=False,
+                median_line_width=median_line_width,
+                drawing_diagonal=drawing_diagonal,
+            )
+            right_candidate = fit_best_candidate(
+                after,
+                closed=False,
+                median_line_width=median_line_width,
+                drawing_diagonal=drawing_diagonal,
+            )
+            child_errors = [
+                candidate["fitErrorP95"]
+                for candidate in (left_candidate, right_candidate)
+                if candidate is not None
+            ]
+            if len(child_errors) != 2:
+                continue
+            combined_error = best_open_fit_error(combined)
+            child_error = sum(child_errors) / 2.0
+            split_gain = (combined_error - child_error) / fit_tolerance
+            accept_score = split_gain - 1.5
+            result = {
+                **proposal,
+                "sampleIndex": index,
+                "combinedFitErrorP95": combined_error,
+                "childFitErrorP95": child_errors,
+                "splitGain": split_gain,
+                "acceptScore": accept_score,
+                "accepted": accept_score > 0,
+                "reason": "accepted" if accept_score > 0 else "complexity-penalty",
+            }
+            if best is None or result["acceptScore"] > best["acceptScore"]:
+                best = result
+        if best is None:
+            best = {
+                **proposal,
+                "combinedFitErrorP95": None,
+                "childFitErrorP95": [],
+                "splitGain": None,
+                "acceptScore": None,
+                "accepted": False,
+                "reason": "child-fit-rejected",
+            }
+        refined.append(best)
+
+    accepted = [item for item in refined if item["accepted"]]
+    accepted = non_maximum_suppression(
+        accepted,
+        locations,
+        chain_length,
+        minimum_span,
+        closed,
+        score_key="acceptScore",
+    )
+    accepted_indices = {item["sampleIndex"] for item in accepted}
+    decisions = []
+    for item in refined:
+        value = {**item, "accepted": item["sampleIndex"] in accepted_indices}
+        if item["accepted"] and not value["accepted"]:
+            value["reason"] = "minimum-span"
+        decisions.append(round_decision(value))
+    return sorted(accepted_indices), decisions
+
+
+def non_maximum_suppression(
+    candidates: list[dict],
+    locations: np.ndarray,
+    chain_length: float,
+    minimum_distance: float,
+    closed: bool,
+    score_key: str = "cornerScore",
+) -> list[dict]:
+    selected: list[dict] = []
+    for candidate in sorted(candidates, key=lambda item: item[score_key], reverse=True):
+        location = locations[candidate["sampleIndex"]]
+        if any(
+            path_distance(
+                location,
+                locations[item["sampleIndex"]],
+                chain_length,
+                closed,
+            ) < minimum_distance
+            for item in selected
+        ):
+            continue
+        selected.append(candidate)
+    return sorted(selected, key=lambda item: item["sampleIndex"])
+
+
+def tangent_change(points: np.ndarray, index: int, radius: float, closed: bool) -> float:
+    before = directional_window(points, index, radius, -1, closed)
+    after = directional_window(points, index, radius, 1, closed)
+    if len(before) < 3 or len(after) < 3:
+        return 0.0
+    incoming = pca_direction(before)
+    outgoing = pca_direction(after)
+    cosine = float(np.clip(np.dot(incoming, outgoing), -1.0, 1.0))
+    return math.degrees(math.acos(cosine))
+
+
+def directional_window(
+    points: np.ndarray,
+    index: int,
+    radius: float,
+    direction: int,
+    closed: bool,
+) -> np.ndarray:
+    indices = [index]
+    distance_sum = 0.0
+    current = index
+    maximum_steps = len(points) - 1 if closed else len(points)
+    for _step in range(maximum_steps):
+        following = current + direction
+        if closed:
+            following %= len(points)
+        elif following < 0 or following >= len(points):
+            break
+        distance_sum += float(np.linalg.norm(points[following] - points[current]))
+        indices.append(following)
+        current = following
+        if distance_sum >= radius:
+            break
+    if direction < 0:
+        indices.reverse()
+    return points[indices]
+
+
+def pca_direction(points: np.ndarray) -> np.ndarray:
+    centered = points - np.mean(points, axis=0)
+    _left, _values, vectors = np.linalg.svd(centered, full_matrices=False)
+    direction = vectors[0]
+    if float(np.dot(direction, points[-1] - points[0])) < 0:
+        direction = -direction
+    length = float(np.linalg.norm(direction))
+    return direction / max(length, 1e-12)
+
+
+def best_open_fit_error(points: np.ndarray) -> float:
+    line_error = float(fit_line(points)["fitErrorP95"])
+    circle = fit_circle_through_endpoints(points)
+    if circle is None:
+        return line_error
+    bounds = point_bounds(points)
+    diagonal = math.hypot(bounds[2], bounds[3])
+    radius = circle["parameters"]["radius"]
+    if diagonal <= 0 or radius > diagonal * 4.0:
+        return line_error
+    angles = np.unwrap(np.arctan2(
+        points[:, 1] - circle["parameters"]["center"][1],
+        points[:, 0] - circle["parameters"]["center"][0],
+    ))
+    sweep = abs(math.degrees(float(angles[-1] - angles[0])))
+    return min(line_error, float(circle["fitErrorP95"])) if 5.0 <= sweep <= 330.0 else line_error
+
+
+def piece_ranges(
+    sample_count: int,
+    split_indices: list[int],
+    closed: bool,
+) -> list[tuple[int, int, bool]]:
+    if not split_indices:
+        return [(0, sample_count - 1, closed)]
+    ordered = sorted(set(split_indices))
+    if not closed:
+        boundaries = [0, *ordered, sample_count - 1]
+        return [
+            (start, end, False)
+            for start, end in zip(boundaries, boundaries[1:])
+            if end > start
+        ]
+    return [
+        (start, ordered[(index + 1) % len(ordered)], index == len(ordered) - 1)
+        for index, start in enumerate(ordered)
+    ]
+
+
+def range_points(
+    points: np.ndarray,
+    start_index: int,
+    end_index: int,
+    wraps: bool,
+) -> np.ndarray:
+    if not wraps:
+        return points[start_index:end_index + 1]
+    if start_index == 0 and end_index == len(points) - 1:
+        return points
+    return np.vstack((points[start_index:], points[:end_index + 1]))
+
+
+def build_chain_piece(
+    points: np.ndarray,
+    closed: bool,
+    start_index: int,
+    end_index: int,
+    wraps: bool,
+    median_line_width: float,
+    drawing_diagonal: float,
+    candidate: dict | None,
+) -> dict:
+    tolerance = max(median_line_width * 0.22, drawing_diagonal * 0.00015)
+    simplified = simplify_points(points, closed=closed, tolerance=tolerance)
+    stable = {
+        "closed": closed,
+        "sampleRange": [start_index, end_index],
+        "wraps": wraps,
+        "simplified": [[round(x, 3), round(y, 3)] for x, y in simplified],
+    }
+    piece_id = "piece_" + hashlib.sha256(
+        json.dumps(stable, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()[:20]
+    return {
+        "id": piece_id,
+        "sampleRange": [start_index, end_index],
+        "wraps": wraps,
+        "closed": closed,
+        "simplified": [[round(float(x), 6), round(float(y), 6)] for x, y in simplified],
+        "bounds": [round(value, 6) for value in point_bounds(points)],
+        "candidate": candidate,
+    }
+
+
+def vertex_locations(points: np.ndarray, closed: bool) -> np.ndarray:
+    distances = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    return np.concatenate(([0.0], np.cumsum(distances)))
+
+
+def closed_path_length(points: np.ndarray, closed: bool) -> float:
+    length = float(np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1)))
+    return length + (float(np.linalg.norm(points[0] - points[-1])) if closed else 0.0)
+
+
+def path_distance(
+    left: float,
+    right: float,
+    chain_length: float,
+    closed: bool,
+) -> float:
+    direct = abs(left - right)
+    return min(direct, chain_length - direct) if closed else direct
+
+
+def nearby_indices(
+    locations: np.ndarray,
+    center_index: int,
+    radius: float,
+    chain_length: float,
+    closed: bool,
+) -> list[int]:
+    center = float(locations[center_index])
+    return [
+        index
+        for index, location in enumerate(locations)
+        if path_distance(center, float(location), chain_length, closed) <= radius
+    ]
+
+
+def round_decision(value: dict) -> dict:
+    rounded = {}
+    for key, item in value.items():
+        if isinstance(item, (float, np.floating)):
+            rounded[key] = round(float(item), 6)
+        elif isinstance(item, list):
+            rounded[key] = [
+                round(float(entry), 6) if isinstance(entry, (float, np.floating)) else entry
+                for entry in item
+            ]
+        else:
+            rounded[key] = item
+    return rounded
+
+
+def adaptive_fit_tolerance(median_line_width: float, drawing_diagonal: float) -> float:
+    return max(0.5 * float(median_line_width), 0.0003 * float(drawing_diagonal))
+
+
 def fit_best_candidate(
     points: np.ndarray,
     closed: bool,
     median_line_width: float,
+    drawing_diagonal: float | None = None,
 ) -> dict | None:
     samples = np.asarray(points, dtype=np.float64)
     if samples.ndim != 2 or samples.shape[1] != 2 or len(samples) < 2:
         return None
-    threshold = max(1.5, 0.5 * float(median_line_width))
+    source_diagonal = drawing_diagonal if drawing_diagonal is not None else math.hypot(
+        *point_bounds(samples)[2:]
+    )
+    threshold = adaptive_fit_tolerance(median_line_width, source_diagonal)
     bounds = point_bounds(samples)
     diagonal = math.hypot(bounds[2], bounds[3])
 
@@ -310,7 +967,7 @@ def fit_best_candidate(
         if line["fitErrorP95"] <= threshold:
             return with_confidence(line, threshold)
 
-    circle = fit_circle(samples)
+    circle = fit_circle(samples) if closed else fit_circle_through_endpoints(samples)
     circle_allowed = (
         circle is not None
         and circle["fitErrorP95"] <= threshold
@@ -320,8 +977,20 @@ def fit_best_candidate(
     if closed:
         ellipse = fit_ellipse(samples) if len(samples) >= 5 else None
         ellipse_allowed = ellipse is not None and ellipse["fitErrorP95"] <= threshold
+        ellipse_deviation = None if ellipse is None else (
+            float(np.linalg.norm(ellipse["parameters"]["majorAxis"]))
+            * (1.0 - float(ellipse["parameters"]["ratio"]))
+        )
+        circle_is_indistinguishable = (
+            circle_allowed
+            and ellipse_allowed
+            and ellipse_deviation is not None
+            and ellipse_deviation <= threshold
+        )
         if circle_allowed and (
-            not ellipse_allowed or circle["fitErrorP95"] <= ellipse["fitErrorP95"] * 1.08
+            not ellipse_allowed
+            or circle_is_indistinguishable
+            or circle["fitErrorP95"] <= ellipse["fitErrorP95"] * 1.08
         ):
             return with_confidence(circle, threshold)
         if ellipse_allowed:
@@ -356,13 +1025,23 @@ def fit_best_candidate(
 
 
 def fit_line(points: np.ndarray) -> dict:
+    """Fit the best supporting line; compound-path junctions are resolved later."""
+    return fit_unconstrained_line(points)
+
+
+def fit_unconstrained_line(points: np.ndarray) -> dict:
     center = np.mean(points, axis=0)
     _, _, vectors = np.linalg.svd(points - center, full_matrices=False)
     direction = vectors[0]
+    if float(np.dot(direction, points[-1] - points[0])) < 0:
+        direction = -direction
     projections = (points - center) @ direction
     start = center + direction * float(np.min(projections))
     end = center + direction * float(np.max(projections))
-    errors = np.abs((points - center)[:, 0] * direction[1] - (points - center)[:, 1] * direction[0])
+    errors = np.abs(
+        (points - center)[:, 0] * direction[1]
+        - (points - center)[:, 1] * direction[0]
+    )
     return fit_record(
         "line",
         {"start": point_json(start), "end": point_json(end)},
@@ -386,7 +1065,38 @@ def fit_circle(points: np.ndarray) -> dict | None:
     errors = np.abs(np.linalg.norm(points - center, axis=1) - radius)
     return fit_record(
         "circle",
-        {"center": point_json(center), "radius": round(radius, 6)},
+        {"center": point_json(center), "radius": round(radius, 9)},
+        errors,
+    )
+
+
+def fit_circle_through_endpoints(points: np.ndarray) -> dict | None:
+    """Fit an open circular segment constrained through both source endpoints."""
+    if len(points) < 3:
+        return None
+    start = points[0]
+    end = points[-1]
+    chord = end - start
+    chord_length = float(np.linalg.norm(chord))
+    if chord_length <= 1e-12:
+        return None
+    midpoint = (start + end) / 2.0
+    normal = np.array([-chord[1], chord[0]], dtype=np.float64) / chord_length
+    local = points - midpoint
+    coefficient = 2.0 * (local @ normal)
+    target = np.sum(local * local, axis=1) - chord_length * chord_length / 4.0
+    denominator = float(coefficient @ coefficient)
+    if denominator <= 1e-12:
+        return None
+    offset = float(coefficient @ target) / denominator
+    center = midpoint + offset * normal
+    radius = math.hypot(chord_length / 2.0, offset)
+    if radius <= 0 or not np.isfinite(radius):
+        return None
+    errors = np.abs(np.linalg.norm(points - center, axis=1) - radius)
+    return fit_record(
+        "circle",
+        {"center": point_json(center), "radius": round(radius, 9)},
         errors,
     )
 
@@ -484,11 +1194,11 @@ def canonical_edge(first: Point, second: Point) -> tuple[Point, Point]:
 
 
 def point_json(point: np.ndarray) -> list[float]:
-    return [round(float(point[0]), 6), round(float(point[1]), 6)]
+    return [round(float(point[0]), 9), round(float(point[1]), 9)]
 
 
 def normalize_degrees(value: float) -> float:
-    return round((value % 360.0 + 360.0) % 360.0, 6)
+    return round((value % 360.0 + 360.0) % 360.0, 9)
 
 
 def serve() -> None:

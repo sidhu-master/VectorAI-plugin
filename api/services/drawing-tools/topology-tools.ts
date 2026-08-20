@@ -12,7 +12,6 @@ import {
   buildGeometryTopologyGraph,
   type AtomicGraphSegment,
   type GeometryTopologyGraph,
-  type TopologyVertex,
 } from '../drawing-spatial/atomic-graph.js';
 import {
   roughGeometryBounds,
@@ -26,7 +25,7 @@ import type {
   ModelDrawingToolExecutionContext,
 } from './types.js';
 
-type ToolDefinition = ModelDrawingToolDefinition<any, any>;
+type ToolDefinition = ModelDrawingToolDefinition<unknown, unknown>;
 
 interface TracePathsInput {
   seedPoints: Vec2[];
@@ -66,7 +65,7 @@ export class DrawingTopologyTools {
 
   #buildTopology(): ToolDefinition {
     return define('build_topology', 'read', 10_000, parseBuildTopology, async ({ invocation, input }) => {
-      const workspace = await this.#application.open(invocation.drawingId);
+      const workspace = await this.#application.readCurrent(invocation.drawingId);
       const graph = buildGeometryTopologyGraph({
         document: workspace.document,
         revision: workspace.revision,
@@ -94,7 +93,7 @@ export class DrawingTopologyTools {
     return define<TracePathsInput, unknown>(
       'trace_paths', 'read', 15_000, parseTracePaths,
       async ({ invocation, input }) => {
-        const workspace = await this.#application.open(invocation.drawingId);
+        const workspace = await this.#application.readCurrent(invocation.drawingId);
         const graph = buildGeometryTopologyGraph({
           document: workspace.document,
           revision: workspace.revision,
@@ -154,7 +153,7 @@ export class DrawingTopologyTools {
 
   #findInterfaces(): ToolDefinition {
     return define('find_interfaces', 'read', 10_000, parseFindInterfaces, async ({ invocation, input }) => {
-      const workspace = await this.#application.open(invocation.drawingId);
+      const workspace = await this.#application.readCurrent(invocation.drawingId);
       const graph = buildGeometryTopologyGraph({
         document: workspace.document,
         revision: workspace.revision,
@@ -188,7 +187,7 @@ export class DrawingTopologyTools {
 
   #inspectFragment(): ToolDefinition {
     return define('inspect_fragment', 'read', 10_000, parseInspectFragment, async ({ invocation, input }) => {
-      const workspace = await this.#application.open(invocation.drawingId);
+      const workspace = await this.#application.readCurrent(invocation.drawingId);
       const node = workspace.document.geometry.find((item) => item.id === input.nodeId);
       if (!node) invalid('nodeId does not reference geometry');
       const samples = fragmentSamples(node, input.range, input.samples);
@@ -213,7 +212,7 @@ export class DrawingTopologyTools {
     return define<MaterializeSplitInput, unknown>(
       'materialize_split', 'write', 15_000, parseMaterializeSplit,
       async ({ invocation, input }) => {
-        const workspace = await this.#application.open(invocation.drawingId);
+        const workspace = await this.#application.readCurrent(invocation.drawingId);
         const selection = selectionForPlans(workspace.revision, input.splitPlans);
         const materialized = materializeSpatialSplits({
           document: workspace.document,

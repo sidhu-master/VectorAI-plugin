@@ -1,12 +1,14 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   parseDrawingToolAssertions,
   parseDrawingToolCommands,
   parseDrawingToolSelector,
+  type DrawingAgentSpatialMarker,
 } from '../../../src/contracts/drawing-agent.js';
 import {
   randomIdFactory,
+  previewTransaction,
   type Bounds2D,
   type DrawingAssertion,
   type DrawingCommand,
@@ -24,11 +26,25 @@ import {
 import { geometryBounds, unionBounds } from '../../../src/drawing/query/bounds.js';
 import type { DrawingApplication } from '../drawing-application/application.js';
 import { evaluateDrawingPreview } from '../drawing-diagnostics/evaluate-preview.js';
+import type { DrawingDiagnostic } from '../drawing-diagnostics/types.js';
+import { projectDrawingDeltaFrame } from '../drawing-interaction/index.js';
+import {
+  CounterfactualWorldService,
+  type CounterfactualWorldBranch,
+} from '../drawing-preview-world/index.js';
 import { buildGeometryTopologyGraph } from '../drawing-spatial/atomic-graph.js';
 import {
   roughGeometryBounds,
   sampleGeometryRanges,
 } from '../drawing-spatial/geometry-sampling.js';
+import { compileConnectedTransform } from '../drawing-spatial-actions/connected-transform.js';
+import {
+  compileSpatialEditProgram,
+  parseSpatialEditProgram,
+  SpatialProgramError,
+  type SpatialEditProgram,
+  type SpatialOperationReceipt,
+} from '../drawing-spatial-program/index.js';
 import {
   ModelToolExecutionError,
   ModelToolInputError,
@@ -38,7 +54,7 @@ import type {
   ModelDrawingToolExecutionContext,
 } from './types.js';
 
-type ToolDefinition = ModelDrawingToolDefinition<any, any>;
+type ToolDefinition = ModelDrawingToolDefinition<unknown, unknown>;
 
 interface StoredCandidate {
   handle: string;
@@ -47,8 +63,25 @@ interface StoredCandidate {
   drawingId: DrawingId;
   baseRevision: RevisionId;
   transaction: DrawingTransaction;
+  transactionDigest: string;
+  counterfactualBranchId: string;
   affectedNodeIds: string[];
+  resultingDocument: DrawingDocument;
+  editBase: DrawingModelCandidateEditBase;
 }
+
+export type DrawingModelCandidateEditBase =
+  | {
+      kind: 'canonical';
+      revision: RevisionId;
+      replacesPreviewHandle?: string;
+    }
+  | {
+      kind: 'preview';
+      revision: RevisionId;
+      previewHandle: string;
+      transactionDigest: string;
+    };
 
 export interface DrawingModelCandidateSnapshot {
   previewHandle: string;
@@ -57,10 +90,15 @@ export interface DrawingModelCandidateSnapshot {
   drawingId: DrawingId;
   baseRevision: RevisionId;
   transaction: DrawingTransaction;
+  transactionDigest: string;
+  counterfactualBranchId: string;
   affectedNodeIds: string[];
+  editBase: DrawingModelCandidateEditBase;
 }
 
 interface PreviewTransactionInput {
+  baseRevision: RevisionId;
+  replacesPreviewHandle?: string;
   summary: string;
   confidence?: number;
   commands: DrawingCommand[];
@@ -69,7 +107,26 @@ interface PreviewTransactionInput {
   evidenceRefs: EvidenceId[];
   lineage?: DrawingLineageRecord[];
   decisionGrantRefs?: string[];
-  diagnosticAcknowledgements?: string[];
+}
+
+interface RevisePreviewInput {
+  basePreviewHandle: string;
+  baseTransactionDigest: string;
+  summary: string;
+  corrections: DrawingCommand[];
+  postconditions?: DrawingAssertion[];
+  evidenceRefs: EvidenceId[];
+  confidence?: number;
+}
+
+interface PreviewConnectedTransformInput {
+  summary: string;
+  carrierNodeId: string;
+  targetCenter?: Vec2;
+  delta?: Vec2;
+  rotationDegrees?: number;
+  evidenceRefs: EvidenceId[];
+  confidence?: number;
 }
 
 interface EvaluatePreviewInput {
@@ -81,7 +138,6 @@ interface EvaluatePreviewInput {
 interface CommitPreviewInput {
   previewHandle: string;
   decisionGrantRefs: string[];
-  diagnosticAcknowledgements: string[];
 }
 
 type MeasurementRequest =
@@ -98,6 +154,7 @@ export class DrawingModelTools {
   readonly #idFactory: IdFactory;
   readonly #handleFactory: () => string;
   readonly #tolerance: number;
+  readonly #counterfactualWorld: CounterfactualWorldService;
   readonly #candidates = new Map<string, StoredCandidate>();
 
   constructor(input: {
@@ -105,24 +162,29 @@ export class DrawingModelTools {
     idFactory?: IdFactory;
     handleFactory?: () => string;
     tolerance?: number;
+    counterfactualWorld?: CounterfactualWorldService;
   }) {
     this.#application = input.application;
     this.#idFactory = input.idFactory ?? randomIdFactory;
     this.#handleFactory = input.handleFactory ?? (() => `preview_${randomUUID()}`);
     this.#tolerance = positiveNumber(input.tolerance ?? 0.01, 'tolerance');
+    this.#counterfactualWorld = input.counterfactualWorld ?? new CounterfactualWorldService();
     this.definitions = Object.freeze([
       this.#queryNodes(),
       this.#inspectNodes(),
       this.#renderDrawing(),
       this.#measureGeometry(),
+      this.#previewSpatialProgram(),
+      this.#previewConnectedTransform(),
       this.#previewTransaction(),
+      this.#revisePreview(),
       this.#evaluatePreview(),
       this.#commitPreview(),
     ]);
   }
 
   async currentRevision(drawingId: DrawingId): Promise<RevisionId> {
-    return (await this.#application.open(drawingId)).revision;
+    return this.#application.currentRevision(drawingId);
   }
 
   snapshot(): { candidateCount: number; documentCount: 0 } {
@@ -133,6 +195,7 @@ export class DrawingModelTools {
     let discarded = 0;
     for (const [handle, candidate] of this.#candidates) {
       if (candidate.runId !== runId) continue;
+      this.#counterfactualWorld.discard(candidate.counterfactualBranchId);
       this.#candidates.delete(handle);
       discarded += 1;
     }
@@ -159,7 +222,10 @@ export class DrawingModelTools {
       drawingId: candidate.drawingId,
       baseRevision: candidate.baseRevision,
       transaction: structuredClone(candidate.transaction),
+      transactionDigest: candidate.transactionDigest,
+      counterfactualBranchId: candidate.counterfactualBranchId,
       affectedNodeIds: [...candidate.affectedNodeIds],
+      editBase: structuredClone(candidate.editBase),
     };
   }
 
@@ -179,6 +245,10 @@ export class DrawingModelTools {
     affectedNodeIds: string[];
     candidate: boolean;
     validationValid: boolean;
+    previewDelta: {
+      upserts: Array<GeometryNode | DrawingDocument['annotations'][number]>;
+      removeIds: string[];
+    };
   } | { status: 'already_satisfied' } | { status: 'rejected'; errors: unknown[] }> {
     const transaction: DrawingTransaction = {
       id: this.#idFactory.next('transaction'),
@@ -195,10 +265,20 @@ export class DrawingModelTools {
         ...(input.lineage ? { lineage: structuredClone(input.lineage) } : {}),
       },
     };
+    const current = await this.#application.readCurrent(input.drawingId);
     const result = await this.#application.preview({ drawingId: input.drawingId, transaction });
     if (result.status !== 'ready') return structuredClone(result);
     const handle = this.#handleFactory();
     const affectedNodeIds = [...result.preview.affectedNodeIds];
+    const transactionDigest = digestTransaction(transaction);
+    const branch = this.#counterfactualWorld.create({
+      runId: input.runId,
+      episodeId: input.episodeId,
+      baseDocument: current.document,
+      baseRevision: input.revision,
+      preview: result,
+      transactionDigest,
+    });
     this.#candidates.set(handle, {
       handle,
       runId: input.runId,
@@ -206,12 +286,17 @@ export class DrawingModelTools {
       drawingId: input.drawingId,
       baseRevision: input.revision,
       transaction,
+      transactionDigest,
+      counterfactualBranchId: branch.id,
       affectedNodeIds,
+      resultingDocument: structuredClone(result.resultingDocument),
+      editBase: { kind: 'canonical', revision: input.revision },
     });
     return {
       status: 'ready', previewHandle: handle, affectedNodeIds,
       candidate: result.preview.candidate,
       validationValid: result.preview.validationReport.valid,
+      previewDelta: drawingPreviewDelta(current.document, result.resultingDocument),
     };
   }
 
@@ -269,7 +354,7 @@ export class DrawingModelTools {
 
   #measureGeometry(): ToolDefinition {
     return define('measure_geometry', 'read', 10_000, parseMeasureGeometry, async ({ invocation, input }) => {
-      const workspace = await this.#application.open(invocation.drawingId);
+      const workspace = await this.#application.readCurrent(invocation.drawingId);
       const measurements = input.measurements.map((request) => (
         measure(workspace.document, workspace.revision, request, this.#tolerance)
       ));
@@ -288,6 +373,12 @@ export class DrawingModelTools {
       15_000,
       parsePreviewTransaction,
       async ({ invocation, input }) => {
+        if (input.baseRevision !== invocation.revision) {
+          throw toolError('PREVIEW_BASE_REVISION_MISMATCH', 'requery');
+        }
+        if (input.replacesPreviewHandle) {
+          this.#requireCandidate(invocation, input.replacesPreviewHandle);
+        }
         const transaction: DrawingTransaction = {
           id: this.#idFactory.next('transaction'),
           baseRevision: invocation.revision,
@@ -304,9 +395,150 @@ export class DrawingModelTools {
             ...(input.decisionGrantRefs
               ? { decisionGrantRefs: structuredClone(input.decisionGrantRefs) }
               : {}),
-            ...(input.diagnosticAcknowledgements
-              ? { diagnosticAcknowledgements: structuredClone(input.diagnosticAcknowledgements) }
+          },
+        };
+        const current = await this.#application.readCurrent(invocation.drawingId);
+        const result = await this.#application.preview({
+          drawingId: invocation.drawingId,
+          transaction,
+        });
+        if (result.status !== 'ready') {
+          return {
+            output: structuredClone(result),
+            affectedNodeIds: result.status === 'rejected'
+              ? unique(result.errors.flatMap((error) => error.nodeIds))
+              : [],
+          };
+        }
+        const handle = this.#handleFactory();
+        const transactionDigest = digestTransaction(transaction);
+        const branch = this.#counterfactualWorld.create({
+          runId: invocation.runId,
+          episodeId: invocation.episodeId,
+          baseDocument: current.document,
+          baseRevision: invocation.revision,
+          preview: result,
+          transactionDigest,
+        });
+        const report = evaluateDrawingPreview({
+          before: current.document,
+          after: result.resultingDocument,
+          transaction,
+          tolerance: this.#tolerance,
+        });
+        const previewDelta = drawingPreviewDelta(current.document, result.resultingDocument);
+        const interactionFrame = projectDrawingDeltaFrame({
+          before: current.document,
+          after: result.resultingDocument,
+          changedNodeIds: result.preview.affectedNodeIds,
+          phase: 'previewing',
+          label: input.summary,
+        });
+        const candidate: StoredCandidate = {
+          handle,
+          runId: invocation.runId,
+          episodeId: invocation.episodeId,
+          drawingId: invocation.drawingId,
+          baseRevision: invocation.revision,
+          transaction,
+          transactionDigest,
+          counterfactualBranchId: branch.id,
+          affectedNodeIds: [...result.preview.affectedNodeIds],
+          resultingDocument: structuredClone(result.resultingDocument),
+          editBase: {
+            kind: 'canonical', revision: invocation.revision,
+            ...(input.replacesPreviewHandle
+              ? { replacesPreviewHandle: input.replacesPreviewHandle }
               : {}),
+          },
+        };
+        this.#candidates.set(handle, candidate);
+        const observation = await this.#application.observePreviewForAgent({
+          document: result.resultingDocument,
+          revision: invocation.revision,
+          previewHandle: handle,
+          includeAnnotations: false,
+          selectedIds: candidate.affectedNodeIds,
+        });
+        return {
+          output: {
+            status: 'ready',
+            previewHandle: handle,
+            transactionId: transaction.id,
+            candidate: result.preview.candidate,
+            validationValid: result.preview.validationReport.valid,
+            goalSatisfied: result.preview.outcomeReport.satisfied,
+            affectedNodeIds: [...result.preview.affectedNodeIds],
+            hardValid: report.hardValid,
+            diagnostics: report.diagnostics,
+            previewDelta,
+            interactionFrame,
+            observation,
+            counterfactual: counterfactualSummary(branch),
+            editBase: structuredClone(candidate.editBase),
+          },
+          affectedNodeIds: candidate.affectedNodeIds,
+        };
+      },
+    );
+  }
+
+  #previewSpatialProgram(): ToolDefinition {
+    return define<SpatialEditProgram, unknown>(
+      'preview_spatial_program',
+      'write',
+      15_000,
+      parsePreviewSpatialProgram,
+      async ({ invocation, input }) => {
+        if (input.baseRevision !== invocation.revision) {
+          throw toolError('SPATIAL_PROGRAM_REVISION_MISMATCH', 'requery');
+        }
+        const current = await this.#application.readCurrent(invocation.drawingId);
+        const parent = input.replacesPreviewHandle
+          ? this.#requireCandidate(invocation, input.replacesPreviewHandle)
+          : null;
+        const editDocument = parent?.resultingDocument ?? current.document;
+        let compiled;
+        try {
+          compiled = compileSpatialEditProgram(input, {
+            document: editDocument,
+            drawingId: invocation.drawingId,
+            revision: invocation.revision,
+            readObservationView: (viewId) => this.#application.readObservationView(viewId),
+            idFactory: this.#idFactory,
+          });
+        } catch (error) {
+          if (error instanceof SpatialProgramError) {
+            throw new ModelToolExecutionError({
+              code: error.code,
+              message: error.message,
+              retryable: true,
+              suggestedAction: error.code.includes('OBSERVATION')
+                || error.code.includes('REVISION')
+                ? 'requery'
+                : 'replan',
+            });
+          }
+          throw error;
+        }
+        const transaction: DrawingTransaction = {
+          id: this.#idFactory.next('transaction'),
+          baseRevision: invocation.revision,
+          actor: { type: 'AI', id: `drawing-agent:${invocation.runId}` },
+          commands: [
+            ...structuredClone(parent?.transaction.commands ?? []),
+            ...compiled.commands.map(withoutCandidateExpected),
+          ],
+          preconditions: structuredClone(parent?.transaction.preconditions ?? []),
+          postconditions: [{ type: 'document.valid' }],
+          evidenceRefs: unique([
+            ...parent?.transaction.evidenceRefs ?? [],
+            ...input.evidenceRefs,
+          ]) as EvidenceId[],
+          metadata: {
+            episodeId: invocation.episodeId,
+            summary: input.summary,
+            ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
           },
         };
         const result = await this.#application.preview({
@@ -322,6 +554,201 @@ export class DrawingModelTools {
           };
         }
         const handle = this.#handleFactory();
+        const transactionDigest = digestTransaction(transaction);
+        const branch = this.#counterfactualWorld.create({
+          runId: invocation.runId,
+          episodeId: invocation.episodeId,
+          baseDocument: current.document,
+          baseRevision: invocation.revision,
+          preview: result,
+          transactionDigest,
+        });
+        const report = evaluateDrawingPreview({
+          before: current.document,
+          after: result.resultingDocument,
+          transaction,
+          tolerance: this.#tolerance,
+        });
+        const affectedNodeIds = [...result.preview.affectedNodeIds];
+        const previewDelta = drawingPreviewDelta(current.document, result.resultingDocument);
+        const markers = spatialProgramMarkers(input, compiled.receipts);
+        const interactionFrame = projectDrawingDeltaFrame({
+          before: current.document,
+          after: result.resultingDocument,
+          changedNodeIds: affectedNodeIds,
+          phase: 'previewing',
+          label: input.summary,
+          markers,
+        });
+        const editBase: DrawingModelCandidateEditBase = parent
+          ? {
+              kind: 'preview', revision: invocation.revision,
+              previewHandle: parent.handle,
+              transactionDigest: parent.transactionDigest,
+            }
+          : { kind: 'canonical', revision: invocation.revision };
+        this.#candidates.set(handle, {
+          handle,
+          runId: invocation.runId,
+          episodeId: invocation.episodeId,
+          drawingId: invocation.drawingId,
+          baseRevision: invocation.revision,
+          transaction,
+          transactionDigest,
+          counterfactualBranchId: branch.id,
+          affectedNodeIds,
+          resultingDocument: structuredClone(result.resultingDocument),
+          editBase,
+        });
+        const observation = await this.#application.observePreviewForAgent({
+          document: result.resultingDocument,
+          revision: invocation.revision,
+          previewHandle: handle,
+          includeAnnotations: false,
+          selectedIds: affectedNodeIds,
+        });
+        return {
+          output: {
+            status: 'ready',
+            previewHandle: handle,
+            transactionId: transaction.id,
+            candidate: result.preview.candidate,
+            validationValid: result.preview.validationReport.valid,
+            goalSatisfied: result.preview.outcomeReport.satisfied,
+            affectedNodeIds,
+            hardValid: report.hardValid,
+            diagnostics: report.diagnostics,
+            programDiagnostics: structuredClone(compiled.diagnostics),
+            spatialProgram: structuredClone(input),
+            operationReceipts: structuredClone(compiled.receipts),
+            previewDelta,
+            interactionFrame,
+            observation,
+            counterfactual: counterfactualSummary(branch),
+            editBase: structuredClone(editBase),
+          },
+          affectedNodeIds,
+        };
+      },
+    );
+  }
+
+  #revisePreview(): ToolDefinition {
+    return define<RevisePreviewInput, unknown>(
+      'revise_preview',
+      'write',
+      15_000,
+      parseRevisePreview,
+      async ({ invocation, input }) => {
+        const parent = this.#requireCandidate(invocation, input.basePreviewHandle);
+        if (parent.transactionDigest !== input.baseTransactionDigest) {
+          throw toolError('PREVIEW_BASE_DIGEST_MISMATCH', 'replan');
+        }
+        const postconditions = input.postconditions
+          ? structuredClone(input.postconditions)
+          : structuredClone(parent.transaction.postconditions);
+        const correctionTransaction: DrawingTransaction = {
+          id: this.#idFactory.next('transaction'),
+          baseRevision: invocation.revision,
+          actor: { type: 'AI', id: `drawing-agent:${invocation.runId}` },
+          commands: structuredClone(input.corrections),
+          preconditions: [],
+          postconditions,
+          evidenceRefs: structuredClone(input.evidenceRefs),
+          metadata: {
+            episodeId: invocation.episodeId,
+            summary: input.summary,
+            ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
+          },
+        };
+        const corrected = previewTransaction({
+          document: parent.resultingDocument,
+          currentRevision: invocation.revision,
+        }, correctionTransaction, this.#idFactory);
+        if (corrected.status !== 'ready') {
+          return {
+            output: structuredClone(corrected),
+            affectedNodeIds: corrected.status === 'rejected'
+              ? unique(corrected.errors.flatMap((error) => error.nodeIds))
+              : [],
+          };
+        }
+        const transaction: DrawingTransaction = {
+          id: this.#idFactory.next('transaction'),
+          baseRevision: invocation.revision,
+          actor: { type: 'AI', id: `drawing-agent:${invocation.runId}` },
+          commands: [
+            ...structuredClone(parent.transaction.commands),
+            ...input.corrections.map(withoutCandidateExpected),
+          ],
+          preconditions: structuredClone(parent.transaction.preconditions),
+          postconditions,
+          evidenceRefs: unique([
+            ...parent.transaction.evidenceRefs,
+            ...input.evidenceRefs,
+          ]) as EvidenceId[],
+          metadata: {
+            episodeId: invocation.episodeId,
+            summary: input.summary,
+            ...(input.confidence === undefined
+              ? parent.transaction.metadata?.confidence === undefined
+                ? {}
+                : { confidence: parent.transaction.metadata.confidence }
+              : { confidence: input.confidence }),
+            ...(parent.transaction.metadata?.lineage
+              ? { lineage: structuredClone(parent.transaction.metadata.lineage) }
+              : {}),
+            ...(parent.transaction.metadata?.decisionGrantRefs
+              ? { decisionGrantRefs: structuredClone(parent.transaction.metadata.decisionGrantRefs) }
+              : {}),
+          },
+        };
+        const current = await this.#application.readCurrent(invocation.drawingId);
+        const result = await this.#application.preview({
+          drawingId: invocation.drawingId,
+          transaction,
+        });
+        if (result.status !== 'ready') {
+          return {
+            output: structuredClone(result),
+            affectedNodeIds: result.status === 'rejected'
+              ? unique(result.errors.flatMap((error) => error.nodeIds))
+              : [],
+          };
+        }
+        if (!sameDocument(result.resultingDocument, corrected.resultingDocument)) {
+          throw toolError('PREVIEW_COMPOSITION_MISMATCH', 'replan');
+        }
+        const handle = this.#handleFactory();
+        const transactionDigest = digestTransaction(transaction);
+        const branch = this.#counterfactualWorld.create({
+          runId: invocation.runId,
+          episodeId: invocation.episodeId,
+          baseDocument: current.document,
+          baseRevision: invocation.revision,
+          preview: result,
+          transactionDigest,
+        });
+        const report = evaluateDrawingPreview({
+          before: current.document,
+          after: result.resultingDocument,
+          transaction,
+          tolerance: this.#tolerance,
+        });
+        const previewDelta = drawingPreviewDelta(current.document, result.resultingDocument);
+        const interactionFrame = projectDrawingDeltaFrame({
+          before: current.document,
+          after: result.resultingDocument,
+          changedNodeIds: result.preview.affectedNodeIds,
+          phase: 'previewing',
+          label: input.summary,
+        });
+        const editBase: DrawingModelCandidateEditBase = {
+          kind: 'preview',
+          revision: invocation.revision,
+          previewHandle: parent.handle,
+          transactionDigest: parent.transactionDigest,
+        };
         const candidate: StoredCandidate = {
           handle,
           runId: invocation.runId,
@@ -329,9 +756,20 @@ export class DrawingModelTools {
           drawingId: invocation.drawingId,
           baseRevision: invocation.revision,
           transaction,
+          transactionDigest,
+          counterfactualBranchId: branch.id,
           affectedNodeIds: [...result.preview.affectedNodeIds],
+          resultingDocument: structuredClone(result.resultingDocument),
+          editBase,
         };
         this.#candidates.set(handle, candidate);
+        const observation = await this.#application.observePreviewForAgent({
+          document: result.resultingDocument,
+          revision: invocation.revision,
+          previewHandle: handle,
+          includeAnnotations: false,
+          selectedIds: candidate.affectedNodeIds,
+        });
         return {
           output: {
             status: 'ready',
@@ -341,8 +779,168 @@ export class DrawingModelTools {
             validationValid: result.preview.validationReport.valid,
             goalSatisfied: result.preview.outcomeReport.satisfied,
             affectedNodeIds: [...result.preview.affectedNodeIds],
+            hardValid: report.hardValid,
+            diagnostics: report.diagnostics,
+            previewDelta,
+            interactionFrame,
+            observation,
+            counterfactual: counterfactualSummary(branch),
+            editBase: structuredClone(editBase),
           },
           affectedNodeIds: candidate.affectedNodeIds,
+        };
+      },
+    );
+  }
+
+  #previewConnectedTransform(): ToolDefinition {
+    return define<PreviewConnectedTransformInput, unknown>(
+      'preview_connected_transform',
+      'write',
+      15_000,
+      parsePreviewConnectedTransform,
+      async ({ invocation, input }) => {
+        const current = await this.#application.readCurrent(invocation.drawingId);
+        let compiled;
+        try {
+          const carrier = current.document.geometry.find((node) => node.id === input.carrierNodeId);
+          const targetCenter = input.targetCenter ?? (
+            carrier && (carrier.type === 'circle' || carrier.type === 'ellipse') && input.delta
+              ? [
+                  carrier.center[0] + input.delta[0],
+                  carrier.center[1] + input.delta[1],
+                ] as Vec2
+              : undefined
+          );
+          if (!targetCenter) throw new Error('CONNECTED_TRANSFORM_CARRIER_NOT_CLOSED');
+          compiled = compileConnectedTransform({
+            document: current.document,
+            carrierNodeId: input.carrierNodeId,
+            targetCenter,
+            ...(input.rotationDegrees === undefined
+              ? {}
+              : { rotationDegrees: input.rotationDegrees }),
+          });
+        } catch (error) {
+          throw new ModelToolExecutionError({
+            code: error instanceof Error ? error.message.split(':')[0] : 'CONNECTED_TRANSFORM_FAILED',
+            retryable: true,
+            suggestedAction: 'replan',
+          });
+        }
+        const transaction: DrawingTransaction = {
+          id: this.#idFactory.next('transaction'),
+          baseRevision: invocation.revision,
+          actor: { type: 'AI', id: `drawing-agent:${invocation.runId}` },
+          commands: structuredClone(compiled.commands),
+          preconditions: [
+            { type: 'node.exists', nodeId: input.carrierNodeId },
+            ...compiled.audit.connectorNodeIds.map((nodeId) => ({
+              type: 'node.exists' as const,
+              nodeId,
+            })),
+          ],
+          postconditions: [{ type: 'document.valid' }],
+          evidenceRefs: structuredClone(input.evidenceRefs),
+          metadata: {
+            episodeId: invocation.episodeId,
+            summary: input.summary,
+            ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
+          },
+        };
+        const result = await this.#application.preview({
+          drawingId: invocation.drawingId,
+          transaction,
+        });
+        if (result.status !== 'ready') {
+          return {
+            output: structuredClone(result),
+            affectedNodeIds: result.status === 'rejected'
+              ? unique(result.errors.flatMap((error) => error.nodeIds))
+              : [],
+          };
+        }
+        const handle = this.#handleFactory();
+        const transactionDigest = digestTransaction(transaction);
+        const branch = this.#counterfactualWorld.create({
+          runId: invocation.runId,
+          episodeId: invocation.episodeId,
+          baseDocument: current.document,
+          baseRevision: invocation.revision,
+          preview: result,
+          transactionDigest,
+        });
+        const report = evaluateDrawingPreview({
+          before: current.document,
+          after: result.resultingDocument,
+          transaction,
+          tolerance: this.#tolerance,
+        });
+        const diagnostics = mergeDiagnostics(report.diagnostics, compiled.diagnostics);
+        const previewDelta = drawingPreviewDelta(current.document, result.resultingDocument);
+        const affectedNodeIds = [...result.preview.affectedNodeIds];
+        const interactionFrame = projectDrawingDeltaFrame({
+          before: current.document,
+          after: result.resultingDocument,
+          changedNodeIds: affectedNodeIds,
+          phase: 'previewing',
+          label: input.summary,
+          markers: compiled.audit.ports.flatMap((port) => ([
+            {
+              id: `connected-interface-before:${port.connectorNodeId}:${port.endpointRole}`,
+              ref: port.connectorNodeId,
+              role: 'interface' as const,
+              point: port.before,
+            },
+            {
+              id: `connected-interface-after:${port.connectorNodeId}:${port.endpointRole}`,
+              ref: port.connectorNodeId,
+              role: 'target' as const,
+              point: port.after,
+            },
+            {
+              id: `connected-anchor:${port.connectorNodeId}:${port.endpointRole}`,
+              ref: port.connectorNodeId,
+              role: 'anchor' as const,
+              point: port.fixedAnchor,
+            },
+          ])),
+        });
+        this.#candidates.set(handle, {
+          handle,
+          runId: invocation.runId,
+          episodeId: invocation.episodeId,
+          drawingId: invocation.drawingId,
+          baseRevision: invocation.revision,
+          transaction,
+          transactionDigest,
+          counterfactualBranchId: branch.id,
+          affectedNodeIds,
+          resultingDocument: structuredClone(result.resultingDocument),
+          editBase: { kind: 'canonical', revision: invocation.revision },
+        });
+        const observation = await this.#application.observePreviewForAgent({
+          document: result.resultingDocument,
+          revision: invocation.revision,
+          previewHandle: handle,
+          includeAnnotations: false,
+          selectedIds: affectedNodeIds,
+        });
+        return {
+          output: {
+            status: 'ready',
+            previewHandle: handle,
+            transactionId: transaction.id,
+            affectedNodeIds,
+            hardValid: report.hardValid,
+            diagnostics,
+            previewDelta,
+            interactionFrame,
+            observation,
+            connectedTransform: compiled.audit,
+            counterfactual: counterfactualSummary(branch),
+          },
+          affectedNodeIds,
         };
       },
     );
@@ -351,7 +949,7 @@ export class DrawingModelTools {
   #evaluatePreview(): ToolDefinition {
     return define('evaluate_preview', 'read', 20_000, parseEvaluatePreview, async ({ invocation, input }) => {
       const candidate = this.#requireCandidate(invocation, input.previewHandle);
-      const workspace = await this.#application.open(invocation.drawingId);
+      const workspace = await this.#application.readCurrent(invocation.drawingId);
       const preview = await this.#application.preview({
         drawingId: candidate.drawingId,
         transaction: structuredClone(candidate.transaction),
@@ -369,6 +967,17 @@ export class DrawingModelTools {
         tolerance: this.#tolerance,
       });
       const previewDelta = drawingPreviewDelta(workspace.document, preview.resultingDocument);
+      const interactionFrame = projectDrawingDeltaFrame({
+        before: workspace.document,
+        after: preview.resultingDocument,
+        changedNodeIds: report.changedNodeIds,
+        phase: 'verifying',
+        label: '检查当前候选',
+      });
+      const branch = this.#counterfactualWorld.get(candidate.counterfactualBranchId, {
+        revision: candidate.baseRevision,
+        transactionDigest: candidate.transactionDigest,
+      });
       const observation = input.includeRender
         ? await this.#application.observePreviewForAgent({
             document: preview.resultingDocument,
@@ -382,8 +991,10 @@ export class DrawingModelTools {
       return {
         output: {
           previewHandle: candidate.handle,
+          counterfactual: counterfactualSummary(branch),
           ...report,
           previewDelta,
+          interactionFrame,
           validationReport: structuredClone(preview.preview.validationReport),
           outcomeReport: structuredClone(preview.preview.outcomeReport),
           ...(observation ? { observation } : {}),
@@ -397,16 +1008,12 @@ export class DrawingModelTools {
     return define<CommitPreviewInput, unknown>('commit_preview', 'write', 15_000, parseCommitPreview, async ({ invocation, input }) => {
       const candidate = this.#requireCandidate(invocation, input.previewHandle);
       const transaction = structuredClone(candidate.transaction);
-      if (input.decisionGrantRefs.length > 0 || input.diagnosticAcknowledgements.length > 0) {
+      if (input.decisionGrantRefs.length > 0) {
         transaction.metadata = {
           ...transaction.metadata!,
           decisionGrantRefs: unique([
             ...transaction.metadata?.decisionGrantRefs ?? [],
             ...input.decisionGrantRefs,
-          ]),
-          diagnosticAcknowledgements: unique([
-            ...transaction.metadata?.diagnosticAcknowledgements ?? [],
-            ...input.diagnosticAcknowledgements,
           ]),
         };
       }
@@ -418,6 +1025,7 @@ export class DrawingModelTools {
         throw toolError(committed.errors[0]?.code ?? 'COMMIT_REJECTED', 'requery');
       }
       this.#candidates.delete(candidate.handle);
+      this.#counterfactualWorld.discard(candidate.counterfactualBranchId);
       if (committed.status === 'already_satisfied') {
         return {
           output: { status: 'already_satisfied', outcome: committed.outcome },
@@ -450,10 +1058,45 @@ export class DrawingModelTools {
     }
     if (candidate.baseRevision !== invocation.revision) {
       this.#candidates.delete(handle);
+      this.#counterfactualWorld.discard(candidate.counterfactualBranchId);
       throw toolError('PREVIEW_STALE', 'requery');
     }
     return candidate;
   }
+}
+
+function counterfactualSummary(branch: CounterfactualWorldBranch) {
+  return {
+    branchId: branch.id,
+    affectedScope: structuredClone(branch.affectedScope),
+    knowledge: structuredClone(branch.afterWorld.knowledge),
+    compilerVersion: branch.afterWorld.compilerVersion,
+    inputDigest: branch.afterWorld.inputDigest,
+    delta: structuredClone(branch.delta),
+  };
+}
+
+function digestTransaction(transaction: DrawingTransaction): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify(transaction)).digest('hex')}`;
+}
+
+function spatialProgramMarkers(
+  program: SpatialEditProgram,
+  receipts: SpatialOperationReceipt[],
+): DrawingAgentSpatialMarker[] {
+  const markers = receipts.flatMap((receipt) => receipt.resolvedPoints.map((resolved, index) => ({
+    id: `spatial-program:${receipt.operationIndex}:${resolved.role}:${index}`,
+    ref: receipt.affectedNodeIds[0] ?? program.targets[0]?.id,
+    role: resolved.role === 'from'
+      ? 'anchor' as const
+      : resolved.role === 'start' || resolved.role === 'end'
+        ? 'interface' as const
+        : 'target' as const,
+    point: [...resolved.point] as Vec2,
+  })));
+  return markers.filter((marker, index) => (
+    markers.findIndex((candidate) => candidate.id === marker.id) === index
+  ));
 }
 
 function drawingPreviewDelta(before: DrawingDocument, after: DrawingDocument): {
@@ -584,10 +1227,19 @@ function parseMeasurement(value: unknown, index: number): MeasurementRequest {
 function parsePreviewTransaction(value: unknown): PreviewTransactionInput {
   const input = strictRecord(
     value,
-    ['summary', 'commands', 'preconditions', 'postconditions', 'evidenceRefs'],
-    ['confidence', 'lineage', 'decisionGrantRefs', 'diagnosticAcknowledgements'],
+    ['baseRevision', 'summary', 'commands', 'preconditions', 'postconditions', 'evidenceRefs'],
+    ['replacesPreviewHandle', 'confidence', 'lineage', 'decisionGrantRefs'],
   );
   return {
+    baseRevision: nonEmptyString(input.baseRevision, 'input.baseRevision') as RevisionId,
+    ...(input.replacesPreviewHandle === undefined
+      ? {}
+      : {
+          replacesPreviewHandle: nonEmptyString(
+            input.replacesPreviewHandle,
+            'input.replacesPreviewHandle',
+          ),
+        }),
     summary: nonEmptyString(input.summary, 'input.summary'),
     ...(input.confidence === undefined
       ? {}
@@ -600,14 +1252,75 @@ function parsePreviewTransaction(value: unknown): PreviewTransactionInput {
     ...(input.decisionGrantRefs === undefined
       ? {}
       : { decisionGrantRefs: stringArray(input.decisionGrantRefs, 'input.decisionGrantRefs') }),
-    ...(input.diagnosticAcknowledgements === undefined
+  };
+}
+
+function parsePreviewSpatialProgram(value: unknown): SpatialEditProgram {
+  try {
+    return parseSpatialEditProgram(value);
+  } catch (error) {
+    if (error instanceof SpatialProgramError) {
+      throw new ModelToolInputError(error.message, error.code);
+    }
+    throw error;
+  }
+}
+
+function parseRevisePreview(value: unknown): RevisePreviewInput {
+  const input = strictRecord(
+    value,
+    ['basePreviewHandle', 'baseTransactionDigest', 'summary', 'corrections', 'evidenceRefs'],
+    ['postconditions', 'confidence'],
+  );
+  return {
+    basePreviewHandle: nonEmptyString(input.basePreviewHandle, 'input.basePreviewHandle'),
+    baseTransactionDigest: nonEmptyString(
+      input.baseTransactionDigest,
+      'input.baseTransactionDigest',
+    ),
+    summary: nonEmptyString(input.summary, 'input.summary'),
+    corrections: parseDrawingToolCommands(input.corrections, 'input.corrections'),
+    ...(input.postconditions === undefined
       ? {}
       : {
-          diagnosticAcknowledgements: stringArray(
-            input.diagnosticAcknowledgements,
-            'input.diagnosticAcknowledgements',
+          postconditions: parseDrawingToolAssertions(
+            input.postconditions,
+            'input.postconditions',
           ),
         }),
+    evidenceRefs: stringArray(input.evidenceRefs, 'input.evidenceRefs') as EvidenceId[],
+    ...(input.confidence === undefined
+      ? {}
+      : { confidence: confidence(input.confidence, 'input.confidence') }),
+  };
+}
+
+function parsePreviewConnectedTransform(value: unknown): PreviewConnectedTransformInput {
+  const input = strictRecord(
+    value,
+    ['summary', 'carrierNodeId', 'evidenceRefs'],
+    ['targetCenter', 'delta', 'rotationDegrees', 'confidence'],
+  );
+  const hasTargetCenter = input.targetCenter !== undefined;
+  const hasDelta = input.delta !== undefined;
+  if (hasTargetCenter === hasDelta) {
+    throw new ModelToolInputError(
+      'input requires exactly one of targetCenter or delta',
+      'CONNECTED_TRANSFORM_TARGET_INVALID',
+    );
+  }
+  return {
+    summary: nonEmptyString(input.summary, 'input.summary'),
+    carrierNodeId: nonEmptyString(input.carrierNodeId, 'input.carrierNodeId'),
+    ...(hasTargetCenter ? { targetCenter: point(input.targetCenter, 'input.targetCenter') } : {}),
+    ...(hasDelta ? { delta: point(input.delta, 'input.delta') } : {}),
+    evidenceRefs: stringArray(input.evidenceRefs, 'input.evidenceRefs') as EvidenceId[],
+    ...(input.rotationDegrees === undefined
+      ? {}
+      : { rotationDegrees: finiteNumber(input.rotationDegrees, 'input.rotationDegrees') }),
+    ...(input.confidence === undefined
+      ? {}
+      : { confidence: confidence(input.confidence, 'input.confidence') }),
   };
 }
 
@@ -628,16 +1341,13 @@ function parseCommitPreview(value: unknown): CommitPreviewInput {
   const input = strictRecord(
     value,
     ['previewHandle'],
-    ['decisionGrantRefs', 'diagnosticAcknowledgements'],
+    ['decisionGrantRefs'],
   );
   return {
     previewHandle: nonEmptyString(input.previewHandle, 'input.previewHandle'),
     decisionGrantRefs: input.decisionGrantRefs === undefined
       ? []
       : stringArray(input.decisionGrantRefs, 'input.decisionGrantRefs'),
-    diagnosticAcknowledgements: input.diagnosticAcknowledgements === undefined
-      ? []
-      : stringArray(input.diagnosticAcknowledgements, 'input.diagnosticAcknowledgements'),
   };
 }
 
@@ -828,6 +1538,16 @@ function toolError(code: string, action: 'retry' | 'requery' | 'replan') {
   return new ModelToolExecutionError({ code, retryable: true, suggestedAction: action });
 }
 
+function withoutCandidateExpected(command: DrawingCommand): DrawingCommand {
+  const result = structuredClone(command);
+  if ('changes' in result) delete result.expected;
+  return result;
+}
+
+function sameDocument(left: DrawingDocument, right: DrawingDocument): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function strictRecord(
   value: unknown,
   required: string[],
@@ -915,6 +1635,16 @@ function invalid(message: string): never {
 
 function distance(left: Vec2, right: Vec2): number {
   return Math.hypot(right[0] - left[0], right[1] - left[1]);
+}
+
+function mergeDiagnostics(...groups: DrawingDiagnostic[][]): DrawingDiagnostic[] {
+  const seen = new Set<string>();
+  return groups.flat().filter((diagnostic) => {
+    const key = [diagnostic.code, ...diagnostic.nodeIds, diagnostic.action ?? ''].join('\u0000');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function clean(value: number): number {

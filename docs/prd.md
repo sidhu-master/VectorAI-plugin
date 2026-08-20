@@ -2,7 +2,7 @@
 
 > 产品阶段：MVP
 >
-> 更新日期：2026-08-13
+> 更新日期：2026-08-16
 >
 > 当前方向：模型主导的 AI 二维空间交互引擎
 
@@ -20,7 +20,7 @@ VectorAI 要成为 AI 与二维世界之间的连接引擎，让 AI 像理解、
 
 1. **来源重建**：把二维图片、栅格 PDF 或结构化 CAD 转成可编辑 Drawing IR，并在画布上逐步显示结果。
 2. **模型主导编辑**：用户描述想要的结果，模型自主使用视觉与空间工具，对 Drawing IR 进行多轮增量修改。
-3. **视觉反馈 Loop**：模型持续观察 before、Preview 与 diff，发现问题后自主更换工具或重建局部，直到提交、请求用户决策或明确失败。
+3. **视觉反馈 Loop**：独立检查者只复核“当前 Preview 是否满足用户指令”，主模型读取 before/after、确定性诊断与检查结论后自主修正或提交，直到完成、请求用户决策或明确失败。
 
 `test1`、`test2` 与后续工程图集合是回归样例，不是产品规则来源。生产代码和提示词不得针对样例坐标、对象类别、动作或语言关键词添加专用逻辑。
 
@@ -39,11 +39,12 @@ VectorAI 要成为 AI 与二维世界之间的连接引擎，让 AI 像理解、
 模型负责：
 
 - 理解用户意图和视觉语义。
-- 选择、合并或排除 Semantic Entity candidates。
-- 选择目标节点、SourceSpan、HalfEdge、Face、接口或路径。
+- 从视觉与 Drawing IR 中选择任务目标、目的点、接口、路径和需要保持的内容。
+- 在确有歧义时选择、合并或排除局部 Semantic Entity candidates。
 - 选择下一项空间、视觉、CV 或事务工具。
 - 决定修改范围、设计结果和编辑方式。
-- 解释验证结果并继续修正。
+- 解释独立检查结果并继续修正。
+- 显式决定下一次修改是舍弃当前候选并从正式 revision 重做，还是基于指定 Preview 继续修订。
 - 决定提交、请求用户决策或结束。
 
 Harness 负责：
@@ -73,16 +74,16 @@ Harness 负责：
 - base revision 或 Preview 已过期。
 - 缺少当前动作所需的用户授权。
 
-断线、方向、局部范围、样式、约束影响、标注冲突、视觉差异和可疑尺度形成结构化诊断，交给模型自主修正。模型认为仍可接受时，可以低置信度 candidate 状态提交并标红。
+断线、方向、局部范围、样式、约束影响、标注冲突、视觉差异和可疑尺度形成结构化诊断，交给模型自主修正。独立检查者的 `satisfied / needs_revision / unavailable` 结论同样只是证据，不是 Commit 授权。模型认为仍可接受时，可以低置信度 candidate 状态提交并标红。
 
 ### 3.4 AI 默认自动执行并形成反馈 Loop
 
 - 用户不选择“普通/Agent”或“精确/生成”开关。
 - 模型自主观察、查询、编辑、预览、验证、修正和提交。
 - 用户可以随时暂停、停止或追加指令。
-- 当前 Preview 可以被后续候选替换；已提交结果通过新的纠正 Commit 修改，不重写历史。
+- 当前 Preview 可以被后续候选替换。模型必须显式选择从 canonical revision 重做，或基于当前 Preview 只提交纠正；已提交结果通过新的纠正 Commit 修改，不重写历史。
 - 生成服务或工具失败时返回模型重新规划，不自动强制切换成某个几何动作。
-- 空间理解、编辑规划和最终视觉验收默认直接使用高级空间模型；超时重试不降级。轻量模型不得作为空间结果的否决者。
+- 主模型与独立检查模型分别配置。检查者不参与规划、不编辑图纸、不授予权限，也不能否决主模型；其任务只有依据当前有效用户指令比较修改前后结果。
 
 ### 3.5 用户只处理权限、事实和价值判断
 
@@ -102,17 +103,20 @@ Harness 负责：
 - 每个局部工作集显式标记 `resolved | partial | unknown | stale`；系统不得把尚未读取或尚未矢量化解释为没有图元。
 - 只有未解析部分与当前目标、保持接口或影响范围相交时才继续展开；无关区域不阻塞局部 Preview。
 
-### 3.7 无坐标优先的视觉 Grounding
+### 3.7 任务驱动的空间引用，Grounding 按需使用
 
-- 已有向量图纸由后端统一渲染正常 Observation 和隐藏 Pick/Coverage Map，模型优先选择有限的语义候选 ID，而不是手绘完整轮廓或输出精确数值坐标。
+- 对已明确的任务，模型直接把视觉选点写成 `observationId + normalized`，把精确既有点写成 `node_anchor`；后端绑定 drawing/revision 并完成坐标反算，模型不手算仿射矩阵。
+- 已有向量图纸由后端统一渲染 Observation；只有目标歧义、图元边界与语义边界不一致或连接证据不足时，才生成局部 Pick/Coverage 与 Semantic Entity candidates。
 - Grounding 候选必须显示真实 Overlay，包括支持的 SourceSpan/原子边、保持接口和显式排除结构；模型可以观察后继续合并、排除或扩大读取范围。
 - Source 栅格、现有 IR 中不存在的新对象或自由重绘时，系统可以调用 SAM 2 或其他可提示分割工具；Mask 只作为视觉 Evidence 和生成输入，必须映射回二维世界模型后才能形成编辑动作。
 - 所有 Observation、坐标引用和派生 Slice 绑定 drawing、revision、frame、compiler version 和 input digest。
 
 ### 3.8 空间动作是可编译程序，不是固定 Harness
 
-- 系统根据当前目标、支持集、接口和约束提出 transform、deform、solve、replace、redraw 或 hybrid 等可执行候选，并说明影响范围、必要切分、可行性和代价。
-- 模型选择候选或编写新的 Spatial Action Program；程序负责把目标关系、保持接口和方法降低为 Drawing Commands。
+- `SpatialEditProgram` 是明确任务的默认快速入口。模型声明 targets、operations、preserveNodeRefs 和 postconditions；代码解析空间引用并编译 Drawing Commands。
+- 首版通用操作为 `translate`、`set_endpoint`、`create_path` 和 `delete_nodes`。它们可以在一次原子 Preview 中组合，不包含对象类别或动作关键词。
+- 当首版操作不足时，模型仍可使用底层 `preview_transaction`、局部 Grounding、拓扑工具或自由重绘；结构化程序是效率入口，不是能力边界。
+- Action Proposal 可在复杂约束或多策略任务中按需生成，但不再是每次编辑的前置步骤。
 - 动作候选不构成写权限。模型可以组合工具、调整目标，或直接提交合法的底层 Drawing Transaction。
 - 平面世界模型中的分析切分不会改写正式图纸；只有 Preview 真正编辑局部参数区间时，才物化必要切分。
 - Preview 同时形成一条只读反事实世界分支，模型可以查询候选事务导致的几何、拓扑、语义支持和诊断变化，再决定修正或提交。
@@ -141,8 +145,10 @@ Harness 负责：
 
 ### 4.2 输入与重建
 
-- 支持文字、图片、PDF 以及文字与附件组合输入。
-- 结构化 CAD 优先确定性解析，不用视觉模型重新猜测已有对象。
+- 支持文字、图片、PDF、ASCII DXF 以及文字与附件组合输入；DXF 可同时携带 UTF-8 工程数据文档。
+- 结构化 CAD 优先确定性解析，不用视觉模型重新猜测已有对象。DXF 原文件按内容哈希不可变保存，嵌套 BLOCK/INSERT、未知实体和 CAXA XDATA/私有组码不得因当前 Drawing IR 不支持而丢失。
+- BLOCK/INSERT 为来源结构；画布递归展开当前支持的二维图元，每个投影节点保留 source handle 与完整 INSERT 路径，导入作为一笔可撤销的系统事务提交。
+- 程序只确认单位、显式图元、显式尺寸、主轴等可证明事实。配套文档与几何不一致时必须产生 conflict，缺少唯一证据时保持 candidate；不得自动猜测公差、粗糙度、形位公差、基准、配合、齿数或模数。
 - 图片和栅格 PDF 使用来源分析、CV、清洁线稿、矢量化和视觉反馈 Loop。
 - 清洁线稿形成 Line、Circle、Arc、Ellipse 等解析图元；无法可靠拟合的部分保留为 Polyline/Spline。
 - 一条来源链可以提升为多个图元，并用 CompoundPath 保存来源顺序与逻辑整体。
@@ -153,21 +159,19 @@ Harness 负责：
 
 ```text
 创建 EditEpisode
-→ 读取用户目标、全局图纸地图、当前 WorldModelSlice 与单一视图
-→ Grounding Service 生成 Semantic Entity 候选与真实 Overlay
-→ 模型选择、合并或排除候选，并确定设计目标
-→ 程序映射 SourceSpan、HalfEdge、Face、Interface 与相关约束
-→ 程序生成带可行性和影响分析的空间动作候选
-→ 模型选择/组合动作或直接提交底层事务
-→ Spatial Action Compiler 编译为任意合法 Drawing IR 增量事务
+→ 代码读取用户目标、局部 Drawing IR 事实与单一 Observation
+→ 模型选择目标、目的点、接口和保持范围
+→ 模型输出紧凑 SpatialEditProgram
+→ 后端解析 observation/world/node_anchor 并编译 Drawing Commands
 → Preview + 统一渲染 + 硬校验 + 诊断
-→ 模型继续修正、请求用户决策或提交
+→ 独立检查者比较 before/after，结论绑定具体 Preview
+→ 主模型继续当前候选、舍弃重做、请求用户决策或提交
 → 原子 Commit + inverse Patch
 ```
 
 模型每轮选择一个显式工具或状态动作。工具返回 revision-bound receipt 和结构化证据。固定 Planner DAG 不再限制模型下一步必须调用什么。
 
-该流程是可用能力闭环，不是固定串行清单。明确引用、高置信局部候选、相关范围已读取且存在可执行动作时，系统并行准备局部证据并走快速路径：模型可在一次决策中完成候选选择和动作规划，随后直接生成 Preview。只有候选歧义、相关范围未解析、动作不可行或 Preview 出现问题时，才按需增加 Grounding、Slice 展开或模型轮次。
+该流程是可用能力闭环，不是固定串行清单。明确任务以一次模型决策加一次程序编译到达首个 Preview；只有目标歧义、相关范围未解析、操作表达力不足或 Preview 出现问题时，才按需增加 Grounding、Slice 展开、底层事务或模型轮次。
 
 ### 4.4 模型空间工具
 
@@ -180,7 +184,8 @@ MVP 工具至少覆盖：
 - 构建或扩展 WorldModelSlice，查询 SourceSpan、HalfEdge、Face、incidence 与 authored connection。
 - 通过 Pick/Coverage Map 生成、选择、合并和排除 Semantic Entity candidates。
 - 将 Observation 中的归一化提示或候选 ID 解析为世界坐标、SourceSpan、接口和节点。
-- 生成空间动作候选，并把 Spatial Action Program 编译为 Preview Transaction。
+- 用 `preview_spatial_program` 把任务级目标、空间引用和通用操作编译为 Preview Transaction。
+- 按需生成空间动作候选，或直接使用自由 Drawing Transaction 与局部重绘。
 - 按需加载一个或一组工具契约，不强迫模型解析完整工具联合 Schema。
 - 按参数范围拆分、合并、拟合和重建图元。
 - 调用 CV、局部重绘和矢量化。
@@ -235,10 +240,17 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 ### 4.9 Preview、诊断与低置信度
 
 - 画布显示当前有效增量 Preview，不堆叠过期候选。
-- 画布动态显示语义候选、支持/排除结构、SourceSpan/HalfEdge、保持接口、拓扑路径、Mask 和动作影响；Overlay 不代表硬选区。
+- 画布通过统一 Spatial Interaction Frame 动态显示语义候选、支持/排除结构、SourceSpan/HalfEdge、保持接口、拓扑路径、Mask 和动作影响；Overlay 不代表硬选区。
+- Interaction Frame 必须使用后端解析的真实世界坐标：精确区分 target、context、excluded、interface、anchor、before 和 after，不允许前端根据包围盒重新猜测语义范围。
+- 直接修改工具在执行前先投影当前目标、目标点与运动方向；工具返回后切换为真实 before/after 差异，让长耗时任务也有可验证的连续反馈。
 - 硬校验只处理协议、引用、revision 和缺失授权。
 - 诊断至少覆盖连接、端点、拓扑、约束、标注、视觉目标、局部差异、尺度和伪影。
 - 诊断反馈给模型，不自动扩大、缩小或改写候选。
+- 语义写入 Preview 由独立检查者复核：后端把同视口的修改前和修改后截图左右拼成一张，检查者只返回是否满足指令、理由和结构化缺陷。
+- 检查结果绑定 revision、当前 Preview handle 与事务摘要，作为下一轮主模型上下文；`needs_revision` 或 `unavailable` 不清除当前 Preview，也不构成提交门禁。
+- 一次用户指令默认最多复核 3 个语义候选；达到预算后不得自动提交失败候选，正式 Drawing IR 保持不变，并向用户提供重试或追加指令。该上限只约束资源，不包含任何对象或动作特判。
+- 模型上下文给出准确的 `editBaseOptions`：无候选时用 `taskDrivenProgram` 创建 Preview；有候选时可用 `continueWithTaskProgram` 追加通用空间操作、用 `revise_preview` 写底层纠正，或用 `preview_transaction` 从正式 revision 舍弃重做。Runtime 校验模型声明的基线，不替模型决定。
+- `revise_preview` 的纠正先在父候选上验证，再由程序合成为仍以 canonical revision 为基线的完整事务，因此新候选可以独立回放和 Commit。
 - 低置信度提交以 candidate 样式标红。
 
 ### 4.10 审计、回放与回归
@@ -248,9 +260,9 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 - 用户目标、追加反馈、Drawing ID 和 base revision。
 - 模型角色、配置摘要、Prompt hash 和原始结构化动作。
 - 工具版本、输入摘要、receipt、Observation、Pick/Coverage 查询和真实耗时。
-- Semantic Entity candidates、支持/排除映射、WorldModelSlice 和 Spatial Action Program。
+- `SpatialEditProgram`、逐操作解析 receipt，以及按需产生的 Semantic Entity candidates、支持/排除映射和 WorldModelSlice。
 - Task-Relevant View、Slice 完整度、Grounding Evidence Delta 与被替代假设。
-- Action Proposals、Commands、lineage、before/preview/diff、诊断和提交理由。
+- Action Proposals、Commands、lineage、before/after 对照图、独立检查结果、诊断和提交理由。
 - Counterfactual World Branch 的受影响范围、Arrangement/语义支持增量和查询结果。
 - Human Decision 请求、响应和精确授权范围。
 - Commit、前后 revision、正向/逆向 Patch 和进度事件。
@@ -263,12 +275,14 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 - 任务状态吸附在输入框上方，只显示当前真实动作；运行时发送按钮切换为暂停/停止。
 - Human Decision 以紧凑确认卡片展示问题、影响、推荐项和 Preview 入口。
 - 用户看不到模型名称或隐藏推理，只看到工具动作摘要、事实结果和画布变化。
+- 空间交互统一使用克制的深色 CAD 配色：青色表示当前目标/候选，琥珀表示接口/锚点，低饱和灰表示上下文/排除/修改前；不使用随机颜色区分图元。
 - HTTP 受理与首个状态目标小于 1 秒；活跃任务最长约 25 秒产生进度或 heartbeat。
 - 30 秒是可见反馈体验目标，不是正确性的硬超时。
 - 上下文预算回归需要覆盖 100+ 节点和本地最大真实快照；单轮图像数必须 `<= 1`，精确节点数受工作集上限约束。
+- 首轮没有明确选中项时只发送 Grounded Observation 与 Global Map；出现活跃目标后才编译局部 World Model。World Model 与完整 Working Set 不在同一轮重复表达。
 - 普通明确任务不因审计、语义分层或整图完整性增加固定模型调用；坐标、拓扑、影响和约束由程序预计算后一次提供。
-- 首轮可并行的渲染、空间索引、候选生成和确定性诊断应并行执行；后续只传 Evidence Delta，不重复传输完整历史。
-- 清晰局部任务的首个 Preview 前目标为一次模型决策；语义/重绘任务通常再使用一次 Preview 视觉验收，额外轮次必须由歧义、相关未解析边界、不可行动作或 Preview 缺陷触发并审计。
+- 首轮可并行的渲染、空间索引、局部事实和确定性诊断应并行执行；语义候选仅在歧义时生成，后续只传 Evidence Delta，不重复传输完整历史。
+- 清晰局部任务的首个 Preview 前目标为一次主模型决策；语义/重绘任务通常增加一次独立复核。只有主模型根据复核意见决定修正时才增加编辑轮次，并记录理由与新增证据。
 - GroundingHistory、Counterfactual 派生缓存和审计媒体异步落盘，不得位于首个 Preview 的同步关键路径；事务、revision 和必要 Evidence 元数据仍同步保证一致性。
 
 ## 6. MVP 验收标准
@@ -290,11 +304,13 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 ### 6.3 模型与二维空间交互
 
 - 模型可以自由组合视觉、向量、拓扑、CV、重绘和事务工具。
-- 已有向量图纸的模型定位优先选择 Grounding candidate，不要求模型生成精确轮廓坐标。
+- 已明确的向量任务可用 observation/node_anchor 引用直接生成 `SpatialEditProgram`，不要求先建立全图语义候选，也不要求模型手算精确坐标。
+- 有歧义的定位可以按需选择 Grounding candidate，不要求模型生成完整轮廓坐标。
 - 一个语义对象可映射多个节点/SourceSpan，一个节点可同时支持多个语义对象。
 - 重叠结构不会因 Pick、Mask、包围盒或几何 incidence 自动共同修改。
 - 分析切分不改变正式 Drawing IR；只有 Preview 需要时才物化局部切分。
 - 模型可选择 Action Proposal，也可组合工具或直接 Preview Raw Transaction。
+- 通用程序能够原子组合移动、端点重连、路径创建和删除，并保证未被操作引用的节点保持不变。
 - 模型能按当前任务将多个 SourceSpan 临时组成部件，并在需要时展开或折叠语义粒度，不要求永久 Feature。
 - `partial/unknown` 不会被误认为空白，也不会在与当前任务无关时拖慢局部修改。
 - Preview 可查询受影响拓扑和语义支持的增量结果，不需要提交后才发现结构变化。
@@ -303,10 +319,15 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 - 自动标注不会改变模型编辑策略。
 - 模型可以删除错误拟合的图元并重建完整语义部件。
 - 工具与 Preview 过程能够在画布上真实、逐步显示。
+- Grounding 支持集中的局部 SourceSpan 只描边对应参数区间，不高亮整个相交图元；excluded 与 interface 在同一帧中可清晰辨认。
+- 每个写工具在返回 Preview 前先产生 planning 帧，Preview 后产生 before/after 帧；动画不可拦截点选、平移或缩放。
+- Interaction Frame 不进入模型文本上下文，大图投影保持有界，避免为了 UI 反馈增加模型 token 和首帧延迟。
 
 ### 6.4 编辑与反馈 Loop
 
-- 模型能依据 before/preview/diff 和诊断继续修正，而不是重复同一失败候选。
+- 主模型能依据 before/after、独立检查结果和诊断继续修正，而不是重复同一失败候选。
+- 活跃上下文只保留当前候选契约与最新复核，旧候选仍完整保存在审计日志；连续候选用尽预算时安全结束且 canonical 零改动。
+- 独立检查者不接收编辑工具，不参与提交决策；复核不通过时当前 Preview 仍可见、可修改、可由主模型确认提交。
 - 正常几何错误不询问用户；权限、事实和价值判断通过 Human Decision Gate。
 - 解除约束必须获得候选级授权；用户拒绝后模型重新规划。
 - 用户追加意见后继续同一 Episode，不丢失历史上下文。
@@ -329,7 +350,8 @@ Commit 使用 compare-and-swap revision。事务失败不改变正式图纸，Un
 ## 7. 文档与研发约束
 
 - 当前权威技术架构是 `docs/tech-architecture.md`。
-- 当前主设计是 `docs/superpowers/specs/2026-08-12-model-led-drawing-agent-and-human-decision-gate-design.md`。
+- 当前默认编辑设计是 `docs/superpowers/specs/2026-08-15-task-driven-spatial-edit-program-design.md`。
+- Human Decision 与模型主循环设计是 `docs/superpowers/specs/2026-08-12-model-led-drawing-agent-and-human-decision-gate-design.md`。
 - 当前二维世界模型设计是 `docs/superpowers/specs/2026-08-13-2d-world-model-and-spatial-action-compiler-design.md`。
 - 自适应分段、矢量化和全局拓扑算法继续作为模型工具基础能力。
 - MVP 不维护错误架构的兼容入口、双主链或长期 Feature Flag；新主链通过后直接删除旧入口。

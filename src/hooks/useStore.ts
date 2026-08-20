@@ -6,6 +6,7 @@ import {
   randomIdFactory,
   reconcilePerceptionPreview,
   retainUncommittedPromotions,
+  VECTOR_REVEAL_TOTAL_MS,
   type DrawingCommand,
   type DrawingCommit,
   type DrawingDocument,
@@ -14,40 +15,112 @@ import {
   type RevisionId,
 } from '@/drawing';
 import type {
+  DrawingAgentCanvasOverlay,
   DrawingAgentPlan,
   DrawingAgentRunView,
+  HumanDecisionRequest,
 } from '@/contracts/drawing-agent';
 import {
   agentClient as defaultAgentClient,
   type AgentClient,
   type AgentProgressEvent,
+  type AgentWorkflow,
 } from '@/services/agent-client';
 import {
   drawingClient as defaultDrawingClient,
   DrawingClientError,
   type DrawingClient,
+  type DxfUploadFile,
 } from '@/services/drawing-client';
 import {
   applyWorkspaceResult,
-  buildClearCommands,
   buildDeleteCommand,
   buildUpdateCommand,
   createWorkspaceTransaction,
 } from './drawing-store';
 
 export const ACTIVE_DRAWING_STORAGE_KEY = 'vectorai.activeDrawingId';
+
+/** 分区补充文档（按图纸持久化到 localStorage，重新分区时自动携带） */
+export interface PartitionSupplementDoc {
+  name: string;
+  text: string;
+}
+
+function partitionSupplementKey(drawingId: string): string {
+  return `vectorai.partitionSupplements.${drawingId}`;
+}
+
+function readPartitionSupplements(
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null,
+  drawingId: string,
+): PartitionSupplementDoc[] {
+  try {
+    const raw = storage?.getItem(partitionSupplementKey(drawingId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is PartitionSupplementDoc => (
+      typeof item === 'object' && item !== null
+      && typeof item.name === 'string' && typeof item.text === 'string'
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function writePartitionSupplements(
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null,
+  drawingId: string,
+  docs: PartitionSupplementDoc[],
+): void {
+  try {
+    if (docs.length === 0) storage?.removeItem(partitionSupplementKey(drawingId));
+    else storage?.setItem(partitionSupplementKey(drawingId), JSON.stringify(docs));
+  } catch { /* 存储不可用时仅保留内存态 */ }
+}
+
+/** 分区 goal 拼接补充文档（同名文档已在 goal 中则跳过，单文档截断 6000 字） */
+function appendPartitionSupplements(goal: string, docs: PartitionSupplementDoc[]): string {
+  const parts = [goal];
+  for (const doc of docs) {
+    if (goal.includes(`[补充文档 ${doc.name}]`)) continue;
+    if (!doc.text.trim()) continue;
+    parts.push(`[补充文档 ${doc.name}]\n${doc.text.slice(0, 6000)}`);
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
+/** 合并分区补充文档：同名覆盖，其余追加 */
+function mergePartitionSupplements(
+  current: PartitionSupplementDoc[],
+  incoming: PartitionSupplementDoc[],
+): PartitionSupplementDoc[] {
+  const merged = [...current];
+  for (const doc of incoming) {
+    const index = merged.findIndex((item) => item.name === doc.name);
+    if (index >= 0) merged[index] = doc;
+    else merged.push(doc);
+  }
+  return merged;
+}
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  image?: string;
+  mimeType?: string;
+  files?: Array<{ name: string; mimeType: string }>;
   confidence?: number;
   timestamp: number;
 }
 
 interface AgentSubmission {
   goal: string;
+  userText: string;
   image?: string;
   mimeType?: string;
+  workflow?: AgentWorkflow;
 }
 
 export type AgentUiStatus =
@@ -82,6 +155,9 @@ export interface AppState {
   agentEvents: AgentProgressEvent[];
   agentError: string | null;
   perceptionPreview: PerceptionPreviewState;
+  agentCanvasOverlay: DrawingAgentCanvasOverlay | null;
+  pendingAgentDecision: HumanDecisionRequest | null;
+  decisionSubmitting: boolean;
 
   initializeDrawing: () => Promise<void>;
   updateNode: (id: string, changes: Record<string, unknown>) => Promise<void>;
@@ -96,13 +172,37 @@ export interface AppState {
   toggleAnnotations: () => void;
   setMouseCoords: (coords: { x: number; y: number } | null) => void;
 
-  submitAgentInput: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
-  startAgent: (prompt?: string, image?: string, mimeType?: string) => Promise<void>;
+  importDxf: (
+    file: DxfUploadFile,
+    engineeringDocument?: DxfUploadFile,
+    prompt?: string,
+  ) => Promise<void>;
+
+  submitAgentInput: (
+    prompt?: string,
+    image?: string,
+    mimeType?: string,
+    workflow?: AgentWorkflow,
+    displayText?: string,
+  ) => Promise<void>;
+  startAgent: (
+    prompt?: string,
+    image?: string,
+    mimeType?: string,
+    workflow?: AgentWorkflow,
+    displayText?: string,
+  ) => Promise<void>;
+  /** 确认当前分区并按分区生成自动标注 */
+  confirmPartitionAnnotations: () => Promise<void>;
+  /** 分区补充文档（用户上传的 TXT 等）；分区/重新分区请求自动携带 */
+  partitionSupplementDocs: PartitionSupplementDoc[];
+  setPartitionSupplementDocs: (docs: PartitionSupplementDoc[]) => void;
   retryAgent: () => Promise<void>;
   pauseAgent: () => Promise<void>;
   resumeAgent: () => Promise<void>;
   stopAgent: () => Promise<void>;
   addAgentInstruction: (instruction: string) => Promise<void>;
+  respondToAgentDecision: (selectedOptionId: string, additionalInstruction?: string) => Promise<void>;
   resetAgent: () => void;
 }
 
@@ -112,6 +212,8 @@ export interface AppStoreDependencies {
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
   idFactory?: IdFactory;
   now?: () => number;
+  /** Minimum presentation time for a real canvas preview; never delays backend work. */
+  previewSettleMs?: number;
 }
 
 let messageCounter = 0;
@@ -122,11 +224,49 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
   const storage = dependencies.storage ?? browserStorage();
   const idFactory = dependencies.idFactory ?? randomIdFactory;
   const now = dependencies.now ?? Date.now;
+  const previewSettleMs = dependencies.previewSettleMs ?? VECTOR_REVEAL_TOTAL_MS;
   let unsubscribeAgent: (() => void) | null = null;
   let initializationPromise: Promise<void> | null = null;
   let lastAgentSubmission: AgentSubmission | null = null;
+  const previewSettleTimers = new Set<ReturnType<typeof setTimeout>>();
+  const clearPreviewSettleTimers = () => {
+    previewSettleTimers.forEach((timer) => clearTimeout(timer));
+    previewSettleTimers.clear();
+  };
 
   return create<AppState>((set, get) => {
+    const schedulePreviewSettlement = (runId: string) => {
+      const current = get();
+      const committedIds = new Set<string>(current.document
+        ? [...current.document.geometry, ...current.document.annotations].map((node) => node.id)
+        : []);
+      const capturedNodes = Object.fromEntries(
+        Object.entries(current.perceptionPreview.nodes)
+          .filter(([id]) => committedIds.has(id)),
+      );
+      const ids = Object.keys(capturedNodes);
+      if (ids.length === 0) return;
+      const settle = () => {
+        previewSettleTimers.delete(timer);
+        if (get().agentRunId !== runId) return;
+        set((latest) => {
+          const unchangedIds = ids.filter((id) => (
+            latest.perceptionPreview.nodes[id] === capturedNodes[id]
+          ));
+          if (unchangedIds.length === 0) return latest;
+          return {
+            perceptionPreview: reconcilePerceptionPreview(
+              latest.perceptionPreview,
+              latest.document,
+              unchangedIds,
+            ),
+          };
+        });
+      };
+      const timer = setTimeout(settle, Math.max(0, previewSettleMs));
+      previewSettleTimers.add(timer);
+    };
+
     const executeCommands = async (commands: DrawingCommand[]) => {
       const state = get();
       if (!state.document || !state.revision || state.drawingBusy || commands.length === 0) return;
@@ -168,11 +308,15 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       }
       unsubscribeAgent?.();
       unsubscribeAgent = null;
+      clearPreviewSettleTimers();
       set((current) => ({
         ...(options.appendUserMessage ? {
           aiMessages: [
             ...current.aiMessages,
-            chatMessage('user', submission.goal || '上传图纸并重建', now),
+            chatMessage('user', submission.userText, now, {
+              image: submission.image,
+              mimeType: submission.mimeType,
+            }),
           ],
         } : {}),
         taskPlan: null,
@@ -183,6 +327,9 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         agentEvents: [],
         agentError: null,
         perceptionPreview: emptyPerceptionPreview(null),
+        agentCanvasOverlay: null,
+        pendingAgentDecision: null,
+        decisionSubmitting: false,
       }));
       try {
         const started = await agents.start({
@@ -190,6 +337,10 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           baseRevision: state.revision,
           goal: submission.goal,
           selectedIds: [...state.selectedIds],
+          stableRules: [
+            '除非用户明确要求，否则保持非目标内容、已有连接关系、轮廓连续性与原图样式不变',
+            '不得产生新的悬空端点；标注是次要派生信息，不能阻止几何编辑',
+          ],
           viewport: state.viewportSize.width > 0 && state.viewportSize.height > 0
             ? {
                 scale: state.canvasTransform.scale,
@@ -206,6 +357,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
               page: 1,
             },
           } : {}),
+          ...(submission.workflow ? { workflow: submission.workflow } : {}),
         });
         set({
           agentRunId: started.runId,
@@ -221,14 +373,13 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                 : [...current.agentEvents, event].slice(-100),
               agentStatus: progressStatus(event.type, current.agentStatus),
               agentError: event.type === 'failed' ? event.title : current.agentError,
-              perceptionPreview: event.type === 'stopped' || event.type === 'failed'
+              perceptionPreview: event.type === 'stopped'
                 ? emptyPerceptionPreview(null)
+                : event.type === 'failed'
+                  ? terminalDiagnosticPreview(current.perceptionPreview)
                 : event.type === 'completed'
                   ? {
-                      ...reconcilePerceptionPreview(
-                        current.perceptionPreview,
-                        current.document,
-                      ),
+                      ...current.perceptionPreview,
                       activeOverlay: null,
                       previewVersionId: null,
                     }
@@ -238,8 +389,14 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                         retainUncommittedPromotions(event.perceptionDelta, current.document),
                       )
                     : current.perceptionPreview,
+              agentCanvasOverlay: event.type === 'stopped'
+                || event.type === 'completed'
+                || event.type === 'failed'
+                || event.overlay?.kind === 'clear'
+                ? null
+                : event.overlay ?? current.agentCanvasOverlay,
             }));
-            if (event.type === 'commit') {
+            if (event.type === 'committed') {
               const drawingId = get().document?.id;
               if (drawingId) {
                 void drawings.open(drawingId).then((workspace) => {
@@ -247,15 +404,13 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
                   set((current) => ({
                     ...workspace,
                     selectedIds: [],
-                    perceptionPreview: reconcilePerceptionPreview(
-                      current.perceptionPreview,
-                      workspace.document,
-                    ),
+                    perceptionPreview: current.perceptionPreview,
                   }));
+                  schedulePreviewSettlement(started.runId);
                 }).catch((error) => set({ drawingError: errorMessage(error) }));
               }
             }
-            if (['model_finished', 'validation', 'commit'].includes(event.type)) {
+            if (['model_finished', 'validation', 'commit', 'committed'].includes(event.type)) {
               void agents.getRun(started.runId).then((run) => {
                 if (get().agentRunId !== started.runId) return;
                 set(projectAgentRun(run));
@@ -315,7 +470,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       canvasTransform: { scale: 1, offsetX: 80, offsetY: 500 },
       viewportSize: { width: 0, height: 0 },
       showGrid: true,
-      showRelations: true,
+      showRelations: false,
       showAnnotations: true,
       mouseCoords: null,
 
@@ -327,6 +482,16 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       agentEvents: [],
       agentError: null,
       perceptionPreview: emptyPerceptionPreview(null),
+      agentCanvasOverlay: null,
+      pendingAgentDecision: null,
+      decisionSubmitting: false,
+      partitionSupplementDocs: [],
+
+      setPartitionSupplementDocs: (docs) => {
+        const drawingId = get().document?.id;
+        set({ partitionSupplementDocs: docs });
+        if (drawingId) writePartitionSupplements(storage, drawingId, docs);
+      },
 
       initializeDrawing: () => {
         if (get().drawingStatus === 'ready') return Promise.resolve();
@@ -356,6 +521,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
               drawingBusy: false,
               drawingError: null,
               selectedIds: [],
+              partitionSupplementDocs: readPartitionSupplements(storage, workspace.document.id),
             });
           } catch (error) {
             set({
@@ -403,34 +569,25 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         const drawingId = state.document.id;
         set({ drawingBusy: true, drawingError: null });
         try {
-          const latest = await drawings.open(drawingId);
-          const commands = buildClearCommands(latest.document);
-          if (commands.length === 0) {
-            set({
-              ...latest,
-              drawingBusy: false,
-              drawingError: null,
-              selectedIds: [],
-              perceptionPreview: emptyPerceptionPreview(null),
-            });
-            return;
-          }
-          const transaction = createWorkspaceTransaction({
-            revision: latest.revision,
-            commands,
-            actor: { type: 'user', id: 'local-user' },
-            idFactory,
-          });
-          const result = await drawings.execute(drawingId, transaction);
-          const applied = applyWorkspaceResult(latest, result);
+          unsubscribeAgent?.();
+          unsubscribeAgent = null;
+          clearPreviewSettleTimers();
+          const workspace = await drawings.clear(drawingId);
+          writePartitionSupplements(storage, drawingId, []);
           set({
-            ...applied.workspace,
+            ...workspace,
             drawingBusy: false,
-            drawingError: applied.error,
-            selectedIds: applied.error ? get().selectedIds : [],
-            perceptionPreview: applied.error
-              ? get().perceptionPreview
-              : emptyPerceptionPreview(null),
+            drawingError: null,
+            selectedIds: [],
+            partitionSupplementDocs: [],
+            agentStatus: 'idle',
+            agentRunId: null,
+            agentEvents: [],
+            agentError: null,
+            perceptionPreview: emptyPerceptionPreview(null),
+            agentCanvasOverlay: null,
+            pendingAgentDecision: null,
+            decisionSubmitting: false,
           });
         } catch (error) {
           set({ drawingBusy: false, drawingError: errorMessage(error) });
@@ -487,7 +644,65 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
       })),
       setMouseCoords: (mouseCoords) => set({ mouseCoords }),
 
-      submitAgentInput: async (prompt, image, mimeType) => {
+      importDxf: async (file, engineeringDocument, prompt) => {
+        const state = get();
+        if (!state.document || state.drawingBusy) return;
+        if (state.agentRunId && isAgentActiveStatus(state.agentStatus)) {
+          set({ agentError: '当前任务仍在运行，请停止后再导入 DXF' });
+          return;
+        }
+        const userText = prompt?.trim() ?? '';
+        const files = [
+          { name: file.fileName, mimeType: file.mimeType },
+          ...(engineeringDocument
+            ? [{ name: engineeringDocument.fileName, mimeType: engineeringDocument.mimeType }]
+            : []),
+        ];
+        set((current) => ({
+          drawingBusy: true,
+          drawingError: null,
+          aiMessages: [...current.aiMessages, chatMessage('user', userText, now, { files })],
+        }));
+        try {
+          const result = await drawings.importDxf(
+            state.document.id,
+            file,
+            engineeringDocument,
+          );
+          const summary = [
+            `已导入 ${result.receipt.source.fileName}：`,
+            `${result.receipt.projection.projectedGeometryCount} 个图元，`,
+            `${result.receipt.annotation.generatedCount} 项源标注。`,
+            '自动标注将在分区确认后生成--请发送补充信息（台阶说明、区域用途等，可上传文档），',
+            'AI 将结合补充信息按台阶特征对图纸分区。',
+          ].join('');
+          set((current) => ({
+            ...result.workspace,
+            drawingBusy: false,
+            drawingError: null,
+            selectedIds: [],
+            perceptionPreview: emptyPerceptionPreview(null),
+            agentCanvasOverlay: null,
+            aiMessages: [...current.aiMessages, chatMessage('assistant', summary, now)],
+          }));
+          if (userText) {
+            lastAgentSubmission = { goal: userText, userText };
+            await launchAgent(lastAgentSubmission, { appendUserMessage: false });
+          }
+        } catch (error) {
+          const message = errorMessage(error);
+          set((current) => ({
+            drawingBusy: false,
+            drawingError: message,
+            aiMessages: [
+              ...current.aiMessages,
+              chatMessage('assistant', `DXF 导入失败：${message}`, now),
+            ],
+          }));
+        }
+      },
+
+      submitAgentInput: async (prompt, image, mimeType, workflow, displayText) => {
         const text = prompt?.trim();
         const state = get();
         if (state.agentRunId && isAgentActiveStatus(state.agentStatus)) {
@@ -498,17 +713,42 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           }
           return;
         }
-        if (text || image) await get().startAgent(text, image, mimeType);
+        if (text || image) {
+          await get().startAgent(text, image, mimeType, workflow, displayText);
+        }
       },
 
-      startAgent: async (prompt, image, mimeType) => {
-        const goal = prompt?.trim() ?? '';
+      startAgent: async (prompt, image, mimeType, workflow, displayText) => {
+        const requestedGoal = prompt?.trim() ?? '';
+        let goal = requestedGoal;
+        if (workflow === 'partition') {
+          // 分区流自动携带已上传的补充文档，避免重新分区时丢失文档上下文
+          const drawingId = get().document?.id;
+          const docs = drawingId && get().partitionSupplementDocs.length === 0
+            ? readPartitionSupplements(storage, drawingId)
+            : get().partitionSupplementDocs;
+          goal = appendPartitionSupplements(
+            requestedGoal || '按图纸中的台阶特征对图纸分区',
+            docs,
+          );
+        }
         if (!goal && !image) return;
         lastAgentSubmission = {
           goal,
+          userText: displayText?.trim() || requestedGoal,
           ...(image ? { image, mimeType: mimeType || 'image/png' } : {}),
+          ...(workflow ? { workflow } : {}),
         };
         await launchAgent(lastAgentSubmission, { appendUserMessage: true });
+      },
+
+      confirmPartitionAnnotations: async () => {
+        await get().startAgent(
+          '确认当前分区，按分区生成自动标注（分区边界尺寸 + 重点分区特征标注）',
+          undefined,
+          undefined,
+          'partitioned-annotation',
+        );
       },
 
       retryAgent: async () => {
@@ -553,6 +793,23 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           set({ agentError: errorMessage(error) });
         }
       },
+      respondToAgentDecision: async (selectedOptionId, additionalInstruction) => {
+        const state = get();
+        const request = state.pendingAgentDecision;
+        if (!state.agentRunId || !request || state.decisionSubmitting) return;
+        set({ decisionSubmitting: true, agentError: null });
+        try {
+          const run = await agents.respondToDecision(state.agentRunId, request.id, {
+            selectedOptionId,
+            ...(additionalInstruction?.trim()
+              ? { additionalInstruction: additionalInstruction.trim() }
+              : {}),
+          });
+          set({ ...projectAgentRun(run), decisionSubmitting: false });
+        } catch (error) {
+          set({ decisionSubmitting: false, agentError: errorMessage(error) });
+        }
+      },
       resetAgent: () => {
         const state = get();
         if (state.agentRunId && isAgentActiveStatus(state.agentStatus)) {
@@ -560,6 +817,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         }
         unsubscribeAgent?.();
         unsubscribeAgent = null;
+        clearPreviewSettleTimers();
         lastAgentSubmission = null;
         set({
           taskPlan: null,
@@ -570,6 +828,9 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           agentEvents: [],
           agentError: null,
           perceptionPreview: emptyPerceptionPreview(null),
+          agentCanvasOverlay: null,
+          pendingAgentDecision: null,
+          decisionSubmitting: false,
         });
       },
     };
@@ -587,9 +848,20 @@ function chatMessage(
   role: ChatMessage['role'],
   content: string,
   now: () => number,
+  attachment: Pick<ChatMessage, 'image' | 'mimeType' | 'files'> = {},
 ): ChatMessage {
   messageCounter += 1;
-  return { id: `message_${messageCounter}_${now()}`, role, content, timestamp: now() };
+  return {
+    id: `message_${messageCounter}_${now()}`,
+    role,
+    content,
+    ...(attachment.image ? {
+      image: attachment.image,
+      mimeType: attachment.mimeType || 'image/png',
+    } : {}),
+    ...(attachment.files?.length ? { files: structuredClone(attachment.files) } : {}),
+    timestamp: now(),
+  };
 }
 
 function errorMessage(error: unknown): string {
@@ -617,6 +889,7 @@ function projectAgentRun(run: DrawingAgentRunView): Partial<AppState> {
     taskPlan: plan,
     currentStepIndex: runningIndex >= 0 ? runningIndex : completedCount,
     stepResults: [],
+    pendingAgentDecision: run.pendingDecision,
   };
 }
 
@@ -632,4 +905,22 @@ function progressStatus(
   if (type === 'failed') return 'error';
   if (type === 'heartbeat') return current;
   return current === 'pause_requested' || current === 'stopping' ? current : 'running';
+}
+
+function terminalDiagnosticPreview(
+  preview: PerceptionPreviewState,
+): PerceptionPreviewState {
+  const activeOverlay = preview.activeOverlay?.status === 'rejected'
+    ? structuredClone(preview.activeOverlay)
+    : null;
+  return {
+    runId: preview.runId,
+    lastSequence: preview.lastSequence,
+    nodes: {},
+    labelsByNodeId: {},
+    activeOverlay,
+    previewVersionId: activeOverlay?.previewVersionId ?? null,
+    stageByNodeId: {},
+    hiddenCommittedIds: [],
+  };
 }

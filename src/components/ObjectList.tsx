@@ -2,20 +2,122 @@
  * ObjectList - 左侧实体列表（支持多选）
  */
 import { useMemo } from 'react';
-import { Circle, Dot, Eye, EyeOff, Minus, Shapes, Trash2 } from 'lucide-react';
+import {
+  ArrowRight,
+  Circle,
+  CornerUpRight,
+  Crosshair,
+  Dot,
+  Eye,
+  EyeOff,
+  Minus,
+  MoveHorizontal,
+  Ruler,
+  Shapes,
+  Trash2,
+  Type as TypeIcon,
+} from 'lucide-react';
 import { useStore } from '@/hooks/useStore';
 import type { AnnotationNode, GeometryNode } from '@/drawing';
+import { isCanvasSelectable } from './canvas/canvas-policies';
 
 type ListedNode = GeometryNode | AnnotationNode;
+export type ObjectType = ListedNode['type'];
 
-function typeIcon(type: ListedNode['type']) {
-  const cls = 'text-slate-500';
+const ICON_CLASS = 'text-slate-500';
+const ICON_SIZE = 15;
+
+function GeometryGlyph({
+  shape,
+  children,
+}: {
+  shape: 'arc' | 'ellipse' | 'polyline' | 'spline' | 'section-hatch';
+  children: React.ReactNode;
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      data-icon-shape={shape}
+      width={ICON_SIZE}
+      height={ICON_SIZE}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={ICON_CLASS}
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function ObjectTypeIcon({ type }: { type: ObjectType }) {
+  let icon: React.ReactNode;
+
   switch (type) {
-    case 'circle': return <Circle size={14} className={cls} />;
-    case 'line': return <Minus size={14} className={cls} />;
-    case 'point': return <Dot size={16} className={cls} />;
-    default: return <span className="w-4 text-center font-mono text-[8px] uppercase text-slate-500">{type.slice(0, 2)}</span>;
+    case 'point':
+      icon = <Dot size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'line':
+      icon = <Minus size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'ray':
+      icon = <ArrowRight size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'xline':
+      icon = <MoveHorizontal size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'circle':
+      icon = <Circle size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'arc':
+      icon = <GeometryGlyph shape="arc"><path d="M2.5 12.5A7.5 7.5 0 0 1 13.5 4.5" /></GeometryGlyph>;
+      break;
+    case 'ellipse':
+      icon = <GeometryGlyph shape="ellipse"><ellipse cx="8" cy="8" rx="6" ry="3.8" /></GeometryGlyph>;
+      break;
+    case 'polyline':
+      icon = <GeometryGlyph shape="polyline"><polyline points="2.5,12 5.5,5.5 9,10 13.5,3.5" /></GeometryGlyph>;
+      break;
+    case 'spline':
+      icon = <GeometryGlyph shape="spline"><path d="M2.5 11.5C4 3.5 7.5 3.5 8.5 8.5S12.5 13 13.5 5" /></GeometryGlyph>;
+      break;
+    case 'text':
+      icon = <TypeIcon size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'dimension':
+      icon = <Ruler size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'leader':
+      icon = <CornerUpRight size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'centerline':
+      icon = <Crosshair size={ICON_SIZE} strokeWidth={1.6} className={ICON_CLASS} />;
+      break;
+    case 'section-hatch':
+      icon = (
+        <GeometryGlyph shape="section-hatch">
+          <path d="M2 12L7 3M6 13L11 4M10 13L14 7" />
+        </GeometryGlyph>
+      );
+      break;
+    default: {
+      const exhaustive: never = type;
+      return exhaustive;
+    }
   }
+
+  return (
+    <span
+      aria-hidden="true"
+      data-object-type-icon={type}
+      className="flex h-4 w-4 shrink-0 items-center justify-center"
+    >
+      {icon}
+    </span>
+  );
 }
 
 export default function ObjectList() {
@@ -59,16 +161,19 @@ export default function ObjectList() {
           </div>
         ) : (
           entities.map((e) => {
-            const selected = selectedIds.includes(e.id);
+            const selectable = isCanvasSelectable(e);
+            const selected = selectable && selectedIds.includes(e.id);
             return (
               <div
                 key={e.id}
-                className={`group flex cursor-pointer items-center gap-2 border-l-2 px-3 py-2 transition hover:bg-white/[0.035] ${
+                className={`group flex items-center gap-2 border-l-2 px-3 py-2 transition hover:bg-white/[0.035] ${selectable ? 'cursor-pointer' : 'cursor-default'} ${
                   selected ? 'border-accent bg-accent/[0.07]' : 'border-transparent'
                 }`}
-                onClick={(ev) => selectEntity(e.id, ev.ctrlKey || ev.metaKey)}
+                onClick={selectable
+                  ? (ev) => selectEntity(e.id, ev.ctrlKey || ev.metaKey)
+                  : undefined}
               >
-                {typeIcon(e.type)}
+                <ObjectTypeIcon type={e.type} />
                 <span className={`flex-1 truncate font-mono text-[10px] ${selected ? 'text-slate-200' : 'text-slate-400'}`}>
                   {e.id}
                 </span>

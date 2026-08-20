@@ -24,6 +24,8 @@ export interface ModelDrawingToolInvocation {
 export interface ModelToolErrorReceipt {
   code: string;
   retryable: boolean;
+  /** Audit-safe parser/compiler feedback. It describes the contract mismatch, never raw input. */
+  detail?: string;
   suggestedAction?: 'retry' | 'requery' | 'replan' | 'request-human-decision';
 }
 
@@ -73,6 +75,8 @@ export interface ModelDrawingToolDefinition<I = unknown, O = unknown> {
   version: string;
   access: ModelDrawingToolAccess;
   timeoutMs: number;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
   parseInput(value: unknown): I;
   execute: ModelDrawingToolExecutor<I, O>;
 }

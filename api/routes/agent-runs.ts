@@ -1,23 +1,35 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 
-import type { DrawingAgentRunStatus } from '../../src/contracts/drawing-agent.js';
+import type {
+  DrawingAgentRunStatus,
+  DrawingAgentRunView,
+  HumanDecisionResponse,
+} from '../../src/contracts/drawing-agent.js';
 import type { DrawingId, RevisionId } from '../../src/drawing/index.js';
 import type { AgentProgressEvent } from '../services/drawing-agent/progress.js';
 import { DrawingApplication, DrawingApplicationError } from '../services/drawing-application/application.js';
-import { DrawingAgentRuntime } from '../services/drawing-agent/runtime.js';
-import { toDrawingAgentRunView } from '../services/drawing-agent/state.js';
+import type { RunProgressChannel } from '../services/drawing-agent/progress.js';
+import {
+  toDrawingAgentRunView,
+  toModelLedDrawingAgentRunView,
+  type DrawingAgentState,
+  type ModelLedDrawingAgentState,
+} from '../services/drawing-agent/state.js';
 import type { DrawingAgentModelProfile } from '../services/drawing-agent/types.js';
+import type { StartDrawingAgentRunInput } from '../services/drawing-agent/types.js';
 import type { SourceArtifactStore } from '../services/source-artifacts/types.js';
 
 const TERMINAL_STATUSES = new Set<DrawingAgentRunStatus>(['stopped', 'completed', 'failed']);
 const TERMINAL_EVENTS = new Set<AgentProgressEvent['type']>(['stopped', 'completed', 'failed']);
 const ALLOWED_START_KEYS = new Set([
   'drawingId', 'baseRevision', 'goal', 'selectedIds', 'stableRules', 'viewport', 'attachment',
+  'workflow',
 ]);
+const ALLOWED_WORKFLOWS = new Set(['partition', 'partitioned-annotation']);
 
 export function createAgentRunsRouter(
-  runtime: DrawingAgentRuntime,
+  runtime: AgentRunsRuntime,
   application: DrawingApplication,
   modelProfile: DrawingAgentModelProfile,
   sourceArtifacts?: SourceArtifactStore,
@@ -42,16 +54,21 @@ export function createAgentRunsRouter(
     const selectedIds = optionalStringArray(body.selectedIds);
     const stableRules = optionalStringArray(body.stableRules);
     const viewport = parseViewport(body.viewport);
+    const workflow = body.workflow === undefined
+      ? undefined
+      : typeof body.workflow === 'string' && ALLOWED_WORKFLOWS.has(body.workflow)
+        ? body.workflow as 'partition' | 'partitioned-annotation'
+        : null;
     if (
       !drawingId || !baseRevision || goal === null || (!goal && !attachment)
       || attachment === null || selectedIds === null || stableRules === null
-      || viewport === null
+      || viewport === null || workflow === null
     ) {
       invalid(
         res,
         400,
         'INVALID_AGENT_REQUEST',
-        'drawingId、baseRevision 必填；goal 与 attachment 至少提供一个，attachment 仅支持图片/PDF',
+        'drawingId、baseRevision 必填；goal 与 attachment 至少提供一个，attachment 仅支持图片/PDF；workflow 仅支持 partition / partitioned-annotation',
       );
       return;
     }
@@ -98,6 +115,7 @@ export function createAgentRunsRouter(
       ...(stableRules ? { stableRules } : {}),
       ...(viewport ? { viewport } : {}),
       ...(source ? { source } : {}),
+      ...(workflow ? { workflow } : {}),
     });
     res.status(202).json({ success: true, runId });
   }));
@@ -133,30 +151,31 @@ export function createAgentRunsRouter(
   router.get('/:runId', (req: Request, res: Response): void => {
     const state = runtime.getState(req.params.runId);
     if (!state) return notFound(res);
-    res.json({ success: true, run: toDrawingAgentRunView(state) });
+    res.json({ success: true, run: projectRun(state) });
   });
 
   router.post('/:runId/pause', (req: Request, res: Response): void => {
     const state = runtime.getState(req.params.runId);
     if (!state) return notFound(res);
-    if (state.status !== 'planning' && state.status !== 'running') {
+    if (state.status !== 'planning' && state.status !== 'running'
+      && state.status !== 'waiting_for_user') {
       return conflict(res, state.status, '暂停');
     }
-    res.status(202).json({ success: true, run: toDrawingAgentRunView(runtime.pause(req.params.runId)) });
+    res.status(202).json({ success: true, run: projectRun(runtime.pause(req.params.runId)) });
   });
 
   router.post('/:runId/resume', (req: Request, res: Response): void => {
     const state = runtime.getState(req.params.runId);
     if (!state) return notFound(res);
     if (state.status !== 'paused') return conflict(res, state.status, '继续');
-    res.status(202).json({ success: true, run: toDrawingAgentRunView(runtime.resume(req.params.runId)) });
+    res.status(202).json({ success: true, run: projectRun(runtime.resume(req.params.runId)) });
   });
 
   router.post('/:runId/stop', (req: Request, res: Response): void => {
     const state = runtime.getState(req.params.runId);
     if (!state) return notFound(res);
     if (TERMINAL_STATUSES.has(state.status)) return conflict(res, state.status, '停止');
-    res.status(202).json({ success: true, run: toDrawingAgentRunView(runtime.stop(req.params.runId)) });
+    res.status(202).json({ success: true, run: projectRun(runtime.stop(req.params.runId)) });
   });
 
   router.post('/:runId/instructions', (req: Request, res: Response): void => {
@@ -172,11 +191,73 @@ export function createAgentRunsRouter(
     }
     res.status(202).json({
       success: true,
-      run: toDrawingAgentRunView(runtime.addInstruction(req.params.runId, instruction)),
+      run: projectRun(runtime.addInstruction(req.params.runId, instruction)),
     });
   });
 
+  router.post('/:runId/decisions/:requestId/respond', route(async (req, res) => {
+    const state = runtime.getState(req.params.runId);
+    if (!state) return notFound(res);
+    if (!runtime.respondToDecision || state.status !== 'waiting_for_user'
+      || state.pendingDecision?.id !== req.params.requestId) {
+      invalid(res, 409, 'HUMAN_DECISION_STALE', '该用户决定已不在等待中');
+      return;
+    }
+    const body = isRecord(req.body) ? req.body : {};
+    const unknownKey = Object.keys(body).find((key) => (
+      key !== 'selectedOptionId' && key !== 'additionalInstruction'
+    ));
+    const selectedOptionId = nonEmptyString(body.selectedOptionId);
+    const additionalInstruction = body.additionalInstruction === undefined
+      ? undefined
+      : nonEmptyString(body.additionalInstruction);
+    if (unknownKey || !selectedOptionId || additionalInstruction === null) {
+      invalid(res, 400, 'INVALID_HUMAN_DECISION_RESPONSE', '用户决定响应格式无效');
+      return;
+    }
+    if (!state.pendingDecision.options.some((option) => option.id === selectedOptionId)) {
+      invalid(res, 400, 'HUMAN_DECISION_OPTION_NOT_FOUND', '所选项不属于当前决定');
+      return;
+    }
+    const response: HumanDecisionResponse = {
+      requestId: req.params.requestId,
+      selectedOptionId,
+      ...(additionalInstruction ? { additionalInstruction } : {}),
+      decidedAt: Date.now(),
+    };
+    try {
+      const next = await runtime.respondToDecision(req.params.runId, response);
+      res.status(202).json({ success: true, run: projectRun(next) });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : String(error);
+      if (code.startsWith('HUMAN_DECISION_')) {
+        invalid(res, 409, code, '该决定已失效或已处理');
+        return;
+      }
+      throw error;
+    }
+  }));
+
   return router;
+}
+
+type AgentRunState = DrawingAgentState | ModelLedDrawingAgentState;
+
+export interface AgentRunsRuntime {
+  start(input: StartDrawingAgentRunInput): unknown;
+  getState(runId: string): AgentRunState | undefined;
+  getProgress(runId: string): RunProgressChannel | undefined;
+  pause(runId: string): AgentRunState;
+  resume(runId: string): AgentRunState;
+  stop(runId: string): AgentRunState;
+  addInstruction(runId: string, instruction: string): AgentRunState;
+  respondToDecision?(runId: string, response: HumanDecisionResponse): Promise<AgentRunState>;
+}
+
+function projectRun(state: AgentRunState): DrawingAgentRunView {
+  return 'episodeId' in state
+    ? toModelLedDrawingAgentRunView(state)
+    : toDrawingAgentRunView(state);
 }
 
 function route(

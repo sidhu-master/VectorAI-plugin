@@ -258,8 +258,13 @@ function isMediaBody(key: string): boolean {
     || key.includes('sha256')
     || key.includes('reference')
     || key.includes('handle');
+  const metric = key.endsWith('count')
+    || key.endsWith('bytes')
+    || key.endsWith('pixels')
+    || key.endsWith('width')
+    || key.endsWith('height');
   const bounds = key.endsWith('bounds');
-  return !reference && !bounds && (
+  return !reference && !metric && !bounds && (
     key.includes('image') || key.includes('screenshot') || key.includes('pdfbody')
   );
 }
@@ -285,6 +290,7 @@ function validateManifest(value: unknown): asserts value is DrawingAgentAuditMan
     || typeof value.modelProfile.planner !== 'string'
     || typeof value.modelProfile.decision !== 'string'
     || typeof value.modelProfile.repair !== 'string'
+    || typeof value.modelProfile.reviewer !== 'string'
     || (value.goalSpec !== null && !isRecord(value.goalSpec))) {
     throw new Error('必需字段缺失或类型错误');
   }

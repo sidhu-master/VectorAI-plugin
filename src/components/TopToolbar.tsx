@@ -83,7 +83,7 @@ export default function TopToolbar() {
           <DraftingCompass size={15} />
         </span>
         <div className="leading-tight">
-          <span className="block text-[13px] font-semibold tracking-tight text-slate-100">VectorAI</span>
+          <span className="block text-[13px] font-semibold tracking-tight text-slate-100">维构 AI</span>
           <span className="block text-[9px] tracking-wide text-slate-600">二维空间编辑器</span>
         </div>
       </div>

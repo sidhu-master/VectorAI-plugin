@@ -112,6 +112,37 @@ describe('validateDrawingDocument', () => {
     expect(codes).toContain('REFERENCE_NOT_FOUND');
   });
 
+  it('accepts formal leader and centerline annotations and validates their geometry references', () => {
+    const document = validDocument();
+    const circleId = document.geometry[0].id;
+    document.annotations.push({
+      id: 'centerline_1' as AnnotationId,
+      type: 'centerline',
+      visible: true,
+      quality: confirmed,
+      targets: [circleId],
+      start: [0, 10],
+      end: [20, 10],
+      extension: 2,
+    }, {
+      id: 'leader_1' as AnnotationId,
+      type: 'leader',
+      visible: true,
+      quality: confirmed,
+      target: { geometryId: circleId, anchor: { kind: 'center' } },
+      points: [[10, 10], [20, 20]],
+      content: 'C0.5',
+      textHeight: 2.5,
+    });
+
+    expect(validateDrawingDocument(document)).toEqual({ valid: true, issues: [] });
+
+    const leader = document.annotations.at(-1);
+    if (leader?.type !== 'leader') throw new Error('fixture is not a leader');
+    leader.target = { geometryId: 'missing' as GeometryId, anchor: { kind: 'center' } };
+    expect(validateDrawingDocument(document).issues.map((issue) => issue.code)).toContain('REFERENCE_NOT_FOUND');
+  });
+
   it('validates analytic geometry invariants', () => {
     const document = validDocument();
     document.geometry.push(

@@ -25,14 +25,14 @@ export class CleanLineVectorizationService {
 
   async vectorizeSource(input: {
     sourceId: string;
-    maxPixels: number;
+    maxPixels?: number;
     signal: AbortSignal;
   }): Promise<PersistedCleanLineVectorizationResult> {
     const source = await this.#sources.read(input.sourceId);
     if (source.sourceId !== input.sourceId) throw new Error('VECTORIZATION_SOURCE_ID_MISMATCH');
     const result = await this.#provider.vectorize({
       source,
-      maxPixels: input.maxPixels,
+      maxPixels: input.maxPixels ?? Math.min(source.width * source.height, 4_000_000),
       signal: input.signal,
     });
     if (result.sourceId !== input.sourceId
@@ -40,12 +40,20 @@ export class CleanLineVectorizationService {
       throw new Error('VECTORIZATION_SOURCE_SCOPE_MISMATCH');
     }
     const chains = await Promise.all(result.chains.map(async (chain) => {
+      const candidateTypes = chain.pieces
+        .map((piece) => piece.candidate?.type)
+        .filter((type): type is NonNullable<typeof type> => Boolean(type));
+      const candidateConfidence = chain.pieces
+        .map((piece) => piece.candidate?.confidence)
+        .filter((value): value is number => value !== undefined);
       const evidence = await this.#evidence.putEvidence({
         sourceId: input.sourceId,
         regionId: `vector_${chain.id}`,
-        kind: evidenceKind(chain.candidate?.type),
+        kind: evidenceKind(candidateTypes.length === 1 ? candidateTypes[0] : undefined),
         bounds: { ...chain.bounds },
-        confidence: chain.candidate?.confidence ?? 0.8,
+        confidence: candidateConfidence.length === 0
+          ? 0.8
+          : candidateConfidence.reduce((sum, value) => sum + value, 0) / candidateConfidence.length,
         touchesRegionEdge: touchesSourceEdge(chain.bounds, result.width, result.height),
         samples: chain.samples,
       });

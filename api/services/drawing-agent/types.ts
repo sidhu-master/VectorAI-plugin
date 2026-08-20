@@ -211,6 +211,16 @@ export interface DrawingPreviewDefect {
   repairHint?: string;
 }
 
+export interface PreviewReviewEvidence {
+  revision: RevisionId;
+  previewHandle: string;
+  transactionDigest: string;
+  status: 'satisfied' | 'needs_revision' | 'unavailable';
+  reason: string;
+  defects: DrawingPreviewDefect[];
+  reviewedAt: number;
+}
+
 export interface DrawingPreviewVerificationInput {
   goal: string;
   previewDocument: DrawingDocument;
@@ -219,6 +229,20 @@ export interface DrawingPreviewVerificationInput {
   deadlineAt: number;
   beforeObservation?: VisualObservation;
   previewObservation?: VisualObservation;
+  deterministicDiagnostics?: import('../drawing-diagnostics/types.js').DrawingDiagnostic[];
+  /** Exact candidate identity plus the primary model's declared edit contract; context, not proof. */
+  candidateContext?: {
+    previewHandle: string;
+    transactionDigest: string;
+    tool: string;
+    summary: string;
+    intent?: string;
+    targetNodeIds: string[];
+    operationKinds: string[];
+    preserveNodeIds: string[];
+  };
+  /** Feedback from a rejected verifier response when the runtime performs one bounded retry. */
+  protocolFeedback?: string;
   readImage?: (handle: string) => string | null;
   onRawReply?: (role: DrawingModelRole, reply: string) => void;
 }
@@ -237,6 +261,7 @@ export interface DrawingAgentModelProfile {
   planner: string;
   decision: string;
   repair: string;
+  reviewer: string;
 }
 
 export interface StartDrawingAgentRunInput {
@@ -248,6 +273,15 @@ export interface StartDrawingAgentRunInput {
   selectedIds?: string[];
   stableRules?: string[];
   source?: SourceArtifactReference;
-  /** 当前画布视口(世界→屏幕),用于后端渲染"用户所见"的图纸快照 */
+  /** 当前画布视口(世界->屏幕),用于后端渲染"用户所见"的图纸快照 */
   viewport?: { scale: number; offsetX: number; offsetY: number; width: number; height: number };
+  /**
+   * 显式工作流（分区标注流程）：
+   * - 'partition'：结合补充信息对当前图纸做 AI 分区（产出 feature 分区，等待用户预览编辑）；
+   * - 'partitioned-annotation'：按用户确认后的分区生成自动标注。
+   * 缺省走模型主导的编辑/重建循环。
+   */
+  workflow?: DrawingAgentWorkflow;
 }
+
+export type DrawingAgentWorkflow = 'partition' | 'partitioned-annotation';

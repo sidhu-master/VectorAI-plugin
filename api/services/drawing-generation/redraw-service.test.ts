@@ -21,20 +21,25 @@ function vectorization(sourceId: string): CleanLineVectorizationResult {
         id: 'chain_0123456789abcdef0123', closed: false,
         samples: [[10, 10], [30, 10]], simplified: [[10, 10], [30, 10]],
         bounds: { x: 10, y: 10, width: 20, height: 0.5 },
-        candidate: {
+        pieces: [piece('piece_line', [[10, 10], [30, 10]], {
           type: 'line', parameters: { start: [10, 10], end: [30, 10] },
           fitErrorMean: 0, fitErrorP95: 0, fitErrorMax: 0, confidence: 0.98,
-        },
+        })],
+        segmentation: segmentation(),
       },
       {
         id: 'chain_abcdef0123456789abcd', closed: false,
         samples: [[40, 20], [45, 30], [50, 20]], simplified: [[40, 20], [45, 30], [50, 20]],
-        bounds: { x: 40, y: 20, width: 10, height: 10 }, candidate: null,
+        bounds: { x: 40, y: 20, width: 10, height: 10 },
+        pieces: [piece('piece_polyline', [[40, 20], [45, 30], [50, 20]], null)],
+        segmentation: segmentation(),
       },
       {
         id: 'chain_fedcba9876543210fedc', closed: false,
         samples: [[90, 70], [99, 79]], simplified: [[90, 70], [99, 79]],
-        bounds: { x: 90, y: 70, width: 9, height: 9 }, candidate: null,
+        bounds: { x: 90, y: 70, width: 9, height: 9 },
+        pieces: [piece('piece_outside', [[90, 70], [99, 79]], null)],
+        segmentation: segmentation(),
       },
     ],
   };
@@ -58,8 +63,8 @@ describe('DrawingRegionRedrawService', () => {
           ...chain,
           evidence: {
             handle: `evidence_${chain.id}`, sourceId, regionId: `vector_${chain.id}`,
-            kind: chain.candidate ? 'line-candidate' as const : 'polyline-candidate' as const,
-            bounds: chain.bounds, confidence: chain.candidate?.confidence ?? 0.8,
+            kind: chain.pieces[0].candidate ? 'line-candidate' as const : 'polyline-candidate' as const,
+            bounds: chain.bounds, confidence: chain.pieces[0].candidate?.confidence ?? 0.8,
             touchesRegionEdge: false, sampleCount: chain.samples.length,
           },
         })),
@@ -119,3 +124,33 @@ describe('DrawingRegionRedrawService', () => {
     expect(vectorizeSource).not.toHaveBeenCalled();
   });
 });
+
+function piece(
+  id: string,
+  simplified: Array<readonly [number, number]>,
+  candidate: import('../drawing-vectorization/types.js').CleanLinePrimitiveCandidate | null,
+) {
+  const xs = simplified.map((point) => point[0]);
+  const ys = simplified.map((point) => point[1]);
+  return {
+    id,
+    sampleRange: [0, simplified.length - 1] as [number, number],
+    wraps: false,
+    closed: false,
+    simplified,
+    bounds: {
+      x: Math.min(...xs), y: Math.min(...ys),
+      width: Math.max(...xs) - Math.min(...xs),
+      height: Math.max(...ys) - Math.min(...ys),
+    },
+    candidate,
+  };
+}
+
+function segmentation() {
+  return {
+    algorithmVersion: 'adaptive-multiscale-v1', drawingDiagonalPx: 128,
+    chainLengthPx: 20, fitTolerancePx: 1, nearWindowPx: 2, farWindowPx: 4,
+    minimumSpanPx: 4, splitPenalty: 1.5, decisions: [],
+  };
+}

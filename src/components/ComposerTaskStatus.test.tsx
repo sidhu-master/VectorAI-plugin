@@ -46,6 +46,7 @@ describe('ComposerTaskStatusView', () => {
     );
 
     expect(html).toContain('正在确认需要修改的精确轮廓片段');
+    expect(html).toContain('aria-live="polite"');
     expect(html).toContain('7 个候选');
     expect(html).toContain('第 1/3 次尝试');
     expect(html).toContain('停止');

@@ -23,6 +23,10 @@ interface PendingRequest {
   removeAbortListener: () => void;
 }
 
+// The product's 30-second target is a visible-feedback budget, not a hard limit
+// for bounded local geometry extraction. Keep this aligned with vectorize_image.
+export const DEFAULT_VECTORIZATION_TIMEOUT_MS = 120_000;
+
 export class PythonVectorizationError extends Error {
   constructor(readonly code: string, message = code) {
     super(message);
@@ -61,7 +65,7 @@ export class PythonVectorizationProvider implements CleanLineVectorizationProvid
   } = {}): Promise<PythonVectorizationProvider> {
     const pythonPath = options.pythonPath ?? await defaultPythonPath();
     const scriptPath = options.scriptPath ?? resolve(process.cwd(), 'python/vectorai_vectorizer.py');
-    const timeoutMs = options.timeoutMs ?? 30_000;
+    const timeoutMs = options.timeoutMs ?? DEFAULT_VECTORIZATION_TIMEOUT_MS;
     const startupTimeoutMs = options.startupTimeoutMs ?? Math.max(1_000, timeoutMs);
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
       throw new PythonVectorizationError('PYTHON_VECTORIZATION_TIMEOUT_INVALID');
@@ -223,7 +227,22 @@ function parseVectorizationResult(value: unknown, expectedSourceId: string): Cle
         samples: structuredClone(chain.samples) as CleanLineVectorizationResult['chains'][number]['samples'],
         simplified: structuredClone(chain.simplified) as CleanLineVectorizationResult['chains'][number]['simplified'],
         bounds: { x: bounds[0], y: bounds[1], width: bounds[2], height: bounds[3] },
-        candidate: structuredClone(chain.candidate) as CleanLineVectorizationResult['chains'][number]['candidate'],
+        pieces: (chain.pieces as Record<string, unknown>[]).map((piece) => {
+          const pieceBounds = piece.bounds as number[];
+          return {
+            id: piece.id as string,
+            sampleRange: structuredClone(piece.sampleRange) as [number, number],
+            wraps: piece.wraps as boolean,
+            closed: piece.closed as boolean,
+            simplified: structuredClone(piece.simplified) as CleanLineVectorizationResult['chains'][number]['pieces'][number]['simplified'],
+            bounds: {
+              x: pieceBounds[0], y: pieceBounds[1],
+              width: pieceBounds[2], height: pieceBounds[3],
+            },
+            candidate: structuredClone(piece.candidate) as CleanLineVectorizationResult['chains'][number]['pieces'][number]['candidate'],
+          };
+        }),
+        segmentation: structuredClone(chain.segmentation) as CleanLineVectorizationResult['chains'][number]['segmentation'],
       };
     }),
   };
@@ -239,9 +258,110 @@ function validateChain(value: unknown, width: unknown, height: unknown): void {
     || !points(chain.samples, width as number, height as number)
     || !points(chain.simplified, width as number, height as number)
     || !rect(chain.bounds, width as number, height as number)
-    || !(chain.candidate === null || validCandidate(chain.candidate))) {
+    || !validPieces(chain.pieces, chain.closed, (chain.samples as unknown[]).length, width as number, height as number)
+    || !validSegmentation(chain.segmentation, (chain.samples as unknown[]).length)) {
     throw new PythonVectorizationError('PYTHON_VECTORIZATION_CHAIN_INVALID');
   }
+}
+
+function validPieces(
+  value: unknown,
+  chainClosed: unknown,
+  sampleCount: number,
+  width: number,
+  height: number,
+): boolean {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const pieces = value as Record<string, unknown>[];
+  if (!pieces.every((piece) => (
+    piece && typeof piece === 'object' && !Array.isArray(piece)
+    && typeof piece.id === 'string' && /^piece_[a-f0-9]{20}$/.test(piece.id)
+    && Array.isArray(piece.sampleRange) && piece.sampleRange.length === 2
+    && piece.sampleRange.every((item) => Number.isInteger(item) && item >= 0 && item < sampleCount)
+    && typeof piece.wraps === 'boolean'
+    && typeof piece.closed === 'boolean'
+    && points(piece.simplified, width, height)
+    && rect(piece.bounds, width, height)
+    && (piece.candidate === null || validCandidate(piece.candidate))
+  ))) return false;
+  const ids = new Set(pieces.map((piece) => piece.id));
+  if (ids.size !== pieces.length) return false;
+  const ranges = pieces.map((piece) => piece.sampleRange as number[]);
+  if (chainClosed === false) {
+    return pieces.every((piece) => piece.closed === false && piece.wraps === false)
+      && ranges[0][0] === 0
+      && ranges.at(-1)![1] === sampleCount - 1
+      && ranges.every(([start, end], index) => (
+        end > start && (index === 0 || ranges[index - 1][1] === start)
+      ));
+  }
+  if (pieces.length === 1) {
+    return pieces[0].closed === true && pieces[0].wraps === true
+      && ranges[0][0] === 0 && ranges[0][1] === sampleCount - 1;
+  }
+  return pieces.every((piece) => piece.closed === false)
+    && pieces.filter((piece) => piece.wraps).length === 1
+    && pieces.at(-1)!.wraps === true
+    && ranges.every(([start, end], index) => (
+      start !== end
+      && (index === pieces.length - 1
+        ? end === ranges[0][0]
+        : !pieces[index].wraps && end === ranges[index + 1][0] && end > start)
+    ));
+}
+
+function validSegmentation(value: unknown, sampleCount: number): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const audit = value as Record<string, unknown>;
+  const positiveFields = [
+    'drawingDiagonalPx', 'chainLengthPx', 'fitTolerancePx',
+    'nearWindowPx', 'farWindowPx', 'minimumSpanPx', 'splitPenalty',
+  ];
+  if (typeof audit.algorithmVersion !== 'string' || !audit.algorithmVersion
+    || !positiveFields.every((field) => positive(audit[field]))
+    || !Array.isArray(audit.decisions)) return false;
+  if (audit.cycleAssembly !== undefined && !validCycleAssembly(audit.cycleAssembly)) return false;
+  if (audit.continuationAssembly !== undefined
+    && !validContinuationAssembly(audit.continuationAssembly)) return false;
+  return audit.decisions.every((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    const decision = item as Record<string, unknown>;
+    return Number.isInteger(decision.sampleIndex)
+      && (decision.sampleIndex as number) >= 0 && (decision.sampleIndex as number) < sampleCount
+      && finite(decision.nearAngleDegrees) && finite(decision.farAngleDegrees)
+      && finite(decision.stability) && finite(decision.cornerScore)
+      && nullableFinite(decision.combinedFitErrorP95)
+      && Array.isArray(decision.childFitErrorP95) && decision.childFitErrorP95.every(finite)
+      && nullableFinite(decision.splitGain) && nullableFinite(decision.acceptScore)
+      && typeof decision.accepted === 'boolean'
+      && typeof decision.reason === 'string' && decision.reason.length > 0;
+  });
+}
+
+function validCycleAssembly(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const audit = value as Record<string, unknown>;
+  return audit.sourceChainCount === 2
+    && positive(audit.endpointTolerancePx)
+    && positive(audit.fitTolerancePx)
+    && finite(audit.fitErrorP95)
+    && (audit.fitErrorP95 as number) >= 0
+    && audit.fitErrorP95 <= audit.fitTolerancePx
+    && audit.reason === 'shared-endpoints-circle-fit';
+}
+
+function validContinuationAssembly(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const audit = value as Record<string, unknown>;
+  return Number.isInteger(audit.sourceChainCount) && (audit.sourceChainCount as number) >= 2
+    && positive(audit.endpointTolerancePx)
+    && positive(audit.fitTolerancePx)
+    && finite(audit.fitErrorP95) && (audit.fitErrorP95 as number) >= 0
+    && audit.fitErrorP95 <= audit.fitTolerancePx
+    && finite(audit.tangentCosine)
+    && (audit.tangentCosine as number) >= -1 && (audit.tangentCosine as number) <= 1
+    && (audit.modelType === 'line' || audit.modelType === 'arc')
+    && audit.reason === 'shared-endpoint-smooth-analytic-fit';
 }
 
 function validCandidate(value: unknown): boolean {
@@ -274,6 +394,10 @@ function positiveInteger(value: unknown): value is number {
 
 function positive(value: unknown): value is number {
   return finite(value) && value > 0;
+}
+
+function nullableFinite(value: unknown): boolean {
+  return value === null || finite(value);
 }
 
 function finite(value: unknown): value is number {

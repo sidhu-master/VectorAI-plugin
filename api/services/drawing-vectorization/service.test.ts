@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FileCvEvidenceStore } from '../drawing-cv/evidence-store.js';
 import type { CvSourceImage } from '../drawing-cv/types.js';
@@ -17,6 +17,36 @@ afterEach(async () => {
 });
 
 describe('CleanLineVectorizationService', () => {
+  it('derives a bounded analysis budget from source dimensions when callers omit one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vectorai-vectorization-budget-'));
+    directories.push(root);
+    const source: CvSourceImage = {
+      sourceId: 'source_large', mimeType: 'image/png',
+      bytes: Uint8Array.from([1]), width: 3_058, height: 4_103,
+    };
+    const vectorize = vi.fn(async () => ({
+      sourceId: source.sourceId, pipelineVersion: 'fixture-v1',
+      width: source.width, height: source.height,
+      analysisScale: 1, medianLineWidthPx: 0, chains: [],
+    }));
+    const service = new CleanLineVectorizationService({
+      provider: { vectorize, close: async () => undefined },
+      sources: { read: async () => structuredClone(source) },
+      evidence: new FileCvEvidenceStore({
+        rootDirectory: root,
+        resolveSourceSize: async () => ({ width: source.width, height: source.height }),
+      }),
+    });
+
+    await service.vectorizeSource({
+      sourceId: source.sourceId, signal: new AbortController().signal,
+    });
+
+    expect(vectorize).toHaveBeenCalledWith({
+      source, maxPixels: 4_000_000, signal: expect.any(AbortSignal),
+    });
+  });
+
   it('persists complete source-space chains with stable evidence handles', async () => {
     const root = await mkdtemp(join(tmpdir(), 'vectorai-vectorization-service-'));
     directories.push(root);
@@ -37,9 +67,19 @@ describe('CleanLineVectorizationService', () => {
           samples: [[10, 20], [50, 20], [90, 20]],
           simplified: [[10, 20], [90, 20]],
           bounds: { x: 10, y: 20, width: 80, height: 0.5 },
-          candidate: {
-            type: 'line', parameters: { start: [10, 20], end: [90, 20] },
-            fitErrorMean: 0, fitErrorP95: 0, fitErrorMax: 0, confidence: 0.99,
+          pieces: [{
+            id: 'piece_0123456789abcdef0123', sampleRange: [0, 2], wraps: false, closed: false,
+            simplified: [[10, 20], [90, 20]],
+            bounds: { x: 10, y: 20, width: 80, height: 0.5 },
+            candidate: {
+              type: 'line', parameters: { start: [10, 20], end: [90, 20] },
+              fitErrorMean: 0, fitErrorP95: 0, fitErrorMax: 0, confidence: 0.99,
+            },
+          }],
+          segmentation: {
+            algorithmVersion: 'fixture-v2', drawingDiagonalPx: 128.06, chainLengthPx: 80,
+            fitTolerancePx: 2, nearWindowPx: 8, farWindowPx: 16,
+            minimumSpanPx: 16, splitPenalty: 1.5, decisions: [],
           },
         }],
       }),

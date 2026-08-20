@@ -40,7 +40,12 @@ export function ComposerTaskStatusView({
 }) {
   const active = isActive(status);
   return (
-    <section className="mb-2 px-1" aria-label="当前任务状态">
+    <section
+      className="mb-2 px-1"
+      aria-label="当前任务状态"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       <div className="flex min-w-0 items-center gap-2 text-[10px]">
         <StatusIcon presentation={presentation} status={status} />
         <span className={`min-w-0 flex-1 truncate ${

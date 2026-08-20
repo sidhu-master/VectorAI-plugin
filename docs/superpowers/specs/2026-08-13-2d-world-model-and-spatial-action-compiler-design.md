@@ -494,9 +494,10 @@ interface CounterfactualWorldBranch {
 → 生成 Action Proposals
 → 模型选择方案或写新的 Spatial Action Program
 → Compiler 生成 Drawing Transaction Preview
-→ 统一渲染 before / preview / diff
-→ 结构诊断 + 视觉验收
-→ 模型继续修正、请求用户决定或 Commit
+→ 统一渲染并拼接 before | after
+→ 结构诊断 + 独立检查者复核
+→ Review Evidence 返回主模型
+→ 主模型继续修正、请求用户决定或 Commit
 ```
 
 上面是能力闭环，不是每次必须逐项执行的固定 Workflow。Runtime 使用证据驱动的升级策略：
@@ -510,7 +511,7 @@ interface CounterfactualWorldBranch {
 - Compiler 存在 `ready` Proposal，且不需要解除用户约束。
 - 当前 revision 的相关缓存可复用。
 
-模型可以在同一次决策中选择语义候选和 Spatial Action Program；程序随即编译并渲染 Counterfactual Preview。明确数值操作且确定性 postconditions 足够时可以直接提交；视觉设计、重绘或语义目标仍需要一次 Preview 视觉验收。正常任务不为了建立完整语义层级、读取整图或证明全局正确而额外调用模型。
+模型可以在同一次决策中选择语义候选和 Spatial Action Program；程序随即编译并渲染 Counterfactual Preview。确定性导入路径可在局部硬校验后直接提交；主模型产生的语义写入由独立检查者比较 before/after，并把意见交还主模型。检查结论不授权或阻止 Commit。正常任务不为了建立完整语义层级、读取整图或证明全局正确而额外调用模型。
 
 ### 9.2 按需升级
 
@@ -532,7 +533,7 @@ interface CounterfactualWorldBranch {
 - 只发送最新 TaskRelevantView、Evidence Delta 和一张最相关 Observation，不重放完整 GroundingHistory。
 - 确定性只读工具可以并行；模型调用、写事务和需要前序视觉结果的步骤保持串行。
 - 30 秒是可见反馈目标，不是强制终止。超过目标时发布真实状态、可暂停点和已完成证据。
-- 清晰局部任务在首个 Preview 前以一次模型决策为基线；语义/重绘任务通常只再增加一次 Preview 视觉验收。额外轮次记录 `escalationReason`、新增 Evidence refs 和诊断变化。
+- 清晰局部任务在首个 Preview 前以一次主模型决策为基线；语义/重绘任务通常只再增加一次独立复核。只有主模型决定修正时才增加编辑轮次，并记录 `escalationReason`、新增 Evidence refs 和诊断变化。
 - GroundingHistory、可重建的 Counterfactual 派生缓存和大体积审计媒体异步落盘，不占据首个 Preview 的同步关键路径；revision、事务、授权和必要 Evidence 索引仍同步持久化。
 
 UI 只显示最新真实事件，不显示固定流程文案。核心事件包括：

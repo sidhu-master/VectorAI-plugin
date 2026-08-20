@@ -24,13 +24,12 @@ describe('routeSpatialEditStrategy', () => {
     });
 
     const strategy = routeSpatialEditStrategy({
-      goal: '把右手抬起来打招呼',
       document,
-      region: test2RightArmRegion(),
+      region: { ...test2RightArmRegion(), preferredEditMode: 'generative-redraw' },
       selection: selection(),
     });
 
-    expect(strategy.primaryReason).not.toContain('工程几何');
+    expect(strategy.mode).toBe('generative-redraw');
   });
 
   it('forces engineering geometry with constraints onto the geometric path', () => {
@@ -43,7 +42,6 @@ describe('routeSpatialEditStrategy', () => {
     });
 
     expect(routeSpatialEditStrategy({
-      goal: '把工程图中的右臂旋转 30 度并保持连接',
       document,
       region: test2RightArmRegion(),
       selection: selection(),
@@ -53,18 +51,16 @@ describe('routeSpatialEditStrategy', () => {
 
   it('uses generative redraw for a free-form appearance addition', () => {
     expect(routeSpatialEditStrategy({
-      goal: '给角色增加卷发',
       document: test2SharedPolylineDocument(),
-      region: test2RightArmRegion(),
+      region: { ...test2RightArmRegion(), preferredEditMode: 'generative-redraw' },
       selection: selection(),
     }).mode).toBe('generative-redraw');
   });
 
   it('uses hybrid edit when free-form generation must protect named regions', () => {
     const strategy = routeSpatialEditStrategy({
-      goal: '给角色增加卷发，但不遮挡眼睛和脸部轮廓',
       document: test2SharedPolylineDocument(),
-      region: test2RightArmRegion(),
+      region: { ...test2RightArmRegion(), preferredEditMode: 'hybrid-edit' },
       selection: selection(),
       protectedRegionIds: ['region_eyes', 'region_face'],
     });

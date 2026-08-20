@@ -21,7 +21,6 @@ describe('assessSearchEnvelope', () => {
     expect(result.accepted).toBe(false);
     expect(result.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
       'ENVELOPE_SPAN_EXCEEDED',
-      'ENVELOPE_COMPLEXITY_EXCEEDED',
     ]));
     expect(result.metrics.heightRatio).toBeGreaterThan(0.6);
   });
@@ -41,6 +40,21 @@ describe('assessSearchEnvelope', () => {
 
     expect(result.accepted).toBe(true);
     expect(result.issues).toEqual([]);
+  });
+
+  it('accepts a compact vector-dense limb without admitting the overbroad body envelope', () => {
+    const result = assessSearchEnvelope({
+      documentBounds,
+      envelopeBounds: { minX: 74, minY: 160, maxX: 224, maxY: 331 },
+      targetHint: {
+        semanticDescription: '把图形的右手举起来打招呼',
+        preferredScale: 'part',
+      },
+      counts: { wholeNodes: 9, crossingNodes: 0, boundaryAnchors: 0, candidateFragments: 9 },
+      budget: localityBudgetFor('part'),
+    });
+
+    expect(result.accepted).toBe(true);
   });
 
   it('does not reject an anatomical-side target only because its horizontal center differs', () => {

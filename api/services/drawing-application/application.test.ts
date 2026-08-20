@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   type DrawingTransaction,
@@ -172,6 +172,29 @@ describe('DrawingApplication', () => {
     expect((await application.open(workspace.document.id)).commits).toHaveLength(2);
   });
 
+  it('atomically clears every Drawing IR plane without a client revision', async () => {
+    const { application } = setup();
+    const workspace = await application.create();
+    const committed = await application.execute({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(workspace.revision, 'circle_clear'),
+    });
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const cleared = await application.clear({
+      drawingId: workspace.document.id,
+      actor: { type: 'user', id: 'local-user' },
+    });
+
+    expect(cleared.document).toMatchObject({
+      geometry: [], annotations: [], relations: [], features: [],
+    });
+    expect(cleared.revision).not.toBe(committed.revision);
+    expect(cleared.commits.at(-1)).toMatchObject({
+      actor: { type: 'user', id: 'local-user' },
+    });
+  });
+
   it('rejects opening an unknown drawing without fabricating state', async () => {
     const { application } = setup();
     await expect(application.open('missing' as DrawingId)).rejects.toMatchObject({
@@ -235,6 +258,43 @@ describe('DrawingApplication', () => {
       },
     });
     expect(summarized).not.toHaveProperty('document');
+  });
+
+  it('does not load commit history for current-revision read projections', async () => {
+    const { application, repository } = setup();
+    const workspace = await application.create();
+    const committed = await application.execute({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(workspace.revision, 'circle_fast_read'),
+    });
+    if (committed.status !== 'committed') throw new Error('expected commit');
+    const listCommits = vi.spyOn(repository, 'listCommits');
+
+    await application.summarize({ drawingId: workspace.document.id, limit: 20 });
+    await application.query({
+      drawingId: workspace.document.id,
+      selector: { plane: 'geometry', ids: ['circle_fast_read'], limit: 1 },
+    });
+    await application.inspect({ drawingId: workspace.document.id, nodeId: 'circle_fast_read' });
+    await application.observeForAgent({ drawingId: workspace.document.id });
+    await application.renderForVision({
+      drawingId: workspace.document.id,
+      viewport: { scale: 1, offsetX: 0, offsetY: 100, width: 100, height: 100 },
+    });
+    await application.validateRevision({
+      drawingId: workspace.document.id,
+      revision: committed.revision,
+    });
+    await application.preview({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(committed.revision, 'circle_fast_preview'),
+    });
+    await application.execute({
+      drawingId: workspace.document.id,
+      transaction: circleTransaction(committed.revision, 'circle_fast_execute'),
+    });
+
+    expect(listCommits).not.toHaveBeenCalled();
   });
 
   it('inspects one node through the Application boundary without exposing repository state', async () => {
@@ -368,6 +428,21 @@ describe('DrawingApplication', () => {
     expect(observation.vectorDigest.nodes).toEqual([
       expect.objectContaining({ id: 'circle_observe', type: 'circle' }),
     ]);
+  });
+
+  it('exposes revision-bound observation metadata for deterministic spatial resolution', async () => {
+    const { application } = setup();
+    const workspace = await application.create();
+    const observation = await application.observeForAgent({ drawingId: workspace.document.id });
+
+    const stored = application.readObservationView(observation.views[0].id);
+
+    expect(stored).toMatchObject({
+      drawingId: workspace.document.id,
+      revision: workspace.revision,
+      cacheScope: 'canonical',
+      view: { id: observation.views[0].id },
+    });
   });
 });
 

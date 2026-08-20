@@ -27,7 +27,7 @@ const TRANSFORM = [1, 0, 0, -1, 0, 120] as const;
 const REGION = { x: 0, y: 0, width: 120, height: 120 };
 
 describe('DrawingFeedbackLoop', () => {
-  it('bootstraps a clean stroke as polyline before promoting the same node to circle', async () => {
+  it('bootstraps a clean stroke directly as final circle geometry', async () => {
     const fixture = await setup();
     const modelDrawingTypes: string[][] = [];
     const vectorization = {
@@ -44,14 +44,15 @@ describe('DrawingFeedbackLoop', () => {
           samples: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
           simplified: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
           bounds: { x: 30, y: 30, width: 60, height: 60 },
-          candidate: {
+          pieces: [vectorPiece({
             type: 'circle' as const,
             parameters: { center: [60, 60], radius: 30 },
             fitErrorMean: 0.2,
             fitErrorP95: 0.5,
             fitErrorMax: 0.8,
             confidence: 0.96,
-          },
+          })],
+          segmentation: vectorSegmentation(),
           evidence: {
             handle: 'evidence_cccccccccccccccccccccccc',
             sourceId: fixture.input.sourceId,
@@ -76,10 +77,24 @@ describe('DrawingFeedbackLoop', () => {
         output.kind === 'proposal'
       ))
       .map((output) => output.nodes[0]?.type);
-    expect(proposalTypes).toEqual([
-      'polyline', 'circle', 'dimension', 'dimension', 'dimension',
-    ]);
-    expect(outputs.filter((output) => output.kind === 'commit')).toHaveLength(5);
+    const annotationProposal = outputs.find((output): output is Extract<
+      DrawingFeedbackOutput,
+      { kind: 'proposal' }
+    > => output.kind === 'proposal' && output.nodes[0]?.type === 'dimension');
+    const annotationAudit = outputs.find((output): output is Extract<
+      DrawingFeedbackOutput,
+      { kind: 'audit' }
+    > => output.kind === 'audit' && output.payload.event === 'AUTOMATIC_ANNOTATION_BATCH_COMMITTED');
+    expect(proposalTypes).toEqual(['circle', 'dimension']);
+    expect(outputs.filter((output) => output.kind === 'proposal')[0]).toMatchObject({
+      labelsByNodeId: {},
+    });
+    expect(annotationProposal?.nodes).toHaveLength(3);
+    expect(Object.keys(annotationProposal?.labelsByNodeId ?? {})).toHaveLength(3);
+    expect(annotationProposal?.slotIds).toHaveLength(3);
+    expect(annotationAudit?.payload).toMatchObject({ annotationCount: 3 });
+    expect(annotationAudit?.payload.annotations).toHaveLength(3);
+    expect(outputs.filter((output) => output.kind === 'commit')).toHaveLength(2);
     expect(outputs.filter((output) => output.kind === 'state').map((output) => output.stage))
       .toContain('ANNOTATE_GEOMETRY');
     expect(modelDrawingTypes).toEqual([]);
@@ -87,12 +102,16 @@ describe('DrawingFeedbackLoop', () => {
     expect(completedDocument.geometry)
       .toEqual([expect.objectContaining({ type: 'circle', center: [250, 250], radius: 125 })]);
     expect(completedDocument.annotations.map((annotation) => (
-      annotation.type === 'dimension' ? annotation.displayText : annotation.content
+      annotation.type === 'dimension'
+        ? annotation.displayText
+        : annotation.type === 'text' || annotation.type === 'leader'
+          ? annotation.content
+          : annotation.type
     ))).toEqual(['250', '250', 'Ø250']);
     expect(outputs.at(-1)).toMatchObject({ kind: 'completed', unresolvedRequired: 0 });
   });
 
-  it('pauses before the first vectorization transaction and resumes without duplicate drafts', async () => {
+  it('pauses before the first vectorization batch and resumes without duplicate geometry', async () => {
     const fixture = await setup();
     let pause = true;
     const vectorization = cleanVectorization(fixture.input.sourceId);
@@ -114,17 +133,44 @@ describe('DrawingFeedbackLoop', () => {
       ...fixture.input, checkpoint, shouldPause: () => pause,
     }));
 
-    expect(resumed.filter((output) => output.kind === 'commit')).toHaveLength(5);
+    expect(resumed.filter((output) => output.kind === 'commit')).toHaveLength(2);
     const resumedDocument = (await fixture.application.open(fixture.input.drawingId)).document;
     expect(resumedDocument.geometry).toEqual([expect.objectContaining({ type: 'circle' })]);
     expect(resumedDocument.annotations).toHaveLength(3);
   });
 
-  it('keeps a committed polyline when its analytic promotion fails Drawing validation', async () => {
+  it('atomically replaces an existing vector reconstruction before committing new batches', async () => {
+    const fixture = await setup();
+    const vectorization = cleanVectorization(fixture.input.sourceId);
+    const initial = await collect(fixture.loopWith(
+      [], () => ({ type: 'finish', summary: '无需模型' }), undefined,
+      async () => metricReport(1, 0, 0, true),
+      { vectorizeSource: async () => vectorization },
+    ).run(fixture.input));
+    const prior = await fixture.application.open(fixture.input.drawingId);
+    expect(initial.at(-1)).toMatchObject({ kind: 'completed' });
+
+    const outputs = await collect(fixture.loopWith(
+      [], () => ({ type: 'finish', summary: '无需模型' }), undefined,
+      async () => metricReport(1, 0, 0, true),
+      { vectorizeSource: async () => vectorization },
+    ).run({ ...fixture.input, runId: 'run_feedback_rebuild', revision: prior.revision }));
+
+    expect(outputs).not.toContainEqual(expect.objectContaining({
+      kind: 'audit', payload: expect.objectContaining({ event: 'VECTORIZATION_STEP_REJECTED' }),
+    }));
+    expect(outputs.at(-1)).toMatchObject({ kind: 'completed' });
+    const rebuilt = (await fixture.application.open(fixture.input.drawingId)).document;
+    expect(rebuilt.geometry).toEqual([expect.objectContaining({ type: 'circle' })]);
+    expect(rebuilt.annotations).toHaveLength(3);
+  });
+
+  it('falls back to a valid polyline before batching an invalid analytic candidate', async () => {
     const fixture = await setup();
     const vectorization = cleanVectorization(fixture.input.sourceId);
     vectorization.chains[0].closed = false;
-    vectorization.chains[0].candidate = {
+    vectorization.chains[0].pieces[0].closed = false;
+    vectorization.chains[0].pieces[0].candidate = {
       type: 'line',
       parameters: { start: [60, 60], end: [60, 60] },
       fitErrorMean: 0,
@@ -142,9 +188,59 @@ describe('DrawingFeedbackLoop', () => {
 
     const outputs = await collect(loop.run(fixture.input));
 
-    expect(outputs).toContainEqual(expect.objectContaining({ kind: 'correction', action: 'reject' }));
+    expect(outputs).not.toContainEqual(expect.objectContaining({ kind: 'correction', action: 'reject' }));
     expect((await fixture.application.open(fixture.input.drawingId)).document.geometry)
       .toEqual([expect.objectContaining({ type: 'polyline' })]);
+  });
+
+  it('commits 97 vector chains as three progressive batches with no draft labels', async () => {
+    const fixture = await setup();
+    const vectorization = cleanVectorization(fixture.input.sourceId);
+    const template = vectorization.chains[0];
+    template.closed = false;
+    template.pieces = [vectorPiece(null)];
+    template.pieces[0].closed = false;
+    vectorization.chains = Array.from({ length: 97 }, (_, index) => ({
+      ...structuredClone(template),
+      id: `chain_${String(index).padStart(20, '0')}`,
+      bounds: { x: index, y: 1, width: 1, height: 1 },
+      evidence: {
+        ...structuredClone(template.evidence),
+        handle: `evidence_${String(index).padStart(24, '0')}`,
+      },
+    }));
+    const loop = fixture.loopWith(
+      [],
+      () => ({ type: 'finish', summary: '无需模型' }),
+      undefined,
+      async () => metricReport(1, 0, 0, true),
+      { vectorizeSource: async () => vectorization },
+    );
+
+    const outputs = await collect(loop.run(fixture.input));
+    const vectorCommits = outputs.filter((output) => (
+      output.kind === 'commit' && output.slotIds.every((id) => !id.startsWith('annotation:'))
+    ));
+    const vectorProposals = outputs.filter((output): output is Extract<
+      DrawingFeedbackOutput,
+      { kind: 'proposal' }
+    > => output.kind === 'proposal' && !output.slotId.startsWith('annotation:'));
+    const batchAudits = outputs.filter((output): output is Extract<
+      DrawingFeedbackOutput,
+      { kind: 'audit' }
+    > => output.kind === 'audit' && output.payload.event === 'VECTORIZATION_STEP_COMMITTED');
+
+    expect(vectorCommits).toHaveLength(3);
+    expect(vectorProposals).toHaveLength(3);
+    expect(vectorProposals.every((proposal) => (
+      Object.keys(proposal.labelsByNodeId).length === 0
+    ))).toBe(true);
+    expect(batchAudits.map((output) => output.payload.chainCount)).toEqual([48, 48, 1]);
+    expect(batchAudits.flatMap((output) => (
+      output.payload.chains as Array<{ chainId: string }>
+    )).map((chain) => chain.chainId)).toHaveLength(97);
+    expect((await fixture.application.open(fixture.input.drawingId)).document.geometry)
+      .toHaveLength(97);
   });
 
   it('accepts a high-coverage vector result without sending tiny raster speckles to the model', async () => {
@@ -1015,14 +1111,15 @@ function cleanVectorization(sourceId: string): PersistedCleanLineVectorizationRe
       samples: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
       simplified: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
       bounds: { x: 30, y: 30, width: 60, height: 60 },
-      candidate: {
+      pieces: [vectorPiece({
         type: 'circle' as const,
         parameters: { center: [60, 60], radius: 30 },
         fitErrorMean: 0.2,
         fitErrorP95: 0.5,
         fitErrorMax: 0.8,
         confidence: 0.96,
-      },
+      })],
+      segmentation: vectorSegmentation(),
       evidence: {
         handle: 'evidence_cccccccccccccccccccccccc',
         sourceId,
@@ -1034,6 +1131,28 @@ function cleanVectorization(sourceId: string): PersistedCleanLineVectorizationRe
         sampleCount: 4,
       },
     }],
+  };
+}
+
+function vectorPiece(
+  candidate: import('../drawing-vectorization/types.js').CleanLinePrimitiveCandidate | null,
+) {
+  return {
+    id: 'piece_0123456789abcdef0123',
+    sampleRange: [0, 3] as [number, number],
+    wraps: false,
+    closed: true,
+    simplified: [[30, 60], [60, 30], [90, 60], [60, 90]] as Array<readonly [number, number]>,
+    bounds: { x: 30, y: 30, width: 60, height: 60 },
+    candidate,
+  };
+}
+
+function vectorSegmentation() {
+  return {
+    algorithmVersion: 'adaptive-multiscale-v1', drawingDiagonalPx: 170,
+    chainLengthPx: 170, fitTolerancePx: 1, nearWindowPx: 4, farWindowPx: 8,
+    minimumSpanPx: 8, splitPenalty: 1.5, decisions: [],
   };
 }
 
@@ -1082,6 +1201,7 @@ async function setup() {
     goal: '重建来源图纸',
     modelProfile: {
       planner: 'doubao-seed-2.0-lite', decision: 'doubao-seed-2.0-lite', repair: 'doubao-seed-2.1-turbo',
+      reviewer: 'doubao-seed-2.1-turbo',
     },
     signal: new AbortController().signal,
   };

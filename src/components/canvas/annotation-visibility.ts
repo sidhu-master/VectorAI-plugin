@@ -6,5 +6,11 @@ export function filterCanvasAnnotations<T extends DrawingRenderable>(
 ): T[] {
   return showAnnotations
     ? [...entities]
-    : entities.filter((entity) => entity.type !== 'text' && entity.type !== 'dimension');
+    : entities.filter((entity) => (
+      entity.type !== 'text'
+      && entity.type !== 'dimension'
+      && entity.type !== 'leader'
+      && entity.type !== 'centerline'
+      && entity.type !== 'section-hatch'
+    ));
 }

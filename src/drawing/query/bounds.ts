@@ -42,6 +42,35 @@ export function annotationBounds(node: AnnotationNode): Bounds2D {
     return boundsFromPoints([node.textPosition, ...node.definitionPoints]);
   }
 
+  if (node.type === 'leader') {
+    const textOrigin = node.points.at(-1) ?? [0, 0];
+    const textWidth = Math.max(node.textHeight * 0.6, node.content.length * node.textHeight * 0.6);
+    return unionBounds([
+      boundsFromPoints(node.points),
+      boundsFromPoints([
+        textOrigin,
+        [textOrigin[0] + textWidth, textOrigin[1] + node.textHeight],
+      ]),
+    ])!;
+  }
+
+  if (node.type === 'centerline') {
+    const dx = node.end[0] - node.start[0];
+    const dy = node.end[1] - node.start[1];
+    const length = Math.hypot(dx, dy);
+    if (!(length > EPSILON)) return boundsFromPoints([node.start]);
+    const ux = dx / length;
+    const uy = dy / length;
+    return boundsFromPoints([
+      [node.start[0] - ux * node.extension, node.start[1] - uy * node.extension],
+      [node.end[0] + ux * node.extension, node.end[1] + uy * node.extension],
+    ]);
+  }
+
+  if (node.type === 'section-hatch') {
+    return boundsFromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+  }
+
   const width = node.maxWidth ?? Math.max(node.height * 0.6, node.content.length * node.height * 0.6);
   const left = node.alignment === 'center' ? -width / 2 : node.alignment === 'right' ? -width : 0;
   const bottom = node.verticalAlignment === 'top'

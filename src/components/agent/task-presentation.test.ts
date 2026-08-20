@@ -62,6 +62,80 @@ describe('Agent task presentation', () => {
     expect(presentation.tone).toBe('danger');
   });
 
+  it.each(['complete', 'error', 'stopped'] as const)(
+    'hides stale candidate attempt progress after the task reaches %s',
+    (status) => {
+      const terminalType = status === 'complete'
+        ? 'completed'
+        : status === 'error'
+          ? 'failed'
+          : 'stopped';
+      const presentation = presentAgentTask({
+        status,
+        error: status === 'error' ? '任务失败' : null,
+        nowMs: 130_000,
+        events: [
+          event('verifying', '正在复核候选结果', 12_000, {
+            candidateAttempt: 1,
+            maxCandidateAttempts: 3,
+          }),
+          event(terminalType, status === 'complete' ? '任务已完成' : '任务已结束', 18_000),
+        ],
+      });
+
+      expect(presentation.attemptLabel).toBeNull();
+    },
+  );
+
+  it('keeps protocol repair and successful recovery visible across generic model events', () => {
+    const repairing = presentAgentTask({
+      status: 'running', error: null, nowMs: 120_000,
+      events: [
+        event('accepted', '任务已接收', 0),
+        event('protocol_repairing', '模型输出格式需要校正', 12_000, {
+          detail: '正在进行第 1/2 次自动纠正',
+        }),
+        event('model_started', '正在根据当前图纸决定下一步', 12_100),
+      ],
+    });
+    const recovered = presentAgentTask({
+      status: 'running', error: null, nowMs: 122_000,
+      events: [
+        event('protocol_repairing', '模型输出格式需要校正', 12_000),
+        event('protocol_recovered', '输出格式已恢复，继续执行', 18_000, {
+          detail: '第 1/2 次自动纠正已成功',
+        }),
+        event('model_finished', '已确定下一步', 18_010),
+      ],
+    });
+    const completed = presentAgentTask({
+      status: 'complete', error: null, nowMs: 123_000,
+      events: [
+        event('protocol_repairing', '模型输出格式需要校正', 12_000),
+        event('protocol_recovered', '输出格式已恢复，继续执行', 18_000),
+        event('completed', '图纸重建完成', 20_000, {
+          detail: '执行期间已完成 1 次自动纠正',
+        }),
+      ],
+    });
+
+    expect(repairing).toMatchObject({
+      heading: '模型输出格式需要校正',
+      detail: '正在进行第 1/2 次自动纠正',
+      tone: 'active',
+    });
+    expect(recovered).toMatchObject({
+      heading: '输出格式已恢复，继续执行',
+      detail: '第 1/2 次自动纠正已成功',
+      tone: 'success',
+    });
+    expect(completed).toMatchObject({
+      heading: '图纸重建完成',
+      detail: '执行期间已完成 1 次自动纠正',
+      tone: 'success',
+    });
+  });
+
   it.each([
     ['planning', '正在准备任务', 'active'],
     ['paused', '任务已暂停', 'paused'],

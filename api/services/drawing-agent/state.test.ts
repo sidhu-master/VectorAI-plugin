@@ -190,6 +190,11 @@ describe('Model-led Drawing Agent state machine', () => {
     state = reduceModelLed(state, {
       type: 'PREVIEW_READY', previewHandle: 'preview_2', candidateDigest: 'digest_a',
     });
+    state = reduceModelLed(state, {
+      type: 'DIAGNOSTICS_RECORDED', diagnostics: [{
+        code: 'CURRENT_PREVIEW_WARNING', severity: 'warning', nodeIds: ['line_b'],
+      }],
+    });
 
     expect(state).toMatchObject({
       currentPreviewHandle: 'preview_2', actionCount: 1, toolCallCount: 1,
@@ -197,7 +202,7 @@ describe('Model-led Drawing Agent state machine', () => {
       latestActivity: { title: '正在查看拓扑' },
     });
     expect(state.recentDiagnostics).toEqual([
-      { code: 'NEW_DANGLING_ENDPOINT', severity: 'warning', nodeIds: ['line_a'] },
+      { code: 'CURRENT_PREVIEW_WARNING', severity: 'warning', nodeIds: ['line_b'] },
     ]);
   });
 
@@ -241,7 +246,8 @@ describe('Model-led Drawing Agent state machine', () => {
       .toBe('MAX_TOOL_CALLS');
     expect(checkModelLedDrawingAgentBudget({ ...budgeted, consecutiveReadCount: 1 }, 0)?.code)
       .toBe('MAX_CONSECUTIVE_READS');
-    expect(checkModelLedDrawingAgentBudget({ ...budgeted, commitCount: 1 }, 0)?.code)
+    expect(checkModelLedDrawingAgentBudget({ ...budgeted, commitCount: 1 }, 0)).toBeNull();
+    expect(checkModelLedDrawingAgentBudget({ ...budgeted, budgetedCommitCount: 1 }, 0)?.code)
       .toBe('MAX_COMMITS');
     expect(checkModelLedDrawingAgentBudget(budgeted, 100)?.code).toBe('DEADLINE_EXCEEDED');
   });
@@ -253,8 +259,19 @@ describe('Model-led Drawing Agent state machine', () => {
     state = reduceModelLed(state, { type: 'COMPLETED', summary: '已完成编辑' });
     expect(state).toMatchObject({
       status: 'completed', revision: 'revision_2', commitCount: 1,
+      budgetedCommitCount: 1,
       analysisSummary: '已完成编辑', currentPreviewHandle: null,
     });
+  });
+
+  it('tracks deterministic import commits without spending the semantic edit budget', () => {
+    const state = reduceModelLed(modelLedInitial(), {
+      type: 'COMMIT_RECORDED', revision: 'revision_2' as RevisionId,
+      countsTowardBudget: false,
+    });
+
+    expect(state).toMatchObject({ commitCount: 1, budgetedCommitCount: 0 });
+    expect(checkModelLedDrawingAgentBudget(state, 0)).toBeNull();
   });
 });
 

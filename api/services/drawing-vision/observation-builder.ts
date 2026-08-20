@@ -29,8 +29,17 @@ export interface BuildVisualObservationInput {
   cacheScope?: string;
   includeAnnotations?: boolean;
   selectedIds?: string[];
+  /** Selection stays visually highlighted, but only explicit user references create a detail target. */
+  selectionIsTarget?: boolean;
   targetBounds?: Bounds2D;
   userViewport?: AgentObservationViewport;
+}
+
+export interface StoredObservationView {
+  drawingId: DrawingDocument['id'];
+  revision: RevisionId;
+  cacheScope: string;
+  view: VisualObservationView;
 }
 
 export class DrawingObservationBuilder {
@@ -38,6 +47,7 @@ export class DrawingObservationBuilder {
   readonly #maxImages: number;
   readonly #images = new Map<string, string>();
   readonly #viewCache = new Map<string, VisualObservationView>();
+  readonly #viewsById = new Map<string, StoredObservationView>();
   readonly #inflight = new Map<string, Promise<VisualObservationView>>();
 
   constructor(input: {
@@ -76,9 +86,11 @@ export class DrawingObservationBuilder {
       viewport: fitBounds(documentBounds, 1024, 1024, 0.08),
       selectedIds,
     }];
-    const selectedBounds = input.targetBounds ?? unionBounds(selectedIds
-      .map((id) => baseScene.nodeIndex[id]?.worldBounds)
-      .filter((bounds): bounds is Bounds2D => Boolean(bounds)));
+    const selectedBounds = input.targetBounds ?? (input.selectionIsTarget === false
+      ? null
+      : unionBounds(selectedIds
+        .map((id) => baseScene.nodeIndex[id]?.worldBounds)
+        .filter((bounds): bounds is Bounds2D => Boolean(bounds))));
     if (selectedBounds) {
       requests.push({
         purpose: 'target-detail',
@@ -110,6 +122,14 @@ export class DrawingObservationBuilder {
     this.#images.delete(handle);
     this.#images.set(handle, image);
     return image;
+  }
+
+  readView(viewId: string): StoredObservationView | null {
+    const stored = this.#viewsById.get(viewId);
+    if (!stored) return null;
+    this.#viewsById.delete(viewId);
+    this.#viewsById.set(viewId, stored);
+    return structuredClone(stored);
   }
 
   async #buildView(
@@ -161,8 +181,17 @@ export class DrawingObservationBuilder {
       grounding: structuredClone(snapshot.nodes),
     };
     this.#viewCache.set(cacheKey, structuredClone(view));
+    this.#viewsById.set(view.id, {
+      drawingId: input.document.id,
+      revision: input.revision,
+      cacheScope: input.cacheScope ?? 'canonical',
+      view: structuredClone(view),
+    });
     while (this.#viewCache.size > this.#maxImages) {
       this.#viewCache.delete(this.#viewCache.keys().next().value!);
+    }
+    while (this.#viewsById.size > this.#maxImages) {
+      this.#viewsById.delete(this.#viewsById.keys().next().value!);
     }
     return view;
   }

@@ -94,6 +94,125 @@ describe('compileDrawingScene', () => {
     });
   });
 
+  it('compiles leaders and centerlines as display-only annotation primitives', () => {
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const scene = compileDrawingScene(documentWith(allGeometry(), [{
+      id: 'leader' as never,
+      type: 'leader',
+      visible: true,
+      quality,
+      target: { geometryId: 'circle' as never, anchor: { kind: 'center' } },
+      points: [[20, 20], [30, 30], [38, 30]],
+      content: 'C0.5',
+      textHeight: 2.5,
+    }, {
+      id: 'centerline' as never,
+      type: 'centerline',
+      visible: true,
+      quality,
+      targets: ['circle' as never],
+      start: [5, 20],
+      end: [35, 20],
+      extension: 3,
+    }]), {
+      revision: 'revision_scene_annotations' as RevisionId,
+      viewBounds: { minX: -100, minY: -100, maxX: 100, maxY: 100 },
+      scale: 2,
+    });
+
+    expect(scene.primitives.filter((item) => item.nodeId === 'leader').map((item) => (
+      [item.plane, item.semanticRole, item.kind]
+    ))).toEqual([
+      ['annotation', 'leader-line', 'path'],
+      ['annotation', 'leader-arrow', 'path'],
+      ['text', 'leader-text', 'text'],
+    ]);
+    expect(scene.primitives.filter((item) => item.nodeId === 'centerline')).toEqual([
+      expect.objectContaining({
+        plane: 'annotation', semanticRole: 'centerline', kind: 'path',
+        commands: [{ op: 'M', point: [2, 20] }, { op: 'L', point: [38, 20] }],
+      }),
+    ]);
+  });
+
+  it('compiles angular dimensions into two boundary rays, a circular arc, and tangent arrows', () => {
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const angular: AnnotationNode = {
+      id: 'dimension_angular' as never,
+      type: 'dimension',
+      visible: true,
+      quality,
+      dimensionKind: 'angular',
+      associationStatus: 'resolved',
+      targets: [],
+      computedValue: 60,
+      displayText: '60°',
+      unit: 'deg',
+      textPosition: [7, 12.124356],
+      definitionPoints: [
+        [0, 0],
+        [20, 0],
+        [10, 17.320508],
+        [10, 0],
+        [5, 8.660254],
+      ],
+    };
+
+    const scene = compileDrawingScene(documentWith([], [angular]), {
+      revision: 'revision_scene_angular' as RevisionId,
+      scale: 1,
+    });
+    const primitives = scene.primitives.filter((item) => item.nodeId === angular.id);
+    expect(primitives.map((item) => item.semanticRole)).toEqual([
+      'dimension-angular-extension',
+      'dimension-angular-extension',
+      'dimension-angular-arc',
+      'dimension-arrow',
+      'dimension-arrow',
+      'dimension-text',
+    ]);
+    expect(primitives[2]).toMatchObject({
+      kind: 'path',
+      commands: [{ op: 'M', point: [10, 0] }, {
+        op: 'A', center: [0, 0], rotation: 0, startAngle: 0, counterClockwise: true,
+      }],
+    });
+    const arc = primitives[2].kind === 'path' ? primitives[2].commands[1] : undefined;
+    expect(arc?.op).toBe('A');
+    if (arc?.op === 'A') {
+      expect(arc.radiusX).toBeCloseTo(10, 6);
+      expect(arc.radiusY).toBeCloseTo(10, 6);
+      expect(arc.endAngle).toBeCloseTo(Math.PI / 3, 6);
+    }
+  });
+
+  it('compiles a section hatch as one display-only path with disconnected segments', () => {
+    const hatch = {
+      id: 'hatch_1',
+      type: 'section-hatch',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      pattern: 'ANSI31',
+      angle: 45,
+      spacing: 2,
+      segments: [
+        { start: [0, 0], end: [4, 4] },
+        { start: [0, 2], end: [2, 4] },
+      ],
+    } as unknown as AnnotationNode;
+
+    const scene = compileDrawingScene(documentWith([], [hatch]), {
+      revision: 'revision_scene_hatch' as RevisionId,
+    });
+    const primitive = scene.primitives.find((item) => item.semanticRole === 'section-hatch');
+
+    expect(primitive).toMatchObject({ kind: 'path', plane: 'annotation', role: 'annotation' });
+    expect(primitive?.kind === 'path' ? primitive.commands : []).toEqual([
+      { op: 'M', point: [0, 0] }, { op: 'L', point: [4, 4] },
+      { op: 'M', point: [0, 2] }, { op: 'L', point: [2, 4] },
+    ]);
+  });
+
   it('clips ray and xline geometry to the requested view bounds', () => {
     const scene = compileDrawingScene(documentWith(allGeometry()), {
       revision: 'revision_scene_1' as RevisionId,

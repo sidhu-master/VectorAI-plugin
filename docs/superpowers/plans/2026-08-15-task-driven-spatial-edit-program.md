@@ -27,11 +27,11 @@
 - Create: `api/services/drawing-spatial-program/point-resolver.ts`
 - Create: `api/services/drawing-spatial-program/point-resolver.test.ts`
 
-- [ ] Add failing tests for reading a view by observation ID, drawing/revision isolation, expiry, and affine inverse round-trip including inverted Y.
-- [ ] Expose immutable revision-bound observation metadata without exposing image bytes or mutable cache state.
-- [ ] Implement `SpatialPointRef` resolution for observation, document-world, and node-anchor references.
-- [ ] Return stable error codes for missing, stale, foreign, unsupported, or singular references.
-- [ ] Run the three focused suites until green.
+- [x] Add failing tests for reading a view by observation ID, drawing/revision isolation, expiry, and affine inverse round-trip including inverted Y.
+- [x] Expose immutable revision-bound observation metadata without exposing image bytes or mutable cache state.
+- [x] Implement `SpatialPointRef` resolution for observation, document-world, and node-anchor references.
+- [x] Return stable error codes for missing, stale, foreign, unsupported, or singular references.
+- [x] Run the three focused suites until green.
 
 ### Task 2: Program protocol and generic compiler
 
@@ -43,12 +43,12 @@
 - Create: `api/services/drawing-spatial-program/compiler.test.ts`
 - Create: `api/services/drawing-spatial-program/index.ts`
 
-- [ ] Add failing schema tests for valid programs and malformed operations, point refs, confidence, empty targets, and out-of-range normalized points.
-- [ ] Implement strict parsing with bounded operation/node/reference counts.
-- [ ] Add failing compiler tests for generic translate, endpoint edits on open geometry, path creation, deletion, sequential composition, preserve conflicts, and atomic failure.
-- [ ] Implement compilation to existing Drawing Commands without mutating canonical state.
-- [ ] Add postcondition diagnostics for anchor coincidence, anchor-at, unchanged nodes, and closed paths.
-- [ ] Prove unmentioned nodes remain byte-equivalent and rerun focused tests.
+- [x] Add failing schema tests for valid programs and malformed operations, point refs, confidence, empty targets, and out-of-range normalized points.
+- [x] Implement strict parsing with bounded operation/node/reference counts.
+- [x] Add failing compiler tests for generic translate, endpoint edits on open geometry, path creation, deletion, sequential composition, preserve conflicts, and atomic failure.
+- [x] Implement compilation to existing Drawing Commands without mutating canonical state.
+- [x] Add postcondition diagnostics for anchor coincidence, anchor-at, unchanged nodes, and closed paths.
+- [x] Prove unmentioned nodes remain byte-equivalent and rerun focused tests.
 
 ### Task 3: `preview_spatial_program` model tool
 
@@ -59,12 +59,12 @@
 - Modify: `api/services/drawing-tools/index.ts`
 - Modify: `api/services/drawing-tools/types.ts`
 
-- [ ] Add a failing tool contract test requiring the program schema and compact result contract.
-- [ ] Add failing integration tests for canonical-based Preview, observation point mapping, `replacesPreviewHandle`, stale observation rejection, and preserve conflict.
-- [ ] Compile the program and feed its commands into the existing Preview/counterfactual machinery.
-- [ ] Return normalized program, resolution/operation receipts, diagnostics, Preview observation, counterfactual reference, and interaction frame.
-- [ ] Ensure the existing registry still owns audit, timeout, revision and write semantics.
-- [ ] Run DrawingModelTools and registry focused suites until green.
+- [x] Add a failing tool contract test requiring the program schema and compact result contract.
+- [x] Add failing integration tests for canonical-based Preview, observation point mapping, `replacesPreviewHandle`, stale observation rejection, and preserve conflict.
+- [x] Compile the program and feed its commands into the existing Preview/counterfactual machinery.
+- [x] Return normalized program, resolution/operation receipts, diagnostics, Preview observation, counterfactual reference, and interaction frame.
+- [x] Ensure the existing registry still owns audit, timeout, revision and write semantics.
+- [x] Run DrawingModelTools and registry focused suites until green.
 
 ### Task 4: Live interaction projection
 
@@ -74,11 +74,11 @@
 - Modify: `api/services/drawing-agent/model-loop-runtime.ts`
 - Modify: `api/services/drawing-agent/model-loop-runtime.test.ts`
 
-- [ ] Add failing projector tests for program targets, observation/node anchors, interfaces, motion vectors and Preview before/after strokes.
-- [ ] Project a bounded pre-execution planning frame from model inputs and a precise post-execution delta frame from the compiled Preview.
-- [ ] Add the new tool to projectable intent, overlay forwarding, progress presentation and preview-delta extraction.
-- [ ] Assert UI progress is based on actual tool data and independent review starts for the new Preview.
-- [ ] Run projector and runtime suites until green.
+- [x] Add failing projector tests for program targets, observation/node anchors, interfaces, motion vectors and Preview before/after strokes.
+- [x] Project a bounded pre-execution planning frame from model inputs and a precise post-execution delta frame from the compiled Preview.
+- [x] Add the new tool to projectable intent, overlay forwarding, progress presentation and preview-delta extraction.
+- [x] Assert UI progress is based on actual tool data and independent review starts for the new Preview.
+- [x] Run projector and runtime suites until green.
 
 ### Task 5: Model policy and review loop
 
@@ -92,11 +92,11 @@
 - Modify: `api/services/drawing-agent/preview-verifier.ts`
 - Modify: `api/services/drawing-agent/preview-verifier.test.ts`
 
-- [ ] Add failing prompt/policy tests proving the program is the default resolved-task path while local grounding and raw editing stay reachable.
-- [ ] Tell the model to externalize an action plan, use observation refs, preserve unmentioned content, and avoid manual coordinate inversion.
-- [ ] Teach alias/context compaction about program node references and compact receipts without losing Preview identity.
-- [ ] Ensure the independent reviewer receives the program summary and the exact Preview handle it evaluates.
-- [ ] Verify the main model can explicitly revise a Preview or replace it from canonical after feedback.
+- [x] Add failing prompt/policy tests proving the program is the default resolved-task path while local grounding and raw editing stay reachable.
+- [x] Tell the model to externalize an action plan, use observation refs, preserve unmentioned content, and avoid manual coordinate inversion.
+- [x] Teach alias/context compaction about program node references and compact receipts without losing Preview identity.
+- [x] Ensure the independent reviewer receives the program summary and the exact Preview handle it evaluates.
+- [x] Verify the main model can explicitly revise a Preview or replace it from canonical after feedback.
 
 ### Task 6: Generic regression and architecture documents
 
@@ -106,20 +106,27 @@
 - Modify: `docs/tech-architecture.md`
 - Modify: `docs/agent-execution-flow.md`
 
-- [ ] Build a semantic-neutral fixture with a carrier geometry, two connector paths, nearby unrelated geometry and an observation transform.
-- [ ] Execute a program that moves the carrier, reconnects explicit interfaces, preserves unrelated geometry and satisfies declared postconditions.
-- [ ] Assert canonical is unchanged before commit, the Preview has no dangling interfaces, unrelated geometry is unchanged, and commit is atomic/auditable.
-- [ ] Update product and architecture docs so task-driven programs are primary, local candidates are optional, and free redraw remains an escape hatch.
-- [ ] Search production source for prohibited example-specific rules and remove any remaining ones.
+- [x] Build a semantic-neutral fixture with a carrier geometry, two connector paths, nearby unrelated geometry and an observation transform.
+- [x] Execute a program that moves the carrier, reconnects explicit interfaces, preserves unrelated geometry and satisfies declared postconditions.
+- [x] Assert canonical is unchanged before commit, the Preview has no dangling interfaces, unrelated geometry is unchanged, and commit is atomic/auditable.
+- [x] Update product and architecture docs so task-driven programs are primary, local candidates are optional, and free redraw remains an escape hatch.
+- [x] Search production source for prohibited example-specific rules and remove any remaining ones.
 
 ### Task 7: Full verification and browser acceptance
 
 **Files:**
 - Modify only when verification exposes a defect.
 
-- [ ] Run all spatial-program, tool, runtime, verifier and application focused suites together.
-- [ ] Run `pnpm check`, `pnpm lint`, `pnpm build`, and the repository test command.
-- [ ] Run `git diff --check` and inspect the task-specific diff for accidental user-file changes.
-- [ ] Restart local services and use the in-app browser to upload the clean line drawing and submit a general spatial edit.
-- [ ] Verify the canvas shows actual target/anchor/motion/Preview evidence, review feedback binds to the right Preview, and canonical changes only after acceptance.
-- [ ] Record any remaining model-quality limitation separately from architecture/test failures.
+- [x] Run all spatial-program, tool, runtime, verifier and application focused suites together.
+- [x] Run `pnpm check`, `pnpm lint`, `pnpm build`, and the repository test command.
+- [x] Run `git diff --check` and inspect the task-specific diff for accidental user-file changes.
+- [x] Restart local services and use the in-app browser to upload the clean line drawing and submit a general spatial edit.
+- [x] Verify the canvas shows actual target/anchor/motion/Preview evidence, review feedback binds to the right Preview, and canonical changes only after acceptance.
+- [x] Record any remaining model-quality limitation separately from architecture/test failures.
+
+## Acceptance record — 2026-08-15
+
+- Real browser run: `run_ac87887c-4bf1-40a0-97e9-5f4123253f70`.
+- The first candidate was visibly projected and independently rejected for broken connections; the second valid candidate was independently accepted and atomically committed at `revision_e58728ac-4c93-4dab-aa8b-ad1f4331d464`.
+- The first model request fell from the previous observed 47,802 input tokens / 107,752 request bytes to 15,869 input tokens / 53,459 request bytes. Repair-turn request sizes remained bounded around 73–75 KB instead of growing with every replaced candidate.
+- The light model confused Spatial Program postconditions with low-level `revise_preview` Drawing Assertions three times before recovering. This is a replaceable-model/protocol guidance issue, not an edit architecture failure; the generic prompt and tool contract now state the distinction explicitly without adding any object or example rule.

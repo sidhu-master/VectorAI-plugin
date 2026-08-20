@@ -18,7 +18,7 @@ const AUTOMATIC_ANNOTATION_PREFIX = 'annotation_auto_';
 export interface AutomaticAnnotationStep {
   id: string;
   annotation: DimensionAnnotation;
-  commands: [Extract<DrawingCommand, { type: 'annotation.create' }>];
+  commands: Array<Extract<DrawingCommand, { type: 'annotation.create' | 'annotation.delete' }>>;
   label: string;
 }
 
@@ -88,73 +88,95 @@ export function buildAutomaticAnnotationSteps(input: {
   }
 
   for (const node of geometry) {
-    if (node.type === 'circle' && node.radius > EPSILON) {
-      const axis = normalize([1, 1]);
-      const start = add(node.center, scale(axis, -node.radius));
-      const end = add(node.center, scale(axis, node.radius));
-      const normal: Vec2 = [-axis[1], axis[0]];
-      steps.push(step(input.drawingId, `${node.id}:diameter`, {
-        dimensionKind: 'diameter',
-        targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
-        computedValue: node.radius * 2,
-        displayText: `Ø${formatNumber(node.radius * 2)}`,
-        textPosition: add(node.center, scale(normal, Math.max(offset * 0.32, node.radius * 0.18))),
-        definitionPoints: [start, end],
-        sources: [node],
-      }));
-      continue;
-    }
-    if (node.type === 'arc' && node.radius > EPSILON) {
-      const angle = midSweepAngle(node.startAngle, node.endAngle, node.counterClockwise);
-      const axis: Vec2 = [Math.cos(angle), Math.sin(angle)];
-      const edge = add(node.center, scale(axis, node.radius));
-      const leaderEnd = add(node.center, scale(axis, node.radius + offset * 0.7));
-      steps.push(step(input.drawingId, `${node.id}:radius`, {
-        dimensionKind: 'radius',
-        targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
-        computedValue: node.radius,
-        displayText: `R${formatNumber(node.radius)}`,
-        textPosition: add(leaderEnd, scale(axis, offset * 0.18)),
-        definitionPoints: [node.center, edge, leaderEnd],
-        sources: [node],
-      }));
-      continue;
-    }
-    if (node.type === 'ellipse') {
-      const majorRadius = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
-      if (majorRadius <= EPSILON || node.ratio <= EPSILON) continue;
-      const majorAxis = normalize(node.majorAxis);
-      const minorAxis: Vec2 = [-majorAxis[1], majorAxis[0]];
-      const minorRadius = majorRadius * node.ratio;
-      steps.push(step(input.drawingId, `${node.id}:major-axis`, {
-        dimensionKind: 'aligned',
-        targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
-        computedValue: majorRadius * 2,
-        displayText: formatNumber(majorRadius * 2),
-        textPosition: add(node.center, scale(minorAxis, offset * 0.32)),
-        definitionPoints: [
-          add(node.center, scale(majorAxis, -majorRadius)),
-          add(node.center, scale(majorAxis, majorRadius)),
-        ],
-        sources: [node],
-      }));
-      steps.push(step(input.drawingId, `${node.id}:minor-axis`, {
-        dimensionKind: 'aligned',
-        targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
-        computedValue: minorRadius * 2,
-        displayText: formatNumber(minorRadius * 2),
-        textPosition: add(node.center, scale(majorAxis, offset * 0.32)),
-        definitionPoints: [
-          add(node.center, scale(minorAxis, -minorRadius)),
-          add(node.center, scale(minorAxis, minorRadius)),
-        ],
-        sources: [node],
-      }));
-    }
+    steps.push(...featureAnnotationSteps({
+      drawingId: input.drawingId,
+      node,
+      offset,
+    }));
   }
 
   const existing = new Set(input.existingAnnotationIds);
   return steps.filter((item) => !existing.has(item.annotation.id));
+}
+
+/** 圆/弧/椭圆等单图元的确定性特征标注步骤（整图与按分区标注共用） */
+export function featureAnnotationSteps(input: {
+  drawingId: DrawingId;
+  node: GeometryNode;
+  offset: number;
+  /** 稳定 ID 的键前缀（如 partition:<id>:），用于按分区生成时避免 ID 冲突 */
+  keyPrefix?: string;
+  /** 标注文本前缀（如分区名） */
+  labelPrefix?: string;
+}): AutomaticAnnotationStep[] {
+  const { drawingId, node, offset } = input;
+  const keyPrefix = input.keyPrefix ?? '';
+  const labelPrefix = input.labelPrefix ?? '';
+  const steps: AutomaticAnnotationStep[] = [];
+  if (node.type === 'circle' && node.radius > EPSILON) {
+    const axis = normalize([1, 1]);
+    const start = add(node.center, scale(axis, -node.radius));
+    const end = add(node.center, scale(axis, node.radius));
+    const normal: Vec2 = [-axis[1], axis[0]];
+    steps.push(step(drawingId, `${keyPrefix}${node.id}:diameter`, {
+      dimensionKind: 'diameter',
+      targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
+      computedValue: node.radius * 2,
+      displayText: `${labelPrefix}Ø${formatNumber(node.radius * 2)}`,
+      textPosition: add(node.center, scale(normal, Math.max(offset * 0.32, node.radius * 0.18))),
+      definitionPoints: [start, end],
+      sources: [node],
+    }));
+    return steps;
+  }
+  if (node.type === 'arc' && node.radius > EPSILON) {
+    const angle = midSweepAngle(node.startAngle, node.endAngle, node.counterClockwise);
+    const axis: Vec2 = [Math.cos(angle), Math.sin(angle)];
+    const edge = add(node.center, scale(axis, node.radius));
+    const leaderEnd = add(node.center, scale(axis, node.radius + offset * 0.7));
+    steps.push(step(drawingId, `${keyPrefix}${node.id}:radius`, {
+      dimensionKind: 'radius',
+      targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
+      computedValue: node.radius,
+      displayText: `${labelPrefix}R${formatNumber(node.radius)}`,
+      textPosition: add(leaderEnd, scale(axis, offset * 0.18)),
+      definitionPoints: [node.center, edge, leaderEnd],
+      sources: [node],
+    }));
+    return steps;
+  }
+  if (node.type === 'ellipse') {
+    const majorRadius = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+    if (majorRadius <= EPSILON || node.ratio <= EPSILON) return steps;
+    const majorAxis = normalize(node.majorAxis);
+    const minorAxis: Vec2 = [-majorAxis[1], majorAxis[0]];
+    const minorRadius = majorRadius * node.ratio;
+    steps.push(step(drawingId, `${keyPrefix}${node.id}:major-axis`, {
+      dimensionKind: 'aligned',
+      targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
+      computedValue: majorRadius * 2,
+      displayText: `${labelPrefix}${formatNumber(majorRadius * 2)}`,
+      textPosition: add(node.center, scale(minorAxis, offset * 0.32)),
+      definitionPoints: [
+        add(node.center, scale(majorAxis, -majorRadius)),
+        add(node.center, scale(majorAxis, majorRadius)),
+      ],
+      sources: [node],
+    }));
+    steps.push(step(drawingId, `${keyPrefix}${node.id}:minor-axis`, {
+      dimensionKind: 'aligned',
+      targets: [{ geometryId: node.id, anchor: { kind: 'center' } }],
+      computedValue: minorRadius * 2,
+      displayText: `${labelPrefix}${formatNumber(minorRadius * 2)}`,
+      textPosition: add(node.center, scale(majorAxis, offset * 0.32)),
+      definitionPoints: [
+        add(node.center, scale(minorAxis, -minorRadius)),
+        add(node.center, scale(minorAxis, minorRadius)),
+      ],
+      sources: [node],
+    }));
+  }
+  return steps;
 }
 
 export function withoutAutomaticAnnotations(document: DrawingDocument): DrawingDocument {
@@ -166,12 +188,26 @@ export function withoutAutomaticAnnotations(document: DrawingDocument): DrawingD
     : { ...document, annotations };
 }
 
-function step(
+/** 移除已提交的自动标注（重跑时清理不再生成的过期标注） */
+export function removalStep(annotation: DimensionAnnotation): AutomaticAnnotationStep {
+  return {
+    id: `auto-annotation-remove:${annotation.id}`,
+    annotation,
+    commands: [{ type: 'annotation.delete', id: annotation.id }],
+    label: `移除过期标注 ${annotation.displayText ?? annotation.id}`,
+  };
+}
+
+export function isAutomaticAnnotationId(id: string): boolean {
+  return id.startsWith(AUTOMATIC_ANNOTATION_PREFIX);
+}
+
+export function step(
   drawingId: DrawingId,
   key: string,
   input: Pick<DimensionAnnotation,
     'dimensionKind' | 'targets' | 'computedValue' | 'displayText' | 'textPosition' | 'definitionPoints'>
-    & { sources: GeometryNode[] },
+    & { sources: GeometryNode[]; unit?: 'mm' | 'deg' },
 ): AutomaticAnnotationStep {
   const annotation: DimensionAnnotation = {
     id: stableAnnotationId(drawingId, key) as AnnotationId,
@@ -183,7 +219,7 @@ function step(
     targets: input.targets,
     computedValue: round(input.computedValue ?? 0),
     displayText: input.displayText,
-    unit: 'mm',
+    unit: input.unit ?? 'mm',
     textPosition: roundPoint(input.textPosition),
     definitionPoints: input.definitionPoints.map(roundPoint),
   };
@@ -195,7 +231,7 @@ function step(
   };
 }
 
-function contributor(
+export function contributor(
   geometry: GeometryNode[],
   edge: 'minX' | 'minY' | 'maxX' | 'maxY',
   value: number,
@@ -237,7 +273,7 @@ function positiveModulo(value: number, modulus: number): number {
   return ((value % modulus) + modulus) % modulus;
 }
 
-function formatNumber(value: number): string {
+export function formatNumber(value: number): string {
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }

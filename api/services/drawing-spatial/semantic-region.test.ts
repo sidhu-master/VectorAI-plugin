@@ -51,11 +51,13 @@ describe('buildSemanticRegion', () => {
 
 function proposal(): SemanticRegionProposal {
   return {
-    label: 'right arm',
+    label: 'target component',
+    operation: 'modify-existing',
+    preferredEditMode: 'geometric-edit',
     sourceViewId: 'view_overview',
     contours: [[[0.1, 0.1], [0.4, 0.1], [0.4, 0.4], [0.1, 0.4]]],
     holes: [[[0.2, 0.2], [0.3, 0.2], [0.3, 0.3], [0.2, 0.3]]],
-    anchors: [{ id: 'shoulder', role: 'connection', point: [0.25, 0.25], confidence: 0.9 }],
+    anchors: [{ id: 'port', role: 'boundary', point: [0.25, 0.25], confidence: 0.9 }],
     confidence: 0.92,
     evidenceRefs: ['view_overview'],
   };

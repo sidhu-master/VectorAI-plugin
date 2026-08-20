@@ -143,6 +143,151 @@ describe('evaluateDrawingPreview', () => {
       code: 'UNDECLARED_NODE_CHANGE', severity: 'warning', nodeIds: ['line_right'],
     }));
   });
+
+  it('reports scale-independent path-length distortion as a fact the model must review', () => {
+    const before = fixture();
+    const transaction = candidate([{
+      type: 'geometry.update', id: 'line_left' as GeometryId,
+      changes: { end: [100, 0] },
+    }]);
+    const preview = previewTransaction({ document: before, currentRevision: revision }, transaction);
+    if (preview.status !== 'ready') throw new Error('expected ready preview');
+
+    const report = evaluateDrawingPreview({
+      before, after: preview.resultingDocument, transaction, tolerance: 0.01,
+    });
+
+    expect(report.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'GEOMETRY_LENGTH_DISTORTION',
+      severity: 'warning',
+      nodeIds: ['line_left'],
+      facts: expect.objectContaining({
+        beforeLength: 10,
+        afterLength: 100,
+        lengthRatio: 10,
+        drawingDiagonal: 100,
+        normalizedLengthChange: 0.9,
+      }),
+    }));
+  });
+
+  it('uses a drawing-relative tolerance and treats endpoints on any curve as connected', () => {
+    const before = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_curve_connection' }, now: () => 1,
+    });
+    before.geometry.push({
+      id: 'hand' as GeometryId,
+      type: 'circle', visible: true, quality: confirmed,
+      center: [0, 0], radius: 20,
+    }, {
+      id: 'arm' as GeometryId,
+      type: 'line', visible: true, quality: confirmed,
+      start: [0, 20.2], end: [0, 50.2],
+    }, {
+      id: 'body' as GeometryId,
+      type: 'circle', visible: true, quality: confirmed,
+      center: [0, 100], radius: 50,
+    });
+    const transaction = candidate([
+      {
+        type: 'geometry.update', id: 'hand' as GeometryId,
+        changes: { center: [-30, 40] },
+      },
+      {
+        type: 'geometry.update', id: 'arm' as GeometryId,
+        changes: { start: [-30, 60.2] },
+      },
+    ]);
+    const preview = previewTransaction({ document: before, currentRevision: revision }, transaction);
+    if (preview.status !== 'ready') throw new Error('expected ready preview');
+
+    const report = evaluateDrawingPreview({
+      before, after: preview.resultingDocument, transaction, tolerance: 0.01,
+    });
+
+    expect(report.unexpectedDanglingEndpoints).toEqual([]);
+    expect(report.diagnostics.some((item) => item.code === 'NEW_DANGLING_ENDPOINT')).toBe(false);
+  });
+
+  it('still reports an endpoint separated from every curve beyond the drawing-relative tolerance', () => {
+    const before = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_curve_gap' }, now: () => 1,
+    });
+    before.geometry.push({
+      id: 'hand' as GeometryId,
+      type: 'circle', visible: true, quality: confirmed,
+      center: [0, 0], radius: 20,
+    }, {
+      id: 'arm' as GeometryId,
+      type: 'line', visible: true, quality: confirmed,
+      start: [0, 20.2], end: [0, 50.2],
+    }, {
+      id: 'body' as GeometryId,
+      type: 'circle', visible: true, quality: confirmed,
+      center: [0, 100], radius: 50,
+    });
+    const transaction = candidate([
+      {
+        type: 'geometry.update', id: 'hand' as GeometryId,
+        changes: { center: [-30, 40] },
+      },
+      {
+        type: 'geometry.update', id: 'arm' as GeometryId,
+        changes: { start: [-30, 66] },
+      },
+    ]);
+    const preview = previewTransaction({ document: before, currentRevision: revision }, transaction);
+    if (preview.status !== 'ready') throw new Error('expected ready preview');
+
+    const report = evaluateDrawingPreview({
+      before, after: preview.resultingDocument, transaction, tolerance: 0.01,
+    });
+
+    expect(report.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'NEW_DANGLING_ENDPOINT', nodeIds: ['arm'],
+    }));
+  });
+
+  it('reports a preserved neighbor endpoint when moving its contacted curve breaks the connection', () => {
+    const before = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_preserved_neighbor_gap' }, now: () => 1,
+    });
+    before.geometry.push({
+      id: 'hand' as GeometryId,
+      type: 'circle', visible: true, quality: confirmed,
+      center: [0, 0], radius: 20,
+    }, {
+      id: 'upper_arm' as GeometryId,
+      type: 'line', visible: true, quality: confirmed,
+      start: [0, 20], end: [40, 60],
+    }, {
+      id: 'lower_arm' as GeometryId,
+      type: 'line', visible: true, quality: confirmed,
+      start: [20, 0], end: [60, 0],
+    });
+    const transaction = candidate([
+      {
+        type: 'geometry.update', id: 'hand' as GeometryId,
+        changes: { center: [0, 100] },
+      },
+      {
+        type: 'geometry.update', id: 'upper_arm' as GeometryId,
+        changes: { start: [0, 120] },
+      },
+    ]);
+    const preview = previewTransaction({ document: before, currentRevision: revision }, transaction);
+    if (preview.status !== 'ready') throw new Error('expected ready preview');
+
+    const report = evaluateDrawingPreview({
+      before, after: preview.resultingDocument, transaction, tolerance: 0.01,
+    });
+
+    expect(report.unexpectedDanglingEndpoints).toContainEqual([20, 0]);
+    expect(report.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'BROKEN_EXISTING_CONNECTION',
+      nodeIds: expect.arrayContaining(['hand', 'lower_arm']),
+    }));
+  });
 });
 
 function fixture() {

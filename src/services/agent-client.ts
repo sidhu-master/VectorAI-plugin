@@ -8,6 +8,8 @@ import type { DrawingId, RevisionId } from '@/drawing';
 export type AgentProgressEventType = DrawingAgentProgressEventType;
 export type AgentProgressEvent = DrawingAgentProgressEvent;
 
+export type AgentWorkflow = 'partition' | 'partitioned-annotation';
+
 export interface StartAgentInput {
   drawingId: DrawingId;
   baseRevision: RevisionId;
@@ -20,6 +22,7 @@ export interface StartAgentInput {
     mimeType: string;
     page?: number;
   };
+  workflow?: AgentWorkflow;
 }
 
 export interface EventSourceLike {
@@ -108,6 +111,18 @@ export class AgentClient {
 
   addInstruction(runId: string, instruction: string): Promise<DrawingAgentRunView> {
     return this.control(runId, 'instructions', { instruction });
+  }
+
+  respondToDecision(
+    runId: string,
+    requestId: string,
+    input: { selectedOptionId: string; additionalInstruction?: string },
+  ): Promise<DrawingAgentRunView> {
+    return this.control(
+      runId,
+      `decisions/${encodeURIComponent(requestId)}/respond`,
+      input,
+    );
   }
 
   private async control(runId: string, action: string, body?: unknown): Promise<DrawingAgentRunView> {

@@ -41,6 +41,7 @@ export class CounterfactualWorldService {
 
   create(input: {
     runId?: string;
+    episodeId?: string;
     baseDocument: DrawingDocument;
     baseRevision: RevisionId;
     preview: ReadyPreview;
@@ -82,6 +83,7 @@ export class CounterfactualWorldService {
     const branch: CounterfactualWorldBranchSnapshot = {
       id,
       ...(input.runId ? { runId: input.runId } : {}),
+      ...(input.episodeId ? { episodeId: input.episodeId } : {}),
       drawingId: input.baseDocument.id,
       baseRevision: input.baseRevision,
       transactionDigest: input.transactionDigest,
@@ -128,6 +130,26 @@ export class CounterfactualWorldService {
     return publicBranch(stored.branch);
   }
 
+  inspectScoped(
+    id: string,
+    expected: {
+      runId: string;
+      episodeId: string;
+      drawingId: DrawingDocument['id'];
+      revision: RevisionId;
+    },
+  ): CounterfactualWorldBranch {
+    const stored = this.#branches.get(id);
+    if (!stored) throw new Error('COUNTERFACTUAL_NOT_FOUND');
+    if (stored.branch.runId !== expected.runId
+      || stored.branch.episodeId !== expected.episodeId
+      || stored.branch.drawingId !== expected.drawingId
+      || stored.branch.baseRevision !== expected.revision) {
+      throw new Error('COUNTERFACTUAL_SCOPE_MISMATCH');
+    }
+    return publicBranch(stored.branch);
+  }
+
   readDocument(handle: string): DrawingDocument | null {
     for (const stored of this.#branches.values()) {
       if (stored.branch.beforeDocumentHandle === handle) return structuredClone(stored.beforeDocument);
@@ -156,8 +178,10 @@ export class CounterfactualWorldService {
 }
 
 function publicBranch(branch: CounterfactualWorldBranchSnapshot): CounterfactualWorldBranch {
-  const { beforeDocumentHandle: _before, afterDocumentHandle: _after, ...publicValue } = branch;
-  return structuredClone(publicValue);
+  const publicValue = structuredClone(branch) as Partial<CounterfactualWorldBranchSnapshot>;
+  delete publicValue.beforeDocumentHandle;
+  delete publicValue.afterDocumentHandle;
+  return publicValue as CounterfactualWorldBranch;
 }
 
 function affectedScopeBounds(
@@ -223,7 +247,9 @@ function findNode(document: DrawingDocument, id: string): DrawingNode | undefine
 function nodeBounds(node: DrawingNode | undefined): Bounds2D | null {
   if (!node) return null;
   if (isGeometry(node)) return geometryBounds(node);
-  if (node.type === 'text' || node.type === 'dimension') return annotationBounds(node);
+  if (node.type === 'text' || node.type === 'dimension' || node.type === 'section-hatch') {
+    return annotationBounds(node);
+  }
   return null;
 }
 

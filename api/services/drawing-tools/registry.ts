@@ -14,9 +14,12 @@ import type {
 export type * from './types.js';
 
 export class ModelToolInputError extends Error {
-  constructor(message = 'Invalid model tool input') {
+  readonly code: string;
+
+  constructor(message = 'Invalid model tool input', code = 'TOOL_INPUT_INVALID') {
     super(message);
     this.name = 'ModelToolInputError';
+    this.code = code;
   }
 }
 
@@ -42,6 +45,8 @@ export class ModelToolExecutionError extends Error {
 class ModelToolTimeoutError extends Error {}
 
 export class ModelDrawingToolRegistry {
+  // The registry intentionally erases heterogeneous input/output types after each parser binds them.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly #tools = new Map<string, ModelDrawingToolDefinition<any, any>>();
   readonly #getCurrentRevision: (drawingId: DrawingId) => Promise<RevisionId>;
   readonly #now: () => number;
@@ -49,6 +54,7 @@ export class ModelDrawingToolRegistry {
   readonly #writeQueues = new Map<DrawingId, Promise<void>>();
 
   constructor(input: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tools: readonly ModelDrawingToolDefinition<any, any>[];
     getCurrentRevision(drawingId: DrawingId): Promise<RevisionId>;
     now?: () => number;
@@ -66,9 +72,16 @@ export class ModelDrawingToolRegistry {
     this.#now = input.now ?? Date.now;
   }
 
-  catalog(): Array<Pick<ModelDrawingToolDefinition, 'name' | 'version' | 'access' | 'timeoutMs'>> {
-    return [...this.#tools.values()].map(({ name, version, access, timeoutMs }) => ({
+  catalog(): Array<Pick<
+    ModelDrawingToolDefinition,
+    'name' | 'version' | 'access' | 'timeoutMs' | 'description' | 'inputSchema'
+  >> {
+    return [...this.#tools.values()].map(({
+      name, version, access, timeoutMs, description, inputSchema,
+    }) => ({
       name, version, access, timeoutMs,
+      ...(description ? { description } : {}),
+      ...(inputSchema ? { inputSchema: structuredClone(inputSchema) } : {}),
     }));
   }
 
@@ -79,7 +92,10 @@ export class ModelDrawingToolRegistry {
     };
   }
 
-  async invoke(invocation: ModelDrawingToolInvocation): Promise<ModelToolResult> {
+  async invoke(
+    invocation: ModelDrawingToolInvocation,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ModelToolResult> {
     const startedAt = this.#now();
     const inputDigest = digest(invocation.input);
     const tool = this.#tools.get(invocation.tool);
@@ -88,7 +104,12 @@ export class ModelDrawingToolRegistry {
       return this.#errorResult({
         invocation, tool, inputDigest, startedAt,
         status: 'rejected',
-        error: { code: 'DUPLICATE_TOOL_CALL_ID', retryable: false },
+        error: {
+          code: 'DUPLICATE_TOOL_CALL_ID',
+          retryable: true,
+          detail: 'Retry with a new toolCallId; tool call ids are single-use within a run.',
+          suggestedAction: 'retry',
+        },
       });
     }
     this.#consumedCalls.add(callKey);
@@ -104,11 +125,17 @@ export class ModelDrawingToolRegistry {
     let parsedInput: unknown;
     try {
       parsedInput = tool.parseInput(invocation.input);
-    } catch {
+    } catch (error) {
+      const inputError = error instanceof ModelToolInputError ? error : null;
       return this.#errorResult({
         invocation, tool, inputDigest, startedAt,
         status: 'rejected',
-        error: { code: 'TOOL_INPUT_INVALID', retryable: true, suggestedAction: 'replan' },
+        error: {
+          code: inputError?.code ?? 'TOOL_INPUT_INVALID',
+          retryable: true,
+          ...(safeInputErrorDetail(error) ? { detail: safeInputErrorDetail(error) } : {}),
+          suggestedAction: 'replan',
+        },
       });
     }
 
@@ -118,6 +145,7 @@ export class ModelDrawingToolRegistry {
       parsedInput,
       inputDigest,
       startedAt,
+      externalSignal: options.signal,
     });
     return tool.access === 'write'
       ? this.#serializeWrite(invocation.drawingId, execute)
@@ -147,6 +175,7 @@ export class ModelDrawingToolRegistry {
     parsedInput: unknown;
     inputDigest: string;
     startedAt: number;
+    externalSignal?: AbortSignal;
   }): Promise<ModelToolResult> {
     let currentRevision: RevisionId;
     try {
@@ -168,22 +197,40 @@ export class ModelDrawingToolRegistry {
     }
 
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(
+      input.externalSignal?.reason ?? new Error('MODEL_TOOL_ABORTED'),
+    );
+    if (input.externalSignal?.aborted) abortFromCaller();
+    else input.externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
-        reject(new ModelToolTimeoutError());
+        timedOut = true;
+        if (input.tool.access === 'read') reject(new ModelToolTimeoutError());
         controller.abort();
       }, input.tool.timeoutMs);
     });
     try {
-      const execution = await Promise.race([
-        input.tool.execute({
-          invocation: withoutInput(input.invocation),
-          input: input.parsedInput,
-          signal: controller.signal,
-        }),
-        timeout,
-      ]);
+      if (controller.signal.aborted) {
+        return this.#errorResult({
+          ...input,
+          status: 'rejected',
+          error: { code: 'TOOL_ABORTED', retryable: true, suggestedAction: 'retry' },
+        });
+      }
+      const executionPromise = input.tool.execute({
+        invocation: withoutInput(input.invocation),
+        input: input.parsedInput,
+        signal: controller.signal,
+      });
+      // Reads are cancellation-safe. A write may cross its warning timeout after
+      // its durable side effect has started, so returning early would create an
+      // unknowable outcome ("timed out" followed by a real commit). Keep the
+      // per-drawing write queue until the handler reports its authoritative result.
+      const execution = input.tool.access === 'write'
+        ? await executionPromise
+        : await Promise.race([executionPromise, timeout]);
       const revisionAfter = execution.revisionAfter ?? currentRevision;
       return {
         schemaVersion: 1,
@@ -197,7 +244,14 @@ export class ModelDrawingToolRegistry {
         output: structuredClone(execution.output),
       };
     } catch (error) {
-      if (error instanceof ModelToolTimeoutError) {
+      if (input.externalSignal?.aborted) {
+        return this.#errorResult({
+          ...input,
+          status: 'rejected',
+          error: { code: 'TOOL_ABORTED', retryable: true, suggestedAction: 'retry' },
+        });
+      }
+      if (error instanceof ModelToolTimeoutError || (timedOut && input.tool.access === 'read')) {
         return this.#errorResult({
           ...input,
           status: 'timed_out',
@@ -205,12 +259,14 @@ export class ModelDrawingToolRegistry {
         });
       }
       if (error instanceof ModelToolExecutionError) {
+        const detail = safeExecutionErrorDetail(error);
         return this.#errorResult({
           ...input,
           status: 'rejected',
           error: {
             code: error.code,
             retryable: error.retryable,
+            ...(detail ? { detail } : {}),
             ...(error.suggestedAction ? { suggestedAction: error.suggestedAction } : {}),
           },
         });
@@ -222,6 +278,7 @@ export class ModelDrawingToolRegistry {
       });
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      input.externalSignal?.removeEventListener('abort', abortFromCaller);
     }
   }
 
@@ -275,8 +332,14 @@ export class ModelDrawingToolRegistry {
 function withoutInput(
   invocation: ModelDrawingToolInvocation,
 ): Omit<ModelDrawingToolInvocation, 'input'> {
-  const { input: _input, ...context } = invocation;
-  return context;
+  return {
+    runId: invocation.runId,
+    episodeId: invocation.episodeId,
+    drawingId: invocation.drawingId,
+    revision: invocation.revision,
+    toolCallId: invocation.toolCallId,
+    tool: invocation.tool,
+  };
 }
 
 function digest(value: unknown): string {
@@ -290,4 +353,24 @@ function stableStringify(value: unknown): string {
   const entries = Object.entries(value as Record<string, unknown>)
     .sort(([left], [right]) => left.localeCompare(right));
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`;
+}
+
+function safeInputErrorDetail(error: unknown): string | undefined {
+  if (!(error instanceof ModelToolInputError)
+    && (!(error instanceof Error) || error.name !== 'DrawingAgentProtocolError')) {
+    return undefined;
+  }
+  return boundedAuditDetail(error.message);
+}
+
+function safeExecutionErrorDetail(error: ModelToolExecutionError): string | undefined {
+  return boundedAuditDetail(error.message);
+}
+
+function boundedAuditDetail(value: string): string | undefined {
+  const message = value
+    .replace(/(?:Bearer\s+|api[_-]?key[=:]\s*)[^\s]+/gi, '[redacted]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim();
+  return message ? message.slice(0, 500) : undefined;
 }

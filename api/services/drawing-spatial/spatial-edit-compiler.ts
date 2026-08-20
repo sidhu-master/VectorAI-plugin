@@ -1,5 +1,5 @@
 import type {
-  FragmentAuthorization,
+  SpatialEditAuthorization,
   SemanticRegion,
   SpatialEditMode,
   SpatialEditStrategy,
@@ -63,7 +63,7 @@ export interface CompiledSpatialEditCandidate {
   strategy: SpatialEditMode;
   fidelityWarnings: string[];
   authorizationId: string;
-  selectionProofId: string;
+  topologyResolutionId: string;
 }
 
 export function compileSpatialEdit(input: {
@@ -72,13 +72,19 @@ export function compileSpatialEdit(input: {
   region: SemanticRegion;
   strategy: SpatialEditStrategy;
   split: MaterializedSplit;
-  authorization: FragmentAuthorization;
+  authorization: SpatialEditAuthorization;
   design: SpatialEditDesign;
 }): CompiledSpatialEditCandidate {
   assertScope(input);
   assertAuthorization(input);
   if (input.design.kind === 'local-redraw') {
     return compileLocalRedraw({ ...input, design: input.design });
+  }
+  if (input.design.kind === 'replacement'
+    && input.region.operation === 'add-new'
+    && input.selection.wholeNodes.length === 0
+    && input.selection.partialSegments.length === 0) {
+    return compileAdditiveReplacement({ ...input, design: input.design });
   }
   const targetFragmentIds = input.split.lineage
     .filter((entry) => entry.role === 'target')
@@ -168,7 +174,41 @@ export function compileSpatialEdit(input: {
       ...(anchored ? ['ANCHORED_DEFORMATION_APPLIED'] : []),
     ],
     authorizationId: input.authorization.id,
-    selectionProofId: input.authorization.selectionProofId,
+    topologyResolutionId: input.authorization.topologyResolutionId,
+  };
+}
+
+function compileAdditiveReplacement(input: {
+  document: DrawingDocument;
+  selection: SpatialSelection;
+  region: SemanticRegion;
+  strategy: SpatialEditStrategy;
+  split: MaterializedSplit;
+  authorization: SpatialEditAuthorization;
+  design: Extract<SpatialEditDesign, { kind: 'replacement' }>;
+}): CompiledSpatialEditCandidate {
+  if (input.design.geometry.length === 0) throw new Error('SPATIAL_ADDITION_EMPTY');
+  const generatedIds = new Set<string>();
+  for (const node of input.design.geometry) {
+    if (generatedIds.has(node.id)) throw new Error(`SPATIAL_ADDITION_ID_DUPLICATE:${node.id}`);
+    if (input.document.geometry.some((existing) => existing.id === node.id)) {
+      throw new Error(`SPATIAL_ADDITION_ID_COLLISION:${node.id}`);
+    }
+    generatedIds.add(node.id);
+  }
+  const geometry = input.design.geometry.map((node) => withDesignQuality(node, input.design));
+  return {
+    baseRevision: input.selection.revision,
+    commands: geometry.map((value) => ({ type: 'geometry.create' as const, value })),
+    targetNodeIds: geometry.map((node) => node.id),
+    preserveNodeHashes: collectPreservedNodeHashes(input.document, allNodeIds(input.document)),
+    protectedFragmentHashes: {},
+    authorizedBounds: authorizedBounds(input.region, geometry),
+    lineage: [],
+    strategy: input.strategy.mode,
+    fidelityWarnings: [...input.split.fidelityWarnings],
+    authorizationId: input.authorization.id,
+    topologyResolutionId: input.authorization.topologyResolutionId,
   };
 }
 
@@ -178,7 +218,7 @@ function compileLocalRedraw(input: {
   region: SemanticRegion;
   strategy: SpatialEditStrategy;
   split: MaterializedSplit;
-  authorization: FragmentAuthorization;
+  authorization: SpatialEditAuthorization;
   design: Extract<SpatialEditDesign, { kind: 'local-redraw' }>;
 }): CompiledSpatialEditCandidate {
   if (input.design.geometry.length === 0) throw new Error('SPATIAL_REDRAW_EMPTY');
@@ -233,7 +273,7 @@ function compileLocalRedraw(input: {
     strategy: input.strategy.mode,
     fidelityWarnings: [...input.split.fidelityWarnings],
     authorizationId: input.authorization.id,
-    selectionProofId: input.authorization.selectionProofId,
+    topologyResolutionId: input.authorization.topologyResolutionId,
   };
 }
 
@@ -242,7 +282,7 @@ function assertScope(input: {
   selection: SpatialSelection;
   region: SemanticRegion;
   strategy: SpatialEditStrategy;
-  authorization: FragmentAuthorization;
+  authorization: SpatialEditAuthorization;
 }): void {
   if (input.document.id !== input.region.drawingId) throw new Error('SPATIAL_EDIT_DRAWING_MISMATCH');
   if (input.selection.revision !== input.region.revision) throw new Error('SPATIAL_EDIT_STALE');
@@ -260,13 +300,13 @@ function assertScope(input: {
 function assertAuthorization(input: {
   document: DrawingDocument;
   selection: SpatialSelection;
-  authorization: FragmentAuthorization;
+  authorization: SpatialEditAuthorization;
 }): void {
   const expected = [
     ...input.selection.wholeNodes.map((id) => `node:${id}`),
     ...input.selection.partialSegments.map((segment) => segment.id),
   ];
-  const authorized = new Set(input.authorization.editableFragmentIds);
+  const authorized = new Set(input.authorization.editableTargetIds);
   for (const id of expected) {
     if (!authorized.has(id)) throw new Error(`SPATIAL_EDIT_UNAUTHORIZED_TARGET:${id}`);
   }

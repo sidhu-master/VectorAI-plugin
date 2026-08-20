@@ -2,11 +2,17 @@
 
 > 状态：当前权威技术文档
 >
-> 更新日期：2026-08-13
+> 更新日期：2026-08-16
 >
-> 主设计：[`模型主导的二维空间 Agent 与 Human Decision Gate`](./superpowers/specs/2026-08-12-model-led-drawing-agent-and-human-decision-gate-design.md)
+> DXF 导入：[`DXF 保真导入与确定性识别`](./superpowers/specs/2026-08-16-lossless-dxf-import-and-deterministic-recognition-design.md)
+>
+> 默认编辑设计：[`任务驱动空间编辑程序`](./superpowers/specs/2026-08-15-task-driven-spatial-edit-program-design.md)
+>
+> 主循环与授权：[`模型主导的二维空间 Agent 与 Human Decision Gate`](./superpowers/specs/2026-08-12-model-led-drawing-agent-and-human-decision-gate-design.md)
 >
 > 二维世界模型：[`二维世界模型与空间动作编译器`](./superpowers/specs/2026-08-13-2d-world-model-and-spatial-action-compiler-design.md)
+>
+> 空间交互帧：[`通用精确空间交互帧`](./superpowers/specs/2026-08-14-general-spatial-interaction-frame-design.md)
 >
 > 基础内核：[`图纸即代码系统架构`](./superpowers/specs/2026-08-08-drawing-as-code-system-architecture-design.md)
 
@@ -16,10 +22,10 @@ VectorAI 建立 AI 视觉语义与真实二维空间之间的可操作映射，�
 
 核心分工是：
 
-- 模型负责需要视觉与智力的决策：理解语义对象、选择 Grounding 候选、设计目标、选择空间动作、观察 Preview 和修正。
+- 模型负责需要视觉与智力的决策：理解语义目标、选择任务节点与关键点、声明目标关系、观察 Preview 和修正；只有歧义时才选择 Grounding 候选。
 - Drawing Core 负责唯一真相：协议、坐标、事务、revision、Patch、回滚和持久化。
 - 2D World Model 负责派生现实：坐标框架、交点、原子边、半边、面、来源参数区间、语义支持映射和可查询局部 Slice。
-- Spatial Action Compiler 负责把模型的语义目标、保持接口和动作选择编译成精确 Drawing Commands。
+- Spatial Program Compiler 负责把模型声明的目标、空间引用、通用操作和保持契约编译成精确 Drawing Commands。
 - Tool Gateway 负责执行能力：渲染、空间查询、拓扑、CV、拟合、重绘、矢量化和诊断。
 - Model Provider Adapter 负责把统一内部动作映射到供应商支持的 Function Calling、JSON Schema 或 JSON Mode。
 - Human Interaction Service 负责需要用户权限、事实或价值判断的暂停与恢复。
@@ -30,7 +36,7 @@ VectorAI 建立 AI 视觉语义与真实二维空间之间的可操作映射，�
 
 | 类型 | 载体 | 职责 |
 |---|---|---|
-| 来源真相 | Source Artifact：DXF、PDF、图片及内容哈希 | 证明数据来源 |
+| 来源真相 | Source Artifact：DXF、PDF、图片及内容哈希；DXF Lossless Manifest | 证明数据来源与原生引用结构 |
 | 编辑真相 | Canonical Drawing IR：`VectorAI-Drawing` v1.0 | 正式查询、修改、验证和版本化 |
 | 派生表示 | SVG、PNG、Mask、DXF、PDF | 显示、模型观察和交付 |
 
@@ -44,35 +50,30 @@ flowchart LR
     INGEST --> CORE["Canonical Drawing IR"]
 
     USER["目标 / 追加反馈"] --> RUNTIME["Agent Runtime"]
-    CORE --> WMC["2D World Model Compiler"]
-    FRAME["Coordinate Frame Graph"] --> WMC
-    WMC --> WORLD["Revision-bound World Model"]
-    WORLD --> TASKVIEW["Task-Relevant View"]
+    CORE --> OBS["Shared Render / Observation"]
+    CORE --> FACTS["Local IR Facts / 2D World Model"]
+    OBS --> RUNTIME
+    FACTS --> RUNTIME
     CORE --> TOOLS["Drawing Tool Gateway"]
-    RENDER --> GROUND["Grounding + Pick/Coverage Map"]
-    WORLD --> GROUND
-    GROUND --> RUNTIME
-    TASKVIEW --> RUNTIME
     RUNTIME <--> PROVIDER["Model Provider Adapter"]
-    PROVIDER <--> MODEL["Replaceable Spatial Model"]
+    PROVIDER <--> MODEL["Replaceable AI Model"]
     MODEL <--> TOOLS
-    MODEL --> ACTION["Spatial Action IR"]
-    WORLD --> PROPOSAL["Action Proposals / Feasibility"]
-    PROPOSAL --> MODEL
-    ACTION --> COMPILER["Spatial Action Compiler"]
+    MODEL --> PROGRAM["SpatialEditProgram<br/>targets + point refs + operations"]
+    PROGRAM --> COMPILER["Spatial Program Compiler"]
 
-    TOOLS --> RENDER["Shared Render / Observation"]
     TOOLS --> QUERY["IR / Geometry / Topology Query"]
+    TOOLS --> GROUND["Optional Local Grounding"]
     TOOLS --> CV["CV / Fit / Vectorize"]
     TOOLS --> REDRAW["Local Redraw"]
     COMPILER --> TX["Transaction Preview"]
     TOOLS --> TX
 
-    TX --> BRANCH["Counterfactual World Branch"]
-    BRANCH --> HARD["Hard Validator"]
-    BRANCH --> DIAG["Diagnostic Evaluators"]
+    TX --> HARD["Hard Validator"]
+    TX --> DIAG["Diagnostic Evaluators"]
+    TX --> REVIEW["Independent before / after Review"]
     HARD --> MODEL
     DIAG --> MODEL
+    REVIEW --> MODEL
 
     MODEL -->|"need permission / fact / choice"| HUMAN["Human Decision Gate"]
     HUMAN --> MODEL
@@ -89,7 +90,7 @@ flowchart LR
 - Importer、CV、模型和生成服务只产生 Evidence、Tool Result 或 Drawing Commands。
 - Tool Gateway 不保存独立 Drawing Document，所有调用显式绑定 drawing ID 与 revision。
 - 所有写入最终汇入 Drawing Application 的事务路径。
-- 模型选择语义候选、稳定空间引用、设计目标和空间动作；程序将选择解析为精确 SourceSpan、原子边、接口、约束解与 Drawing Commands。
+- 模型直接选择任务相关节点与稳定空间引用；程序解析 observation/world/node_anchor，执行通用几何运算并生成 Drawing Commands。局部 SourceSpan、原子边、接口和候选只在需要时查询。
 - 二维世界模型只按 revision 从 Drawing IR 派生，不保存可独立写入的第二份图纸状态。
 - 语义对象和 Drawing 图元是多对多关系；区域相交、Mask 相交或几何 incidence 均不自动构成共同修改授权。
 - 语义层级按当前任务动态投影；局部世界显式记录读取完整度；Preview 作为只读反事实世界分支供模型查询。这些能力按证据触发，不构成固定串行 Workflow。
@@ -119,7 +120,9 @@ DrawingDocument
 
 ### 5.1 导入策略
 
-- DXF：确定性读取原生对象；暂不编辑的层、块和填充可作为 opaque records 保留。
+- DXF：原始字节按 SHA-256 不可变保存；线性 group-pair 扫描生成 Lossless Manifest，保留 HEADER、所有 SECTION、实体 handle/owner、BLOCK 定义、INSERT 引用图、未知实体和 CAXA XDATA/私有组码。
+- DXF 画布投影：递归展开可达 INSERT 的仿射变换，将 Point、Line、Circle、Arc、Ellipse、Polyline、Spline、Text、Dimension 投影为 Drawing IR；节点 Evidence 保存来源 handle 与完整 INSERT path。未支持实体只记录诊断，不伪造几何。
+- DXF 导入通过 `POST /api/drawings/:drawingId/imports/dxf` 绕过 Agent，在一笔系统事务中替换四个 plane，因此失败不产生半成品，成功结果可 Undo/审计。配套工程文档只生成 confirmed/candidate/conflict 识别事实，不自动推断工程语义。
 - PDF：优先提取矢量路径和文字；不可靠页面转入栅格感知。
 - 图片：页级分析 → 清洁线稿 → 骨架/轮廓链 → 解析图元与 Polyline/Spline 兜底 → Drawing Transaction。
 
@@ -165,23 +168,23 @@ Runtime 只施加通用资源限制：
 - 单次图像像素和响应大小。
 - 工具、模型与 Episode 总超时。
 - 只读工具并发与写事务串行。
-- 重复候选检测和最大无进展轮数。
+- 重复候选检测和最大无进展轮数；MVP 一次指令默认最多复核 3 个语义候选。
 
 预算不包含人体、建筑、动作、左右、图元类别或测试图规则。
 
 Runtime 同时遵守“最小充分证据”原则：
 
 - 不以完整读取整图、构造完整语义本体或消除所有不确定性作为 Preview 前置条件。
-- 初始观察、空间索引、局部 Arrangement、候选和确定性诊断在依赖允许时并行执行。
-- 明确任务优先合并 Grounding 选择与动作规划为一次模型决策；只有相关歧义、不完整或 Preview 失败才增加轮次。
+- 初始观察、空间索引、局部 Drawing IR 事实和确定性诊断在依赖允许时并行执行。
+- 明确任务优先由模型一次选择目标与 SpatialEditProgram；只有相关歧义、不完整、程序表达力不足或 Preview 失败才增加轮次。
 - 每次升级必须增加与当前目标相关的新证据或改变动作方法；无改善的同候选重复调用被 `NO_PROGRESS` 截止。
 
 ### 6.4 模型选择策略
 
-- 空间理解、工具规划、Drawing IR 事务生成和最终视觉验收从第一轮起使用可配置的高级空间模型。
-- 调用超时或传输失败时，重试同一高级模型，不降级到轻量模型；单次调用默认上限 120 秒，Episode 默认上限 15 分钟。
+- 空间理解、工具规划和 Drawing IR 事务生成使用可配置的主空间模型；修改结果复核使用角色独立的检查模型。两者共享协议但不共享职责。
+- 主模型调用超时或传输失败时重试同一模型，不用较弱模型否决空间结果；单次调用默认上限 120 秒，Episode 默认上限 15 分钟。
 - 快速前置检查由确定性的 Schema、revision、引用、数值和几何诊断完成，不让轻量模型对空间候选作权威判断。
-- 模型仍是可替换边界；服务配置通过 `COMPANY_AI_SPATIAL_MODEL` 选择实现，任务 UI 不显示供应商或模型名称，审计内部保留实际配置。
+- 模型仍是可替换边界；服务配置通过 `COMPANY_AI_SPATIAL_MODEL` 和 `COMPANY_AI_REVIEW_MODEL` 分别选择实现，任务 UI 不显示供应商或模型名称，审计内部保留实际配置。
 
 ### 6.5 上下文工作集协议
 
@@ -190,6 +193,10 @@ Runtime 同时遵守“最小充分证据”原则：
 1. **Global Drawing Map**：单位、整图 bounds、四个 plane 的计数、几何类型计数、多尺度重叠区域统计和拓扑组件摘要。区域是检索范围，不是互斥切块，也不拥有图元。
 2. **Local Working Set**：本轮目标、显式 relation/feature 邻接和空间邻域中的精确 Drawing IR 节点。每个节点标明 `target | relation | neighbor`；相交或邻近只提供上下文，不构成共同修改授权。
 3. **Evidence Ledger**：revision-bound 工具 receipt、诊断、用户决定和未被 Working Set 覆盖的精确节点事实。重复 `render_drawing` media、`views` 与 `vectorDigest` 不进入文本上下文。
+
+`preview_spatial_program` 的 Ledger 输出保留 Preview handle、精简 program、已解析坐标和每项操作的 affected IDs，但剥离重复 Drawing Commands、图片和 Interaction Frame；因此下一轮能精确续写当前候选，又不会重复占用上下文。
+
+同一 revision 的活跃 Ledger 只保留当前候选 Preview receipt；被替换候选及其模型动作、工具 receipt 和复核结果仍完整追加到审计日志。这样模型获得的是当前可操作状态，不会随着失败候选数量线性增长。
 
 既有节点在模型上下文中使用 `g1`、`g2` 等 revision-bound 短别名。模型可以直接用别名查询、更新或删除；Runtime 只在工具协议中的节点/图元/关系/Feature ID 字段里解析别名，不改写 source ID、crop handle、preview handle 或用户正文。revision 改变后，别名和旧节点事实全部失效并重建。
 
@@ -216,24 +223,27 @@ Semantic Grounding Graph 可以按当前目标投影 `TaskRelevantView`，临时
 正常快速路径：
 
 ```text
-并行准备 Observation + Local Slice + candidates + proposals
-→ 一次模型决策选择目标与 Spatial Action
-→ 编译 Counterfactual Preview
-→ 必要的视觉验收
+并行准备 Observation + Local Drawing IR Facts
+→ 一次模型决策输出 SpatialEditProgram
+→ 后端解析空间引用并编译 Preview
+→ 独立检查者比较 before | after
+→ 主模型读取检查结论
 → Commit
 ```
 
-只有以下情况按需升级：候选无法区分；相关 Knowledge State 不是 `resolved`；Compiler 需要其他策略或解除约束；Preview 目标未达成、破坏接口或出现意外范围。升级沿用同一 Episode、缓存和 GroundingHistory，不从 overview 重启。
+只有以下情况按需升级：目标无法区分；相关 Knowledge State 不是 `resolved`；四个首版操作无法表达所需几何；需要解除约束；Preview 目标未达成、破坏接口或出现意外范围。升级可选择局部 Grounding、拓扑、底层事务或重绘，并沿用同一 Episode 和当前证据，不从 overview 重启。
 
-确定性数值编辑且 postconditions 足够时可以省略额外视觉模型验收；自由设计、语义形变、重绘和低置信度候选仍观察 Preview。该判定基于动作能力与诊断，不基于对象或指令关键词。
+来源矢量化批次等确定性导入路径在局部硬校验后可以省略检查模型；由主模型发起的语义写入 Preview 默认交给独立检查者。该判定基于动作能力，不基于对象或指令关键词。
 
-清晰局部任务以一次模型决策到首个 Preview 为默认性能基线；语义/重绘候选通常再做一次视觉验收。Runtime 对额外轮次记录 `escalationReason`、新增 Evidence refs 与前后诊断 digest。Grounding Evidence、反事实派生缓存和大体积审计媒体在必要元数据入账后异步持久化，不阻塞 Preview；Commit、inverse Patch、revision CAS 和授权记录仍保持同步原子性。
+清晰局部任务以一次模型决策到首个 Preview 为默认性能基线；语义/重绘候选通常增加一次独立复核。只有主模型根据复核意见决定修改时才产生额外编辑轮次。Runtime 记录复核结果、Evidence refs 与前后诊断 digest；Grounding Evidence、反事实派生缓存和大体积审计媒体在必要元数据入账后异步持久化，不阻塞 Preview；Commit、inverse Patch、revision CAS 和授权记录仍保持同步原子性。
 
-### 6.8 无坐标优先 Grounding
+没有用户选中项、工具目标或当前候选时，首轮不编译也不内联完整 World Model，只发送 Grounded Observation 与 Global Map。出现活跃节点后才构造 bounded World Model；该轮 Working Set 只保留别名、plane、类型、相关性和 bounds，精确几何由 World Model 表达。后续未重复投影 World Model 的无状态调用再恢复 Working Set 节点事实，既避免同轮重复，也不假设模型保留上一轮记忆。
 
-SceneCompiler 为同一 revision 和视口产生正常 Observation 与隐藏 Pick Map。Pick Map 提供最上层像素命中，CoverageIndex 使用向量空间索引返回同一区域内全部 Node、SourceSpan/HalfEdge 候选、层叠顺序、距离和覆盖比例。
+### 6.8 Observation 引用与按需 Grounding
 
-Grounding Service 根据用户表达、Observation、Pick/Coverage 结果和 World Model 生成有限 `SemanticEntityHypothesis`。模型选择、合并或排除候选，并观察后端生成的真实 Overlay，不再默认手绘完整目标轮廓和锚点。已有向量图纸优先走这一确定性链；Source 栅格、现有 IR 中不存在的新对象或自由重绘时，才调用 SAM 2 或等价的 `RasterGroundingProvider`。
+SceneCompiler 为同一 revision 和视口产生 Observation。模型用 `observationId + [u,v]` 表达视觉点，后端校验 drawing/revision 后通过保存的 `worldToImage` 确定性逆变换；模型无需看到或手算仿射公式。精确既有点使用 `node_anchor`，确定的文档坐标使用 `frameId=document`。
+
+目标存在歧义时，Pick Map 与 CoverageIndex 才按局部区域返回 Node、SourceSpan/HalfEdge 候选、层叠顺序、距离和覆盖比例。Grounding Service 生成有限 `SemanticEntityHypothesis`，模型选择、合并或排除候选并观察真实 Overlay。Source 栅格、现有 IR 中不存在的新对象或自由重绘时，可以调用 SAM 2 或等价的 `RasterGroundingProvider`。
 
 Mask 只提供像素证据和生成输入，必须映射回 World Model 支持集；Mask/包围盒相交不能直接成为删除或修改列表。
 
@@ -258,9 +268,9 @@ HTTP 200 但正文为空不再统一报成“网络失败”。例如 `finish_re
 
 上下文预算是可回归的协议，而不是对某张图的手工裁剪。`pnpm benchmark:agent-context` 读取本地最大 Drawing 快照，但不调用外部模型，它构造真实工具目录、工作集、观察图和序列化请求，输出冷读、空间索引、渲染、Prompt、Schema 和图像指标。
 
-2026-08-13 基线：16.7 MB 快照、3,133 条 Commit、96 个四平面节点；冷读当前 checkpoint 57.8 ms，空间索引 11.2 ms，观察渲染 29.6 ms。单轮 Drawing 上下文 29.0 KB，只包含 21 个工作集节点和 1 张 1,048,576 像素观察图。21 个工具的 strict response schema 仍有另外 30.6 KB 固定开销。
+2026-08-15 本地真实目标工作集基线：3,194 条历史 Commit、96 个四平面节点；冷读当前 checkpoint 约 2.7 ms，空间索引约 9.4 ms，局部 World Model 约 9.9 ms，观察渲染约 22.9 ms。单轮 Dynamic Context 约 24.7 KB，只包含 21 个工作集节点和 1 张 1,048,576 像素观察图；4 个首轮 Active Tool 的 strict response schema 约 11.6 KB。没有明确目标的首轮会省略 World Model 与精确 Working Set，因此更小。
 
-下一阶段门禁：Dynamic Context 不超过 16 KB；Active Tool Schema 不超过 8 KB 且默认不超过 4 个完整契约；System Prompt、Dynamic Context 与 Active Tool Schema 总文本不超过 32 KB。完整工具契约由模型通过紧凑 Capability Catalog 按需加载，不能通过删除目标精确事实或限制模型可用工具来达成预算。
+当前回归门禁：100+ 节点的紧凑局部上下文不超过 16 KB；本地真实目标工作集 Dynamic Context 不超过 32 KB；首轮 Active Tool Schema 不超过 12 KB；两者合计不超过 48 KB；单轮图像数不超过 1。工具 schema 使用共享 `$defs`，目录按 `build_world_slice → ground_semantic_entities → propose_spatial_actions` 的真实前置条件逐步开放。预算不能通过删除目标精确事实或收窄模型写权限来达成。
 
 ### 6.12 Model Provider Adapter
 
@@ -278,7 +288,7 @@ Runtime 使用统一内部动作，不直接假设供应商支持 OpenAI strict 
 
 所有工具版本化并返回统一 receipt：tool call ID、输入摘要、revision before/after、结果句柄、受影响节点、状态、耗时和可重试建议。
 
-模型常驻上下文只读取工具名、版本、访问属性和一句话能力摘要。完整输入契约通过 Runtime 内建的顶层动作 `load-tool-contracts` 按模型选择进入 Active Tool Contracts；该固定小协议不依赖待加载工具契约，且任何工具都可加载，因此不构成固定 Workflow。
+Runtime 根据当前 revision、是否存在 Preview、来源附件和已完成读取选择有界的 Active Tool Catalog；每个活跃工具携带严格输入契约。目录只裁剪当前不可用或已完成的能力，不规定下一步必须调用哪个工具，也不按对象类别路由。
 
 ### 7.1 观察与查询工具
 
@@ -323,30 +333,42 @@ World Model 按 `revision + frame + compiler version + input digest` 缓存；�
 ### 7.4 事务与评估工具
 
 - `propose_spatial_actions`
-- `compile_spatial_action`
+- `preview_spatial_program`
+- `preview_connected_transform`
 - `preview_transaction`
+- `revise_preview`
 - `evaluate_preview`
+- `inspect_counterfactual_world`
 - `commit_preview`
 
-`propose_spatial_actions` 返回 transform、deform、solve、replace、redraw 或 hybrid 候选的目标支持集、必要切分、固定接口、影响范围、可行性和代价。模型可以选择候选、组合能力或绕过候选直接调用 `preview_transaction`。
+`preview_spatial_program` 是已明确任务的默认写入口。它严格解析 `SpatialEditProgram`，从 immutable Observation view、文档 frame 或节点 anchor 解析点，顺序编译通用操作，并复用普通 Preview、Counterfactual、诊断、统一渲染和审计链路。失败是原子的，并返回稳定可恢复错误码。
 
-`compile_spatial_action` 把模型选择的目标、设计目标、保持接口与方法编译为 Drawing Commands、lineage、pre/postconditions 和 Preview recipe。Preview handle 绑定 base revision、Commands digest、resulting document、Patch、inverse Patch、诊断和过期条件。Commit 只能引用仍有效的 Preview。
+`propose_spatial_actions` 与 `preview_connected_transform` 保留为复杂局部问题的可选适配器，不是默认路线。`preview_transaction` 保留完整 Drawing IR 控制能力；`revise_preview` 在精确父候选上应用底层纠正。Preview handle 绑定 base revision、Commands digest、resulting document、诊断和过期条件，Commit 只能引用仍有效的 Preview。
 
 每个有效 Preview 同时暴露 `CounterfactualWorldBranch`。它直接复用事务引擎中的临时 DrawingDocument，只对 Patch 影响的 bounds、SourceSpan、Arrangement 分片和语义支持做增量失效与重建，提供结构化 delta 和统一渲染，不复制或全量编译整张图纸。模型按需查询分支；快速路径不要求为了形式完整读取所有 delta。
 
 ## 8. Drawing Transaction 与 Lineage
 
-模型默认先表达 `SpatialActionProgram`，其中包含 target refs、设计目标、保持 refs/interfaces/constraints、倾向方法和 Evidence。`SpatialActionCompiler` 使用可替换后端把它降低为 Drawing Commands：
+模型默认表达一次性、revision-bound 的 `SpatialEditProgram`：
 
-- rigid transform
-- parametric split
-- constraint solve
-- replacement
-- redraw
-- hybrid
-- raw transaction
+```ts
+interface SpatialEditProgram {
+  baseRevision: RevisionId;
+  replacesPreviewHandle?: string;
+  summary: string;
+  intent: string;
+  targets: SpatialTarget[];
+  operations: Array<Translate | SetEndpoint | CreatePath | DeleteNodes>;
+  preserveNodeRefs: string[];
+  postconditions: SpatialPostcondition[];
+  evidenceRefs: string[];
+  confidence?: number;
+}
+```
 
-该层类似编译器而不是权限系统：它负责精确坐标、必要切分、约束解和影响分析，但模型仍可组合能力或直接给出合法底层事务。
+`targets` 负责审计与 UI 解释，真正写范围来自 operations 中的显式节点引用。编译器顺序执行 `translate`、`set_endpoint`、`create_path`、`delete_nodes`，并为每项操作保存解析点、受影响节点和 Commands receipt。未被 operations 引用的节点天然保持不变；同一 program 又声明 preserve 又修改同一节点时返回计划矛盾错误。
+
+该层类似编译器而不是权限系统：它负责精确坐标与基础几何运算，但模型仍可组合其他能力、直接给出合法底层事务或自由重绘。后续只根据真实任务频率增加通用操作，不为某个对象或示例添加专用 opcode。
 
 现有 Drawing Commands 继续作为唯一修改语言：
 
@@ -367,7 +389,6 @@ interface DrawingTransactionMetadata {
   confidence?: number;
   lineage?: DrawingLineageRecord[];
   decisionGrantRefs?: string[];
-  diagnosticAcknowledgements?: string[];
 }
 ```
 
@@ -394,10 +415,32 @@ interface DrawingTransactionMetadata {
 - 新增/消失端点、闭合度和拓扑连接变化。
 - 局部间隙、分支、相交和尺寸变化。
 - 约束影响与标注冲突。
-- before/preview/diff 视觉目标达成度。
+- before/after 视觉目标达成度。
 - 区域外差异、样式、尺度和伪影。
 
 Diagnostic 不修改候选，不强制缩小选区、不强制切换编辑方式。模型根据结果继续修正、解释接受或请求用户决定。
+
+### 9.3 Independent Preview Reviewer
+
+语义写入 Preview 产生后，Runtime 使用共享 SceneCompiler 在同一视口分别渲染正式 revision 与候选结果，再由服务端左右拼成一张 `before | after` 图。独立检查模型只接收当前有效用户指令、这张对照图、有界确定性诊断，以及绑定候选身份的精简 `candidateContext`。其中包含 Preview handle、transaction digest、program 摘要、目标节点和操作种类，只用于确认正在检查哪个候选；主模型声明不是视觉证据。检查者不接收写工具，也不参与规划、授权或提交。
+
+检查结果以 `PreviewReviewEvidence` 绑定 revision、Preview handle 和事务摘要：
+
+```ts
+interface PreviewReviewEvidence {
+  revision: RevisionId;
+  previewHandle: string;
+  transactionDigest: string;
+  status: 'satisfied' | 'needs_revision' | 'unavailable';
+  reason: string;
+  defects: DrawingPreviewDefect[];
+  reviewedAt: number;
+}
+```
+
+该结果通过 `currentPreviewReview` 进入主模型下一轮上下文。它是第三方复核意见而不是 verification receipt：`needs_revision` 和 `unavailable` 都保留当前 Preview；主模型可以结合 Drawing IR、用户指令和其他证据继续修改或确认提交。
+
+主模型同时收到 `{attempt,max}` 候选预算，可自主选择继续当前 Preview、从 canonical 重做或接受结果。连续 3 个候选均未通过时，Runtime 以 `PREVIEW_REVIEW_ATTEMPTS_EXHAUSTED` 安全结束本轮：不 Commit、不改 canonical，并向 UI 明确显示可重试或追加指令。该边界防止无改善循环，不替检查者作语义判断。
 
 ## 10. 标注、约束与 Interaction Policy
 
@@ -451,14 +494,20 @@ Diagnostic 不修改候选，不强制缩小选区、不强制切换编辑方式
 ## 12. Preview、提交与反馈 Loop
 
 ```text
-模型调用 preview_transaction
+模型调用 preview_spatial_program（默认）或其他 Preview 工具
 → Hard Validator
 → Diagnostic Evaluators
-→ 后端统一渲染 before/preview/diff
+→ 后端同视口渲染并拼接 before | after
 → UI 显示当前 Preview 与真实工具 Overlay
-→ 模型读取全部事实
-→ 修正 / 请求用户决定 / commit_preview
+→ 独立检查者仅判断是否满足当前用户指令
+→ 检查结果作为 currentPreviewReview 返回主模型
+→ 主模型显式选择继续 SpatialEditProgram、revise_preview 底层修订，或 preview_transaction 从 canonical 重做
+→ 请求用户决定 / commit_preview
 ```
+
+每轮模型上下文包含权威 `editBaseOptions`。没有候选时，`taskDrivenProgram` 从当前 revision 创建候选；已有候选时，`continueWithTaskProgram` 携带父 Preview handle 并把新 program 合成可独立回放的 canonical 事务。`reviseCurrentPreview` 用 handle/digest 写底层纠正，`startFromCanonical` 显式舍弃当前候选并完整重做。模型自主选择，Runtime 只校验声明的基线。
+
+`revise_preview` 的 corrections 以父候选 resulting document 为读取语义。工具层先验证局部纠正，再把父事务与纠正合成为一个以 canonical revision 为基线的完整事务并做结果等价校验。新 Preview 记录父 handle/digest，但 Commit 不依赖父候选仍然存在。
 
 模型默认自动提交自己认可的候选。仍有 warning 时可以：
 
@@ -468,7 +517,7 @@ Diagnostic 不修改候选，不强制缩小选区、不强制切换编辑方式
 
 同一失败候选连续重复时，Runtime 返回 digest 相同和诊断未改善的事实，模型必须换工具、换策略、升级模型或结束，不能静默重复。
 
-Preview Loop 追求当前动作的最小充分验证，而不是证明整张图绝对正确：硬校验始终运行；受影响拓扑和接口诊断增量运行；视觉验收仅在语义设计、重绘、视觉目标或低置信度使其有实际价值时运行。无关 Slice 的 `partial/unknown` 不延迟提交。
+Preview Loop 追求当前动作的最小充分验证，而不是证明整张图绝对正确：硬校验始终运行；受影响拓扑和接口诊断增量运行；独立视觉复核只评价指令满足度并把意见交还主模型，不承担 Commit 门禁。无关 Slice 的 `partial/unknown`、普通 warning、复核 `needs_revision` 或检查服务暂时不可用都不延迟主模型对当前候选的判断。
 
 ## 13. UI 与实时事件
 
@@ -480,7 +529,49 @@ Preview Loop 追求当前动作的最小充分验证，而不是证明整张图�
 - UI 不显示模型名称或隐藏推理；只显示动作摘要、工具结果和修改理由。
 - 活跃任务最长约 25 秒产生真实进度或 heartbeat；30 秒不是正确性的硬超时。
 
-UI 事件来自真实后端动作，例如 `grounding.candidates-created`、`grounding.supports-resolved`、`world-model.slice-expanded`、`action.proposals-created`、`action.compile-started`、`action.preview-ready` 和 `verification.completed`，不能由固定阶段列表伪造。
+UI 事件来自真实后端动作和工具结果，例如 observation、program compile、resolved target/anchor/motion、Preview delta、diagnostics、independent review 和 Commit；不能由固定阶段列表伪造。
+
+### 13.1 Spatial Interaction Frame
+
+前后端之间只传递一种有界、世界坐标系的画布交互协议：
+
+```ts
+type SpatialInteractionFrame = {
+  kind: 'spatial';
+  phase: 'observing' | 'grounding' | 'planning' | 'previewing' | 'verifying';
+  label?: string;
+  strokes: Array<{
+    id: string;
+    ref?: string;
+    nodeId?: string;
+    role: 'target' | 'boundary' | 'interface' | 'context' | 'excluded'
+      | 'before' | 'after';
+    points: Vec2[];
+    closed?: boolean;
+    confidence?: number;
+  }>;
+  markers: Array<{
+    id: string;
+    ref?: string;
+    role: 'seed' | 'target' | 'interface' | 'anchor' | 'warning';
+    point: Vec2;
+  }>;
+  vectors: Array<{
+    id: string;
+    role: 'motion' | 'constraint';
+    from: Vec2;
+    to: Vec2;
+  }>;
+  truncated?: boolean;
+};
+```
+
+- `drawing-interaction/projector` 将 Node、SourceSpan、HalfEdge、Face、Interface 和 Drawing Delta 确定性投影为该协议；前端不再从节点 ID、包围盒或像素 Mask 猜测精确轮廓。
+- Grounding 返回 `target/boundary + excluded + interface`，Action 返回 `target + context + interface`，Preview/Verification 返回 `before + after + motion`。
+- 直接写工具的已解析输入在调用前由 Runtime 本地投影为 `planning` 帧；工具返回后用真实结果帧覆盖。这不增加模型调用。
+- 画布仅负责显示协议：青色目标描边、琥珀接口脉冲、灰色上下文/排除、before/after 差异和运动向量。Overlay 必须 `pointer-events: none`，不参与选中与事务。
+- 单帧最多 96 条 stroke、96 个 marker、96 个 vector，每条 stroke 最多 96 个采样点；超限标记 `truncated`，但不改变 Drawing IR 与工具结果。
+- Interaction Frame 只进入进度事件和审计引用，Context Ledger 投影给模型时会剥离其大体积坐标，避免 UI 几何反复占用 token。
 
 ## 14. 审计、回放与上下文管理
 
@@ -494,7 +585,7 @@ Episode Event Log 记录：
 - Observation、Pick/Coverage 查询、坐标变换、拓扑/CV/矢量化证据。
 - Semantic Entity candidates、支持/排除映射、World Model Slice 和 SourceSpan/HalfEdge 引用。
 - TaskRelevantView、Knowledge State、Grounding Evidence Delta 和 supersedes 关系。
-- Action Proposals、Spatial Action Program、Commands、lineage、Preview、diagnostics 和 commit decision。
+- `SpatialEditProgram`、逐操作 resolution receipt、可选 Action Proposals、Commands、lineage、Preview、diagnostics 和 commit decision。
 - Counterfactual World Branch 的影响范围、增量 Arrangement/语义支持与查询结果。
 - Permission Grant、Patch、inverse Patch 和进度耗时。
 
@@ -524,6 +615,7 @@ MVP 本地仓库分离保存：
 - `api/services/drawing-agent/`：模型 Loop、Episode、重试、状态与工具调度。
 - `api/services/model-provider/`：供应商能力配置、协议适配、结构化输出与 token/thinking 策略。
 - `api/services/drawing-tools/`：新的模型工具 Gateway 与版本化注册表。
+- `api/services/drawing-spatial-program/`：`SpatialEditProgram` 严格解析、Observation/World/Node Anchor 解析、通用几何编译与 postcondition diagnostics。
 - `api/services/drawing-world-model/`：Frame Graph、Arrangement、SourceSpan/HalfEdge/Face、WorldModelSlice、空间索引和增量失效；只从 Drawing IR 派生。
 - `api/services/drawing-grounding/`：Pick Map、CoverageIndex、Semantic Entity candidates、TaskRelevantView、Grounding Evidence Event、支持映射、Raster Grounding Provider 和 Overlay。
 - `api/services/drawing-spatial-actions/`：Action Proposal、Spatial Action IR、Compiler backends、必要切分、约束求解和 lineage。
@@ -550,7 +642,7 @@ MVP 本地仓库分离保存：
 - Grounding Renderer → 正常 Observation + Pick Map + CoverageIndex + 候选 Overlay。
 - `TopologyPartResolver` → `trace_paths/find_interfaces` 的候选查询，不收敛成唯一授权。
 - `split-materializer` → `materialize_split`。
-- `spatial-edit-compiler` → `SpatialActionCompiler` 多后端。
+- 已解析的常用编辑 → `SpatialEditProgram` 通用编译器；复杂 Proposal、约束和重绘后端保留为按需工具。
 - `spatial-validator` → Hard Validator 扩展 + Diagnostic Evaluators。
 - `Strategy Router` → 删除强制路由，只保留模型工具能力描述。
 
@@ -576,6 +668,8 @@ MVP 不保留双主链或长期 Feature Flag。生产 `api/app.ts` 只装配 `Mo
 - incidence 与 connected 分离，路径不会默认穿越视觉交叉点。
 - Arrangement 分析切分不修改 Drawing IR，物化切分只出现在事务中。
 - Coordinate Frame/Observation 引用可以确定性解析。
+- SpatialEditProgram 严格有界，编译失败不产生部分 Preview；未提及节点保持字节等价。
+- translate、set_endpoint、create_path、delete_nodes 可以顺序组合并产生逐操作 receipt。
 - 四个 plane 同事务原子修改与 inverse Patch。
 - replace/redraw 的 lineage。
 - revision/Preview/Grant 过期。
@@ -584,11 +678,12 @@ MVP 不保留双主链或长期 Feature Flag。生产 `api/app.ts` 只装配 `Mo
 
 ### 18.2 Agent 集成测试
 
-- 多候选 Grounding 能选择、合并和排除重叠结构，不要求模型输出精确轮廓坐标。
+- 已明确任务可以直接用 observation/node_anchor 引用在一次模型决策后生成 Preview，不要求先调用 Grounding 或 Proposal。
+- 有歧义任务的多候选 Grounding 能选择、合并和排除重叠结构，不要求模型输出精确轮廓坐标。
 - Semantic Entity 与 Node/SourceSpan 支持多对多映射。
 - TaskRelevantView 能按任务组合、展开和折叠临时语义对象，不污染 Authoring Graph。
 - WorldModelSlice 区分 resolved/partial/unknown/stale；只在相关未解析边界上继续展开。
-- Action Proposal 不限制模型；模型可选择候选、组合能力或直接 Preview Raw Transaction。
+- SpatialEditProgram 是默认快速入口；Action Proposal 不限制模型，模型可选择候选、组合能力或直接 Preview Raw Transaction。
 - 明确任务通过一次模型决策选择 Grounding 与动作；不因完整审计或整图语义建模增加固定轮次。
 - Counterfactual World Branch 只重建 Patch 影响范围，并能返回拓扑、接口和语义支持 delta。
 - 清晰局部任务在首个 Preview 前至多一次模型决策；每个额外决策都具有受支持的 escalation reason 和非空 Evidence Delta。
@@ -600,7 +695,7 @@ MVP 不保留双主链或长期 Feature Flag。生产 `api/app.ts` 只装配 `Mo
 - 用户追加指令继续同一 Episode。
 - 重复无改善候选能触发换策略而非相同重试。
 - 模型上下文不包含仿射公式或无空间标签的裸坐标；视觉引用可以确定性解析到世界坐标。
-- Capability Catalog 保持完整能力可发现性，但每轮只加载少量 Active Tool Contracts。
+- Active Tool Catalog 保持当前可用能力可发现性并使用严格契约，不形成对象类别或固定步骤路由。
 - Native Tools、strict JSON Schema 和 JSON Object 供应商均投影为相同内部动作并通过本地校验。
 
 ### 18.3 真实流程基准

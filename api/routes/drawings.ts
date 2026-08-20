@@ -11,8 +11,16 @@ import {
   DrawingApplicationError,
 } from '../services/drawing-application/application.js';
 import { DrawingRepositoryLoadError } from '../services/drawing-application/file-drawing-repository.js';
+import {
+  DxfImportCoordinator,
+  DxfImportError,
+} from '../services/drawing-dxf/coordinator.js';
 
-export function createDrawingsRouter(application: DrawingApplication): Router {
+export function createDrawingsRouter(
+  application: DrawingApplication,
+  lifecycle?: { stopActiveRuns(drawingId: string): Promise<string[]> },
+  dxfImports?: Pick<DxfImportCoordinator, 'import'>,
+): Router {
   const router = Router();
 
   router.post('/', route(async (req, res) => {
@@ -28,6 +36,30 @@ export function createDrawingsRouter(application: DrawingApplication): Router {
   router.get('/:drawingId', route(async (req, res) => {
     const workspace = await application.open(req.params.drawingId as DrawingId);
     res.status(200).json({ success: true, workspace });
+  }));
+
+  router.post('/:drawingId/imports/dxf', route(async (req, res) => {
+    if (!dxfImports) {
+      res.status(503).json({
+        success: false,
+        error: { code: 'DXF_IMPORT_UNAVAILABLE', message: 'DXF 导入服务未启用' },
+      });
+      return;
+    }
+    if (!isDxfFile(req.body?.file)
+      || (req.body?.engineeringDocument !== undefined
+        && !isEngineeringDocument(req.body.engineeringDocument))) {
+      invalid(res, 'INVALID_DXF_IMPORT', 'DXF 导入请求结构无效');
+      return;
+    }
+    const result = await dxfImports.import({
+      drawingId: req.params.drawingId as DrawingId,
+      ...req.body.file,
+      ...(req.body.engineeringDocument
+        ? { engineeringDocument: req.body.engineeringDocument }
+        : {}),
+    });
+    res.status(200).json({ success: true, ...result });
   }));
 
   router.post('/:drawingId/transactions', route(async (req, res) => {
@@ -57,6 +89,19 @@ export function createDrawingsRouter(application: DrawingApplication): Router {
     res.status(200).json({ success: true, result });
   }));
 
+  router.post('/:drawingId/clear', route(async (req, res) => {
+    if (!isActor(req.body?.actor)) {
+      invalid(res, 'INVALID_CLEAR', '清空请求缺少有效 actor');
+      return;
+    }
+    const drawingId = req.params.drawingId as DrawingId;
+    const stoppedRunIds = lifecycle
+      ? await lifecycle.stopActiveRuns(drawingId)
+      : [];
+    const workspace = await application.clear({ drawingId, actor: req.body.actor });
+    res.status(200).json({ success: true, workspace, stoppedRunIds });
+  }));
+
   return router;
 }
 
@@ -76,6 +121,17 @@ function route(
         res.status(409).json({
           success: false,
           error: { code: error.code, message: '本地图纸数据损坏' },
+        });
+        return;
+      }
+      if (error instanceof DxfImportError) {
+        const status = error.code === 'DXF_PARSE_FAILED'
+          || error.code === 'DXF_ENGINEERING_DOCUMENT_INVALID'
+          ? 400
+          : 409;
+        res.status(status).json({
+          success: false,
+          error: { code: error.code, message: error.message },
         });
         return;
       }
@@ -109,6 +165,34 @@ function isActor(value: unknown): value is Actor {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isDxfFile(value: unknown): value is {
+  fileName: string;
+  data: string;
+  mimeType: string;
+} {
+  return isRecord(value)
+    && typeof value.fileName === 'string'
+    && value.fileName.trim().toLowerCase().endsWith('.dxf')
+    && typeof value.data === 'string'
+    && Boolean(value.data.trim())
+    && typeof value.mimeType === 'string'
+    && ['application/dxf', 'application/x-dxf', 'image/vnd.dxf', 'application/octet-stream', '']
+      .includes(value.mimeType);
+}
+
+function isEngineeringDocument(value: unknown): value is {
+  fileName: string;
+  data: string;
+  mimeType: string;
+} {
+  return isRecord(value)
+    && typeof value.fileName === 'string'
+    && Boolean(value.fileName.trim())
+    && typeof value.data === 'string'
+    && Boolean(value.data.trim())
+    && value.mimeType === 'text/plain';
 }
 
 function invalid(res: Response, code: string, message: string): void {

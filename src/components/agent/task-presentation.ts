@@ -47,6 +47,10 @@ function isActive(status: AgentUiStatus): boolean {
     || status === 'pause_requested' || status === 'stopping';
 }
 
+function isTerminal(status: AgentUiStatus): boolean {
+  return status === 'complete' || status === 'error' || status === 'stopped';
+}
+
 function terminalEventMatches(status: AgentUiStatus, event: AgentProgressEvent): boolean {
   if (status === 'error') return event.type === 'failed';
   if (status === 'complete') return event.type === 'completed';
@@ -55,9 +59,13 @@ function terminalEventMatches(status: AgentUiStatus, event: AgentProgressEvent):
   return true;
 }
 
-function presentationTone(status: AgentUiStatus): PresentedAgentTask['tone'] {
+function presentationTone(
+  status: AgentUiStatus,
+  event?: AgentProgressEvent,
+): PresentedAgentTask['tone'] {
   if (status === 'error') return 'danger';
   if (status === 'complete') return 'success';
+  if (event?.type === 'protocol_recovered') return 'success';
   if (status === 'paused') return 'paused';
   if (status === 'waiting_for_user') return 'paused';
   if (status === 'stopped' || status === 'idle') return 'neutral';
@@ -72,9 +80,11 @@ export function presentAgentTask(input: PresentAgentTaskInput): PresentedAgentTa
   const displayedEvent = latestMeaningful && terminalEventMatches(input.status, latestMeaningful)
     ? latestMeaningful
     : undefined;
-  const attemptEvent = [...input.events].reverse().find((event) => (
-    event.candidateAttempt !== undefined && event.maxCandidateAttempts !== undefined
-  ));
+  const attemptEvent = isTerminal(input.status)
+    ? undefined
+    : [...input.events].reverse().find((event) => (
+      event.candidateAttempt !== undefined && event.maxCandidateAttempts !== undefined
+    ));
   const startedAt = input.events.length > 0
     ? input.events[0].timestamp - input.events[0].elapsedMs
     : input.nowMs;
@@ -93,6 +103,6 @@ export function presentAgentTask(input: PresentAgentTaskInput): PresentedAgentTa
     attemptLabel: attemptEvent
       ? `第 ${attemptEvent.candidateAttempt}/${attemptEvent.maxCandidateAttempts} 次尝试`
       : null,
-    tone: presentationTone(input.status),
+    tone: presentationTone(input.status, displayedEvent),
   };
 }

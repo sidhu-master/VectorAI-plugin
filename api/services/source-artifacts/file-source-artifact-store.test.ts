@@ -28,12 +28,26 @@ describe('FileSourceArtifactStore', () => {
     });
   });
 
+  it('stores DXF and companion engineering text as immutable source artifacts', async () => {
+    const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-sources-'));
+    roots.push(rootDirectory);
+    const store = new FileSourceArtifactStore({ rootDirectory });
+
+    const [dxf, document] = await Promise.all([
+      store.put({ data: Buffer.from('0\nEOF').toString('base64'), mimeType: 'application/dxf' }),
+      store.put({ data: Buffer.from('[drawing]\nunit=mm').toString('base64'), mimeType: 'text/plain' }),
+    ]);
+
+    expect(dxf.mimeType).toBe('application/dxf');
+    expect(document.mimeType).toBe('text/plain');
+  });
+
   it('rejects unsupported media and decoded payloads over the configured limit', async () => {
     const rootDirectory = await mkdtemp(join(tmpdir(), 'vectorai-sources-'));
     roots.push(rootDirectory);
     const store = new FileSourceArtifactStore({ rootDirectory, maxBytes: 4 });
 
-    await expect(store.put({ data: 'dGV4dA==', mimeType: 'text/plain' }))
+    await expect(store.put({ data: 'dGV4dA==', mimeType: 'application/zip' }))
       .rejects.toThrow('SOURCE_MIME_UNSUPPORTED');
     await expect(store.put({ data: 'MTIzNDU=', mimeType: 'image/png' }))
       .rejects.toThrow('SOURCE_TOO_LARGE');

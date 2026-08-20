@@ -35,6 +35,22 @@ describe('DrawingObservationBuilder', () => {
     expect(builder.readImage(observation.views[0].image.handle)).toMatch(/^data:image\/png;base64,/);
   });
 
+  it('keeps incidental selection highlighted without using it to create a target-detail view', async () => {
+    const builder = new DrawingObservationBuilder();
+
+    const observation = await builder.build({
+      document: documentWithCircle(),
+      revision: 'revision_incidental_selection' as RevisionId,
+      selectedIds: ['hand'],
+      selectionIsTarget: false,
+    });
+
+    expect(observation.selectedIds).toEqual(['hand']);
+    expect(observation.views.map((view) => view.purpose)).toEqual(['overview']);
+    expect(observation.views[0].grounding.find((node) => node.nodeId === 'hand')?.selected)
+      .toBe(true);
+  });
+
   it('reuses a deterministic cached render for the same revision and view spec', async () => {
     const render = vi.fn(renderGroundingSnapshot);
     const builder = new DrawingObservationBuilder({ renderSnapshot: render });
@@ -106,6 +122,27 @@ describe('DrawingObservationBuilder', () => {
 
     expect(after.views[0].image.handle).not.toBe(before.views[0].image.handle);
     expect(after.vectorDigest.nodes).toHaveLength(before.vectorDigest.nodes.length + 1);
+  });
+
+  it('reads immutable drawing- and revision-bound metadata by observation view id', async () => {
+    const builder = new DrawingObservationBuilder();
+    const observation = await builder.build({
+      document: documentWithCircle(),
+      revision: 'revision_point_reference' as RevisionId,
+    });
+    const viewId = observation.views[0].id;
+
+    const stored = builder.readView(viewId);
+
+    expect(stored).toEqual({
+      drawingId: 'drawing_observation',
+      revision: 'revision_point_reference',
+      cacheScope: 'canonical',
+      view: observation.views[0],
+    });
+    if (!stored) throw new Error('expected stored observation');
+    stored.view.worldBounds.minX = 999;
+    expect(builder.readView(viewId)?.view.worldBounds.minX).not.toBe(999);
   });
 });
 

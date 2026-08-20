@@ -34,10 +34,19 @@ export const SEMANTIC_REGION_RESPONSE_SCHEMA: DrawingResponseSchema = {
     type: 'object',
     additionalProperties: false,
     required: [
-      'label', 'sourceViewId', 'contours', 'holes', 'anchors', 'confidence', 'evidenceRefs',
+      'label', 'operation', 'preferredEditMode', 'sourceViewId',
+      'contours', 'holes', 'anchors', 'confidence', 'evidenceRefs',
     ],
     properties: {
       label: STRING,
+      operation: {
+        type: 'string',
+        enum: ['modify-existing', 'add-new', 'replace-existing'],
+      },
+      preferredEditMode: {
+        type: 'string',
+        enum: ['geometric-edit', 'generative-redraw', 'hybrid-edit'],
+      },
       sourceViewId: STRING,
       contours: { type: 'array', minItems: 1, items: NORMALIZED_POLYGON },
       holes: { type: 'array', items: NORMALIZED_POLYGON },
@@ -49,7 +58,10 @@ export const SEMANTIC_REGION_RESPONSE_SCHEMA: DrawingResponseSchema = {
           required: ['id', 'role', 'point', 'confidence'],
           properties: {
             id: STRING,
-            role: STRING,
+            role: {
+              type: 'string',
+              enum: ['target-seed', 'boundary', 'required', 'protected-seed'],
+            },
             point: NORMALIZED_POINT,
             confidence: CONFIDENCE,
           },
@@ -57,33 +69,6 @@ export const SEMANTIC_REGION_RESPONSE_SCHEMA: DrawingResponseSchema = {
       },
       confidence: CONFIDENCE,
       evidenceRefs: STRING_ARRAY,
-    },
-  },
-};
-
-export const FRAGMENT_SELECTION_RESPONSE_SCHEMA: DrawingResponseSchema = {
-  name: 'drawing_fragment_selection',
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['editableFragmentIds', 'anchorIds', 'evidence', 'confidence'],
-    properties: {
-      editableFragmentIds: { type: 'array', items: STRING, uniqueItems: true },
-      anchorIds: { type: 'array', items: STRING, uniqueItems: true },
-      evidence: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['fragmentId', 'reason', 'confidence'],
-          properties: {
-            fragmentId: STRING,
-            reason: STRING,
-            confidence: CONFIDENCE,
-          },
-        },
-      },
-      confidence: CONFIDENCE,
     },
   },
 };

@@ -61,7 +61,7 @@ DrawingAssertion 必须精确使用以下五种形状之一，不得添加额外
 {"type":"selection.count","selector":DrawingSelector,"min":non_negative_integer}
 selection.count 的 equals 与 min 二选一：equals 表示精确条数，min 表示至少 N 条。对"区域定位/找某个对象"这类无法预先确定精确数量的节点，务必用 min（如 min:1，表示该区域至少有一条即通过），不要用 equals 猜测精确数量。
 对新建且尚无稳定 ID 的图元，使用 selection.count 或 document.valid，不要在计划中虚构 nodeId。
-对于“抬手、调整姿态、改得更自然”等依赖视觉语义的目标，不得臆造坐标 bounds 或精确数量来代替语义验收；最终 acceptanceCriteria 使用 document.valid 及能由现有 Drawing IR 证明的不变量，语义是否完成由运行时的预览视觉验证和最终视觉验收判断。
+对于依赖视觉语义、且无法仅靠 Drawing IR 数值断言证明的目标，不得臆造坐标 bounds 或精确数量来代替语义验收；最终 acceptanceCriteria 使用 document.valid 及能由现有 Drawing IR 证明的不变量，语义是否完成由运行时的预览视觉验证和最终视觉验收判断。
 工作流 capability 只能是 query_entities、inspect_entity、edit_entities、verify_goal；新建、修改、删除都使用 edit_entities。修改必须是局部增量。
 已有对象只能引用摘要里出现的稳定 ID，不得编造待修改或待删除对象的 ID。新建图元可不提供 ID。
 低置信度结果允许作为 candidate，但必须安排验证。不得输出 commit；提交由运行时在预览安全点后执行。
@@ -105,10 +105,10 @@ const DECISION_VISION_SYSTEM_PROMPT = `你是 VectorAI Drawing Agent 的单步�
 你可以看到一幅"当前图纸"的图片,图中每个可见图元用不同颜色绘制,并用 grounding 映射给出 图片区域 ↔ nodeId 的对应关系。用户选中的图元会用红色高亮。
 
 接地规则:
-- 用户指令中的指代(如"右手""那个圆""选中的线")要通过图片上的区域定位,再用 grounding 里最近的 nodeId 确定具体对象。
+- 用户指令中的指代(如"目标部件""那个圆""选中的线")要通过图片上的区域定位,再用 grounding 里最近的 nodeId 确定具体对象。
 - 若存在 selection(用户选中),指令默认作用域是这些选中节点;除非指令明确要求新建,否则不要改动选区之外的对象。
 - 只能用 grounding 里出现的 nodeId 去修改/删除,禁止编造 ID。新建对象可不提供 ID。
-- 修改肢体/形状时,先判断"这个部位由哪些节点/线段组成",再针对这些节点分别发出 geometry.update,不要只改单个端点;必要时可 update 多个节点。
+- 修改由多个边界片段共同构成的形状时,先判断目标由哪些节点或线段组成,再针对这些节点分别发出 geometry.update,不要只改单个端点;必要时可 update 多个节点。
 - grounding 中每个节点的 normalized 字段是其相对整幅图的归一化坐标(0~1),请据此判断节点在整图中的位置与相对关系。
 - 坐标一律使用图纸世界坐标,不要直接使用归一化坐标。
 

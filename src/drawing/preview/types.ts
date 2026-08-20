@@ -29,10 +29,27 @@ export interface SpatialRegionPreviewOverlay {
   id: string;
   revision: RevisionId;
   previewVersionId: string;
+  attempt: number;
+  status: 'proposed' | 'tracing' | 'accepted' | 'rejected';
   label: string;
   contours: Vec2[][];
   holes: Vec2[][];
-  anchors: Array<{ id: string; role: string; point: Vec2; confidence: number }>;
+  anchors: Array<{
+    id: string;
+    role: string;
+    point: Vec2;
+    confidence: number;
+    snapStatus: 'pending' | 'snapped' | 'missed';
+    snappedPoint?: Vec2;
+  }>;
+  paths: Array<{
+    id: string;
+    nodeId: string;
+    role: 'selected' | 'protected';
+    order: number;
+    points: Vec2[];
+  }>;
+  issues: Array<{ code: string; message: string }>;
   confidence: number;
 }
 

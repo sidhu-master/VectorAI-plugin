@@ -11,6 +11,11 @@ export interface DrawingInputInterpretation {
 
 const ANALYSIS_PATTERN = /分析|识别|检查|看看|说明|理解|analy[sz]e|inspect|explain/i;
 const MODIFY_PATTERN = /修改|改成|改为|改到|删除|移除|添加|新增|移动|调整|替换|放大|缩小|旋转|对齐|modify|change|delete|remove|add|move|adjust|replace|resize|rotate|align/i;
+const SELECTION_REFERENCE_PATTERN = /选中(?:的)?|所选|当前选择|选择(?:的)?(?:对象|图元|线|圆|区域)|\bselected\b|\bselection\b/i;
+
+export function referencesCurrentSelection(goal: string): boolean {
+  return SELECTION_REFERENCE_PATTERN.test(goal.trim());
+}
 
 export function interpretDrawingInput(input: {
   goal: string;

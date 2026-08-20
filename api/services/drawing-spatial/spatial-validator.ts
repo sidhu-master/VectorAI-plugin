@@ -39,6 +39,7 @@ export function validateSpatialEditPreview(input: {
   tolerance: number;
 }): SpatialValidationReport {
   const issues: SpatialValidationIssue[] = [];
+  const connectionTolerance = fittedConnectivityTolerance(input.region, input.tolerance);
   if (input.region.revision !== input.selection.revision
     || input.candidate.baseRevision !== input.selection.revision) {
     issues.push(hardIssue('SPATIAL_EDIT_STALE', '区域、选择和候选版本不一致'));
@@ -75,22 +76,22 @@ export function validateSpatialEditPreview(input: {
       issues.push(issue('TARGET_OUTSIDE_AUTHORIZED_BOUNDS', '目标图元越出授权范围', [id]));
     }
   }
-  issues.push(...validateBoundaryAnchors(input));
+  issues.push(...validateBoundaryAnchors({ ...input, tolerance: connectionTolerance }));
   const baselineTargetIds = new Set([
     ...input.selection.wholeNodes,
     ...input.selection.crossingNodes,
   ]);
   const baselineDanglingEndpoints = danglingEndpoints(
     input.before.geometry.filter((node) => baselineTargetIds.has(node.id)),
-    input.tolerance,
+    connectionTolerance,
   );
   const expectedBoundaryPoints = input.selection.boundaryAnchors.map((anchor) => anchor.point);
   const unexpectedDanglingEndpoints = danglingEndpoints(
     input.after.geometry.filter((node) => input.candidate.targetNodeIds.includes(node.id)),
-    input.tolerance,
+    connectionTolerance,
   ).filter((point) => (
-    !nearAny(point, baselineDanglingEndpoints, input.tolerance)
-    && !nearAny(point, expectedBoundaryPoints, input.tolerance)
+    !nearAny(point, baselineDanglingEndpoints, connectionTolerance)
+    && !nearAny(point, expectedBoundaryPoints, connectionTolerance)
   ));
   if (input.candidate.strategy === 'geometric-edit'
     && input.selection.boundaryAnchors.length > 0
@@ -273,6 +274,17 @@ function distanceToSegment(point: Vec2, start: Vec2, end: Vec2): number {
 
 function distance(left: Vec2, right: Vec2): number {
   return Math.hypot(left[0] - right[0], left[1] - right[1]);
+}
+
+function fittedConnectivityTolerance(region: SemanticRegion, numericTolerance: number): number {
+  const points = region.worldContours.flat();
+  if (points.length === 0) return numericTolerance;
+  const minX = Math.min(...points.map((point) => point[0]));
+  const minY = Math.min(...points.map((point) => point[1]));
+  const maxX = Math.max(...points.map((point) => point[0]));
+  const maxY = Math.max(...points.map((point) => point[1]));
+  const localSpan = Math.max(maxX - minX, maxY - minY);
+  return Math.max(numericTolerance, Math.min(1, localSpan * 0.005));
 }
 
 function issue(code: string, message: string, nodeIds: string[] = []): SpatialValidationIssue {

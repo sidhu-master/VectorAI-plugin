@@ -85,9 +85,13 @@ export function retainUncommittedPromotions(
 export function reconcilePerceptionPreview(
   state: PerceptionPreviewState,
   document: AuthoritativeDrawingNodes | null,
+  onlyNodeIds?: readonly string[],
 ): PerceptionPreviewState {
   const committedIds = drawingNodeIds(document);
-  const promotedIds = Object.keys(state.nodes).filter((id) => committedIds.has(id));
+  const allowedIds = onlyNodeIds === undefined ? null : new Set(onlyNodeIds);
+  const promotedIds = Object.keys(state.nodes).filter((id) => (
+    committedIds.has(id) && (allowedIds === null || allowedIds.has(id))
+  ));
   if (promotedIds.length === 0) return state;
 
   const nodes = { ...state.nodes };
@@ -105,7 +109,9 @@ export function reconcilePerceptionPreview(
     nodes,
     labelsByNodeId,
     ...(stageByNodeId === undefined ? {} : { stageByNodeId }),
-    ...(state.hiddenCommittedIds === undefined ? {} : { hiddenCommittedIds: [] }),
+    ...(state.hiddenCommittedIds === undefined ? {} : {
+      hiddenCommittedIds: state.hiddenCommittedIds.filter((id) => !promotedIds.includes(id)),
+    }),
   };
 }
 

@@ -155,6 +155,22 @@ export function entityBounds(entity: DrawingRenderable): BBox | null {
       return rotatedTextBounds(entity);
     case 'dimension':
       return boundsFromPoints([...entity.definitionPoints, entity.textPosition]);
+    case 'leader':
+      return boundsFromPoints(entity.points);
+    case 'centerline': {
+      const dx = entity.end[0] - entity.start[0];
+      const dy = entity.end[1] - entity.start[1];
+      const length = Math.hypot(dx, dy);
+      if (!(length > 0)) return boundsFromPoints([entity.start]);
+      const ux = dx / length;
+      const uy = dy / length;
+      return boundsFromPoints([
+        [entity.start[0] - ux * entity.extension, entity.start[1] - uy * entity.extension],
+        [entity.end[0] + ux * entity.extension, entity.end[1] + uy * entity.extension],
+      ]);
+    }
+    case 'section-hatch':
+      return boundsFromPoints(entity.segments.flatMap(({ start, end }) => [start, end]));
   }
 }
 

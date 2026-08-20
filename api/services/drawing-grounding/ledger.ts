@@ -78,7 +78,7 @@ export class GroundingLedger {
 
   #apply(event: GroundingEvidenceEvent, cursor: number): void {
     const prior = this.#current.get(event.hypothesisId);
-    let hypothesis = event.hypothesis
+    const hypothesis = event.hypothesis
       ? structuredClone(event.hypothesis)
       : prior
         ? structuredClone(prior.hypothesis)

@@ -2,7 +2,12 @@ import express from 'express';
 import type { Server } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentDecision, DrawingAgentPlan } from '../../src/contracts/drawing-agent';
+import type {
+  AgentDecision,
+  DrawingAgentPlan,
+  DrawingAgentRunView,
+  HumanDecisionResponse,
+} from '../../src/contracts/drawing-agent';
 import {
   type GeometryId,
   type IdFactory,
@@ -27,7 +32,7 @@ afterEach(async () => {
 });
 
 describe('drawing agent run routes', () => {
-  it('returns 202 quickly and forwards only drawing identity plus bounded guidance', async () => {
+  it('returns 202 quickly and keeps incidental selection out of planner guidance', async () => {
     const planningInputs: DrawingPlannerInput[] = [];
     const planner: DrawingPlannerModelAdapter = {
       plan: vi.fn(async (input) => {
@@ -53,8 +58,9 @@ describe('drawing agent run routes', () => {
       drawingId: context.workspace.document.id,
       revision: context.workspace.revision,
       objective: '创建圆',
-      instruction: expect.stringContaining('circle_1'),
+      instruction: '稳定规则：单位使用 mm',
     });
+    expect(planningInputs[0].instruction).not.toContain('circle_1');
     expect(JSON.stringify(planningInputs[0])).not.toContain('document');
     expect(JSON.stringify(planningInputs[0])).not.toContain('history');
   });
@@ -168,7 +174,53 @@ describe('drawing agent run routes', () => {
     expect(invalidPause.status).toBe(409);
     expect(stop.status).toBe(202);
   });
+
+  it('validates and forwards a response only to the exact pending Human Decision', async () => {
+    const context = await startServer();
+    const runtime = context.runtime as unknown as {
+      getState(runId: string): { status: string } | undefined;
+      respondToDecision(runId: string, response: HumanDecisionResponse): Promise<unknown>;
+    };
+    const pending = agentRunViewFixture('waiting_for_user');
+    pending.pendingDecision = {
+      id: 'decision_1', episodeId: 'episode_1', revision: context.workspace.revision,
+      kind: 'choose-option', question: '选择一个方案', reason: '存在两个有效候选',
+      options: [{ id: 'first', label: '方案一' }, { id: 'second', label: '方案二' }],
+      affectedResources: [], expiresWhenRevisionChanges: true,
+    };
+    Object.assign(runtime, { respondToDecision: vi.fn() });
+    vi.spyOn(runtime, 'getState').mockReturnValue(pending as never);
+    const respond = vi.spyOn(runtime, 'respondToDecision').mockResolvedValue({
+      ...pending, status: 'running', pendingDecision: null,
+    });
+
+    const valid = await fetch(`${context.baseUrl}/api/agent/runs/run_1/decisions/decision_1/respond`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedOptionId: 'first', additionalInstruction: '保留尺寸' }),
+    });
+    const stale = await fetch(`${context.baseUrl}/api/agent/runs/run_1/decisions/stale/respond`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedOptionId: 'first' }),
+    });
+
+    expect(valid.status).toBe(202);
+    expect(respond).toHaveBeenCalledWith('run_1', {
+      requestId: 'decision_1', selectedOptionId: 'first',
+      additionalInstruction: '保留尺寸', decidedAt: expect.any(Number),
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: { code: 'HUMAN_DECISION_STALE' } });
+  });
 });
+
+function agentRunViewFixture(status: DrawingAgentRunView['status']): DrawingAgentRunView {
+  return {
+    runId: 'run_1', drawingId: 'drawing_1' as never, revision: 'revision_1' as never,
+    status, goal: null, workflow: [], currentWorkflowNodeId: null,
+    commitCount: 0, analysisSummary: null, pendingInstructions: [],
+    pendingDecision: null, error: null,
+  };
+}
 
 async function startServer(input: {
   planner?: DrawingPlannerModelAdapter;
@@ -208,7 +260,7 @@ async function startServer(input: {
   const app = express();
   app.use(express.json());
   app.use('/api/agent/runs', createAgentRunsRouter(runtime, application, {
-    planner: 'lite-model', decision: 'lite-model', repair: 'repair-model',
+    planner: 'lite-model', decision: 'lite-model', repair: 'repair-model', reviewer: 'review-model',
   }, sourceArtifacts));
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));

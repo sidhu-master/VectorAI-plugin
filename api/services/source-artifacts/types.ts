@@ -1,5 +1,6 @@
 export const SOURCE_MIME_TYPES = [
   'image/png', 'image/jpeg', 'image/webp', 'application/pdf',
+  'application/dxf', 'application/x-dxf', 'image/vnd.dxf', 'text/plain',
 ] as const;
 
 export type SourceArtifactMimeType = typeof SOURCE_MIME_TYPES[number];

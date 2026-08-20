@@ -26,7 +26,6 @@ export interface DrawingTransactionMetadata {
   confidence?: number;
   lineage?: DrawingLineageRecord[];
   decisionGrantRefs?: string[];
-  diagnosticAcknowledgements?: string[];
 }
 
 export interface DrawingTransaction {

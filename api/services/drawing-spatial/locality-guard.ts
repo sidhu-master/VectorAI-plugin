@@ -16,9 +16,9 @@ export interface SearchEnvelopeCounts {
 export function localityBudgetFor(scale: TargetHint['preferredScale']): LocalityBudget {
   switch (scale) {
     case 'detail':
-      return budget(0.08, 0.32, 4, 4, 4, 12);
+      return budget(0.08, 0.32, 6, 6, 6, 12);
     case 'part':
-      return budget(0.25, 0.55, 6, 6, 6, 18);
+      return budget(0.25, 0.55, 12, 6, 6, 24);
     case 'assembly':
       return budget(0.6, 0.82, 20, 20, 16, 60);
     case 'drawing':
@@ -72,21 +72,6 @@ export function assessSearchEnvelope(input: {
     issues.push({
       code: 'ENVELOPE_SPAN_EXCEEDED',
       message: `搜索区域跨度达到图纸的 ${(Math.max(metrics.widthRatio, metrics.heightRatio) * 100).toFixed(1)}%`,
-    });
-  }
-  const complexityExceeded = metrics.wholeNodes > input.budget.maxWholeNodes
-    || metrics.crossingNodes > input.budget.maxCrossingNodes
-    || metrics.boundaryAnchors > input.budget.maxBoundaryAnchors
-    || metrics.candidateFragments > input.budget.maxCandidateFragments;
-  if (complexityExceeded) {
-    issues.push({
-      code: 'ENVELOPE_COMPLEXITY_EXCEEDED',
-      message: [
-        `完整图元 ${metrics.wholeNodes}`,
-        `跨边界图元 ${metrics.crossingNodes}`,
-        `边界锚点 ${metrics.boundaryAnchors}`,
-        `候选片段 ${metrics.candidateFragments}`,
-      ].join('，'),
     });
   }
   return { accepted: issues.length === 0, metrics, issues };

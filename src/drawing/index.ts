@@ -8,12 +8,19 @@ export {
   reconcilePerceptionPreview,
   retainUncommittedPromotions,
 } from './preview/reducer';
+export {
+  VECTOR_REVEAL_DURATION_MS,
+  VECTOR_REVEAL_STAGGER_MS,
+  VECTOR_REVEAL_TOTAL_MS,
+  vectorRevealTiming,
+} from './preview/reveal';
 
 export { validateDrawingDocument } from './validation/document';
 export type * from './validation/types';
 
 export { inspectNode, queryDrawing } from './query/query';
 export type * from './query/types';
+export { geometryBounds, unionBounds } from './query/bounds';
 
 export { compileDrawingCommands, evaluateAssertion } from './command/compile';
 export type * from './command/types';
@@ -27,6 +34,7 @@ export type * from './transaction/types';
 export { MemoryDrawingRepository } from './repository/memory';
 export { replayDrawingCommits } from './repository/replay';
 export {
+  clearRepositoryState,
   commitRepositoryState,
   createRepositoryState,
   revertRepositoryState,

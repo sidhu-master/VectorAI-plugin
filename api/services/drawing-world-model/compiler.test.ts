@@ -88,6 +88,33 @@ describe('WorldModelCompiler', () => {
     expect(slice.sourceSpans).toHaveLength(1);
   });
 
+  it('consumes revision-bound continuation tokens to read a large scope progressively', () => {
+    const document = drawing();
+    document.geometry.push(
+      line('line_a', [0, 0], [10, 0]),
+      line('line_b', [20, 0], [30, 0]),
+      line('line_c', [40, 0], [50, 0]),
+    );
+    const compiler = new WorldModelCompiler();
+    const revision = 'revision_pages' as RevisionId;
+
+    const first = compiler.compile(document, revision, { limit: 1 });
+    const second = compiler.compile(document, revision, {
+      limit: 1, continuationToken: first.continuationToken,
+    });
+    const third = compiler.compile(document, revision, {
+      limit: 1, continuationToken: second.continuationToken,
+    });
+
+    expect(first.sourceSpans.map((span) => span.sourceNodeId)).toEqual(['line_a']);
+    expect(second.sourceSpans.map((span) => span.sourceNodeId)).toEqual(['line_b']);
+    expect(third.sourceSpans.map((span) => span.sourceNodeId)).toEqual(['line_c']);
+    expect(first.continuationToken).toBeTruthy();
+    expect(second.continuationToken).toBeTruthy();
+    expect(third.continuationToken).toBeUndefined();
+    expect(second.knowledge.unresolvedBoundaryRefs).toContain('node:line_a');
+  });
+
   it('marks an unsupported local node as unknown instead of resolved empty space', () => {
     const document = drawing();
     document.geometry.push({

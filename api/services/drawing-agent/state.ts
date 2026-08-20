@@ -368,6 +368,7 @@ export interface ModelLedDrawingAgentState {
   recentDiagnostics: Array<Pick<DrawingDiagnostic, 'code' | 'severity' | 'nodeIds'> & {
     message?: string;
     action?: string;
+    facts?: Record<string, unknown>;
   }>;
   pendingInstructions: string[];
   activeInstructions: string[];
@@ -385,6 +386,7 @@ export interface ModelLedDrawingAgentState {
   toolCallCount: number;
   consecutiveReadCount: number;
   commitCount: number;
+  budgetedCommitCount: number;
   protocolCorrectionCount: number;
   latestActivity: ModelLedDrawingAgentActivity | null;
   analysisSummary: string | null;
@@ -410,7 +412,7 @@ export type ModelLedDrawingAgentEvent =
       response?: import('../../../src/contracts/drawing-agent.js').HumanDecisionResponse;
     }
   | { type: 'PROTOCOL_CORRECTION_RECORDED' }
-  | { type: 'COMMIT_RECORDED'; revision: RevisionId }
+  | { type: 'COMMIT_RECORDED'; revision: RevisionId; countsTowardBudget?: boolean }
   | { type: 'PAUSE_REQUESTED' }
   | { type: 'RESUME' }
   | { type: 'STOP_REQUESTED' }
@@ -460,6 +462,7 @@ export function createModelLedDrawingAgentState(input: {
     toolCallCount: 0,
     consecutiveReadCount: 0,
     commitCount: 0,
+    budgetedCommitCount: 0,
     protocolCorrectionCount: 0,
     latestActivity: null,
     analysisSummary: null,
@@ -502,6 +505,10 @@ export function reduceModelLedDrawingAgentState(
       return modelLedValid(state, {
         ...state,
         currentPreviewHandle: event.previewHandle,
+        // A Preview is a replacement counterfactual, not a patch on the previous
+        // candidate. Historical diagnostics remain in the audit log; only the
+        // current candidate's diagnostics belong in the active reasoning state.
+        recentDiagnostics: [],
         candidateDigests: [...state.candidateDigests, event.candidateDigest]
           .slice(-MAX_CANDIDATE_DIGESTS),
         duplicateCandidateCount: state.duplicateCandidateCount + (duplicate ? 1 : 0),
@@ -570,6 +577,8 @@ export function reduceModelLedDrawingAgentState(
         ...state,
         revision: event.revision,
         commitCount: state.commitCount + 1,
+        budgetedCommitCount: state.budgetedCommitCount
+          + (event.countsTowardBudget === false ? 0 : 1),
         currentPreviewHandle: null,
         consecutiveReadCount: 0,
       });
@@ -628,7 +637,7 @@ export function checkModelLedDrawingAgentBudget(
       message: `已达到最大连续读取次数 ${state.limits.maxConsecutiveReads}`,
     };
   }
-  if (state.commitCount >= state.limits.maxCommits) {
+  if (state.budgetedCommitCount >= state.limits.maxCommits) {
     return { code: 'MAX_COMMITS', message: `已达到最大提交次数 ${state.limits.maxCommits}` };
   }
   if (state.protocolCorrectionCount >= state.limits.maxProtocolCorrections) {

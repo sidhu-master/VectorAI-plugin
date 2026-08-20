@@ -81,7 +81,7 @@ VectorAI 的目标不是穷举所有可能的图形、部件和编辑模板，�
 
 ```ts
 interface SpatialEditProgram {
-  baseRevision: number;
+  baseRevision: RevisionId;
   replacesPreviewHandle?: string;
   summary: string;
   intent: string;
@@ -153,7 +153,7 @@ type SpatialPointRef =
 `replacesPreviewHandle` 明确本轮基于哪一个结果：
 
 - 缺省：基于 canonical `baseRevision`；
-- 提供 handle：基于该 Preview 修订，并替换旧候选；
+- 提供 handle：基于该 Preview 继续编译，并用新候选替换当前显示的旧候选；最终事务仍以 canonical revision 为基线，可独立回放；
 - 主模型可以根据检查反馈选择保留上一步或从 canonical 重做。
 
 ## 7. Postconditions 与检查 loop
@@ -174,6 +174,8 @@ type SpatialPointRef =
 5. 主模型选择 `commit`、基于该 Preview `revise`，或从 canonical `replace`。
 
 检查者不生成编辑命令，也不复用主模型的隐藏推理。
+
+为防止模型在同一问题上无限生成无改善候选，Runtime 对一次指令设置很小的候选预算，MVP 默认最多复核 3 个语义候选。预算是通用资源边界，不判断对象、动作或方向；达到上限时正式 Drawing IR 保持不变，最后一个 Preview 不会自动提交，UI 明确提示用户重试或追加指令。完整候选与复核历史继续保留在审计中，模型活跃上下文只保留当前候选契约和最新检查结果。
 
 ## 8. 动态视觉交互
 
@@ -205,7 +207,10 @@ type SpatialPointRef =
 
 - 普通任务以一次模型决策 + 一次编译 Preview 为快速路径；
 - observation 逆变换、节点锚点、几何运算全部由代码完成；
-- 只传任务相关节点、关系、观察索引和紧凑工具 schema；
+- 首轮只传 grounded overview 与 Global Map；用户已有选中项或工具产生了活跃节点后，才内联局部 World Model，避免首轮编译和传输整图拓扑；
+- 只传任务相关节点、关系、观察索引和紧凑工具 schema；工具目录按 `build → ground → propose` 的真实前置条件逐步开放；
+- 同一 revision 的精确 World Model 与完整 Working Set 不在同一轮重复表达；后续无 World Model 投影时再恢复必要节点事实，不能假设模型记得上一轮；
+- 新候选替换活跃上下文里的旧候选 receipt，审计日志仍保持追加式完整历史；
 - 不强制 Grounding、候选生成、全图拓扑或额外模型轮次；
 - 超过 30 秒时 UI 展示真实阶段，但不牺牲原子事务和检查 loop；
 - 大图通过 revision-bound 局部工作集和 observation 引用扩展，不把整图坐标逐轮重复传给模型。

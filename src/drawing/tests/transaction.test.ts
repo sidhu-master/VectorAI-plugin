@@ -230,7 +230,6 @@ describe('previewTransaction', () => {
         evidenceRefs: ['evidence_render_1' as EvidenceId],
       }],
       decisionGrantRefs: ['grant_1'],
-      diagnosticAcknowledgements: ['diagnostic_1'],
     };
     (transaction as DrawingTransaction & { metadata?: typeof metadata }).metadata = metadata;
 

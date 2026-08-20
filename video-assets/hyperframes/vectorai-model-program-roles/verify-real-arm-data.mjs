@@ -1,68 +1,117 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+import { readFile, readdir } from 'node:fs/promises';
 
-const html = await readFile(new URL('./index.html', import.meta.url), 'utf8');
-const fixtureSource = await readFile(
-  new URL('../../../api/services/drawing-spatial/test2-fixture.ts', import.meta.url),
-  'utf8',
+const projectUrl = new URL('./', import.meta.url);
+const historyUrl = new URL(
+  '../../../.local/vectorai/drawings/05e65088fbf972ac53939ab7d54193e88a4b8c68bb0a7806908142124359068a.history/',
+  projectUrl,
 );
-const editSource = await readFile(
-  new URL('../../../scripts/test2-self-semantic-edit.ts', import.meta.url),
-  'utf8',
+const commitUrl = new URL(
+  '../../../.local/vectorai/runs/run_660e24af-8d7f-4baa-9e14-9427956e63f6/commits/commit_4c3140b7-9b85-4eb5-befd-9f10e9397c42.json',
+  projectUrl,
+);
+const eventsUrl = new URL(
+  '../../../.local/vectorai/runs/run_660e24af-8d7f-4baa-9e14-9427956e63f6/events.jsonl',
+  projectUrl,
 );
 
-const match = html.match(
-  /<script type="application\/json" id="real-arm-fixture-data">([\s\S]*?)<\/script>/,
-);
-assert.ok(match, 'index.html must embed #real-arm-fixture-data');
+const clone = value => JSON.parse(JSON.stringify(value));
 
-const data = JSON.parse(match[1]);
-const sharedPoints = [
-  [101.910828, 193.412466],
-  [103.937462, 193.991562],
-  [117.255351, 203.546338],
-  [118.992468, 203.546338],
-  [118.992468, 71.22675],
-];
-const handPoints = [
-  [101.910828, 193.412466],
-  [99, 197],
-  [102, 199],
-  [116, 210],
-  [122, 207],
-  [118.992468, 203.546338],
-];
-const anchor = [118.992468, 203.546338];
-
-assert.deepEqual(data.sharedPoints, sharedPoints, 'shared polyline must match test2 fixture');
-assert.deepEqual(data.handPoints, handPoints, 'hand outline must match test2 fixture');
-assert.deepEqual(data.anchor, anchor, 'shoulder anchor must match test2 fixture');
-assert.equal(data.angleDegrees, 35, 'rotation must match compileSpatialEdit input');
-assert.equal(data.sharedPolylineId, 'node_vec_9b4cf19e18282a496e2d');
-assert.equal(data.handOutlineId, 'node_test2_hand_outline');
-
-for (const point of [...sharedPoints, ...handPoints, anchor]) {
-  assert.ok(
-    fixtureSource.includes(point.join(', ')),
-    `fixture source must contain point [${point.join(', ')}]`,
-  );
-}
-assert.match(editSource, /angleDegrees:\s*35/);
-
-const rotate = ([x, y], [cx, cy], degrees) => {
-  const radians = degrees * Math.PI / 180;
-  const dx = x - cx;
-  const dy = y - cy;
-  return [
-    cx + dx * Math.cos(radians) - dy * Math.sin(radians),
-    cy + dx * Math.sin(radians) + dy * Math.cos(radians),
-  ];
+const applyGeometryPatch = (geometry, operations) => {
+  const byId = new Map(geometry.map(item => [item.id, clone(item)]));
+  for (const operation of operations) {
+    if (operation.type === 'geometry.add') {
+      byId.set(operation.value.id, clone(operation.value));
+    } else if (operation.type === 'geometry.update') {
+      const current = byId.get(operation.id);
+      assert.ok(current, `history update references missing geometry ${operation.id}`);
+      byId.set(operation.id, { ...current, ...clone(operation.changes) });
+    } else if (operation.type === 'geometry.delete') {
+      byId.delete(operation.id);
+    }
+  }
+  return [...byId.values()];
 };
-const rotatedAnchor = rotate(anchor, anchor, data.angleDegrees);
-assert.ok(Math.abs(rotatedAnchor[0] - anchor[0]) < 1e-9);
-assert.ok(Math.abs(rotatedAnchor[1] - anchor[1]) < 1e-9);
 
+const historyBase = JSON.parse(await readFile(new URL('base.json', historyUrl), 'utf8'));
+const segmentFiles = (await readdir(historyUrl))
+  .filter(name => /^\d{12}\.json$/.test(name))
+  .sort();
+const commits = [];
+for (const segmentFile of segmentFiles) {
+  const segment = JSON.parse(await readFile(new URL(segmentFile, historyUrl), 'utf8'));
+  commits.push(...segment.commits);
+}
+
+const sourceCommit = JSON.parse(await readFile(commitUrl, 'utf8'));
+const sourceEvents = (await readFile(eventsUrl, 'utf8'))
+  .trim()
+  .split('\n')
+  .map(line => JSON.parse(line));
+const modelEvent = sourceEvents.find(event => event.type === 'model' && event.payload?.role === 'drawing-action');
+assert.ok(modelEvent, 'drawing-action model event must exist');
+const toolRequest = JSON.parse(modelEvent.payload.reply);
+
+const targetIndex = commits.findIndex(commit => commit.id === sourceCommit.id);
+assert.ok(targetIndex >= 0, 'source commit must exist in the drawing history');
+
+let expectedBaseGeometry = clone(historyBase.initialDocument.geometry);
+for (const commit of commits.slice(0, targetIndex)) {
+  expectedBaseGeometry = applyGeometryPatch(expectedBaseGeometry, commit.patch.operations);
+}
+const expectedResultGeometry = applyGeometryPatch(expectedBaseGeometry, sourceCommit.patch.operations);
+
+const html = await readFile(new URL('index.html', projectUrl), 'utf8');
+const dataSource = await readFile(new URL('audit-replay-data.js', projectUrl), 'utf8');
+const context = { window: {} };
+vm.runInNewContext(dataSource, context);
+const data = clone(context.window.VECTORAI_AUDIT_REPLAY);
+
+assert.match(html, /audit-replay-data\.js/);
+assert.equal(data.runId, 'run_660e24af-8d7f-4baa-9e14-9427956e63f6');
+assert.equal(data.drawingId, sourceCommit.drawingId);
+assert.equal(data.baseRevision, sourceCommit.parentRevision);
+assert.equal(data.resultingRevision, sourceCommit.resultingRevision);
+assert.equal(data.commitId, sourceCommit.id);
+assert.equal(data.model.kind, 'connected-translate');
+assert.equal(data.model.tool, 'preview_connected_transform');
+assert.equal(data.model.carrierNodeRef, 'g8');
+assert.equal(data.model.carrierNodeId, 'node_vec_2daddd0d927a0aabeff1');
+assert.deepEqual(data.model.delta, [30, 150]);
+assert.deepEqual(data.model.beforeCenter, [61.710477, 204.929327]);
+assert.deepEqual(data.model.afterCenter, [91.710477, 354.929327]);
+assert.equal(data.model.orientationMode, 'minimum-deformation');
+assert.deepEqual(toolRequest.input.delta, data.model.delta);
+assert.equal(toolRequest.input.carrierNodeId, data.model.carrierNodeRef);
+assert.equal(data.baseGeometry.length, 58);
+assert.equal(data.geometry.length, 58);
+assert.deepEqual(data.baseGeometry, expectedBaseGeometry);
+assert.deepEqual(data.geometry, expectedResultGeometry);
+assert.deepEqual(data.targetIds, sourceCommit.commands.map(command => command.id));
+assert.deepEqual(data.updates, sourceCommit.commands);
+assert.equal(data.updates.length, 3);
+
+const byId = list => new Map(list.map(item => [item.id, item]));
+const before = byId(data.baseGeometry);
+const after = byId(data.geometry);
+const handId = 'node_vec_2daddd0d927a0aabeff1';
+const connectorIds = [
+  'node_vec_9751a4f110efdc1a1845',
+  'node_vec_c4deca597c5f861f3f5d',
+];
+
+assert.deepEqual(before.get(handId).center, data.model.beforeCenter);
+assert.deepEqual(after.get(handId).center, data.model.afterCenter);
+for (const connectorId of connectorIds) {
+  assert.deepEqual(after.get(connectorId).end, before.get(connectorId).end, `${connectorId} fixed anchor moved`);
+  assert.notDeepEqual(after.get(connectorId).start, before.get(connectorId).start, `${connectorId} hand port did not reconnect`);
+}
+
+assert.equal(sourceCommit.validationReport.valid, true);
+assert.equal(sourceCommit.outcomeReport.satisfied, true);
+assert.doesNotMatch(html, /RUN_410C|旋转 72|rotate\(72|68 个图元|4 个待更新图元/);
 process.stdout.write(
-  `verified ${sharedPoints.length} shared points, ${handPoints.length} hand points, `
-  + `anchor (${anchor.join(', ')}), rotation ${data.angleDegrees}deg\n`,
+  `verified external-browser audit ${data.runId}: translated hand ${data.model.delta.join(', ')}, `
+  + `${data.targetIds.length} exact updates across ${data.geometry.length} geometries\n`,
 );

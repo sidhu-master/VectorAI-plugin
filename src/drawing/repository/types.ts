@@ -43,6 +43,7 @@ export interface DrawingRepositoryState {
 
 export interface DrawingRepositorySnapshot extends DrawingRepositoryState {
   schemaVersion: 1;
+  contentDigest?: string;
 }
 
 export type RepositoryCommitResult =
@@ -57,11 +58,19 @@ export type RepositoryCommitResult =
 
 export interface DrawingRepository {
   create(document: DrawingDocument): Promise<{ document: DrawingDocument; revision: RevisionId }>;
+  /** Optional checkpoint-only fast path for read projections that do not need Commit history. */
+  getCurrentCheckpoint?(
+    drawingId: DrawingId,
+  ): Promise<{ document: DrawingDocument; revision: RevisionId }>;
   getCurrent(drawingId: DrawingId): Promise<{ document: DrawingDocument; revision: RevisionId }>;
   commit(transaction: DrawingTransaction): Promise<RepositoryCommitResult>;
   revert(input: {
     drawingId: DrawingId;
     commitId: CommitId;
+    actor: Actor;
+  }): Promise<RepositoryCommitResult>;
+  clear(input: {
+    drawingId: DrawingId;
     actor: Actor;
   }): Promise<RepositoryCommitResult>;
   listCommits(drawingId: DrawingId): Promise<DrawingCommit[]>;

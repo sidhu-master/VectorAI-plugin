@@ -85,3 +85,36 @@ summary:focus-visible {
 .breathe {
   animation: breathe 3s ease-in-out infinite;
 }
+
+/* 矢量化预览：批次数据一次到达，图元在本地按稳定顺序逐线描出。 */
+@keyframes vector-stroke-reveal {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0.2;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+.vector-stroke-reveal {
+  animation-name: vector-stroke-reveal;
+  animation-duration: var(--vector-reveal-duration, 300ms);
+  animation-delay: var(--vector-reveal-delay, 0ms);
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: forwards;
+  will-change: stroke-dashoffset, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vector-stroke-reveal {
+    animation: none;
+    stroke-dashoffset: 0;
+    opacity: 1;
+    will-change: auto;
+  }
+}

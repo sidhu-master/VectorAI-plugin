@@ -116,6 +116,31 @@ describe('AgentClient', () => {
     ]);
     expect(JSON.parse(String(fetcher.mock.calls.at(3)![1]?.body))).toEqual({ instruction: '把孔径改成 8mm' });
   });
+
+  it('responds to an exact Human Decision through its dedicated endpoint', async () => {
+    const fetcher = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
+    fetcher.mockResolvedValue(jsonResponse(202, {
+      success: true,
+      run: { status: 'running', pendingDecision: null },
+    }));
+    const client = new AgentClient({ fetcher, eventSourceFactory: () => new FakeEventSource() });
+
+    await client.respondToDecision('run_1', 'decision_1', {
+      selectedOptionId: 'allow_once',
+      additionalInstruction: '其他部分保持不变',
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/agent/runs/run_1/decisions/decision_1/respond',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          selectedOptionId: 'allow_once',
+          additionalInstruction: '其他部分保持不变',
+        }),
+      }),
+    );
+  });
 });
 
 function progress(id: string, type: AgentProgressEvent['type']): AgentProgressEvent {

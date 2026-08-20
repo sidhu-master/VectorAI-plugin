@@ -15,36 +15,28 @@ import aiRoutes from './routes/ai.js'
 import { createAgentRunsRouter } from './routes/agent-runs.js'
 import { FileDrawingRepository } from './services/drawing-application/file-drawing-repository.js'
 import { DrawingApplication } from './services/drawing-application/application.js'
-import { DrawingAgentRuntime } from './services/drawing-agent/runtime.js'
-import { DrawingAcceptanceAdapter, DrawingDecisionAdapter, DrawingPlannerAdapter } from './services/drawing-agent/model-adapters.js'
-import { DrawingToolRegistry } from './services/drawing-agent/tool-registry.js'
+import { ModelLedDrawingAgentRuntime } from './services/drawing-agent/model-loop-runtime.js'
+import { ModelLoopActionAdapter } from './services/drawing-agent/model-loop-adapter.js'
 import { DrawingPreviewVerificationAdapter } from './services/drawing-agent/preview-verifier.js'
-import {
-  DrawingFragmentSelectionAdapter,
-  DrawingSemanticRegionAdapter,
-  DrawingSpatialDesignAdapter,
-} from './services/drawing-agent/semantic-adapters.js'
+import { GatewayDrawingPartitionModel } from './services/drawing-partition/partition-model.js'
+import { isDrawingImageEditConfigured } from './services/ai-gateway.js'
 import { FileDrawingAgentAuditStore } from './services/drawing-agent/file-audit-store.js'
 import { createDrawingsRouter } from './routes/drawings.js'
-import { DrawingPerceptionPipeline } from './services/drawing-perception/pipeline.js'
-import { FileDrawingObservationStore } from './services/drawing-perception/observation-store.js'
 import { FileSourceArtifactStore } from './services/source-artifacts/file-source-artifact-store.js'
 import { FileCvEvidenceStore } from './services/drawing-cv/evidence-store.js'
 import { OpenCvWorkerProvider } from './services/drawing-cv/opencv-provider.js'
 import { StoredSourceCvGateway } from './services/drawing-cv/source-gateway.js'
 import { DrawingCvToolRegistry } from './services/drawing-cv/tool-registry.js'
 import { FileCvCropStore } from './services/drawing-cv/crop-store.js'
-import { FileDrawingFeedbackCheckpointStore } from './services/drawing-feedback/checkpoint-store.js'
-import { DrawingFeedbackLoop } from './services/drawing-feedback/loop-controller.js'
-import { DrawingFeedbackModelAdapter } from './services/drawing-feedback/model-adapter.js'
 import { MemoryObservationRegionStore } from './services/drawing-feedback/region-store.js'
-import { MemoryObservationSlotStore } from './services/drawing-feedback/slot-store.js'
-import { SourceRasterFeedbackComparator } from './services/drawing-feedback/source-comparator.js'
 import { PythonVectorizationProvider } from './services/drawing-vectorization/python-provider.js'
 import { CleanLineVectorizationService } from './services/drawing-vectorization/service.js'
-import { FileEditEpisodeStore } from './services/drawing-episode/file-episode-store.js'
 import { GatewayDrawingRegionImageEditProvider } from './services/drawing-generation/gateway-provider.js'
 import { DrawingRegionRedrawService } from './services/drawing-generation/redraw-service.js'
+import { createModelDrawingToolGateway } from './services/drawing-tools/index.js'
+import { FileHumanInteractionStore } from './services/human-interaction/file-store.js'
+import { FileDxfManifestStore } from './services/drawing-dxf/manifest-store.js'
+import { DxfImportCoordinator } from './services/drawing-dxf/coordinator.js'
 
 // load env
 dotenv.config()
@@ -55,16 +47,27 @@ const drawingRepository = new FileDrawingRepository({
 })
 const drawingApplication = new DrawingApplication({ repository: drawingRepository })
 const primaryModel = process.env.COMPANY_AI_PRIMARY_MODEL || 'doubao-seed-2.0-lite'
+const spatialModel = process.env.COMPANY_AI_SPATIAL_MODEL
+  || 'doubao-seed-2.1-turbo'
+const reviewModel = process.env.COMPANY_AI_REVIEW_MODEL || spatialModel
 const agentModelDefaults = Object.freeze({
-  planner: process.env.COMPANY_AI_PLANNER_MODEL || primaryModel,
-  decision: process.env.COMPANY_AI_DECISION_MODEL || primaryModel,
-  repair: process.env.COMPANY_AI_REPAIR_MODEL || 'doubao-seed-2.1-turbo',
+  planner: spatialModel,
+  decision: spatialModel,
+  repair: spatialModel,
+  reviewer: reviewModel,
 })
 const auditStore = new FileDrawingAgentAuditStore({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
 })
 const sourceArtifacts = new FileSourceArtifactStore({
   rootDirectory: path.resolve(process.cwd(), '.local/vectorai/sources'),
+})
+const dxfImports = new DxfImportCoordinator({
+  application: drawingApplication,
+  sources: sourceArtifacts,
+  manifests: new FileDxfManifestStore({
+    rootDirectory: path.resolve(process.cwd(), '.local/vectorai/dxf-manifests'),
+  }),
 })
 const sourceCvGateway = new StoredSourceCvGateway({ sourceArtifacts })
 const cvProvider = await OpenCvWorkerProvider.create({ workerCount: 1 })
@@ -86,7 +89,7 @@ const cleanLineVectorization = vectorizationProvider
       evidence: cvEvidenceStore,
     })
   : undefined
-const regionRedraw = cleanLineVectorization
+const regionRedraw = cleanLineVectorization && isDrawingImageEditConfigured()
   ? new DrawingRegionRedrawService({
       provider: new GatewayDrawingRegionImageEditProvider({
         modelName: process.env.COMPANY_AI_IMAGE_EDIT_MODEL || primaryModel,
@@ -101,7 +104,6 @@ const cvCropStore = new FileCvCropStore({
 const observationRegions = new MemoryObservationRegionStore({
   resolveSourceSize: (sourceId) => sourceCvGateway.cachedSize(sourceId),
 })
-const observationSlots = new MemoryObservationSlotStore()
 const cvTools = new DrawingCvToolRegistry({
   provider: cvProvider,
   evidenceStore: cvEvidenceStore,
@@ -112,49 +114,29 @@ const cvTools = new DrawingCvToolRegistry({
   },
   crops: cvCropStore,
 })
-const sourceComparator = new SourceRasterFeedbackComparator({ sources: sourceCvGateway })
-const drawingPerception = new DrawingPerceptionPipeline({
-  observationStore: new FileDrawingObservationStore(
-    path.resolve(process.cwd(), '.local/vectorai/runs'),
-  ),
-})
-const drawingTools = new DrawingToolRegistry({ application: drawingApplication })
-const drawingFeedback = new DrawingFeedbackLoop({
+const drawingGateway = createModelDrawingToolGateway({
   application: drawingApplication,
-  drawingTools,
-  cvTools,
-  model: new DrawingFeedbackModelAdapter(undefined, undefined, {
-    readCrop: (mediaHandle) => cvCropStore.read(mediaHandle),
-  }),
-  regions: observationRegions,
-  slots: observationSlots,
-  compare: sourceComparator.compare.bind(sourceComparator),
+  ...(regionRedraw ? { redraw: regionRedraw } : {}),
   ...(cleanLineVectorization ? { vectorization: cleanLineVectorization } : {}),
-  maxIterations: 160,
+  cvTools,
 })
-const agentRuntime = new DrawingAgentRuntime({
+const agentRuntime = new ModelLedDrawingAgentRuntime({
   application: drawingApplication,
-  tools: drawingTools,
-  planner: new DrawingPlannerAdapter(),
-  decision: new DrawingDecisionAdapter(),
-  acceptance: new DrawingAcceptanceAdapter(),
+  registry: drawingGateway.registry,
+  drawingTools: drawingGateway.drawingTools,
+  generationTools: drawingGateway.generationTools,
+  runResources: drawingGateway,
+  model: new ModelLoopActionAdapter(),
   previewVerifier: new DrawingPreviewVerificationAdapter(),
-  regionProposer: new DrawingSemanticRegionAdapter(),
-  fragmentSelector: new DrawingFragmentSelectionAdapter(),
-  spatialDesigner: new DrawingSpatialDesignAdapter(),
-  ...(regionRedraw ? { redrawService: regionRedraw } : {}),
-  episodeStore: new FileEditEpisodeStore({
+  partitionModel: new GatewayDrawingPartitionModel({
+    modelName: process.env.COMPANY_AI_PARTITION_MODEL || spatialModel || primaryModel,
+  }),
+  interactions: new FileHumanInteractionStore({
     rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
   }),
   auditStore,
-  sourceArtifacts,
-  perception: drawingPerception,
-  visionModelName: primaryModel,
-  visionRepairModelName: agentModelDefaults.repair,
-  feedbackLoop: drawingFeedback,
-  feedbackCheckpointStore: new FileDrawingFeedbackCheckpointStore({
-    rootDirectory: path.resolve(process.cwd(), '.local/vectorai/runs'),
-  }),
+  sourceImages: sourceCvGateway,
+  sourceCrops: cvCropStore,
 })
 
 app.use(cors())
@@ -172,7 +154,9 @@ app.use('/api/agent/runs', createAgentRunsRouter(
   agentModelDefaults,
   sourceArtifacts,
 ))
-app.use('/api/drawings', createDrawingsRouter(drawingApplication))
+app.use('/api/drawings', createDrawingsRouter(drawingApplication, {
+  stopActiveRuns: (drawingId) => agentRuntime.stopActiveRunsForDrawing(drawingId),
+}, dxfImports))
 
 /**
  * health

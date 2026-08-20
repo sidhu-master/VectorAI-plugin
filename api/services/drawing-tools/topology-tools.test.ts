@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
   DrawingDocument,
@@ -38,12 +38,13 @@ async function setup(document: DrawingDocument) {
   const invoke = (tool: string, input: unknown) => registry.invoke({
     ...base, toolCallId: `call_${++call}`, tool, input,
   });
-  return { application, base, drawingTools, invoke };
+  return { application, base, drawingTools, invoke, repository };
 }
 
 describe('DrawingTopologyTools', () => {
   it('builds revision topology and traces ranked alternate paths without write authority', async () => {
-    const { invoke } = await setup(branchDocument());
+    const { invoke, repository } = await setup(branchDocument());
+    const listCommits = vi.spyOn(repository, 'listCommits');
 
     const built = await invoke('build_topology', { tolerance: 0.01, curveSamples: 32 });
     const traced = await invoke('trace_paths', {
@@ -72,6 +73,7 @@ describe('DrawingTopologyTools', () => {
     });
     expect(JSON.stringify(traced.output)).not.toContain('authorization');
     expect(JSON.stringify(traced.output)).not.toContain('accepted');
+    expect(listCommits).not.toHaveBeenCalled();
   });
 
   it('reports interfaces and local fragments as observations rather than permissions', async () => {

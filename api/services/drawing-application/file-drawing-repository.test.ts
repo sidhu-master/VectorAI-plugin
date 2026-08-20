@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,7 @@ import type {
 import type { DrawingTransaction } from '../../../src/drawing/transaction/types';
 import {
   FileDrawingRepository,
+  NodeAtomicJsonWriter,
   type AtomicJsonWriter,
 } from './file-drawing-repository';
 
@@ -59,6 +60,23 @@ function createCircle(baseRevision: DrawingTransaction['baseRevision'], id = 'ci
   };
 }
 
+function resizeCircle(
+  baseRevision: DrawingTransaction['baseRevision'],
+  radius: number,
+): DrawingTransaction {
+  return {
+    id: `tx_resize_${radius}`,
+    baseRevision,
+    actor: { type: 'user', id: 'local-user' },
+    commands: [{
+      type: 'geometry.update', id: 'circle_1' as GeometryId, changes: { radius },
+    }],
+    preconditions: [{ type: 'node.exists', nodeId: 'circle_1' }],
+    postconditions: [{ type: 'document.valid' }],
+    evidenceRefs: [],
+  };
+}
+
 describe('FileDrawingRepository', () => {
   it('restores the exact document and revision in a new repository instance', async () => {
     const rootDirectory = await temporaryRoot();
@@ -73,6 +91,47 @@ describe('FileDrawingRepository', () => {
 
     expect(reopened).toEqual(created);
     expect(reopened.document).toEqual(document);
+    const persisted = JSON.parse(await readFile(snapshotPath(rootDirectory, document.id), 'utf8'));
+    expect(persisted.contentDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it('rejects a structurally valid checkpoint changed without updating its digest', async () => {
+    const rootDirectory = await temporaryRoot();
+    const document = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_digest' }, now: () => 1,
+    });
+    const first = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 100 });
+    const created = await first.create(document);
+    const committed = await first.commit(createCircle(created.revision));
+    if (committed.status !== 'committed') throw new Error('expected commit');
+    const path = snapshotPath(rootDirectory, document.id);
+    const snapshot = JSON.parse(await readFile(path, 'utf8'));
+    snapshot.document.geometry[0].radius = 999;
+    await writeFile(path, JSON.stringify(snapshot));
+
+    const restarted = new FileDrawingRepository({ rootDirectory, idFactory: ids() });
+    await expect(restarted.getCurrentCheckpoint(document.id)).rejects.toMatchObject({
+      code: 'CORRUPT_SNAPSHOT', drawingId: document.id,
+    });
+    await expect(restarted.getCurrent(document.id)).rejects.toMatchObject({
+      code: 'CORRUPT_SNAPSHOT', drawingId: document.id,
+    });
+  });
+
+  it('reads one current checkpoint without replaying or loading unrelated snapshots', async () => {
+    const rootDirectory = await temporaryRoot();
+    const document = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_checkpoint' }, now: () => 1,
+    });
+    const first = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 100 });
+    const created = await first.create(document);
+    await writeFile(join(rootDirectory, 'unrelated-corrupt.json'), '{not-json');
+    const restarted = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 200 });
+
+    await expect(restarted.getCurrentCheckpoint(document.id)).resolves.toEqual(created);
+    await expect(restarted.getCurrent(document.id)).resolves.toEqual(created);
+    await expect(restarted.commit(createCircle(created.revision, 'circle_checkpoint')))
+      .resolves.toMatchObject({ status: 'committed' });
   });
 
   it('persists commits and revert commits across restarts', async () => {
@@ -130,7 +189,7 @@ describe('FileDrawingRepository', () => {
     const reopened = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 200 });
     expect((await reopened.listCommits(document.id))[0].metadata).toEqual(transaction.metadata);
 
-    const path = snapshotPath(rootDirectory, document.id);
+    const path = historySegmentPath(rootDirectory, document.id, 0);
     const snapshot = JSON.parse(await readFile(path, 'utf8')) as {
       commits: Array<{ metadata: { lineage: Array<{ operation: string }> } }>;
     };
@@ -161,6 +220,46 @@ describe('FileDrawingRepository', () => {
       status: 'rejected', errors: [{ code: 'STALE_REVISION' }],
     });
     expect(await repository.listCommits(document.id)).toHaveLength(1);
+  });
+
+  it('keeps the current checkpoint bounded while preserving an append-only replay history', async () => {
+    const rootDirectory = await temporaryRoot();
+    const document = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_segmented_history' }, now: () => 1,
+    });
+    const repository = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 100 });
+    const opened = await repository.create(document);
+    const created = await repository.commit(createCircle(opened.revision));
+    if (created.status !== 'committed') throw new Error('expected circle commit');
+    let revision = created.revision;
+    for (let radius = 11; radius <= 74; radius += 1) {
+      const committed = await repository.commit(resizeCircle(revision, radius));
+      if (committed.status !== 'committed') throw new Error(`expected resize ${radius}`);
+      revision = committed.revision;
+    }
+
+    const checkpointText = await readFile(snapshotPath(rootDirectory, document.id), 'utf8');
+    const checkpoint = JSON.parse(checkpointText) as Record<string, unknown>;
+    const historyNames = (await readdir(historyDirectory(rootDirectory, document.id)))
+      .filter((name) => /^\d{12}\.json$/.test(name));
+    const historyTexts = await Promise.all(historyNames.map((name) => (
+      readFile(join(historyDirectory(rootDirectory, document.id), name), 'utf8')
+    )));
+    const historyBytes = historyTexts.reduce((total, text) => total + text.length, 0);
+
+    expect(checkpoint).toMatchObject({
+      schemaVersion: 2,
+      revision,
+      history: { commitCount: 65, headRevision: revision },
+    });
+    expect(checkpoint).not.toHaveProperty('commits');
+    expect(checkpointText.length).toBeLessThan(historyBytes / 4);
+
+    const reopened = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 200 });
+    expect((await reopened.getCurrent(document.id)).document.geometry[0]).toMatchObject({
+      id: 'circle_1', radius: 74,
+    });
+    expect(await reopened.listCommits(document.id)).toHaveLength(65);
   });
 
   it('rejects a corrupt snapshot instead of silently replacing it', async () => {
@@ -201,11 +300,11 @@ describe('FileDrawingRepository', () => {
       preconditions: [], postconditions: [], evidenceRefs: [],
     });
     if (updated.status !== 'committed') throw new Error('expected update');
-    const path = snapshotPath(rootDirectory, document.id);
+    const path = historySegmentPath(rootDirectory, document.id, 1);
     const snapshot = JSON.parse(await readFile(path, 'utf8')) as {
       commits: Array<{ patch: { operations: unknown[] } }>;
     };
-    snapshot.commits[1].patch.operations = [{ type: 'geometry.update', id: 'circle_1' }];
+    snapshot.commits[0].patch.operations = [{ type: 'geometry.update', id: 'circle_1' }];
     await writeFile(path, JSON.stringify(snapshot));
 
     const reopened = new FileDrawingRepository({ rootDirectory, idFactory: ids() });
@@ -239,9 +338,83 @@ describe('FileDrawingRepository', () => {
     expect(await recovered.getCurrent(document.id)).toEqual(opened);
     expect(await recovered.listCommits(document.id)).toEqual([]);
   });
+
+  it('ignores an uncommitted history tail when checkpoint publication fails', async () => {
+    const rootDirectory = await temporaryRoot();
+    const document = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_orphan_history_tail' }, now: () => 1,
+    });
+    const sharedIds = ids();
+    const healthy = new FileDrawingRepository({ rootDirectory, idFactory: sharedIds, now: () => 100 });
+    const opened = await healthy.create(document);
+    const created = await healthy.commit(createCircle(opened.revision));
+    if (created.status !== 'committed') throw new Error('expected initial commit');
+    const nodeWriter = new NodeAtomicJsonWriter();
+    let failedCheckpoint = false;
+    const checkpointFailingWriter: AtomicJsonWriter = {
+      write: async (targetPath, json) => {
+        if (!failedCheckpoint && targetPath === snapshotPath(rootDirectory, document.id)) {
+          failedCheckpoint = true;
+          throw new Error('checkpoint publication failed');
+        }
+        await nodeWriter.write(targetPath, json);
+      },
+    };
+    const failing = new FileDrawingRepository({
+      rootDirectory, idFactory: sharedIds, now: () => 200, writer: checkpointFailingWriter,
+    });
+
+    await expect(failing.commit(resizeCircle(created.revision, 20)))
+      .rejects.toThrow('checkpoint publication failed');
+
+    const recovered = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 300 });
+    expect(await recovered.getCurrent(document.id)).toEqual({
+      document: created.document,
+      revision: created.revision,
+    });
+    expect(await recovered.listCommits(document.id)).toEqual([created.commit]);
+  });
+
+  it('clears the latest state atomically without a caller-owned revision', async () => {
+    const rootDirectory = await temporaryRoot();
+    const idFactory = ids();
+    const document = createEmptyDrawing({
+      idFactory: { next: () => 'drawing_clear' }, now: () => 1,
+    });
+    const repository = new FileDrawingRepository({ rootDirectory, idFactory, now: () => 100 });
+    const opened = await repository.create(document);
+    const committed = await repository.commit(createCircle(opened.revision));
+    if (committed.status !== 'committed') throw new Error('expected commit');
+
+    const cleared = await repository.clear({
+      drawingId: document.id,
+      actor: { type: 'user', id: 'local-user' },
+    });
+
+    expect(cleared.status).toBe('committed');
+    if (cleared.status !== 'committed') throw new Error('expected clear commit');
+    expect(cleared.document).toMatchObject({
+      geometry: [], annotations: [], relations: [], features: [],
+    });
+    const reopened = new FileDrawingRepository({ rootDirectory, idFactory: ids(), now: () => 200 });
+    expect((await reopened.getCurrent(document.id)).document.geometry).toEqual([]);
+  });
 });
 
 function snapshotPath(rootDirectory: string, drawingId: DrawingId): string {
   const name = createHash('sha256').update(drawingId).digest('hex');
   return join(rootDirectory, `${name}.json`);
+}
+
+function historyDirectory(rootDirectory: string, drawingId: DrawingId): string {
+  const name = createHash('sha256').update(drawingId).digest('hex');
+  return join(rootDirectory, `${name}.history`);
+}
+
+function historySegmentPath(
+  rootDirectory: string,
+  drawingId: DrawingId,
+  startIndex: number,
+): string {
+  return join(historyDirectory(rootDirectory, drawingId), `${String(startIndex).padStart(12, '0')}.json`);
 }

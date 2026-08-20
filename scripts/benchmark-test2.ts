@@ -23,7 +23,7 @@ const bytes = await readFile(sourcePath);
 const metadata = await sharp(bytes).metadata();
 if (!metadata.width || !metadata.height) throw new Error('TEST2_IMAGE_SIZE_UNAVAILABLE');
 
-const provider = await PythonVectorizationProvider.create({ timeoutMs: 30_000 });
+const provider = await PythonVectorizationProvider.create();
 try {
   const workerStartedAt = performance.now();
   const result = await provider.vectorize({
@@ -37,9 +37,7 @@ try {
   const vectorizationMs = performance.now() - workerStartedAt;
   const persisted = persistForBenchmark(result);
   const steps = buildVectorizationSteps(persisted);
-  const drafts = steps.filter((step) => step.kind === 'draft');
-  const promotions = steps.filter((step) => step.kind === 'promotion');
-  const geometry = finalGeometry(steps.map((step) => step.previewNode));
+  const geometry = finalGeometry(steps);
   const document = drawingDocument(geometry);
   const comparator = new SourceRasterFeedbackComparator({
     sources: { read: async () => ({
@@ -53,12 +51,18 @@ try {
   const coverageStartedAt = performance.now();
   const residual = await comparator.compare(document, undefined, { sourceId: result.sourceId });
   const coverageMs = performance.now() - coverageStartedAt;
-  const errors = validationErrors(result.chains, result.width, result.height, drafts.length);
+  const errors = validationErrors(
+    result.chains,
+    result.width,
+    result.height,
+    steps.flatMap((step) => step.chainIds),
+  );
   const typeCounts = Object.fromEntries(
     [...new Set(geometry.map((node) => node.type))]
       .sort()
       .map((type) => [type, geometry.filter((node) => node.type === type).length]),
   );
+  const junctionGapMaxPx = Math.max(0, ...steps.map((step) => step.validation.junctionGapMaxPx));
   const report = {
     source: { file: sourcePath, width: result.width, height: result.height },
     pipelineVersion: result.pipelineVersion,
@@ -68,9 +72,10 @@ try {
     firstResultMs: round(vectorizationMs),
     medianLineWidthPx: round(result.medianLineWidthPx),
     chainCount: result.chains.length,
-    draftCount: drafts.length,
-    promotionCount: promotions.length,
+    batchCount: steps.length,
+    vectorNodeCount: geometry.length,
     typeCounts,
+    junctionGapMaxPx: round(junctionGapMaxPx),
     coverage: {
       edgePrecision: round(residual.geometry.edgePrecision),
       edgeRecall: round(residual.geometry.edgeRecall),
@@ -83,6 +88,8 @@ try {
     maxCandidateRadiusRatio: round(maxCandidateRadiusRatio(result.chains)),
     errors,
   };
+
+  if (junctionGapMaxPx > 0.001) errors.push('COMPOUND_PATH_NOT_CLOSED');
 
   await mkdir(dirname(reportPath), { recursive: true });
   await Promise.all([
@@ -106,9 +113,11 @@ function persistForBenchmark(
         handle: `benchmark_${chain.id}`,
         sourceId: result.sourceId,
         regionId: `vector_${chain.id}`,
-        kind: chain.candidate ? `${chain.candidate.type}-candidate` : 'polyline-candidate',
+        kind: chain.pieces.length === 1 && chain.pieces[0].candidate
+          ? `${chain.pieces[0].candidate.type}-candidate`
+          : 'polyline-candidate',
         bounds: { ...chain.bounds },
-        confidence: chain.candidate?.confidence ?? 0.8,
+        confidence: chain.pieces[0]?.candidate?.confidence ?? 0.8,
         touchesRegionEdge: false,
         sampleCount: chain.samples.length,
       },
@@ -116,9 +125,11 @@ function persistForBenchmark(
   };
 }
 
-function finalGeometry(nodes: GeometryNode[]): GeometryNode[] {
+function finalGeometry(steps: ReturnType<typeof buildVectorizationSteps>): GeometryNode[] {
   const byId = new Map<string, GeometryNode>();
-  for (const node of nodes) byId.set(node.id, structuredClone(node));
+  for (const step of steps) {
+    step.previewNodes.forEach((node) => byId.set(node.id, structuredClone(node)));
+  }
   return [...byId.values()];
 }
 
@@ -136,34 +147,40 @@ function validationErrors(
   chains: CleanLineStrokeChain[],
   width: number,
   height: number,
-  draftCount: number,
+  emittedChainIds: string[],
 ): string[] {
   const errors = new Set<string>();
-  if (draftCount !== chains.length) errors.add('EMPTY_DRAFT');
+  if (new Set(emittedChainIds).size !== chains.length) errors.add('MISSING_FINAL_GEOMETRY');
   const sourceDiagonal = Math.hypot(width, height);
   for (const chain of chains) {
-    if (chain.samples.length === 0 || chain.simplified.length === 0) errors.add('EMPTY_DRAFT');
+    if (chain.samples.length === 0 || chain.simplified.length === 0) {
+      errors.add('MISSING_FINAL_GEOMETRY');
+    }
     for (const [x, y] of chain.samples) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) errors.add('NON_FINITE');
       if (x < 0 || x >= width || y < 0 || y >= height) errors.add('OUT_OF_BOUNDS');
     }
-    const radius = chain.candidate?.parameters.radius;
     const boundsDiagonal = Math.hypot(chain.bounds.width, chain.bounds.height);
-    if (typeof radius === 'number'
-      && (radius > sourceDiagonal || (boundsDiagonal > 0 && radius > boundsDiagonal * 4))) {
-      errors.add('FALSE_GIANT_CIRCLE');
-    }
+    chain.pieces.forEach((piece) => {
+      const radius = piece.candidate?.parameters.radius;
+      if (typeof radius === 'number'
+        && (radius > sourceDiagonal || (boundsDiagonal > 0 && radius > boundsDiagonal * 4))) {
+        errors.add('FALSE_GIANT_CIRCLE');
+      }
+    });
   }
   return [...errors].sort();
 }
 
 function maxCandidateRadiusRatio(chains: CleanLineStrokeChain[]): number {
   return chains.reduce((maximum, chain) => {
-    const radius = chain.candidate?.parameters.radius;
     const diagonal = Math.hypot(chain.bounds.width, chain.bounds.height);
-    return typeof radius === 'number' && diagonal > 0
-      ? Math.max(maximum, radius / diagonal)
-      : maximum;
+    return chain.pieces.reduce((pieceMaximum, piece) => {
+      const radius = piece.candidate?.parameters.radius;
+      return typeof radius === 'number' && diagonal > 0
+        ? Math.max(pieceMaximum, radius / diagonal)
+        : pieceMaximum;
+    }, maximum);
   }, 0);
 }
 

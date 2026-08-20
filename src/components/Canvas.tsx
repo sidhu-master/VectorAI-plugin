@@ -5,15 +5,25 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { useStore } from '@/hooks/useStore';
+import type { DrawingAgentCanvasOverlay } from '@/contracts/drawing-agent';
 import type { DrawingRelation } from '@/drawing';
 import type { SpatialRegionPreviewOverlay } from '@/drawing/preview/types';
 import EntityRenderer from './canvas/EntityRenderer';
+import PartitionLayer from './canvas/PartitionLayer';
 import { filterCanvasAnnotations } from './canvas/annotation-visibility';
 import { gridPatternMetrics } from './canvas/grid-pattern';
 import { createCanvasPanSession } from './canvas/pan-interaction';
+import { selectGeometryIdsInBox } from './canvas/path-selection';
+import { filterCanvasRelations, isCanvasSelectable } from './canvas/canvas-policies';
 import {
-  aabbIntersects,
-  entityBounds,
+  annotationLabelBounds,
+  applyDimensionTextDrag,
+  extractAnnotationTextHandles,
+  resolveNewAnnotationTextOffsets,
+  type AnnotationLabelBounds,
+  type AnnotationTextHandle,
+} from './canvas/annotation-text-utils';
+import {
   entityCenter,
   fitBoundsToViewport,
   modelBounds,
@@ -95,19 +105,30 @@ export function PerceptionPreviewLayer({
   scale: number;
   viewport: { minX: number; minY: number; maxX: number; maxY: number };
 }) {
+  const outlineIds = entities
+    .filter((entity) => stageByNodeId?.[entity.id] === 'outline')
+    .map((entity) => entity.id);
+  const outlineOrder = new Map(outlineIds.map((id, index) => [id, index]));
   return (
     <g data-perception-preview="true" pointerEvents="none">
-      {entities.map((entity) => (
-        <EntityRenderer
-          key={`preview:${entity.id}`}
-          entity={entity}
-          scale={scale}
-          viewport={viewport}
-          provisional
-          perceptionStage={stageByNodeId?.[entity.id]}
-          label={labelsByNodeId[entity.id]}
-        />
-      ))}
+      {entities.map((entity) => {
+        const revealIndex = outlineOrder.get(entity.id);
+        return (
+          <EntityRenderer
+            key={`preview:${entity.id}`}
+            entity={entity}
+            scale={scale}
+            viewport={viewport}
+            provisional
+            perceptionStage={stageByNodeId?.[entity.id]}
+            label={labelsByNodeId[entity.id]}
+            {...(revealIndex === undefined ? {} : {
+              revealIndex,
+              revealCount: outlineIds.length,
+            })}
+          />
+        );
+      })}
     </g>
   );
 }
@@ -120,6 +141,14 @@ export function SpatialRegionOverlayLayer({
   scale: number;
 }) {
   if (!overlay) return null;
+  const rejected = overlay.status === 'rejected';
+  const accepted = overlay.status === 'accepted';
+  const regionStroke = rejected
+    ? 'rgba(239, 91, 91, 0.95)'
+    : accepted ? 'rgba(87, 196, 154, 0.95)' : 'rgba(109, 169, 210, 0.9)';
+  const regionFill = rejected
+    ? 'rgba(239, 91, 91, 0.10)'
+    : accepted ? 'rgba(87, 196, 154, 0.10)' : 'rgba(67, 149, 217, 0.14)';
   const path = [...overlay.contours, ...overlay.holes].map((polygon) => polygon
     .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point[0]} ${point[1]}`)
     .join(' ') + ' Z').join(' ');
@@ -127,35 +156,470 @@ export function SpatialRegionOverlayLayer({
     <g
       data-spatial-region-overlay={overlay.previewVersionId}
       data-region-id={overlay.id}
+      data-overlay-status={overlay.status}
+      data-overlay-attempt={overlay.attempt}
       pointerEvents="none"
     >
       <path
         d={path}
-        fill="rgba(67, 149, 217, 0.14)"
+        fill={regionFill}
         fillRule="evenodd"
-        stroke="rgba(109, 169, 210, 0.9)"
+        stroke={regionStroke}
         strokeWidth={1.5 / scale}
         strokeDasharray={`${6 / scale} ${4 / scale}`}
       />
-      {overlay.anchors.map((anchor) => (
-        <circle
-          key={anchor.id}
-          data-region-anchor={anchor.id}
-          cx={anchor.point[0]}
-          cy={anchor.point[1]}
-          r={4 / scale}
-          fill="#8ec5e8"
-          stroke="#09131b"
-          strokeWidth={1.5 / scale}
-        />
+      {overlay.paths.map((path, index) => (
+        <polyline
+          key={path.id}
+          data-topology-path={path.id}
+          data-path-role={path.role}
+          points={path.points.map((point) => point.join(',')).join(' ')}
+          fill="none"
+          stroke={rejected ? '#ef5b5b' : path.role === 'protected' ? '#667582' : '#69c4e8'}
+          strokeWidth={2.4 / scale}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          pathLength={1}
+          strokeDasharray="1"
+          strokeDashoffset={0}
+        >
+          <animate
+            attributeName="stroke-dashoffset"
+            from="1"
+            to="0"
+            dur="420ms"
+            begin={`${Math.max(path.order, index) * 90}ms`}
+            fill="freeze"
+          />
+        </polyline>
+      ))}
+      {overlay.anchors.map((anchor) => {
+        const color = anchorColor(anchor.role, rejected);
+        return (
+          <g key={anchor.id} data-anchor-status={anchor.snapStatus}>
+            {anchor.snappedPoint && (
+              <>
+                <line
+                  data-anchor-snap={anchor.id}
+                  x1={anchor.point[0]}
+                  y1={anchor.point[1]}
+                  x2={anchor.snappedPoint[0]}
+                  y2={anchor.snappedPoint[1]}
+                  stroke={color}
+                  strokeWidth={1 / scale}
+                  strokeDasharray={`${2 / scale} ${2 / scale}`}
+                />
+                <circle
+                  cx={anchor.snappedPoint[0]}
+                  cy={anchor.snappedPoint[1]}
+                  r={2.5 / scale}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={1.2 / scale}
+                />
+              </>
+            )}
+            <circle
+              data-region-anchor={anchor.id}
+              cx={anchor.point[0]}
+              cy={anchor.point[1]}
+              r={anchor.role === 'boundary' ? 4.5 / scale : 4 / scale}
+              fill={anchor.snapStatus === 'missed' ? '#09131b' : color}
+              stroke={color}
+              strokeWidth={1.5 / scale}
+            />
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+export function AgentCanvasOverlayLayer({
+  overlay,
+  entities,
+  scale,
+}: {
+  overlay: DrawingAgentCanvasOverlay | null;
+  entities: DrawingRenderable[];
+  scale: number;
+}) {
+  if (!overlay || overlay.kind === 'clear') return null;
+  if (overlay.kind === 'spatial') {
+    return <SpatialInteractionFrameLayer frame={overlay} scale={scale} />;
+  }
+  const byId = new Map<string, DrawingRenderable>(entities.map((entity) => [entity.id, entity]));
+  const nodeIds = overlay.kind === 'nodes'
+    ? overlay.nodeIds
+    : overlay.kind === 'preview'
+      ? overlay.affectedNodeIds
+      : overlay.kind === 'diagnostics' ? overlay.nodeIds : [];
+  const nodeStroke = overlay.kind === 'diagnostics'
+    ? '#ef9a67'
+    : overlay.kind === 'preview' ? '#8ab4d6' : '#7399b6';
+  const safeScale = Math.max(scale, 0.001);
+  const viewport = modelBounds(entities) ?? {
+    minX: -1_000, minY: -1_000, maxX: 1_000, maxY: 1_000,
+  };
+  const focusedEntities = nodeIds.flatMap((id) => {
+    const entity = byId.get(id);
+    return entity ? [entity] : [];
+  });
+  const activityLabel = overlay.kind === 'diagnostics'
+    ? 'AI 正在校验'
+    : overlay.kind === 'preview'
+      ? 'AI 修改候选'
+      : overlay.kind === 'nodes' && overlay.role === 'observed'
+        ? 'AI 正在观察'
+        : 'AI 正在处理';
+  return (
+    <g data-agent-overlay={overlay.kind} pointerEvents="none" opacity={0.88}>
+      {focusedEntities.map((entity, index) => (
+        <g key={`agent-shape:${entity.id}`} data-agent-overlay-node-shape={entity.id}>
+          <EntityRenderer
+            entity={entity}
+            scale={scale}
+            viewport={viewport}
+            provisional
+            perceptionStage="edit-preview"
+            label={index === 0 ? activityLabel : undefined}
+          />
+        </g>
+      ))}
+      {focusedEntities.flatMap((entity) => {
+        const center = entityCenter(entity);
+        if (!center) return [];
+        return [(
+          <circle
+            key={`agent-node:${entity.id}`}
+            data-agent-overlay-node={entity.id}
+            cx={center[0]}
+            cy={center[1]}
+            r={7 / safeScale}
+            fill="none"
+            stroke={nodeStroke}
+            strokeWidth={1.5 / safeScale}
+            strokeDasharray={`${3 / safeScale} ${3 / safeScale}`}
+          >
+            <animate
+              data-agent-overlay-animation="focus"
+              attributeName="r"
+              values={`${5 / safeScale};${8 / safeScale};${5 / safeScale}`}
+              dur="1.1s"
+              repeatCount="indefinite"
+            />
+            <animate
+              attributeName="opacity"
+              values="0.35;1;0.35"
+              dur="1.1s"
+              repeatCount="indefinite"
+            />
+          </circle>
+        )];
+      })}
+      {overlay.kind === 'paths' && overlay.paths.map((path) => {
+        const points = path.points ?? path.nodeIds
+          .map((id) => byId.get(id))
+          .filter((entity): entity is DrawingRenderable => Boolean(entity))
+          .map(entityCenter)
+          .filter((point): point is readonly [number, number] => Boolean(point));
+        if (points.length < 2) return null;
+        return (
+          <polyline
+            key={path.id}
+            data-agent-path={path.id}
+            points={points.map((point) => point.join(',')).join(' ')}
+            fill="none"
+            stroke="#76b7d5"
+            strokeWidth={2 / safeScale}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            pathLength={1}
+            strokeDasharray="1"
+            strokeDashoffset={0}
+          >
+            <animate
+              attributeName="stroke-dashoffset"
+              from="1"
+              to="0"
+              dur="520ms"
+              fill="freeze"
+            />
+          </polyline>
+        );
+      })}
+      {overlay.kind === 'points' && overlay.points.map((point) => (
+        <g key={point.id} data-agent-point={point.id}>
+          <circle
+            cx={point.point[0]}
+            cy={point.point[1]}
+            r={4 / safeScale}
+            fill="#76b7d5"
+            stroke="#0b1117"
+            strokeWidth={1 / safeScale}
+          >
+            <animate
+              data-agent-overlay-animation="point-pulse"
+              attributeName="r"
+              values={`${2.5 / safeScale};${5 / safeScale};${4 / safeScale}`}
+              dur="420ms"
+              fill="freeze"
+            />
+          </circle>
+        </g>
       ))}
     </g>
   );
 }
 
+function SpatialInteractionFrameLayer({
+  frame,
+  scale,
+}: {
+  frame: Extract<DrawingAgentCanvasOverlay, { kind: 'spatial' }>;
+  scale: number;
+}) {
+  const safeScale = Math.max(scale, 0.001);
+  const labelAnchor = frame.strokes.find((stroke) => (
+    stroke.role === 'target' || stroke.role === 'after' || stroke.role === 'boundary'
+  ))?.points[0] ?? frame.markers[0]?.point;
+  return (
+    <g
+      data-agent-overlay="spatial"
+      data-agent-spatial-phase={frame.phase}
+      data-agent-spatial-truncated={frame.truncated ? 'true' : undefined}
+      pointerEvents="none"
+    >
+      {frame.strokes.map((stroke) => {
+        const style = spatialStrokeStyle(stroke.role, safeScale, stroke.confidence);
+        const confidenceBand = spatialConfidenceBand(stroke.confidence);
+        if (stroke.points.length === 1) {
+          return (
+            <circle
+              key={stroke.id}
+              data-agent-spatial-stroke={stroke.id}
+              data-agent-spatial-role={stroke.role}
+              data-agent-spatial-confidence={confidenceBand}
+              cx={stroke.points[0][0]}
+              cy={stroke.points[0][1]}
+              r={3.2 / safeScale}
+              fill={style.color}
+              opacity={style.opacity}
+            />
+          );
+        }
+        if (stroke.points.length < 2) return null;
+        const points = stroke.points.map((point) => point.join(',')).join(' ');
+        const emphasized = stroke.role === 'target'
+          || stroke.role === 'boundary'
+          || stroke.role === 'interface'
+          || stroke.role === 'after';
+        return (
+          <g
+            key={stroke.id}
+            data-agent-spatial-stroke={stroke.id}
+            data-agent-spatial-role={stroke.role}
+            data-agent-spatial-confidence={confidenceBand}
+          >
+            {emphasized ? (
+              <polyline
+                points={points}
+                fill="none"
+                stroke={style.color}
+                strokeWidth={6 / safeScale}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.11}
+              />
+            ) : null}
+            <polyline
+              points={points}
+              fill="none"
+              stroke={style.color}
+              strokeWidth={style.width}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={emphasized ? 1 : style.dash}
+              opacity={style.opacity}
+              pathLength={emphasized ? 1 : undefined}
+              strokeDashoffset={emphasized ? 0 : undefined}
+            >
+              {emphasized ? (
+                <animate
+                  data-agent-overlay-animation="span-reveal"
+                  attributeName="stroke-dashoffset"
+                  from="1"
+                  to="0"
+                  dur="460ms"
+                  fill="freeze"
+                />
+              ) : null}
+            </polyline>
+          </g>
+        );
+      })}
+      {frame.vectors.map((vector) => {
+        const color = vector.role === 'constraint' ? '#d7ad6d' : '#82bad2';
+        return (
+          <g key={vector.id} data-agent-spatial-vector={vector.id}>
+            <line
+              x1={vector.from[0]}
+              y1={vector.from[1]}
+              x2={vector.to[0]}
+              y2={vector.to[1]}
+              stroke={color}
+              strokeWidth={1.35 / safeScale}
+              strokeDasharray={`${5 / safeScale} ${4 / safeScale}`}
+              opacity={0.82}
+            >
+              <animate
+                data-agent-overlay-animation="motion-flow"
+                attributeName="stroke-dashoffset"
+                from={9 / safeScale}
+                to={0}
+                dur="620ms"
+                repeatCount="indefinite"
+              />
+            </line>
+            <circle
+              cx={vector.to[0]}
+              cy={vector.to[1]}
+              r={2.6 / safeScale}
+              fill={color}
+              stroke="#101820"
+              strokeWidth={0.8 / safeScale}
+            />
+          </g>
+        );
+      })}
+      {frame.markers.map((marker) => {
+        const color = spatialMarkerColor(marker.role);
+        return (
+          <g
+            key={marker.id}
+            data-agent-spatial-marker={marker.id}
+            data-agent-spatial-role={marker.role}
+          >
+            <circle
+              cx={marker.point[0]}
+              cy={marker.point[1]}
+              r={6 / safeScale}
+              fill="none"
+              stroke={color}
+              strokeWidth={1.2 / safeScale}
+              opacity={0.34}
+            >
+              <animate
+                data-agent-overlay-animation="interface-pulse"
+                attributeName="r"
+                values={`${4.5 / safeScale};${8 / safeScale};${4.5 / safeScale}`}
+                dur="1.15s"
+                repeatCount="indefinite"
+              />
+            </circle>
+            <circle
+              cx={marker.point[0]}
+              cy={marker.point[1]}
+              r={2.6 / safeScale}
+              fill="#101820"
+              stroke={color}
+              strokeWidth={1.5 / safeScale}
+            />
+          </g>
+        );
+      })}
+      {frame.label && labelAnchor ? (
+        <g
+          data-agent-spatial-label="true"
+          transform={`translate(${labelAnchor[0]}, ${labelAnchor[1]}) scale(${1 / safeScale}, ${-1 / safeScale})`}
+        >
+          <rect
+            x={10}
+            y={-29}
+            width={Math.max(76, Math.min(220, compactSpatialLabel(frame.label).length * 7.4 + 24))}
+            height={24}
+            rx={8}
+            fill="#111a22"
+            stroke="#38566a"
+            strokeWidth={1}
+            opacity={0.96}
+          />
+          <text
+            x={22}
+            y={-13}
+            fill="#b9d6e5"
+            fontSize={12}
+            fontFamily="Inter, ui-sans-serif, system-ui, sans-serif"
+            letterSpacing="0.02em"
+          >
+            {compactSpatialLabel(frame.label)}
+          </text>
+        </g>
+      ) : null}
+    </g>
+  );
+}
+
+function spatialStrokeStyle(
+  role: Extract<DrawingAgentCanvasOverlay, { kind: 'spatial' }>['strokes'][number]['role'],
+  scale: number,
+  confidence?: number,
+) {
+  if (confidence !== undefined && confidence < 0.6
+    && role !== 'context' && role !== 'excluded' && role !== 'before') {
+    return { color: '#d98a70', width: 2.35 / scale, opacity: 0.98, dash: undefined };
+  }
+  switch (role) {
+    case 'target': return { color: '#83c5df', width: 2.35 / scale, opacity: 0.98, dash: undefined };
+    case 'boundary': return { color: '#d7ad6d', width: 2.15 / scale, opacity: 0.96, dash: undefined };
+    case 'interface': return { color: '#d7ad6d', width: 2.35 / scale, opacity: 1, dash: undefined };
+    case 'after': return { color: '#91cce3', width: 2.45 / scale, opacity: 1, dash: undefined };
+    case 'before': return {
+      color: '#667b8a', width: 1.35 / scale, opacity: 0.55,
+      dash: `${5 / scale} ${4 / scale}`,
+    };
+    case 'excluded': return {
+      color: '#53616c', width: 1.2 / scale, opacity: 0.48,
+      dash: `${3 / scale} ${5 / scale}`,
+    };
+    case 'context': return {
+      color: '#61717e', width: 1.15 / scale, opacity: 0.42,
+      dash: `${2 / scale} ${5 / scale}`,
+    };
+  }
+}
+
+function spatialConfidenceBand(confidence?: number): 'low' | 'confirmed' | undefined {
+  if (confidence === undefined) return undefined;
+  return confidence < 0.6 ? 'low' : 'confirmed';
+}
+
+function spatialMarkerColor(
+  role: Extract<DrawingAgentCanvasOverlay, { kind: 'spatial' }>['markers'][number]['role'],
+): string {
+  if (role === 'interface') return '#d7ad6d';
+  if (role === 'warning') return '#d98a70';
+  if (role === 'anchor') return '#718491';
+  return '#83c5df';
+}
+
+function compactSpatialLabel(label: string): string {
+  const compact = label.replace(/\s+/g, ' ').trim();
+  return compact.length > 28 ? `${compact.slice(0, 27)}…` : compact;
+}
+
+function anchorColor(role: string, rejected: boolean): string {
+  if (rejected) return '#ef5b5b';
+  if (role === 'boundary') return '#e6ad5c';
+  if (role === 'required') return '#a98be6';
+  if (role === 'protected-seed') return '#71808c';
+  return '#69c4e8';
+}
+
 export default function Canvas() {
   const document = useStore((s) => s.document);
   const perceptionPreview = useStore((s) => s.perceptionPreview);
+  const agentCanvasOverlay = useStore((s) => s.agentCanvasOverlay);
   const selectedIds = useStore((s) => s.selectedIds);
   const showGrid = useStore((s) => s.showGrid);
   const showRelations = useStore((s) => s.showRelations);
@@ -167,6 +631,7 @@ export default function Canvas() {
   const selectEntities = useStore((s) => s.selectEntities);
   const clearSelection = useStore((s) => s.clearSelection);
   const setMouseCoords = useStore((s) => s.setMouseCoords);
+  const updateNode = useStore((s) => s.updateNode);
 
   const { scale, offsetX, offsetY } = canvasTransform;
   const entities = useMemo<DrawingRenderable[]>(() => {
@@ -206,6 +671,15 @@ export default function Canvas() {
   const userAdjustedViewRef = useRef(false);
   const previewRunRef = useRef<string | null>(null);
   const panSessionRef = useRef<ReturnType<typeof createCanvasPanSession> | null>(null);
+  const annotationDragRef = useRef<{
+    nodeId: string;
+    kind: 'text' | 'dimension' | 'leader';
+    axis: 'x' | 'y' | null;
+    startWorld: { x: number; y: number };
+    basePoint: readonly [number, number];
+  } | null>(null);
+  const annotationDragOffsetsRef = useRef<Record<string, readonly [number, number]>>({});
+  const [annotationDragTick, setAnnotationDragTick] = useState(0);
 
   // 交互视口节流：拖动/缩放时用 requestAnimationFrame 合并高频更新，
   // 每帧最多提交一次 setCanvasTransform，避免整块 SVG 逐事件重渲染导致闪烁。
@@ -336,6 +810,62 @@ export default function Canvas() {
   const worldRight = w ? (w - offsetX) / scale : 0;
   const worldBottom = h ? (offsetY - h) / scale : 0;
   const worldTop = offsetY / scale;
+  // 自动避让只在标注首次出现时计算一次并冻结；后续任何更新（拖动提交等）都不再触发
+  const annotationAvoidanceRef = useRef<{
+    drawingId: string | null;
+    handled: Set<string>;
+    offsets: Record<string, { x: number; y: number }>;
+  }>({ drawingId: null, handled: new Set(), offsets: {} });
+  const staticAnnotationTextOffsets = useMemo(
+    () => {
+      const state = annotationAvoidanceRef.current;
+      const drawingId = document?.id ?? null;
+      if (drawingId !== state.drawingId) {
+        state.drawingId = drawingId;
+        state.handled = new Set();
+        state.offsets = {};
+      }
+      const handles = extractAnnotationTextHandles(entities)
+        .filter((item) => item.width > 0 && item.height > 0);
+      // 角度标注文字必须钉在角平分线上：不参与避让位移，仅作为其他标签的避让障碍
+      const angularIds = new Set<string>(entities
+        .filter((entity) => entity.type === 'dimension' && entity.dimensionKind === 'angular')
+        .map((entity) => entity.id));
+      const placed: AnnotationLabelBounds[] = [];
+      const pending: AnnotationTextHandle[] = [];
+      for (const handle of handles) {
+        if (angularIds.has(handle.id)) {
+          state.handled.add(handle.id);
+          placed.push(annotationLabelBounds(handle, { x: 0, y: 0 }));
+        } else if (state.handled.has(handle.id)) {
+          placed.push(annotationLabelBounds(handle, state.offsets[handle.id] ?? { x: 0, y: 0 }));
+        } else {
+          pending.push(handle);
+        }
+      }
+      if (pending.length > 0) {
+        const fresh = resolveNewAnnotationTextOffsets(pending, placed);
+        for (const handle of pending) {
+          state.handled.add(handle.id);
+          state.offsets[handle.id] = fresh[handle.id] ?? { x: 0, y: 0 };
+        }
+      }
+      return { ...state.offsets };
+    },
+    [document?.id, entities],
+  );
+  const annotationTextOffsets = useMemo(() => {
+    const combined = { ...staticAnnotationTextOffsets };
+    const draggingOffsets = annotationDragOffsetsRef.current;
+    for (const [nodeId, offset] of Object.entries(draggingOffsets)) {
+      const base = staticAnnotationTextOffsets[nodeId];
+      combined[nodeId] = {
+        x: (base?.x ?? 0) + (offset[0] ?? 0),
+        y: (base?.y ?? 0) + (offset[1] ?? 0),
+      };
+    }
+    return combined;
+  }, [annotationDragTick, staticAnnotationTextOffsets]);
 
   // 坐标轴标签
   const axisLabels: React.ReactElement[] = [];
@@ -356,22 +886,132 @@ export default function Canvas() {
 
   const entityById = (id: string) => entities.find((entity) => entity.id === id);
 
+  const annotationTextOffset = (id: string): readonly [number, number] | undefined => {
+    const point = annotationTextOffsets[id];
+    if (!point) return undefined;
+    return [point.x, point.y];
+  };
+
+  const clearAnnotationDragState = useCallback(() => {
+    annotationDragRef.current = null;
+    if (Object.keys(annotationDragOffsetsRef.current).length > 0) {
+      annotationDragOffsetsRef.current = {};
+      setAnnotationDragTick((prev) => prev + 1);
+    }
+    setCursor('grab');
+  }, []);
+
+  const startAnnotationTextDrag = useCallback((entity: DrawingRenderable, event: React.MouseEvent<SVGGElement>) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const target = event.target as Element | null;
+    if (!target || !target.closest('[data-annotation-text="true"]')) return;
+    const resolvedAnchor = (() => {
+      if (entity.type === 'text') return { kind: 'text' as const, basePoint: entity.position };
+      if (entity.type === 'dimension') return { kind: 'dimension' as const, basePoint: entity.textPosition };
+      if (entity.type === 'leader') return { kind: 'leader' as const, basePoint: entity.points.at(-1) };
+      return null;
+    })();
+    const basePoint = resolvedAnchor?.basePoint;
+    if (!basePoint) return;
+    const sx = event.clientX - rect.left;
+    const sy = event.clientY - rect.top;
+    const startWorld = toWorld(sx, sy);
+    annotationDragRef.current = {
+      nodeId: entity.id,
+      kind: resolvedAnchor?.kind,
+      axis: null,
+      startWorld,
+      basePoint,
+    };
+    annotationDragOffsetsRef.current = {
+      ...annotationDragOffsetsRef.current,
+      [entity.id]: [0, 0],
+    };
+    setAnnotationDragTick((prev) => prev + 1);
+    hasMovedRef.current = false;
+    setCursor('grabbing');
+    event.preventDefault();
+    event.stopPropagation();
+  }, [toWorld]);
+
+  const commitAnnotationTextDrag = useCallback(async () => {
+    const drag = annotationDragRef.current;
+    if (!drag) return;
+    const entity = entityById(drag.nodeId);
+    if (!entity) {
+      clearAnnotationDragState();
+      return;
+    }
+    const offset = annotationDragOffsetsRef.current[drag.nodeId];
+    annotationDragOffsetsRef.current = {};
+    clearAnnotationDragState();
+    if (!offset) return;
+    const [offsetX, offsetY] = offset;
+    const dx = Number(offsetX);
+    const dy = Number(offsetY);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    if (Math.hypot(dx, dy) < 1e-6) return;
+    // 把冻结的避让偏移一并写入文档（预览时它已叠加显示），实现所见即所得
+    const frozen = annotationAvoidanceRef.current.offsets[drag.nodeId] ?? { x: 0, y: 0 };
+    const next: number[] = [drag.basePoint[0] + frozen.x + dx, drag.basePoint[1] + frozen.y + dy];
+    // 提交成功后移除该标注的避让偏移，且不再为其重新计算（已记录为已处理）
+    const consumeAvoidance = () => {
+      delete annotationAvoidanceRef.current.offsets[drag.nodeId];
+    };
+
+    const applyOffset = (point: readonly [number, number]): [number, number] => [
+      point[0] + frozen.x + dx,
+      point[1] + frozen.y + dy,
+    ];
+
+    if (entity.type === 'text') {
+      await updateNode(entity.id, { position: next as [number, number] });
+      consumeAvoidance();
+      return;
+    }
+    if (entity.type === 'dimension') {
+      // 延长线起点等锚定在几何上的定义点不动；标注线（箭头）与文字跟随新位置
+      const nextDimension = applyDimensionTextDrag(entity, next as [number, number]);
+      await updateNode(entity.id, {
+        textPosition: nextDimension.textPosition as [number, number],
+        definitionPoints: nextDimension.definitionPoints,
+      });
+      consumeAvoidance();
+      return;
+    }
+    if (entity.type === 'leader') {
+      // 箭头端固定在几何上，仅移动引线其余节点与文字
+      await updateNode(entity.id, {
+        points: entity.points.map((point, index) => (index === 0 ? point : applyOffset(point))),
+      });
+      consumeAvoidance();
+      return;
+    }
+  }, [clearAnnotationDragState, entityById, updateNode]);
+
   // 渲染实体（含透明点击区域）
   const renderEntity = (e: DrawingRenderable) => {
+    const canDragAnnotationText = e.type === 'text' || e.type === 'dimension' || e.type === 'leader';
+    const selectable = isCanvasSelectable(e);
     const onClick = (ev: React.MouseEvent<SVGGElement>) => {
       ev.stopPropagation();
       if (!hasMovedRef.current) {
         selectEntity(e.id, ev.ctrlKey || ev.metaKey);
       }
     };
+    const onPointerDown = canDragAnnotationText ? (ev: React.MouseEvent<SVGGElement>) => startAnnotationTextDrag(e, ev) : undefined;
     return (
       <EntityRenderer
         key={e.id}
         entity={e}
         scale={scale}
         viewport={{ minX: worldLeft, minY: worldBottom, maxX: worldRight, maxY: worldTop }}
-        selected={selectedIds.includes(e.id)}
-        onSelect={onClick}
+        selected={selectable && selectedIds.includes(e.id)}
+        onSelect={selectable ? onClick : undefined}
+        onPointerDown={onPointerDown}
+        annotationTextOnly={canDragAnnotationText}
+        textOffset={canDragAnnotationText ? annotationTextOffset(e.id) : undefined}
       />
     );
   };
@@ -380,7 +1020,7 @@ export default function Canvas() {
   const relationLines: React.ReactElement[] = [];
   const relationLabels: React.ReactElement[] = [];
   if (showRelations) {
-    (document?.relations ?? []).forEach((relation: DrawingRelation, i) => {
+    filterCanvasRelations(document?.relations ?? []).forEach((relation: DrawingRelation, i) => {
       const pts = relationNodeIds(relation).map(entityById).filter(Boolean) as DrawingRenderable[];
       if (pts.length < 2) return;
       for (let j = 0; j < pts.length - 1; j += 1) {
@@ -418,6 +1058,10 @@ export default function Canvas() {
   const onMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const target = e.target as Element | null;
+    if (target?.closest('[data-annotation-text="true"]')) {
+      return;
+    }
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
     const ctrl = e.ctrlKey || e.metaKey;
@@ -448,9 +1092,48 @@ export default function Canvas() {
       if (!rect) return;
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
+      const textDrag = annotationDragRef.current;
 
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
+      if (textDrag) {
+        if (e.buttons === 0) {
+          // 没有按键按住却仍处于拖动状态（mouseup 发生在画布外等）：直接取消，避免文字跟随悬停鼠标
+          annotationDragOffsetsRef.current = {};
+          clearAnnotationDragState();
+          return;
+        }
+        const world = toWorld(sx, sy);
+        const deltaWorld = {
+          x: world.x - textDrag.startWorld.x,
+          y: world.y - textDrag.startWorld.y,
+        };
+        // 尺寸标注文字自由拖动（标注线沿垂直分量跟随）；纯文字/引线仍按主轴锁定移动
+        const freeDrag = textDrag.kind === 'dimension';
+        const axis = textDrag.axis
+          ?? (Math.abs(deltaWorld.x) > Math.abs(deltaWorld.y) ? 'x' : 'y');
+        const lockedAxis = freeDrag ? null : textDrag.axis ?? axis;
+        if (!freeDrag && textDrag.axis === null) {
+          annotationDragRef.current = {
+            ...textDrag,
+            axis: lockedAxis,
+          };
+        }
+        const current = textDrag.basePoint;
+        const next = lockedAxis === 'x'
+          ? [current[0] + deltaWorld.x, current[1]]
+          : lockedAxis === 'y'
+            ? [current[0], current[1] + deltaWorld.y]
+            : [current[0] + deltaWorld.x, current[1] + deltaWorld.y];
+        annotationDragOffsetsRef.current = {
+          ...annotationDragOffsetsRef.current,
+          [textDrag.nodeId]: next.map((value, index) => value - current[index]) as [number, number],
+        };
+        hasMovedRef.current = true;
+        setAnnotationDragTick((prev) => prev + 1);
+        return;
+      }
+
       if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
         hasMovedRef.current = true;
       }
@@ -503,12 +1186,23 @@ export default function Canvas() {
         setMouseCoords(toWorld(sx, sy));
       }
     },
-    [applyAxisLabels, h, setMouseCoords, toWorld, w],
+    [applyAxisLabels, clearAnnotationDragState, h, setMouseCoords, toWorld, w],
   );
 
   const onMouseUp = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
+
+    if (annotationDragRef.current) {
+      const drag = annotationDragRef.current;
+      if (!hasMovedRef.current) {
+        selectEntity(drag.nodeId, e.ctrlKey || e.metaKey);
+        clearAnnotationDragState();
+      } else {
+        void commitAnnotationTextDrag();
+      }
+      return;
+    }
 
     if (isSelectingRef.current) {
       // 框选结束：计算选中的实体
@@ -521,14 +1215,9 @@ export default function Canvas() {
         const w2 = toWorld(Math.max(selBox.x1, selBox.x2), Math.max(selBox.y1, selBox.y2));
         const selBBox = { minX: Math.min(w1.x, w2.x), minY: Math.min(w1.y, w2.y), maxX: Math.max(w1.x, w2.x), maxY: Math.max(w1.y, w2.y) };
 
-        // 检测相交
-        const hits = entities
-          .filter((entity) => {
-            if (!entity.visible) return false;
-            const bounds = entityBounds(entity);
-            return bounds !== null && aabbIntersects(bounds, selBBox);
-          })
-          .map((e) => e.id);
+        const hits = selectGeometryIdsInBox(entities, selBBox, {
+          minX: worldLeft, minY: worldBottom, maxX: worldRight, maxY: worldTop,
+        });
 
         if (hits.length > 0) {
           // Ctrl+框选：追加到已有选择
@@ -559,6 +1248,10 @@ export default function Canvas() {
   };
 
   const onMouseLeave = () => {
+    if (annotationDragRef.current) {
+      annotationDragOffsetsRef.current = {};
+      clearAnnotationDragState();
+    }
     if (isDraggingRef.current) {
       panSessionRef.current?.finish();
       panSessionRef.current = null;
@@ -624,6 +1317,7 @@ export default function Canvas() {
         {/* 世界坐标组 */}
         <g ref={worldGroupRef} transform={`translate(${offsetX}, ${offsetY}) scale(${scale}, ${-scale})`}>
           <SpatialRegionOverlayLayer overlay={perceptionPreview.activeOverlay} scale={scale} />
+          <PartitionLayer scale={scale} offsetX={offsetX} offsetY={offsetY} />
           {entities.map(renderEntity)}
           <PerceptionPreviewLayer
             entities={previewEntities}
@@ -631,6 +1325,11 @@ export default function Canvas() {
             stageByNodeId={perceptionPreview.stageByNodeId}
             scale={scale}
             viewport={{ minX: worldLeft, minY: worldBottom, maxX: worldRight, maxY: worldTop }}
+          />
+          <AgentCanvasOverlayLayer
+            overlay={agentCanvasOverlay}
+            entities={fittedEntities}
+            scale={scale}
           />
           {relationLines}
         </g>

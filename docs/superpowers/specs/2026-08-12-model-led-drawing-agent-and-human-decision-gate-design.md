@@ -134,13 +134,22 @@ flowchart LR
 → 模型继续观察、查询或编辑
 → 生成原子事务 Preview
 → 硬校验 + 诊断评估 + 统一渲染
-→ 模型基于 before / preview / diff 决定修正、请求用户决定或提交
+→ 独立检查者比较 before | after 并返回 Review Evidence
+→ 主模型基于图纸事实与 Review Evidence 决定修正、请求用户决定或提交
 → Commit / 等待用户 / 暂停 / 失败
 ```
 
 Runtime 只施加服务级预算，例如最大单次媒体像素、工具超时、并发和 Episode 总资源。预算是稳定性保护，不包含对象、动作或语义规则。
 
-### 5.1 模型动作协议
+### 5.1 模型能力与调用可靠性
+
+- 空间理解、工具规划和 Drawing IR 事务生成使用 `COMPANY_AI_SPATIAL_MODEL`；独立结果复核使用 `COMPANY_AI_REVIEW_MODEL`，且复核意见不是 Commit 门禁。
+- `planner / decision / repair` 是审计兼容角色，不代表不同推理等级；生产运行将三者解析到同一高级空间模型。
+- 超时、网络或供应商传输失败只触发同一模型重试，不能降级到轻量模型。单次调用软上限默认 120 秒，Episode 总上限默认 15 分钟。
+- Schema、revision、引用、数值和确定性几何诊断可在本地快速执行，但不得把轻量模型引入为候选的空间裁决者。
+- 模型是可替换能力边界；这些策略不把供应商名称写入 Drawing IR、任务协议或 UI。
+
+### 5.2 模型动作协议
 
 模型每轮只输出一个显式动作：
 
@@ -162,7 +171,6 @@ type DrawingAgentAction =
 - `query_nodes`：按 plane、ID、类型、范围、关系或 Feature 查询。
 - `inspect_nodes`：读取完整节点、引用、关系、标注和来源证据。
 - `measure_geometry`：距离、角度、包围盒、相交、最近点和闭合度。
-- `compare_views`：计算 before/preview/source 的可解释差异。
 
 ### 6.2 拓扑与路径
 
@@ -177,13 +185,13 @@ type DrawingAgentAction =
 ### 6.3 编辑与生成
 
 - `preview_transaction`：对四个 IR plane 执行任意合法 Drawing Commands。
-- `redraw_region`：由模型提供目标、参考视图、Mask/接口和保护提示，返回干净线稿候选。
+- `redraw_region`：模型提供编辑意图、Drawing IR 世界坐标轮廓和可选关注节点；服务端统一渲染当前图纸、生成 Mask 并返回干净线稿候选。
 - `vectorize_image`：把局部或全图候选转换为解析图元与 Polyline/Spline 兜底。
 - `fit_geometry`：拟合 Line、Circle、Arc、Ellipse、Polyline 或 Spline。
 - `recompute_annotations`：重算、重关联、标记冲突或删除派生标注。
 - `evaluate_preview`：返回硬校验、诊断、约束影响和渲染句柄。
 
-`redraw_region` 的 Mask 是生成输入，不是事务写权限。模型可以在看到重绘结果后决定实际删除、更新和新增哪些 IR 节点。
+`redraw_region` 不要求模型传输 PNG/Base64。服务端通过同一 SceneCompiler 和 world/image 变换生成输入图、Mask 与保护 Mask。Mask 是生成输入，不是事务写权限；模型可以在看到重绘结果后决定实际删除、更新和新增哪些 IR 节点。
 
 ## 7. 自由 Drawing Transaction
 
