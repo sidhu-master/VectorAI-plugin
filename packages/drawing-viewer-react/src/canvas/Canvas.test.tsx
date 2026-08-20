@@ -38,6 +38,10 @@ function workspaceSnapshot(): DrawingWorkspaceSnapshot {
     id: 'relation-1',
     type: 'topology', plane: 'topology', kind: 'connected',
     nodeIds: ['line-1', 'circle-1'], visible: true, quality,
+  } as DrawingRelation, {
+    id: 'relation-2',
+    type: 'association', plane: 'association', kind: 'annotation-target',
+    annotationId: 'text-1', geometryIds: ['line-1'], visible: true, quality,
   } as DrawingRelation];
   document.coordinateFrames.push({
     id: 'frame_source_source-1',
@@ -78,7 +82,7 @@ async function loadedStore() {
 }
 
 describe('shared Canvas rendering', () => {
-  it('renders an infinite grid, coordinate axes, source raster, entities, and relations', async () => {
+  it('renders extracted entities and non-topology relations without exposing the source raster or connected labels', async () => {
     const store = await loadedStore();
 
     const markup = renderToStaticMarkup(
@@ -90,13 +94,28 @@ describe('shared Canvas rendering', () => {
     expect(markup).toContain('data-cad-grid="true"');
     expect(markup).toContain('data-axis="x"');
     expect(markup).toContain('data-axis="y"');
-    expect(markup).toContain('href="blob:source-1"');
-    expect(markup).toContain('transform="matrix(5 0 0 -5 0 400)"');
+    expect(markup).not.toContain('href="blob:source-1"');
     expect(markup).toContain('data-entity-id="line-1"');
     expect(markup).toContain('data-entity-id="circle-1"');
     expect(markup).toContain('data-entity-id="text-1"');
-    expect(markup).toContain('data-relation-id="relation-1"');
+    expect(markup).not.toContain('data-relation-id="relation-1"');
+    expect(markup).not.toContain('connected');
+    expect(markup).toContain('data-relation-id="relation-2"');
     expect(markup).toContain('vector-effect="non-scaling-stroke"');
+  });
+
+  it('shows the source raster only after the source toggle is explicitly enabled', async () => {
+    const store = await loadedStore();
+    store.getState().setDisplay({ sourceUnderlay: true });
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <Canvas />
+      </DrawingWorkspaceProvider>,
+    );
+
+    expect(markup).toContain('href="blob:source-1"');
+    expect(markup).toContain('transform="matrix(5 0 0 -5 0 400)"');
   });
 
   it('applies annotation, relation, source, and selection state from the scoped store', async () => {

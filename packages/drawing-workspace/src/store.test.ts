@@ -107,6 +107,12 @@ function snapshotWithText(revision = 1): DrawingWorkspaceSnapshot {
 }
 
 describe('createDrawingWorkspaceStore', () => {
+  it('defaults to the extracted vector view without the source raster underlay', () => {
+    const store = createDrawingWorkspaceStore({ port: new TestPort(snapshot(1)) });
+
+    expect(store.getState().display.sourceUnderlay).toBe(false);
+  });
+
   it('starts idle and loads an authoritative snapshot', async () => {
     const store = createDrawingWorkspaceStore({ port: new TestPort(snapshot(4)) });
 

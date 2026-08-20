@@ -703,7 +703,7 @@ window.__ModuleLoader__.load({
       document,
       viewport
     }) {
-      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-relations", children: document.relations.filter((relation) => relation.visible).flatMap((relation) => {
+      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-relations", children: document.relations.filter((relation) => relation.visible && relation.plane !== "topology").flatMap((relation) => {
         const centers = relationNodeIds(relation).flatMap((id) => {
           const node = [...document.geometry, ...document.annotations].find((candidate) => candidate.id === id);
           const bounds = node === void 0 ? null : nodeBounds(node);
@@ -1231,7 +1231,7 @@ window.__ModuleLoader__.load({
       axes: true,
       relations: true,
       annotations: true,
-      sourceUnderlay: true
+      sourceUnderlay: false
     };
     function createDrawingWorkspaceStore(input) {
       const { port } = input;

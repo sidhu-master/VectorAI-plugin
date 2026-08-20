@@ -252,7 +252,9 @@ function RelationLayer({
 }) {
   return (
     <g className="vai-relations">
-      {document.relations.filter((relation) => relation.visible).flatMap((relation) => {
+      {document.relations.filter((relation) => (
+        relation.visible && relation.plane !== 'topology'
+      )).flatMap((relation) => {
         const centers = relationNodeIds(relation).flatMap((id): Vec2[] => {
           const node = [...document.geometry, ...document.annotations].find((candidate) => candidate.id === id);
           const bounds = node === undefined ? null : nodeBounds(node);

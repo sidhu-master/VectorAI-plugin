@@ -77,7 +77,7 @@ const DEFAULT_DISPLAY: DrawingWorkspaceDisplay = {
   axes: true,
   relations: true,
   annotations: true,
-  sourceUnderlay: true,
+  sourceUnderlay: false,
 };
 
 export function createDrawingWorkspaceStore(input: {
