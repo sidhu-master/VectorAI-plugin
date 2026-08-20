@@ -8,6 +8,7 @@
     "client:dev": "vite",
     "build": "tsc -b && vite build",
     "build:dsh-space": "node scripts/build-dsh-space.mjs",
+    "patch:dsh-workspace": "node scripts/dsh-inline-workspace-patch.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc --noEmit",
