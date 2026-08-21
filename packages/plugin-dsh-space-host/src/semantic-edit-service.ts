@@ -30,7 +30,7 @@ import {
   type TaskRef,
 } from '@vectorai/drawing-edit-protocol';
 import type { DrawingDocument } from '@vectorai/drawing-core';
-import { WorldModelCompiler } from '@vectorai/drawing-spatial';
+import { buildGeometryTopologyGraph, WorldModelCompiler } from '@vectorai/drawing-spatial';
 import type { DrawingUndoStageRequest, DrawingUndoStageResult } from '@vectorai/drawing-workspace';
 
 import {
@@ -126,6 +126,11 @@ export interface SemanticContextRef extends ContextRef {
     contactedPortCount: number;
     interfaces: Array<{ interfaceId: string; nodeId: string; endpoint: 'start' | 'end' }>;
   }>;
+  topologyFacts: {
+    segmentCount: number;
+    vertexCount: number;
+    interfaceVertices: Array<{ vertexId: string; point: readonly [number, number]; nodeIds: string[] }>;
+  };
   knowledge: {
     status: 'complete' | 'partial' | 'unknown';
     worldModelVersion: string;
@@ -341,6 +346,23 @@ export class SemanticEditService {
       interfaces: findConnectedCarrierInterfaces(snapshot.document, candidate.carrierNodeId)
         .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })),
     }));
+    const topology = buildGeometryTopologyGraph({
+      document: snapshot.document,
+      revision: String(snapshot.ref.revision) as never,
+    });
+    const topologyFacts = {
+      segmentCount: topology.segments.length,
+      vertexCount: topology.vertices.length,
+      interfaceVertices: topology.vertices.flatMap((vertex) => {
+        const nodeIds = [...new Set(vertex.incidentSegmentIds.flatMap((segmentId) => {
+          const segment = topology.segment(segmentId);
+          return segment ? [String(segment.nodeId)] : [];
+        }))].sort();
+        return nodeIds.length > 1
+          ? [{ vertexId: vertex.id, point: structuredClone(vertex.point), nodeIds }]
+          : [];
+      }).slice(0, 512),
+    };
     const knowledgeStatus = world.knowledge.state === 'resolved'
       ? 'complete' as const
       : world.knowledge.state === 'partial' ? 'partial' as const : 'unknown' as const;
@@ -350,6 +372,7 @@ export class SemanticEditService {
       observationId: observation.ref.observationId,
       geometryFacts,
       connectedCarrierFacts,
+      topologyFacts,
       knowledge: {
         status: knowledgeStatus,
         worldModelVersion: world.compilerVersion,
@@ -359,6 +382,7 @@ export class SemanticEditService {
         observationDigest: observation.ref.observationDigest,
         geometryFacts,
         connectedCarrierFacts,
+        topologyFacts,
         worldInputDigest: world.inputDigest,
         worldKnowledge: world.knowledge,
       })),
@@ -395,7 +419,11 @@ export class SemanticEditService {
     if (targetNodeIds.length === 0 || targetNodeIds.some((id) => !nodes.has(id))) {
       throw new Error('EDIT_TARGET_UNRESOLVED');
     }
-    const discoveredInterfaces = inferSelectionInterfaces(snapshot.document, targetNodeIds);
+    const discoveredInterfaces = inferSelectionInterfaces(
+      snapshot.document,
+      targetNodeIds,
+      snapshot.ref.revision,
+    );
     const discoveredIds = new Set(discoveredInterfaces.map(({ interfaceId }) => interfaceId));
     const interfaces = input.interfaces.length > 0
       ? structuredClone(input.interfaces)
@@ -960,6 +988,7 @@ function allNodes(document: DrawingDocument) {
 function inferSelectionInterfaces(
   document: DrawingDocument,
   targetNodeIds: string[],
+  revision: number,
 ): GroundedEditTarget['interfaces'] {
   const selected = new Set(targetNodeIds);
   const targets = document.geometry.filter((node) => selected.has(String(node.id)));
@@ -971,6 +1000,34 @@ function inferSelectionInterfaces(
   ));
   if (exactCarrierInterfaces.length > 0) {
     return exactCarrierInterfaces.sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
+  }
+  const topology = buildGeometryTopologyGraph({
+    document,
+    revision: String(revision) as never,
+  });
+  const graphInterfaces = topology.vertices.flatMap((vertex) => {
+    const segments = vertex.incidentSegmentIds.flatMap((id) => {
+      const segment = topology.segment(id);
+      return segment ? [segment] : [];
+    });
+    if (!segments.some(({ nodeId }) => selected.has(String(nodeId)))) return [];
+    return segments.flatMap((segment) => {
+      if (selected.has(String(segment.nodeId))) return [];
+      const node = document.geometry.find(({ id }) => id === segment.nodeId);
+      if (!node || node.type !== 'line') return [];
+      const endpoint = segment.startVertexId === vertex.id
+        ? 'start' as const
+        : segment.endVertexId === vertex.id ? 'end' as const : null;
+      return endpoint ? [{
+        interfaceId: `${String(node.id)}:${endpoint}`,
+        nodeId: String(node.id),
+        endpoint,
+      }] : [];
+    });
+  });
+  if (graphInterfaces.length > 0) {
+    return [...new Map(graphInterfaces.map((port) => [port.interfaceId, port])).values()]
+      .sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
   }
   const tolerance = Math.max(geometryDiagonal(document) * 0.0025, 1e-6);
   const interfaces: GroundedEditTarget['interfaces'] = [];
