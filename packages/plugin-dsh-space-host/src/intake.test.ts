@@ -223,10 +223,13 @@ describe('drawing image intake', () => {
     expect(result.kind).toBe('enter');
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(2);
-    expect(result.messages.at(-1)?.content).toEqual([{
+    const injected = result.messages.at(-1)?.content[0];
+    expect(injected).toMatchObject({
       type: 'text',
-      text: expect.stringMatching(/selection-1[\s\S]*right-hand[\s\S]*only if[\s\S]*drawing_observe/i),
-    }]);
+      text: expect.stringMatching(/1 visible Drawing nodes[\s\S]*current_selection/i),
+    });
+    if (injected?.type !== 'text') throw new Error('expected text');
+    expect(injected.text).not.toMatch(/selection-1|right-hand|selectionProjectionId|node ids:/i);
   });
 
   it('does not reactivate an image from an earlier direct user message', async () => {

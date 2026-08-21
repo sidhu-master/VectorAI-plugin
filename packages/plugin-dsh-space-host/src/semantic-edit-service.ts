@@ -884,6 +884,49 @@ export class SemanticEditService {
     return attachment ? structuredClone(attachment) : null;
   }
 
+  currentObservationAttachment(sessionId: string): ImageAttachmentRef | null {
+    const episode = this.#episodes.current(sessionId);
+    const selection = this.#episodeSelections.get(sessionId);
+    if (!episode || !selection || selection.episodeId !== episode.episodeId) return null;
+    return this.observationAttachment(selection.observationId);
+  }
+
+  currentPreviewPresentation(sessionId: string): {
+    state: 'preview_ready';
+    summary: string;
+    changedNodeCount: number;
+    solver?: {
+      candidateCount: number;
+      goalResidual: number;
+      movementCost: number;
+      deformationCost: number;
+      collisionPenalty: number;
+      topologyPenalty: number;
+    };
+    nextTools: ['drawing_evaluate_preview'];
+  } {
+    const preview = this.#previews.get(sessionId);
+    if (!preview) throw new Error('EDIT_PREVIEW_REQUIRED');
+    const effect = preview.compilation.actualEffect;
+    const receipt = preview.solverProvenance?.receipt;
+    return {
+      state: 'preview_ready',
+      summary: preview.intent?.summary ?? preview.program?.summary ?? '',
+      changedNodeCount: effect.createdNodeIds.length + effect.updatedNodeIds.length + effect.deletedNodeIds.length,
+      ...(receipt ? {
+        solver: {
+          candidateCount: receipt.candidateCount,
+          goalResidual: receipt.goalResidual,
+          movementCost: receipt.movementCost,
+          deformationCost: receipt.deformationCost,
+          collisionPenalty: receipt.collisionPenalty,
+          topologyPenalty: receipt.topologyPenalty,
+        },
+      } : {}),
+      nextTools: ['drawing_evaluate_preview'],
+    };
+  }
+
   buildContext(sessionId: string, input: { taskId: string; observationId: string }): SemanticContextRef {
     const task = this.#task(sessionId, input.taskId);
     const observation = this.#observations.get(input.observationId);

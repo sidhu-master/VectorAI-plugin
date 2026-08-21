@@ -107,8 +107,8 @@ export function createPreStepIntake(
         `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
         'To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.',
         ...(selection ? [
-          `Host-verified canvas selection ${selection.selectionProjectionId} contains exact Drawing node ids: ${selection.nodeIds.join(', ')}.`,
-          'Use the selection only if drawing_observe starts a drawing task; then pass its selectionProjectionId to drawing_ground with empty targetNodeIds and interfaces so the Host derives the exact target and contacted connectors.',
+          `A Host-verified canvas selection exists and covers ${selection.nodeIds.length} visible Drawing nodes.`,
+          'When the user asks to edit that selection, drawing_select_parts can reference it with { kind: "current_selection" }; the Host keeps its exact node ids and revision private.',
           'The selection is grounding evidence only and does not grant write authority.',
         ] : []),
         ...(numericConstraints.length > 0 ? [

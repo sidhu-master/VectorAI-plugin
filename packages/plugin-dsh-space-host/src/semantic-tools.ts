@@ -1,171 +1,114 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions';
-import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools';
 import {
-  finalizePreviewRequestSchema,
-  multiPartTransformRequestSchema,
-  multiPartTransformRevisionRequestSchema,
-  spatialEditProgramSchema,
+  defineTool,
+  type JsonValue,
+  type ObjectValueSchemaSpec,
+  type ParameterPropertySpec,
+  type ParameterSchemaSpec,
+  type ValueSchemaSpec,
+} from '@deepseek-ai/dsh-tools';
+import {
+  drawingSelectPartsRequestSchema,
+  spatialIntentRequestSchema,
+  spatialIntentRevisionSchema,
 } from '@vectorai/drawing-edit-protocol';
 
 import type { SemanticEditService } from './semantic-edit-service';
 
 type Questions = Pick<UserQuestionService, 'ask'>;
 
-const vec2ToolSchema = {
-  type: 'array', items: { type: 'number' },
-  description: 'Exactly two finite Drawing coordinates [x, y].',
-} as const;
+const string = (description?: string): ParameterPropertySpec => ({
+  type: 'string', required: true, ...(description ? { description } : {}),
+});
+const optionalString = (): ParameterPropertySpec => ({ type: 'string' });
+const literal = (value: string): ParameterPropertySpec => ({ type: 'string', const: value, required: true });
+const enumeration = (values: string[]): ParameterPropertySpec => ({ type: 'string', enum: values, required: true });
+const array = (items: ValueSchemaSpec, required = true): ParameterPropertySpec => ({
+  type: 'array', items, ...(required ? { required: true as const } : {}),
+});
+const object = (properties: ParameterSchemaSpec): ObjectValueSchemaSpec => ({
+  type: 'object', properties, additionalProperties: false,
+});
+const normalizedPoint = {
+  type: 'array' as const, items: { type: 'number' as const },
+  description: 'Exactly two normalized observation coordinates in [0, 1].',
+};
 
-const drawingRefToolSchema = {
-  type: 'object',
-  properties: {
-    drawingId: { type: 'string', required: true },
-    revision: { type: 'integer', required: true },
-  },
-  additionalProperties: false,
-} as const;
-
-const effectScopeToolSchema = {
+const selectionReference: ValueSchemaSpec = {
   oneOf: [
-    objectSchema({
-      kind: literalSchema('node-field'), nodeId: requiredString(),
-      fields: requiredArray({ type: 'string' }),
-    }),
-    objectSchema({
-      kind: literalSchema('source-span'), nodeId: requiredString(),
-      start: requiredInteger(), end: requiredInteger(),
-    }),
-    objectSchema({ kind: literalSchema('half-edge'), nodeId: requiredString(), halfEdgeId: requiredString() }),
-    objectSchema({ kind: literalSchema('interface'), interfaceId: requiredString() }),
-    objectSchema({
-      kind: literalSchema('endpoint-slot'), nodeId: requiredString(),
-      endpoint: { type: 'string', enum: ['start', 'end'], required: true },
-    }),
-    objectSchema({
-      kind: literalSchema('creation'),
-      plane: { type: 'string', enum: ['geometry', 'annotation', 'relation', 'feature'], required: true },
-      nodeType: requiredString(), containerId: { type: 'string' }, maxCount: requiredInteger(),
-    }),
-    objectSchema({ kind: literalSchema('deletion'), nodeIds: requiredArray({ type: 'string' }) }),
+    object({ kind: literal('current_selection') }),
+    object({ kind: literal('observation_point'), normalized: { ...normalizedPoint, required: true } }),
+    object({ kind: literal('observation_region'), polygon: array(normalizedPoint) }),
+    object({ kind: literal('candidate'), key: string() }),
+    object({ kind: literal('semantic_query'), text: string() }),
   ],
-} as const;
+};
 
-const spatialOperationToolSchema = {
+const selectionExclusion: ValueSchemaSpec = {
   oneOf: [
-    objectSchema({
-      kind: literalSchema('rigid_transform'), translation: { ...vec2ToolSchema, required: true },
-      rotationRadians: requiredNumber(), pivot: { ...vec2ToolSchema, required: true },
-    }),
-    objectSchema({
-      kind: literalSchema('connected_transform'), translation: { ...vec2ToolSchema, required: true },
-      rotationRadians: { type: 'number' }, pivot: vec2ToolSchema,
-      interfaceIds: requiredArray({ type: 'string' }),
-    }),
-    objectSchema({
-      kind: literalSchema('set_endpoint'), nodeId: requiredString(),
-      endpoint: { type: 'string', enum: ['start', 'end'], required: true },
-      point: { ...vec2ToolSchema, required: true },
-    }),
-    objectSchema({
-      kind: literalSchema('create_path'), nodeId: requiredString(),
-      points: requiredArray(vec2ToolSchema), closed: { type: 'boolean', required: true },
-    }),
-    objectSchema({ kind: literalSchema('delete_nodes'), nodeIds: requiredArray({ type: 'string' }) }),
-    objectSchema({
-      kind: literalSchema('create_annotation_batch'),
-      annotations: requiredArray({
-        type: 'object', properties: { id: requiredString(), type: requiredString() }, additionalProperties: true,
-      }),
-      associations: requiredArray({
-        type: 'object',
-        properties: { id: requiredString(), type: { type: 'string', const: 'association', required: true } },
-        additionalProperties: true,
-      }),
-    }),
+    object({ kind: literal('candidate'), value: string() }),
+    object({ kind: literal('semantic_query'), value: string() }),
   ],
-} as const;
+};
 
-const spatialPostconditionToolSchema = {
+const spatialReference: ValueSchemaSpec = {
   oneOf: [
-    objectSchema({ kind: literalSchema('preserve_connectivity'), nodeIds: requiredArray({ type: 'string' }) }),
-    objectSchema({
-      kind: literalSchema('within_bounds'),
-      bounds: {
-        type: 'object', required: true, additionalProperties: false,
-        properties: {
-          minX: requiredNumber(), minY: requiredNumber(), maxX: requiredNumber(), maxY: requiredNumber(),
-        },
-      },
+    object({ kind: literal('part'), partKey: string() }),
+    object({ kind: literal('drawing_anchor'), anchor: enumeration(['center', 'top', 'bottom', 'left', 'right']) }),
+    object({ kind: literal('observation_point'), normalized: { ...normalizedPoint, required: true } }),
+    object({ kind: literal('semantic_anchor'), query: string() }),
+  ],
+};
+
+const magnitude = enumeration(['minimum', 'slight', 'moderate', 'strong']);
+const spatialGoal: ValueSchemaSpec = {
+  oneOf: [
+    object({
+      kind: literal('direction'), subject: string(),
+      direction: enumeration(['up', 'down', 'left', 'right']), magnitude,
     }),
-    objectSchema({
-      kind: literalSchema('target_position'), targetHandle: requiredString(),
-      point: { ...vec2ToolSchema, required: true }, tolerance: requiredNumber(),
+    object({
+      kind: literal('relative_position'), subject: string(),
+      reference: { ...spatialReference, required: true },
+      relation: enumeration(['above', 'below', 'left_of', 'right_of', 'near', 'far', 'centered']),
+      magnitude,
+    }),
+    object({
+      kind: literal('alignment'), subject: string(),
+      reference: { ...spatialReference, required: true }, axis: enumeration(['x', 'y', 'both']),
+    }),
+    object({
+      kind: literal('topology'), subject: string(),
+      reference: { ...spatialReference, required: true },
+      relation: enumeration(['touches', 'crosses', 'does_not_cross', 'inside', 'outside']),
+    }),
+    object({
+      kind: literal('explicit_numeric'), subject: string(),
+      quantity: enumeration(['delta_x', 'delta_y', 'distance', 'angle', 'target_x', 'target_y']),
+      numericKey: string('Reference a Host-extracted numericKey; never copy a coordinate value.'),
     }),
   ],
-} as const;
+};
 
-const spatialEditProgramToolSchema = {
-  type: 'object',
-  properties: {
-    baseRef: { ...drawingRefToolSchema, required: true },
-    targetHandle: requiredString(),
-    summary: requiredString(),
-    objective: requiredString(),
-    operations: requiredArray(spatialOperationToolSchema),
-    preserveScopes: requiredArray(effectScopeToolSchema),
-    postconditions: requiredArray(spatialPostconditionToolSchema),
-    evidenceRefs: requiredArray({ type: 'string' }),
-  },
-  additionalProperties: false,
-} as const;
+const preservationGoal: ValueSchemaSpec = {
+  oneOf: [
+    object({ kind: literal('part_shape'), partKey: string() }),
+    object({ kind: literal('connectivity'), partKey: string() }),
+    object({ kind: literal('anchor'), reference: { ...spatialReference, required: true } }),
+    object({ kind: literal('topology'), partKey: optionalString() }),
+    object({ kind: literal('protected_scope') }),
+    object({ kind: literal('minimum_deformation') }),
+  ],
+};
 
-const multiPartTransformPartToolSchema = {
-  type: 'object',
-  properties: {
-    groundingId: { type: 'string', required: true },
-    translation: { ...vec2ToolSchema, required: true },
-    rotationDegrees: {
-      type: 'number',
-      description: 'Optional exact rotation in degrees. Use only when the user explicitly requests an exact angle. When present, pivot is also required.',
-    },
-    pivot: vec2ToolSchema,
-  },
-  additionalProperties: false,
-} as const;
-
-function normalizeMultiPartToolRequest(args: {
-  taskId: string;
-  summary: string;
-  parts: Array<{
-    groundingId: string;
-    translation: number[];
-    rotationDegrees?: number;
-    pivot?: number[];
-  }>;
-}) {
-  return {
-    taskId: args.taskId,
-    summary: args.summary,
-    parts: args.parts.map(({ rotationDegrees, ...part }) => ({
-      ...part,
-      ...(rotationDegrees === undefined ? {} : { rotationRadians: rotationDegrees * Math.PI / 180 }),
-    })),
-  };
-}
-
-function withDrawingWorkflow(
-  result: object,
-  state: string,
-  nextTools: string[],
-  instruction: string,
-): JsonValue {
-  return {
-    ...result,
-    drawingWorkflow: { state, nextTools, instruction },
-  } as unknown as JsonValue;
-}
+const intentParameters: ParameterSchemaSpec = {
+  summary: string('A short semantic description of the desired result.'),
+  goals: array(spatialGoal),
+  preserve: array(preservationGoal),
+};
 
 export function createSemanticEditToolCatalog(
   semantic: SemanticEditService,
@@ -173,14 +116,9 @@ export function createSemanticEditToolCatalog(
 ) {
   return [
     createDrawingObserveTool(semantic),
-    createDrawingBuildContextTool(semantic),
-    createDrawingGroundTool(semantic),
-    createDrawingPreviewGroundedTransformTool(semantic),
-    createDrawingPreviewMultiPartTransformTool(semantic),
-    createDrawingReviseGroundedTransformTool(semantic),
-    createDrawingReviseMultiPartTransformTool(semantic),
-    createDrawingPreviewProgramTool(semantic),
-    createDrawingRevisePreviewTool(semantic),
+    createDrawingSelectPartsTool(semantic),
+    createDrawingPreviewSpatialIntentTool(semantic),
+    createDrawingReviseSpatialIntentTool(semantic),
     createDrawingEvaluatePreviewTool(semantic),
     createDrawingFinalizeSemanticTool(semantic, questions),
     createDrawingDiscardSemanticTool(semantic),
@@ -189,357 +127,114 @@ export function createSemanticEditToolCatalog(
   ];
 }
 
-export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_preview_grounded_transform',
-    description: 'Preview a pose transform for an exact grounded target. Pass only the intended displacement; the Host derives the minimum-deformation orientation from actual topology and interfaces. Positive Y moves visually up. Use the advanced program tool only when the user explicitly specifies an exact rotation.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      groundingId: { type: 'string', required: true },
-      translation: {
-        type: 'array', items: { type: 'number' }, required: true,
-        description: 'Exactly two numbers [dx, dy] in Drawing units. Positive dy moves the target visually up.',
-      },
-      summary: { type: 'string', required: true },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const input = args as {
-        taskId: string;
-        groundingId: string;
-        translation: [number, number];
-        summary: string;
-      };
-      const preview = semantic.previewGroundedTransform(requireSession(exec.agent?.id), {
-        taskId: input.taskId,
-        groundingId: input.groundingId,
-        translation: input.translation,
-        summary: input.summary,
-      });
-      return withDrawingWorkflow(
-        preview,
-        'preview_ready',
-        ['drawing_evaluate_preview'],
-        'Evaluate this exact Preview before attempting to finalize it.',
-      );
-    },
-  });
-}
-
-export function createDrawingPreviewMultiPartTransformTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_preview_multi_part_transform',
-    description: 'Create one atomic Preview for 2-16 independently moving grounded parts. Ground each semantic carrier separately, then give every grounding its displacement. Let the Host derive minimum-deformation orientation unless the user explicitly specified an exact angle. Never split one user intent into sequential commits.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      parts: {
-        type: 'array', required: true,
-        description: 'Two to sixteen exact Groundings. Each groundingId may appear once.',
-        items: multiPartTransformPartToolSchema,
-      },
-      summary: { type: 'string', required: true },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const input = multiPartTransformRequestSchema.parse(normalizeMultiPartToolRequest(args));
-      const preview = semantic.previewMultiPartTransform(requireSession(exec.agent?.id), input);
-      return withDrawingWorkflow(
-        preview,
-        'preview_ready',
-        ['drawing_evaluate_preview'],
-        'Evaluate the complete multi-part Preview before attempting to finalize it.',
-      );
-    },
-  });
-}
-
-export function createDrawingReviseMultiPartTransformTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_revise_multi_part_transform',
-    description: 'Atomically replace the exact current multi-part Preview after visual feedback. Keep the same task and Groundings, adjust any part transforms, and pass only the opaque current Preview handle; the Host binds its immutable digest.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      currentPreviewHandle: { type: 'string', required: true },
-      parts: {
-        type: 'array', required: true,
-        description: 'Two to sixteen exact Groundings with revised transforms.',
-        items: multiPartTransformPartToolSchema,
-      },
-      summary: { type: 'string', required: true },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const sessionId = requireSession(exec.agent?.id);
-      const current = semantic.resolveCurrentPreview(sessionId, args.currentPreviewHandle);
-      const input = multiPartTransformRevisionRequestSchema.parse({
-        ...normalizeMultiPartToolRequest(args),
-        currentPreviewHandle: args.currentPreviewHandle,
-        currentCandidateDigest: current.candidateDigest,
-      });
-      const preview = semantic.reviseMultiPartTransform(sessionId, input);
-      return withDrawingWorkflow(
-        preview,
-        'preview_ready',
-        ['drawing_evaluate_preview'],
-        'Evaluate the replacement multi-part Preview; the previous handle is no longer current.',
-      );
-    },
-  });
-}
-
-export function createDrawingReviseGroundedTransformTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_revise_grounded_transform',
-    description: 'Replace the current pose Preview after visual evaluation requests a revision. Keep the same task; optionally call drawing_ground again with the existing context to narrow the moving target. The Host derives orientation from topology. Never call drawing_observe twice in one user turn.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      currentPreviewHandle: { type: 'string', required: true },
-      groundingId: { type: 'string', required: true },
-      translation: {
-        type: 'array', items: { type: 'number' }, required: true,
-        description: 'Exactly two numbers [dx, dy]. Positive dy moves visually up.',
-      },
-      summary: { type: 'string', required: true },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const input = args as {
-        taskId: string;
-        currentPreviewHandle: string;
-        groundingId: string;
-        translation: [number, number];
-        summary: string;
-      };
-      const sessionId = requireSession(exec.agent?.id);
-      const current = semantic.resolveCurrentPreview(sessionId, input.currentPreviewHandle);
-      const preview = semantic.reviseGroundedTransform(sessionId, {
-        taskId: input.taskId,
-        currentPreviewHandle: input.currentPreviewHandle,
-        currentCandidateDigest: current.candidateDigest,
-        groundingId: input.groundingId,
-        translation: input.translation,
-        summary: input.summary,
-      });
-      return withDrawingWorkflow(
-        preview,
-        'preview_ready',
-        ['drawing_evaluate_preview'],
-        'Evaluate the replacement Preview; the previous Preview handle is no longer current.',
-      );
-    },
-  });
-}
-
 export function createDrawingObserveTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_observe',
-    description: 'Start a revision-bound semantic edit task from the current direct user instruction and create an observation of the active local Drawing. Call before grounding or editing.',
+    description: 'Observe the active Drawing only after the user asks to inspect or edit it. The Host owns task, revision, viewport, and observation lineage.',
     parameters: {},
     output: { schema: { type: 'json' }, render: renderObservation },
     async execute(_args, exec) {
       const sessionId = requireSession(exec.agent?.id);
-      const task = semantic.startBoundTask(sessionId);
-      const observation = await semantic.observe(sessionId, { taskId: task.taskId });
-      const imageAttachment = semantic.observationAttachment(observation.observationId);
-      return {
-        task,
-        observation,
-        ...(imageAttachment ? { imageAttachment } : {}),
-        drawingWorkflow: {
-          state: 'observed',
-          nextTools: ['drawing_build_context'],
-          instruction: 'Build bounded context with this taskId and observationId. Follow the next drawing tool descriptions; all returned handles are task- and revision-bound.',
-        },
-      } as unknown as JsonValue;
-    },
-  });
-}
-
-export function createDrawingBuildContextTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_build_context',
-    description: 'Build bounded drawing context for an exact task and observation before selecting an edit target. Drawing coordinates are world-space: positive X moves right, positive Y moves up, negative Y moves down, and positive rotation is counterclockwise.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      observationId: { type: 'string', required: true },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const context = semantic.buildContext(requireSession(exec.agent?.id), args);
-      return withDrawingWorkflow(
-        context,
-        'context_ready',
-        ['drawing_ground'],
-        'Ground the exact semantic target against this bounded context before creating a Preview. Preserve the returned world-coordinate convention when translating or rotating parts.',
-      );
-    },
-  });
-}
-
-export function createDrawingGroundTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_ground',
-    description: 'Ground one exact semantic carrier to node ids and topology interfaces. For a coordinated multi-part edit, call once per independently moving part with a stable partKey and user-facing label. Pass empty interfaces so the Host derives true contacted endpoint slots. When the user refers to a Host selection, pass its selectionProjectionId with empty targetNodeIds.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      contextId: { type: 'string', required: true },
-      selectionProjectionId: {
-        type: 'string',
-        description: 'Optional Host selection handle. Omit this field entirely when drawing_observe did not return one; never send an empty string.',
-      },
-      partKey: {
-        type: 'string',
-        description: 'Stable per-task key for one independently moving part. Provide together with label for multi-part edits.',
-      },
-      label: {
-        type: 'string',
-        description: 'Short user-facing canvas label for this part. Provide together with partKey.',
-      },
-      targetNodeIds: { type: 'array', items: { type: 'string' }, required: true },
-      interfaces: {
-        type: 'array', required: true,
-        items: {
-          type: 'object', additionalProperties: false,
-          properties: {
-            interfaceId: { type: 'string', required: true },
-            nodeId: { type: 'string', required: true },
-            endpoint: { type: 'string', enum: ['start', 'end'], required: true },
-          },
-        },
-      },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const grounding = semantic.ground(requireSession(exec.agent?.id), args as never);
-      return withDrawingWorkflow(
-        grounding,
-        'grounded',
-        ['drawing_preview_grounded_transform', 'drawing_preview_multi_part_transform', 'drawing_preview_program'],
-        'Use grounded transform for one part, multi-part transform after grounding every independent part, or the advanced program only for other explicit spatial operations.',
-      );
-    },
-  });
-}
-
-export function createDrawingPreviewProgramTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_preview_program',
-    description: 'Advanced tool for non-pose spatial operations and exact numeric rotations explicitly requested by the user. For ordinary moving, raising, lowering, or posing, use drawing_preview_grounded_transform so the Host derives minimum-deformation orientation. Compiles a complete Spatial Edit Program against an exact grounding and never accepts raw Drawing transaction commands.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      groundingId: { type: 'string', required: true },
-      program: { ...spatialEditProgramToolSchema, required: true },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const program = spatialEditProgramSchema.parse(args.program);
-      const input = args as { taskId: string; groundingId: string };
-      const preview = semantic.previewProgram(requireSession(exec.agent?.id), {
-        taskId: input.taskId,
-        groundingId: input.groundingId,
-        program: program as never,
+      return recover(['drawing_observe'], async () => {
+        const result = await semantic.observeCurrent(sessionId);
+        const imageAttachment = semantic.currentObservationAttachment(sessionId);
+        return {
+          ...result,
+          ...(imageAttachment ? { imageAttachment } : {}),
+          drawingWorkflow: workflow(result.state, result.nextTools),
+        } as unknown as JsonValue;
       });
-      return withDrawingWorkflow(
-        preview,
-        'preview_ready',
-        ['drawing_evaluate_preview'],
-        'Evaluate this exact Preview before attempting to finalize it.',
-      );
     },
   });
 }
 
-function requiredString() {
-  return { type: 'string', required: true } as const;
+export function createDrawingSelectPartsTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_select_parts',
+    description: 'Name the semantic parts to edit using the observation, current canvas selection, or a semantic description. The Host resolves exact nodes and interfaces.',
+    parameters: {
+      parts: array(object({
+        partKey: string('Stable semantic name used by later goals.'), label: string(),
+        references: array(selectionReference), exclude: array(selectionExclusion, false),
+      })),
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args, exec) {
+      const input = drawingSelectPartsRequestSchema.parse(args);
+      const result = semantic.selectCurrentParts(requireSession(exec.agent?.id), input);
+      return { ...result, drawingWorkflow: workflow(result.state, result.nextTools) } as unknown as JsonValue;
+    },
+  });
 }
 
-function requiredNumber() {
-  return { type: 'number', required: true } as const;
+export function createDrawingPreviewSpatialIntentTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_preview_spatial_intent',
+    description: 'Describe the desired spatial relationship qualitatively. Do not calculate coordinates, rotations, pivots, or transforms; the deterministic Host solver does that.',
+    parameters: intentParameters,
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args, exec) {
+      const input = spatialIntentRequestSchema.parse(args);
+      const sessionId = requireSession(exec.agent?.id);
+      return recover(['drawing_observe'], () => {
+        semantic.previewCurrentIntent(sessionId, input);
+        return semantic.currentPreviewPresentation(sessionId) as unknown as JsonValue;
+      });
+    },
+  });
 }
 
-function requiredInteger() {
-  return { type: 'integer', required: true } as const;
-}
-
-function requiredArray<const T extends object>(items: T) {
-  return { type: 'array', items, required: true } as const;
-}
-
-function literalSchema<const Value extends string>(value: Value) {
-  return { type: 'string', const: value, required: true } as const;
-}
-
-function objectSchema<const Properties extends Record<string, object>>(properties: Properties) {
-  return { type: 'object', properties, additionalProperties: false } as const;
+export function createDrawingReviseSpatialIntentTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_revise_spatial_intent',
+    description: 'Replace the current candidate by revising semantic goals or preservation requirements. The Host recomputes all coordinates.',
+    parameters: {
+      goalDelta: array(spatialGoal),
+      preserveDelta: array(preservationGoal, false),
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args, exec) {
+      const input = spatialIntentRevisionSchema.parse(args);
+      const sessionId = requireSession(exec.agent?.id);
+      return recover(['drawing_observe'], () => {
+        semantic.reviseCurrentIntent(sessionId, input);
+        return semantic.currentPreviewPresentation(sessionId) as unknown as JsonValue;
+      });
+    },
+  });
 }
 
 export function createDrawingEvaluatePreviewTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_evaluate_preview',
-    description: 'Run mandatory deterministic validation and the local reviewer over the exact current Drawing Preview. Pass its opaque handle; the Host resolves and verifies the immutable candidate digest.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      previewHandle: { type: 'string', required: true },
-    },
+    description: 'Run deterministic validators and visual review on the current Host-owned Preview.',
+    parameters: {},
     output: { schema: { type: 'json' }, render: renderObservation },
-    async execute(args, exec) {
+    async execute(_args, exec) {
       const sessionId = requireSession(exec.agent?.id);
-      const current = semantic.resolveCurrentPreview(sessionId, args.previewHandle);
-      const result = await semantic.evaluatePreview(sessionId, {
-        taskId: args.taskId,
-        previewHandle: args.previewHandle,
-        candidateDigest: current.candidateDigest,
-        signal: exec.signal,
+      return recover(['drawing_observe'], async () => {
+        const { evaluation, assessment } = await semantic.evaluateCurrentPreview(sessionId, exec.signal);
+        const imageAttachment = semantic.currentObservationAttachment(sessionId);
+        const revisionRequired = evaluation.review.outcome !== 'satisfied'
+          || assessment.disposition === 'blocked';
+        const nextTools = assessment.disposition === 'blocked'
+          ? ['drawing_revise_spatial_intent', 'drawing_discard_preview']
+          : revisionRequired
+            ? ['drawing_revise_spatial_intent', 'drawing_finalize_preview', 'drawing_discard_preview']
+            : ['drawing_finalize_preview'];
+        return {
+          review: {
+            outcome: evaluation.review.outcome,
+            defects: evaluation.review.defects.map(({ code, reason }) => ({ code, reason })),
+          },
+          diagnostics: evaluation.diagnostics.map(({ code, severity, message, hard }) => ({
+            code, severity, message, ...(hard === undefined ? {} : { hard }),
+          })),
+          assessment: { disposition: assessment.disposition, reasons: assessment.reasons },
+          ...(imageAttachment ? { imageAttachment } : {}),
+          drawingWorkflow: workflow(revisionRequired ? 'needs_revision' : 'evaluated', nextTools),
+        } as unknown as JsonValue;
       });
-      const revisionRequired = result.evaluation.review.outcome === 'needs_revision'
-        || result.assessment.disposition === 'blocked';
-      return withDrawingWorkflow(
-        result,
-        revisionRequired ? 'revision_required' : 'evaluated',
-        revisionRequired
-          ? [
-              'drawing_revise_grounded_transform',
-              'drawing_revise_multi_part_transform',
-              'drawing_revise_preview',
-              'drawing_discard_preview',
-            ]
-          : ['drawing_finalize_preview'],
-        revisionRequired
-          ? 'Do not finalize this candidate. Revise it from the reported evidence or discard it.'
-          : 'Finalize this exact evaluated Preview; the Host will apply auto-safe or request the required user decision.',
-      );
-    },
-  });
-}
-
-export function createDrawingRevisePreviewTool(semantic: SemanticEditService) {
-  return defineTool({
-    name: 'drawing_revise_preview',
-    description: 'Replace the exact current Preview with another candidate in the same task. The former Preview remains current if compilation fails; a task allows at most three candidates.',
-    parameters: {
-      taskId: { type: 'string', required: true },
-      currentPreviewHandle: { type: 'string', required: true },
-      groundingId: { type: 'string', required: true },
-      program: { ...spatialEditProgramToolSchema, required: true },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      const program = spatialEditProgramSchema.parse(args.program);
-      const sessionId = requireSession(exec.agent?.id);
-      const current = semantic.resolveCurrentPreview(sessionId, args.currentPreviewHandle);
-      const preview = semantic.revisePreview(sessionId, {
-        taskId: args.taskId,
-        currentPreviewHandle: args.currentPreviewHandle,
-        currentCandidateDigest: current.candidateDigest,
-        groundingId: args.groundingId,
-        program: program as never,
-      });
-      return withDrawingWorkflow(
-        preview,
-        'preview_ready',
-        ['drawing_evaluate_preview'],
-        'Evaluate the replacement Preview; the previous Preview handle is no longer current.',
-      );
     },
   });
 }
@@ -548,66 +243,53 @@ export function createDrawingFinalizeSemanticTool(
   semantic: SemanticEditService,
   questions?: Questions,
 ) {
-  const pendingDecisions = new Map<string, Promise<JsonValue>>();
+  const pending = new Map<string, Promise<JsonValue>>();
   return defineTool({
     name: 'drawing_finalize_preview',
-    description: 'Finalize an evaluated semantic Preview. Exact auto-safe candidates commit locally; risk-qualified candidates ask the runtime-root user; blocked candidates never commit.',
-    parameters: {
-      previewHandle: { type: 'string', required: true },
-      evaluationId: { type: 'string', required: true },
-    },
+    description: 'Finalize the current evaluated Preview. The Host resolves all hidden lineage, commits auto-safe edits, and asks for exact human confirmation when required.',
+    parameters: {},
     output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
+    async execute(_args, exec) {
       const sessionId = requireSession(exec.agent?.id);
-      const current = semantic.resolveCurrentPreview(sessionId, args.previewHandle);
-      const request = finalizePreviewRequestSchema.parse({
-        previewHandle: current.previewHandle,
-        previewDigest: current.candidateDigest,
-        finalizeOperationId: current.finalizeOperationId,
-        finalizeOperationBindingDigest: current.finalizeOperationBindingDigest,
-        evaluationId: args.evaluationId,
-      });
-      const result = semantic.finalizePreview(sessionId, request);
-      if (result.status !== 'rejected' || result.disposition !== 'confirmation_required') {
-        return result as unknown as JsonValue;
-      }
-      if (!questions || !exec.agent) return {
-        status: 'root-required',
-        message: 'This candidate requires a direct runtime-root user decision.',
-      } as JsonValue;
-      const decisionKey = `${sessionId}\0${request.finalizeOperationId}\0${request.finalizeOperationBindingDigest}`;
-      const existing = pendingDecisions.get(decisionKey);
-      if (existing) return await existing;
-      const decision = (async (): Promise<JsonValue> => {
+      const inFlight = pending.get(sessionId);
+      if (inFlight) return await inFlight;
+      const decision = (async (): Promise<JsonValue> => recover(['drawing_observe'], async () => {
+        const initial = semantic.finalizeCurrentPreview(sessionId);
+        if (initial.status !== 'rejected' || initial.disposition !== 'confirmation_required') {
+          return presentFinalize(initial);
+        }
+        if (!questions || !exec.agent) return {
+          status: 'rejected', code: 'FINALIZE_HUMAN_AUTHORITY_REQUIRED',
+          message: 'This Preview requires a direct user decision.',
+          drawingWorkflow: workflow('confirmation_required', ['drawing_finalize_preview', 'drawing_discard_preview']),
+        } as JsonValue;
+        const questionId = 'drawing-confirm-current';
         const answer = await questions.ask({
-          agent: exec.agent!,
-          signal: exec.signal,
+          agent: exec.agent, signal: exec.signal,
           questions: [{
-            id: `drawing-confirm-${request.finalizeOperationId}`,
-            header: '图纸修改确认',
-            question: '这个候选修改包含需要你确认的风险，是否应用？',
+            id: questionId, header: '图纸修改确认', question: '是否应用当前预览中的图纸修改？',
             options: [
-              { label: '应用修改', description: '按当前预览提交一个可撤销的新版本。' },
-              { label: '继续修改', description: '保留正式图纸不变并让 AI 重新生成候选。' },
-              { label: '取消', description: '丢弃当前候选，不修改图纸。' },
+              { label: '应用修改', description: '提交一个可撤销的新版本。' },
+              { label: '继续修改', description: '保留预览并继续调整。' },
+              { label: '取消', description: '丢弃预览，不修改图纸。' },
             ],
           }],
         });
-        const selected = answer.answers.find(({ id }) => id === `drawing-confirm-${request.finalizeOperationId}`);
+        const selected = answer.answers.find(({ id }) => id === questionId);
         if (selected?.selected.length === 1 && selected.selected[0] === '应用修改' && !selected.custom) {
-          return semantic.confirmFinalize(sessionId, request) as unknown as JsonValue;
+          return presentFinalize(semantic.finalizeCurrentPreview(sessionId, true));
         }
         if (selected?.selected.length === 1 && selected.selected[0] === '取消' && !selected.custom) {
-          return semantic.discardPreview(sessionId, request.previewHandle) as unknown as JsonValue;
+          return presentDiscard(semantic.discardCurrentPreview(sessionId));
         }
         return {
-          status: 'needs-revision', evaluationId: request.evaluationId,
-          reasons: [selected?.custom?.trim() || 'The user requested another candidate.'],
+          status: 'needs-revision', reason: selected?.custom?.trim() || 'User requested another candidate.',
+          drawingWorkflow: workflow('needs_revision', ['drawing_revise_spatial_intent', 'drawing_discard_preview']),
         } as JsonValue;
-      })();
-      pendingDecisions.set(decisionKey, decision);
+      }))();
+      pending.set(sessionId, decision);
       try { return await decision; } finally {
-        if (pendingDecisions.get(decisionKey) === decision) pendingDecisions.delete(decisionKey);
+        if (pending.get(sessionId) === decision) pending.delete(sessionId);
       }
     },
   });
@@ -616,11 +298,12 @@ export function createDrawingFinalizeSemanticTool(
 export function createDrawingDiscardSemanticTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_discard_preview',
-    description: 'Discard the current semantic Preview without changing the formal Drawing.',
-    parameters: { previewHandle: { type: 'string', required: true } },
+    description: 'Discard the current Host-owned Preview without changing the formal Drawing.',
+    parameters: {},
     output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      return semantic.discardPreview(requireSession(exec.agent?.id), args.previewHandle) as unknown as JsonValue;
+    async execute(_args, exec) {
+      const sessionId = requireSession(exec.agent?.id);
+      return recover(['drawing_observe'], () => presentDiscard(semantic.discardCurrentPreview(sessionId)));
     },
   });
 }
@@ -628,62 +311,68 @@ export function createDrawingDiscardSemanticTool(semantic: SemanticEditService) 
 export function createDrawingGetOperationTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_get_operation',
-    description: 'Resolve the durable outcome of a local Drawing write after a response, transport, cancellation, or fsync outcome was uncertain.',
-    parameters: {
-      operationId: { type: 'string', required: true },
-      operationBindingDigest: { type: 'string', required: true },
-    },
+    description: 'Resolve the current Drawing write outcome after a transport, cancellation, or persistence result was uncertain.',
+    parameters: {},
     output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args, exec) {
-      return semantic.getOperation(
-        requireSession(exec.agent?.id), args.operationId, args.operationBindingDigest,
-      ) as unknown as JsonValue;
+    async execute(_args, exec) {
+      const result = semantic.getCurrentOperation(requireSession(exec.agent?.id));
+      if (result.status === 'committed' || result.status === 'no-effect') {
+        const receipt = result.receipt;
+        const ref = receipt.status === 'no-effect' ? receipt.ref : receipt.resultingRef;
+        return { status: result.status, revision: ref.revision } as JsonValue;
+      }
+      return { status: result.status } as JsonValue;
     },
   });
 }
 
 export function createDrawingUndoTool(semantic: SemanticEditService, questions?: Questions) {
-  const pendingDecisions = new Map<string, Promise<JsonValue>>();
+  const pending = new Map<string, Promise<JsonValue>>();
   return defineTool({
     name: 'drawing_undo_commit',
-    description: 'Request an explicit user-authorized Undo of the exact current Drawing commit. Undo creates a new compensating revision and never rewrites history.',
+    description: 'Request an explicit user-authorized Undo of the exact current Drawing commit.',
     parameters: {
-      targetCommitId: { type: 'string', required: true },
+      targetCommitId: string(),
       expectedCurrentRef: {
-        type: 'object',
-        properties: {
-          drawingId: { type: 'string', required: true },
-          revision: { type: 'integer', required: true },
-        },
-        additionalProperties: false,
-        required: true,
+        ...object({ drawingId: string(), revision: { type: 'integer', required: true } }), required: true,
       },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
       const sessionId = requireSession(exec.agent?.id);
-      if (!questions || !exec.agent) return { status: 'root-required', message: 'Undo requires a direct runtime-root user decision.' } as JsonValue;
-      const decisionKey = `${sessionId}\0${args.targetCommitId}\0${JSON.stringify(args.expectedCurrentRef)}`;
-      const existing = pendingDecisions.get(decisionKey);
-      if (existing) return await existing;
+      const input = args as unknown as {
+        targetCommitId: string;
+        expectedCurrentRef: { drawingId: string; revision: number };
+      };
+      if (!questions || !exec.agent) return {
+        status: 'rejected', code: 'UNDO_HUMAN_AUTHORITY_REQUIRED',
+        message: 'Undo requires a direct user decision.',
+      } as JsonValue;
+      const key = `${sessionId}\0${input.targetCommitId}\0${JSON.stringify(input.expectedCurrentRef)}`;
+      const inFlight = pending.get(key);
+      if (inFlight) return await inFlight;
       const decision = (async (): Promise<JsonValue> => {
+        const questionId = `drawing-undo-${input.targetCommitId}`;
         const answer = await questions.ask({
           agent: exec.agent!, signal: exec.signal,
           questions: [{
-            id: `drawing-undo-${args.targetCommitId}`,
-            header: '撤销图纸修改', question: '撤销这个图纸版本并创建一个恢复版本？',
+            id: questionId, header: '撤销图纸修改', question: '撤销这个图纸版本并创建恢复版本？',
             options: [{ label: '撤销此提交' }, { label: '取消' }],
           }],
         });
-        const selected = answer.answers.find(({ id }) => id === `drawing-undo-${args.targetCommitId}`);
+        const selected = answer.answers.find(({ id }) => id === questionId);
         if (selected?.selected.length !== 1 || selected.selected[0] !== '撤销此提交' || selected.custom) {
-          return { status: 'discarded', ref: args.expectedCurrentRef } as JsonValue;
+          return { status: 'discarded', revision: input.expectedCurrentRef.revision } as JsonValue;
         }
-        return semantic.undoAuthorized(sessionId, args) as unknown as JsonValue;
+        const result = semantic.undoAuthorized(sessionId, input);
+        return {
+          status: result.status,
+          ...('resultingRef' in result ? { revision: result.resultingRef.revision } : {}),
+        } as JsonValue;
       })();
-      pendingDecisions.set(decisionKey, decision);
+      pending.set(key, decision);
       try { return await decision; } finally {
-        if (pendingDecisions.get(decisionKey) === decision) pendingDecisions.delete(decisionKey);
+        if (pending.get(key) === decision) pending.delete(key);
       }
     },
   });
@@ -694,22 +383,60 @@ function requireSession(id: unknown): string {
   return String(id);
 }
 
+function workflow(state: string, nextTools: string[]) {
+  return { state, nextTools };
+}
+
+async function recover(nextTools: string[], operation: () => JsonValue | Promise<JsonValue>): Promise<JsonValue> {
+  try { return await operation(); } catch (error) {
+    const code = error instanceof Error ? error.message : 'EDIT_INVALID_STATE';
+    return { drawingWorkflow: { state: 'invalid_state', code, nextTools } } as JsonValue;
+  }
+}
+
+function presentFinalize(result: ReturnType<SemanticEditService['finalizeCurrentPreview']>): JsonValue {
+  if (result.status === 'committed') return {
+    status: 'committed', mode: result.mode, revision: result.ref.revision,
+    drawingWorkflow: workflow('committed', []),
+  } as JsonValue;
+  if (result.status === 'already-satisfied') return {
+    status: 'already-satisfied', revision: result.ref.revision,
+    drawingWorkflow: workflow('committed', []),
+  } as JsonValue;
+  if (result.status === 'rejected' && 'disposition' in result) return {
+    status: 'rejected', disposition: result.disposition, code: result.code, message: result.message,
+    drawingWorkflow: workflow(result.disposition === 'blocked' ? 'blocked' : 'confirmation_required',
+      result.disposition === 'blocked'
+        ? ['drawing_revise_spatial_intent', 'drawing_discard_preview']
+        : ['drawing_finalize_preview', 'drawing_discard_preview']),
+  } as JsonValue;
+  return {
+    status: result.status,
+    ...('message' in result ? { message: result.message } : {}),
+    drawingWorkflow: workflow('invalid_state', ['drawing_get_operation', 'drawing_observe']),
+  } as JsonValue;
+}
+
+function presentDiscard(result: ReturnType<SemanticEditService['discardCurrentPreview']>): JsonValue {
+  return {
+    status: result.status,
+    ...('ref' in result ? { revision: result.ref.revision } : {}),
+    drawingWorkflow: workflow('discarded', ['drawing_observe']),
+  } as JsonValue;
+}
+
 function renderJson(_args: unknown, value: unknown) {
   return [{ type: 'text' as const, text: JSON.stringify(value) }];
 }
 
 function renderObservation(_args: unknown, value: unknown) {
-  const content: Array<
-    | { type: 'text'; text: string }
-    | { type: 'image'; attachment: NonNullable<ReturnType<SemanticEditService['observationAttachment']>> }
-  > = [{ type: 'text', text: JSON.stringify(value) }];
+  const content: Array<{ type: 'text'; text: string } | { type: 'image'; attachment: ImageAttachmentRef }> = [
+    { type: 'text', text: JSON.stringify(value) },
+  ];
   if (value && typeof value === 'object' && 'imageAttachment' in value) {
     const attachment = (value as { imageAttachment?: unknown }).imageAttachment;
     if (attachment && typeof attachment === 'object' && 'attachmentId' in attachment) {
-      content.push({
-        type: 'image',
-        attachment: attachment as NonNullable<ReturnType<SemanticEditService['observationAttachment']>>,
-      });
+      content.push({ type: 'image', attachment: attachment as ImageAttachmentRef });
     }
   }
   return content;
