@@ -11,17 +11,11 @@ const INSTRUCTION = [
   'Call drawing_import before describing, inspecting, or modifying the drawing.',
   'Do not claim that the drawing was inspected until drawing_import succeeds.',
 ].join(' ');
-const SEMANTIC_WORKFLOW_INSTRUCTION = [
-  'For every direct Drawing edit turn, always start with drawing_observe, then drawing_build_context and drawing_ground.',
-  'For articulated motion, ground the semantic carrier being transformed and leave its connector geometry out; the Host derives and preserves true contacted endpoint slots.',
-  'For ordinary moving, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform and let the Host derive orientation; use drawing_preview_program for rotation only when the user explicitly provides an exact angle.',
-  'If visual evaluation returns needs_revision or defects, do not finalize that candidate: keep the same task and use drawing_revise_grounded_transform from the reported evidence, then evaluate again.',
-  'Task, observation, context, grounding, Preview, and selection handles are ephemeral; never reuse handles from an earlier turn or from before a plugin restart.',
-  'Then call drawing_evaluate_preview and drawing_finalize_preview.',
-].join(' ');
-
 interface PendingSourceWriter {
   bindPending(sessionId: string, attachment: ImageAttachmentRef): void;
+  getSnapshot?(sessionId: string): {
+    ref: { drawingId: string; revision: number };
+  } | null;
 }
 
 interface UserInstructionWriter {
@@ -46,6 +40,10 @@ interface PreStepPayload {
   signal: AbortSignal;
 }
 
+interface IntakeScope {
+  isRuntimeRoot(agent: Agent): boolean;
+}
+
 export function findLatestImage(messages: readonly UserMessage[]): ImageAttachmentRef | null {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex];
@@ -62,6 +60,7 @@ export function findLatestImage(messages: readonly UserMessage[]): ImageAttachme
 export function createPreStepIntake(
   repository: PendingSourceWriter,
   semantic?: UserInstructionWriter,
+  scope: IntakeScope = { isRuntimeRoot: () => true },
 ) {
   return async (
     payload: PreStepPayload,
@@ -69,6 +68,7 @@ export function createPreStepIntake(
   ): Promise<PreStepDecision> => {
     const decision = await next();
     if (decision.kind === 'reject' || payload.signal.aborted) return decision;
+    if (!scope.isRuntimeRoot(payload.agent)) return decision;
     const directUser = [...decision.messages].reverse().find((message) => message.source.kind === 'user');
     if (directUser && semantic) {
       const objective = directUser.content
@@ -89,33 +89,29 @@ export function createPreStepIntake(
       });
     }
     let messages = [...decision.messages];
-    if (directUser && semantic) {
-      messages.push(createUserMessage({
-        content: [{ type: 'text', text: SEMANTIC_WORKFLOW_INSTRUCTION }],
-        source: {
-          kind: 'plugin', plugin: PLUGIN_NAME, form: 'snapshot',
-          sections: [{ name: 'vectorai:semantic-workflow', text: SEMANTIC_WORKFLOW_INSTRUCTION }],
-        },
-      }));
-    }
+    const attachment = directUser ? findLatestImage([directUser]) : null;
+    const snapshot = repository.getSnapshot?.(String(payload.agent.id)) ?? null;
     const selection = semantic?.currentSelectionProjection?.(String(payload.agent.id)) ?? null;
-    if (selection !== null) {
-      const instruction = [
-        `Host-verified canvas selection ${selection.selectionProjectionId} is bound to ${selection.drawingRef.drawingId}@${selection.drawingRef.revision}.`,
-        `Exact selected Drawing node ids: ${selection.nodeIds.join(', ')}.`,
-        'When the user refers to the selected object, call drawing_observe, drawing_build_context, then drawing_ground with this selectionProjectionId, empty targetNodeIds, and empty interfaces so the Host resolves the exact target and contacted connectors.',
-        'The selection is grounding evidence only and does not grant write authority.',
+    const drawingRef = selection?.drawingRef ?? snapshot?.ref;
+    if (directUser && drawingRef && attachment === null) {
+      const capability = [
+        `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
+        'To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.',
+        ...(selection ? [
+          `Host-verified canvas selection ${selection.selectionProjectionId} contains exact Drawing node ids: ${selection.nodeIds.join(', ')}.`,
+          'Use the selection only if drawing_observe starts a drawing task; then pass its selectionProjectionId to drawing_ground with empty targetNodeIds and interfaces so the Host derives the exact target and contacted connectors.',
+          'The selection is grounding evidence only and does not grant write authority.',
+        ] : []),
       ].join(' ');
       messages.push(createUserMessage({
-        content: [{ type: 'text', text: instruction }],
+        content: [{ type: 'text', text: capability }],
         source: {
           kind: 'plugin', plugin: PLUGIN_NAME, form: 'snapshot',
-          sections: [{ name: 'vectorai:verified-selection', text: instruction }],
+          sections: [{ name: 'vectorai:drawing-capability', text: capability }],
         },
       }));
     }
 
-    const attachment = findLatestImage(decision.messages);
     if (attachment === null) return { kind: 'enter', messages };
 
     repository.bindPending(String(payload.agent.id), attachment);

@@ -66,14 +66,6 @@ const INSTRUCTION = [
   "Call drawing_import before describing, inspecting, or modifying the drawing.",
   "Do not claim that the drawing was inspected until drawing_import succeeds."
 ].join(" ");
-const SEMANTIC_WORKFLOW_INSTRUCTION = [
-  "For every direct Drawing edit turn, always start with drawing_observe, then drawing_build_context and drawing_ground.",
-  "For articulated motion, ground the semantic carrier being transformed and leave its connector geometry out; the Host derives and preserves true contacted endpoint slots.",
-  "For ordinary moving, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform and let the Host derive orientation; use drawing_preview_program for rotation only when the user explicitly provides an exact angle.",
-  "If visual evaluation returns needs_revision or defects, do not finalize that candidate: keep the same task and use drawing_revise_grounded_transform from the reported evidence, then evaluate again.",
-  "Task, observation, context, grounding, Preview, and selection handles are ephemeral; never reuse handles from an earlier turn or from before a plugin restart.",
-  "Then call drawing_evaluate_preview and drawing_finalize_preview."
-].join(" ");
 function findLatestImage(messages) {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex];
@@ -86,11 +78,12 @@ function findLatestImage(messages) {
   }
   return null;
 }
-function createPreStepIntake(repository, semantic) {
+function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () => true }) {
   return async (payload, next) => {
-    var _a3;
+    var _a3, _b;
     const decision = await next();
     if (decision.kind === "reject" || payload.signal.aborted) return decision;
+    if (!scope.isRuntimeRoot(payload.agent)) return decision;
     const directUser = [...decision.messages].reverse().find((message) => message.source.kind === "user");
     if (directUser && semantic) {
       const objective = directUser.content.filter((block) => block.type === "text").map(({ text }) => text).join("\n").trim();
@@ -108,36 +101,30 @@ function createPreStepIntake(repository, semantic) {
       });
     }
     let messages = [...decision.messages];
-    if (directUser && semantic) {
-      messages.push(createUserMessage({
-        content: [{ type: "text", text: SEMANTIC_WORKFLOW_INSTRUCTION }],
-        source: {
-          kind: "plugin",
-          plugin: PLUGIN_NAME,
-          form: "snapshot",
-          sections: [{ name: "vectorai:semantic-workflow", text: SEMANTIC_WORKFLOW_INSTRUCTION }]
-        }
-      }));
-    }
-    const selection = ((_a3 = semantic == null ? void 0 : semantic.currentSelectionProjection) == null ? void 0 : _a3.call(semantic, String(payload.agent.id))) ?? null;
-    if (selection !== null) {
-      const instruction = [
-        `Host-verified canvas selection ${selection.selectionProjectionId} is bound to ${selection.drawingRef.drawingId}@${selection.drawingRef.revision}.`,
-        `Exact selected Drawing node ids: ${selection.nodeIds.join(", ")}.`,
-        "When the user refers to the selected object, call drawing_observe, drawing_build_context, then drawing_ground with this selectionProjectionId, empty targetNodeIds, and empty interfaces so the Host resolves the exact target and contacted connectors.",
-        "The selection is grounding evidence only and does not grant write authority."
+    const attachment = directUser ? findLatestImage([directUser]) : null;
+    const snapshot = ((_a3 = repository.getSnapshot) == null ? void 0 : _a3.call(repository, String(payload.agent.id))) ?? null;
+    const selection = ((_b = semantic == null ? void 0 : semantic.currentSelectionProjection) == null ? void 0 : _b.call(semantic, String(payload.agent.id))) ?? null;
+    const drawingRef = (selection == null ? void 0 : selection.drawingRef) ?? (snapshot == null ? void 0 : snapshot.ref);
+    if (directUser && drawingRef && attachment === null) {
+      const capability = [
+        `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
+        "To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.",
+        ...selection ? [
+          `Host-verified canvas selection ${selection.selectionProjectionId} contains exact Drawing node ids: ${selection.nodeIds.join(", ")}.`,
+          "Use the selection only if drawing_observe starts a drawing task; then pass its selectionProjectionId to drawing_ground with empty targetNodeIds and interfaces so the Host derives the exact target and contacted connectors.",
+          "The selection is grounding evidence only and does not grant write authority."
+        ] : []
       ].join(" ");
       messages.push(createUserMessage({
-        content: [{ type: "text", text: instruction }],
+        content: [{ type: "text", text: capability }],
         source: {
           kind: "plugin",
           plugin: PLUGIN_NAME,
           form: "snapshot",
-          sections: [{ name: "vectorai:verified-selection", text: instruction }]
+          sections: [{ name: "vectorai:drawing-capability", text: capability }]
         }
       }));
     }
-    const attachment = findLatestImage(decision.messages);
     if (attachment === null) return { kind: "enter", messages };
     repository.bindPending(String(payload.agent.id), attachment);
     const context = createUserMessage({
@@ -8266,6 +8253,12 @@ function bounds(value) {
   const candidate = value;
   return ["minX", "minY", "maxX", "maxY"].every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]));
 }
+function withDrawingWorkflow(result, state, nextTools, instruction) {
+  return {
+    ...result,
+    drawingWorkflow: { state, nextTools, instruction }
+  };
+}
 function createSemanticEditToolCatalog(semantic, questions) {
   return [
     createDrawingObserveTool(semantic),
@@ -8301,12 +8294,18 @@ function createDrawingPreviewGroundedTransformTool(semantic) {
     async execute(args, exec) {
       var _a3;
       const input = args;
-      return semantic.previewGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+      const preview = semantic.previewGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
         taskId: input.taskId,
         groundingId: input.groundingId,
         translation: input.translation,
         summary: input.summary
       });
+      return withDrawingWorkflow(
+        preview,
+        "preview_ready",
+        ["drawing_evaluate_preview"],
+        "Evaluate this exact Preview before attempting to finalize it."
+      );
     }
   });
 }
@@ -8331,7 +8330,7 @@ function createDrawingReviseGroundedTransformTool(semantic) {
     async execute(args, exec) {
       var _a3;
       const input = args;
-      return semantic.reviseGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+      const preview = semantic.reviseGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
         taskId: input.taskId,
         currentPreviewHandle: input.currentPreviewHandle,
         currentCandidateDigest: input.currentCandidateDigest,
@@ -8339,6 +8338,12 @@ function createDrawingReviseGroundedTransformTool(semantic) {
         translation: input.translation,
         summary: input.summary
       });
+      return withDrawingWorkflow(
+        preview,
+        "preview_ready",
+        ["drawing_evaluate_preview"],
+        "Evaluate the replacement Preview; the previous Preview handle is no longer current."
+      );
     }
   });
 }
@@ -8354,7 +8359,16 @@ function createDrawingObserveTool(semantic) {
       const task = semantic.startBoundTask(sessionId);
       const observation = await semantic.observe(sessionId, { taskId: task.taskId });
       const imageAttachment = semantic.observationAttachment(observation.observationId);
-      return { task, observation, ...imageAttachment ? { imageAttachment } : {} };
+      return {
+        task,
+        observation,
+        ...imageAttachment ? { imageAttachment } : {},
+        drawingWorkflow: {
+          state: "observed",
+          nextTools: ["drawing_build_context"],
+          instruction: "Build bounded context with this taskId and observationId. Follow the next drawing tool descriptions; all returned handles are task- and revision-bound."
+        }
+      };
     }
   });
 }
@@ -8369,7 +8383,13 @@ function createDrawingBuildContextTool(semantic) {
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
-      return semantic.buildContext(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      const context = semantic.buildContext(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      return withDrawingWorkflow(
+        context,
+        "context_ready",
+        ["drawing_ground"],
+        "Ground the exact semantic target against this bounded context before creating a Preview."
+      );
     }
   });
 }
@@ -8390,7 +8410,13 @@ function createDrawingGroundTool(semantic) {
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
-      return semantic.ground(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      const grounding = semantic.ground(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      return withDrawingWorkflow(
+        grounding,
+        "grounded",
+        ["drawing_preview_grounded_transform", "drawing_preview_program"],
+        "Use grounded transform for ordinary movement or posing; use the advanced program only for other explicit spatial operations."
+      );
     }
   });
 }
@@ -8407,11 +8433,17 @@ function createDrawingPreviewProgramTool(semantic) {
     async execute(args, exec) {
       var _a3;
       const program = spatialEditProgramSchema.parse(args.program);
-      return semantic.previewProgram(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+      const preview = semantic.previewProgram(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
         taskId: args.taskId,
         groundingId: args.groundingId,
         program
       });
+      return withDrawingWorkflow(
+        preview,
+        "preview_ready",
+        ["drawing_evaluate_preview"],
+        "Evaluate this exact Preview before attempting to finalize it."
+      );
     }
   });
 }
@@ -8427,7 +8459,14 @@ function createDrawingEvaluatePreviewTool(semantic) {
     output: { schema: { type: "json" }, render: renderObservation },
     async execute(args, exec) {
       var _a3;
-      return await semantic.evaluatePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      const result = await semantic.evaluatePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      const revisionRequired = result.evaluation.review.outcome === "needs_revision" || result.assessment.disposition === "blocked";
+      return withDrawingWorkflow(
+        result,
+        revisionRequired ? "revision_required" : "evaluated",
+        revisionRequired ? ["drawing_revise_grounded_transform", "drawing_revise_preview", "drawing_discard_preview"] : ["drawing_finalize_preview"],
+        revisionRequired ? "Do not finalize this candidate. Revise it from the reported evidence or discard it." : "Finalize this exact evaluated Preview; the Host will apply auto-safe or request the required user decision."
+      );
     }
   });
 }
@@ -8446,13 +8485,19 @@ function createDrawingRevisePreviewTool(semantic) {
     async execute(args, exec) {
       var _a3;
       const program = spatialEditProgramSchema.parse(args.program);
-      return semantic.revisePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+      const preview = semantic.revisePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
         taskId: args.taskId,
         currentPreviewHandle: args.currentPreviewHandle,
         currentCandidateDigest: args.currentCandidateDigest,
         groundingId: args.groundingId,
         program
       });
+      return withDrawingWorkflow(
+        preview,
+        "preview_ready",
+        ["drawing_evaluate_preview"],
+        "Evaluate the replacement Preview; the previous Preview handle is no longer current."
+      );
     }
   });
 }
@@ -10605,7 +10650,9 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
     )) {
       ctx.tools.register(tool);
     }
-    ctx.on("agent/pre-step", createPreStepIntake(this.drawings, this.semantic));
+    ctx.on("agent/pre-step", createPreStepIntake(this.drawings, this.semantic, {
+      isRuntimeRoot: (agent) => ctx.agents.roots().includes(agent)
+    }));
     ctx.on("session/disposed", (session) => {
       this.drawings.disposeSession(String(session.id));
     });

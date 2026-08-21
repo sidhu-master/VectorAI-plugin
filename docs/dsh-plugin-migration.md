@@ -291,6 +291,8 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 
 复杂内部过程通过结构化 Ref 逐步展开，不把完整 Drawing Document 塞进模型上下文。旧裸 transaction/Commit 不属于模型目录或 Typert Remote 发布面。
 
+第一层采用多插件友好的惰性激活，不在每个直接用户回合注入完整固定流水线：没有图纸、附件或 Host 验证选择时零注入；已有图纸时只声明“可用但仅在本轮意图涉及图纸时调用 `drawing_observe`”，否则明确要求忽略并继续使用其他插件。`drawing_observe` 激活 revision-bound EditTask 后，每个成功工具结果只返回当前状态允许的下一工具集合，例如 `observed → drawing_build_context`、`preview_ready → drawing_evaluate_preview`。顺序正确性仍由 Host 的 task/ref/digest 状态机强制，不能由模型或其他插件绕过。入口只对 DSH runtime root 生效，隔离 reviewer 和其他 child Agent 不接收图片导入或图纸流程注入。
+
 ## 7. 第二层插件：Engineering Annotation
 
 ### 7.1 依赖与职责

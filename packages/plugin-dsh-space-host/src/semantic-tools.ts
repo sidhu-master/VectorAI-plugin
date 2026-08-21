@@ -11,6 +11,18 @@ import type { SemanticEditService } from './semantic-edit-service';
 
 type Questions = Pick<UserQuestionService, 'ask'>;
 
+function withDrawingWorkflow(
+  result: object,
+  state: string,
+  nextTools: string[],
+  instruction: string,
+): JsonValue {
+  return {
+    ...result,
+    drawingWorkflow: { state, nextTools, instruction },
+  } as unknown as JsonValue;
+}
+
 export function createSemanticEditToolCatalog(
   semantic: SemanticEditService,
   questions?: Questions,
@@ -52,12 +64,18 @@ export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEdit
         translation: [number, number];
         summary: string;
       };
-      return semantic.previewGroundedTransform(requireSession(exec.agent?.id), {
+      const preview = semantic.previewGroundedTransform(requireSession(exec.agent?.id), {
         taskId: input.taskId,
         groundingId: input.groundingId,
         translation: input.translation,
         summary: input.summary,
-      }) as unknown as JsonValue;
+      });
+      return withDrawingWorkflow(
+        preview,
+        'preview_ready',
+        ['drawing_evaluate_preview'],
+        'Evaluate this exact Preview before attempting to finalize it.',
+      );
     },
   });
 }
@@ -87,14 +105,20 @@ export function createDrawingReviseGroundedTransformTool(semantic: SemanticEditS
         translation: [number, number];
         summary: string;
       };
-      return semantic.reviseGroundedTransform(requireSession(exec.agent?.id), {
+      const preview = semantic.reviseGroundedTransform(requireSession(exec.agent?.id), {
         taskId: input.taskId,
         currentPreviewHandle: input.currentPreviewHandle,
         currentCandidateDigest: input.currentCandidateDigest,
         groundingId: input.groundingId,
         translation: input.translation,
         summary: input.summary,
-      }) as unknown as JsonValue;
+      });
+      return withDrawingWorkflow(
+        preview,
+        'preview_ready',
+        ['drawing_evaluate_preview'],
+        'Evaluate the replacement Preview; the previous Preview handle is no longer current.',
+      );
     },
   });
 }
@@ -110,7 +134,16 @@ export function createDrawingObserveTool(semantic: SemanticEditService) {
       const task = semantic.startBoundTask(sessionId);
       const observation = await semantic.observe(sessionId, { taskId: task.taskId });
       const imageAttachment = semantic.observationAttachment(observation.observationId);
-      return { task, observation, ...(imageAttachment ? { imageAttachment } : {}) } as unknown as JsonValue;
+      return {
+        task,
+        observation,
+        ...(imageAttachment ? { imageAttachment } : {}),
+        drawingWorkflow: {
+          state: 'observed',
+          nextTools: ['drawing_build_context'],
+          instruction: 'Build bounded context with this taskId and observationId. Follow the next drawing tool descriptions; all returned handles are task- and revision-bound.',
+        },
+      } as unknown as JsonValue;
     },
   });
 }
@@ -125,7 +158,13 @@ export function createDrawingBuildContextTool(semantic: SemanticEditService) {
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
-      return semantic.buildContext(requireSession(exec.agent?.id), args) as unknown as JsonValue;
+      const context = semantic.buildContext(requireSession(exec.agent?.id), args);
+      return withDrawingWorkflow(
+        context,
+        'context_ready',
+        ['drawing_ground'],
+        'Ground the exact semantic target against this bounded context before creating a Preview.',
+      );
     },
   });
 }
@@ -146,7 +185,13 @@ export function createDrawingGroundTool(semantic: SemanticEditService) {
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
-      return semantic.ground(requireSession(exec.agent?.id), args as never) as unknown as JsonValue;
+      const grounding = semantic.ground(requireSession(exec.agent?.id), args as never);
+      return withDrawingWorkflow(
+        grounding,
+        'grounded',
+        ['drawing_preview_grounded_transform', 'drawing_preview_program'],
+        'Use grounded transform for ordinary movement or posing; use the advanced program only for other explicit spatial operations.',
+      );
     },
   });
 }
@@ -163,11 +208,17 @@ export function createDrawingPreviewProgramTool(semantic: SemanticEditService) {
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
       const program = spatialEditProgramSchema.parse(args.program);
-      return semantic.previewProgram(requireSession(exec.agent?.id), {
+      const preview = semantic.previewProgram(requireSession(exec.agent?.id), {
         taskId: args.taskId,
         groundingId: args.groundingId,
         program: program as never,
-      }) as unknown as JsonValue;
+      });
+      return withDrawingWorkflow(
+        preview,
+        'preview_ready',
+        ['drawing_evaluate_preview'],
+        'Evaluate this exact Preview before attempting to finalize it.',
+      );
     },
   });
 }
@@ -183,7 +234,19 @@ export function createDrawingEvaluatePreviewTool(semantic: SemanticEditService) 
     },
     output: { schema: { type: 'json' }, render: renderObservation },
     async execute(args, exec) {
-      return await semantic.evaluatePreview(requireSession(exec.agent?.id), args) as unknown as JsonValue;
+      const result = await semantic.evaluatePreview(requireSession(exec.agent?.id), args);
+      const revisionRequired = result.evaluation.review.outcome === 'needs_revision'
+        || result.assessment.disposition === 'blocked';
+      return withDrawingWorkflow(
+        result,
+        revisionRequired ? 'revision_required' : 'evaluated',
+        revisionRequired
+          ? ['drawing_revise_grounded_transform', 'drawing_revise_preview', 'drawing_discard_preview']
+          : ['drawing_finalize_preview'],
+        revisionRequired
+          ? 'Do not finalize this candidate. Revise it from the reported evidence or discard it.'
+          : 'Finalize this exact evaluated Preview; the Host will apply auto-safe or request the required user decision.',
+      );
     },
   });
 }
@@ -202,13 +265,19 @@ export function createDrawingRevisePreviewTool(semantic: SemanticEditService) {
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
       const program = spatialEditProgramSchema.parse(args.program);
-      return semantic.revisePreview(requireSession(exec.agent?.id), {
+      const preview = semantic.revisePreview(requireSession(exec.agent?.id), {
         taskId: args.taskId,
         currentPreviewHandle: args.currentPreviewHandle,
         currentCandidateDigest: args.currentCandidateDigest,
         groundingId: args.groundingId,
         program: program as never,
-      }) as unknown as JsonValue;
+      });
+      return withDrawingWorkflow(
+        preview,
+        'preview_ready',
+        ['drawing_evaluate_preview'],
+        'Evaluate the replacement Preview; the previous Preview handle is no longer current.',
+      );
     },
   });
 }

@@ -24,7 +24,11 @@ import {
 import type { ImageVectorizer } from './vectorizer';
 import { SemanticEditService } from './semantic-edit-service';
 import {
+  createDrawingBuildContextTool,
+  createDrawingEvaluatePreviewTool,
   createDrawingFinalizeSemanticTool,
+  createDrawingGroundTool,
+  createDrawingObserveTool,
   createDrawingPreviewGroundedTransformTool,
   createDrawingReviseGroundedTransformTool,
   createDrawingUndoTool,
@@ -94,6 +98,100 @@ function fixtureVectorizer(): ImageVectorizer {
 }
 
 describe('drawing tools', () => {
+  it('activates the drawing workflow lazily and returns only the next tool step', async () => {
+    const semantic = {
+      startBoundTask() {
+        return { taskId: 'task-1' };
+      },
+      async observe() {
+        return { observationId: 'observation-1', taskId: 'task-1' };
+      },
+      observationAttachment() {
+        return null;
+      },
+    } as unknown as SemanticEditService;
+
+    const result = await createDrawingObserveTool(semantic).execute({}, exec('session-a'));
+
+    expect(result).toMatchObject({
+      task: { taskId: 'task-1' },
+      observation: { observationId: 'observation-1' },
+      drawingWorkflow: {
+        state: 'observed',
+        nextTools: ['drawing_build_context'],
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('drawing_finalize_preview');
+  });
+
+  it('guides an activated task one Host-validated step at a time', async () => {
+    const semantic = {
+      buildContext() {
+        return { contextId: 'context-1' };
+      },
+      ground() {
+        return { groundingId: 'grounding-1' };
+      },
+      previewGroundedTransform() {
+        return { previewHandle: 'preview-1', candidateDigest: 'sha256:candidate' };
+      },
+      async evaluatePreview() {
+        return {
+          evaluation: { evaluationId: 'evaluation-1', review: { outcome: 'satisfied' } },
+          assessment: { disposition: 'auto_safe' },
+        };
+      },
+    } as unknown as SemanticEditService;
+
+    const context = await createDrawingBuildContextTool(semantic).execute({
+      taskId: 'task-1', observationId: 'observation-1',
+    }, exec('session-a'));
+    const grounding = await createDrawingGroundTool(semantic).execute({
+      taskId: 'task-1', contextId: 'context-1', targetNodeIds: ['right-hand'], interfaces: [],
+    }, exec('session-a'));
+    const preview = await createDrawingPreviewGroundedTransformTool(semantic).execute({
+      taskId: 'task-1', groundingId: 'grounding-1', translation: [0, 80], summary: 'raise hand',
+    }, exec('session-a'));
+    const evaluation = await createDrawingEvaluatePreviewTool(semantic).execute({
+      taskId: 'task-1', previewHandle: 'preview-1', candidateDigest: 'sha256:candidate',
+    }, exec('session-a'));
+
+    expect(context).toMatchObject({ drawingWorkflow: {
+      state: 'context_ready', nextTools: ['drawing_ground'],
+    } });
+    expect(grounding).toMatchObject({ drawingWorkflow: {
+      state: 'grounded',
+      nextTools: ['drawing_preview_grounded_transform', 'drawing_preview_program'],
+    } });
+    expect(preview).toMatchObject({ drawingWorkflow: {
+      state: 'preview_ready', nextTools: ['drawing_evaluate_preview'],
+    } });
+    expect(evaluation).toMatchObject({ drawingWorkflow: {
+      state: 'evaluated', nextTools: ['drawing_finalize_preview'],
+    } });
+  });
+
+  it('routes a rejected visual candidate to revision instead of finalize', async () => {
+    const semantic = {
+      async evaluatePreview() {
+        return {
+          evaluation: { evaluationId: 'evaluation-1', review: { outcome: 'needs_revision' } },
+          assessment: { disposition: 'confirmation_required' },
+        };
+      },
+    } as unknown as SemanticEditService;
+
+    const evaluation = await createDrawingEvaluatePreviewTool(semantic).execute({
+      taskId: 'task-1', previewHandle: 'preview-1', candidateDigest: 'sha256:candidate',
+    }, exec('session-a'));
+
+    expect(evaluation).toMatchObject({ drawingWorkflow: {
+      state: 'revision_required',
+      nextTools: ['drawing_revise_grounded_transform', 'drawing_revise_preview', 'drawing_discard_preview'],
+    } });
+    expect(JSON.stringify(evaluation)).not.toContain('drawing_finalize_preview');
+  });
+
   it('single-flights concurrent semantic confirmation and Undo questions', async () => {
     let askCalls = 0;
     let release!: () => void;

@@ -39,6 +39,7 @@ The patch validates known source anchors and creates a backup before changing DS
 - The same conversation page shows chat and the shared VectorAI canvas.
 - The canvas supports pan/zoom, axes/grid, click and box selection, object/property panels, source-underlay toggle, annotation display, staged property edits, and Undo.
 - A semantic transform request uses `drawing_observe`, `drawing_build_context`, `drawing_ground`, `drawing_preview_grounded_transform`, `drawing_evaluate_preview`, and `drawing_finalize_preview`. Visual revisions use `drawing_revise_grounded_transform`; the generic `drawing_preview_program` remains the advanced path for non-transform operations.
+- Drawing tools are lazily activated: unrelated turns receive no fixed workflow injection, while an active Drawing or verified selection contributes only a conditional capability hint. After `drawing_observe`, each tool result reports the next Host-valid tool choices.
 - Legacy version-1 local Drawing files are promoted in place to the durable version-2 commit/Undo envelope on their first semantic commit.
 - `/drawing-policy review` immediately makes the current task review-only. `/drawing-policy auto-safe` applies to future tasks and never upgrades an existing review task.
 - Formal Drawing state is stored under `~/.dsh/vectorai/drawings/`. Source images remain in DSH's attachment store.

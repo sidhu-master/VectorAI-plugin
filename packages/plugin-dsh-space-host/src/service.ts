@@ -85,7 +85,9 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     )) {
       ctx.tools.register(tool);
     }
-    ctx.on('agent/pre-step', createPreStepIntake(this.drawings, this.semantic));
+    ctx.on('agent/pre-step', createPreStepIntake(this.drawings, this.semantic, {
+      isRuntimeRoot: (agent) => ctx.agents.roots().includes(agent),
+    }));
     ctx.on('session/disposed', (session) => {
       this.drawings.disposeSession(String(session.id));
     });

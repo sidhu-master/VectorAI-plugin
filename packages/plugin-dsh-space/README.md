@@ -25,6 +25,12 @@ operation lookup, compensating Undo, and the second-layer
 `conversation.workspace`, beside the native chat. `drawing_query` supports
 bounded world slices, exact node lookup, and direct relation/feature neighbors.
 
+The chain is activated lazily. Ordinary DSH turns receive no mandatory drawing
+workflow prompt; when a Drawing or verified canvas selection exists, pre-step
+adds only a conditional capability hint. The model enters the plugin by calling
+`drawing_observe`, and each successful tool result exposes only the next
+Host-valid tool choices. Child agents receive no drawing intake injection.
+
 The view uses the shared VectorAI workspace: axes, adaptive grid, pan/zoom,
 click and box selection, object browser, property inspector, source underlay,
 annotation rendering, and revision-aware manual edits are available in DSH.

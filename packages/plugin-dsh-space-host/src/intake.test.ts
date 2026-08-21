@@ -91,6 +91,27 @@ describe('drawing image intake', () => {
     }]);
   });
 
+  it('prioritizes a new image import over advertising the previously active Drawing', async () => {
+    const repository = {
+      bindPending() {},
+      getSnapshot() {
+        return { ref: { drawingId: 'old-drawing', revision: 9 } };
+      },
+    };
+    const intake = createPreStepIntake(repository, { bindUserInstruction() {} });
+    const message = imageMessage('new-drawing');
+
+    const result = await intake(payload([message]), async () => ({ kind: 'enter', messages: [message] }));
+
+    expect(result.kind).toBe('enter');
+    if (result.kind !== 'enter') throw new Error('expected enter');
+    expect(result.messages).toHaveLength(2);
+    const injected = JSON.stringify(result.messages.at(-1));
+    expect(injected).toContain('drawing_import');
+    expect(injected).not.toContain('drawing_observe');
+    expect(injected).not.toContain('old-drawing');
+  });
+
   it('preserves a downstream rejection without binding the image', async () => {
     let binds = 0;
     const intake = createPreStepIntake({ bindPending: () => { binds += 1; } });
@@ -103,7 +124,7 @@ describe('drawing image intake', () => {
     expect(binds).toBe(0);
   });
 
-  it('injects the fresh-handle semantic workflow for every direct edit turn without an image', async () => {
+  it('does not inject drawing workflow instructions into an unrelated direct turn', async () => {
     let binds = 0;
     const intake = createPreStepIntake(
       { bindPending: () => { binds += 1; } },
@@ -121,12 +142,33 @@ describe('drawing image intake', () => {
 
     expect(result.kind).toBe('enter');
     if (result.kind !== 'enter') throw new Error('expected enter');
-    expect(result.messages).toHaveLength(2);
-    expect(result.messages.at(-1)?.content).toEqual([{
-      type: 'text',
-      text: expect.stringMatching(/drawing_observe[\s\S]*drawing_preview_grounded_transform[\s\S]*never reuse/i),
-    }]);
+    expect(result.messages).toEqual([message]);
     expect(binds).toBe(0);
+  });
+
+  it('advertises drawing capability conditionally without injecting a fixed workflow', async () => {
+    const message = createUserMessage({
+      content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'user' },
+    });
+    const repository = {
+      bindPending() {},
+      getSnapshot() {
+        return { ref: { drawingId: 'drawing-1', revision: 3 } };
+      },
+    };
+    const intake = createPreStepIntake(repository, { bindUserInstruction() {} });
+
+    const result = await intake(payload([message]), async () => ({ kind: 'enter', messages: [message] }));
+
+    expect(result.kind).toBe('enter');
+    if (result.kind !== 'enter') throw new Error('expected enter');
+    expect(result.messages).toHaveLength(2);
+    const text = result.messages.at(-1)?.content[0];
+    expect(text).toMatchObject({ type: 'text' });
+    if (text?.type !== 'text') throw new Error('expected text');
+    expect(text.text).toMatch(/drawing-1@3[\s\S]*drawing_observe[\s\S]*only if[\s\S]*otherwise ignore/i);
+    expect(text.text).not.toMatch(/drawing_build_context[\s\S]*drawing_ground[\s\S]*drawing_preview/i);
   });
 
   it('injects only the Host-verified canvas selection as semantic grounding context', async () => {
@@ -151,9 +193,56 @@ describe('drawing image intake', () => {
 
     expect(result.kind).toBe('enter');
     if (result.kind !== 'enter') throw new Error('expected enter');
+    expect(result.messages).toHaveLength(2);
     expect(result.messages.at(-1)?.content).toEqual([{
       type: 'text',
-      text: expect.stringMatching(/selection-1[\s\S]*right-hand[\s\S]*drawing_ground/),
+      text: expect.stringMatching(/selection-1[\s\S]*right-hand[\s\S]*only if[\s\S]*drawing_observe/i),
     }]);
+  });
+
+  it('does not reactivate an image from an earlier direct user message', async () => {
+    const bindings: ImageAttachmentRef[] = [];
+    const intake = createPreStepIntake({
+      bindPending(_sessionId, source) { bindings.push(source); },
+    });
+    const current = createUserMessage({
+      content: [{ type: 'text', text: '现在聊一下别的事情' }],
+      source: { kind: 'user' },
+    });
+
+    const result = await intake(payload([imageMessage('old-drawing'), current]), async () => ({
+      kind: 'enter',
+      messages: [imageMessage('old-drawing'), current],
+    }));
+
+    expect(bindings).toEqual([]);
+    expect(result.kind).toBe('enter');
+    if (result.kind !== 'enter') throw new Error('expected enter');
+    expect(result.messages).toHaveLength(2);
+  });
+
+  it('does not inject or bind drawing context inside a child agent run', async () => {
+    let binds = 0;
+    let instructions = 0;
+    const createScopedIntake = createPreStepIntake as unknown as (
+      repository: { bindPending(): void },
+      semantic: { bindUserInstruction(): void },
+      scope: { isRuntimeRoot(agent: Agent): boolean },
+    ) => ReturnType<typeof createPreStepIntake>;
+    const intake = createScopedIntake(
+      { bindPending: () => { binds += 1; } },
+      { bindUserInstruction: () => { instructions += 1; } },
+      { isRuntimeRoot: () => false },
+    );
+    const childPrompt = imageMessage('review-image');
+
+    const result = await intake(payload([childPrompt]), async () => ({
+      kind: 'enter',
+      messages: [childPrompt],
+    }));
+
+    expect(result).toEqual({ kind: 'enter', messages: [childPrompt] });
+    expect(binds).toBe(0);
+    expect(instructions).toBe(0);
   });
 });
