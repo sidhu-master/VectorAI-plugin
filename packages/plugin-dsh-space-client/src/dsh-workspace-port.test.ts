@@ -25,6 +25,8 @@ describe('createDshDrawingWorkspacePort', () => {
       version: 1 as const,
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
       taskId: 'task-1',
+      stateEpoch: 1,
+      disposition: 'active' as const,
       groups: [{
         groundingId: 'ground-a', partKey: 'part-a', label: 'Part A', colorIndex: 0,
         nodeIds: ['carrier-a'], interfaces: [],

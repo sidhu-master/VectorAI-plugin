@@ -97,6 +97,7 @@ export function createDrawingWorkspaceStore(input: {
   let requestController: AbortController | undefined;
   let sourceResource: DrawingSourceResource | null = null;
   let selectionSequence = 0;
+  let groundingCursor: { drawingId: string; stateEpoch: number } | null = null;
 
   const store = createStore<DrawingWorkspaceState>((set, get) => {
     const replaceSnapshot = async (
@@ -104,11 +105,45 @@ export function createDrawingWorkspaceStore(input: {
       preview: DrawingWorkspacePreview | null = null,
       groundingOverlay: DrawingGroundingOverlay | null = null,
     ): Promise<void> => {
-      const currentPreview = previewMatchesSnapshot(preview, snapshot) ? preview : null;
+      const previousOverlay = get().groundingOverlay;
+      const sameDrawing = snapshot !== null
+        && groundingCursor?.drawingId === snapshot.ref.drawingId;
+      if (!sameDrawing) groundingCursor = null;
+      const overlayIsOlder = groundingOverlay !== null
+        && groundingCursor !== null
+        && groundingOverlay.drawingRef.drawingId === groundingCursor.drawingId
+        && groundingOverlay.stateEpoch < groundingCursor.stateEpoch;
+      const terminalOverlay = groundingOverlay !== null
+        && groundingOverlay.disposition !== 'active'
+        && !overlayIsOlder
+        && snapshot !== null
+        && groundingOverlay.drawingRef.drawingId === snapshot.ref.drawingId;
+      let currentGroundingOverlay: DrawingGroundingOverlay | null;
+      if (overlayIsOlder) {
+        currentGroundingOverlay = groundingOverlayMatchesSnapshot(previousOverlay, snapshot)
+          && previousOverlay.disposition === 'active'
+          ? structuredClone(previousOverlay)
+          : null;
+      } else if (terminalOverlay) {
+        groundingCursor = {
+          drawingId: groundingOverlay.drawingRef.drawingId,
+          stateEpoch: groundingOverlay.stateEpoch,
+        };
+        currentGroundingOverlay = null;
+      } else if (
+        groundingOverlayMatchesSnapshot(groundingOverlay, snapshot)
+        && groundingOverlay.disposition === 'active'
+      ) {
+        groundingCursor = {
+          drawingId: groundingOverlay.drawingRef.drawingId,
+          stateEpoch: groundingOverlay.stateEpoch,
+        };
+        currentGroundingOverlay = structuredClone(groundingOverlay);
+      } else {
+        currentGroundingOverlay = null;
+      }
+      const currentPreview = !terminalOverlay && previewMatchesSnapshot(preview, snapshot) ? preview : null;
       const displaySnapshot = currentPreview?.candidate ?? snapshot;
-      const currentGroundingOverlay = groundingOverlayMatchesSnapshot(groundingOverlay, snapshot)
-        ? structuredClone(groundingOverlay)
-        : null;
       const nextIds = displaySnapshot === null ? new Set<string>() : drawingNodeIds(displaySnapshot);
       const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
       const previousSource = sourceResource;

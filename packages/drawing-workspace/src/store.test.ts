@@ -166,6 +166,68 @@ describe('createDrawingWorkspaceStore', () => {
     expect(store.getState().groundingOverlay).toBeNull();
   });
 
+  it('ignores an older AI-selection epoch for the same semantic task', async () => {
+    const port = new TestPort(snapshot(1, ['carrier-a', 'carrier-b']));
+    port.groundingOverlay = {
+      version: 1, drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      taskId: 'task-1', stateEpoch: 4, disposition: 'active',
+      groups: [{
+        groundingId: 'ground-new', partKey: 'part', label: 'Part', colorIndex: 0,
+        nodeIds: ['carrier-b'], interfaces: [],
+      }],
+    };
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    port.groundingOverlay = {
+      ...port.groundingOverlay,
+      stateEpoch: 3,
+      groups: [{
+        groundingId: 'ground-old', partKey: 'part', label: 'Part', colorIndex: 0,
+        nodeIds: ['carrier-a'], interfaces: [],
+      }],
+    };
+
+    await store.getState().refresh();
+
+    expect(store.getState().groundingOverlay?.stateEpoch).toBe(4);
+    expect(store.getState().groundingOverlay?.groups[0]?.nodeIds).toEqual(['carrier-b']);
+  });
+
+  it.each(['committed', 'discarded', 'failed'] as const)(
+    'clears AI selection and Preview when the episode becomes %s',
+    async (disposition) => {
+      const port = new TestPort(snapshot(1, ['line-formal']));
+      port.preview = {
+        version: 1, handle: 'preview-1', baseRef: { drawingId: 'drawing-1', revision: 1 },
+        commands: [{ type: 'node.delete', id: 'line-formal' }],
+        candidate: snapshot(1, ['line-candidate']),
+        diff: { createdNodeIds: ['line-candidate'], updatedNodeIds: [], deletedNodeIds: ['line-formal'] },
+        createdAt: 42,
+      };
+      port.groundingOverlay = {
+        version: 1, drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        taskId: 'task-1', stateEpoch: 2, disposition: 'active',
+        groups: [{
+          groundingId: 'ground-a', partKey: 'part', label: 'Part', colorIndex: 0,
+          nodeIds: ['line-candidate'], interfaces: [],
+        }],
+      };
+      const store = createDrawingWorkspaceStore({ port });
+      await store.getState().load();
+      expect(store.getState().preview).not.toBeNull();
+      expect(store.getState().groundingOverlay).not.toBeNull();
+      port.groundingOverlay = {
+        ...port.groundingOverlay, stateEpoch: 3, disposition, groups: [],
+      };
+
+      await store.getState().refresh();
+
+      expect(store.getState().groundingOverlay).toBeNull();
+      expect(store.getState().preview).toBeNull();
+      expect(store.getState().displaySnapshot?.document.geometry[0]?.id).toBe('line-formal');
+    },
+  );
+
   it('publishes a Host-verified projection whenever the canvas selection changes', async () => {
     const port = new TestPort(snapshot(1, ['right-hand']));
     const selections: string[][] = [];
