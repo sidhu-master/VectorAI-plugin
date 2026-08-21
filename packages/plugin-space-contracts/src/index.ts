@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from 'zod';
+import {
+  drawingRefSchema,
+  type DrawingRef,
+} from '@vectorai/drawing-edit-protocol';
+
+export * from '@vectorai/drawing-edit-protocol';
 
 export type {
   DrawingSourceRef,
@@ -205,11 +211,6 @@ export const drawingDocumentSchema = z.object({
   features: z.array(featureSchema),
 }).strict();
 
-export const drawingRefSchema = z.object({
-  drawingId: idSchema,
-  revision: z.number().int().nonnegative(),
-}).strict();
-
 export const bounds2DSchema = z.object({
   minX: z.number(),
   minY: z.number(),
@@ -375,11 +376,6 @@ export const drawingPreviewDiscardResultSchema = z.discriminatedUnion('status', 
   z.object({ status: z.literal('discarded'), ref: drawingRefSchema }).strict(),
   z.object({ status: z.literal('rejected'), message: z.string(), code: z.string().optional() }).strict(),
 ]);
-
-export interface DrawingRef {
-  drawingId: string;
-  revision: number;
-}
 
 export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
 export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;

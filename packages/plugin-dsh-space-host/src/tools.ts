@@ -6,12 +6,27 @@ import {
   drawingPreviewControlRequestSchema,
   drawingPreviewCreateRequestSchema,
   drawingQueryRequestSchema,
+  finalizePreviewRequestSchema,
+  finalizePreviewResultSchema,
   type DrawingWorkspacePreviewCreateRequest,
   type DrawingWorkspacePreviewCreateResult,
   type DrawingWorkspaceCommitResult,
 } from '@vectorai/plugin-space-contracts';
 
 import type { InMemoryDrawingRepository } from './repository';
+
+export function createDrawingAgentToolCatalog(
+  drawings: InMemoryDrawingRepository,
+  attachments: Pick<AttachmentStore, 'readImage'>,
+) {
+  return [
+    createDrawingImportTool(drawings, attachments),
+    createDrawingSummarizeTool(drawings),
+    createDrawingQueryTool(drawings),
+    createDrawingFinalizePreviewTool(drawings),
+    createDrawingDiscardPreviewTool(drawings),
+  ];
+}
 
 const drawingRefSchema = {
   type: 'object',
@@ -201,6 +216,35 @@ export function createDrawingCommitPreviewTool(drawings: InMemoryDrawingReposito
       if (sessionId === undefined) throw new Error('DRAWING_SESSION_REQUIRED');
       const request = drawingPreviewControlRequestSchema.parse(args);
       return commitReceipt(drawings.commitPreview(String(sessionId), request));
+    },
+  });
+}
+
+export function createDrawingFinalizePreviewTool(_drawings: InMemoryDrawingRepository) {
+  return defineTool({
+    name: 'drawing_finalize_preview',
+    description: 'Finalize an evaluated semantic Drawing Preview. This remains fail-closed until durable local history, inverse transactions, idempotency, and Undo are available.',
+    parameters: {
+      previewHandle: { type: 'string', required: true },
+      previewDigest: { type: 'string', required: true },
+      finalizeOperationId: { type: 'string', required: true },
+      finalizeOperationBindingDigest: { type: 'string', required: true },
+      evaluationId: { type: 'string', required: true },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    async execute(args, exec) {
+      const sessionId = exec.agent?.id;
+      if (sessionId === undefined) throw new Error('DRAWING_SESSION_REQUIRED');
+      finalizePreviewRequestSchema.parse(args);
+      return finalizePreviewResultSchema.parse({
+        status: 'rejected',
+        disposition: 'blocked',
+        code: 'AUTO_SAFE_UNAVAILABLE',
+        message: 'Durable history, inverse transactions, idempotency, and Undo are required before semantic finalize.',
+      }) as JsonValue;
     },
   });
 }

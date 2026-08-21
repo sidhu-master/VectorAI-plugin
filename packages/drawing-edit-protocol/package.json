@@ -1,0 +1,19 @@
+{
+  "name": "@vectorai/drawing-edit-protocol",
+  "version": "0.1.0-alpha.0",
+  "description": "Host-neutral semantic drawing edit protocol for VectorAI",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}

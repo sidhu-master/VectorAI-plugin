@@ -22,12 +22,7 @@ import { createPreStepIntake } from './intake';
 import { InMemoryDrawingRepository } from './repository';
 import { FileDrawingRepositoryStorage } from './repository-storage';
 import {
-  createDrawingImportTool,
-  createDrawingCommitPreviewTool,
-  createDrawingDiscardPreviewTool,
-  createDrawingPreviewTool,
-  createDrawingQueryTool,
-  createDrawingSummarizeTool,
+  createDrawingAgentToolCatalog,
 } from './tools';
 import { LocalCleanLineVectorizer } from './vectorizer';
 
@@ -48,12 +43,9 @@ export class DrawingSpaceHostService extends TypertRemoteService {
       vectorizer: new LocalCleanLineVectorizer(),
       storage: new FileDrawingRepositoryStorage(resolve(homedir(), '.dsh/vectorai/drawings')),
     });
-    ctx.tools.register(createDrawingImportTool(this.drawings, ctx.attachments));
-    ctx.tools.register(createDrawingSummarizeTool(this.drawings));
-    ctx.tools.register(createDrawingQueryTool(this.drawings));
-    ctx.tools.register(createDrawingPreviewTool(this.drawings));
-    ctx.tools.register(createDrawingCommitPreviewTool(this.drawings));
-    ctx.tools.register(createDrawingDiscardPreviewTool(this.drawings));
+    for (const tool of createDrawingAgentToolCatalog(this.drawings, ctx.attachments)) {
+      ctx.tools.register(tool);
+    }
     ctx.on('agent/pre-step', createPreStepIntake(this.drawings));
     ctx.on('session/disposed', (session) => {
       this.drawings.disposeSession(String(session.id));

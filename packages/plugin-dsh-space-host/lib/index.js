@@ -5157,6 +5157,87 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
+const idSchema$2 = string().trim().min(1).max(256);
+const digestSchema$1 = string().trim().min(1).max(512);
+const drawingRefSchema$1 = object({
+  drawingId: idSchema$2,
+  revision: number().int().nonnegative()
+}).strict();
+const editBasisSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("canonical"),
+    ref: drawingRefSchema$1
+  }).strict(),
+  object({
+    kind: literal("preview"),
+    baseRef: drawingRefSchema$1,
+    previewHandle: idSchema$2,
+    previewDigest: digestSchema$1
+  }).strict(),
+  object({
+    kind: literal("carried-candidate"),
+    handoffId: idSchema$2,
+    taskId: idSchema$2,
+    originTaskId: idSchema$2,
+    baseRef: drawingRefSchema$1,
+    candidateDigest: digestSchema$1
+  }).strict()
+]);
+object({
+  id: idSchema$2,
+  contentDigest: digestSchema$1,
+  mimeType: _enum(["image/png", "image/webp"]),
+  basis: editBasisSchema
+}).strict();
+const idSchema$1 = string().trim().min(1).max(256);
+const digestSchema = string().trim().min(1).max(512);
+const finalizePreviewRequestSchema = object({
+  previewHandle: idSchema$1,
+  previewDigest: digestSchema,
+  finalizeOperationId: idSchema$1,
+  finalizeOperationBindingDigest: digestSchema,
+  evaluationId: idSchema$1
+}).strict();
+const finalizePreviewResultSchema = discriminatedUnion("status", [
+  object({
+    status: literal("committed"),
+    mode: _enum(["auto-safe", "confirmed"]),
+    commitId: idSchema$1,
+    ref: drawingRefSchema$1,
+    operationId: idSchema$1,
+    operationBindingDigest: digestSchema
+  }).strict(),
+  object({
+    status: literal("already-satisfied"),
+    ref: drawingRefSchema$1,
+    operationId: idSchema$1,
+    operationBindingDigest: digestSchema
+  }).strict(),
+  object({
+    status: literal("root-required"),
+    message: string().trim().min(1).max(2e3)
+  }).strict(),
+  object({
+    status: literal("needs-revision"),
+    evaluationId: idSchema$1,
+    reasons: array(string().trim().min(1).max(1e3)).min(1).max(64)
+  }).strict(),
+  object({
+    status: literal("discarded"),
+    ref: drawingRefSchema$1
+  }).strict(),
+  object({
+    status: literal("rejected"),
+    disposition: _enum(["blocked", "confirmation_required"]),
+    code: idSchema$1,
+    message: string().trim().min(1).max(2e3)
+  }).strict(),
+  object({
+    status: literal("outcome-unknown"),
+    operationId: idSchema$1,
+    operationBindingDigest: digestSchema
+  }).strict()
+]);
 const idSchema = string().min(1);
 const vec2Schema = tuple([number(), number()]);
 const qualitySchema = object({
@@ -5340,10 +5421,6 @@ const drawingDocumentSchema = object({
   relations: array(relationSchema),
   features: array(featureSchema)
 }).strict();
-const drawingRefSchema$1 = object({
-  drawingId: idSchema,
-  revision: number().int().nonnegative()
-}).strict();
 const bounds2DSchema = object({
   minX: number(),
   minY: number(),
@@ -5458,7 +5535,7 @@ discriminatedUnion("status", [
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
-const drawingPreviewCreateRequestSchema = object({
+object({
   ref: drawingRefSchema$1,
   commands: array(workspaceCommandSchema).min(1),
   summary: string().min(1).optional()
@@ -5971,6 +6048,15 @@ function bounds(value) {
   const candidate = value;
   return ["minX", "minY", "maxX", "maxY"].every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]));
 }
+function createDrawingAgentToolCatalog(drawings, attachments) {
+  return [
+    createDrawingImportTool(drawings, attachments),
+    createDrawingSummarizeTool(drawings),
+    createDrawingQueryTool(drawings),
+    createDrawingFinalizePreviewTool(),
+    createDrawingDiscardPreviewTool(drawings)
+  ];
+}
 const drawingRefSchema = {
   type: "object",
   properties: {
@@ -6110,19 +6196,16 @@ function createDrawingQueryTool(drawings) {
     }
   });
 }
-function createDrawingPreviewTool(drawings) {
+function createDrawingFinalizePreviewTool(_drawings2) {
   return defineTool({
-    name: "drawing_preview_transaction",
-    description: "Create or replace the current local Drawing Preview from an exact formal revision. This does not modify the formal drawing until drawing_commit_preview is called.",
+    name: "drawing_finalize_preview",
+    description: "Finalize an evaluated semantic Drawing Preview. This remains fail-closed until durable local history, inverse transactions, idempotency, and Undo are available.",
     parameters: {
-      ref: {
-        type: "object",
-        properties: drawingRefSchema.properties,
-        additionalProperties: false,
-        required: true
-      },
-      commands: { type: "array", items: { type: "json" }, required: true },
-      summary: { type: "string" }
+      previewHandle: { type: "string", required: true },
+      previewDigest: { type: "string", required: true },
+      finalizeOperationId: { type: "string", required: true },
+      finalizeOperationBindingDigest: { type: "string", required: true },
+      evaluationId: { type: "string", required: true }
     },
     output: {
       schema: { type: "json" },
@@ -6132,82 +6215,15 @@ function createDrawingPreviewTool(drawings) {
       var _a3;
       const sessionId = (_a3 = exec.agent) == null ? void 0 : _a3.id;
       if (sessionId === void 0) throw new Error("DRAWING_SESSION_REQUIRED");
-      const request = drawingPreviewCreateRequestSchema.parse(args);
-      return previewReceipt(drawings.createPreview(String(sessionId), request));
+      finalizePreviewRequestSchema.parse(args);
+      return finalizePreviewResultSchema.parse({
+        status: "rejected",
+        disposition: "blocked",
+        code: "AUTO_SAFE_UNAVAILABLE",
+        message: "Durable history, inverse transactions, idempotency, and Undo are required before semantic finalize."
+      });
     }
   });
-}
-function createDrawingCommitPreviewTool(drawings) {
-  return defineTool({
-    name: "drawing_commit_preview",
-    description: "Commit the current local Drawing Preview as one new formal revision. The opaque Preview handle must still be current.",
-    parameters: { handle: { type: "string", required: true } },
-    output: {
-      schema: { type: "json" },
-      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
-    },
-    async execute(args, exec) {
-      var _a3;
-      const sessionId = (_a3 = exec.agent) == null ? void 0 : _a3.id;
-      if (sessionId === void 0) throw new Error("DRAWING_SESSION_REQUIRED");
-      const request = drawingPreviewControlRequestSchema.parse(args);
-      return commitReceipt(drawings.commitPreview(String(sessionId), request));
-    }
-  });
-}
-function previewReceipt(result) {
-  if (result.status === "previewed") {
-    const { preview } = result;
-    return {
-      status: "previewed",
-      preview: {
-        version: preview.version,
-        handle: preview.handle,
-        baseRef: {
-          drawingId: preview.baseRef.drawingId,
-          revision: preview.baseRef.revision
-        },
-        diff: {
-          createdNodeIds: [...preview.diff.createdNodeIds],
-          updatedNodeIds: [...preview.diff.updatedNodeIds],
-          deletedNodeIds: [...preview.diff.deletedNodeIds]
-        },
-        createdAt: preview.createdAt,
-        ...preview.summary === void 0 ? {} : { summary: preview.summary }
-      }
-    };
-  }
-  if (result.status === "conflict") {
-    return {
-      status: "conflict",
-      message: result.message,
-      ...result.snapshot === void 0 ? {} : { ref: {
-        drawingId: result.snapshot.ref.drawingId,
-        revision: result.snapshot.ref.revision
-      } }
-    };
-  }
-  return { status: "rejected", message: result.message, ...result.code === void 0 ? {} : { code: result.code } };
-}
-function commitReceipt(result) {
-  if (result.status === "committed") return {
-    status: "committed",
-    ref: {
-      drawingId: result.snapshot.ref.drawingId,
-      revision: result.snapshot.ref.revision
-    }
-  };
-  if (result.status === "conflict") {
-    return {
-      status: "conflict",
-      message: result.message,
-      ...result.snapshot === void 0 ? {} : { ref: {
-        drawingId: result.snapshot.ref.drawingId,
-        revision: result.snapshot.ref.revision
-      } }
-    };
-  }
-  return { status: "rejected", message: result.message, ...result.code === void 0 ? {} : { code: result.code } };
 }
 function createDrawingDiscardPreviewTool(drawings) {
   return defineTool({
@@ -6776,12 +6792,9 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
       vectorizer: new LocalCleanLineVectorizer(),
       storage: new FileDrawingRepositoryStorage(resolve(homedir(), ".dsh/vectorai/drawings"))
     });
-    ctx.tools.register(createDrawingImportTool(this.drawings, ctx.attachments));
-    ctx.tools.register(createDrawingSummarizeTool(this.drawings));
-    ctx.tools.register(createDrawingQueryTool(this.drawings));
-    ctx.tools.register(createDrawingPreviewTool(this.drawings));
-    ctx.tools.register(createDrawingCommitPreviewTool(this.drawings));
-    ctx.tools.register(createDrawingDiscardPreviewTool(this.drawings));
+    for (const tool of createDrawingAgentToolCatalog(this.drawings, ctx.attachments)) {
+      ctx.tools.register(tool);
+    }
     ctx.on("agent/pre-step", createPreStepIntake(this.drawings));
     ctx.on("session/disposed", (session) => {
       this.drawings.disposeSession(String(session.id));

@@ -4862,6 +4862,38 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
+const idSchema$1 = string().trim().min(1).max(256);
+const digestSchema = string().trim().min(1).max(512);
+const drawingRefSchema = object({
+  drawingId: idSchema$1,
+  revision: number().int().nonnegative()
+}).strict();
+const editBasisSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("canonical"),
+    ref: drawingRefSchema
+  }).strict(),
+  object({
+    kind: literal("preview"),
+    baseRef: drawingRefSchema,
+    previewHandle: idSchema$1,
+    previewDigest: digestSchema
+  }).strict(),
+  object({
+    kind: literal("carried-candidate"),
+    handoffId: idSchema$1,
+    taskId: idSchema$1,
+    originTaskId: idSchema$1,
+    baseRef: drawingRefSchema,
+    candidateDigest: digestSchema
+  }).strict()
+]);
+object({
+  id: idSchema$1,
+  contentDigest: digestSchema,
+  mimeType: _enum(["image/png", "image/webp"]),
+  basis: editBasisSchema
+}).strict();
 const idSchema = string().min(1);
 const vec2Schema = tuple([number(), number()]);
 const qualitySchema = object({
@@ -5044,10 +5076,6 @@ const drawingDocumentSchema = object({
   annotations: array(annotationSchema),
   relations: array(relationSchema),
   features: array(featureSchema)
-}).strict();
-const drawingRefSchema = object({
-  drawingId: idSchema,
-  revision: number().int().nonnegative()
 }).strict();
 const bounds2DSchema = object({
   minX: number(),

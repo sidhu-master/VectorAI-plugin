@@ -4,8 +4,10 @@ import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import {
+  drawingRefSchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
+  finalizePreviewRequestSchema,
   drawingPreviewCreateRequestSchema,
   drawingPreviewSchema,
   drawingWorkspaceCommitRequestSchema,
@@ -32,6 +34,21 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('re-exports strict provider-neutral semantic edit contracts', () => {
+    const ref = { drawingId: 'drawing-1', revision: 3 };
+    const request = {
+      previewHandle: 'preview-1',
+      previewDigest: 'sha256:candidate',
+      finalizeOperationId: 'operation-1',
+      finalizeOperationBindingDigest: 'sha256:binding',
+      evaluationId: 'evaluation-1',
+    };
+
+    expect(drawingRefSchema.parse(ref)).toEqual(ref);
+    expect(finalizePreviewRequestSchema.parse(request)).toEqual(request);
+    expect(() => finalizePreviewRequestSchema.parse({ ...request, approved: true })).toThrow();
+  });
+
   it('accepts a complete Drawing snapshot without embedding raster bytes', () => {
     const parsed = drawingWorkspaceSnapshotSchema.parse(snapshot());
 

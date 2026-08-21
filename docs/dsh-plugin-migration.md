@@ -1,6 +1,6 @@
 # VectorAI → DeepSeek Harness 插件迁移方案
 
-> 状态：第一层图片导入、空间查询、Preview/Commit/Discard 与共享画布已实现；DXF/PDF、Undo/Redo、导出和第二层工程标注待后续切片
+> 状态：第一层图片导入、空间查询、内部 Preview/Commit/Discard 与共享画布已实现；语义编辑 Phase 0 协议迁移已启动，模型裸 Commit 已关闭，durable Finalize/Undo 待后续切片
 >
 > 日期：2026-08-20
 >
@@ -84,8 +84,10 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 - DSH Host 使用按 Agent/session 隔离的完整快照和 expected-revision 原子提交；Client 通过 durable attachment ref 加载原图，不传输 base64 快照。
 - DSH Client 已从独立 `conversation.view` 标签迁移到会话级 `conversation.workspace`：左侧保留 DSH 会话栏，中间显示共享画布，右侧保留 DSH 原生聊天，桌面端分隔宽度可调，窄窗口自动上下排列。
 - 新增宿主无关的 `@vectorai/drawing-spatial`，第一层已公开 revision-bound `world-slice`、node 和 neighbors 查询。
+- 新增 Host-neutral `@vectorai/drawing-edit-protocol`，首批冻结 revision-bound Ref、Observation artifact、`SpatialEditProgram` 与 authority-free Finalize strict codec；`@vectorai/plugin-space-contracts` 作为第一层公共入口重导出该协议。
 - 第一层已实现 Host 权威的会话态 Preview：`node.create/update/delete` 等命令先进入候选，画布显示 created/updated/deleted diff，Commit 才原子增加一个正式 revision，Discard 不修改正式图纸。
-- `drawing_query`、`drawing_preview_transaction`、`drawing_commit_preview`、`drawing_discard_preview` 与 Typert Remote 使用同一套 strict codec；第二层可以只依赖公开 contracts 创建标注和关系。
+- 旧 `drawing_preview_transaction` / `drawing_commit_preview` 工厂与 Typert Remote 暂时作为内部兼容能力保留，但已从默认模型工具目录移除；模型当前只能读图、调用 fail-closed `drawing_finalize_preview` 和丢弃候选。
+- durable history、inverse transaction、idempotency 与 Undo 完成前，`drawing_finalize_preview` 固定返回 blocked `AUTO_SAFE_UNAVAILABLE`，不会修改正式 Drawing；人工确认也不能越过该门禁。
 - DSH 第一层插件不启动 VectorAI Express 或云端服务；网站旧 Agent/Express 仍作为迁移兼容 Adapter 保留。
 - 第二层 Engineering Annotation 保持独立插件边界，下一切片实现本地识别、测量、布局和自动标注工具。
 
@@ -235,7 +237,7 @@ export interface DrawingRenderService {
 DSH Host 插件是 Cordis 组合中的进程级能力，负责：
 
 - 注册 `ctx.vectorDrawing` 一类的二维服务。
-- 注册模型可调用工具，例如 `drawing_open`、`drawing_query`、`drawing_preview_transaction`、`drawing_commit_preview`。
+- 注册模型可调用的高阶工具；语义迁移完成前默认目录只开放导入、查询、fail-closed Finalize 与候选丢弃，不开放裸 transaction/Commit。
 - 通过 DSH Remote API 向浏览器 Client 暴露只需要的查询、渲染和交互操作。
 - 复用 DSH 的 workspace、权限、Jobs、附件和生命周期。
 - 在插件 dispose 时终止自己创建的 Worker、释放 WASM/GPU 资源和刷写本地事务。
@@ -266,11 +268,11 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 | `drawing_summarize` | 只读 | 返回单位、bounds、plane/type 计数与 revision |
 | `drawing_query` | 只读 | 执行 bounds、node、topology、path 等有界查询 |
 | `drawing_observe` | 只读 | 创建绑定 revision/viewport 的观察结果 |
-| `drawing_preview_transaction` | 候选写 | 生成可视 Preview，不改正式状态 |
-| `drawing_commit_preview` | 正式写 | 校验 revision 后原子提交 |
+| `drawing_preview_program` | 候选写 | 编译高阶语义程序并生成可视 Preview，不改正式状态；后续切片实现 |
+| `drawing_finalize_preview` | 受控正式写 | 当前 fail closed；durable history/Undo 完成后按 auto-safe 策略提交 |
 | `drawing_discard_preview` | 候选写 | 丢弃 Preview |
 
-复杂内部过程通过一个工具的结构化结果逐步展开，不把完整 Drawing Document 塞进模型上下文。
+复杂内部过程通过一个工具的结构化结果逐步展开，不把完整 Drawing Document 塞进模型上下文。旧 `drawing_preview_transaction` / `drawing_commit_preview` 只保留为迁移期内部兼容能力，不属于默认模型目录。
 
 ## 7. 第二层插件：Engineering Annotation
 
@@ -291,7 +293,7 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 4. 生成标注布局候选，避免遮挡、越界和重复覆盖。
 5. 通过第一层创建 Preview。
 6. 运行覆盖率、几何和视觉诊断。
-7. 由 DSH Agent 决定修改、请求用户确认或 Commit。
+7. 由 DSH Agent 决定修改、请求用户确认或请求第一层 Finalize。
 
 ### 7.2 标注流水线
 
@@ -320,7 +322,7 @@ Drawing revision
 | `engineering_preview_annotations` | 调用第一层生成标注 Preview |
 | `engineering_validate_annotations` | 返回覆盖率、碰撞、越界、重复与缺失诊断 |
 
-`engineering_preview_annotations` 返回第一层定义的 `PreviewHandle`，提交仍走 `drawing_commit_preview`，从而保证唯一写入口。
+`engineering_preview_annotations` 返回第一层定义的 `PreviewRef`；第二层只能请求第一层 root Agent 执行 `drawing_finalize_preview`，不能获得裸 Commit 或自行铸造提交权限。
 
 ## 8. DSH 与 VectorAI 的职责边界
 

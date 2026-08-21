@@ -11,6 +11,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@vectorai/drawing-core": "workspace:*",
+    "@vectorai/drawing-edit-protocol": "workspace:*",
     "@vectorai/drawing-workspace": "workspace:*",
     "zod": "4.4.3"
   },

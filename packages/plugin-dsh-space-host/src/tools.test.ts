@@ -12,6 +12,8 @@ import { describe, expect, it } from 'vitest';
 
 import { InMemoryDrawingRepository } from './repository';
 import {
+  createDrawingAgentToolCatalog,
+  createDrawingFinalizePreviewTool,
   createDrawingImportTool,
   createDrawingCommitPreviewTool,
   createDrawingDiscardPreviewTool,
@@ -85,6 +87,95 @@ function fixtureVectorizer(): ImageVectorizer {
 }
 
 describe('drawing tools', () => {
+  it('exposes only the fail-closed semantic edit surface to the model', () => {
+    const tools = createDrawingAgentToolCatalog(repository(), {
+      async readImage(): Promise<StoredImageAttachment> {
+        throw new Error('must not read');
+      },
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'drawing_import',
+      'drawing_summarize',
+      'drawing_query',
+      'drawing_finalize_preview',
+      'drawing_discard_preview',
+    ]);
+  });
+
+  it('blocks semantic finalize without mutating the formal Drawing or current Preview', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment());
+    await createDrawingImportTool(drawings, {
+      async readImage(ref) {
+        return { ref, data: new Uint8Array([1]) };
+      },
+    }).execute({}, exec('session-a'));
+    const previewed = drawings.createPreview('session-a', {
+      ref: { drawingId: 'drawing-source', revision: 1 },
+      commands: [{
+        type: 'node.update',
+        id: 'top',
+        changes: { visible: false },
+        expected: { visible: true },
+      }],
+    });
+    expect(previewed.status).toBe('previewed');
+    const before = drawings.getSnapshot('session-a');
+    const previewBefore = drawings.getPreview('session-a');
+
+    const result = await createDrawingFinalizePreviewTool(drawings).execute({
+      previewHandle: previewBefore?.handle ?? 'missing-preview',
+      previewDigest: 'sha256:candidate',
+      finalizeOperationId: 'operation-1',
+      finalizeOperationBindingDigest: 'sha256:binding',
+      evaluationId: 'evaluation-1',
+    }, exec('session-a'));
+
+    expect(result).toEqual({
+      status: 'rejected',
+      disposition: 'blocked',
+      code: 'AUTO_SAFE_UNAVAILABLE',
+      message: 'Durable history, inverse transactions, idempotency, and Undo are required before semantic finalize.',
+    });
+    expect(drawings.getSnapshot('session-a')?.ref).toEqual(before?.ref);
+    expect(drawings.getPreview('session-a')?.handle).toBe(previewBefore?.handle);
+  });
+
+  it('rejects authority and raw command fields on semantic finalize', async () => {
+    const tool = createDrawingFinalizePreviewTool(repository());
+    const request = {
+      previewHandle: 'preview-1',
+      previewDigest: 'sha256:candidate',
+      finalizeOperationId: 'operation-1',
+      finalizeOperationBindingDigest: 'sha256:binding',
+      evaluationId: 'evaluation-1',
+    };
+
+    for (const forbidden of [
+      { force: true },
+      { approved: true },
+      { humanDecision: 'apply' },
+      { commands: [] },
+      { autoSafe: true },
+    ]) {
+      await expect(tool.execute({ ...request, ...forbidden } as never, exec('session-a')))
+        .rejects.toThrow();
+    }
+  });
+
+  it('rejects semantic finalize without an owning Agent', async () => {
+    const tool = createDrawingFinalizePreviewTool(repository());
+
+    await expect(tool.execute({
+      previewHandle: 'preview-1',
+      previewDigest: 'sha256:candidate',
+      finalizeOperationId: 'operation-1',
+      finalizeOperationBindingDigest: 'sha256:binding',
+      evaluationId: 'evaluation-1',
+    }, exec())).rejects.toThrow('DRAWING_SESSION_REQUIRED');
+  });
+
   it('rejects drawing_import without an owning Agent', async () => {
     const tool = createDrawingImportTool(repository(), {
       async readImage(): Promise<StoredImageAttachment> {

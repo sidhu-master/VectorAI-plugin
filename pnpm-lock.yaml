@@ -131,6 +131,12 @@ importers:
 
   packages/drawing-core: {}
 
+  packages/drawing-edit-protocol:
+    dependencies:
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
   packages/drawing-spatial:
     dependencies:
       '@vectorai/drawing-core':
@@ -273,6 +279,9 @@ importers:
       '@vectorai/drawing-core':
         specifier: workspace:*
         version: link:../drawing-core
+      '@vectorai/drawing-edit-protocol':
+        specifier: workspace:*
+        version: link:../drawing-edit-protocol
       '@vectorai/drawing-workspace':
         specifier: workspace:*
         version: link:../drawing-workspace
