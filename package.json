@@ -24,6 +24,7 @@
     "e2e:test2-semantic-edit": "tsx scripts/e2e-test2-semantic-edit.ts",
     "test:test2-self-edit": "tsx scripts/test2-self-semantic-edit.ts",
     "e2e:region-hair-edit": "tsx scripts/e2e-region-hair-edit.ts",
+    "e2e:host-owned-semantic-edit": "tsx scripts/e2e-host-owned-semantic-edit.ts",
     "test:watch": "vitest"
   },
   "dependencies": {
