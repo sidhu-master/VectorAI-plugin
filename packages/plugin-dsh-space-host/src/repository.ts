@@ -37,6 +37,7 @@ import { createHash } from 'node:crypto';
 import type {
   DrawingCommitRecord,
   DrawingDurableState,
+  DrawingSolverProvenance,
   DurableDrawingRepositoryStorage,
 } from './durable-envelope';
 import type { ImageVectorizer } from './vectorizer';
@@ -70,6 +71,7 @@ export interface SemanticCommitRequest {
   mode: 'auto-safe' | 'confirmed' | 'interactive';
   assessment?: Assessment;
   reviewEvidence?: ReviewEvidence;
+  solverProvenance?: DrawingSolverProvenance;
 }
 
 export interface UndoCommitRequest {
@@ -290,6 +292,7 @@ export class InMemoryDrawingRepository {
       snapshotIntegrityDigest,
       ...(request.assessment ? { assessment: structuredClone(request.assessment) } : {}),
       ...(request.reviewEvidence ? { reviewEvidence: structuredClone(request.reviewEvidence) } : {}),
+      ...(request.solverProvenance ? { solverProvenance: structuredClone(request.solverProvenance) } : {}),
       committedAt: this.#now(),
     };
     this.#saveDurable(sessionId, {

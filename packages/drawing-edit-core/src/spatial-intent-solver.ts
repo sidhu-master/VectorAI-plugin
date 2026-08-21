@@ -84,6 +84,10 @@ interface ScoredCandidate {
 
 export function solveSpatialIntent(input: SpatialIntentSolverInput): SpatialIntentSolution {
   validateInput(input);
+  if (input.intent.goals.every(({ kind }) => kind === 'topology')
+    && topologyPenaltyFor(input, input.document) === 0) {
+    throw new Error('EDIT_SPATIAL_ALREADY_SATISFIED');
+  }
   const scale = drawingDiagonal(input.document);
   const primary = solvePrimaryTransforms(input, scale);
   const candidates = generateCandidateTransforms(input, primary, scale).slice(0, MAX_CANDIDATES);

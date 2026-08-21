@@ -46,6 +46,53 @@ function vectorizer(): ImageVectorizer {
 }
 
 describe('FileDrawingRepositoryStorage', () => {
+  it('round-trips deterministic solver provenance inside the durable commit envelope', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'vectorai-dsh-provenance-'));
+    temporaryDirectories.push(directory);
+    const storage = new FileDrawingRepositoryStorage(directory);
+    const state = {
+      version: 2 as const,
+      entry: {
+        attachmentId: 'persisted-source',
+        document: (await vectorizer().vectorize({
+          drawingId: 'drawing-provenance', attachment: attachment(),
+          data: new Uint8Array([1]), signal: new AbortController().signal,
+        })).document,
+        drawingId: 'drawing-provenance',
+        bounds: { minX: 0, minY: 0, maxX: 100, maxY: 50 },
+        revision: 2,
+        source: { id: 'persisted-source', mediaType: 'image/png', width: 120, height: 80 },
+        provisional: false,
+      },
+      commits: [{
+        commitId: 'commit-1', mode: 'auto-safe' as const,
+        operationId: 'operation-1', operationBindingDigest: 'sha256:binding',
+        parentRevision: 1, resultingRevision: 2, forward: [], inverse: [],
+        semanticDigest: 'sha256:semantic', snapshotIntegrityDigest: 'sha256:snapshot',
+        solverProvenance: {
+          solverVersion: 'spatial-intent-solver-0.1.0' as const,
+          canonicalIntentDigest: 'sha256:intent',
+          selectedPartScopeDigests: { moving: 'sha256:scope' },
+          numericEvidenceDigests: ['sha256:numeric'],
+          receipt: {
+            version: 'spatial-intent-solver-0.1.0' as const,
+            candidateCount: 5, selectedRank: 0, goalResidual: 0, movementCost: 0.1,
+            deformationCost: 0, collisionPenalty: 0, topologyPenalty: 0,
+            solvedTransforms: [{ partKey: 'moving', translation: [0, 10] as const }],
+            inputsContainModelCoordinates: false as const,
+          },
+        },
+        committedAt: 7,
+      }],
+      operations: [],
+    };
+
+    storage.saveDurable('session-provenance', state);
+    expect(storage.loadDurable('session-provenance')?.commits[0]?.solverProvenance).toEqual(
+      state.commits[0]!.solverProvenance,
+    );
+  });
+
   it('restores an imported and edited drawing in a new repository instance', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'vectorai-dsh-storage-'));
     temporaryDirectories.push(directory);

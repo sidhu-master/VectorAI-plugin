@@ -397,7 +397,7 @@ git commit -m "feat(core): solve qualitative spatial intents"
 - Consumes: current episode/parts, `solveSpatialIntent`, current Preview/evaluation/durable commit core, current session policy and user authority.
 - Produces: `previewCurrentIntent`, `reviseCurrentIntent`, `evaluateCurrentPreview`, `finalizeCurrentPreview`, `discardCurrentPreview`, and current-disposition operation replay.
 
-- [ ] **Step 1: Write failing current-episode preview tests**
+- [x] **Step 1: Write failing current-episode preview tests**
 
 Exercise the entire service without an externally supplied handle:
 
@@ -412,27 +412,27 @@ expect(replay.previewHandle).toBe(first.previewHandle);
 
 Add tests for a different semantic revision replacing the current Preview, candidate budget, revision invalidation, concurrent interactive commit, no-effect, failed solver, and multi-part one-commit/one-Undo round trip.
 
-- [ ] **Step 2: Write failing evaluation/finalization tests**
+- [x] **Step 2: Write failing evaluation/finalization tests**
 
 Verify evaluate/finalize/discard resolve the internal current Preview and operation binding; response-loss replay returns the same durable receipt; hard-invalid results remain blocked; confirmation and auto-safe remain distinct; terminal states clear transient selection.
 
-- [ ] **Step 3: Run focused tests to prove they fail**
+- [x] **Step 3: Run focused tests to prove they fail**
 
 Run: `pnpm --filter @vectorai/plugin-dsh-space-host test -- --run src/semantic-edit-service.test.ts src/repository-persistence.test.ts`
 
 Expected: FAIL because current-episode preview/finalize methods do not exist.
 
-- [ ] **Step 4: Implement current-episode write APIs**
+- [x] **Step 4: Implement current-episode write APIs**
 
 Resolve all internal handles from `SemanticEditEpisodeStore` immediately before each action. Bind operation identity to `{ episodeId, stateEpoch, operationKind, canonicalSemanticRequestDigest, drawingRef, candidateDigest? }`. Reuse existing Preview storage, evaluation/reviewer, assessment, confirmation, commit envelope, receipt, inverse, and Undo implementations.
 
 Do not delete the internal low-level methods until parity tests pass; make them private/test-only and remove them from the production tool catalog in Task 6.
 
-- [ ] **Step 5: Persist solver provenance**
+- [x] **Step 5: Persist solver provenance**
 
 Add solver version, canonical intent digest, selected-part scope digests, numeric evidence digests, and `SpatialSolverReceipt` to durable review/commit evidence. Do not store transient DSH attachment IDs as the only evidence. Replay must reproduce the candidate semantic digest from the durable intent, resolved scopes, Drawing base, and solver version.
 
-- [ ] **Step 6: Run host persistence and semantic tests**
+- [x] **Step 6: Run host persistence and semantic tests**
 
 Run:
 
@@ -443,7 +443,7 @@ pnpm --filter @vectorai/plugin-dsh-space-host check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 7: Commit episode-backed writes**
+- [x] **Step 7: Commit episode-backed writes**
 
 ```bash
 git add packages/plugin-dsh-space-host/src/semantic-edit-service.ts packages/plugin-dsh-space-host/src/semantic-edit-service.test.ts packages/plugin-dsh-space-host/src/durable-envelope.ts packages/plugin-dsh-space-host/src/repository-persistence.test.ts

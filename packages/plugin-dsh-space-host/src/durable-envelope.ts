@@ -6,8 +6,17 @@ import type {
   DurableOperationReceipt,
   ReviewEvidence,
 } from '@vectorai/drawing-edit-protocol';
+import type { SpatialSolverReceipt } from '@vectorai/drawing-edit-core';
 
 import type { DrawingEntry } from './repository';
+
+export interface DrawingSolverProvenance {
+  solverVersion: 'spatial-intent-solver-0.1.0';
+  canonicalIntentDigest: string;
+  selectedPartScopeDigests: Record<string, string>;
+  numericEvidenceDigests: string[];
+  receipt: SpatialSolverReceipt;
+}
 
 export interface DrawingCommitRecord {
   commitId: string;
@@ -24,6 +33,7 @@ export interface DrawingCommitRecord {
   targetCommitId?: string;
   assessment?: Assessment;
   reviewEvidence?: ReviewEvidence;
+  solverProvenance?: DrawingSolverProvenance;
   committedAt: number;
 }
 

@@ -226,6 +226,29 @@ describe('solveSpatialIntent', () => {
       numericConstraints: [], ports,
     })).toThrow('EDIT_SPATIAL_NO_SOLUTION');
   });
+
+  it('returns an already-satisfied terminal instead of inventing motion for a satisfied topology goal', () => {
+    const document = topologyFixture('does_not_cross');
+    const moving = document.geometry[0];
+    if (!moving || moving.type !== 'line') throw new Error('missing moving line');
+    moving.start = [-20, 0];
+    moving.end = [-10, 0];
+
+    expect(() => solveSpatialIntent({
+      document,
+      baseRef: { drawingId: document.id, revision: 1 },
+      parts: { moving: target('moving'), reference: target('reference') },
+      intent: {
+        summary: 'keep the paths from crossing',
+        goals: [{
+          kind: 'topology', subject: 'moving',
+          reference: { kind: 'part', partKey: 'reference' }, relation: 'does_not_cross',
+        }],
+        preserve: [],
+      },
+      numericConstraints: [], ports,
+    })).toThrow('EDIT_SPATIAL_ALREADY_SATISFIED');
+  });
 });
 
 function topologyFixture(relation: 'touches' | 'crosses' | 'does_not_cross' | 'inside'): DrawingDocument {

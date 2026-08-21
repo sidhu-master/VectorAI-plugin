@@ -7,8 +7,10 @@ import {
   compileSpatialEditProgram,
   findConnectedCarrierCandidates,
   findConnectedCarrierInterfaces,
+  solveSpatialIntent,
   type EditCorePorts,
   type GroundedEditTarget,
+  type SpatialSolverReceipt,
   type SpatialCompilation,
 } from '@vectorai/drawing-edit-core';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
@@ -18,6 +20,8 @@ import {
   multiPartTransformRequestSchema,
   multiPartTransformRevisionRequestSchema,
   spatialEditProgramSchema,
+  spatialIntentRequestSchema,
+  spatialIntentRevisionSchema,
   type Assessment,
   type ContextRef,
   type DrawingSelectPartsRequest,
@@ -36,6 +40,8 @@ import {
   type SemanticPartSelection,
   type SelectionProjectionRef,
   type SpatialEditProgram,
+  type SpatialIntentRequest,
+  type SpatialIntentRevision,
   type TaskRef,
 } from '@vectorai/drawing-edit-protocol';
 import type { DrawingDocument } from '@vectorai/drawing-core';
@@ -53,6 +59,7 @@ import {
   InMemoryDrawingRepository,
   type UndoCommitRequest,
 } from './repository';
+import type { DrawingSolverProvenance } from './durable-envelope';
 import { SemanticEditEpisodeStore, type BoundUserInstruction } from './semantic-episode';
 
 interface TaskState {
@@ -73,6 +80,9 @@ interface PreviewState {
   groundings: GroundingState[];
   program?: SpatialEditProgram;
   compilation: SpatialCompilation;
+  intent?: SpatialIntentRequest;
+  intentDigest?: string;
+  solverProvenance?: DrawingSolverProvenance;
 }
 
 interface EvaluationState {
@@ -190,6 +200,7 @@ interface EpisodeSelectionState {
   contextId: string;
   ledger: GroundingLedger;
   selectedParts: Record<string, GroundedEditTarget>;
+  groundings: Record<string, GroundingState>;
   candidates: Map<string, EpisodeSelectionCandidate>;
   nextCandidate: number;
 }
@@ -238,6 +249,8 @@ export class SemanticEditService {
   readonly #groundingOverlays = new Map<string, DrawingGroundingOverlay>();
   readonly #episodes: SemanticEditEpisodeStore;
   readonly #episodeSelections = new Map<string, EpisodeSelectionState>();
+  readonly #currentOperations = new Map<string, { operationId: string; operationBindingDigest: string }>();
+  readonly #terminalFinalizeResults = new Map<string, FinalizePreviewResult>();
 
   constructor(
     private readonly drawings: InMemoryDrawingRepository,
@@ -260,6 +273,8 @@ export class SemanticEditService {
     if (former && !this.#episodes.current(sessionId)) {
       this.#episodeSelections.delete(sessionId);
       this.#groundingOverlays.delete(sessionId);
+      this.#currentOperations.delete(sessionId);
+      this.#terminalFinalizeResults.delete(sessionId);
     }
     this.#pendingInstructions.set(sessionId, bound);
   }
@@ -344,6 +359,8 @@ export class SemanticEditService {
   }): TaskRef {
     this.#episodes.invalidate(sessionId, 'task-replaced');
     this.#episodeSelections.delete(sessionId);
+    this.#currentOperations.delete(sessionId);
+    this.#terminalFinalizeResults.delete(sessionId);
     const snapshot = this.#snapshot(sessionId);
     const former = this.#tasks.get(sessionId);
     if (former) former.active = false;
@@ -407,6 +424,7 @@ export class SemanticEditService {
         revision: String(snapshot.ref.revision) as never,
       }),
       selectedParts: {},
+      groundings: {},
       candidates: new Map(),
       nextCandidate: 0,
     });
@@ -481,6 +499,7 @@ export class SemanticEditService {
       const internal = this.#groundings.get(grounding.groundingId);
       if (!internal) throw new Error('EDIT_GROUNDING_REQUIRED');
       state.selectedParts[part.partKey] = structuredClone(internal.target);
+      state.groundings[part.partKey] = internal;
       this.#appendGroundingEvidence(state, episode, snapshot.ref, part, grounding);
       selectedResult.push({
         partKey: part.partKey,
@@ -515,6 +534,152 @@ export class SemanticEditService {
     const episode = this.#episodes.current(sessionId);
     const state = this.#episodeSelections.get(sessionId);
     return episode && state?.episodeId === episode.episodeId ? state.ledger.events() : [];
+  }
+
+  previewCurrentIntent(
+    sessionId: string,
+    rawIntent: SpatialIntentRequest,
+  ): PreviewRef {
+    const intent = spatialIntentRequestSchema.parse(rawIntent) as SpatialIntentRequest;
+    const snapshot = this.#snapshot(sessionId);
+    const episode = this.#episodes.current(sessionId, snapshot.ref);
+    const selection = this.#episodeSelections.get(sessionId);
+    const task = this.#tasks.get(sessionId);
+    if (!episode || !selection || selection.episodeId !== episode.episodeId || !task?.active) {
+      throw new Error('EDIT_SELECTION_REQUIRED');
+    }
+    const intentDigest = this.ports.digest(canonicalString(intent));
+    const currentPreview = this.#previews.get(sessionId);
+    if (currentPreview?.intentDigest === intentDigest && currentPreview.task === task) {
+      return structuredClone(currentPreview.ref);
+    }
+    if (task.candidateCount >= 3) throw new Error('EDIT_CANDIDATE_BUDGET_EXHAUSTED');
+    const compilation = solveSpatialIntent({
+      document: snapshot.document,
+      baseRef: snapshot.ref,
+      parts: selection.selectedParts,
+      intent,
+      numericConstraints: episode.instruction.numericConstraints,
+      ports: this.ports,
+    });
+    const selectedPartScopeDigests = Object.fromEntries(Object.keys(selection.selectedParts).sort().map((partKey) => {
+      const part = selection.selectedParts[partKey]!;
+      return [partKey, this.ports.digest(canonicalString({
+        targetNodeIds: [...part.targetNodeIds].sort(),
+        interfaces: part.interfaces
+          .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint }))
+          .sort((left, right) => left.interfaceId.localeCompare(right.interfaceId)),
+      }))];
+    }));
+    const referencedNumericKeys = new Set(intent.goals.flatMap((goal) => (
+      goal.kind === 'explicit_numeric' ? [goal.numericKey] : []
+    )));
+    const numericEvidenceDigests = episode.instruction.numericConstraints
+      .filter(({ numericKey }) => referencedNumericKeys.has(numericKey))
+      .map((constraint) => this.ports.digest(canonicalString(constraint)));
+    const solverProvenance: DrawingSolverProvenance = {
+      solverVersion: compilation.solver.version,
+      canonicalIntentDigest: intentDigest,
+      selectedPartScopeDigests,
+      numericEvidenceDigests,
+      receipt: structuredClone(compilation.solver),
+    };
+    const groundings = Object.keys(selection.groundings).sort().map((partKey) => selection.groundings[partKey]!);
+    const ref = this.#storeCompilation(
+      sessionId, task, snapshot.ref, groundings, compilation, intent.summary,
+    );
+    const stored = this.#previews.get(sessionId);
+    if (!stored) throw new Error('EDIT_PREVIEW_STALE');
+    stored.intent = structuredClone(intent);
+    stored.intentDigest = intentDigest;
+    stored.solverProvenance = solverProvenance;
+    const transitioned = this.#episodes.transition(sessionId, episode.stateEpoch, {
+      kind: 'preview_ready',
+      semanticRequest: intent,
+      preview: { candidateDigest: ref.candidateDigest, effectDigest: ref.effectDigest },
+    });
+    this.#currentOperations.set(sessionId, {
+      operationId: ref.finalizeOperationId,
+      operationBindingDigest: ref.finalizeOperationBindingDigest,
+    });
+    this.#terminalFinalizeResults.delete(sessionId);
+    if (transitioned.candidateCount > 3) throw new Error('EDIT_CANDIDATE_BUDGET_EXHAUSTED');
+    return structuredClone(ref);
+  }
+
+  reviseCurrentIntent(sessionId: string, rawRevision: SpatialIntentRevision): PreviewRef {
+    const revision = spatialIntentRevisionSchema.parse(rawRevision) as SpatialIntentRevision;
+    const current = this.#previews.get(sessionId);
+    if (!current?.intent) throw new Error('EDIT_PREVIEW_REQUIRED');
+    return this.previewCurrentIntent(sessionId, {
+      summary: current.intent.summary,
+      goals: revision.goalDelta,
+      preserve: revision.preserveDelta ?? current.intent.preserve,
+    });
+  }
+
+  evaluateCurrentPreview(sessionId: string, signal?: AbortSignal) {
+    const preview = this.#previews.get(sessionId);
+    if (!preview) throw new Error('EDIT_PREVIEW_REQUIRED');
+    return this.evaluatePreview(sessionId, {
+      taskId: preview.ref.taskId,
+      previewHandle: preview.ref.previewHandle,
+      candidateDigest: preview.ref.candidateDigest,
+      signal,
+    });
+  }
+
+  finalizeCurrentPreview(sessionId: string, confirmed = false): FinalizePreviewResult {
+    const replay = this.#terminalFinalizeResults.get(sessionId);
+    if (replay) return structuredClone(replay);
+    const preview = this.#previews.get(sessionId);
+    if (!preview) throw new Error('EDIT_PREVIEW_REQUIRED');
+    const evaluated = [...this.#evaluations.values()].reverse().find(({ ref }) => (
+      ref.previewHandle === preview.ref.previewHandle
+      && ref.candidateDigest === preview.ref.candidateDigest
+    ));
+    if (!evaluated) throw new Error('EDIT_EVALUATION_REQUIRED');
+    const request = {
+      previewHandle: preview.ref.previewHandle,
+      previewDigest: preview.ref.candidateDigest,
+      finalizeOperationId: preview.ref.finalizeOperationId,
+      finalizeOperationBindingDigest: preview.ref.finalizeOperationBindingDigest,
+      evaluationId: evaluated.ref.evaluationId,
+    };
+    const result = confirmed
+      ? this.confirmFinalize(sessionId, request)
+      : this.finalizePreview(sessionId, request);
+    if (result.status === 'committed' || result.status === 'already-satisfied') {
+      const episode = this.#episodes.current(sessionId);
+      if (episode) this.#episodes.transition(sessionId, episode.stateEpoch, {
+        kind: 'committed', receipt: result,
+      });
+      const task = this.#tasks.get(sessionId);
+      if (task) task.active = false;
+      this.#episodeSelections.delete(sessionId);
+      this.#groundingOverlays.delete(sessionId);
+      this.#terminalFinalizeResults.set(sessionId, structuredClone(result));
+    }
+    return result;
+  }
+
+  discardCurrentPreview(sessionId: string) {
+    const preview = this.#previews.get(sessionId);
+    if (!preview) throw new Error('EDIT_PREVIEW_REQUIRED');
+    const result = this.discardPreview(sessionId, preview.ref.previewHandle);
+    const episode = this.#episodes.current(sessionId);
+    if (episode) this.#episodes.transition(sessionId, episode.stateEpoch, { kind: 'discarded' });
+    this.#episodeSelections.delete(sessionId);
+    this.#currentOperations.delete(sessionId);
+    this.#terminalFinalizeResults.delete(sessionId);
+    return result;
+  }
+
+  getCurrentOperation(sessionId: string): OperationLookupResult {
+    const operation = this.#currentOperations.get(sessionId);
+    return operation
+      ? this.drawings.getOperation(sessionId, operation.operationId, operation.operationBindingDigest)
+      : { status: 'absent' };
   }
 
   #currentObservationResult(
@@ -1266,6 +1431,7 @@ export class SemanticEditService {
       mode,
       assessment: evaluated.assessment,
       reviewEvidence: evaluated.evaluation.review,
+      ...(preview.solverProvenance ? { solverProvenance: preview.solverProvenance } : {}),
     });
     if (receipt.status === 'no-effect') {
       this.#previews.delete(sessionId);
@@ -1307,6 +1473,10 @@ export class SemanticEditService {
     this.#previews.delete(sessionId);
     this.#selectionProjections.delete(sessionId);
     this.#groundingOverlays.delete(sessionId);
+    this.#episodeSelections.delete(sessionId);
+    this.#currentOperations.delete(sessionId);
+    this.#terminalFinalizeResults.delete(sessionId);
+    this.#episodes.dispose(sessionId);
   }
 
   undoAuthorized(sessionId: string, input: Omit<UndoCommitRequest, 'operationId' | 'operationBindingDigest'>) {

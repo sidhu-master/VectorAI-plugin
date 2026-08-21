@@ -108,6 +108,185 @@ async function previewRightHand(service: SemanticEditService) {
 }
 
 describe('SemanticEditService', () => {
+  it('previews, evaluates, commits, replays, and undoes the current semantic episode without caller handles', async () => {
+    const { service, drawings, storage } = await setup();
+    service.projectSelection('session-1', {
+      expectedRef: { drawingId: 'drawing-wave', revision: 1 }, nodeIds: ['right-hand'],
+    });
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-current-write',
+      objective: '把选中的部件向上移动',
+      rootUserMessageDigest: 'sha256:message-current-write', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+    service.selectCurrentParts('session-1', {
+      parts: [{ partKey: 'moving', label: 'selected part', references: [{ kind: 'current_selection' }] }],
+    });
+    const intent = {
+      summary: 'move the selected part upward',
+      goals: [{ kind: 'direction' as const, subject: 'moving', direction: 'up' as const, magnitude: 'moderate' as const }],
+      preserve: [{ kind: 'connectivity' as const, partKey: 'moving' }, { kind: 'protected_scope' as const }],
+    };
+
+    const preview = service.previewCurrentIntent('session-1', intent);
+    const replayedPreview = service.previewCurrentIntent('session-1', intent);
+    expect(replayedPreview).toEqual(preview);
+    const evaluated = await service.evaluateCurrentPreview('session-1');
+    expect(evaluated.assessment.disposition).toBe('auto_safe');
+    const committed = service.finalizeCurrentPreview('session-1');
+    expect(committed).toMatchObject({ status: 'committed', mode: 'auto-safe', ref: { revision: 2 } });
+    expect(service.finalizeCurrentPreview('session-1')).toEqual(committed);
+    expect(service.currentSelectedParts('session-1')).toEqual({});
+    expect(service.currentGroundingOverlay('session-1')).toBeNull();
+    expect(storage.state?.commits.at(-1)?.solverProvenance).toMatchObject({
+      solverVersion: 'spatial-intent-solver-0.1.0',
+      canonicalIntentDigest: expect.stringMatching(/^sha256:/),
+      selectedPartScopeDigests: { moving: expect.stringMatching(/^sha256:/) },
+      receipt: { inputsContainModelCoordinates: false },
+    });
+
+    if (committed.status !== 'committed') throw new Error('expected commit');
+    const undone = service.undoAuthorized('session-1', {
+      targetCommitId: committed.commitId,
+      expectedCurrentRef: committed.ref,
+    });
+    expect(undone).toMatchObject({ status: 'committed', mode: 'undo', resultingRef: { revision: 3 } });
+    expect(drawings.getSnapshot('session-1')?.document.geometry.find(({ id }) => id === 'right-hand'))
+      .toMatchObject({ center: [15, 0] });
+  });
+
+  it('replaces a different semantic revision atomically and enforces the per-task candidate budget', async () => {
+    const { service } = await setup();
+    service.projectSelection('session-1', {
+      expectedRef: { drawingId: 'drawing-wave', revision: 1 }, nodeIds: ['left-hand'],
+    });
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-current-revision', objective: '调整选中的部件',
+      rootUserMessageDigest: 'sha256:message-current-revision', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+    service.selectCurrentParts('session-1', {
+      parts: [{ partKey: 'moving', label: 'selected part', references: [{ kind: 'current_selection' }] }],
+    });
+    const first = service.previewCurrentIntent('session-1', {
+      summary: 'move upward',
+      goals: [{ kind: 'direction', subject: 'moving', direction: 'up', magnitude: 'slight' }],
+      preserve: [],
+    });
+    const second = service.reviseCurrentIntent('session-1', {
+      goalDelta: [{ kind: 'direction', subject: 'moving', direction: 'left', magnitude: 'slight' }],
+    });
+    expect(second.previewHandle).not.toBe(first.previewHandle);
+    expect(() => service.resolveCurrentPreview('session-1', first.previewHandle)).toThrow('EDIT_PREVIEW_STALE');
+    service.reviseCurrentIntent('session-1', {
+      goalDelta: [{ kind: 'direction', subject: 'moving', direction: 'down', magnitude: 'slight' }],
+    });
+    expect(() => service.reviseCurrentIntent('session-1', {
+      goalDelta: [{ kind: 'direction', subject: 'moving', direction: 'right', magnitude: 'slight' }],
+    })).toThrow('EDIT_CANDIDATE_BUDGET_EXHAUSTED');
+  });
+
+  it('commits two selected semantic parts in one revision and one undo batch', async () => {
+    const { service, drawings } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-current-multi', objective: '把左右两个部件一起向下移动',
+      rootUserMessageDigest: 'sha256:message-current-multi', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+    service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'left', label: 'left part', references: [{ kind: 'semantic_query', text: 'left hand' }],
+      }, {
+        partKey: 'right', label: 'right part', references: [{ kind: 'semantic_query', text: 'right hand' }],
+      }],
+    });
+    service.previewCurrentIntent('session-1', {
+      summary: 'move both parts downward',
+      goals: [
+        { kind: 'direction', subject: 'left', direction: 'down', magnitude: 'slight' },
+        { kind: 'direction', subject: 'right', direction: 'down', magnitude: 'slight' },
+      ],
+      preserve: [{ kind: 'protected_scope' }],
+    });
+    await service.evaluateCurrentPreview('session-1');
+    const result = service.finalizeCurrentPreview('session-1');
+    expect(result).toMatchObject({ status: 'committed', ref: { revision: 2 } });
+    if (result.status !== 'committed') throw new Error('expected commit');
+    expect(drawings.getSnapshot('session-1')?.document.geometry.find(({ id }) => id === 'left-hand'))
+      .toMatchObject({ center: [-15, expect.any(Number)] });
+    const undo = service.undoAuthorized('session-1', {
+      targetCommitId: result.commitId, expectedCurrentRef: result.ref,
+    });
+    expect(undo).toMatchObject({ status: 'committed', resultingRef: { revision: 3 } });
+    expect(drawings.getSnapshot('session-1')?.document.geometry.find(({ id }) => id === 'left-hand'))
+      .toMatchObject({ center: [-15, 0] });
+    expect(drawings.getSnapshot('session-1')?.document.geometry.find(({ id }) => id === 'right-hand'))
+      .toMatchObject({ center: [15, 0] });
+  });
+
+  it('keeps confirmation distinct and clears a discarded current Preview', async () => {
+    const { service } = await setup(true);
+    service.projectSelection('session-1', {
+      expectedRef: { drawingId: 'drawing-wave', revision: 1 }, nodeIds: ['right-hand'],
+    });
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-current-confirm', objective: '移动候选来源部件',
+      rootUserMessageDigest: 'sha256:message-current-confirm', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+    service.selectCurrentParts('session-1', {
+      parts: [{ partKey: 'moving', label: 'candidate part', references: [{ kind: 'current_selection' }] }],
+    });
+    service.previewCurrentIntent('session-1', {
+      summary: 'move candidate upward',
+      goals: [{ kind: 'direction', subject: 'moving', direction: 'up', magnitude: 'slight' }],
+      preserve: [],
+    });
+    const evaluated = await service.evaluateCurrentPreview('session-1');
+    expect(evaluated.assessment.disposition).toBe('confirmation_required');
+    expect(service.finalizeCurrentPreview('session-1')).toMatchObject({
+      status: 'rejected', disposition: 'confirmation_required',
+    });
+    expect(service.discardCurrentPreview('session-1')).toMatchObject({ status: 'discarded' });
+    expect(service.currentSelectedParts('session-1')).toEqual({});
+  });
+
+  it('does not create a Preview for an already-satisfied goal and invalidates on a concurrent revision', async () => {
+    const { service, drawings } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-current-stale', objective: '保持左右部件不相交',
+      rootUserMessageDigest: 'sha256:message-current-stale', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+    service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'left', label: 'left part', references: [{ kind: 'semantic_query', text: 'left hand' }],
+      }, {
+        partKey: 'right', label: 'right part', references: [{ kind: 'semantic_query', text: 'right hand' }],
+      }],
+    });
+    expect(() => service.previewCurrentIntent('session-1', {
+      summary: 'keep the parts from crossing',
+      goals: [{
+        kind: 'topology', subject: 'left', reference: { kind: 'part', partKey: 'right' },
+        relation: 'does_not_cross',
+      }],
+      preserve: [],
+    })).toThrow('EDIT_SPATIAL_ALREADY_SATISFIED');
+    expect(drawings.getPreview('session-1')).toBeNull();
+
+    service.previewCurrentIntent('session-1', {
+      summary: 'move left part down',
+      goals: [{ kind: 'direction', subject: 'left', direction: 'down', magnitude: 'slight' }],
+      preserve: [],
+    });
+    drawings.commit('session-1', {
+      expectedRevision: 1,
+      commands: [{ type: 'node.update', id: 'body', changes: { visible: false }, expected: { visible: true } }],
+    });
+    await expect(service.evaluateCurrentPreview('session-1')).rejects.toThrow('EDIT_BASE_STALE');
+  });
+
   it('grounds the current verified selection without exposing Host lineage to the model', async () => {
     const { service } = await setup();
     service.projectSelection('session-1', {
