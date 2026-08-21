@@ -57,10 +57,70 @@ describe('createDshReviewer', () => {
     expect(request?.prompt).toEqual(expect.arrayContaining([
       { type: 'image', attachment },
     ]));
+    expect(request).toMatchObject({ maxDepth: 1, toolFilter: { allow: ['structured_output'] } });
     expect(result).toMatchObject({
       outcome: 'satisfied',
       render: { width: 1280, height: 720, contentDigest: expect.stringMatching(/^sha256:/) },
     });
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('returns unavailable with the local render when DSH rejects nested review depth', async () => {
+    const attachment: ImageAttachmentRef = {
+      attachmentId: 'review-image' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png', bytes: 2048, width: 1280, height: 720,
+    };
+    const review = createDshReviewer({
+      agents: { get: () => ({ id: 'session-1' } as Agent) },
+      attachments: { saveImage: async () => attachment },
+      subagents: {
+        list: () => ['local'],
+        getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true } }),
+        async start() { throw new Error('subagent depth 1 exceeds maxDepth 0'); },
+      },
+    } as never);
+
+    await expect(review({
+      sessionId: 'session-1', objective: '抬手',
+      beforeSemanticDigest: 'sha256:before', afterSemanticDigest: 'sha256:after',
+      effectDigest: 'sha256:effect', changedNodeIds: ['arm'], diagnostics: [],
+      beforeDocument: document(0), afterDocument: document(40),
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+    })).resolves.toMatchObject({
+      outcome: 'unavailable',
+      render: { width: 1280, height: 720, contentDigest: expect.stringMatching(/^sha256:/) },
+    });
+  });
+
+  it('accepts a validated JSON reviewer verdict from ordinary child text output', async () => {
+    const attachment: ImageAttachmentRef = {
+      attachmentId: 'review-image' as ImageAttachmentRef['attachmentId'],
+      mediaType: 'image/png', bytes: 2048, width: 1280, height: 720,
+    };
+    const review = createDshReviewer({
+      agents: { get: () => ({ id: 'session-1' } as Agent) },
+      attachments: { saveImage: async () => attachment },
+      subagents: {
+        list: () => ['local'],
+        getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true } }),
+        async start() {
+          return {
+            result: Promise.resolve({
+              stopReason: 'completed', structured: undefined,
+              output: [{ type: 'text', text: '```json\n{"outcome":"satisfied","defects":[]}\n```' }],
+            }),
+            async dispose() {},
+          };
+        },
+      },
+    } as never);
+
+    await expect(review({
+      sessionId: 'session-1', objective: '抬手',
+      beforeSemanticDigest: 'sha256:before', afterSemanticDigest: 'sha256:after',
+      effectDigest: 'sha256:effect', changedNodeIds: ['arm'], diagnostics: [],
+      beforeDocument: document(0), afterDocument: document(40),
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+    })).resolves.toMatchObject({ outcome: 'satisfied', defects: [] });
   });
 });

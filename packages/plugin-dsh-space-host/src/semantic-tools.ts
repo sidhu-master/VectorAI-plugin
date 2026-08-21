@@ -19,6 +19,8 @@ export function createSemanticEditToolCatalog(
     createDrawingObserveTool(semantic),
     createDrawingBuildContextTool(semantic),
     createDrawingGroundTool(semantic),
+    createDrawingPreviewGroundedTransformTool(semantic),
+    createDrawingReviseGroundedTransformTool(semantic),
     createDrawingPreviewProgramTool(semantic),
     createDrawingRevisePreviewTool(semantic),
     createDrawingEvaluatePreviewTool(semantic),
@@ -27,6 +29,58 @@ export function createSemanticEditToolCatalog(
     createDrawingGetOperationTool(semantic),
     createDrawingUndoTool(semantic, questions),
   ];
+}
+
+export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_preview_grounded_transform',
+    description: 'Preferred tool for moving, rotating, raising, lowering, or posing a grounded Drawing part. Pass only the intended transform; the Host builds the complete validated Spatial Edit Program from the latest grounding. Positive Y moves visually up. Always use taskId and groundingId returned in this turn.',
+    parameters: {
+      taskId: { type: 'string', required: true },
+      groundingId: { type: 'string', required: true },
+      translation: {
+        type: 'array', items: { type: 'number' }, required: true,
+        description: 'Exactly two numbers [dx, dy] in Drawing units. Positive dy moves the target visually up.',
+      },
+      rotationDegrees: {
+        type: 'number',
+        description: 'Optional rotation in degrees around the target center. Use 0 for translation only.',
+      },
+      pivot: {
+        type: 'array', items: { type: 'number' },
+        description: 'Optional exact [x, y] pivot. Omit to rotate around the grounded target center.',
+      },
+      summary: { type: 'string', required: true },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args, exec) {
+      return semantic.previewGroundedTransform(requireSession(exec.agent?.id), args as never) as unknown as JsonValue;
+    },
+  });
+}
+
+export function createDrawingReviseGroundedTransformTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_revise_grounded_transform',
+    description: 'Replace the current transform Preview after visual evaluation requests a revision. Keep the same task; optionally call drawing_ground again with the existing context to narrow the moving target. Never call drawing_observe twice in one user turn.',
+    parameters: {
+      taskId: { type: 'string', required: true },
+      currentPreviewHandle: { type: 'string', required: true },
+      currentCandidateDigest: { type: 'string', required: true },
+      groundingId: { type: 'string', required: true },
+      translation: {
+        type: 'array', items: { type: 'number' }, required: true,
+        description: 'Exactly two numbers [dx, dy]. Positive dy moves visually up.',
+      },
+      rotationDegrees: { type: 'number', description: 'Optional rotation in degrees.' },
+      pivot: { type: 'array', items: { type: 'number' }, description: 'Optional exact [x, y] pivot.' },
+      summary: { type: 'string', required: true },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args, exec) {
+      return semantic.reviseGroundedTransform(requireSession(exec.agent?.id), args as never) as unknown as JsonValue;
+    },
+  });
 }
 
 export function createDrawingObserveTool(semantic: SemanticEditService) {
@@ -62,11 +116,14 @@ export function createDrawingBuildContextTool(semantic: SemanticEditService) {
 export function createDrawingGroundTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_ground',
-    description: 'Ground a semantic target to exact node ids and connector interfaces. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces; the Host resolves the selected nodes and contacted connectors.',
+    description: 'Ground a semantic target to exact node ids and connector interfaces. For articulated edits, target only the moving end object (for example the hand/palm), not its connecting arm lines; with empty interfaces the Host infers contacted line endpoints so they stay connected. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces.',
     parameters: {
       taskId: { type: 'string', required: true },
       contextId: { type: 'string', required: true },
-      selectionProjectionId: { type: 'string' },
+      selectionProjectionId: {
+        type: 'string',
+        description: 'Optional Host selection handle. Omit this field entirely when drawing_observe did not return one; never send an empty string.',
+      },
       targetNodeIds: { type: 'array', items: { type: 'string' }, required: true },
       interfaces: { type: 'array', items: { type: 'json' }, required: true },
     },
@@ -80,7 +137,7 @@ export function createDrawingGroundTool(semantic: SemanticEditService) {
 export function createDrawingPreviewProgramTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_preview_program',
-    description: 'Compile a high-level Spatial Edit Program against an exact grounding and publish a non-formal canvas Preview. Never accepts raw Drawing transaction commands.',
+    description: 'Advanced tool for non-transform spatial operations. For moving, rotating, raising, lowering, or posing a part, use drawing_preview_grounded_transform instead. Compiles a complete Spatial Edit Program against an exact grounding and never accepts raw Drawing transaction commands.',
     parameters: {
       taskId: { type: 'string', required: true },
       groundingId: { type: 'string', required: true },

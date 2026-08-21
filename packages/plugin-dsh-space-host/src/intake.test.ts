@@ -103,9 +103,12 @@ describe('drawing image intake', () => {
     expect(binds).toBe(0);
   });
 
-  it('adds no context when the accepted batch has no image', async () => {
+  it('injects the fresh-handle semantic workflow for every direct edit turn without an image', async () => {
     let binds = 0;
-    const intake = createPreStepIntake({ bindPending: () => { binds += 1; } });
+    const intake = createPreStepIntake(
+      { bindPending: () => { binds += 1; } },
+      { bindUserInstruction() {} },
+    );
     const message = createUserMessage({
       content: [{ type: 'text', text: 'hello' }],
       source: { kind: 'user' },
@@ -116,7 +119,13 @@ describe('drawing image intake', () => {
       messages: [message],
     }));
 
-    expect(result).toEqual({ kind: 'enter', messages: [message] });
+    expect(result.kind).toBe('enter');
+    if (result.kind !== 'enter') throw new Error('expected enter');
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages.at(-1)?.content).toEqual([{
+      type: 'text',
+      text: expect.stringMatching(/drawing_observe[\s\S]*drawing_preview_grounded_transform[\s\S]*never reuse/i),
+    }]);
     expect(binds).toBe(0);
   });
 

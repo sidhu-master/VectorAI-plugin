@@ -11,6 +11,14 @@ const INSTRUCTION = [
   'Call drawing_import before describing, inspecting, or modifying the drawing.',
   'Do not claim that the drawing was inspected until drawing_import succeeds.',
 ].join(' ');
+const SEMANTIC_WORKFLOW_INSTRUCTION = [
+  'For every direct Drawing edit turn, always start with drawing_observe, then drawing_build_context and drawing_ground.',
+  'For articulated motion, ground only the moving end object such as the hand or palm; leave connecting arm lines out so the Host can infer and preserve their contacted endpoints.',
+  'For moving, rotating, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform.',
+  'If visual evaluation requests a revision, keep the same task and use drawing_revise_grounded_transform; never call drawing_observe twice in one user turn.',
+  'Task, observation, context, grounding, Preview, and selection handles are ephemeral; never reuse handles from an earlier turn or from before a plugin restart.',
+  'Then call drawing_evaluate_preview and drawing_finalize_preview.',
+].join(' ');
 
 interface PendingSourceWriter {
   bindPending(sessionId: string, attachment: ImageAttachmentRef): void;
@@ -81,6 +89,15 @@ export function createPreStepIntake(
       });
     }
     let messages = [...decision.messages];
+    if (directUser && semantic) {
+      messages.push(createUserMessage({
+        content: [{ type: 'text', text: SEMANTIC_WORKFLOW_INSTRUCTION }],
+        source: {
+          kind: 'plugin', plugin: PLUGIN_NAME, form: 'snapshot',
+          sections: [{ name: 'vectorai:semantic-workflow', text: SEMANTIC_WORKFLOW_INSTRUCTION }],
+        },
+      }));
+    }
     const selection = semantic?.currentSelectionProjection?.(String(payload.agent.id)) ?? null;
     if (selection !== null) {
       const instruction = [

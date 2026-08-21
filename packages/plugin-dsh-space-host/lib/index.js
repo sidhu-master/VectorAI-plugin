@@ -66,6 +66,14 @@ const INSTRUCTION = [
   "Call drawing_import before describing, inspecting, or modifying the drawing.",
   "Do not claim that the drawing was inspected until drawing_import succeeds."
 ].join(" ");
+const SEMANTIC_WORKFLOW_INSTRUCTION = [
+  "For every direct Drawing edit turn, always start with drawing_observe, then drawing_build_context and drawing_ground.",
+  "For articulated motion, ground only the moving end object such as the hand or palm; leave connecting arm lines out so the Host can infer and preserve their contacted endpoints.",
+  "For moving, rotating, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform.",
+  "If visual evaluation requests a revision, keep the same task and use drawing_revise_grounded_transform; never call drawing_observe twice in one user turn.",
+  "Task, observation, context, grounding, Preview, and selection handles are ephemeral; never reuse handles from an earlier turn or from before a plugin restart.",
+  "Then call drawing_evaluate_preview and drawing_finalize_preview."
+].join(" ");
 function findLatestImage(messages) {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex];
@@ -100,6 +108,17 @@ function createPreStepIntake(repository, semantic) {
       });
     }
     let messages = [...decision.messages];
+    if (directUser && semantic) {
+      messages.push(createUserMessage({
+        content: [{ type: "text", text: SEMANTIC_WORKFLOW_INSTRUCTION }],
+        source: {
+          kind: "plugin",
+          plugin: PLUGIN_NAME,
+          form: "snapshot",
+          sections: [{ name: "vectorai:semantic-workflow", text: SEMANTIC_WORKFLOW_INSTRUCTION }]
+        }
+      }));
+    }
     const selection = ((_a3 = semantic == null ? void 0 : semantic.currentSelectionProjection) == null ? void 0 : _a3.call(semantic, String(payload.agent.id))) ?? null;
     if (selection !== null) {
       const instruction = [
@@ -464,13 +483,29 @@ function degrees(radians) {
   return radians * 180 / Math.PI;
 }
 function dedupeUpdates(commands) {
-  const seen = /* @__PURE__ */ new Set();
-  return commands.filter((command) => {
+  const merged = [];
+  const indexes = /* @__PURE__ */ new Map();
+  for (const command of commands) {
     const id = "id" in command ? command.id : command.node.id;
-    if (seen.has(id)) throw new Error("EDIT_OVERLAPPING_TRANSFORM_SCOPE");
-    seen.add(id);
-    return true;
-  });
+    const index = indexes.get(id);
+    if (index === void 0) {
+      indexes.set(id, merged.length);
+      merged.push(structuredClone(command));
+      continue;
+    }
+    const current = merged[index];
+    if ((current == null ? void 0 : current.type) !== "node.update" || command.type !== "node.update") {
+      throw new Error("EDIT_OVERLAPPING_TRANSFORM_SCOPE");
+    }
+    const overlap = Object.keys(command.changes).some((field) => field in current.changes);
+    if (overlap) throw new Error("EDIT_OVERLAPPING_TRANSFORM_SCOPE");
+    merged[index] = {
+      ...current,
+      changes: { ...current.changes, ...structuredClone(command.changes) },
+      expected: { ...current.expected, ...structuredClone(command.expected) }
+    };
+  }
+  return merged;
 }
 function assertPreserved(before, after, scopes) {
   var _a3, _b;
@@ -6651,8 +6686,17 @@ requireDurable_fn = function(sessionId) {
     throw new Error("AUTO_SAFE_UNAVAILABLE");
   }
   const state = __privateMethod(this, _InMemoryDrawingRepository_instances, durableState_fn).call(this, sessionId);
-  if (!state) throw new Error("DRAWING_REQUIRED");
-  return state;
+  if (state) return state;
+  const legacy = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+  if (!legacy) throw new Error("DRAWING_REQUIRED");
+  const promoted = {
+    version: 2,
+    entry: structuredClone(legacy),
+    commits: [],
+    operations: []
+  };
+  __privateMethod(this, _InMemoryDrawingRepository_instances, saveDurable_fn).call(this, sessionId, promoted);
+  return promoted;
 };
 saveDurable_fn = function(sessionId, state) {
   const storage = __privateGet(this, _storage);
@@ -6984,6 +7028,8 @@ function createSemanticEditToolCatalog(semantic, questions) {
     createDrawingObserveTool(semantic),
     createDrawingBuildContextTool(semantic),
     createDrawingGroundTool(semantic),
+    createDrawingPreviewGroundedTransformTool(semantic),
+    createDrawingReviseGroundedTransformTool(semantic),
     createDrawingPreviewProgramTool(semantic),
     createDrawingRevisePreviewTool(semantic),
     createDrawingEvaluatePreviewTool(semantic),
@@ -6992,6 +7038,63 @@ function createSemanticEditToolCatalog(semantic, questions) {
     createDrawingGetOperationTool(semantic),
     createDrawingUndoTool(semantic, questions)
   ];
+}
+function createDrawingPreviewGroundedTransformTool(semantic) {
+  return defineTool({
+    name: "drawing_preview_grounded_transform",
+    description: "Preferred tool for moving, rotating, raising, lowering, or posing a grounded Drawing part. Pass only the intended transform; the Host builds the complete validated Spatial Edit Program from the latest grounding. Positive Y moves visually up. Always use taskId and groundingId returned in this turn.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      groundingId: { type: "string", required: true },
+      translation: {
+        type: "array",
+        items: { type: "number" },
+        required: true,
+        description: "Exactly two numbers [dx, dy] in Drawing units. Positive dy moves the target visually up."
+      },
+      rotationDegrees: {
+        type: "number",
+        description: "Optional rotation in degrees around the target center. Use 0 for translation only."
+      },
+      pivot: {
+        type: "array",
+        items: { type: "number" },
+        description: "Optional exact [x, y] pivot. Omit to rotate around the grounded target center."
+      },
+      summary: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      return semantic.previewGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+    }
+  });
+}
+function createDrawingReviseGroundedTransformTool(semantic) {
+  return defineTool({
+    name: "drawing_revise_grounded_transform",
+    description: "Replace the current transform Preview after visual evaluation requests a revision. Keep the same task; optionally call drawing_ground again with the existing context to narrow the moving target. Never call drawing_observe twice in one user turn.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      currentPreviewHandle: { type: "string", required: true },
+      currentCandidateDigest: { type: "string", required: true },
+      groundingId: { type: "string", required: true },
+      translation: {
+        type: "array",
+        items: { type: "number" },
+        required: true,
+        description: "Exactly two numbers [dx, dy]. Positive dy moves visually up."
+      },
+      rotationDegrees: { type: "number", description: "Optional rotation in degrees." },
+      pivot: { type: "array", items: { type: "number" }, description: "Optional exact [x, y] pivot." },
+      summary: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      return semantic.reviseGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+    }
+  });
 }
 function createDrawingObserveTool(semantic) {
   return defineTool({
@@ -7026,11 +7129,14 @@ function createDrawingBuildContextTool(semantic) {
 function createDrawingGroundTool(semantic) {
   return defineTool({
     name: "drawing_ground",
-    description: "Ground a semantic target to exact node ids and connector interfaces. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces; the Host resolves the selected nodes and contacted connectors.",
+    description: "Ground a semantic target to exact node ids and connector interfaces. For articulated edits, target only the moving end object (for example the hand/palm), not its connecting arm lines; with empty interfaces the Host infers contacted line endpoints so they stay connected. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces.",
     parameters: {
       taskId: { type: "string", required: true },
       contextId: { type: "string", required: true },
-      selectionProjectionId: { type: "string" },
+      selectionProjectionId: {
+        type: "string",
+        description: "Optional Host selection handle. Omit this field entirely when drawing_observe did not return one; never send an empty string."
+      },
       targetNodeIds: { type: "array", items: { type: "string" }, required: true },
       interfaces: { type: "array", items: { type: "json" }, required: true }
     },
@@ -7044,7 +7150,7 @@ function createDrawingGroundTool(semantic) {
 function createDrawingPreviewProgramTool(semantic) {
   return defineTool({
     name: "drawing_preview_program",
-    description: "Compile a high-level Spatial Edit Program against an exact grounding and publish a non-formal canvas Preview. Never accepts raw Drawing transaction commands.",
+    description: "Advanced tool for non-transform spatial operations. For moving, rotating, raising, lowering, or posing a part, use drawing_preview_grounded_transform instead. Compiles a complete Spatial Edit Program against an exact grounding and never accepts raw Drawing transaction commands.",
     parameters: {
       taskId: { type: "string", required: true },
       groundingId: { type: "string", required: true },
@@ -7975,13 +8081,15 @@ class SemanticEditService {
     return structuredClone(ref);
   }
   ground(sessionId, input) {
+    var _a3;
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
     const context = __privateGet(this, _contexts).get(input.contextId);
     if (!context || context.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
     const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
     const nodes = new Map(allNodes(snapshot.document).map((node) => [String(node.id), node]));
-    const projection = input.selectionProjectionId === void 0 ? null : this.currentSelectionProjection(sessionId);
-    if (input.selectionProjectionId !== void 0 && (projection == null ? void 0 : projection.selectionProjectionId) !== input.selectionProjectionId) {
+    const selectionProjectionId = ((_a3 = input.selectionProjectionId) == null ? void 0 : _a3.trim()) || void 0;
+    const projection = selectionProjectionId === void 0 ? null : this.currentSelectionProjection(sessionId);
+    if (selectionProjectionId !== void 0 && (projection == null ? void 0 : projection.selectionProjectionId) !== selectionProjectionId) {
       throw new Error("EDIT_SELECTION_PROJECTION_STALE");
     }
     const targetNodeIds = projection ? [...projection.nodeIds] : [...new Set(input.targetNodeIds)];
@@ -7989,14 +8097,14 @@ class SemanticEditService {
     if (targetNodeIds.length === 0 || targetNodeIds.some((id) => !nodes.has(id))) {
       throw new Error("EDIT_TARGET_UNRESOLVED");
     }
-    const interfaces = input.interfaces.length > 0 ? structuredClone(input.interfaces) : projection ? inferSelectionInterfaces(snapshot.document, targetNodeIds) : [];
+    const interfaces = input.interfaces.length > 0 ? structuredClone(input.interfaces) : inferSelectionInterfaces(snapshot.document, targetNodeIds);
     for (const port of interfaces) {
       const node = nodes.get(port.nodeId);
       if (!node || node.type !== "line" || !port.endpoint) throw new Error("EDIT_INTERFACE_UNRESOLVED");
     }
     const sourceStatus = snapshot.provisional ? "provisional" : targetNodeIds.some((id) => {
-      var _a3;
-      return ((_a3 = nodes.get(id)) == null ? void 0 : _a3.quality.status) !== "confirmed";
+      var _a4;
+      return ((_a4 = nodes.get(id)) == null ? void 0 : _a4.quality.status) !== "confirmed";
     }) ? "candidate" : "confirmed";
     const targetHandle = this.ports.id("target");
     const target = {
@@ -8074,6 +8182,48 @@ class SemanticEditService {
     task.candidateCount += 1;
     __privateGet(this, _previews2).set(sessionId, { ref, task, grounding, program, compilation });
     return structuredClone(ref);
+  }
+  previewGroundedTransform(sessionId, input) {
+    const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
+    const grounding = __privateGet(this, _groundings).get(input.groundingId);
+    if (!grounding || grounding.ref.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    const translation = finiteVec2(input.translation, "EDIT_TRANSLATION_INVALID");
+    const rotationDegrees = input.rotationDegrees ?? 0;
+    if (!Number.isFinite(rotationDegrees)) throw new Error("EDIT_ROTATION_INVALID");
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const pivot = input.pivot === void 0 ? groundedGeometryCenter(snapshot.document, grounding.target.targetNodeIds) : finiteVec2(input.pivot, "EDIT_PIVOT_INVALID");
+    const interfaces = grounding.target.interfaces.map(({ interfaceId }) => interfaceId);
+    const operation = interfaces.length > 0 ? {
+      kind: "connected_transform",
+      translation,
+      rotationRadians: rotationDegrees * Math.PI / 180,
+      pivot,
+      interfaceIds: interfaces
+    } : {
+      kind: "rigid_transform",
+      translation,
+      rotationRadians: rotationDegrees * Math.PI / 180,
+      pivot
+    };
+    return this.previewProgram(sessionId, {
+      taskId: task.ref.taskId,
+      groundingId: grounding.ref.groundingId,
+      program: {
+        baseRef: structuredClone(task.ref.baseRef),
+        targetHandle: grounding.target.targetHandle,
+        summary: input.summary,
+        objective: task.objective,
+        operations: [operation],
+        preserveScopes: [],
+        postconditions: [],
+        evidenceRefs: [grounding.ref.evidenceDigest]
+      }
+    });
+  }
+  reviseGroundedTransform(sessionId, input) {
+    const current = __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.currentPreviewHandle, input.currentCandidateDigest);
+    if (current.ref.taskId !== input.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    return this.previewGroundedTransform(sessionId, input);
   }
   revisePreview(sessionId, input) {
     const current = __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.currentPreviewHandle, input.currentCandidateDigest);
@@ -8507,6 +8657,23 @@ function geometryDiagonal(document) {
   const ys = points.map(([, y]) => y);
   return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
 }
+function finiteVec2(value, code) {
+  if (!Array.isArray(value) || value.length !== 2 || value.some((coordinate) => !Number.isFinite(coordinate))) {
+    throw new Error(code);
+  }
+  return [value[0], value[1]];
+}
+function groundedGeometryCenter(document, targetNodeIds) {
+  const selected = new Set(targetNodeIds);
+  const points = document.geometry.filter(({ id }) => selected.has(String(id))).flatMap(geometryAnchors);
+  if (points.length === 0) throw new Error("EDIT_TRANSFORM_PIVOT_UNRESOLVED");
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  return [
+    (Math.min(...xs) + Math.max(...xs)) / 2,
+    (Math.min(...ys) + Math.max(...ys)) / 2
+  ];
+}
 function annotationConfirmed(node) {
   const quality = node.quality;
   return (quality == null ? void 0 : quality.status) === "confirmed" && (node.type !== "dimension" || node.associationStatus === "resolved");
@@ -8843,63 +9010,90 @@ function createDshReviewer(ctx) {
       mediaType: "image/png",
       name: "drawing-before-after.png"
     });
-    const run = await ctx.subagents.start(providerName, {
-      label: "drawing-reviewer",
-      parent,
-      signal,
-      maxDepth: 0,
-      toolFilter: { allow: ["structured_output"] },
-      persona: provider.capabilities.persona ? "You are a read-only drawing edit reviewer. Evaluate only the supplied bounded semantic diff. Never request or execute tools." : void 0,
-      prompt: [{ type: "text", text: JSON.stringify({
-        instruction: "Return satisfied only when the changed nodes and diagnostics support the objective without a visible semantic defect.",
-        objective: input.objective,
-        beforeSemanticDigest: input.beforeSemanticDigest,
-        afterSemanticDigest: input.afterSemanticDigest,
-        effectDigest: input.effectDigest,
-        changedNodeIds: input.changedNodeIds,
-        diagnostics: input.diagnostics,
-        comparisonLayout: rendered.manifest.comparisonLayout,
-        rendererVersion: rendered.manifest.rendererVersion,
-        comparisonContentDigest: rendered.contentDigest
-      }) }, { type: "image", attachment }],
-      outputSchema: {
-        type: "object",
-        properties: {
-          outcome: { type: "string", enum: ["satisfied", "needs_revision"] },
-          defects: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                code: { type: "string" },
-                reason: { type: "string" },
-                scopeDigest: { type: "string" }
-              },
-              required: ["code", "reason", "scopeDigest"],
-              additionalProperties: false
-            }
-          }
-        },
-        required: ["outcome", "defects"],
-        additionalProperties: false
-      }
-    });
+    const render = {
+      ...rendered.manifest,
+      contentDigest: rendered.contentDigest
+    };
+    let run;
     try {
-      const result = await run.result;
-      if (result.stopReason !== "completed" || !validReview(result.structured)) {
-        return { outcome: "unavailable", defects: [] };
+      run = await ctx.subagents.start(providerName, {
+        label: "drawing-reviewer",
+        parent,
+        signal,
+        maxDepth: 1,
+        toolFilter: { allow: ["structured_output"] },
+        persona: provider.capabilities.persona ? "You are a read-only drawing edit reviewer. Evaluate only the supplied bounded semantic diff. Never request or execute tools." : void 0,
+        prompt: [{ type: "text", text: JSON.stringify({
+          instruction: "Return satisfied only when the changed nodes and diagnostics support the objective without a visible semantic defect.",
+          objective: input.objective,
+          beforeSemanticDigest: input.beforeSemanticDigest,
+          afterSemanticDigest: input.afterSemanticDigest,
+          effectDigest: input.effectDigest,
+          changedNodeIds: input.changedNodeIds,
+          diagnostics: input.diagnostics,
+          comparisonLayout: rendered.manifest.comparisonLayout,
+          rendererVersion: rendered.manifest.rendererVersion,
+          comparisonContentDigest: rendered.contentDigest
+        }) }, { type: "image", attachment }],
+        outputSchema: {
+          type: "object",
+          properties: {
+            outcome: { type: "string", enum: ["satisfied", "needs_revision"] },
+            defects: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  code: { type: "string" },
+                  reason: { type: "string" },
+                  scopeDigest: { type: "string" }
+                },
+                required: ["code", "reason", "scopeDigest"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ["outcome", "defects"],
+          additionalProperties: false
+        }
+      });
+    } catch {
+      return { outcome: "unavailable", defects: [], render };
+    }
+    try {
+      let result;
+      try {
+        result = await run.result;
+      } catch {
+        return { outcome: "unavailable", defects: [], render };
+      }
+      const verdict = result.stopReason === "completed" ? reviewerVerdict(result.structured, result.output) : null;
+      if (!verdict) {
+        return { outcome: "unavailable", defects: [], render };
       }
       return {
-        ...structuredClone(result.structured),
-        render: {
-          ...rendered.manifest,
-          contentDigest: rendered.contentDigest
-        }
+        ...structuredClone(verdict),
+        render
       };
     } finally {
       await run.dispose();
     }
   };
+}
+function reviewerVerdict(structured, output) {
+  if (validReview(structured)) return structured;
+  if (!Array.isArray(output)) return null;
+  const text = output.filter((block) => !!block && typeof block === "object" && block.type === "text" && typeof block.text === "string").map(({ text: text2 }) => text2).join("\n");
+  if (text.length === 0 || text.length > 2e4) return null;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    return validReview(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 function validReview(value) {
   if (!value || typeof value !== "object") return false;

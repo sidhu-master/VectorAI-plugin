@@ -99,6 +99,85 @@ async function previewRightHand(service: SemanticEditService) {
 }
 
 describe('SemanticEditService', () => {
+  it('treats an empty optional selectionProjectionId as omitted for model-generated grounding input', async () => {
+    const { service } = await setup();
+    const task = service.startTask('session-1', {
+      objective: '把右手抬起来打招呼',
+      rootUserMessageDigest: 'sha256:empty-selection-handle',
+      policy: 'auto-safe',
+    });
+    const observation = service.observe('session-1', { taskId: task.taskId });
+    const context = service.buildContext('session-1', {
+      taskId: task.taskId,
+      observationId: observation.observationId,
+    });
+
+    const grounding = service.ground('session-1', {
+      taskId: task.taskId,
+      contextId: context.contextId,
+      selectionProjectionId: '',
+      targetNodeIds: ['right-hand'],
+      interfaces: [],
+    });
+
+    expect(grounding.targetNodeIds).toEqual(['right-hand']);
+    expect(grounding.interfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'right-arm-top', endpoint: 'end' }),
+      expect.objectContaining({ nodeId: 'right-arm-bottom', endpoint: 'end' }),
+    ]));
+  });
+
+  it('builds a complete connected transform Preview from simple model-facing transform fields', async () => {
+    const { service, drawings } = await setup();
+    const projected = service.projectSelection('session-1', {
+      expectedRef: { drawingId: 'drawing-wave', revision: 1 },
+      nodeIds: ['right-hand'],
+    });
+    if (projected.status !== 'projected') throw new Error('selection projection missing');
+    const task = service.startTask('session-1', {
+      objective: '把选中的右手抬起来打招呼',
+      rootUserMessageDigest: 'sha256:simple-transform',
+      policy: 'auto-safe',
+    });
+    const observation = service.observe('session-1', { taskId: task.taskId });
+    const context = service.buildContext('session-1', {
+      taskId: task.taskId,
+      observationId: observation.observationId,
+    });
+    const grounding = service.ground('session-1', {
+      taskId: task.taskId,
+      contextId: context.contextId,
+      selectionProjectionId: projected.projection.selectionProjectionId,
+      targetNodeIds: [],
+      interfaces: [],
+    });
+
+    const preview = service.previewGroundedTransform('session-1', {
+      taskId: task.taskId,
+      groundingId: grounding.groundingId,
+      translation: [-3, 11],
+      rotationDegrees: -60,
+      summary: 'Raise the selected hand to wave',
+    });
+
+    expect(preview).toMatchObject({ taskId: task.taskId, baseRef: task.baseRef });
+    expect(drawings.getPreview('session-1')?.candidate.document.geometry
+      .find(({ id }) => id === 'right-hand')).toMatchObject({ center: [12, 11] });
+
+    const revised = service.reviseGroundedTransform('session-1', {
+      taskId: task.taskId,
+      currentPreviewHandle: preview.previewHandle,
+      currentCandidateDigest: preview.candidateDigest,
+      groundingId: grounding.groundingId,
+      translation: [-2, 8],
+      rotationDegrees: -35,
+      summary: 'Use a smaller wave motion',
+    });
+    expect(revised.previewHandle).not.toBe(preview.previewHandle);
+    expect(drawings.getPreview('session-1')?.candidate.document.geometry
+      .find(({ id }) => id === 'right-hand')).toMatchObject({ center: [13, 8] });
+  });
+
   it('clears the Host selection projection when the canvas deselects everything', async () => {
     const { service } = await setup();
     const expectedRef = { drawingId: 'drawing-wave', revision: 1 };

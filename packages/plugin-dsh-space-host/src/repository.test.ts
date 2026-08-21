@@ -4,7 +4,8 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
-import type { ImageVectorizer } from './repository';
+import type { DrawingDurableState } from './durable-envelope';
+import type { DrawingEntry, DrawingRepositoryStorage, ImageVectorizer } from './repository';
 import { InMemoryDrawingRepository } from './repository';
 
 function attachment(
@@ -71,6 +72,41 @@ function repository(
 }
 
 describe('InMemoryDrawingRepository', () => {
+  it('promotes a legacy version-1 drawing into durable history on first semantic commit', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing_legacy' }, now: () => 1 });
+    document.geometry = [{
+      id: 'top' as never, type: 'line', start: [0, 0], end: [10, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const legacy: DrawingEntry = {
+      attachmentId: 'legacy-source', document, drawingId: 'drawing_legacy',
+      bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 }, revision: 1,
+      source: { id: 'legacy-source', mediaType: 'image/png', bytes: 1, width: 10, height: 10 },
+      provisional: false,
+    };
+    let saved: DrawingDurableState | null = null;
+    const storage: DrawingRepositoryStorage = {
+      load: () => structuredClone(legacy),
+      save() {},
+      loadDurable: () => null,
+      saveDurable: (_sessionId, state) => { saved = structuredClone(state); },
+    };
+    const drawings = new InMemoryDrawingRepository({ vectorizer: vectorizer(), storage, now: () => 2 });
+
+    const receipt = drawings.commitSemantic('legacy-session', {
+      expectedRef: { drawingId: 'drawing_legacy', revision: 1 },
+      operationId: 'upgrade-operation', operationBindingDigest: 'sha256:upgrade-binding',
+      candidateDigest: 'sha256:upgrade-candidate', mode: 'confirmed',
+      forward: [{ type: 'node.update', id: 'top', expected: { visible: true }, changes: { visible: false } }],
+      inverse: [{ type: 'node.update', id: 'top', expected: { visible: false }, changes: { visible: true } }],
+    });
+
+    expect(receipt).toMatchObject({
+      status: 'committed', resultingRef: { drawingId: 'drawing_legacy', revision: 2 },
+    });
+    expect(saved).toMatchObject({ version: 2, entry: { revision: 2 }, commits: [{ mode: 'confirmed' }] });
+  });
+
   it('keeps only the latest pending image in one session', () => {
     const drawings = repository();
 

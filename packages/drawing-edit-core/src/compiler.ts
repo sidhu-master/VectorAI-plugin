@@ -280,13 +280,29 @@ function degrees(radians: number): number {
 }
 
 function dedupeUpdates(commands: DrawingTransactionCommand[]): DrawingTransactionCommand[] {
-  const seen = new Set<string>();
-  return commands.filter((command) => {
+  const merged: DrawingTransactionCommand[] = [];
+  const indexes = new Map<string, number>();
+  for (const command of commands) {
     const id = 'id' in command ? command.id : command.node.id;
-    if (seen.has(id)) throw new Error('EDIT_OVERLAPPING_TRANSFORM_SCOPE');
-    seen.add(id);
-    return true;
-  });
+    const index = indexes.get(id);
+    if (index === undefined) {
+      indexes.set(id, merged.length);
+      merged.push(structuredClone(command));
+      continue;
+    }
+    const current = merged[index];
+    if (current?.type !== 'node.update' || command.type !== 'node.update') {
+      throw new Error('EDIT_OVERLAPPING_TRANSFORM_SCOPE');
+    }
+    const overlap = Object.keys(command.changes).some((field) => field in current.changes);
+    if (overlap) throw new Error('EDIT_OVERLAPPING_TRANSFORM_SCOPE');
+    merged[index] = {
+      ...current,
+      changes: { ...current.changes, ...structuredClone(command.changes) },
+      expected: { ...current.expected, ...structuredClone(command.expected) },
+    };
+  }
+  return merged;
 }
 
 function assertPreserved(

@@ -270,10 +270,11 @@ export class SemanticEditService {
     if (!context || context.taskId !== task.ref.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
     const snapshot = this.#snapshotAtTask(sessionId, task);
     const nodes = new Map(allNodes(snapshot.document).map((node) => [String(node.id), node]));
-    const projection = input.selectionProjectionId === undefined
+    const selectionProjectionId = input.selectionProjectionId?.trim() || undefined;
+    const projection = selectionProjectionId === undefined
       ? null
       : this.currentSelectionProjection(sessionId);
-    if (input.selectionProjectionId !== undefined && projection?.selectionProjectionId !== input.selectionProjectionId) {
+    if (selectionProjectionId !== undefined && projection?.selectionProjectionId !== selectionProjectionId) {
       throw new Error('EDIT_SELECTION_PROJECTION_STALE');
     }
     const targetNodeIds = projection ? [...projection.nodeIds] : [...new Set(input.targetNodeIds)];
@@ -287,9 +288,7 @@ export class SemanticEditService {
     }
     const interfaces = input.interfaces.length > 0
       ? structuredClone(input.interfaces)
-      : projection
-        ? inferSelectionInterfaces(snapshot.document, targetNodeIds)
-        : [];
+      : inferSelectionInterfaces(snapshot.document, targetNodeIds);
     for (const port of interfaces) {
       const node = nodes.get(port.nodeId);
       if (!node || node.type !== 'line' || !port.endpoint) throw new Error('EDIT_INTERFACE_UNRESOLVED');
@@ -383,6 +382,72 @@ export class SemanticEditService {
     task.candidateCount += 1;
     this.#previews.set(sessionId, { ref, task, grounding, program, compilation });
     return structuredClone(ref);
+  }
+
+  previewGroundedTransform(sessionId: string, input: {
+    taskId: string;
+    groundingId: string;
+    translation: [number, number];
+    rotationDegrees?: number;
+    pivot?: [number, number];
+    summary: string;
+  }): PreviewRef {
+    const task = this.#task(sessionId, input.taskId);
+    const grounding = this.#groundings.get(input.groundingId);
+    if (!grounding || grounding.ref.taskId !== task.ref.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
+    const translation = finiteVec2(input.translation, 'EDIT_TRANSLATION_INVALID');
+    const rotationDegrees = input.rotationDegrees ?? 0;
+    if (!Number.isFinite(rotationDegrees)) throw new Error('EDIT_ROTATION_INVALID');
+    const snapshot = this.#snapshotAtTask(sessionId, task);
+    const pivot = input.pivot === undefined
+      ? groundedGeometryCenter(snapshot.document, grounding.target.targetNodeIds)
+      : finiteVec2(input.pivot, 'EDIT_PIVOT_INVALID');
+    const interfaces = grounding.target.interfaces.map(({ interfaceId }) => interfaceId);
+    const operation: SpatialEditProgram['operations'][number] = interfaces.length > 0
+      ? {
+          kind: 'connected_transform',
+          translation,
+          rotationRadians: rotationDegrees * Math.PI / 180,
+          pivot,
+          interfaceIds: interfaces,
+        }
+      : {
+          kind: 'rigid_transform',
+          translation,
+          rotationRadians: rotationDegrees * Math.PI / 180,
+          pivot,
+        };
+    return this.previewProgram(sessionId, {
+      taskId: task.ref.taskId,
+      groundingId: grounding.ref.groundingId,
+      program: {
+        baseRef: structuredClone(task.ref.baseRef),
+        targetHandle: grounding.target.targetHandle,
+        summary: input.summary,
+        objective: task.objective,
+        operations: [operation],
+        preserveScopes: [],
+        postconditions: [],
+        evidenceRefs: [grounding.ref.evidenceDigest],
+      },
+    });
+  }
+
+  reviseGroundedTransform(sessionId: string, input: {
+    taskId: string;
+    currentPreviewHandle: string;
+    currentCandidateDigest: string;
+    groundingId: string;
+    translation: [number, number];
+    rotationDegrees?: number;
+    pivot?: [number, number];
+    summary: string;
+  }): PreviewRef {
+    const current = this.#preview(
+      sessionId, input.currentPreviewHandle, input.currentCandidateDigest,
+    );
+    if (current.ref.taskId !== input.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
+    return this.previewGroundedTransform(sessionId, input);
   }
 
   revisePreview(sessionId: string, input: {
@@ -842,6 +907,27 @@ function geometryDiagonal(document: DrawingDocument): number {
   const xs = points.map(([x]) => x);
   const ys = points.map(([, y]) => y);
   return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
+}
+
+function finiteVec2(value: [number, number], code: string): [number, number] {
+  if (!Array.isArray(value) || value.length !== 2 || value.some((coordinate) => !Number.isFinite(coordinate))) {
+    throw new Error(code);
+  }
+  return [value[0], value[1]];
+}
+
+function groundedGeometryCenter(document: DrawingDocument, targetNodeIds: string[]): [number, number] {
+  const selected = new Set(targetNodeIds);
+  const points = document.geometry
+    .filter(({ id }) => selected.has(String(id)))
+    .flatMap(geometryAnchors);
+  if (points.length === 0) throw new Error('EDIT_TRANSFORM_PIVOT_UNRESOLVED');
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  return [
+    (Math.min(...xs) + Math.max(...xs)) / 2,
+    (Math.min(...ys) + Math.max(...ys)) / 2,
+  ];
 }
 
 function annotationConfirmed(node: Record<string, unknown>): boolean {

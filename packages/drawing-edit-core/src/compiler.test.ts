@@ -106,6 +106,42 @@ describe('@vectorai/drawing-edit-core compiler', () => {
     expect(canonicalSemanticString(restored)).toBe(canonicalSemanticString(before));
   });
 
+  it('merges disjoint endpoint updates when both ends of one connector follow the target', () => {
+    const before = wavingFixture();
+    before.geometry.push({
+      id: 'hand-detail' as GeometryId,
+      type: 'line', start: [12, 0], end: [18, 0], visible: true, quality,
+    });
+    const compiled = compileSpatialEditProgram({
+      document: before,
+      program: {
+        baseRef: { drawingId: 'drawing-wave', revision: 0 },
+        targetHandle: 'target:right-hand',
+        summary: 'Raise the hand and its internal detail',
+        objective: '抬手',
+        operations: [{
+          kind: 'connected_transform', translation: [0, 5], rotationRadians: 0,
+          pivot: [15, 0], interfaceIds: ['hand-detail:start', 'hand-detail:end'],
+        }],
+        preserveScopes: [], postconditions: [], evidenceRefs: ['evidence:right-hand'],
+      },
+      grounding: {
+        targetHandle: 'target:right-hand', targetNodeIds: ['right-hand'],
+        interfaces: [
+          { interfaceId: 'hand-detail:start', nodeId: 'hand-detail', endpoint: 'start' },
+          { interfaceId: 'hand-detail:end', nodeId: 'hand-detail', endpoint: 'end' },
+        ],
+        sourceStatus: 'confirmed',
+      },
+      ports,
+    });
+
+    expect(compiled.forward).toHaveLength(2);
+    expect(compiled.candidate.geometry.find(({ id }) => id === 'hand-detail')).toMatchObject({
+      start: [12, 5], end: [18, 5],
+    });
+  });
+
   it('keeps semantic candidate identity independent from timestamps and summaries', () => {
     const first = wavingFixture();
     const second = wavingFixture();

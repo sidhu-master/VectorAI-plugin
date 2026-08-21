@@ -168,6 +168,8 @@ describe('drawing tools', () => {
       'drawing_observe',
       'drawing_build_context',
       'drawing_ground',
+      'drawing_preview_grounded_transform',
+      'drawing_revise_grounded_transform',
       'drawing_preview_program',
       'drawing_revise_preview',
       'drawing_evaluate_preview',

@@ -30,65 +30,105 @@ export function createDshReviewer(
       mediaType: 'image/png',
       name: 'drawing-before-after.png',
     });
-    const run = await ctx.subagents.start(providerName, {
-      label: 'drawing-reviewer',
-      parent,
-      signal,
-      maxDepth: 0,
-      toolFilter: { allow: ['structured_output'] },
-      persona: provider.capabilities.persona
-        ? 'You are a read-only drawing edit reviewer. Evaluate only the supplied bounded semantic diff. Never request or execute tools.'
-        : undefined,
-      prompt: [{ type: 'text', text: JSON.stringify({
-        instruction: 'Return satisfied only when the changed nodes and diagnostics support the objective without a visible semantic defect.',
-        objective: input.objective,
-        beforeSemanticDigest: input.beforeSemanticDigest,
-        afterSemanticDigest: input.afterSemanticDigest,
-        effectDigest: input.effectDigest,
-        changedNodeIds: input.changedNodeIds,
-        diagnostics: input.diagnostics,
-        comparisonLayout: rendered.manifest.comparisonLayout,
-        rendererVersion: rendered.manifest.rendererVersion,
-        comparisonContentDigest: rendered.contentDigest,
-      }) }, { type: 'image', attachment }],
-      outputSchema: {
-        type: 'object',
-        properties: {
-          outcome: { type: 'string', enum: ['satisfied', 'needs_revision'] },
-          defects: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                code: { type: 'string' },
-                reason: { type: 'string' },
-                scopeDigest: { type: 'string' },
+    const render = {
+      ...rendered.manifest,
+      contentDigest: rendered.contentDigest,
+    };
+    let run;
+    try {
+      run = await ctx.subagents.start(providerName, {
+        label: 'drawing-reviewer',
+        parent,
+        signal,
+        maxDepth: 1,
+        toolFilter: { allow: ['structured_output'] },
+        persona: provider.capabilities.persona
+          ? 'You are a read-only drawing edit reviewer. Evaluate only the supplied bounded semantic diff. Never request or execute tools.'
+          : undefined,
+        prompt: [{ type: 'text', text: JSON.stringify({
+          instruction: 'Return satisfied only when the changed nodes and diagnostics support the objective without a visible semantic defect.',
+          objective: input.objective,
+          beforeSemanticDigest: input.beforeSemanticDigest,
+          afterSemanticDigest: input.afterSemanticDigest,
+          effectDigest: input.effectDigest,
+          changedNodeIds: input.changedNodeIds,
+          diagnostics: input.diagnostics,
+          comparisonLayout: rendered.manifest.comparisonLayout,
+          rendererVersion: rendered.manifest.rendererVersion,
+          comparisonContentDigest: rendered.contentDigest,
+        }) }, { type: 'image', attachment }],
+        outputSchema: {
+          type: 'object',
+          properties: {
+            outcome: { type: 'string', enum: ['satisfied', 'needs_revision'] },
+            defects: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  code: { type: 'string' },
+                  reason: { type: 'string' },
+                  scopeDigest: { type: 'string' },
+                },
+                required: ['code', 'reason', 'scopeDigest'],
+                additionalProperties: false,
               },
-              required: ['code', 'reason', 'scopeDigest'],
-              additionalProperties: false,
             },
           },
+          required: ['outcome', 'defects'],
+          additionalProperties: false,
         },
-        required: ['outcome', 'defects'],
-        additionalProperties: false,
-      },
-    });
+      });
+    } catch {
+      return { outcome: 'unavailable', defects: [], render };
+    }
     try {
-      const result = await run.result;
-      if (result.stopReason !== 'completed' || !validReview(result.structured)) {
-        return { outcome: 'unavailable', defects: [] };
+      let result;
+      try {
+        result = await run.result;
+      } catch {
+        return { outcome: 'unavailable', defects: [], render };
+      }
+      const verdict = result.stopReason === 'completed'
+        ? reviewerVerdict(result.structured, result.output)
+        : null;
+      if (!verdict) {
+        return { outcome: 'unavailable', defects: [], render };
       }
       return {
-        ...structuredClone(result.structured),
-        render: {
-          ...rendered.manifest,
-          contentDigest: rendered.contentDigest,
-        },
+        ...structuredClone(verdict),
+        render,
       };
     } finally {
       await run.dispose();
     }
   };
+}
+
+function reviewerVerdict(structured: unknown, output: unknown): {
+  outcome: 'satisfied' | 'needs_revision';
+  defects: Array<{ code: string; reason: string; scopeDigest: string }>;
+} | null {
+  if (validReview(structured)) return structured;
+  if (!Array.isArray(output)) return null;
+  const text = output
+    .filter((block): block is { type: 'text'; text: string } => (
+      !!block && typeof block === 'object'
+      && (block as { type?: unknown }).type === 'text'
+      && typeof (block as { text?: unknown }).text === 'string'
+    ))
+    .map(({ text }) => text)
+    .join('\n');
+  if (text.length === 0 || text.length > 20_000) return null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+    return validReview(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function validReview(value: unknown): value is {

@@ -280,6 +280,8 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 | `drawing_build_context` | 只读 | 从 Observation 构建有界上下文 |
 | `drawing_ground` | 只读 | 将语义目标绑定到精确节点和接口 |
 | `drawing_preview_program` | 候选写 | 编译高阶语义程序并生成可视 Preview，不改正式状态 |
+| `drawing_preview_grounded_transform` | 候选写 | 用窄参数移动/旋转已 grounding 的图元，完整空间程序由 Host 生成 |
+| `drawing_revise_grounded_transform` | 候选写 | 根据视觉评审结果替换同一任务的 transform Preview |
 | `drawing_revise_preview` | 候选写 | 精确替换当前候选；失败保留旧 Preview；每任务最多三个候选 |
 | `drawing_evaluate_preview` | 只读/评审 | 运行 hard validators、来源质量和本地 reviewer |
 | `drawing_finalize_preview` | 受控正式写 | auto-safe 自动提交；风险候选询问；hard-invalid/deny 永久阻断 |

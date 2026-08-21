@@ -549,8 +549,17 @@ export class InMemoryDrawingRepository {
       throw new Error('AUTO_SAFE_UNAVAILABLE');
     }
     const state = this.#durableState(sessionId);
-    if (!state) throw new Error('DRAWING_REQUIRED');
-    return state;
+    if (state) return state;
+    const legacy = this.#getDrawing(sessionId);
+    if (!legacy) throw new Error('DRAWING_REQUIRED');
+    const promoted: DrawingDurableState = {
+      version: 2,
+      entry: structuredClone(legacy),
+      commits: [],
+      operations: [],
+    };
+    this.#saveDurable(sessionId, promoted);
+    return promoted;
   }
 
   #saveDurable(sessionId: string, state: DrawingDurableState): void {
