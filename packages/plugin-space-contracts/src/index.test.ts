@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   drawingRefSchema,
+  drawingGroundingOverlaySchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
   finalizePreviewRequestSchema,
@@ -80,6 +81,44 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(drawingSelectionProjectionRequestSchema.parse({ ...request, nodeIds: [] }).nodeIds).toEqual([]);
     expect(drawingSelectionProjectionResultSchema.parse({ status: 'cleared' })).toEqual({ status: 'cleared' });
     expect(() => drawingSelectionProjectionRequestSchema.parse({ ...request, writable: true })).toThrow();
+  });
+
+  it('validates revision-bound transient grounding overlays without write authority', () => {
+    const overlay = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      taskId: 'task-1',
+      groups: [{
+        groundingId: 'ground-left',
+        partKey: 'part-left',
+        label: 'Part Left',
+        colorIndex: 0,
+        nodeIds: ['carrier-left'],
+        interfaces: [{
+          interfaceId: 'connector-left:end',
+          nodeId: 'connector-left',
+          endpoint: 'end' as const,
+        }],
+      }, {
+        groundingId: 'ground-right',
+        partKey: 'part-right',
+        label: 'Part Right',
+        colorIndex: 1,
+        nodeIds: ['carrier-right'],
+        interfaces: [],
+      }],
+    };
+
+    expect(drawingGroundingOverlaySchema.parse(overlay)).toEqual(overlay);
+    expect(() => drawingGroundingOverlaySchema.parse({ ...overlay, writable: true })).toThrow();
+    expect(() => drawingGroundingOverlaySchema.parse({
+      ...overlay,
+      groups: [overlay.groups[0], { ...overlay.groups[1], partKey: 'part-left' }],
+    })).toThrow();
+    expect(() => drawingGroundingOverlaySchema.parse({
+      ...overlay,
+      groups: [{ ...overlay.groups[0], endpoint: 'middle' }],
+    })).toThrow();
   });
 
   it('rejects unknown snapshot and nested document fields', () => {

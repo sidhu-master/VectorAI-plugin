@@ -10,6 +10,7 @@ import {
   durableOperationReceiptSchema,
   finalizePreviewRequestSchema,
   finalizePreviewResultSchema,
+  multiPartTransformRequestSchema,
   observationArtifactRefSchema,
   operationLookupResultSchema,
   reviewEvidenceSchema,
@@ -79,6 +80,44 @@ describe('@vectorai/drawing-edit-protocol', () => {
 
   it('parses a bounded high-level spatial edit program', () => {
     expect(spatialEditProgramSchema.parse(validProgram())).toEqual(validProgram());
+  });
+
+  it('freezes a bounded multi-part transform request with unique exact groundings', () => {
+    const request = {
+      taskId: 'task-1',
+      summary: 'Move two independent carriers',
+      parts: [
+        { groundingId: 'ground-left', translation: [3, -2] },
+        {
+          groundingId: 'ground-right', translation: [-3, -2],
+          rotationRadians: 0.2, pivot: [10, 4],
+        },
+      ],
+    };
+
+    expect(multiPartTransformRequestSchema.parse(request)).toEqual(request);
+    expect(() => multiPartTransformRequestSchema.parse({
+      ...request,
+      parts: [
+        { groundingId: 'same', translation: [1, 0] },
+        { groundingId: 'same', translation: [-1, 0] },
+      ],
+    })).toThrow();
+    expect(() => multiPartTransformRequestSchema.parse({
+      ...request,
+      parts: [
+        { groundingId: 'ground-left', translation: [1, 0], rotationRadians: 0.2 },
+        request.parts[1],
+      ],
+    })).toThrow();
+    expect(() => multiPartTransformRequestSchema.parse({
+      ...request,
+      parts: [
+        { groundingId: 'ground-left', translation: [Number.POSITIVE_INFINITY, 0] },
+        request.parts[1],
+      ],
+    })).toThrow();
+    expect(() => multiPartTransformRequestSchema.parse({ ...request, authority: 'forged' })).toThrow();
   });
 
   it('rejects raw commands, empty evidence, invalid preserve scopes, and non-finite motion', () => {

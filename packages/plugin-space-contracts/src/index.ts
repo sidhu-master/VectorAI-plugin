@@ -394,6 +394,45 @@ export const drawingSelectionProjectionResultSchema = z.discriminatedUnion('stat
   z.object({ status: z.literal('rejected'), code: idSchema, message: z.string().min(1) }).strict(),
 ]);
 
+const drawingGroundingOverlayInterfaceSchema = z.object({
+  interfaceId: idSchema,
+  nodeId: idSchema,
+  endpoint: z.enum(['start', 'end']),
+}).strict();
+
+const drawingGroundingOverlayGroupSchema = z.object({
+  groundingId: idSchema,
+  partKey: z.string().trim().min(1).max(64),
+  label: z.string().trim().min(1).max(80),
+  colorIndex: z.number().int().nonnegative(),
+  nodeIds: z.array(idSchema).min(1).max(256),
+  interfaces: z.array(drawingGroundingOverlayInterfaceSchema).max(256),
+}).strict();
+
+export const drawingGroundingOverlaySchema = z.object({
+  version: z.literal(1),
+  drawingRef: drawingRefSchema,
+  taskId: idSchema,
+  groups: z.array(drawingGroundingOverlayGroupSchema).min(1).max(16),
+}).strict().superRefine(({ groups }, context) => {
+  const groundingIds = new Set<string>();
+  const partKeys = new Set<string>();
+  for (const [index, group] of groups.entries()) {
+    if (groundingIds.has(group.groundingId)) {
+      context.addIssue({
+        code: 'custom', path: ['groups', index, 'groundingId'], message: 'GROUNDING_ID_DUPLICATE',
+      });
+    }
+    if (partKeys.has(group.partKey)) {
+      context.addIssue({
+        code: 'custom', path: ['groups', index, 'partKey'], message: 'GROUNDING_PART_KEY_DUPLICATE',
+      });
+    }
+    groundingIds.add(group.groundingId);
+    partKeys.add(group.partKey);
+  }
+});
+
 export const drawingPreviewCreateRequestSchema = z.object({
   ref: drawingRefSchema,
   commands: z.array(workspaceCommandSchema).min(1),
@@ -432,6 +471,8 @@ export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
 export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;
 export type DrawingSelectionProjectionRequest = z.infer<typeof drawingSelectionProjectionRequestSchema>;
 export type DrawingSelectionProjectionResult = z.infer<typeof drawingSelectionProjectionResultSchema>;
+export type DrawingGroundingOverlay = z.infer<typeof drawingGroundingOverlaySchema>;
+export type DrawingGroundingOverlayGroup = DrawingGroundingOverlay['groups'][number];
 
 export interface Bounds2D {
   minX: number;

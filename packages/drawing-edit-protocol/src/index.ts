@@ -2,6 +2,7 @@
 
 export * from './evaluation';
 export * from './finalize';
+export * from './multi-part';
 export * from './operations';
 export * from './refs';
 export * from './spatial-edit-program';
