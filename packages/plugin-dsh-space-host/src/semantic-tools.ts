@@ -151,7 +151,7 @@ export function createDrawingObserveTool(semantic: SemanticEditService) {
 export function createDrawingSelectPartsTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_select_parts',
-    description: 'Name the semantic parts to edit. Prefer candidate cN keys returned by drawing_observe; otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. The Host resolves exact nodes and interfaces.',
+    description: 'Name the semantic parts to edit. Prefer candidate cN keys returned by drawing_observe; multiple exact candidate references inside one part are merged as that part. Otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. The Host resolves exact nodes and interfaces.',
     parameters: {
       parts: array(object({
         partKey: string('Stable semantic name used by later goals.'), label: string(),

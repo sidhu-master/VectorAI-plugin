@@ -395,6 +395,74 @@ describe('SemanticEditService', () => {
     });
   });
 
+  it('merges multiple exact candidate references into one semantic part', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-composite-part',
+      objective: '选择由多个图元组成的右侧部件',
+      rootUserMessageDigest: 'sha256:message-composite-part', numericConstraints: [],
+    });
+    const observed = await service.observeCurrent('session-1');
+    const rightCircle = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-right')
+    ));
+    const rightLines = observed.selectionCandidates.filter(({ summary }) => (
+      summary.includes('line') && summary.includes('middle-right')
+    ));
+    expect(rightCircle?.key).toMatch(/^c\d+$/);
+    expect(rightLines).toHaveLength(2);
+
+    const selected = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'right-composite', label: 'right composite part',
+        references: [rightCircle!, ...rightLines].map(({ key }) => ({ kind: 'candidate' as const, key })),
+      }],
+    });
+
+    expect(selected).toMatchObject({
+      state: 'selected', parts: [{ partKey: 'right-composite', nodeCount: 3 }],
+    });
+  });
+
+  it('keeps existing episode candidates valid while resolving a genuine ambiguity', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-refine-ambiguity',
+      objective: '选择左侧部件和右侧接触位置',
+      rootUserMessageDigest: 'sha256:message-refine-ambiguity', numericConstraints: [],
+    });
+    const observed = await service.observeCurrent('session-1');
+    const left = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-left')
+    ));
+    expect(left?.key).toMatch(/^c\d+$/);
+
+    const ambiguous = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'left', label: 'left part',
+        references: [{ kind: 'candidate', key: left!.key }],
+      }, {
+        partKey: 'right-contact', label: 'right contact',
+        references: [{ kind: 'observation_point', normalized: [0.7127322, 0.56] }],
+      }],
+    });
+    expect(ambiguous).toMatchObject({ state: 'selection_ambiguous', partKey: 'right-contact' });
+    if (ambiguous.state !== 'selection_ambiguous') throw new Error('expected ambiguity');
+
+    const selected = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'left', label: 'left part',
+        references: [{ kind: 'candidate', key: left!.key }],
+      }, {
+        partKey: 'right-contact', label: 'right contact',
+        references: [{ kind: 'candidate', key: ambiguous.candidates[0]!.key }],
+      }],
+    });
+    expect(selected).toMatchObject({
+      state: 'selected', parts: [{ partKey: 'left' }, { partKey: 'right-contact' }],
+    });
+  });
+
   it('falls back from an ungrounded semantic phrase to bounded visual candidates', async () => {
     const { service } = await setup();
     service.bindUserInstruction('session-1', {

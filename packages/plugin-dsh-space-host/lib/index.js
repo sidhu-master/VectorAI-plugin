@@ -9665,7 +9665,7 @@ function createDrawingObserveTool(semantic) {
 function createDrawingSelectPartsTool(semantic) {
   return defineTool({
     name: "drawing_select_parts",
-    description: "Name the semantic parts to edit. Prefer candidate cN keys returned by drawing_observe; otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. The Host resolves exact nodes and interfaces.",
+    description: "Name the semantic parts to edit. Prefer candidate cN keys returned by drawing_observe; multiple exact candidate references inside one part are merged as that part. Otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. The Host resolves exact nodes and interfaces.",
     parameters: {
       parts: array(object({
         partKey: string("Stable semantic name used by later goals."),
@@ -10878,7 +10878,6 @@ class SemanticEditService {
         return { state: "invalid_state", code: "EDIT_SELECTION_UNRESOLVED", nextTools: ["drawing_select_parts"] };
       }
       if (candidates.length > 1) {
-        state.candidates.clear();
         const safeCandidates = candidates.slice(0, 8).map((candidate) => {
           const key = `c${++state.nextCandidate}`;
           state.candidates.set(key, { ...candidate, key, stateEpoch: episode.stateEpoch });
@@ -11748,8 +11747,16 @@ resolvePartCandidates_fn = function(sessionId, document, drawingRef, state, stat
     }
     return regionCandidates(document, reference.polygon.map((point) => resolvePoint([point[0], point[1]])), stateEpoch);
   });
+  const resolvedReferences = perReference.filter((candidates2) => candidates2.length > 0);
+  const combinations = resolvedReferences.reduce((current, alternatives) => current.flatMap((combination) => alternatives.map((candidate) => [...combination, candidate])).slice(0, 64), [[]]);
+  const combined = resolvedReferences.length > 1 ? combinations.map((combination) => selectionCandidate(
+    document,
+    [...new Set(combination.flatMap(({ nodeIds }) => nodeIds))],
+    combination.reduce((score, candidate) => score + candidate.score, 0),
+    stateEpoch
+  )) : resolvedReferences.flat();
   const candidates = /* @__PURE__ */ new Map();
-  for (const candidate of perReference.flat()) {
+  for (const candidate of combined) {
     const identity = [...candidate.nodeIds].sort().join("\0");
     const current = candidates.get(identity);
     if (!current || candidate.score < current.score) candidates.set(identity, candidate);

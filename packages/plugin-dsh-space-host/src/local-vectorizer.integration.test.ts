@@ -91,8 +91,17 @@ describe.skipIf(!existsSync(fixturePath))('LocalCleanLineVectorizer', () => {
     const right = observed.selectionCandidates.find(({ summary }) => (
       summary.includes('circle') && summary.includes('lower-right')
     ));
+    const rightArm = [
+      observed.selectionCandidates.find(({ summary }) => (
+        summary.includes('polyline') && summary.includes('middle-right')
+      )),
+      observed.selectionCandidates.find(({ summary }) => (
+        summary.includes('line') && summary.includes('lower-right')
+      )),
+    ];
     expect(left?.key).toMatch(/^c\d+$/);
     expect(right?.key).toMatch(/^c\d+$/);
+    expect(rightArm.every((candidate) => candidate?.key !== undefined)).toBe(true);
     expect(JSON.stringify(observed)).not.toMatch(/node_vec_/);
 
     const selected = semantic.selectCurrentParts('session-real-selection', {
@@ -100,13 +109,15 @@ describe.skipIf(!existsSync(fixturePath))('LocalCleanLineVectorizer', () => {
         partKey: 'left-part', label: 'left circular part',
         references: [{ kind: 'candidate', key: left!.key }],
       }, {
-        partKey: 'right-part', label: 'right circular part',
-        references: [{ kind: 'candidate', key: right!.key }],
+        partKey: 'right-part', label: 'right multi-element part',
+        references: [right!, ...rightArm].map((candidate) => ({
+          kind: 'candidate' as const, key: candidate!.key,
+        })),
       }],
     });
     expect(selected).toMatchObject({
       state: 'selected',
-      parts: [{ partKey: 'left-part', nodeCount: 1 }, { partKey: 'right-part', nodeCount: 1 }],
+      parts: [{ partKey: 'left-part', nodeCount: 1 }, { partKey: 'right-part', nodeCount: 3 }],
     });
 
     const preview = semantic.previewCurrentIntent('session-real-selection', {
