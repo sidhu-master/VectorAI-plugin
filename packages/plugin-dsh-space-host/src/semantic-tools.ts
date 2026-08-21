@@ -34,7 +34,7 @@ export function createSemanticEditToolCatalog(
 export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_preview_grounded_transform',
-    description: 'Preview a rigid or articulated transform for an exact grounded target. Pass a displacement; for a connected closed carrier omit rotation so the Host chooses the minimum-deformation orientation from its actual interfaces. Positive Y moves visually up.',
+    description: 'Preview a pose transform for an exact grounded target. Pass only the intended displacement; the Host derives the minimum-deformation orientation from actual topology and interfaces. Positive Y moves visually up. Use the advanced program tool only when the user explicitly specifies an exact rotation.',
     parameters: {
       taskId: { type: 'string', required: true },
       groundingId: { type: 'string', required: true },
@@ -42,15 +42,22 @@ export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEdit
         type: 'array', items: { type: 'number' }, required: true,
         description: 'Exactly two numbers [dx, dy] in Drawing units. Positive dy moves the target visually up.',
       },
-      rotationDegrees: {
-        type: 'number',
-        description: 'Optional explicit orientation change. Omit for Host minimum-deformation orientation on connected closed carriers.',
-      },
       summary: { type: 'string', required: true },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
-      return semantic.previewGroundedTransform(requireSession(exec.agent?.id), args as never) as unknown as JsonValue;
+      const input = args as {
+        taskId: string;
+        groundingId: string;
+        translation: [number, number];
+        summary: string;
+      };
+      return semantic.previewGroundedTransform(requireSession(exec.agent?.id), {
+        taskId: input.taskId,
+        groundingId: input.groundingId,
+        translation: input.translation,
+        summary: input.summary,
+      }) as unknown as JsonValue;
     },
   });
 }
@@ -58,7 +65,7 @@ export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEdit
 export function createDrawingReviseGroundedTransformTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_revise_grounded_transform',
-    description: 'Replace the current transform Preview after visual evaluation requests a revision. Keep the same task; optionally call drawing_ground again with the existing context to narrow the moving target. Never call drawing_observe twice in one user turn.',
+    description: 'Replace the current pose Preview after visual evaluation requests a revision. Keep the same task; optionally call drawing_ground again with the existing context to narrow the moving target. The Host derives orientation from topology. Never call drawing_observe twice in one user turn.',
     parameters: {
       taskId: { type: 'string', required: true },
       currentPreviewHandle: { type: 'string', required: true },
@@ -68,12 +75,26 @@ export function createDrawingReviseGroundedTransformTool(semantic: SemanticEditS
         type: 'array', items: { type: 'number' }, required: true,
         description: 'Exactly two numbers [dx, dy]. Positive dy moves visually up.',
       },
-      rotationDegrees: { type: 'number', description: 'Optional explicit orientation; omit for Host minimum deformation.' },
       summary: { type: 'string', required: true },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
-      return semantic.reviseGroundedTransform(requireSession(exec.agent?.id), args as never) as unknown as JsonValue;
+      const input = args as {
+        taskId: string;
+        currentPreviewHandle: string;
+        currentCandidateDigest: string;
+        groundingId: string;
+        translation: [number, number];
+        summary: string;
+      };
+      return semantic.reviseGroundedTransform(requireSession(exec.agent?.id), {
+        taskId: input.taskId,
+        currentPreviewHandle: input.currentPreviewHandle,
+        currentCandidateDigest: input.currentCandidateDigest,
+        groundingId: input.groundingId,
+        translation: input.translation,
+        summary: input.summary,
+      }) as unknown as JsonValue;
     },
   });
 }
@@ -133,7 +154,7 @@ export function createDrawingGroundTool(semantic: SemanticEditService) {
 export function createDrawingPreviewProgramTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_preview_program',
-    description: 'Advanced tool for non-transform spatial operations. For moving, rotating, raising, lowering, or posing a part, use drawing_preview_grounded_transform instead. Compiles a complete Spatial Edit Program against an exact grounding and never accepts raw Drawing transaction commands.',
+    description: 'Advanced tool for non-pose spatial operations and exact numeric rotations explicitly requested by the user. For ordinary moving, raising, lowering, or posing, use drawing_preview_grounded_transform so the Host derives minimum-deformation orientation. Compiles a complete Spatial Edit Program against an exact grounding and never accepts raw Drawing transaction commands.',
     parameters: {
       taskId: { type: 'string', required: true },
       groundingId: { type: 'string', required: true },

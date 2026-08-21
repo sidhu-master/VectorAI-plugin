@@ -25,6 +25,8 @@ import type { ImageVectorizer } from './vectorizer';
 import { SemanticEditService } from './semantic-edit-service';
 import {
   createDrawingFinalizeSemanticTool,
+  createDrawingPreviewGroundedTransformTool,
+  createDrawingReviseGroundedTransformTool,
   createDrawingUndoTool,
 } from './semantic-tools';
 
@@ -177,6 +179,48 @@ describe('drawing tools', () => {
       'drawing_discard_preview',
       'drawing_get_operation',
       'drawing_undo_commit',
+    ]);
+
+    for (const name of [
+      'drawing_preview_grounded_transform',
+      'drawing_revise_grounded_transform',
+    ]) {
+      const transform = tools.find((tool) => tool.name === name);
+      expect(transform?.parameters).not.toHaveProperty('properties.pivot');
+      expect(transform?.parameters).not.toHaveProperty('properties.rotationDegrees');
+    }
+  });
+
+  it('does not forward model-injected pose angles or pivots through the simple DSH tools', async () => {
+    const received: unknown[] = [];
+    const semantic = {
+      previewGroundedTransform(_sessionId: string, input: unknown) {
+        received.push(input);
+        return {};
+      },
+      reviseGroundedTransform(_sessionId: string, input: unknown) {
+        received.push(input);
+        return {};
+      },
+    } as unknown as SemanticEditService;
+
+    await createDrawingPreviewGroundedTransformTool(semantic).execute({
+      taskId: 'task-1', groundingId: 'grounding-1', translation: [0, 50],
+      rotationDegrees: 30, pivot: [10, 20], summary: 'pose',
+    }, exec('session-a'));
+    await createDrawingReviseGroundedTransformTool(semantic).execute({
+      taskId: 'task-1', currentPreviewHandle: 'preview-1',
+      currentCandidateDigest: 'sha256:candidate', groundingId: 'grounding-1',
+      translation: [0, 40], rotationDegrees: -35, pivot: [10, 20], summary: 'revise',
+    }, exec('session-a'));
+
+    expect(received).toEqual([
+      { taskId: 'task-1', groundingId: 'grounding-1', translation: [0, 50], summary: 'pose' },
+      {
+        taskId: 'task-1', currentPreviewHandle: 'preview-1',
+        currentCandidateDigest: 'sha256:candidate', groundingId: 'grounding-1',
+        translation: [0, 40], summary: 'revise',
+      },
     ]);
   });
 

@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _pending, _drawings, _durable, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _SemanticEditService_instances, commitPreview_fn, assess_fn, task_fn, preview_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
+var _ports, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _SemanticEditService_instances, commitPreview_fn, assess_fn, task_fn, preview_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -68,9 +68,9 @@ const INSTRUCTION = [
 ].join(" ");
 const SEMANTIC_WORKFLOW_INSTRUCTION = [
   "For every direct Drawing edit turn, always start with drawing_observe, then drawing_build_context and drawing_ground.",
-  "For articulated motion, ground only the moving end object such as the hand or palm; leave connecting arm lines out so the Host can infer and preserve their contacted endpoints.",
-  "For moving, rotating, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform.",
-  "If visual evaluation requests a revision, keep the same task and use drawing_revise_grounded_transform; never call drawing_observe twice in one user turn.",
+  "For articulated motion, ground the semantic carrier being transformed and leave its connector geometry out; the Host derives and preserves true contacted endpoint slots.",
+  "For ordinary moving, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform and let the Host derive orientation; use drawing_preview_program for rotation only when the user explicitly provides an exact angle.",
+  "If visual evaluation returns needs_revision or defects, do not finalize that candidate: keep the same task and use drawing_revise_grounded_transform from the reported evidence, then evaluate again.",
   "Task, observation, context, grounding, Preview, and selection handles are ephemeral; never reuse handles from an earlier turn or from before a plugin restart.",
   "Then call drawing_evaluate_preview and drawing_finalize_preview."
 ].join(" ");
@@ -168,6 +168,352 @@ function normalize(value) {
   }
   if (typeof value === "number" && Object.is(value, -0)) return 0;
   return value;
+}
+function findConnectedCarrierCandidates(document) {
+  const tolerance = drawingRelativeTolerance(document);
+  return document.geometry.flatMap((node) => {
+    if (node.type !== "circle" && node.type !== "ellipse") return [];
+    const contacts = findCarrierContacts(document, node, tolerance);
+    if (contacts.length === 0) return [];
+    return [{
+      carrierNodeId: String(node.id),
+      carrierType: node.type,
+      contactedOpenConnectorCount: new Set(contacts.map(({ node: connector }) => connector.id)).size,
+      contactedPortCount: contacts.length
+    }];
+  });
+}
+function findConnectedCarrierInterfaces(document, carrierNodeId) {
+  const carrier = document.geometry.find((node) => String(node.id) === carrierNodeId);
+  if (!carrier || carrier.type !== "circle" && carrier.type !== "ellipse") return [];
+  return findCarrierContacts(document, carrier, drawingRelativeTolerance(document)).map(({ node, endpoint, projected }) => ({
+    interfaceId: `${String(node.id)}:${endpoint.role}`,
+    nodeId: String(node.id),
+    endpoint: endpoint.role,
+    contactPoint: structuredClone(endpoint.point),
+    projectedPoint: structuredClone(projected),
+    fixedAnchor: structuredClone(endpoint.fixedAnchor)
+  })).sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
+}
+function compileConnectedTransform(input) {
+  const carrier = input.document.geometry.find((node) => node.id === input.carrierNodeId);
+  if (!carrier) throw new Error("CONNECTED_TRANSFORM_CARRIER_NOT_FOUND");
+  if (carrier.type !== "circle" && carrier.type !== "ellipse") {
+    throw new Error("CONNECTED_TRANSFORM_CARRIER_NOT_CLOSED");
+  }
+  assertPoint(input.targetCenter, "CONNECTED_TRANSFORM_TARGET_CENTER_INVALID");
+  const extent = drawingExtent(input.document);
+  const explicitRotation = input.rotationDegrees === void 0 ? void 0 : normalizedRotationDegrees(input.rotationDegrees);
+  if (distance$2(carrier.center, input.targetCenter) <= Math.max(extent * 1e-9, 1e-9) && Math.abs(explicitRotation ?? 0) <= 1e-9) throw new Error("CONNECTED_TRANSFORM_NO_EFFECT");
+  const tolerance = input.contactTolerance ?? drawingRelativeTolerance(input.document);
+  if (!Number.isFinite(tolerance) || tolerance <= 0) {
+    throw new Error("CONNECTED_TRANSFORM_TOLERANCE_INVALID");
+  }
+  const contacts = findCarrierContacts(input.document, carrier, tolerance);
+  const minimumRotation = contacts.length === 0 ? 0 : inferMinimumDeformationRotation({
+    beforeCenter: carrier.center,
+    targetCenter: input.targetCenter,
+    contacts: contacts.map(({ endpoint, projected }) => ({
+      projected,
+      fixedAnchor: endpoint.fixedAnchor
+    }))
+  });
+  const rotationDegrees = explicitRotation ?? minimumRotation;
+  const rotationRadians = rotationDegrees * Math.PI / 180;
+  const ports = contacts.map(({ node, endpoint, projected }) => {
+    const after = transportCarrierPoint(carrier, projected, input.targetCenter, rotationRadians);
+    const beforeLength = distance$2(projected, endpoint.fixedAnchor);
+    const afterLength = distance$2(after, endpoint.fixedAnchor);
+    return {
+      connectorNodeId: String(node.id),
+      endpointRole: endpoint.role,
+      before: structuredClone(projected),
+      after,
+      fixedAnchor: structuredClone(endpoint.fixedAnchor),
+      originalAngle: clean$1(angleOf(carrier.center, projected) * 180 / Math.PI),
+      transportedAngle: clean$1(angleOf(input.targetCenter, after) * 180 / Math.PI),
+      beforeConnectorLength: clean$1(beforeLength),
+      afterConnectorLength: clean$1(afterLength),
+      stretchRatio: clean$1(safeRatio(afterLength, beforeLength)),
+      lengthChange: clean$1(afterLength - beforeLength)
+    };
+  }).sort((left, right) => left.originalAngle - right.originalAngle || left.connectorNodeId.localeCompare(right.connectorNodeId) || left.endpointRole.localeCompare(right.endpointRole));
+  const commands = [{
+    type: "node.update",
+    id: String(carrier.id),
+    changes: {
+      center: structuredClone(input.targetCenter),
+      ...carrier.type === "ellipse" && rotationDegrees !== 0 ? { majorAxis: rotateVector(carrier.majorAxis, rotationRadians) } : {}
+    },
+    expected: {
+      center: structuredClone(carrier.center),
+      ...carrier.type === "ellipse" && rotationDegrees !== 0 ? { majorAxis: structuredClone(carrier.majorAxis) } : {}
+    }
+  }, ...ports.map((port) => ({
+    type: "node.update",
+    id: port.connectorNodeId,
+    changes: { [port.endpointRole]: structuredClone(port.after) },
+    expected: {
+      [port.endpointRole]: structuredClone(endpointValue(
+        input.document,
+        port.connectorNodeId,
+        port.endpointRole
+      ))
+    }
+  }))];
+  const metrics = ports.length === 0 ? void 0 : interfaceMetrics({
+    document: input.document,
+    ports,
+    carrier,
+    targetCenter: input.targetCenter,
+    selectedRotationDegrees: rotationDegrees,
+    minimumDeformationRotationDegrees: minimumRotation
+  });
+  return {
+    commands,
+    diagnostics: metrics ? interfaceDiagnostics(String(carrier.id), ports, metrics) : [],
+    audit: {
+      carrierNodeId: String(carrier.id),
+      carrierType: carrier.type,
+      beforeCenter: structuredClone(carrier.center),
+      targetCenter: structuredClone(input.targetCenter),
+      rotationDegrees: clean$1(rotationDegrees),
+      orientationMode: explicitRotation !== void 0 ? "explicit-rotation" : ports.length > 0 ? "minimum-deformation" : "translated",
+      contactTolerance: tolerance,
+      connectorNodeIds: [...new Set(ports.map(({ connectorNodeId }) => connectorNodeId))],
+      ports,
+      ...metrics ? { interfaceMetrics: metrics } : {}
+    }
+  };
+}
+function findCarrierContacts(document, carrier, tolerance) {
+  return document.geometry.flatMap((node) => {
+    if (node.id === carrier.id || node.type !== "line") return [];
+    return [
+      { role: "start", point: node.start, fixedAnchor: node.end },
+      { role: "end", point: node.end, fixedAnchor: node.start }
+    ].flatMap((endpoint) => {
+      const projected = closestPointOnCarrier(carrier, endpoint.point);
+      return projected && distance$2(projected, endpoint.point) <= tolerance ? [{ node, endpoint, projected }] : [];
+    });
+  });
+}
+function closestPointOnCarrier(carrier, point) {
+  if (carrier.type === "circle") {
+    const delta2 = [point[0] - carrier.center[0], point[1] - carrier.center[1]];
+    const length = Math.hypot(...delta2);
+    if (length <= 1e-12) return null;
+    return cleanPoint$2([
+      carrier.center[0] + delta2[0] * carrier.radius / length,
+      carrier.center[1] + delta2[1] * carrier.radius / length
+    ]);
+  }
+  const majorLength = Math.hypot(...carrier.majorAxis);
+  if (majorLength <= 1e-12 || carrier.ratio <= 0) return null;
+  const major = [carrier.majorAxis[0] / majorLength, carrier.majorAxis[1] / majorLength];
+  const minor = [-major[1], major[0]];
+  const delta = [point[0] - carrier.center[0], point[1] - carrier.center[1]];
+  const parameter = Math.atan2(
+    dot(delta, minor) / (majorLength * carrier.ratio),
+    dot(delta, major) / majorLength
+  );
+  const minorAxis = [-carrier.majorAxis[1] * carrier.ratio, carrier.majorAxis[0] * carrier.ratio];
+  return cleanPoint$2([
+    carrier.center[0] + carrier.majorAxis[0] * Math.cos(parameter) + minorAxis[0] * Math.sin(parameter),
+    carrier.center[1] + carrier.majorAxis[1] * Math.cos(parameter) + minorAxis[1] * Math.sin(parameter)
+  ]);
+}
+function inferMinimumDeformationRotation(input) {
+  let dotSum = 0;
+  let crossSum = 0;
+  for (const contact of input.contacts) {
+    const local = [
+      contact.projected[0] - input.beforeCenter[0],
+      contact.projected[1] - input.beforeCenter[1]
+    ];
+    const target = [
+      contact.fixedAnchor[0] - input.targetCenter[0],
+      contact.fixedAnchor[1] - input.targetCenter[1]
+    ];
+    dotSum += dot(local, target);
+    crossSum += local[0] * target[1] - local[1] * target[0];
+  }
+  return Math.hypot(dotSum, crossSum) <= 1e-12 ? 0 : clean$1(Math.atan2(crossSum, dotSum) * 180 / Math.PI);
+}
+function interfaceMetrics(input) {
+  const drawingDiagonal = drawingExtent(input.document);
+  const maximumStretchRatio = Math.max(...input.ports.map(({ stretchRatio }) => stretchRatio));
+  const maximumLengthIncrease = Math.max(0, ...input.ports.map(({ lengthChange }) => lengthChange));
+  const selectedDeformationCost = input.ports.reduce((sum, port) => sum + port.afterConnectorLength ** 2, 0);
+  const referenceRadians = input.minimumDeformationRotationDegrees * Math.PI / 180;
+  const minimumDeformationCost = input.ports.reduce((sum, port) => {
+    const reference = transportCarrierPoint(input.carrier, port.before, input.targetCenter, referenceRadians);
+    return sum + distance$2(reference, port.fixedAnchor) ** 2;
+  }, 0);
+  const result = {
+    drawingDiagonal: clean$1(drawingDiagonal),
+    portCount: input.ports.length,
+    maximumStretchRatio: clean$1(maximumStretchRatio),
+    maximumLengthIncrease: clean$1(maximumLengthIncrease),
+    normalizedMaximumLengthIncrease: clean$1(maximumLengthIncrease / Math.max(drawingDiagonal, 1e-12)),
+    selectedDeformationCost: clean$1(selectedDeformationCost),
+    minimumDeformationCost: clean$1(minimumDeformationCost),
+    deformationCostRatio: clean$1(safeRatio(selectedDeformationCost, minimumDeformationCost)),
+    selectedRotationDegrees: clean$1(input.selectedRotationDegrees),
+    minimumDeformationRotationDegrees: clean$1(input.minimumDeformationRotationDegrees)
+  };
+  if (input.ports.length === 2) {
+    const before = signedArea([
+      input.ports[0].fixedAnchor,
+      input.ports[0].before,
+      input.ports[1].before,
+      input.ports[1].fixedAnchor
+    ]);
+    const after = signedArea([
+      input.ports[0].fixedAnchor,
+      input.ports[0].after,
+      input.ports[1].after,
+      input.ports[1].fixedAnchor
+    ]);
+    if (Math.abs(before) > Math.max(drawingDiagonal ** 2 * 1e-8, 1e-12)) {
+      result.beforeSignedArea = clean$1(before);
+      result.afterSignedArea = clean$1(after);
+      result.areaRetentionRatio = clean$1(Math.abs(after / before));
+      result.orientationInverted = Math.sign(after) !== Math.sign(before);
+    }
+  }
+  return result;
+}
+function interfaceDiagnostics(carrierNodeId, ports, metrics) {
+  const nodeIds = [carrierNodeId, ...new Set(ports.map(({ connectorNodeId }) => connectorNodeId))];
+  const facts = interfaceFacts(metrics);
+  const diagnostics = [];
+  if (metrics.orientationInverted) diagnostics.push({
+    code: "CONNECTED_INTERFACE_ORIENTATION_INVERTED",
+    severity: "warning",
+    message: "The ordered connected interface changes orientation.",
+    nodeIds,
+    action: "Choose another target pose or rebuild the connected boundary.",
+    facts
+  });
+  if (metrics.areaRetentionRatio !== void 0 && metrics.areaRetentionRatio < 0.1) diagnostics.push({
+    code: "CONNECTED_INTERFACE_AREA_COLLAPSED",
+    severity: "warning",
+    message: "The connected interface area collapses below ten percent of its original area.",
+    nodeIds,
+    action: "Inspect the interface pairing and use the minimum-deformation orientation.",
+    facts
+  });
+  if (metrics.maximumStretchRatio > 3 && metrics.normalizedMaximumLengthIncrease > 0.02) diagnostics.push({
+    code: "CONNECTED_INTERFACE_EXCESSIVE_STRETCH",
+    severity: "warning",
+    message: "At least one connected boundary is stretched excessively.",
+    nodeIds,
+    action: "Move the target closer or rebuild the connected boundary.",
+    facts
+  });
+  if (metrics.deformationCostRatio >= 4) diagnostics.push({
+    code: "CONNECTED_TRANSFORM_NON_MINIMUM_ORIENTATION",
+    severity: "warning",
+    message: "The explicit orientation has much greater deformation cost than the minimum-deformation pose.",
+    nodeIds,
+    action: "Use the measured minimum-deformation orientation or explicitly confirm the intended twist.",
+    facts
+  });
+  return diagnostics;
+}
+function interfaceFacts(metrics) {
+  return {
+    portCount: metrics.portCount,
+    maximumStretchRatio: metrics.maximumStretchRatio,
+    maximumLengthIncrease: metrics.maximumLengthIncrease,
+    normalizedMaximumLengthIncrease: metrics.normalizedMaximumLengthIncrease,
+    selectedDeformationCost: metrics.selectedDeformationCost,
+    minimumDeformationCost: metrics.minimumDeformationCost,
+    deformationCostRatio: metrics.deformationCostRatio,
+    selectedRotationDegrees: metrics.selectedRotationDegrees,
+    minimumDeformationRotationDegrees: metrics.minimumDeformationRotationDegrees,
+    ...metrics.beforeSignedArea === void 0 ? {} : { beforeSignedArea: metrics.beforeSignedArea },
+    ...metrics.afterSignedArea === void 0 ? {} : { afterSignedArea: metrics.afterSignedArea },
+    ...metrics.areaRetentionRatio === void 0 ? {} : { areaRetentionRatio: metrics.areaRetentionRatio },
+    ...metrics.orientationInverted === void 0 ? {} : { orientationInverted: metrics.orientationInverted }
+  };
+}
+function transportCarrierPoint(carrier, point, center2, radians) {
+  const local = [point[0] - carrier.center[0], point[1] - carrier.center[1]];
+  const rotated = rotateVector(local, radians);
+  return cleanPoint$2([center2[0] + rotated[0], center2[1] + rotated[1]]);
+}
+function drawingRelativeTolerance(document) {
+  const diagonal = drawingExtent(document);
+  return Math.max(diagonal * 25e-4, Number.EPSILON * Math.max(1, diagonal) * 64);
+}
+function drawingExtent(document) {
+  const points = document.geometry.flatMap(geometryExtentPoints);
+  if (points.length === 0) return 0.01;
+  return Math.hypot(
+    Math.max(...points.map(([x]) => x)) - Math.min(...points.map(([x]) => x)),
+    Math.max(...points.map(([, y]) => y)) - Math.min(...points.map(([, y]) => y))
+  );
+}
+function geometryExtentPoints(node) {
+  if (node.type === "point") return [[node.x, node.y]];
+  if (node.type === "line") return [node.start, node.end];
+  if (node.type === "ray" || node.type === "xline") return [node.origin];
+  if (node.type === "circle" || node.type === "arc") return [
+    [node.center[0] - node.radius, node.center[1] - node.radius],
+    [node.center[0] + node.radius, node.center[1] + node.radius]
+  ];
+  if (node.type === "ellipse") {
+    const radius = Math.hypot(...node.majorAxis);
+    return [[node.center[0] - radius, node.center[1] - radius], [node.center[0] + radius, node.center[1] + radius]];
+  }
+  if (node.type === "polyline") return node.vertices.map(({ point }) => point);
+  return node.controlPoints;
+}
+function endpointValue(document, nodeId, endpoint) {
+  const node = document.geometry.find((item) => item.id === nodeId);
+  if (!node || node.type !== "line") throw new Error("CONNECTED_TRANSFORM_CONNECTOR_STALE");
+  return structuredClone(node[endpoint]);
+}
+function normalizedRotationDegrees(value) {
+  if (!Number.isFinite(value)) throw new Error("CONNECTED_TRANSFORM_ROTATION_INVALID");
+  const normalized = (value % 360 + 540) % 360 - 180;
+  return Object.is(normalized, -0) ? 0 : normalized;
+}
+function rotateVector(vector, radians) {
+  return cleanPoint$2([
+    vector[0] * Math.cos(radians) - vector[1] * Math.sin(radians),
+    vector[0] * Math.sin(radians) + vector[1] * Math.cos(radians)
+  ]);
+}
+function signedArea(points) {
+  return points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point[0] * next[1] - point[1] * next[0];
+  }, 0) / 2;
+}
+function safeRatio(numerator, denominator) {
+  return Math.abs(denominator) > 1e-12 ? numerator / denominator : Math.abs(numerator) <= 1e-12 ? 1 : Number.MAX_SAFE_INTEGER;
+}
+function angleOf(center2, point) {
+  return Math.atan2(point[1] - center2[1], point[0] - center2[0]);
+}
+function distance$2(left, right) {
+  return Math.hypot(left[0] - right[0], left[1] - right[1]);
+}
+function dot(left, right) {
+  return left[0] * right[0] + left[1] * right[1];
+}
+function cleanPoint$2(point) {
+  return [clean$1(point[0]), clean$1(point[1])];
+}
+function clean$1(value) {
+  const rounded = Number(value.toFixed(9));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+function assertPoint(point, code) {
+  if (!Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite)) throw new Error(code);
 }
 function applyDrawingTransaction(source, commands, now) {
   const document = structuredClone(source);
@@ -295,8 +641,11 @@ function compileSpatialEditProgram(input) {
   const initial = structuredClone(input.document);
   let working = structuredClone(input.document);
   const forward = [];
+  const operationDiagnostics = [];
   for (const operation of input.program.operations) {
-    const commands = compileOperation(working, operation, input.grounding, input.ports);
+    const compiled = compileOperation(working, operation, input.grounding, input.ports);
+    const commands = compiled.commands;
+    operationDiagnostics.push(...compiled.diagnostics);
     if (commands.length > 0) {
       working = applyDrawingTransaction(working, commands, input.ports.now());
       forward.push(...commands);
@@ -304,7 +653,10 @@ function compileSpatialEditProgram(input) {
   }
   if (canonicalSemanticString(initial) === canonicalSemanticString(working)) throw new Error("EDIT_NO_EFFECT");
   assertPreserved(initial, working, input.program.preserveScopes);
-  const diagnostics = evaluateProgram(working, input.program, input.grounding);
+  const diagnostics = [
+    ...operationDiagnostics,
+    ...evaluateProgram(working, input.program, input.grounding)
+  ];
   const inverse = invertDrawingTransaction(initial, forward);
   const restored = applyDrawingTransaction(working, inverse, input.ports.now());
   if (canonicalSemanticString(restored) !== canonicalSemanticString(initial)) {
@@ -338,10 +690,43 @@ function compileSpatialEditProgram(input) {
 function compileOperation(document, operation, grounding, ports) {
   if (operation.kind === "rigid_transform") {
     const transform2 = normalizedTransform(operation);
-    return grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform2));
+    return {
+      commands: grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform2)),
+      diagnostics: []
+    };
   }
   if (operation.kind === "connected_transform") {
-    const transform2 = normalizedTransform(operation);
+    const target = grounding.targetNodeIds.length === 1 ? findDrawingNode(document, grounding.targetNodeIds[0]) : null;
+    if ((target == null ? void 0 : target.plane) === "geometry" && (target.node.type === "circle" || target.node.type === "ellipse")) {
+      const translation = finitePoint(operation.translation, "EDIT_TRANSFORM_INVALID");
+      const candidate = operation;
+      const compiled = compileConnectedTransform({
+        document,
+        carrierNodeId: String(target.node.id),
+        targetCenter: [
+          target.node.center[0] + translation[0],
+          target.node.center[1] + translation[1]
+        ],
+        ...candidate.rotationRadians === void 0 ? {} : { rotationDegrees: degrees(candidate.rotationRadians) }
+      });
+      const allowed2 = new Set(operation.interfaceIds);
+      const grounded = new Set(grounding.interfaces.map(({ interfaceId }) => interfaceId));
+      for (const port of compiled.audit.ports) {
+        const interfaceId = `${port.connectorNodeId}:${port.endpointRole}`;
+        if (!allowed2.has(interfaceId) || !grounded.has(interfaceId)) {
+          throw new Error("EDIT_INTERFACE_SCOPE_MISMATCH");
+        }
+      }
+      return { commands: dedupeUpdates(compiled.commands), diagnostics: compiled.diagnostics };
+    }
+    if (operation.rotationRadians === void 0 || operation.pivot === void 0) {
+      throw new Error("EDIT_CONNECTED_STRATEGY_UNAVAILABLE");
+    }
+    const transform2 = normalizedTransform({
+      translation: operation.translation,
+      rotationRadians: operation.rotationRadians,
+      pivot: operation.pivot
+    });
     const allowed = new Set(operation.interfaceIds);
     const commands = grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform2));
     for (const port of grounding.interfaces) {
@@ -359,23 +744,23 @@ function compileOperation(document, operation, grounding, ports) {
         expected: { [port.endpoint]: structuredClone(point) }
       });
     }
-    return dedupeUpdates(commands);
+    return { commands: dedupeUpdates(commands), diagnostics: [] };
   }
   if (operation.kind === "set_endpoint") {
     const located = findDrawingNode(document, operation.nodeId);
     if (!located || located.plane !== "geometry" || located.node.type !== "line") {
       throw new Error("EDIT_ENDPOINT_UNRESOLVED");
     }
-    return [{
+    return { commands: [{
       type: "node.update",
       id: operation.nodeId,
       changes: { [operation.endpoint]: structuredClone(operation.point) },
       expected: { [operation.endpoint]: structuredClone(located.node[operation.endpoint]) }
-    }];
+    }], diagnostics: [] };
   }
   if (operation.kind === "create_path") {
     const id = operation.nodeId || inputId(ports, "geometry");
-    return [{
+    return { commands: [{
       type: "node.create",
       plane: "geometry",
       node: {
@@ -386,10 +771,10 @@ function compileOperation(document, operation, grounding, ports) {
         visible: true,
         quality: { status: grounding.sourceStatus === "confirmed" ? "confirmed" : "candidate", evidenceRefs: [] }
       }
-    }];
+    }], diagnostics: [] };
   }
   if (operation.kind === "create_annotation_batch") {
-    return [
+    return { commands: [
       ...operation.annotations.map((node) => ({
         type: "node.create",
         plane: "annotation",
@@ -400,12 +785,17 @@ function compileOperation(document, operation, grounding, ports) {
         plane: "relation",
         node: structuredClone(node)
       }))
-    ];
+    ], diagnostics: [] };
   }
-  return operation.nodeIds.map((id) => {
+  return { commands: operation.nodeIds.map((id) => {
     if (!findDrawingNode(document, id)) throw new Error("EDIT_NODE_NOT_FOUND");
     return { type: "node.delete", id };
-  });
+  }), diagnostics: [] };
+}
+function finitePoint(value, code) {
+  const point = [Number(value[0]), Number(value[1])];
+  if (!point.every(Number.isFinite)) throw new Error(code);
+  return point;
 }
 function normalizedTransform(input) {
   const translation = [Number(input.translation[0]), Number(input.translation[1])];
@@ -462,7 +852,7 @@ function pair(before, after) {
 function transformPoint(point, transform2) {
   const relative = [point[0] - transform2.pivot[0], point[1] - transform2.pivot[1]];
   const rotated = rotate(relative, transform2.rotationRadians);
-  return cleanPoint([
+  return cleanPoint$1([
     rotated[0] + transform2.pivot[0] + transform2.translation[0],
     rotated[1] + transform2.pivot[1] + transform2.translation[1]
   ]);
@@ -470,9 +860,9 @@ function transformPoint(point, transform2) {
 function rotate(vector, radians) {
   const cosine = Math.cos(radians);
   const sine = Math.sin(radians);
-  return cleanPoint([vector[0] * cosine - vector[1] * sine, vector[0] * sine + vector[1] * cosine]);
+  return cleanPoint$1([vector[0] * cosine - vector[1] * sine, vector[0] * sine + vector[1] * cosine]);
 }
-function cleanPoint(point) {
+function cleanPoint$1(point) {
   return [clean(point[0]), clean(point[1])];
 }
 function clean(value) {
@@ -768,6 +1158,859 @@ function infiniteLineIntersects(origin, direction, bounds2, ray) {
     high = Math.min(high, Math.max(first, second));
   }
   return low <= high;
+}
+const WORLD_MODEL_COMPILER_VERSION = "world-model-0.1.0";
+class WorldModelCompiler {
+  constructor(ports = { digest: portableDigest$1 }) {
+    __privateAdd(this, _ports);
+    __privateSet(this, _ports, ports);
+  }
+  compile(document, revision, request = {}) {
+    var _a3, _b, _c;
+    const tolerance = positive$2(request.tolerance, 1e-6);
+    const curveSamples = integer$1(request.curveSamples, 8, 512, 64);
+    const limit = integer$1(request.limit, 1, 2e3, 2e3);
+    const requested = request.nodeIds ? new Set(request.nodeIds) : null;
+    const allCandidates = document.geometry.filter((node) => (!requested || requested.has(String(node.id))) && (!request.bounds || boundsIntersect(geometryBounds(node), request.bounds)));
+    const effectiveScopeBounds = request.bounds ? structuredClone(request.bounds) : unionSpatialBounds(allCandidates.map(geometryBounds));
+    const missing = ((_a3 = request.nodeIds) == null ? void 0 : _a3.filter((id) => !document.geometry.some((node) => node.id === id))) ?? [];
+    const scopeDigest = __privateGet(this, _ports).digest(stableStringify({
+      drawingId: document.id,
+      revision,
+      nodeIds: (_b = request.nodeIds) == null ? void 0 : _b.slice().sort(),
+      bounds: request.bounds,
+      tolerance,
+      curveSamples
+    }));
+    const offset = parseContinuation(request.continuationToken, scopeDigest);
+    const page = allCandidates.slice(offset, offset + limit);
+    const hasMore = offset + page.length < allCandidates.length;
+    const continuationToken = hasMore ? `world:${scopeDigest}:${offset + page.length}` : void 0;
+    const diagnostics = missing.map((id) => ({
+      code: "WORLD_MODEL_NODE_NOT_FOUND",
+      severity: "error",
+      message: `Geometry ${id} does not exist.`,
+      nodeIds: [id],
+      sourceSpanIds: []
+    }));
+    const unsupported = page.filter((node) => node.type === "ray" || node.type === "xline");
+    diagnostics.push(...unsupported.map((node) => ({
+      code: "WORLD_MODEL_UNBOUNDED_GEOMETRY",
+      severity: "warning",
+      message: `Unbounded geometry ${node.id} cannot form a bounded arrangement span.`,
+      nodeIds: [String(node.id)],
+      sourceSpanIds: []
+    })));
+    const unsplitDrafts = page.flatMap((node) => spansForNode(node, curveSamples));
+    const drafts = splitLinearDraftsAtIntersections(unsplitDrafts, tolerance);
+    const sourceSpans = drafts.map((draft) => {
+      const id = stableId$1(__privateGet(this, _ports), "span", {
+        drawingId: document.id,
+        revision,
+        nodeId: draft.sourceNodeId,
+        range: draft.parameterRange,
+        samples: draft.samples
+      });
+      return {
+        id,
+        sourceNodeId: draft.sourceNodeId,
+        parameterRange: draft.parameterRange,
+        halfEdgeIds: [`half:${id}:forward`, `half:${id}:reverse`],
+        derivation: draft.derivation,
+        tolerance,
+        bounds: pointsBounds(draft.samples),
+        samples: structuredClone(draft.samples)
+      };
+    });
+    const vertices = [];
+    const halfEdges = [];
+    const vertexFor = (point, source) => {
+      const existing = vertices.find((vertex2) => distance$1(vertex2.point, point) <= tolerance);
+      if (existing) return existing;
+      const vertex = {
+        id: stableId$1(__privateGet(this, _ports), "vertex", { point: quantize(point, tolerance) }),
+        point: structuredClone(point),
+        incidentHalfEdgeIds: [],
+        source
+      };
+      vertices.push(vertex);
+      return vertex;
+    };
+    for (const span of sourceSpans) {
+      const first = span.samples[0];
+      const last = span.samples.at(-1);
+      if (!first || !last) continue;
+      const origin = vertexFor(first, distance$1(first, last) <= tolerance ? "closed-curve-anchor" : "endpoint");
+      const destination = vertexFor(last, distance$1(first, last) <= tolerance ? "closed-curve-anchor" : "endpoint");
+      const forward = span.halfEdgeIds[0];
+      const reverse = span.halfEdgeIds[1];
+      halfEdges.push(
+        { id: forward, twinId: reverse, sourceSpanId: span.id, originVertexId: origin.id, destinationVertexId: destination.id, direction: "forward" },
+        { id: reverse, twinId: forward, sourceSpanId: span.id, originVertexId: destination.id, destinationVertexId: origin.id, direction: "reverse" }
+      );
+      origin.incidentHalfEdgeIds.push(forward, reverse);
+      if (destination !== origin) destination.incidentHalfEdgeIds.push(forward, reverse);
+    }
+    const incidenceEdges = compileIncidence(unsplitDrafts, sourceSpans, tolerance, __privateGet(this, _ports));
+    const connectedEdges = compileConnectivity(document, sourceSpans, vertices, tolerance, __privateGet(this, _ports));
+    const unresolved = [
+      ...allCandidates.slice(0, offset).map((node) => `node:${node.id}`),
+      ...allCandidates.slice(offset + page.length).map((node) => `node:${node.id}`),
+      ...unsupported.map((node) => `node:${node.id}`),
+      ...missing.map((id) => `node:${id}`)
+    ];
+    const state = unsupported.length > 0 || missing.length > 0 ? "unknown" : hasMore || offset > 0 ? "partial" : "resolved";
+    const knowledge = {
+      state,
+      scopeDigest,
+      unresolvedBoundaryRefs: [...new Set(unresolved)],
+      ...continuationToken ? { continuationToken } : {}
+    };
+    return {
+      drawingId: document.id,
+      revision,
+      compilerVersion: WORLD_MODEL_COMPILER_VERSION,
+      inputDigest: __privateGet(this, _ports).digest(stableStringify({ document: document.geometry, request, revision })),
+      frameId: ((_c = document.coordinateFrames.find(({ kind }) => kind === "document")) == null ? void 0 : _c.id) ?? "document",
+      ...effectiveScopeBounds ? { scopeBounds: effectiveScopeBounds } : {},
+      sourceSpans,
+      vertices: vertices.sort((a, b) => a.id.localeCompare(b.id)),
+      halfEdges: halfEdges.sort((a, b) => a.id.localeCompare(b.id)),
+      faces: [],
+      incidenceEdges,
+      connectedEdges,
+      diagnostics,
+      knowledge,
+      ...continuationToken ? { continuationToken } : {}
+    };
+  }
+}
+_ports = new WeakMap();
+function spansForNode(node, curveSamples) {
+  if (node.type === "ray" || node.type === "xline" || node.type === "point") return [];
+  if (node.type === "line") return [{
+    sourceNodeId: String(node.id),
+    parameterRange: [0, 1],
+    derivation: "analytic",
+    samples: [structuredClone(node.start), structuredClone(node.end)]
+  }];
+  if (node.type === "polyline") {
+    const count = Math.max(1, node.vertices.length - (node.closed ? 0 : 1));
+    return Array.from({ length: count }, (_, index) => {
+      const next = (index + 1) % node.vertices.length;
+      return {
+        sourceNodeId: String(node.id),
+        parameterRange: [index / count, (index + 1) / count],
+        derivation: "polyline-exact",
+        samples: [structuredClone(node.vertices[index].point), structuredClone(node.vertices[next].point)]
+      };
+    });
+  }
+  const samples = sampleCurve(node, curveSamples);
+  return samples.length < 2 ? [] : [{
+    sourceNodeId: String(node.id),
+    parameterRange: [0, 1],
+    derivation: node.type === "circle" || node.type === "arc" || node.type === "ellipse" ? "analytic" : "sampled-fallback",
+    samples
+  }];
+}
+function splitLinearDraftsAtIntersections(drafts, tolerance) {
+  const cuts = drafts.map(() => /* @__PURE__ */ new Set([0, 1]));
+  for (let leftIndex = 0; leftIndex < drafts.length; leftIndex += 1) {
+    const left = drafts[leftIndex];
+    if (left.samples.length !== 2) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < drafts.length; rightIndex += 1) {
+      const right = drafts[rightIndex];
+      if (right.sourceNodeId === left.sourceNodeId || right.samples.length !== 2) continue;
+      const parameters = segmentIntersectionParameters(
+        left.samples[0],
+        left.samples[1],
+        right.samples[0],
+        right.samples[1],
+        tolerance
+      );
+      if (!parameters) continue;
+      if (parameters.left > tolerance && parameters.left < 1 - tolerance) cuts[leftIndex].add(parameters.left);
+      if (parameters.right > tolerance && parameters.right < 1 - tolerance) cuts[rightIndex].add(parameters.right);
+    }
+  }
+  return drafts.flatMap((draft, index) => {
+    if (draft.samples.length !== 2) return [draft];
+    const parameters = [...cuts[index]].sort((left, right) => left - right);
+    return parameters.slice(0, -1).map((start, parameterIndex) => {
+      const end = parameters[parameterIndex + 1];
+      const rangeStart = draft.parameterRange[0] + (draft.parameterRange[1] - draft.parameterRange[0]) * start;
+      const rangeEnd = draft.parameterRange[0] + (draft.parameterRange[1] - draft.parameterRange[0]) * end;
+      return {
+        ...draft,
+        parameterRange: [rangeStart, rangeEnd],
+        samples: [pointAt(draft.samples[0], draft.samples[1], start), pointAt(draft.samples[0], draft.samples[1], end)]
+      };
+    });
+  });
+}
+function sampleCurve(node, count) {
+  if (node.type === "spline") return structuredClone(node.controlPoints);
+  if (node.type === "circle") return Array.from({ length: count + 1 }, (_, index) => {
+    const angle = index / count * Math.PI * 2;
+    return [node.center[0] + node.radius * Math.cos(angle), node.center[1] + node.radius * Math.sin(angle)];
+  });
+  if (node.type === "arc") return Array.from({ length: count + 1 }, (_, index) => {
+    const start2 = node.startAngle * Math.PI / 180;
+    const raw = (node.endAngle - node.startAngle) * Math.PI / 180;
+    const span = node.counterClockwise ? raw : -raw;
+    const angle = start2 + span * index / count;
+    return [node.center[0] + node.radius * Math.cos(angle), node.center[1] + node.radius * Math.sin(angle)];
+  });
+  const major = node.majorAxis;
+  const minor = [-major[1] * node.ratio, major[0] * node.ratio];
+  const start = node.startParam ?? 0;
+  const end = node.endParam ?? Math.PI * 2;
+  return Array.from({ length: count + 1 }, (_, index) => {
+    const parameter = start + (end - start) * index / count;
+    return [
+      node.center[0] + major[0] * Math.cos(parameter) + minor[0] * Math.sin(parameter),
+      node.center[1] + major[1] * Math.cos(parameter) + minor[1] * Math.sin(parameter)
+    ];
+  });
+}
+function compileIncidence(drafts, spans, tolerance, ports) {
+  const result = [];
+  for (let leftIndex = 0; leftIndex < drafts.length; leftIndex += 1) {
+    const left = drafts[leftIndex];
+    if (left.samples.length !== 2) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < drafts.length; rightIndex += 1) {
+      const right = drafts[rightIndex];
+      if (right.sourceNodeId === left.sourceNodeId || right.samples.length !== 2) continue;
+      const hit = segmentIntersection(left.samples[0], left.samples[1], right.samples[0], right.samples[1], tolerance);
+      if (!hit) continue;
+      const sourceSpanIds = spans.filter((span) => (span.sourceNodeId === left.sourceNodeId || span.sourceNodeId === right.sourceNodeId) && (!hit.point || pointOnBounds(hit.point, span.bounds, tolerance))).map(({ id }) => id);
+      result.push({
+        id: stableId$1(ports, "incidence", { left: left.sourceNodeId, right: right.sourceNodeId, hit }),
+        kind: hit.kind,
+        nodeIds: [left.sourceNodeId, right.sourceNodeId],
+        sourceSpanIds,
+        ...hit.point ? { point: hit.point } : {}
+      });
+    }
+  }
+  return result.sort((a, b) => a.id.localeCompare(b.id));
+}
+function pointOnBounds(point, bounds2, tolerance) {
+  return point[0] >= bounds2.minX - tolerance && point[0] <= bounds2.maxX + tolerance && point[1] >= bounds2.minY - tolerance && point[1] <= bounds2.maxY + tolerance;
+}
+function compileConnectivity(document, spans, vertices, tolerance, ports) {
+  const byNode = /* @__PURE__ */ new Map();
+  for (const span of spans) byNode.set(span.sourceNodeId, [...byNode.get(span.sourceNodeId) ?? [], span.id]);
+  const result = document.relations.flatMap((relation) => {
+    if (relation.type !== "topology" || relation.kind !== "connected") return [];
+    const nodeIds = relation.nodeIds.filter((id) => byNode.has(id));
+    return nodeIds.length < 2 ? [] : [{
+      id: stableId$1(ports, "connected", { relationId: relation.id, nodeIds }),
+      source: "authored",
+      nodeIds,
+      sourceSpanIds: nodeIds.flatMap((id) => byNode.get(id) ?? []),
+      relationId: String(relation.id)
+    }];
+  });
+  for (const vertex of vertices) {
+    const nodeIds = [...new Set(spans.flatMap((span) => {
+      const first = span.samples[0];
+      const last = span.samples.at(-1);
+      const atAuthoredStart = span.parameterRange[0] <= tolerance && first && distance$1(first, vertex.point) <= tolerance;
+      const atAuthoredEnd = span.parameterRange[1] >= 1 - tolerance && last && distance$1(last, vertex.point) <= tolerance;
+      return atAuthoredStart || atAuthoredEnd ? [span.sourceNodeId] : [];
+    }))];
+    if (nodeIds.length < 2) continue;
+    const authored = result.some((edge) => nodeIds.every((id) => edge.nodeIds.includes(id)));
+    if (!authored) result.push({
+      id: stableId$1(ports, "connected", { point: quantize(vertex.point, tolerance), nodeIds }),
+      source: "shared-endpoint",
+      nodeIds,
+      sourceSpanIds: nodeIds.flatMap((id) => byNode.get(id) ?? []),
+      point: vertex.point
+    });
+  }
+  return result.sort((a, b) => a.id.localeCompare(b.id));
+}
+function segmentIntersection(a, b, c, d, tolerance) {
+  const parameters = segmentIntersectionParameters(a, b, c, d, tolerance);
+  if (!parameters) return null;
+  const point = pointAt(a, b, parameters.left);
+  const touching = parameters.left <= tolerance || parameters.left >= 1 - tolerance || parameters.right <= tolerance || parameters.right >= 1 - tolerance;
+  return { kind: touching ? "touching" : "crossing", point: cleanPoint(point) };
+}
+function segmentIntersectionParameters(a, b, c, d, tolerance) {
+  const r = [b[0] - a[0], b[1] - a[1]];
+  const s = [d[0] - c[0], d[1] - c[1]];
+  const denominator = cross(r, s);
+  const offset = [c[0] - a[0], c[1] - a[1]];
+  if (Math.abs(denominator) <= tolerance) return null;
+  const t = cross(offset, s) / denominator;
+  const u = cross(offset, r) / denominator;
+  if (t < -tolerance || t > 1 + tolerance || u < -tolerance || u > 1 + tolerance) return null;
+  return { left: Math.max(0, Math.min(1, t)), right: Math.max(0, Math.min(1, u)) };
+}
+function pointAt(start, end, parameter) {
+  return cleanPoint([
+    start[0] + (end[0] - start[0]) * parameter,
+    start[1] + (end[1] - start[1]) * parameter
+  ]);
+}
+function geometryBounds(node) {
+  if (node.type === "point") return pointsBounds([[node.x, node.y]]);
+  if (node.type === "line") return pointsBounds([node.start, node.end]);
+  if (node.type === "ray" || node.type === "xline") return pointsBounds([node.origin]);
+  if (node.type === "circle" || node.type === "arc") return {
+    minX: node.center[0] - node.radius,
+    minY: node.center[1] - node.radius,
+    maxX: node.center[0] + node.radius,
+    maxY: node.center[1] + node.radius
+  };
+  if (node.type === "ellipse") {
+    const radius = Math.hypot(...node.majorAxis);
+    return { minX: node.center[0] - radius, minY: node.center[1] - radius, maxX: node.center[0] + radius, maxY: node.center[1] + radius };
+  }
+  if (node.type === "polyline") return pointsBounds(node.vertices.map(({ point }) => point));
+  return pointsBounds(node.controlPoints);
+}
+function pointsBounds(points) {
+  if (points.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  return {
+    minX: Math.min(...points.map(([x]) => x)),
+    minY: Math.min(...points.map(([, y]) => y)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    maxY: Math.max(...points.map(([, y]) => y))
+  };
+}
+function boundsIntersect(left, right) {
+  return left.minX <= right.maxX && left.maxX >= right.minX && left.minY <= right.maxY && left.maxY >= right.minY;
+}
+function parseContinuation(token, scopeDigest) {
+  if (!token) return 0;
+  const prefix = `world:${scopeDigest}:`;
+  if (!token.startsWith(prefix)) throw new Error("WORLD_MODEL_CONTINUATION_INVALID");
+  const offset = Number(token.slice(prefix.length));
+  if (!Number.isInteger(offset) || offset < 0) throw new Error("WORLD_MODEL_CONTINUATION_INVALID");
+  return offset;
+}
+function unionSpatialBounds(bounds2) {
+  if (bounds2.length === 0) return void 0;
+  return {
+    minX: Math.min(...bounds2.map((item) => item.minX)),
+    minY: Math.min(...bounds2.map((item) => item.minY)),
+    maxX: Math.max(...bounds2.map((item) => item.maxX)),
+    maxY: Math.max(...bounds2.map((item) => item.maxY))
+  };
+}
+function stableId$1(ports, kind, value) {
+  return `${kind}_${ports.digest(stableStringify(value)).replace(/^sha256:/, "").slice(0, 24)}`;
+}
+function portableDigest$1(value) {
+  let first = 2166136261;
+  let second = 2246822519;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619) >>> 0;
+    second = Math.imul(second ^ code, 3266489917) >>> 0;
+  }
+  return `sha256:${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
+}
+function stableStringify(value) {
+  return JSON.stringify(canonicalize(value));
+}
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonicalize(child)]));
+}
+function integer$1(value, minimum, maximum, fallback) {
+  if (value === void 0) return fallback;
+  if (!Number.isInteger(value) || value < minimum || value > maximum) throw new Error("WORLD_MODEL_REQUEST_INVALID");
+  return value;
+}
+function positive$2(value, fallback) {
+  if (value === void 0) return fallback;
+  if (!Number.isFinite(value) || value <= 0) throw new Error("WORLD_MODEL_REQUEST_INVALID");
+  return value;
+}
+function quantize(point, tolerance) {
+  return [Math.round(point[0] / tolerance) * tolerance, Math.round(point[1] / tolerance) * tolerance];
+}
+function cleanPoint(point) {
+  return [Number(point[0].toFixed(12)), Number(point[1].toFixed(12))];
+}
+function distance$1(left, right) {
+  return Math.hypot(left[0] - right[0], left[1] - right[1]);
+}
+function cross(left, right) {
+  return left[0] * right[1] - left[1] * right[0];
+}
+function portableDigest(value) {
+  let first = 2166136261;
+  let second = 2246822519;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619) >>> 0;
+    second = Math.imul(second ^ code, 3266489917) >>> 0;
+  }
+  return `${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
+}
+function sampleGeometryRanges(node, input) {
+  const curveSamples = Math.max(8, Math.min(512, Math.floor(input.curveSamples)));
+  switch (node.type) {
+    case "point":
+      return [range("whole-node", [[node.x, node.y]])];
+    case "line":
+      return [range("parameter-range", [node.start, node.end], { parameterRange: [0, 1] })];
+    case "ray":
+    case "xline": {
+      const length = Math.max(
+        input.localBounds.maxX - input.localBounds.minX,
+        input.localBounds.maxY - input.localBounds.minY,
+        1
+      ) * 2;
+      const magnitude = Math.hypot(node.direction[0], node.direction[1]);
+      if (magnitude === 0) return [range("whole-node", [node.origin])];
+      const direction = [node.direction[0] / magnitude, node.direction[1] / magnitude];
+      const first = node.type === "ray" ? 0 : -length;
+      return [range("parameter-range", [
+        pointAlong(node.origin, direction, first),
+        pointAlong(node.origin, direction, length)
+      ], { parameterRange: [first, length] })];
+    }
+    case "polyline":
+      return polylineRanges(node, curveSamples);
+    case "circle":
+      return sampledParameterRanges(curveSamples, (parameter) => polar$1(
+        node.center,
+        node.radius,
+        parameter * Math.PI * 2
+      ));
+    case "arc": {
+      const sweep = arcSweepRadians(node.startAngle, node.endAngle, node.counterClockwise);
+      const count = Math.max(2, Math.ceil(curveSamples * Math.abs(sweep) / (Math.PI * 2)));
+      return sampledParameterRanges(count, (parameter) => polar$1(
+        node.center,
+        node.radius,
+        degreesToRadians(node.startAngle) + sweep * parameter
+      ));
+    }
+    case "ellipse": {
+      const start = node.startParam ?? 0;
+      const rawEnd = node.endParam ?? Math.PI * 2;
+      const sweep = node.startParam === void 0 && node.endParam === void 0 ? Math.PI * 2 : positiveSweep(rawEnd - start);
+      const count = Math.max(2, Math.ceil(curveSamples * sweep / (Math.PI * 2)));
+      return sampledParameterRanges(count, (parameter) => ellipsePoint(
+        node.center,
+        node.majorAxis,
+        node.ratio,
+        start + sweep * parameter
+      ));
+    }
+    case "spline": {
+      const count = Math.max(2, curveSamples);
+      return sampledParameterRanges(count, (parameter) => splinePoint(node, parameter));
+    }
+  }
+}
+function roughGeometryBounds(node) {
+  switch (node.type) {
+    case "point":
+      return boundsOf([[node.x, node.y]]);
+    case "line":
+      return boundsOf([node.start, node.end]);
+    case "ray":
+    case "xline":
+      return null;
+    case "circle":
+    case "arc":
+      return {
+        minX: node.center[0] - node.radius,
+        minY: node.center[1] - node.radius,
+        maxX: node.center[0] + node.radius,
+        maxY: node.center[1] + node.radius
+      };
+    case "ellipse": {
+      const major = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+      return {
+        minX: node.center[0] - major,
+        minY: node.center[1] - major,
+        maxX: node.center[0] + major,
+        maxY: node.center[1] + major
+      };
+    }
+    case "polyline": {
+      if (node.vertices.length === 0) return null;
+      const samples = polylineRanges(node, 64).flatMap((item) => item.samples);
+      return boundsOf(samples);
+    }
+    case "spline":
+      return node.controlPoints.length > 0 ? boundsOf(node.controlPoints) : null;
+  }
+}
+function polylineRanges(node, curveSamples) {
+  const count = node.closed ? node.vertices.length : Math.max(0, node.vertices.length - 1);
+  return Array.from({ length: count }, (_, index) => {
+    const next = (index + 1) % node.vertices.length;
+    const start = node.vertices[index].point;
+    const end = node.vertices[next].point;
+    const bulge = node.vertices[index].bulge ?? 0;
+    const samples = Math.abs(bulge) < 1e-12 ? [start, end] : sampleBulge(start, end, bulge, curveSamples);
+    return range("vertex-range", samples, { vertexRange: [index, next] });
+  });
+}
+function sampleBulge(start, end, bulge, curveSamples) {
+  const chord = Math.hypot(end[0] - start[0], end[1] - start[1]);
+  if (chord === 0) return [start, end];
+  const sweep = 4 * Math.atan(bulge);
+  const midpoint = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
+  const left = [-(end[1] - start[1]) / chord, (end[0] - start[0]) / chord];
+  const offset = chord * (1 - bulge ** 2) / (4 * bulge);
+  const center2 = [midpoint[0] + left[0] * offset, midpoint[1] + left[1] * offset];
+  const radius = Math.hypot(start[0] - center2[0], start[1] - center2[1]);
+  const startAngle = Math.atan2(start[1] - center2[1], start[0] - center2[0]);
+  const count = Math.max(2, Math.ceil(curveSamples * Math.abs(sweep) / (Math.PI * 2)));
+  return Array.from({ length: count + 1 }, (_, index) => index === count ? end : polar$1(center2, radius, startAngle + sweep * index / count));
+}
+function sampledParameterRanges(count, evaluate) {
+  return Array.from({ length: count }, (_, index) => {
+    const start = index / count;
+    const end = (index + 1) / count;
+    return range("parameter-range", [evaluate(start), evaluate(end)], {
+      parameterRange: [start, end]
+    });
+  });
+}
+function splinePoint(node, parameter) {
+  var _a3;
+  const points = node.controlPoints;
+  if (points.length === 0) return [0, 0];
+  if (points.length === 1) return points[0];
+  const degree = Math.min(node.degree, points.length - 1);
+  const expectedKnotCount = points.length + degree + 1;
+  if (node.knots.length !== expectedKnotCount) return controlPolygonPoint(points, parameter);
+  const minimum = node.knots[degree];
+  const maximum = node.knots[points.length];
+  const u = parameter >= 1 ? maximum : minimum + (maximum - minimum) * parameter;
+  const weights = ((_a3 = node.weights) == null ? void 0 : _a3.length) === points.length ? node.weights : points.map(() => 1);
+  let weightSum = 0;
+  let x = 0;
+  let y = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const basis = bsplineBasis(index, degree, u, node.knots, maximum) * weights[index];
+    weightSum += basis;
+    x += basis * points[index][0];
+    y += basis * points[index][1];
+  }
+  return weightSum === 0 ? controlPolygonPoint(points, parameter) : [x / weightSum, y / weightSum];
+}
+function bsplineBasis(index, degree, parameter, knots, maximum) {
+  if (degree === 0) {
+    return knots[index] <= parameter && (parameter < knots[index + 1] || parameter === maximum && knots[index + 1] === maximum) ? 1 : 0;
+  }
+  const leftDenominator = knots[index + degree] - knots[index];
+  const rightDenominator = knots[index + degree + 1] - knots[index + 1];
+  const left = leftDenominator === 0 ? 0 : (parameter - knots[index]) / leftDenominator * bsplineBasis(index, degree - 1, parameter, knots, maximum);
+  const right = rightDenominator === 0 ? 0 : (knots[index + degree + 1] - parameter) / rightDenominator * bsplineBasis(index + 1, degree - 1, parameter, knots, maximum);
+  return left + right;
+}
+function controlPolygonPoint(points, parameter) {
+  const scaled = Math.max(0, Math.min(1, parameter)) * (points.length - 1);
+  const index = Math.min(points.length - 2, Math.floor(scaled));
+  const local = scaled - index;
+  return [
+    points[index][0] + (points[index + 1][0] - points[index][0]) * local,
+    points[index][1] + (points[index + 1][1] - points[index][1]) * local
+  ];
+}
+function ellipsePoint(center2, majorAxis, ratio, parameter) {
+  const major = Math.hypot(majorAxis[0], majorAxis[1]);
+  if (major === 0) return center2;
+  const unit = [majorAxis[0] / major, majorAxis[1] / major];
+  const perpendicular = [-unit[1], unit[0]];
+  return [
+    center2[0] + unit[0] * major * Math.cos(parameter) + perpendicular[0] * major * ratio * Math.sin(parameter),
+    center2[1] + unit[1] * major * Math.cos(parameter) + perpendicular[1] * major * ratio * Math.sin(parameter)
+  ];
+}
+function range(kind, samples, identity = {}) {
+  return {
+    kind,
+    ...identity,
+    samples,
+    start: samples[0],
+    end: samples.at(-1),
+    bounds: boundsOf(samples)
+  };
+}
+function boundsOf(points) {
+  return {
+    minX: Math.min(...points.map((point) => point[0])),
+    minY: Math.min(...points.map((point) => point[1])),
+    maxX: Math.max(...points.map((point) => point[0])),
+    maxY: Math.max(...points.map((point) => point[1]))
+  };
+}
+function arcSweepRadians(start, end, counterClockwise) {
+  const raw = degreesToRadians(end - start);
+  return counterClockwise ? positiveSweep(raw) : -positiveSweep(-raw);
+}
+function positiveSweep(value) {
+  const full = Math.PI * 2;
+  const normalized = (value % full + full) % full;
+  return Math.abs(normalized) < 1e-12 ? full : normalized;
+}
+function degreesToRadians(value) {
+  return value * Math.PI / 180;
+}
+function polar$1(center2, radius, angle) {
+  return [center2[0] + radius * Math.cos(angle), center2[1] + radius * Math.sin(angle)];
+}
+function pointAlong(origin, direction, parameter) {
+  return [origin[0] + direction[0] * parameter, origin[1] + direction[1] * parameter];
+}
+const graphCache = /* @__PURE__ */ new WeakMap();
+class GeometryTopologyGraph {
+  constructor(revision, segments, vertices, tolerance) {
+    __publicField(this, "segments");
+    __publicField(this, "vertices");
+    __privateAdd(this, _byNode, /* @__PURE__ */ new Map());
+    __privateAdd(this, _segmentById, /* @__PURE__ */ new Map());
+    __privateAdd(this, _vertexById, /* @__PURE__ */ new Map());
+    this.revision = revision;
+    this.tolerance = tolerance;
+    this.segments = segments;
+    this.vertices = vertices;
+    for (const segment of segments) {
+      const existing = __privateGet(this, _byNode).get(segment.nodeId) ?? [];
+      __privateGet(this, _byNode).set(segment.nodeId, [...existing, segment]);
+      __privateGet(this, _segmentById).set(segment.id, segment);
+    }
+    vertices.forEach((vertex) => __privateGet(this, _vertexById).set(vertex.id, vertex));
+  }
+  segmentsFor(nodeId) {
+    return __privateGet(this, _byNode).get(nodeId) ?? [];
+  }
+  segment(id) {
+    return __privateGet(this, _segmentById).get(id);
+  }
+  vertex(id) {
+    return __privateGet(this, _vertexById).get(id);
+  }
+}
+_byNode = new WeakMap();
+_segmentById = new WeakMap();
+_vertexById = new WeakMap();
+function buildGeometryTopologyGraph(input) {
+  var _a3;
+  const curveSamples = normalizedCurveSamples(input.curveSamples);
+  const samplingBounds = documentSamplingBounds(input.document);
+  const tolerance = normalizedTolerance(input.tolerance, samplingBounds);
+  const cacheKey = JSON.stringify({
+    revision: input.revision,
+    curveSamples,
+    tolerance
+  });
+  const cached2 = (_a3 = graphCache.get(input.document)) == null ? void 0 : _a3.get(cacheKey);
+  if (cached2) return cached2;
+  const unresolvedSegments = input.document.geometry.flatMap((node) => sampleGeometryRanges(node, { curveSamples, localBounds: samplingBounds }).map((sample) => ({
+    id: atomicId(input.revision, node.id, sample),
+    revision: input.revision,
+    nodeId: node.id,
+    kind: sample.kind,
+    ...sample.vertexRange ? { vertexRange: sample.vertexRange } : {},
+    ...sample.parameterRange ? { parameterRange: sample.parameterRange } : {},
+    start: sample.start,
+    end: sample.end,
+    bounds: sample.bounds,
+    adjacentSegmentIds: [],
+    samples: sample.samples
+  })));
+  const { segments, vertices } = resolveEndpointTopology(
+    unresolvedSegments,
+    input.revision,
+    tolerance
+  );
+  connectExplicitRelations(segments, input.document);
+  normalizeAdjacency(segments);
+  const graph = new GeometryTopologyGraph(input.revision, segments, vertices, tolerance);
+  const documentCache = graphCache.get(input.document) ?? /* @__PURE__ */ new Map();
+  documentCache.set(cacheKey, graph);
+  while (documentCache.size > 16) documentCache.delete(documentCache.keys().next().value);
+  graphCache.set(input.document, documentCache);
+  return graph;
+}
+function resolveEndpointTopology(unresolved, revision, tolerance) {
+  const endpoints = unresolved.flatMap((segment, segmentIndex) => [
+    { segmentIndex, side: "start", point: segment.start, identity: `${segment.id}:start` },
+    { segmentIndex, side: "end", point: segment.end, identity: `${segment.id}:end` }
+  ]);
+  const parent = endpoints.map((_, index) => index);
+  const buckets = /* @__PURE__ */ new Map();
+  endpoints.forEach((endpoint, index) => {
+    const [cellX, cellY] = endpointCell(endpoint.point, tolerance);
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (const candidateIndex of buckets.get(`${cellX + offsetX}:${cellY + offsetY}`) ?? []) {
+          if (distance(endpoint.point, endpoints[candidateIndex].point) <= tolerance) {
+            union$1(parent, index, candidateIndex);
+          }
+        }
+      }
+    }
+    const key = `${cellX}:${cellY}`;
+    buckets.set(key, [...buckets.get(key) ?? [], index]);
+  });
+  const components = /* @__PURE__ */ new Map();
+  endpoints.forEach((_, index) => {
+    const root = find(parent, index);
+    components.set(root, [...components.get(root) ?? [], index]);
+  });
+  const endpointVertexIds = /* @__PURE__ */ new Map();
+  const vertices = [...components.values()].map((component) => {
+    const identities = component.map((index) => endpoints[index].identity).sort();
+    const id = `vertex_${digest$1(JSON.stringify({ revision, identities })).slice(0, 24)}`;
+    const point = [
+      component.reduce((sum, index) => sum + endpoints[index].point[0], 0) / component.length,
+      component.reduce((sum, index) => sum + endpoints[index].point[1], 0) / component.length
+    ];
+    const incidentSegmentIds = unique(component.map((index) => unresolved[endpoints[index].segmentIndex].id)).sort();
+    component.forEach((index) => endpointVertexIds.set(index, id));
+    return { id, point, incidentSegmentIds };
+  }).sort((left, right) => left.id.localeCompare(right.id));
+  const segments = unresolved.map((segment, index) => {
+    var _a3, _b;
+    const startVertexId = endpointVertexIds.get(index * 2);
+    const endVertexId = endpointVertexIds.get(index * 2 + 1);
+    const adjacentSegmentIds = unique([
+      ...((_a3 = vertices.find((vertex) => vertex.id === startVertexId)) == null ? void 0 : _a3.incidentSegmentIds) ?? [],
+      ...((_b = vertices.find((vertex) => vertex.id === endVertexId)) == null ? void 0 : _b.incidentSegmentIds) ?? []
+    ]).filter((id) => id !== segment.id);
+    return { ...segment, startVertexId, endVertexId, adjacentSegmentIds };
+  });
+  return { segments, vertices };
+}
+function connectExplicitRelations(segments, document) {
+  const byNode = /* @__PURE__ */ new Map();
+  segments.forEach((segment) => {
+    byNode.set(segment.nodeId, [...byNode.get(segment.nodeId) ?? [], segment]);
+  });
+  for (const relation of document.relations) {
+    if (relation.plane !== "topology" || relation.kind !== "connected") continue;
+    relation.nodeIds.forEach((leftId, leftIndex) => {
+      relation.nodeIds.slice(leftIndex + 1).forEach((rightId) => {
+        const pair2 = closestEndpointPair(byNode.get(leftId) ?? [], byNode.get(rightId) ?? []);
+        if (!pair2) return;
+        pair2[0].adjacentSegmentIds.push(pair2[1].id);
+        pair2[1].adjacentSegmentIds.push(pair2[0].id);
+      });
+    });
+  }
+}
+function closestEndpointPair(left, right) {
+  let best = null;
+  for (const leftSegment of left) {
+    for (const rightSegment of right) {
+      const separation = Math.min(
+        distance(leftSegment.start, rightSegment.start),
+        distance(leftSegment.start, rightSegment.end),
+        distance(leftSegment.end, rightSegment.start),
+        distance(leftSegment.end, rightSegment.end)
+      );
+      if (!best || separation < best.distance) {
+        best = { pair: [leftSegment, rightSegment], distance: separation };
+      }
+    }
+  }
+  return (best == null ? void 0 : best.pair) ?? null;
+}
+function normalizeAdjacency(segments) {
+  segments.forEach((segment) => {
+    segment.adjacentSegmentIds = unique(segment.adjacentSegmentIds).filter((id) => id !== segment.id).sort();
+  });
+}
+function documentSamplingBounds(document) {
+  const finite2 = document.geometry.flatMap((node) => {
+    const bounds22 = roughGeometryBounds(node);
+    if (bounds22) return [bounds22];
+    if (node.type === "ray" || node.type === "xline") {
+      return [{
+        minX: node.origin[0],
+        minY: node.origin[1],
+        maxX: node.origin[0],
+        maxY: node.origin[1]
+      }];
+    }
+    return [];
+  });
+  if (finite2.length === 0) return { minX: -1, minY: -1, maxX: 1, maxY: 1 };
+  const bounds2 = {
+    minX: Math.min(...finite2.map((item) => item.minX)),
+    minY: Math.min(...finite2.map((item) => item.minY)),
+    maxX: Math.max(...finite2.map((item) => item.maxX)),
+    maxY: Math.max(...finite2.map((item) => item.maxY))
+  };
+  const span = Math.max(bounds2.maxX - bounds2.minX, bounds2.maxY - bounds2.minY, 1);
+  return {
+    minX: bounds2.minX - span,
+    minY: bounds2.minY - span,
+    maxX: bounds2.maxX + span,
+    maxY: bounds2.maxY + span
+  };
+}
+function normalizedTolerance(value, bounds2) {
+  if (value !== void 0) {
+    if (!Number.isFinite(value) || value <= 0) throw new Error("TOPOLOGY_TOLERANCE_INVALID");
+    return value;
+  }
+  const scale2 = Math.max(
+    bounds2.maxX - bounds2.minX,
+    bounds2.maxY - bounds2.minY,
+    Math.abs(bounds2.minX),
+    Math.abs(bounds2.minY),
+    Math.abs(bounds2.maxX),
+    Math.abs(bounds2.maxY),
+    Number.MIN_VALUE
+  );
+  return Math.max(scale2 * 4e-4, scale2 * Number.EPSILON * 64);
+}
+function normalizedCurveSamples(value) {
+  const samples = value ?? 64;
+  if (!Number.isFinite(samples) || samples < 2) throw new Error("TOPOLOGY_CURVE_SAMPLES_INVALID");
+  return Math.max(8, Math.min(512, Math.floor(samples)));
+}
+function atomicId(revision, nodeId, range2) {
+  return `atomic_${digest$1(JSON.stringify({
+    revision,
+    nodeId,
+    kind: range2.kind,
+    vertexRange: range2.vertexRange,
+    parameterRange: range2.parameterRange
+  })).slice(0, 24)}`;
+}
+function endpointCell(point, tolerance) {
+  return [Math.floor(point[0] / tolerance), Math.floor(point[1] / tolerance)];
+}
+function find(parent, index) {
+  if (parent[index] !== index) parent[index] = find(parent, parent[index]);
+  return parent[index];
+}
+function union$1(parent, left, right) {
+  const leftRoot = find(parent, left);
+  const rightRoot = find(parent, right);
+  if (leftRoot === rightRoot) return;
+  if (leftRoot < rightRoot) parent[rightRoot] = leftRoot;
+  else parent[leftRoot] = rightRoot;
+}
+function distance(left, right) {
+  return Math.hypot(right[0] - left[0], right[1] - left[1]);
+}
+function unique(values) {
+  return [...new Set(values)];
+}
+function digest$1(value) {
+  return portableDigest(value);
 }
 var _a$1;
 function $constructor(name, initializer2, params) {
@@ -5838,8 +7081,8 @@ const spatialOperationSchema = discriminatedUnion("kind", [
   object({
     kind: literal("connected_transform"),
     translation: vec2Schema$1,
-    rotationRadians: finiteSchema,
-    pivot: vec2Schema$1,
+    rotationRadians: finiteSchema.optional(),
+    pivot: vec2Schema$1.optional(),
     interfaceIds: array(idSchema$1).min(1).max(256)
   }).strict(),
   object({
@@ -7042,7 +8285,7 @@ function createSemanticEditToolCatalog(semantic, questions) {
 function createDrawingPreviewGroundedTransformTool(semantic) {
   return defineTool({
     name: "drawing_preview_grounded_transform",
-    description: "Preferred tool for moving, rotating, raising, lowering, or posing a grounded Drawing part. Pass only the intended transform; the Host builds the complete validated Spatial Edit Program from the latest grounding. Positive Y moves visually up. Always use taskId and groundingId returned in this turn.",
+    description: "Preview a pose transform for an exact grounded target. Pass only the intended displacement; the Host derives the minimum-deformation orientation from actual topology and interfaces. Positive Y moves visually up. Use the advanced program tool only when the user explicitly specifies an exact rotation.",
     parameters: {
       taskId: { type: "string", required: true },
       groundingId: { type: "string", required: true },
@@ -7052,28 +8295,25 @@ function createDrawingPreviewGroundedTransformTool(semantic) {
         required: true,
         description: "Exactly two numbers [dx, dy] in Drawing units. Positive dy moves the target visually up."
       },
-      rotationDegrees: {
-        type: "number",
-        description: "Optional rotation in degrees around the target center. Use 0 for translation only."
-      },
-      pivot: {
-        type: "array",
-        items: { type: "number" },
-        description: "Optional exact [x, y] pivot. Omit to rotate around the grounded target center."
-      },
       summary: { type: "string", required: true }
     },
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
-      return semantic.previewGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      const input = args;
+      return semantic.previewGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+        taskId: input.taskId,
+        groundingId: input.groundingId,
+        translation: input.translation,
+        summary: input.summary
+      });
     }
   });
 }
 function createDrawingReviseGroundedTransformTool(semantic) {
   return defineTool({
     name: "drawing_revise_grounded_transform",
-    description: "Replace the current transform Preview after visual evaluation requests a revision. Keep the same task; optionally call drawing_ground again with the existing context to narrow the moving target. Never call drawing_observe twice in one user turn.",
+    description: "Replace the current pose Preview after visual evaluation requests a revision. Keep the same task; optionally call drawing_ground again with the existing context to narrow the moving target. The Host derives orientation from topology. Never call drawing_observe twice in one user turn.",
     parameters: {
       taskId: { type: "string", required: true },
       currentPreviewHandle: { type: "string", required: true },
@@ -7085,14 +8325,20 @@ function createDrawingReviseGroundedTransformTool(semantic) {
         required: true,
         description: "Exactly two numbers [dx, dy]. Positive dy moves visually up."
       },
-      rotationDegrees: { type: "number", description: "Optional rotation in degrees." },
-      pivot: { type: "array", items: { type: "number" }, description: "Optional exact [x, y] pivot." },
       summary: { type: "string", required: true }
     },
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
-      return semantic.reviseGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      const input = args;
+      return semantic.reviseGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+        taskId: input.taskId,
+        currentPreviewHandle: input.currentPreviewHandle,
+        currentCandidateDigest: input.currentCandidateDigest,
+        groundingId: input.groundingId,
+        translation: input.translation,
+        summary: input.summary
+      });
     }
   });
 }
@@ -7101,13 +8347,14 @@ function createDrawingObserveTool(semantic) {
     name: "drawing_observe",
     description: "Start a revision-bound semantic edit task from the current direct user instruction and create an observation of the active local Drawing. Call before grounding or editing.",
     parameters: {},
-    output: { schema: { type: "json" }, render: renderJson },
+    output: { schema: { type: "json" }, render: renderObservation },
     async execute(_args, exec) {
       var _a3;
       const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
       const task = semantic.startBoundTask(sessionId);
-      const observation = semantic.observe(sessionId, { taskId: task.taskId });
-      return { task, observation };
+      const observation = await semantic.observe(sessionId, { taskId: task.taskId });
+      const imageAttachment = semantic.observationAttachment(observation.observationId);
+      return { task, observation, ...imageAttachment ? { imageAttachment } : {} };
     }
   });
 }
@@ -7129,7 +8376,7 @@ function createDrawingBuildContextTool(semantic) {
 function createDrawingGroundTool(semantic) {
   return defineTool({
     name: "drawing_ground",
-    description: "Ground a semantic target to exact node ids and connector interfaces. For articulated edits, target only the moving end object (for example the hand/palm), not its connecting arm lines; with empty interfaces the Host infers contacted line endpoints so they stay connected. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces.",
+    description: "Ground a semantic target to exact node ids and topology interfaces. Choose only the semantic carrier being transformed; pass empty interfaces so the Host derives true contacted endpoint slots. When the user refers to a Host selection, pass its selectionProjectionId with empty targetNodeIds.",
     parameters: {
       taskId: { type: "string", required: true },
       contextId: { type: "string", required: true },
@@ -7150,7 +8397,7 @@ function createDrawingGroundTool(semantic) {
 function createDrawingPreviewProgramTool(semantic) {
   return defineTool({
     name: "drawing_preview_program",
-    description: "Advanced tool for non-transform spatial operations. For moving, rotating, raising, lowering, or posing a part, use drawing_preview_grounded_transform instead. Compiles a complete Spatial Edit Program against an exact grounding and never accepts raw Drawing transaction commands.",
+    description: "Advanced tool for non-pose spatial operations and exact numeric rotations explicitly requested by the user. For ordinary moving, raising, lowering, or posing, use drawing_preview_grounded_transform so the Host derives minimum-deformation orientation. Compiles a complete Spatial Edit Program against an exact grounding and never accepts raw Drawing transaction commands.",
     parameters: {
       taskId: { type: "string", required: true },
       groundingId: { type: "string", required: true },
@@ -7177,7 +8424,7 @@ function createDrawingEvaluatePreviewTool(semantic) {
       previewHandle: { type: "string", required: true },
       candidateDigest: { type: "string", required: true }
     },
-    output: { schema: { type: "json" }, render: renderJson },
+    output: { schema: { type: "json" }, render: renderObservation },
     async execute(args, exec) {
       var _a3;
       return await semantic.evaluatePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
@@ -7363,6 +8610,19 @@ function requireSession(id) {
 }
 function renderJson(_args, value) {
   return [{ type: "text", text: JSON.stringify(value) }];
+}
+function renderObservation(_args, value) {
+  const content = [{ type: "text", text: JSON.stringify(value) }];
+  if (value && typeof value === "object" && "imageAttachment" in value) {
+    const attachment = value.imageAttachment;
+    if (attachment && typeof attachment === "object" && "attachmentId" in attachment) {
+      content.push({
+        type: "image",
+        attachment
+      });
+    }
+  }
+  return content;
 }
 function createDrawingAgentToolCatalog(drawings, attachments, semantic, questions) {
   return [
@@ -8043,38 +9303,112 @@ class SemanticEditService {
     __privateGet(this, _tasks).set(sessionId, { ref, objective, candidateCount: 0, active: true });
     return structuredClone(ref);
   }
-  observe(sessionId, input) {
+  async observe(sessionId, input) {
+    var _a3;
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
     const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
     const selection = this.currentSelectionProjection(sessionId);
+    const viewport = ((_a3 = this.drawings.summarize(sessionId)) == null ? void 0 : _a3.bounds) ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+    const rendered = this.ports.renderObservation ? await this.ports.renderObservation({
+      document: snapshot.document,
+      viewport,
+      selectedNodeIds: (selection == null ? void 0 : selection.nodeIds) ?? []
+    }) : void 0;
+    const basis = { kind: "canonical", ref: structuredClone(snapshot.ref) };
+    const semanticContentDigest = this.ports.digest(canonicalSemanticString(snapshot.document));
     const ref = {
       observationId: this.ports.id("observation"),
       taskId: task.ref.taskId,
-      basis: { kind: "canonical", ref: structuredClone(snapshot.ref) },
-      artifactRefs: [],
+      basis,
+      artifactRefs: [{
+        id: rendered ? String(rendered.attachment.attachmentId) : this.ports.id("observation-artifact"),
+        contentDigest: (rendered == null ? void 0 : rendered.contentDigest) ?? semanticContentDigest,
+        mimeType: "image/png",
+        basis
+      }],
       ...selection ? { selectionProjectionId: selection.selectionProjectionId } : {},
       observationDigest: this.ports.digest(canonicalString({
         taskId: task.ref.taskId,
         ref: snapshot.ref,
-        semantic: canonicalSemanticString(snapshot.document),
+        semanticContentDigest,
+        artifactContentDigest: (rendered == null ? void 0 : rendered.contentDigest) ?? semanticContentDigest,
         selectionProjectionDigest: selection == null ? void 0 : selection.projectionDigest
       }))
     };
-    __privateGet(this, _observations).set(ref.observationId, ref);
+    __privateGet(this, _observations).set(ref.observationId, {
+      ref,
+      ...rendered ? {
+        attachment: rendered.attachment,
+        view: {
+          width: rendered.width,
+          height: rendered.height,
+          worldToImage: rendered.worldToImage
+        }
+      } : {}
+    });
     return structuredClone(ref);
+  }
+  observationAttachment(observationId) {
+    var _a3;
+    const attachment = (_a3 = __privateGet(this, _observations).get(observationId)) == null ? void 0 : _a3.attachment;
+    return attachment ? structuredClone(attachment) : null;
   }
   buildContext(sessionId, input) {
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
     const observation = __privateGet(this, _observations).get(input.observationId);
-    if (!observation || observation.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    if (!observation || observation.ref.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
     const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const world = new WorldModelCompiler({ digest: this.ports.digest }).compile(
+      snapshot.document,
+      String(snapshot.ref.revision),
+      { limit: 2e3 }
+    );
+    const geometryFacts = snapshot.document.geometry.slice(0, 512).map((node) => ({
+      nodeId: String(node.id),
+      type: node.type,
+      quality: node.quality.status,
+      center: geometryCenter(node),
+      bounds: geometryNodeBounds(node)
+    }));
+    const connectedCarrierFacts = findConnectedCarrierCandidates(snapshot.document).map((candidate) => ({
+      ...candidate,
+      interfaces: findConnectedCarrierInterfaces(snapshot.document, candidate.carrierNodeId).map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint }))
+    }));
+    const topology = buildGeometryTopologyGraph({
+      document: snapshot.document,
+      revision: String(snapshot.ref.revision)
+    });
+    const topologyFacts = {
+      segmentCount: topology.segments.length,
+      vertexCount: topology.vertices.length,
+      interfaceVertices: topology.vertices.flatMap((vertex) => {
+        const nodeIds = [...new Set(vertex.incidentSegmentIds.flatMap((segmentId) => {
+          const segment = topology.segment(segmentId);
+          return segment ? [String(segment.nodeId)] : [];
+        }))].sort();
+        return nodeIds.length > 1 ? [{ vertexId: vertex.id, point: structuredClone(vertex.point), nodeIds }] : [];
+      }).slice(0, 512)
+    };
+    const knowledgeStatus = world.knowledge.state === "resolved" ? "complete" : world.knowledge.state === "partial" ? "partial" : "unknown";
     const ref = {
       contextId: this.ports.id("context"),
       taskId: task.ref.taskId,
-      observationId: observation.observationId,
+      observationId: observation.ref.observationId,
+      geometryFacts,
+      connectedCarrierFacts,
+      topologyFacts,
+      knowledge: {
+        status: knowledgeStatus,
+        worldModelVersion: world.compilerVersion,
+        unresolvedBoundaryRefs: world.knowledge.unresolvedBoundaryRefs
+      },
       contextDigest: this.ports.digest(canonicalString({
-        observationDigest: observation.observationDigest,
-        nodeIds: allNodes(snapshot.document).map(({ id }) => id).sort()
+        observationDigest: observation.ref.observationDigest,
+        geometryFacts,
+        connectedCarrierFacts,
+        topologyFacts,
+        worldInputDigest: world.inputDigest,
+        worldKnowledge: world.knowledge
       }))
     };
     __privateGet(this, _contexts).set(ref.contextId, ref);
@@ -8097,10 +9431,19 @@ class SemanticEditService {
     if (targetNodeIds.length === 0 || targetNodeIds.some((id) => !nodes.has(id))) {
       throw new Error("EDIT_TARGET_UNRESOLVED");
     }
-    const interfaces = input.interfaces.length > 0 ? structuredClone(input.interfaces) : inferSelectionInterfaces(snapshot.document, targetNodeIds);
+    const discoveredInterfaces = inferSelectionInterfaces(
+      snapshot.document,
+      targetNodeIds,
+      snapshot.ref.revision
+    );
+    const discoveredIds = new Set(discoveredInterfaces.map(({ interfaceId }) => interfaceId));
+    const interfaces = input.interfaces.length > 0 ? structuredClone(input.interfaces) : discoveredInterfaces;
     for (const port of interfaces) {
       const node = nodes.get(port.nodeId);
       if (!node || node.type !== "line" || !port.endpoint) throw new Error("EDIT_INTERFACE_UNRESOLVED");
+      if (discoveredInterfaces.length > 0 && !discoveredIds.has(port.interfaceId)) {
+        throw new Error("EDIT_INTERFACE_NOT_CONTACTED");
+      }
     }
     const sourceStatus = snapshot.provisional ? "provisional" : targetNodeIds.some((id) => {
       var _a4;
@@ -8188,22 +9531,21 @@ class SemanticEditService {
     const grounding = __privateGet(this, _groundings).get(input.groundingId);
     if (!grounding || grounding.ref.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
     const translation = finiteVec2(input.translation, "EDIT_TRANSLATION_INVALID");
-    const rotationDegrees = input.rotationDegrees ?? 0;
-    if (!Number.isFinite(rotationDegrees)) throw new Error("EDIT_ROTATION_INVALID");
+    const rotationDegrees = input.rotationDegrees;
+    if (rotationDegrees !== void 0 && !Number.isFinite(rotationDegrees)) throw new Error("EDIT_ROTATION_INVALID");
     const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
-    const pivot = input.pivot === void 0 ? groundedGeometryCenter(snapshot.document, grounding.target.targetNodeIds) : finiteVec2(input.pivot, "EDIT_PIVOT_INVALID");
     const interfaces = grounding.target.interfaces.map(({ interfaceId }) => interfaceId);
-    const operation = interfaces.length > 0 ? {
+    const closedCarrier = grounding.target.targetNodeIds.length === 1 ? snapshot.document.geometry.find(({ id }) => String(id) === grounding.target.targetNodeIds[0]) : void 0;
+    const operation = interfaces.length > 0 && ((closedCarrier == null ? void 0 : closedCarrier.type) === "circle" || (closedCarrier == null ? void 0 : closedCarrier.type) === "ellipse") ? {
       kind: "connected_transform",
       translation,
-      rotationRadians: rotationDegrees * Math.PI / 180,
-      pivot,
+      ...rotationDegrees === void 0 ? {} : { rotationRadians: rotationDegrees * Math.PI / 180 },
       interfaceIds: interfaces
     } : {
       kind: "rigid_transform",
       translation,
-      rotationRadians: rotationDegrees * Math.PI / 180,
-      pivot
+      rotationRadians: (rotationDegrees ?? 0) * Math.PI / 180,
+      pivot: input.pivot === void 0 ? groundedGeometryCenter(snapshot.document, grounding.target.targetNodeIds) : finiteVec2(input.pivot, "EDIT_PIVOT_INVALID")
     };
     return this.previewProgram(sessionId, {
       taskId: task.ref.taskId,
@@ -8235,7 +9577,7 @@ class SemanticEditService {
     });
   }
   async evaluatePreview(sessionId, input) {
-    var _a3, _b, _c, _d, _e, _f, _g, _h;
+    var _a3, _b, _c, _d, _e, _f, _g, _h, _i;
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
     const preview = __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.previewHandle, input.candidateDigest);
     if (preview.task !== task) throw new Error("EDIT_LINEAGE_MISMATCH");
@@ -8344,7 +9686,11 @@ class SemanticEditService {
       evaluationDigest
     };
     __privateGet(this, _evaluations).set(evaluationId, { ref, evaluation, assessment });
-    return { evaluation: structuredClone(evaluation), assessment: structuredClone(assessment) };
+    return {
+      evaluation: structuredClone(evaluation),
+      assessment: structuredClone(assessment),
+      ...((_i = reviewed.render) == null ? void 0 : _i.attachment) ? { imageAttachment: structuredClone(reviewed.render.attachment) } : {}
+    };
   }
   finalizePreview(sessionId, raw) {
     const request = finalizePreviewRequestSchema.parse(raw);
@@ -8434,7 +9780,7 @@ class SemanticEditService {
   }
   async runExtensionProgram(sessionId, input, signal) {
     const task = this.startBoundTask(sessionId);
-    const observation = this.observe(sessionId, { taskId: task.taskId });
+    const observation = await this.observe(sessionId, { taskId: task.taskId });
     const context = this.buildContext(sessionId, {
       taskId: task.taskId,
       observationId: observation.observationId
@@ -8595,10 +9941,39 @@ snapshotAtTask_fn = function(sessionId, task) {
 function allNodes(document) {
   return [...document.geometry, ...document.annotations, ...document.relations, ...document.features];
 }
-function inferSelectionInterfaces(document, targetNodeIds) {
+function inferSelectionInterfaces(document, targetNodeIds, revision) {
   const selected = new Set(targetNodeIds);
   const targets = document.geometry.filter((node) => selected.has(String(node.id)));
-  const tolerance = Math.max(geometryDiagonal(document) * 0.025, 1e-6);
+  const exactCarrierInterfaces = targets.flatMap((target) => target.type === "circle" || target.type === "ellipse" ? findConnectedCarrierInterfaces(document, String(target.id)).map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })) : []);
+  if (exactCarrierInterfaces.length > 0) {
+    return exactCarrierInterfaces.sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
+  }
+  const topology = buildGeometryTopologyGraph({
+    document,
+    revision: String(revision)
+  });
+  const graphInterfaces = topology.vertices.flatMap((vertex) => {
+    const segments = vertex.incidentSegmentIds.flatMap((id) => {
+      const segment = topology.segment(id);
+      return segment ? [segment] : [];
+    });
+    if (!segments.some(({ nodeId }) => selected.has(String(nodeId)))) return [];
+    return segments.flatMap((segment) => {
+      if (selected.has(String(segment.nodeId))) return [];
+      const node = document.geometry.find(({ id }) => id === segment.nodeId);
+      if (!node || node.type !== "line") return [];
+      const endpoint = segment.startVertexId === vertex.id ? "start" : segment.endVertexId === vertex.id ? "end" : null;
+      return endpoint ? [{
+        interfaceId: `${String(node.id)}:${endpoint}`,
+        nodeId: String(node.id),
+        endpoint
+      }] : [];
+    });
+  });
+  if (graphInterfaces.length > 0) {
+    return [...new Map(graphInterfaces.map((port) => [port.interfaceId, port])).values()].sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
+  }
+  const tolerance = Math.max(geometryDiagonal(document) * 25e-4, 1e-6);
   const interfaces = [];
   for (const connector of document.geometry) {
     if (selected.has(String(connector.id)) || connector.type !== "line") continue;
@@ -8649,6 +10024,43 @@ function geometryAnchors(node) {
     case "spline":
       return node.controlPoints;
   }
+}
+function geometryCenter(node) {
+  if (node.type === "point") return [node.x, node.y];
+  if (node.type === "circle" || node.type === "arc" || node.type === "ellipse") return [...node.center];
+  const anchors = geometryAnchors(node);
+  if (anchors.length === 0) return null;
+  return [
+    anchors.reduce((sum, point) => sum + point[0], 0) / anchors.length,
+    anchors.reduce((sum, point) => sum + point[1], 0) / anchors.length
+  ];
+}
+function geometryNodeBounds(node) {
+  if (node.type === "circle" || node.type === "arc") return {
+    minX: node.center[0] - node.radius,
+    minY: node.center[1] - node.radius,
+    maxX: node.center[0] + node.radius,
+    maxY: node.center[1] + node.radius
+  };
+  if (node.type === "ellipse") {
+    const major = Math.hypot(...node.majorAxis);
+    return {
+      minX: node.center[0] - major,
+      minY: node.center[1] - major,
+      maxX: node.center[0] + major,
+      maxY: node.center[1] + major
+    };
+  }
+  const anchors = geometryAnchors(node);
+  if (anchors.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  const xs = anchors.map(([x]) => x);
+  const ys = anchors.map(([, y]) => y);
+  return {
+    minX: Math.min(...xs),
+    minY: Math.min(...ys),
+    maxX: Math.max(...xs),
+    maxY: Math.max(...ys)
+  };
 }
 function geometryDiagonal(document) {
   const points = document.geometry.flatMap(geometryAnchors);
@@ -8856,6 +10268,37 @@ function registerDrawingCommands(commands, interactive, semantic) {
     disposeApply();
   };
 }
+async function renderDrawingObservation(input) {
+  const width = 960;
+  const height = 720;
+  const padding = 36;
+  const worldWidth = Math.max(input.viewport.maxX - input.viewport.minX, 1e-6);
+  const worldHeight = Math.max(input.viewport.maxY - input.viewport.minY, 1e-6);
+  const scale2 = Math.min((width - padding * 2) / worldWidth, (height - padding * 2) / worldHeight);
+  const offsetX = padding + (width - padding * 2 - worldWidth * scale2) / 2 - input.viewport.minX * scale2;
+  const offsetY = height - padding - (height - padding * 2 - worldHeight * scale2) / 2 + input.viewport.minY * scale2;
+  const transform2 = [scale2, 0, 0, -scale2, offsetX, offsetY];
+  const selected = new Set(input.selectedNodeIds ?? []);
+  const normal = renderDocument(input.document, /* @__PURE__ */ new Set(), "#d7e0ea");
+  const highlight = selected.size === 0 ? "" : renderDocument(input.document, selected, "#ffad42", true);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <rect width="${width}" height="${height}" fill="#101419"/>
+    <g transform="matrix(${transform2.join(" ")})">${normal}${highlight}</g>
+  </svg>`;
+  const png = await sharp(Buffer.from(svg)).png().toBuffer();
+  return {
+    png,
+    contentDigest: `sha256:${createHash("sha256").update(png).digest("hex")}`,
+    manifest: {
+      rendererVersion: "vectorai-observation-svg-v1",
+      width,
+      height,
+      worldToImage: transform2,
+      viewport: structuredClone(input.viewport),
+      overlays: ["selection"]
+    }
+  };
+}
 async function renderReviewComparison(input) {
   const width = 1280;
   const height = 720;
@@ -8894,8 +10337,8 @@ async function renderReviewComparison(input) {
     }
   };
 }
-function renderDocument(document, changed, changedColor) {
-  return [...document.geometry, ...document.annotations].filter((node) => node.visible).map((node) => renderNode(node, changed.has(String(node.id)) ? changedColor : "#d7e0ea")).join("");
+function renderDocument(document, changed, changedColor, selectedOnly = false) {
+  return [...document.geometry, ...document.annotations].filter((node) => node.visible && (!selectedOnly || changed.has(String(node.id)))).map((node) => renderNode(node, changed.has(String(node.id)) ? changedColor : "#d7e0ea")).join("");
 }
 function renderNode(node, color) {
   const style = `fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"`;
@@ -8993,9 +10436,13 @@ function createDshReviewer(ctx) {
   return async (input) => {
     const parent = ctx.agents.get(input.sessionId);
     const providerName = ctx.subagents.list()[0];
-    if (!parent || !providerName) return { outcome: "unavailable", defects: [] };
+    if (!parent || !providerName) {
+      reportReviewerUnavailable("provider-resolution", !parent ? "parent agent unavailable" : "no provider");
+      return { outcome: "unavailable", defects: [] };
+    }
     const provider = ctx.subagents.getProvider(providerName);
     if (!(provider == null ? void 0 : provider.capabilities.outputSchema) || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) {
+      reportReviewerUnavailable("provider-capabilities", `provider ${providerName} lacks required isolation`);
       return { outcome: "unavailable", defects: [] };
     }
     const signal = input.signal ?? new AbortController().signal;
@@ -9012,7 +10459,8 @@ function createDshReviewer(ctx) {
     });
     const render = {
       ...rendered.manifest,
-      contentDigest: rendered.contentDigest
+      contentDigest: rendered.contentDigest,
+      attachment
     };
     let run;
     try {
@@ -9021,7 +10469,10 @@ function createDshReviewer(ctx) {
         parent,
         signal,
         maxDepth: 1,
-        toolFilter: { allow: ["structured_output"] },
+        // Global restrictions do not affect the output-schema tool registered
+        // inside the child scope. An empty allow-list therefore gives the
+        // reviewer no ambient capabilities while preserving structured output.
+        toolFilter: { allow: [] },
         persona: provider.capabilities.persona ? "You are a read-only drawing edit reviewer. Evaluate only the supplied bounded semantic diff. Never request or execute tools." : void 0,
         prompt: [{ type: "text", text: JSON.stringify({
           instruction: "Return satisfied only when the changed nodes and diagnostics support the objective without a visible semantic defect.",
@@ -9057,18 +10508,21 @@ function createDshReviewer(ctx) {
           additionalProperties: false
         }
       });
-    } catch {
+    } catch (error) {
+      reportReviewerUnavailable("start", error);
       return { outcome: "unavailable", defects: [], render };
     }
     try {
       let result;
       try {
         result = await run.result;
-      } catch {
+      } catch (error) {
+        reportReviewerUnavailable("result", error);
         return { outcome: "unavailable", defects: [], render };
       }
       const verdict = result.stopReason === "completed" ? reviewerVerdict(result.structured, result.output) : null;
       if (!verdict) {
+        reportReviewerUnavailable("verdict", `stop reason ${result.stopReason}`);
         return { outcome: "unavailable", defects: [], render };
       }
       return {
@@ -9079,6 +10533,10 @@ function createDshReviewer(ctx) {
       await run.dispose();
     }
   };
+}
+function reportReviewerUnavailable(stage, reason) {
+  const message = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
+  console.warn(`[VectorAI drawing reviewer unavailable:${stage}] ${message}`);
 }
 function reviewerVerdict(structured, output) {
   if (validReview(structured)) return structured;
@@ -9119,6 +10577,21 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
       id: (kind) => `${kind}_${randomUUID()}`,
       now: Date.now,
       digest: (value) => `sha256:${createHash("sha256").update(value).digest("hex")}`,
+      renderObservation: async (input) => {
+        const rendered = await renderDrawingObservation(input);
+        const attachment = await ctx.attachments.saveImage({
+          data: rendered.png,
+          mediaType: "image/png",
+          name: "drawing-observation.png"
+        });
+        return {
+          contentDigest: rendered.contentDigest,
+          attachment,
+          width: rendered.manifest.width,
+          height: rendered.manifest.height,
+          worldToImage: rendered.manifest.worldToImage
+        };
+      },
       review: createDshReviewer(ctx)
     };
     this.semantic = new SemanticEditService(this.drawings, editPorts);

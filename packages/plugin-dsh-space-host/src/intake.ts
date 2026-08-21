@@ -14,7 +14,7 @@ const INSTRUCTION = [
 const SEMANTIC_WORKFLOW_INSTRUCTION = [
   'For every direct Drawing edit turn, always start with drawing_observe, then drawing_build_context and drawing_ground.',
   'For articulated motion, ground the semantic carrier being transformed and leave its connector geometry out; the Host derives and preserves true contacted endpoint slots.',
-  'For moving, rotating, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform.',
+  'For ordinary moving, raising, lowering, or posing a grounded part, use drawing_preview_grounded_transform and let the Host derive orientation; use drawing_preview_program for rotation only when the user explicitly provides an exact angle.',
   'If visual evaluation returns needs_revision or defects, do not finalize that candidate: keep the same task and use drawing_revise_grounded_transform from the reported evidence, then evaluate again.',
   'Task, observation, context, grounding, Preview, and selection handles are ephemeral; never reuse handles from an earlier turn or from before a plugin restart.',
   'Then call drawing_evaluate_preview and drawing_finalize_preview.',

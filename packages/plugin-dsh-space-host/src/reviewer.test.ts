@@ -57,7 +57,7 @@ describe('createDshReviewer', () => {
     expect(request?.prompt).toEqual(expect.arrayContaining([
       { type: 'image', attachment },
     ]));
-    expect(request).toMatchObject({ maxDepth: 1, toolFilter: { allow: ['structured_output'] } });
+    expect(request).toMatchObject({ maxDepth: 1, toolFilter: { allow: [] } });
     expect(result).toMatchObject({
       outcome: 'satisfied',
       render: {
@@ -70,6 +70,7 @@ describe('createDshReviewer', () => {
   });
 
   it('returns unavailable with the local render when DSH rejects nested review depth', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const attachment: ImageAttachmentRef = {
       attachmentId: 'review-image' as ImageAttachmentRef['attachmentId'],
       mediaType: 'image/png', bytes: 2048, width: 1280, height: 720,
@@ -94,6 +95,8 @@ describe('createDshReviewer', () => {
       outcome: 'unavailable',
       render: { width: 1280, height: 720, contentDigest: expect.stringMatching(/^sha256:/) },
     });
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('subagent depth 1 exceeds maxDepth 0'));
+    warning.mockRestore();
   });
 
   it('accepts a validated JSON reviewer verdict from ordinary child text output', async () => {

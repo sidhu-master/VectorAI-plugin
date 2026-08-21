@@ -13,9 +13,13 @@ export function createDshReviewer(
   return async (input) => {
     const parent = ctx.agents.get(input.sessionId as SessionId);
     const providerName = ctx.subagents.list()[0];
-    if (!parent || !providerName) return { outcome: 'unavailable', defects: [] };
+    if (!parent || !providerName) {
+      reportReviewerUnavailable('provider-resolution', !parent ? 'parent agent unavailable' : 'no provider');
+      return { outcome: 'unavailable', defects: [] };
+    }
     const provider = ctx.subagents.getProvider(providerName);
     if (!provider?.capabilities.outputSchema || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) {
+      reportReviewerUnavailable('provider-capabilities', `provider ${providerName} lacks required isolation`);
       return { outcome: 'unavailable', defects: [] };
     }
     const signal = input.signal ?? new AbortController().signal;
@@ -42,7 +46,10 @@ export function createDshReviewer(
         parent,
         signal,
         maxDepth: 1,
-        toolFilter: { allow: ['structured_output'] },
+        // Global restrictions do not affect the output-schema tool registered
+        // inside the child scope. An empty allow-list therefore gives the
+        // reviewer no ambient capabilities while preserving structured output.
+        toolFilter: { allow: [] },
         persona: provider.capabilities.persona
           ? 'You are a read-only drawing edit reviewer. Evaluate only the supplied bounded semantic diff. Never request or execute tools.'
           : undefined,
@@ -80,20 +87,23 @@ export function createDshReviewer(
           additionalProperties: false,
         },
       });
-    } catch {
+    } catch (error) {
+      reportReviewerUnavailable('start', error);
       return { outcome: 'unavailable', defects: [], render };
     }
     try {
       let result;
       try {
         result = await run.result;
-      } catch {
+      } catch (error) {
+        reportReviewerUnavailable('result', error);
         return { outcome: 'unavailable', defects: [], render };
       }
       const verdict = result.stopReason === 'completed'
         ? reviewerVerdict(result.structured, result.output)
         : null;
       if (!verdict) {
+        reportReviewerUnavailable('verdict', `stop reason ${result.stopReason}`);
         return { outcome: 'unavailable', defects: [], render };
       }
       return {
@@ -104,6 +114,13 @@ export function createDshReviewer(
       await run.dispose();
     }
   };
+}
+
+function reportReviewerUnavailable(stage: string, reason: unknown) {
+  const message = reason instanceof Error
+    ? `${reason.name}: ${reason.message}`
+    : String(reason);
+  console.warn(`[VectorAI drawing reviewer unavailable:${stage}] ${message}`);
 }
 
 function reviewerVerdict(structured: unknown, output: unknown): {

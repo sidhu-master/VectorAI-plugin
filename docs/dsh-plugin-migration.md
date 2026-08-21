@@ -653,6 +653,8 @@ ProjectManifest
 - `@vectorai/plugin-dsh-annotation`：第二层 `drawing_auto_annotate` DSH 工具；
 - `@vectorai/plugin-dsh-space`：把 Host/Client/Annotation 装入 DSH profile 的 bundle patch。
 
+2026-08-21 最终语义一致性迁移同时完成：旧 Web 的 World Model、几何采样、点解析、Grounding Ledger、原子拓扑图和连接载体变换已经抽到 `@vectorai/drawing-spatial` / `@vectorai/drawing-edit-core`，Web 与 DSH 只保留 Adapter。普通姿态工具只接收目标位移，模型即使从旧会话注入 `rotationDegrees` 或 `pivot` 也不会越过 Adapter；Host 根据实际接触端点选择最小形变方向。精确数值旋转仍通过高级 Spatial Edit Program 表达，不依赖具体“抬手”示例或部件名称。
+
 真实 DSH `0.1.0-rc.8` mount smoke 已验证 `vectorai-space-host`、`vectorai-space-client`、严格 TypeRT Remote 路由和共享画布。当前布局由 `scripts/dsh-inline-workspace-patch.mjs` 增加会话级工作区插槽，首次写入自动备份，未知版本/结构拒绝修改。此切片不启动 VectorAI Express/HTTP 服务，也不调用 VectorAI 云端。
 
 当前边界：
@@ -665,6 +667,8 @@ ProjectManifest
 - Preview 只在内存中，进程重启后可从 canonical Drawing 重新生成；正式状态不受未提交 Preview 影响；
 - DXF/PDF 和可选 WASM 是可增加的导入/计算 Adapter，不影响已经完成的图片线稿与语义改图闭环；
 - 本地 workspace 安装需把 bundle、Host、Client、Annotation 四个路径加入 profile；发布后由普通包依赖解析。
+
+最终实机验收使用 DSH `0.1.0-rc.8`、Doubao-seed-2.0-lite High 和既有线稿执行“把右手抬起来打招呼”：模型只提交 `[0, 80]` 位移；Host 解析出两个真实接触端点，确定性诊断为空；隔离的只读 reviewer 接收 before/after 图并返回 `satisfied`；assessment 为 `auto_safe`，R5→R6 只产生一笔正式提交。随后通过画布 Undo 生成 R7 补偿提交，语义摘要恢复为提交前的 `sha256:583af28e…e12e`。同轮修复了 rc.8 reviewer 隔离配置：全局工具使用空 allow-list，子作用域的 `structured_output` 保留，不再因把它误判为全局工具而降级为 `unavailable`。
 
 ## 20. Definition of Done
 
