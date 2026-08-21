@@ -307,7 +307,7 @@ git commit -m "feat(host): ground model-directed semantic selections"
 - Consumes: `SpatialIntentRequest`, Host-resolved `partKey -> GroundedEditTarget`, Host numeric constraints, Drawing document/ref, existing connected-transform and multi-part compilers, canonical digest/time ports.
 - Produces: `solveSpatialIntent(input): SpatialCompilation & { solver: SpatialSolverReceipt }` with deterministic translations/rotations, ranked candidate metrics, and stable failure codes.
 
-- [ ] **Step 1: Write failing one-part solver tests**
+- [x] **Step 1: Write failing one-part solver tests**
 
 Cover direction, relative position, alignment, exact extracted numeric constraint, and absence of model coordinates:
 
@@ -324,17 +324,17 @@ expect(solved.inverse).not.toHaveLength(0);
 
 Verify connected endpoints move to their exact solved carrier contact and untouched-node canonical digests stay equal.
 
-- [ ] **Step 2: Write failing multi-part and topology tests**
+- [x] **Step 2: Write failing multi-part and topology tests**
 
 Cover atomic two-part direction/alignment, `crosses`, `does_not_cross`, `touches`, `inside`, collision rejection, protected scopes, unsatisfiable goals, deterministic ranking, and candidate cap. Assert both parts appear in one forward/inverse batch and a failure produces no partial candidate.
 
-- [ ] **Step 3: Run solver tests to prove they fail**
+- [x] **Step 3: Run solver tests to prove they fail**
 
 Run: `pnpm --filter @vectorai/drawing-edit-core test -- --run src/spatial-intent-solver.test.ts`
 
 Expected: FAIL because `solveSpatialIntent` does not exist.
 
-- [ ] **Step 4: Implement deterministic candidate generation**
+- [x] **Step 4: Implement deterministic candidate generation**
 
 Derive Drawing scale from the finite Drawing diagonal. Map qualitative magnitude to versioned scale ratios:
 
@@ -344,7 +344,7 @@ const MAGNITUDE_RATIO = { minimum: 0.02, slight: 0.05, moderate: 0.12, strong: 0
 
 These are generic solver constants, not fixture coordinates. Generate seeds from direction, relative-part/reference bounds, alignment, semantic/Observation anchors, and current positions. Add a bounded deterministic neighborhood around each seed; sort all tuples canonically and cap combined candidates at 256.
 
-- [ ] **Step 5: Implement residuals, hard constraints, and compilation**
+- [x] **Step 5: Implement residuals, hard constraints, and compilation**
 
 Score each candidate with a lexicographically stable receipt containing:
 
@@ -365,7 +365,7 @@ interface SpatialSolverReceipt {
 
 Use exact segment/bounds/topology predicates for topology goals. Treat protected-scope mutation, non-finite math, missing numeric key, structural invalidity, and impossible hard topology as rejection. Use the existing minimum-deformation connected transform for carrier orientation and endpoint transport. Compile one part through `compileSpatialEditProgram` and 2–16 parts through `compileMultiPartTransform`, then verify inverse replay before returning.
 
-- [ ] **Step 6: Run core tests and property regressions**
+- [x] **Step 6: Run core tests and property regressions**
 
 Run:
 
@@ -376,7 +376,7 @@ pnpm --filter @vectorai/drawing-edit-core check
 
 Expected: all commands exit 0, including existing connected-transform and multi-part parity tests.
 
-- [ ] **Step 7: Commit the solver**
+- [x] **Step 7: Commit the solver**
 
 ```bash
 git add packages/drawing-edit-core/src/spatial-intent-solver.ts packages/drawing-edit-core/src/spatial-intent-solver.test.ts packages/drawing-edit-core/src/index.ts
