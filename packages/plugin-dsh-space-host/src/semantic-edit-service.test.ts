@@ -357,6 +357,120 @@ describe('SemanticEditService', () => {
     });
   });
 
+  it('publishes episode-bound short candidates so opaque geometry ids never enter model context', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-short-candidates',
+      objective: '选择画面左右两侧的圆形部件',
+      rootUserMessageDigest: 'sha256:message-short-candidates',
+      numericConstraints: [],
+    });
+
+    const observed = await service.observeCurrent('session-1');
+    const left = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-left')
+    ));
+    const right = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-right')
+    ));
+
+    expect(left?.key).toMatch(/^c\d+$/);
+    expect(right?.key).toMatch(/^c\d+$/);
+    expect(JSON.stringify(observed.selectionCandidates)).not.toMatch(/left-hand|right-hand|node_/);
+    expect((await service.observeCurrent('session-1')).selectionCandidates)
+      .toEqual(observed.selectionCandidates);
+
+    const selected = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'left-part', label: 'left circular part',
+        references: [{ kind: 'candidate', key: left!.key }],
+      }, {
+        partKey: 'right-part', label: 'right circular part',
+        references: [{ kind: 'candidate', key: right!.key }],
+      }],
+    });
+    expect(selected).toMatchObject({
+      state: 'selected',
+      parts: [{ partKey: 'left-part', nodeCount: 1 }, { partKey: 'right-part', nodeCount: 1 }],
+    });
+  });
+
+  it('falls back from an ungrounded semantic phrase to bounded visual candidates', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-semantic-fallback', objective: '选择画面左侧的目标部件',
+      rootUserMessageDigest: 'sha256:message-semantic-fallback', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+
+    const result = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'target', label: 'semantic target',
+        references: [{ kind: 'semantic_query', text: 'opaque semantic component' }],
+      }],
+    });
+
+    expect(result).toMatchObject({ state: 'selection_ambiguous', partKey: 'target' });
+    if (result.state !== 'selection_ambiguous') throw new Error('expected visual candidates');
+    expect(result.candidates.length).toBeGreaterThan(0);
+    expect(result.candidates.every(({ key, summary }) => (
+      /^c\d+$/.test(key) && summary.length > 0
+    ))).toBe(true);
+    expect(JSON.stringify(result)).not.toMatch(/left-hand|node_/);
+  });
+
+  it('treats one visual region as one multi-node part and applies model-click hit slop', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-region-group', objective: '选择右侧组合部件',
+      rootUserMessageDigest: 'sha256:message-region-group', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+
+    const grouped = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'right-group', label: 'right connected group',
+        references: [{
+          kind: 'observation_region',
+          polygon: [[0.62, 0.50], [0.82, 0.50], [0.82, 0.68], [0.62, 0.68]],
+        }],
+      }],
+    });
+    expect(grouped).toMatchObject({
+      state: 'selected', parts: [{ partKey: 'right-group', nodeCount: 3 }],
+    });
+
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-hit-slop', objective: '选择左侧圆形部件',
+      rootUserMessageDigest: 'sha256:message-hit-slop', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+    const nearMiss = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'left-part', label: 'left circular part',
+        references: [{ kind: 'observation_point', normalized: [0.18, 0.6] }],
+      }],
+    });
+    expect(nearMiss).toMatchObject({
+      state: 'selected', parts: [{ partKey: 'left-part', nodeCount: 1 }],
+    });
+  });
+
+  it('rejects Preview before any semantic part is selected', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-selection-gate', objective: '移动一个部件',
+      rootUserMessageDigest: 'sha256:message-selection-gate', numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+
+    expect(() => service.previewCurrentIntent('session-1', {
+      summary: 'move part upward',
+      goals: [{ kind: 'direction', subject: 'part', direction: 'up', magnitude: 'moderate' }],
+      preserve: [],
+    })).toThrow('EDIT_SELECTION_REQUIRED');
+  });
+
   it('returns short ambiguous candidates and accepts only a current-episode candidate key', async () => {
     const { service } = await setup();
     service.bindUserInstruction('session-1', {

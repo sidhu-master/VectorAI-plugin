@@ -386,6 +386,7 @@ export class SemanticEditService {
     state: 'observed';
     drawing: { drawingId: string; revision: number };
     selectionAvailable: boolean;
+    selectionCandidates: Array<{ key: string; summary: string }>;
     numericConstraints: Array<{ numericKey: string; kind: string; value: number | [number, number]; unit: string }>;
     nextTools: string[];
   }> {
@@ -548,6 +549,7 @@ export class SemanticEditService {
     if (!episode || !selection || selection.episodeId !== episode.episodeId || !task?.active) {
       throw new Error('EDIT_SELECTION_REQUIRED');
     }
+    if (Object.keys(selection.selectedParts).length === 0) throw new Error('EDIT_SELECTION_REQUIRED');
     const intentDigest = this.ports.digest(canonicalString(intent));
     const currentPreview = this.#previews.get(sessionId);
     if (currentPreview?.intentDigest === intentDigest && currentPreview.task === task) {
@@ -687,10 +689,34 @@ export class SemanticEditService {
     instruction: BoundUserInstruction,
     drawingRef: { drawingId: string; revision: number },
   ) {
+    const state = this.#episodeSelections.get(sessionId);
+    const episode = this.#episodes.current(sessionId, drawingRef);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (state && episode && snapshot && state.candidates.size === 0) {
+      const nodes = snapshot.document.geometry
+        .filter(({ visible }) => visible)
+        .map((node) => ({
+          node,
+          size: geometryNodeSize(node),
+        }))
+        .sort((left, right) => right.size - left.size
+          || String(left.node.id).localeCompare(String(right.node.id)))
+        .slice(0, 64);
+      for (const { node } of nodes) {
+        const key = `c${++state.nextCandidate}`;
+        state.candidates.set(key, {
+          ...selectionCandidate(snapshot.document, [String(node.id)], 0, episode.stateEpoch),
+          key,
+        });
+      }
+    }
     return {
       state: 'observed' as const,
       drawing: structuredClone(drawingRef),
       selectionAvailable: this.currentSelectionProjection(sessionId) !== null,
+      selectionCandidates: state
+        ? [...state.candidates.values()].map(({ key, summary }) => ({ key, summary }))
+        : [],
       numericConstraints: instruction.numericConstraints.map(({ numericKey, kind, value, unit }) => ({
         numericKey, kind, value: Array.isArray(value) ? [value[0]!, value[1]!] as [number, number] : value, unit,
       })),
@@ -717,7 +743,10 @@ export class SemanticEditService {
         return [structuredClone(candidate)];
       }
       if (reference.kind === 'semantic_query') {
-        return semanticCandidates(document, reference.text, stateEpoch);
+        const exact = semanticCandidates(document, reference.text, stateEpoch);
+        return exact.length > 0
+          ? exact
+          : visualFallbackCandidates(state.candidates.values(), reference.text, stateEpoch);
       }
       const observation = this.#observations.get(state.observationId);
       if (!observation?.view) throw new Error('EDIT_OBSERVATION_VIEW_REQUIRED');
@@ -1914,11 +1943,12 @@ function geometryNodeBounds(node: DrawingDocument['geometry'][number]) {
 }
 
 function geometryDiagonal(document: DrawingDocument): number {
-  const points = document.geometry.flatMap(geometryAnchors);
-  if (points.length === 0) return 1;
-  const xs = points.map(([x]) => x);
-  const ys = points.map(([, y]) => y);
-  return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
+  const bounds = document.geometry.filter(({ visible }) => visible).map(geometryNodeBounds);
+  if (bounds.length === 0) return 1;
+  return Math.hypot(
+    Math.max(...bounds.map(({ maxX }) => maxX)) - Math.min(...bounds.map(({ minX }) => minX)),
+    Math.max(...bounds.map(({ maxY }) => maxY)) - Math.min(...bounds.map(({ minY }) => minY)),
+  ) || 1;
 }
 
 function selectionCandidate(
@@ -1947,7 +1977,7 @@ function pointCandidates(
     .map((node) => ({ node, distance: distanceToSelectableGeometry(node, point) }))
     .sort((left, right) => left.distance - right.distance || String(left.node.id).localeCompare(String(right.node.id)));
   const minimum = ranked[0]?.distance ?? Number.POSITIVE_INFINITY;
-  const tolerance = Math.max(geometryDiagonal(document) * 0.015, 1e-6);
+  const tolerance = Math.max(geometryDiagonal(document) * 0.03, 1e-6);
   if (minimum > tolerance) return [];
   return ranked
     .filter(({ distance }) => distance <= minimum + tolerance * 0.1)
@@ -1961,15 +1991,20 @@ function regionCandidates(
   stateEpoch: number,
 ): EpisodeSelectionCandidate[] {
   if (polygon.length < 3) return [];
-  return document.geometry
+  const nodeIds = document.geometry
     .filter(({ visible }) => visible)
     .filter((node) => {
       const center = geometryCenter(node);
       return center !== null && pointInPolygon(center, polygon);
     })
-    .map((node) => selectionCandidate(document, [String(node.id)], 0, stateEpoch))
-    .sort((left, right) => left.nodeIds[0]!.localeCompare(right.nodeIds[0]!))
-    .slice(0, 8);
+    .map(({ id }) => String(id))
+    .sort();
+  return nodeIds.length === 0 ? [] : [selectionCandidate(document, nodeIds, 0, stateEpoch)];
+}
+
+function geometryNodeSize(node: DrawingDocument['geometry'][number]): number {
+  const bounds = geometryNodeBounds(node);
+  return Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
 }
 
 function semanticCandidates(
@@ -1982,6 +2017,27 @@ function semanticCandidates(
     .map((node) => selectionCandidate(document, [String(node.id)], semanticMatchScore(node, query), stateEpoch))
     .sort((left, right) => left.score - right.score || left.nodeIds[0]!.localeCompare(right.nodeIds[0]!))
     .slice(0, 8);
+}
+
+function visualFallbackCandidates(
+  candidates: Iterable<EpisodeSelectionCandidate>,
+  query: string,
+  stateEpoch: number,
+): EpisodeSelectionCandidate[] {
+  const normalized = normalizeSemanticText(query);
+  const hints = [
+    { present: /(?:^| )left(?: |$)/.test(normalized) || query.includes('左'), match: 'left' },
+    { present: /(?:^| )right(?: |$)/.test(normalized) || query.includes('右'), match: 'right' },
+    { present: /(?:^| )(?:top|upper)(?: |$)/.test(normalized) || query.includes('上'), match: 'upper' },
+    { present: /(?:^| )(?:bottom|lower)(?: |$)/.test(normalized) || query.includes('下'), match: 'lower' },
+    { present: /(?:^| )(?:circle|round)(?: |$)/.test(normalized) || query.includes('圆'), match: 'circle' },
+    { present: /(?:^| )line(?: |$)/.test(normalized) || query.includes('线'), match: 'line' },
+  ].filter(({ present }) => present).map(({ match }) => match);
+  const all = [...candidates].filter((candidate) => candidate.stateEpoch === stateEpoch);
+  const filtered = hints.length === 0
+    ? all
+    : all.filter(({ summary }) => hints.every((hint) => summary.includes(hint)));
+  return (filtered.length > 0 ? filtered : all).slice(0, 16).map((candidate) => structuredClone(candidate));
 }
 
 function semanticNodeMatches(document: DrawingDocument, nodeId: string, query: string): boolean {

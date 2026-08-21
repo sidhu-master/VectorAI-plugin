@@ -98,14 +98,22 @@ async function runScenario(label: string) {
   };
 
   await call('drawing_import', {});
-  await call('drawing_observe', {});
+  const observed = await call('drawing_observe', {}) as {
+    selectionCandidates?: Array<{ key: string; summary: string }>;
+  };
+  const westCandidate = observed.selectionCandidates?.find(({ summary }) => summary.includes('upper-left'));
+  const eastCandidate = observed.selectionCandidates?.find(({ summary }) => summary.includes('upper-right'));
+  if (!westCandidate || !eastCandidate) throw new Error('E2E_SELECTION_CANDIDATES_MISSING');
+  if (JSON.stringify(observed.selectionCandidates).match(/component-west|component-east/)) {
+    throw new Error('E2E_INTERNAL_SELECTION_ID_EXPOSED');
+  }
   await call('drawing_select_parts', {
     parts: [{
       partKey: 'west', label: 'western component',
-      references: [{ kind: 'semantic_query', text: 'component west' }],
+      references: [{ kind: 'candidate', key: westCandidate.key }],
     }, {
       partKey: 'east', label: 'eastern component',
-      references: [{ kind: 'semantic_query', text: 'component east' }],
+      references: [{ kind: 'candidate', key: eastCandidate.key }],
     }],
   });
   await call('drawing_preview_spatial_intent', {

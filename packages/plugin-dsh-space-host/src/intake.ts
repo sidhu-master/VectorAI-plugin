@@ -106,6 +106,7 @@ export function createPreStepIntake(
       const capability = [
         `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
         'To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.',
+        'drawing_observe returns short selection candidates such as cN; use those keys with drawing_select_parts, and do not use drawing_query node ids or guessed coordinates for semantic selection.',
         ...(selection ? [
           `A Host-verified canvas selection exists and covers ${selection.nodeIds.length} visible Drawing nodes.`,
           'When the user asks to edit that selection, drawing_select_parts can reference it with { kind: "current_selection" }; the Host keeps its exact node ids and revision private.',

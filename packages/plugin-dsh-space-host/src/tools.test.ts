@@ -170,9 +170,29 @@ describe('drawing semantic tools', () => {
     }, exec('session-a'));
     expect(result).toEqual({
       drawingWorkflow: {
-        state: 'invalid_state', code: 'EDIT_SELECTION_REQUIRED', nextTools: ['drawing_observe'],
+        state: 'invalid_state', code: 'EDIT_SELECTION_REQUIRED', nextTools: ['drawing_select_parts'],
       },
     });
+  });
+
+  it('renders world-slice queries as bounded inspection summaries without selectable node ids', async () => {
+    const drawings = repository();
+    drawings.bindPending('session-a', attachment());
+    await drawings.importPending('session-a', {
+      data: new Uint8Array([1]), signal: new AbortController().signal,
+    });
+    const tool = createDrawingQueryTool(drawings);
+    const result = await tool.execute({
+      kind: 'world-slice', ref: { drawingId: 'drawing-source', revision: 1 },
+      bounds: { minX: 0, minY: 0, maxX: 120, maxY: 80 }, planes: ['geometry'],
+    }, exec('session-a'));
+    const rendered = tool.output.render({}, result as never);
+    const text = rendered.map((item) => item.type === 'text' ? item.text : '').join('');
+
+    expect(text).toContain('read_only');
+    expect(text).toContain('drawing_select_parts');
+    expect(text).not.toMatch(/"id":"(?:top|right)"|start|end|nodeId/);
+    expect(text.length).toBeLessThan(2_000);
   });
 
   it('revises semantic goals only, without coordinates or current Preview ids', async () => {

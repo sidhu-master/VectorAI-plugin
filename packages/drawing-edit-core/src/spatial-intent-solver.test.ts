@@ -169,6 +169,37 @@ describe('solveSpatialIntent', () => {
     expect(first.solver.candidateCount).toBeLessThanOrEqual(256);
   });
 
+  it('aligns unequal parts moving in the same positive direction without cancelling either goal', () => {
+    const document = fixture();
+    const solved = solveSpatialIntent({
+      document,
+      baseRef: { drawingId: document.id, revision: 1 },
+      parts: {
+        upper: target('part-b', 'connector-b'),
+        lower: target('part-a', 'connector-a'),
+      },
+      intent: {
+        summary: 'move both unequal-height parts up and align them',
+        goals: [
+          { kind: 'direction', subject: 'upper', direction: 'up', magnitude: 'moderate' },
+          { kind: 'direction', subject: 'lower', direction: 'up', magnitude: 'moderate' },
+          { kind: 'alignment', subject: 'upper', reference: { kind: 'part', partKey: 'lower' }, axis: 'y' },
+        ],
+        preserve: [],
+      },
+      numericConstraints: [], ports,
+    });
+
+    const upperBefore = circleCenter(document, 'part-b');
+    const lowerBefore = circleCenter(document, 'part-a');
+    const upperAfter = circleCenter(solved.candidate, 'part-b');
+    const lowerAfter = circleCenter(solved.candidate, 'part-a');
+    expect(upperAfter[1]).toBeCloseTo(lowerAfter[1], 8);
+    expect(upperAfter[1]).toBeGreaterThan(upperBefore[1]);
+    expect(lowerAfter[1]).toBeGreaterThan(lowerBefore[1]);
+    expect(solved.solver.goalResidual).toBe(0);
+  });
+
   it.each(['touches', 'crosses', 'does_not_cross', 'inside'] as const)(
     'satisfies the hard %s topology relation',
     (relation) => {
@@ -193,10 +224,10 @@ describe('solveSpatialIntent', () => {
     },
   );
 
-  it('rejects a forced collision and an impossible containment without a partial candidate', () => {
+  it('returns an explicit collision warning for a solvable overlap and rejects impossible containment', () => {
     const before = collisionFixture();
     const semanticBefore = canonicalSemanticString(before);
-    expect(() => solveSpatialIntent({
+    const overlapping = solveSpatialIntent({
       document: before,
       baseRef: { drawingId: before.id, revision: 1 },
       parts: { moving: target('moving') },
@@ -210,7 +241,11 @@ describe('solveSpatialIntent', () => {
         userEvidenceSpan: { start: 0, end: 5, text: '20 mm' },
       }],
       ports,
-    })).toThrow('EDIT_SPATIAL_NO_SOLUTION');
+    });
+    expect(overlapping.solver.collisionPenalty).toBeGreaterThan(0);
+    expect(overlapping.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'SPATIAL_COLLISION_CANDIDATE', severity: 'warning', hard: false,
+    }));
     expect(canonicalSemanticString(before)).toBe(semanticBefore);
 
     const impossible = impossibleInsideFixture();

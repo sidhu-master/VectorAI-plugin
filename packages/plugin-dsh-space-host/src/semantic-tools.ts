@@ -130,7 +130,7 @@ export function createSemanticEditToolCatalog(
 export function createDrawingObserveTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_observe',
-    description: 'Observe the active Drawing only after the user asks to inspect or edit it. The Host owns task, revision, viewport, and observation lineage.',
+    description: 'Observe the active Drawing only after the user asks to inspect or edit it. The Host owns task, revision, viewport, and observation lineage, and returns short cN selection candidates alongside the image.',
     parameters: {},
     output: { schema: { type: 'json' }, render: renderObservation },
     async execute(_args, exec) {
@@ -151,7 +151,7 @@ export function createDrawingObserveTool(semantic: SemanticEditService) {
 export function createDrawingSelectPartsTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_select_parts',
-    description: 'Name the semantic parts to edit using the observation, current canvas selection, or a semantic description. The Host resolves exact nodes and interfaces.',
+    description: 'Name the semantic parts to edit. Prefer candidate cN keys returned by drawing_observe; otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. The Host resolves exact nodes and interfaces.',
     parameters: {
       parts: array(object({
         partKey: string('Stable semantic name used by later goals.'), label: string(),
@@ -176,7 +176,7 @@ export function createDrawingPreviewSpatialIntentTool(semantic: SemanticEditServ
     async execute(args, exec) {
       const input = spatialIntentRequestSchema.parse(args);
       const sessionId = requireSession(exec.agent?.id);
-      return recover(['drawing_observe'], () => {
+      return recover(['drawing_select_parts'], () => {
         semantic.previewCurrentIntent(sessionId, input);
         return semantic.currentPreviewPresentation(sessionId) as unknown as JsonValue;
       });

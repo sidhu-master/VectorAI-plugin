@@ -212,6 +212,7 @@ function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () =
       const capability = [
         `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
         "To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.",
+        "drawing_observe returns short selection candidates such as cN; use those keys with drawing_select_parts, and do not use drawing_query node ids or guessed coordinates for semantic selection.",
         ...selection ? [
           `A Host-verified canvas selection exists and covers ${selection.nodeIds.length} visible Drawing nodes.`,
           'When the user asks to edit that selection, drawing_select_parts can reference it with { kind: "current_selection" }; the Host keeps its exact node ids and revision private.',
@@ -1210,10 +1211,20 @@ function solveSpatialIntent(input) {
       const compilation = compileTransforms(input, transforms);
       const topologyPenalty = topologyPenaltyFor(input, compilation.candidate);
       const collisionPenalty = collisionPenaltyFor(input, compilation.candidate);
-      if (topologyPenalty > EPSILON || collisionPenalty > EPSILON) continue;
+      if (topologyPenalty > EPSILON) continue;
       assertProtectedScope(input, compilation.candidate);
+      const assessedCompilation = collisionPenalty > EPSILON ? {
+        ...compilation,
+        diagnostics: [...compilation.diagnostics, {
+          code: "SPATIAL_COLLISION_CANDIDATE",
+          severity: "warning",
+          message: "The solved spatial intent introduces new geometric overlap and requires review.",
+          facts: { collisionCount: collisionPenalty },
+          hard: false
+        }]
+      } : compilation;
       viable.push({
-        compilation,
+        compilation: assessedCompilation,
         transforms,
         goalResidual: goalResidualFor(input, compilation.candidate, transforms, scale2),
         movementCost: movementCostFor(transforms, scale2),
@@ -1299,16 +1310,19 @@ function applyGoal(input, transforms, goal, scale2) {
     let coupledX = false;
     let coupledY = false;
     if (goal.reference.kind === "part") {
-      const referenceTransform = transforms[goal.reference.partKey];
-      const referenceOriginal = originalPartGeometry(input, goal.reference.partKey);
-      if ((goal.axis === "y" || goal.axis === "both") && hasDirectionalGoal(input, goal.subject, "down") && hasDirectionalGoal(input, goal.reference.partKey, "down")) {
-        const targetY = Math.min(subject.center[1], reference.center[1]);
+      const referencePartKey = goal.reference.partKey;
+      const referenceTransform = transforms[referencePartKey];
+      const referenceOriginal = originalPartGeometry(input, referencePartKey);
+      const sharedYDirection = ["down", "up"].find((direction) => hasDirectionalGoal(input, goal.subject, direction) && hasDirectionalGoal(input, referencePartKey, direction));
+      if ((goal.axis === "y" || goal.axis === "both") && sharedYDirection) {
+        const targetY = sharedYDirection === "down" ? Math.min(subject.center[1], reference.center[1]) : Math.max(subject.center[1], reference.center[1]);
         transform2.translation[1] = targetY - originalPartGeometry(input, goal.subject).center[1];
         referenceTransform.translation[1] = targetY - referenceOriginal.center[1];
         coupledY = true;
       }
-      if ((goal.axis === "x" || goal.axis === "both") && hasDirectionalGoal(input, goal.subject, "left") && hasDirectionalGoal(input, goal.reference.partKey, "left")) {
-        const targetX = Math.min(subject.center[0], reference.center[0]);
+      const sharedXDirection = ["left", "right"].find((direction) => hasDirectionalGoal(input, goal.subject, direction) && hasDirectionalGoal(input, referencePartKey, direction));
+      if ((goal.axis === "x" || goal.axis === "both") && sharedXDirection) {
+        const targetX = sharedXDirection === "left" ? Math.min(subject.center[0], reference.center[0]) : Math.max(subject.center[0], reference.center[0]);
         transform2.translation[0] = targetX - originalPartGeometry(input, goal.subject).center[0];
         referenceTransform.translation[0] = targetX - referenceOriginal.center[0];
         coupledX = true;
@@ -9630,7 +9644,7 @@ function createSemanticEditToolCatalog(semantic, questions) {
 function createDrawingObserveTool(semantic) {
   return defineTool({
     name: "drawing_observe",
-    description: "Observe the active Drawing only after the user asks to inspect or edit it. The Host owns task, revision, viewport, and observation lineage.",
+    description: "Observe the active Drawing only after the user asks to inspect or edit it. The Host owns task, revision, viewport, and observation lineage, and returns short cN selection candidates alongside the image.",
     parameters: {},
     output: { schema: { type: "json" }, render: renderObservation },
     async execute(_args, exec) {
@@ -9651,7 +9665,7 @@ function createDrawingObserveTool(semantic) {
 function createDrawingSelectPartsTool(semantic) {
   return defineTool({
     name: "drawing_select_parts",
-    description: "Name the semantic parts to edit using the observation, current canvas selection, or a semantic description. The Host resolves exact nodes and interfaces.",
+    description: "Name the semantic parts to edit. Prefer candidate cN keys returned by drawing_observe; otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. The Host resolves exact nodes and interfaces.",
     parameters: {
       parts: array(object({
         partKey: string("Stable semantic name used by later goals."),
@@ -9679,7 +9693,7 @@ function createDrawingPreviewSpatialIntentTool(semantic) {
       var _a3;
       const input = spatialIntentRequestSchema.parse(args);
       const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
-      return recover(["drawing_observe"], () => {
+      return recover(["drawing_select_parts"], () => {
         semantic.previewCurrentIntent(sessionId, input);
         return semantic.currentPreviewPresentation(sessionId);
       });
@@ -10058,7 +10072,7 @@ function createDrawingSummarizeTool(drawings) {
 function createDrawingQueryTool(drawings) {
   return defineTool({
     name: "drawing_query",
-    description: "Query the active local VectorAI Drawing at an exact drawingId and revision. Use world-slice for bounded spatial context, node for one object, or neighbors for directly related objects.",
+    description: "Read-only inspection of the active Drawing. This is not a semantic selection tool: never pass query node ids to drawing_select_parts. Use drawing_observe candidate keys or observation points/regions for edits.",
     parameters: {
       kind: {
         type: "string",
@@ -10091,7 +10105,7 @@ function createDrawingQueryTool(drawings) {
     },
     output: {
       schema: { type: "json" },
-      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+      render: renderDrawingQuery
     },
     async execute(args, exec) {
       var _a3;
@@ -10101,6 +10115,30 @@ function createDrawingQueryTool(drawings) {
       return drawings.query(String(sessionId), request);
     }
   });
+}
+function renderDrawingQuery(_args, value) {
+  var _a3;
+  if (value && typeof value === "object" && "kind" in value && value.kind === "world-slice") {
+    const slice = value;
+    const counts = {};
+    for (const item of slice.nodes ?? []) {
+      const key = `${String(item.plane ?? "unknown")}:${String(((_a3 = item.node) == null ? void 0 : _a3.type) ?? "unknown")}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return [{
+      type: "text",
+      text: JSON.stringify({
+        kind: "world-slice-summary",
+        mode: "read_only",
+        bounds: slice.bounds,
+        visibleCounts: counts,
+        totalByPlane: slice.totalByPlane,
+        truncated: slice.truncated,
+        semanticSelection: "Use drawing_observe selectionCandidates and drawing_select_parts; query ids are not candidate keys."
+      })
+    }];
+  }
+  return [{ type: "text", text: JSON.stringify(value) }];
 }
 function createDrawingFinalizePreviewTool(_drawings2) {
   return defineTool({
@@ -10912,6 +10950,7 @@ class SemanticEditService {
     if (!episode || !selection || selection.episodeId !== episode.episodeId || !(task == null ? void 0 : task.active)) {
       throw new Error("EDIT_SELECTION_REQUIRED");
     }
+    if (Object.keys(selection.selectedParts).length === 0) throw new Error("EDIT_SELECTION_REQUIRED");
     const intentDigest = this.ports.digest(canonicalString(intent));
     const currentPreview = __privateGet(this, _previews2).get(sessionId);
     if ((currentPreview == null ? void 0 : currentPreview.intentDigest) === intentDigest && currentPreview.task === task) {
@@ -11644,10 +11683,27 @@ _currentOperations = new WeakMap();
 _terminalFinalizeResults = new WeakMap();
 _SemanticEditService_instances = new WeakSet();
 currentObservationResult_fn = function(sessionId, instruction, drawingRef) {
+  const state = __privateGet(this, _episodeSelections).get(sessionId);
+  const episode = __privateGet(this, _episodes2).current(sessionId, drawingRef);
+  const snapshot = this.drawings.getSnapshot(sessionId);
+  if (state && episode && snapshot && state.candidates.size === 0) {
+    const nodes = snapshot.document.geometry.filter(({ visible }) => visible).map((node) => ({
+      node,
+      size: geometryNodeSize(node)
+    })).sort((left, right) => right.size - left.size || String(left.node.id).localeCompare(String(right.node.id))).slice(0, 64);
+    for (const { node } of nodes) {
+      const key = `c${++state.nextCandidate}`;
+      state.candidates.set(key, {
+        ...selectionCandidate(snapshot.document, [String(node.id)], 0, episode.stateEpoch),
+        key
+      });
+    }
+  }
   return {
     state: "observed",
     drawing: structuredClone(drawingRef),
     selectionAvailable: this.currentSelectionProjection(sessionId) !== null,
+    selectionCandidates: state ? [...state.candidates.values()].map(({ key, summary }) => ({ key, summary })) : [],
     numericConstraints: instruction.numericConstraints.map(({ numericKey, kind, value, unit }) => ({
       numericKey,
       kind,
@@ -11669,7 +11725,8 @@ resolvePartCandidates_fn = function(sessionId, document, drawingRef, state, stat
       return [structuredClone(candidate)];
     }
     if (reference.kind === "semantic_query") {
-      return semanticCandidates(document, reference.text, stateEpoch);
+      const exact = semanticCandidates(document, reference.text, stateEpoch);
+      return exact.length > 0 ? exact : visualFallbackCandidates(state.candidates.values(), reference.text, stateEpoch);
     }
     const observation = __privateGet(this, _observations).get(state.observationId);
     if (!(observation == null ? void 0 : observation.view)) throw new Error("EDIT_OBSERVATION_VIEW_REQUIRED");
@@ -12083,11 +12140,12 @@ function geometryNodeBounds(node) {
   };
 }
 function geometryDiagonal(document) {
-  const points = document.geometry.flatMap(geometryAnchors);
-  if (points.length === 0) return 1;
-  const xs = points.map(([x]) => x);
-  const ys = points.map(([, y]) => y);
-  return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
+  const bounds2 = document.geometry.filter(({ visible }) => visible).map(geometryNodeBounds);
+  if (bounds2.length === 0) return 1;
+  return Math.hypot(
+    Math.max(...bounds2.map(({ maxX }) => maxX)) - Math.min(...bounds2.map(({ minX }) => minX)),
+    Math.max(...bounds2.map(({ maxY }) => maxY)) - Math.min(...bounds2.map(({ minY }) => minY))
+  ) || 1;
 }
 function selectionCandidate(document, nodeIds, score, stateEpoch) {
   const unique2 = [...new Set(nodeIds)].sort();
@@ -12103,19 +12161,38 @@ function pointCandidates(document, point, stateEpoch) {
   var _a3;
   const ranked = document.geometry.filter(({ visible }) => visible).map((node) => ({ node, distance: distanceToSelectableGeometry(node, point) })).sort((left, right) => left.distance - right.distance || String(left.node.id).localeCompare(String(right.node.id)));
   const minimum = ((_a3 = ranked[0]) == null ? void 0 : _a3.distance) ?? Number.POSITIVE_INFINITY;
-  const tolerance = Math.max(geometryDiagonal(document) * 0.015, 1e-6);
+  const tolerance = Math.max(geometryDiagonal(document) * 0.03, 1e-6);
   if (minimum > tolerance) return [];
   return ranked.filter(({ distance: distance2 }) => distance2 <= minimum + tolerance * 0.1).slice(0, 8).map(({ node, distance: distance2 }) => selectionCandidate(document, [String(node.id)], distance2, stateEpoch));
 }
 function regionCandidates(document, polygon, stateEpoch) {
   if (polygon.length < 3) return [];
-  return document.geometry.filter(({ visible }) => visible).filter((node) => {
+  const nodeIds = document.geometry.filter(({ visible }) => visible).filter((node) => {
     const center2 = geometryCenter(node);
     return center2 !== null && pointInPolygon(center2, polygon);
-  }).map((node) => selectionCandidate(document, [String(node.id)], 0, stateEpoch)).sort((left, right) => left.nodeIds[0].localeCompare(right.nodeIds[0])).slice(0, 8);
+  }).map(({ id }) => String(id)).sort();
+  return nodeIds.length === 0 ? [] : [selectionCandidate(document, nodeIds, 0, stateEpoch)];
+}
+function geometryNodeSize(node) {
+  const bounds2 = geometryNodeBounds(node);
+  return Math.hypot(bounds2.maxX - bounds2.minX, bounds2.maxY - bounds2.minY);
 }
 function semanticCandidates(document, query, stateEpoch) {
   return document.geometry.filter(({ visible, id }) => visible && semanticNodeMatches(document, String(id), query)).map((node) => selectionCandidate(document, [String(node.id)], semanticMatchScore(node, query), stateEpoch)).sort((left, right) => left.score - right.score || left.nodeIds[0].localeCompare(right.nodeIds[0])).slice(0, 8);
+}
+function visualFallbackCandidates(candidates, query, stateEpoch) {
+  const normalized = normalizeSemanticText(query);
+  const hints = [
+    { present: /(?:^| )left(?: |$)/.test(normalized) || query.includes("左"), match: "left" },
+    { present: /(?:^| )right(?: |$)/.test(normalized) || query.includes("右"), match: "right" },
+    { present: /(?:^| )(?:top|upper)(?: |$)/.test(normalized) || query.includes("上"), match: "upper" },
+    { present: /(?:^| )(?:bottom|lower)(?: |$)/.test(normalized) || query.includes("下"), match: "lower" },
+    { present: /(?:^| )(?:circle|round)(?: |$)/.test(normalized) || query.includes("圆"), match: "circle" },
+    { present: /(?:^| )line(?: |$)/.test(normalized) || query.includes("线"), match: "line" }
+  ].filter(({ present }) => present).map(({ match }) => match);
+  const all = [...candidates].filter((candidate) => candidate.stateEpoch === stateEpoch);
+  const filtered = hints.length === 0 ? all : all.filter(({ summary }) => hints.every((hint) => summary.includes(hint)));
+  return (filtered.length > 0 ? filtered : all).slice(0, 16).map((candidate) => structuredClone(candidate));
 }
 function semanticNodeMatches(document, nodeId, query) {
   const node = document.geometry.find(({ id }) => String(id) === nodeId);

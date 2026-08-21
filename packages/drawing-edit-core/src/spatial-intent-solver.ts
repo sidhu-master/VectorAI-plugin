@@ -98,10 +98,20 @@ export function solveSpatialIntent(input: SpatialIntentSolverInput): SpatialInte
       const compilation = compileTransforms(input, transforms);
       const topologyPenalty = topologyPenaltyFor(input, compilation.candidate);
       const collisionPenalty = collisionPenaltyFor(input, compilation.candidate);
-      if (topologyPenalty > EPSILON || collisionPenalty > EPSILON) continue;
+      if (topologyPenalty > EPSILON) continue;
       assertProtectedScope(input, compilation.candidate);
+      const assessedCompilation = collisionPenalty > EPSILON ? {
+        ...compilation,
+        diagnostics: [...compilation.diagnostics, {
+          code: 'SPATIAL_COLLISION_CANDIDATE',
+          severity: 'warning' as const,
+          message: 'The solved spatial intent introduces new geometric overlap and requires review.',
+          facts: { collisionCount: collisionPenalty },
+          hard: false,
+        }],
+      } : compilation;
       viable.push({
-        compilation,
+        compilation: assessedCompilation,
         transforms,
         goalResidual: goalResidualFor(input, compilation.candidate, transforms, scale),
         movementCost: movementCostFor(transforms, scale),
@@ -205,20 +215,31 @@ function applyGoal(
     let coupledX = false;
     let coupledY = false;
     if (goal.reference.kind === 'part') {
-      const referenceTransform = transforms[goal.reference.partKey]!;
-      const referenceOriginal = originalPartGeometry(input, goal.reference.partKey);
+      const referencePartKey = goal.reference.partKey;
+      const referenceTransform = transforms[referencePartKey]!;
+      const referenceOriginal = originalPartGeometry(input, referencePartKey);
+      const sharedYDirection = (['down', 'up'] as const).find((direction) => (
+        hasDirectionalGoal(input, goal.subject, direction)
+        && hasDirectionalGoal(input, referencePartKey, direction)
+      ));
       if ((goal.axis === 'y' || goal.axis === 'both')
-        && hasDirectionalGoal(input, goal.subject, 'down')
-        && hasDirectionalGoal(input, goal.reference.partKey, 'down')) {
-        const targetY = Math.min(subject.center[1], reference.center[1]);
+        && sharedYDirection) {
+        const targetY = sharedYDirection === 'down'
+          ? Math.min(subject.center[1], reference.center[1])
+          : Math.max(subject.center[1], reference.center[1]);
         transform.translation[1] = targetY - originalPartGeometry(input, goal.subject).center[1];
         referenceTransform.translation[1] = targetY - referenceOriginal.center[1];
         coupledY = true;
       }
+      const sharedXDirection = (['left', 'right'] as const).find((direction) => (
+        hasDirectionalGoal(input, goal.subject, direction)
+        && hasDirectionalGoal(input, referencePartKey, direction)
+      ));
       if ((goal.axis === 'x' || goal.axis === 'both')
-        && hasDirectionalGoal(input, goal.subject, 'left')
-        && hasDirectionalGoal(input, goal.reference.partKey, 'left')) {
-        const targetX = Math.min(subject.center[0], reference.center[0]);
+        && sharedXDirection) {
+        const targetX = sharedXDirection === 'left'
+          ? Math.min(subject.center[0], reference.center[0])
+          : Math.max(subject.center[0], reference.center[0]);
         transform.translation[0] = targetX - originalPartGeometry(input, goal.subject).center[0];
         referenceTransform.translation[0] = targetX - referenceOriginal.center[0];
         coupledX = true;

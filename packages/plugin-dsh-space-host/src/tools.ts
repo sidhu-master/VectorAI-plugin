@@ -138,7 +138,7 @@ export function createDrawingSummarizeTool(drawings: InMemoryDrawingRepository) 
 export function createDrawingQueryTool(drawings: InMemoryDrawingRepository) {
   return defineTool({
     name: 'drawing_query',
-    description: 'Query the active local VectorAI Drawing at an exact drawingId and revision. Use world-slice for bounded spatial context, node for one object, or neighbors for directly related objects.',
+    description: 'Read-only inspection of the active Drawing. This is not a semantic selection tool: never pass query node ids to drawing_select_parts. Use drawing_observe candidate keys or observation points/regions for edits.',
     parameters: {
       kind: {
         type: 'string',
@@ -171,7 +171,7 @@ export function createDrawingQueryTool(drawings: InMemoryDrawingRepository) {
     },
     output: {
       schema: { type: 'json' },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+      render: renderDrawingQuery,
     },
     async execute(args, exec) {
       const sessionId = exec.agent?.id;
@@ -180,6 +180,32 @@ export function createDrawingQueryTool(drawings: InMemoryDrawingRepository) {
       return drawings.query(String(sessionId), request) as unknown as JsonValue;
     },
   });
+}
+
+function renderDrawingQuery(_args: unknown, value: unknown) {
+  if (value && typeof value === 'object' && 'kind' in value
+    && (value as { kind?: unknown }).kind === 'world-slice') {
+    const slice = value as {
+      bounds?: unknown;
+      nodes?: Array<{ plane?: unknown; node?: { type?: unknown; quality?: { status?: unknown } } }>;
+      totalByPlane?: unknown;
+      truncated?: unknown;
+    };
+    const counts: Record<string, number> = {};
+    for (const item of slice.nodes ?? []) {
+      const key = `${String(item.plane ?? 'unknown')}:${String(item.node?.type ?? 'unknown')}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return [{
+      type: 'text' as const,
+      text: JSON.stringify({
+        kind: 'world-slice-summary', mode: 'read_only', bounds: slice.bounds,
+        visibleCounts: counts, totalByPlane: slice.totalByPlane, truncated: slice.truncated,
+        semanticSelection: 'Use drawing_observe selectionCandidates and drawing_select_parts; query ids are not candidate keys.',
+      }),
+    }];
+  }
+  return [{ type: 'text' as const, text: JSON.stringify(value) }];
 }
 
 export function createDrawingPreviewTool(drawings: InMemoryDrawingRepository) {

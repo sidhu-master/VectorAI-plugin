@@ -2,16 +2,20 @@
 
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 import { LocalCleanLineVectorizer } from './vectorizer';
+import { InMemoryDrawingRepository } from './repository';
+import { SemanticEditService } from './semantic-edit-service';
+import { FileDrawingRepositoryStorage } from './repository-storage';
 
 const fixturePath = resolve(import.meta.dirname, '../../../test2.png');
 
 describe.skipIf(!existsSync(fixturePath))('LocalCleanLineVectorizer', () => {
-  it('turns the uploaded image into real selectable geometry instead of four source-boundary lines', async () => {
+  it('vectorizes a real upload and completes semantic selection, multi-part commit, and Undo', async () => {
     const data = await readFile(fixturePath);
     const attachment: ImageAttachmentRef = {
       attachmentId: 'test2' as ImageAttachmentRef['attachmentId'],
@@ -55,5 +59,85 @@ describe.skipIf(!existsSync(fixturePath))('LocalCleanLineVectorizer', () => {
         expect.any(Number),
       ]),
     });
+
+    const storageRoot = await mkdtemp(join(tmpdir(), 'vectorai-real-semantic-'));
+    onTestFinished(() => rm(storageRoot, { recursive: true, force: true }));
+    const drawings = new InMemoryDrawingRepository({
+      drawingId: () => 'drawing_test2',
+      vectorizer: { async vectorize() { return structuredClone(result); } },
+      storage: new FileDrawingRepositoryStorage(storageRoot),
+    });
+    drawings.bindPending('session-real-selection', attachment);
+    await drawings.importPending('session-real-selection', {
+      data, signal: new AbortController().signal,
+    });
+    let sequence = 0;
+    const semantic = new SemanticEditService(drawings, {
+      id: (kind) => `${kind}-real-${++sequence}`,
+      now: () => 1_000 + sequence,
+      digest: (value) => `sha256:real-${value.length}-${sequence}`,
+    });
+    semantic.bindUserInstruction('session-real-selection', {
+      rootUserMessageId: 'message-real-multipart',
+      rootUserMessageDigest: 'sha256:message-real-multipart',
+      objective: '把画面左右两侧的圆形部件向内并向上移动',
+      numericConstraints: [],
+    });
+
+    const observed = await semantic.observeCurrent('session-real-selection');
+    const left = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('lower-left')
+    ));
+    const right = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('lower-right')
+    ));
+    expect(left?.key).toMatch(/^c\d+$/);
+    expect(right?.key).toMatch(/^c\d+$/);
+    expect(JSON.stringify(observed)).not.toMatch(/node_vec_/);
+
+    const selected = semantic.selectCurrentParts('session-real-selection', {
+      parts: [{
+        partKey: 'left-part', label: 'left circular part',
+        references: [{ kind: 'candidate', key: left!.key }],
+      }, {
+        partKey: 'right-part', label: 'right circular part',
+        references: [{ kind: 'candidate', key: right!.key }],
+      }],
+    });
+    expect(selected).toMatchObject({
+      state: 'selected',
+      parts: [{ partKey: 'left-part', nodeCount: 1 }, { partKey: 'right-part', nodeCount: 1 }],
+    });
+
+    const preview = semantic.previewCurrentIntent('session-real-selection', {
+      summary: 'move both side components inward and upward as one edit',
+      goals: [
+        { kind: 'direction', subject: 'left-part', direction: 'right', magnitude: 'strong' },
+        { kind: 'direction', subject: 'left-part', direction: 'up', magnitude: 'moderate' },
+        { kind: 'direction', subject: 'right-part', direction: 'left', magnitude: 'strong' },
+        { kind: 'direction', subject: 'right-part', direction: 'up', magnitude: 'moderate' },
+        { kind: 'alignment', subject: 'left-part', reference: { kind: 'part', partKey: 'right-part' }, axis: 'y' },
+      ],
+      preserve: [
+        { kind: 'part_shape', partKey: 'left-part' },
+        { kind: 'part_shape', partKey: 'right-part' },
+        { kind: 'minimum_deformation' },
+      ],
+    });
+    expect(preview.candidateDigest).toMatch(/^sha256:/);
+    expect(semantic.currentPreviewPresentation('session-real-selection').changedNodeCount)
+      .toBeGreaterThan(0);
+    await semantic.evaluateCurrentPreview('session-real-selection');
+    expect(semantic.finalizeCurrentPreview('session-real-selection')).toMatchObject({
+      status: 'rejected', disposition: 'confirmation_required',
+    });
+    const committed = semantic.finalizeCurrentPreview('session-real-selection', true);
+    expect(committed).toMatchObject({ status: 'committed', ref: { revision: 2 } });
+    if (committed.status !== 'committed') throw new Error('expected committed real selection');
+    const undone = semantic.undoAuthorized('session-real-selection', {
+      targetCommitId: committed.commitId,
+      expectedCurrentRef: committed.ref,
+    });
+    expect(undone).toMatchObject({ status: 'committed', resultingRef: { revision: 3 } });
   }, 35_000);
 });
