@@ -22,6 +22,7 @@ import {
   type OperationLookupResult,
   type PreviewRef,
   type ReviewEvidence,
+  type SelectionProjectionRef,
   type SpatialEditProgram,
   type TaskRef,
 } from '@vectorai/drawing-edit-protocol';
@@ -62,6 +63,15 @@ interface EvaluationState {
 export interface ReviewerDecision {
   outcome: 'satisfied' | 'needs_revision' | 'unavailable';
   defects: Array<{ code: string; reason: string; scopeDigest: string }>;
+  render?: {
+    rendererVersion: string;
+    contentDigest: string;
+    width: number;
+    height: number;
+    comparisonLayout: 'before | after';
+    worldToImage: [number, number, number, number, number, number];
+    overlays: string[];
+  };
 }
 
 export interface SemanticEditServicePorts extends EditCorePorts {
@@ -73,6 +83,9 @@ export interface SemanticEditServicePorts extends EditCorePorts {
     effectDigest: string;
     changedNodeIds: string[];
     diagnostics: SpatialCompilation['diagnostics'];
+    beforeDocument: DrawingDocument;
+    afterDocument: DrawingDocument;
+    viewport: { minX: number; minY: number; maxX: number; maxY: number };
     signal?: AbortSignal;
   }): Promise<ReviewerDecision>;
 }
@@ -97,6 +110,7 @@ export class SemanticEditService {
   readonly #evaluations = new Map<string, EvaluationState>();
   readonly #reviewInflight = new Map<string, Promise<ReviewerDecision>>();
   readonly #stickyReviewDefects = new Map<string, ReviewerDecision>();
+  readonly #selectionProjections = new Map<string, SelectionProjectionRef>();
 
   constructor(
     private readonly drawings: InMemoryDrawingRepository,
@@ -127,6 +141,59 @@ export class SemanticEditService {
     }
   }
 
+  projectSelection(sessionId: string, input: {
+    expectedRef: { drawingId: string; revision: number };
+    nodeIds: string[];
+  }):
+    | { status: 'projected'; projection: SelectionProjectionRef }
+    | { status: 'cleared' }
+    | { status: 'stale'; currentRef: { drawingId: string; revision: number } }
+    | { status: 'rejected'; code: string; message: string } {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return { status: 'rejected', code: 'DRAWING_REQUIRED', message: 'No Drawing is loaded.' };
+    if (
+      snapshot.ref.drawingId !== input.expectedRef.drawingId
+      || snapshot.ref.revision !== input.expectedRef.revision
+    ) return { status: 'stale', currentRef: structuredClone(snapshot.ref) };
+    const ids = [...new Set(input.nodeIds)];
+    if (ids.length === 0) {
+      this.#selectionProjections.delete(sessionId);
+      return { status: 'cleared' };
+    }
+    if (ids.length > 256) {
+      return { status: 'rejected', code: 'SELECTION_SIZE_INVALID', message: 'Select between 1 and 256 Drawing nodes.' };
+    }
+    const visible = new Map(allNodes(snapshot.document).map((node) => [String(node.id), node.visible]));
+    if (ids.some((id) => visible.get(id) !== true)) {
+      return { status: 'rejected', code: 'SELECTION_NODE_INVALID', message: 'Selection contains a missing or hidden node.' };
+    }
+    const projection: SelectionProjectionRef = {
+      selectionProjectionId: this.ports.id('selection'),
+      drawingRef: structuredClone(snapshot.ref),
+      nodeIds: ids,
+      projectionDigest: this.ports.digest(canonicalString({ ref: snapshot.ref, nodeIds: [...ids].sort() })),
+      expiresAt: this.ports.now() + 10 * 60_000,
+    };
+    this.#selectionProjections.set(sessionId, projection);
+    return { status: 'projected', projection: structuredClone(projection) };
+  }
+
+  currentSelectionProjection(sessionId: string): SelectionProjectionRef | null {
+    const projection = this.#selectionProjections.get(sessionId);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (
+      !projection
+      || projection.expiresAt <= this.ports.now()
+      || !snapshot
+      || projection.drawingRef.drawingId !== snapshot.ref.drawingId
+      || projection.drawingRef.revision !== snapshot.ref.revision
+    ) {
+      if (projection) this.#selectionProjections.delete(sessionId);
+      return null;
+    }
+    return structuredClone(projection);
+  }
+
   startTask(sessionId: string, input: {
     objective: string;
     rootUserMessageDigest: string;
@@ -155,15 +222,18 @@ export class SemanticEditService {
   observe(sessionId: string, input: { taskId: string }): ObservationRef {
     const task = this.#task(sessionId, input.taskId);
     const snapshot = this.#snapshotAtTask(sessionId, task);
+    const selection = this.currentSelectionProjection(sessionId);
     const ref: ObservationRef = {
       observationId: this.ports.id('observation'),
       taskId: task.ref.taskId,
       basis: { kind: 'canonical', ref: structuredClone(snapshot.ref) },
       artifactRefs: [],
+      ...(selection ? { selectionProjectionId: selection.selectionProjectionId } : {}),
       observationDigest: this.ports.digest(canonicalString({
         taskId: task.ref.taskId,
         ref: snapshot.ref,
         semantic: canonicalSemanticString(snapshot.document),
+        selectionProjectionDigest: selection?.projectionDigest,
       })),
     };
     this.#observations.set(ref.observationId, ref);
@@ -193,29 +263,47 @@ export class SemanticEditService {
     contextId: string;
     targetNodeIds: string[];
     interfaces: GroundedEditTarget['interfaces'];
+    selectionProjectionId?: string;
   }): GroundingRef {
     const task = this.#task(sessionId, input.taskId);
     const context = this.#contexts.get(input.contextId);
     if (!context || context.taskId !== task.ref.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
     const snapshot = this.#snapshotAtTask(sessionId, task);
     const nodes = new Map(allNodes(snapshot.document).map((node) => [String(node.id), node]));
-    if (input.targetNodeIds.length === 0 || input.targetNodeIds.some((id) => !nodes.has(id))) {
+    const projection = input.selectionProjectionId === undefined
+      ? null
+      : this.currentSelectionProjection(sessionId);
+    if (input.selectionProjectionId !== undefined && projection?.selectionProjectionId !== input.selectionProjectionId) {
+      throw new Error('EDIT_SELECTION_PROJECTION_STALE');
+    }
+    const targetNodeIds = projection ? [...projection.nodeIds] : [...new Set(input.targetNodeIds)];
+    if (
+      projection
+      && input.targetNodeIds.length > 0
+      && canonicalString([...new Set(input.targetNodeIds)].sort()) !== canonicalString([...targetNodeIds].sort())
+    ) throw new Error('EDIT_SELECTION_SCOPE_MISMATCH');
+    if (targetNodeIds.length === 0 || targetNodeIds.some((id) => !nodes.has(id))) {
       throw new Error('EDIT_TARGET_UNRESOLVED');
     }
-    for (const port of input.interfaces) {
+    const interfaces = input.interfaces.length > 0
+      ? structuredClone(input.interfaces)
+      : projection
+        ? inferSelectionInterfaces(snapshot.document, targetNodeIds)
+        : [];
+    for (const port of interfaces) {
       const node = nodes.get(port.nodeId);
       if (!node || node.type !== 'line' || !port.endpoint) throw new Error('EDIT_INTERFACE_UNRESOLVED');
     }
     const sourceStatus: GroundedEditTarget['sourceStatus'] = snapshot.provisional
       ? 'provisional'
-      : input.targetNodeIds.some((id) => nodes.get(id)?.quality.status !== 'confirmed')
+      : targetNodeIds.some((id) => nodes.get(id)?.quality.status !== 'confirmed')
         ? 'candidate'
         : 'confirmed';
     const targetHandle = this.ports.id('target');
     const target: GroundedEditTarget = {
       targetHandle,
-      targetNodeIds: [...new Set(input.targetNodeIds)],
-      interfaces: structuredClone(input.interfaces),
+      targetNodeIds,
+      interfaces,
       sourceStatus,
     };
     const ref: GroundingRef = {
@@ -223,13 +311,23 @@ export class SemanticEditService {
       taskId: task.ref.taskId,
       contextId: context.contextId,
       targetHandle,
+      targetNodeIds: [...target.targetNodeIds],
+      interfaces: target.interfaces.map((port) => ({
+        interfaceId: port.interfaceId,
+        nodeId: port.nodeId,
+        endpoint: port.endpoint!,
+      })),
       targetScopeDigest: this.ports.digest(canonicalString([...target.targetNodeIds].sort())),
       protectedScopeDigest: this.ports.digest(canonicalString(
         allNodes(snapshot.document).map(({ id }) => String(id))
           .filter((id) => !target.targetNodeIds.includes(id) && !target.interfaces.some((port) => port.nodeId === id))
           .sort(),
       )),
-      evidenceDigest: this.ports.digest(canonicalString({ context: context.contextDigest, sourceStatus })),
+      evidenceDigest: this.ports.digest(canonicalString({
+        context: context.contextDigest,
+        sourceStatus,
+        selectionProjectionDigest: projection?.projectionDigest,
+      })),
     };
     this.#groundings.set(ref.groundingId, { ref, target });
     return structuredClone(ref);
@@ -326,6 +424,7 @@ export class SemanticEditService {
     const sticky = this.#stickyReviewDefects.get(riskKey);
     let reviewPromise = this.#reviewInflight.get(riskKey);
     if (!reviewPromise && !sticky && this.ports.review) {
+      const viewport = this.drawings.summarize(sessionId)?.bounds ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 };
       reviewPromise = this.ports.review({
           sessionId,
           objective: task.objective,
@@ -338,6 +437,9 @@ export class SemanticEditService {
             ...preview.compilation.actualEffect.deletedNodeIds,
           ],
           diagnostics: preview.compilation.diagnostics,
+          beforeDocument: snapshot.document,
+          afterDocument: preview.compilation.candidate,
+          viewport,
           signal: input.signal,
         });
       this.#reviewInflight.set(riskKey, reviewPromise);
@@ -367,11 +469,16 @@ export class SemanticEditService {
       kind: 'reviewer', provider: this.ports.review ? 'dsh-subagent' : 'deterministic-local', providerVersion: '1',
       authoritativeObjective: { text: task.objective, attachmentContentDigests: [] },
       renderManifest: {
-        rendererVersion: 'semantic-digest-v1',
+        rendererVersion: reviewed.render?.rendererVersion ?? 'semantic-digest-v1',
         beforeContentDigest,
         afterContentDigest,
+        artifactContentDigest: reviewed.render?.contentDigest ?? afterContentDigest,
+        comparisonLayout: 'before | after',
+        worldToImage: reviewed.render?.worldToImage ?? [1, 0, 0, -1, 0, 0],
         viewport: this.drawings.summarize(sessionId)?.bounds ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 },
-        width: 1, height: 1, overlays: ['changed-nodes'],
+        width: reviewed.render?.width ?? 1,
+        height: reviewed.render?.height ?? 1,
+        overlays: reviewed.render?.overlays ?? ['changed-nodes'],
       },
       outcome: reviewed.outcome,
       defects: reviewed.defects.map((diagnostic) => ({
@@ -667,6 +774,74 @@ export class SemanticEditService {
 
 function allNodes(document: DrawingDocument) {
   return [...document.geometry, ...document.annotations, ...document.relations, ...document.features];
+}
+
+function inferSelectionInterfaces(
+  document: DrawingDocument,
+  targetNodeIds: string[],
+): GroundedEditTarget['interfaces'] {
+  const selected = new Set(targetNodeIds);
+  const targets = document.geometry.filter((node) => selected.has(String(node.id)));
+  const tolerance = Math.max(geometryDiagonal(document) * 0.025, 1e-6);
+  const interfaces: GroundedEditTarget['interfaces'] = [];
+  for (const connector of document.geometry) {
+    if (selected.has(String(connector.id)) || connector.type !== 'line') continue;
+    for (const endpoint of ['start', 'end'] as const) {
+      const point = connector[endpoint];
+      if (!targets.some((target) => distanceToGeometryBoundary(target, point) <= tolerance)) continue;
+      interfaces.push({
+        interfaceId: `${String(connector.id)}:${endpoint}`,
+        nodeId: String(connector.id),
+        endpoint,
+      });
+    }
+  }
+  return interfaces.sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
+}
+
+function distanceToGeometryBoundary(
+  node: DrawingDocument['geometry'][number],
+  point: readonly [number, number],
+): number {
+  if (node.type === 'circle') {
+    return Math.abs(Math.hypot(point[0] - node.center[0], point[1] - node.center[1]) - node.radius);
+  }
+  if (node.type === 'ellipse') {
+    const major = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+    if (major <= 1e-9 || node.ratio <= 0) return Number.POSITIVE_INFINITY;
+    const ux = node.majorAxis[0] / major;
+    const uy = node.majorAxis[1] / major;
+    const dx = point[0] - node.center[0];
+    const dy = point[1] - node.center[1];
+    const normalized = Math.hypot((dx * ux + dy * uy) / major, (-dx * uy + dy * ux) / (major * node.ratio));
+    return Math.abs(normalized - 1) * major;
+  }
+  const anchors = geometryAnchors(node);
+  return anchors.length === 0
+    ? Number.POSITIVE_INFINITY
+    : Math.min(...anchors.map((anchor) => Math.hypot(point[0] - anchor[0], point[1] - anchor[1])));
+}
+
+function geometryAnchors(node: DrawingDocument['geometry'][number]): Array<readonly [number, number]> {
+  switch (node.type) {
+    case 'point': return [[node.x, node.y]];
+    case 'line': return [node.start, node.end];
+    case 'ray':
+    case 'xline': return [node.origin];
+    case 'circle':
+    case 'arc':
+    case 'ellipse': return [node.center];
+    case 'polyline': return node.vertices.map(({ point }) => point);
+    case 'spline': return node.controlPoints;
+  }
+}
+
+function geometryDiagonal(document: DrawingDocument): number {
+  const points = document.geometry.flatMap(geometryAnchors);
+  if (points.length === 0) return 1;
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
 }
 
 function annotationConfirmed(node: Record<string, unknown>): boolean {

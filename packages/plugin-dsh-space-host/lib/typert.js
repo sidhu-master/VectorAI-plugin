@@ -4909,6 +4909,7 @@ object({
   taskId: idSchema$1,
   basis: editBasisSchema,
   artifactRefs: array(observationArtifactRefSchema).max(16),
+  selectionProjectionId: idSchema$1.optional(),
   observationDigest: digestSchema
 }).strict();
 object({
@@ -4922,6 +4923,12 @@ object({
   taskId: idSchema$1,
   contextId: idSchema$1,
   targetHandle: idSchema$1,
+  targetNodeIds: array(idSchema$1).min(1).max(256),
+  interfaces: array(object({
+    interfaceId: idSchema$1,
+    nodeId: idSchema$1,
+    endpoint: _enum(["start", "end"])
+  }).strict()).max(256),
   targetScopeDigest: digestSchema,
   protectedScopeDigest: digestSchema,
   evidenceDigest: digestSchema
@@ -4943,10 +4950,10 @@ object({
   candidateDigest: digestSchema,
   evaluationDigest: digestSchema
 }).strict();
-object({
+const selectionProjectionRefSchema = object({
   selectionProjectionId: idSchema$1,
   drawingRef: drawingRefSchema,
-  nodeIds: array(idSchema$1).max(256),
+  nodeIds: array(idSchema$1).min(1).max(256),
   projectionDigest: digestSchema,
   expiresAt: number().int().nonnegative()
 }).strict();
@@ -5377,6 +5384,16 @@ const drawingUndoStageResultSchema = discriminatedUnion("status", [
   }).strict(),
   object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
 ]);
+const drawingSelectionProjectionRequestSchema = object({
+  expectedRef: drawingRefSchema,
+  nodeIds: array(idSchema).max(256)
+}).strict();
+const drawingSelectionProjectionResultSchema = discriminatedUnion("status", [
+  object({ status: literal("projected"), projection: selectionProjectionRefSchema }).strict(),
+  object({ status: literal("cleared") }).strict(),
+  object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+  object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+]);
 object({
   ref: drawingRefSchema,
   commands: array(workspaceCommandSchema).min(1),
@@ -5407,6 +5424,7 @@ discriminatedUnion("status", [
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
 const drawingSessionIdSchema = string().min(1);
+const nonEmptyStringSchema = string().min(1);
 const agentCodec = {
   mode: "strict",
   typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
@@ -5443,6 +5461,16 @@ const TYPERT = {
     parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingQueryRequest", drawingQueryRequestSchema)],
     result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult", schema: drawingQueryResultSchema },
     sourceLocation: serviceLocation(71)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/projectSelection",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "projectSelection",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest", drawingSelectionProjectionRequestSchema)],
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult", schema: drawingSelectionProjectionResultSchema },
+    sourceLocation: serviceLocation(76)
   }, {
     id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit",
     service: "drawingSpace",
@@ -5494,10 +5522,7 @@ function stringParameter(name) {
     name,
     wire: name,
     source: "json",
-    codec: { mode: "strict", typeSymbol: "string", schema: { parse(input) {
-      if (typeof input !== "string" || input.length === 0) throw new Error("STRING_REQUIRED");
-      return input;
-    } } }
+    codec: { mode: "strict", typeSymbol: "string", schema: nonEmptyStringSchema }
   };
 }
 function serviceLocation(line) {

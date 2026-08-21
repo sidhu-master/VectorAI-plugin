@@ -455,6 +455,22 @@
   stroke-dasharray: 4 3;
 }
 
+.vai-preview-motion {
+  fill: none;
+  stroke: #54b9ff;
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+  animation: vai-preview-motion-flow 0.8s linear infinite;
+}
+
+#vai-preview-motion-arrow path {
+  fill: #54b9ff;
+}
+
+@keyframes vai-preview-motion-flow {
+  to { stroke-dashoffset: -24; }
+}
+
 .vai-workspace__state {
   max-width: 440px;
   margin: auto;

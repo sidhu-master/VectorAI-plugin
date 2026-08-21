@@ -55,6 +55,7 @@ export const observationRefSchema = z.object({
   taskId: idSchema,
   basis: editBasisSchema,
   artifactRefs: z.array(observationArtifactRefSchema).max(16),
+  selectionProjectionId: idSchema.optional(),
   observationDigest: digestSchema,
 }).strict();
 
@@ -70,6 +71,12 @@ export const groundingRefSchema = z.object({
   taskId: idSchema,
   contextId: idSchema,
   targetHandle: idSchema,
+  targetNodeIds: z.array(idSchema).min(1).max(256),
+  interfaces: z.array(z.object({
+    interfaceId: idSchema,
+    nodeId: idSchema,
+    endpoint: z.enum(['start', 'end']),
+  }).strict()).max(256),
   targetScopeDigest: digestSchema,
   protectedScopeDigest: digestSchema,
   evidenceDigest: digestSchema,
@@ -97,7 +104,7 @@ export const evaluationRefSchema = z.object({
 export const selectionProjectionRefSchema = z.object({
   selectionProjectionId: idSchema,
   drawingRef: drawingRefSchema,
-  nodeIds: z.array(idSchema).max(256),
+  nodeIds: z.array(idSchema).min(1).max(256),
   projectionDigest: digestSchema,
   expiresAt: z.number().int().nonnegative(),
 }).strict();

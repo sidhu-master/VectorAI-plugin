@@ -57,6 +57,7 @@ class TestPort implements DrawingWorkspacePort {
   listeners = new Set<() => void>();
   loadSource?: DrawingWorkspacePort['loadSource'];
   undoLast?: DrawingWorkspacePort['undoLast'];
+  projectSelection?: DrawingWorkspacePort['projectSelection'];
 
   constructor(current: DrawingWorkspaceSnapshot | null) {
     this.current = current;
@@ -114,6 +115,36 @@ function snapshotWithText(revision = 1): DrawingWorkspaceSnapshot {
 }
 
 describe('createDrawingWorkspaceStore', () => {
+  it('publishes a Host-verified projection whenever the canvas selection changes', async () => {
+    const port = new TestPort(snapshot(1, ['right-hand']));
+    const selections: string[][] = [];
+    port.projectSelection = async (ref, nodeIds) => {
+      selections.push(nodeIds);
+      return nodeIds.length === 0 ? { status: 'cleared' } : {
+        status: 'projected',
+        projection: {
+          selectionProjectionId: 'selection-1', drawingRef: ref, nodeIds,
+          projectionDigest: 'sha256:selection', expiresAt: 1234,
+        },
+      };
+    };
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+
+    store.getState().setSelection(['right-hand']);
+    await Promise.resolve();
+
+    expect(store.getState().selectionProjection).toMatchObject({
+      selectionProjectionId: 'selection-1', nodeIds: ['right-hand'],
+    });
+
+    store.getState().setSelection([]);
+    await Promise.resolve();
+
+    expect(selections).toEqual([['right-hand'], []]);
+    expect(store.getState().selectionProjection).toBeNull();
+  });
+
   it('defaults to the extracted vector view without the source raster underlay', () => {
     const store = createDrawingWorkspaceStore({ port: new TestPort(snapshot(1)) });
 

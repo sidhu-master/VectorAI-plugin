@@ -185,9 +185,10 @@ const inject = ["tools", "drawingSpace"];
 function apply(ctx) {
   return ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace));
 }
+const plugin = Object.assign(apply, { inject });
 export {
   apply,
   createEngineeringAnnotationTool,
-  apply as default,
+  plugin as default,
   inject
 };

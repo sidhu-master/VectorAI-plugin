@@ -18,7 +18,7 @@ await Promise.all([
     outDir: join(hostDir, 'lib'),
     fileName: 'index.js',
     format: 'es',
-    external: (id) => deepseekExternal(id) || id.startsWith('node:'),
+    external: (id) => deepseekExternal(id) || id.startsWith('node:') || id === 'sharp',
   }),
   buildLibrary({
     entry: join(clientDir, 'src/index.ts'),
@@ -32,7 +32,7 @@ await Promise.all([
     outDir: join(annotationDir, 'lib'),
     fileName: 'index.js',
     format: 'es',
-    external: (id) => deepseekExternal(id) || id.startsWith('node:'),
+    external: (id) => deepseekExternal(id) || id.startsWith('node:') || id === 'sharp',
   }),
 ]);
 
@@ -48,7 +48,7 @@ await buildLibrary({
   fileName: 'typert.js',
   format: 'es',
   emptyOutDir: false,
-  external: (id) => deepseekExternal(id) || id.startsWith('node:'),
+  external: (id) => deepseekExternal(id) || id.startsWith('node:') || id === 'sharp',
 });
 
 const temporary = await mkdtemp(join(tmpdir(), 'vectorai-dsh-client-'));

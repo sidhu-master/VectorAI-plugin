@@ -91,6 +91,18 @@ export function Canvas() {
   ].filter((node) => (
     preview.diff.updatedNodeIds.includes(node.id) || preview.diff.deletedNodeIds.includes(node.id)
   ));
+  const previewMotion = preview === null || formalSnapshot === null ? [] : preview.diff.updatedNodeIds.flatMap((id) => {
+    const before = [...formalSnapshot.document.geometry, ...formalSnapshot.document.annotations]
+      .find((node) => node.id === id);
+    const after = [...snapshot.document.geometry, ...snapshot.document.annotations]
+      .find((node) => node.id === id);
+    const first = before === undefined ? null : nodeBounds(before);
+    const second = after === undefined ? null : nodeBounds(after);
+    if (first === null || second === null) return [];
+    const from: Vec2 = [(first.minX + first.maxX) / 2, (first.minY + first.maxY) / 2];
+    const to: Vec2 = [(second.minX + second.maxX) / 2, (second.minY + second.maxY) / 2];
+    return Math.hypot(from[0] - to[0], from[1] - to[1]) <= 1e-9 ? [] : [{ id, from, to }];
+  });
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
@@ -240,6 +252,11 @@ export function Canvas() {
           fill="transparent"
         />
         <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale} ${-viewport.scale})`}>
+          <defs>
+            <marker id="vai-preview-motion-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" />
+            </marker>
+          </defs>
           {display.sourceUnderlay && snapshot.source !== undefined && sourceResource !== null ? (
             <SourceUnderlay
               source={snapshot.source}
@@ -256,6 +273,20 @@ export function Canvas() {
               selected={false}
               previewDiff={preview?.diff.deletedNodeIds.includes(node.id) ? 'deleted' : 'before'}
               onSelect={() => {}}
+            />
+          ))}
+          {previewMotion.map(({ id, from, to }) => (
+            <line
+              key={`preview-motion:${id}`}
+              data-motion-vector={id}
+              className="vai-preview-motion"
+              x1={from[0]}
+              y1={from[1]}
+              x2={to[0]}
+              y2={to[1]}
+              vectorEffect="non-scaling-stroke"
+              markerEnd="url(#vai-preview-motion-arrow)"
+              pointerEvents="none"
             />
           ))}
           {entities.map((node) => (

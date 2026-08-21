@@ -245,6 +245,9 @@ describe('@vectorai/drawing-edit-protocol', () => {
         rendererVersion: 'svg-v1',
         beforeContentDigest: 'sha256:before',
         afterContentDigest: 'sha256:after',
+        artifactContentDigest: 'sha256:comparison',
+        comparisonLayout: 'before | after' as const,
+        worldToImage: [1, 0, 0, -1, 0, 600] as const,
         viewport: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
         width: 800,
         height: 600,
@@ -260,6 +263,10 @@ describe('@vectorai/drawing-edit-protocol', () => {
     };
 
     expect(reviewEvidenceSchema.parse(evidence)).toEqual(evidence);
+    expect(() => reviewEvidenceSchema.parse({
+      ...evidence,
+      renderManifest: { ...evidence.renderManifest, artifactContentDigest: undefined },
+    })).toThrow();
     expect(() => reviewEvidenceSchema.parse({ ...evidence, rawPrompt: 'unbounded prompt' })).toThrow();
   });
 });

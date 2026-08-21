@@ -568,6 +568,16 @@ window.__ModuleLoader__.load({
         ...formalSnapshot.document.geometry,
         ...display.annotations ? formalSnapshot.document.annotations : []
       ].filter((node) => preview.diff.updatedNodeIds.includes(node.id) || preview.diff.deletedNodeIds.includes(node.id));
+      const previewMotion = preview === null || formalSnapshot === null ? [] : preview.diff.updatedNodeIds.flatMap((id) => {
+        const before = [...formalSnapshot.document.geometry, ...formalSnapshot.document.annotations].find((node) => node.id === id);
+        const after = [...snapshot.document.geometry, ...snapshot.document.annotations].find((node) => node.id === id);
+        const first = before === void 0 ? null : nodeBounds(before);
+        const second = after === void 0 ? null : nodeBounds(after);
+        if (first === null || second === null) return [];
+        const from = [(first.minX + first.maxX) / 2, (first.minY + first.maxY) / 2];
+        const to = [(second.minX + second.maxX) / 2, (second.minY + second.maxY) / 2];
+        return Math.hypot(from[0] - to[0], from[1] - to[1]) <= 1e-9 ? [] : [{ id, from, to }];
+      });
       const handleWheel = (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -714,6 +724,7 @@ window.__ModuleLoader__.load({
                   }
                 ),
                 /* @__PURE__ */ jsxRuntime.jsxs("g", { transform: `translate(${viewport.x} ${viewport.y}) scale(${viewport.scale} ${-viewport.scale})`, children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("defs", { children: /* @__PURE__ */ jsxRuntime.jsx("marker", { id: "vai-preview-motion-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse", children: /* @__PURE__ */ jsxRuntime.jsx("path", { d: "M 0 0 L 10 5 L 0 10 z" }) }) }),
                   display.sourceUnderlay && snapshot.source !== void 0 && sourceResource !== null ? /* @__PURE__ */ jsxRuntime.jsx(
                     SourceUnderlay,
                     {
@@ -734,6 +745,21 @@ window.__ModuleLoader__.load({
                       }
                     },
                     `preview-before:${node.id}`
+                  )),
+                  previewMotion.map(({ id, from, to }) => /* @__PURE__ */ jsxRuntime.jsx(
+                    "line",
+                    {
+                      "data-motion-vector": id,
+                      className: "vai-preview-motion",
+                      x1: from[0],
+                      y1: from[1],
+                      x2: to[0],
+                      y2: to[1],
+                      vectorEffect: "non-scaling-stroke",
+                      markerEnd: "url(#vai-preview-motion-arrow)",
+                      pointerEvents: "none"
+                    },
+                    `preview-motion:${id}`
                   )),
                   entities.map((node) => /* @__PURE__ */ jsxRuntime.jsx(
                     EntityRenderer,
@@ -1329,6 +1355,7 @@ window.__ModuleLoader__.load({
       let unsubscribe;
       let requestController;
       let sourceResource = null;
+      let selectionSequence = 0;
       const store = createStore((set, get) => {
         const replaceSnapshot = async (snapshot, preview = null) => {
           const currentPreview = previewMatchesSnapshot(preview, snapshot) ? preview : null;
@@ -1357,6 +1384,7 @@ window.__ModuleLoader__.load({
             displaySnapshot,
             sourceResource: nextSource,
             selectedIds,
+            selectionProjection: null,
             status: snapshot === null ? "empty" : "ready"
           });
         };
@@ -1392,6 +1420,7 @@ window.__ModuleLoader__.load({
           error: null,
           viewport: { ...DEFAULT_VIEWPORT },
           selectedIds: [],
+          selectionProjection: null,
           mouseWorld: null,
           display: { ...DEFAULT_DISPLAY },
           async load() {
@@ -1489,7 +1518,19 @@ window.__ModuleLoader__.load({
           setSelection(ids) {
             const displaySnapshot = get().displaySnapshot;
             const available = displaySnapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(displaySnapshot);
-            set({ selectedIds: [...new Set(ids)].filter((id) => available.has(id)) });
+            const selectedIds = [...new Set(ids)].filter((id) => available.has(id));
+            const sequence = ++selectionSequence;
+            set({ selectedIds, selectionProjection: null });
+            const snapshot = get().snapshot;
+            if (snapshot === null || port.projectSelection === void 0) return;
+            void port.projectSelection(snapshot.ref, selectedIds).then((result) => {
+              var _a2;
+              if (disposed || sequence !== selectionSequence || result.status !== "projected") return;
+              const current = get();
+              if (((_a2 = current.snapshot) == null ? void 0 : _a2.ref.drawingId) !== result.projection.drawingRef.drawingId || current.snapshot.ref.revision !== result.projection.drawingRef.revision || JSON.stringify(current.selectedIds) !== JSON.stringify(result.projection.nodeIds)) return;
+              set({ selectionProjection: result.projection });
+            }).catch(() => {
+            });
           },
           setDisplay(display) {
             set({ display: { ...get().display, ...display } });
@@ -1531,6 +1572,15 @@ window.__ModuleLoader__.load({
         async load(signal) {
           signal == null ? void 0 : signal.throwIfAborted();
           const result = await remote.getSnapshot(sessionId);
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async projectSelection(ref, nodeIds, signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          const result = await remote.projectSelection(sessionId, {
+            expectedRef: ref,
+            nodeIds
+          });
           signal == null ? void 0 : signal.throwIfAborted();
           return unwrap(result);
         },
@@ -6534,6 +6584,7 @@ window.__ModuleLoader__.load({
       taskId: idSchema$1,
       basis: editBasisSchema,
       artifactRefs: array(observationArtifactRefSchema).max(16),
+      selectionProjectionId: idSchema$1.optional(),
       observationDigest: digestSchema
     }).strict();
     object({
@@ -6547,6 +6598,12 @@ window.__ModuleLoader__.load({
       taskId: idSchema$1,
       contextId: idSchema$1,
       targetHandle: idSchema$1,
+      targetNodeIds: array(idSchema$1).min(1).max(256),
+      interfaces: array(object({
+        interfaceId: idSchema$1,
+        nodeId: idSchema$1,
+        endpoint: _enum(["start", "end"])
+      }).strict()).max(256),
       targetScopeDigest: digestSchema,
       protectedScopeDigest: digestSchema,
       evidenceDigest: digestSchema
@@ -6568,10 +6625,10 @@ window.__ModuleLoader__.load({
       candidateDigest: digestSchema,
       evaluationDigest: digestSchema
     }).strict();
-    object({
+    const selectionProjectionRefSchema = object({
       selectionProjectionId: idSchema$1,
       drawingRef: drawingRefSchema,
-      nodeIds: array(idSchema$1).max(256),
+      nodeIds: array(idSchema$1).min(1).max(256),
       projectionDigest: digestSchema,
       expiresAt: number().int().nonnegative()
     }).strict();
@@ -7002,6 +7059,16 @@ window.__ModuleLoader__.load({
       }).strict(),
       object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
     ]);
+    const drawingSelectionProjectionRequestSchema = object({
+      expectedRef: drawingRefSchema,
+      nodeIds: array(idSchema).max(256)
+    }).strict();
+    const drawingSelectionProjectionResultSchema = discriminatedUnion("status", [
+      object({ status: literal("projected"), projection: selectionProjectionRefSchema }).strict(),
+      object({ status: literal("cleared") }).strict(),
+      object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+      object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+    ]);
     object({
       ref: drawingRefSchema,
       commands: array(workspaceCommandSchema).min(1),
@@ -7064,6 +7131,15 @@ window.__ModuleLoader__.load({
         scope: { context: "agent", wire: "agentId" },
         parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingQueryRequest", drawingQueryRequestSchema)],
         result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult", schema: drawingQueryResultSchema }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/projectSelection",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "projectSelection",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest", drawingSelectionProjectionRequestSchema)],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult", schema: drawingSelectionProjectionResultSchema }
       }, {
         id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
         service: "drawingSpace",
@@ -7171,7 +7247,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset.vectoraiDshSpace = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
       document.head.append(style);
       var dispose;
       try {

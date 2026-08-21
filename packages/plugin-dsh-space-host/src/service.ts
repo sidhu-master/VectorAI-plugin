@@ -8,6 +8,8 @@ import type {
   DrawingWorkspaceSnapshot,
   DrawingQueryRequest,
   DrawingQueryResult,
+  DrawingSelectionProjectionRequest,
+  DrawingSelectionProjectionResult,
   DrawingWorkspacePreview,
   DrawingUndoStageRequest,
   DrawingUndoStageResult,
@@ -81,6 +83,14 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   @Remote
   query(agent: Agent, request: DrawingQueryRequest): DrawingQueryResult {
     return this.drawings.query(String(agent.id), request);
+  }
+
+  @Remote
+  projectSelection(
+    agent: Agent,
+    request: DrawingSelectionProjectionRequest,
+  ): DrawingSelectionProjectionResult {
+    return this.semantic.projectSelection(String(agent.id), request);
   }
 
   @Remote

@@ -5,6 +5,8 @@ import type { CommandExecution } from '@deepseek-ai/dsh-commands';
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type {
   DrawingInteractiveStageResult,
+  DrawingSelectionProjectionRequest,
+  DrawingSelectionProjectionResult,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspaceCommitResult,
   DrawingWorkspacePreview,
@@ -17,6 +19,7 @@ import type { DrawingWorkspacePort } from '@vectorai/drawing-workspace';
 
 export interface DshDrawingSpaceRemote {
   getSnapshot(sessionId: string): Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
+  projectSelection(sessionId: string, request: DrawingSelectionProjectionRequest): Promise<RemoteResult<DrawingSelectionProjectionResult>>;
   stageInteractiveEdit(sessionId: string, request: DrawingWorkspaceCommitRequest): Promise<RemoteResult<DrawingInteractiveStageResult>>;
   stageUndo(sessionId: string, request: DrawingUndoStageRequest): Promise<RemoteResult<DrawingUndoStageResult>>;
   getOperation(sessionId: string, operationId: string, operationBindingDigest: string): Promise<RemoteResult<OperationLookupResult>>;
@@ -38,6 +41,15 @@ export function createDshDrawingWorkspacePort(input: {
     async load(signal) {
       signal?.throwIfAborted();
       const result = await remote.getSnapshot(sessionId);
+      signal?.throwIfAborted();
+      return unwrap(result);
+    },
+    async projectSelection(ref, nodeIds, signal) {
+      signal?.throwIfAborted();
+      const result = await remote.projectSelection(sessionId, {
+        expectedRef: ref,
+        nodeIds,
+      });
       signal?.throwIfAborted();
       return unwrap(result);
     },

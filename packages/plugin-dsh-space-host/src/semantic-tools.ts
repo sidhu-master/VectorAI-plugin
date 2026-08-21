@@ -62,10 +62,11 @@ export function createDrawingBuildContextTool(semantic: SemanticEditService) {
 export function createDrawingGroundTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_ground',
-    description: 'Ground a semantic target to exact node ids and declared connector interfaces from the current task context. Use drawing_query to inspect candidate ids first.',
+    description: 'Ground a semantic target to exact node ids and connector interfaces. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces; the Host resolves the selected nodes and contacted connectors.',
     parameters: {
       taskId: { type: 'string', required: true },
       contextId: { type: 'string', required: true },
+      selectionProjectionId: { type: 'string' },
       targetNodeIds: { type: 'array', items: { type: 'string' }, required: true },
       interfaces: { type: 'array', items: { type: 'json' }, required: true },
     },

@@ -10,6 +10,8 @@ import {
   finalizePreviewRequestSchema,
   drawingPreviewCreateRequestSchema,
   drawingPreviewSchema,
+  drawingSelectionProjectionRequestSchema,
+  drawingSelectionProjectionResultSchema,
   drawingWorkspaceCommitRequestSchema,
   drawingWorkspaceCommitResultSchema,
   drawingWorkspaceSnapshotSchema,
@@ -55,6 +57,29 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(parsed?.document.protocol).toBe('VectorAI-Drawing');
     expect(parsed?.source).toMatchObject({ id: 'attachment-1', bytes: 4 });
     expect(parsed?.source).not.toHaveProperty('dataUrl');
+  });
+
+  it('strictly projects a bounded client selection without granting write authority', () => {
+    const request = {
+      expectedRef: { drawingId: 'drawing-1', revision: 1 },
+      nodeIds: ['right-hand'],
+    };
+    const result = {
+      status: 'projected' as const,
+      projection: {
+        selectionProjectionId: 'selection-1',
+        drawingRef: request.expectedRef,
+        nodeIds: request.nodeIds,
+        projectionDigest: 'sha256:selection',
+        expiresAt: 1234,
+      },
+    };
+
+    expect(drawingSelectionProjectionRequestSchema.parse(request)).toEqual(request);
+    expect(drawingSelectionProjectionResultSchema.parse(result)).toEqual(result);
+    expect(drawingSelectionProjectionRequestSchema.parse({ ...request, nodeIds: [] }).nodeIds).toEqual([]);
+    expect(drawingSelectionProjectionResultSchema.parse({ status: 'cleared' })).toEqual({ status: 'cleared' });
+    expect(() => drawingSelectionProjectionRequestSchema.parse({ ...request, writable: true })).toThrow();
   });
 
   it('rejects unknown snapshot and nested document fields', () => {

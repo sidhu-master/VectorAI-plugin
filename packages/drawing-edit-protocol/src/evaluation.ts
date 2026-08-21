@@ -44,6 +44,12 @@ export const reviewEvidenceSchema = z.object({
     rendererVersion: protocolIdSchema,
     beforeContentDigest: contentDigestSchema,
     afterContentDigest: contentDigestSchema,
+    artifactContentDigest: contentDigestSchema,
+    comparisonLayout: z.literal('before | after'),
+    worldToImage: z.tuple([
+      z.number().finite(), z.number().finite(), z.number().finite(),
+      z.number().finite(), z.number().finite(), z.number().finite(),
+    ]),
     viewport: boundsSchema,
     width: z.number().int().positive().max(8_192),
     height: z.number().int().positive().max(8_192),

@@ -7,7 +7,7 @@ describe('TYPERT host contribution', () => {
   it('publishes only the strict, session-scoped read and staged-write routes', () => {
     const methods = TYPERT.invocations.map(({ method }) => method);
     expect(methods).toEqual([
-      'getSnapshot', 'query', 'stageInteractiveEdit', 'stageUndo', 'getOperation', 'getPreview',
+      'getSnapshot', 'query', 'projectSelection', 'stageInteractiveEdit', 'stageUndo', 'getOperation', 'getPreview',
     ]);
     expect(methods).not.toEqual(expect.arrayContaining([
       'commit', 'createPreview', 'commitPreview', 'discardPreview',
@@ -17,6 +17,10 @@ describe('TYPERT host contribution', () => {
       expect(invocation.scope).toEqual({ context: 'agent', wire: 'agentId' });
       expect(invocation.parameters[0]).toMatchObject({ source: 'lookup', lookup: 'agent' });
       expect(invocation.result.mode).toBe('strict');
+      for (const parameter of invocation.parameters) {
+        expect(parameter.codec.schema).toHaveProperty('_zod');
+      }
+      expect(invocation.result.schema).toHaveProperty('_zod');
     }
     expect(TYPERT.invocations[0]?.result.schema.parse(null)).toBeNull();
     expect(() => TYPERT.invocations[0]?.parameters[0]?.codec.schema.parse('')).toThrow();

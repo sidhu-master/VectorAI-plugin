@@ -119,4 +119,32 @@ describe('drawing image intake', () => {
     expect(result).toEqual({ kind: 'enter', messages: [message] });
     expect(binds).toBe(0);
   });
+
+  it('injects only the Host-verified canvas selection as semantic grounding context', async () => {
+    const message = createUserMessage({
+      content: [{ type: 'text', text: '把选中的手抬起来打招呼' }],
+      source: { kind: 'user' },
+    });
+    const intake = createPreStepIntake({ bindPending() {} }, {
+      bindUserInstruction() {},
+      currentSelectionProjection() {
+        return {
+          selectionProjectionId: 'selection-1',
+          drawingRef: { drawingId: 'drawing-1', revision: 3 },
+          nodeIds: ['right-hand'],
+          projectionDigest: 'sha256:selection',
+          expiresAt: 9999,
+        };
+      },
+    });
+
+    const result = await intake(payload([message]), async () => ({ kind: 'enter', messages: [message] }));
+
+    expect(result.kind).toBe('enter');
+    if (result.kind !== 'enter') throw new Error('expected enter');
+    expect(result.messages.at(-1)?.content).toEqual([{
+      type: 'text',
+      text: expect.stringMatching(/selection-1[\s\S]*right-hand[\s\S]*drawing_ground/),
+    }]);
+  });
 });

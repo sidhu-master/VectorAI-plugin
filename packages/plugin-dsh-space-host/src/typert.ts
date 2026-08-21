@@ -5,6 +5,8 @@ import {
   drawingPreviewSchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
+  drawingSelectionProjectionRequestSchema,
+  drawingSelectionProjectionResultSchema,
   drawingSessionIdSchema,
   drawingUndoStageRequestSchema,
   drawingUndoStageResultSchema,
@@ -12,6 +14,9 @@ import {
   drawingWorkspaceSnapshotSchema,
   operationLookupResultSchema,
 } from '@vectorai/plugin-space-contracts';
+import { z } from 'zod';
+
+const nonEmptyStringSchema = z.string().min(1);
 
 const agentCodec = {
   mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
@@ -37,6 +42,13 @@ export const TYPERT = {
     parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingQueryRequest', drawingQueryRequestSchema)],
     result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingQueryResult', schema: drawingQueryResultSchema },
     sourceLocation: serviceLocation(71),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/projectSelection',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'projectSelection',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest', drawingSelectionProjectionRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult', schema: drawingSelectionProjectionResultSchema },
+    sourceLocation: serviceLocation(76),
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageInteractiveEdit',
@@ -76,10 +88,7 @@ function jsonRequest(typeSymbol: string, schema: { parse(input: unknown): unknow
 function stringParameter(name: string) {
   return {
     name, wire: name, source: 'json',
-    codec: { mode: 'strict', typeSymbol: 'string', schema: { parse(input: unknown) {
-      if (typeof input !== 'string' || input.length === 0) throw new Error('STRING_REQUIRED');
-      return input;
-    } } },
+    codec: { mode: 'strict', typeSymbol: 'string', schema: nonEmptyStringSchema },
   } as const;
 }
 

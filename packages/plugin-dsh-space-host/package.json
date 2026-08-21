@@ -43,6 +43,8 @@
     "@vectorai/drawing-edit-core": "workspace:*",
     "@vectorai/drawing-edit-protocol": "workspace:*",
     "@vectorai/drawing-spatial": "workspace:*",
-    "@vectorai/plugin-space-contracts": "workspace:*"
+    "@vectorai/plugin-space-contracts": "workspace:*",
+    "sharp": "^0.35.3",
+    "zod": "4.4.3"
   }
 }

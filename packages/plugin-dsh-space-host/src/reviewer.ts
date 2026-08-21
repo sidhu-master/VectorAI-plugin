@@ -5,6 +5,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session';
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent';
 
 import type { SemanticEditServicePorts } from './semantic-edit-service';
+import { renderReviewComparison } from './review-renderer';
 
 export function createDshReviewer(
   ctx: Context & { subagents: SubagentRuntime },
@@ -18,6 +19,17 @@ export function createDshReviewer(
       return { outcome: 'unavailable', defects: [] };
     }
     const signal = input.signal ?? new AbortController().signal;
+    const rendered = await renderReviewComparison({
+      before: input.beforeDocument,
+      after: input.afterDocument,
+      viewport: input.viewport,
+      changedNodeIds: input.changedNodeIds,
+    });
+    const attachment = await ctx.attachments.saveImage({
+      data: rendered.png,
+      mediaType: 'image/png',
+      name: 'drawing-before-after.png',
+    });
     const run = await ctx.subagents.start(providerName, {
       label: 'drawing-reviewer',
       parent,
@@ -35,7 +47,10 @@ export function createDshReviewer(
         effectDigest: input.effectDigest,
         changedNodeIds: input.changedNodeIds,
         diagnostics: input.diagnostics,
-      }) }],
+        comparisonLayout: rendered.manifest.comparisonLayout,
+        rendererVersion: rendered.manifest.rendererVersion,
+        comparisonContentDigest: rendered.contentDigest,
+      }) }, { type: 'image', attachment }],
       outputSchema: {
         type: 'object',
         properties: {
@@ -63,7 +78,13 @@ export function createDshReviewer(
       if (result.stopReason !== 'completed' || !validReview(result.structured)) {
         return { outcome: 'unavailable', defects: [] };
       }
-      return structuredClone(result.structured);
+      return {
+        ...structuredClone(result.structured),
+        render: {
+          ...rendered.manifest,
+          contentDigest: rendered.contentDigest,
+        },
+      };
     } finally {
       await run.dispose();
     }

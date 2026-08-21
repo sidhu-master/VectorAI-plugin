@@ -99,6 +99,109 @@ async function previewRightHand(service: SemanticEditService) {
 }
 
 describe('SemanticEditService', () => {
+  it('clears the Host selection projection when the canvas deselects everything', async () => {
+    const { service } = await setup();
+    const expectedRef = { drawingId: 'drawing-wave', revision: 1 };
+
+    expect(service.projectSelection('session-1', { expectedRef, nodeIds: ['right-hand'] }).status).toBe('projected');
+    expect(service.currentSelectionProjection('session-1')).not.toBeNull();
+
+    expect(service.projectSelection('session-1', { expectedRef, nodeIds: [] })).toEqual({ status: 'cleared' });
+    expect(service.currentSelectionProjection('session-1')).toBeNull();
+  });
+
+  it('projects the exact canvas selection into grounding and resolves contacted connector endpoints', async () => {
+    let reviewedAfter: unknown;
+    const { service, drawings } = await setup(false, async (input) => {
+      reviewedAfter = input.afterDocument.geometry.find(({ id }) => id === 'right-hand');
+      return {
+        outcome: 'satisfied', defects: [],
+        render: {
+          rendererVersion: 'vectorai-review-svg-v1', contentDigest: 'sha256:comparison',
+          width: 1280, height: 720, comparisonLayout: 'before | after',
+          worldToImage: [1, 0, 0, -1, 0, 720], overlays: ['changed-nodes', 'motion-vectors'],
+        },
+      };
+    });
+    const projected = service.projectSelection('session-1', {
+      expectedRef: { drawingId: 'drawing-wave', revision: 1 },
+      nodeIds: ['right-hand'],
+    });
+    expect(projected).toMatchObject({
+      status: 'projected',
+      projection: {
+        drawingRef: { drawingId: 'drawing-wave', revision: 1 },
+        nodeIds: ['right-hand'],
+      },
+    });
+    if (projected.status !== 'projected') throw new Error('selection projection missing');
+
+    const task = service.startTask('session-1', {
+      objective: '把选中的右手抬起来打招呼',
+      rootUserMessageDigest: 'sha256:selected-wave',
+      policy: 'auto-safe',
+    });
+    const observation = service.observe('session-1', { taskId: task.taskId });
+    expect(observation.selectionProjectionId).toBe(projected.projection.selectionProjectionId);
+    const context = service.buildContext('session-1', {
+      taskId: task.taskId,
+      observationId: observation.observationId,
+    });
+    const grounding = service.ground('session-1', {
+      taskId: task.taskId,
+      contextId: context.contextId,
+      selectionProjectionId: projected.projection.selectionProjectionId,
+      targetNodeIds: [],
+      interfaces: [],
+    });
+
+    expect(grounding.targetNodeIds).toEqual(['right-hand']);
+    expect(grounding.interfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'right-arm-top', endpoint: 'end' }),
+      expect.objectContaining({ nodeId: 'right-arm-bottom', endpoint: 'end' }),
+    ]));
+
+    const preview = service.previewProgram('session-1', {
+      taskId: task.taskId,
+      groundingId: grounding.groundingId,
+      program: {
+        baseRef: task.baseRef,
+        targetHandle: grounding.targetHandle,
+        summary: 'Raise selected hand',
+        objective: '把选中的右手抬起来打招呼',
+        operations: [{
+          kind: 'connected_transform', translation: [-3, 11], rotationRadians: -Math.PI / 3,
+          pivot: [15, 0], interfaceIds: grounding.interfaces.map(({ interfaceId }) => interfaceId),
+        }],
+        preserveScopes: [{ kind: 'node-field', nodeId: 'left-hand', fields: ['center'] }],
+        postconditions: [{ kind: 'within_bounds', bounds: { minX: -30, minY: -20, maxX: 30, maxY: 30 } }],
+        evidenceRefs: [projected.projection.projectionDigest],
+      },
+    });
+    const evaluated = await service.evaluatePreview('session-1', {
+      taskId: task.taskId,
+      previewHandle: preview.previewHandle,
+      candidateDigest: preview.candidateDigest,
+    });
+    expect(evaluated.assessment.disposition).toBe('auto_safe');
+    expect(evaluated.evaluation.review.renderManifest).toMatchObject({
+      rendererVersion: 'vectorai-review-svg-v1',
+      artifactContentDigest: 'sha256:comparison',
+      width: 1280,
+      height: 720,
+    });
+    const committed = service.finalizePreview('session-1', {
+      previewHandle: preview.previewHandle,
+      previewDigest: preview.candidateDigest,
+      finalizeOperationId: preview.finalizeOperationId,
+      finalizeOperationBindingDigest: preview.finalizeOperationBindingDigest,
+      evaluationId: evaluated.evaluation.evaluationId,
+    });
+    expect(committed).toMatchObject({ status: 'committed', mode: 'auto-safe' });
+    expect(reviewedAfter).toMatchObject({ center: [12, 11] });
+    expect(drawings.getSnapshot('session-1')?.ref.revision).toBe(2);
+  });
+
   it('runs the right-hand edit through Preview, evaluation, auto-safe commit, and Undo', async () => {
     const { service, drawings, storage } = await setup();
     const { preview } = await previewRightHand(service);

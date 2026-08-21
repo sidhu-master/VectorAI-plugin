@@ -21,6 +21,13 @@ interface UserInstructionWriter {
     objective: string;
     rootUserMessageDigest: string;
   }): void;
+  currentSelectionProjection?(sessionId: string): {
+    selectionProjectionId: string;
+    drawingRef: { drawingId: string; revision: number };
+    nodeIds: string[];
+    projectionDigest: string;
+    expiresAt: number;
+  } | null;
 }
 
 interface PreStepPayload {
@@ -73,8 +80,26 @@ export function createPreStepIntake(
         })).digest('hex')}`,
       });
     }
+    let messages = [...decision.messages];
+    const selection = semantic?.currentSelectionProjection?.(String(payload.agent.id)) ?? null;
+    if (selection !== null) {
+      const instruction = [
+        `Host-verified canvas selection ${selection.selectionProjectionId} is bound to ${selection.drawingRef.drawingId}@${selection.drawingRef.revision}.`,
+        `Exact selected Drawing node ids: ${selection.nodeIds.join(', ')}.`,
+        'When the user refers to the selected object, call drawing_observe, drawing_build_context, then drawing_ground with this selectionProjectionId, empty targetNodeIds, and empty interfaces so the Host resolves the exact target and contacted connectors.',
+        'The selection is grounding evidence only and does not grant write authority.',
+      ].join(' ');
+      messages.push(createUserMessage({
+        content: [{ type: 'text', text: instruction }],
+        source: {
+          kind: 'plugin', plugin: PLUGIN_NAME, form: 'snapshot',
+          sections: [{ name: 'vectorai:verified-selection', text: instruction }],
+        },
+      }));
+    }
+
     const attachment = findLatestImage(decision.messages);
-    if (attachment === null) return decision;
+    if (attachment === null) return { kind: 'enter', messages };
 
     repository.bindPending(String(payload.agent.id), attachment);
     const context = createUserMessage({
@@ -86,6 +111,6 @@ export function createPreStepIntake(
         sections: [{ name: 'vectorai:drawing-intake', text: INSTRUCTION }],
       },
     });
-    return { kind: 'enter', messages: [...decision.messages, context] };
+    return { kind: 'enter', messages: [...messages, context] };
   };
 }

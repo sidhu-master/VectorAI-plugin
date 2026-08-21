@@ -5,6 +5,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import type {
   DrawingSourceResource,
+  DrawingSelectionProjection,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspacePort,
   DrawingWorkspacePreview,
@@ -49,6 +50,7 @@ export interface DrawingWorkspaceState {
   error: DrawingWorkspaceError | null;
   viewport: DrawingWorkspaceViewport;
   selectedIds: string[];
+  selectionProjection: DrawingSelectionProjection | null;
   mouseWorld: Vec2 | null;
   display: DrawingWorkspaceDisplay;
   load(): Promise<void>;
@@ -92,6 +94,7 @@ export function createDrawingWorkspaceStore(input: {
   let unsubscribe: (() => void) | undefined;
   let requestController: AbortController | undefined;
   let sourceResource: DrawingSourceResource | null = null;
+  let selectionSequence = 0;
 
   const store = createStore<DrawingWorkspaceState>((set, get) => {
     const replaceSnapshot = async (
@@ -126,6 +129,7 @@ export function createDrawingWorkspaceStore(input: {
         displaySnapshot,
         sourceResource: nextSource,
         selectedIds,
+        selectionProjection: null,
         status: snapshot === null ? 'empty' : 'ready',
       });
     };
@@ -162,6 +166,7 @@ export function createDrawingWorkspaceStore(input: {
       error: null,
       viewport: { ...DEFAULT_VIEWPORT },
       selectedIds: [],
+      selectionProjection: null,
       mouseWorld: null,
       display: { ...DEFAULT_DISPLAY },
       async load() {
@@ -258,7 +263,23 @@ export function createDrawingWorkspaceStore(input: {
       setSelection(ids) {
         const displaySnapshot = get().displaySnapshot;
         const available = displaySnapshot === null ? new Set<string>() : drawingNodeIds(displaySnapshot);
-        set({ selectedIds: [...new Set(ids)].filter((id) => available.has(id)) });
+        const selectedIds = [...new Set(ids)].filter((id) => available.has(id));
+        const sequence = ++selectionSequence;
+        set({ selectedIds, selectionProjection: null });
+        const snapshot = get().snapshot;
+        if (snapshot === null || port.projectSelection === undefined) return;
+        void port.projectSelection(snapshot.ref, selectedIds).then((result) => {
+          if (disposed || sequence !== selectionSequence || result.status !== 'projected') return;
+          const current = get();
+          if (
+            current.snapshot?.ref.drawingId !== result.projection.drawingRef.drawingId
+            || current.snapshot.ref.revision !== result.projection.drawingRef.revision
+            || JSON.stringify(current.selectedIds) !== JSON.stringify(result.projection.nodeIds)
+          ) return;
+          set({ selectionProjection: result.projection });
+        }).catch(() => {
+          // Selection remains a local visual state when Host projection is unavailable.
+        });
       },
       setDisplay(display) {
         set({ display: { ...get().display, ...display } });

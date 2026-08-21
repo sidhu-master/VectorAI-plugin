@@ -656,6 +656,8 @@ ProjectManifest
 当前边界：
 
 - 图片导入已使用随 Host 打包的本地 Python/OpenCV clean-line worker，输出解析图元、Polyline 兜底、拓扑关系和 compound-path 特征；
+- Canvas 选择会由 Host 投影成 revision-bound `SelectionProjectionRef`；“把选中的右手抬起来”沿 `observe → context → ground` 解析精确图元，并自动补齐与未选中身体连接的端点接口；
+- Preview 在同页 Canvas 中以 before/after 位移矢量动画展示；视觉评审使用 Host 本地渲染的同视口 1280×720 对比图，而不是模型自报结果，评审通过后才进入 auto-safe/确认提交判定；
 - Drawing 状态按 DSH session 哈希键写入 `~/.dsh/vectorai/drawings/`；正式 envelope 同时保存快照、revision、forward/inverse、commit record 和 operation receipt；
 - 正式写入只来自 semantic finalize、Host-staged 浏览器编辑或显式 Undo，三条路径都使用 expected revision 和幂等 operation binding；
 - Preview 只在内存中，进程重启后可从 canonical Drawing 重新生成；正式状态不受未提交 Preview 影响；

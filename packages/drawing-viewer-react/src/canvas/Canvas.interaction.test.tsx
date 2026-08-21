@@ -10,6 +10,7 @@ import {
   type DrawingWorkspaceCommitRequest,
   type DrawingWorkspaceCommitResult,
   type DrawingWorkspacePort,
+  type DrawingWorkspacePreview,
   type DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
 import TestRenderer, { act } from 'react-test-renderer';
@@ -24,6 +25,7 @@ const quality = { status: 'confirmed' as const, evidenceRefs: [] };
 class InteractionPort implements DrawingWorkspacePort {
   readonly commits: DrawingWorkspaceCommitRequest[] = [];
   readonly value: DrawingWorkspaceSnapshot;
+  preview: DrawingWorkspacePreview | null = null;
 
   constructor() {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing' }, now: () => 1 });
@@ -49,6 +51,10 @@ class InteractionPort implements DrawingWorkspacePort {
 
   async load(): Promise<DrawingWorkspaceSnapshot> {
     return this.value;
+  }
+
+  async loadPreview(): Promise<DrawingWorkspacePreview | null> {
+    return this.preview;
   }
 
   async commit(request: DrawingWorkspaceCommitRequest): Promise<DrawingWorkspaceCommitResult> {
@@ -82,6 +88,37 @@ const stopPropagation = () => {};
 const preventDefault = () => {};
 
 describe('shared Canvas interaction', () => {
+  it('projects a semantic Preview as an animated before-after motion vector', async () => {
+    const { port, store, renderer } = await renderCanvas();
+    const candidate = structuredClone(port.value);
+    const moved = candidate.document.geometry.find(({ id }) => id === 'line-1');
+    if (!moved || moved.type !== 'line') throw new Error('fixture line missing');
+    moved.start = [0, 20];
+    moved.end = [100, 20];
+    port.preview = {
+      version: 1,
+      handle: 'preview-motion',
+      baseRef: structuredClone(port.value.ref),
+      commands: [{
+        type: 'node.update', id: 'line-1',
+        changes: { start: [0, 20], end: [100, 20] },
+        expected: { start: [0, 0], end: [100, 0] },
+      }],
+      candidate,
+      diff: { createdNodeIds: [], updatedNodeIds: ['line-1'], deletedNodeIds: [] },
+      createdAt: 2,
+    };
+    await act(async () => { await store.getState().refresh(); });
+
+    const vector = renderer.root.findByProps({ 'data-motion-vector': 'line-1' });
+    expect(vector.props.x1).toBe(50);
+    expect(vector.props.y1).toBe(0);
+    expect(vector.props.x2).toBe(50);
+    expect(vector.props.y2).toBe(20);
+    expect(vector.props.className).toContain('vai-preview-motion');
+    act(() => renderer.unmount());
+  });
+
   it('zooms around the pointer without moving its world coordinate', async () => {
     const { store, renderer } = await renderCanvas();
     const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });

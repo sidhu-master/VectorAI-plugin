@@ -14,6 +14,20 @@ export interface DrawingWorkspaceRef {
   revision: number;
 }
 
+export interface DrawingSelectionProjection {
+  selectionProjectionId: string;
+  drawingRef: DrawingWorkspaceRef;
+  nodeIds: string[];
+  projectionDigest: string;
+  expiresAt: number;
+}
+
+export type DrawingSelectionProjectionResult =
+  | { status: 'projected'; projection: DrawingSelectionProjection }
+  | { status: 'cleared' }
+  | { status: 'stale'; currentRef: DrawingWorkspaceRef }
+  | { status: 'rejected'; code: string; message: string };
+
 export interface DrawingSourceRef {
   id: string;
   mediaType: string;
@@ -135,6 +149,11 @@ export type DrawingUndoStageResult =
 export interface DrawingWorkspacePort {
   load(signal?: AbortSignal): Promise<DrawingWorkspaceSnapshot | null>;
   loadPreview?(signal?: AbortSignal): Promise<DrawingWorkspacePreview | null>;
+  projectSelection?(
+    ref: DrawingWorkspaceRef,
+    nodeIds: string[],
+    signal?: AbortSignal,
+  ): Promise<DrawingSelectionProjectionResult>;
   commit(
     request: DrawingWorkspaceCommitRequest,
     signal?: AbortSignal,

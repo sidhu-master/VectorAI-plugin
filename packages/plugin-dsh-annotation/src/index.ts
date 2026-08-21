@@ -12,4 +12,6 @@ export function apply(ctx: Context) {
   return ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace));
 }
 
-export default apply;
+const plugin = Object.assign(apply, { inject });
+
+export default plugin;

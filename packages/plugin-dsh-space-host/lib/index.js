@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _pending, _drawings, _durable, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _SemanticEditService_instances, commitPreview_fn, assess_fn, task_fn, preview_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _query_dec, _getSnapshot_dec, _a2, _init;
+var _pending, _drawings, _durable, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _SemanticEditService_instances, commitPreview_fn, assess_fn, task_fn, preview_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -59,6 +59,7 @@ import { defineTool } from "@deepseek-ai/dsh-tools";
 import { access } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import sharp from "sharp";
 const PLUGIN_NAME = "@vectorai/plugin-dsh-space-host";
 const INSTRUCTION = [
   "A new drawing image is pending in the local VectorAI Space plugin.",
@@ -79,6 +80,7 @@ function findLatestImage(messages) {
 }
 function createPreStepIntake(repository, semantic) {
   return async (payload, next) => {
+    var _a3;
     const decision = await next();
     if (decision.kind === "reject" || payload.signal.aborted) return decision;
     const directUser = [...decision.messages].reverse().find((message) => message.source.kind === "user");
@@ -97,8 +99,27 @@ function createPreStepIntake(repository, semantic) {
         })).digest("hex")}`
       });
     }
+    let messages = [...decision.messages];
+    const selection = ((_a3 = semantic == null ? void 0 : semantic.currentSelectionProjection) == null ? void 0 : _a3.call(semantic, String(payload.agent.id))) ?? null;
+    if (selection !== null) {
+      const instruction = [
+        `Host-verified canvas selection ${selection.selectionProjectionId} is bound to ${selection.drawingRef.drawingId}@${selection.drawingRef.revision}.`,
+        `Exact selected Drawing node ids: ${selection.nodeIds.join(", ")}.`,
+        "When the user refers to the selected object, call drawing_observe, drawing_build_context, then drawing_ground with this selectionProjectionId, empty targetNodeIds, and empty interfaces so the Host resolves the exact target and contacted connectors.",
+        "The selection is grounding evidence only and does not grant write authority."
+      ].join(" ");
+      messages.push(createUserMessage({
+        content: [{ type: "text", text: instruction }],
+        source: {
+          kind: "plugin",
+          plugin: PLUGIN_NAME,
+          form: "snapshot",
+          sections: [{ name: "vectorai:verified-selection", text: instruction }]
+        }
+      }));
+    }
     const attachment = findLatestImage(decision.messages);
-    if (attachment === null) return decision;
+    if (attachment === null) return { kind: "enter", messages };
     repository.bindPending(String(payload.agent.id), attachment);
     const context = createUserMessage({
       content: [{ type: "text", text: INSTRUCTION }],
@@ -109,7 +130,7 @@ function createPreStepIntake(repository, semantic) {
         sections: [{ name: "vectorai:drawing-intake", text: INSTRUCTION }]
       }
     });
-    return { kind: "enter", messages: [...decision.messages, context] };
+    return { kind: "enter", messages: [...messages, context] };
   };
 }
 function canonicalString(value) {
@@ -669,14 +690,14 @@ function fromPoints(points) {
 function radiusBounds([x, y], radius) {
   return { minX: x - radius, minY: y - radius, maxX: x + radius, maxY: y + radius };
 }
-function arcBounds(center, radius, startAngle, endAngle, counterClockwise) {
+function arcBounds(center2, radius, startAngle, endAngle, counterClockwise) {
   const angles = [startAngle, endAngle];
   for (const angle of [0, 90, 180, 270]) {
     if (angleOnArc(angle, startAngle, endAngle, counterClockwise)) angles.push(angle);
   }
   return fromPoints(angles.map((angle) => {
     const radians = angle * Math.PI / 180;
-    return [center[0] + radius * Math.cos(radians), center[1] + radius * Math.sin(radians)];
+    return [center2[0] + radius * Math.cos(radians), center2[1] + radius * Math.sin(radians)];
   }));
 }
 function angleOnArc(angle, start, end, counterClockwise) {
@@ -5624,6 +5645,7 @@ object({
   taskId: idSchema$3,
   basis: editBasisSchema,
   artifactRefs: array(observationArtifactRefSchema).max(16),
+  selectionProjectionId: idSchema$3.optional(),
   observationDigest: digestSchema$1
 }).strict();
 object({
@@ -5637,6 +5659,12 @@ object({
   taskId: idSchema$3,
   contextId: idSchema$3,
   targetHandle: idSchema$3,
+  targetNodeIds: array(idSchema$3).min(1).max(256),
+  interfaces: array(object({
+    interfaceId: idSchema$3,
+    nodeId: idSchema$3,
+    endpoint: _enum(["start", "end"])
+  }).strict()).max(256),
   targetScopeDigest: digestSchema$1,
   protectedScopeDigest: digestSchema$1,
   evidenceDigest: digestSchema$1
@@ -5658,10 +5686,10 @@ object({
   candidateDigest: digestSchema$1,
   evaluationDigest: digestSchema$1
 }).strict();
-object({
+const selectionProjectionRefSchema = object({
   selectionProjectionId: idSchema$3,
   drawingRef: drawingRefSchema$1,
-  nodeIds: array(idSchema$3).max(256),
+  nodeIds: array(idSchema$3).min(1).max(256),
   projectionDigest: digestSchema$1,
   expiresAt: number().int().nonnegative()
 }).strict();
@@ -6155,6 +6183,16 @@ discriminatedUnion("status", [
     commandLine: string().startsWith("/drawing-undo ")
   }).strict(),
   object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+]);
+object({
+  expectedRef: drawingRefSchema$1,
+  nodeIds: array(idSchema).max(256)
+}).strict();
+discriminatedUnion("status", [
+  object({ status: literal("projected"), projection: selectionProjectionRefSchema }).strict(),
+  object({ status: literal("cleared") }).strict(),
+  object({ status: literal("stale"), currentRef: drawingRefSchema$1 }).strict(),
+  object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
 ]);
 object({
   ref: drawingRefSchema$1,
@@ -6988,10 +7026,11 @@ function createDrawingBuildContextTool(semantic) {
 function createDrawingGroundTool(semantic) {
   return defineTool({
     name: "drawing_ground",
-    description: "Ground a semantic target to exact node ids and declared connector interfaces from the current task context. Use drawing_query to inspect candidate ids first.",
+    description: "Ground a semantic target to exact node ids and connector interfaces. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces; the Host resolves the selected nodes and contacted connectors.",
     parameters: {
       taskId: { type: "string", required: true },
       contextId: { type: "string", required: true },
+      selectionProjectionId: { type: "string" },
       targetNodeIds: { type: "array", items: { type: "string" }, required: true },
       interfaces: { type: "array", items: { type: "json" }, required: true }
     },
@@ -7821,6 +7860,7 @@ class SemanticEditService {
     __privateAdd(this, _evaluations, /* @__PURE__ */ new Map());
     __privateAdd(this, _reviewInflight, /* @__PURE__ */ new Map());
     __privateAdd(this, _stickyReviewDefects, /* @__PURE__ */ new Map());
+    __privateAdd(this, _selectionProjections, /* @__PURE__ */ new Map());
     this.drawings = drawings;
     this.ports = ports;
   }
@@ -7841,6 +7881,41 @@ class SemanticEditService {
     if (policy === "review" && (current == null ? void 0 : current.active) && current.ref.policy === "auto-safe") {
       current.ref = { ...current.ref, policy: "review", stateEpoch: current.ref.stateEpoch + 1 };
     }
+  }
+  projectSelection(sessionId, input) {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return { status: "rejected", code: "DRAWING_REQUIRED", message: "No Drawing is loaded." };
+    if (snapshot.ref.drawingId !== input.expectedRef.drawingId || snapshot.ref.revision !== input.expectedRef.revision) return { status: "stale", currentRef: structuredClone(snapshot.ref) };
+    const ids = [...new Set(input.nodeIds)];
+    if (ids.length === 0) {
+      __privateGet(this, _selectionProjections).delete(sessionId);
+      return { status: "cleared" };
+    }
+    if (ids.length > 256) {
+      return { status: "rejected", code: "SELECTION_SIZE_INVALID", message: "Select between 1 and 256 Drawing nodes." };
+    }
+    const visible = new Map(allNodes(snapshot.document).map((node) => [String(node.id), node.visible]));
+    if (ids.some((id) => visible.get(id) !== true)) {
+      return { status: "rejected", code: "SELECTION_NODE_INVALID", message: "Selection contains a missing or hidden node." };
+    }
+    const projection = {
+      selectionProjectionId: this.ports.id("selection"),
+      drawingRef: structuredClone(snapshot.ref),
+      nodeIds: ids,
+      projectionDigest: this.ports.digest(canonicalString({ ref: snapshot.ref, nodeIds: [...ids].sort() })),
+      expiresAt: this.ports.now() + 10 * 6e4
+    };
+    __privateGet(this, _selectionProjections).set(sessionId, projection);
+    return { status: "projected", projection: structuredClone(projection) };
+  }
+  currentSelectionProjection(sessionId) {
+    const projection = __privateGet(this, _selectionProjections).get(sessionId);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!projection || projection.expiresAt <= this.ports.now() || !snapshot || projection.drawingRef.drawingId !== snapshot.ref.drawingId || projection.drawingRef.revision !== snapshot.ref.revision) {
+      if (projection) __privateGet(this, _selectionProjections).delete(sessionId);
+      return null;
+    }
+    return structuredClone(projection);
   }
   startTask(sessionId, input) {
     const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshot_fn).call(this, sessionId);
@@ -7865,15 +7940,18 @@ class SemanticEditService {
   observe(sessionId, input) {
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
     const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const selection = this.currentSelectionProjection(sessionId);
     const ref = {
       observationId: this.ports.id("observation"),
       taskId: task.ref.taskId,
       basis: { kind: "canonical", ref: structuredClone(snapshot.ref) },
       artifactRefs: [],
+      ...selection ? { selectionProjectionId: selection.selectionProjectionId } : {},
       observationDigest: this.ports.digest(canonicalString({
         taskId: task.ref.taskId,
         ref: snapshot.ref,
-        semantic: canonicalSemanticString(snapshot.document)
+        semantic: canonicalSemanticString(snapshot.document),
+        selectionProjectionDigest: selection == null ? void 0 : selection.projectionDigest
       }))
     };
     __privateGet(this, _observations).set(ref.observationId, ref);
@@ -7902,22 +7980,29 @@ class SemanticEditService {
     if (!context || context.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
     const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
     const nodes = new Map(allNodes(snapshot.document).map((node) => [String(node.id), node]));
-    if (input.targetNodeIds.length === 0 || input.targetNodeIds.some((id) => !nodes.has(id))) {
+    const projection = input.selectionProjectionId === void 0 ? null : this.currentSelectionProjection(sessionId);
+    if (input.selectionProjectionId !== void 0 && (projection == null ? void 0 : projection.selectionProjectionId) !== input.selectionProjectionId) {
+      throw new Error("EDIT_SELECTION_PROJECTION_STALE");
+    }
+    const targetNodeIds = projection ? [...projection.nodeIds] : [...new Set(input.targetNodeIds)];
+    if (projection && input.targetNodeIds.length > 0 && canonicalString([...new Set(input.targetNodeIds)].sort()) !== canonicalString([...targetNodeIds].sort())) throw new Error("EDIT_SELECTION_SCOPE_MISMATCH");
+    if (targetNodeIds.length === 0 || targetNodeIds.some((id) => !nodes.has(id))) {
       throw new Error("EDIT_TARGET_UNRESOLVED");
     }
-    for (const port of input.interfaces) {
+    const interfaces = input.interfaces.length > 0 ? structuredClone(input.interfaces) : projection ? inferSelectionInterfaces(snapshot.document, targetNodeIds) : [];
+    for (const port of interfaces) {
       const node = nodes.get(port.nodeId);
       if (!node || node.type !== "line" || !port.endpoint) throw new Error("EDIT_INTERFACE_UNRESOLVED");
     }
-    const sourceStatus = snapshot.provisional ? "provisional" : input.targetNodeIds.some((id) => {
+    const sourceStatus = snapshot.provisional ? "provisional" : targetNodeIds.some((id) => {
       var _a3;
       return ((_a3 = nodes.get(id)) == null ? void 0 : _a3.quality.status) !== "confirmed";
     }) ? "candidate" : "confirmed";
     const targetHandle = this.ports.id("target");
     const target = {
       targetHandle,
-      targetNodeIds: [...new Set(input.targetNodeIds)],
-      interfaces: structuredClone(input.interfaces),
+      targetNodeIds,
+      interfaces,
       sourceStatus
     };
     const ref = {
@@ -7925,11 +8010,21 @@ class SemanticEditService {
       taskId: task.ref.taskId,
       contextId: context.contextId,
       targetHandle,
+      targetNodeIds: [...target.targetNodeIds],
+      interfaces: target.interfaces.map((port) => ({
+        interfaceId: port.interfaceId,
+        nodeId: port.nodeId,
+        endpoint: port.endpoint
+      })),
       targetScopeDigest: this.ports.digest(canonicalString([...target.targetNodeIds].sort())),
       protectedScopeDigest: this.ports.digest(canonicalString(
         allNodes(snapshot.document).map(({ id }) => String(id)).filter((id) => !target.targetNodeIds.includes(id) && !target.interfaces.some((port) => port.nodeId === id)).sort()
       )),
-      evidenceDigest: this.ports.digest(canonicalString({ context: context.contextDigest, sourceStatus }))
+      evidenceDigest: this.ports.digest(canonicalString({
+        context: context.contextDigest,
+        sourceStatus,
+        selectionProjectionDigest: projection == null ? void 0 : projection.projectionDigest
+      }))
     };
     __privateGet(this, _groundings).set(ref.groundingId, { ref, target });
     return structuredClone(ref);
@@ -7990,7 +8085,7 @@ class SemanticEditService {
     });
   }
   async evaluatePreview(sessionId, input) {
-    var _a3;
+    var _a3, _b, _c, _d, _e, _f, _g, _h;
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
     const preview = __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.previewHandle, input.candidateDigest);
     if (preview.task !== task) throw new Error("EDIT_LINEAGE_MISMATCH");
@@ -8006,6 +8101,7 @@ class SemanticEditService {
     const sticky = __privateGet(this, _stickyReviewDefects).get(riskKey);
     let reviewPromise = __privateGet(this, _reviewInflight).get(riskKey);
     if (!reviewPromise && !sticky && this.ports.review) {
+      const viewport = ((_a3 = this.drawings.summarize(sessionId)) == null ? void 0 : _a3.bounds) ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 };
       reviewPromise = this.ports.review({
         sessionId,
         objective: task.objective,
@@ -8018,6 +8114,9 @@ class SemanticEditService {
           ...preview.compilation.actualEffect.deletedNodeIds
         ],
         diagnostics: preview.compilation.diagnostics,
+        beforeDocument: snapshot.document,
+        afterDocument: preview.compilation.candidate,
+        viewport,
         signal: input.signal
       });
       __privateGet(this, _reviewInflight).set(riskKey, reviewPromise);
@@ -8050,13 +8149,16 @@ class SemanticEditService {
       providerVersion: "1",
       authoritativeObjective: { text: task.objective, attachmentContentDigests: [] },
       renderManifest: {
-        rendererVersion: "semantic-digest-v1",
+        rendererVersion: ((_b = reviewed.render) == null ? void 0 : _b.rendererVersion) ?? "semantic-digest-v1",
         beforeContentDigest,
         afterContentDigest,
-        viewport: ((_a3 = this.drawings.summarize(sessionId)) == null ? void 0 : _a3.bounds) ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 },
-        width: 1,
-        height: 1,
-        overlays: ["changed-nodes"]
+        artifactContentDigest: ((_c = reviewed.render) == null ? void 0 : _c.contentDigest) ?? afterContentDigest,
+        comparisonLayout: "before | after",
+        worldToImage: ((_d = reviewed.render) == null ? void 0 : _d.worldToImage) ?? [1, 0, 0, -1, 0, 0],
+        viewport: ((_e = this.drawings.summarize(sessionId)) == null ? void 0 : _e.bounds) ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        width: ((_f = reviewed.render) == null ? void 0 : _f.width) ?? 1,
+        height: ((_g = reviewed.render) == null ? void 0 : _g.height) ?? 1,
+        overlays: ((_h = reviewed.render) == null ? void 0 : _h.overlays) ?? ["changed-nodes"]
       },
       outcome: reviewed.outcome,
       defects: reviewed.defects.map((diagnostic) => ({
@@ -8230,6 +8332,7 @@ _previews2 = new WeakMap();
 _evaluations = new WeakMap();
 _reviewInflight = new WeakMap();
 _stickyReviewDefects = new WeakMap();
+_selectionProjections = new WeakMap();
 _SemanticEditService_instances = new WeakSet();
 commitPreview_fn = function(sessionId, preview, evaluated, mode) {
   const receipt = this.drawings.commitSemantic(sessionId, {
@@ -8341,6 +8444,68 @@ snapshotAtTask_fn = function(sessionId, task) {
 };
 function allNodes(document) {
   return [...document.geometry, ...document.annotations, ...document.relations, ...document.features];
+}
+function inferSelectionInterfaces(document, targetNodeIds) {
+  const selected = new Set(targetNodeIds);
+  const targets = document.geometry.filter((node) => selected.has(String(node.id)));
+  const tolerance = Math.max(geometryDiagonal(document) * 0.025, 1e-6);
+  const interfaces = [];
+  for (const connector of document.geometry) {
+    if (selected.has(String(connector.id)) || connector.type !== "line") continue;
+    for (const endpoint of ["start", "end"]) {
+      const point = connector[endpoint];
+      if (!targets.some((target) => distanceToGeometryBoundary(target, point) <= tolerance)) continue;
+      interfaces.push({
+        interfaceId: `${String(connector.id)}:${endpoint}`,
+        nodeId: String(connector.id),
+        endpoint
+      });
+    }
+  }
+  return interfaces.sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
+}
+function distanceToGeometryBoundary(node, point) {
+  if (node.type === "circle") {
+    return Math.abs(Math.hypot(point[0] - node.center[0], point[1] - node.center[1]) - node.radius);
+  }
+  if (node.type === "ellipse") {
+    const major = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+    if (major <= 1e-9 || node.ratio <= 0) return Number.POSITIVE_INFINITY;
+    const ux = node.majorAxis[0] / major;
+    const uy = node.majorAxis[1] / major;
+    const dx = point[0] - node.center[0];
+    const dy = point[1] - node.center[1];
+    const normalized = Math.hypot((dx * ux + dy * uy) / major, (-dx * uy + dy * ux) / (major * node.ratio));
+    return Math.abs(normalized - 1) * major;
+  }
+  const anchors = geometryAnchors(node);
+  return anchors.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...anchors.map((anchor) => Math.hypot(point[0] - anchor[0], point[1] - anchor[1])));
+}
+function geometryAnchors(node) {
+  switch (node.type) {
+    case "point":
+      return [[node.x, node.y]];
+    case "line":
+      return [node.start, node.end];
+    case "ray":
+    case "xline":
+      return [node.origin];
+    case "circle":
+    case "arc":
+    case "ellipse":
+      return [node.center];
+    case "polyline":
+      return node.vertices.map(({ point }) => point);
+    case "spline":
+      return node.controlPoints;
+  }
+}
+function geometryDiagonal(document) {
+  const points = document.geometry.flatMap(geometryAnchors);
+  if (points.length === 0) return 1;
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
 }
 function annotationConfirmed(node) {
   const quality = node.quality;
@@ -8524,6 +8689,139 @@ function registerDrawingCommands(commands, interactive, semantic) {
     disposeApply();
   };
 }
+async function renderReviewComparison(input) {
+  const width = 1280;
+  const height = 720;
+  const panelWidth = width / 2;
+  const padding = 36;
+  const worldWidth = Math.max(input.viewport.maxX - input.viewport.minX, 1e-6);
+  const worldHeight = Math.max(input.viewport.maxY - input.viewport.minY, 1e-6);
+  const scale2 = Math.min((panelWidth - padding * 2) / worldWidth, (height - padding * 2 - 28) / worldHeight);
+  const offsetX = padding + (panelWidth - padding * 2 - worldWidth * scale2) / 2 - input.viewport.minX * scale2;
+  const offsetY = height - padding - (height - padding * 2 - 28 - worldHeight * scale2) / 2 + input.viewport.minY * scale2;
+  const transform2 = [scale2, 0, 0, -scale2, offsetX, offsetY];
+  const changed = new Set(input.changedNodeIds);
+  const before = renderDocument(input.before, changed, "#f5a65b");
+  const after = renderDocument(input.after, changed, "#54b9ff");
+  const motion = motionVectors(input.before, input.after, changed).map(({ id, from, to }) => `<line data-node="${escapeXml(id)}" x1="${from[0]}" y1="${from[1]}" x2="${to[0]}" y2="${to[1]}" stroke="#54b9ff" stroke-width="2" vector-effect="non-scaling-stroke" marker-end="url(#arrow)"/>`).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <rect width="${width}" height="${height}" fill="#101419"/>
+    <line x1="${panelWidth}" y1="0" x2="${panelWidth}" y2="${height}" stroke="#35404b"/>
+    <text x="20" y="25" fill="#9aa8b5" font-family="sans-serif" font-size="14">BEFORE</text>
+    <text x="${panelWidth + 20}" y="25" fill="#9aa8b5" font-family="sans-serif" font-size="14">AFTER</text>
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#54b9ff"/></marker></defs>
+    <g transform="matrix(${transform2.join(" ")})">${before}</g>
+    <g transform="translate(${panelWidth} 0) matrix(${transform2.join(" ")})">${after}${motion}</g>
+  </svg>`;
+  const png = await sharp(Buffer.from(svg)).png().toBuffer();
+  return {
+    png,
+    contentDigest: `sha256:${createHash("sha256").update(png).digest("hex")}`,
+    manifest: {
+      rendererVersion: "vectorai-review-svg-v1",
+      width,
+      height,
+      comparisonLayout: "before | after",
+      worldToImage: transform2,
+      overlays: ["changed-nodes", "motion-vectors"]
+    }
+  };
+}
+function renderDocument(document, changed, changedColor) {
+  return [...document.geometry, ...document.annotations].filter((node) => node.visible).map((node) => renderNode(node, changed.has(String(node.id)) ? changedColor : "#d7e0ea")).join("");
+}
+function renderNode(node, color) {
+  const style = `fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"`;
+  switch (node.type) {
+    case "point":
+      return `<circle cx="${node.x}" cy="${node.y}" r="2" ${style}/>`;
+    case "line":
+      return `<line x1="${node.start[0]}" y1="${node.start[1]}" x2="${node.end[0]}" y2="${node.end[1]}" ${style}/>`;
+    case "ray":
+    case "xline":
+      return `<line x1="${node.origin[0]}" y1="${node.origin[1]}" x2="${node.origin[0] + node.direction[0] * 1e3}" y2="${node.origin[1] + node.direction[1] * 1e3}" ${style}/>`;
+    case "circle":
+      return `<circle cx="${node.center[0]}" cy="${node.center[1]}" r="${node.radius}" ${style}/>`;
+    case "arc": {
+      const start = polar(node.center, node.radius, node.startAngle);
+      const end = polar(node.center, node.radius, node.endAngle);
+      const span = Math.abs(node.endAngle - node.startAngle) % 360;
+      return `<path d="M ${start[0]} ${start[1]} A ${node.radius} ${node.radius} 0 ${span > 180 ? 1 : 0} ${node.counterClockwise ? 1 : 0} ${end[0]} ${end[1]}" ${style}/>`;
+    }
+    case "ellipse": {
+      const rx = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+      const rotation = Math.atan2(node.majorAxis[1], node.majorAxis[0]) * 180 / Math.PI;
+      return `<ellipse cx="${node.center[0]}" cy="${node.center[1]}" rx="${rx}" ry="${rx * node.ratio}" transform="rotate(${rotation} ${node.center[0]} ${node.center[1]})" ${style}/>`;
+    }
+    case "polyline":
+      return `<polyline points="${node.vertices.map(({ point }) => point.join(",")).join(" ")}" ${node.closed ? 'data-closed="true"' : ""} ${style}/>`;
+    case "spline":
+      return `<polyline points="${node.controlPoints.map((point) => point.join(",")).join(" ")}" ${style}/>`;
+    case "text":
+      return textBox(node.position, node.height, node.content, color);
+    case "dimension":
+      return `${node.definitionPoints.length > 1 ? `<polyline points="${node.definitionPoints.map((point) => point.join(",")).join(" ")}" ${style}/>` : ""}${textBox(node.textPosition, 4, node.displayText ?? "DIM", color)}`;
+    case "leader":
+      return `<polyline points="${node.points.map((point) => point.join(",")).join(" ")}" ${style}/>${textBox(node.points.at(-1) ?? [0, 0], node.textHeight, node.content, color)}`;
+    case "centerline":
+      return `<line x1="${node.start[0]}" y1="${node.start[1]}" x2="${node.end[0]}" y2="${node.end[1]}" stroke-dasharray="8 4" ${style}/>`;
+    case "section-hatch":
+      return node.segments.map(({ start, end }) => `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" ${style}/>`).join("");
+  }
+}
+function textBox(position, height, text, color) {
+  return `<g transform="translate(${position[0]} ${position[1]}) scale(1 -1)"><text fill="${color}" font-size="${height}" font-family="sans-serif">${escapeXml(text)}</text></g>`;
+}
+function motionVectors(before, after, changed) {
+  const first = new Map([...before.geometry, ...before.annotations].map((node) => [String(node.id), node]));
+  const second = new Map([...after.geometry, ...after.annotations].map((node) => [String(node.id), node]));
+  return [...changed].flatMap((id) => {
+    const from = center(first.get(id));
+    const to = center(second.get(id));
+    return from && to && Math.hypot(from[0] - to[0], from[1] - to[1]) > 1e-9 ? [{ id, from, to }] : [];
+  });
+}
+function center(node) {
+  if (!node) return null;
+  switch (node.type) {
+    case "point":
+      return [node.x, node.y];
+    case "line":
+      return [(node.start[0] + node.end[0]) / 2, (node.start[1] + node.end[1]) / 2];
+    case "ray":
+    case "xline":
+      return [...node.origin];
+    case "circle":
+    case "arc":
+    case "ellipse":
+      return [...node.center];
+    case "polyline":
+      return average(node.vertices.map(({ point }) => point));
+    case "spline":
+      return average(node.controlPoints);
+    case "text":
+      return [...node.position];
+    case "dimension":
+      return [...node.textPosition];
+    case "leader":
+      return [...node.points.at(-1) ?? [0, 0]];
+    case "centerline":
+      return [(node.start[0] + node.end[0]) / 2, (node.start[1] + node.end[1]) / 2];
+    case "section-hatch":
+      return average(node.segments.flatMap(({ start, end }) => [start, end]));
+  }
+}
+function average(points) {
+  if (points.length === 0) return null;
+  return [points.reduce((sum, [x]) => sum + x, 0) / points.length, points.reduce((sum, [, y]) => sum + y, 0) / points.length];
+}
+function polar(center2, radius, degrees2) {
+  const radians = degrees2 * Math.PI / 180;
+  return [center2[0] + radius * Math.cos(radians), center2[1] + radius * Math.sin(radians)];
+}
+function escapeXml(value) {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] ?? character);
+}
 function createDshReviewer(ctx) {
   return async (input) => {
     const parent = ctx.agents.get(input.sessionId);
@@ -8534,6 +8832,17 @@ function createDshReviewer(ctx) {
       return { outcome: "unavailable", defects: [] };
     }
     const signal = input.signal ?? new AbortController().signal;
+    const rendered = await renderReviewComparison({
+      before: input.beforeDocument,
+      after: input.afterDocument,
+      viewport: input.viewport,
+      changedNodeIds: input.changedNodeIds
+    });
+    const attachment = await ctx.attachments.saveImage({
+      data: rendered.png,
+      mediaType: "image/png",
+      name: "drawing-before-after.png"
+    });
     const run = await ctx.subagents.start(providerName, {
       label: "drawing-reviewer",
       parent,
@@ -8548,8 +8857,11 @@ function createDshReviewer(ctx) {
         afterSemanticDigest: input.afterSemanticDigest,
         effectDigest: input.effectDigest,
         changedNodeIds: input.changedNodeIds,
-        diagnostics: input.diagnostics
-      }) }],
+        diagnostics: input.diagnostics,
+        comparisonLayout: rendered.manifest.comparisonLayout,
+        rendererVersion: rendered.manifest.rendererVersion,
+        comparisonContentDigest: rendered.contentDigest
+      }) }, { type: "image", attachment }],
       outputSchema: {
         type: "object",
         properties: {
@@ -8577,7 +8889,13 @@ function createDshReviewer(ctx) {
       if (result.stopReason !== "completed" || !validReview(result.structured)) {
         return { outcome: "unavailable", defects: [] };
       }
-      return structuredClone(result.structured);
+      return {
+        ...structuredClone(result.structured),
+        render: {
+          ...rendered.manifest,
+          contentDigest: rendered.contentDigest
+        }
+      };
     } finally {
       await run.dispose();
     }
@@ -8592,7 +8910,7 @@ function validReview(value) {
     return typeof item.code === "string" && typeof item.reason === "string" && typeof item.scopeDigest === "string";
   });
 }
-class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
+class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _projectSelection_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingSpace");
     __runInitializers(_init, 5, this);
@@ -8631,6 +8949,9 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
   query(agent, request) {
     return this.drawings.query(String(agent.id), request);
   }
+  projectSelection(agent, request) {
+    return this.semantic.projectSelection(String(agent.id), request);
+  }
   stageInteractiveEdit(agent, request) {
     return this.interactive.stage(String(agent.id), request);
   }
@@ -8650,6 +8971,7 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
 _init = __decoratorStart(_a2);
 __decorateElement(_init, 1, "getSnapshot", _getSnapshot_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "query", _query_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "projectSelection", _projectSelection_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "stageInteractiveEdit", _stageInteractiveEdit_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "stageUndo", _stageUndo_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getOperation", _getOperation_dec, DrawingSpaceHostService);

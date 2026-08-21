@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import {
   drawingRefSchema,
+  selectionProjectionRefSchema,
   type DrawingRef,
 } from '@vectorai/drawing-edit-protocol';
 
@@ -381,6 +382,18 @@ export const drawingUndoStageResultSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('rejected'), message: z.string(), code: idSchema }).strict(),
 ]);
 
+export const drawingSelectionProjectionRequestSchema = z.object({
+  expectedRef: drawingRefSchema,
+  nodeIds: z.array(idSchema).max(256),
+}).strict();
+
+export const drawingSelectionProjectionResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('projected'), projection: selectionProjectionRefSchema }).strict(),
+  z.object({ status: z.literal('cleared') }).strict(),
+  z.object({ status: z.literal('stale'), currentRef: drawingRefSchema }).strict(),
+  z.object({ status: z.literal('rejected'), code: idSchema, message: z.string().min(1) }).strict(),
+]);
+
 export const drawingPreviewCreateRequestSchema = z.object({
   ref: drawingRefSchema,
   commands: z.array(workspaceCommandSchema).min(1),
@@ -417,6 +430,8 @@ export const drawingPreviewDiscardResultSchema = z.discriminatedUnion('status', 
 
 export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
 export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;
+export type DrawingSelectionProjectionRequest = z.infer<typeof drawingSelectionProjectionRequestSchema>;
+export type DrawingSelectionProjectionResult = z.infer<typeof drawingSelectionProjectionResultSchema>;
 
 export interface Bounds2D {
   minX: number;

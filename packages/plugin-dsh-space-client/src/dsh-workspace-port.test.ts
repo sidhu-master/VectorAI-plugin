@@ -20,11 +20,42 @@ function snapshot(): DrawingWorkspaceSnapshot {
 }
 
 describe('createDshDrawingWorkspacePort', () => {
+  it('projects the exact revision-bound canvas selection through the Host Remote', async () => {
+    const value = {
+      status: 'projected' as const,
+      projection: {
+        selectionProjectionId: 'selection-1',
+        drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        nodeIds: ['right-hand'],
+        projectionDigest: 'sha256:selection',
+        expiresAt: 1234,
+      },
+    };
+    const projectSelection = vi.fn(async () => ({ ok: true as const, value }));
+    const port = createDshDrawingWorkspacePort({
+      sessionId: 'session-1',
+      remote: {
+        getSnapshot: vi.fn(), projectSelection,
+        stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn(),
+      },
+      commands: { execute: vi.fn() },
+      resolveImage: vi.fn(),
+    });
+
+    await expect(port.projectSelection?.(
+      { drawingId: 'drawing-1', revision: 1 }, ['right-hand'],
+    )).resolves.toEqual(value);
+    expect(projectSelection).toHaveBeenCalledWith('session-1', {
+      expectedRef: { drawingId: 'drawing-1', revision: 1 },
+      nodeIds: ['right-hand'],
+    });
+  });
+
   it('loads the authorized session snapshot and unwraps Remote results', async () => {
     const getSnapshot = vi.fn(async () => ({ ok: true as const, value: snapshot() }));
     const port = createDshDrawingWorkspacePort({
       sessionId: 'session-1',
-      remote: { getSnapshot, stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn() },
+      remote: { getSnapshot, projectSelection: vi.fn(), stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn() },
       commands: { execute: vi.fn() },
       resolveImage: vi.fn(),
     });
@@ -48,7 +79,7 @@ describe('createDshDrawingWorkspacePort', () => {
     const getSnapshot = vi.fn(async () => ({ ok: true as const, value: snapshot() }));
     const port = createDshDrawingWorkspacePort({
       sessionId: 'session-1',
-      remote: { getSnapshot, stageInteractiveEdit, stageUndo: vi.fn(), getOperation: vi.fn() },
+      remote: { getSnapshot, projectSelection: vi.fn(), stageInteractiveEdit, stageUndo: vi.fn(), getOperation: vi.fn() },
       commands: { execute },
       resolveImage: vi.fn(),
     });
@@ -75,7 +106,7 @@ describe('createDshDrawingWorkspacePort', () => {
     const getPreview = vi.fn(async () => ({ ok: true as const, value: preview }));
     const port = createDshDrawingWorkspacePort({
       sessionId: 'session-1',
-      remote: { getSnapshot: vi.fn(), stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn(), getPreview },
+      remote: { getSnapshot: vi.fn(), projectSelection: vi.fn(), stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn(), getPreview },
       commands: { execute: vi.fn() },
       resolveImage: vi.fn(),
     });
@@ -88,7 +119,7 @@ describe('createDshDrawingWorkspacePort', () => {
     const resolveImage = vi.fn(async () => 'blob:dsh-source');
     const port = createDshDrawingWorkspacePort({
       sessionId: 'session-1',
-      remote: { getSnapshot: vi.fn(), stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn() },
+      remote: { getSnapshot: vi.fn(), projectSelection: vi.fn(), stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn() },
       commands: { execute: vi.fn() },
       resolveImage,
     });
@@ -112,6 +143,7 @@ describe('createDshDrawingWorkspacePort', () => {
           ok: false as const,
           error: { code: 'DISCONNECTED', message: 'Host disconnected', details: {} },
         })),
+        projectSelection: vi.fn(),
         stageInteractiveEdit: vi.fn(),
         stageUndo: vi.fn(),
         getOperation: vi.fn(),
@@ -144,6 +176,7 @@ describe('createDshDrawingWorkspacePort', () => {
       sessionId: 'session-1',
       remote: {
         getSnapshot: vi.fn(async () => ({ ok: true as const, value: undone })),
+        projectSelection: vi.fn(),
         stageInteractiveEdit: vi.fn(),
         stageUndo,
         getOperation: vi.fn(),
