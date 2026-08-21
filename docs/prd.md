@@ -12,7 +12,7 @@ VectorAI 要成为 AI 与二维世界之间的连接引擎，让 AI 像理解、
 
 用户可以提供自然语言、图片、PDF 或 CAD 数据。系统把图纸转换为统一 Drawing IR，并从中派生可查询的二维世界模型；模型结合视觉语义、真实向量数据、平面拓扑和空间动作工具自主观察、规划、修改和校验。最终结果不是不可编辑图片，而是可修改、可撤销、可审计、可回放的二维图纸事务。
 
-模型应拥有 Drawing IR 的完整控制能力。系统不预先限制模型只能修改哪个选区、哪类图元或必须使用哪种算法；Harness 的职责是提供可靠工具、原子事务、版本控制、用户决策、审计和回滚。
+模型应拥有通用语义表达能力，而不是直接承担数值求解或持有 Drawing IR 写句柄。系统不为某个对象、姿态或样例规定专用路径；模型选择任务相关部件、空间关系和保持条件，Host 负责把它们求解并编译成原子 Drawing 事务。
 
 ## 2. MVP 目标
 
@@ -39,12 +39,12 @@ VectorAI 要成为 AI 与二维世界之间的连接引擎，让 AI 像理解、
 模型负责：
 
 - 理解用户意图和视觉语义。
-- 从视觉与 Drawing IR 中选择任务目标、目的点、接口、路径和需要保持的内容。
+- 从视觉与 Drawing IR 中选择任务目标、语义参考、关系和需要保持的内容。
 - 在确有歧义时选择、合并或排除局部 Semantic Entity candidates。
 - 选择下一项空间、视觉、CV 或事务工具。
 - 决定修改范围、设计结果和编辑方式。
 - 解释独立检查结果并继续修正。
-- 显式决定下一次修改是舍弃当前候选并从正式 revision 重做，还是基于指定 Preview 继续修订。
+- 显式决定继续修订当前语义目标，还是丢弃候选。
 - 决定提交、请求用户决策或结束。
 
 Harness 负责：
@@ -71,8 +71,9 @@ Harness 负责：
 系统只硬阻止：
 
 - Drawing IR Schema、数值或引用非法。
-- base revision 或 Preview 已过期。
-- 缺少当前动作所需的用户授权。
+- base revision、Episode、引用、Preview 或 operation 绑定已过期/不一致。
+- 缺少当前动作所需的用户授权，或触碰不可覆盖的保护/deny。
+- inverse、durable history、幂等 ledger 或 mandatory safety evaluator 不可用。
 
 断线、方向、局部范围、样式、约束影响、标注冲突、视觉差异和可疑尺度形成结构化诊断，交给模型自主修正。独立检查者的 `satisfied / needs_revision / unavailable` 结论同样只是证据，不是 Commit 授权。模型认为仍可接受时，可以低置信度 candidate 状态提交并标红。
 
@@ -81,7 +82,7 @@ Harness 负责：
 - 用户不选择“普通/Agent”或“精确/生成”开关。
 - 模型自主观察、查询、编辑、预览、验证、修正和提交。
 - 用户可以随时暂停、停止或追加指令。
-- 当前 Preview 可以被后续候选替换。模型必须显式选择从 canonical revision 重做，或基于当前 Preview 只提交纠正；已提交结果通过新的纠正 Commit 修改，不重写历史。
+- 当前 Preview 可以被后续语义候选原子替换；模型不传父 handle，Host 从当前 Episode 解析并限制最多三个候选。已提交结果通过新的纠正 Commit 修改，不重写历史。
 - 生成服务或工具失败时返回模型重新规划，不自动强制切换成某个几何动作。
 - 主模型与独立检查模型分别配置。检查者不参与规划、不编辑图纸、不授予权限，也不能否决主模型；其任务只有依据当前有效用户指令比较修改前后结果。
 
@@ -105,19 +106,19 @@ Harness 负责：
 
 ### 3.7 任务驱动的空间引用，Grounding 按需使用
 
-- 对已明确的任务，模型直接把视觉选点写成 `observationId + normalized`，把精确既有点写成 `node_anchor`；后端绑定 drawing/revision 并完成坐标反算，模型不手算仿射矩阵。
+- 对已明确的任务，模型可使用 `current_selection`、Observation 归一化点/区域、短候选 key 或语义查询选择部件；`observationId`、drawing/revision 和精确节点由 Host 当前 Episode 绑定，模型不携带这些句柄，也不手算仿射矩阵。
 - 已有向量图纸由后端统一渲染 Observation；只有目标歧义、图元边界与语义边界不一致或连接证据不足时，才生成局部 Pick/Coverage 与 Semantic Entity candidates。
 - Grounding 候选必须显示真实 Overlay，包括支持的 SourceSpan/原子边、保持接口和显式排除结构；模型可以观察后继续合并、排除或扩大读取范围。
 - Source 栅格、现有 IR 中不存在的新对象或自由重绘时，系统可以调用 SAM 2 或其他可提示分割工具；Mask 只作为视觉 Evidence 和生成输入，必须映射回二维世界模型后才能形成编辑动作。
 - 所有 Observation、坐标引用和派生 Slice 绑定 drawing、revision、frame、compiler version 和 input digest。
 
-### 3.8 空间动作是可编译程序，不是固定 Harness
+### 3.8 空间意图由 Host 编译，不是固定姿态 Harness
 
-- `SpatialEditProgram` 是明确任务的默认快速入口。模型声明 targets、operations、preserveNodeRefs 和 postconditions；代码解析空间引用并编译 Drawing Commands。
-- 首版通用操作为 `translate`、`set_endpoint`、`create_path` 和 `delete_nodes`。它们可以在一次原子 Preview 中组合，不包含对象类别或动作关键词。
-- 当首版操作不足时，模型仍可使用底层 `preview_transaction`、局部 Grounding、拓扑工具或自由重绘；结构化程序是效率入口，不是能力边界。
-- Action Proposal 可在复杂约束或多策略任务中按需生成，但不再是每次编辑的前置步骤。
-- 动作候选不构成写权限。模型可以组合工具、调整目标，或直接提交合法的底层 Drawing Transaction。
+- `SpatialIntentRequest` 是 DSH 明确任务的默认入口。模型只声明 semantic parts、direction/relative position/alignment/topology/显式用户数值引用和 preservation goals。
+- 首版不让模型输出 `translation`、pivot、rotation 或世界坐标。确定性求解器生成和排名通用候选，再交给现有 transaction compiler 产生 forward/inverse Commands。
+- 多部件目标在一次求解、一个 Preview 和一笔 Commit 内完成；连接、保护范围、碰撞、越界与最小变形共同参与求解和校验。
+- 扩展插件可以通过第一层受信任的内部 program 接口表达创建、删除或标注事务，但这些底层命令不进入 DSH 模型目录。
+- 候选不构成写权限；Host 必须基于实际 before/after effect 重算 assessment。
 - 平面世界模型中的分析切分不会改写正式图纸；只有 Preview 真正编辑局部参数区间时，才物化必要切分。
 - Preview 同时形成一条只读反事实世界分支，模型可以查询候选事务导致的几何、拓扑、语义支持和诊断变化，再决定修正或提交。
 - 反事实分支只增量重算 Patch 影响范围，不为每个候选重新读取和编译整张图纸。
@@ -160,12 +161,12 @@ Harness 负责：
 ```text
 创建 EditEpisode
 → 代码读取用户目标、局部 Drawing IR 事实与单一 Observation
-→ 模型选择目标、目的点、接口和保持范围
-→ 模型输出紧凑 SpatialEditProgram
-→ 后端解析 observation/world/node_anchor 并编译 Drawing Commands
+→ 模型用 drawing_select_parts 选择语义部件
+→ 模型输出紧凑 SpatialIntentRequest（关系与保持条件）
+→ Host 解析 Observation/selection，确定性求解坐标并编译 Drawing Commands
 → Preview + 统一渲染 + 硬校验 + 诊断
 → 独立检查者比较 before/after，结论绑定具体 Preview
-→ 主模型继续当前候选、舍弃重做、请求用户决策或提交
+→ 主模型修订语义目标、丢弃、请求用户决策或提交
 → 原子 Commit + inverse Patch
 ```
 
@@ -184,8 +185,8 @@ MVP 工具至少覆盖：
 - 构建或扩展 WorldModelSlice，查询 SourceSpan、HalfEdge、Face、incidence 与 authored connection。
 - 通过 Pick/Coverage Map 生成、选择、合并和排除 Semantic Entity candidates。
 - 将 Observation 中的归一化提示或候选 ID 解析为世界坐标、SourceSpan、接口和节点。
-- 用 `preview_spatial_program` 把任务级目标、空间引用和通用操作编译为 Preview Transaction。
-- 按需生成空间动作候选，或直接使用自由 Drawing Transaction 与局部重绘。
+- 用 `drawing_preview_spatial_intent` 把任务级定性目标与保持条件确定性求解为 Preview Transaction。
+- 用 `drawing_revise_spatial_intent` 替换当前候选；坐标和内部 Preview lineage 仍由 Host 持有。
 - 按需加载一个或一组工具契约，不强迫模型解析完整工具联合 Schema。
 - 按参数范围拆分、合并、拟合和重建图元。
 - 调用 CV、局部重绘和矢量化。
@@ -195,7 +196,7 @@ MVP 工具至少覆盖：
 
 ### 4.5 自由增量事务
 
-模型可以：
+受信任的 Host compiler 与扩展插件可以：
 
 - 更新现有节点。
 - 删除原有节点并创建不同类型或 ID 的替代节点。

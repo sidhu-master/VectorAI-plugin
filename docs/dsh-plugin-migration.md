@@ -54,7 +54,7 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 | 检查 | 结果 |
 |---|---|
 | `pnpm test`（迁移前） | 通过：169 个测试文件、1055 个测试 |
-| `pnpm test`（当前） | 通过：207 个测试文件、1213 个测试 |
+| `pnpm test`（当前） | 通过：216 个测试文件、1304 个测试 |
 | `pnpm check`（当前） | 通过 |
 | `pnpm build:dsh-space`（当前） | 通过；Host、Client、Annotation 构建成功 |
 | 发布面负向扫描 | 通过；无旧 `commit/createPreview/commitPreview/discardPreview` Remote |
@@ -91,9 +91,9 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 - DSH Host 使用按 Agent/session 隔离的完整快照和 expected-revision 原子提交；Client 通过 durable attachment ref 加载原图，不传输 base64 快照。
 - DSH Client 已从独立 `conversation.view` 标签迁移到会话级 `conversation.workspace`：左侧保留 DSH 会话栏，中间显示共享画布，右侧保留 DSH 原生聊天，桌面端分隔宽度可调，窄窗口自动上下排列。
 - 新增宿主无关的 `@vectorai/drawing-spatial`，第一层已公开 revision-bound `world-slice`、node 和 neighbors 查询。
-- `@vectorai/drawing-edit-protocol` 已冻结 revision/task/observation/context/grounding/Preview/Evaluation Ref、Spatial Edit Program、transaction、三态 assessment、operation binding/receipt 与 strict codec；`@vectorai/plugin-space-contracts` 作为公共入口重导出协议。
-- `@vectorai/drawing-edit-core` 已实现纯函数 transaction apply、inverse、canonical semantic digest、rigid/connected transform、endpoint、path、delete 与 annotation batch 编译；“把右手抬起来打招呼”有确定性 golden test。
-- 第一层 Host 已接通 `observe → build_context → ground → preview/revise → evaluate → finalize`。Host 根据实际 before/after effect、来源质量、诊断、评审结果和任务策略决定 `blocked | confirmation_required | auto_safe`，不接受模型自报权限或 auto-safe。
+- `@vectorai/drawing-edit-protocol` 已冻结模型可见的 semantic part selection、qualitative spatial intent、preservation goal 与 `numericKey` 协议；revision/task/Observation/Grounding/Preview/Evaluation、事务、operation binding 和 receipt 只在 Host 内部流转。
+- `@vectorai/drawing-edit-core` 已实现确定性空间意图求解、transaction apply、inverse 与 canonical digest。模型选择语义部件和空间关系，求解器统一计算候选坐标、旋转、连接、碰撞与最小变形；没有对象类别、动作示例或固定坐标特例。
+- 第一层 Host 已接通 `observe → select_parts → preview_spatial_intent/revise → evaluate → finalize`。一次 Host-owned episode 保存全部 lineage；模型不再抄写 task/context/grounding/Preview handle，也不再为定性指令输出 translation/pivot/rotation。Host 根据实际 before/after effect、来源质量、诊断、评审结果和任务策略决定 `blocked | confirmation_required | auto_safe`。
 - 正式提交使用本地 durable envelope：operation binding、ledger-first 幂等、forward/inverse transaction、commit record、原子快照替换和补偿式 Undo。空 diff 不增加 revision；同 operation 重试返回原 receipt。
 - 浏览器 Remote 已删除裸 `commit/createPreview/commitPreview/discardPreview`。人工属性编辑先由 Host stage，再通过一次性 DSH command 提交；命令响应丢失后按 operationId 对账。Undo 使用相同 staged + receipt 路径。
 - Reviewer 通过 DSH one-shot subagent 只读运行；同候选并发评审 single-flight，负面缺陷对同一语义候选保持 sticky，不能用重复评审洗成 auto-safe。确认卡与 Undo 卡也按 operation binding single-flight。
@@ -263,7 +263,7 @@ Client 插件负责：
 - 图片/DXF/PDF 的拖放、粘贴和文件选择入口。
 - 通过 DSH Client Remote 调用 Host 插件，不直接访问 Host 文件路径。
 - 对纯浏览器计算可直接调度 Web Worker/OffscreenCanvas；需要持久化或宿主权限的操作交给 Host。
-- 会话切换时绑定相应 DrawingRef；没有图纸时显示空画布导入状态。
+- 会话切换时绑定相应 DrawingRef；没有图纸时不挂载图纸工作区，也不抢占普通聊天布局。
 
 DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布局兼容补丁细节只能存在于 Adapter/启动路径，不能进入业务内核。DSH 提供正式可组合布局 API 后删除该补丁，`conversation.workspace` 注册组件无需改变共享 Viewer。
 
@@ -276,22 +276,19 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 | `drawing_import` | 读/初始化 | 仅在用户明确要求“导入/转换/矢量化为图纸”时，把当前会话的最新图片附件导入为 Drawing；普通参考附件不得触发 |
 | `drawing_summarize` | 只读 | 返回单位、bounds、plane/type 计数与 revision |
 | `drawing_query` | 只读 | 执行 bounds、node、topology、path 等有界查询 |
-| `drawing_observe` | 只读 | 创建绑定 revision/viewport 的观察结果 |
-| `drawing_build_context` | 只读 | 从 Observation 构建有界上下文 |
-| `drawing_ground` | 只读 | 将语义目标绑定到精确节点和接口 |
-| `drawing_preview_program` | 候选写 | 编译高阶语义程序并生成可视 Preview，不改正式状态 |
-| `drawing_preview_grounded_transform` | 候选写 | 用窄参数移动/旋转已 grounding 的图元，完整空间程序由 Host 生成 |
-| `drawing_revise_grounded_transform` | 候选写 | 根据视觉评审结果替换同一任务的 transform Preview |
-| `drawing_revise_preview` | 候选写 | 精确替换当前候选；失败保留旧 Preview；每任务最多三个候选 |
+| `drawing_observe` | 只读 | 惰性激活当前图纸 episode；Host 内部创建并绑定 Observation/context |
+| `drawing_select_parts` | 语义选择 | 模型用 current selection、Observation 归一化区域、候选短键或语义查询描述部件；Host 解析精确节点和接口 |
+| `drawing_preview_spatial_intent` | 候选写 | 模型声明通用定性空间目标和保持条件；Host 求解数值并生成一个原子 Preview |
+| `drawing_revise_spatial_intent` | 候选写 | 只修订语义目标/保持条件；Host 替换候选并重新求解，每任务最多三个候选 |
 | `drawing_evaluate_preview` | 只读/评审 | 运行 hard validators、来源质量和本地 reviewer |
 | `drawing_finalize_preview` | 受控正式写 | auto-safe 自动提交；风险候选询问；hard-invalid/deny 永久阻断 |
-| `drawing_discard_preview` | 候选写 | 丢弃 Preview |
-| `drawing_get_operation` | 只读 | 在响应丢失或持久化结果未知时查询 durable receipt |
+| `drawing_discard_preview` | 候选写 | 丢弃当前 Host-owned Preview，不需要模型传 handle |
+| `drawing_get_operation` | 只读 | 在结果未知时查询当前 Host-owned operation，不需要模型重放 operation ID/digest |
 | `drawing_undo_commit` | 受控正式写 | 用户授权后创建补偿式 Undo revision |
 
-复杂内部过程通过结构化 Ref 逐步展开，不把完整 Drawing Document 塞进模型上下文。旧裸 transaction/Commit 不属于模型目录或 Typert Remote 发布面。
+模型可见目录不含 `taskId`、`observationId`、`contextId`、`groundingId`、`previewHandle`、candidate/operation digest、裸 Drawing Command、translation、pivot、rotation 或世界坐标。精确数值只有在用户原始指令中被 Host 确定性提取后，才以 `numericKey` 被空间目标引用。旧裸 transaction/Commit 与旧 handle 工具都不属于模型目录或 Typert Remote 发布面。
 
-第一层采用多插件友好的惰性激活，不在每个直接用户回合注入完整固定流水线。图片只被 Host 暂存为可选附件，不产生 `drawing_import` 提示，也不改变本轮路由；DSH 仍把它作为普通多模态上下文交给模型。只有用户明确要求把图片导入为可编辑图纸时，模型才调用 `drawing_import`。已有图纸时只声明“可用但仅在本轮意图涉及图纸时调用 `drawing_observe`”，否则明确要求忽略并继续使用其他插件。`drawing_observe` 激活 revision-bound EditTask 后，每个成功工具结果只返回当前状态允许的下一工具集合，例如 `observed → drawing_build_context`、`preview_ready → drawing_evaluate_preview`。顺序正确性仍由 Host 的 task/ref/digest 状态机强制，不能由模型或其他插件绕过。入口只对 DSH runtime root 生效，隔离 reviewer 和其他 child Agent 不接收图片导入或图纸流程注入。
+第一层采用多插件友好的惰性激活，不在每个直接用户回合注入完整固定流水线。图片只被 Host 暂存为可选附件，不产生 `drawing_import` 提示，也不改变本轮路由；DSH 仍把它作为普通多模态上下文交给模型。只有用户明确要求把图片导入为可编辑图纸时，模型才调用 `drawing_import`。已有图纸时只声明“可用但仅在本轮意图涉及图纸时调用 `drawing_observe`”，否则明确要求忽略并继续使用其他插件。每个成功结果只返回当前允许的紧凑下一步，例如 `observed → drawing_select_parts → drawing_preview_spatial_intent → drawing_evaluate_preview`。顺序、revision 和权限由 Host episode 强制，模型上下文压缩不会丢失状态；入口只对 DSH runtime root 生效。
 
 ## 7. 第二层插件：Engineering Annotation
 
@@ -341,7 +338,7 @@ Drawing revision
 | `engineering_preview_annotations` | 调用第一层生成标注 Preview |
 | `engineering_validate_annotations` | 返回覆盖率、碰撞、越界、重复与缺失诊断 |
 
-`engineering_preview_annotations` 返回第一层定义的 `PreviewRef`；第二层只能请求第一层 root Agent 执行 `drawing_finalize_preview`，不能获得裸 Commit 或自行铸造提交权限。
+`engineering_preview_annotations` 通过第一层内部扩展接口创建 Preview；返回给 root Agent 的只是紧凑 disposition。第二层不能获得裸 Commit、模型可见内部 Ref 或自行铸造提交权限。
 
 ## 8. DSH 与 VectorAI 的职责边界
 
@@ -625,7 +622,7 @@ ProjectManifest
 | 字体和文本布局不一致 | 内置/明确字体包，记录 font digest，布局与渲染分开验证 |
 | OPFS 数据难以迁移或损坏 | checkpoint + append log + schema migration + 项目包导出 |
 | 两套宿主产生行为分叉 | 共享 application contracts 和同一套 adapter contract tests |
-| 工具过多导致 Agent 上下文膨胀 | 首版小工具面，按前置条件逐步开放，返回 handle/摘要 |
+| 工具过多导致 Agent 上下文膨胀 | 首版固定 12 个工具；语义链只返回短 part/candidate key 与 disposition，内部 handle 留在 Host |
 | 第二层绕过底层写入 | 包依赖门禁 + 唯一 transaction service + integration test |
 
 ## 19. 首个实施切片
@@ -655,14 +652,14 @@ ProjectManifest
 - `@vectorai/plugin-dsh-annotation`：第二层 `drawing_auto_annotate` DSH 工具；
 - `@vectorai/plugin-dsh-space`：把 Host/Client/Annotation 装入 DSH profile 的 bundle patch。
 
-2026-08-21 最终语义一致性迁移同时完成：旧 Web 的 World Model、几何采样、点解析、Grounding Ledger、原子拓扑图和连接载体变换已经抽到 `@vectorai/drawing-spatial` / `@vectorai/drawing-edit-core`，Web 与 DSH 只保留 Adapter。普通姿态工具只接收目标位移，模型即使从旧会话注入 `rotationDegrees` 或 `pivot` 也不会越过 Adapter；Host 根据实际接触端点选择最小形变方向。精确数值旋转仍通过高级 Spatial Edit Program 表达，不依赖具体“抬手”示例或部件名称。
+2026-08-21 最终语义一致性迁移同时完成：旧 Web 的 World Model、几何采样、点解析、Grounding Ledger、原子拓扑图和连接载体变换已经抽到 `@vectorai/drawing-spatial` / `@vectorai/drawing-edit-core`，Web 与 DSH 只保留 Adapter。DSH 模型工具只接收语义部件、定性空间关系、保持条件与可信 `numericKey`；任何 `translation`、`rotationDegrees`、`pivot` 或世界坐标字段都会被 strict schema 拒绝。Host 根据真实几何与接口选择最小变形解，不依赖具体姿态示例或部件名称。
 
 真实 DSH `0.1.0-rc.8` mount smoke 已验证 `vectorai-space-host`、`vectorai-space-client`、严格 TypeRT Remote 路由和共享画布。当前布局由 `scripts/dsh-inline-workspace-patch.mjs` 增加会话级工作区插槽，首次写入自动备份，未知版本/结构拒绝修改。此切片不启动 VectorAI Express/HTTP 服务，也不调用 VectorAI 云端。
 
 当前边界：
 
 - 用户显式导入图片时，Host 使用随包发布的本地 Python/OpenCV clean-line worker，输出解析图元、Polyline 兜底、拓扑关系和 compound-path 特征；普通图片保持参考附件，不运行该 worker；
-- Canvas 选择会由 Host 投影成 revision-bound `SelectionProjectionRef`；“把选中的右手抬起来”沿 `observe → context → ground` 解析精确图元，并自动补齐与未选中身体连接的端点接口；
+- Canvas 选择会由 Host 投影成 revision-bound `SelectionProjectionRef`，但只向模型公开“当前选择可用”；语义链沿 `observe → select_parts` 在 Host 内解析精确图元，并自动补齐与未选中结构连接的端点接口；
 - Preview 在同页 Canvas 中以 before/after 位移矢量动画展示；视觉评审使用 Host 本地渲染的同视口 1280×720 对比图，而不是模型自报结果，评审通过后才进入 auto-safe/确认提交判定；
 - Drawing 状态按 DSH session 哈希键写入 `~/.dsh/vectorai/drawings/`；正式 envelope 同时保存快照、revision、forward/inverse、commit record 和 operation receipt；
 - 正式写入只来自 semantic finalize、Host-staged 浏览器编辑或显式 Undo，三条路径都使用 expected revision 和幂等 operation binding；

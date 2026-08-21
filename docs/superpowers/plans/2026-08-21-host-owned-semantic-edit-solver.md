@@ -466,7 +466,7 @@ git commit -m "feat(host): commit solved intents from current episode"
 - Consumes: Task 3/5 current-episode service APIs and Task 1 strict schemas.
 - Produces: production catalog containing `drawing_observe`, `drawing_select_parts`, `drawing_preview_spatial_intent`, `drawing_revise_spatial_intent`, `drawing_evaluate_preview`, `drawing_finalize_preview`, `drawing_discard_preview`, parameterless current-operation recovery through `drawing_get_operation`, and `drawing_undo_commit`.
 
-- [ ] **Step 1: Write failing catalog boundary tests**
+- [x] **Step 1: Write failing catalog boundary tests**
 
 Assert the production tool names exactly match the expected high-level set and inspect every parameter schema recursively:
 
@@ -485,27 +485,27 @@ expect(JSON.stringify(catalog.map(({ parameters }) => parameters))).not.toMatch(
 
 Add invocation tests that perform observe → select → preview → evaluate → finalize without reading/copying any internal identifier, plus compact-result size assertions and wrong-state recovery dispositions.
 
-- [ ] **Step 2: Run tool tests to prove they fail**
+- [x] **Step 2: Run tool tests to prove they fail**
 
 Run: `pnpm --filter @vectorai/plugin-dsh-space-host test -- --run src/tools.test.ts src/intake.test.ts src/typert.test.ts`
 
 Expected: FAIL because the production catalog still exposes legacy lineage and numeric tools.
 
-- [ ] **Step 3: Replace model-visible tool definitions**
+- [x] **Step 3: Replace model-visible tool definitions**
 
 Parse `drawing_select_parts`, `drawing_preview_spatial_intent`, and revision arguments through Task 1 Zod schemas before calling the service. Keep tool outputs below 16 KB of text excluding the single image attachment. Return semantic summaries, solver/evaluation diagnostics, current state, and next tools; omit whole-Drawing geometry arrays and all internal IDs/digests.
 
 Make evaluate/finalize/discard parameter objects empty. Keep `drawing_get_operation` only as an empty-parameter current-episode recovery lookup; the Host resolves the internal operation ID/binding digest and the model never receives or constructs either value.
 
-- [ ] **Step 4: Remove fixed workflow and selection IDs from intake**
+- [x] **Step 4: Remove fixed workflow and selection IDs from intake**
 
 The conditional hint may say that a verified selection exists and how many nodes it covers, but it must not print selection handles or node IDs. It may name high-level capabilities, not prescribe a fixed full sequence. Unrelated user turns still receive no Drawing mutation instruction.
 
-- [ ] **Step 5: Verify strict Typert registration**
+- [x] **Step 5: Verify strict Typert registration**
 
 Ensure every model-visible request/result is backed by a Zod v4 strict schema accepted by the rc.8 typert loader. Keep DSH-specific attachment presentation in the adapter rather than provider-neutral protocol packages.
 
-- [ ] **Step 6: Run complete Host tests and check**
+- [x] **Step 6: Run complete Host tests and check**
 
 Run:
 
@@ -516,7 +516,7 @@ pnpm --filter @vectorai/plugin-dsh-space-host check
 
 Expected: all commands exit 0 and no catalog test finds a forbidden lineage/coordinate field.
 
-- [ ] **Step 7: Commit the catalog cutover**
+- [x] **Step 7: Commit the catalog cutover**
 
 ```bash
 git add packages/plugin-dsh-space-host/src/semantic-tools.ts packages/plugin-dsh-space-host/src/tools.test.ts packages/plugin-dsh-space-host/src/intake.ts packages/plugin-dsh-space-host/src/intake.test.ts packages/plugin-dsh-space-host/src/service.ts packages/plugin-dsh-space-host/src/typert.test.ts
@@ -539,21 +539,21 @@ git commit -m "feat(dsh): expose host-owned semantic edit tools"
 - Consumes: trusted current Grounding overlay projection with Drawing ref/state epoch/terminal disposition.
 - Produces: transient blinking AI selection distinct from user selection, with deterministic clearing on every episode terminal/invalidation state.
 
-- [ ] **Step 1: Write failing Client lifecycle tests**
+- [x] **Step 1: Write failing Client lifecycle tests**
 
 Verify selected nodes blink with the AI-selection class while the episode is active, user selection styling remains separate, replacement swaps the set atomically, and commit/discard/blocked/reobserve/session change clears all AI selection and dashed Preview decoration.
 
-- [ ] **Step 2: Run Client tests to prove they fail**
+- [x] **Step 2: Run Client tests to prove they fail**
 
 Run: `pnpm --filter @vectorai/plugin-dsh-space-client test -- --run src/client-view.test.tsx src/remote.test.ts`
 
 Expected: FAIL until the new episode disposition/epoch is consumed.
 
-- [ ] **Step 3: Implement strict projection and clearing**
+- [x] **Step 3: Implement strict projection and clearing**
 
 Poll/project only the current trusted Remote state. Ignore an overlay whose drawing ref or epoch no longer matches the current workspace. Do not add part labels, orange/purple colors, or permanent annotations. Clear Preview dashed state when the Host reports a terminal disposition even if the conversation response is delayed.
 
-- [ ] **Step 4: Run Client and contract tests**
+- [x] **Step 4: Run Client and contract tests**
 
 Run:
 
@@ -566,7 +566,7 @@ pnpm --filter @vectorai/plugin-dsh-space-client check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Commit Client episode projection**
+- [x] **Step 5: Commit Client episode projection**
 
 ```bash
 git add packages/plugin-dsh-space-client/src/client.tsx packages/plugin-dsh-space-client/src/client-view.test.tsx packages/plugin-dsh-space-client/src/remote.ts packages/plugin-dsh-space-client/src/remote.test.ts packages/plugin-space-contracts/src/index.ts packages/plugin-space-contracts/src/index.test.ts
@@ -587,7 +587,7 @@ git commit -m "fix(client): bind AI selection to semantic episode"
 - Consumes: final model-visible catalog and shared solver.
 - Produces: repeatable local regression command and parity proof for DSH/Web-neutral semantics.
 
-- [ ] **Step 1: Write the failing end-to-end script**
+- [x] **Step 1: Write the failing end-to-end script**
 
 The script must:
 
@@ -602,17 +602,17 @@ The script must:
 9. discard presentation messages between each step to simulate context compaction while retaining Host state;
 10. repeat the same semantic input and verify deterministic candidate/commit digests.
 
-- [ ] **Step 2: Run the script to prove it fails**
+- [x] **Step 2: Run the script to prove it fails**
 
 Run: `pnpm tsx scripts/e2e-host-owned-semantic-edit.ts`
 
 Expected: FAIL until Tasks 1–7 provide the final catalog and current-episode flow.
 
-- [ ] **Step 3: Add parity and anti-special-case tests**
+- [x] **Step 3: Add parity and anti-special-case tests**
 
 Assert the shared solver produces the same candidate digest when called through the direct core adapter and DSH Host adapter. Scan production TypeScript in protocol/core/Host packages for fixture node IDs, fixture coordinates, character names, and gesture-specific operation names used by test inputs; fail with the matched path and line.
 
-- [ ] **Step 4: Register and run end-to-end command**
+- [x] **Step 4: Register and run end-to-end command**
 
 Add:
 
@@ -629,7 +629,7 @@ pnpm --filter @vectorai/plugin-dsh-space-host test -- --run src/semantic-parity.
 
 Expected: commands exit 0; the E2E reports one commit, one successful Undo, zero forbidden keys, and deterministic replay.
 
-- [ ] **Step 5: Commit E2E coverage**
+- [x] **Step 5: Commit E2E coverage**
 
 ```bash
 git add scripts/e2e-host-owned-semantic-edit.ts package.json packages/plugin-dsh-space-host/src/semantic-parity.test.ts packages/plugin-dsh-space-host/src/tools.test.ts
@@ -649,11 +649,11 @@ git commit -m "test: cover host-owned semantic edit flow"
 - Consumes: all completed implementation tasks.
 - Produces: accurate migration status, a built plugin bundle, and a local DSH runtime smoke result.
 
-- [ ] **Step 1: Update documentation to the production truth**
+- [x] **Step 1: Update documentation to the production truth**
 
 Record the final model-visible tool names, Host-owned episode rule, numeric evidence rule, solver responsibility, multi-part atomic behavior, and legacy catalog removal. Remove statements implying ordinary pose tools accept model displacement or that the model must replay task/context/Preview handles.
 
-- [ ] **Step 2: Run focused package gates**
+- [x] **Step 2: Run focused package gates**
 
 Run:
 
@@ -667,7 +667,7 @@ pnpm --filter @vectorai/plugin-dsh-space-client test && pnpm --filter @vectorai/
 
 Expected: every command exits 0.
 
-- [ ] **Step 3: Run repository gates and build plugin artifacts**
+- [x] **Step 3: Run repository gates and build plugin artifacts**
 
 Run:
 
@@ -681,11 +681,16 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 4: Verify dependency and package boundaries**
+- [x] **Step 4: Verify dependency and package boundaries**
 
 Pack the first-layer Host, Client, and annotation example packages into a temporary directory, install them into a clean temporary consumer, and import their public entry points. Verify the annotation package consumes only public first-layer contracts and no package deep-imports Host internals.
 
 - [ ] **Step 5: Restart local DSH and run a runtime smoke test**
+
+Automated runtime portion completed: a fresh DSH `web --no-open` process loaded the
+current Host/Client workspace packages and served a Client bundle whose SHA matched
+the just-built artifact. The locked macOS session prevented the final UI gesture/chat
+portion, so this checkbox intentionally remains open rather than claiming an unrun test.
 
 Restart `/Users/sidhu/Applications/DSH.app`, open a fresh Drawing edit session, and run one qualitative single-part and one qualitative multi-part request. Inspect the session log and assert:
 
@@ -696,7 +701,7 @@ Restart `/Users/sidhu/Applications/DSH.app`, open a fresh Drawing edit session, 
 - one Preview is evaluated and terminal UI state clears;
 - committed result can be undone.
 
-- [ ] **Step 6: Commit docs and verified cutover**
+- [x] **Step 6: Commit docs and verified cutover**
 
 ```bash
 git add docs/dsh-plugin-migration.md docs/prd.md docs/tech-architecture.md

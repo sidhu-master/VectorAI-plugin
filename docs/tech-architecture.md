@@ -140,6 +140,24 @@ DrawingDocument
 
 ## 6. Agent Runtime
 
+### 6.0 DSH 生产工具边界
+
+DSH 第一层使用 Host-owned semantic episode。模型可见工具固定为：
+
+```text
+drawing_import / drawing_summarize / drawing_query
+drawing_observe / drawing_select_parts
+drawing_preview_spatial_intent / drawing_revise_spatial_intent
+drawing_evaluate_preview / drawing_finalize_preview / drawing_discard_preview
+drawing_get_operation / drawing_undo_commit
+```
+
+`drawing_observe` 只在本轮用户确实要处理已有图纸时惰性激活。Host 从可信 session、runtime-root user message 和当前 DrawingRef 创建 Task/Observation/Context，并把它们保存在 EpisodeStore。后续模型调用不携带 `taskId`、`observationId`、`contextId`、`groundingId`、`previewHandle`、candidate/operation digest 或 revision。
+
+模型通过 `drawing_select_parts` 使用 current canvas selection、Observation 归一化点/区域、短候选 key 或 semantic query 选择部件；Host 把选择折叠为 GroundingLedger 和精确节点/接口。模型随后提交通用 `SpatialIntentRequest`：direction、relative position、alignment、topology、preservation goal，以及对可信用户原文数值的 `numericKey` 引用。模型协议不接受 translation、pivot、rotation 或世界坐标。
+
+`@vectorai/drawing-edit-core` 的确定性 solver 从真实几何生成有界候选，按目标残差、移动/变形代价、碰撞和拓扑代价稳定排名，再编译一组 forward/inverse Commands。多个部件共享一次求解、一个 Preview 和一个 Commit。Evaluation/Finalize 在 Host 内解析当前候选并重算三态 assessment；模型只收到 compact disposition 和下一工具，不负责重放内部 lineage。上下文压缩不会影响 EpisodeStore。
+
 ### 6.1 EditEpisode
 
 每个任务建立 EditEpisode：
@@ -152,14 +170,16 @@ DrawingDocument
 ### 6.2 模型动作
 
 ```ts
-type DrawingAgentAction =
-  | { type: 'tool'; toolCallId: string; tool: DrawingToolName; input: unknown }
-  | { type: 'request-human-decision'; request: HumanDecisionDraft }
-  | { type: 'commit'; previewHandle: string; summary: string; confidence?: number }
-  | { type: 'finish'; summary: string };
+type ModelVisibleSpatialAction =
+  | { type: 'select-parts'; parts: SemanticPartSelection[] }
+  | { type: 'preview-intent'; intent: SpatialIntentRequest }
+  | { type: 'revise-intent'; revision: SpatialIntentRevision }
+  | { type: 'evaluate-current' }
+  | { type: 'finalize-current' }
+  | { type: 'discard-current' };
 ```
 
-模型每轮选择一个动作。Runtime 验证动作协议、执行工具、记录 receipt，并把结构化输出送回模型。固定 Workflow DAG 可以作为展示摘要，但不能限制下一工具或修改方式。
+模型每轮选择一个动作。Runtime 验证 strict schema、从当前 Episode 解析内部状态、执行工具、记录 receipt，并把紧凑 disposition 送回模型。Commit、Undo、operation binding 和 handle 是 Host durable protocol，不是模型 action 字段。
 
 ### 6.3 服务预算
 
@@ -194,11 +214,11 @@ Runtime 同时遵守“最小充分证据”原则：
 2. **Local Working Set**：本轮目标、显式 relation/feature 邻接和空间邻域中的精确 Drawing IR 节点。每个节点标明 `target | relation | neighbor`；相交或邻近只提供上下文，不构成共同修改授权。
 3. **Evidence Ledger**：revision-bound 工具 receipt、诊断、用户决定和未被 Working Set 覆盖的精确节点事实。重复 `render_drawing` media、`views` 与 `vectorDigest` 不进入文本上下文。
 
-`preview_spatial_program` 的 Ledger 输出保留 Preview handle、精简 program、已解析坐标和每项操作的 affected IDs，但剥离重复 Drawing Commands、图片和 Interaction Frame；因此下一轮能精确续写当前候选，又不会重复占用上下文。
+DSH Ledger 输出只保留当前语义阶段、part/candidate 短键、目标摘要、诊断与下一工具；Preview handle、已解析坐标、affected IDs、Commands 和 operation receipt 留在 Host EpisodeStore/durable envelope。下一轮通过当前 session 恢复候选，因此模型上下文压缩或工具结果丢弃不会破坏链路。
 
 同一 revision 的活跃 Ledger 只保留当前候选 Preview receipt；被替换候选及其模型动作、工具 receipt 和复核结果仍完整追加到审计日志。这样模型获得的是当前可操作状态，不会随着失败候选数量线性增长。
 
-既有节点在模型上下文中使用 `g1`、`g2` 等 revision-bound 短别名。模型可以直接用别名查询、更新或删除；Runtime 只在工具协议中的节点/图元/关系/Feature ID 字段里解析别名，不改写 source ID、crop handle、preview handle 或用户正文。revision 改变后，别名和旧节点事实全部失效并重建。
+既有节点可以在只读查询中使用 revision-bound 短别名；语义写工具只使用 Episode-local `partKey`/candidate key，不能直接以节点别名形成写命令。revision 改变后，selection projection、候选 key、Grounding 和旧节点事实全部失效并重建。
 
 空间索引采用重叠式多尺度区域树。跨区域 Line、Circle、Arc、Polyline 或 Spline 始终保留为同一个完整节点，可以被多个区域查询命中；系统不会为了上下文分区而切碎图元。
 
@@ -326,49 +346,40 @@ World Model 按 `revision + frame + compiler version + input digest` 缓存；�
 - `vectorize_image`
 - `recompute_annotations`
 
-`redraw_region` 只接收模型给出的编辑意图、Drawing IR 世界坐标轮廓和可选关注节点。服务端用统一 SceneCompiler 渲染无标注的当前图纸，生成像素 Mask、保护 Mask 和 image/world 反变换，再调用可替换的生图模型。Mask 仅指导图像生成与候选矢量化，不是 Drawing Transaction 写权限；模型仍可在看到候选后决定实际删除、更新和新增哪些 IR 节点。
+`redraw_region` 只接收模型给出的编辑意图与 Observation-bound 归一化区域；Host 解析为内部 Drawing 世界范围并选择可选关注节点。统一 SceneCompiler 渲染无标注的当前图纸，生成像素 Mask、保护 Mask 和 image/world 反变换，再调用可替换的生图模型。Mask 仅指导图像生成与候选矢量化，不是 Drawing Transaction 写权限；实际 IR effect 仍进入统一 Preview/assessment。
 
 生成失败作为工具错误返回模型，不自动回退旋转、缩放或其他几何模板。
 
 ### 7.4 事务与评估工具
 
-- `propose_spatial_actions`
-- `preview_spatial_program`
-- `preview_connected_transform`
-- `preview_transaction`
-- `revise_preview`
-- `evaluate_preview`
-- `inspect_counterfactual_world`
-- `commit_preview`
+- `drawing_preview_spatial_intent`
+- `drawing_revise_spatial_intent`
+- `drawing_evaluate_preview`
+- `drawing_finalize_preview`
+- `drawing_discard_preview`
+- `drawing_get_operation`
 
-`preview_spatial_program` 是已明确任务的默认写入口。它严格解析 `SpatialEditProgram`，从 immutable Observation view、文档 frame 或节点 anchor 解析点，顺序编译通用操作，并复用普通 Preview、Counterfactual、诊断、统一渲染和审计链路。失败是原子的，并返回稳定可恢复错误码。
+`drawing_preview_spatial_intent` 是 DSH 已明确任务的默认写入口。它严格解析 `SpatialIntentRequest`，由 Host 读取当前 Episode 的 Drawing、Observation、Grounding 与用户数值证据，求解通用关系并复用 Preview、Counterfactual、诊断、统一渲染和审计链路。失败是原子的，并返回稳定可恢复错误码。
 
-`propose_spatial_actions` 与 `preview_connected_transform` 保留为复杂局部问题的可选适配器，不是默认路线。`preview_transaction` 保留完整 Drawing IR 控制能力；`revise_preview` 在精确父候选上应用底层纠正。Preview handle 绑定 base revision、Commands digest、resulting document、诊断和过期条件，Commit 只能引用仍有效的 Preview。
+底层 `SpatialEditProgram`、connected transform 与 raw transaction compiler 仍作为 Host/受信任扩展 API，供 Web Adapter、交互式画布和第二层标注插件复用；它们不发布到 DSH 模型工具目录。Preview handle 绑定 base revision、Commands digest、resulting document、诊断和过期条件，但只在 Host 内出现。
 
 每个有效 Preview 同时暴露 `CounterfactualWorldBranch`。它直接复用事务引擎中的临时 DrawingDocument，只对 Patch 影响的 bounds、SourceSpan、Arrangement 分片和语义支持做增量失效与重建，提供结构化 delta 和统一渲染，不复制或全量编译整张图纸。模型按需查询分支；快速路径不要求为了形式完整读取所有 delta。
 
 ## 8. Drawing Transaction 与 Lineage
 
-模型默认表达一次性、revision-bound 的 `SpatialEditProgram`：
+DSH 模型默认表达一次 Host-current 的 `SpatialIntentRequest`：
 
 ```ts
-interface SpatialEditProgram {
-  baseRevision: RevisionId;
-  replacesPreviewHandle?: string;
+interface SpatialIntentRequest {
   summary: string;
-  intent: string;
-  targets: SpatialTarget[];
-  operations: Array<Translate | SetEndpoint | CreatePath | DeleteNodes>;
-  preserveNodeRefs: string[];
-  postconditions: SpatialPostcondition[];
-  evidenceRefs: string[];
-  confidence?: number;
+  goals: Array<Direction | RelativePosition | Alignment | Topology | ExplicitNumericKey>;
+  preserve: Array<PartShape | Connectivity | Anchor | Topology | ProtectedScope | MinimumDeformation>;
 }
 ```
 
-`targets` 负责审计与 UI 解释，真正写范围来自 operations 中的显式节点引用。编译器顺序执行 `translate`、`set_endpoint`、`create_path`、`delete_nodes`，并为每项操作保存解析点、受影响节点和 Commands receipt。未被 operations 引用的节点天然保持不变；同一 program 又声明 preserve 又修改同一节点时返回计划矛盾错误。
+`subject` 只引用本 Episode 中已经由 Host 解析的 `partKey`；数值目标只能引用 Host 从当前 root user instruction 提取的 `numericKey`。求解器生成候选 transform，检查目标残差、保持范围、连接、保护集合、碰撞和拓扑，再把选中候选编译为内部 `SpatialEditProgram` 与 Commands receipt。未被实际 effect 覆盖的节点必须保持 canonical semantic equality。
 
-该层类似编译器而不是权限系统：它负责精确坐标与基础几何运算，但模型仍可组合其他能力、直接给出合法底层事务或自由重绘。后续只根据真实任务频率增加通用操作，不为某个对象或示例添加专用 opcode。
+该层类似编译器而不是权限系统：它负责精确坐标与基础几何运算，权限仍由 Host 对实际 diff 另行判断。后续只根据真实任务频率增加通用目标/约束，不为某个对象或示例添加专用 opcode。
 
 现有 Drawing Commands 继续作为唯一修改语言：
 
@@ -422,9 +433,9 @@ Diagnostic 不修改候选，不强制缩小选区、不强制切换编辑方式
 
 ### 9.3 Independent Preview Reviewer
 
-语义写入 Preview 产生后，Runtime 使用共享 SceneCompiler 在同一视口分别渲染正式 revision 与候选结果，再由服务端左右拼成一张 `before | after` 图。独立检查模型只接收当前有效用户指令、这张对照图、有界确定性诊断，以及绑定候选身份的精简 `candidateContext`。其中包含 Preview handle、transaction digest、program 摘要、目标节点和操作种类，只用于确认正在检查哪个候选；主模型声明不是视觉证据。检查者不接收写工具，也不参与规划、授权或提交。
+语义写入 Preview 产生后，Runtime 使用共享 SceneCompiler 在同一视口分别渲染正式 revision 与候选结果，再由 Host 左右拼成一张 `before | after` 图。独立检查模型只接收当前有效用户指令、这张对照图、有界确定性诊断和候选语义摘要；内部 Preview handle、transaction digest、operation binding 与精确节点集合不进入 reviewer prompt。检查者不接收写工具，也不参与规划、授权或提交。
 
-检查结果以 `PreviewReviewEvidence` 绑定 revision、Preview handle 和事务摘要：
+检查结果在 Host durable envelope 内绑定 revision、Preview 和事务摘要；模型可见投影不暴露这些字段：
 
 ```ts
 interface PreviewReviewEvidence {
@@ -494,20 +505,18 @@ interface PreviewReviewEvidence {
 ## 12. Preview、提交与反馈 Loop
 
 ```text
-模型调用 preview_spatial_program（默认）或其他 Preview 工具
+模型调用 drawing_preview_spatial_intent
 → Hard Validator
 → Diagnostic Evaluators
 → 后端同视口渲染并拼接 before | after
 → UI 显示当前 Preview 与真实工具 Overlay
 → 独立检查者仅判断是否满足当前用户指令
-→ 检查结果作为 currentPreviewReview 返回主模型
-→ 主模型显式选择继续 SpatialEditProgram、revise_preview 底层修订，或 preview_transaction 从 canonical 重做
-→ 请求用户决定 / commit_preview
+→ 检查结果作为当前 Episode 的 compact review 返回主模型
+→ 主模型调用 drawing_revise_spatial_intent、discard 或 finalize
+→ Host auto-safe 提交 / 请求用户决定 / blocked
 ```
 
-每轮模型上下文包含权威 `editBaseOptions`。没有候选时，`taskDrivenProgram` 从当前 revision 创建候选；已有候选时，`continueWithTaskProgram` 携带父 Preview handle 并把新 program 合成可独立回放的 canonical 事务。`reviseCurrentPreview` 用 handle/digest 写底层纠正，`startFromCanonical` 显式舍弃当前候选并完整重做。模型自主选择，Runtime 只校验声明的基线。
-
-`revise_preview` 的 corrections 以父候选 resulting document 为读取语义。工具层先验证局部纠正，再把父事务与纠正合成为一个以 canonical revision 为基线的完整事务并做结果等价校验。新 Preview 记录父 handle/digest，但 Commit 不依赖父候选仍然存在。
+每轮模型上下文只包含当前 disposition 与允许的下一工具。权威 base revision、父 Preview、candidate digest、evaluation 和 operation binding 位于 Host；`drawing_revise_spatial_intent` 只接收新的 goals/preserve，由 Host 从 canonical base 重新求解并原子替换候选。失败时旧 Preview 保持可见；成功时旧 handle 立即失效，但模型从不需要读写它。
 
 模型默认自动提交自己认可的候选。仍有 warning 时可以：
 

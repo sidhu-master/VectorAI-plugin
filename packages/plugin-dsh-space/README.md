@@ -19,7 +19,7 @@ Published packages will resolve those dependencies normally.
 
 The bundle adds `drawing_import`, `drawing_summarize`, revision-bound
 `drawing_query`, the Host-authoritative
-`observe → context → ground → preview/revise → evaluate → finalize` chain,
+`observe → select_parts → preview_spatial_intent/revise → evaluate → finalize` chain,
 operation lookup, compensating Undo, and the second-layer
 `drawing_auto_annotate` tool. The canvas is mounted in the session-scoped
 `conversation.workspace`, beside the native chat. `drawing_query` supports
@@ -29,7 +29,10 @@ The chain is activated lazily. Ordinary DSH turns receive no mandatory drawing
 workflow prompt; when a Drawing or verified canvas selection exists, pre-step
 adds only a conditional capability hint. The model enters the plugin by calling
 `drawing_observe`, and each successful tool result exposes only the next
-Host-valid tool choices. Child agents receive no drawing intake injection.
+Host-valid tool choices. Internal task/context/grounding/Preview handles stay in
+the Host. The model selects semantic parts and qualitative relations; the local
+deterministic solver computes coordinates, rotations, interfaces, and the
+minimum-deformation transaction. Child agents receive no drawing intake injection.
 
 The view uses the shared VectorAI workspace: axes, adaptive grid, pan/zoom,
 click and box selection, object browser, property inspector, source underlay,
