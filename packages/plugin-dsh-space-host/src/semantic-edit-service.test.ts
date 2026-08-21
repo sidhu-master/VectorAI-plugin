@@ -203,7 +203,7 @@ describe('SemanticEditService', () => {
       .find(({ id }) => id === 'left-hand')).toMatchObject({ center: [-12, -5] });
     expect(drawings.getPreview('session-1')?.candidate.document.geometry
       .find(({ id }) => id === 'right-hand')).toMatchObject({ center: [12, 11] });
-    expect(service.currentGroundingOverlay('session-1')?.groups).toHaveLength(2);
+    expect(service.currentGroundingOverlay('session-1')).toBeNull();
 
     service.discardPreview('session-1', preview.previewHandle);
     expect(service.currentGroundingOverlay('session-1')).toBeNull();

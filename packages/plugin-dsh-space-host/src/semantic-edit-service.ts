@@ -1089,6 +1089,7 @@ export class SemanticEditService {
     this.#previews.set(sessionId, {
       ref, task, groundings: [...groundings], ...(program ? { program } : {}), compilation,
     });
+    this.#groundingOverlays.delete(sessionId);
     return structuredClone(ref);
   }
 

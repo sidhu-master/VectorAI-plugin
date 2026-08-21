@@ -126,7 +126,7 @@ describe('shared drawing workspace panels', () => {
     expect(markup).toContain('Revision 12');
   });
 
-  it('shows AI-grounded part labels beside object rows without selecting them', async () => {
+  it('shows AI-grounded objects with the same selected row state without changing user selection', async () => {
     const port = new PanelPort();
     port.groundingOverlay = {
       version: 1,
@@ -146,9 +146,9 @@ describe('shared drawing workspace panels', () => {
       </DrawingWorkspaceProvider>,
     );
 
-    expect(markup).toContain('data-grounding-object="line-1"');
-    expect(markup).toContain('title="AI 识别：左臂"');
-    expect(markup).toContain('左臂');
-    expect(markup).not.toContain('vai-object-row--selected');
+    expect(markup).toMatch(/class="vai-object-row vai-object-row--selected"[^>]*data-object-id="line-1"/);
+    expect(markup).not.toContain('data-grounding-object');
+    expect(markup).not.toContain('AI 识别：左臂');
+    expect(store.getState().selectedIds).toEqual([]);
   });
 });

@@ -142,7 +142,7 @@ describe('shared Canvas rendering', () => {
     expect(markup).toContain('data-selected="true"');
   });
 
-  it('marks every grounded part and interface without intercepting canvas input', async () => {
+  it('renders grounded nodes with the normal selected state without changing user selection', async () => {
     const port = new CanvasPort();
     port.groundingOverlay = {
       version: 1,
@@ -167,14 +167,10 @@ describe('shared Canvas rendering', () => {
       </DrawingWorkspaceProvider>,
     );
 
-    expect(markup).toContain('data-grounding-group="left-arm"');
-    expect(markup).toContain('data-grounding-group="right-hand"');
-    expect(markup).toContain('data-grounding-label="左臂"');
-    expect(markup).toContain('data-grounding-label="右手"');
-    expect(markup).toContain('data-grounding-node="line-1"');
-    expect(markup).toContain('data-grounding-node="circle-1"');
-    expect(markup).toContain('data-grounding-interface="left-shoulder"');
-    expect(markup).toContain('pointer-events="none"');
+    expect(markup).toMatch(/data-entity-id="line-1"[^>]*data-selected="true"/);
+    expect(markup).toMatch(/data-entity-id="circle-1"[^>]*data-selected="true"/);
+    expect(markup).not.toContain('data-grounding-group');
+    expect(markup).not.toContain('data-grounding-label');
     expect(store.getState().selectedIds).toEqual([]);
   });
 });

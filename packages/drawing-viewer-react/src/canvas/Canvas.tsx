@@ -14,7 +14,6 @@ import {
 import { useDrawingWorkspace } from '../hooks';
 import { CadGrid } from './Grid';
 import { EntityRenderer } from './EntityRenderer';
-import { GroundingOverlay } from './GroundingOverlay';
 import { SourceUnderlay } from './SourceUnderlay';
 import {
   fitViewportToDrawing,
@@ -87,6 +86,9 @@ export function Canvas() {
     ...snapshot.document.geometry,
     ...(display.annotations ? snapshot.document.annotations : []),
   ];
+  const groundedNodeIds = new Set(
+    groundingOverlay?.groups.flatMap((group) => group.nodeIds) ?? [],
+  );
   const previewBeforeEntities = preview === null || formalSnapshot === null ? [] : [
     ...formalSnapshot.document.geometry,
     ...(display.annotations ? formalSnapshot.document.annotations : []),
@@ -291,19 +293,12 @@ export function Canvas() {
               pointerEvents="none"
             />
           ))}
-          {groundingOverlay === null ? null : (
-            <GroundingOverlay
-              document={snapshot.document}
-              overlay={groundingOverlay}
-              viewport={viewport}
-            />
-          )}
           {entities.map((node) => (
             <EntityRenderer
               key={node.id}
               node={node}
               viewport={viewport}
-              selected={selectedIds.includes(node.id)}
+              selected={selectedIds.includes(node.id) || groundedNodeIds.has(node.id)}
               previewDiff={preview?.diff.createdNodeIds.includes(node.id)
                 ? 'created'
                 : preview?.diff.updatedNodeIds.includes(node.id)

@@ -29,6 +29,9 @@ export function ObjectList() {
     { label: '关系', nodes: snapshot.document.relations },
     { label: '语义特征', nodes: snapshot.document.features },
   ];
+  const groundedNodeIds = new Set(
+    groundingOverlay?.groups.flatMap((group) => group.nodeIds) ?? [],
+  );
 
   return (
     <aside className="vai-panel vai-object-list" aria-label="图纸对象">
@@ -38,11 +41,10 @@ export function ObjectList() {
           <section key={group.label} className="vai-object-group">
             <h3>{group.label}<span>{group.nodes.length}</span></h3>
             {group.nodes.length === 0 ? <div className="vai-object-group__empty">无</div> : group.nodes.map((node) => {
-              const groundedParts = groundingOverlay?.groups.filter((part) => part.nodeIds.includes(node.id)) ?? [];
               return (
               <div
                 key={node.id}
-                className={`vai-object-row${selectedIds.includes(node.id) ? ' vai-object-row--selected' : ''}`}
+                className={`vai-object-row${selectedIds.includes(node.id) || groundedNodeIds.has(node.id) ? ' vai-object-row--selected' : ''}`}
                 data-object-id={node.id}
               >
                 <button
@@ -58,14 +60,6 @@ export function ObjectList() {
                 >
                   <ObjectGlyph type={node.type} />
                   <span className="vai-object-row__identity"><strong>{node.id}</strong><small>{node.type}</small></span>
-                  {groundedParts.map((part) => (
-                    <span
-                      key={part.groundingId}
-                      className={`vai-object-row__grounding vai-grounding--color-${Math.abs(part.colorIndex) % 6}`}
-                      data-grounding-object={node.id}
-                      title={`AI 识别：${part.label}`}
-                    >{part.label}</span>
-                  ))}
                 </button>
                 <button
                   type="button"

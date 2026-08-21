@@ -10514,6 +10514,7 @@ storeCompilation_fn = function(sessionId, task, baseRef, groundings, compilation
     ...program ? { program } : {},
     compilation
   });
+  __privateGet(this, _groundingOverlays).delete(sessionId);
   return structuredClone(ref);
 };
 updateGroundingOverlay_fn = function(sessionId, task, drawingRef, grounding, rawPartKey, rawLabel) {
