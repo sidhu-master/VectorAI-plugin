@@ -21,6 +21,7 @@ import {
   type ContextRef,
   type EvaluationRecord,
   type EvaluationRef,
+  type ExplicitNumericConstraint,
   type FinalizePreviewRequest,
   type FinalizePreviewResult,
   type GroundingRef,
@@ -166,8 +167,10 @@ interface ObservationState {
 
 export class SemanticEditService {
   readonly #pendingInstructions = new Map<string, {
+    rootUserMessageId: string;
     objective: string;
     rootUserMessageDigest: string;
+    numericConstraints: ExplicitNumericConstraint[];
   }>();
   readonly #sessionPolicies = new Map<string, 'review' | 'auto-safe'>();
   readonly #tasks = new Map<string, TaskState>();
@@ -187,8 +190,10 @@ export class SemanticEditService {
   ) {}
 
   bindUserInstruction(sessionId: string, instruction: {
+    rootUserMessageId: string;
     objective: string;
     rootUserMessageDigest: string;
+    numericConstraints: ExplicitNumericConstraint[];
   }): void {
     const objective = instruction.objective.trim();
     if (!objective) return;

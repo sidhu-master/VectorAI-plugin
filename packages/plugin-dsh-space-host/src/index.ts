@@ -7,3 +7,6 @@ export type { ImageVectorizer } from './vectorizer';
 export { LocalCleanLineVectorizer } from './vectorizer';
 export { SemanticEditService } from './semantic-edit-service';
 export { InteractiveEditService } from './interactive-edit';
+export { extractNumericConstraints } from './numeric-instruction';
+export { SemanticEditEpisodeStore } from './semantic-episode';
+export type { BoundUserInstruction, SemanticEditEpisode } from './semantic-episode';

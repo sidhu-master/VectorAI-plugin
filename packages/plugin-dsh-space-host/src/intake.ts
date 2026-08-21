@@ -3,20 +3,26 @@
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
+import type { ExplicitNumericConstraint } from '@vectorai/drawing-edit-protocol';
 import { createHash } from 'node:crypto';
+
+import { extractNumericConstraints } from './numeric-instruction';
 
 const PLUGIN_NAME = '@vectorai/plugin-dsh-space-host';
 interface PendingSourceWriter {
   bindPending(sessionId: string, attachment: ImageAttachmentRef): void;
   getSnapshot?(sessionId: string): {
     ref: { drawingId: string; revision: number };
+    document?: { unitSystem: { length: 'mm' | 'cm' | 'm' } };
   } | null;
 }
 
 interface UserInstructionWriter {
   bindUserInstruction(sessionId: string, instruction: {
+    rootUserMessageId: string;
     objective: string;
     rootUserMessageDigest: string;
+    numericConstraints: ExplicitNumericConstraint[];
   }): void;
   currentSelectionProjection?(sessionId: string): {
     selectionProjectionId: string;
@@ -65,13 +71,21 @@ export function createPreStepIntake(
     if (decision.kind === 'reject' || payload.signal.aborted) return decision;
     if (!scope.isRuntimeRoot(payload.agent)) return decision;
     const directUser = [...decision.messages].reverse().find((message) => message.source.kind === 'user');
+    const sessionId = String(payload.agent.id);
+    const snapshot = repository.getSnapshot?.(sessionId) ?? null;
+    let numericConstraints: ExplicitNumericConstraint[] = [];
     if (directUser && semantic) {
       const objective = directUser.content
         .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
         .map(({ text }) => text)
         .join('\n')
         .trim();
-      if (objective) semantic.bindUserInstruction(String(payload.agent.id), {
+      numericConstraints = extractNumericConstraints(
+        objective,
+        snapshot?.document?.unitSystem.length ?? 'mm',
+      );
+      if (objective) semantic.bindUserInstruction(sessionId, {
+        rootUserMessageId: String(directUser.id),
         objective,
         rootUserMessageDigest: `sha256:${createHash('sha256').update(JSON.stringify({
           id: String(directUser.id), objective,
@@ -81,12 +95,12 @@ export function createPreStepIntake(
             bytes: block.attachment.bytes,
           })),
         })).digest('hex')}`,
+        numericConstraints,
       });
     }
     let messages = [...decision.messages];
     const attachment = directUser ? findLatestImage([directUser]) : null;
-    const snapshot = repository.getSnapshot?.(String(payload.agent.id)) ?? null;
-    const selection = semantic?.currentSelectionProjection?.(String(payload.agent.id)) ?? null;
+    const selection = semantic?.currentSelectionProjection?.(sessionId) ?? null;
     const drawingRef = selection?.drawingRef ?? snapshot?.ref;
     if (directUser && drawingRef) {
       const capability = [
@@ -96,6 +110,10 @@ export function createPreStepIntake(
           `Host-verified canvas selection ${selection.selectionProjectionId} contains exact Drawing node ids: ${selection.nodeIds.join(', ')}.`,
           'Use the selection only if drawing_observe starts a drawing task; then pass its selectionProjectionId to drawing_ground with empty targetNodeIds and interfaces so the Host derives the exact target and contacted connectors.',
           'The selection is grounding evidence only and does not grant write authority.',
+        ] : []),
+        ...(numericConstraints.length > 0 ? [
+          `Verified numeric evidence: ${JSON.stringify(numericConstraints.map(({ numericKey, kind, value, unit }) => ({ numericKey, kind, value, unit })))}.`,
+          'A Drawing spatial intent may reference these values only by numericKey.',
         ] : []),
       ].join(' ');
       messages.push(createUserMessage({
@@ -107,7 +125,7 @@ export function createPreStepIntake(
       }));
     }
 
-    if (attachment !== null) repository.bindPending(String(payload.agent.id), attachment);
+    if (attachment !== null) repository.bindPending(sessionId, attachment);
     return { kind: 'enter', messages };
   };
 }

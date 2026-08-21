@@ -148,7 +148,7 @@ git commit -m "feat(protocol): add semantic spatial intent schema"
 - Consumes: `ExplicitNumericConstraint`, trusted DSH `sessionId`, exact root message ID/text/digest, `DrawingRef`, and Host `now/id/digest` ports.
 - Produces: `extractNumericConstraints(text, drawingUnit)`, `SemanticEditEpisodeStore.bindInstruction`, `.start`, `.current`, `.transition`, `.invalidate`, and `.dispose`.
 
-- [ ] **Step 1: Write failing numeric extraction tests**
+- [x] **Step 1: Write failing numeric extraction tests**
 
 Cover Chinese and ASCII forms without interpreting qualitative words as values:
 
@@ -165,7 +165,7 @@ expect(extractNumericConstraints('移动 80', 'mm')).toMatchObject([
 
 Reject non-finite/scientific-overflow values, cap extracted constraints at 16, retain the exact bounded evidence span, and normalize `毫米/mm`, `厘米/cm`, `度/°/deg` deterministically.
 
-- [ ] **Step 2: Write failing episode lifecycle tests**
+- [x] **Step 2: Write failing episode lifecycle tests**
 
 Verify one active episode per session, root identity binding, monotonic `stateEpoch`, current-state lookup without caller IDs, canonical semantic request idempotency, and invalidation by a new root turn/revision:
 
@@ -178,7 +178,7 @@ store.bindInstruction('session-1', instructionB);
 expect(store.current('session-1')).toBeNull();
 ```
 
-- [ ] **Step 3: Run focused tests to prove they fail**
+- [x] **Step 3: Run focused tests to prove they fail**
 
 Run:
 
@@ -188,7 +188,7 @@ pnpm --filter @vectorai/plugin-dsh-space-host test -- --run src/numeric-instruct
 
 Expected: FAIL because the new modules and root-bound intake fields do not exist.
 
-- [ ] **Step 4: Implement numeric extraction and episode store**
+- [x] **Step 4: Implement numeric extraction and episode store**
 
 Make `SemanticEditEpisodeStore` a pure state component. Store internal IDs/digests but expose only cloned current disposition data to callers. Canonicalize request bindings with the Host digest port; rebinding the same root message ID/digest and replaying a matching semantic request are idempotent, while a different root message invalidates the old episode and a different semantic request advances the epoch.
 
@@ -205,7 +205,7 @@ interface BoundUserInstruction {
 
 In intake, use the exact runtime-root `directUser.id`; never infer root identity from child-agent messages. Do not inject extracted internal spans or values except the bounded public `{ numericKey, kind, value, unit }` list after Drawing activation.
 
-- [ ] **Step 5: Run focused tests and package check**
+- [x] **Step 5: Run focused tests and package check**
 
 Run:
 
@@ -216,7 +216,7 @@ pnpm --filter @vectorai/plugin-dsh-space-host check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit Host episode foundations**
+- [x] **Step 6: Commit Host episode foundations**
 
 ```bash
 git add packages/plugin-dsh-space-host/src/numeric-instruction.ts packages/plugin-dsh-space-host/src/numeric-instruction.test.ts packages/plugin-dsh-space-host/src/semantic-episode.ts packages/plugin-dsh-space-host/src/semantic-episode.test.ts packages/plugin-dsh-space-host/src/intake.ts packages/plugin-dsh-space-host/src/intake.test.ts

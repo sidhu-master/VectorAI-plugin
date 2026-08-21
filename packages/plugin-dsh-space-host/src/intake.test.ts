@@ -47,6 +47,43 @@ function payload(messages: UserMessage[]) {
 }
 
 describe('drawing image intake', () => {
+  it('binds the exact runtime-root identity and Host-extracted numeric evidence', async () => {
+    const instructions: unknown[] = [];
+    const message = createUserMessage({
+      content: [{ type: 'text', text: '向上移动 80 mm' }],
+      source: { kind: 'user' },
+    });
+    const intake = createPreStepIntake({
+      bindPending() {},
+      getSnapshot() {
+        return {
+          ref: { drawingId: 'drawing-1', revision: 3 },
+          document: { unitSystem: { length: 'mm' as const } },
+        };
+      },
+    }, {
+      bindUserInstruction(_sessionId, instruction) {
+        instructions.push(instruction);
+      },
+    });
+
+    const result = await intake(payload([message]), async () => ({ kind: 'enter', messages: [message] }));
+
+    expect(instructions).toEqual([expect.objectContaining({
+      rootUserMessageId: String(message.id),
+      objective: '向上移动 80 mm',
+      numericConstraints: [expect.objectContaining({
+        numericKey: 'n1', kind: 'distance', value: 80, unit: 'mm',
+      })],
+    })]);
+    expect(result.kind).toBe('enter');
+    if (result.kind !== 'enter') throw new Error('expected enter');
+    const injected = JSON.stringify(result.messages.at(-1));
+    expect(injected).toContain('n1');
+    expect(injected).toContain('80');
+    expect(injected).not.toContain('userEvidenceSpan');
+  });
+
   it('finds the last image in prompt order', () => {
     expect(findLatestImage([
       imageMessage('first', 'middle'),
