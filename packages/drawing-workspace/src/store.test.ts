@@ -127,6 +127,8 @@ describe('createDrawingWorkspaceStore', () => {
       version: 1,
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
       taskId: 'task-1',
+      stateEpoch: 1,
+      disposition: 'active',
       groups: [{
         groundingId: 'ground-a', partKey: 'part-a', label: 'Part A', colorIndex: 0,
         nodeIds: ['carrier-a'], interfaces: [],
@@ -147,6 +149,8 @@ describe('createDrawingWorkspaceStore', () => {
       version: 1,
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
       taskId: 'task-1',
+      stateEpoch: 1,
+      disposition: 'active',
       groups: [{
         groundingId: 'ground-a', partKey: 'part-a', label: 'Part A', colorIndex: 0,
         nodeIds: ['carrier-a'], interfaces: [],

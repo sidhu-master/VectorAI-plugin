@@ -148,6 +148,8 @@ describe('shared Canvas rendering', () => {
       version: 1,
       drawingRef: structuredClone(port.value.ref),
       taskId: 'task-pose',
+      stateEpoch: 1,
+      disposition: 'active',
       groups: [{
         groundingId: 'ground-left', partKey: 'left-arm', label: '左臂', colorIndex: 0,
         nodeIds: ['line-1'],

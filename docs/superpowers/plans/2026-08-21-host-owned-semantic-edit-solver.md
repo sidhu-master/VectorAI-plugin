@@ -237,7 +237,7 @@ git commit -m "feat(host): own semantic episode and numeric evidence"
 - Consumes: current episode, stored Observation view, `resolveSpatialPoint`, `GroundingLedger`, `WorldModelCompiler`, current selection projection, and `DrawingSelectPartsRequest` from Task 1.
 - Produces: `SemanticEditService.observeCurrent(sessionId)`, `selectCurrentParts(sessionId, request)`, `currentSelectedParts(sessionId)`, and compact `DrawingGroundingOverlay`/candidate dispositions.
 
-- [ ] **Step 1: Write failing current-selection and Observation-reference tests**
+- [x] **Step 1: Write failing current-selection and Observation-reference tests**
 
 Test these paths without passing task/context IDs:
 
@@ -252,13 +252,13 @@ expect(service.currentSelectedParts('session-1')['part-a'].targetNodeIds).toEqua
 
 Add Observation-normalized point/region resolution tests, ambiguous candidate-key follow-up, exclusion, multiple independently moving parts, contacted endpoint discovery, revision mismatch, candidate-key expiry, and cross-session rejection. Assert the model-facing result omits exact internal UUIDs while the internal ledger retains them.
 
-- [ ] **Step 2: Run focused tests to prove they fail**
+- [x] **Step 2: Run focused tests to prove they fail**
 
 Run: `pnpm --filter @vectorai/plugin-dsh-space-host test -- --run src/semantic-edit-service.test.ts`
 
 Expected: FAIL because `observeCurrent`, `selectCurrentParts`, and current selected-part state do not exist.
 
-- [ ] **Step 3: Implement current Observation and selection resolution**
+- [x] **Step 3: Implement current Observation and selection resolution**
 
 Use the current episode as the only lineage source. Store the existing detailed Observation/context/grounding refs internally. Resolve:
 
@@ -270,11 +270,11 @@ Use the current episode as the only lineage source. Store the existing detailed 
 
 Append proposal/selection/refinement events to one `GroundingLedger` per episode. Preserve existing interface inference and protected-scope digests internally. Emit only short `partKey`/candidate keys and safe summaries to the model.
 
-- [ ] **Step 4: Update strict Client projection contracts**
+- [x] **Step 4: Update strict Client projection contracts**
 
 Keep exact node IDs in the trusted Client Remote overlay projection, but bind them to `drawingRef + stateEpoch` and add a terminal disposition so the Client clears AI selection after commit/discard/failure. Reject unknown fields with Zod strict schemas.
 
-- [ ] **Step 5: Run host and contract tests**
+- [x] **Step 5: Run host and contract tests**
 
 Run:
 
@@ -287,7 +287,7 @@ pnpm --filter @vectorai/plugin-dsh-space-host check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit semantic selection**
+- [x] **Step 6: Commit semantic selection**
 
 ```bash
 git add packages/plugin-dsh-space-host/src/semantic-edit-service.ts packages/plugin-dsh-space-host/src/semantic-edit-service.test.ts packages/plugin-space-contracts/src/index.ts packages/plugin-space-contracts/src/index.test.ts

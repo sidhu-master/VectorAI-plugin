@@ -53,6 +53,15 @@ async function setup(
     id: (kind) => `${kind}-${++sequence}`,
     now: () => 1_000 + sequence,
     digest: (value) => `sha256:test-${value.length}-${checksum(value)}`,
+    async renderObservation() {
+      return {
+        contentDigest: 'sha256:observation-render',
+        attachment,
+        width: 60,
+        height: 50,
+        worldToImage: [1, 0, 0, -1, 30, 30],
+      };
+    },
     ...(review ? { review } : {}),
   });
   return { drawings, service, storage };
@@ -99,6 +108,154 @@ async function previewRightHand(service: SemanticEditService) {
 }
 
 describe('SemanticEditService', () => {
+  it('grounds the current verified selection without exposing Host lineage to the model', async () => {
+    const { service } = await setup();
+    service.projectSelection('session-1', {
+      expectedRef: { drawingId: 'drawing-wave', revision: 1 },
+      nodeIds: ['right-hand'],
+    });
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-current-selection',
+      objective: '把选中的部件向上移动',
+      rootUserMessageDigest: 'sha256:message-current-selection',
+      numericConstraints: [],
+    });
+
+    const observed = await service.observeCurrent('session-1');
+    const selected = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'part-a',
+        label: 'selected part',
+        references: [{ kind: 'current_selection' }],
+      }],
+    });
+
+    expect(observed.state).toBe('observed');
+    expect(selected).toMatchObject({
+      state: 'selected',
+      parts: [{ partKey: 'part-a', label: 'selected part', sourceStatus: 'confirmed', interfaceCount: 2 }],
+    });
+    expect(JSON.stringify(selected)).not.toMatch(/taskId|groundingId|contextId|nodeIds|right-hand/);
+    expect(service.currentSelectedParts('session-1')['part-a']).toMatchObject({
+      targetNodeIds: ['right-hand'],
+      interfaces: [
+        { nodeId: 'right-arm-bottom', endpoint: 'end' },
+        { nodeId: 'right-arm-top', endpoint: 'end' },
+      ],
+    });
+    expect(service.currentGroundingLedger('session-1').map(({ kind }) => kind)).toEqual(['proposed', 'selected']);
+  });
+
+  it('resolves Observation points and bounded regions into independent semantic parts', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-observation-selection',
+      objective: '移动图中左右两个小圆部件',
+      rootUserMessageDigest: 'sha256:message-observation-selection',
+      numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+
+    const selected = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'part-left',
+        label: 'left circular part',
+        references: [{
+          kind: 'observation_region',
+          polygon: [[0.18, 0.48], [0.32, 0.48], [0.32, 0.72], [0.18, 0.72]],
+        }],
+      }, {
+        partKey: 'part-right',
+        label: 'right circular part',
+        references: [{ kind: 'observation_point', normalized: [0.75, 0.6] }],
+      }],
+    });
+
+    expect(selected.state).toBe('selected');
+    expect(service.currentSelectedParts('session-1')).toMatchObject({
+      'part-left': { targetNodeIds: ['left-hand'] },
+      'part-right': { targetNodeIds: ['right-hand'] },
+    });
+  });
+
+  it('returns short ambiguous candidates and accepts only a current-episode candidate key', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-ambiguous-selection',
+      objective: '选择右侧接触位置的部件',
+      rootUserMessageDigest: 'sha256:message-ambiguous-selection',
+      numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+
+    const ambiguous = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'part-a',
+        label: 'contacted part',
+        references: [{ kind: 'observation_point', normalized: [0.7127322, 0.56] }],
+      }],
+    });
+
+    expect(ambiguous).toMatchObject({ state: 'selection_ambiguous', partKey: 'part-a' });
+    if (ambiguous.state !== 'selection_ambiguous') throw new Error('expected ambiguity');
+    expect(ambiguous.candidates.length).toBeGreaterThan(1);
+    expect(ambiguous.candidates.every(({ key }) => /^c\d+$/.test(key))).toBe(true);
+    expect(JSON.stringify(ambiguous)).not.toMatch(/right-hand|right-arm|groundingId|nodeIds/);
+
+    const selected = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'part-a',
+        label: 'contacted part',
+        references: [{ kind: 'candidate', key: ambiguous.candidates[0]!.key }],
+      }],
+    });
+    expect(selected.state).toBe('selected');
+    const expired = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'part-b',
+        label: 'stale candidate',
+        references: [{ kind: 'candidate', key: ambiguous.candidates[0]!.key }],
+      }],
+    });
+    expect(expired).toMatchObject({ state: 'invalid_state', code: 'EDIT_CANDIDATE_EXPIRED' });
+  });
+
+  it('applies semantic-query exclusions and fails closed across sessions or revisions', async () => {
+    const { service, drawings } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-query-selection',
+      objective: '选择右侧的手部圆，不要手臂线',
+      rootUserMessageDigest: 'sha256:message-query-selection',
+      numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+
+    const selected = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'part-right',
+        label: 'right circular component',
+        references: [{ kind: 'semantic_query', text: 'right' }],
+        exclude: [{ kind: 'semantic_query', value: 'arm' }],
+      }],
+    });
+    expect(selected.state).toBe('selected');
+    expect(service.currentSelectedParts('session-1')['part-right']?.targetNodeIds).toEqual(['right-hand']);
+    expect(service.selectCurrentParts('session-2', {
+      parts: [{ partKey: 'part-x', label: 'other', references: [{ kind: 'candidate', key: 'c1' }] }],
+    })).toMatchObject({ state: 'invalid_state' });
+
+    drawings.commit('session-1', {
+      expectedRevision: 1,
+      commands: [{ type: 'node.update', id: 'body', changes: { visible: false }, expected: { visible: true } }],
+    });
+    expect(service.selectCurrentParts('session-1', {
+      parts: [{ partKey: 'part-x', label: 'stale', references: [{ kind: 'semantic_query', text: 'left' }] }],
+    })).toMatchObject({ state: 'reobserve_required' });
+    await expect(service.observeCurrent('session-1')).resolves.toMatchObject({
+      state: 'observed', drawing: { drawingId: 'drawing-wave', revision: 2 },
+    });
+  });
+
   it('projects named Groundings as transient groups and replaces only the same part key', async () => {
     const { service } = await setup();
     const task = service.startTask('session-1', {

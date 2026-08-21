@@ -99,6 +99,11 @@ export class SemanticEditEpisodeStore {
     return structuredClone(normalized);
   }
 
+  boundInstruction(sessionId: string): BoundUserInstruction | null {
+    const instruction = this.#instructions.get(sessionId);
+    return instruction ? structuredClone(instruction) : null;
+  }
+
   start(
     sessionId: string,
     instruction: BoundUserInstruction,

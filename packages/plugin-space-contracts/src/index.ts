@@ -415,8 +415,16 @@ export const drawingGroundingOverlaySchema = z.object({
   version: z.literal(1),
   drawingRef: drawingRefSchema,
   taskId: idSchema,
-  groups: z.array(drawingGroundingOverlayGroupSchema).min(1).max(16),
-}).strict().superRefine(({ groups }, context) => {
+  stateEpoch: z.number().int().nonnegative(),
+  disposition: z.enum(['active', 'committed', 'discarded', 'failed']),
+  groups: z.array(drawingGroundingOverlayGroupSchema).max(16),
+}).strict().superRefine(({ disposition, groups }, context) => {
+  if (disposition === 'active' && groups.length === 0) {
+    context.addIssue({ code: 'custom', path: ['groups'], message: 'GROUNDING_ACTIVE_GROUP_REQUIRED' });
+  }
+  if (disposition !== 'active' && groups.length > 0) {
+    context.addIssue({ code: 'custom', path: ['groups'], message: 'GROUNDING_TERMINAL_GROUP_FORBIDDEN' });
+  }
   const groundingIds = new Set<string>();
   const partKeys = new Set<string>();
   for (const [index, group] of groups.entries()) {

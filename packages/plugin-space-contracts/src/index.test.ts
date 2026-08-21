@@ -88,6 +88,8 @@ describe('DSH drawing workspace wire schemas', () => {
       version: 1 as const,
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
       taskId: 'task-1',
+      stateEpoch: 4,
+      disposition: 'active' as const,
       groups: [{
         groundingId: 'ground-left',
         partKey: 'part-left',
@@ -118,6 +120,16 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(() => drawingGroundingOverlaySchema.parse({
       ...overlay,
       groups: [{ ...overlay.groups[0], endpoint: 'middle' }],
+    })).toThrow();
+    expect(drawingGroundingOverlaySchema.parse({
+      ...overlay,
+      stateEpoch: 5,
+      disposition: 'committed',
+      groups: [],
+    })).toMatchObject({ disposition: 'committed', groups: [] });
+    expect(() => drawingGroundingOverlaySchema.parse({
+      ...overlay,
+      disposition: 'discarded',
     })).toThrow();
   });
 

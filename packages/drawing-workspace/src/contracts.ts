@@ -47,6 +47,8 @@ export interface DrawingGroundingOverlay {
   version: 1;
   drawingRef: DrawingWorkspaceRef;
   taskId: string;
+  stateEpoch: number;
+  disposition: 'active' | 'committed' | 'discarded' | 'failed';
   groups: DrawingGroundingOverlayGroup[];
 }
 

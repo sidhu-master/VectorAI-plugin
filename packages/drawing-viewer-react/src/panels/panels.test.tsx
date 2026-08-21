@@ -132,6 +132,8 @@ describe('shared drawing workspace panels', () => {
       version: 1,
       drawingRef: structuredClone(port.value.ref),
       taskId: 'task-pose',
+      stateEpoch: 1,
+      disposition: 'active',
       groups: [{
         groundingId: 'ground-arm', partKey: 'arm', label: '左臂', colorIndex: 2,
         nodeIds: ['line-1'], interfaces: [],

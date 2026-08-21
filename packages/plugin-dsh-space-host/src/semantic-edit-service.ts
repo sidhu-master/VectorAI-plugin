@@ -13,12 +13,14 @@ import {
 } from '@vectorai/drawing-edit-core';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import {
+  drawingSelectPartsRequestSchema,
   finalizePreviewRequestSchema,
   multiPartTransformRequestSchema,
   multiPartTransformRevisionRequestSchema,
   spatialEditProgramSchema,
   type Assessment,
   type ContextRef,
+  type DrawingSelectPartsRequest,
   type EvaluationRecord,
   type EvaluationRef,
   type ExplicitNumericConstraint,
@@ -31,19 +33,27 @@ import {
   type OperationLookupResult,
   type PreviewRef,
   type ReviewEvidence,
+  type SemanticPartSelection,
   type SelectionProjectionRef,
   type SpatialEditProgram,
   type TaskRef,
 } from '@vectorai/drawing-edit-protocol';
 import type { DrawingDocument } from '@vectorai/drawing-core';
 import type { DrawingGroundingOverlay } from '@vectorai/plugin-space-contracts';
-import { buildGeometryTopologyGraph, WorldModelCompiler } from '@vectorai/drawing-spatial';
+import {
+  buildGeometryTopologyGraph,
+  GroundingLedger,
+  resolveSpatialPoint,
+  WorldModelCompiler,
+  type GroundingEvidenceEvent,
+} from '@vectorai/drawing-spatial';
 import type { DrawingUndoStageRequest, DrawingUndoStageResult } from '@vectorai/drawing-workspace';
 
 import {
   InMemoryDrawingRepository,
   type UndoCommitRequest,
 } from './repository';
+import { SemanticEditEpisodeStore, type BoundUserInstruction } from './semantic-episode';
 
 interface TaskState {
   ref: TaskRef;
@@ -165,6 +175,49 @@ interface ObservationState {
   };
 }
 
+interface EpisodeSelectionCandidate {
+  key: string;
+  nodeIds: string[];
+  score: number;
+  summary: string;
+  stateEpoch: number;
+}
+
+interface EpisodeSelectionState {
+  episodeId: string;
+  taskId: string;
+  observationId: string;
+  contextId: string;
+  ledger: GroundingLedger;
+  selectedParts: Record<string, GroundedEditTarget>;
+  candidates: Map<string, EpisodeSelectionCandidate>;
+  nextCandidate: number;
+}
+
+export type CurrentPartSelectionResult =
+  | {
+    state: 'selected';
+    parts: Array<{
+      partKey: string;
+      label: string;
+      sourceStatus: GroundedEditTarget['sourceStatus'];
+      nodeCount: number;
+      interfaceCount: number;
+    }>;
+    nextTools: string[];
+  }
+  | {
+    state: 'selection_ambiguous';
+    partKey: string;
+    candidates: Array<{ key: string; summary: string }>;
+    nextTools: string[];
+  }
+  | {
+    state: 'invalid_state' | 'reobserve_required';
+    code: string;
+    nextTools: string[];
+  };
+
 export class SemanticEditService {
   readonly #pendingInstructions = new Map<string, {
     rootUserMessageId: string;
@@ -183,11 +236,15 @@ export class SemanticEditService {
   readonly #stickyReviewDefects = new Map<string, ReviewerDecision>();
   readonly #selectionProjections = new Map<string, SelectionProjectionRef>();
   readonly #groundingOverlays = new Map<string, DrawingGroundingOverlay>();
+  readonly #episodes: SemanticEditEpisodeStore;
+  readonly #episodeSelections = new Map<string, EpisodeSelectionState>();
 
   constructor(
     private readonly drawings: InMemoryDrawingRepository,
     private readonly ports: SemanticEditServicePorts,
-  ) {}
+  ) {
+    this.#episodes = new SemanticEditEpisodeStore({ id: ports.id, digest: ports.digest });
+  }
 
   bindUserInstruction(sessionId: string, instruction: {
     rootUserMessageId: string;
@@ -197,14 +254,26 @@ export class SemanticEditService {
   }): void {
     const objective = instruction.objective.trim();
     if (!objective) return;
-    this.#pendingInstructions.set(sessionId, { ...instruction, objective });
+    const bound = { ...instruction, objective };
+    const former = this.#episodes.current(sessionId);
+    this.#episodes.bindInstruction(sessionId, bound);
+    if (former && !this.#episodes.current(sessionId)) {
+      this.#episodeSelections.delete(sessionId);
+      this.#groundingOverlays.delete(sessionId);
+    }
+    this.#pendingInstructions.set(sessionId, bound);
   }
 
   startBoundTask(sessionId: string, policy?: 'review' | 'auto-safe'): TaskRef {
-    const pending = this.#pendingInstructions.get(sessionId);
+    const pending = this.#pendingInstructions.get(sessionId) ?? this.#episodes.boundInstruction(sessionId);
     if (!pending) throw new Error('EDIT_USER_INSTRUCTION_REQUIRED');
     this.#pendingInstructions.delete(sessionId);
-    return this.startTask(sessionId, { ...pending, policy: policy ?? this.#sessionPolicies.get(sessionId) ?? 'auto-safe' });
+    const task = this.startTask(sessionId, {
+      ...pending,
+      policy: policy ?? this.#sessionPolicies.get(sessionId) ?? 'auto-safe',
+    });
+    this.#episodes.start(sessionId, pending, task.baseRef);
+    return task;
   }
 
   setSessionPolicy(sessionId: string, policy: 'review' | 'auto-safe'): void {
@@ -273,6 +342,8 @@ export class SemanticEditService {
     rootUserMessageDigest: string;
     policy: 'review' | 'auto-safe';
   }): TaskRef {
+    this.#episodes.invalidate(sessionId, 'task-replaced');
+    this.#episodeSelections.delete(sessionId);
     const snapshot = this.#snapshot(sessionId);
     const former = this.#tasks.get(sessionId);
     if (former) former.active = false;
@@ -292,6 +363,307 @@ export class SemanticEditService {
     };
     this.#tasks.set(sessionId, { ref, objective, candidateCount: 0, active: true });
     return structuredClone(ref);
+  }
+
+  async observeCurrent(sessionId: string): Promise<{
+    state: 'observed';
+    drawing: { drawingId: string; revision: number };
+    selectionAvailable: boolean;
+    numericConstraints: Array<{ numericKey: string; kind: string; value: number | [number, number]; unit: string }>;
+    nextTools: string[];
+  }> {
+    const snapshot = this.#snapshot(sessionId);
+    let episode = this.#episodes.current(sessionId, snapshot.ref);
+    if (!episode) {
+      this.startBoundTask(sessionId);
+      episode = this.#episodes.current(sessionId, snapshot.ref);
+    }
+    if (!episode) throw new Error('EDIT_EPISODE_REQUIRED');
+    const task = this.#tasks.get(sessionId);
+    if (!task?.active) throw new Error('EDIT_TASK_REQUIRED');
+
+    const existing = this.#episodeSelections.get(sessionId);
+    if (existing?.episodeId === episode.episodeId) {
+      return this.#currentObservationResult(sessionId, episode.instruction, snapshot.ref);
+    }
+
+    const observation = await this.observe(sessionId, { taskId: task.ref.taskId });
+    const context = this.buildContext(sessionId, {
+      taskId: task.ref.taskId,
+      observationId: observation.observationId,
+    });
+    const transitioned = this.#episodes.transition(sessionId, episode.stateEpoch, {
+      kind: 'observed',
+      observation: { observationId: observation.observationId, contextId: context.contextId },
+    });
+    this.#episodeSelections.set(sessionId, {
+      episodeId: transitioned.episodeId,
+      taskId: task.ref.taskId,
+      observationId: observation.observationId,
+      contextId: context.contextId,
+      ledger: new GroundingLedger({
+        episodeId: transitioned.episodeId,
+        drawingId: snapshot.ref.drawingId as never,
+        revision: String(snapshot.ref.revision) as never,
+      }),
+      selectedParts: {},
+      candidates: new Map(),
+      nextCandidate: 0,
+    });
+    return this.#currentObservationResult(sessionId, transitioned.instruction, snapshot.ref);
+  }
+
+  selectCurrentParts(
+    sessionId: string,
+    rawRequest: DrawingSelectPartsRequest,
+  ): CurrentPartSelectionResult {
+    const existingEpisode = this.#episodes.current(sessionId);
+    if (!existingEpisode) {
+      return { state: 'invalid_state', code: 'EDIT_EPISODE_REQUIRED', nextTools: ['drawing_observe'] };
+    }
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot || !this.#episodes.current(sessionId, snapshot.ref)) {
+      this.#episodeSelections.delete(sessionId);
+      this.#groundingOverlays.delete(sessionId);
+      return { state: 'reobserve_required', code: 'EDIT_BASE_STALE', nextTools: ['drawing_observe'] };
+    }
+    const episode = this.#episodes.current(sessionId)!;
+    const state = this.#episodeSelections.get(sessionId);
+    const task = this.#tasks.get(sessionId);
+    if (!state || state.episodeId !== episode.episodeId || !task?.active) {
+      return { state: 'invalid_state', code: 'EDIT_OBSERVATION_REQUIRED', nextTools: ['drawing_observe'] };
+    }
+    const request = drawingSelectPartsRequestSchema.parse(rawRequest);
+    const resolved: Array<{
+      partKey: string;
+      label: string;
+      nodeIds: string[];
+    }> = [];
+
+    for (const part of request.parts) {
+      let candidates: EpisodeSelectionCandidate[];
+      try {
+        candidates = this.#resolvePartCandidates(sessionId, snapshot.document, snapshot.ref, state, episode.stateEpoch, part);
+      } catch (error) {
+        const code = error instanceof Error ? error.message : 'EDIT_SELECTION_UNRESOLVED';
+        return { state: 'invalid_state', code, nextTools: ['drawing_select_parts'] };
+      }
+      if (candidates.length === 0) {
+        return { state: 'invalid_state', code: 'EDIT_SELECTION_UNRESOLVED', nextTools: ['drawing_select_parts'] };
+      }
+      if (candidates.length > 1) {
+        state.candidates.clear();
+        const safeCandidates = candidates.slice(0, 8).map((candidate) => {
+          const key = `c${++state.nextCandidate}`;
+          state.candidates.set(key, { ...candidate, key, stateEpoch: episode.stateEpoch });
+          return { key, summary: candidate.summary };
+        });
+        return {
+          state: 'selection_ambiguous',
+          partKey: part.partKey,
+          candidates: safeCandidates,
+          nextTools: ['drawing_select_parts'],
+        };
+      }
+      resolved.push({ partKey: part.partKey, label: part.label, nodeIds: candidates[0]!.nodeIds });
+    }
+
+    const selectedResult: Extract<CurrentPartSelectionResult, { state: 'selected' }>['parts'] = [];
+    for (const part of resolved) {
+      const grounding = this.ground(sessionId, {
+        taskId: state.taskId,
+        contextId: state.contextId,
+        targetNodeIds: part.nodeIds,
+        interfaces: inferSelectionInterfaces(snapshot.document, part.nodeIds, snapshot.ref.revision),
+        partKey: part.partKey,
+        label: part.label,
+      });
+      const internal = this.#groundings.get(grounding.groundingId);
+      if (!internal) throw new Error('EDIT_GROUNDING_REQUIRED');
+      state.selectedParts[part.partKey] = structuredClone(internal.target);
+      this.#appendGroundingEvidence(state, episode, snapshot.ref, part, grounding);
+      selectedResult.push({
+        partKey: part.partKey,
+        label: part.label,
+        sourceStatus: internal.target.sourceStatus,
+        nodeCount: internal.target.targetNodeIds.length,
+        interfaceCount: internal.target.interfaces.length,
+      });
+    }
+    state.candidates.clear();
+    const transitioned = this.#episodes.transition(sessionId, episode.stateEpoch, {
+      kind: 'selected', semanticRequest: request,
+      selection: { partKeys: resolved.map(({ partKey }) => partKey) },
+    });
+    const overlay = this.#groundingOverlays.get(sessionId);
+    if (overlay) this.#groundingOverlays.set(sessionId, {
+      ...overlay,
+      stateEpoch: transitioned.stateEpoch,
+      disposition: 'active',
+    });
+    return { state: 'selected', parts: selectedResult, nextTools: ['drawing_preview_spatial_intent'] };
+  }
+
+  currentSelectedParts(sessionId: string): Record<string, GroundedEditTarget> {
+    const episode = this.#episodes.current(sessionId);
+    const state = this.#episodeSelections.get(sessionId);
+    if (!episode || !state || state.episodeId !== episode.episodeId) return {};
+    return structuredClone(state.selectedParts);
+  }
+
+  currentGroundingLedger(sessionId: string): GroundingEvidenceEvent[] {
+    const episode = this.#episodes.current(sessionId);
+    const state = this.#episodeSelections.get(sessionId);
+    return episode && state?.episodeId === episode.episodeId ? state.ledger.events() : [];
+  }
+
+  #currentObservationResult(
+    sessionId: string,
+    instruction: BoundUserInstruction,
+    drawingRef: { drawingId: string; revision: number },
+  ) {
+    return {
+      state: 'observed' as const,
+      drawing: structuredClone(drawingRef),
+      selectionAvailable: this.currentSelectionProjection(sessionId) !== null,
+      numericConstraints: instruction.numericConstraints.map(({ numericKey, kind, value, unit }) => ({
+        numericKey, kind, value: Array.isArray(value) ? [value[0]!, value[1]!] as [number, number] : value, unit,
+      })),
+      nextTools: ['drawing_select_parts'],
+    };
+  }
+
+  #resolvePartCandidates(
+    sessionId: string,
+    document: DrawingDocument,
+    drawingRef: { drawingId: string; revision: number },
+    state: EpisodeSelectionState,
+    stateEpoch: number,
+    part: SemanticPartSelection,
+  ): EpisodeSelectionCandidate[] {
+    const perReference = part.references.map((reference): EpisodeSelectionCandidate[] => {
+      if (reference.kind === 'current_selection') {
+        const projection = this.#currentSelectionProjectionForRef(sessionId, drawingRef);
+        return projection ? [selectionCandidate(document, projection.nodeIds, 0, stateEpoch)] : [];
+      }
+      if (reference.kind === 'candidate') {
+        const candidate = state.candidates.get(reference.key);
+        if (!candidate || candidate.stateEpoch !== stateEpoch) throw new Error('EDIT_CANDIDATE_EXPIRED');
+        return [structuredClone(candidate)];
+      }
+      if (reference.kind === 'semantic_query') {
+        return semanticCandidates(document, reference.text, stateEpoch);
+      }
+      const observation = this.#observations.get(state.observationId);
+      if (!observation?.view) throw new Error('EDIT_OBSERVATION_VIEW_REQUIRED');
+      const resolvePoint = (normalized: readonly [number, number]) => resolveSpatialPoint({
+        kind: 'observation', observationId: state.observationId, normalized,
+      }, {
+        document,
+        drawingId: drawingRef.drawingId as never,
+        revision: String(drawingRef.revision) as never,
+        readObservationView: (observationId) => observationId === state.observationId ? {
+          drawingId: drawingRef.drawingId as never,
+          revision: String(drawingRef.revision) as never,
+          view: observation.view!,
+        } : null,
+      });
+      if (reference.kind === 'observation_point') {
+        return pointCandidates(document, resolvePoint([reference.normalized[0]!, reference.normalized[1]!]), stateEpoch);
+      }
+      return regionCandidates(document, reference.polygon.map((point) => resolvePoint([point[0]!, point[1]!])), stateEpoch);
+    });
+
+    const candidates = new Map<string, EpisodeSelectionCandidate>();
+    for (const candidate of perReference.flat()) {
+      const identity = [...candidate.nodeIds].sort().join('\0');
+      const current = candidates.get(identity);
+      if (!current || candidate.score < current.score) candidates.set(identity, candidate);
+    }
+    for (const exclusion of part.exclude ?? []) {
+      if (exclusion.kind === 'candidate') {
+        const excluded = state.candidates.get(exclusion.value);
+        if (excluded) candidates.delete([...excluded.nodeIds].sort().join('\0'));
+        continue;
+      }
+      for (const [identity, candidate] of candidates) {
+        if (candidate.nodeIds.some((nodeId) => semanticNodeMatches(document, nodeId, exclusion.value))) {
+          candidates.delete(identity);
+        }
+      }
+    }
+    return [...candidates.values()]
+      .sort((left, right) => left.score - right.score
+        || left.nodeIds.join('\0').localeCompare(right.nodeIds.join('\0')))
+      .slice(0, 8);
+  }
+
+  #currentSelectionProjectionForRef(
+    sessionId: string,
+    drawingRef: { drawingId: string; revision: number },
+  ): SelectionProjectionRef | null {
+    const projection = this.#selectionProjections.get(sessionId);
+    return projection
+      && projection.drawingRef.drawingId === drawingRef.drawingId
+      && projection.drawingRef.revision === drawingRef.revision
+      && projection.expiresAt > this.ports.now()
+      ? structuredClone(projection)
+      : null;
+  }
+
+  #appendGroundingEvidence(
+    state: EpisodeSelectionState,
+    episode: { episodeId: string },
+    drawingRef: { drawingId: string; revision: number },
+    part: { partKey: string; label: string; nodeIds: string[] },
+    grounding: GroundingRef,
+  ): void {
+    const hypothesisId = this.ports.id('hypothesis');
+    const evidenceRefs = [state.observationId];
+    const hypothesis = {
+      id: hypothesisId,
+      drawingId: drawingRef.drawingId as never,
+      revision: String(drawingRef.revision) as never,
+      label: part.label,
+      referringExpression: part.partKey,
+      observationRefs: [state.observationId],
+      regionRefs: [],
+      supports: [
+        ...part.nodeIds.map((nodeId) => ({
+          kind: 'node' as const, ref: nodeId, weight: 1, role: 'interior' as const,
+        })),
+        ...grounding.interfaces.map(({ interfaceId }) => ({
+          kind: 'half-edge' as const, ref: interfaceId, weight: 1, role: 'interface' as const,
+        })),
+      ],
+      excludedSupports: [],
+      interfaceRefs: grounding.interfaces.map(({ interfaceId }) => interfaceId),
+      confidence: 1,
+      provenance: { provider: 'vectorai-host', evidenceRefs, createdAt: this.ports.now() },
+    };
+    state.ledger.append({
+      id: this.ports.id('grounding-event'),
+      episodeId: episode.episodeId,
+      drawingId: drawingRef.drawingId as never,
+      revision: String(drawingRef.revision) as never,
+      hypothesisId,
+      kind: 'proposed',
+      hypothesis,
+      evidenceRefs,
+      reasonCode: 'MODEL_SEMANTIC_SELECTION',
+      createdAt: this.ports.now(),
+    });
+    state.ledger.append({
+      id: this.ports.id('grounding-event'),
+      episodeId: episode.episodeId,
+      drawingId: drawingRef.drawingId as never,
+      revision: String(drawingRef.revision) as never,
+      hypothesisId,
+      kind: 'selected',
+      evidenceRefs,
+      reasonCode: 'HOST_SELECTION_RESOLVED',
+      createdAt: this.ports.now(),
+    });
   }
 
   async observe(sessionId: string, input: { taskId: string }): Promise<ObservationRef> {
@@ -1167,6 +1539,8 @@ export class SemanticEditService {
       version: 1,
       drawingRef: structuredClone(drawingRef),
       taskId: task.ref.taskId,
+      stateEpoch: task.ref.stateEpoch,
+      disposition: 'active',
       groups: existingGroups,
     });
   }
@@ -1332,6 +1706,169 @@ function geometryDiagonal(document: DrawingDocument): number {
   const xs = points.map(([x]) => x);
   const ys = points.map(([, y]) => y);
   return Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) || 1;
+}
+
+function selectionCandidate(
+  document: DrawingDocument,
+  nodeIds: string[],
+  score: number,
+  stateEpoch: number,
+): EpisodeSelectionCandidate {
+  const unique = [...new Set(nodeIds)].sort();
+  return {
+    key: '',
+    nodeIds: unique,
+    score,
+    summary: candidateSummary(document, unique),
+    stateEpoch,
+  };
+}
+
+function pointCandidates(
+  document: DrawingDocument,
+  point: readonly [number, number],
+  stateEpoch: number,
+): EpisodeSelectionCandidate[] {
+  const ranked = document.geometry
+    .filter(({ visible }) => visible)
+    .map((node) => ({ node, distance: distanceToSelectableGeometry(node, point) }))
+    .sort((left, right) => left.distance - right.distance || String(left.node.id).localeCompare(String(right.node.id)));
+  const minimum = ranked[0]?.distance ?? Number.POSITIVE_INFINITY;
+  const tolerance = Math.max(geometryDiagonal(document) * 0.015, 1e-6);
+  if (minimum > tolerance) return [];
+  return ranked
+    .filter(({ distance }) => distance <= minimum + tolerance * 0.1)
+    .slice(0, 8)
+    .map(({ node, distance }) => selectionCandidate(document, [String(node.id)], distance, stateEpoch));
+}
+
+function regionCandidates(
+  document: DrawingDocument,
+  polygon: Array<readonly [number, number]>,
+  stateEpoch: number,
+): EpisodeSelectionCandidate[] {
+  if (polygon.length < 3) return [];
+  return document.geometry
+    .filter(({ visible }) => visible)
+    .filter((node) => {
+      const center = geometryCenter(node);
+      return center !== null && pointInPolygon(center, polygon);
+    })
+    .map((node) => selectionCandidate(document, [String(node.id)], 0, stateEpoch))
+    .sort((left, right) => left.nodeIds[0]!.localeCompare(right.nodeIds[0]!))
+    .slice(0, 8);
+}
+
+function semanticCandidates(
+  document: DrawingDocument,
+  query: string,
+  stateEpoch: number,
+): EpisodeSelectionCandidate[] {
+  return document.geometry
+    .filter(({ visible, id }) => visible && semanticNodeMatches(document, String(id), query))
+    .map((node) => selectionCandidate(document, [String(node.id)], semanticMatchScore(node, query), stateEpoch))
+    .sort((left, right) => left.score - right.score || left.nodeIds[0]!.localeCompare(right.nodeIds[0]!))
+    .slice(0, 8);
+}
+
+function semanticNodeMatches(document: DrawingDocument, nodeId: string, query: string): boolean {
+  const node = document.geometry.find(({ id }) => String(id) === nodeId);
+  if (!node) return false;
+  const normalizedQuery = normalizeSemanticText(query);
+  if (!normalizedQuery) return false;
+  const searchable = `${normalizeSemanticText(nodeId)} ${normalizeSemanticText(node.type)}`;
+  const tokens = normalizedQuery.split(' ').filter(Boolean);
+  return tokens.every((token) => searchable.includes(token));
+}
+
+function semanticMatchScore(node: DrawingDocument['geometry'][number], query: string): number {
+  const normalizedQuery = normalizeSemanticText(query);
+  const normalizedId = normalizeSemanticText(String(node.id));
+  return normalizedId === normalizedQuery ? 0 : normalizedId.includes(normalizedQuery) ? 1 : 2;
+}
+
+function normalizeSemanticText(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function candidateSummary(document: DrawingDocument, nodeIds: string[]): string {
+  const nodes = document.geometry.filter(({ id }) => nodeIds.includes(String(id)));
+  const typeSummary = [...new Set(nodes.map(({ type }) => type))].sort().join('+') || 'geometry';
+  const centers = nodes.flatMap((node) => {
+    const center = geometryCenter(node);
+    return center ? [center] : [];
+  });
+  if (centers.length === 0) return `${nodeIds.length} ${typeSummary} element`;
+  const centerX = centers.reduce((sum, [x]) => sum + x, 0) / centers.length;
+  const centerY = centers.reduce((sum, [, y]) => sum + y, 0) / centers.length;
+  const bounds = document.geometry.map(geometryNodeBounds);
+  const minX = Math.min(...bounds.map(({ minX: value }) => value));
+  const maxX = Math.max(...bounds.map(({ maxX: value }) => value));
+  const minY = Math.min(...bounds.map(({ minY: value }) => value));
+  const maxY = Math.max(...bounds.map(({ maxY: value }) => value));
+  const horizontal = centerX < minX + (maxX - minX) / 3 ? 'left'
+    : centerX > minX + (maxX - minX) * 2 / 3 ? 'right' : 'center';
+  const vertical = centerY < minY + (maxY - minY) / 3 ? 'lower'
+    : centerY > minY + (maxY - minY) * 2 / 3 ? 'upper' : 'middle';
+  return `${nodeIds.length} ${typeSummary} element in ${vertical}-${horizontal} area`;
+}
+
+function pointInPolygon(
+  point: readonly [number, number],
+  polygon: Array<readonly [number, number]>,
+): boolean {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const [x1, y1] = polygon[index]!;
+    const [x2, y2] = polygon[previous]!;
+    if ((y1 > point[1]) !== (y2 > point[1])
+      && point[0] < (x2 - x1) * (point[1] - y1) / (y2 - y1) + x1) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToSelectableGeometry(
+  node: DrawingDocument['geometry'][number],
+  point: readonly [number, number],
+): number {
+  if (node.type === 'point') return Math.hypot(point[0] - node.x, point[1] - node.y);
+  if (node.type === 'circle' || node.type === 'arc') {
+    const radial = Math.hypot(point[0] - node.center[0], point[1] - node.center[1]);
+    return node.type === 'circle' && radial <= node.radius ? 0 : Math.abs(radial - node.radius);
+  }
+  if (node.type === 'ellipse') {
+    const major = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+    if (major <= 1e-9 || node.ratio <= 0) return Number.POSITIVE_INFINITY;
+    const ux = node.majorAxis[0] / major;
+    const uy = node.majorAxis[1] / major;
+    const dx = point[0] - node.center[0];
+    const dy = point[1] - node.center[1];
+    const normalized = Math.hypot((dx * ux + dy * uy) / major, (-dx * uy + dy * ux) / (major * node.ratio));
+    return normalized <= 1 ? 0 : (normalized - 1) * major;
+  }
+  const segments = node.type === 'line'
+    ? [[node.start, node.end] as const]
+    : node.type === 'polyline'
+      ? node.vertices.slice(1).map((vertex, index) => [node.vertices[index]!.point, vertex.point] as const)
+      : node.type === 'spline'
+        ? node.controlPoints.slice(1).map((vertex, index) => [node.controlPoints[index]!, vertex] as const)
+        : [];
+  if (segments.length > 0) return Math.min(...segments.map(([start, end]) => distanceToSegment(point, start, end)));
+  const center = geometryCenter(node);
+  return center ? Math.hypot(point[0] - center[0], point[1] - center[1]) : Number.POSITIVE_INFINITY;
+}
+
+function distanceToSegment(
+  point: readonly [number, number],
+  start: readonly [number, number],
+  end: readonly [number, number],
+): number {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= 1e-18) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  const ratio = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+  return Math.hypot(point[0] - (start[0] + ratio * dx), point[1] - (start[1] + ratio * dy));
 }
 
 function finiteVec2(value: [number, number], code: string): [number, number] {
