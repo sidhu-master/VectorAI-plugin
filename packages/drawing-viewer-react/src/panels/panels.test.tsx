@@ -8,6 +8,7 @@ import {
 import {
   createDrawingWorkspaceStore,
   type DrawingWorkspaceCommitResult,
+  type DrawingGroundingOverlay,
   type DrawingWorkspacePort,
   type DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
@@ -24,6 +25,7 @@ const quality = { status: 'confirmed' as const, evidenceRefs: [] };
 
 class PanelPort implements DrawingWorkspacePort {
   readonly value: DrawingWorkspaceSnapshot;
+  groundingOverlay: DrawingGroundingOverlay | null = null;
 
   constructor() {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-panels' }, now: () => 1 });
@@ -53,6 +55,10 @@ class PanelPort implements DrawingWorkspacePort {
 
   async commit(): Promise<DrawingWorkspaceCommitResult> {
     return { status: 'committed', snapshot: this.value };
+  }
+
+  async loadGroundingOverlay(): Promise<DrawingGroundingOverlay | null> {
+    return this.groundingOverlay;
   }
 }
 
@@ -118,5 +124,31 @@ describe('shared drawing workspace panels', () => {
     expect(markup).toContain('Y 25.000');
     expect(markup).toContain('200%');
     expect(markup).toContain('Revision 12');
+  });
+
+  it('shows AI-grounded part labels beside object rows without selecting them', async () => {
+    const port = new PanelPort();
+    port.groundingOverlay = {
+      version: 1,
+      drawingRef: structuredClone(port.value.ref),
+      taskId: 'task-pose',
+      groups: [{
+        groundingId: 'ground-arm', partKey: 'arm', label: '左臂', colorIndex: 2,
+        nodeIds: ['line-1'], interfaces: [],
+      }],
+    };
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <ObjectList />
+      </DrawingWorkspaceProvider>,
+    );
+
+    expect(markup).toContain('data-grounding-object="line-1"');
+    expect(markup).toContain('title="AI 识别：左臂"');
+    expect(markup).toContain('左臂');
+    expect(markup).not.toContain('vai-object-row--selected');
   });
 });

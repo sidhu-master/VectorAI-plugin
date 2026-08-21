@@ -252,6 +252,19 @@
   flex-direction: column;
 }
 
+.vai-object-row__grounding {
+  max-width: 72px;
+  overflow: hidden;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 1px 5px;
+  color: var(--vai-grounding-color);
+  font-size: 9px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vai-object-row__identity strong,
 .vai-object-row__identity small {
   overflow: hidden;
@@ -432,6 +445,55 @@
   fill: #72b9e8;
   stroke: #72b9e8;
   stroke-width: 2;
+}
+
+.vai-grounding {
+  pointer-events: none;
+}
+
+.vai-grounding__group {
+  color: var(--vai-grounding-color);
+}
+
+.vai-grounding--color-0 { --vai-grounding-color: #f59e0b; }
+.vai-grounding--color-1 { --vai-grounding-color: #a78bfa; }
+.vai-grounding--color-2 { --vai-grounding-color: #34d399; }
+.vai-grounding--color-3 { --vai-grounding-color: #fb7185; }
+.vai-grounding--color-4 { --vai-grounding-color: #22d3ee; }
+.vai-grounding--color-5 { --vai-grounding-color: #facc15; }
+
+.vai-grounding__outline {
+  fill: color-mix(in srgb, currentColor 7%, transparent);
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.vai-grounding__node {
+  fill: transparent;
+  stroke: currentColor;
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+.vai-grounding__interface {
+  fill: var(--vai-bg);
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.vai-grounding__label-bg {
+  fill: color-mix(in srgb, var(--vai-panel-deep) 82%, currentColor);
+  stroke: currentColor;
+  stroke-width: 0.75;
+  vector-effect: non-scaling-stroke;
+}
+
+.vai-grounding__label {
+  fill: currentColor;
+  stroke: none;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 650;
 }
 
 .vai-entity text {

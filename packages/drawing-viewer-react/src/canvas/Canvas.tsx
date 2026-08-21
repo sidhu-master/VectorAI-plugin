@@ -14,6 +14,7 @@ import {
 import { useDrawingWorkspace } from '../hooks';
 import { CadGrid } from './Grid';
 import { EntityRenderer } from './EntityRenderer';
+import { GroundingOverlay } from './GroundingOverlay';
 import { SourceUnderlay } from './SourceUnderlay';
 import {
   fitViewportToDrawing,
@@ -38,6 +39,7 @@ export function Canvas() {
   const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
   const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
   const preview = useDrawingWorkspace((state) => state.preview);
+  const groundingOverlay = useDrawingWorkspace((state) => state.groundingOverlay);
   const sourceResource = useDrawingWorkspace((state) => state.sourceResource);
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -289,6 +291,13 @@ export function Canvas() {
               pointerEvents="none"
             />
           ))}
+          {groundingOverlay === null ? null : (
+            <GroundingOverlay
+              document={snapshot.document}
+              overlay={groundingOverlay}
+              viewport={viewport}
+            />
+          )}
           {entities.map((node) => (
             <EntityRenderer
               key={node.id}

@@ -9,6 +9,7 @@ import {
 import {
   createDrawingWorkspaceStore,
   type DrawingWorkspaceCommitResult,
+  type DrawingGroundingOverlay,
   type DrawingWorkspacePort,
   type DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
@@ -60,6 +61,7 @@ function workspaceSnapshot(): DrawingWorkspaceSnapshot {
 
 class CanvasPort implements DrawingWorkspacePort {
   readonly value = workspaceSnapshot();
+  groundingOverlay: DrawingGroundingOverlay | null = null;
 
   async load(): Promise<DrawingWorkspaceSnapshot> {
     return this.value;
@@ -67,6 +69,10 @@ class CanvasPort implements DrawingWorkspacePort {
 
   async commit(): Promise<DrawingWorkspaceCommitResult> {
     return { status: 'committed', snapshot: this.value };
+  }
+
+  async loadGroundingOverlay(): Promise<DrawingGroundingOverlay | null> {
+    return this.groundingOverlay;
   }
 
   async loadSource() {
@@ -134,5 +140,41 @@ describe('shared Canvas rendering', () => {
     expect(markup).not.toContain('data-relation-id="relation-1"');
     expect(markup).toContain('data-entity-id="circle-1"');
     expect(markup).toContain('data-selected="true"');
+  });
+
+  it('marks every grounded part and interface without intercepting canvas input', async () => {
+    const port = new CanvasPort();
+    port.groundingOverlay = {
+      version: 1,
+      drawingRef: structuredClone(port.value.ref),
+      taskId: 'task-pose',
+      groups: [{
+        groundingId: 'ground-left', partKey: 'left-arm', label: '左臂', colorIndex: 0,
+        nodeIds: ['line-1'],
+        interfaces: [{ interfaceId: 'left-shoulder', nodeId: 'line-1', endpoint: 'start' }],
+      }, {
+        groundingId: 'ground-right', partKey: 'right-hand', label: '右手', colorIndex: 1,
+        nodeIds: ['circle-1'], interfaces: [],
+      }],
+    };
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().setViewport({ x: 400, y: 300, scale: 2, width: 800, height: 600 });
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <Canvas />
+      </DrawingWorkspaceProvider>,
+    );
+
+    expect(markup).toContain('data-grounding-group="left-arm"');
+    expect(markup).toContain('data-grounding-group="right-hand"');
+    expect(markup).toContain('data-grounding-label="左臂"');
+    expect(markup).toContain('data-grounding-label="右手"');
+    expect(markup).toContain('data-grounding-node="line-1"');
+    expect(markup).toContain('data-grounding-node="circle-1"');
+    expect(markup).toContain('data-grounding-interface="left-shoulder"');
+    expect(markup).toContain('pointer-events="none"');
+    expect(store.getState().selectedIds).toEqual([]);
   });
 });

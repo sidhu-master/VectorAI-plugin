@@ -15,6 +15,7 @@ export function ObjectList() {
   const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
   const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
   const preview = useDrawingWorkspace((state) => state.preview);
+  const groundingOverlay = useDrawingWorkspace((state) => state.groundingOverlay);
   const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
   const busy = useDrawingWorkspace((state) => state.busy);
   const setSelection = useDrawingWorkspace((state) => state.setSelection);
@@ -36,7 +37,9 @@ export function ObjectList() {
         {groups.map((group) => (
           <section key={group.label} className="vai-object-group">
             <h3>{group.label}<span>{group.nodes.length}</span></h3>
-            {group.nodes.length === 0 ? <div className="vai-object-group__empty">无</div> : group.nodes.map((node) => (
+            {group.nodes.length === 0 ? <div className="vai-object-group__empty">无</div> : group.nodes.map((node) => {
+              const groundedParts = groundingOverlay?.groups.filter((part) => part.nodeIds.includes(node.id)) ?? [];
+              return (
               <div
                 key={node.id}
                 className={`vai-object-row${selectedIds.includes(node.id) ? ' vai-object-row--selected' : ''}`}
@@ -55,6 +58,14 @@ export function ObjectList() {
                 >
                   <ObjectGlyph type={node.type} />
                   <span className="vai-object-row__identity"><strong>{node.id}</strong><small>{node.type}</small></span>
+                  {groundedParts.map((part) => (
+                    <span
+                      key={part.groundingId}
+                      className={`vai-object-row__grounding vai-grounding--color-${Math.abs(part.colorIndex) % 6}`}
+                      data-grounding-object={node.id}
+                      title={`AI 识别：${part.label}`}
+                    >{part.label}</span>
+                  ))}
                 </button>
                 <button
                   type="button"
@@ -75,7 +86,8 @@ export function ObjectList() {
                   ×
                 </button>
               </div>
-            ))}
+              );
+            })}
           </section>
         ))}
       </div>
