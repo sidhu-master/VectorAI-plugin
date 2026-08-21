@@ -8,6 +8,9 @@ import {
   drawingRefSchema,
   durableOperationBindingSchema,
   durableOperationReceiptSchema,
+  drawingSelectPartsRequestSchema,
+  drawingWorkflowDispositionSchema,
+  explicitNumericConstraintSchema,
   finalizePreviewRequestSchema,
   finalizePreviewResultSchema,
   multiPartTransformRequestSchema,
@@ -16,6 +19,8 @@ import {
   operationLookupResultSchema,
   previewRefSchema,
   reviewEvidenceSchema,
+  spatialIntentRequestSchema,
+  spatialIntentRevisionSchema,
   spatialEditProgramSchema,
   taskRefSchema,
 } from './index';
@@ -56,6 +61,133 @@ function validFinalizeRequest() {
 }
 
 describe('@vectorai/drawing-edit-protocol', () => {
+  it('accepts qualitative spatial intent without model-authored coordinates or lineage', () => {
+    const request = {
+      summary: 'place two selected parts below the drawing center and make their paths cross',
+      goals: [
+        {
+          kind: 'relative_position' as const,
+          subject: 'part-a',
+          reference: { kind: 'drawing_anchor' as const, anchor: 'center' as const },
+          relation: 'below' as const,
+          magnitude: 'moderate' as const,
+        },
+        {
+          kind: 'topology' as const,
+          subject: 'part-a',
+          reference: { kind: 'part' as const, partKey: 'part-b' },
+          relation: 'crosses' as const,
+        },
+      ],
+      preserve: [
+        { kind: 'connectivity' as const, partKey: 'part-a' },
+        { kind: 'minimum_deformation' as const },
+      ],
+    };
+
+    expect(spatialIntentRequestSchema.parse(request)).toEqual(request);
+    for (const [field, value] of Object.entries({
+      taskId: 'task-1',
+      contextId: 'context-1',
+      groundingId: 'grounding-1',
+      previewHandle: 'preview-1',
+      translation: [0, 80],
+      pivot: [10, 20],
+      rotationRadians: 0.5,
+      point: [10, 20],
+    })) {
+      expect(() => spatialIntentRequestSchema.parse({ ...request, [field]: value })).toThrow();
+    }
+  });
+
+  it('keeps semantic part selection bounded, normalized, and episode-local', () => {
+    const request = {
+      parts: [
+        {
+          partKey: 'part-a',
+          label: 'left selected carrier',
+          references: [
+            { kind: 'current_selection' as const },
+            { kind: 'observation_point' as const, normalized: [0.25, 0.75] as const },
+            {
+              kind: 'observation_region' as const,
+              polygon: [[0.1, 0.2], [0.3, 0.2], [0.2, 0.4]] as const,
+            },
+            { kind: 'candidate' as const, key: 'c1' },
+            { kind: 'semantic_query' as const, text: 'connected strokes at the left edge' },
+          ],
+          exclude: [{ kind: 'candidate' as const, value: 'c2' }],
+        },
+      ],
+    };
+
+    expect(drawingSelectPartsRequestSchema.parse(request)).toEqual(request);
+    expect(() => drawingSelectPartsRequestSchema.parse({
+      parts: [{
+        ...request.parts[0],
+        references: [{ kind: 'observation_point', normalized: [1.01, 0.5] }],
+      }],
+    })).toThrow();
+    expect(() => drawingSelectPartsRequestSchema.parse({
+      parts: [request.parts[0], { ...request.parts[0], label: 'duplicate key' }],
+    })).toThrow();
+    expect(() => drawingSelectPartsRequestSchema.parse({
+      parts: [{ ...request.parts[0], references: [{ kind: 'raw_node_ids', nodeIds: ['line-1'] }] }],
+    })).toThrow();
+  });
+
+  it('lets the model reference only Host-extracted numeric keys', () => {
+    const request = {
+      summary: 'move the selected part by the exact distance in the instruction',
+      goals: [{
+        kind: 'explicit_numeric' as const,
+        subject: 'part-a',
+        quantity: 'distance' as const,
+        numericKey: 'n1',
+      }],
+      preserve: [],
+    };
+    const extracted = {
+      numericKey: 'n1',
+      kind: 'distance' as const,
+      value: 80,
+      unit: 'mm',
+      userEvidenceSpan: { start: 5, end: 10, text: '80 mm' },
+    };
+
+    expect(spatialIntentRequestSchema.parse(request)).toEqual(request);
+    expect(explicitNumericConstraintSchema.parse(extracted)).toEqual(extracted);
+    expect(() => spatialIntentRequestSchema.parse({
+      ...request,
+      goals: [{ ...request.goals[0], numericKey: 'distance-80' }],
+    })).toThrow();
+    expect(() => spatialIntentRequestSchema.parse({
+      ...request,
+      goals: [{ ...request.goals[0], value: 80 }],
+    })).toThrow();
+  });
+
+  it('freezes semantic-only revision deltas and compact dispositions', () => {
+    const revision = {
+      goalDelta: [{
+        kind: 'direction' as const,
+        subject: 'part-a',
+        direction: 'up' as const,
+        magnitude: 'slight' as const,
+      }],
+      preserveDelta: [{ kind: 'part_shape' as const, partKey: 'part-a' }],
+    };
+
+    expect(spatialIntentRevisionSchema.parse(revision)).toEqual(revision);
+    expect(drawingWorkflowDispositionSchema.parse('preview_ready')).toBe('preview_ready');
+    expect(() => drawingWorkflowDispositionSchema.parse('preview-uuid')).toThrow();
+    expect(() => spatialIntentRevisionSchema.parse({ ...revision, previewHandle: 'preview-1' })).toThrow();
+    expect(() => spatialIntentRevisionSchema.parse({
+      ...revision,
+      goalDelta: [{ kind: 'unknown_goal', subject: 'part-a' }],
+    })).toThrow();
+  });
+
   it('keeps DrawingRef revision-bound and rejects host identity fields', () => {
     const ref = { drawingId: 'drawing-1', revision: 2 };
 

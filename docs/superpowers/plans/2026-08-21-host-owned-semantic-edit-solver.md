@@ -64,7 +64,7 @@
 - Consumes: Zod 4 strict object schemas and the existing `DrawingRef` conventions.
 - Produces: `drawingSelectPartsRequestSchema`, `spatialIntentRequestSchema`, `spatialIntentRevisionSchema`, `spatialReferenceSchema`, `spatialGoalSchema`, `preservationGoalSchema`, `explicitNumericConstraintSchema`, `DrawingWorkflowDisposition`, and their inferred TypeScript types.
 
-- [ ] **Step 1: Write failing strict-codec tests**
+- [x] **Step 1: Write failing strict-codec tests**
 
 Add tests that accept a generic qualitative request and reject every legacy/internal field:
 
@@ -85,13 +85,13 @@ for (const forbidden of ['taskId', 'contextId', 'groundingId', 'previewHandle', 
 
 Also test normalized Observation coordinates reject values outside `[0, 1]`, unknown union variants fail, duplicate `partKey` selection requests fail, and `explicit_numeric` accepts only `numericKey` matching `n1`, `n2`, … without a value field.
 
-- [ ] **Step 2: Run the protocol test to prove it fails**
+- [x] **Step 2: Run the protocol test to prove it fails**
 
 Run: `pnpm --filter @vectorai/drawing-edit-protocol test -- --run src/protocol.test.ts`
 
 Expected: FAIL because `spatialIntentRequestSchema` and related exports do not exist.
 
-- [ ] **Step 3: Implement strict schemas and types**
+- [x] **Step 3: Implement strict schemas and types**
 
 Use `z.strictObject` for every object arm. Define:
 
@@ -114,7 +114,7 @@ Keep `explicitNumericConstraintSchema` separate from the model request; it conta
 
 Define `drawingSelectPartsRequestSchema` from strict `current_selection`, `observation_point`, `observation_region`, `candidate`, and `semantic_query` reference arms. Enforce 1–16 unique `partKey` values, 1–8 bounded references per part, polygons with 3–64 normalized points, and bounded exclusion arrays.
 
-- [ ] **Step 4: Run protocol tests and typecheck**
+- [x] **Step 4: Run protocol tests and typecheck**
 
 Run:
 
@@ -125,7 +125,7 @@ pnpm --filter @vectorai/drawing-edit-protocol check
 
 Expected: both commands exit 0; strict-codec tests confirm forbidden fields are rejected.
 
-- [ ] **Step 5: Commit the protocol**
+- [x] **Step 5: Commit the protocol**
 
 ```bash
 git add packages/drawing-edit-protocol/src/spatial-intent.ts packages/drawing-edit-protocol/src/index.ts packages/drawing-edit-protocol/src/protocol.test.ts
