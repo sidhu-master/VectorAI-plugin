@@ -17,7 +17,10 @@ import { fileURLToPath } from 'node:url';
 const SUPPORTED_VERSION = '0.1.0-rc.8';
 const PATCH_MARKER = 'data-vectorai-dsh-workspace-patch';
 const LEGACY_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8"`;
-const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
+const PREVIOUS_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
+const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
+const LEGACY_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane]:not(:empty)';
+const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
 
 const ROOT_STATE_ANCHOR = `
 \t\t\tconst [pendingWorkspaceId, setPendingWorkspaceId] = (0, react.useState)();
@@ -56,18 +59,18 @@ const WORKSPACE_CSS = `
 [data-conversation-chat-pane] {
   display: contents;
 }
-[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) {
+[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) {
   flex-direction: row;
   overflow: hidden;
 }
-[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-workspace-pane] {
+[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-workspace-pane] {
   display: flex;
   flex: 1 1 auto;
   min-width: 520px;
   min-height: 0;
   overflow: hidden;
 }
-[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-workspace-resizer] {
+[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-workspace-resizer] {
   display: block;
   width: 7px;
   flex: 0 0 7px;
@@ -79,12 +82,12 @@ const WORKSPACE_CSS = `
   box-sizing: border-box;
   z-index: 12;
 }
-[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-workspace-resizer]:hover,
-[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-workspace-resizer]:focus-visible {
+[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-workspace-resizer]:hover,
+[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-workspace-resizer]:focus-visible {
   background: var(--dsw-alias-state-business-primary);
   outline: none;
 }
-[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-chat-pane] {
+[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-chat-pane] {
   display: flex;
   flex: 0 0 var(--dsh-conversation-chat-width, 440px);
   width: var(--dsh-conversation-chat-width, 440px);
@@ -95,19 +98,19 @@ const WORKSPACE_CSS = `
   overflow: hidden;
 }
 @media (max-width: 1100px) {
-  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) {
+  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) {
     flex-direction: column;
     overflow: hidden;
   }
-  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-workspace-pane] {
+  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-workspace-pane] {
     min-width: 0;
     min-height: 320px;
     flex: 1 1 55%;
   }
-  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-workspace-resizer] {
+  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-workspace-resizer] {
     display: none;
   }
-  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane]:not(:empty)) > [data-conversation-chat-pane] {
+  [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-chat-pane] {
     width: 100%;
     min-width: 0;
     max-width: none;
@@ -188,7 +191,7 @@ const ROOT_RETURN_REPLACEMENT = `
 \t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t"data-phase": phase,
 \t\t\t\t"data-conversation-workspace-layout": "",
-\t\t\t\t"${PATCH_MARKER}": "rc.8-v2",
+\t\t\t\t"${PATCH_MARKER}": "rc.8-v3",
 \t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("style", { children: workspaceLayoutStyles }), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-pane": "",
 \t\t\t\t\tchildren: workspacePane
@@ -227,11 +230,25 @@ const ROOT_CHILD_REPLACEMENT = `
 
 export function patchConversationClient(source) {
   if (source.includes(PATCH_MARKER)) {
-    if (source.includes(CURRENT_PATCH_MARKER) && source.includes(ROBUST_RESIZE_HANDLER)) {
+    if (
+      source.includes(CURRENT_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
+      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+    ) {
       return { status: 'already-patched', source };
+    }
+    if (
+      source.includes(PREVIOUS_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
+      && source.includes(LEGACY_WORKSPACE_SELECTOR)
+    ) {
+      let upgraded = source.replaceAll(LEGACY_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
+      upgraded = replaceExactlyOnce(upgraded, PREVIOUS_PATCH_MARKER, CURRENT_PATCH_MARKER);
+      return { status: 'upgraded', source: upgraded };
     }
     if (source.includes(LEGACY_PATCH_MARKER) && source.includes(LEGACY_RESIZE_HANDLER)) {
       let upgraded = replaceExactlyOnce(source, LEGACY_RESIZE_HANDLER, ROBUST_RESIZE_HANDLER);
+      upgraded = upgraded.replaceAll(LEGACY_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
       upgraded = replaceExactlyOnce(upgraded, LEGACY_PATCH_MARKER, CURRENT_PATCH_MARKER);
       return { status: 'upgraded', source: upgraded };
     }

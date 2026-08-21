@@ -57,6 +57,7 @@ function legacyPatchedResizeFixture(): string {
 \t\t\t\thandle.addEventListener("pointerup", finish, { once: true });
 \t\t\t\thandle.addEventListener("pointercancel", finish, { once: true });
 \t\t\t}, [workspaceChatWidth]);
+\t\t\tconst workspaceLayoutStyles = "[data-conversation-workspace-pane]:not(:empty)";
 \t\t\t"data-vectorai-dsh-workspace-patch": "rc.8"`;
 }
 
@@ -70,10 +71,29 @@ describe('patchConversationClient', () => {
     expect(result.source).toContain('data-conversation-workspace-pane');
     expect(result.source).toContain('data-conversation-workspace-resizer');
     expect(result.source).toContain('data-conversation-chat-pane');
+    expect(result.source).toContain('[data-conversation-workspace-active]');
+    expect(result.source).not.toContain('[data-conversation-workspace-pane]:not(:empty)');
     expect(result.source).toContain('Math.min(640, Math.max(360');
     expect(result.source).toContain('(next.buttons & 1) === 0');
     expect(result.source).toContain('lostpointercapture');
     expect(result.source).toContain('window.addEventListener("blur", finish');
+  });
+
+  it('upgrades the installed v2 layout selector instead of treating it as current', () => {
+    const current = patchConversationClient(rc8Fixture()).source;
+    const v2 = current
+      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v3"', '"data-vectorai-dsh-workspace-patch": "rc.8-v2"')
+      .replaceAll(
+        '[data-conversation-workspace-pane] [data-conversation-workspace-active]',
+        '[data-conversation-workspace-pane]:not(:empty)',
+      );
+
+    const result = patchConversationClient(v2);
+
+    expect(result.status).toBe('upgraded');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v3"');
+    expect(result.source).toContain('[data-conversation-workspace-active]');
+    expect(result.source).not.toContain('[data-conversation-workspace-pane]:not(:empty)');
   });
 
   it('upgrades the installed rc.8 resize handler and then remains idempotent', () => {
@@ -82,7 +102,8 @@ describe('patchConversationClient', () => {
     expect(result.status).toBe('upgraded');
     expect(result.source).toContain('(next.buttons & 1) === 0');
     expect(result.source).toContain('lostpointercapture');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v2"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v3"');
+    expect(result.source).toContain('[data-conversation-workspace-active]');
     expect(patchConversationClient(result.source)).toEqual({
       status: 'already-patched',
       source: result.source,

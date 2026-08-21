@@ -7193,6 +7193,18 @@ window.__ModuleLoader__.load({
       };
     }
     const inject = ["slots", "remote", "conversation"];
+    function MountedDrawingWorkspace() {
+      const hasDrawing = useDrawingWorkspace((state) => state.snapshot !== null);
+      if (!hasDrawing) return null;
+      return /* @__PURE__ */ jsxRuntime.jsx(
+        "div",
+        {
+          className: "vai-dsh-workspace-host",
+          "data-conversation-workspace-active": "",
+          children: /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspace, {})
+        }
+      );
+    }
     function DrawingConversationView({
       useSession,
       workspacePort,
@@ -7209,7 +7221,7 @@ window.__ModuleLoader__.load({
         else didObserveInitialCallCount.current = true;
       }, [runningCallCount, store]);
       react.useEffect(() => releaseSources, [releaseSources]);
-      return /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-dsh-workspace-host", children: /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspaceProvider, { store, children: /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspace, { emptyMessage: "还没有已导入的图纸" }) }) });
+      return /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspaceProvider, { store, children: /* @__PURE__ */ jsxRuntime.jsx(MountedDrawingWorkspace, {}) });
     }
     async function apply(ctx) {
       const remote = ctx.get("remote");

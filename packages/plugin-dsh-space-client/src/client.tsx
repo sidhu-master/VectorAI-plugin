@@ -9,6 +9,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session';
 import {
   DrawingWorkspace,
   DrawingWorkspaceProvider,
+  useDrawingWorkspace,
 } from '@vectorai/drawing-viewer-react';
 import '@vectorai/drawing-viewer-react/styles.css';
 import './client.css';
@@ -26,9 +27,23 @@ import type { DrawingWorkspaceSlotProps } from './workspace-slot';
 // eslint-disable-next-line react-refresh/only-export-components
 export const inject = ['slots', 'remote', 'conversation'];
 
-interface DrawingConversationViewProps extends DrawingWorkspaceSlotProps {
+interface DrawingConversationViewProps extends Pick<DrawingWorkspaceSlotProps, 'useSession'> {
   workspacePort: DrawingWorkspacePort;
   releaseSources(): void;
+}
+
+function MountedDrawingWorkspace() {
+  const hasDrawing = useDrawingWorkspace((state) => state.snapshot !== null);
+  if (!hasDrawing) return null;
+
+  return (
+    <div
+      className="vai-dsh-workspace-host"
+      data-conversation-workspace-active=""
+    >
+      <DrawingWorkspace />
+    </div>
+  );
 }
 
 export function DrawingConversationView({
@@ -51,11 +66,9 @@ export function DrawingConversationView({
   useEffect(() => releaseSources, [releaseSources]);
 
   return (
-    <div className="vai-dsh-workspace-host">
-      <DrawingWorkspaceProvider store={store}>
-        <DrawingWorkspace emptyMessage="还没有已导入的图纸" />
-      </DrawingWorkspaceProvider>
-    </div>
+    <DrawingWorkspaceProvider store={store}>
+      <MountedDrawingWorkspace />
+    </DrawingWorkspaceProvider>
   );
 }
 
