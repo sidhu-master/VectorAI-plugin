@@ -62,7 +62,7 @@ describe('drawing image intake', () => {
     expect(findLatestImage([pluginImageMessage('reviewer-render')])).toBeNull();
   });
 
-  it('binds the accepted image and appends an import instruction', async () => {
+  it('stages the accepted image without routing the turn into drawing import', async () => {
     const bindings: Array<{ sessionId: string; attachment: ImageAttachmentRef }> = [];
     const intake = createPreStepIntake({
       bindPending(sessionId, source) {
@@ -79,19 +79,11 @@ describe('drawing image intake', () => {
     expect(bindings).toEqual([{ sessionId: 'session-a', attachment: attachment('drawing') }]);
     expect(result.kind).toBe('enter');
     if (result.kind !== 'enter') throw new Error('expected enter');
-    expect(result.messages).toHaveLength(2);
-    expect(result.messages[1]?.source).toMatchObject({
-      kind: 'plugin',
-      plugin: '@vectorai/plugin-dsh-space-host',
-      form: 'snapshot',
-    });
-    expect(result.messages[1]?.content).toEqual([{
-      type: 'text',
-      text: expect.stringContaining('drawing_import'),
-    }]);
+    expect(result.messages).toEqual([message]);
+    expect(JSON.stringify(result.messages)).not.toContain('drawing_import');
   });
 
-  it('prioritizes a new image import over advertising the previously active Drawing', async () => {
+  it('keeps an uploaded reference image independent from the active Drawing capability', async () => {
     const repository = {
       bindPending() {},
       getSnapshot() {
@@ -107,9 +99,9 @@ describe('drawing image intake', () => {
     if (result.kind !== 'enter') throw new Error('expected enter');
     expect(result.messages).toHaveLength(2);
     const injected = JSON.stringify(result.messages.at(-1));
-    expect(injected).toContain('drawing_import');
-    expect(injected).not.toContain('drawing_observe');
-    expect(injected).not.toContain('old-drawing');
+    expect(injected).not.toContain('drawing_import');
+    expect(injected).toContain('drawing_observe');
+    expect(injected).toContain('old-drawing');
   });
 
   it('preserves a downstream rejection without binding the image', async () => {

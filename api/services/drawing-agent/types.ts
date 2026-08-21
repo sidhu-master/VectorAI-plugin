@@ -273,6 +273,8 @@ export interface StartDrawingAgentRunInput {
   selectedIds?: string[];
   stableRules?: string[];
   source?: SourceArtifactReference;
+  /** Images are ordinary context unless the caller explicitly marks one as an editable drawing source. */
+  attachmentPurpose?: DrawingAttachmentPurpose;
   /** 当前画布视口(世界->屏幕),用于后端渲染"用户所见"的图纸快照 */
   viewport?: { scale: number; offsetX: number; offsetY: number; width: number; height: number };
   /**
@@ -285,3 +287,4 @@ export interface StartDrawingAgentRunInput {
 }
 
 export type DrawingAgentWorkflow = 'partition' | 'partitioned-annotation';
+export type DrawingAttachmentPurpose = 'reference' | 'drawing-source';

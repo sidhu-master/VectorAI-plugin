@@ -278,6 +278,9 @@ describe('drawing tools', () => {
       'drawing_get_operation',
       'drawing_undo_commit',
     ]);
+    const importTool = tools.find((tool) => tool.name === 'drawing_import');
+    expect(importTool?.description).toContain('Only call this when the user explicitly asks');
+    expect(importTool?.description).toContain('reference or supplemental image');
 
     for (const name of [
       'drawing_preview_grounded_transform',

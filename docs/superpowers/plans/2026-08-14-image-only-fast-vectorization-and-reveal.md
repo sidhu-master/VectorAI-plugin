@@ -1,5 +1,7 @@
 # Image-only Fast Vectorization and Reveal Implementation Plan
 
+> **Deprecated (2026-08-21):** An image-only upload is no longer a drawing-import signal. Attachments default to `reference`; this plan remains only as historical context.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make image-only uploads complete through the deterministic vectorization pipeline with zero model calls and reveal each vector batch as progressively drawn SVG paths.

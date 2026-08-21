@@ -25,6 +25,7 @@ const TERMINAL_EVENTS = new Set<AgentProgressEvent['type']>(['stopped', 'complet
 const ALLOWED_START_KEYS = new Set([
   'drawingId', 'baseRevision', 'goal', 'selectedIds', 'stableRules', 'viewport', 'attachment',
   'workflow',
+  'attachmentPurpose',
 ]);
 const ALLOWED_WORKFLOWS = new Set(['partition', 'partitioned-annotation']);
 
@@ -59,10 +60,15 @@ export function createAgentRunsRouter(
       : typeof body.workflow === 'string' && ALLOWED_WORKFLOWS.has(body.workflow)
         ? body.workflow as 'partition' | 'partitioned-annotation'
         : null;
+    const attachmentPurpose = body.attachmentPurpose === undefined
+      ? 'reference'
+      : body.attachmentPurpose === 'reference' || body.attachmentPurpose === 'drawing-source'
+        ? body.attachmentPurpose
+        : null;
     if (
       !drawingId || !baseRevision || goal === null || (!goal && !attachment)
       || attachment === null || selectedIds === null || stableRules === null
-      || viewport === null || workflow === null
+      || viewport === null || workflow === null || attachmentPurpose === null
     ) {
       invalid(
         res,
@@ -115,6 +121,7 @@ export function createAgentRunsRouter(
       ...(stableRules ? { stableRules } : {}),
       ...(viewport ? { viewport } : {}),
       ...(source ? { source } : {}),
+      ...(source ? { attachmentPurpose } : {}),
       ...(workflow ? { workflow } : {}),
     });
     res.status(202).json({ success: true, runId });

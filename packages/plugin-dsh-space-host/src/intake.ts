@@ -6,11 +6,6 @@ import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
 import { createHash } from 'node:crypto';
 
 const PLUGIN_NAME = '@vectorai/plugin-dsh-space-host';
-const INSTRUCTION = [
-  'A new drawing image is pending in the local VectorAI Space plugin.',
-  'Call drawing_import before describing, inspecting, or modifying the drawing.',
-  'Do not claim that the drawing was inspected until drawing_import succeeds.',
-].join(' ');
 interface PendingSourceWriter {
   bindPending(sessionId: string, attachment: ImageAttachmentRef): void;
   getSnapshot?(sessionId: string): {
@@ -93,7 +88,7 @@ export function createPreStepIntake(
     const snapshot = repository.getSnapshot?.(String(payload.agent.id)) ?? null;
     const selection = semantic?.currentSelectionProjection?.(String(payload.agent.id)) ?? null;
     const drawingRef = selection?.drawingRef ?? snapshot?.ref;
-    if (directUser && drawingRef && attachment === null) {
+    if (directUser && drawingRef) {
       const capability = [
         `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
         'To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.',
@@ -112,18 +107,7 @@ export function createPreStepIntake(
       }));
     }
 
-    if (attachment === null) return { kind: 'enter', messages };
-
-    repository.bindPending(String(payload.agent.id), attachment);
-    const context = createUserMessage({
-      content: [{ type: 'text', text: INSTRUCTION }],
-      source: {
-        kind: 'plugin',
-        plugin: PLUGIN_NAME,
-        form: 'snapshot',
-        sections: [{ name: 'vectorai:drawing-intake', text: INSTRUCTION }],
-      },
-    });
-    return { kind: 'enter', messages: [...messages, context] };
+    if (attachment !== null) repository.bindPending(String(payload.agent.id), attachment);
+    return { kind: 'enter', messages };
   };
 }

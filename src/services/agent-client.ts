@@ -9,6 +9,7 @@ export type AgentProgressEventType = DrawingAgentProgressEventType;
 export type AgentProgressEvent = DrawingAgentProgressEvent;
 
 export type AgentWorkflow = 'partition' | 'partitioned-annotation';
+export type AttachmentPurpose = 'reference' | 'drawing-source';
 
 export interface StartAgentInput {
   drawingId: DrawingId;
@@ -22,6 +23,7 @@ export interface StartAgentInput {
     mimeType: string;
     page?: number;
   };
+  attachmentPurpose?: AttachmentPurpose;
   workflow?: AgentWorkflow;
 }
 

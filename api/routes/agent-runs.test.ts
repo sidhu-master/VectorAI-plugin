@@ -86,6 +86,7 @@ describe('drawing agent run routes', () => {
 
   it('stores a bounded attachment reference and still rejects legacy SpatialModel input', async () => {
     const context = await startServer();
+    const start = vi.spyOn(context.runtime, 'start');
     const attachment = await fetch(`${context.baseUrl}/api/agent/runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -103,10 +104,32 @@ describe('drawing agent run routes', () => {
     expect(context.sourceArtifacts.put).toHaveBeenCalledWith({
       data: 'cG5n', mimeType: 'image/png', page: 1,
     });
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      attachmentPurpose: 'reference',
+    }));
     expect(legacy.status).toBe(400);
     expect(await legacy.json()).toMatchObject({
       error: { code: 'LEGACY_SPATIAL_MODEL_FORBIDDEN' },
     });
+  });
+
+  it('forwards drawing-source only when the caller explicitly selects it', async () => {
+    const context = await startServer();
+    const start = vi.spyOn(context.runtime, 'start');
+
+    const response = await fetch(`${context.baseUrl}/api/agent/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...startBody(context, { goal: '' }),
+        attachment: { data: 'cG5n', mimeType: 'image/png', page: 1 },
+        attachmentPurpose: 'drawing-source',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      attachmentPurpose: 'drawing-source',
+    }));
   });
 
   it('replays accepted and later progress over SSE and closes on terminal state', async () => {

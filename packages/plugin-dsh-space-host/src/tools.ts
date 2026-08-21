@@ -50,7 +50,7 @@ export function createDrawingImportTool(
 ) {
   return defineTool({
     name: 'drawing_import',
-    description: 'Import the latest pending drawing image into the local VectorAI 2D Space. Call this before inspecting or editing a new drawing image.',
+    description: 'Import and vectorize the latest pending image as an editable local VectorAI Drawing. Only call this when the user explicitly asks to import, convert, or vectorize that image as a drawing. Never call it merely because a reference or supplemental image was uploaded.',
     parameters: {},
     output: {
       schema: {

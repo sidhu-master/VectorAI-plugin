@@ -61,11 +61,6 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import sharp from "sharp";
 const PLUGIN_NAME = "@vectorai/plugin-dsh-space-host";
-const INSTRUCTION = [
-  "A new drawing image is pending in the local VectorAI Space plugin.",
-  "Call drawing_import before describing, inspecting, or modifying the drawing.",
-  "Do not claim that the drawing was inspected until drawing_import succeeds."
-].join(" ");
 function findLatestImage(messages) {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex];
@@ -105,7 +100,7 @@ function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () =
     const snapshot = ((_a3 = repository.getSnapshot) == null ? void 0 : _a3.call(repository, String(payload.agent.id))) ?? null;
     const selection = ((_b = semantic == null ? void 0 : semantic.currentSelectionProjection) == null ? void 0 : _b.call(semantic, String(payload.agent.id))) ?? null;
     const drawingRef = (selection == null ? void 0 : selection.drawingRef) ?? (snapshot == null ? void 0 : snapshot.ref);
-    if (directUser && drawingRef && attachment === null) {
+    if (directUser && drawingRef) {
       const capability = [
         `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
         "To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.",
@@ -125,18 +120,8 @@ function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () =
         }
       }));
     }
-    if (attachment === null) return { kind: "enter", messages };
-    repository.bindPending(String(payload.agent.id), attachment);
-    const context = createUserMessage({
-      content: [{ type: "text", text: INSTRUCTION }],
-      source: {
-        kind: "plugin",
-        plugin: PLUGIN_NAME,
-        form: "snapshot",
-        sections: [{ name: "vectorai:drawing-intake", text: INSTRUCTION }]
-      }
-    });
-    return { kind: "enter", messages: [...messages, context] };
+    if (attachment !== null) repository.bindPending(String(payload.agent.id), attachment);
+    return { kind: "enter", messages };
   };
 }
 function canonicalString(value) {
@@ -8691,7 +8676,7 @@ const drawingRefSchema = {
 function createDrawingImportTool(drawings, attachments) {
   return defineTool({
     name: "drawing_import",
-    description: "Import the latest pending drawing image into the local VectorAI 2D Space. Call this before inspecting or editing a new drawing image.",
+    description: "Import and vectorize the latest pending image as an editable local VectorAI Drawing. Only call this when the user explicitly asks to import, convert, or vectorize that image as a drawing. Never call it merely because a reference or supplemental image was uploaded.",
     parameters: {},
     output: {
       schema: {

@@ -326,7 +326,7 @@ describe('DrawingAgentRuntime', () => {
     const { runtime, workspace } = await setup({ feedbackLoop, perceptionService });
 
     const final = await runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status, final.error ?? '').toBe('completed');
@@ -348,7 +348,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const { runtime, workspace } = await setup({ feedbackLoop });
     const handle = runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     });
     const events: import('./progress').AgentProgressEvent[] = [];
     runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -385,7 +385,7 @@ describe('DrawingAgentRuntime', () => {
       const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
       const { runtime, workspace } = await setup({ feedbackLoop, auditStore });
       const handle = runtime.start({
-        ...startInput(workspace), goal: '', source: sourceReference(),
+        ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
       });
 
       await handle.completion;
@@ -439,7 +439,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const { runtime, workspace } = await setup({ feedbackLoop });
     const handle = runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     });
     const events: import('./progress').AgentProgressEvent[] = [];
     runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -509,7 +509,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const { runtime, workspace } = await setup({ feedbackLoop });
     const handle = runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     });
     const events: import('./progress').AgentProgressEvent[] = [];
     runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -544,7 +544,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const { runtime, workspace } = await setup({ feedbackLoop });
     const handle = runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     });
     const events: import('./progress').AgentProgressEvent[] = [];
     runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -593,7 +593,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const { runtime, workspace } = await setup({ feedbackLoop });
     const handle = runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     });
     const events: import('./progress').AgentProgressEvent[] = [];
     runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -628,7 +628,7 @@ describe('DrawingAgentRuntime', () => {
       const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
       const { runtime, workspace } = await setup({ feedbackLoop, auditStore });
       const handle = runtime.start({
-        ...startInput(workspace), goal: '', source: sourceReference(),
+        ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
       });
       const events: import('./progress').AgentProgressEvent[] = [];
       runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -677,7 +677,7 @@ describe('DrawingAgentRuntime', () => {
       const auditStore = new FileDrawingAgentAuditStore({ rootDirectory });
       const { runtime, workspace } = await setup({ feedbackLoop, auditStore });
       const handle = runtime.start({
-        ...startInput(workspace), goal: '', source: sourceReference(),
+        ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
       });
       const events: import('./progress').AgentProgressEvent[] = [];
       runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -719,7 +719,7 @@ describe('DrawingAgentRuntime', () => {
     };
     const { runtime, workspace } = await setup({ feedbackLoop });
     const handle = runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     });
     const events: import('./progress').AgentProgressEvent[] = [];
     runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -751,7 +751,7 @@ describe('DrawingAgentRuntime', () => {
       };
       const { runtime, workspace } = await setup({ auditStore, perceptionService });
       const handle = runtime.start({
-        ...startInput(workspace), goal: '', source: sourceReference(),
+        ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
       });
       const events: import('./progress').AgentProgressEvent[] = [];
       runtime.getProgress(handle.runId)!.subscribe((event) => events.push(event));
@@ -786,7 +786,7 @@ describe('DrawingAgentRuntime', () => {
     });
 
     const final = await runtime.start({
-      ...startInput(workspace), goal: '分析这张图纸的结构', source: sourceReference(),
+      ...startInput(workspace), goal: '分析这张图纸的结构', source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -808,7 +808,7 @@ describe('DrawingAgentRuntime', () => {
     });
 
     const final = await runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -840,7 +840,7 @@ describe('DrawingAgentRuntime', () => {
     });
 
     const final = await runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -853,7 +853,7 @@ describe('DrawingAgentRuntime', () => {
     });
 
     const final = await runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -872,7 +872,7 @@ describe('DrawingAgentRuntime', () => {
     });
 
     const final = await runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -897,7 +897,7 @@ describe('DrawingAgentRuntime', () => {
     const final = await runtime.start({
       ...startInput(workspace),
       goal: '先分析图纸，然后添加一个圆',
-      source: sourceReference(),
+      source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -913,7 +913,7 @@ describe('DrawingAgentRuntime', () => {
     });
 
     const final = await runtime.start({
-      ...startInput(workspace), goal: '', source: sourceReference(),
+      ...startInput(workspace), goal: '', source: sourceReference(), attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(final.status).toBe('completed');
@@ -2127,7 +2127,7 @@ describe('DrawingAgentRuntime', () => {
       });
 
       const handle = runtime.start({
-        ...startInput(workspace), goal: '分析图纸', source: sourceReference(),
+        ...startInput(workspace), goal: '分析图纸', source: sourceReference(), attachmentPurpose: 'drawing-source',
       });
       await handle.completion;
       await runtime.flushAudit(handle.runId);

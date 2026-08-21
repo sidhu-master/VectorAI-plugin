@@ -651,6 +651,7 @@ describe('Drawing Agent workspace integration', () => {
     expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({
       drawingId, baseRevision: revision1, goal: '分析图纸', selectedIds: [],
       attachment: { data: 'aW1hZ2U=', mimeType: 'image/png', page: 1 },
+      attachmentPurpose: 'reference',
       stableRules: expect.any(Array),
     }));
     expect(store.getState().agentError).toBeNull();
@@ -671,12 +672,31 @@ describe('Drawing Agent workspace integration', () => {
       drawingId, baseRevision: revision1,
       goal: '',
       attachment: { data: 'aW1hZ2U=', mimeType: 'image/png', page: 1 },
+      attachmentPurpose: 'reference',
     }));
     expect(store.getState().aiMessages).toContainEqual(expect.objectContaining({
       role: 'user', content: '', image: 'aW1hZ2U=', mimeType: 'image/png',
     }));
     expect(store.getState().aiMessages).not.toContainEqual(expect.objectContaining({
       role: 'user', content: '解析并重建上传的二维图纸',
+    }));
+  });
+
+  it('only marks an attachment as a drawing source through the explicit import option', async () => {
+    const agent = agentClientDouble();
+    const store = createAppStore({
+      drawingClient: drawingClientDouble() as unknown as DrawingClient,
+      agentClient: agent as unknown as AgentClient,
+      storage: memoryStorage(),
+    });
+    await store.getState().initializeDrawing();
+
+    await store.getState().submitAgentInput(
+      undefined, 'aW1hZ2U=', 'image/png', undefined, undefined, 'drawing-source',
+    );
+
+    expect(agent.start).toHaveBeenCalledWith(expect.objectContaining({
+      attachmentPurpose: 'drawing-source',
     }));
   });
 

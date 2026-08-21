@@ -20,9 +20,12 @@ export function referencesCurrentSelection(goal: string): boolean {
 export function interpretDrawingInput(input: {
   goal: string;
   hasSource: boolean;
+  attachmentPurpose?: 'reference' | 'drawing-source';
 }): DrawingInputInterpretation {
   const goal = input.goal.trim();
-  if (!input.hasSource) return { mode: 'text_only', modificationGoal: goal };
+  if (!input.hasSource || input.attachmentPurpose !== 'drawing-source') {
+    return { mode: 'text_only', modificationGoal: goal };
+  }
   if (!goal) return { mode: 'reconstruct', modificationGoal: null };
   if (MODIFY_PATTERN.test(goal)) {
     const clauses = goal.split(/(?:然后|再|之后|then)/i).map((item) => item.trim()).filter(Boolean);

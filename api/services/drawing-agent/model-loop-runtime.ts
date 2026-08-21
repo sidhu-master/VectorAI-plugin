@@ -973,6 +973,7 @@ export class ModelLedDrawingAgentRuntime {
     const decisionContext = this.#decisionContext(record, worldEvidenceRef);
     const toolCatalog = selectModelToolCatalog(this.#registry.catalog(), {
       hasSource: Boolean(record.input.source),
+      allowSourceReconstruction: record.input.attachmentPurpose === 'drawing-source',
       currentPreview: Boolean(record.state.currentPreviewHandle),
       latestTool: record.state.recentToolResults.at(-1)?.receipt.tool,
       knowledgeState: worldContext?.worldModelSlice.knowledge.state
@@ -2153,16 +2154,18 @@ function buildPartitionCommands(
 }
 
 function isSourceReconstructionRun(record: RunRecord): boolean {
-  if (!record.input.source) return false;
+  if (!record.input.source || record.input.attachmentPurpose !== 'drawing-source') return false;
   const mode = interpretDrawingInput({
     goal: record.state.objective,
     hasSource: true,
+    attachmentPurpose: record.input.attachmentPurpose,
   }).mode;
   return mode === 'reconstruct' || mode === 'reconstruct_then_modify';
 }
 
 function isImageOnlyImport(record: RunRecord): boolean {
-  return record.input.goal.trim() === ''
+  return record.input.attachmentPurpose === 'drawing-source'
+    && record.input.goal.trim() === ''
     && Boolean(record.input.source?.mimeType.startsWith('image/'));
 }
 

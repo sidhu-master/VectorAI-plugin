@@ -1,6 +1,6 @@
 /**
  * AIDialog - 右侧 AI 对话面板
- * 支持文字输入 + 图片上传/粘贴（先预览，发送时才分析）
+ * 支持文字输入 + 图片上传/粘贴（默认作为参考，显式选择后才导入为图纸）
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -13,6 +13,7 @@ import HumanDecisionCard from './HumanDecisionCard';
 import { composerPrimaryAction } from './agent/composer-primary-action';
 import PartitionStageBar, { type PartitionStage } from './agent/partition-stage-bar';
 import { readDrawingPartitions } from '@/contracts/drawing-partition';
+import type { AttachmentPurpose } from '@/services/agent-client';
 
 interface PendingFile {
   base64: string;
@@ -158,6 +159,7 @@ export default function AIDialog() {
 
   const [input, setInput] = useState('');
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [attachmentPurpose, setAttachmentPurpose] = useState<AttachmentPurpose>('reference');
   const [fileError, setFileError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -228,11 +230,13 @@ export default function AIDialog() {
         goal || undefined,
         media?.base64,
         media?.mimeType,
-        partitionFlow ? 'partition' : undefined,
+        partitionFlow && attachmentPurpose === 'reference' ? 'partition' : undefined,
         displayText || undefined,
+        attachmentPurpose,
       );
     }
     setPendingFiles([]);
+    setAttachmentPurpose('reference');
     setFileError(null);
     setInput('');
   };
@@ -253,6 +257,9 @@ export default function AIDialog() {
 
   const loadFiles = async (files: File[]) => {
     const loaded = await Promise.all(files.map(readPendingFile));
+    if (loaded.some((file) => file.kind === 'image' || file.kind === 'pdf')) {
+      setAttachmentPurpose('reference');
+    }
     setPendingFiles((current) => {
       const incomingDxf = loaded.find((file) => file.kind === 'dxf');
       const existingDxf = current.find((file) => file.kind === 'dxf');
@@ -263,7 +270,8 @@ export default function AIDialog() {
         setFileError(null);
         return [dxf, ...(companion ? [companion] : [])];
       }
-      // 非 DXF 场景：一个图纸附件（图片/PDF）+ 多个 TXT 补充文档
+      // 非 DXF 场景：一个普通参考附件（图片/PDF）+ 多个 TXT 补充文档。
+      // 矢量化必须由用户在附件卡片上显式选择。
       const media = loaded.find((file) => file.kind === 'image' || file.kind === 'pdf')
         ?? current.find((file) => file.kind === 'image' || file.kind === 'pdf');
       const texts = [
@@ -370,12 +378,35 @@ export default function AIDialog() {
                   <p className="text-[9px] text-slate-600">
                     {file.kind === 'dxf' ? '确定性导入'
                       : file.kind === 'text' ? (hasPendingDxf ? '配套工程数据' : '分区补充文档')
-                      : '等待发送'}
+                      : attachmentPurpose === 'drawing-source' ? '将导入为可编辑图纸' : '普通参考附件'}
                   </p>
+                  {(file.kind === 'image' || file.kind === 'pdf') && (
+                    <div className="mt-1 flex gap-1" aria-label="附件用途">
+                      <button
+                        type="button"
+                        className={`rounded px-1.5 py-0.5 text-[9px] ${attachmentPurpose === 'reference' ? 'bg-accent/15 text-accent' : 'text-slate-600 hover:text-slate-300'}`}
+                        onClick={() => setAttachmentPurpose('reference')}
+                      >
+                        作为参考
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded px-1.5 py-0.5 text-[9px] ${attachmentPurpose === 'drawing-source' ? 'bg-accent/15 text-accent' : 'text-slate-600 hover:text-slate-300'}`}
+                        onClick={() => setAttachmentPurpose('drawing-source')}
+                      >
+                        导入为图纸
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <button
                   className="rounded-md p-1 text-slate-600 transition hover:bg-danger/[0.06] hover:text-danger"
-                  onClick={() => setPendingFiles((current) => current.filter((item) => item !== file))}
+                  onClick={() => {
+                    setPendingFiles((current) => current.filter((item) => item !== file));
+                    if (file.kind === 'image' || file.kind === 'pdf') {
+                      setAttachmentPurpose('reference');
+                    }
+                  }}
                   title={`移除 ${file.name}`}
                 >
                   <X size={14} />
@@ -410,7 +441,7 @@ export default function AIDialog() {
               className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/[0.05] hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-30"
               onClick={() => fileInputRef.current?.click()}
               disabled={starting || agentActive || attachmentFull}
-              title={agentActive ? '当前任务结束后可上传新图纸' : '上传图纸'}
+              title={agentActive ? '当前任务结束后可添加附件' : '添加附件'}
             >
               <Paperclip size={14} />
             </button>
@@ -430,7 +461,8 @@ export default function AIDialog() {
                     ? '重试任务'
                     : primaryAction === 'waiting'
                       ? '等待当前操作完成'
-                      : hasPendingDxf ? '导入 DXF' : pendingFiles.length > 0 ? '发送并分析图片' : '发送'}
+                      : hasPendingDxf ? '导入 DXF'
+                        : attachmentPurpose === 'drawing-source' ? '导入为图纸' : '发送参考附件'}
             >
               {primaryAction === 'waiting' ? (
                 <Loader2 size={13} className="animate-spin" />

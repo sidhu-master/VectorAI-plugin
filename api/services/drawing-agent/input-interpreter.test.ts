@@ -2,17 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { interpretDrawingInput, referencesCurrentSelection } from './input-interpreter';
 
 describe('Drawing Agent combined-input interpreter', () => {
-  it.each([
-    [{ goal: '创建一个圆', hasSource: false }, { mode: 'text_only', modificationGoal: '创建一个圆' }],
-    [{ goal: '', hasSource: true }, { mode: 'reconstruct', modificationGoal: null }],
-    [{ goal: '分析这张图纸的结构', hasSource: true }, { mode: 'analyze_only', modificationGoal: null }],
-    [{ goal: '先分析图纸，再把所有圆孔改成半径 8mm', hasSource: true }, {
+  const cases: Array<[
+    { goal: string; hasSource: boolean; attachmentPurpose: 'reference' | 'drawing-source' },
+    { mode: 'text_only' | 'analyze_only' | 'reconstruct' | 'reconstruct_then_modify'; modificationGoal: string | null },
+  ]> = [
+    [{ goal: '创建一个圆', hasSource: false, attachmentPurpose: 'reference' }, { mode: 'text_only', modificationGoal: '创建一个圆' }],
+    [{ goal: '', hasSource: true, attachmentPurpose: 'reference' }, { mode: 'text_only', modificationGoal: '' }],
+    [{ goal: '把右手抬起来', hasSource: true, attachmentPurpose: 'reference' }, { mode: 'text_only', modificationGoal: '把右手抬起来' }],
+    [{ goal: '', hasSource: true, attachmentPurpose: 'drawing-source' }, { mode: 'reconstruct', modificationGoal: null }],
+    [{ goal: '分析这张图纸的结构', hasSource: true, attachmentPurpose: 'drawing-source' }, { mode: 'analyze_only', modificationGoal: null }],
+    [{ goal: '先分析图纸，再把所有圆孔改成半径 8mm', hasSource: true, attachmentPurpose: 'drawing-source' }, {
       mode: 'reconstruct_then_modify', modificationGoal: '把所有圆孔改成半径 8mm',
     }],
-    [{ goal: '根据这张图创建可编辑图纸', hasSource: true }, {
+    [{ goal: '根据这张图创建可编辑图纸', hasSource: true, attachmentPurpose: 'drawing-source' }, {
       mode: 'reconstruct', modificationGoal: null,
     }],
-  ])('classifies %# without a user-facing switch', (input, expected) => {
+  ];
+  it.each(cases)('uses the structured attachment purpose for %#', (input, expected) => {
     expect(interpretDrawingInput(input)).toEqual(expected);
   });
 });

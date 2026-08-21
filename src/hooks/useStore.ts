@@ -25,6 +25,7 @@ import {
   type AgentClient,
   type AgentProgressEvent,
   type AgentWorkflow,
+  type AttachmentPurpose,
 } from '@/services/agent-client';
 import {
   drawingClient as defaultDrawingClient,
@@ -108,6 +109,7 @@ interface AgentSubmission {
   image?: string;
   mimeType?: string;
   workflow?: AgentWorkflow;
+  attachmentPurpose?: AttachmentPurpose;
 }
 
 export type AgentUiStatus =
@@ -172,6 +174,7 @@ export interface AppState {
     mimeType?: string,
     workflow?: AgentWorkflow,
     displayText?: string,
+    attachmentPurpose?: AttachmentPurpose,
   ) => Promise<void>;
   startAgent: (
     prompt?: string,
@@ -179,6 +182,7 @@ export interface AppState {
     mimeType?: string,
     workflow?: AgentWorkflow,
     displayText?: string,
+    attachmentPurpose?: AttachmentPurpose,
   ) => Promise<void>;
   /** 确认当前分区并按分区生成自动标注 */
   confirmPartitionAnnotations: () => Promise<void>;
@@ -349,6 +353,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
               mimeType: submission.mimeType || 'image/png',
               page: 1,
             },
+            attachmentPurpose: submission.attachmentPurpose ?? 'reference',
           } : {}),
           ...(submission.workflow ? { workflow: submission.workflow } : {}),
         });
@@ -697,7 +702,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
         }
       },
 
-      submitAgentInput: async (prompt, image, mimeType, workflow, displayText) => {
+      submitAgentInput: async (prompt, image, mimeType, workflow, displayText, attachmentPurpose) => {
         const text = prompt?.trim();
         const state = get();
         if (state.agentRunId && isAgentActiveStatus(state.agentStatus)) {
@@ -709,11 +714,11 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           return;
         }
         if (text || image) {
-          await get().startAgent(text, image, mimeType, workflow, displayText);
+          await get().startAgent(text, image, mimeType, workflow, displayText, attachmentPurpose);
         }
       },
 
-      startAgent: async (prompt, image, mimeType, workflow, displayText) => {
+      startAgent: async (prompt, image, mimeType, workflow, displayText, attachmentPurpose) => {
         const requestedGoal = prompt?.trim() ?? '';
         let goal = requestedGoal;
         if (workflow === 'partition') {
@@ -732,6 +737,7 @@ export function createAppStore(dependencies: AppStoreDependencies = {}) {
           goal,
           userText: displayText?.trim() || requestedGoal,
           ...(image ? { image, mimeType: mimeType || 'image/png' } : {}),
+          ...(image ? { attachmentPurpose: attachmentPurpose ?? 'reference' } : {}),
           ...(workflow ? { workflow } : {}),
         };
         await launchAgent(lastAgentSubmission, { appendUserMessage: true });

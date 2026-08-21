@@ -95,6 +95,7 @@ describe('selectModelToolCatalog', () => {
     const selected = selectModelToolCatalog(catalog, {
       hasSource: true, currentPreview: true, latestTool: 'preview_transaction',
       knowledgeState: 'resolved', hasDiagnostics: true, decisionSequence: 2,
+      allowSourceReconstruction: true,
     });
 
     expect(selected.map((item) => item.name)).toEqual(expect.arrayContaining([
@@ -106,10 +107,24 @@ describe('selectModelToolCatalog', () => {
     expect(selected.map((item) => item.name)).not.toContain('materialize_split');
   });
 
+  it('keeps source inspection but hides reconstruction tools for a reference attachment', () => {
+    const selected = selectModelToolCatalog(catalog, {
+      hasSource: true, currentPreview: false, latestTool: undefined,
+      knowledgeState: 'resolved', hasDiagnostics: false, decisionSequence: 1,
+      allowSourceReconstruction: false,
+    }).map((item) => item.name);
+
+    expect(selected).toContain('inspect_source_overview');
+    expect(selected).not.toEqual(expect.arrayContaining([
+      'redraw_region', 'vectorize_image', 'preview_vectorization_batch', 'fit_geometry',
+    ]));
+  });
+
   it('keeps the next vectorization batch available while hiding completed source extraction', () => {
     const selected = selectModelToolCatalog(catalog, {
       hasSource: true, currentPreview: false, latestTool: 'commit_preview',
       knowledgeState: 'resolved', hasDiagnostics: false, decisionSequence: 3,
+      allowSourceReconstruction: true,
       completedTools: ['vectorize_image', 'preview_vectorization_batch'],
     }).map((tool) => tool.name);
 
@@ -121,6 +136,7 @@ describe('selectModelToolCatalog', () => {
     const selected = selectModelToolCatalog(catalog, {
       hasSource: true, currentPreview: true, latestTool: 'preview_vectorization_batch',
       knowledgeState: 'resolved', hasDiagnostics: false, decisionSequence: 3,
+      allowSourceReconstruction: true,
       completedTools: ['vectorize_image'],
     }).map((tool) => tool.name);
 
@@ -132,6 +148,7 @@ describe('selectModelToolCatalog', () => {
     const selected = selectModelToolCatalog(catalog, {
       hasSource: true, currentPreview: false, latestTool: 'commit_preview',
       knowledgeState: 'resolved', hasDiagnostics: false, decisionSequence: 4,
+      allowSourceReconstruction: true,
       completedTools: ['vectorize_image', 'preview_vectorization_batch'],
       pendingVectorizationBatches: false,
     }).map((tool) => tool.name);

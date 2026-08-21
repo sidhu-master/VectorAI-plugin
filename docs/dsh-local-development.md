@@ -75,7 +75,7 @@ The built Host Typert and Client bundle must not contain the old raw write route
 
 ## Troubleshooting
 
-- `PENDING_DRAWING_SOURCE_REQUIRED`: attach or paste the image in a direct user message, then call import again.
+- `PENDING_DRAWING_SOURCE_REQUIRED`: explicitly choose/import an attached image as a Drawing source first. Ordinary pasted or uploaded reference images are not auto-imported.
 - `EDIT_TARGET_UNRESOLVED`: query the current revision and ground exact node ids/interfaces before previewing.
 - `EDIT_PREVIEW_STALE` / `EDIT_TASK_STALE`: a newer task, revision, Preview, or manual edit superseded the handle; observe from the current Drawing again.
 - `confirmation_required`: inspect the Preview. Confirmed source + clean diagnostics + satisfied reviewer are required for auto-safe.

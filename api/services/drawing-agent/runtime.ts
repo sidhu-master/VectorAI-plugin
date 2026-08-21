@@ -320,6 +320,7 @@ export class DrawingAgentRuntime {
     const interpretation = interpretDrawingInput({
       goal: input.goal,
       hasSource: Boolean(input.source),
+      attachmentPurpose: input.attachmentPurpose,
     });
     const record: RunRecord = {
       state: createDrawingAgentState({
@@ -350,7 +351,7 @@ export class DrawingAgentRuntime {
       visionRevision: null,
       inputMode: interpretation.mode,
       planningObjective: interpretation.modificationGoal ?? input.goal.trim(),
-      perceptionCompleted: !input.source,
+      perceptionCompleted: !input.source || input.attachmentPurpose !== 'drawing-source',
       commitBaseline: 0,
       planCommitBaseline: 0,
       perceptionBatchIds: new Set(),
@@ -478,7 +479,7 @@ export class DrawingAgentRuntime {
     record.driving = true;
     try {
       if (!await this.#safePoint(record, 'before_model')) return;
-      if (record.source && this.#feedbackLoop) {
+      if (record.source && record.inputMode !== 'text_only' && this.#feedbackLoop) {
         await this.#runFeedback(record);
         return;
       }

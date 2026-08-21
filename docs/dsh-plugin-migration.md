@@ -273,7 +273,7 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 
 | 工具 | 类型 | 作用 |
 |---|---|---|
-| `drawing_import` | 读/初始化 | 把当前 DSH 会话的最新图片附件导入为 Drawing |
+| `drawing_import` | 读/初始化 | 仅在用户明确要求“导入/转换/矢量化为图纸”时，把当前会话的最新图片附件导入为 Drawing；普通参考附件不得触发 |
 | `drawing_summarize` | 只读 | 返回单位、bounds、plane/type 计数与 revision |
 | `drawing_query` | 只读 | 执行 bounds、node、topology、path 等有界查询 |
 | `drawing_observe` | 只读 | 创建绑定 revision/viewport 的观察结果 |
@@ -291,7 +291,7 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 
 复杂内部过程通过结构化 Ref 逐步展开，不把完整 Drawing Document 塞进模型上下文。旧裸 transaction/Commit 不属于模型目录或 Typert Remote 发布面。
 
-第一层采用多插件友好的惰性激活，不在每个直接用户回合注入完整固定流水线：没有图纸、附件或 Host 验证选择时零注入；已有图纸时只声明“可用但仅在本轮意图涉及图纸时调用 `drawing_observe`”，否则明确要求忽略并继续使用其他插件。`drawing_observe` 激活 revision-bound EditTask 后，每个成功工具结果只返回当前状态允许的下一工具集合，例如 `observed → drawing_build_context`、`preview_ready → drawing_evaluate_preview`。顺序正确性仍由 Host 的 task/ref/digest 状态机强制，不能由模型或其他插件绕过。入口只对 DSH runtime root 生效，隔离 reviewer 和其他 child Agent 不接收图片导入或图纸流程注入。
+第一层采用多插件友好的惰性激活，不在每个直接用户回合注入完整固定流水线。图片只被 Host 暂存为可选附件，不产生 `drawing_import` 提示，也不改变本轮路由；DSH 仍把它作为普通多模态上下文交给模型。只有用户明确要求把图片导入为可编辑图纸时，模型才调用 `drawing_import`。已有图纸时只声明“可用但仅在本轮意图涉及图纸时调用 `drawing_observe`”，否则明确要求忽略并继续使用其他插件。`drawing_observe` 激活 revision-bound EditTask 后，每个成功工具结果只返回当前状态允许的下一工具集合，例如 `observed → drawing_build_context`、`preview_ready → drawing_evaluate_preview`。顺序正确性仍由 Host 的 task/ref/digest 状态机强制，不能由模型或其他插件绕过。入口只对 DSH runtime root 生效，隔离 reviewer 和其他 child Agent 不接收图片导入或图纸流程注入。
 
 ## 7. 第二层插件：Engineering Annotation
 
@@ -661,7 +661,7 @@ ProjectManifest
 
 当前边界：
 
-- 图片导入已使用随 Host 打包的本地 Python/OpenCV clean-line worker，输出解析图元、Polyline 兜底、拓扑关系和 compound-path 特征；
+- 用户显式导入图片时，Host 使用随包发布的本地 Python/OpenCV clean-line worker，输出解析图元、Polyline 兜底、拓扑关系和 compound-path 特征；普通图片保持参考附件，不运行该 worker；
 - Canvas 选择会由 Host 投影成 revision-bound `SelectionProjectionRef`；“把选中的右手抬起来”沿 `observe → context → ground` 解析精确图元，并自动补齐与未选中身体连接的端点接口；
 - Preview 在同页 Canvas 中以 before/after 位移矢量动画展示；视觉评审使用 Host 本地渲染的同视口 1280×720 对比图，而不是模型自报结果，评审通过后才进入 auto-safe/确认提交判定；
 - Drawing 状态按 DSH session 哈希键写入 `~/.dsh/vectorai/drawings/`；正式 envelope 同时保存快照、revision、forward/inverse、commit record 和 operation receipt；
@@ -690,4 +690,4 @@ ProjectManifest
 
 已确认根许可证使用 Apache-2.0，第一层和第二层先采用同仓库 pnpm workspace 多包发布；第二层不是第一层示例，而是只依赖第一层公开契约的独立可安装插件。
 
-当前 DSH.app 路径已完成“本地图片 → clean-line 矢量化 → 同页可交互画布 → 语义 Grounding → Preview/评审 → auto-safe 或确认提交 → Undo”闭环。后续扩展不再改变这一层架构：可以继续增加 DXF/PDF/WASM Adapter、复杂工程标注规则和静态 Web/PWA Adapter；它们分别通过 importer、第二层插件和 Web port 接入。
+当前 DSH.app 路径已完成“用户显式导入本地图片 → clean-line 矢量化 → 同页可交互画布 → 语义 Grounding → Preview/评审 → auto-safe 或确认提交 → Undo”闭环。普通图片上传不进入这条链路，只作为 DSH 多模态上下文。后续扩展不再改变这一层架构：可以继续增加 DXF/PDF/WASM Adapter、复杂工程标注规则和静态 Web/PWA Adapter；它们分别通过 importer、第二层插件和 Web port 接入。

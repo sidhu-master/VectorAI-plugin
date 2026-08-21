@@ -20,8 +20,10 @@ const TOPOLOGY_ADAPTERS = new Set([
 
 const SOURCE_TOOLS = new Set([
   'inspect_source_overview', 'create_observation_region', 'inspect_source_crop',
-  'extract_cv_evidence', 'read_cv_evidence', 'redraw_region', 'vectorize_image',
-  'preview_vectorization_batch', 'fit_geometry',
+  'extract_cv_evidence', 'read_cv_evidence',
+]);
+const SOURCE_RECONSTRUCTION_TOOLS = new Set([
+  'redraw_region', 'vectorize_image', 'preview_vectorization_batch', 'fit_geometry',
 ]);
 
 const PREVIEW_TOOLS = new Set([
@@ -41,6 +43,7 @@ export function selectModelToolCatalog<T extends Pick<ModelDrawingToolDefinition
     completedTools?: string[];
     pendingVectorizationBatches?: boolean;
     hasExplicitSelection?: boolean;
+    allowSourceReconstruction?: boolean;
   },
 ): T[] {
   const completedTools = new Set(context.completedTools ?? []);
@@ -63,6 +66,8 @@ export function selectModelToolCatalog<T extends Pick<ModelDrawingToolDefinition
     || evidenceRefinementAllowed && EVIDENCE_REFINEMENT.has(tool.name)
     || topologyRelevant && TOPOLOGY_ADAPTERS.has(tool.name)
     || context.hasSource && SOURCE_TOOLS.has(tool.name)
+    || context.hasSource && context.allowSourceReconstruction === true
+      && SOURCE_RECONSTRUCTION_TOOLS.has(tool.name)
     || context.currentPreview && PREVIEW_TOOLS.has(tool.name)
   ) && (tool.name !== 'preview_vectorization_batch'
     || context.pendingVectorizationBatches !== false)

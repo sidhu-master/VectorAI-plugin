@@ -156,31 +156,17 @@ Client 显示为文件图标和文件名；剪贴板/提交文本保留 canonica
 
 ### 6.3 图片来源
 
-DSH 原生图片消息不需要转换成 `vectorai-source:` 文本。Layer 1 pre-step resolver 从已接受的 user message 中识别新的 ImageAttachmentRef，建立 session-bound pending source 投影。实际字节仍由 DSH attachment service 提供。
+DSH 原生图片消息不需要转换成 `vectorai-source:` 文本。Layer 1 pre-step resolver 从已接受的 user message 中识别新的 ImageAttachmentRef，仅建立 session-bound pending attachment 投影，方便后续显式导入。这个投影不代表导入意图、不注入路由提示，也不启动矢量化；图片仍是 DSH 的普通多模态上下文。实际字节仍由 DSH attachment service 提供。
 
-## 7. 自动介入 DSH 的方式
+## 7. 按需介入 DSH 的方式
 
-“自动开始处理”不等于 Client 在后台偷偷运行。它表示 DSH Agent 在收到新图纸的第一步，根据插件提供的事实和规则调用第一层工具。
+插件不能把“消息含图片”解释成“图纸导入”。图片可能是参考照片、错误截图或补充描述。图纸能力只有在用户明确要求导入为可编辑 Drawing，或当前意图明确涉及已激活 Drawing 时才介入。
 
-### 7.1 稳定提示段
+### 7.1 工具语义与激活边界
 
-第一层工具插件注册稳定、前缀可缓存的 system prompt section：
+第一层不注册“看到图片就先导入”的 system prompt。`drawing_import` 自身的工具描述明确规定：只有用户要求 import、convert 或 vectorize as Drawing 时才能调用；reference/supplemental image 不得调用。已有 Drawing 只获得一个条件式 capability hint，真正的工作流在 `drawing_observe` 后由 Host 状态机逐步展开。
 
-```text
-When the latest accepted user input contains unimported drawing sources,
-call drawing_import before describing or modifying the drawing. Do not claim
-to have inspected a source until drawing_import succeeds. Use the returned
-DrawingRef for every later drawing tool.
-```
-
-第二层注册自己的稳定提示段：
-
-```text
-After drawing_import, inspect engineering capabilities. Ask whether to create
-an intelligent partition only when engineering_inspect reports a supported
-partition recommendation. Use DSH ask_user_question for the choice; do not
-assume consent from silence.
-```
+第二层同样不能从上传附件推断分区或标注意图；它只在第一层已经存在 Drawing 且用户请求工程处理后按需激活。
 
 ### 7.2 动态 pre-step context
 
@@ -190,17 +176,9 @@ assume consent from silence.
 2. 识别新的 DSH image attachment references。
 3. 校验 ownership、媒体类型和大小。
 4. 折叠已经导入或重复的来源。
-5. 注入一个小型、source-attributed context。
+5. 只更新 Host 内部 pending attachment；不注入 import context。
 
-示例：
-
-```xml
-<vectorai_drawing_sources>
-  <source ref="src_01H..." name="平面图.dxf" media_type="image/vnd.dxf" state="unimported" />
-</vectorai_drawing_sources>
-```
-
-该 context 只描述待处理事实，不包含图纸语义推断，不启动 VectorAI Agent，也不改 Drawing。
+DSH 原始用户消息继续携带图片供模型理解。插件既不增加一条 `drawing_import` 指令，也不因为附件存在而压过其他插件的路由。
 
 ### 7.3 防止重复处理
 

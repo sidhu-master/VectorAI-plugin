@@ -374,6 +374,7 @@ describe('ModelLedDrawingAgentRuntime', () => {
         sourceId: 'source_image', sha256: 'a'.repeat(64), mimeType: 'image/png',
         byteLength: 4, page: 1,
       },
+      attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(terminal.status).toBe('completed');
@@ -430,6 +431,7 @@ describe('ModelLedDrawingAgentRuntime', () => {
         sourceId: 'source_image', sha256: 'a'.repeat(64), mimeType: 'image/png',
         byteLength: 4, page: 1,
       },
+      attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(terminal, terminal.error ?? 'runtime failed').toMatchObject({
@@ -538,6 +540,7 @@ describe('ModelLedDrawingAgentRuntime', () => {
         sourceId: 'source_image', sha256: 'a'.repeat(64), mimeType: 'image/png',
         byteLength: 4, page: 1,
       },
+      attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(terminal, terminal.error ?? 'runtime failed').toMatchObject({
@@ -620,6 +623,7 @@ describe('ModelLedDrawingAgentRuntime', () => {
         sourceId: 'source_image', sha256: 'a'.repeat(64), mimeType: 'image/png',
         byteLength: 4, page: 1,
       },
+      attachmentPurpose: 'drawing-source',
     }).completion;
 
     expect(terminal, terminal.error ?? 'runtime failed').toMatchObject({
@@ -636,6 +640,27 @@ describe('ModelLedDrawingAgentRuntime', () => {
         }),
       }),
     ]));
+  });
+
+  it('treats an image-only attachment as reference context unless import is explicit', async () => {
+    const { model, runtime, start } = await setup([
+      { type: 'finish', summary: '参考图片已作为上下文读取，图纸未修改' },
+    ]);
+
+    const terminal = await runtime.start({
+      ...start,
+      goal: '',
+      source: {
+        sourceId: 'reference_image', sha256: 'a'.repeat(64), mimeType: 'image/png',
+        byteLength: 4, page: 1,
+      },
+    }).completion;
+
+    expect(terminal).toMatchObject({ status: 'completed', commitCount: 0 });
+    expect(model.contexts).toHaveLength(1);
+    expect(model.contexts[0]?.toolCatalog.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining(['vectorize_image', 'preview_vectorization_batch']),
+    );
   });
 
   it('imports an image-only source without calling the model', async () => {
@@ -699,6 +724,7 @@ describe('ModelLedDrawingAgentRuntime', () => {
         sourceId: 'source_image', sha256: 'a'.repeat(64), mimeType: 'image/png',
         byteLength: 4, page: 1,
       },
+      attachmentPurpose: 'drawing-source',
     }).completion;
 
     const current = await application.open(created.document.id);
