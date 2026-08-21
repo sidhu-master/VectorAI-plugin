@@ -209,6 +209,64 @@ describe('SemanticEditService', () => {
     expect(service.currentGroundingOverlay('session-1')).toBeNull();
   });
 
+  it('evaluates, commits, and undoes a multi-part transform as one revision', async () => {
+    const { service, drawings } = await setup();
+    const task = service.startTask('session-1', {
+      objective: 'Move two independent components in opposite directions',
+      rootUserMessageDigest: 'sha256:multi-round-trip', policy: 'auto-safe',
+    });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
+    const context = service.buildContext('session-1', {
+      taskId: task.taskId, observationId: observation.observationId,
+    });
+    const left = service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['left-hand'], interfaces: [], partKey: 'part-a', label: 'Part A',
+    });
+    const right = service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['right-hand'], interfaces: [], partKey: 'part-b', label: 'Part B',
+    });
+    const preview = service.previewMultiPartTransform('session-1', {
+      taskId: task.taskId, summary: 'Opposing component motion',
+      parts: [
+        { groundingId: left.groundingId, translation: [3, -5] },
+        { groundingId: right.groundingId, translation: [-3, 11] },
+      ],
+    });
+
+    const evaluated = await service.evaluatePreview('session-1', {
+      taskId: task.taskId,
+      previewHandle: preview.previewHandle,
+      candidateDigest: preview.candidateDigest,
+    });
+    expect(evaluated.assessment.disposition).toBe('auto_safe');
+    const committed = service.finalizePreview('session-1', {
+      previewHandle: preview.previewHandle,
+      previewDigest: preview.candidateDigest,
+      finalizeOperationId: preview.finalizeOperationId,
+      finalizeOperationBindingDigest: preview.finalizeOperationBindingDigest,
+      evaluationId: evaluated.evaluation.evaluationId,
+    });
+
+    expect(committed).toMatchObject({ status: 'committed', ref: { revision: 2 } });
+    expect(drawings.getSnapshot('session-1')?.document.geometry
+      .find(({ id }) => id === 'left-hand')).toMatchObject({ center: [-12, -5] });
+    expect(drawings.getSnapshot('session-1')?.document.geometry
+      .find(({ id }) => id === 'right-hand')).toMatchObject({ center: [12, 11] });
+    if (committed.status !== 'committed') throw new Error('expected committed multi-part edit');
+    expect(service.undo('session-1', {
+      targetCommitId: committed.commitId,
+      expectedCurrentRef: committed.ref,
+      operationId: 'undo-multi-1',
+      operationBindingDigest: 'sha256:undo-multi-binding',
+    })).toMatchObject({ status: 'committed', resultingRef: { revision: 3 } });
+    expect(drawings.getSnapshot('session-1')?.document.geometry
+      .find(({ id }) => id === 'left-hand')).toMatchObject({ center: [-15, 0] });
+    expect(drawings.getSnapshot('session-1')?.document.geometry
+      .find(({ id }) => id === 'right-hand')).toMatchObject({ center: [15, 0] });
+  });
+
   it('atomically replaces a multi-part Preview during visual revision', async () => {
     const { service, drawings } = await setup();
     const task = service.startTask('session-1', {
