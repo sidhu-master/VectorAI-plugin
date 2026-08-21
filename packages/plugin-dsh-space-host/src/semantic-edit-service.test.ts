@@ -199,6 +199,10 @@ describe('SemanticEditService', () => {
           rendererVersion: 'vectorai-review-svg-v1', contentDigest: 'sha256:comparison',
           width: 1280, height: 720, comparisonLayout: 'before | after',
           worldToImage: [1, 0, 0, -1, 0, 720], overlays: ['changed-nodes', 'motion-vectors'],
+          attachment: {
+            attachmentId: 'comparison-image' as never,
+            mediaType: 'image/png', bytes: 10, width: 1280, height: 720,
+          },
         },
       };
     });
@@ -269,6 +273,7 @@ describe('SemanticEditService', () => {
       width: 1280,
       height: 720,
     });
+    expect(evaluated.imageAttachment).toMatchObject({ attachmentId: 'comparison-image' });
     const committed = service.finalizePreview('session-1', {
       previewHandle: preview.previewHandle,
       previewDigest: preview.candidateDigest,

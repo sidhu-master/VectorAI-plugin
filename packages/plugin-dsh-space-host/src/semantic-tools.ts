@@ -160,7 +160,7 @@ export function createDrawingEvaluatePreviewTool(semantic: SemanticEditService) 
       previewHandle: { type: 'string', required: true },
       candidateDigest: { type: 'string', required: true },
     },
-    output: { schema: { type: 'json' }, render: renderJson },
+    output: { schema: { type: 'json' }, render: renderObservation },
     async execute(args, exec) {
       return await semantic.evaluatePreview(requireSession(exec.agent?.id), args) as unknown as JsonValue;
     },

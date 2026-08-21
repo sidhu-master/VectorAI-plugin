@@ -33,6 +33,7 @@ export function createDshReviewer(
     const render = {
       ...rendered.manifest,
       contentDigest: rendered.contentDigest,
+      attachment,
     };
     let run;
     try {

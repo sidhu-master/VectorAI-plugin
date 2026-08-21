@@ -60,7 +60,11 @@ describe('createDshReviewer', () => {
     expect(request).toMatchObject({ maxDepth: 1, toolFilter: { allow: ['structured_output'] } });
     expect(result).toMatchObject({
       outcome: 'satisfied',
-      render: { width: 1280, height: 720, contentDigest: expect.stringMatching(/^sha256:/) },
+      render: {
+        width: 1280, height: 720,
+        contentDigest: expect.stringMatching(/^sha256:/),
+        attachment,
+      },
     });
     expect(dispose).toHaveBeenCalledOnce();
   });

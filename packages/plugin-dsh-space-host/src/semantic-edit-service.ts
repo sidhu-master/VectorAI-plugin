@@ -75,6 +75,7 @@ export interface ReviewerDecision {
     comparisonLayout: 'before | after';
     worldToImage: [number, number, number, number, number, number];
     overlays: string[];
+    attachment?: ImageAttachmentRef;
   };
 }
 
@@ -617,7 +618,11 @@ export class SemanticEditService {
     previewHandle: string;
     candidateDigest: string;
     signal?: AbortSignal;
-  }): Promise<{ evaluation: EvaluationRecord; assessment: Assessment }> {
+  }): Promise<{
+    evaluation: EvaluationRecord;
+    assessment: Assessment;
+    imageAttachment?: ImageAttachmentRef;
+  }> {
     const task = this.#task(sessionId, input.taskId);
     const preview = this.#preview(sessionId, input.previewHandle, input.candidateDigest);
     if (preview.task !== task) throw new Error('EDIT_LINEAGE_MISMATCH');
@@ -718,7 +723,13 @@ export class SemanticEditService {
       evaluationDigest,
     };
     this.#evaluations.set(evaluationId, { ref, evaluation, assessment });
-    return { evaluation: structuredClone(evaluation), assessment: structuredClone(assessment) };
+    return {
+      evaluation: structuredClone(evaluation),
+      assessment: structuredClone(assessment),
+      ...(reviewed.render?.attachment
+        ? { imageAttachment: structuredClone(reviewed.render.attachment) }
+        : {}),
+    };
   }
 
   finalizePreview(sessionId: string, raw: FinalizePreviewRequest): FinalizePreviewResult {
