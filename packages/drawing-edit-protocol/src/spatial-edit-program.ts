@@ -67,8 +67,8 @@ export const spatialOperationSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('connected_transform'),
     translation: vec2Schema,
-    rotationRadians: finiteSchema,
-    pivot: vec2Schema,
+    rotationRadians: finiteSchema.optional(),
+    pivot: vec2Schema.optional(),
     interfaceIds: z.array(idSchema).min(1).max(256),
   }).strict(),
   z.object({

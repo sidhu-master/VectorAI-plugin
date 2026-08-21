@@ -20,6 +20,9 @@ export const diagnosticSchema = z.object({
   code: protocolIdSchema,
   severity: z.enum(['info', 'candidate', 'warning', 'decision_required', 'error']),
   message: boundedTextSchema,
+  nodeIds: z.array(protocolIdSchema).max(256).optional(),
+  action: boundedTextSchema.optional(),
+  facts: z.record(z.string(), z.unknown()).optional(),
   scopeDigest: contentDigestSchema.optional(),
   hard: z.boolean().optional(),
 }).strict();

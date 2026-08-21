@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DrawingDocument, GeometryId } from '@vectorai/drawing-core';
+import type { SpatialEditProgram } from '@vectorai/drawing-edit-protocol';
 import { describe, expect, it } from 'vitest';
 
-import { compileConnectedTransform } from './index';
+import { compileConnectedTransform, compileSpatialEditProgram } from './index';
 
 const quality = { status: 'confirmed' as const, evidenceRefs: [] };
 
@@ -71,5 +72,49 @@ describe('connected transform production parity', () => {
       expect.objectContaining({ id: 'unrelated' }),
     ]));
     expect(result.audit.rotationDegrees).not.toBe(0);
+  });
+
+  it('routes a semantic connected displacement through the shared solver without a model pivot or angle', () => {
+    const document = genericCarrierFixture();
+    const program = {
+      baseRef: { drawingId: document.id, revision: 1 },
+      targetHandle: 'target-carrier',
+      summary: 'Move the grounded connected component',
+      objective: 'Move the connected component upward',
+      operations: [{
+        kind: 'connected_transform',
+        translation: [15, 20],
+        interfaceIds: ['connector-upper:start', 'connector-lower:start'],
+      }],
+      preserveScopes: [],
+      postconditions: [],
+      evidenceRefs: ['evidence-grounded'],
+    } as unknown as SpatialEditProgram;
+
+    const compiled = compileSpatialEditProgram({
+      document,
+      program,
+      grounding: {
+        targetHandle: 'target-carrier',
+        targetNodeIds: ['carrier'],
+        interfaces: [
+          { interfaceId: 'connector-upper:start', nodeId: 'connector-upper', endpoint: 'start' },
+          { interfaceId: 'connector-lower:start', nodeId: 'connector-lower', endpoint: 'start' },
+        ],
+        sourceStatus: 'confirmed',
+      },
+      ports: {
+        digest: (value) => `sha256:${value.length}`,
+        id: (kind) => `${kind}-1`,
+        now: () => 2,
+      },
+    });
+
+    expect(compiled.actualEffect.updatedNodeIds).toEqual([
+      'carrier', 'connector-lower', 'connector-upper',
+    ]);
+    expect(compiled.candidate.geometry.find(({ id }) => id === 'carrier')).toMatchObject({
+      center: [15, 20],
+    });
   });
 });

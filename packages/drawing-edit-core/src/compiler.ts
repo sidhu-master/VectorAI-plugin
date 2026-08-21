@@ -13,6 +13,7 @@ import type {
 } from '@vectorai/drawing-edit-protocol';
 
 import { canonicalSemanticString, canonicalString } from './canonical';
+import { compileConnectedTransform } from './connected-transform';
 import { applyDrawingTransaction, findDrawingNode } from './document-transaction';
 import { invertDrawingTransaction } from './inverse';
 
@@ -62,8 +63,11 @@ export function compileSpatialEditProgram(input: {
   const initial = structuredClone(input.document);
   let working = structuredClone(input.document);
   const forward: DrawingTransactionCommand[] = [];
+  const operationDiagnostics: Diagnostic[] = [];
   for (const operation of input.program.operations) {
-    const commands = compileOperation(working, operation, input.grounding, input.ports);
+    const compiled = compileOperation(working, operation, input.grounding, input.ports);
+    const commands = compiled.commands;
+    operationDiagnostics.push(...compiled.diagnostics);
     if (commands.length > 0) {
       working = applyDrawingTransaction(working, commands, input.ports.now());
       forward.push(...commands);
@@ -71,7 +75,10 @@ export function compileSpatialEditProgram(input: {
   }
   if (canonicalSemanticString(initial) === canonicalSemanticString(working)) throw new Error('EDIT_NO_EFFECT');
   assertPreserved(initial, working, input.program.preserveScopes);
-  const diagnostics = evaluateProgram(working, input.program, input.grounding);
+  const diagnostics = [
+    ...operationDiagnostics,
+    ...evaluateProgram(working, input.program, input.grounding),
+  ];
   const inverse = invertDrawingTransaction(initial, forward);
   const restored = applyDrawingTransaction(working, inverse, input.ports.now());
   if (canonicalSemanticString(restored) !== canonicalSemanticString(initial)) {
@@ -110,13 +117,56 @@ function compileOperation(
   operation: SpatialEditProgram['operations'][number],
   grounding: GroundedEditTarget,
   ports: EditCorePorts,
-): DrawingTransactionCommand[] {
+): { commands: DrawingTransactionCommand[]; diagnostics: Diagnostic[] } {
   if (operation.kind === 'rigid_transform') {
     const transform = normalizedTransform(operation);
-    return grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform));
+    return {
+      commands: grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform)),
+      diagnostics: [],
+    };
   }
   if (operation.kind === 'connected_transform') {
-    const transform = normalizedTransform(operation);
+    const target = grounding.targetNodeIds.length === 1
+      ? findDrawingNode(document, grounding.targetNodeIds[0]!)
+      : null;
+    if (
+      target?.plane === 'geometry'
+      && (target.node.type === 'circle' || target.node.type === 'ellipse')
+    ) {
+      const translation = finitePoint(operation.translation, 'EDIT_TRANSFORM_INVALID');
+      const candidate = operation as typeof operation & {
+        rotationRadians?: number;
+        pivot?: Vec2;
+      };
+      const compiled = compileConnectedTransform({
+        document,
+        carrierNodeId: String(target.node.id),
+        targetCenter: [
+          target.node.center[0] + translation[0],
+          target.node.center[1] + translation[1],
+        ],
+        ...(candidate.rotationRadians === undefined
+          ? {}
+          : { rotationDegrees: degrees(candidate.rotationRadians) }),
+      });
+      const allowed = new Set(operation.interfaceIds);
+      const grounded = new Set(grounding.interfaces.map(({ interfaceId }) => interfaceId));
+      for (const port of compiled.audit.ports) {
+        const interfaceId = `${port.connectorNodeId}:${port.endpointRole}`;
+        if (!allowed.has(interfaceId) || !grounded.has(interfaceId)) {
+          throw new Error('EDIT_INTERFACE_SCOPE_MISMATCH');
+        }
+      }
+      return { commands: dedupeUpdates(compiled.commands), diagnostics: compiled.diagnostics };
+    }
+    if (operation.rotationRadians === undefined || operation.pivot === undefined) {
+      throw new Error('EDIT_CONNECTED_STRATEGY_UNAVAILABLE');
+    }
+    const transform = normalizedTransform({
+      translation: operation.translation,
+      rotationRadians: operation.rotationRadians,
+      pivot: operation.pivot,
+    });
     const allowed = new Set(operation.interfaceIds);
     const commands = grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform));
     for (const port of grounding.interfaces) {
@@ -134,22 +184,22 @@ function compileOperation(
         expected: { [port.endpoint]: structuredClone(point) },
       });
     }
-    return dedupeUpdates(commands);
+    return { commands: dedupeUpdates(commands), diagnostics: [] };
   }
   if (operation.kind === 'set_endpoint') {
     const located = findDrawingNode(document, operation.nodeId);
     if (!located || located.plane !== 'geometry' || located.node.type !== 'line') {
       throw new Error('EDIT_ENDPOINT_UNRESOLVED');
     }
-    return [{
+    return { commands: [{
       type: 'node.update', id: operation.nodeId,
       changes: { [operation.endpoint]: structuredClone(operation.point) },
       expected: { [operation.endpoint]: structuredClone(located.node[operation.endpoint]) },
-    }];
+    }], diagnostics: [] };
   }
   if (operation.kind === 'create_path') {
     const id = operation.nodeId || inputId(ports, 'geometry');
-    return [{
+    return { commands: [{
       type: 'node.create', plane: 'geometry',
       node: {
         id,
@@ -159,22 +209,28 @@ function compileOperation(
         visible: true,
         quality: { status: grounding.sourceStatus === 'confirmed' ? 'confirmed' : 'candidate', evidenceRefs: [] },
       },
-    }];
+    }], diagnostics: [] };
   }
   if (operation.kind === 'create_annotation_batch') {
-    return [
+    return { commands: [
       ...operation.annotations.map((node): DrawingTransactionCommand => ({
         type: 'node.create', plane: 'annotation', node: structuredClone(node),
       })),
       ...operation.associations.map((node): DrawingTransactionCommand => ({
         type: 'node.create', plane: 'relation', node: structuredClone(node),
       })),
-    ];
+    ], diagnostics: [] };
   }
-  return operation.nodeIds.map((id) => {
+  return { commands: operation.nodeIds.map((id) => {
     if (!findDrawingNode(document, id)) throw new Error('EDIT_NODE_NOT_FOUND');
     return { type: 'node.delete' as const, id };
-  });
+  }), diagnostics: [] };
+}
+
+function finitePoint(value: readonly unknown[], code: string): Vec2 {
+  const point: Vec2 = [Number(value[0]), Number(value[1])];
+  if (!point.every(Number.isFinite)) throw new Error(code);
+  return point;
 }
 
 function normalizedTransform(input: {

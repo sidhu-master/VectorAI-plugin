@@ -26,8 +26,8 @@ function wavingFixture(): DrawingDocument {
     geometry: [
       { id: 'body' as GeometryId, type: 'circle', center: [0, 0], radius: 10, visible: true, quality },
       { id: 'right-hand' as GeometryId, type: 'circle', center: [15, 0], radius: 3, visible: true, quality },
-      { id: 'right-arm-top' as GeometryId, type: 'line', start: [9, 2], end: [12, 2], visible: true, quality },
-      { id: 'right-arm-bottom' as GeometryId, type: 'line', start: [9, -2], end: [12, -2], visible: true, quality },
+      { id: 'right-arm-top' as GeometryId, type: 'line', start: [9, 2], end: [12.316718427, 1.341640786], visible: true, quality },
+      { id: 'right-arm-bottom' as GeometryId, type: 'line', start: [9, -2], end: [12.316718427, -1.341640786], visible: true, quality },
       { id: 'left-hand' as GeometryId, type: 'circle', center: [-15, 0], radius: 3, visible: true, quality },
     ],
     annotations: [],
@@ -86,7 +86,10 @@ describe('@vectorai/drawing-edit-core compiler', () => {
     expect(compiled.candidate.geometry.find(({ id }) => id === 'right-hand')).toMatchObject({
       center: [12, 11],
     });
-    expect(compiled.diagnostics).toEqual([]);
+    expect(compiled.diagnostics.map(({ code }) => code)).toEqual(expect.arrayContaining([
+      'CONNECTED_INTERFACE_ORIENTATION_INVERTED',
+      'CONNECTED_INTERFACE_EXCESSIVE_STRETCH',
+    ]));
     expect(compiled.forward).toHaveLength(3);
     expect(compiled.inverse).toHaveLength(3);
   });
@@ -108,6 +111,9 @@ describe('@vectorai/drawing-edit-core compiler', () => {
 
   it('merges disjoint endpoint updates when both ends of one connector follow the target', () => {
     const before = wavingFixture();
+    before.geometry = before.geometry.filter(({ id }) => (
+      id !== 'right-arm-top' && id !== 'right-arm-bottom'
+    ));
     before.geometry.push({
       id: 'hand-detail' as GeometryId,
       type: 'line', start: [12, 0], end: [18, 0], visible: true, quality,
