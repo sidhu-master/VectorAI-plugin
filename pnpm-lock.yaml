@@ -14,6 +14,9 @@ importers:
       '@vectorai/drawing-edit-core':
         specifier: workspace:*
         version: link:packages/drawing-edit-core
+      '@vectorai/drawing-spatial':
+        specifier: workspace:*
+        version: link:packages/drawing-spatial
       '@vectorai/drawing-viewer-react':
         specifier: workspace:*
         version: link:packages/drawing-viewer-react
