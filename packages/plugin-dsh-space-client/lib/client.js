@@ -1372,11 +1372,34 @@ window.__ModuleLoader__.load({
       let requestController;
       let sourceResource = null;
       let selectionSequence = 0;
+      let groundingCursor = null;
       const store = createStore((set, get) => {
         const replaceSnapshot = async (snapshot, preview = null, groundingOverlay = null) => {
-          const currentPreview = previewMatchesSnapshot(preview, snapshot) ? preview : null;
+          const previousOverlay = get().groundingOverlay;
+          const sameDrawing = snapshot !== null && (groundingCursor == null ? void 0 : groundingCursor.drawingId) === snapshot.ref.drawingId;
+          if (!sameDrawing) groundingCursor = null;
+          const overlayIsOlder = groundingOverlay !== null && groundingCursor !== null && groundingOverlay.drawingRef.drawingId === groundingCursor.drawingId && groundingOverlay.stateEpoch < groundingCursor.stateEpoch;
+          const terminalOverlay = groundingOverlay !== null && groundingOverlay.disposition !== "active" && !overlayIsOlder && snapshot !== null && groundingOverlay.drawingRef.drawingId === snapshot.ref.drawingId;
+          let currentGroundingOverlay;
+          if (overlayIsOlder) {
+            currentGroundingOverlay = groundingOverlayMatchesSnapshot(previousOverlay, snapshot) && previousOverlay.disposition === "active" ? structuredClone(previousOverlay) : null;
+          } else if (terminalOverlay) {
+            groundingCursor = {
+              drawingId: groundingOverlay.drawingRef.drawingId,
+              stateEpoch: groundingOverlay.stateEpoch
+            };
+            currentGroundingOverlay = null;
+          } else if (groundingOverlayMatchesSnapshot(groundingOverlay, snapshot) && groundingOverlay.disposition === "active") {
+            groundingCursor = {
+              drawingId: groundingOverlay.drawingRef.drawingId,
+              stateEpoch: groundingOverlay.stateEpoch
+            };
+            currentGroundingOverlay = structuredClone(groundingOverlay);
+          } else {
+            currentGroundingOverlay = null;
+          }
+          const currentPreview = !terminalOverlay && previewMatchesSnapshot(preview, snapshot) ? preview : null;
           const displaySnapshot = (currentPreview == null ? void 0 : currentPreview.candidate) ?? snapshot;
-          const currentGroundingOverlay = groundingOverlayMatchesSnapshot(groundingOverlay, snapshot) ? structuredClone(groundingOverlay) : null;
           const nextIds = displaySnapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(displaySnapshot);
           const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
           const previousSource = sourceResource;
@@ -7122,8 +7145,16 @@ window.__ModuleLoader__.load({
       version: literal(1),
       drawingRef: drawingRefSchema,
       taskId: idSchema,
-      groups: array(drawingGroundingOverlayGroupSchema).min(1).max(16)
-    }).strict().superRefine(({ groups }, context) => {
+      stateEpoch: number().int().nonnegative(),
+      disposition: _enum(["active", "committed", "discarded", "failed"]),
+      groups: array(drawingGroundingOverlayGroupSchema).max(16)
+    }).strict().superRefine(({ disposition, groups }, context) => {
+      if (disposition === "active" && groups.length === 0) {
+        context.addIssue({ code: "custom", path: ["groups"], message: "GROUNDING_ACTIVE_GROUP_REQUIRED" });
+      }
+      if (disposition !== "active" && groups.length > 0) {
+        context.addIssue({ code: "custom", path: ["groups"], message: "GROUNDING_TERMINAL_GROUP_FORBIDDEN" });
+      }
       const groundingIds = /* @__PURE__ */ new Set();
       const partKeys = /* @__PURE__ */ new Set();
       for (const [index, group] of groups.entries()) {

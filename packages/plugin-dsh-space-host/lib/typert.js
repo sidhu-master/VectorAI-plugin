@@ -5417,8 +5417,16 @@ const drawingGroundingOverlaySchema = object({
   version: literal(1),
   drawingRef: drawingRefSchema,
   taskId: idSchema,
-  groups: array(drawingGroundingOverlayGroupSchema).min(1).max(16)
-}).strict().superRefine(({ groups }, context) => {
+  stateEpoch: number().int().nonnegative(),
+  disposition: _enum(["active", "committed", "discarded", "failed"]),
+  groups: array(drawingGroundingOverlayGroupSchema).max(16)
+}).strict().superRefine(({ disposition, groups }, context) => {
+  if (disposition === "active" && groups.length === 0) {
+    context.addIssue({ code: "custom", path: ["groups"], message: "GROUNDING_ACTIVE_GROUP_REQUIRED" });
+  }
+  if (disposition !== "active" && groups.length > 0) {
+    context.addIssue({ code: "custom", path: ["groups"], message: "GROUNDING_TERMINAL_GROUP_FORBIDDEN" });
+  }
   const groundingIds = /* @__PURE__ */ new Set();
   const partKeys = /* @__PURE__ */ new Set();
   for (const [index, group] of groups.entries()) {
