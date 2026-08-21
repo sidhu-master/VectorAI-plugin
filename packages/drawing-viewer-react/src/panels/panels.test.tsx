@@ -126,7 +126,7 @@ describe('shared drawing workspace panels', () => {
     expect(markup).toContain('Revision 12');
   });
 
-  it('shows AI-grounded objects with the same selected row state without changing user selection', async () => {
+  it('shows AI-grounded objects with a transient row state distinct from user selection', async () => {
     const port = new PanelPort();
     port.groundingOverlay = {
       version: 1,
@@ -146,7 +146,8 @@ describe('shared drawing workspace panels', () => {
       </DrawingWorkspaceProvider>,
     );
 
-    expect(markup).toMatch(/class="vai-object-row vai-object-row--selected"[^>]*data-object-id="line-1"/);
+    expect(markup).toMatch(/class="vai-object-row vai-object-row--ai-grounded"[^>]*data-object-id="line-1"/);
+    expect(markup).not.toContain('vai-object-row--selected');
     expect(markup).not.toContain('data-grounding-object');
     expect(markup).not.toContain('AI 识别：左臂');
     expect(store.getState().selectedIds).toEqual([]);

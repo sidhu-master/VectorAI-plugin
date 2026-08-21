@@ -119,6 +119,15 @@ export interface ExtensionProgramRequest {
 }
 
 export interface SemanticContextRef extends ContextRef {
+  coordinateSystem: {
+    space: 'world';
+    positiveX: 'right';
+    positiveY: 'up';
+    negativeX: 'left';
+    negativeY: 'down';
+    positiveRotation: 'counterclockwise';
+    modelRotationUnit: 'degrees';
+  };
   geometryFacts: Array<{
     nodeId: string;
     type: string;
@@ -375,10 +384,20 @@ export class SemanticEditService {
     const knowledgeStatus = world.knowledge.state === 'resolved'
       ? 'complete' as const
       : world.knowledge.state === 'partial' ? 'partial' as const : 'unknown' as const;
+    const coordinateSystem = {
+      space: 'world' as const,
+      positiveX: 'right' as const,
+      positiveY: 'up' as const,
+      negativeX: 'left' as const,
+      negativeY: 'down' as const,
+      positiveRotation: 'counterclockwise' as const,
+      modelRotationUnit: 'degrees' as const,
+    };
     const ref: SemanticContextRef = {
       contextId: this.ports.id('context'),
       taskId: task.ref.taskId,
       observationId: observation.ref.observationId,
+      coordinateSystem,
       geometryFacts,
       connectedCarrierFacts,
       topologyFacts,
@@ -389,6 +408,7 @@ export class SemanticEditService {
       },
       contextDigest: this.ports.digest(canonicalString({
         observationDigest: observation.ref.observationDigest,
+        coordinateSystem,
         geometryFacts,
         connectedCarrierFacts,
         topologyFacts,
@@ -502,6 +522,12 @@ export class SemanticEditService {
       return null;
     }
     return structuredClone(overlay);
+  }
+
+  resolveCurrentPreview(sessionId: string, previewHandle: string): PreviewRef {
+    const preview = this.#previews.get(sessionId);
+    if (!preview || preview.ref.previewHandle !== previewHandle) throw new Error('EDIT_PREVIEW_STALE');
+    return structuredClone(preview.ref);
   }
 
   previewProgram(sessionId: string, input: {

@@ -8599,14 +8599,24 @@ const multiPartTransformPartToolSchema = {
   properties: {
     groundingId: { type: "string", required: true },
     translation: { ...vec2ToolSchema, required: true },
-    rotationRadians: {
+    rotationDegrees: {
       type: "number",
-      description: "Optional exact rotation in radians. When present, pivot is also required."
+      description: "Optional exact rotation in degrees. Use only when the user explicitly requests an exact angle. When present, pivot is also required."
     },
     pivot: vec2ToolSchema
   },
   additionalProperties: false
 };
+function normalizeMultiPartToolRequest(args) {
+  return {
+    taskId: args.taskId,
+    summary: args.summary,
+    parts: args.parts.map(({ rotationDegrees, ...part }) => ({
+      ...part,
+      ...rotationDegrees === void 0 ? {} : { rotationRadians: rotationDegrees * Math.PI / 180 }
+    }))
+  };
+}
 function withDrawingWorkflow(result, state, nextTools, instruction) {
   return {
     ...result,
@@ -8668,7 +8678,7 @@ function createDrawingPreviewGroundedTransformTool(semantic) {
 function createDrawingPreviewMultiPartTransformTool(semantic) {
   return defineTool({
     name: "drawing_preview_multi_part_transform",
-    description: "Create one atomic Preview for 2-16 independently moving grounded parts. Ground each semantic carrier separately with a stable partKey and label, then give every grounding its own translation and optional exact rotation/pivot. Use this for coordinated poses; never split one user intent into sequential commits.",
+    description: "Create one atomic Preview for 2-16 independently moving grounded parts. Ground each semantic carrier separately, then give every grounding its displacement. Let the Host derive minimum-deformation orientation unless the user explicitly specified an exact angle. Never split one user intent into sequential commits.",
     parameters: {
       taskId: { type: "string", required: true },
       parts: {
@@ -8682,7 +8692,7 @@ function createDrawingPreviewMultiPartTransformTool(semantic) {
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
-      const input = multiPartTransformRequestSchema.parse(args);
+      const input = multiPartTransformRequestSchema.parse(normalizeMultiPartToolRequest(args));
       const preview = semantic.previewMultiPartTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), input);
       return withDrawingWorkflow(
         preview,
@@ -8696,11 +8706,10 @@ function createDrawingPreviewMultiPartTransformTool(semantic) {
 function createDrawingReviseMultiPartTransformTool(semantic) {
   return defineTool({
     name: "drawing_revise_multi_part_transform",
-    description: "Atomically replace the exact current multi-part Preview after visual feedback. Keep the same task and Groundings, adjust any part transforms, and bind the replacement to the current Preview handle and candidate digest.",
+    description: "Atomically replace the exact current multi-part Preview after visual feedback. Keep the same task and Groundings, adjust any part transforms, and pass only the opaque current Preview handle; the Host binds its immutable digest.",
     parameters: {
       taskId: { type: "string", required: true },
       currentPreviewHandle: { type: "string", required: true },
-      currentCandidateDigest: { type: "string", required: true },
       parts: {
         type: "array",
         required: true,
@@ -8712,8 +8721,14 @@ function createDrawingReviseMultiPartTransformTool(semantic) {
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
-      const input = multiPartTransformRevisionRequestSchema.parse(args);
-      const preview = semantic.reviseMultiPartTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), input);
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const current = semantic.resolveCurrentPreview(sessionId, args.currentPreviewHandle);
+      const input = multiPartTransformRevisionRequestSchema.parse({
+        ...normalizeMultiPartToolRequest(args),
+        currentPreviewHandle: args.currentPreviewHandle,
+        currentCandidateDigest: current.candidateDigest
+      });
+      const preview = semantic.reviseMultiPartTransform(sessionId, input);
       return withDrawingWorkflow(
         preview,
         "preview_ready",
@@ -8730,7 +8745,6 @@ function createDrawingReviseGroundedTransformTool(semantic) {
     parameters: {
       taskId: { type: "string", required: true },
       currentPreviewHandle: { type: "string", required: true },
-      currentCandidateDigest: { type: "string", required: true },
       groundingId: { type: "string", required: true },
       translation: {
         type: "array",
@@ -8744,10 +8758,12 @@ function createDrawingReviseGroundedTransformTool(semantic) {
     async execute(args, exec) {
       var _a3;
       const input = args;
-      const preview = semantic.reviseGroundedTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const current = semantic.resolveCurrentPreview(sessionId, input.currentPreviewHandle);
+      const preview = semantic.reviseGroundedTransform(sessionId, {
         taskId: input.taskId,
         currentPreviewHandle: input.currentPreviewHandle,
-        currentCandidateDigest: input.currentCandidateDigest,
+        currentCandidateDigest: current.candidateDigest,
         groundingId: input.groundingId,
         translation: input.translation,
         summary: input.summary
@@ -8789,7 +8805,7 @@ function createDrawingObserveTool(semantic) {
 function createDrawingBuildContextTool(semantic) {
   return defineTool({
     name: "drawing_build_context",
-    description: "Build bounded drawing context for an exact task and observation before selecting an edit target.",
+    description: "Build bounded drawing context for an exact task and observation before selecting an edit target. Drawing coordinates are world-space: positive X moves right, positive Y moves up, negative Y moves down, and positive rotation is counterclockwise.",
     parameters: {
       taskId: { type: "string", required: true },
       observationId: { type: "string", required: true }
@@ -8802,7 +8818,7 @@ function createDrawingBuildContextTool(semantic) {
         context,
         "context_ready",
         ["drawing_ground"],
-        "Ground the exact semantic target against this bounded context before creating a Preview."
+        "Ground the exact semantic target against this bounded context before creating a Preview. Preserve the returned world-coordinate convention when translating or rotating parts."
       );
     }
   });
@@ -8903,16 +8919,22 @@ function objectSchema(properties) {
 function createDrawingEvaluatePreviewTool(semantic) {
   return defineTool({
     name: "drawing_evaluate_preview",
-    description: "Run mandatory deterministic validation and the local reviewer over an exact Drawing Preview. The Host computes policy; caller-provided auto-safe claims are not accepted.",
+    description: "Run mandatory deterministic validation and the local reviewer over the exact current Drawing Preview. Pass its opaque handle; the Host resolves and verifies the immutable candidate digest.",
     parameters: {
       taskId: { type: "string", required: true },
-      previewHandle: { type: "string", required: true },
-      candidateDigest: { type: "string", required: true }
+      previewHandle: { type: "string", required: true }
     },
     output: { schema: { type: "json" }, render: renderObservation },
     async execute(args, exec) {
       var _a3;
-      const result = await semantic.evaluatePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const current = semantic.resolveCurrentPreview(sessionId, args.previewHandle);
+      const result = await semantic.evaluatePreview(sessionId, {
+        taskId: args.taskId,
+        previewHandle: args.previewHandle,
+        candidateDigest: current.candidateDigest,
+        signal: exec.signal
+      });
       const revisionRequired = result.evaluation.review.outcome === "needs_revision" || result.assessment.disposition === "blocked";
       return withDrawingWorkflow(
         result,
@@ -8935,7 +8957,6 @@ function createDrawingRevisePreviewTool(semantic) {
     parameters: {
       taskId: { type: "string", required: true },
       currentPreviewHandle: { type: "string", required: true },
-      currentCandidateDigest: { type: "string", required: true },
       groundingId: { type: "string", required: true },
       program: { ...spatialEditProgramToolSchema, required: true }
     },
@@ -8943,10 +8964,12 @@ function createDrawingRevisePreviewTool(semantic) {
     async execute(args, exec) {
       var _a3;
       const program = spatialEditProgramSchema.parse(args.program);
-      const preview = semantic.revisePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const current = semantic.resolveCurrentPreview(sessionId, args.currentPreviewHandle);
+      const preview = semantic.revisePreview(sessionId, {
         taskId: args.taskId,
         currentPreviewHandle: args.currentPreviewHandle,
-        currentCandidateDigest: args.currentCandidateDigest,
+        currentCandidateDigest: current.candidateDigest,
         groundingId: args.groundingId,
         program
       });
@@ -8966,16 +8989,20 @@ function createDrawingFinalizeSemanticTool(semantic, questions) {
     description: "Finalize an evaluated semantic Preview. Exact auto-safe candidates commit locally; risk-qualified candidates ask the runtime-root user; blocked candidates never commit.",
     parameters: {
       previewHandle: { type: "string", required: true },
-      previewDigest: { type: "string", required: true },
-      finalizeOperationId: { type: "string", required: true },
-      finalizeOperationBindingDigest: { type: "string", required: true },
       evaluationId: { type: "string", required: true }
     },
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
       const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
-      const request = finalizePreviewRequestSchema.parse(args);
+      const current = semantic.resolveCurrentPreview(sessionId, args.previewHandle);
+      const request = finalizePreviewRequestSchema.parse({
+        previewHandle: current.previewHandle,
+        previewDigest: current.candidateDigest,
+        finalizeOperationId: current.finalizeOperationId,
+        finalizeOperationBindingDigest: current.finalizeOperationBindingDigest,
+        evaluationId: args.evaluationId
+      });
       const result = semantic.finalizePreview(sessionId, request);
       if (result.status !== "rejected" || result.disposition !== "confirmation_required") {
         return result;
@@ -9895,10 +9922,20 @@ class SemanticEditService {
       }).slice(0, 512)
     };
     const knowledgeStatus = world.knowledge.state === "resolved" ? "complete" : world.knowledge.state === "partial" ? "partial" : "unknown";
+    const coordinateSystem = {
+      space: "world",
+      positiveX: "right",
+      positiveY: "up",
+      negativeX: "left",
+      negativeY: "down",
+      positiveRotation: "counterclockwise",
+      modelRotationUnit: "degrees"
+    };
     const ref = {
       contextId: this.ports.id("context"),
       taskId: task.ref.taskId,
       observationId: observation.ref.observationId,
+      coordinateSystem,
       geometryFacts,
       connectedCarrierFacts,
       topologyFacts,
@@ -9909,6 +9946,7 @@ class SemanticEditService {
       },
       contextDigest: this.ports.digest(canonicalString({
         observationDigest: observation.ref.observationDigest,
+        coordinateSystem,
         geometryFacts,
         connectedCarrierFacts,
         topologyFacts,
@@ -9995,6 +10033,11 @@ class SemanticEditService {
       return null;
     }
     return structuredClone(overlay);
+  }
+  resolveCurrentPreview(sessionId, previewHandle) {
+    const preview = __privateGet(this, _previews2).get(sessionId);
+    if (!preview || preview.ref.previewHandle !== previewHandle) throw new Error("EDIT_PREVIEW_STALE");
+    return structuredClone(preview.ref);
   }
   previewProgram(sessionId, input) {
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);

@@ -298,7 +298,8 @@ export function Canvas() {
               key={node.id}
               node={node}
               viewport={viewport}
-              selected={selectedIds.includes(node.id) || groundedNodeIds.has(node.id)}
+              selected={selectedIds.includes(node.id)}
+              aiGrounded={groundedNodeIds.has(node.id)}
               previewDiff={preview?.diff.createdNodeIds.includes(node.id)
                 ? 'created'
                 : preview?.diff.updatedNodeIds.includes(node.id)

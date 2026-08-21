@@ -142,7 +142,7 @@ describe('shared Canvas rendering', () => {
     expect(markup).toContain('data-selected="true"');
   });
 
-  it('renders grounded nodes with the normal selected state without changing user selection', async () => {
+  it('renders grounded nodes with a transient AI state distinct from user selection', async () => {
     const port = new CanvasPort();
     port.groundingOverlay = {
       version: 1,
@@ -167,8 +167,10 @@ describe('shared Canvas rendering', () => {
       </DrawingWorkspaceProvider>,
     );
 
-    expect(markup).toMatch(/data-entity-id="line-1"[^>]*data-selected="true"/);
-    expect(markup).toMatch(/data-entity-id="circle-1"[^>]*data-selected="true"/);
+    expect(markup).toMatch(/class="[^"]*vai-entity--ai-grounded[^"]*"[^>]*data-entity-id="line-1"/);
+    expect(markup).toMatch(/class="[^"]*vai-entity--ai-grounded[^"]*"[^>]*data-entity-id="circle-1"/);
+    expect(markup).toContain('data-ai-grounded="true"');
+    expect(markup).not.toContain('data-selected="true"');
     expect(markup).not.toContain('data-grounding-group');
     expect(markup).not.toContain('data-grounding-label');
     expect(store.getState().selectedIds).toEqual([]);

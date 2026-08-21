@@ -41,11 +41,14 @@ export function ObjectList() {
           <section key={group.label} className="vai-object-group">
             <h3>{group.label}<span>{group.nodes.length}</span></h3>
             {group.nodes.length === 0 ? <div className="vai-object-group__empty">无</div> : group.nodes.map((node) => {
+              const selected = selectedIds.includes(node.id);
+              const aiGrounded = groundedNodeIds.has(node.id);
               return (
               <div
                 key={node.id}
-                className={`vai-object-row${selectedIds.includes(node.id) || groundedNodeIds.has(node.id) ? ' vai-object-row--selected' : ''}`}
+                className={`vai-object-row${selected ? ' vai-object-row--selected' : ''}${aiGrounded ? ' vai-object-row--ai-grounded' : ''}`}
                 data-object-id={node.id}
+                data-ai-grounded={aiGrounded || undefined}
               >
                 <button
                   type="button"

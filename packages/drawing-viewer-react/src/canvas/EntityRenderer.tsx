@@ -10,6 +10,7 @@ export interface EntityRendererProps {
   node: GeometryNode | AnnotationNode;
   viewport: DrawingWorkspaceViewport;
   selected: boolean;
+  aiGrounded?: boolean;
   onSelect(event: MouseEvent<SVGGElement>): void;
   onTextPointerDown?(event: MouseEvent<SVGGElement>): void;
   previewDiff?: 'created' | 'updated' | 'before' | 'deleted';
@@ -19,12 +20,13 @@ export function EntityRenderer({
   node,
   viewport,
   selected,
+  aiGrounded = false,
   onSelect,
   onTextPointerDown,
   previewDiff,
 }: EntityRendererProps) {
   if (!node.visible) return null;
-  const className = `vai-entity vai-entity--${node.quality.status}${selected ? ' vai-entity--selected' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
+  const className = `vai-entity vai-entity--${node.quality.status}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
   const interactiveText = (node.type === 'text' || node.type === 'dimension') && onTextPointerDown !== undefined;
   return (
     <g
@@ -32,6 +34,7 @@ export function EntityRenderer({
       data-entity-id={node.id}
       data-entity-type={node.type}
       data-selected={selected || undefined}
+      data-ai-grounded={aiGrounded || undefined}
       data-preview-diff={previewDiff}
       onClick={onSelect}
       onMouseDown={interactiveText ? onTextPointerDown : undefined}

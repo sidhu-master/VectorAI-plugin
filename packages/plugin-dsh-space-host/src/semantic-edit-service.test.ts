@@ -110,6 +110,15 @@ describe('SemanticEditService', () => {
     const context = service.buildContext('session-1', {
       taskId: task.taskId, observationId: observation.observationId,
     });
+    expect(context.coordinateSystem).toEqual({
+      space: 'world',
+      positiveX: 'right',
+      positiveY: 'up',
+      negativeX: 'left',
+      negativeY: 'down',
+      positiveRotation: 'counterclockwise',
+      modelRotationUnit: 'degrees',
+    });
 
     service.ground('session-1', {
       taskId: task.taskId, contextId: context.contextId,

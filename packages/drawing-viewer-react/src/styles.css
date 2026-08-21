@@ -230,6 +230,12 @@
   background: rgba(109, 169, 210, 0.07);
 }
 
+.vai-object-row--ai-grounded {
+  border-left-color: #2dd4bf;
+  background: rgba(45, 212, 191, 0.12);
+  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;
+}
+
 .vai-object-row__main {
   display: flex;
   min-width: 0;
@@ -432,6 +438,26 @@
   fill: #72b9e8;
   stroke: #72b9e8;
   stroke-width: 2;
+}
+
+.vai-entity--ai-grounded {
+  fill: #2dd4bf;
+  stroke: #2dd4bf;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));
+  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;
+}
+
+@keyframes vai-ai-grounded-pulse {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vai-entity--ai-grounded,
+  .vai-object-row--ai-grounded {
+    animation: none;
+  }
 }
 
 .vai-entity text {
