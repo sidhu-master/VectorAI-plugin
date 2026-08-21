@@ -3,11 +3,18 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assessmentSchema,
+  drawingTransactionCommandSchema,
   drawingRefSchema,
+  durableOperationBindingSchema,
+  durableOperationReceiptSchema,
   finalizePreviewRequestSchema,
   finalizePreviewResultSchema,
   observationArtifactRefSchema,
+  operationLookupResultSchema,
+  reviewEvidenceSchema,
   spatialEditProgramSchema,
+  taskRefSchema,
 } from './index';
 
 function validProgram() {
@@ -125,5 +132,134 @@ describe('@vectorai/drawing-edit-protocol', () => {
     expect(finalizePreviewResultSchema.parse(unavailable)).toEqual(unavailable);
     expect(finalizePreviewResultSchema.parse(unknown)).toEqual(unknown);
     expect(() => finalizePreviewResultSchema.parse({ ...unavailable, approved: true })).toThrow();
+  });
+
+  it('freezes strict task lineage and rejects caller-authored actor fields', () => {
+    const task = {
+      taskId: 'task-1',
+      rootUserMessageDigest: 'sha256:message',
+      authoritativeObjectiveDigest: 'sha256:objective',
+      baseRef: { drawingId: 'drawing-1', revision: 2 },
+      policy: 'auto-safe' as const,
+      stateEpoch: 3,
+    };
+
+    expect(taskRefSchema.parse(task)).toEqual(task);
+    expect(() => taskRefSchema.parse({ ...task, actorId: 'model-forged' })).toThrow();
+  });
+
+  it('preserves transaction order while keeping command envelopes strict', () => {
+    const first = {
+      type: 'node.update' as const,
+      id: 'line-1',
+      changes: { start: [1, 2] },
+      expected: { start: [0, 0] },
+    };
+    const second = { type: 'node.delete' as const, id: 'line-2' };
+
+    expect(drawingTransactionCommandSchema.parse(first)).toEqual(first);
+    expect(() => drawingTransactionCommandSchema.parse({ ...first, force: true })).toThrow();
+    expect(JSON.stringify([first, second])).not.toBe(JSON.stringify([second, first]));
+  });
+
+  it('separates auto-safe qualification from confirmation authority', () => {
+    const common = {
+      assessmentId: 'assessment-1',
+      taskId: 'task-1',
+      drawingId: 'drawing-1',
+      baseRef: { drawingId: 'drawing-1', revision: 2 },
+      previewHandle: 'preview-1',
+      candidateDigest: 'sha256:candidate',
+      evaluationDigest: 'sha256:evaluation',
+      policyVersion: 'policy-v1',
+      evaluatorVersions: ['source-quality-v1', 'postconditions-v1'],
+      effectDigest: 'sha256:effect',
+      reasons: [],
+    };
+    const autoSafe = {
+      ...common,
+      disposition: 'auto_safe' as const,
+      autoQualification: {
+        exactScope: true,
+        cleanDiagnostics: true,
+        sourceConfirmed: true,
+        reviewerSatisfied: true,
+        inverseVerified: true,
+      },
+    };
+    const confirmation = {
+      ...common,
+      disposition: 'confirmation_required' as const,
+      reasons: ['SOURCE_CANDIDATE'],
+      requiredEffectDigest: 'sha256:effect',
+    };
+
+    expect(assessmentSchema.parse(autoSafe)).toEqual(autoSafe);
+    expect(assessmentSchema.parse(confirmation)).toEqual(confirmation);
+    expect(() => assessmentSchema.parse({ ...confirmation, autoQualification: autoSafe.autoQualification })).toThrow();
+  });
+
+  it('freezes mode-discriminated operation bindings and terminal receipts', () => {
+    const binding = {
+      mode: 'semantic' as const,
+      operationId: 'operation-1',
+      sessionId: 'session-1',
+      drawingId: 'drawing-1',
+      candidateDigest: 'sha256:candidate',
+      previewHandle: 'preview-1',
+    };
+    const receipt = {
+      status: 'committed' as const,
+      mode: 'semantic' as const,
+      operationId: 'operation-1',
+      operationBindingDigest: 'sha256:binding',
+      sessionId: 'session-1',
+      drawingId: 'drawing-1',
+      parentRef: { drawingId: 'drawing-1', revision: 2 },
+      resultingRef: { drawingId: 'drawing-1', revision: 3 },
+      commitId: 'commit-1',
+      semanticDigest: 'sha256:semantic',
+      snapshotIntegrityDigest: 'sha256:snapshot',
+    };
+
+    expect(durableOperationBindingSchema.parse(binding)).toEqual(binding);
+    expect(durableOperationReceiptSchema.parse(receipt)).toEqual(receipt);
+    expect(operationLookupResultSchema.parse({ status: 'committed', receipt })).toEqual({ status: 'committed', receipt });
+    expect(operationLookupResultSchema.parse({
+      status: 'outcome-unknown',
+      operationId: 'operation-1',
+      operationBindingDigest: 'sha256:binding',
+    }).status).toBe('outcome-unknown');
+  });
+
+  it('stores bounded reviewer evidence instead of a digest-only audit stub', () => {
+    const evidence = {
+      kind: 'reviewer' as const,
+      provider: 'in-process',
+      providerVersion: 'rc.8',
+      authoritativeObjective: {
+        text: 'Raise the right hand',
+        attachmentContentDigests: ['sha256:image'],
+      },
+      renderManifest: {
+        rendererVersion: 'svg-v1',
+        beforeContentDigest: 'sha256:before',
+        afterContentDigest: 'sha256:after',
+        viewport: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+        width: 800,
+        height: 600,
+        overlays: ['selection', 'changed-nodes'],
+      },
+      outcome: 'satisfied' as const,
+      defects: [],
+      resolvedDefects: [{
+        defectId: 'defect-previous',
+        scopeDigest: 'sha256:scope',
+        evidenceDigests: ['sha256:resolution'],
+      }],
+    };
+
+    expect(reviewEvidenceSchema.parse(evidence)).toEqual(evidence);
+    expect(() => reviewEvidenceSchema.parse({ ...evidence, rawPrompt: 'unbounded prompt' })).toThrow();
   });
 });

@@ -1155,6 +1155,7 @@ window.__ModuleLoader__.load({
       previewContributions = [],
       emptyMessage = "还没有图纸"
     }) {
+      var _a2;
       const [objectsOpen, setObjectsOpen] = react.useState(true);
       const [inspectorOpen, setInspectorOpen] = react.useState(true);
       const status = useDrawingWorkspace((state) => state.status);
@@ -1164,6 +1165,7 @@ window.__ModuleLoader__.load({
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const busy = useDrawingWorkspace((state) => state.busy);
       const error = useDrawingWorkspace((state) => state.error);
+      const undoLast = useDrawingWorkspace((state) => state.undoLast);
       if (status === "idle" || status === "loading") {
         return /* @__PURE__ */ jsxRuntime.jsx("section", { className: "vai-workspace", "aria-label": "图纸工作区", "data-workspace-state": "loading", children: /* @__PURE__ */ jsxRuntime.jsx(WorkspaceState, { title: "正在读取本地图纸…" }) });
       }
@@ -1193,6 +1195,18 @@ window.__ModuleLoader__.load({
                 preview === null ? null : /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge vai-workspace__badge--preview", children: "候选 Preview" })
               ] }),
               /* @__PURE__ */ jsxRuntime.jsx(WorkspaceToolbar, {}),
+              /* @__PURE__ */ jsxRuntime.jsx(
+                "button",
+                {
+                  type: "button",
+                  disabled: busy || preview !== null || !((_a2 = snapshot.lastCommit) == null ? void 0 : _a2.undoable),
+                  title: preview !== null ? "先处理当前 Preview" : "撤销最近一次图纸提交",
+                  onClick: () => {
+                    void undoLast();
+                  },
+                  children: "撤销"
+                }
+              ),
               /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__panel-toggles", children: [
                 /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": objectsOpen, onClick: () => setObjectsOpen(!objectsOpen), children: "对象" }),
                 /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": inspectorOpen, onClick: () => setInspectorOpen(!inspectorOpen), children: "属性" })
@@ -1442,6 +1456,30 @@ window.__ModuleLoader__.load({
             const command = buildAnnotationTextMoveCommand(snapshot.document, id, position);
             return command === null ? false : get().commit({ commands: [command] });
           },
+          async undoLast() {
+            var _a2;
+            const snapshot = get().snapshot;
+            if (!((_a2 = snapshot == null ? void 0 : snapshot.lastCommit) == null ? void 0 : _a2.undoable) || !port.undoLast || disposed) return false;
+            set({ busy: true, error: null });
+            const controller = new AbortController();
+            requestController = controller;
+            try {
+              const result = await port.undoLast(snapshot, controller.signal);
+              if (controller.signal.aborted || disposed) return false;
+              if (result.status === "committed") {
+                await replaceSnapshot(result.snapshot, null);
+                return true;
+              }
+              set({ error: { code: "undo_failed", message: result.message } });
+              return false;
+            } catch (error) {
+              if (controller.signal.aborted || disposed) return false;
+              set({ error: { code: "undo_failed", message: errorMessage(error) } });
+              return false;
+            } finally {
+              if (!disposed) set({ busy: false });
+            }
+          },
           setViewport(viewport) {
             set({ viewport: { ...viewport } });
           },
@@ -1488,7 +1526,7 @@ window.__ModuleLoader__.load({
       return error instanceof Error ? error.message : String(error);
     }
     function createDshDrawingWorkspacePort(input) {
-      const { sessionId, remote, resolveImage } = input;
+      const { sessionId, remote, commands, resolveImage } = input;
       return {
         async load(signal) {
           signal == null ? void 0 : signal.throwIfAborted();
@@ -1497,10 +1535,47 @@ window.__ModuleLoader__.load({
           return unwrap(result);
         },
         async commit(request, signal) {
+          var _a2;
           signal == null ? void 0 : signal.throwIfAborted();
-          const result = await remote.commit(sessionId, request);
+          const staged = unwrap(await remote.stageInteractiveEdit(sessionId, request));
+          if (staged.status !== "staged") return staged;
+          let execution;
+          try {
+            execution = await commands.execute(sessionId, staged.commandLine, [], signal);
+          } catch {
+            execution = void 0;
+          }
+          if ((execution == null ? void 0 : execution.ok) === true && ((_a2 = execution.value) == null ? void 0 : _a2.result.kind) === "success") {
+            return committedSnapshot(remote, sessionId);
+          }
+          return reconcileInteractive(remote, sessionId, staged);
+        },
+        async undoLast(snapshot, signal) {
+          var _a2;
+          const last = snapshot.lastCommit;
+          if (!(last == null ? void 0 : last.undoable)) return { status: "rejected", code: "UNDO_UNAVAILABLE", message: "No undoable Drawing commit is current." };
           signal == null ? void 0 : signal.throwIfAborted();
-          return unwrap(result);
+          const staged = unwrap(await remote.stageUndo(sessionId, {
+            targetCommitId: last.commitId,
+            expectedCurrentRef: snapshot.ref
+          }));
+          if (staged.status !== "staged") return staged;
+          let execution;
+          try {
+            execution = await commands.execute(sessionId, staged.commandLine, [], signal);
+          } catch {
+            execution = void 0;
+          }
+          if ((execution == null ? void 0 : execution.ok) === true && ((_a2 = execution.value) == null ? void 0 : _a2.result.kind) === "success") {
+            return committedSnapshot(remote, sessionId);
+          }
+          const lookup = unwrap(await remote.getOperation(
+            sessionId,
+            staged.operationId,
+            staged.operationBindingDigest
+          ));
+          if (lookup.status === "committed") return committedSnapshot(remote, sessionId);
+          return { status: "rejected", code: "COMMIT_OUTCOME_UNKNOWN", message: "Undo outcome is uncertain; refresh the Drawing before retrying." };
         },
         async loadPreview(signal) {
           signal == null ? void 0 : signal.throwIfAborted();
@@ -1525,6 +1600,24 @@ window.__ModuleLoader__.load({
           } };
         }
       };
+    }
+    async function reconcileInteractive(remote, sessionId, staged) {
+      const lookup = unwrap(await remote.getOperation(sessionId, staged.operationId, staged.operationBindingDigest));
+      if (lookup.status === "committed" || lookup.status === "no-effect") return committedSnapshot(remote, sessionId);
+      if (lookup.status === "pending" || lookup.status === "outcome-unknown" || lookup.status === "recovering") return {
+        status: "rejected",
+        code: "COMMIT_OUTCOME_UNKNOWN",
+        message: "The local Drawing write outcome is still being reconciled. Refresh before retrying."
+      };
+      return {
+        status: "rejected",
+        code: lookup.status === "digest-mismatch" ? "IDEMPOTENCY_KEY_REUSED" : "INTERACTIVE_COMMAND_FAILED",
+        message: "The staged Drawing gesture was not committed."
+      };
+    }
+    async function committedSnapshot(remote, sessionId) {
+      const snapshot = unwrap(await remote.getSnapshot(sessionId));
+      return snapshot === null ? { status: "rejected", code: "DRAWING_REQUIRED", message: "The committed Drawing is unavailable." } : { status: "committed", snapshot };
     }
     function unwrap(result) {
       if (result.ok === true) return result.value;
@@ -6394,8 +6487,10 @@ window.__ModuleLoader__.load({
     function superRefine(fn, params) {
       return /* @__PURE__ */ _superRefine(fn, params);
     }
-    const idSchema$1 = string().trim().min(1).max(256);
-    const digestSchema = string().trim().min(1).max(512);
+    const protocolIdSchema = string().trim().min(1).max(256);
+    const contentDigestSchema = string().trim().min(1).max(512);
+    const idSchema$1 = protocolIdSchema;
+    const digestSchema = contentDigestSchema;
     const drawingRefSchema = object({
       drawingId: idSchema$1,
       revision: number().int().nonnegative()
@@ -6420,12 +6515,164 @@ window.__ModuleLoader__.load({
         candidateDigest: digestSchema
       }).strict()
     ]);
-    object({
+    const observationArtifactRefSchema = object({
       id: idSchema$1,
       contentDigest: digestSchema,
       mimeType: _enum(["image/png", "image/webp"]),
       basis: editBasisSchema
     }).strict();
+    const taskRefSchema = object({
+      taskId: idSchema$1,
+      rootUserMessageDigest: digestSchema,
+      authoritativeObjectiveDigest: digestSchema,
+      baseRef: drawingRefSchema,
+      policy: _enum(["review", "auto-safe"]),
+      stateEpoch: number().int().nonnegative()
+    }).strict();
+    object({
+      observationId: idSchema$1,
+      taskId: idSchema$1,
+      basis: editBasisSchema,
+      artifactRefs: array(observationArtifactRefSchema).max(16),
+      observationDigest: digestSchema
+    }).strict();
+    object({
+      contextId: idSchema$1,
+      taskId: idSchema$1,
+      observationId: idSchema$1,
+      contextDigest: digestSchema
+    }).strict();
+    object({
+      groundingId: idSchema$1,
+      taskId: idSchema$1,
+      contextId: idSchema$1,
+      targetHandle: idSchema$1,
+      targetScopeDigest: digestSchema,
+      protectedScopeDigest: digestSchema,
+      evidenceDigest: digestSchema
+    }).strict();
+    object({
+      previewHandle: idSchema$1,
+      taskId: idSchema$1,
+      groundingId: idSchema$1,
+      baseRef: drawingRefSchema,
+      candidateDigest: digestSchema,
+      effectDigest: digestSchema,
+      finalizeOperationId: idSchema$1,
+      finalizeOperationBindingDigest: digestSchema
+    }).strict();
+    object({
+      evaluationId: idSchema$1,
+      taskId: idSchema$1,
+      previewHandle: idSchema$1,
+      candidateDigest: digestSchema,
+      evaluationDigest: digestSchema
+    }).strict();
+    object({
+      selectionProjectionId: idSchema$1,
+      drawingRef: drawingRefSchema,
+      nodeIds: array(idSchema$1).max(256),
+      projectionDigest: digestSchema,
+      expiresAt: number().int().nonnegative()
+    }).strict();
+    const operationBase = {
+      operationId: protocolIdSchema,
+      sessionId: protocolIdSchema,
+      drawingId: protocolIdSchema
+    };
+    discriminatedUnion("mode", [
+      object({
+        ...operationBase,
+        mode: literal("semantic"),
+        candidateDigest: contentDigestSchema,
+        previewHandle: protocolIdSchema
+      }).strict(),
+      object({
+        ...operationBase,
+        mode: literal("interactive"),
+        intentId: protocolIdSchema,
+        intentDigest: contentDigestSchema,
+        effectDigest: contentDigestSchema
+      }).strict(),
+      object({
+        ...operationBase,
+        mode: literal("genesis"),
+        sourceDigest: contentDigestSchema
+      }).strict(),
+      object({
+        ...operationBase,
+        mode: literal("undo"),
+        targetCommitId: protocolIdSchema,
+        expectedCurrentRef: drawingRefSchema
+      }).strict()
+    ]);
+    const committedReceiptBase = {
+      operationId: protocolIdSchema,
+      operationBindingDigest: contentDigestSchema,
+      sessionId: protocolIdSchema,
+      drawingId: protocolIdSchema,
+      parentRef: drawingRefSchema,
+      resultingRef: drawingRefSchema,
+      commitId: protocolIdSchema,
+      semanticDigest: contentDigestSchema,
+      snapshotIntegrityDigest: contentDigestSchema
+    };
+    const committedOperationReceiptSchema = discriminatedUnion("mode", [
+      object({ ...committedReceiptBase, status: literal("committed"), mode: literal("semantic") }).strict(),
+      object({ ...committedReceiptBase, status: literal("committed"), mode: literal("interactive") }).strict(),
+      object({ ...committedReceiptBase, status: literal("committed"), mode: literal("undo"), targetCommitId: protocolIdSchema }).strict()
+    ]);
+    const durableOperationReceiptSchema = union([
+      committedOperationReceiptSchema,
+      object({
+        status: literal("initialized"),
+        mode: literal("genesis"),
+        operationId: protocolIdSchema,
+        operationBindingDigest: contentDigestSchema,
+        sessionId: protocolIdSchema,
+        drawingId: protocolIdSchema,
+        resultingRef: drawingRefSchema,
+        semanticDigest: contentDigestSchema,
+        snapshotIntegrityDigest: contentDigestSchema,
+        initialTask: taskRefSchema,
+        taskStatus: _enum(["active", "expired"])
+      }).strict(),
+      object({
+        status: literal("no-effect"),
+        mode: _enum(["semantic", "interactive"]),
+        operationId: protocolIdSchema,
+        operationBindingDigest: contentDigestSchema,
+        sessionId: protocolIdSchema,
+        drawingId: protocolIdSchema,
+        ref: drawingRefSchema,
+        semanticDigest: contentDigestSchema
+      }).strict()
+    ]);
+    const operationLookupResultSchema = discriminatedUnion("status", [
+      object({ status: literal("committed"), receipt: durableOperationReceiptSchema }).strict(),
+      object({ status: literal("no-effect"), receipt: durableOperationReceiptSchema }).strict(),
+      object({
+        status: literal("pending"),
+        operationId: protocolIdSchema,
+        operationBindingDigest: contentDigestSchema
+      }).strict(),
+      object({
+        status: literal("outcome-unknown"),
+        operationId: protocolIdSchema,
+        operationBindingDigest: contentDigestSchema
+      }).strict(),
+      object({
+        status: literal("recovering"),
+        operationId: protocolIdSchema,
+        operationBindingDigest: contentDigestSchema,
+        retryAfterMs: number().int().positive().max(6e4)
+      }).strict(),
+      object({ status: literal("absent") }).strict(),
+      object({
+        status: literal("digest-mismatch"),
+        operationId: protocolIdSchema
+      }).strict()
+    ]);
     const idSchema = string().min(1);
     const vec2Schema = tuple([number(), number()]);
     const qualitySchema = object({
@@ -6688,7 +6935,12 @@ window.__ModuleLoader__.load({
         annotations: boolean(),
         sourceUnderlay: boolean()
       }).strict(),
-      provisional: boolean().optional()
+      provisional: boolean().optional(),
+      lastCommit: object({
+        commitId: idSchema,
+        mode: _enum(["auto-safe", "confirmed", "interactive", "undo"]),
+        undoable: boolean()
+      }).strict().optional()
     }).strict().nullable();
     const nodeCreateCommandSchema = object({
       type: literal("node.create"),
@@ -6718,12 +6970,39 @@ window.__ModuleLoader__.load({
       expectedRevision: number().int().nonnegative(),
       commands: array(workspaceCommandSchema).min(1)
     }).strict();
-    const drawingWorkspaceCommitResultSchema = discriminatedUnion("status", [
+    discriminatedUnion("status", [
       object({ status: literal("committed"), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
       object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
       object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
     ]);
-    const drawingPreviewCreateRequestSchema = object({
+    const drawingInteractiveStageResultSchema = discriminatedUnion("status", [
+      object({
+        status: literal("staged"),
+        intentId: idSchema,
+        intentDigest: idSchema,
+        operationId: idSchema,
+        operationBindingDigest: idSchema,
+        commandLine: string().startsWith("/drawing-apply-intent ")
+      }).strict(),
+      object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+      object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+    ]);
+    const drawingUndoStageRequestSchema = object({
+      targetCommitId: idSchema,
+      expectedCurrentRef: drawingRefSchema
+    }).strict();
+    const drawingUndoStageResultSchema = discriminatedUnion("status", [
+      object({
+        status: literal("staged"),
+        targetCommitId: idSchema,
+        expectedCurrentRef: drawingRefSchema,
+        operationId: idSchema,
+        operationBindingDigest: idSchema,
+        commandLine: string().startsWith("/drawing-undo ")
+      }).strict(),
+      object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+    ]);
+    object({
       ref: drawingRefSchema,
       commands: array(workspaceCommandSchema).min(1),
       summary: string().min(1).optional()
@@ -6742,13 +7021,13 @@ window.__ModuleLoader__.load({
       createdAt: number(),
       summary: string().min(1).optional()
     }).strict();
-    const drawingPreviewCreateResultSchema = discriminatedUnion("status", [
+    discriminatedUnion("status", [
       object({ status: literal("previewed"), preview: drawingPreviewSchema }).strict(),
       object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
       object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
     ]);
-    const drawingPreviewControlRequestSchema = object({ handle: idSchema }).strict();
-    const drawingPreviewDiscardResultSchema = discriminatedUnion("status", [
+    object({ handle: idSchema }).strict();
+    discriminatedUnion("status", [
       object({ status: literal("discarded"), ref: drawingRefSchema }).strict(),
       object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
     ]);
@@ -6775,33 +7054,7 @@ window.__ModuleLoader__.load({
         invocation: { kind: "direct" },
         scope: { context: "agent", wire: "agentId" },
         parameters: [agentParameter],
-        result: {
-          mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null",
-          schema: drawingWorkspaceSnapshotSchema
-        }
-      }, {
-        id: "@vectorai/plugin-dsh-space-host#drawingSpace/commit",
-        service: "drawingSpace",
-        namespace: "drawingSpace",
-        method: "commit",
-        invocation: { kind: "direct" },
-        scope: { context: "agent", wire: "agentId" },
-        parameters: [agentParameter, {
-          name: "request",
-          wire: "request",
-          source: "json",
-          codec: {
-            mode: "strict",
-            typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest",
-            schema: drawingWorkspaceCommitRequestSchema
-          }
-        }],
-        result: {
-          mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
-          schema: drawingWorkspaceCommitResultSchema
-        }
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null", schema: drawingWorkspaceSnapshotSchema }
       }, {
         id: "@vectorai/plugin-dsh-space-host#drawingSpace/query",
         service: "drawingSpace",
@@ -6809,21 +7062,8 @@ window.__ModuleLoader__.load({
         method: "query",
         invocation: { kind: "direct" },
         scope: { context: "agent", wire: "agentId" },
-        parameters: [agentParameter, {
-          name: "request",
-          wire: "request",
-          source: "json",
-          codec: {
-            mode: "strict",
-            typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryRequest",
-            schema: drawingQueryRequestSchema
-          }
-        }],
-        result: {
-          mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult",
-          schema: drawingQueryResultSchema
-        }
+        parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingQueryRequest", drawingQueryRequestSchema)],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult", schema: drawingQueryResultSchema }
       }, {
         id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
         service: "drawingSpace",
@@ -6832,67 +7072,48 @@ window.__ModuleLoader__.load({
         invocation: { kind: "direct" },
         scope: { context: "agent", wire: "agentId" },
         parameters: [agentParameter],
-        result: {
-          mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null",
-          schema: drawingPreviewSchema.nullable()
-        }
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null", schema: drawingPreviewSchema.nullable() }
       }, {
-        id: "@vectorai/plugin-dsh-space-host#drawingSpace/createPreview",
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit",
         service: "drawingSpace",
         namespace: "drawingSpace",
-        method: "createPreview",
+        method: "stageInteractiveEdit",
         invocation: { kind: "direct" },
         scope: { context: "agent", wire: "agentId" },
-        parameters: [agentParameter, jsonRequest(
-          "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateRequest",
-          drawingPreviewCreateRequestSchema
-        )],
-        result: {
-          mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateResult",
-          schema: drawingPreviewCreateResultSchema
-        }
+        parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest", drawingWorkspaceCommitRequestSchema)],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingInteractiveStageResult", schema: drawingInteractiveStageResultSchema }
       }, {
-        id: "@vectorai/plugin-dsh-space-host#drawingSpace/commitPreview",
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageUndo",
         service: "drawingSpace",
         namespace: "drawingSpace",
-        method: "commitPreview",
+        method: "stageUndo",
         invocation: { kind: "direct" },
         scope: { context: "agent", wire: "agentId" },
-        parameters: [agentParameter, jsonRequest(
-          "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
-          drawingPreviewControlRequestSchema
-        )],
-        result: {
-          mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
-          schema: drawingWorkspaceCommitResultSchema
-        }
+        parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingUndoStageRequest", drawingUndoStageRequestSchema)],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingUndoStageResult", schema: drawingUndoStageResultSchema }
       }, {
-        id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardPreview",
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/getOperation",
         service: "drawingSpace",
         namespace: "drawingSpace",
-        method: "discardPreview",
+        method: "getOperation",
         invocation: { kind: "direct" },
         scope: { context: "agent", wire: "agentId" },
-        parameters: [agentParameter, jsonRequest(
-          "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
-          drawingPreviewControlRequestSchema
-        )],
-        result: {
-          mode: "strict",
-          typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewDiscardResult",
-          schema: drawingPreviewDiscardResultSchema
-        }
+        parameters: [agentParameter, stringParameter("operationId"), stringParameter("operationBindingDigest")],
+        result: { mode: "strict", typeSymbol: "@vectorai/drawing-edit-protocol#OperationLookupResult", schema: operationLookupResultSchema }
       }]
     };
     function jsonRequest(typeSymbol, schema) {
+      return { name: "request", wire: "request", source: "json", codec: { mode: "strict", typeSymbol, schema } };
+    }
+    function stringParameter(name) {
       return {
-        name: "request",
-        wire: "request",
+        name,
+        wire: name,
         source: "json",
-        codec: { mode: "strict", typeSymbol, schema }
+        codec: { mode: "strict", typeSymbol: "string", schema: { parse(input) {
+          if (typeof input !== "string" || input.length === 0) throw new Error("STRING_REQUIRED");
+          return input;
+        } } }
       };
     }
     const inject = ["slots", "remote", "conversation"];
@@ -6918,8 +7139,9 @@ window.__ModuleLoader__.load({
       const remote = ctx.get("remote");
       const slots = ctx.get("slots");
       const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
-      const viewFiber = ctx.inject(["remote.drawingSpace", "conversation"], (scope) => {
+      const viewFiber = ctx.inject(["remote.drawingSpace", "remote.commands", "conversation"], (scope) => {
         const drawingSpace = scope.get("remote").drawingSpace;
+        const commands = scope.get("remote").commands;
         const conversation = scope.get("conversation");
         return slots.inject("conversation.workspace", () => slots.register({
           name: "conversation.workspace",
@@ -6929,6 +7151,7 @@ window.__ModuleLoader__.load({
               workspacePort: createDshDrawingWorkspacePort({
                 sessionId: id,
                 remote: drawingSpace,
+                commands,
                 resolveImage: (ownerId, attachment) => conversation.resolveImage(ownerId, attachment)
               }),
               releaseSources: () => conversation.releaseSessionImages(id)

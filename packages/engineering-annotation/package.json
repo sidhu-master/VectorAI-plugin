@@ -1,0 +1,18 @@
+{
+  "name": "@vectorai/engineering-annotation",
+  "version": "0.1.0-alpha.0",
+  "description": "Deterministic engineering annotation layer built on VectorAI semantic editing contracts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": { ".": "./src/index.ts" },
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@vectorai/drawing-core": "workspace:*",
+    "@vectorai/drawing-edit-protocol": "workspace:*"
+  }
+}

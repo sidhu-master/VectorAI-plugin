@@ -9,6 +9,7 @@ import { build } from 'vite';
 const root = resolve(import.meta.dirname, '..');
 const hostDir = join(root, 'packages/plugin-dsh-space-host');
 const clientDir = join(root, 'packages/plugin-dsh-space-client');
+const annotationDir = join(root, 'packages/plugin-dsh-annotation');
 const deepseekExternal = (id) => id.startsWith('@deepseek-ai/') || id === '@deepseek-ai/cordis';
 
 await Promise.all([
@@ -25,6 +26,13 @@ await Promise.all([
     fileName: 'index.js',
     format: 'es',
     external: deepseekExternal,
+  }),
+  buildLibrary({
+    entry: join(annotationDir, 'src/index.ts'),
+    outDir: join(annotationDir, 'lib'),
+    fileName: 'index.js',
+    format: 'es',
+    external: (id) => deepseekExternal(id) || id.startsWith('node:'),
   }),
 ]);
 

@@ -5,3 +5,5 @@ export { InMemoryDrawingRepository } from './repository';
 export { FileDrawingRepositoryStorage } from './repository-storage';
 export type { ImageVectorizer } from './vectorizer';
 export { LocalCleanLineVectorizer } from './vectorizer';
+export { SemanticEditService } from './semantic-edit-service';
+export { InteractiveEditService } from './interactive-edit';

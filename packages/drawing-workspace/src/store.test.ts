@@ -56,6 +56,7 @@ class TestPort implements DrawingWorkspacePort {
   commits: DrawingWorkspaceCommitRequest[] = [];
   listeners = new Set<() => void>();
   loadSource?: DrawingWorkspacePort['loadSource'];
+  undoLast?: DrawingWorkspacePort['undoLast'];
 
   constructor(current: DrawingWorkspaceSnapshot | null) {
     this.current = current;
@@ -309,5 +310,27 @@ describe('createDrawingWorkspaceStore', () => {
 
     expect(store.getState().snapshot?.ref.revision).toBe(2);
     expect(port.listeners.size).toBe(1);
+  });
+
+  it('undoes the exact latest commit and adopts the compensating revision', async () => {
+    const current = snapshot(2);
+    current.lastCommit = { commitId: 'commit-1', mode: 'interactive', undoable: true };
+    const port = new TestPort(current);
+    port.undoLast = async (received) => ({
+      status: 'committed',
+      snapshot: {
+        ...structuredClone(received),
+        ref: { ...received.ref, revision: 3 },
+        lastCommit: { commitId: 'undo-1', mode: 'undo', undoable: false },
+      },
+    });
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+
+    await expect(store.getState().undoLast()).resolves.toBe(true);
+    expect(store.getState().snapshot?.ref.revision).toBe(3);
+    expect(store.getState().snapshot?.lastCommit).toEqual({
+      commitId: 'undo-1', mode: 'undo', undoable: false,
+    });
   });
 });

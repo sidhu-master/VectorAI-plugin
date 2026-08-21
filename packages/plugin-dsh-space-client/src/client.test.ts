@@ -7,7 +7,10 @@ import { apply } from './client';
 describe('client apply', () => {
   it('captures injected services before callbacks run outside the plugin fiber', async () => {
     const getSnapshot = vi.fn(async () => ({ ok: true as const, value: null }));
-    const commit = vi.fn();
+    const stageInteractiveEdit = vi.fn();
+    const stageUndo = vi.fn();
+    const getOperation = vi.fn();
+    const execute = vi.fn();
     const resolveImage = vi.fn();
     const releaseSessionImages = vi.fn();
     const disposeRemote = vi.fn();
@@ -21,7 +24,7 @@ describe('client apply', () => {
     } | undefined;
 
     let pluginActive = true;
-    const drawingSpace = { getSnapshot, commit };
+    const drawingSpace = { getSnapshot, stageInteractiveEdit, stageUndo, getOperation };
     const conversation = { resolveImage, releaseSessionImages };
     const remote = {
       $mount: vi.fn(async () => disposeRemote),
@@ -30,6 +33,10 @@ describe('client apply', () => {
           throw new Error('remote namespace accessed outside inject');
         }
         return drawingSpace;
+      },
+      get commands() {
+        if (!pluginActive) throw new Error('remote namespace accessed outside inject');
+        return { execute };
       },
     };
     const slots = {
@@ -47,7 +54,7 @@ describe('client apply', () => {
         throw new Error(`unexpected service ${name}`);
       },
       inject(deps: string[], callback: (scope: Context) => unknown) {
-        expect(deps).toEqual(['remote.drawingSpace', 'conversation']);
+        expect(deps).toEqual(['remote.drawingSpace', 'remote.commands', 'conversation']);
         callback(ctx);
         return { dispose: disposeViewFiber };
       },

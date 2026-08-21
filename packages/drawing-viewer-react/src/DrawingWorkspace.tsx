@@ -49,6 +49,7 @@ export function DrawingWorkspace({
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const busy = useDrawingWorkspace((state) => state.busy);
   const error = useDrawingWorkspace((state) => state.error);
+  const undoLast = useDrawingWorkspace((state) => state.undoLast);
 
   if (status === 'idle' || status === 'loading') {
     return (
@@ -90,6 +91,12 @@ export function DrawingWorkspace({
           {preview === null ? null : <span className="vai-workspace__badge vai-workspace__badge--preview">候选 Preview</span>}
         </div>
         <WorkspaceToolbar />
+        <button
+          type="button"
+          disabled={busy || preview !== null || !snapshot.lastCommit?.undoable}
+          title={preview !== null ? '先处理当前 Preview' : '撤销最近一次图纸提交'}
+          onClick={() => { void undoLast(); }}
+        >撤销</button>
         <div className="vai-workspace__panel-toggles">
           <button type="button" aria-pressed={objectsOpen} onClick={() => setObjectsOpen(!objectsOpen)}>对象</button>
           <button type="button" aria-pressed={inspectorOpen} onClick={() => setInspectorOpen(!inspectorOpen)}>属性</button>

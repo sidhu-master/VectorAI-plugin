@@ -47,14 +47,14 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _pending, _drawings, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, _directory, _FileDrawingRepositoryStorage_instances, path_fn, _process, _timeoutMs, _pending2, _closed, _stderr, _PythonVectorizationProvider_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs2, _discardPreview_dec, _commitPreview_dec, _createPreview_dec, _getPreview_dec, _query_dec, _commit_dec, _getSnapshot_dec, _a2, _init;
+var _pending, _drawings, _durable, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _SemanticEditService_instances, commitPreview_fn, assess_fn, task_fn, preview_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _query_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { isDeepStrictEqual } from "node:util";
-import { randomUUID, createHash } from "node:crypto";
-import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, unlinkSync, writeFileSync, openSync, fsyncSync, closeSync, renameSync } from "node:fs";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { access } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -66,9 +66,10 @@ const INSTRUCTION = [
   "Do not claim that the drawing was inspected until drawing_import succeeds."
 ].join(" ");
 function findLatestImage(messages) {
-  var _a3;
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
-    const content = ((_a3 = messages[messageIndex]) == null ? void 0 : _a3.content) ?? [];
+    const message = messages[messageIndex];
+    if ((message == null ? void 0 : message.source.kind) !== "user") continue;
+    const content = message.content;
     for (let blockIndex = content.length - 1; blockIndex >= 0; blockIndex -= 1) {
       const block = content[blockIndex];
       if ((block == null ? void 0 : block.type) === "image") return structuredClone(block.attachment);
@@ -76,10 +77,26 @@ function findLatestImage(messages) {
   }
   return null;
 }
-function createPreStepIntake(repository) {
+function createPreStepIntake(repository, semantic) {
   return async (payload, next) => {
     const decision = await next();
     if (decision.kind === "reject" || payload.signal.aborted) return decision;
+    const directUser = [...decision.messages].reverse().find((message) => message.source.kind === "user");
+    if (directUser && semantic) {
+      const objective = directUser.content.filter((block) => block.type === "text").map(({ text }) => text).join("\n").trim();
+      if (objective) semantic.bindUserInstruction(String(payload.agent.id), {
+        objective,
+        rootUserMessageDigest: `sha256:${createHash("sha256").update(JSON.stringify({
+          id: String(directUser.id),
+          objective,
+          images: directUser.content.filter((block) => block.type === "image").map((block) => ({
+            attachmentId: String(block.attachment.attachmentId),
+            mediaType: block.attachment.mediaType,
+            bytes: block.attachment.bytes
+          }))
+        })).digest("hex")}`
+      });
+    }
     const attachment = findLatestImage(decision.messages);
     if (attachment === null) return decision;
     repository.bindPending(String(payload.agent.id), attachment);
@@ -94,6 +111,409 @@ function createPreStepIntake(repository) {
     });
     return { kind: "enter", messages: [...decision.messages, context] };
   };
+}
+function canonicalString(value) {
+  return JSON.stringify(normalize(value));
+}
+function canonicalSemanticString(document) {
+  const semantic = Object.fromEntries(
+    Object.entries(document).filter(([key]) => key !== "metadata")
+  );
+  return canonicalString(semantic);
+}
+function normalize(value) {
+  if (Array.isArray(value)) return value.map(normalize);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== void 0).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, normalize(item)]));
+  }
+  if (typeof value === "number" && Object.is(value, -0)) return 0;
+  return value;
+}
+function applyDrawingTransaction(source, commands, now) {
+  const document = structuredClone(source);
+  for (const command of commands) applyCommand$1(document, command);
+  validateDocument$1(document);
+  document.metadata.updatedAt = now;
+  return document;
+}
+function findDrawingNode(document, id) {
+  for (const plane of ["geometry", "annotation", "relation", "feature"]) {
+    const collection = collectionFor(document, plane);
+    const node = collection.find((candidate) => candidate.id === id);
+    if (node) return { plane, node };
+  }
+  return null;
+}
+function applyCommand$1(document, command) {
+  if (command.type === "node.create") {
+    if (findDrawingNode(document, command.node.id)) throw new Error("EDIT_NODE_ALREADY_EXISTS");
+    const collection = collectionFor(document, command.plane);
+    collection.push(structuredClone(command.node));
+    return;
+  }
+  const located = findDrawingNode(document, command.id);
+  if (!located) throw new Error("EDIT_NODE_NOT_FOUND");
+  if (command.type === "node.delete") {
+    const collection = collectionFor(document, located.plane);
+    const index = collection.findIndex(({ id }) => id === command.id);
+    collection.splice(index, 1);
+    removeReferences(document, command.id);
+    return;
+  }
+  if (command.type === "annotation.move-text") {
+    if (located.plane !== "annotation") throw new Error("EDIT_NODE_TYPE_MISMATCH");
+    const node2 = located.node;
+    const key = node2.type === "text" ? "position" : "textPosition";
+    assertExpected(node2[key], command.expectedPosition);
+    node2[key] = structuredClone(command.position);
+    return;
+  }
+  const node = located.node;
+  for (const [key, expected] of Object.entries(command.expected)) assertExpected(node[key], expected);
+  for (const [key, value] of Object.entries(command.changes)) node[key] = structuredClone(value);
+}
+function collectionFor(document, plane) {
+  if (plane === "geometry") return document.geometry;
+  if (plane === "annotation") return document.annotations;
+  if (plane === "relation") return document.relations;
+  return document.features;
+}
+function removeReferences(document, id) {
+  document.relations = document.relations.filter((relation) => {
+    if (relation.type === "topology") return !relation.nodeIds.includes(id);
+    if (relation.type === "constraint") return !relation.geometryIds.includes(id);
+    if (relation.type === "association") {
+      return relation.annotationId !== id && !relation.geometryIds.includes(id);
+    }
+    return relation.featureId !== id && !relation.nodeIds.includes(id);
+  });
+  document.features = document.features.filter((feature) => feature.id !== id).map((feature) => ({
+    ...feature,
+    geometryIds: feature.geometryIds.filter((nodeId) => nodeId !== id),
+    annotationIds: feature.annotationIds.filter((nodeId) => nodeId !== id),
+    relationIds: feature.relationIds.filter((nodeId) => nodeId !== id)
+  }));
+}
+function validateDocument$1(document) {
+  const ids = [
+    ...document.geometry.map(({ id }) => id),
+    ...document.annotations.map(({ id }) => id),
+    ...document.relations.map(({ id }) => id),
+    ...document.features.map(({ id }) => id)
+  ].map(String);
+  if (new Set(ids).size !== ids.length) throw new Error("EDIT_DUPLICATE_NODE_ID");
+  const geometry = new Set(document.geometry.map(({ id }) => id));
+  const annotation = new Set(document.annotations.map(({ id }) => id));
+  const feature = new Set(document.features.map(({ id }) => id));
+  for (const relation of document.relations) {
+    const valid = relation.type === "topology" ? relation.nodeIds.every((id) => ids.includes(String(id))) : relation.type === "constraint" ? relation.geometryIds.every((id) => geometry.has(id)) : relation.type === "association" ? annotation.has(relation.annotationId) && relation.geometryIds.every((id) => geometry.has(id)) : feature.has(relation.featureId) && relation.nodeIds.every((id) => ids.includes(String(id)));
+    if (!valid) throw new Error("EDIT_DANGLING_REFERENCE");
+  }
+}
+function assertExpected(actual, expected) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("EDIT_PRECONDITION_FAILED");
+}
+function invertDrawingTransaction(document, forward) {
+  let working = structuredClone(document);
+  const inverses = [];
+  for (const command of forward) {
+    inverses.push(inverseFor(working, command));
+    working = applyDrawingTransaction(working, [command], working.metadata.updatedAt);
+  }
+  return inverses.reverse().flat();
+}
+function inverseFor(document, command) {
+  if (command.type === "node.create") return [{ type: "node.delete", id: command.node.id }];
+  const located = findDrawingNode(document, command.id);
+  if (!located) throw new Error("EDIT_NODE_NOT_FOUND");
+  if (command.type === "node.delete") {
+    return [{
+      type: "node.create",
+      plane: located.plane,
+      node: structuredClone(located.node)
+    }];
+  }
+  if (command.type === "annotation.move-text") {
+    return [{
+      type: "annotation.move-text",
+      id: command.id,
+      position: structuredClone(command.expectedPosition),
+      expectedPosition: structuredClone(command.position)
+    }];
+  }
+  const node = located.node;
+  return [{
+    type: "node.update",
+    id: command.id,
+    changes: Object.fromEntries(Object.keys(command.changes).map((key) => [key, structuredClone(node[key])])),
+    expected: structuredClone(command.changes)
+  }];
+}
+function compileSpatialEditProgram(input) {
+  if (input.program.baseRef.drawingId !== input.document.id) throw new Error("EDIT_DRAWING_MISMATCH");
+  if (input.program.targetHandle !== input.grounding.targetHandle) throw new Error("EDIT_GROUNDING_MISMATCH");
+  const initial = structuredClone(input.document);
+  let working = structuredClone(input.document);
+  const forward = [];
+  for (const operation of input.program.operations) {
+    const commands = compileOperation(working, operation, input.grounding, input.ports);
+    if (commands.length > 0) {
+      working = applyDrawingTransaction(working, commands, input.ports.now());
+      forward.push(...commands);
+    }
+  }
+  if (canonicalSemanticString(initial) === canonicalSemanticString(working)) throw new Error("EDIT_NO_EFFECT");
+  assertPreserved(initial, working, input.program.preserveScopes);
+  const diagnostics = evaluateProgram(working, input.program, input.grounding);
+  const inverse = invertDrawingTransaction(initial, forward);
+  const restored = applyDrawingTransaction(working, inverse, input.ports.now());
+  if (canonicalSemanticString(restored) !== canonicalSemanticString(initial)) {
+    throw new Error("EDIT_INVERSE_VERIFICATION_FAILED");
+  }
+  const actualEffect = diffDocuments$1(initial, working);
+  const effectProjection = {
+    createdNodeIds: actualEffect.createdNodeIds,
+    updatedNodeIds: actualEffect.updatedNodeIds,
+    deletedNodeIds: actualEffect.deletedNodeIds,
+    changedFields: actualEffect.changedFields
+  };
+  const effectDigest = input.ports.digest(canonicalString(effectProjection));
+  const candidateDigest = input.ports.digest(canonicalString({
+    baseRef: input.program.baseRef,
+    resultingSemanticDocument: JSON.parse(canonicalSemanticString(working)),
+    effectDigest,
+    forward,
+    inverse,
+    targetScope: [...input.grounding.targetNodeIds].sort(),
+    interfaceScopes: [...input.grounding.interfaces].map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })).sort((left, right) => left.interfaceId.localeCompare(right.interfaceId))
+  }));
+  const semanticRiskKey = input.ports.digest(canonicalString({
+    baseRef: input.program.baseRef,
+    resultingSemanticDigest: input.ports.digest(canonicalSemanticString(working)),
+    effectDigest,
+    authoritativeObjective: input.program.objective
+  }));
+  return { forward, inverse, candidate: working, actualEffect, diagnostics, candidateDigest, effectDigest, semanticRiskKey };
+}
+function compileOperation(document, operation, grounding, ports) {
+  if (operation.kind === "rigid_transform") {
+    const transform2 = normalizedTransform(operation);
+    return grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform2));
+  }
+  if (operation.kind === "connected_transform") {
+    const transform2 = normalizedTransform(operation);
+    const allowed = new Set(operation.interfaceIds);
+    const commands = grounding.targetNodeIds.map((id) => transformNodeCommand(document, id, transform2));
+    for (const port of grounding.interfaces) {
+      if (!allowed.has(port.interfaceId)) throw new Error("EDIT_INTERFACE_SCOPE_MISMATCH");
+      if (!port.endpoint) throw new Error("EDIT_INTERFACE_ENDPOINT_REQUIRED");
+      const located = findDrawingNode(document, port.nodeId);
+      if (!located || located.plane !== "geometry" || located.node.type !== "line") {
+        throw new Error("EDIT_INTERFACE_UNRESOLVED");
+      }
+      const point = located.node[port.endpoint];
+      commands.push({
+        type: "node.update",
+        id: port.nodeId,
+        changes: { [port.endpoint]: transformPoint(point, transform2) },
+        expected: { [port.endpoint]: structuredClone(point) }
+      });
+    }
+    return dedupeUpdates(commands);
+  }
+  if (operation.kind === "set_endpoint") {
+    const located = findDrawingNode(document, operation.nodeId);
+    if (!located || located.plane !== "geometry" || located.node.type !== "line") {
+      throw new Error("EDIT_ENDPOINT_UNRESOLVED");
+    }
+    return [{
+      type: "node.update",
+      id: operation.nodeId,
+      changes: { [operation.endpoint]: structuredClone(operation.point) },
+      expected: { [operation.endpoint]: structuredClone(located.node[operation.endpoint]) }
+    }];
+  }
+  if (operation.kind === "create_path") {
+    const id = operation.nodeId || inputId(ports, "geometry");
+    return [{
+      type: "node.create",
+      plane: "geometry",
+      node: {
+        id,
+        type: "polyline",
+        vertices: operation.points.map((point) => ({ point: structuredClone(point) })),
+        closed: operation.closed,
+        visible: true,
+        quality: { status: grounding.sourceStatus === "confirmed" ? "confirmed" : "candidate", evidenceRefs: [] }
+      }
+    }];
+  }
+  if (operation.kind === "create_annotation_batch") {
+    return [
+      ...operation.annotations.map((node) => ({
+        type: "node.create",
+        plane: "annotation",
+        node: structuredClone(node)
+      })),
+      ...operation.associations.map((node) => ({
+        type: "node.create",
+        plane: "relation",
+        node: structuredClone(node)
+      }))
+    ];
+  }
+  return operation.nodeIds.map((id) => {
+    if (!findDrawingNode(document, id)) throw new Error("EDIT_NODE_NOT_FOUND");
+    return { type: "node.delete", id };
+  });
+}
+function normalizedTransform(input) {
+  const translation = [Number(input.translation[0]), Number(input.translation[1])];
+  const pivot = [Number(input.pivot[0]), Number(input.pivot[1])];
+  if (![...translation, ...pivot, input.rotationRadians].every(Number.isFinite)) {
+    throw new Error("EDIT_TRANSFORM_INVALID");
+  }
+  return { translation, rotationRadians: input.rotationRadians, pivot };
+}
+function inputId(ports, kind) {
+  const id = ports.id(kind);
+  if (!id) throw new Error("EDIT_ID_UNAVAILABLE");
+  return id;
+}
+function transformNodeCommand(document, id, transform2) {
+  const located = findDrawingNode(document, id);
+  if (!located) throw new Error("EDIT_TARGET_UNRESOLVED");
+  const before = located.node;
+  const changes = located.plane === "geometry" ? transformedGeometryFields(before, transform2) : located.plane === "annotation" ? transformedAnnotationFields(before, transform2) : null;
+  if (!changes) throw new Error("EDIT_TARGET_NOT_TRANSFORMABLE");
+  return {
+    type: "node.update",
+    id,
+    changes: changes.after,
+    expected: changes.before
+  };
+}
+function transformedGeometryFields(node, transform2) {
+  if (node.type === "point") return pair({ x: node.x, y: node.y }, (() => {
+    const [x, y] = transformPoint([node.x, node.y], transform2);
+    return { x, y };
+  })());
+  if (node.type === "line") return pair({ start: node.start, end: node.end }, { start: transformPoint(node.start, transform2), end: transformPoint(node.end, transform2) });
+  if (node.type === "ray" || node.type === "xline") return pair({ origin: node.origin, direction: node.direction }, { origin: transformPoint(node.origin, transform2), direction: rotate(node.direction, transform2.rotationRadians) });
+  if (node.type === "circle") return pair({ center: node.center }, { center: transformPoint(node.center, transform2) });
+  if (node.type === "arc") return pair(
+    { center: node.center, startAngle: node.startAngle, endAngle: node.endAngle },
+    { center: transformPoint(node.center, transform2), startAngle: node.startAngle + degrees(transform2.rotationRadians), endAngle: node.endAngle + degrees(transform2.rotationRadians) }
+  );
+  if (node.type === "ellipse") return pair({ center: node.center, majorAxis: node.majorAxis }, { center: transformPoint(node.center, transform2), majorAxis: rotate(node.majorAxis, transform2.rotationRadians) });
+  if (node.type === "polyline") return pair({ vertices: node.vertices }, { vertices: node.vertices.map((vertex) => ({ ...vertex, point: transformPoint(vertex.point, transform2) })) });
+  return pair({ controlPoints: node.controlPoints }, { controlPoints: node.controlPoints.map((point) => transformPoint(point, transform2)) });
+}
+function transformedAnnotationFields(node, transform2) {
+  if (node.type === "text") return pair({ position: node.position, rotation: node.rotation }, { position: transformPoint(node.position, transform2), rotation: node.rotation + transform2.rotationRadians });
+  if (node.type === "dimension") return pair({ textPosition: node.textPosition, definitionPoints: node.definitionPoints }, { textPosition: transformPoint(node.textPosition, transform2), definitionPoints: node.definitionPoints.map((point) => transformPoint(point, transform2)) });
+  if (node.type === "leader") return pair({ points: node.points }, { points: node.points.map((point) => transformPoint(point, transform2)) });
+  if (node.type === "centerline") return pair({ start: node.start, end: node.end }, { start: transformPoint(node.start, transform2), end: transformPoint(node.end, transform2) });
+  return pair({ segments: node.segments }, { segments: node.segments.map((segment) => ({ start: transformPoint(segment.start, transform2), end: transformPoint(segment.end, transform2) })) });
+}
+function pair(before, after) {
+  return { before: structuredClone(before), after };
+}
+function transformPoint(point, transform2) {
+  const relative = [point[0] - transform2.pivot[0], point[1] - transform2.pivot[1]];
+  const rotated = rotate(relative, transform2.rotationRadians);
+  return cleanPoint([
+    rotated[0] + transform2.pivot[0] + transform2.translation[0],
+    rotated[1] + transform2.pivot[1] + transform2.translation[1]
+  ]);
+}
+function rotate(vector, radians) {
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  return cleanPoint([vector[0] * cosine - vector[1] * sine, vector[0] * sine + vector[1] * cosine]);
+}
+function cleanPoint(point) {
+  return [clean(point[0]), clean(point[1])];
+}
+function clean(value) {
+  const result = Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
+  return Object.is(result, -0) ? 0 : result;
+}
+function degrees(radians) {
+  return radians * 180 / Math.PI;
+}
+function dedupeUpdates(commands) {
+  const seen = /* @__PURE__ */ new Set();
+  return commands.filter((command) => {
+    const id = "id" in command ? command.id : command.node.id;
+    if (seen.has(id)) throw new Error("EDIT_OVERLAPPING_TRANSFORM_SCOPE");
+    seen.add(id);
+    return true;
+  });
+}
+function assertPreserved(before, after, scopes) {
+  var _a3, _b;
+  for (const scope of scopes) {
+    if (scope.kind !== "node-field") continue;
+    const beforeNode = (_a3 = findDrawingNode(before, scope.nodeId)) == null ? void 0 : _a3.node;
+    const afterNode = (_b = findDrawingNode(after, scope.nodeId)) == null ? void 0 : _b.node;
+    if (!beforeNode || !afterNode) throw new Error("EDIT_PRESERVE_SCOPE_CHANGED");
+    for (const field of scope.fields) {
+      if (canonicalString(beforeNode[field]) !== canonicalString(afterNode[field])) {
+        throw new Error("EDIT_PRESERVE_SCOPE_CHANGED");
+      }
+    }
+  }
+}
+function evaluateProgram(document, program, grounding) {
+  const diagnostics = [];
+  if (grounding.sourceStatus !== "confirmed") diagnostics.push({
+    code: grounding.sourceStatus === "provisional" ? "SOURCE_PROVISIONAL" : "SOURCE_CANDIDATE",
+    severity: "warning",
+    message: "The edit target is not backed by confirmed source geometry."
+  });
+  for (const postcondition of program.postconditions) {
+    if (postcondition.kind !== "within_bounds") continue;
+    const outside = document.geometry.some((node) => nodePoints(node).some(([x, y]) => x < postcondition.bounds.minX || x > postcondition.bounds.maxX || y < postcondition.bounds.minY || y > postcondition.bounds.maxY));
+    if (outside) diagnostics.push({
+      code: "POSTCONDITION_OUT_OF_BOUNDS",
+      severity: "error",
+      hard: true,
+      message: "Edited geometry exceeds the declared drawing bounds."
+    });
+  }
+  return diagnostics;
+}
+function nodePoints(node) {
+  if (node.type === "point") return [[node.x, node.y]];
+  if (node.type === "line") return [node.start, node.end];
+  if (node.type === "ray" || node.type === "xline") return [node.origin];
+  if (node.type === "circle" || node.type === "arc" || node.type === "ellipse") return [node.center];
+  if (node.type === "polyline") return node.vertices.map(({ point }) => point);
+  return node.controlPoints;
+}
+function diffDocuments$1(before, after) {
+  const beforeNodes = allNodes$2(before);
+  const afterNodes = allNodes$2(after);
+  const createdNodeIds = [...afterNodes.keys()].filter((id) => !beforeNodes.has(id)).sort();
+  const deletedNodeIds = [...beforeNodes.keys()].filter((id) => !afterNodes.has(id)).sort();
+  const changedFields = {};
+  const updatedNodeIds = [...beforeNodes.keys()].filter((id) => {
+    const next = afterNodes.get(id);
+    if (!next || canonicalString(beforeNodes.get(id)) === canonicalString(next)) return false;
+    const previous = beforeNodes.get(id);
+    changedFields[id] = [.../* @__PURE__ */ new Set([...Object.keys(previous), ...Object.keys(next)])].filter((key) => canonicalString(previous[key]) !== canonicalString(next[key])).sort();
+    return true;
+  }).sort();
+  return { createdNodeIds, updatedNodeIds, deletedNodeIds, changedFields };
+}
+function allNodes$2(document) {
+  return new Map([
+    ...document.geometry,
+    ...document.annotations,
+    ...document.relations,
+    ...document.features
+  ].map((node) => [node.id, node]));
 }
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
@@ -237,13 +657,13 @@ function boundsOfNode(node) {
       return fromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
   }
 }
-function fromPoints(points2) {
-  if (points2.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+function fromPoints(points) {
+  if (points.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   return {
-    minX: Math.min(...points2.map(([x]) => x)),
-    minY: Math.min(...points2.map(([, y]) => y)),
-    maxX: Math.max(...points2.map(([x]) => x)),
-    maxY: Math.max(...points2.map(([, y]) => y))
+    minX: Math.min(...points.map(([x]) => x)),
+    minY: Math.min(...points.map(([, y]) => y)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    maxY: Math.max(...points.map(([, y]) => y))
   };
 }
 function radiusBounds([x, y], radius) {
@@ -260,12 +680,12 @@ function arcBounds(center, radius, startAngle, endAngle, counterClockwise) {
   }));
 }
 function angleOnArc(angle, start, end, counterClockwise) {
-  const normalize = (value) => (value % 360 + 360) % 360;
-  const a = normalize(angle);
-  const s = normalize(start);
-  const e = normalize(end);
-  if (counterClockwise) return normalize(a - s) <= normalize(e - s);
-  return normalize(s - a) <= normalize(s - e);
+  const normalize2 = (value) => (value % 360 + 360) % 360;
+  const a = normalize2(angle);
+  const s = normalize2(start);
+  const e = normalize2(end);
+  if (counterClockwise) return normalize2(a - s) <= normalize2(e - s);
+  return normalize2(s - a) <= normalize2(s - e);
 }
 function expandPoint([x, y], width, height) {
   return { minX: x - width, minY: y - height, maxX: x + width, maxY: y + height };
@@ -5157,10 +5577,12 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
-const idSchema$2 = string().trim().min(1).max(256);
-const digestSchema$1 = string().trim().min(1).max(512);
+const protocolIdSchema = string().trim().min(1).max(256);
+const contentDigestSchema = string().trim().min(1).max(512);
+const idSchema$3 = protocolIdSchema;
+const digestSchema$1 = contentDigestSchema;
 const drawingRefSchema$1 = object({
-  drawingId: idSchema$2,
+  drawingId: idSchema$3,
   revision: number().int().nonnegative()
 }).strict();
 const editBasisSchema = discriminatedUnion("kind", [
@@ -5171,46 +5593,100 @@ const editBasisSchema = discriminatedUnion("kind", [
   object({
     kind: literal("preview"),
     baseRef: drawingRefSchema$1,
-    previewHandle: idSchema$2,
+    previewHandle: idSchema$3,
     previewDigest: digestSchema$1
   }).strict(),
   object({
     kind: literal("carried-candidate"),
-    handoffId: idSchema$2,
-    taskId: idSchema$2,
-    originTaskId: idSchema$2,
+    handoffId: idSchema$3,
+    taskId: idSchema$3,
+    originTaskId: idSchema$3,
     baseRef: drawingRefSchema$1,
     candidateDigest: digestSchema$1
   }).strict()
 ]);
-object({
-  id: idSchema$2,
+const observationArtifactRefSchema = object({
+  id: idSchema$3,
   contentDigest: digestSchema$1,
   mimeType: _enum(["image/png", "image/webp"]),
   basis: editBasisSchema
 }).strict();
-const idSchema$1 = string().trim().min(1).max(256);
+object({
+  taskId: idSchema$3,
+  rootUserMessageDigest: digestSchema$1,
+  authoritativeObjectiveDigest: digestSchema$1,
+  baseRef: drawingRefSchema$1,
+  policy: _enum(["review", "auto-safe"]),
+  stateEpoch: number().int().nonnegative()
+}).strict();
+object({
+  observationId: idSchema$3,
+  taskId: idSchema$3,
+  basis: editBasisSchema,
+  artifactRefs: array(observationArtifactRefSchema).max(16),
+  observationDigest: digestSchema$1
+}).strict();
+object({
+  contextId: idSchema$3,
+  taskId: idSchema$3,
+  observationId: idSchema$3,
+  contextDigest: digestSchema$1
+}).strict();
+object({
+  groundingId: idSchema$3,
+  taskId: idSchema$3,
+  contextId: idSchema$3,
+  targetHandle: idSchema$3,
+  targetScopeDigest: digestSchema$1,
+  protectedScopeDigest: digestSchema$1,
+  evidenceDigest: digestSchema$1
+}).strict();
+object({
+  previewHandle: idSchema$3,
+  taskId: idSchema$3,
+  groundingId: idSchema$3,
+  baseRef: drawingRefSchema$1,
+  candidateDigest: digestSchema$1,
+  effectDigest: digestSchema$1,
+  finalizeOperationId: idSchema$3,
+  finalizeOperationBindingDigest: digestSchema$1
+}).strict();
+object({
+  evaluationId: idSchema$3,
+  taskId: idSchema$3,
+  previewHandle: idSchema$3,
+  candidateDigest: digestSchema$1,
+  evaluationDigest: digestSchema$1
+}).strict();
+object({
+  selectionProjectionId: idSchema$3,
+  drawingRef: drawingRefSchema$1,
+  nodeIds: array(idSchema$3).max(256),
+  projectionDigest: digestSchema$1,
+  expiresAt: number().int().nonnegative()
+}).strict();
+const idSchema$2 = string().trim().min(1).max(256);
 const digestSchema = string().trim().min(1).max(512);
 const finalizePreviewRequestSchema = object({
-  previewHandle: idSchema$1,
+  previewHandle: idSchema$2,
   previewDigest: digestSchema,
-  finalizeOperationId: idSchema$1,
+  finalizeOperationId: idSchema$2,
   finalizeOperationBindingDigest: digestSchema,
-  evaluationId: idSchema$1
+  evaluationId: idSchema$2
 }).strict();
 const finalizePreviewResultSchema = discriminatedUnion("status", [
   object({
     status: literal("committed"),
     mode: _enum(["auto-safe", "confirmed"]),
-    commitId: idSchema$1,
+    commitId: idSchema$2,
     ref: drawingRefSchema$1,
-    operationId: idSchema$1,
+    operationId: idSchema$2,
     operationBindingDigest: digestSchema
   }).strict(),
   object({
     status: literal("already-satisfied"),
     ref: drawingRefSchema$1,
-    operationId: idSchema$1,
+    operationId: idSchema$2,
     operationBindingDigest: digestSchema
   }).strict(),
   object({
@@ -5219,7 +5695,7 @@ const finalizePreviewResultSchema = discriminatedUnion("status", [
   }).strict(),
   object({
     status: literal("needs-revision"),
-    evaluationId: idSchema$1,
+    evaluationId: idSchema$2,
     reasons: array(string().trim().min(1).max(1e3)).min(1).max(64)
   }).strict(),
   object({
@@ -5229,15 +5705,128 @@ const finalizePreviewResultSchema = discriminatedUnion("status", [
   object({
     status: literal("rejected"),
     disposition: _enum(["blocked", "confirmation_required"]),
-    code: idSchema$1,
+    code: idSchema$2,
     message: string().trim().min(1).max(2e3)
   }).strict(),
   object({
     status: literal("outcome-unknown"),
-    operationId: idSchema$1,
+    operationId: idSchema$2,
     operationBindingDigest: digestSchema
   }).strict()
 ]);
+const idSchema$1 = string().trim().min(1).max(256);
+const boundedTextSchema = string().trim().min(1).max(2e3);
+const finiteSchema = number().finite();
+const vec2Schema$1 = tuple([finiteSchema, finiteSchema]);
+const boundsSchema = object({
+  minX: finiteSchema,
+  minY: finiteSchema,
+  maxX: finiteSchema,
+  maxY: finiteSchema
+}).strict().refine(
+  ({ minX, minY, maxX, maxY }) => minX <= maxX && minY <= maxY,
+  { message: "INVALID_BOUNDS" }
+);
+const effectScopeRefSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("node-field"),
+    nodeId: idSchema$1,
+    fields: array(idSchema$1).min(1).max(64)
+  }).strict(),
+  object({
+    kind: literal("source-span"),
+    nodeId: idSchema$1,
+    start: number().int().nonnegative(),
+    end: number().int().positive()
+  }).strict().refine(({ start, end }) => start < end, { message: "INVALID_SOURCE_SPAN" }),
+  object({
+    kind: literal("half-edge"),
+    nodeId: idSchema$1,
+    halfEdgeId: idSchema$1
+  }).strict(),
+  object({
+    kind: literal("interface"),
+    interfaceId: idSchema$1
+  }).strict(),
+  object({
+    kind: literal("endpoint-slot"),
+    nodeId: idSchema$1,
+    endpoint: _enum(["start", "end"])
+  }).strict(),
+  object({
+    kind: literal("creation"),
+    plane: _enum(["geometry", "annotation", "relation", "feature"]),
+    nodeType: idSchema$1,
+    containerId: idSchema$1.optional(),
+    maxCount: number().int().min(1).max(256)
+  }).strict(),
+  object({
+    kind: literal("deletion"),
+    nodeIds: array(idSchema$1).min(1).max(256)
+  }).strict()
+]);
+const spatialOperationSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("rigid_transform"),
+    translation: vec2Schema$1,
+    rotationRadians: finiteSchema,
+    pivot: vec2Schema$1
+  }).strict(),
+  object({
+    kind: literal("connected_transform"),
+    translation: vec2Schema$1,
+    rotationRadians: finiteSchema,
+    pivot: vec2Schema$1,
+    interfaceIds: array(idSchema$1).min(1).max(256)
+  }).strict(),
+  object({
+    kind: literal("set_endpoint"),
+    nodeId: idSchema$1,
+    endpoint: _enum(["start", "end"]),
+    point: vec2Schema$1
+  }).strict(),
+  object({
+    kind: literal("create_path"),
+    nodeId: idSchema$1,
+    points: array(vec2Schema$1).min(2).max(4096),
+    closed: boolean()
+  }).strict(),
+  object({
+    kind: literal("delete_nodes"),
+    nodeIds: array(idSchema$1).min(1).max(256)
+  }).strict(),
+  object({
+    kind: literal("create_annotation_batch"),
+    annotations: array(object({ id: idSchema$1, type: idSchema$1 }).catchall(unknown())).min(1).max(512),
+    associations: array(object({ id: idSchema$1, type: literal("association") }).catchall(unknown())).max(512)
+  }).strict()
+]);
+const spatialPostconditionSchema = discriminatedUnion("kind", [
+  object({
+    kind: literal("preserve_connectivity"),
+    nodeIds: array(idSchema$1).min(1).max(256)
+  }).strict(),
+  object({
+    kind: literal("within_bounds"),
+    bounds: boundsSchema
+  }).strict(),
+  object({
+    kind: literal("target_position"),
+    targetHandle: idSchema$1,
+    point: vec2Schema$1,
+    tolerance: finiteSchema.positive()
+  }).strict()
+]);
+const spatialEditProgramSchema = object({
+  baseRef: drawingRefSchema$1,
+  targetHandle: idSchema$1,
+  summary: boundedTextSchema,
+  objective: boundedTextSchema,
+  operations: array(spatialOperationSchema).min(1).max(128),
+  preserveScopes: array(effectScopeRefSchema).max(512),
+  postconditions: array(spatialPostconditionSchema).max(128),
+  evidenceRefs: array(idSchema$1).min(1).max(256)
+}).strict();
 const idSchema = string().min(1);
 const vec2Schema = tuple([number(), number()]);
 const qualitySchema = object({
@@ -5500,7 +6089,12 @@ const drawingWorkspaceSnapshotSchema = object({
     annotations: boolean(),
     sourceUnderlay: boolean()
   }).strict(),
-  provisional: boolean().optional()
+  provisional: boolean().optional(),
+  lastCommit: object({
+    commitId: idSchema,
+    mode: _enum(["auto-safe", "confirmed", "interactive", "undo"]),
+    undoable: boolean()
+  }).strict().optional()
 }).strict().nullable();
 const nodeCreateCommandSchema = object({
   type: literal("node.create"),
@@ -5534,6 +6128,33 @@ discriminatedUnion("status", [
   object({ status: literal("committed"), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
+]);
+discriminatedUnion("status", [
+  object({
+    status: literal("staged"),
+    intentId: idSchema,
+    intentDigest: idSchema,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: string().startsWith("/drawing-apply-intent ")
+  }).strict(),
+  object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+]);
+object({
+  targetCommitId: idSchema,
+  expectedCurrentRef: drawingRefSchema$1
+}).strict();
+discriminatedUnion("status", [
+  object({
+    status: literal("staged"),
+    targetCommitId: idSchema,
+    expectedCurrentRef: drawingRefSchema$1,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: string().startsWith("/drawing-undo ")
+  }).strict(),
+  object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
 ]);
 object({
   ref: drawingRefSchema$1,
@@ -5570,6 +6191,7 @@ class InMemoryDrawingRepository {
     __privateAdd(this, _InMemoryDrawingRepository_instances);
     __privateAdd(this, _pending, /* @__PURE__ */ new Map());
     __privateAdd(this, _drawings, /* @__PURE__ */ new Map());
+    __privateAdd(this, _durable, /* @__PURE__ */ new Map());
     __privateAdd(this, _previews, /* @__PURE__ */ new Map());
     __privateAdd(this, _vectorizer);
     __privateAdd(this, _drawingId);
@@ -5590,7 +6212,7 @@ class InMemoryDrawingRepository {
     return attachment === void 0 ? null : structuredClone(attachment);
   }
   async importPending(sessionId, input) {
-    var _a3;
+    var _a3, _b;
     const attachment = __privateGet(this, _pending).get(sessionId);
     if (attachment === void 0) throw new Error("PENDING_DRAWING_SOURCE_REQUIRED");
     const attachmentId = String(attachment.attachmentId);
@@ -5627,7 +6249,18 @@ class InMemoryDrawingRepository {
       },
       provisional: vectorized.provisional
     };
-    (_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.save(sessionId, structuredClone(entry));
+    if ((_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.saveDurable) {
+      const state = {
+        version: 2,
+        entry: structuredClone(entry),
+        commits: [],
+        operations: []
+      };
+      __privateGet(this, _storage).saveDurable(sessionId, structuredClone(state));
+      __privateGet(this, _durable).set(sessionId, state);
+    } else {
+      (_b = __privateGet(this, _storage)) == null ? void 0 : _b.save(sessionId, structuredClone(entry));
+    }
     __privateGet(this, _drawings).set(sessionId, entry);
     __privateGet(this, _previews).delete(sessionId);
     return {
@@ -5637,9 +6270,11 @@ class InMemoryDrawingRepository {
     };
   }
   getSnapshot(sessionId) {
+    var _a3;
     const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
     if (entry === null) return null;
-    return snapshotOf(entry);
+    const lastCommit = (_a3 = __privateMethod(this, _InMemoryDrawingRepository_instances, durableState_fn).call(this, sessionId)) == null ? void 0 : _a3.commits.at(-1);
+    return snapshotOf(entry, lastCommit);
   }
   commit(sessionId, request) {
     var _a3;
@@ -5671,6 +6306,152 @@ class InMemoryDrawingRepository {
     __privateGet(this, _drawings).set(sessionId, nextEntry);
     __privateGet(this, _previews).delete(sessionId);
     return { status: "committed", snapshot: snapshotOf(nextEntry) };
+  }
+  commitSemantic(sessionId, request) {
+    const state = __privateMethod(this, _InMemoryDrawingRepository_instances, requireDurable_fn).call(this, sessionId);
+    const replay = findOperation(state, request.operationId);
+    if (replay) {
+      if (replay.operationBindingDigest !== request.operationBindingDigest) {
+        throw new Error("IDEMPOTENCY_KEY_REUSED");
+      }
+      return structuredClone(replay);
+    }
+    const entry = state.entry;
+    if (request.expectedRef.drawingId !== entry.drawingId || request.expectedRef.revision !== entry.revision) throw new Error("DRAWING_STALE");
+    const operationMode = request.mode === "interactive" ? "interactive" : "semantic";
+    const beforeSemantic = canonicalSemanticString(entry.document);
+    const candidate = applyDrawingTransaction(entry.document, request.forward, __privateGet(this, _now).call(this));
+    const semanticDigest = digest(canonicalSemanticString(candidate));
+    if (canonicalSemanticString(candidate) === beforeSemantic) {
+      const receipt2 = {
+        status: "no-effect",
+        mode: operationMode,
+        operationId: request.operationId,
+        operationBindingDigest: request.operationBindingDigest,
+        sessionId,
+        drawingId: entry.drawingId,
+        ref: { drawingId: entry.drawingId, revision: entry.revision },
+        semanticDigest
+      };
+      const next = { ...state, operations: [...state.operations, receipt2] };
+      __privateMethod(this, _InMemoryDrawingRepository_instances, saveDurable_fn).call(this, sessionId, next);
+      return structuredClone(receipt2);
+    }
+    const restored = applyDrawingTransaction(candidate, request.inverse, __privateGet(this, _now).call(this));
+    if (canonicalSemanticString(restored) !== beforeSemantic) {
+      throw new Error("INVERSE_VERIFICATION_FAILED");
+    }
+    const nextEntry = {
+      ...entry,
+      document: candidate,
+      revision: entry.revision + 1
+    };
+    const commitId = `commit_${request.operationId}`;
+    const snapshotIntegrityDigest = digest(JSON.stringify(nextEntry));
+    const receipt = {
+      status: "committed",
+      mode: operationMode,
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      sessionId,
+      drawingId: entry.drawingId,
+      parentRef: { drawingId: entry.drawingId, revision: entry.revision },
+      resultingRef: { drawingId: entry.drawingId, revision: nextEntry.revision },
+      commitId,
+      semanticDigest,
+      snapshotIntegrityDigest
+    };
+    const record2 = {
+      commitId,
+      mode: request.mode,
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      parentRevision: entry.revision,
+      resultingRevision: nextEntry.revision,
+      forward: structuredClone(request.forward),
+      inverse: structuredClone(request.inverse),
+      candidateDigest: request.candidateDigest,
+      semanticDigest,
+      snapshotIntegrityDigest,
+      ...request.assessment ? { assessment: structuredClone(request.assessment) } : {},
+      ...request.reviewEvidence ? { reviewEvidence: structuredClone(request.reviewEvidence) } : {},
+      committedAt: __privateGet(this, _now).call(this)
+    };
+    __privateMethod(this, _InMemoryDrawingRepository_instances, saveDurable_fn).call(this, sessionId, {
+      version: 2,
+      entry: nextEntry,
+      commits: [...state.commits, record2],
+      operations: [...state.operations, receipt]
+    });
+    __privateGet(this, _previews).delete(sessionId);
+    return structuredClone(receipt);
+  }
+  getOperation(sessionId, operationId, operationBindingDigest) {
+    const state = __privateMethod(this, _InMemoryDrawingRepository_instances, durableState_fn).call(this, sessionId);
+    if (state === null) return { status: "absent" };
+    const receipt = findOperation(state, operationId);
+    if (!receipt) return { status: "absent" };
+    if (receipt.operationBindingDigest !== operationBindingDigest) {
+      return { status: "digest-mismatch", operationId };
+    }
+    return receipt.status === "no-effect" ? { status: "no-effect", receipt: structuredClone(receipt) } : { status: "committed", receipt: structuredClone(receipt) };
+  }
+  undoCommit(sessionId, request) {
+    if (__privateGet(this, _previews).has(sessionId)) throw new Error("UNDO_PREVIEW_ACTIVE");
+    const state = __privateMethod(this, _InMemoryDrawingRepository_instances, requireDurable_fn).call(this, sessionId);
+    const replay = findOperation(state, request.operationId);
+    if (replay) {
+      if (replay.operationBindingDigest !== request.operationBindingDigest) {
+        throw new Error("IDEMPOTENCY_KEY_REUSED");
+      }
+      return structuredClone(replay);
+    }
+    const currentRef = { drawingId: state.entry.drawingId, revision: state.entry.revision };
+    if (!isDeepStrictEqual(currentRef, request.expectedCurrentRef)) throw new Error("UNDO_CONFLICT");
+    const target = state.commits.find(({ commitId: commitId2 }) => commitId2 === request.targetCommitId);
+    if (!target) throw new Error("UNDO_TARGET_NOT_FOUND");
+    if (target.mode === "undo") throw new Error("UNDO_TARGET_IS_REVERT");
+    if (target.resultingRevision !== state.entry.revision) throw new Error("UNDO_CONFLICT");
+    const document = applyDrawingTransaction(state.entry.document, target.inverse, __privateGet(this, _now).call(this));
+    const nextEntry = { ...state.entry, document, revision: state.entry.revision + 1 };
+    const semanticDigest = digest(canonicalSemanticString(document));
+    const snapshotIntegrityDigest = digest(JSON.stringify(nextEntry));
+    const commitId = `commit_${request.operationId}`;
+    const receipt = {
+      status: "committed",
+      mode: "undo",
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      sessionId,
+      drawingId: state.entry.drawingId,
+      parentRef: currentRef,
+      resultingRef: { drawingId: state.entry.drawingId, revision: nextEntry.revision },
+      commitId,
+      targetCommitId: target.commitId,
+      semanticDigest,
+      snapshotIntegrityDigest
+    };
+    const record2 = {
+      commitId,
+      mode: "undo",
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      parentRevision: state.entry.revision,
+      resultingRevision: nextEntry.revision,
+      forward: structuredClone(target.inverse),
+      inverse: structuredClone(target.forward),
+      targetCommitId: target.commitId,
+      semanticDigest,
+      snapshotIntegrityDigest,
+      committedAt: __privateGet(this, _now).call(this)
+    };
+    __privateMethod(this, _InMemoryDrawingRepository_instances, saveDurable_fn).call(this, sessionId, {
+      version: 2,
+      entry: nextEntry,
+      commits: [...state.commits, record2],
+      operations: [...state.operations, receipt]
+    });
+    return structuredClone(receipt);
   }
   summarize(sessionId) {
     const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
@@ -5790,11 +6571,13 @@ class InMemoryDrawingRepository {
   disposeSession(sessionId) {
     __privateGet(this, _pending).delete(sessionId);
     __privateGet(this, _drawings).delete(sessionId);
+    __privateGet(this, _durable).delete(sessionId);
     __privateGet(this, _previews).delete(sessionId);
   }
 }
 _pending = new WeakMap();
 _drawings = new WeakMap();
+_durable = new WeakMap();
 _previews = new WeakMap();
 _vectorizer = new WeakMap();
 _drawingId = new WeakMap();
@@ -5806,10 +6589,45 @@ getDrawing_fn = function(sessionId) {
   var _a3;
   const current = __privateGet(this, _drawings).get(sessionId);
   if (current !== void 0) return current;
-  const restored = ((_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.load(sessionId)) ?? null;
+  const durable = __privateMethod(this, _InMemoryDrawingRepository_instances, durableState_fn).call(this, sessionId);
+  const restored = (durable == null ? void 0 : durable.entry) ?? ((_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.load(sessionId)) ?? null;
   if (restored !== null) __privateGet(this, _drawings).set(sessionId, structuredClone(restored));
   return restored;
 };
+durableState_fn = function(sessionId) {
+  var _a3, _b;
+  const current = __privateGet(this, _durable).get(sessionId);
+  if (current) return current;
+  const restored = ((_b = (_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.loadDurable) == null ? void 0 : _b.call(_a3, sessionId)) ?? null;
+  if (restored) {
+    const clone2 = structuredClone(restored);
+    __privateGet(this, _durable).set(sessionId, clone2);
+    __privateGet(this, _drawings).set(sessionId, structuredClone(clone2.entry));
+    return clone2;
+  }
+  return null;
+};
+requireDurable_fn = function(sessionId) {
+  var _a3;
+  if (!((_a3 = __privateGet(this, _storage)) == null ? void 0 : _a3.loadDurable) || !__privateGet(this, _storage).saveDurable) {
+    throw new Error("AUTO_SAFE_UNAVAILABLE");
+  }
+  const state = __privateMethod(this, _InMemoryDrawingRepository_instances, durableState_fn).call(this, sessionId);
+  if (!state) throw new Error("DRAWING_REQUIRED");
+  return state;
+};
+saveDurable_fn = function(sessionId, state) {
+  const storage = __privateGet(this, _storage);
+  storage.saveDurable(sessionId, structuredClone(state));
+  __privateGet(this, _durable).set(sessionId, structuredClone(state));
+  __privateGet(this, _drawings).set(sessionId, structuredClone(state.entry));
+};
+function findOperation(state, operationId) {
+  return state.operations.find((receipt) => receipt.operationId === operationId);
+}
+function digest(value) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
 function spatialQueryOf(request) {
   if (request.kind === "node") return { kind: "node", id: request.id };
   if (request.kind === "neighbors") {
@@ -5826,7 +6644,7 @@ function spatialQueryOf(request) {
     ...request.limit === void 0 ? {} : { limit: request.limit }
   };
 }
-function snapshotOf(entry) {
+function snapshotOf(entry, lastCommit) {
   return structuredClone({
     version: 1,
     ref: { drawingId: entry.drawingId, revision: entry.revision },
@@ -5838,7 +6656,12 @@ function snapshotOf(entry) {
       annotations: true,
       sourceUnderlay: true
     },
-    provisional: entry.provisional
+    provisional: entry.provisional,
+    ...lastCommit ? { lastCommit: {
+      commitId: lastCommit.commitId,
+      mode: lastCommit.mode,
+      undoable: lastCommit.mode !== "undo"
+    } } : {}
   });
 }
 function applyCommand(document, command) {
@@ -5924,15 +6747,15 @@ function deleteNode(document, id) {
   return null;
 }
 function diffDocuments(before, after) {
-  const beforeNodes = new Map(allNodes(before).map((node) => [node.id, node]));
-  const afterNodes = new Map(allNodes(after).map((node) => [node.id, node]));
+  const beforeNodes = new Map(allNodes$1(before).map((node) => [node.id, node]));
+  const afterNodes = new Map(allNodes$1(after).map((node) => [node.id, node]));
   return {
     createdNodeIds: [...afterNodes.keys()].filter((id) => !beforeNodes.has(id)),
     updatedNodeIds: [...afterNodes.keys()].filter((id) => beforeNodes.has(id) && !isDeepStrictEqual(beforeNodes.get(id), afterNodes.get(id))),
     deletedNodeIds: [...beforeNodes.keys()].filter((id) => !afterNodes.has(id))
   };
 }
-function allNodes(document) {
+function allNodes$1(document) {
   return [
     ...document.geometry,
     ...document.annotations,
@@ -5944,7 +6767,7 @@ function validateDocument(document) {
   if (!drawingDocumentSchema.safeParse(document).success) {
     return { status: "rejected", message: "Candidate Drawing is invalid", code: "INVALID_DOCUMENT" };
   }
-  const ids = allNodes(document).map(({ id }) => id);
+  const ids = allNodes$1(document).map(({ id }) => id);
   if (new Set(ids).size !== ids.length) {
     return { status: "rejected", message: "Drawing node ids must be unique", code: "NODE_ALREADY_EXISTS" };
   }
@@ -5982,6 +6805,8 @@ class FileDrawingRepositoryStorage {
     mkdirSync(directory, { recursive: true, mode: 448 });
   }
   load(sessionId) {
+    const durable = this.loadDurable(sessionId);
+    if (durable) return durable.entry;
     const path = __privateMethod(this, _FileDrawingRepositoryStorage_instances, path_fn).call(this, sessionId);
     if (!existsSync(path)) return null;
     try {
@@ -6014,9 +6839,46 @@ class FileDrawingRepositoryStorage {
       snapshot: snapshotForStorage(entry)
     };
     try {
-      writeFileSync(temporary, `${JSON.stringify(value)}
-`, { encoding: "utf8", mode: 384 });
-      renameSync(temporary, path);
+      __privateMethod(this, _FileDrawingRepositoryStorage_instances, atomicWrite_fn).call(this, path, temporary, value);
+    } finally {
+      if (existsSync(temporary)) unlinkSync(temporary);
+    }
+  }
+  loadDurable(sessionId) {
+    const path = __privateMethod(this, _FileDrawingRepositoryStorage_instances, path_fn).call(this, sessionId);
+    if (!existsSync(path)) return null;
+    try {
+      const value = JSON.parse(readFileSync(path, "utf8"));
+      if (value.version !== 2 || !value.entry || !Array.isArray(value.commits) || !Array.isArray(value.operations)) {
+        return null;
+      }
+      const entry = entryFromStored(value.entry);
+      if (!entry) return null;
+      return {
+        version: 2,
+        entry,
+        commits: structuredClone(value.commits),
+        operations: structuredClone(value.operations)
+      };
+    } catch {
+      return null;
+    }
+  }
+  saveDurable(sessionId, state) {
+    const path = __privateMethod(this, _FileDrawingRepositoryStorage_instances, path_fn).call(this, sessionId);
+    const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    const value = {
+      version: 2,
+      entry: {
+        attachmentId: state.entry.attachmentId,
+        bounds: structuredClone(state.entry.bounds),
+        snapshot: snapshotForStorage(state.entry)
+      },
+      commits: structuredClone(state.commits),
+      operations: structuredClone(state.operations)
+    };
+    try {
+      __privateMethod(this, _FileDrawingRepositoryStorage_instances, atomicWrite_fn).call(this, path, temporary, value);
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);
     }
@@ -6024,10 +6886,41 @@ class FileDrawingRepositoryStorage {
 }
 _directory = new WeakMap();
 _FileDrawingRepositoryStorage_instances = new WeakSet();
+atomicWrite_fn = function(path, temporary, value) {
+  writeFileSync(temporary, `${JSON.stringify(value)}
+`, { encoding: "utf8", mode: 384 });
+  const file = openSync(temporary, "r");
+  try {
+    fsyncSync(file);
+  } finally {
+    closeSync(file);
+  }
+  renameSync(temporary, path);
+  const directory = openSync(__privateGet(this, _directory), "r");
+  try {
+    fsyncSync(directory);
+  } finally {
+    closeSync(directory);
+  }
+};
 path_fn = function(sessionId) {
   const key = createHash("sha256").update(sessionId).digest("hex");
   return join(__privateGet(this, _directory), `${key}.json`);
 };
+function entryFromStored(value) {
+  if (typeof value.attachmentId !== "string" || !bounds(value.bounds)) return null;
+  const snapshot = drawingWorkspaceSnapshotSchema.safeParse(value.snapshot);
+  if (!snapshot.success || snapshot.data.source === void 0) return null;
+  return {
+    attachmentId: value.attachmentId,
+    document: snapshot.data.document,
+    drawingId: snapshot.data.ref.drawingId,
+    bounds: value.bounds,
+    revision: snapshot.data.ref.revision,
+    source: snapshot.data.source,
+    provisional: snapshot.data.provisional ?? false
+  };
+}
 function snapshotForStorage(entry) {
   return {
     version: 1,
@@ -6048,13 +6941,293 @@ function bounds(value) {
   const candidate = value;
   return ["minX", "minY", "maxX", "maxY"].every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]));
 }
-function createDrawingAgentToolCatalog(drawings, attachments) {
+function createSemanticEditToolCatalog(semantic, questions) {
+  return [
+    createDrawingObserveTool(semantic),
+    createDrawingBuildContextTool(semantic),
+    createDrawingGroundTool(semantic),
+    createDrawingPreviewProgramTool(semantic),
+    createDrawingRevisePreviewTool(semantic),
+    createDrawingEvaluatePreviewTool(semantic),
+    createDrawingFinalizeSemanticTool(semantic, questions),
+    createDrawingDiscardSemanticTool(semantic),
+    createDrawingGetOperationTool(semantic),
+    createDrawingUndoTool(semantic, questions)
+  ];
+}
+function createDrawingObserveTool(semantic) {
+  return defineTool({
+    name: "drawing_observe",
+    description: "Start a revision-bound semantic edit task from the current direct user instruction and create an observation of the active local Drawing. Call before grounding or editing.",
+    parameters: {},
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(_args, exec) {
+      var _a3;
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const task = semantic.startBoundTask(sessionId);
+      const observation = semantic.observe(sessionId, { taskId: task.taskId });
+      return { task, observation };
+    }
+  });
+}
+function createDrawingBuildContextTool(semantic) {
+  return defineTool({
+    name: "drawing_build_context",
+    description: "Build bounded drawing context for an exact task and observation before selecting an edit target.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      observationId: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      return semantic.buildContext(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+    }
+  });
+}
+function createDrawingGroundTool(semantic) {
+  return defineTool({
+    name: "drawing_ground",
+    description: "Ground a semantic target to exact node ids and declared connector interfaces from the current task context. Use drawing_query to inspect candidate ids first.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      contextId: { type: "string", required: true },
+      targetNodeIds: { type: "array", items: { type: "string" }, required: true },
+      interfaces: { type: "array", items: { type: "json" }, required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      return semantic.ground(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+    }
+  });
+}
+function createDrawingPreviewProgramTool(semantic) {
+  return defineTool({
+    name: "drawing_preview_program",
+    description: "Compile a high-level Spatial Edit Program against an exact grounding and publish a non-formal canvas Preview. Never accepts raw Drawing transaction commands.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      groundingId: { type: "string", required: true },
+      program: { type: "json", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      const program = spatialEditProgramSchema.parse(args.program);
+      return semantic.previewProgram(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+        taskId: args.taskId,
+        groundingId: args.groundingId,
+        program
+      });
+    }
+  });
+}
+function createDrawingEvaluatePreviewTool(semantic) {
+  return defineTool({
+    name: "drawing_evaluate_preview",
+    description: "Run mandatory deterministic validation and the local reviewer over an exact Drawing Preview. The Host computes policy; caller-provided auto-safe claims are not accepted.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      previewHandle: { type: "string", required: true },
+      candidateDigest: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      return await semantic.evaluatePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args);
+    }
+  });
+}
+function createDrawingRevisePreviewTool(semantic) {
+  return defineTool({
+    name: "drawing_revise_preview",
+    description: "Replace the exact current Preview with another candidate in the same task. The former Preview remains current if compilation fails; a task allows at most three candidates.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      currentPreviewHandle: { type: "string", required: true },
+      currentCandidateDigest: { type: "string", required: true },
+      groundingId: { type: "string", required: true },
+      program: { type: "json", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      const program = spatialEditProgramSchema.parse(args.program);
+      return semantic.revisePreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
+        taskId: args.taskId,
+        currentPreviewHandle: args.currentPreviewHandle,
+        currentCandidateDigest: args.currentCandidateDigest,
+        groundingId: args.groundingId,
+        program
+      });
+    }
+  });
+}
+function createDrawingFinalizeSemanticTool(semantic, questions) {
+  const pendingDecisions = /* @__PURE__ */ new Map();
+  return defineTool({
+    name: "drawing_finalize_preview",
+    description: "Finalize an evaluated semantic Preview. Exact auto-safe candidates commit locally; risk-qualified candidates ask the runtime-root user; blocked candidates never commit.",
+    parameters: {
+      previewHandle: { type: "string", required: true },
+      previewDigest: { type: "string", required: true },
+      finalizeOperationId: { type: "string", required: true },
+      finalizeOperationBindingDigest: { type: "string", required: true },
+      evaluationId: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const request = finalizePreviewRequestSchema.parse(args);
+      const result = semantic.finalizePreview(sessionId, request);
+      if (result.status !== "rejected" || result.disposition !== "confirmation_required") {
+        return result;
+      }
+      if (!questions || !exec.agent) return {
+        status: "root-required",
+        message: "This candidate requires a direct runtime-root user decision."
+      };
+      const decisionKey = `${sessionId}\0${request.finalizeOperationId}\0${request.finalizeOperationBindingDigest}`;
+      const existing = pendingDecisions.get(decisionKey);
+      if (existing) return await existing;
+      const decision = (async () => {
+        var _a4;
+        const answer = await questions.ask({
+          agent: exec.agent,
+          signal: exec.signal,
+          questions: [{
+            id: `drawing-confirm-${request.finalizeOperationId}`,
+            header: "图纸修改确认",
+            question: "这个候选修改包含需要你确认的风险，是否应用？",
+            options: [
+              { label: "应用修改", description: "按当前预览提交一个可撤销的新版本。" },
+              { label: "继续修改", description: "保留正式图纸不变并让 AI 重新生成候选。" },
+              { label: "取消", description: "丢弃当前候选，不修改图纸。" }
+            ]
+          }]
+        });
+        const selected = answer.answers.find(({ id }) => id === `drawing-confirm-${request.finalizeOperationId}`);
+        if ((selected == null ? void 0 : selected.selected.length) === 1 && selected.selected[0] === "应用修改" && !selected.custom) {
+          return semantic.confirmFinalize(sessionId, request);
+        }
+        if ((selected == null ? void 0 : selected.selected.length) === 1 && selected.selected[0] === "取消" && !selected.custom) {
+          return semantic.discardPreview(sessionId, request.previewHandle);
+        }
+        return {
+          status: "needs-revision",
+          evaluationId: request.evaluationId,
+          reasons: [((_a4 = selected == null ? void 0 : selected.custom) == null ? void 0 : _a4.trim()) || "The user requested another candidate."]
+        };
+      })();
+      pendingDecisions.set(decisionKey, decision);
+      try {
+        return await decision;
+      } finally {
+        if (pendingDecisions.get(decisionKey) === decision) pendingDecisions.delete(decisionKey);
+      }
+    }
+  });
+}
+function createDrawingDiscardSemanticTool(semantic) {
+  return defineTool({
+    name: "drawing_discard_preview",
+    description: "Discard the current semantic Preview without changing the formal Drawing.",
+    parameters: { previewHandle: { type: "string", required: true } },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      return semantic.discardPreview(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), args.previewHandle);
+    }
+  });
+}
+function createDrawingGetOperationTool(semantic) {
+  return defineTool({
+    name: "drawing_get_operation",
+    description: "Resolve the durable outcome of a local Drawing write after a response, transport, cancellation, or fsync outcome was uncertain.",
+    parameters: {
+      operationId: { type: "string", required: true },
+      operationBindingDigest: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      return semantic.getOperation(
+        requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id),
+        args.operationId,
+        args.operationBindingDigest
+      );
+    }
+  });
+}
+function createDrawingUndoTool(semantic, questions) {
+  const pendingDecisions = /* @__PURE__ */ new Map();
+  return defineTool({
+    name: "drawing_undo_commit",
+    description: "Request an explicit user-authorized Undo of the exact current Drawing commit. Undo creates a new compensating revision and never rewrites history.",
+    parameters: {
+      targetCommitId: { type: "string", required: true },
+      expectedCurrentRef: {
+        type: "object",
+        properties: {
+          drawingId: { type: "string", required: true },
+          revision: { type: "integer", required: true }
+        },
+        additionalProperties: false,
+        required: true
+      }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      if (!questions || !exec.agent) return { status: "root-required", message: "Undo requires a direct runtime-root user decision." };
+      const decisionKey = `${sessionId}\0${args.targetCommitId}\0${JSON.stringify(args.expectedCurrentRef)}`;
+      const existing = pendingDecisions.get(decisionKey);
+      if (existing) return await existing;
+      const decision = (async () => {
+        const answer = await questions.ask({
+          agent: exec.agent,
+          signal: exec.signal,
+          questions: [{
+            id: `drawing-undo-${args.targetCommitId}`,
+            header: "撤销图纸修改",
+            question: "撤销这个图纸版本并创建一个恢复版本？",
+            options: [{ label: "撤销此提交" }, { label: "取消" }]
+          }]
+        });
+        const selected = answer.answers.find(({ id }) => id === `drawing-undo-${args.targetCommitId}`);
+        if ((selected == null ? void 0 : selected.selected.length) !== 1 || selected.selected[0] !== "撤销此提交" || selected.custom) {
+          return { status: "discarded", ref: args.expectedCurrentRef };
+        }
+        return semantic.undoAuthorized(sessionId, args);
+      })();
+      pendingDecisions.set(decisionKey, decision);
+      try {
+        return await decision;
+      } finally {
+        if (pendingDecisions.get(decisionKey) === decision) pendingDecisions.delete(decisionKey);
+      }
+    }
+  });
+}
+function requireSession(id) {
+  if (id === void 0) throw new Error("DRAWING_SESSION_REQUIRED");
+  return String(id);
+}
+function renderJson(_args, value) {
+  return [{ type: "text", text: JSON.stringify(value) }];
+}
+function createDrawingAgentToolCatalog(drawings, attachments, semantic, questions) {
   return [
     createDrawingImportTool(drawings, attachments),
     createDrawingSummarizeTool(drawings),
     createDrawingQueryTool(drawings),
-    createDrawingFinalizePreviewTool(),
-    createDrawingDiscardPreviewTool(drawings)
+    ...semantic ? createSemanticEditToolCatalog(semantic, questions) : [
+      createDrawingFinalizePreviewTool(),
+      createDrawingDiscardPreviewTool(drawings)
+    ]
   ];
 }
 const drawingRefSchema = {
@@ -6268,56 +7441,33 @@ function createEmptyDrawing(input = {}) {
     features: []
   };
 }
-const DEFAULT_VECTORIZATION_TIMEOUT_MS = 12e4;
-class PythonVectorizationError extends Error {
-  constructor(code, message = code) {
-    super(message);
-    this.code = code;
-    this.name = "PythonVectorizationError";
-  }
-}
-const _PythonVectorizationProvider = class _PythonVectorizationProvider {
-  constructor(process2, timeoutMs) {
-    __privateAdd(this, _PythonVectorizationProvider_instances);
-    __privateAdd(this, _process);
-    __privateAdd(this, _timeoutMs);
+const _LocalPythonVectorizerProcess = class _LocalPythonVectorizerProcess {
+  constructor(child, timeoutMs) {
+    __privateAdd(this, _LocalPythonVectorizerProcess_instances);
     __privateAdd(this, _pending2, /* @__PURE__ */ new Map());
     __privateAdd(this, _closed, false);
     __privateAdd(this, _stderr, "");
-    __privateSet(this, _process, process2);
-    __privateSet(this, _timeoutMs, timeoutMs);
-    createInterface({ input: process2.stdout }).on("line", (line) => __privateMethod(this, _PythonVectorizationProvider_instances, onLine_fn).call(this, line));
-    process2.stderr.setEncoding("utf8");
-    process2.stderr.on("data", (chunk) => {
+    this.child = child;
+    this.timeoutMs = timeoutMs;
+    createInterface({ input: child.stdout }).on("line", (line) => __privateMethod(this, _LocalPythonVectorizerProcess_instances, onLine_fn).call(this, line));
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
       __privateSet(this, _stderr, `${__privateGet(this, _stderr)}${chunk}`.slice(-4096));
     });
-    process2.on("error", () => __privateMethod(this, _PythonVectorizationProvider_instances, failAll_fn).call(this, new PythonVectorizationError("PYTHON_VECTORIZATION_PROCESS_ERROR")));
-    process2.on("exit", () => {
-      if (!__privateGet(this, _closed)) {
-        __privateMethod(this, _PythonVectorizationProvider_instances, failAll_fn).call(this, new PythonVectorizationError("PYTHON_VECTORIZATION_EXITED"));
-      }
+    child.on("error", () => __privateMethod(this, _LocalPythonVectorizerProcess_instances, failAll_fn).call(this, new Error("PYTHON_VECTORIZATION_PROCESS_ERROR")));
+    child.on("exit", () => {
+      if (!__privateGet(this, _closed)) __privateMethod(this, _LocalPythonVectorizerProcess_instances, failAll_fn).call(this, new Error(`PYTHON_VECTORIZATION_EXITED ${__privateGet(this, _stderr)}`.trim()));
     });
   }
-  static async create(options = {}) {
+  static async create(input) {
     var _a3;
-    const pythonPath = options.pythonPath ?? await defaultPythonPath();
-    const scriptPath = options.scriptPath ?? resolve(process.cwd(), "python/vectorai_vectorizer.py");
-    const timeoutMs = options.timeoutMs ?? DEFAULT_VECTORIZATION_TIMEOUT_MS;
-    const startupTimeoutMs = options.startupTimeoutMs ?? Math.max(1e3, timeoutMs);
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
-      throw new PythonVectorizationError("PYTHON_VECTORIZATION_TIMEOUT_INVALID");
-    }
-    if (!Number.isInteger(startupTimeoutMs) || startupTimeoutMs < 1) {
-      throw new PythonVectorizationError("PYTHON_VECTORIZATION_STARTUP_TIMEOUT_INVALID");
-    }
-    const child = spawn(pythonPath, ["-u", scriptPath], {
-      cwd: process.cwd(),
+    const child = spawn(input.pythonPath, ["-u", input.scriptPath], {
       env: { ...process.env, PYTHONUNBUFFERED: "1" },
       stdio: ["pipe", "pipe", "pipe"]
     });
-    const provider = new _PythonVectorizationProvider(child, timeoutMs);
+    const provider = new _LocalPythonVectorizerProcess(child, input.timeoutMs);
     try {
-      await __privateMethod(_a3 = provider, _PythonVectorizationProvider_instances, invoke_fn).call(_a3, { operation: "health" }, new AbortController().signal, startupTimeoutMs);
+      await __privateMethod(_a3 = provider, _LocalPythonVectorizerProcess_instances, invoke_fn).call(_a3, { operation: "health" }, new AbortController().signal);
       return provider;
     } catch (error) {
       await provider.close();
@@ -6325,64 +7475,57 @@ const _PythonVectorizationProvider = class _PythonVectorizationProvider {
     }
   }
   async vectorize(input) {
-    if (!Number.isInteger(input.maxPixels) || input.maxPixels < 1) {
-      throw new PythonVectorizationError("PYTHON_VECTORIZATION_BUDGET_INVALID");
+    if (input.bytes.byteLength === 0 || input.width < 1 || input.height < 1 || input.maxPixels < 1) {
+      throw new Error("PYTHON_VECTORIZATION_SOURCE_INVALID");
     }
-    if (input.source.bytes.byteLength === 0 || input.source.width < 1 || input.source.height < 1) {
-      throw new PythonVectorizationError("PYTHON_VECTORIZATION_SOURCE_INVALID");
-    }
-    const value = await __privateMethod(this, _PythonVectorizationProvider_instances, invoke_fn).call(this, {
+    const value = await __privateMethod(this, _LocalPythonVectorizerProcess_instances, invoke_fn).call(this, {
       operation: "vectorize",
-      sourceId: input.source.sourceId,
-      mimeType: input.source.mimeType,
-      imageBase64: Buffer.from(input.source.bytes).toString("base64"),
+      sourceId: input.sourceId,
+      mimeType: input.mimeType,
+      imageBase64: Buffer.from(input.bytes).toString("base64"),
       maxPixels: input.maxPixels
     }, input.signal);
-    return parseVectorizationResult(value, input.source.sourceId);
+    return parseResult(value, input.sourceId);
   }
   async close() {
     if (__privateGet(this, _closed)) return;
     __privateSet(this, _closed, true);
-    __privateMethod(this, _PythonVectorizationProvider_instances, failAll_fn).call(this, new PythonVectorizationError("PYTHON_VECTORIZATION_CLOSED"));
-    if (__privateGet(this, _process).exitCode !== null || __privateGet(this, _process).signalCode !== null) return;
-    await new Promise((resolveClose) => {
+    __privateMethod(this, _LocalPythonVectorizerProcess_instances, failAll_fn).call(this, new Error("PYTHON_VECTORIZATION_CLOSED"));
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
+    await new Promise((resolve2) => {
       const timer = setTimeout(() => {
-        __privateGet(this, _process).kill("SIGKILL");
-        resolveClose();
+        this.child.kill("SIGKILL");
+        resolve2();
       }, 1e3);
-      __privateGet(this, _process).once("exit", () => {
+      this.child.once("exit", () => {
         clearTimeout(timer);
-        resolveClose();
+        resolve2();
       });
-      __privateGet(this, _process).kill("SIGTERM");
+      this.child.kill("SIGTERM");
     });
   }
 };
-_process = new WeakMap();
-_timeoutMs = new WeakMap();
 _pending2 = new WeakMap();
 _closed = new WeakMap();
 _stderr = new WeakMap();
-_PythonVectorizationProvider_instances = new WeakSet();
-invoke_fn = function(payload, signal, timeoutMs = __privateGet(this, _timeoutMs)) {
-  if (__privateGet(this, _closed)) return Promise.reject(new PythonVectorizationError("PYTHON_VECTORIZATION_CLOSED"));
-  if (signal.aborted) return Promise.reject(signal.reason ?? new PythonVectorizationError("PYTHON_VECTORIZATION_ABORTED"));
+_LocalPythonVectorizerProcess_instances = new WeakSet();
+invoke_fn = function(payload, signal) {
+  if (__privateGet(this, _closed)) return Promise.reject(new Error("PYTHON_VECTORIZATION_CLOSED"));
+  signal.throwIfAborted();
   const id = randomUUID();
-  return new Promise((resolveValue, reject) => {
-    const abort = () => __privateMethod(this, _PythonVectorizationProvider_instances, reject_fn).call(this, id, signal.reason ?? new PythonVectorizationError("PYTHON_VECTORIZATION_ABORTED"));
+  return new Promise((resolve2, reject) => {
+    const abort = () => __privateMethod(this, _LocalPythonVectorizerProcess_instances, reject_fn).call(this, id, signal.reason ?? new Error("PYTHON_VECTORIZATION_ABORTED"));
     signal.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => {
-      __privateMethod(this, _PythonVectorizationProvider_instances, reject_fn).call(this, id, new PythonVectorizationError("PYTHON_VECTORIZATION_TIMEOUT"));
-    }, timeoutMs);
+    const timer = setTimeout(() => __privateMethod(this, _LocalPythonVectorizerProcess_instances, reject_fn).call(this, id, new Error("PYTHON_VECTORIZATION_TIMEOUT")), this.timeoutMs);
     __privateGet(this, _pending2).set(id, {
-      resolve: resolveValue,
+      resolve: resolve2,
       reject,
       timer,
-      removeAbortListener: () => signal.removeEventListener("abort", abort)
+      removeAbort: () => signal.removeEventListener("abort", abort)
     });
-    __privateGet(this, _process).stdin.write(`${JSON.stringify({ id, ...payload })}
+    this.child.stdin.write(`${JSON.stringify({ id, ...payload })}
 `, (error) => {
-      if (error) __privateMethod(this, _PythonVectorizationProvider_instances, reject_fn).call(this, id, new PythonVectorizationError("PYTHON_VECTORIZATION_WRITE_FAILED"));
+      if (error) __privateMethod(this, _LocalPythonVectorizerProcess_instances, reject_fn).call(this, id, new Error("PYTHON_VECTORIZATION_WRITE_FAILED"));
     });
   });
 };
@@ -6391,7 +7534,7 @@ onLine_fn = function(line) {
   try {
     response = JSON.parse(line);
   } catch {
-    __privateMethod(this, _PythonVectorizationProvider_instances, failAll_fn).call(this, new PythonVectorizationError("PYTHON_VECTORIZATION_PROTOCOL_INVALID"));
+    __privateMethod(this, _LocalPythonVectorizerProcess_instances, failAll_fn).call(this, new Error("PYTHON_VECTORIZATION_PROTOCOL_INVALID"));
     return;
   }
   if (typeof response.id !== "string") return;
@@ -6399,182 +7542,64 @@ onLine_fn = function(line) {
   if (!pending) return;
   __privateGet(this, _pending2).delete(response.id);
   clearTimeout(pending.timer);
-  pending.removeAbortListener();
+  pending.removeAbort();
   if (response.ok === true) pending.resolve(response.value);
-  else pending.reject(new PythonVectorizationError(response.code || "PYTHON_VECTORIZATION_FAILED"));
+  else pending.reject(new Error(typeof response.code === "string" ? response.code : "PYTHON_VECTORIZATION_FAILED"));
 };
 reject_fn = function(id, error) {
   const pending = __privateGet(this, _pending2).get(id);
   if (!pending) return;
   __privateGet(this, _pending2).delete(id);
   clearTimeout(pending.timer);
-  pending.removeAbortListener();
+  pending.removeAbort();
   pending.reject(error);
 };
 failAll_fn = function(error) {
-  for (const id of [...__privateGet(this, _pending2).keys()]) __privateMethod(this, _PythonVectorizationProvider_instances, reject_fn).call(this, id, error);
+  for (const id of [...__privateGet(this, _pending2).keys()]) __privateMethod(this, _LocalPythonVectorizerProcess_instances, reject_fn).call(this, id, error);
 };
-let PythonVectorizationProvider = _PythonVectorizationProvider;
-async function defaultPythonPath() {
-  if (process.env.VECTORAI_CV_PYTHON) return process.env.VECTORAI_CV_PYTHON;
-  const local = resolve(process.cwd(), ".local/vectorai/cv-venv/bin/python");
-  try {
-    await access(local);
-    return local;
-  } catch {
-    return "python3";
-  }
-}
-function parseVectorizationResult(value, expectedSourceId) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new PythonVectorizationError("PYTHON_VECTORIZATION_RESULT_INVALID");
-  }
+let LocalPythonVectorizerProcess = _LocalPythonVectorizerProcess;
+function parseResult(value, sourceId) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("PYTHON_VECTORIZATION_RESULT_INVALID");
   const result = value;
-  if (result.sourceId !== expectedSourceId || typeof result.pipelineVersion !== "string" || !positiveInteger(result.width) || !positiveInteger(result.height) || !positive$1(result.analysisScale) || !positive$1(result.medianLineWidthPx) || !Array.isArray(result.chains)) {
-    throw new PythonVectorizationError("PYTHON_VECTORIZATION_RESULT_INVALID");
+  if (result.sourceId !== sourceId || typeof result.pipelineVersion !== "string" || !positiveInteger(result.width) || !positiveInteger(result.height) || !positive$1(result.analysisScale) || !positive$1(result.medianLineWidthPx) || !Array.isArray(result.chains)) throw new Error("PYTHON_VECTORIZATION_RESULT_INVALID");
+  for (const chain of result.chains) {
+    if (!chain || typeof chain !== "object" || Array.isArray(chain)) throw new Error("PYTHON_VECTORIZATION_CHAIN_INVALID");
+    const record2 = chain;
+    if (typeof record2.id !== "string" || typeof record2.closed !== "boolean" || !Array.isArray(record2.simplified) || !Array.isArray(record2.pieces) || !record2.segmentation || typeof record2.segmentation !== "object") {
+      throw new Error("PYTHON_VECTORIZATION_CHAIN_INVALID");
+    }
   }
-  for (const chain of result.chains) validateChain(chain, result.width, result.height);
-  return {
-    sourceId: result.sourceId,
-    pipelineVersion: result.pipelineVersion,
-    width: result.width,
-    height: result.height,
-    analysisScale: result.analysisScale,
-    medianLineWidthPx: result.medianLineWidthPx,
-    chains: result.chains.map((value2) => {
-      const chain = value2;
-      const bounds2 = chain.bounds;
-      return {
-        id: chain.id,
-        closed: chain.closed,
-        samples: structuredClone(chain.samples),
-        simplified: structuredClone(chain.simplified),
-        bounds: { x: bounds2[0], y: bounds2[1], width: bounds2[2], height: bounds2[3] },
-        pieces: chain.pieces.map((piece) => {
-          const pieceBounds = piece.bounds;
-          return {
-            id: piece.id,
-            sampleRange: structuredClone(piece.sampleRange),
-            wraps: piece.wraps,
-            closed: piece.closed,
-            simplified: structuredClone(piece.simplified),
-            bounds: {
-              x: pieceBounds[0],
-              y: pieceBounds[1],
-              width: pieceBounds[2],
-              height: pieceBounds[3]
-            },
-            candidate: structuredClone(piece.candidate)
-          };
-        }),
-        segmentation: structuredClone(chain.segmentation)
-      };
-    })
-  };
-}
-function validateChain(value, width, height) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new PythonVectorizationError("PYTHON_VECTORIZATION_CHAIN_INVALID");
-  }
-  const chain = value;
-  if (typeof chain.id !== "string" || !/^chain_[a-f0-9]{20}$/.test(chain.id) || typeof chain.closed !== "boolean" || !points(chain.samples, width, height) || !points(chain.simplified, width, height) || !rect(chain.bounds, width, height) || !validPieces(chain.pieces, chain.closed, chain.samples.length, width, height) || !validSegmentation(chain.segmentation, chain.samples.length)) {
-    throw new PythonVectorizationError("PYTHON_VECTORIZATION_CHAIN_INVALID");
-  }
-}
-function validPieces(value, chainClosed, sampleCount, width, height) {
-  if (!Array.isArray(value) || value.length === 0) return false;
-  const pieces = value;
-  if (!pieces.every((piece) => piece && typeof piece === "object" && !Array.isArray(piece) && typeof piece.id === "string" && /^piece_[a-f0-9]{20}$/.test(piece.id) && Array.isArray(piece.sampleRange) && piece.sampleRange.length === 2 && piece.sampleRange.every((item) => Number.isInteger(item) && item >= 0 && item < sampleCount) && typeof piece.wraps === "boolean" && typeof piece.closed === "boolean" && points(piece.simplified, width, height) && rect(piece.bounds, width, height) && (piece.candidate === null || validCandidate(piece.candidate)))) return false;
-  const ids = new Set(pieces.map((piece) => piece.id));
-  if (ids.size !== pieces.length) return false;
-  const ranges = pieces.map((piece) => piece.sampleRange);
-  if (chainClosed === false) {
-    return pieces.every((piece) => piece.closed === false && piece.wraps === false) && ranges[0][0] === 0 && ranges.at(-1)[1] === sampleCount - 1 && ranges.every(([start, end], index) => end > start && (index === 0 || ranges[index - 1][1] === start));
-  }
-  if (pieces.length === 1) {
-    return pieces[0].closed === true && pieces[0].wraps === true && ranges[0][0] === 0 && ranges[0][1] === sampleCount - 1;
-  }
-  return pieces.every((piece) => piece.closed === false) && pieces.filter((piece) => piece.wraps).length === 1 && pieces.at(-1).wraps === true && ranges.every(([start, end], index) => start !== end && (index === pieces.length - 1 ? end === ranges[0][0] : !pieces[index].wraps && end === ranges[index + 1][0] && end > start));
-}
-function validSegmentation(value, sampleCount) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const audit = value;
-  const positiveFields = [
-    "drawingDiagonalPx",
-    "chainLengthPx",
-    "fitTolerancePx",
-    "nearWindowPx",
-    "farWindowPx",
-    "minimumSpanPx",
-    "splitPenalty"
-  ];
-  if (typeof audit.algorithmVersion !== "string" || !audit.algorithmVersion || !positiveFields.every((field) => positive$1(audit[field])) || !Array.isArray(audit.decisions)) return false;
-  if (audit.cycleAssembly !== void 0 && !validCycleAssembly(audit.cycleAssembly)) return false;
-  if (audit.continuationAssembly !== void 0 && !validContinuationAssembly(audit.continuationAssembly)) return false;
-  return audit.decisions.every((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-    const decision = item;
-    return Number.isInteger(decision.sampleIndex) && decision.sampleIndex >= 0 && decision.sampleIndex < sampleCount && finite$1(decision.nearAngleDegrees) && finite$1(decision.farAngleDegrees) && finite$1(decision.stability) && finite$1(decision.cornerScore) && nullableFinite(decision.combinedFitErrorP95) && Array.isArray(decision.childFitErrorP95) && decision.childFitErrorP95.every(finite$1) && nullableFinite(decision.splitGain) && nullableFinite(decision.acceptScore) && typeof decision.accepted === "boolean" && typeof decision.reason === "string" && decision.reason.length > 0;
-  });
-}
-function validCycleAssembly(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const audit = value;
-  return audit.sourceChainCount === 2 && positive$1(audit.endpointTolerancePx) && positive$1(audit.fitTolerancePx) && finite$1(audit.fitErrorP95) && audit.fitErrorP95 >= 0 && audit.fitErrorP95 <= audit.fitTolerancePx && audit.reason === "shared-endpoints-circle-fit";
-}
-function validContinuationAssembly(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const audit = value;
-  return Number.isInteger(audit.sourceChainCount) && audit.sourceChainCount >= 2 && positive$1(audit.endpointTolerancePx) && positive$1(audit.fitTolerancePx) && finite$1(audit.fitErrorP95) && audit.fitErrorP95 >= 0 && audit.fitErrorP95 <= audit.fitTolerancePx && finite$1(audit.tangentCosine) && audit.tangentCosine >= -1 && audit.tangentCosine <= 1 && (audit.modelType === "line" || audit.modelType === "arc") && audit.reason === "shared-endpoint-smooth-analytic-fit";
-}
-function validCandidate(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const candidate = value;
-  return ["line", "circle", "arc", "ellipse"].includes(String(candidate.type)) && candidate.parameters !== null && typeof candidate.parameters === "object" && finite$1(candidate.fitErrorMean) && finite$1(candidate.fitErrorP95) && finite$1(candidate.fitErrorMax) && finite$1(candidate.confidence) && candidate.confidence >= 0 && candidate.confidence <= 1;
-}
-function points(value, width, height) {
-  return Array.isArray(value) && value.length >= 2 && value.every((point) => Array.isArray(point) && point.length === 2 && finite$1(point[0]) && finite$1(point[1]) && point[0] >= 0 && point[1] >= 0 && point[0] <= width && point[1] <= height);
-}
-function rect(value, width, height) {
-  return Array.isArray(value) && value.length === 4 && value.every(finite$1) && value[0] >= 0 && value[1] >= 0 && value[2] > 0 && value[3] > 0 && value[0] + value[2] <= width + 1e-3 && value[1] + value[3] <= height + 1e-3;
-}
-function positiveInteger(value) {
-  return Number.isInteger(value) && value > 0;
+  return structuredClone(result);
 }
 function positive$1(value) {
-  return finite$1(value) && value > 0;
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
-function nullableFinite(value) {
-  return value === null || finite$1(value);
-}
-function finite$1(value) {
-  return typeof value === "number" && Number.isFinite(value);
+function positiveInteger(value) {
+  return positive$1(value) && Number.isInteger(value);
 }
 const PAGE_WIDTH = 500;
 class LocalCleanLineVectorizer {
   constructor(options = {}) {
-    __privateAdd(this, _timeoutMs2);
-    __privateSet(this, _timeoutMs2, options.timeoutMs ?? 12e4);
+    __privateAdd(this, _timeoutMs);
+    __privateSet(this, _timeoutMs, options.timeoutMs ?? 12e4);
   }
   async vectorize(input) {
     input.signal.throwIfAborted();
     const root = resolve(import.meta.dirname, "../../..");
     const localPython = resolve(root, ".local/vectorai/cv-venv/bin/python");
     const packagedScript = resolve(import.meta.dirname, "vectorai_vectorizer.py");
-    const provider = await PythonVectorizationProvider.create({
-      pythonPath: await accessible(localPython) ? localPython : void 0,
+    const provider = await LocalPythonVectorizerProcess.create({
+      pythonPath: await accessible(localPython) ? localPython : "python3",
       scriptPath: await accessible(packagedScript) ? packagedScript : resolve(root, "python/vectorai_vectorizer.py"),
-      timeoutMs: __privateGet(this, _timeoutMs2)
+      timeoutMs: __privateGet(this, _timeoutMs)
     });
     try {
       const result = await provider.vectorize({
-        source: {
-          sourceId: String(input.attachment.attachmentId),
-          mimeType: input.attachment.mediaType,
-          bytes: input.data,
-          width: input.attachment.width,
-          height: input.attachment.height
-        },
+        sourceId: String(input.attachment.attachmentId),
+        mimeType: input.attachment.mediaType,
+        bytes: input.data,
+        width: input.attachment.width,
+        height: input.attachment.height,
         maxPixels: Math.min(input.attachment.width * input.attachment.height, 4e6),
         signal: input.signal
       });
@@ -6585,7 +7610,7 @@ class LocalCleanLineVectorizer {
     }
   }
 }
-_timeoutMs2 = new WeakMap();
+_timeoutMs = new WeakMap();
 async function accessible(path) {
   try {
     await access(path);
@@ -6783,19 +7808,819 @@ function normalizeDegrees(value) {
 function round(value) {
   return Math.round(value * 1e6) / 1e6;
 }
-class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _commit_dec = [Remote], _query_dec = [Remote], _getPreview_dec = [Remote], _createPreview_dec = [Remote], _commitPreview_dec = [Remote], _discardPreview_dec = [Remote], _a2) {
+class SemanticEditService {
+  constructor(drawings, ports) {
+    __privateAdd(this, _SemanticEditService_instances);
+    __privateAdd(this, _pendingInstructions, /* @__PURE__ */ new Map());
+    __privateAdd(this, _sessionPolicies, /* @__PURE__ */ new Map());
+    __privateAdd(this, _tasks, /* @__PURE__ */ new Map());
+    __privateAdd(this, _observations, /* @__PURE__ */ new Map());
+    __privateAdd(this, _contexts, /* @__PURE__ */ new Map());
+    __privateAdd(this, _groundings, /* @__PURE__ */ new Map());
+    __privateAdd(this, _previews2, /* @__PURE__ */ new Map());
+    __privateAdd(this, _evaluations, /* @__PURE__ */ new Map());
+    __privateAdd(this, _reviewInflight, /* @__PURE__ */ new Map());
+    __privateAdd(this, _stickyReviewDefects, /* @__PURE__ */ new Map());
+    this.drawings = drawings;
+    this.ports = ports;
+  }
+  bindUserInstruction(sessionId, instruction) {
+    const objective = instruction.objective.trim();
+    if (!objective) return;
+    __privateGet(this, _pendingInstructions).set(sessionId, { ...instruction, objective });
+  }
+  startBoundTask(sessionId, policy) {
+    const pending = __privateGet(this, _pendingInstructions).get(sessionId);
+    if (!pending) throw new Error("EDIT_USER_INSTRUCTION_REQUIRED");
+    __privateGet(this, _pendingInstructions).delete(sessionId);
+    return this.startTask(sessionId, { ...pending, policy: policy ?? __privateGet(this, _sessionPolicies).get(sessionId) ?? "auto-safe" });
+  }
+  setSessionPolicy(sessionId, policy) {
+    __privateGet(this, _sessionPolicies).set(sessionId, policy);
+    const current = __privateGet(this, _tasks).get(sessionId);
+    if (policy === "review" && (current == null ? void 0 : current.active) && current.ref.policy === "auto-safe") {
+      current.ref = { ...current.ref, policy: "review", stateEpoch: current.ref.stateEpoch + 1 };
+    }
+  }
+  startTask(sessionId, input) {
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshot_fn).call(this, sessionId);
+    const former = __privateGet(this, _tasks).get(sessionId);
+    if (former) former.active = false;
+    const workspacePreview = this.drawings.getPreview(sessionId);
+    if (workspacePreview) this.drawings.discardPreview(sessionId, { handle: workspacePreview.handle });
+    __privateGet(this, _previews2).delete(sessionId);
+    const objective = input.objective.trim();
+    if (!objective) throw new Error("EDIT_OBJECTIVE_REQUIRED");
+    const ref = {
+      taskId: this.ports.id("task"),
+      rootUserMessageDigest: input.rootUserMessageDigest,
+      authoritativeObjectiveDigest: this.ports.digest(canonicalString({ text: objective })),
+      baseRef: structuredClone(snapshot.ref),
+      policy: input.policy,
+      stateEpoch: ((former == null ? void 0 : former.ref.stateEpoch) ?? 0) + 1
+    };
+    __privateGet(this, _tasks).set(sessionId, { ref, objective, candidateCount: 0, active: true });
+    return structuredClone(ref);
+  }
+  observe(sessionId, input) {
+    const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const ref = {
+      observationId: this.ports.id("observation"),
+      taskId: task.ref.taskId,
+      basis: { kind: "canonical", ref: structuredClone(snapshot.ref) },
+      artifactRefs: [],
+      observationDigest: this.ports.digest(canonicalString({
+        taskId: task.ref.taskId,
+        ref: snapshot.ref,
+        semantic: canonicalSemanticString(snapshot.document)
+      }))
+    };
+    __privateGet(this, _observations).set(ref.observationId, ref);
+    return structuredClone(ref);
+  }
+  buildContext(sessionId, input) {
+    const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
+    const observation = __privateGet(this, _observations).get(input.observationId);
+    if (!observation || observation.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const ref = {
+      contextId: this.ports.id("context"),
+      taskId: task.ref.taskId,
+      observationId: observation.observationId,
+      contextDigest: this.ports.digest(canonicalString({
+        observationDigest: observation.observationDigest,
+        nodeIds: allNodes(snapshot.document).map(({ id }) => id).sort()
+      }))
+    };
+    __privateGet(this, _contexts).set(ref.contextId, ref);
+    return structuredClone(ref);
+  }
+  ground(sessionId, input) {
+    const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
+    const context = __privateGet(this, _contexts).get(input.contextId);
+    if (!context || context.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const nodes = new Map(allNodes(snapshot.document).map((node) => [String(node.id), node]));
+    if (input.targetNodeIds.length === 0 || input.targetNodeIds.some((id) => !nodes.has(id))) {
+      throw new Error("EDIT_TARGET_UNRESOLVED");
+    }
+    for (const port of input.interfaces) {
+      const node = nodes.get(port.nodeId);
+      if (!node || node.type !== "line" || !port.endpoint) throw new Error("EDIT_INTERFACE_UNRESOLVED");
+    }
+    const sourceStatus = snapshot.provisional ? "provisional" : input.targetNodeIds.some((id) => {
+      var _a3;
+      return ((_a3 = nodes.get(id)) == null ? void 0 : _a3.quality.status) !== "confirmed";
+    }) ? "candidate" : "confirmed";
+    const targetHandle = this.ports.id("target");
+    const target = {
+      targetHandle,
+      targetNodeIds: [...new Set(input.targetNodeIds)],
+      interfaces: structuredClone(input.interfaces),
+      sourceStatus
+    };
+    const ref = {
+      groundingId: this.ports.id("grounding"),
+      taskId: task.ref.taskId,
+      contextId: context.contextId,
+      targetHandle,
+      targetScopeDigest: this.ports.digest(canonicalString([...target.targetNodeIds].sort())),
+      protectedScopeDigest: this.ports.digest(canonicalString(
+        allNodes(snapshot.document).map(({ id }) => String(id)).filter((id) => !target.targetNodeIds.includes(id) && !target.interfaces.some((port) => port.nodeId === id)).sort()
+      )),
+      evidenceDigest: this.ports.digest(canonicalString({ context: context.contextDigest, sourceStatus }))
+    };
+    __privateGet(this, _groundings).set(ref.groundingId, { ref, target });
+    return structuredClone(ref);
+  }
+  previewProgram(sessionId, input) {
+    const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
+    if (task.candidateCount >= 3) throw new Error("EDIT_CANDIDATE_BUDGET_EXHAUSTED");
+    const grounding = __privateGet(this, _groundings).get(input.groundingId);
+    if (!grounding || grounding.ref.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    const program = spatialEditProgramSchema.parse(input.program);
+    if (program.objective !== task.objective) throw new Error("EDIT_OBJECTIVE_MISMATCH");
+    if (program.baseRef.drawingId !== task.ref.baseRef.drawingId || program.baseRef.revision !== task.ref.baseRef.revision) throw new Error("EDIT_BASE_MISMATCH");
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const compilation = compileSpatialEditProgram({
+      document: snapshot.document,
+      program,
+      grounding: grounding.target,
+      ports: this.ports
+    });
+    const workspace = this.drawings.createPreview(sessionId, {
+      ref: snapshot.ref,
+      commands: compilation.forward,
+      summary: program.summary
+    });
+    if (workspace.status !== "previewed") {
+      throw new Error(workspace.status === "rejected" ? workspace.code ?? "EDIT_PREVIEW_REJECTED" : "EDIT_BASE_STALE");
+    }
+    const finalizeOperationId = this.ports.id("finalize");
+    const finalizeOperationBindingDigest = this.ports.digest(canonicalString({
+      mode: "semantic",
+      sessionId,
+      drawingId: snapshot.ref.drawingId,
+      operationId: finalizeOperationId,
+      previewHandle: workspace.preview.handle,
+      candidateDigest: compilation.candidateDigest
+    }));
+    const ref = {
+      previewHandle: workspace.preview.handle,
+      taskId: task.ref.taskId,
+      groundingId: grounding.ref.groundingId,
+      baseRef: structuredClone(snapshot.ref),
+      candidateDigest: compilation.candidateDigest,
+      effectDigest: compilation.effectDigest,
+      finalizeOperationId,
+      finalizeOperationBindingDigest
+    };
+    task.candidateCount += 1;
+    __privateGet(this, _previews2).set(sessionId, { ref, task, grounding, program, compilation });
+    return structuredClone(ref);
+  }
+  revisePreview(sessionId, input) {
+    const current = __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.currentPreviewHandle, input.currentCandidateDigest);
+    if (current.ref.taskId !== input.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    return this.previewProgram(sessionId, {
+      taskId: input.taskId,
+      groundingId: input.groundingId,
+      program: input.program
+    });
+  }
+  async evaluatePreview(sessionId, input) {
+    var _a3;
+    const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
+    const preview = __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.previewHandle, input.candidateDigest);
+    if (preview.task !== task) throw new Error("EDIT_LINEAGE_MISMATCH");
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const beforeContentDigest = this.ports.digest(canonicalSemanticString(snapshot.document));
+    const afterContentDigest = this.ports.digest(canonicalSemanticString(preview.compilation.candidate));
+    const riskKey = this.ports.digest(canonicalString({
+      taskObjective: task.ref.authoritativeObjectiveDigest,
+      baseRef: task.ref.baseRef,
+      afterContentDigest,
+      effectDigest: preview.ref.effectDigest
+    }));
+    const sticky = __privateGet(this, _stickyReviewDefects).get(riskKey);
+    let reviewPromise = __privateGet(this, _reviewInflight).get(riskKey);
+    if (!reviewPromise && !sticky && this.ports.review) {
+      reviewPromise = this.ports.review({
+        sessionId,
+        objective: task.objective,
+        beforeSemanticDigest: beforeContentDigest,
+        afterSemanticDigest: afterContentDigest,
+        effectDigest: preview.ref.effectDigest,
+        changedNodeIds: [
+          ...preview.compilation.actualEffect.createdNodeIds,
+          ...preview.compilation.actualEffect.updatedNodeIds,
+          ...preview.compilation.actualEffect.deletedNodeIds
+        ],
+        diagnostics: preview.compilation.diagnostics,
+        signal: input.signal
+      });
+      __privateGet(this, _reviewInflight).set(riskKey, reviewPromise);
+    }
+    let reviewed;
+    if (sticky) reviewed = sticky;
+    else if (reviewPromise) {
+      try {
+        reviewed = await reviewPromise;
+      } finally {
+        if (__privateGet(this, _reviewInflight).get(riskKey) === reviewPromise) __privateGet(this, _reviewInflight).delete(riskKey);
+      }
+    } else reviewed = {
+      outcome: preview.compilation.diagnostics.some(({ hard }) => hard) ? "needs_revision" : "satisfied",
+      defects: preview.compilation.diagnostics.filter(({ hard }) => hard).map((diagnostic) => ({
+        code: diagnostic.code,
+        reason: diagnostic.message,
+        scopeDigest: preview.ref.effectDigest
+      }))
+    };
+    if (reviewed.outcome === "needs_revision") {
+      const immutable = structuredClone(reviewed);
+      __privateGet(this, _stickyReviewDefects).set(riskKey, immutable);
+      reviewed = immutable;
+    }
+    __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.previewHandle, input.candidateDigest);
+    const review = {
+      kind: "reviewer",
+      provider: this.ports.review ? "dsh-subagent" : "deterministic-local",
+      providerVersion: "1",
+      authoritativeObjective: { text: task.objective, attachmentContentDigests: [] },
+      renderManifest: {
+        rendererVersion: "semantic-digest-v1",
+        beforeContentDigest,
+        afterContentDigest,
+        viewport: ((_a3 = this.drawings.summarize(sessionId)) == null ? void 0 : _a3.bounds) ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 },
+        width: 1,
+        height: 1,
+        overlays: ["changed-nodes"]
+      },
+      outcome: reviewed.outcome,
+      defects: reviewed.defects.map((diagnostic) => ({
+        defectId: this.ports.id("defect"),
+        code: diagnostic.code,
+        reason: diagnostic.reason,
+        scopeDigest: diagnostic.scopeDigest
+      })),
+      resolvedDefects: []
+    };
+    const evaluationId = this.ports.id("evaluation");
+    const evaluationDigest = this.ports.digest(canonicalString({
+      preview: preview.ref,
+      diagnostics: preview.compilation.diagnostics,
+      review
+    }));
+    const evaluation = {
+      evaluationId,
+      taskId: task.ref.taskId,
+      previewHandle: preview.ref.previewHandle,
+      candidateDigest: preview.ref.candidateDigest,
+      diagnostics: structuredClone(preview.compilation.diagnostics),
+      mandatoryEvaluatorVersions: ["source-quality-v1", "scope-v1", "postconditions-v1", "inverse-v1"],
+      review,
+      evaluationDigest
+    };
+    const assessment = __privateMethod(this, _SemanticEditService_instances, assess_fn).call(this, sessionId, preview, evaluation);
+    const ref = {
+      evaluationId,
+      taskId: task.ref.taskId,
+      previewHandle: preview.ref.previewHandle,
+      candidateDigest: preview.ref.candidateDigest,
+      evaluationDigest
+    };
+    __privateGet(this, _evaluations).set(evaluationId, { ref, evaluation, assessment });
+    return { evaluation: structuredClone(evaluation), assessment: structuredClone(assessment) };
+  }
+  finalizePreview(sessionId, raw) {
+    const request = finalizePreviewRequestSchema.parse(raw);
+    const currentTask = __privateGet(this, _tasks).get(sessionId);
+    const preview = __privateGet(this, _previews2).get(sessionId);
+    if (!(currentTask == null ? void 0 : currentTask.active) || !preview || preview.task !== currentTask) throw new Error("EDIT_TASK_STALE");
+    __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, request.previewHandle, request.previewDigest);
+    if (request.finalizeOperationId !== preview.ref.finalizeOperationId || request.finalizeOperationBindingDigest !== preview.ref.finalizeOperationBindingDigest) throw new Error("EDIT_OPERATION_BINDING_MISMATCH");
+    const evaluated = __privateGet(this, _evaluations).get(request.evaluationId);
+    if (!evaluated || evaluated.ref.previewHandle !== preview.ref.previewHandle || evaluated.ref.candidateDigest !== preview.ref.candidateDigest) throw new Error("EDIT_EVALUATION_STALE");
+    if (evaluated.assessment.disposition !== "auto_safe") {
+      return {
+        status: "rejected",
+        disposition: evaluated.assessment.disposition === "blocked" ? "blocked" : "confirmation_required",
+        code: evaluated.assessment.reasons[0] ?? "EDIT_CONFIRMATION_REQUIRED",
+        message: evaluated.assessment.disposition === "blocked" ? "The candidate is blocked by a non-overridable safety rule." : "The candidate requires an exact human confirmation before commit."
+      };
+    }
+    return __privateMethod(this, _SemanticEditService_instances, commitPreview_fn).call(this, sessionId, preview, evaluated, "auto-safe");
+  }
+  confirmFinalize(sessionId, raw) {
+    const request = finalizePreviewRequestSchema.parse(raw);
+    const currentTask = __privateGet(this, _tasks).get(sessionId);
+    const preview = __privateGet(this, _previews2).get(sessionId);
+    if (!(currentTask == null ? void 0 : currentTask.active) || !preview || preview.task !== currentTask) throw new Error("EDIT_TASK_STALE");
+    __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, request.previewHandle, request.previewDigest);
+    if (request.finalizeOperationId !== preview.ref.finalizeOperationId || request.finalizeOperationBindingDigest !== preview.ref.finalizeOperationBindingDigest) throw new Error("EDIT_OPERATION_BINDING_MISMATCH");
+    const evaluated = __privateGet(this, _evaluations).get(request.evaluationId);
+    if (!evaluated || evaluated.ref.candidateDigest !== preview.ref.candidateDigest) {
+      throw new Error("EDIT_EVALUATION_STALE");
+    }
+    if (evaluated.assessment.disposition === "blocked") {
+      return { status: "rejected", disposition: "blocked", code: evaluated.assessment.reasons[0] ?? "EDIT_BLOCKED", message: "The candidate is blocked." };
+    }
+    return __privateMethod(this, _SemanticEditService_instances, commitPreview_fn).call(this, sessionId, preview, evaluated, "confirmed");
+  }
+  discardPreview(sessionId, previewHandle) {
+    const preview = __privateGet(this, _previews2).get(sessionId);
+    if (!preview || preview.ref.previewHandle !== previewHandle) throw new Error("EDIT_PREVIEW_STALE");
+    const result = this.drawings.discardPreview(sessionId, { handle: previewHandle });
+    if (result.status !== "discarded") throw new Error(result.code ?? "EDIT_DISCARD_REJECTED");
+    __privateGet(this, _previews2).delete(sessionId);
+    return result;
+  }
+  getOperation(sessionId, operationId, bindingDigest) {
+    return this.drawings.getOperation(sessionId, operationId, bindingDigest);
+  }
+  undo(sessionId, request) {
+    return this.drawings.undoCommit(sessionId, request);
+  }
+  undoAuthorized(sessionId, input) {
+    const operationId = this.ports.id("undo");
+    const operationBindingDigest = this.ports.digest(canonicalString({
+      mode: "undo",
+      operationId,
+      sessionId,
+      drawingId: input.expectedCurrentRef.drawingId,
+      targetCommitId: input.targetCommitId,
+      expectedCurrentRef: input.expectedCurrentRef
+    }));
+    return this.undo(sessionId, { ...input, operationId, operationBindingDigest });
+  }
+  stageUndo(sessionId, input) {
+    var _a3;
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return { status: "rejected", code: "DRAWING_REQUIRED", message: "No Drawing is loaded." };
+    if (snapshot.ref.drawingId !== input.expectedCurrentRef.drawingId || snapshot.ref.revision !== input.expectedCurrentRef.revision) return { status: "rejected", code: "UNDO_CONFLICT", message: "The Drawing revision changed." };
+    if (!((_a3 = snapshot.lastCommit) == null ? void 0 : _a3.undoable) || snapshot.lastCommit.commitId !== input.targetCommitId) {
+      return { status: "rejected", code: "UNDO_TARGET_NOT_CURRENT", message: "The requested commit is not the current undo target." };
+    }
+    const operationId = this.ports.id("undo");
+    const operationBindingDigest = this.ports.digest(canonicalString({
+      mode: "undo",
+      operationId,
+      sessionId,
+      drawingId: input.expectedCurrentRef.drawingId,
+      targetCommitId: input.targetCommitId,
+      expectedCurrentRef: input.expectedCurrentRef
+    }));
+    return {
+      status: "staged",
+      ...structuredClone(input),
+      operationId,
+      operationBindingDigest,
+      commandLine: `/drawing-undo ${input.targetCommitId} ${input.expectedCurrentRef.drawingId}@${input.expectedCurrentRef.revision} ${operationId} ${operationBindingDigest}`
+    };
+  }
+  async runExtensionProgram(sessionId, input, signal) {
+    const task = this.startBoundTask(sessionId);
+    const observation = this.observe(sessionId, { taskId: task.taskId });
+    const context = this.buildContext(sessionId, {
+      taskId: task.taskId,
+      observationId: observation.observationId
+    });
+    const grounding = this.ground(sessionId, {
+      taskId: task.taskId,
+      contextId: context.contextId,
+      targetNodeIds: input.targetNodeIds,
+      interfaces: input.interfaces ?? []
+    });
+    const taskState = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, task.taskId);
+    const preview = this.previewProgram(sessionId, {
+      taskId: task.taskId,
+      groundingId: grounding.groundingId,
+      program: {
+        ...structuredClone(input.program),
+        baseRef: structuredClone(task.baseRef),
+        targetHandle: grounding.targetHandle,
+        objective: taskState.objective
+      }
+    });
+    const evaluated = await this.evaluatePreview(sessionId, {
+      taskId: task.taskId,
+      previewHandle: preview.previewHandle,
+      candidateDigest: preview.candidateDigest,
+      signal
+    });
+    const result = this.finalizePreview(sessionId, {
+      previewHandle: preview.previewHandle,
+      previewDigest: preview.candidateDigest,
+      finalizeOperationId: preview.finalizeOperationId,
+      finalizeOperationBindingDigest: preview.finalizeOperationBindingDigest,
+      evaluationId: evaluated.evaluation.evaluationId
+    });
+    return { task, observation, context, grounding, preview, ...evaluated, result };
+  }
+}
+_pendingInstructions = new WeakMap();
+_sessionPolicies = new WeakMap();
+_tasks = new WeakMap();
+_observations = new WeakMap();
+_contexts = new WeakMap();
+_groundings = new WeakMap();
+_previews2 = new WeakMap();
+_evaluations = new WeakMap();
+_reviewInflight = new WeakMap();
+_stickyReviewDefects = new WeakMap();
+_SemanticEditService_instances = new WeakSet();
+commitPreview_fn = function(sessionId, preview, evaluated, mode) {
+  const receipt = this.drawings.commitSemantic(sessionId, {
+    expectedRef: preview.ref.baseRef,
+    operationId: preview.ref.finalizeOperationId,
+    operationBindingDigest: preview.ref.finalizeOperationBindingDigest,
+    candidateDigest: preview.ref.candidateDigest,
+    forward: preview.compilation.forward,
+    inverse: preview.compilation.inverse,
+    mode,
+    assessment: evaluated.assessment,
+    reviewEvidence: evaluated.evaluation.review
+  });
+  if (receipt.status === "no-effect") return {
+    status: "already-satisfied",
+    ref: receipt.ref,
+    operationId: receipt.operationId,
+    operationBindingDigest: receipt.operationBindingDigest
+  };
+  if (receipt.status !== "committed" || receipt.mode !== "semantic") {
+    throw new Error("EDIT_COMMIT_RECEIPT_INVALID");
+  }
+  __privateGet(this, _previews2).delete(sessionId);
+  return {
+    status: "committed",
+    mode,
+    commitId: receipt.commitId,
+    ref: receipt.resultingRef,
+    operationId: receipt.operationId,
+    operationBindingDigest: receipt.operationBindingDigest
+  };
+};
+assess_fn = function(sessionId, preview, evaluation) {
+  const reasons = [];
+  const hard = evaluation.diagnostics.some((diagnostic) => diagnostic.severity === "error" && diagnostic.hard);
+  if (hard) reasons.push("HARD_VALIDATION_FAILED");
+  if (preview.grounding.target.sourceStatus !== "confirmed") reasons.push("SOURCE_NOT_CONFIRMED");
+  if (evaluation.diagnostics.some((diagnostic) => diagnostic.severity !== "info")) reasons.push("DIAGNOSTICS_PRESENT");
+  if (evaluation.review.outcome !== "satisfied") reasons.push("REVIEW_NOT_SATISFIED");
+  const safeAnnotationCreate = preview.program.operations.every((operation) => operation.kind === "create_annotation_batch" && operation.annotations.every((node) => annotationConfirmed(node)) && operation.associations.every((node) => associationResolved(node)));
+  if (preview.compilation.actualEffect.deletedNodeIds.length > 0 || preview.compilation.actualEffect.createdNodeIds.length > 0 && !safeAnnotationCreate) {
+    reasons.push("LIFECYCLE_CHANGE");
+  }
+  const allowed = /* @__PURE__ */ new Set([
+    ...preview.grounding.target.targetNodeIds,
+    ...preview.grounding.target.interfaces.map(({ nodeId }) => nodeId)
+  ]);
+  if (preview.compilation.actualEffect.updatedNodeIds.some((id) => !allowed.has(id))) {
+    reasons.push("OUT_OF_SCOPE_EFFECT");
+  }
+  const base = {
+    assessmentId: this.ports.id("assessment"),
+    taskId: preview.task.ref.taskId,
+    drawingId: preview.ref.baseRef.drawingId,
+    baseRef: structuredClone(preview.ref.baseRef),
+    previewHandle: preview.ref.previewHandle,
+    candidateDigest: preview.ref.candidateDigest,
+    evaluationDigest: evaluation.evaluationDigest,
+    policyVersion: "auto-safe-v1",
+    evaluatorVersions: [...evaluation.mandatoryEvaluatorVersions],
+    effectDigest: preview.ref.effectDigest,
+    reasons
+  };
+  if (hard || reasons.includes("OUT_OF_SCOPE_EFFECT")) return {
+    ...base,
+    disposition: "blocked",
+    hardDeny: hard,
+    nonOverridableProtected: reasons.includes("OUT_OF_SCOPE_EFFECT")
+  };
+  if (preview.task.ref.policy !== "auto-safe") reasons.push("TASK_REVIEW_POLICY");
+  if (reasons.length > 0) return {
+    ...base,
+    disposition: "confirmation_required",
+    requiredEffectDigest: preview.ref.effectDigest
+  };
+  return {
+    ...base,
+    disposition: "auto_safe",
+    autoQualification: {
+      exactScope: true,
+      cleanDiagnostics: true,
+      sourceConfirmed: true,
+      reviewerSatisfied: true,
+      inverseVerified: true
+    }
+  };
+};
+task_fn = function(sessionId, taskId) {
+  const task = __privateGet(this, _tasks).get(sessionId);
+  if (!(task == null ? void 0 : task.active) || task.ref.taskId !== taskId) throw new Error("EDIT_TASK_STALE");
+  return task;
+};
+preview_fn = function(sessionId, handle, digest2) {
+  const preview = __privateGet(this, _previews2).get(sessionId);
+  if (!preview || preview.ref.previewHandle !== handle || preview.ref.candidateDigest !== digest2) {
+    throw new Error("EDIT_PREVIEW_STALE");
+  }
+  return preview;
+};
+snapshot_fn = function(sessionId) {
+  const snapshot = this.drawings.getSnapshot(sessionId);
+  if (!snapshot) throw new Error("DRAWING_REQUIRED");
+  return snapshot;
+};
+snapshotAtTask_fn = function(sessionId, task) {
+  const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshot_fn).call(this, sessionId);
+  if (snapshot.ref.drawingId !== task.ref.baseRef.drawingId || snapshot.ref.revision !== task.ref.baseRef.revision) throw new Error("EDIT_BASE_STALE");
+  return snapshot;
+};
+function allNodes(document) {
+  return [...document.geometry, ...document.annotations, ...document.relations, ...document.features];
+}
+function annotationConfirmed(node) {
+  const quality = node.quality;
+  return (quality == null ? void 0 : quality.status) === "confirmed" && (node.type !== "dimension" || node.associationStatus === "resolved");
+}
+function associationResolved(node) {
+  return node.type === "association" && node.kind === "annotation-target" && Array.isArray(node.geometryIds) && node.geometryIds.length > 0;
+}
+class InteractiveEditService {
+  constructor(drawings, ports) {
+    __privateAdd(this, _intents, /* @__PURE__ */ new Map());
+    this.drawings = drawings;
+    this.ports = ports;
+  }
+  stage(sessionId, request) {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return { status: "rejected", message: "No Drawing is loaded.", code: "DRAWING_REQUIRED" };
+    if (request.expectedRevision !== snapshot.ref.revision) return {
+      status: "conflict",
+      message: `Expected revision ${request.expectedRevision}, current revision is ${snapshot.ref.revision}`,
+      snapshot
+    };
+    if (request.commands.length === 0 || request.commands.length > 256) return {
+      status: "rejected",
+      message: "Interactive edit command count is invalid.",
+      code: "INTERACTIVE_COMMAND_COUNT_INVALID"
+    };
+    for (const command of request.commands) {
+      if (command.type === "node.create") return {
+        status: "rejected",
+        message: "Interactive creation is not supported by this gesture path.",
+        code: "INTERACTIVE_CREATE_FORBIDDEN"
+      };
+      if (command.type === "node.update" && Object.keys(command.changes).some((field) => field === "id" || field === "type" || field === "plane" || field === "quality")) return {
+        status: "rejected",
+        message: "The gesture attempted to change an identity or protected field.",
+        code: "INTERACTIVE_FIELD_FORBIDDEN"
+      };
+    }
+    const commands = structuredClone(request.commands);
+    let candidate;
+    let inverse;
+    try {
+      candidate = applyDrawingTransaction(snapshot.document, commands, this.ports.now());
+      inverse = invertDrawingTransaction(snapshot.document, commands);
+      const restored = applyDrawingTransaction(candidate, inverse, this.ports.now());
+      if (canonicalSemanticString(restored) !== canonicalSemanticString(snapshot.document)) {
+        throw new Error("INVERSE_VERIFICATION_FAILED");
+      }
+    } catch (error) {
+      return { status: "rejected", message: errorMessage(error), code: "INTERACTIVE_EDIT_REJECTED" };
+    }
+    const intentId = this.ports.id("intent");
+    const operationId = this.ports.id("interactive");
+    const candidateDigest = this.ports.digest(canonicalSemanticString(candidate));
+    const intentDigest = this.ports.digest(canonicalString({
+      sessionId,
+      intentId,
+      expectedRef: snapshot.ref,
+      commands,
+      candidateDigest
+    }));
+    const operationBindingDigest = this.ports.digest(canonicalString({
+      mode: "interactive",
+      operationId,
+      sessionId,
+      drawingId: snapshot.ref.drawingId,
+      intentId,
+      intentDigest,
+      candidateDigest
+    }));
+    const staged = {
+      status: "staged",
+      sessionId,
+      expectedRef: structuredClone(snapshot.ref),
+      commands,
+      inverse,
+      candidateDigest,
+      intentId,
+      intentDigest,
+      operationId,
+      operationBindingDigest,
+      commandLine: `/drawing-apply-intent ${intentId} ${intentDigest} ${operationId} ${operationBindingDigest}`
+    };
+    __privateGet(this, _intents).set(intentId, staged);
+    return publicIntent(staged);
+  }
+  apply(sessionId, tokens) {
+    const intent = __privateGet(this, _intents).get(tokens.intentId);
+    if (!intent || intent.sessionId !== sessionId) throw new Error("INTERACTIVE_INTENT_NOT_FOUND");
+    for (const key of ["intentDigest", "operationId", "operationBindingDigest"]) {
+      if (tokens[key] !== intent[key]) throw new Error("INTERACTIVE_INTENT_BINDING_MISMATCH");
+    }
+    return this.drawings.commitSemantic(sessionId, {
+      expectedRef: intent.expectedRef,
+      operationId: intent.operationId,
+      operationBindingDigest: intent.operationBindingDigest,
+      candidateDigest: intent.candidateDigest,
+      forward: intent.commands,
+      inverse: intent.inverse,
+      mode: "interactive"
+    });
+  }
+  applyCommand(sessionId, rawInput) {
+    const [intentId, intentDigest, operationId, operationBindingDigest, ...extra] = rawInput.trim().split(/\s+/);
+    if (!intentId || !intentDigest || !operationId || !operationBindingDigest || extra.length > 0) {
+      throw new Error("INTERACTIVE_COMMAND_INVALID");
+    }
+    return this.apply(sessionId, {
+      status: "staged",
+      intentId,
+      intentDigest,
+      operationId,
+      operationBindingDigest,
+      commandLine: `/drawing-apply-intent ${intentId} ${intentDigest} ${operationId} ${operationBindingDigest}`
+    });
+  }
+}
+_intents = new WeakMap();
+function publicIntent(intent) {
+  const { intentId, intentDigest, operationId, operationBindingDigest, commandLine } = intent;
+  return { status: "staged", intentId, intentDigest, operationId, operationBindingDigest, commandLine };
+}
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function registerDrawingCommands(commands, interactive, semantic) {
+  const disposeApply = commands.register({
+    name: "drawing-apply-intent",
+    description: "Apply one Host-staged Drawing gesture using exact opaque intent and operation tokens.",
+    input: { hint: "<intentId> <intentDigest> <operationId> <operationBindingDigest>" },
+    recordInput: false,
+    async handler(invocation) {
+      try {
+        const receipt = interactive.applyCommand(String(invocation.agent.id), invocation.rawInput);
+        return { kind: "success", text: JSON.stringify(receipt) };
+      } catch (error) {
+        return { kind: "error", text: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  });
+  const disposePolicy = commands.register({
+    name: "drawing-policy",
+    description: "Set Drawing edit policy: review immediately downgrades the current task; auto-safe applies to future tasks.",
+    input: { hint: "review | auto-safe" },
+    async handler(invocation) {
+      const policy = invocation.rawInput.trim();
+      if (policy !== "review" && policy !== "auto-safe") {
+        return { kind: "error", text: "Usage: /drawing-policy review|auto-safe" };
+      }
+      semantic.setSessionPolicy(String(invocation.agent.id), policy);
+      return { kind: "success", text: policy === "review" ? "当前图纸任务及后续任务已切换为先预览确认。" : "后续新图纸任务将使用 auto-safe；当前 review 任务不会被反向升级。" };
+    }
+  });
+  const disposeUndo = commands.register({
+    name: "drawing-undo",
+    description: "Undo an exact current Drawing commit as a new compensating revision.",
+    input: { hint: "<commitId> <drawingId>@<revision> [operationId operationBindingDigest]" },
+    recordInput: false,
+    async handler(invocation) {
+      const [targetCommitId, encodedRef, operationId, operationBindingDigest, ...extra] = invocation.rawInput.trim().split(/\s+/);
+      const match = encodedRef == null ? void 0 : encodedRef.match(/^(.+)@(\d+)$/);
+      if (!targetCommitId || !match || extra.length > 0 || Boolean(operationId) !== Boolean(operationBindingDigest)) {
+        return { kind: "error", text: "Usage: /drawing-undo <commitId> <drawingId>@<revision> [operationId operationBindingDigest]" };
+      }
+      try {
+        const input = {
+          targetCommitId,
+          expectedCurrentRef: { drawingId: match[1], revision: Number(match[2]) }
+        };
+        const receipt = operationId && operationBindingDigest ? semantic.undo(String(invocation.agent.id), { ...input, operationId, operationBindingDigest }) : semantic.undoAuthorized(String(invocation.agent.id), input);
+        return { kind: "success", text: JSON.stringify(receipt) };
+      } catch (error) {
+        return { kind: "error", text: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  });
+  return () => {
+    disposeUndo();
+    disposePolicy();
+    disposeApply();
+  };
+}
+function createDshReviewer(ctx) {
+  return async (input) => {
+    const parent = ctx.agents.get(input.sessionId);
+    const providerName = ctx.subagents.list()[0];
+    if (!parent || !providerName) return { outcome: "unavailable", defects: [] };
+    const provider = ctx.subagents.getProvider(providerName);
+    if (!(provider == null ? void 0 : provider.capabilities.outputSchema) || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) {
+      return { outcome: "unavailable", defects: [] };
+    }
+    const signal = input.signal ?? new AbortController().signal;
+    const run = await ctx.subagents.start(providerName, {
+      label: "drawing-reviewer",
+      parent,
+      signal,
+      maxDepth: 0,
+      toolFilter: { allow: ["structured_output"] },
+      persona: provider.capabilities.persona ? "You are a read-only drawing edit reviewer. Evaluate only the supplied bounded semantic diff. Never request or execute tools." : void 0,
+      prompt: [{ type: "text", text: JSON.stringify({
+        instruction: "Return satisfied only when the changed nodes and diagnostics support the objective without a visible semantic defect.",
+        objective: input.objective,
+        beforeSemanticDigest: input.beforeSemanticDigest,
+        afterSemanticDigest: input.afterSemanticDigest,
+        effectDigest: input.effectDigest,
+        changedNodeIds: input.changedNodeIds,
+        diagnostics: input.diagnostics
+      }) }],
+      outputSchema: {
+        type: "object",
+        properties: {
+          outcome: { type: "string", enum: ["satisfied", "needs_revision"] },
+          defects: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                code: { type: "string" },
+                reason: { type: "string" },
+                scopeDigest: { type: "string" }
+              },
+              required: ["code", "reason", "scopeDigest"],
+              additionalProperties: false
+            }
+          }
+        },
+        required: ["outcome", "defects"],
+        additionalProperties: false
+      }
+    });
+    try {
+      const result = await run.result;
+      if (result.stopReason !== "completed" || !validReview(result.structured)) {
+        return { outcome: "unavailable", defects: [] };
+      }
+      return structuredClone(result.structured);
+    } finally {
+      await run.dispose();
+    }
+  };
+}
+function validReview(value) {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value;
+  return (candidate.outcome === "satisfied" || candidate.outcome === "needs_revision") && Array.isArray(candidate.defects) && candidate.defects.length <= 32 && candidate.defects.every((defect) => {
+    if (!defect || typeof defect !== "object") return false;
+    const item = defect;
+    return typeof item.code === "string" && typeof item.reason === "string" && typeof item.scopeDigest === "string";
+  });
+}
+class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingSpace");
     __runInitializers(_init, 5, this);
     __publicField(this, "drawings");
+    __publicField(this, "semantic");
+    __publicField(this, "interactive");
     this.drawings = new InMemoryDrawingRepository({
       vectorizer: new LocalCleanLineVectorizer(),
       storage: new FileDrawingRepositoryStorage(resolve(homedir(), ".dsh/vectorai/drawings"))
     });
-    for (const tool of createDrawingAgentToolCatalog(this.drawings, ctx.attachments)) {
+    const editPorts = {
+      id: (kind) => `${kind}_${randomUUID()}`,
+      now: Date.now,
+      digest: (value) => `sha256:${createHash("sha256").update(value).digest("hex")}`,
+      review: createDshReviewer(ctx)
+    };
+    this.semantic = new SemanticEditService(this.drawings, editPorts);
+    this.interactive = new InteractiveEditService(this.drawings, editPorts);
+    ctx.effect(() => registerDrawingCommands(ctx.commands, this.interactive, this.semantic));
+    for (const tool of createDrawingAgentToolCatalog(
+      this.drawings,
+      ctx.attachments,
+      this.semantic,
+      ctx.userQuestions
+    )) {
       ctx.tools.register(tool);
     }
-    ctx.on("agent/pre-step", createPreStepIntake(this.drawings));
+    ctx.on("agent/pre-step", createPreStepIntake(this.drawings, this.semantic));
     ctx.on("session/disposed", (session) => {
       this.drawings.disposeSession(String(session.id));
     });
@@ -6803,39 +8628,40 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
   getSnapshot(agent) {
     return this.drawings.getSnapshot(String(agent.id));
   }
-  commit(agent, request) {
-    return this.drawings.commit(String(agent.id), request);
-  }
   query(agent, request) {
     return this.drawings.query(String(agent.id), request);
+  }
+  stageInteractiveEdit(agent, request) {
+    return this.interactive.stage(String(agent.id), request);
+  }
+  stageUndo(agent, request) {
+    return this.semantic.stageUndo(String(agent.id), request);
+  }
+  getOperation(agent, operationId, operationBindingDigest) {
+    return this.semantic.getOperation(String(agent.id), operationId, operationBindingDigest);
+  }
+  async runExtensionProgram(agent, request, signal) {
+    return await this.semantic.runExtensionProgram(String(agent.id), request, signal);
   }
   getPreview(agent) {
     return this.drawings.getPreview(String(agent.id));
   }
-  createPreview(agent, request) {
-    return this.drawings.createPreview(String(agent.id), request);
-  }
-  commitPreview(agent, request) {
-    return this.drawings.commitPreview(String(agent.id), request);
-  }
-  discardPreview(agent, request) {
-    return this.drawings.discardPreview(String(agent.id), request);
-  }
 }
 _init = __decoratorStart(_a2);
 __decorateElement(_init, 1, "getSnapshot", _getSnapshot_dec, DrawingSpaceHostService);
-__decorateElement(_init, 1, "commit", _commit_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "query", _query_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "stageInteractiveEdit", _stageInteractiveEdit_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "stageUndo", _stageUndo_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "getOperation", _getOperation_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getPreview", _getPreview_dec, DrawingSpaceHostService);
-__decorateElement(_init, 1, "createPreview", _createPreview_dec, DrawingSpaceHostService);
-__decorateElement(_init, 1, "commitPreview", _commitPreview_dec, DrawingSpaceHostService);
-__decorateElement(_init, 1, "discardPreview", _discardPreview_dec, DrawingSpaceHostService);
 __decoratorMetadata(_init, DrawingSpaceHostService);
-__publicField(DrawingSpaceHostService, "inject", ["tools", "attachments"]);
+__publicField(DrawingSpaceHostService, "inject", ["tools", "attachments", "userQuestions", "commands", "agents", "subagents"]);
 export {
   DrawingSpaceHostService,
   FileDrawingRepositoryStorage,
   InMemoryDrawingRepository,
+  InteractiveEditService,
   LocalCleanLineVectorizer,
+  SemanticEditService,
   DrawingSpaceHostService as default
 };

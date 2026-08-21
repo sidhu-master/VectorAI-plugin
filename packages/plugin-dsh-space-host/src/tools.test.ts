@@ -22,6 +22,11 @@ import {
   createDrawingSummarizeTool,
 } from './tools';
 import type { ImageVectorizer } from './vectorizer';
+import { SemanticEditService } from './semantic-edit-service';
+import {
+  createDrawingFinalizeSemanticTool,
+  createDrawingUndoTool,
+} from './semantic-tools';
 
 function attachment(id = 'source'): ImageAttachmentRef {
   return {
@@ -87,19 +92,89 @@ function fixtureVectorizer(): ImageVectorizer {
 }
 
 describe('drawing tools', () => {
+  it('single-flights concurrent semantic confirmation and Undo questions', async () => {
+    let askCalls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const questions = {
+      async ask(input: { questions: Array<{ id: string }> }) {
+        askCalls += 1;
+        await gate;
+        const id = input.questions[0]!.id;
+        return { answers: [{ id, selected: [id.startsWith('drawing-undo-') ? '撤销此提交' : '应用修改'] }] };
+      },
+    };
+    let confirms = 0;
+    let undoes = 0;
+    const semantic = {
+      finalizePreview: () => ({
+        status: 'rejected', disposition: 'confirmation_required', code: 'REVIEW', message: 'review',
+      }),
+      confirmFinalize: () => { confirms += 1; return { status: 'committed' }; },
+      discardPreview: () => ({ status: 'discarded' }),
+      undoAuthorized: () => { undoes += 1; return { status: 'committed' }; },
+    } as unknown as SemanticEditService;
+    const finalize = createDrawingFinalizeSemanticTool(semantic, questions as never);
+    const request = {
+      previewHandle: 'preview-1', previewDigest: 'sha256:candidate',
+      finalizeOperationId: 'operation-1', finalizeOperationBindingDigest: 'sha256:binding',
+      evaluationId: 'evaluation-1',
+    };
+    const a = finalize.execute(request, exec('session-a'));
+    const b = finalize.execute(request, exec('session-a'));
+    await Promise.resolve();
+    expect(askCalls).toBe(1);
+    release();
+    await Promise.all([a, b]);
+    expect(confirms).toBe(1);
+
+    let releaseUndo!: () => void;
+    const undoGate = new Promise<void>((resolve) => { releaseUndo = resolve; });
+    const undoQuestions = {
+      async ask(input: { questions: Array<{ id: string }> }) {
+        askCalls += 1;
+        await undoGate;
+        return { answers: [{ id: input.questions[0]!.id, selected: ['撤销此提交'] }] };
+      },
+    };
+    const undo = createDrawingUndoTool(semantic, undoQuestions as never);
+    const undoArgs = { targetCommitId: 'commit-1', expectedCurrentRef: { drawingId: 'drawing-1', revision: 2 } };
+    const u1 = undo.execute(undoArgs, exec('session-a'));
+    const u2 = undo.execute(undoArgs, exec('session-a'));
+    await Promise.resolve();
+    expect(askCalls).toBe(2);
+    releaseUndo();
+    await Promise.all([u1, u2]);
+    expect(undoes).toBe(1);
+  });
+
   it('exposes only the fail-closed semantic edit surface to the model', () => {
-    const tools = createDrawingAgentToolCatalog(repository(), {
+    const drawings = repository();
+    const semantic = new SemanticEditService(drawings, {
+      id: (kind) => `${kind}-1`,
+      now: () => 1,
+      digest: (value) => `sha256:${value.length}`,
+    });
+    const tools = createDrawingAgentToolCatalog(drawings, {
       async readImage(): Promise<StoredImageAttachment> {
         throw new Error('must not read');
       },
-    });
+    }, semantic);
 
     expect(tools.map((tool) => tool.name)).toEqual([
       'drawing_import',
       'drawing_summarize',
       'drawing_query',
+      'drawing_observe',
+      'drawing_build_context',
+      'drawing_ground',
+      'drawing_preview_program',
+      'drawing_revise_preview',
+      'drawing_evaluate_preview',
       'drawing_finalize_preview',
       'drawing_discard_preview',
+      'drawing_get_operation',
+      'drawing_undo_commit',
     ]);
   });
 

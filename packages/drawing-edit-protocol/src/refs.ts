@@ -2,8 +2,11 @@
 
 import { z } from 'zod';
 
-const idSchema = z.string().trim().min(1).max(256);
-const digestSchema = z.string().trim().min(1).max(512);
+export const protocolIdSchema = z.string().trim().min(1).max(256);
+export const contentDigestSchema = z.string().trim().min(1).max(512);
+
+const idSchema = protocolIdSchema;
+const digestSchema = contentDigestSchema;
 
 export const drawingRefSchema = z.object({
   drawingId: idSchema,
@@ -38,6 +41,74 @@ export const observationArtifactRefSchema = z.object({
   basis: editBasisSchema,
 }).strict();
 
+export const taskRefSchema = z.object({
+  taskId: idSchema,
+  rootUserMessageDigest: digestSchema,
+  authoritativeObjectiveDigest: digestSchema,
+  baseRef: drawingRefSchema,
+  policy: z.enum(['review', 'auto-safe']),
+  stateEpoch: z.number().int().nonnegative(),
+}).strict();
+
+export const observationRefSchema = z.object({
+  observationId: idSchema,
+  taskId: idSchema,
+  basis: editBasisSchema,
+  artifactRefs: z.array(observationArtifactRefSchema).max(16),
+  observationDigest: digestSchema,
+}).strict();
+
+export const contextRefSchema = z.object({
+  contextId: idSchema,
+  taskId: idSchema,
+  observationId: idSchema,
+  contextDigest: digestSchema,
+}).strict();
+
+export const groundingRefSchema = z.object({
+  groundingId: idSchema,
+  taskId: idSchema,
+  contextId: idSchema,
+  targetHandle: idSchema,
+  targetScopeDigest: digestSchema,
+  protectedScopeDigest: digestSchema,
+  evidenceDigest: digestSchema,
+}).strict();
+
+export const previewRefSchema = z.object({
+  previewHandle: idSchema,
+  taskId: idSchema,
+  groundingId: idSchema,
+  baseRef: drawingRefSchema,
+  candidateDigest: digestSchema,
+  effectDigest: digestSchema,
+  finalizeOperationId: idSchema,
+  finalizeOperationBindingDigest: digestSchema,
+}).strict();
+
+export const evaluationRefSchema = z.object({
+  evaluationId: idSchema,
+  taskId: idSchema,
+  previewHandle: idSchema,
+  candidateDigest: digestSchema,
+  evaluationDigest: digestSchema,
+}).strict();
+
+export const selectionProjectionRefSchema = z.object({
+  selectionProjectionId: idSchema,
+  drawingRef: drawingRefSchema,
+  nodeIds: z.array(idSchema).max(256),
+  projectionDigest: digestSchema,
+  expiresAt: z.number().int().nonnegative(),
+}).strict();
+
 export type DrawingRef = z.infer<typeof drawingRefSchema>;
 export type EditBasis = z.infer<typeof editBasisSchema>;
 export type ObservationArtifactRef = z.infer<typeof observationArtifactRefSchema>;
+export type TaskRef = z.infer<typeof taskRefSchema>;
+export type ObservationRef = z.infer<typeof observationRefSchema>;
+export type ContextRef = z.infer<typeof contextRefSchema>;
+export type GroundingRef = z.infer<typeof groundingRefSchema>;
+export type PreviewRef = z.infer<typeof previewRefSchema>;
+export type EvaluationRef = z.infer<typeof evaluationRefSchema>;
+export type SelectionProjectionRef = z.infer<typeof selectionProjectionRefSchema>;

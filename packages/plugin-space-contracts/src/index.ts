@@ -13,6 +13,9 @@ export type {
   DrawingWorkspaceCommand,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspaceCommitResult,
+  DrawingInteractiveStageResult,
+  DrawingUndoStageRequest,
+  DrawingUndoStageResult,
   DrawingWorkspacePreview,
   DrawingWorkspacePreviewControlRequest,
   DrawingWorkspacePreviewCreateRequest,
@@ -298,6 +301,11 @@ export const drawingWorkspaceSnapshotSchema = z.object({
     sourceUnderlay: z.boolean(),
   }).strict(),
   provisional: z.boolean().optional(),
+  lastCommit: z.object({
+    commitId: idSchema,
+    mode: z.enum(['auto-safe', 'confirmed', 'interactive', 'undo']),
+    undoable: z.boolean(),
+  }).strict().optional(),
 }).strict().nullable();
 
 const nodeCreateCommandSchema = z.object({
@@ -341,6 +349,36 @@ export const drawingWorkspaceCommitResultSchema = z.discriminatedUnion('status',
   z.object({ status: z.literal('committed'), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
   z.object({ status: z.literal('conflict'), message: z.string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   z.object({ status: z.literal('rejected'), message: z.string(), code: z.string().optional() }).strict(),
+]);
+
+export const drawingInteractiveStageResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('staged'),
+    intentId: idSchema,
+    intentDigest: idSchema,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: z.string().startsWith('/drawing-apply-intent '),
+  }).strict(),
+  z.object({ status: z.literal('conflict'), message: z.string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  z.object({ status: z.literal('rejected'), message: z.string(), code: idSchema }).strict(),
+]);
+
+export const drawingUndoStageRequestSchema = z.object({
+  targetCommitId: idSchema,
+  expectedCurrentRef: drawingRefSchema,
+}).strict();
+
+export const drawingUndoStageResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('staged'),
+    targetCommitId: idSchema,
+    expectedCurrentRef: drawingRefSchema,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: z.string().startsWith('/drawing-undo '),
+  }).strict(),
+  z.object({ status: z.literal('rejected'), message: z.string(), code: idSchema }).strict(),
 ]);
 
 export const drawingPreviewCreateRequestSchema = z.object({

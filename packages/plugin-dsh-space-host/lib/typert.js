@@ -4862,8 +4862,10 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
-const idSchema$1 = string().trim().min(1).max(256);
-const digestSchema = string().trim().min(1).max(512);
+const protocolIdSchema = string().trim().min(1).max(256);
+const contentDigestSchema = string().trim().min(1).max(512);
+const idSchema$1 = protocolIdSchema;
+const digestSchema = contentDigestSchema;
 const drawingRefSchema = object({
   drawingId: idSchema$1,
   revision: number().int().nonnegative()
@@ -4888,12 +4890,164 @@ const editBasisSchema = discriminatedUnion("kind", [
     candidateDigest: digestSchema
   }).strict()
 ]);
-object({
+const observationArtifactRefSchema = object({
   id: idSchema$1,
   contentDigest: digestSchema,
   mimeType: _enum(["image/png", "image/webp"]),
   basis: editBasisSchema
 }).strict();
+const taskRefSchema = object({
+  taskId: idSchema$1,
+  rootUserMessageDigest: digestSchema,
+  authoritativeObjectiveDigest: digestSchema,
+  baseRef: drawingRefSchema,
+  policy: _enum(["review", "auto-safe"]),
+  stateEpoch: number().int().nonnegative()
+}).strict();
+object({
+  observationId: idSchema$1,
+  taskId: idSchema$1,
+  basis: editBasisSchema,
+  artifactRefs: array(observationArtifactRefSchema).max(16),
+  observationDigest: digestSchema
+}).strict();
+object({
+  contextId: idSchema$1,
+  taskId: idSchema$1,
+  observationId: idSchema$1,
+  contextDigest: digestSchema
+}).strict();
+object({
+  groundingId: idSchema$1,
+  taskId: idSchema$1,
+  contextId: idSchema$1,
+  targetHandle: idSchema$1,
+  targetScopeDigest: digestSchema,
+  protectedScopeDigest: digestSchema,
+  evidenceDigest: digestSchema
+}).strict();
+object({
+  previewHandle: idSchema$1,
+  taskId: idSchema$1,
+  groundingId: idSchema$1,
+  baseRef: drawingRefSchema,
+  candidateDigest: digestSchema,
+  effectDigest: digestSchema,
+  finalizeOperationId: idSchema$1,
+  finalizeOperationBindingDigest: digestSchema
+}).strict();
+object({
+  evaluationId: idSchema$1,
+  taskId: idSchema$1,
+  previewHandle: idSchema$1,
+  candidateDigest: digestSchema,
+  evaluationDigest: digestSchema
+}).strict();
+object({
+  selectionProjectionId: idSchema$1,
+  drawingRef: drawingRefSchema,
+  nodeIds: array(idSchema$1).max(256),
+  projectionDigest: digestSchema,
+  expiresAt: number().int().nonnegative()
+}).strict();
+const operationBase = {
+  operationId: protocolIdSchema,
+  sessionId: protocolIdSchema,
+  drawingId: protocolIdSchema
+};
+discriminatedUnion("mode", [
+  object({
+    ...operationBase,
+    mode: literal("semantic"),
+    candidateDigest: contentDigestSchema,
+    previewHandle: protocolIdSchema
+  }).strict(),
+  object({
+    ...operationBase,
+    mode: literal("interactive"),
+    intentId: protocolIdSchema,
+    intentDigest: contentDigestSchema,
+    effectDigest: contentDigestSchema
+  }).strict(),
+  object({
+    ...operationBase,
+    mode: literal("genesis"),
+    sourceDigest: contentDigestSchema
+  }).strict(),
+  object({
+    ...operationBase,
+    mode: literal("undo"),
+    targetCommitId: protocolIdSchema,
+    expectedCurrentRef: drawingRefSchema
+  }).strict()
+]);
+const committedReceiptBase = {
+  operationId: protocolIdSchema,
+  operationBindingDigest: contentDigestSchema,
+  sessionId: protocolIdSchema,
+  drawingId: protocolIdSchema,
+  parentRef: drawingRefSchema,
+  resultingRef: drawingRefSchema,
+  commitId: protocolIdSchema,
+  semanticDigest: contentDigestSchema,
+  snapshotIntegrityDigest: contentDigestSchema
+};
+const committedOperationReceiptSchema = discriminatedUnion("mode", [
+  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("semantic") }).strict(),
+  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("interactive") }).strict(),
+  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("undo"), targetCommitId: protocolIdSchema }).strict()
+]);
+const durableOperationReceiptSchema = union([
+  committedOperationReceiptSchema,
+  object({
+    status: literal("initialized"),
+    mode: literal("genesis"),
+    operationId: protocolIdSchema,
+    operationBindingDigest: contentDigestSchema,
+    sessionId: protocolIdSchema,
+    drawingId: protocolIdSchema,
+    resultingRef: drawingRefSchema,
+    semanticDigest: contentDigestSchema,
+    snapshotIntegrityDigest: contentDigestSchema,
+    initialTask: taskRefSchema,
+    taskStatus: _enum(["active", "expired"])
+  }).strict(),
+  object({
+    status: literal("no-effect"),
+    mode: _enum(["semantic", "interactive"]),
+    operationId: protocolIdSchema,
+    operationBindingDigest: contentDigestSchema,
+    sessionId: protocolIdSchema,
+    drawingId: protocolIdSchema,
+    ref: drawingRefSchema,
+    semanticDigest: contentDigestSchema
+  }).strict()
+]);
+const operationLookupResultSchema = discriminatedUnion("status", [
+  object({ status: literal("committed"), receipt: durableOperationReceiptSchema }).strict(),
+  object({ status: literal("no-effect"), receipt: durableOperationReceiptSchema }).strict(),
+  object({
+    status: literal("pending"),
+    operationId: protocolIdSchema,
+    operationBindingDigest: contentDigestSchema
+  }).strict(),
+  object({
+    status: literal("outcome-unknown"),
+    operationId: protocolIdSchema,
+    operationBindingDigest: contentDigestSchema
+  }).strict(),
+  object({
+    status: literal("recovering"),
+    operationId: protocolIdSchema,
+    operationBindingDigest: contentDigestSchema,
+    retryAfterMs: number().int().positive().max(6e4)
+  }).strict(),
+  object({ status: literal("absent") }).strict(),
+  object({
+    status: literal("digest-mismatch"),
+    operationId: protocolIdSchema
+  }).strict()
+]);
 const idSchema = string().min(1);
 const vec2Schema = tuple([number(), number()]);
 const qualitySchema = object({
@@ -5156,7 +5310,12 @@ const drawingWorkspaceSnapshotSchema = object({
     annotations: boolean(),
     sourceUnderlay: boolean()
   }).strict(),
-  provisional: boolean().optional()
+  provisional: boolean().optional(),
+  lastCommit: object({
+    commitId: idSchema,
+    mode: _enum(["auto-safe", "confirmed", "interactive", "undo"]),
+    undoable: boolean()
+  }).strict().optional()
 }).strict().nullable();
 const nodeCreateCommandSchema = object({
   type: literal("node.create"),
@@ -5186,12 +5345,39 @@ const drawingWorkspaceCommitRequestSchema = object({
   expectedRevision: number().int().nonnegative(),
   commands: array(workspaceCommandSchema).min(1)
 }).strict();
-const drawingWorkspaceCommitResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({ status: literal("committed"), snapshot: drawingWorkspaceSnapshotSchema.unwrap() }).strict(),
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
-const drawingPreviewCreateRequestSchema = object({
+const drawingInteractiveStageResultSchema = discriminatedUnion("status", [
+  object({
+    status: literal("staged"),
+    intentId: idSchema,
+    intentDigest: idSchema,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: string().startsWith("/drawing-apply-intent ")
+  }).strict(),
+  object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
+  object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+]);
+const drawingUndoStageRequestSchema = object({
+  targetCommitId: idSchema,
+  expectedCurrentRef: drawingRefSchema
+}).strict();
+const drawingUndoStageResultSchema = discriminatedUnion("status", [
+  object({
+    status: literal("staged"),
+    targetCommitId: idSchema,
+    expectedCurrentRef: drawingRefSchema,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: string().startsWith("/drawing-undo ")
+  }).strict(),
+  object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+]);
+object({
   ref: drawingRefSchema,
   commands: array(workspaceCommandSchema).min(1),
   summary: string().min(1).optional()
@@ -5210,13 +5396,13 @@ const drawingPreviewSchema = object({
   createdAt: number(),
   summary: string().min(1).optional()
 }).strict();
-const drawingPreviewCreateResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({ status: literal("previewed"), preview: drawingPreviewSchema }).strict(),
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
-const drawingPreviewControlRequestSchema = object({ handle: idSchema }).strict();
-const drawingPreviewDiscardResultSchema = discriminatedUnion("status", [
+object({ handle: idSchema }).strict();
+discriminatedUnion("status", [
   object({ status: literal("discarded"), ref: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
@@ -5245,43 +5431,8 @@ const TYPERT = {
     invocation: { kind: "direct" },
     scope: { context: "agent", wire: "agentId" },
     parameters: [agentParameter],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null",
-      schema: drawingWorkspaceSnapshotSchema
-    },
-    sourceLocation: {
-      file: "packages/plugin-dsh-space-host/src/service.ts",
-      line: 40,
-      column: 3
-    }
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/commit",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "commit",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, {
-      name: "request",
-      wire: "request",
-      source: "json",
-      codec: {
-        mode: "strict",
-        typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest",
-        schema: drawingWorkspaceCommitRequestSchema
-      }
-    }],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
-      schema: drawingWorkspaceCommitResultSchema
-    },
-    sourceLocation: {
-      file: "packages/plugin-dsh-space-host/src/service.ts",
-      line: 45,
-      column: 3
-    }
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null", schema: drawingWorkspaceSnapshotSchema },
+    sourceLocation: serviceLocation(66)
   }, {
     id: "@vectorai/plugin-dsh-space-host#drawingSpace/query",
     service: "drawingSpace",
@@ -5289,26 +5440,39 @@ const TYPERT = {
     method: "query",
     invocation: { kind: "direct" },
     scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, {
-      name: "request",
-      wire: "request",
-      source: "json",
-      codec: {
-        mode: "strict",
-        typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryRequest",
-        schema: drawingQueryRequestSchema
-      }
-    }],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult",
-      schema: drawingQueryResultSchema
-    },
-    sourceLocation: {
-      file: "packages/plugin-dsh-space-host/src/service.ts",
-      line: 60,
-      column: 3
-    }
+    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingQueryRequest", drawingQueryRequestSchema)],
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult", schema: drawingQueryResultSchema },
+    sourceLocation: serviceLocation(71)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "stageInteractiveEdit",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest", drawingWorkspaceCommitRequestSchema)],
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingInteractiveStageResult", schema: drawingInteractiveStageResultSchema },
+    sourceLocation: serviceLocation(76)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageUndo",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "stageUndo",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingUndoStageRequest", drawingUndoStageRequestSchema)],
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingUndoStageResult", schema: drawingUndoStageResultSchema },
+    sourceLocation: serviceLocation(84)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getOperation",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "getOperation",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, stringParameter("operationId"), stringParameter("operationBindingDigest")],
+    result: { mode: "strict", typeSymbol: "@vectorai/drawing-edit-protocol#OperationLookupResult", schema: operationLookupResultSchema },
+    sourceLocation: serviceLocation(89)
   }, {
     id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
     service: "drawingSpace",
@@ -5317,76 +5481,23 @@ const TYPERT = {
     invocation: { kind: "direct" },
     scope: { context: "agent", wire: "agentId" },
     parameters: [agentParameter],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null",
-      schema: drawingPreviewSchema.nullable()
-    },
-    sourceLocation: serviceLocation(65)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/createPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "createPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest(
-      "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateRequest",
-      drawingPreviewCreateRequestSchema
-    )],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateResult",
-      schema: drawingPreviewCreateResultSchema
-    },
-    sourceLocation: serviceLocation(70)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/commitPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "commitPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest(
-      "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
-      drawingPreviewControlRequestSchema
-    )],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult",
-      schema: drawingWorkspaceCommitResultSchema
-    },
-    sourceLocation: serviceLocation(78)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "discardPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest(
-      "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest",
-      drawingPreviewControlRequestSchema
-    )],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreviewDiscardResult",
-      schema: drawingPreviewDiscardResultSchema
-    },
-    sourceLocation: serviceLocation(86)
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null", schema: drawingPreviewSchema.nullable() },
+    sourceLocation: serviceLocation(103)
   }],
-  model: {
-    services: [],
-    events: [],
-    objects: []
-  }
+  model: { services: [], events: [], objects: [] }
 };
 function jsonRequest(typeSymbol, schema) {
+  return { name: "request", wire: "request", source: "json", codec: { mode: "strict", typeSymbol, schema } };
+}
+function stringParameter(name) {
   return {
-    name: "request",
-    wire: "request",
+    name,
+    wire: name,
     source: "json",
-    codec: { mode: "strict", typeSymbol, schema }
+    codec: { mode: "strict", typeSymbol: "string", schema: { parse(input) {
+      if (typeof input !== "string" || input.length === 0) throw new Error("STRING_REQUIRED");
+      return input;
+    } } }
   };
 }
 function serviceLocation(line) {

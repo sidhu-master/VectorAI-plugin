@@ -8,9 +8,12 @@ import { describe, expect, it } from 'vitest';
 
 const sourceRoot = dirname(fileURLToPath(import.meta.url));
 const requiredProductionFiles = [
+  'evaluation.ts',
   'finalize.ts',
+  'operations.ts',
   'refs.ts',
   'spatial-edit-program.ts',
+  'transactions.ts',
 ];
 const forbidden = [
   /^node:/,

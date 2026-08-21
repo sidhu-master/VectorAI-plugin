@@ -1,0 +1,26 @@
+{
+  "name": "@vectorai/plugin-dsh-annotation",
+  "version": "0.1.0-alpha.0",
+  "description": "Engineering annotation DSH plugin built on the VectorAI 2D semantic edit layer",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": { ".": { "types": "./src/index.ts", "default": "./lib/index.js" } },
+  "files": ["lib/index.js", "src/**/*.ts"],
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
+    "@vectorai/engineering-annotation": "workspace:*",
+    "@vectorai/plugin-dsh-space-host": "workspace:*"
+  },
+  "devDependencies": {
+    "@vectorai/drawing-core": "workspace:*"
+  }
+}

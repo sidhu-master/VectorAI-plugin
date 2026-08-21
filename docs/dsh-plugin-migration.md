@@ -1,14 +1,18 @@
 # VectorAI → DeepSeek Harness 插件迁移方案
 
-> 状态：第一层图片导入、空间查询、内部 Preview/Commit/Discard 与共享画布已实现；语义编辑 Phase 0 协议迁移已启动，模型裸 Commit 已关闭，durable Finalize/Undo 待后续切片
+> 状态：DSH 第一层语义编辑迁移已完成；第二层确定性自动标注已作为独立插件接入。静态 Web/PWA 去除旧 Express Adapter 仍是独立后续阶段，不影响 DSH 本地运行。
 >
-> 日期：2026-08-20
+> 最后验证：2026-08-21
 >
 > 基线提交：`90d254e`（`feat: establish pre-DSH migration baseline`）
 >
 > 目标分支：`codex/dsh-plugin-migration`
 >
 > DSH 交互协议：[`图纸上传、矢量化、分区与标注交互设计`](./superpowers/specs/2026-08-20-dsh-drawing-interaction-design.md)
+>
+> Auto-safe 规格：[`DSH 语义改图与可撤销提交`](./superpowers/specs/2026-08-21-dsh-semantic-edit-auto-safe-design.md)
+>
+> 实现架构：[`DSH Semantic Edit Architecture`](./architecture/dsh-semantic-edit.md)
 
 ## 1. 结论
 
@@ -45,12 +49,15 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 
 ### 3.1 已验证状态
 
-基线提交前的验证结果：
+迁移前基线与当前验证结果：
 
 | 检查 | 结果 |
 |---|---|
-| `pnpm test` | 通过：169 个测试文件、1055 个测试 |
-| `pnpm check` | 通过 |
+| `pnpm test`（迁移前） | 通过：169 个测试文件、1055 个测试 |
+| `pnpm test`（当前） | 通过：207 个测试文件、1213 个测试 |
+| `pnpm check`（当前） | 通过 |
+| `pnpm build:dsh-space`（当前） | 通过；Host、Client、Annotation 构建成功 |
+| 发布面负向扫描 | 通过；无旧 `commit/createPreview/commitPreview/discardPreview` Remote |
 | `pnpm lint` | 未通过：2 个 Hooks 警告、1 个未使用函数错误 |
 | HyperFrames `npm run check` | 环境中找不到 `hyperframes` CLI；不作为本次基线阻塞项 |
 
@@ -84,12 +91,14 @@ DSH 负责 Agent、模型、会话、工具调度、权限和附件生命周期�
 - DSH Host 使用按 Agent/session 隔离的完整快照和 expected-revision 原子提交；Client 通过 durable attachment ref 加载原图，不传输 base64 快照。
 - DSH Client 已从独立 `conversation.view` 标签迁移到会话级 `conversation.workspace`：左侧保留 DSH 会话栏，中间显示共享画布，右侧保留 DSH 原生聊天，桌面端分隔宽度可调，窄窗口自动上下排列。
 - 新增宿主无关的 `@vectorai/drawing-spatial`，第一层已公开 revision-bound `world-slice`、node 和 neighbors 查询。
-- 新增 Host-neutral `@vectorai/drawing-edit-protocol`，首批冻结 revision-bound Ref、Observation artifact、`SpatialEditProgram` 与 authority-free Finalize strict codec；`@vectorai/plugin-space-contracts` 作为第一层公共入口重导出该协议。
-- 第一层已实现 Host 权威的会话态 Preview：`node.create/update/delete` 等命令先进入候选，画布显示 created/updated/deleted diff，Commit 才原子增加一个正式 revision，Discard 不修改正式图纸。
-- 旧 `drawing_preview_transaction` / `drawing_commit_preview` 工厂与 Typert Remote 暂时作为内部兼容能力保留，但已从默认模型工具目录移除；模型当前只能读图、调用 fail-closed `drawing_finalize_preview` 和丢弃候选。
-- durable history、inverse transaction、idempotency 与 Undo 完成前，`drawing_finalize_preview` 固定返回 blocked `AUTO_SAFE_UNAVAILABLE`，不会修改正式 Drawing；人工确认也不能越过该门禁。
+- `@vectorai/drawing-edit-protocol` 已冻结 revision/task/observation/context/grounding/Preview/Evaluation Ref、Spatial Edit Program、transaction、三态 assessment、operation binding/receipt 与 strict codec；`@vectorai/plugin-space-contracts` 作为公共入口重导出协议。
+- `@vectorai/drawing-edit-core` 已实现纯函数 transaction apply、inverse、canonical semantic digest、rigid/connected transform、endpoint、path、delete 与 annotation batch 编译；“把右手抬起来打招呼”有确定性 golden test。
+- 第一层 Host 已接通 `observe → build_context → ground → preview/revise → evaluate → finalize`。Host 根据实际 before/after effect、来源质量、诊断、评审结果和任务策略决定 `blocked | confirmation_required | auto_safe`，不接受模型自报权限或 auto-safe。
+- 正式提交使用本地 durable envelope：operation binding、ledger-first 幂等、forward/inverse transaction、commit record、原子快照替换和补偿式 Undo。空 diff 不增加 revision；同 operation 重试返回原 receipt。
+- 浏览器 Remote 已删除裸 `commit/createPreview/commitPreview/discardPreview`。人工属性编辑先由 Host stage，再通过一次性 DSH command 提交；命令响应丢失后按 operationId 对账。Undo 使用相同 staged + receipt 路径。
+- Reviewer 通过 DSH one-shot subagent 只读运行；同候选并发评审 single-flight，负面缺陷对同一语义候选保持 sticky，不能用重复评审洗成 auto-safe。确认卡与 Undo 卡也按 operation binding single-flight。
 - DSH 第一层插件不启动 VectorAI Express 或云端服务；网站旧 Agent/Express 仍作为迁移兼容 Adapter 保留。
-- 第二层 Engineering Annotation 保持独立插件边界，下一切片实现本地识别、测量、布局和自动标注工具。
+- `@vectorai/engineering-annotation` 和 `@vectorai/plugin-dsh-annotation` 已作为第二层独立包接入：确定性识别 circle/arc/ellipse 标注候选，通过第一层 `runExtensionProgram` 生成 Preview、评估并按相同策略提交，且有禁止深导入的依赖门禁。
 
 ## 4. 目标架构
 
@@ -237,7 +246,7 @@ export interface DrawingRenderService {
 DSH Host 插件是 Cordis 组合中的进程级能力，负责：
 
 - 注册 `ctx.vectorDrawing` 一类的二维服务。
-- 注册模型可调用的高阶工具；语义迁移完成前默认目录只开放导入、查询、fail-closed Finalize 与候选丢弃，不开放裸 transaction/Commit。
+- 注册模型可调用的高阶工具，不开放裸 transaction/Commit。
 - 通过 DSH Remote API 向浏览器 Client 暴露只需要的查询、渲染和交互操作。
 - 复用 DSH 的 workspace、权限、Jobs、附件和生命周期。
 - 在插件 dispose 时终止自己创建的 Worker、释放 WASM/GPU 资源和刷写本地事务。
@@ -268,11 +277,17 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 | `drawing_summarize` | 只读 | 返回单位、bounds、plane/type 计数与 revision |
 | `drawing_query` | 只读 | 执行 bounds、node、topology、path 等有界查询 |
 | `drawing_observe` | 只读 | 创建绑定 revision/viewport 的观察结果 |
-| `drawing_preview_program` | 候选写 | 编译高阶语义程序并生成可视 Preview，不改正式状态；后续切片实现 |
-| `drawing_finalize_preview` | 受控正式写 | 当前 fail closed；durable history/Undo 完成后按 auto-safe 策略提交 |
+| `drawing_build_context` | 只读 | 从 Observation 构建有界上下文 |
+| `drawing_ground` | 只读 | 将语义目标绑定到精确节点和接口 |
+| `drawing_preview_program` | 候选写 | 编译高阶语义程序并生成可视 Preview，不改正式状态 |
+| `drawing_revise_preview` | 候选写 | 精确替换当前候选；失败保留旧 Preview；每任务最多三个候选 |
+| `drawing_evaluate_preview` | 只读/评审 | 运行 hard validators、来源质量和本地 reviewer |
+| `drawing_finalize_preview` | 受控正式写 | auto-safe 自动提交；风险候选询问；hard-invalid/deny 永久阻断 |
 | `drawing_discard_preview` | 候选写 | 丢弃 Preview |
+| `drawing_get_operation` | 只读 | 在响应丢失或持久化结果未知时查询 durable receipt |
+| `drawing_undo_commit` | 受控正式写 | 用户授权后创建补偿式 Undo revision |
 
-复杂内部过程通过一个工具的结构化结果逐步展开，不把完整 Drawing Document 塞进模型上下文。旧 `drawing_preview_transaction` / `drawing_commit_preview` 只保留为迁移期内部兼容能力，不属于默认模型目录。
+复杂内部过程通过结构化 Ref 逐步展开，不把完整 Drawing Document 塞进模型上下文。旧裸 transaction/Commit 不属于模型目录或 Typert Remote 发布面。
 
 ## 7. 第二层插件：Engineering Annotation
 
@@ -454,6 +469,18 @@ ProjectManifest
 
 ## 14. 迁移阶段与退出条件
 
+截至 2026-08-21 的状态：
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| Phase 0：边界基线 | 完成 | Apache-2.0、workspace 包、strict codec 和依赖门禁已建立 |
+| Phase 1：Drawing Core | 完成（DSH 所需范围） | canonical IR、共享 Workspace/Viewer、transaction/inverse 已包化 |
+| Phase 2：Spatial/Edit Core | 完成（DSH 所需范围） | 空间查询、高阶程序编译、effect/preserve/postcondition 已接入 |
+| Phase 3：第一层 DSH | 完成 | 导入、矢量化、同页画布、语义改图、durable finalize、Undo 已闭环 |
+| Phase 4：第二层标注 | 完成首个可用版本 | circle/arc/ellipse 确定性标注与 DSH 工具已接入；更复杂工程规则可迭代扩展 |
+| Phase 5：静态 Web/PWA | 未完成 | 当前网站继续使用兼容 Adapter；不属于 DSH 插件运行依赖 |
+| Phase 6：删除 Legacy Server | 未完成 | DSH 路径已无 Express/云依赖；仓库旧网站服务端仍保留 |
+
 ### Phase 0：仓库与边界基线
 
 工作：
@@ -611,23 +638,29 @@ ProjectManifest
 
 这个切片的验收不是“自动标注做完”，而是证明以下事实：同一个 Drawing Core 能被 DSH 和静态网站消费；DSH 有真实二维空间与可预览画布；没有 VectorAI Express 服务参与。
 
-### 19.1 2026-08-20 Slice 1 实施状态
+### 19.1 2026-08-21 DSH 迁移实施状态
 
-当前已完成第一条更窄的 DSH 纵向闭环，代码位于同仓库的四个包：
+当前 DSH 纵向闭环已完成，代码位于同仓库的以下包：
 
-- `@vectorai/plugin-space-contracts`：宿主无关的 JSON contract 与共享 TypeRT 严格 schema；
-- `@vectorai/plugin-dsh-space-host`：图片接入、会话内存 Repository、`drawing_import`、`drawing_summarize` 和 Remote Host；
+- `@vectorai/drawing-edit-protocol`：Host-neutral Ref、程序、事务、评审、assessment 和 operation receipt；
+- `@vectorai/drawing-edit-core`：纯函数语义编辑编译、effect、inverse 和 canonical digest；
+- `@vectorai/plugin-space-contracts`：公共 JSON contract 与共享 Typert 严格 schema；
+- `@vectorai/plugin-dsh-space-host`：图片接入、本地矢量化、durable Repository、语义工具、评审和 staged command；
 - `@vectorai/plugin-dsh-space-client`：`conversation.workspace` 内联共享画布与 Remote Client；
-- `@vectorai/plugin-dsh-space`：把 Host/Client 装入 DSH profile 的 bundle patch。
+- `@vectorai/engineering-annotation`：确定性工程标注计划；
+- `@vectorai/plugin-dsh-annotation`：第二层 `drawing_auto_annotate` DSH 工具；
+- `@vectorai/plugin-dsh-space`：把 Host/Client/Annotation 装入 DSH profile 的 bundle patch。
 
 真实 DSH `0.1.0-rc.8` mount smoke 已验证 `vectorai-space-host`、`vectorai-space-client`、严格 TypeRT Remote 路由和共享画布。当前布局由 `scripts/dsh-inline-workspace-patch.mjs` 增加会话级工作区插槽，首次写入自动备份，未知版本/结构拒绝修改。此切片不启动 VectorAI Express/HTTP 服务，也不调用 VectorAI 云端。
 
-当前边界与限制：
+当前边界：
 
 - 图片导入已使用随 Host 打包的本地 Python/OpenCV clean-line worker，输出解析图元、Polyline 兜底、拓扑关系和 compound-path 特征；
-- Drawing 状态按 DSH session 哈希键原子写入 `~/.dsh/vectorai/drawings/`，重启 DSH 后可恢复；
-- DXF/PDF、可选 WASM 后端、自动标注仍属于后续切片；
-- 本地 workspace 安装需把 bundle、Host、Client 三个路径一起加入 profile；发布到 npm 后由普通包依赖解析。
+- Drawing 状态按 DSH session 哈希键写入 `~/.dsh/vectorai/drawings/`；正式 envelope 同时保存快照、revision、forward/inverse、commit record 和 operation receipt；
+- 正式写入只来自 semantic finalize、Host-staged 浏览器编辑或显式 Undo，三条路径都使用 expected revision 和幂等 operation binding；
+- Preview 只在内存中，进程重启后可从 canonical Drawing 重新生成；正式状态不受未提交 Preview 影响；
+- DXF/PDF 和可选 WASM 是可增加的导入/计算 Adapter，不影响已经完成的图片线稿与语义改图闭环；
+- 本地 workspace 安装需把 bundle、Host、Client、Annotation 四个路径加入 profile；发布后由普通包依赖解析。
 
 ## 20. Definition of Done
 
@@ -643,8 +676,8 @@ ProjectManifest
 - 仓库具有明确开源许可证、依赖合规记录和无密钥发布检查。
 - 文档、示例和一键安装流程可由干净机器复现。
 
-## 21. 已确认决策与下一步
+## 21. 已确认决策与后续扩展
 
 已确认根许可证使用 Apache-2.0，第一层和第二层先采用同仓库 pnpm workspace 多包发布；第二层不是第一层示例，而是只依赖第一层公开契约的独立可安装插件。
 
-当前正式 DSH.app 已完成“本地矢量图纸恢复 → 内联图纸预览 → 原生聊天同页 → 分隔条调整”验收。下一步继续补齐第一层导入入口与剩余网站能力，再推进第二层自动标注与 DXF/PDF/WASM adapter。
+当前 DSH.app 路径已完成“本地图片 → clean-line 矢量化 → 同页可交互画布 → 语义 Grounding → Preview/评审 → auto-safe 或确认提交 → Undo”闭环。后续扩展不再改变这一层架构：可以继续增加 DXF/PDF/WASM Adapter、复杂工程标注规则和静态 Web/PWA Adapter；它们分别通过 importer、第二层插件和 Web port 接入。

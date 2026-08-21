@@ -19,7 +19,7 @@ import {
 export type DrawingWorkspaceStatus = 'idle' | 'loading' | 'empty' | 'ready' | 'error';
 
 export interface DrawingWorkspaceError {
-  code: 'load_failed' | 'commit_failed' | 'revision_conflict' | 'source_failed';
+  code: 'load_failed' | 'commit_failed' | 'revision_conflict' | 'source_failed' | 'undo_failed';
   message: string;
 }
 
@@ -57,6 +57,7 @@ export interface DrawingWorkspaceState {
   updateNode(id: string, changes: Record<string, unknown>): Promise<boolean>;
   deleteNodes(ids: string[]): Promise<boolean>;
   moveAnnotationText(id: string, position: Vec2): Promise<boolean>;
+  undoLast(): Promise<boolean>;
   setViewport(viewport: DrawingWorkspaceViewport): void;
   setMouseWorld(point: Vec2 | null): void;
   setSelection(ids: string[]): void;
@@ -224,6 +225,29 @@ export function createDrawingWorkspaceStore(input: {
         if (snapshot === null || !snapshot.capabilities.annotations) return false;
         const command = buildAnnotationTextMoveCommand(snapshot.document, id, position);
         return command === null ? false : get().commit({ commands: [command] });
+      },
+      async undoLast() {
+        const snapshot = get().snapshot;
+        if (!snapshot?.lastCommit?.undoable || !port.undoLast || disposed) return false;
+        set({ busy: true, error: null });
+        const controller = new AbortController();
+        requestController = controller;
+        try {
+          const result = await port.undoLast(snapshot, controller.signal);
+          if (controller.signal.aborted || disposed) return false;
+          if (result.status === 'committed') {
+            await replaceSnapshot(result.snapshot, null);
+            return true;
+          }
+          set({ error: { code: 'undo_failed', message: result.message } });
+          return false;
+        } catch (error) {
+          if (controller.signal.aborted || disposed) return false;
+          set({ error: { code: 'undo_failed', message: errorMessage(error) } });
+          return false;
+        } finally {
+          if (!disposed) set({ busy: false });
+        }
       },
       setViewport(viewport) {
         set({ viewport: { ...viewport } });

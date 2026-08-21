@@ -1,220 +1,107 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  RemoteResult,
-  TypertRemoteContribution,
-} from '@deepseek-ai/dsh-typert-protocol';
+import type { RemoteResult, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol';
 import {
-  drawingSessionIdSchema,
+  drawingInteractiveStageResultSchema,
+  drawingUndoStageRequestSchema,
+  drawingUndoStageResultSchema,
+  drawingPreviewSchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
-  drawingPreviewControlRequestSchema,
-  drawingPreviewCreateRequestSchema,
-  drawingPreviewCreateResultSchema,
-  drawingPreviewDiscardResultSchema,
-  drawingPreviewSchema,
+  drawingSessionIdSchema,
   drawingWorkspaceCommitRequestSchema,
-  drawingWorkspaceCommitResultSchema,
   drawingWorkspaceSnapshotSchema,
-  type DrawingWorkspaceCommitRequest,
-  type DrawingWorkspaceCommitResult,
-  type DrawingWorkspaceSnapshot,
+  operationLookupResultSchema,
+  type DrawingInteractiveStageResult,
+  type DrawingUndoStageRequest,
+  type DrawingUndoStageResult,
   type DrawingQueryRequest,
   type DrawingQueryResult,
+  type DrawingWorkspaceCommitRequest,
   type DrawingWorkspacePreview,
-  type DrawingWorkspacePreviewControlRequest,
-  type DrawingWorkspacePreviewCreateRequest,
-  type DrawingWorkspacePreviewCreateResult,
-  type DrawingWorkspacePreviewDiscardResult,
+  type DrawingWorkspaceSnapshot,
+  type OperationLookupResult,
 } from '@vectorai/plugin-space-contracts';
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespaceMap {
     drawingSpace: {
       getSnapshot(sessionId: string): Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
-      commit(
-        sessionId: string,
-        request: DrawingWorkspaceCommitRequest,
-      ): Promise<RemoteResult<DrawingWorkspaceCommitResult>>;
-      query(
-        sessionId: string,
-        request: DrawingQueryRequest,
-      ): Promise<RemoteResult<DrawingQueryResult>>;
+      query(sessionId: string, request: DrawingQueryRequest): Promise<RemoteResult<DrawingQueryResult>>;
       getPreview(sessionId: string): Promise<RemoteResult<DrawingWorkspacePreview | null>>;
-      createPreview(
-        sessionId: string,
-        request: DrawingWorkspacePreviewCreateRequest,
-      ): Promise<RemoteResult<DrawingWorkspacePreviewCreateResult>>;
-      commitPreview(
-        sessionId: string,
-        request: DrawingWorkspacePreviewControlRequest,
-      ): Promise<RemoteResult<DrawingWorkspaceCommitResult>>;
-      discardPreview(
-        sessionId: string,
-        request: DrawingWorkspacePreviewControlRequest,
-      ): Promise<RemoteResult<DrawingWorkspacePreviewDiscardResult>>;
+      stageInteractiveEdit(sessionId: string, request: DrawingWorkspaceCommitRequest): Promise<RemoteResult<DrawingInteractiveStageResult>>;
+      stageUndo(sessionId: string, request: DrawingUndoStageRequest): Promise<RemoteResult<DrawingUndoStageResult>>;
+      getOperation(sessionId: string, operationId: string, operationBindingDigest: string): Promise<RemoteResult<OperationLookupResult>>;
     };
   }
-
   interface TypertRemoteMap {
-    'drawingSpace/getSnapshot': (
-      sessionId: string,
-    ) => Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
-    'drawingSpace/commit': (
-      sessionId: string,
-      request: DrawingWorkspaceCommitRequest,
-    ) => Promise<RemoteResult<DrawingWorkspaceCommitResult>>;
-    'drawingSpace/query': (
-      sessionId: string,
-      request: DrawingQueryRequest,
-    ) => Promise<RemoteResult<DrawingQueryResult>>;
-    'drawingSpace/getPreview': (
-      sessionId: string,
-    ) => Promise<RemoteResult<DrawingWorkspacePreview | null>>;
-    'drawingSpace/createPreview': (
-      sessionId: string,
-      request: DrawingWorkspacePreviewCreateRequest,
-    ) => Promise<RemoteResult<DrawingWorkspacePreviewCreateResult>>;
-    'drawingSpace/commitPreview': (
-      sessionId: string,
-      request: DrawingWorkspacePreviewControlRequest,
-    ) => Promise<RemoteResult<DrawingWorkspaceCommitResult>>;
-    'drawingSpace/discardPreview': (
-      sessionId: string,
-      request: DrawingWorkspacePreviewControlRequest,
-    ) => Promise<RemoteResult<DrawingWorkspacePreviewDiscardResult>>;
+    'drawingSpace/getSnapshot': (sessionId: string) => Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
+    'drawingSpace/query': (sessionId: string, request: DrawingQueryRequest) => Promise<RemoteResult<DrawingQueryResult>>;
+    'drawingSpace/getPreview': (sessionId: string) => Promise<RemoteResult<DrawingWorkspacePreview | null>>;
+    'drawingSpace/stageInteractiveEdit': (sessionId: string, request: DrawingWorkspaceCommitRequest) => Promise<RemoteResult<DrawingInteractiveStageResult>>;
+    'drawingSpace/stageUndo': (sessionId: string, request: DrawingUndoStageRequest) => Promise<RemoteResult<DrawingUndoStageResult>>;
+    'drawingSpace/getOperation': (sessionId: string, operationId: string, operationBindingDigest: string) => Promise<RemoteResult<OperationLookupResult>>;
   }
 }
 
 const agentCodec = {
-  mode: 'strict',
-  typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-  schema: drawingSessionIdSchema,
+  mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId', schema: drawingSessionIdSchema,
 } as const;
 const agentParameter = {
-  name: 'agent',
-  wire: 'agentId',
-  source: 'lookup',
-  lookup: 'agent',
-  codec: agentCodec,
+  name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent', codec: agentCodec,
 } as const;
 
 export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
   package: '@vectorai/plugin-dsh-space-host',
   descriptors: [{
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot',
-    service: 'drawingSpace',
-    namespace: 'drawingSpace',
-    method: 'getSnapshot',
-    invocation: { kind: 'direct' },
-    scope: { context: 'agent', wire: 'agentId' },
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getSnapshot',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null',
-      schema: drawingWorkspaceSnapshotSchema,
-    },
-  }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/commit',
-    service: 'drawingSpace',
-    namespace: 'drawingSpace',
-    method: 'commit',
-    invocation: { kind: 'direct' },
-    scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, {
-      name: 'request',
-      wire: 'request',
-      source: 'json',
-      codec: {
-        mode: 'strict',
-        typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest',
-        schema: drawingWorkspaceCommitRequestSchema,
-      },
-    }],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult',
-      schema: drawingWorkspaceCommitResultSchema,
-    },
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null', schema: drawingWorkspaceSnapshotSchema },
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/query',
-    service: 'drawingSpace',
-    namespace: 'drawingSpace',
-    method: 'query',
-    invocation: { kind: 'direct' },
-    scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, {
-      name: 'request',
-      wire: 'request',
-      source: 'json',
-      codec: {
-        mode: 'strict',
-        typeSymbol: '@vectorai/plugin-space-contracts#DrawingQueryRequest',
-        schema: drawingQueryRequestSchema,
-      },
-    }],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingQueryResult',
-      schema: drawingQueryResultSchema,
-    },
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'query',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingQueryRequest', drawingQueryRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingQueryResult', schema: drawingQueryResultSchema },
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getPreview',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getPreview',
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null',
-      schema: drawingPreviewSchema.nullable(),
-    },
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null', schema: drawingPreviewSchema.nullable() },
   }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/createPreview',
-    service: 'drawingSpace', namespace: 'drawingSpace', method: 'createPreview',
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageInteractiveEdit',
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, jsonRequest(
-      '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateRequest',
-      drawingPreviewCreateRequestSchema,
-    )],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateResult',
-      schema: drawingPreviewCreateResultSchema,
-    },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest', drawingWorkspaceCommitRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingInteractiveStageResult', schema: drawingInteractiveStageResultSchema },
   }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/commitPreview',
-    service: 'drawingSpace', namespace: 'drawingSpace', method: 'commitPreview',
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageUndo',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageUndo',
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, jsonRequest(
-      '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest',
-      drawingPreviewControlRequestSchema,
-    )],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult',
-      schema: drawingWorkspaceCommitResultSchema,
-    },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingUndoStageRequest', drawingUndoStageRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingUndoStageResult', schema: drawingUndoStageResultSchema },
   }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/discardPreview',
-    service: 'drawingSpace', namespace: 'drawingSpace', method: 'discardPreview',
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/getOperation',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getOperation',
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, jsonRequest(
-      '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest',
-      drawingPreviewControlRequestSchema,
-    )],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewDiscardResult',
-      schema: drawingPreviewDiscardResultSchema,
-    },
+    parameters: [agentParameter, stringParameter('operationId'), stringParameter('operationBindingDigest')],
+    result: { mode: 'strict', typeSymbol: '@vectorai/drawing-edit-protocol#OperationLookupResult', schema: operationLookupResultSchema },
   }],
 };
 
 function jsonRequest(typeSymbol: string, schema: { parse(input: unknown): unknown }) {
+  return { name: 'request', wire: 'request', source: 'json', codec: { mode: 'strict', typeSymbol, schema } } as const;
+}
+
+function stringParameter(name: string) {
   return {
-    name: 'request',
-    wire: 'request',
-    source: 'json',
-    codec: { mode: 'strict', typeSymbol, schema },
+    name, wire: name, source: 'json',
+    codec: { mode: 'strict', typeSymbol: 'string', schema: { parse(input: unknown) {
+      if (typeof input !== 'string' || input.length === 0) throw new Error('STRING_REQUIRED');
+      return input;
+    } } },
   } as const;
 }

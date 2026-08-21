@@ -64,8 +64,9 @@ export async function apply(ctx: Context) {
   const remote = ctx.get('remote');
   const slots = ctx.get('slots');
   const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
-  const viewFiber = ctx.inject(['remote.drawingSpace', 'conversation'], (scope) => {
+  const viewFiber = ctx.inject(['remote.drawingSpace', 'remote.commands', 'conversation'], (scope) => {
     const drawingSpace = scope.get('remote').drawingSpace;
+    const commands = scope.get('remote').commands;
     const conversation = scope.get('conversation') as unknown as Pick<
       ConversationController,
       'resolveImage' | 'releaseSessionImages'
@@ -78,6 +79,7 @@ export async function apply(ctx: Context) {
           workspacePort: createDshDrawingWorkspacePort({
             sessionId: id,
             remote: drawingSpace,
+            commands,
             resolveImage: (ownerId: string, attachment: ImageAttachmentRef) => (
               conversation.resolveImage(ownerId as SessionId, attachment)
             ),

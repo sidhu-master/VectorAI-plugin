@@ -25,13 +25,13 @@ import { createHash } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { PythonVectorizationProvider } from '../../../api/services/drawing-vectorization/python-provider';
-import type {
-  CleanLinePrimitiveCandidate,
-  CleanLineStrokeChain,
-  CleanLineStrokePiece,
-  CleanLineVectorizationResult,
-} from '../../../api/services/drawing-vectorization/types';
+import {
+  LocalPythonVectorizerProcess,
+  type CleanLinePrimitiveCandidate,
+  type CleanLineStrokeChain,
+  type CleanLineStrokePiece,
+  type CleanLineVectorizationResult,
+} from './local-python-vectorizer';
 
 export interface VectorizedImage {
   document: DrawingDocument;
@@ -68,8 +68,8 @@ export class LocalCleanLineVectorizer implements ImageVectorizer {
     const root = resolve(import.meta.dirname, '../../..');
     const localPython = resolve(root, '.local/vectorai/cv-venv/bin/python');
     const packagedScript = resolve(import.meta.dirname, 'vectorai_vectorizer.py');
-    const provider = await PythonVectorizationProvider.create({
-      pythonPath: await accessible(localPython) ? localPython : undefined,
+    const provider = await LocalPythonVectorizerProcess.create({
+      pythonPath: await accessible(localPython) ? localPython : 'python3',
       scriptPath: await accessible(packagedScript)
         ? packagedScript
         : resolve(root, 'python/vectorai_vectorizer.py'),
@@ -77,13 +77,11 @@ export class LocalCleanLineVectorizer implements ImageVectorizer {
     });
     try {
       const result = await provider.vectorize({
-        source: {
-          sourceId: String(input.attachment.attachmentId),
-          mimeType: input.attachment.mediaType,
-          bytes: input.data,
-          width: input.attachment.width,
-          height: input.attachment.height,
-        },
+        sourceId: String(input.attachment.attachmentId),
+        mimeType: input.attachment.mediaType,
+        bytes: input.data,
+        width: input.attachment.width,
+        height: input.attachment.height,
         maxPixels: Math.min(input.attachment.width * input.attachment.height, 4_000_000),
         signal: input.signal,
       });

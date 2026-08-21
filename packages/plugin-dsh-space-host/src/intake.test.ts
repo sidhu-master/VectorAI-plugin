@@ -24,6 +24,18 @@ function imageMessage(...ids: string[]): UserMessage {
   });
 }
 
+function pluginImageMessage(id: string): UserMessage {
+  return createUserMessage({
+    content: [{ type: 'image', attachment: attachment(id) }],
+    source: {
+      kind: 'plugin',
+      plugin: '@vectorai/reviewer',
+      form: 'snapshot',
+      sections: [],
+    },
+  });
+}
+
 function payload(messages: UserMessage[]) {
   return {
     agent: { id: 'session-a' } as unknown as Agent,
@@ -40,6 +52,14 @@ describe('drawing image intake', () => {
       imageMessage('first', 'middle'),
       imageMessage('last'),
     ])).toEqual(attachment('last'));
+  });
+
+  it('ignores plugin and tool-produced images when choosing a pending import', () => {
+    expect(findLatestImage([
+      imageMessage('real-user-drawing'),
+      pluginImageMessage('reviewer-render'),
+    ])).toEqual(attachment('real-user-drawing'));
+    expect(findLatestImage([pluginImageMessage('reviewer-render')])).toBeNull();
   });
 
   it('binds the accepted image and appends an import instruction', async () => {

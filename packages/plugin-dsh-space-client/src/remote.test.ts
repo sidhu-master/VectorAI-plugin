@@ -9,23 +9,28 @@ import {
 
 describe('DRAWING_SPACE_REMOTE', () => {
   it('uses strict codecs for every JSON field exposed to the DSH client gateway', () => {
-    const [snapshot, commit, query, getPreview, createPreview, commitPreview, discardPreview] = DRAWING_SPACE_REMOTE.descriptors;
+    const [snapshot, query, getPreview, stageInteractive, stageUndo, getOperation] = DRAWING_SPACE_REMOTE.descriptors;
 
     expect(snapshot?.parameters[0]?.codec.mode).toBe('strict');
     expect(snapshot?.result.mode).toBe('strict');
     expect(snapshot?.invocation).toEqual({ kind: 'direct' });
     expect(snapshot?.scope).toEqual({ context: 'agent', wire: 'agentId' });
-    expect(commit?.parameters[1]?.codec.mode).toBe('strict');
-    expect(commit?.result.mode).toBe('strict');
     expect(query?.method).toBe('query');
     expect(query?.parameters[1]?.codec.mode).toBe('strict');
     expect(query?.result.mode).toBe('strict');
     expect(getPreview?.method).toBe('getPreview');
     expect(getPreview?.result.mode).toBe('strict');
-    expect(createPreview?.parameters[1]?.codec.mode).toBe('strict');
-    expect(createPreview?.result.mode).toBe('strict');
-    expect(commitPreview?.parameters[1]?.codec.mode).toBe('strict');
-    expect(discardPreview?.result.mode).toBe('strict');
+    expect(stageInteractive?.method).toBe('stageInteractiveEdit');
+    expect(stageInteractive?.parameters[1]?.codec.mode).toBe('strict');
+    expect(stageInteractive?.result.mode).toBe('strict');
+    expect(stageUndo?.method).toBe('stageUndo');
+    expect(stageUndo?.parameters[1]?.codec.mode).toBe('strict');
+    expect(stageUndo?.result.mode).toBe('strict');
+    expect(getOperation?.method).toBe('getOperation');
+    expect(getOperation?.parameters[1]?.codec.mode).toBe('strict');
+    expect(DRAWING_SPACE_REMOTE.descriptors.map(({ method }) => method)).not.toEqual(
+      expect.arrayContaining(['commit', 'createPreview', 'commitPreview', 'discardPreview']),
+    );
   });
 
   it('accepts a complete workspace snapshot or null and rejects malformed snapshots', () => {

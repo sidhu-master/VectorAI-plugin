@@ -1,174 +1,85 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  drawingSessionIdSchema,
+  drawingInteractiveStageResultSchema,
+  drawingPreviewSchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
-  drawingPreviewControlRequestSchema,
-  drawingPreviewCreateRequestSchema,
-  drawingPreviewCreateResultSchema,
-  drawingPreviewDiscardResultSchema,
-  drawingPreviewSchema,
+  drawingSessionIdSchema,
+  drawingUndoStageRequestSchema,
+  drawingUndoStageResultSchema,
   drawingWorkspaceCommitRequestSchema,
-  drawingWorkspaceCommitResultSchema,
   drawingWorkspaceSnapshotSchema,
+  operationLookupResultSchema,
 } from '@vectorai/plugin-space-contracts';
 
 const agentCodec = {
-  mode: 'strict',
-  typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
+  mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
   schema: drawingSessionIdSchema,
 } as const;
-
 const agentParameter = {
-  name: 'agent',
-  wire: 'agentId',
-  source: 'lookup',
-  lookup: 'agent',
-  codec: agentCodec,
+  name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent', codec: agentCodec,
 } as const;
 
 export const TYPERT = {
-  package: '@vectorai/plugin-dsh-space-host',
-  face: 'host',
-  schemas: [],
+  package: '@vectorai/plugin-dsh-space-host', face: 'host', schemas: [],
   invocations: [{
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot',
-    service: 'drawingSpace',
-    namespace: 'drawingSpace',
-    method: 'getSnapshot',
-    invocation: { kind: 'direct' },
-    scope: { context: 'agent', wire: 'agentId' },
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getSnapshot',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null',
-      schema: drawingWorkspaceSnapshotSchema,
-    },
-    sourceLocation: {
-      file: 'packages/plugin-dsh-space-host/src/service.ts',
-      line: 40,
-      column: 3,
-    },
-  }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/commit',
-    service: 'drawingSpace',
-    namespace: 'drawingSpace',
-    method: 'commit',
-    invocation: { kind: 'direct' },
-    scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, {
-      name: 'request',
-      wire: 'request',
-      source: 'json',
-      codec: {
-        mode: 'strict',
-        typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest',
-        schema: drawingWorkspaceCommitRequestSchema,
-      },
-    }],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult',
-      schema: drawingWorkspaceCommitResultSchema,
-    },
-    sourceLocation: {
-      file: 'packages/plugin-dsh-space-host/src/service.ts',
-      line: 45,
-      column: 3,
-    },
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null', schema: drawingWorkspaceSnapshotSchema },
+    sourceLocation: serviceLocation(66),
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/query',
-    service: 'drawingSpace',
-    namespace: 'drawingSpace',
-    method: 'query',
-    invocation: { kind: 'direct' },
-    scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, {
-      name: 'request',
-      wire: 'request',
-      source: 'json',
-      codec: {
-        mode: 'strict',
-        typeSymbol: '@vectorai/plugin-space-contracts#DrawingQueryRequest',
-        schema: drawingQueryRequestSchema,
-      },
-    }],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingQueryResult',
-      schema: drawingQueryResultSchema,
-    },
-    sourceLocation: {
-      file: 'packages/plugin-dsh-space-host/src/service.ts',
-      line: 60,
-      column: 3,
-    },
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'query',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingQueryRequest', drawingQueryRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingQueryResult', schema: drawingQueryResultSchema },
+    sourceLocation: serviceLocation(71),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageInteractiveEdit',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest', drawingWorkspaceCommitRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingInteractiveStageResult', schema: drawingInteractiveStageResultSchema },
+    sourceLocation: serviceLocation(76),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageUndo',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageUndo',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingUndoStageRequest', drawingUndoStageRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingUndoStageResult', schema: drawingUndoStageResultSchema },
+    sourceLocation: serviceLocation(84),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/getOperation',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getOperation',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, stringParameter('operationId'), stringParameter('operationBindingDigest')],
+    result: { mode: 'strict', typeSymbol: '@vectorai/drawing-edit-protocol#OperationLookupResult', schema: operationLookupResultSchema },
+    sourceLocation: serviceLocation(89),
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getPreview',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getPreview',
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null',
-      schema: drawingPreviewSchema.nullable(),
-    },
-    sourceLocation: serviceLocation(65),
-  }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/createPreview',
-    service: 'drawingSpace', namespace: 'drawingSpace', method: 'createPreview',
-    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, jsonRequest(
-      '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateRequest',
-      drawingPreviewCreateRequestSchema,
-    )],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewCreateResult',
-      schema: drawingPreviewCreateResultSchema,
-    },
-    sourceLocation: serviceLocation(70),
-  }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/commitPreview',
-    service: 'drawingSpace', namespace: 'drawingSpace', method: 'commitPreview',
-    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, jsonRequest(
-      '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest',
-      drawingPreviewControlRequestSchema,
-    )],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspaceCommitResult',
-      schema: drawingWorkspaceCommitResultSchema,
-    },
-    sourceLocation: serviceLocation(78),
-  }, {
-    id: '@vectorai/plugin-dsh-space-host#drawingSpace/discardPreview',
-    service: 'drawingSpace', namespace: 'drawingSpace', method: 'discardPreview',
-    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
-    parameters: [agentParameter, jsonRequest(
-      '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewControlRequest',
-      drawingPreviewControlRequestSchema,
-    )],
-    result: {
-      mode: 'strict',
-      typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreviewDiscardResult',
-      schema: drawingPreviewDiscardResultSchema,
-    },
-    sourceLocation: serviceLocation(86),
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null', schema: drawingPreviewSchema.nullable() },
+    sourceLocation: serviceLocation(103),
   }],
-  model: {
-    services: [],
-    events: [],
-    objects: [],
-  },
+  model: { services: [], events: [], objects: [] },
 } as const;
 
 function jsonRequest(typeSymbol: string, schema: { parse(input: unknown): unknown }) {
+  return { name: 'request', wire: 'request', source: 'json', codec: { mode: 'strict', typeSymbol, schema } } as const;
+}
+
+function stringParameter(name: string) {
   return {
-    name: 'request', wire: 'request', source: 'json',
-    codec: { mode: 'strict', typeSymbol, schema },
+    name, wire: name, source: 'json',
+    codec: { mode: 'strict', typeSymbol: 'string', schema: { parse(input: unknown) {
+      if (typeof input !== 'string' || input.length === 0) throw new Error('STRING_REQUIRED');
+      return input;
+    } } },
   } as const;
 }
 

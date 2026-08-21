@@ -42,6 +42,11 @@ export interface DrawingWorkspaceSnapshot {
   source?: DrawingSourceRef;
   capabilities: DrawingWorkspaceCapabilities;
   provisional?: boolean;
+  lastCommit?: {
+    commitId: string;
+    mode: 'auto-safe' | 'confirmed' | 'interactive' | 'undo';
+    undoable: boolean;
+  };
 }
 
 export type DrawingWorkspaceCommand =
@@ -99,11 +104,43 @@ export type DrawingWorkspacePreviewDiscardResult =
   | { status: 'discarded'; ref: DrawingWorkspaceRef }
   | { status: 'rejected'; message: string; code?: string };
 
+export type DrawingInteractiveStageResult =
+  | {
+    status: 'staged';
+    intentId: string;
+    intentDigest: string;
+    operationId: string;
+    operationBindingDigest: string;
+    commandLine: string;
+  }
+  | { status: 'conflict'; message: string; snapshot?: DrawingWorkspaceSnapshot }
+  | { status: 'rejected'; message: string; code: string };
+
+export interface DrawingUndoStageRequest {
+  targetCommitId: string;
+  expectedCurrentRef: DrawingWorkspaceRef;
+}
+
+export type DrawingUndoStageResult =
+  | {
+    status: 'staged';
+    targetCommitId: string;
+    expectedCurrentRef: DrawingWorkspaceRef;
+    operationId: string;
+    operationBindingDigest: string;
+    commandLine: string;
+  }
+  | { status: 'rejected'; message: string; code: string };
+
 export interface DrawingWorkspacePort {
   load(signal?: AbortSignal): Promise<DrawingWorkspaceSnapshot | null>;
   loadPreview?(signal?: AbortSignal): Promise<DrawingWorkspacePreview | null>;
   commit(
     request: DrawingWorkspaceCommitRequest,
+    signal?: AbortSignal,
+  ): Promise<DrawingWorkspaceCommitResult>;
+  undoLast?(
+    snapshot: DrawingWorkspaceSnapshot,
     signal?: AbortSignal,
   ): Promise<DrawingWorkspaceCommitResult>;
   loadSource?(

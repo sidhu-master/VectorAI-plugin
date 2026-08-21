@@ -87,6 +87,11 @@ export const spatialOperationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('delete_nodes'),
     nodeIds: z.array(idSchema).min(1).max(256),
   }).strict(),
+  z.object({
+    kind: z.literal('create_annotation_batch'),
+    annotations: z.array(z.object({ id: idSchema, type: idSchema }).catchall(z.unknown())).min(1).max(512),
+    associations: z.array(z.object({ id: idSchema, type: z.literal('association') }).catchall(z.unknown())).max(512),
+  }).strict(),
 ]);
 
 export const spatialPostconditionSchema = z.discriminatedUnion('kind', [

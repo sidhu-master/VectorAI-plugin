@@ -37,6 +37,7 @@ interface DrawingWorkspaceSnapshot {
   source?: DrawingSourceRef;
   capabilities: DrawingWorkspaceCapabilities;
   provisional?: boolean;
+  lastCommit?: { commitId: string; mode: string; undoable: boolean };
 }
 ```
 
@@ -50,14 +51,19 @@ The Store does not mutate the document optimistically. A commit includes `expect
 
 `src/adapters/website-drawing-workspace-port.ts` is a migration adapter over the existing local website Store. It uses the canonical command action and emits replacements when imports, undo, reset, or Agent tools change the Drawing. The existing website chat remains a sibling host panel; it is not part of the Viewer.
 
-The current website compatibility path still contains legacy Express/Agent code. New shared packages do not depend on it, and the target static Web/PWA adapter can replace this port without changing the Viewer.
+The current website compatibility path still contains legacy Express/Agent code. New shared packages and the DSH runtime do not depend on it, and the target static Web/PWA adapter can replace this port without changing the Viewer.
 
 ### DeepSeek Harness
 
-The DSH Host keeps one in-memory authoritative repository per authorized Agent/session. The strict TypeRT surface exposes:
+The DSH Host keeps one authoritative local repository per authorized Agent/session and persists formal revisions in a versioned durable envelope. The strict Typert surface exposes:
 
 - `getSnapshot` for the complete current Drawing;
-- `commit` for atomic expected-revision command batches.
+- `query` and `getPreview` for bounded reads;
+- `stageInteractiveEdit` for an exact expected-revision browser gesture;
+- `stageUndo` for the exact current undo target;
+- `getOperation` for durable outcome reconciliation.
+
+It deliberately does not expose raw `commit`, `createPreview`, `commitPreview`, or `discardPreview` routes. A staged edit is applied by a Host command carrying opaque intent/operation tokens. A lost command response is reconciled against the durable operation ledger. Undo is a new compensating revision, not an in-place rollback.
 
 Session identity is resolved through DSH's Agent lookup/scope rather than trusted as arbitrary business data. Imports and model tools use the same repository as manual Viewer edits. The rc.8 compatibility path refreshes the view when the conversation's running tool-call count changes; commit responses replace the snapshot immediately.
 
@@ -69,5 +75,4 @@ Each mounted drawing view creates exactly one workspace Store. Provider cleanup 
 
 ## Public extension point
 
-`PreviewOverlayContribution` receives deeply readonly snapshot and viewport inputs. It may render temporary visual evidence, but cannot mutate the Drawing Store. Durable changes must use the public transaction/commit path. This keeps optional higher-layer plugins removable without affecting rendering or editing of annotations already committed to the canonical document.
-
+`PreviewOverlayContribution` receives deeply readonly snapshot and viewport inputs. It may render temporary visual evidence, but cannot mutate the Drawing Store. Durable changes must use the public semantic or staged-interactive path. This keeps optional higher-layer plugins removable without affecting rendering, staged editing, or Undo of annotations already committed to the canonical document.

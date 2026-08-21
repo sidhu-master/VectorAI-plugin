@@ -2,6 +2,17 @@
 
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { DrawingDocument } from '@vectorai/drawing-core';
+import {
+  applyDrawingTransaction,
+  canonicalSemanticString,
+} from '@vectorai/drawing-edit-core';
+import type {
+  Assessment,
+  DrawingTransactionCommand,
+  DurableOperationReceipt,
+  OperationLookupResult,
+  ReviewEvidence,
+} from '@vectorai/drawing-edit-protocol';
 import { queryDrawing, type DrawingSpatialQuery } from '@vectorai/drawing-spatial';
 import { drawingDocumentSchema } from '@vectorai/plugin-space-contracts';
 import type {
@@ -21,7 +32,13 @@ import type {
   DrawingWorkspaceSnapshot,
 } from '@vectorai/plugin-space-contracts';
 import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
 
+import type {
+  DrawingCommitRecord,
+  DrawingDurableState,
+  DurableDrawingRepositoryStorage,
+} from './durable-envelope';
 import type { ImageVectorizer } from './vectorizer';
 
 export type { ImageVectorizer } from './vectorizer';
@@ -39,11 +56,33 @@ export interface DrawingEntry {
 export interface DrawingRepositoryStorage {
   load(sessionId: string): DrawingEntry | null;
   save(sessionId: string, entry: DrawingEntry): void;
+  loadDurable?(sessionId: string): DrawingDurableState | null;
+  saveDurable?(sessionId: string, state: DrawingDurableState): void;
+}
+
+export interface SemanticCommitRequest {
+  expectedRef: { drawingId: string; revision: number };
+  operationId: string;
+  operationBindingDigest: string;
+  candidateDigest: string;
+  forward: DrawingTransactionCommand[];
+  inverse: DrawingTransactionCommand[];
+  mode: 'auto-safe' | 'confirmed' | 'interactive';
+  assessment?: Assessment;
+  reviewEvidence?: ReviewEvidence;
+}
+
+export interface UndoCommitRequest {
+  targetCommitId: string;
+  expectedCurrentRef: { drawingId: string; revision: number };
+  operationId: string;
+  operationBindingDigest: string;
 }
 
 export class InMemoryDrawingRepository {
   readonly #pending = new Map<string, ImageAttachmentRef>();
   readonly #drawings = new Map<string, DrawingEntry>();
+  readonly #durable = new Map<string, DrawingDurableState>();
   readonly #previews = new Map<string, DrawingWorkspacePreview>();
   readonly #vectorizer: ImageVectorizer;
   readonly #drawingId: (sessionId: string, attachment: ImageAttachmentRef) => string;
@@ -117,7 +156,18 @@ export class InMemoryDrawingRepository {
       },
       provisional: vectorized.provisional,
     };
-    this.#storage?.save(sessionId, structuredClone(entry));
+    if (this.#storage?.saveDurable) {
+      const state: DrawingDurableState = {
+        version: 2,
+        entry: structuredClone(entry),
+        commits: [],
+        operations: [],
+      };
+      this.#storage.saveDurable(sessionId, structuredClone(state));
+      this.#durable.set(sessionId, state);
+    } else {
+      this.#storage?.save(sessionId, structuredClone(entry));
+    }
     this.#drawings.set(sessionId, entry);
     this.#previews.delete(sessionId);
     return {
@@ -130,7 +180,8 @@ export class InMemoryDrawingRepository {
   getSnapshot(sessionId: string): DrawingWorkspaceSnapshot | null {
     const entry = this.#getDrawing(sessionId);
     if (entry === null) return null;
-    return snapshotOf(entry);
+    const lastCommit = this.#durableState(sessionId)?.commits.at(-1);
+    return snapshotOf(entry, lastCommit);
   }
 
   commit(
@@ -166,6 +217,158 @@ export class InMemoryDrawingRepository {
     this.#drawings.set(sessionId, nextEntry);
     this.#previews.delete(sessionId);
     return { status: 'committed', snapshot: snapshotOf(nextEntry) };
+  }
+
+  commitSemantic(sessionId: string, request: SemanticCommitRequest): DurableOperationReceipt {
+    const state = this.#requireDurable(sessionId);
+    const replay = findOperation(state, request.operationId);
+    if (replay) {
+      if (replay.operationBindingDigest !== request.operationBindingDigest) {
+        throw new Error('IDEMPOTENCY_KEY_REUSED');
+      }
+      return structuredClone(replay);
+    }
+    const entry = state.entry;
+    if (
+      request.expectedRef.drawingId !== entry.drawingId
+      || request.expectedRef.revision !== entry.revision
+    ) throw new Error('DRAWING_STALE');
+    const operationMode = request.mode === 'interactive' ? 'interactive' : 'semantic';
+    const beforeSemantic = canonicalSemanticString(entry.document);
+    const candidate = applyDrawingTransaction(entry.document, request.forward, this.#now());
+    const semanticDigest = digest(canonicalSemanticString(candidate));
+    if (canonicalSemanticString(candidate) === beforeSemantic) {
+      const receipt: DurableOperationReceipt = {
+        status: 'no-effect',
+        mode: operationMode,
+        operationId: request.operationId,
+        operationBindingDigest: request.operationBindingDigest,
+        sessionId,
+        drawingId: entry.drawingId,
+        ref: { drawingId: entry.drawingId, revision: entry.revision },
+        semanticDigest,
+      };
+      const next = { ...state, operations: [...state.operations, receipt] };
+      this.#saveDurable(sessionId, next);
+      return structuredClone(receipt);
+    }
+    const restored = applyDrawingTransaction(candidate, request.inverse, this.#now());
+    if (canonicalSemanticString(restored) !== beforeSemantic) {
+      throw new Error('INVERSE_VERIFICATION_FAILED');
+    }
+    const nextEntry: DrawingEntry = {
+      ...entry,
+      document: candidate,
+      revision: entry.revision + 1,
+    };
+    const commitId = `commit_${request.operationId}`;
+    const snapshotIntegrityDigest = digest(JSON.stringify(nextEntry));
+    const receipt: DurableOperationReceipt = {
+      status: 'committed',
+      mode: operationMode,
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      sessionId,
+      drawingId: entry.drawingId,
+      parentRef: { drawingId: entry.drawingId, revision: entry.revision },
+      resultingRef: { drawingId: entry.drawingId, revision: nextEntry.revision },
+      commitId,
+      semanticDigest,
+      snapshotIntegrityDigest,
+    };
+    const record: DrawingCommitRecord = {
+      commitId,
+      mode: request.mode,
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      parentRevision: entry.revision,
+      resultingRevision: nextEntry.revision,
+      forward: structuredClone(request.forward),
+      inverse: structuredClone(request.inverse),
+      candidateDigest: request.candidateDigest,
+      semanticDigest,
+      snapshotIntegrityDigest,
+      ...(request.assessment ? { assessment: structuredClone(request.assessment) } : {}),
+      ...(request.reviewEvidence ? { reviewEvidence: structuredClone(request.reviewEvidence) } : {}),
+      committedAt: this.#now(),
+    };
+    this.#saveDurable(sessionId, {
+      version: 2,
+      entry: nextEntry,
+      commits: [...state.commits, record],
+      operations: [...state.operations, receipt],
+    });
+    this.#previews.delete(sessionId);
+    return structuredClone(receipt);
+  }
+
+  getOperation(
+    sessionId: string,
+    operationId: string,
+    operationBindingDigest: string,
+  ): OperationLookupResult {
+    const state = this.#durableState(sessionId);
+    if (state === null) return { status: 'absent' };
+    const receipt = findOperation(state, operationId);
+    if (!receipt) return { status: 'absent' };
+    if (receipt.operationBindingDigest !== operationBindingDigest) {
+      return { status: 'digest-mismatch', operationId };
+    }
+    return receipt.status === 'no-effect'
+      ? { status: 'no-effect', receipt: structuredClone(receipt) }
+      : { status: 'committed', receipt: structuredClone(receipt) };
+  }
+
+  undoCommit(sessionId: string, request: UndoCommitRequest): DurableOperationReceipt {
+    if (this.#previews.has(sessionId)) throw new Error('UNDO_PREVIEW_ACTIVE');
+    const state = this.#requireDurable(sessionId);
+    const replay = findOperation(state, request.operationId);
+    if (replay) {
+      if (replay.operationBindingDigest !== request.operationBindingDigest) {
+        throw new Error('IDEMPOTENCY_KEY_REUSED');
+      }
+      return structuredClone(replay);
+    }
+    const currentRef = { drawingId: state.entry.drawingId, revision: state.entry.revision };
+    if (!isDeepStrictEqual(currentRef, request.expectedCurrentRef)) throw new Error('UNDO_CONFLICT');
+    const target = state.commits.find(({ commitId }) => commitId === request.targetCommitId);
+    if (!target) throw new Error('UNDO_TARGET_NOT_FOUND');
+    if (target.mode === 'undo') throw new Error('UNDO_TARGET_IS_REVERT');
+    if (target.resultingRevision !== state.entry.revision) throw new Error('UNDO_CONFLICT');
+    const document = applyDrawingTransaction(state.entry.document, target.inverse, this.#now());
+    const nextEntry: DrawingEntry = { ...state.entry, document, revision: state.entry.revision + 1 };
+    const semanticDigest = digest(canonicalSemanticString(document));
+    const snapshotIntegrityDigest = digest(JSON.stringify(nextEntry));
+    const commitId = `commit_${request.operationId}`;
+    const receipt: DurableOperationReceipt = {
+      status: 'committed', mode: 'undo',
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      sessionId, drawingId: state.entry.drawingId,
+      parentRef: currentRef,
+      resultingRef: { drawingId: state.entry.drawingId, revision: nextEntry.revision },
+      commitId, targetCommitId: target.commitId,
+      semanticDigest, snapshotIntegrityDigest,
+    };
+    const record: DrawingCommitRecord = {
+      commitId, mode: 'undo',
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      parentRevision: state.entry.revision,
+      resultingRevision: nextEntry.revision,
+      forward: structuredClone(target.inverse),
+      inverse: structuredClone(target.forward),
+      targetCommitId: target.commitId,
+      semanticDigest, snapshotIntegrityDigest,
+      committedAt: this.#now(),
+    };
+    this.#saveDurable(sessionId, {
+      version: 2,
+      entry: nextEntry,
+      commits: [...state.commits, record],
+      operations: [...state.operations, receipt],
+    });
+    return structuredClone(receipt);
   }
 
   summarize(sessionId: string): DrawingSummary | null {
@@ -315,16 +518,55 @@ export class InMemoryDrawingRepository {
   disposeSession(sessionId: string): void {
     this.#pending.delete(sessionId);
     this.#drawings.delete(sessionId);
+    this.#durable.delete(sessionId);
     this.#previews.delete(sessionId);
   }
 
   #getDrawing(sessionId: string): DrawingEntry | null {
     const current = this.#drawings.get(sessionId);
     if (current !== undefined) return current;
-    const restored = this.#storage?.load(sessionId) ?? null;
+    const durable = this.#durableState(sessionId);
+    const restored = durable?.entry ?? this.#storage?.load(sessionId) ?? null;
     if (restored !== null) this.#drawings.set(sessionId, structuredClone(restored));
     return restored;
   }
+
+  #durableState(sessionId: string): DrawingDurableState | null {
+    const current = this.#durable.get(sessionId);
+    if (current) return current;
+    const restored = this.#storage?.loadDurable?.(sessionId) ?? null;
+    if (restored) {
+      const clone = structuredClone(restored);
+      this.#durable.set(sessionId, clone);
+      this.#drawings.set(sessionId, structuredClone(clone.entry));
+      return clone;
+    }
+    return null;
+  }
+
+  #requireDurable(sessionId: string): DrawingDurableState {
+    if (!this.#storage?.loadDurable || !this.#storage.saveDurable) {
+      throw new Error('AUTO_SAFE_UNAVAILABLE');
+    }
+    const state = this.#durableState(sessionId);
+    if (!state) throw new Error('DRAWING_REQUIRED');
+    return state;
+  }
+
+  #saveDurable(sessionId: string, state: DrawingDurableState): void {
+    const storage = this.#storage as DrawingRepositoryStorage & DurableDrawingRepositoryStorage;
+    storage.saveDurable(sessionId, structuredClone(state));
+    this.#durable.set(sessionId, structuredClone(state));
+    this.#drawings.set(sessionId, structuredClone(state.entry));
+  }
+}
+
+function findOperation(state: DrawingDurableState, operationId: string): DurableOperationReceipt | undefined {
+  return state.operations.find((receipt) => receipt.operationId === operationId);
+}
+
+function digest(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
 function spatialQueryOf(request: DrawingQueryRequest): DrawingSpatialQuery {
@@ -344,7 +586,7 @@ function spatialQueryOf(request: DrawingQueryRequest): DrawingSpatialQuery {
   };
 }
 
-function snapshotOf(entry: DrawingEntry): DrawingWorkspaceSnapshot {
+function snapshotOf(entry: DrawingEntry, lastCommit?: DrawingCommitRecord): DrawingWorkspaceSnapshot {
   return structuredClone({
     version: 1,
     ref: { drawingId: entry.drawingId, revision: entry.revision },
@@ -357,6 +599,11 @@ function snapshotOf(entry: DrawingEntry): DrawingWorkspaceSnapshot {
       sourceUnderlay: true,
     },
     provisional: entry.provisional,
+    ...(lastCommit ? { lastCommit: {
+      commitId: lastCommit.commitId,
+      mode: lastCommit.mode,
+      undoable: lastCommit.mode !== 'undo',
+    } } : {}),
   });
 }
 

@@ -14,17 +14,24 @@ import {
 } from '@vectorai/plugin-space-contracts';
 
 import type { InMemoryDrawingRepository } from './repository';
+import type { SemanticEditService } from './semantic-edit-service';
+import { createSemanticEditToolCatalog } from './semantic-tools';
+import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions';
 
 export function createDrawingAgentToolCatalog(
   drawings: InMemoryDrawingRepository,
   attachments: Pick<AttachmentStore, 'readImage'>,
+  semantic?: SemanticEditService,
+  questions?: Pick<UserQuestionService, 'ask'>,
 ) {
   return [
     createDrawingImportTool(drawings, attachments),
     createDrawingSummarizeTool(drawings),
     createDrawingQueryTool(drawings),
-    createDrawingFinalizePreviewTool(drawings),
-    createDrawingDiscardPreviewTool(drawings),
+    ...(semantic ? createSemanticEditToolCatalog(semantic, questions) : [
+      createDrawingFinalizePreviewTool(drawings),
+      createDrawingDiscardPreviewTool(drawings),
+    ]),
   ];
 }
 
@@ -221,6 +228,7 @@ export function createDrawingCommitPreviewTool(drawings: InMemoryDrawingReposito
 }
 
 export function createDrawingFinalizePreviewTool(_drawings: InMemoryDrawingRepository) {
+  void _drawings;
   return defineTool({
     name: 'drawing_finalize_preview',
     description: 'Finalize an evaluated semantic Drawing Preview. This remains fail-closed until durable local history, inverse transactions, idempotency, and Undo are available.',

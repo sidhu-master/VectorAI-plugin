@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "composite": false, "tsBuildInfoFile": "../../node_modules/.tmp/plugin-dsh-annotation.tsbuildinfo" },
+  "include": ["src"]
+}

@@ -5,18 +5,16 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type {
   DrawingWorkspaceCommitRequest,
-  DrawingWorkspaceCommitResult,
   DrawingWorkspaceSnapshot,
   DrawingQueryRequest,
   DrawingQueryResult,
   DrawingWorkspacePreview,
-  DrawingWorkspacePreviewControlRequest,
-  DrawingWorkspacePreviewCreateRequest,
-  DrawingWorkspacePreviewCreateResult,
-  DrawingWorkspacePreviewDiscardResult,
+  DrawingUndoStageRequest,
+  DrawingUndoStageResult,
 } from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { createPreStepIntake } from './intake';
 import { InMemoryDrawingRepository } from './repository';
@@ -25,6 +23,13 @@ import {
   createDrawingAgentToolCatalog,
 } from './tools';
 import { LocalCleanLineVectorizer } from './vectorizer';
+import { SemanticEditService } from './semantic-edit-service';
+import type { ExtensionProgramRequest } from './semantic-edit-service';
+import { InteractiveEditService } from './interactive-edit';
+import { registerDrawingCommands } from './commands';
+import { createDshReviewer } from './reviewer';
+import type { DrawingInteractiveStageResult } from '@vectorai/drawing-workspace';
+import type { OperationLookupResult } from '@vectorai/drawing-edit-protocol';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -33,9 +38,11 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export class DrawingSpaceHostService extends TypertRemoteService {
-  static inject = ['tools', 'attachments'];
+  static inject = ['tools', 'attachments', 'userQuestions', 'commands', 'agents', 'subagents'];
 
   private readonly drawings: InMemoryDrawingRepository;
+  private readonly semantic: SemanticEditService;
+  private readonly interactive: InteractiveEditService;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingSpace');
@@ -43,10 +50,24 @@ export class DrawingSpaceHostService extends TypertRemoteService {
       vectorizer: new LocalCleanLineVectorizer(),
       storage: new FileDrawingRepositoryStorage(resolve(homedir(), '.dsh/vectorai/drawings')),
     });
-    for (const tool of createDrawingAgentToolCatalog(this.drawings, ctx.attachments)) {
+    const editPorts = {
+      id: (kind) => `${kind}_${randomUUID()}`,
+      now: Date.now,
+      digest: (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`,
+      review: createDshReviewer(ctx),
+    };
+    this.semantic = new SemanticEditService(this.drawings, editPorts);
+    this.interactive = new InteractiveEditService(this.drawings, editPorts);
+    ctx.effect(() => registerDrawingCommands(ctx.commands, this.interactive, this.semantic));
+    for (const tool of createDrawingAgentToolCatalog(
+      this.drawings,
+      ctx.attachments,
+      this.semantic,
+      ctx.userQuestions,
+    )) {
       ctx.tools.register(tool);
     }
-    ctx.on('agent/pre-step', createPreStepIntake(this.drawings));
+    ctx.on('agent/pre-step', createPreStepIntake(this.drawings, this.semantic));
     ctx.on('session/disposed', (session) => {
       this.drawings.disposeSession(String(session.id));
     });
@@ -58,13 +79,34 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   }
 
   @Remote
-  commit(agent: Agent, request: DrawingWorkspaceCommitRequest): DrawingWorkspaceCommitResult {
-    return this.drawings.commit(String(agent.id), request);
+  query(agent: Agent, request: DrawingQueryRequest): DrawingQueryResult {
+    return this.drawings.query(String(agent.id), request);
   }
 
   @Remote
-  query(agent: Agent, request: DrawingQueryRequest): DrawingQueryResult {
-    return this.drawings.query(String(agent.id), request);
+  stageInteractiveEdit(
+    agent: Agent,
+    request: DrawingWorkspaceCommitRequest,
+  ): DrawingInteractiveStageResult {
+    return this.interactive.stage(String(agent.id), request);
+  }
+
+  @Remote
+  stageUndo(agent: Agent, request: DrawingUndoStageRequest): DrawingUndoStageResult {
+    return this.semantic.stageUndo(String(agent.id), request);
+  }
+
+  @Remote
+  getOperation(
+    agent: Agent,
+    operationId: string,
+    operationBindingDigest: string,
+  ): OperationLookupResult {
+    return this.semantic.getOperation(String(agent.id), operationId, operationBindingDigest);
+  }
+
+  async runExtensionProgram(agent: Agent, request: ExtensionProgramRequest, signal?: AbortSignal) {
+    return await this.semantic.runExtensionProgram(String(agent.id), request, signal);
   }
 
   @Remote
@@ -72,29 +114,6 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     return this.drawings.getPreview(String(agent.id));
   }
 
-  @Remote
-  createPreview(
-    agent: Agent,
-    request: DrawingWorkspacePreviewCreateRequest,
-  ): DrawingWorkspacePreviewCreateResult {
-    return this.drawings.createPreview(String(agent.id), request);
-  }
-
-  @Remote
-  commitPreview(
-    agent: Agent,
-    request: DrawingWorkspacePreviewControlRequest,
-  ): DrawingWorkspaceCommitResult {
-    return this.drawings.commitPreview(String(agent.id), request);
-  }
-
-  @Remote
-  discardPreview(
-    agent: Agent,
-    request: DrawingWorkspacePreviewControlRequest,
-  ): DrawingWorkspacePreviewDiscardResult {
-    return this.drawings.discardPreview(String(agent.id), request);
-  }
 }
 
 export default DrawingSpaceHostService;

@@ -3,8 +3,11 @@
 import { drawingWorkspaceSnapshotSchema } from '@vectorai/plugin-space-contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -13,6 +16,7 @@ import {
 import { join } from 'node:path';
 
 import type { DrawingEntry, DrawingRepositoryStorage } from './repository';
+import type { DrawingDurableState, DurableDrawingRepositoryStorage } from './durable-envelope';
 
 interface StoredDrawing {
   version: 1;
@@ -21,7 +25,18 @@ interface StoredDrawing {
   snapshot: ReturnType<typeof snapshotForStorage>;
 }
 
-export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage {
+interface StoredDurableDrawing {
+  version: 2;
+  entry: {
+    attachmentId: string;
+    bounds: DrawingEntry['bounds'];
+    snapshot: ReturnType<typeof snapshotForStorage>;
+  };
+  commits: DrawingDurableState['commits'];
+  operations: DrawingDurableState['operations'];
+}
+
+export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, DurableDrawingRepositoryStorage {
   readonly #directory: string;
 
   constructor(directory: string) {
@@ -30,6 +45,8 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage {
   }
 
   load(sessionId: string): DrawingEntry | null {
+    const durable = this.loadDurable(sessionId);
+    if (durable) return durable.entry;
     const path = this.#path(sessionId);
     if (!existsSync(path)) return null;
     try {
@@ -63,10 +80,67 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage {
       snapshot: snapshotForStorage(entry),
     };
     try {
-      writeFileSync(temporary, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 });
-      renameSync(temporary, path);
+      this.#atomicWrite(path, temporary, value);
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);
+    }
+  }
+
+  loadDurable(sessionId: string): DrawingDurableState | null {
+    const path = this.#path(sessionId);
+    if (!existsSync(path)) return null;
+    try {
+      const value = JSON.parse(readFileSync(path, 'utf8')) as Partial<StoredDurableDrawing>;
+      if (value.version !== 2 || !value.entry || !Array.isArray(value.commits) || !Array.isArray(value.operations)) {
+        return null;
+      }
+      const entry = entryFromStored(value.entry);
+      if (!entry) return null;
+      return {
+        version: 2,
+        entry,
+        commits: structuredClone(value.commits),
+        operations: structuredClone(value.operations),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  saveDurable(sessionId: string, state: DrawingDurableState): void {
+    const path = this.#path(sessionId);
+    const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    const value: StoredDurableDrawing = {
+      version: 2,
+      entry: {
+        attachmentId: state.entry.attachmentId,
+        bounds: structuredClone(state.entry.bounds),
+        snapshot: snapshotForStorage(state.entry),
+      },
+      commits: structuredClone(state.commits),
+      operations: structuredClone(state.operations),
+    };
+    try {
+      this.#atomicWrite(path, temporary, value);
+    } finally {
+      if (existsSync(temporary)) unlinkSync(temporary);
+    }
+  }
+
+  #atomicWrite(path: string, temporary: string, value: StoredDrawing | StoredDurableDrawing): void {
+    writeFileSync(temporary, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const file = openSync(temporary, 'r');
+    try {
+      fsyncSync(file);
+    } finally {
+      closeSync(file);
+    }
+    renameSync(temporary, path);
+    const directory = openSync(this.#directory, 'r');
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
     }
   }
 
@@ -74,6 +148,25 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage {
     const key = createHash('sha256').update(sessionId).digest('hex');
     return join(this.#directory, `${key}.json`);
   }
+}
+
+function entryFromStored(value: {
+  attachmentId?: unknown;
+  bounds?: unknown;
+  snapshot?: unknown;
+}): DrawingEntry | null {
+  if (typeof value.attachmentId !== 'string' || !bounds(value.bounds)) return null;
+  const snapshot = drawingWorkspaceSnapshotSchema.safeParse(value.snapshot);
+  if (!snapshot.success || snapshot.data.source === undefined) return null;
+  return {
+    attachmentId: value.attachmentId,
+    document: snapshot.data.document as unknown as DrawingEntry['document'],
+    drawingId: snapshot.data.ref.drawingId,
+    bounds: value.bounds,
+    revision: snapshot.data.ref.revision,
+    source: snapshot.data.source,
+    provisional: snapshot.data.provisional ?? false,
+  };
 }
 
 function snapshotForStorage(entry: DrawingEntry) {
