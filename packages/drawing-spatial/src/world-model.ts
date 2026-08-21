@@ -145,6 +145,9 @@ export class WorldModelCompiler {
       (!requested || requested.has(String(node.id)))
       && (!request.bounds || boundsIntersect(geometryBounds(node), request.bounds))
     ));
+    const effectiveScopeBounds = request.bounds
+      ? structuredClone(request.bounds)
+      : unionSpatialBounds(allCandidates.map(geometryBounds));
     const missing = request.nodeIds?.filter((id) => !document.geometry.some((node) => node.id === id)) ?? [];
     const scopeDigest = this.#ports.digest(stableStringify({
       drawingId: document.id,
@@ -157,7 +160,7 @@ export class WorldModelCompiler {
     const offset = parseContinuation(request.continuationToken, scopeDigest);
     const page = allCandidates.slice(offset, offset + limit);
     const hasMore = offset + page.length < allCandidates.length;
-    const continuationToken = hasMore ? `${scopeDigest}:${offset + page.length}` : undefined;
+    const continuationToken = hasMore ? `world:${scopeDigest}:${offset + page.length}` : undefined;
     const diagnostics: WorldModelDiagnostic[] = missing.map((id) => ({
       code: 'WORLD_MODEL_NODE_NOT_FOUND', severity: 'error',
       message: `Geometry ${id} does not exist.`, nodeIds: [id], sourceSpanIds: [],
@@ -236,7 +239,7 @@ export class WorldModelCompiler {
       compilerVersion: WORLD_MODEL_COMPILER_VERSION,
       inputDigest: this.#ports.digest(stableStringify({ document: document.geometry, request, revision })),
       frameId: document.coordinateFrames.find(({ kind }) => kind === 'document')?.id ?? 'document',
-      ...(request.bounds ? { scopeBounds: structuredClone(request.bounds) } : {}),
+      ...(effectiveScopeBounds ? { scopeBounds: effectiveScopeBounds } : {}),
       sourceSpans,
       vertices: vertices.sort((a, b) => a.id.localeCompare(b.id)),
       halfEdges: halfEdges.sort((a, b) => a.id.localeCompare(b.id)),
@@ -481,11 +484,21 @@ function boundsIntersect(left: SpatialBounds2D, right: SpatialBounds2D): boolean
 
 function parseContinuation(token: string | undefined, scopeDigest: string): number {
   if (!token) return 0;
-  const prefix = `${scopeDigest}:`;
+  const prefix = `world:${scopeDigest}:`;
   if (!token.startsWith(prefix)) throw new Error('WORLD_MODEL_CONTINUATION_INVALID');
   const offset = Number(token.slice(prefix.length));
   if (!Number.isInteger(offset) || offset < 0) throw new Error('WORLD_MODEL_CONTINUATION_INVALID');
   return offset;
+}
+
+function unionSpatialBounds(bounds: SpatialBounds2D[]): SpatialBounds2D | undefined {
+  if (bounds.length === 0) return undefined;
+  return {
+    minX: Math.min(...bounds.map((item) => item.minX)),
+    minY: Math.min(...bounds.map((item) => item.minY)),
+    maxX: Math.max(...bounds.map((item) => item.maxX)),
+    maxY: Math.max(...bounds.map((item) => item.maxY)),
+  };
 }
 
 function stableId(ports: WorldModelCompilerPorts, kind: string, value: unknown): string {
