@@ -60,6 +60,15 @@ export interface ConnectedCarrierCandidate {
   contactedPortCount: number;
 }
 
+export interface ConnectedCarrierInterface {
+  interfaceId: string;
+  nodeId: string;
+  endpoint: 'start' | 'end';
+  contactPoint: Vec2;
+  projectedPoint: Vec2;
+  fixedAnchor: Vec2;
+}
+
 type Carrier = Extract<GeometryNode, { type: 'circle' | 'ellipse' }>;
 
 export function findConnectedCarrierCandidates(document: DrawingDocument): ConnectedCarrierCandidate[] {
@@ -75,6 +84,24 @@ export function findConnectedCarrierCandidates(document: DrawingDocument): Conne
       contactedPortCount: contacts.length,
     }];
   });
+}
+
+export function findConnectedCarrierInterfaces(
+  document: DrawingDocument,
+  carrierNodeId: string,
+): ConnectedCarrierInterface[] {
+  const carrier = document.geometry.find((node) => String(node.id) === carrierNodeId);
+  if (!carrier || (carrier.type !== 'circle' && carrier.type !== 'ellipse')) return [];
+  return findCarrierContacts(document, carrier, drawingRelativeTolerance(document))
+    .map(({ node, endpoint, projected }) => ({
+      interfaceId: `${String(node.id)}:${endpoint.role}`,
+      nodeId: String(node.id),
+      endpoint: endpoint.role,
+      contactPoint: structuredClone(endpoint.point),
+      projectedPoint: structuredClone(projected),
+      fixedAnchor: structuredClone(endpoint.fixedAnchor),
+    }))
+    .sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
 }
 
 export function compileConnectedTransform(input: {

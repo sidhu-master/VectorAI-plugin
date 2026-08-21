@@ -30,6 +30,7 @@ import type { ExtensionProgramRequest } from './semantic-edit-service';
 import { InteractiveEditService } from './interactive-edit';
 import { registerDrawingCommands } from './commands';
 import { createDshReviewer } from './reviewer';
+import { renderDrawingObservation } from './review-renderer';
 import type { DrawingInteractiveStageResult } from '@vectorai/drawing-workspace';
 import type { OperationLookupResult } from '@vectorai/drawing-edit-protocol';
 
@@ -56,6 +57,21 @@ export class DrawingSpaceHostService extends TypertRemoteService {
       id: (kind) => `${kind}_${randomUUID()}`,
       now: Date.now,
       digest: (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`,
+      renderObservation: async (input) => {
+        const rendered = await renderDrawingObservation(input);
+        const attachment = await ctx.attachments.saveImage({
+          data: rendered.png,
+          mediaType: 'image/png',
+          name: 'drawing-observation.png',
+        });
+        return {
+          contentDigest: rendered.contentDigest,
+          attachment,
+          width: rendered.manifest.width,
+          height: rendered.manifest.height,
+          worldToImage: rendered.manifest.worldToImage,
+        };
+      },
       review: createDshReviewer(ctx),
     };
     this.semantic = new SemanticEditService(this.drawings, editPorts);

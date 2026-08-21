@@ -4,10 +4,13 @@ import {
   canonicalSemanticString,
   canonicalString,
   compileSpatialEditProgram,
+  findConnectedCarrierCandidates,
+  findConnectedCarrierInterfaces,
   type EditCorePorts,
   type GroundedEditTarget,
   type SpatialCompilation,
 } from '@vectorai/drawing-edit-core';
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import {
   finalizePreviewRequestSchema,
   spatialEditProgramSchema,
@@ -27,6 +30,7 @@ import {
   type TaskRef,
 } from '@vectorai/drawing-edit-protocol';
 import type { DrawingDocument } from '@vectorai/drawing-core';
+import { WorldModelCompiler } from '@vectorai/drawing-spatial';
 import type { DrawingUndoStageRequest, DrawingUndoStageResult } from '@vectorai/drawing-workspace';
 
 import {
@@ -75,6 +79,17 @@ export interface ReviewerDecision {
 }
 
 export interface SemanticEditServicePorts extends EditCorePorts {
+  renderObservation?(input: {
+    document: DrawingDocument;
+    viewport: { minX: number; minY: number; maxX: number; maxY: number };
+    selectedNodeIds: string[];
+  }): Promise<{
+    contentDigest: string;
+    attachment: ImageAttachmentRef;
+    width: number;
+    height: number;
+    worldToImage: [number, number, number, number, number, number];
+  }>;
   review?(input: {
     sessionId: string;
     objective: string;
@@ -96,6 +111,38 @@ export interface ExtensionProgramRequest {
   program: SpatialEditProgram;
 }
 
+export interface SemanticContextRef extends ContextRef {
+  geometryFacts: Array<{
+    nodeId: string;
+    type: string;
+    quality: 'confirmed' | 'candidate';
+    center: [number, number] | null;
+    bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  }>;
+  connectedCarrierFacts: Array<{
+    carrierNodeId: string;
+    carrierType: 'circle' | 'ellipse';
+    contactedOpenConnectorCount: number;
+    contactedPortCount: number;
+    interfaces: Array<{ interfaceId: string; nodeId: string; endpoint: 'start' | 'end' }>;
+  }>;
+  knowledge: {
+    status: 'complete' | 'partial' | 'unknown';
+    worldModelVersion: string;
+    unresolvedBoundaryRefs: string[];
+  };
+}
+
+interface ObservationState {
+  ref: ObservationRef;
+  attachment?: ImageAttachmentRef;
+  view?: {
+    width: number;
+    height: number;
+    worldToImage: [number, number, number, number, number, number];
+  };
+}
+
 export class SemanticEditService {
   readonly #pendingInstructions = new Map<string, {
     objective: string;
@@ -103,8 +150,8 @@ export class SemanticEditService {
   }>();
   readonly #sessionPolicies = new Map<string, 'review' | 'auto-safe'>();
   readonly #tasks = new Map<string, TaskState>();
-  readonly #observations = new Map<string, ObservationRef>();
-  readonly #contexts = new Map<string, ContextRef>();
+  readonly #observations = new Map<string, ObservationState>();
+  readonly #contexts = new Map<string, SemanticContextRef>();
   readonly #groundings = new Map<string, GroundingState>();
   readonly #previews = new Map<string, PreviewState>();
   readonly #evaluations = new Map<string, EvaluationState>();
@@ -219,39 +266,101 @@ export class SemanticEditService {
     return structuredClone(ref);
   }
 
-  observe(sessionId: string, input: { taskId: string }): ObservationRef {
+  async observe(sessionId: string, input: { taskId: string }): Promise<ObservationRef> {
     const task = this.#task(sessionId, input.taskId);
     const snapshot = this.#snapshotAtTask(sessionId, task);
     const selection = this.currentSelectionProjection(sessionId);
+    const viewport = this.drawings.summarize(sessionId)?.bounds
+      ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+    const rendered = this.ports.renderObservation
+      ? await this.ports.renderObservation({
+          document: snapshot.document,
+          viewport,
+          selectedNodeIds: selection?.nodeIds ?? [],
+        })
+      : undefined;
+    const basis = { kind: 'canonical' as const, ref: structuredClone(snapshot.ref) };
+    const semanticContentDigest = this.ports.digest(canonicalSemanticString(snapshot.document));
     const ref: ObservationRef = {
       observationId: this.ports.id('observation'),
       taskId: task.ref.taskId,
-      basis: { kind: 'canonical', ref: structuredClone(snapshot.ref) },
-      artifactRefs: [],
+      basis,
+      artifactRefs: [{
+        id: rendered ? String(rendered.attachment.attachmentId) : this.ports.id('observation-artifact'),
+        contentDigest: rendered?.contentDigest ?? semanticContentDigest,
+        mimeType: 'image/png',
+        basis,
+      }],
       ...(selection ? { selectionProjectionId: selection.selectionProjectionId } : {}),
       observationDigest: this.ports.digest(canonicalString({
         taskId: task.ref.taskId,
         ref: snapshot.ref,
-        semantic: canonicalSemanticString(snapshot.document),
+        semanticContentDigest,
+        artifactContentDigest: rendered?.contentDigest ?? semanticContentDigest,
         selectionProjectionDigest: selection?.projectionDigest,
       })),
     };
-    this.#observations.set(ref.observationId, ref);
+    this.#observations.set(ref.observationId, {
+      ref,
+      ...(rendered ? {
+        attachment: rendered.attachment,
+        view: {
+          width: rendered.width,
+          height: rendered.height,
+          worldToImage: rendered.worldToImage,
+        },
+      } : {}),
+    });
     return structuredClone(ref);
   }
 
-  buildContext(sessionId: string, input: { taskId: string; observationId: string }): ContextRef {
+  observationAttachment(observationId: string): ImageAttachmentRef | null {
+    const attachment = this.#observations.get(observationId)?.attachment;
+    return attachment ? structuredClone(attachment) : null;
+  }
+
+  buildContext(sessionId: string, input: { taskId: string; observationId: string }): SemanticContextRef {
     const task = this.#task(sessionId, input.taskId);
     const observation = this.#observations.get(input.observationId);
-    if (!observation || observation.taskId !== task.ref.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
+    if (!observation || observation.ref.taskId !== task.ref.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
     const snapshot = this.#snapshotAtTask(sessionId, task);
-    const ref: ContextRef = {
+    const world = new WorldModelCompiler({ digest: this.ports.digest }).compile(
+      snapshot.document,
+      String(snapshot.ref.revision) as never,
+      { limit: 2_000 },
+    );
+    const geometryFacts = snapshot.document.geometry.slice(0, 512).map((node) => ({
+      nodeId: String(node.id),
+      type: node.type,
+      quality: node.quality.status,
+      center: geometryCenter(node),
+      bounds: geometryNodeBounds(node),
+    }));
+    const connectedCarrierFacts = findConnectedCarrierCandidates(snapshot.document).map((candidate) => ({
+      ...candidate,
+      interfaces: findConnectedCarrierInterfaces(snapshot.document, candidate.carrierNodeId)
+        .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })),
+    }));
+    const knowledgeStatus = world.knowledge.state === 'resolved'
+      ? 'complete' as const
+      : world.knowledge.state === 'partial' ? 'partial' as const : 'unknown' as const;
+    const ref: SemanticContextRef = {
       contextId: this.ports.id('context'),
       taskId: task.ref.taskId,
-      observationId: observation.observationId,
+      observationId: observation.ref.observationId,
+      geometryFacts,
+      connectedCarrierFacts,
+      knowledge: {
+        status: knowledgeStatus,
+        worldModelVersion: world.compilerVersion,
+        unresolvedBoundaryRefs: world.knowledge.unresolvedBoundaryRefs,
+      },
       contextDigest: this.ports.digest(canonicalString({
-        observationDigest: observation.observationDigest,
-        nodeIds: allNodes(snapshot.document).map(({ id }) => id).sort(),
+        observationDigest: observation.ref.observationDigest,
+        geometryFacts,
+        connectedCarrierFacts,
+        worldInputDigest: world.inputDigest,
+        worldKnowledge: world.knowledge,
       })),
     };
     this.#contexts.set(ref.contextId, ref);
@@ -286,12 +395,17 @@ export class SemanticEditService {
     if (targetNodeIds.length === 0 || targetNodeIds.some((id) => !nodes.has(id))) {
       throw new Error('EDIT_TARGET_UNRESOLVED');
     }
+    const discoveredInterfaces = inferSelectionInterfaces(snapshot.document, targetNodeIds);
+    const discoveredIds = new Set(discoveredInterfaces.map(({ interfaceId }) => interfaceId));
     const interfaces = input.interfaces.length > 0
       ? structuredClone(input.interfaces)
-      : inferSelectionInterfaces(snapshot.document, targetNodeIds);
+      : discoveredInterfaces;
     for (const port of interfaces) {
       const node = nodes.get(port.nodeId);
       if (!node || node.type !== 'line' || !port.endpoint) throw new Error('EDIT_INTERFACE_UNRESOLVED');
+      if (discoveredInterfaces.length > 0 && !discoveredIds.has(port.interfaceId)) {
+        throw new Error('EDIT_INTERFACE_NOT_CONTACTED');
+      }
     }
     const sourceStatus: GroundedEditTarget['sourceStatus'] = snapshot.provisional
       ? 'provisional'
@@ -396,26 +510,28 @@ export class SemanticEditService {
     const grounding = this.#groundings.get(input.groundingId);
     if (!grounding || grounding.ref.taskId !== task.ref.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
     const translation = finiteVec2(input.translation, 'EDIT_TRANSLATION_INVALID');
-    const rotationDegrees = input.rotationDegrees ?? 0;
-    if (!Number.isFinite(rotationDegrees)) throw new Error('EDIT_ROTATION_INVALID');
+    const rotationDegrees = input.rotationDegrees;
+    if (rotationDegrees !== undefined && !Number.isFinite(rotationDegrees)) throw new Error('EDIT_ROTATION_INVALID');
     const snapshot = this.#snapshotAtTask(sessionId, task);
-    const pivot = input.pivot === undefined
-      ? groundedGeometryCenter(snapshot.document, grounding.target.targetNodeIds)
-      : finiteVec2(input.pivot, 'EDIT_PIVOT_INVALID');
     const interfaces = grounding.target.interfaces.map(({ interfaceId }) => interfaceId);
+    const closedCarrier = grounding.target.targetNodeIds.length === 1
+      ? snapshot.document.geometry.find(({ id }) => String(id) === grounding.target.targetNodeIds[0])
+      : undefined;
     const operation: SpatialEditProgram['operations'][number] = interfaces.length > 0
+      && (closedCarrier?.type === 'circle' || closedCarrier?.type === 'ellipse')
       ? {
           kind: 'connected_transform',
           translation,
-          rotationRadians: rotationDegrees * Math.PI / 180,
-          pivot,
+          ...(rotationDegrees === undefined ? {} : { rotationRadians: rotationDegrees * Math.PI / 180 }),
           interfaceIds: interfaces,
         }
       : {
           kind: 'rigid_transform',
           translation,
-          rotationRadians: rotationDegrees * Math.PI / 180,
-          pivot,
+          rotationRadians: (rotationDegrees ?? 0) * Math.PI / 180,
+          pivot: input.pivot === undefined
+            ? groundedGeometryCenter(snapshot.document, grounding.target.targetNodeIds)
+            : finiteVec2(input.pivot, 'EDIT_PIVOT_INVALID'),
         };
     return this.previewProgram(sessionId, {
       taskId: task.ref.taskId,
@@ -714,7 +830,7 @@ export class SemanticEditService {
 
   async runExtensionProgram(sessionId: string, input: ExtensionProgramRequest, signal?: AbortSignal) {
     const task = this.startBoundTask(sessionId);
-    const observation = this.observe(sessionId, { taskId: task.taskId });
+    const observation = await this.observe(sessionId, { taskId: task.taskId });
     const context = this.buildContext(sessionId, {
       taskId: task.taskId,
       observationId: observation.observationId,
@@ -847,7 +963,16 @@ function inferSelectionInterfaces(
 ): GroundedEditTarget['interfaces'] {
   const selected = new Set(targetNodeIds);
   const targets = document.geometry.filter((node) => selected.has(String(node.id)));
-  const tolerance = Math.max(geometryDiagonal(document) * 0.025, 1e-6);
+  const exactCarrierInterfaces = targets.flatMap((target) => (
+    target.type === 'circle' || target.type === 'ellipse'
+      ? findConnectedCarrierInterfaces(document, String(target.id))
+        .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint }))
+      : []
+  ));
+  if (exactCarrierInterfaces.length > 0) {
+    return exactCarrierInterfaces.sort((left, right) => left.interfaceId.localeCompare(right.interfaceId));
+  }
+  const tolerance = Math.max(geometryDiagonal(document) * 0.0025, 1e-6);
   const interfaces: GroundedEditTarget['interfaces'] = [];
   for (const connector of document.geometry) {
     if (selected.has(String(connector.id)) || connector.type !== 'line') continue;
@@ -899,6 +1024,43 @@ function geometryAnchors(node: DrawingDocument['geometry'][number]): Array<reado
     case 'polyline': return node.vertices.map(({ point }) => point);
     case 'spline': return node.controlPoints;
   }
+}
+
+function geometryCenter(node: DrawingDocument['geometry'][number]): [number, number] | null {
+  if (node.type === 'point') return [node.x, node.y];
+  if (node.type === 'circle' || node.type === 'arc' || node.type === 'ellipse') return [...node.center];
+  const anchors = geometryAnchors(node);
+  if (anchors.length === 0) return null;
+  return [
+    anchors.reduce((sum, point) => sum + point[0], 0) / anchors.length,
+    anchors.reduce((sum, point) => sum + point[1], 0) / anchors.length,
+  ];
+}
+
+function geometryNodeBounds(node: DrawingDocument['geometry'][number]) {
+  if (node.type === 'circle' || node.type === 'arc') return {
+    minX: node.center[0] - node.radius,
+    minY: node.center[1] - node.radius,
+    maxX: node.center[0] + node.radius,
+    maxY: node.center[1] + node.radius,
+  };
+  if (node.type === 'ellipse') {
+    const major = Math.hypot(...node.majorAxis);
+    return {
+      minX: node.center[0] - major,
+      minY: node.center[1] - major,
+      maxX: node.center[0] + major,
+      maxY: node.center[1] + major,
+    };
+  }
+  const anchors = geometryAnchors(node);
+  if (anchors.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  const xs = anchors.map(([x]) => x);
+  const ys = anchors.map(([, y]) => y);
+  return {
+    minX: Math.min(...xs), minY: Math.min(...ys),
+    maxX: Math.max(...xs), maxY: Math.max(...ys),
+  };
 }
 
 function geometryDiagonal(document: DrawingDocument): number {

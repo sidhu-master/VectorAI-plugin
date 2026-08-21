@@ -34,7 +34,7 @@ export function createSemanticEditToolCatalog(
 export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_preview_grounded_transform',
-    description: 'Preferred tool for moving, rotating, raising, lowering, or posing a grounded Drawing part. Pass only the intended transform; the Host builds the complete validated Spatial Edit Program from the latest grounding. Positive Y moves visually up. Always use taskId and groundingId returned in this turn.',
+    description: 'Preview a rigid or articulated transform for an exact grounded target. Pass a displacement; for a connected closed carrier omit rotation so the Host chooses the minimum-deformation orientation from its actual interfaces. Positive Y moves visually up.',
     parameters: {
       taskId: { type: 'string', required: true },
       groundingId: { type: 'string', required: true },
@@ -44,11 +44,7 @@ export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEdit
       },
       rotationDegrees: {
         type: 'number',
-        description: 'Optional rotation in degrees around the target center. Use 0 for translation only.',
-      },
-      pivot: {
-        type: 'array', items: { type: 'number' },
-        description: 'Optional exact [x, y] pivot. Omit to rotate around the grounded target center.',
+        description: 'Optional explicit orientation change. Omit for Host minimum-deformation orientation on connected closed carriers.',
       },
       summary: { type: 'string', required: true },
     },
@@ -72,8 +68,7 @@ export function createDrawingReviseGroundedTransformTool(semantic: SemanticEditS
         type: 'array', items: { type: 'number' }, required: true,
         description: 'Exactly two numbers [dx, dy]. Positive dy moves visually up.',
       },
-      rotationDegrees: { type: 'number', description: 'Optional rotation in degrees.' },
-      pivot: { type: 'array', items: { type: 'number' }, description: 'Optional exact [x, y] pivot.' },
+      rotationDegrees: { type: 'number', description: 'Optional explicit orientation; omit for Host minimum deformation.' },
       summary: { type: 'string', required: true },
     },
     output: { schema: { type: 'json' }, render: renderJson },
@@ -88,12 +83,13 @@ export function createDrawingObserveTool(semantic: SemanticEditService) {
     name: 'drawing_observe',
     description: 'Start a revision-bound semantic edit task from the current direct user instruction and create an observation of the active local Drawing. Call before grounding or editing.',
     parameters: {},
-    output: { schema: { type: 'json' }, render: renderJson },
+    output: { schema: { type: 'json' }, render: renderObservation },
     async execute(_args, exec) {
       const sessionId = requireSession(exec.agent?.id);
       const task = semantic.startBoundTask(sessionId);
-      const observation = semantic.observe(sessionId, { taskId: task.taskId });
-      return { task, observation } as unknown as JsonValue;
+      const observation = await semantic.observe(sessionId, { taskId: task.taskId });
+      const imageAttachment = semantic.observationAttachment(observation.observationId);
+      return { task, observation, ...(imageAttachment ? { imageAttachment } : {}) } as unknown as JsonValue;
     },
   });
 }
@@ -116,7 +112,7 @@ export function createDrawingBuildContextTool(semantic: SemanticEditService) {
 export function createDrawingGroundTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_ground',
-    description: 'Ground a semantic target to exact node ids and connector interfaces. For articulated edits, target only the moving end object (for example the hand/palm), not its connecting arm lines; with empty interfaces the Host infers contacted line endpoints so they stay connected. When drawing_observe returns a Host-verified selectionProjectionId and the user refers to the selection, pass it with empty targetNodeIds and interfaces.',
+    description: 'Ground a semantic target to exact node ids and topology interfaces. Choose only the semantic carrier being transformed; pass empty interfaces so the Host derives true contacted endpoint slots. When the user refers to a Host selection, pass its selectionProjectionId with empty targetNodeIds.',
     parameters: {
       taskId: { type: 'string', required: true },
       contextId: { type: 'string', required: true },
@@ -344,4 +340,21 @@ function requireSession(id: unknown): string {
 
 function renderJson(_args: unknown, value: unknown) {
   return [{ type: 'text' as const, text: JSON.stringify(value) }];
+}
+
+function renderObservation(_args: unknown, value: unknown) {
+  const content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; attachment: NonNullable<ReturnType<SemanticEditService['observationAttachment']>> }
+  > = [{ type: 'text', text: JSON.stringify(value) }];
+  if (value && typeof value === 'object' && 'imageAttachment' in value) {
+    const attachment = (value as { imageAttachment?: unknown }).imageAttachment;
+    if (attachment && typeof attachment === 'object' && 'attachmentId' in attachment) {
+      content.push({
+        type: 'image',
+        attachment: attachment as NonNullable<ReturnType<SemanticEditService['observationAttachment']>>,
+      });
+    }
+  }
+  return content;
 }

@@ -13,6 +13,47 @@ export interface ReviewRenderManifest {
   overlays: ['changed-nodes', 'motion-vectors'];
 }
 
+export interface ObservationRenderManifest {
+  rendererVersion: 'vectorai-observation-svg-v1';
+  width: 960;
+  height: 720;
+  worldToImage: [number, number, number, number, number, number];
+  viewport: { minX: number; minY: number; maxX: number; maxY: number };
+  overlays: ['selection'];
+}
+
+export async function renderDrawingObservation(input: {
+  document: DrawingDocument;
+  viewport: { minX: number; minY: number; maxX: number; maxY: number };
+  selectedNodeIds?: string[];
+}): Promise<{ png: Uint8Array; contentDigest: string; manifest: ObservationRenderManifest }> {
+  const width = 960 as const;
+  const height = 720 as const;
+  const padding = 36;
+  const worldWidth = Math.max(input.viewport.maxX - input.viewport.minX, 1e-6);
+  const worldHeight = Math.max(input.viewport.maxY - input.viewport.minY, 1e-6);
+  const scale = Math.min((width - padding * 2) / worldWidth, (height - padding * 2) / worldHeight);
+  const offsetX = padding + (width - padding * 2 - worldWidth * scale) / 2 - input.viewport.minX * scale;
+  const offsetY = height - padding - (height - padding * 2 - worldHeight * scale) / 2 + input.viewport.minY * scale;
+  const transform: ObservationRenderManifest['worldToImage'] = [scale, 0, 0, -scale, offsetX, offsetY];
+  const selected = new Set(input.selectedNodeIds ?? []);
+  const normal = renderDocument(input.document, new Set(), '#d7e0ea');
+  const highlight = selected.size === 0 ? '' : renderDocument(input.document, selected, '#ffad42', true);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <rect width="${width}" height="${height}" fill="#101419"/>
+    <g transform="matrix(${transform.join(' ')})">${normal}${highlight}</g>
+  </svg>`;
+  const png = await sharp(Buffer.from(svg)).png().toBuffer();
+  return {
+    png,
+    contentDigest: `sha256:${createHash('sha256').update(png).digest('hex')}`,
+    manifest: {
+      rendererVersion: 'vectorai-observation-svg-v1', width, height, worldToImage: transform,
+      viewport: structuredClone(input.viewport), overlays: ['selection'],
+    },
+  };
+}
+
 export async function renderReviewComparison(input: {
   before: DrawingDocument;
   after: DrawingDocument;
@@ -56,9 +97,14 @@ export async function renderReviewComparison(input: {
   };
 }
 
-function renderDocument(document: DrawingDocument, changed: Set<string>, changedColor: string): string {
+function renderDocument(
+  document: DrawingDocument,
+  changed: Set<string>,
+  changedColor: string,
+  selectedOnly = false,
+): string {
   return [...document.geometry, ...document.annotations]
-    .filter((node) => node.visible)
+    .filter((node) => node.visible && (!selectedOnly || changed.has(String(node.id))))
     .map((node) => renderNode(node, changed.has(String(node.id)) ? changedColor : '#d7e0ea'))
     .join('');
 }

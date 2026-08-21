@@ -3,3 +3,5 @@
 export { queryDrawing } from './query';
 export type * from './query';
 export * from './world-model';
+export * from './point-resolver';
+export * from './grounding-ledger';

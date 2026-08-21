@@ -36,8 +36,8 @@ async function setup(
         document.geometry = [
           { id: 'body' as GeometryId, type: 'circle', center: [0, 0], radius: 10, visible: true, quality },
           { id: 'right-hand' as GeometryId, type: 'circle', center: [15, 0], radius: 3, visible: true, quality },
-          { id: 'right-arm-top' as GeometryId, type: 'line', start: [9, 2], end: [12, 2], visible: true, quality },
-          { id: 'right-arm-bottom' as GeometryId, type: 'line', start: [9, -2], end: [12, -2], visible: true, quality },
+          { id: 'right-arm-top' as GeometryId, type: 'line', start: [9, 2], end: [12.7639320225, 2], visible: true, quality },
+          { id: 'right-arm-bottom' as GeometryId, type: 'line', start: [9, -2], end: [12.7639320225, -2], visible: true, quality },
           { id: 'left-hand' as GeometryId, type: 'circle', center: [-15, 0], radius: 3, visible: true, quality },
         ];
         return { document, bounds: { minX: -30, minY: -20, maxX: 30, maxY: 30 }, provisional };
@@ -64,7 +64,7 @@ async function previewRightHand(service: SemanticEditService) {
     rootUserMessageDigest: 'sha256:user-message',
     policy: 'auto-safe',
   });
-  const observation = service.observe('session-1', { taskId: task.taskId });
+  const observation = await service.observe('session-1', { taskId: task.taskId });
   const context = service.buildContext('session-1', {
     taskId: task.taskId,
     observationId: observation.observationId,
@@ -87,8 +87,8 @@ async function previewRightHand(service: SemanticEditService) {
       summary: 'Raise right hand',
       objective: '把右手抬起来打招呼',
       operations: [{
-        kind: 'connected_transform', translation: [-3, 11], rotationRadians: -Math.PI / 3,
-        pivot: [15, 0], interfaceIds: ['right-arm-top:end', 'right-arm-bottom:end'],
+        kind: 'connected_transform', translation: [-3, 11],
+        interfaceIds: ['right-arm-top:end', 'right-arm-bottom:end'],
       }],
       preserveScopes: [{ kind: 'node-field', nodeId: 'left-hand', fields: ['center'] }],
       postconditions: [{ kind: 'within_bounds', bounds: { minX: -30, minY: -20, maxX: 30, maxY: 30 } }],
@@ -106,7 +106,7 @@ describe('SemanticEditService', () => {
       rootUserMessageDigest: 'sha256:empty-selection-handle',
       policy: 'auto-safe',
     });
-    const observation = service.observe('session-1', { taskId: task.taskId });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
     const context = service.buildContext('session-1', {
       taskId: task.taskId,
       observationId: observation.observationId,
@@ -139,7 +139,7 @@ describe('SemanticEditService', () => {
       rootUserMessageDigest: 'sha256:simple-transform',
       policy: 'auto-safe',
     });
-    const observation = service.observe('session-1', { taskId: task.taskId });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
     const context = service.buildContext('session-1', {
       taskId: task.taskId,
       observationId: observation.observationId,
@@ -220,7 +220,7 @@ describe('SemanticEditService', () => {
       rootUserMessageDigest: 'sha256:selected-wave',
       policy: 'auto-safe',
     });
-    const observation = service.observe('session-1', { taskId: task.taskId });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
     expect(observation.selectionProjectionId).toBe(projected.projection.selectionProjectionId);
     const context = service.buildContext('session-1', {
       taskId: task.taskId,
@@ -249,8 +249,8 @@ describe('SemanticEditService', () => {
         summary: 'Raise selected hand',
         objective: '把选中的右手抬起来打招呼',
         operations: [{
-          kind: 'connected_transform', translation: [-3, 11], rotationRadians: -Math.PI / 3,
-          pivot: [15, 0], interfaceIds: grounding.interfaces.map(({ interfaceId }) => interfaceId),
+          kind: 'connected_transform', translation: [-3, 11],
+          interfaceIds: grounding.interfaces.map(({ interfaceId }) => interfaceId),
         }],
         preserveScopes: [{ kind: 'node-field', nodeId: 'left-hand', fields: ['center'] }],
         postconditions: [{ kind: 'within_bounds', bounds: { minX: -30, minY: -20, maxX: 30, maxY: 30 } }],

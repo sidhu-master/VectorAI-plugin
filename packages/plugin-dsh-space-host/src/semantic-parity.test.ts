@@ -51,7 +51,7 @@ describe('DSH semantic edit production parity', () => {
       policy: 'auto-safe',
     });
 
-    const observation = service.observe('session-parity', { taskId: task.taskId }) as unknown as {
+    const observation = await service.observe('session-parity', { taskId: task.taskId }) as unknown as {
       artifactRefs: unknown[];
     };
     expect(observation.artifactRefs).toHaveLength(1);
