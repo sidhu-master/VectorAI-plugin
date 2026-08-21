@@ -11,6 +11,7 @@ import type {
   DrawingSelectionProjectionRequest,
   DrawingSelectionProjectionResult,
   DrawingWorkspacePreview,
+  DrawingGroundingOverlay,
   DrawingUndoStageRequest,
   DrawingUndoStageResult,
 } from '@vectorai/plugin-space-contracts';
@@ -89,6 +90,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
       isRuntimeRoot: (agent) => ctx.agents.roots().includes(agent),
     }));
     ctx.on('session/disposed', (session) => {
+      this.semantic.disposeSession(String(session.id));
       this.drawings.disposeSession(String(session.id));
     });
   }
@@ -109,6 +111,11 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     request: DrawingSelectionProjectionRequest,
   ): DrawingSelectionProjectionResult {
     return this.semantic.projectSelection(String(agent.id), request);
+  }
+
+  @Remote
+  getGroundingOverlay(agent: Agent): DrawingGroundingOverlay | null {
+    return this.semantic.currentGroundingOverlay(String(agent.id));
   }
 
   @Remote

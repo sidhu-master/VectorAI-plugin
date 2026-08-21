@@ -99,6 +99,155 @@ async function previewRightHand(service: SemanticEditService) {
 }
 
 describe('SemanticEditService', () => {
+  it('projects named Groundings as transient groups and replaces only the same part key', async () => {
+    const { service } = await setup();
+    const task = service.startTask('session-1', {
+      objective: 'Move two independent components',
+      rootUserMessageDigest: 'sha256:multi-overlay',
+      policy: 'auto-safe',
+    });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
+    const context = service.buildContext('session-1', {
+      taskId: task.taskId, observationId: observation.observationId,
+    });
+
+    service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['left-hand'], interfaces: [],
+      partKey: 'part-a', label: 'Part A',
+    });
+    service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['right-hand'], interfaces: [],
+      partKey: 'part-b', label: 'Part B',
+    });
+
+    const first = service.currentGroundingOverlay('session-1');
+    expect(first).toMatchObject({
+      version: 1,
+      drawingRef: task.baseRef,
+      taskId: task.taskId,
+      groups: [
+        { partKey: 'part-a', label: 'Part A', colorIndex: 0, nodeIds: ['left-hand'] },
+        { partKey: 'part-b', label: 'Part B', colorIndex: 1, nodeIds: ['right-hand'] },
+      ],
+    });
+
+    service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['left-hand'], interfaces: [],
+      partKey: 'part-a', label: 'Part A refined',
+    });
+    expect(service.currentGroundingOverlay('session-1')?.groups).toMatchObject([
+      { partKey: 'part-a', label: 'Part A refined', colorIndex: 0 },
+      { partKey: 'part-b', label: 'Part B', colorIndex: 1 },
+    ]);
+
+    if (!first) throw new Error('overlay missing');
+    first.groups[0]!.label = 'caller mutation';
+    expect(service.currentGroundingOverlay('session-1')?.groups[0]?.label).toBe('Part A refined');
+  });
+
+  it('lets a legacy Grounding replace named groups and clears them for a new task', async () => {
+    const { service } = await setup();
+    const task = service.startTask('session-1', {
+      objective: 'Inspect components', rootUserMessageDigest: 'sha256:legacy-overlay', policy: 'auto-safe',
+    });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
+    const context = service.buildContext('session-1', { taskId: task.taskId, observationId: observation.observationId });
+    service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['left-hand'], interfaces: [], partKey: 'part-a', label: 'Part A',
+    });
+    service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['right-hand'], interfaces: [],
+    });
+    expect(service.currentGroundingOverlay('session-1')?.groups).toHaveLength(1);
+    expect(service.currentGroundingOverlay('session-1')?.groups[0]?.nodeIds).toEqual(['right-hand']);
+
+    service.startTask('session-1', {
+      objective: 'Start another task', rootUserMessageDigest: 'sha256:new-task', policy: 'auto-safe',
+    });
+    expect(service.currentGroundingOverlay('session-1')).toBeNull();
+  });
+
+  it('creates one Preview for multiple exact Groundings and clears Overlay on discard', async () => {
+    const { service, drawings } = await setup();
+    const task = service.startTask('session-1', {
+      objective: 'Move two independent components',
+      rootUserMessageDigest: 'sha256:multi-preview', policy: 'auto-safe',
+    });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
+    const context = service.buildContext('session-1', { taskId: task.taskId, observationId: observation.observationId });
+    const left = service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['left-hand'], interfaces: [], partKey: 'part-a', label: 'Part A',
+    });
+    const right = service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['right-hand'], interfaces: [], partKey: 'part-b', label: 'Part B',
+    });
+
+    const preview = service.previewMultiPartTransform('session-1', {
+      taskId: task.taskId,
+      summary: 'Move two components',
+      parts: [
+        { groundingId: left.groundingId, translation: [3, -5] },
+        { groundingId: right.groundingId, translation: [-3, 11] },
+      ],
+    });
+
+    expect(preview.groundingIds).toEqual([left.groundingId, right.groundingId]);
+    expect(drawings.getPreview('session-1')?.candidate.document.geometry
+      .find(({ id }) => id === 'left-hand')).toMatchObject({ center: [-12, -5] });
+    expect(drawings.getPreview('session-1')?.candidate.document.geometry
+      .find(({ id }) => id === 'right-hand')).toMatchObject({ center: [12, 11] });
+    expect(service.currentGroundingOverlay('session-1')?.groups).toHaveLength(2);
+
+    service.discardPreview('session-1', preview.previewHandle);
+    expect(service.currentGroundingOverlay('session-1')).toBeNull();
+  });
+
+  it('atomically replaces a multi-part Preview during visual revision', async () => {
+    const { service, drawings } = await setup();
+    const task = service.startTask('session-1', {
+      objective: 'Move two independent components', rootUserMessageDigest: 'sha256:multi-revise', policy: 'auto-safe',
+    });
+    const observation = await service.observe('session-1', { taskId: task.taskId });
+    const context = service.buildContext('session-1', { taskId: task.taskId, observationId: observation.observationId });
+    const left = service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['left-hand'], interfaces: [], partKey: 'part-a', label: 'Part A',
+    });
+    const right = service.ground('session-1', {
+      taskId: task.taskId, contextId: context.contextId,
+      targetNodeIds: ['right-hand'], interfaces: [], partKey: 'part-b', label: 'Part B',
+    });
+    const first = service.previewMultiPartTransform('session-1', {
+      taskId: task.taskId, summary: 'First pose',
+      parts: [
+        { groundingId: left.groundingId, translation: [3, -5] },
+        { groundingId: right.groundingId, translation: [-3, 11] },
+      ],
+    });
+
+    const revised = service.reviseMultiPartTransform('session-1', {
+      taskId: task.taskId,
+      currentPreviewHandle: first.previewHandle,
+      currentCandidateDigest: first.candidateDigest,
+      summary: 'Smaller pose',
+      parts: [
+        { groundingId: left.groundingId, translation: [2, -3] },
+        { groundingId: right.groundingId, translation: [-2, 8] },
+      ],
+    });
+
+    expect(revised.previewHandle).not.toBe(first.previewHandle);
+    expect(drawings.getPreview('session-1')?.handle).toBe(revised.previewHandle);
+    expect(() => service.discardPreview('session-1', first.previewHandle)).toThrow('EDIT_PREVIEW_STALE');
+  });
+
   it('treats an empty optional selectionProjectionId as omitted for model-generated grounding input', async () => {
     const { service } = await setup();
     const task = service.startTask('session-1', {

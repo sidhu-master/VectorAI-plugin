@@ -86,12 +86,18 @@ export const previewRefSchema = z.object({
   previewHandle: idSchema,
   taskId: idSchema,
   groundingId: idSchema,
+  groundingIds: z.array(idSchema).min(2).max(16).optional(),
   baseRef: drawingRefSchema,
   candidateDigest: digestSchema,
   effectDigest: digestSchema,
   finalizeOperationId: idSchema,
   finalizeOperationBindingDigest: digestSchema,
-}).strict();
+}).strict().superRefine(({ groundingId, groundingIds }, context) => {
+  if (groundingIds === undefined) return;
+  if (groundingIds[0] !== groundingId || new Set(groundingIds).size !== groundingIds.length) {
+    context.addIssue({ code: 'custom', path: ['groundingIds'], message: 'EDIT_GROUNDING_SET_INVALID' });
+  }
+});
 
 export const evaluationRefSchema = z.object({
   evaluationId: idSchema,

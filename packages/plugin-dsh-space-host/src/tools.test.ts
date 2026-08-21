@@ -30,6 +30,8 @@ import {
   createDrawingGroundTool,
   createDrawingObserveTool,
   createDrawingPreviewGroundedTransformTool,
+  createDrawingPreviewMultiPartTransformTool,
+  createDrawingReviseMultiPartTransformTool,
   createDrawingReviseGroundedTransformTool,
   createDrawingUndoTool,
 } from './semantic-tools';
@@ -135,6 +137,9 @@ describe('drawing tools', () => {
       previewGroundedTransform() {
         return { previewHandle: 'preview-1', candidateDigest: 'sha256:candidate' };
       },
+      previewMultiPartTransform() {
+        return { previewHandle: 'preview-multi', candidateDigest: 'sha256:multi-candidate' };
+      },
       async evaluatePreview() {
         return {
           evaluation: { evaluationId: 'evaluation-1', review: { outcome: 'satisfied' } },
@@ -148,6 +153,7 @@ describe('drawing tools', () => {
     }, exec('session-a'));
     const grounding = await createDrawingGroundTool(semantic).execute({
       taskId: 'task-1', contextId: 'context-1', targetNodeIds: ['right-hand'], interfaces: [],
+      partKey: 'part-a', label: 'Part A',
     }, exec('session-a'));
     const preview = await createDrawingPreviewGroundedTransformTool(semantic).execute({
       taskId: 'task-1', groundingId: 'grounding-1', translation: [0, 80], summary: 'raise hand',
@@ -161,7 +167,11 @@ describe('drawing tools', () => {
     } });
     expect(grounding).toMatchObject({ drawingWorkflow: {
       state: 'grounded',
-      nextTools: ['drawing_preview_grounded_transform', 'drawing_preview_program'],
+      nextTools: [
+        'drawing_preview_grounded_transform',
+        'drawing_preview_multi_part_transform',
+        'drawing_preview_program',
+      ],
     } });
     expect(preview).toMatchObject({ drawingWorkflow: {
       state: 'preview_ready', nextTools: ['drawing_evaluate_preview'],
@@ -169,6 +179,57 @@ describe('drawing tools', () => {
     expect(evaluation).toMatchObject({ drawingWorkflow: {
       state: 'evaluated', nextTools: ['drawing_finalize_preview'],
     } });
+  });
+
+  it('exposes and executes a structured multi-part transform without opaque JSON', async () => {
+    let received: unknown;
+    const semantic = {
+      previewMultiPartTransform(_sessionId: string, input: unknown) {
+        received = input;
+        return { previewHandle: 'preview-multi', candidateDigest: 'sha256:multi' };
+      },
+    } as unknown as SemanticEditService;
+    const tool = createDrawingPreviewMultiPartTransformTool(semantic);
+    const request = {
+      taskId: 'task-1', summary: 'Move components',
+      parts: [
+        { groundingId: 'ground-a', translation: [3, -2] },
+        { groundingId: 'ground-b', translation: [-3, -2], rotationRadians: 0.2, pivot: [10, 4] },
+      ],
+    };
+
+    await tool.execute(request, exec('session-a'));
+
+    expect(received).toEqual(request);
+    expect(tool.parameters).toHaveProperty('properties.parts', expect.objectContaining({
+      type: 'array',
+      items: expect.objectContaining({ type: 'object', additionalProperties: false }),
+    }));
+    expect(tool.parameters).not.toHaveProperty('properties.parts.items.type', 'json');
+  });
+
+  it('revises the exact current multi-part Preview with the same structured parts', async () => {
+    let received: unknown;
+    const semantic = {
+      reviseMultiPartTransform(_sessionId: string, input: unknown) {
+        received = input;
+        return { previewHandle: 'preview-revised', candidateDigest: 'sha256:revised' };
+      },
+    } as unknown as SemanticEditService;
+    const tool = createDrawingReviseMultiPartTransformTool(semantic);
+    const request = {
+      taskId: 'task-1', currentPreviewHandle: 'preview-1',
+      currentCandidateDigest: 'sha256:candidate', summary: 'Refine components',
+      parts: [
+        { groundingId: 'ground-a', translation: [2, -1] },
+        { groundingId: 'ground-b', translation: [-2, -1] },
+      ],
+    };
+
+    await tool.execute(request, exec('session-a'));
+    expect(received).toEqual(request);
+    expect(tool.parameters).toHaveProperty('properties.currentPreviewHandle.type', 'string');
+    expect(tool.parameters).toHaveProperty('properties.parts.items.type', 'object');
   });
 
   it('routes a rejected visual candidate to revision instead of finalize', async () => {
@@ -187,7 +248,12 @@ describe('drawing tools', () => {
 
     expect(evaluation).toMatchObject({ drawingWorkflow: {
       state: 'revision_required',
-      nextTools: ['drawing_revise_grounded_transform', 'drawing_revise_preview', 'drawing_discard_preview'],
+      nextTools: [
+        'drawing_revise_grounded_transform',
+        'drawing_revise_multi_part_transform',
+        'drawing_revise_preview',
+        'drawing_discard_preview',
+      ],
     } });
     expect(JSON.stringify(evaluation)).not.toContain('drawing_finalize_preview');
   });
@@ -269,7 +335,9 @@ describe('drawing tools', () => {
       'drawing_build_context',
       'drawing_ground',
       'drawing_preview_grounded_transform',
+      'drawing_preview_multi_part_transform',
       'drawing_revise_grounded_transform',
+      'drawing_revise_multi_part_transform',
       'drawing_preview_program',
       'drawing_revise_preview',
       'drawing_evaluate_preview',
@@ -290,6 +358,15 @@ describe('drawing tools', () => {
       expect(transform?.parameters).not.toHaveProperty('properties.pivot');
       expect(transform?.parameters).not.toHaveProperty('properties.rotationDegrees');
     }
+    const advanced = tools.find((tool) => tool.name === 'drawing_preview_program');
+    expect(advanced?.parameters).toHaveProperty('properties.program', expect.objectContaining({
+      type: 'object',
+      additionalProperties: false,
+      properties: expect.objectContaining({
+        baseRef: expect.objectContaining({ type: 'object' }),
+        operations: expect.objectContaining({ type: 'array' }),
+      }),
+    }));
   });
 
   it('does not forward model-injected pose angles or pivots through the simple DSH tools', async () => {

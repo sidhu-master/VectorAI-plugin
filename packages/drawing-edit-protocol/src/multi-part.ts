@@ -21,11 +21,16 @@ export const multiPartTransformPartSchema = z.object({
   }
 });
 
-export const multiPartTransformRequestSchema = z.object({
+const multiPartTransformRequestShape = {
   taskId: idSchema,
   parts: z.array(multiPartTransformPartSchema).min(2).max(16),
   summary: boundedTextSchema,
-}).strict().superRefine(({ parts }, context) => {
+};
+
+function validateUniqueGroundings(
+  { parts }: { parts: Array<{ groundingId: string }> },
+  context: z.RefinementCtx,
+) {
   const groundingIds = new Set<string>();
   for (const [index, part] of parts.entries()) {
     if (groundingIds.has(part.groundingId)) {
@@ -37,7 +42,18 @@ export const multiPartTransformRequestSchema = z.object({
     }
     groundingIds.add(part.groundingId);
   }
-});
+}
+
+export const multiPartTransformRequestSchema = z.object({
+  ...multiPartTransformRequestShape,
+}).strict().superRefine(validateUniqueGroundings);
+
+export const multiPartTransformRevisionRequestSchema = z.object({
+  ...multiPartTransformRequestShape,
+  currentPreviewHandle: idSchema,
+  currentCandidateDigest: idSchema,
+}).strict().superRefine(validateUniqueGroundings);
 
 export type MultiPartTransformPart = z.infer<typeof multiPartTransformPartSchema>;
 export type MultiPartTransformRequest = z.infer<typeof multiPartTransformRequestSchema>;
+export type MultiPartTransformRevisionRequest = z.infer<typeof multiPartTransformRevisionRequestSchema>;

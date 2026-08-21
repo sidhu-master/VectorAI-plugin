@@ -3,6 +3,7 @@
 import {
   canonicalSemanticString,
   canonicalString,
+  compileMultiPartTransform,
   compileSpatialEditProgram,
   findConnectedCarrierCandidates,
   findConnectedCarrierInterfaces,
@@ -13,6 +14,8 @@ import {
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import {
   finalizePreviewRequestSchema,
+  multiPartTransformRequestSchema,
+  multiPartTransformRevisionRequestSchema,
   spatialEditProgramSchema,
   type Assessment,
   type ContextRef,
@@ -21,6 +24,8 @@ import {
   type FinalizePreviewRequest,
   type FinalizePreviewResult,
   type GroundingRef,
+  type MultiPartTransformRequest,
+  type MultiPartTransformRevisionRequest,
   type ObservationRef,
   type OperationLookupResult,
   type PreviewRef,
@@ -30,6 +35,7 @@ import {
   type TaskRef,
 } from '@vectorai/drawing-edit-protocol';
 import type { DrawingDocument } from '@vectorai/drawing-core';
+import type { DrawingGroundingOverlay } from '@vectorai/plugin-space-contracts';
 import { buildGeometryTopologyGraph, WorldModelCompiler } from '@vectorai/drawing-spatial';
 import type { DrawingUndoStageRequest, DrawingUndoStageResult } from '@vectorai/drawing-workspace';
 
@@ -53,8 +59,8 @@ interface GroundingState {
 interface PreviewState {
   ref: PreviewRef;
   task: TaskState;
-  grounding: GroundingState;
-  program: SpatialEditProgram;
+  groundings: GroundingState[];
+  program?: SpatialEditProgram;
   compilation: SpatialCompilation;
 }
 
@@ -164,6 +170,7 @@ export class SemanticEditService {
   readonly #reviewInflight = new Map<string, Promise<ReviewerDecision>>();
   readonly #stickyReviewDefects = new Map<string, ReviewerDecision>();
   readonly #selectionProjections = new Map<string, SelectionProjectionRef>();
+  readonly #groundingOverlays = new Map<string, DrawingGroundingOverlay>();
 
   constructor(
     private readonly drawings: InMemoryDrawingRepository,
@@ -258,6 +265,7 @@ export class SemanticEditService {
     const workspacePreview = this.drawings.getPreview(sessionId);
     if (workspacePreview) this.drawings.discardPreview(sessionId, { handle: workspacePreview.handle });
     this.#previews.delete(sessionId);
+    this.#groundingOverlays.delete(sessionId);
     const objective = input.objective.trim();
     if (!objective) throw new Error('EDIT_OBJECTIVE_REQUIRED');
     const ref: TaskRef = {
@@ -398,6 +406,8 @@ export class SemanticEditService {
     targetNodeIds: string[];
     interfaces: GroundedEditTarget['interfaces'];
     selectionProjectionId?: string;
+    partKey?: string;
+    label?: string;
   }): GroundingRef {
     const task = this.#task(sessionId, input.taskId);
     const context = this.#contexts.get(input.contextId);
@@ -472,7 +482,26 @@ export class SemanticEditService {
       })),
     };
     this.#groundings.set(ref.groundingId, { ref, target });
+    this.#updateGroundingOverlay(sessionId, task, snapshot.ref, ref, input.partKey, input.label);
     return structuredClone(ref);
+  }
+
+  currentGroundingOverlay(sessionId: string): DrawingGroundingOverlay | null {
+    const overlay = this.#groundingOverlays.get(sessionId);
+    const task = this.#tasks.get(sessionId);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (
+      !overlay
+      || !task?.active
+      || overlay.taskId !== task.ref.taskId
+      || !snapshot
+      || overlay.drawingRef.drawingId !== snapshot.ref.drawingId
+      || overlay.drawingRef.revision !== snapshot.ref.revision
+    ) {
+      if (overlay) this.#groundingOverlays.delete(sessionId);
+      return null;
+    }
+    return structuredClone(overlay);
   }
 
   previewProgram(sessionId: string, input: {
@@ -497,34 +526,61 @@ export class SemanticEditService {
       grounding: grounding.target,
       ports: this.ports,
     });
-    const workspace = this.drawings.createPreview(sessionId, {
-      ref: snapshot.ref,
-      commands: compilation.forward as never,
-      summary: program.summary,
+    return this.#storeCompilation(sessionId, task, snapshot.ref, [grounding], compilation, program.summary, program);
+  }
+
+  previewMultiPartTransform(
+    sessionId: string,
+    raw: MultiPartTransformRequest,
+  ): PreviewRef {
+    const input = multiPartTransformRequestSchema.parse(raw);
+    const task = this.#task(sessionId, input.taskId);
+    if (task.candidateCount >= 3) throw new Error('EDIT_CANDIDATE_BUDGET_EXHAUSTED');
+    const groundings = input.parts.map(({ groundingId }) => {
+      const grounding = this.#groundings.get(groundingId);
+      if (!grounding || grounding.ref.taskId !== task.ref.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
+      return grounding;
     });
-    if (workspace.status !== 'previewed') {
-      throw new Error(workspace.status === 'rejected' ? workspace.code ?? 'EDIT_PREVIEW_REJECTED' : 'EDIT_BASE_STALE');
+    const contextId = groundings[0]?.ref.contextId;
+    if (!contextId || groundings.some(({ ref }) => ref.contextId !== contextId)) {
+      throw new Error('EDIT_CONTEXT_MISMATCH');
     }
-    const finalizeOperationId = this.ports.id('finalize');
-    const finalizeOperationBindingDigest = this.ports.digest(canonicalString({
-      mode: 'semantic', sessionId, drawingId: snapshot.ref.drawingId,
-      operationId: finalizeOperationId,
-      previewHandle: workspace.preview.handle,
-      candidateDigest: compilation.candidateDigest,
-    }));
-    const ref: PreviewRef = {
-      previewHandle: workspace.preview.handle,
-      taskId: task.ref.taskId,
-      groundingId: grounding.ref.groundingId,
-      baseRef: structuredClone(snapshot.ref),
-      candidateDigest: compilation.candidateDigest,
-      effectDigest: compilation.effectDigest,
-      finalizeOperationId,
-      finalizeOperationBindingDigest,
-    };
-    task.candidateCount += 1;
-    this.#previews.set(sessionId, { ref, task, grounding, program, compilation });
-    return structuredClone(ref);
+    const snapshot = this.#snapshotAtTask(sessionId, task);
+    const compilation = compileMultiPartTransform({
+      document: snapshot.document,
+      baseRef: task.ref.baseRef,
+      objective: task.objective,
+      summary: input.summary,
+      parts: input.parts.map((part, index) => ({
+        groundingId: part.groundingId,
+        grounding: groundings[index]!.target,
+        translation: [part.translation[0]!, part.translation[1]!],
+        ...(part.rotationRadians === undefined ? {} : {
+          rotationRadians: part.rotationRadians,
+          pivot: [part.pivot![0]!, part.pivot![1]!],
+        }),
+      })),
+      ports: this.ports,
+    });
+    return this.#storeCompilation(
+      sessionId, task, snapshot.ref, groundings, compilation, input.summary,
+    );
+  }
+
+  reviseMultiPartTransform(
+    sessionId: string,
+    raw: MultiPartTransformRevisionRequest,
+  ): PreviewRef {
+    const input = multiPartTransformRevisionRequestSchema.parse(raw);
+    const current = this.#preview(
+      sessionId, input.currentPreviewHandle, input.currentCandidateDigest,
+    );
+    if (current.ref.taskId !== input.taskId) throw new Error('EDIT_LINEAGE_MISMATCH');
+    return this.previewMultiPartTransform(sessionId, {
+      taskId: input.taskId,
+      parts: input.parts,
+      summary: input.summary,
+    });
   }
 
   previewGroundedTransform(sessionId: string, input: {
@@ -787,6 +843,7 @@ export class SemanticEditService {
     const result = this.drawings.discardPreview(sessionId, { handle: previewHandle });
     if (result.status !== 'discarded') throw new Error(result.code ?? 'EDIT_DISCARD_REJECTED');
     this.#previews.delete(sessionId);
+    this.#groundingOverlays.delete(sessionId);
     return result;
   }
 
@@ -807,16 +864,21 @@ export class SemanticEditService {
       assessment: evaluated.assessment,
       reviewEvidence: evaluated.evaluation.review,
     });
-    if (receipt.status === 'no-effect') return {
-      status: 'already-satisfied',
-      ref: receipt.ref,
-      operationId: receipt.operationId,
-      operationBindingDigest: receipt.operationBindingDigest,
-    };
+    if (receipt.status === 'no-effect') {
+      this.#previews.delete(sessionId);
+      this.#groundingOverlays.delete(sessionId);
+      return {
+        status: 'already-satisfied',
+        ref: receipt.ref,
+        operationId: receipt.operationId,
+        operationBindingDigest: receipt.operationBindingDigest,
+      };
+    }
     if (receipt.status !== 'committed' || receipt.mode !== 'semantic') {
       throw new Error('EDIT_COMMIT_RECEIPT_INVALID');
     }
     this.#previews.delete(sessionId);
+    this.#groundingOverlays.delete(sessionId);
     return {
       status: 'committed', mode, commitId: receipt.commitId,
       ref: receipt.resultingRef,
@@ -831,6 +893,17 @@ export class SemanticEditService {
 
   undo(sessionId: string, request: UndoCommitRequest) {
     return this.drawings.undoCommit(sessionId, request);
+  }
+
+  disposeSession(sessionId: string): void {
+    const task = this.#tasks.get(sessionId);
+    if (task) task.active = false;
+    this.#pendingInstructions.delete(sessionId);
+    this.#sessionPolicies.delete(sessionId);
+    this.#tasks.delete(sessionId);
+    this.#previews.delete(sessionId);
+    this.#selectionProjections.delete(sessionId);
+    this.#groundingOverlays.delete(sessionId);
   }
 
   undoAuthorized(sessionId: string, input: Omit<UndoCommitRequest, 'operationId' | 'operationBindingDigest'>) {
@@ -911,14 +984,14 @@ export class SemanticEditService {
     const reasons: string[] = [];
     const hard = evaluation.diagnostics.some((diagnostic) => diagnostic.severity === 'error' && diagnostic.hard);
     if (hard) reasons.push('HARD_VALIDATION_FAILED');
-    if (preview.grounding.target.sourceStatus !== 'confirmed') reasons.push('SOURCE_NOT_CONFIRMED');
+    if (preview.groundings.some(({ target }) => target.sourceStatus !== 'confirmed')) reasons.push('SOURCE_NOT_CONFIRMED');
     if (evaluation.diagnostics.some((diagnostic) => diagnostic.severity !== 'info')) reasons.push('DIAGNOSTICS_PRESENT');
     if (evaluation.review.outcome !== 'satisfied') reasons.push('REVIEW_NOT_SATISFIED');
-    const safeAnnotationCreate = preview.program.operations.every((operation) => (
+    const safeAnnotationCreate = preview.program?.operations.every((operation) => (
       operation.kind === 'create_annotation_batch'
       && operation.annotations.every((node) => annotationConfirmed(node))
       && operation.associations.every((node) => associationResolved(node))
-    ));
+    )) ?? false;
     if (
       preview.compilation.actualEffect.deletedNodeIds.length > 0
       || (preview.compilation.actualEffect.createdNodeIds.length > 0 && !safeAnnotationCreate)
@@ -926,8 +999,8 @@ export class SemanticEditService {
       reasons.push('LIFECYCLE_CHANGE');
     }
     const allowed = new Set([
-      ...preview.grounding.target.targetNodeIds,
-      ...preview.grounding.target.interfaces.map(({ nodeId }) => nodeId),
+      ...preview.groundings.flatMap(({ target }) => target.targetNodeIds),
+      ...preview.groundings.flatMap(({ target }) => target.interfaces.map(({ nodeId }) => nodeId)),
     ]);
     if (preview.compilation.actualEffect.updatedNodeIds.some((id) => !allowed.has(id))) {
       reasons.push('OUT_OF_SCOPE_EFFECT');
@@ -974,6 +1047,96 @@ export class SemanticEditService {
       throw new Error('EDIT_PREVIEW_STALE');
     }
     return preview;
+  }
+
+  #storeCompilation(
+    sessionId: string,
+    task: TaskState,
+    baseRef: { drawingId: string; revision: number },
+    groundings: GroundingState[],
+    compilation: SpatialCompilation,
+    summary: string,
+    program?: SpatialEditProgram,
+  ): PreviewRef {
+    const workspace = this.drawings.createPreview(sessionId, {
+      ref: baseRef,
+      commands: compilation.forward as never,
+      summary,
+    });
+    if (workspace.status !== 'previewed') {
+      throw new Error(workspace.status === 'rejected' ? workspace.code ?? 'EDIT_PREVIEW_REJECTED' : 'EDIT_BASE_STALE');
+    }
+    const finalizeOperationId = this.ports.id('finalize');
+    const finalizeOperationBindingDigest = this.ports.digest(canonicalString({
+      mode: 'semantic', sessionId, drawingId: baseRef.drawingId,
+      operationId: finalizeOperationId,
+      previewHandle: workspace.preview.handle,
+      candidateDigest: compilation.candidateDigest,
+    }));
+    const groundingIds = groundings.map(({ ref }) => ref.groundingId);
+    const ref: PreviewRef = {
+      previewHandle: workspace.preview.handle,
+      taskId: task.ref.taskId,
+      groundingId: groundingIds[0]!,
+      ...(groundingIds.length > 1 ? { groundingIds } : {}),
+      baseRef: structuredClone(baseRef),
+      candidateDigest: compilation.candidateDigest,
+      effectDigest: compilation.effectDigest,
+      finalizeOperationId,
+      finalizeOperationBindingDigest,
+    };
+    task.candidateCount += 1;
+    this.#previews.set(sessionId, {
+      ref, task, groundings: [...groundings], ...(program ? { program } : {}), compilation,
+    });
+    return structuredClone(ref);
+  }
+
+  #updateGroundingOverlay(
+    sessionId: string,
+    task: TaskState,
+    drawingRef: { drawingId: string; revision: number },
+    grounding: GroundingRef,
+    rawPartKey?: string,
+    rawLabel?: string,
+  ): void {
+    const partKey = rawPartKey?.trim();
+    const label = rawLabel?.trim();
+    if (partKey !== undefined && (partKey.length === 0 || partKey.length > 64)) {
+      throw new Error('EDIT_PART_KEY_INVALID');
+    }
+    if (label !== undefined && (label.length === 0 || label.length > 80)) {
+      throw new Error('EDIT_PART_LABEL_INVALID');
+    }
+    if ((partKey === undefined) !== (label === undefined)) throw new Error('EDIT_PART_DISPLAY_PAIR_REQUIRED');
+    const current = this.#groundingOverlays.get(sessionId);
+    const existingGroups = partKey && current?.taskId === task.ref.taskId
+      ? [...current.groups]
+      : [];
+    const existingIndex = partKey
+      ? existingGroups.findIndex((group) => group.partKey === partKey)
+      : -1;
+    const colorIndex = existingIndex >= 0
+      ? existingGroups[existingIndex]!.colorIndex
+      : existingGroups.length;
+    const group = {
+      groundingId: grounding.groundingId,
+      partKey: partKey ?? `grounding:${grounding.groundingId}`,
+      label: label ?? 'Grounded target',
+      colorIndex,
+      nodeIds: [...grounding.targetNodeIds].sort(),
+      interfaces: grounding.interfaces
+        .map((port) => structuredClone(port))
+        .sort((left, right) => left.interfaceId.localeCompare(right.interfaceId)),
+    };
+    if (existingIndex >= 0) existingGroups.splice(existingIndex, 1, group);
+    else existingGroups.push(group);
+    this.#groundingOverlays.set(sessionId, {
+      version: 1,
+      drawingRef: structuredClone(drawingRef),
+      taskId: task.ref.taskId,
+      groups: existingGroups,
+    });
   }
 
   #snapshot(sessionId: string) {

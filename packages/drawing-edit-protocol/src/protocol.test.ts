@@ -11,8 +11,10 @@ import {
   finalizePreviewRequestSchema,
   finalizePreviewResultSchema,
   multiPartTransformRequestSchema,
+  multiPartTransformRevisionRequestSchema,
   observationArtifactRefSchema,
   operationLookupResultSchema,
+  previewRefSchema,
   reviewEvidenceSchema,
   spatialEditProgramSchema,
   taskRefSchema,
@@ -118,6 +120,32 @@ describe('@vectorai/drawing-edit-protocol', () => {
       ],
     })).toThrow();
     expect(() => multiPartTransformRequestSchema.parse({ ...request, authority: 'forged' })).toThrow();
+  });
+
+  it('keeps a multi-part Preview bound to every exact Grounding', () => {
+    const ref = {
+      previewHandle: 'preview-1', taskId: 'task-1', groundingId: 'ground-a',
+      groundingIds: ['ground-a', 'ground-b'],
+      baseRef: { drawingId: 'drawing-1', revision: 2 },
+      candidateDigest: 'sha256:candidate', effectDigest: 'sha256:effect',
+      finalizeOperationId: 'operation-1', finalizeOperationBindingDigest: 'sha256:binding',
+    };
+
+    expect(previewRefSchema.parse(ref)).toEqual(ref);
+    expect(() => previewRefSchema.parse({ ...ref, groundingIds: ['ground-a', 'ground-a'] })).toThrow();
+  });
+
+  it('binds multi-part revision to the exact current Preview', () => {
+    const request = {
+      taskId: 'task-1', currentPreviewHandle: 'preview-1',
+      currentCandidateDigest: 'sha256:candidate', summary: 'Refine two parts',
+      parts: [
+        { groundingId: 'ground-a', translation: [2, -1] },
+        { groundingId: 'ground-b', translation: [-2, -1] },
+      ],
+    };
+    expect(multiPartTransformRevisionRequestSchema.parse(request)).toEqual(request);
+    expect(() => multiPartTransformRevisionRequestSchema.parse({ ...request, force: true })).toThrow();
   });
 
   it('rejects raw commands, empty evidence, invalid preserve scopes, and non-finite motion', () => {

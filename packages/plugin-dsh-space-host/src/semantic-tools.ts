@@ -4,12 +4,136 @@ import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions';
 import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools';
 import {
   finalizePreviewRequestSchema,
+  multiPartTransformRequestSchema,
+  multiPartTransformRevisionRequestSchema,
   spatialEditProgramSchema,
 } from '@vectorai/drawing-edit-protocol';
 
 import type { SemanticEditService } from './semantic-edit-service';
 
 type Questions = Pick<UserQuestionService, 'ask'>;
+
+const vec2ToolSchema = {
+  type: 'array', items: { type: 'number' },
+  description: 'Exactly two finite Drawing coordinates [x, y].',
+} as const;
+
+const drawingRefToolSchema = {
+  type: 'object',
+  properties: {
+    drawingId: { type: 'string', required: true },
+    revision: { type: 'integer', required: true },
+  },
+  additionalProperties: false,
+} as const;
+
+const effectScopeToolSchema = {
+  oneOf: [
+    objectSchema({
+      kind: literalSchema('node-field'), nodeId: requiredString(),
+      fields: requiredArray({ type: 'string' }),
+    }),
+    objectSchema({
+      kind: literalSchema('source-span'), nodeId: requiredString(),
+      start: requiredInteger(), end: requiredInteger(),
+    }),
+    objectSchema({ kind: literalSchema('half-edge'), nodeId: requiredString(), halfEdgeId: requiredString() }),
+    objectSchema({ kind: literalSchema('interface'), interfaceId: requiredString() }),
+    objectSchema({
+      kind: literalSchema('endpoint-slot'), nodeId: requiredString(),
+      endpoint: { type: 'string', enum: ['start', 'end'], required: true },
+    }),
+    objectSchema({
+      kind: literalSchema('creation'),
+      plane: { type: 'string', enum: ['geometry', 'annotation', 'relation', 'feature'], required: true },
+      nodeType: requiredString(), containerId: { type: 'string' }, maxCount: requiredInteger(),
+    }),
+    objectSchema({ kind: literalSchema('deletion'), nodeIds: requiredArray({ type: 'string' }) }),
+  ],
+} as const;
+
+const spatialOperationToolSchema = {
+  oneOf: [
+    objectSchema({
+      kind: literalSchema('rigid_transform'), translation: { ...vec2ToolSchema, required: true },
+      rotationRadians: requiredNumber(), pivot: { ...vec2ToolSchema, required: true },
+    }),
+    objectSchema({
+      kind: literalSchema('connected_transform'), translation: { ...vec2ToolSchema, required: true },
+      rotationRadians: { type: 'number' }, pivot: vec2ToolSchema,
+      interfaceIds: requiredArray({ type: 'string' }),
+    }),
+    objectSchema({
+      kind: literalSchema('set_endpoint'), nodeId: requiredString(),
+      endpoint: { type: 'string', enum: ['start', 'end'], required: true },
+      point: { ...vec2ToolSchema, required: true },
+    }),
+    objectSchema({
+      kind: literalSchema('create_path'), nodeId: requiredString(),
+      points: requiredArray(vec2ToolSchema), closed: { type: 'boolean', required: true },
+    }),
+    objectSchema({ kind: literalSchema('delete_nodes'), nodeIds: requiredArray({ type: 'string' }) }),
+    objectSchema({
+      kind: literalSchema('create_annotation_batch'),
+      annotations: requiredArray({
+        type: 'object', properties: { id: requiredString(), type: requiredString() }, additionalProperties: true,
+      }),
+      associations: requiredArray({
+        type: 'object',
+        properties: { id: requiredString(), type: { type: 'string', const: 'association', required: true } },
+        additionalProperties: true,
+      }),
+    }),
+  ],
+} as const;
+
+const spatialPostconditionToolSchema = {
+  oneOf: [
+    objectSchema({ kind: literalSchema('preserve_connectivity'), nodeIds: requiredArray({ type: 'string' }) }),
+    objectSchema({
+      kind: literalSchema('within_bounds'),
+      bounds: {
+        type: 'object', required: true, additionalProperties: false,
+        properties: {
+          minX: requiredNumber(), minY: requiredNumber(), maxX: requiredNumber(), maxY: requiredNumber(),
+        },
+      },
+    }),
+    objectSchema({
+      kind: literalSchema('target_position'), targetHandle: requiredString(),
+      point: { ...vec2ToolSchema, required: true }, tolerance: requiredNumber(),
+    }),
+  ],
+} as const;
+
+const spatialEditProgramToolSchema = {
+  type: 'object',
+  properties: {
+    baseRef: { ...drawingRefToolSchema, required: true },
+    targetHandle: requiredString(),
+    summary: requiredString(),
+    objective: requiredString(),
+    operations: requiredArray(spatialOperationToolSchema),
+    preserveScopes: requiredArray(effectScopeToolSchema),
+    postconditions: requiredArray(spatialPostconditionToolSchema),
+    evidenceRefs: requiredArray({ type: 'string' }),
+  },
+  additionalProperties: false,
+} as const;
+
+const multiPartTransformPartToolSchema = {
+  type: 'object',
+  properties: {
+    groundingId: { type: 'string', required: true },
+    translation: { ...vec2ToolSchema, required: true },
+    rotationRadians: {
+      type: 'number',
+      description: 'Optional exact rotation in radians. When present, pivot is also required.',
+    },
+    pivot: vec2ToolSchema,
+  },
+  additionalProperties: false,
+} as const;
 
 function withDrawingWorkflow(
   result: object,
@@ -32,7 +156,9 @@ export function createSemanticEditToolCatalog(
     createDrawingBuildContextTool(semantic),
     createDrawingGroundTool(semantic),
     createDrawingPreviewGroundedTransformTool(semantic),
+    createDrawingPreviewMultiPartTransformTool(semantic),
     createDrawingReviseGroundedTransformTool(semantic),
+    createDrawingReviseMultiPartTransformTool(semantic),
     createDrawingPreviewProgramTool(semantic),
     createDrawingRevisePreviewTool(semantic),
     createDrawingEvaluatePreviewTool(semantic),
@@ -75,6 +201,62 @@ export function createDrawingPreviewGroundedTransformTool(semantic: SemanticEdit
         'preview_ready',
         ['drawing_evaluate_preview'],
         'Evaluate this exact Preview before attempting to finalize it.',
+      );
+    },
+  });
+}
+
+export function createDrawingPreviewMultiPartTransformTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_preview_multi_part_transform',
+    description: 'Create one atomic Preview for 2-16 independently moving grounded parts. Ground each semantic carrier separately with a stable partKey and label, then give every grounding its own translation and optional exact rotation/pivot. Use this for coordinated poses; never split one user intent into sequential commits.',
+    parameters: {
+      taskId: { type: 'string', required: true },
+      parts: {
+        type: 'array', required: true,
+        description: 'Two to sixteen exact Groundings. Each groundingId may appear once.',
+        items: multiPartTransformPartToolSchema,
+      },
+      summary: { type: 'string', required: true },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args, exec) {
+      const input = multiPartTransformRequestSchema.parse(args);
+      const preview = semantic.previewMultiPartTransform(requireSession(exec.agent?.id), input);
+      return withDrawingWorkflow(
+        preview,
+        'preview_ready',
+        ['drawing_evaluate_preview'],
+        'Evaluate the complete multi-part Preview before attempting to finalize it.',
+      );
+    },
+  });
+}
+
+export function createDrawingReviseMultiPartTransformTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_revise_multi_part_transform',
+    description: 'Atomically replace the exact current multi-part Preview after visual feedback. Keep the same task and Groundings, adjust any part transforms, and bind the replacement to the current Preview handle and candidate digest.',
+    parameters: {
+      taskId: { type: 'string', required: true },
+      currentPreviewHandle: { type: 'string', required: true },
+      currentCandidateDigest: { type: 'string', required: true },
+      parts: {
+        type: 'array', required: true,
+        description: 'Two to sixteen exact Groundings with revised transforms.',
+        items: multiPartTransformPartToolSchema,
+      },
+      summary: { type: 'string', required: true },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args, exec) {
+      const input = multiPartTransformRevisionRequestSchema.parse(args);
+      const preview = semantic.reviseMultiPartTransform(requireSession(exec.agent?.id), input);
+      return withDrawingWorkflow(
+        preview,
+        'preview_ready',
+        ['drawing_evaluate_preview'],
+        'Evaluate the replacement multi-part Preview; the previous handle is no longer current.',
       );
     },
   });
@@ -172,7 +354,7 @@ export function createDrawingBuildContextTool(semantic: SemanticEditService) {
 export function createDrawingGroundTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_ground',
-    description: 'Ground a semantic target to exact node ids and topology interfaces. Choose only the semantic carrier being transformed; pass empty interfaces so the Host derives true contacted endpoint slots. When the user refers to a Host selection, pass its selectionProjectionId with empty targetNodeIds.',
+    description: 'Ground one exact semantic carrier to node ids and topology interfaces. For a coordinated multi-part edit, call once per independently moving part with a stable partKey and user-facing label. Pass empty interfaces so the Host derives true contacted endpoint slots. When the user refers to a Host selection, pass its selectionProjectionId with empty targetNodeIds.',
     parameters: {
       taskId: { type: 'string', required: true },
       contextId: { type: 'string', required: true },
@@ -180,8 +362,26 @@ export function createDrawingGroundTool(semantic: SemanticEditService) {
         type: 'string',
         description: 'Optional Host selection handle. Omit this field entirely when drawing_observe did not return one; never send an empty string.',
       },
+      partKey: {
+        type: 'string',
+        description: 'Stable per-task key for one independently moving part. Provide together with label for multi-part edits.',
+      },
+      label: {
+        type: 'string',
+        description: 'Short user-facing canvas label for this part. Provide together with partKey.',
+      },
       targetNodeIds: { type: 'array', items: { type: 'string' }, required: true },
-      interfaces: { type: 'array', items: { type: 'json' }, required: true },
+      interfaces: {
+        type: 'array', required: true,
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            interfaceId: { type: 'string', required: true },
+            nodeId: { type: 'string', required: true },
+            endpoint: { type: 'string', enum: ['start', 'end'], required: true },
+          },
+        },
+      },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
@@ -189,8 +389,8 @@ export function createDrawingGroundTool(semantic: SemanticEditService) {
       return withDrawingWorkflow(
         grounding,
         'grounded',
-        ['drawing_preview_grounded_transform', 'drawing_preview_program'],
-        'Use grounded transform for ordinary movement or posing; use the advanced program only for other explicit spatial operations.',
+        ['drawing_preview_grounded_transform', 'drawing_preview_multi_part_transform', 'drawing_preview_program'],
+        'Use grounded transform for one part, multi-part transform after grounding every independent part, or the advanced program only for other explicit spatial operations.',
       );
     },
   });
@@ -203,14 +403,15 @@ export function createDrawingPreviewProgramTool(semantic: SemanticEditService) {
     parameters: {
       taskId: { type: 'string', required: true },
       groundingId: { type: 'string', required: true },
-      program: { type: 'json', required: true },
+      program: { ...spatialEditProgramToolSchema, required: true },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
       const program = spatialEditProgramSchema.parse(args.program);
+      const input = args as { taskId: string; groundingId: string };
       const preview = semantic.previewProgram(requireSession(exec.agent?.id), {
-        taskId: args.taskId,
-        groundingId: args.groundingId,
+        taskId: input.taskId,
+        groundingId: input.groundingId,
         program: program as never,
       });
       return withDrawingWorkflow(
@@ -221,6 +422,30 @@ export function createDrawingPreviewProgramTool(semantic: SemanticEditService) {
       );
     },
   });
+}
+
+function requiredString() {
+  return { type: 'string', required: true } as const;
+}
+
+function requiredNumber() {
+  return { type: 'number', required: true } as const;
+}
+
+function requiredInteger() {
+  return { type: 'integer', required: true } as const;
+}
+
+function requiredArray<const T extends object>(items: T) {
+  return { type: 'array', items, required: true } as const;
+}
+
+function literalSchema<const Value extends string>(value: Value) {
+  return { type: 'string', const: value, required: true } as const;
+}
+
+function objectSchema<const Properties extends Record<string, object>>(properties: Properties) {
+  return { type: 'object', properties, additionalProperties: false } as const;
 }
 
 export function createDrawingEvaluatePreviewTool(semantic: SemanticEditService) {
@@ -241,7 +466,12 @@ export function createDrawingEvaluatePreviewTool(semantic: SemanticEditService) 
         result,
         revisionRequired ? 'revision_required' : 'evaluated',
         revisionRequired
-          ? ['drawing_revise_grounded_transform', 'drawing_revise_preview', 'drawing_discard_preview']
+          ? [
+              'drawing_revise_grounded_transform',
+              'drawing_revise_multi_part_transform',
+              'drawing_revise_preview',
+              'drawing_discard_preview',
+            ]
           : ['drawing_finalize_preview'],
         revisionRequired
           ? 'Do not finalize this candidate. Revise it from the reported evidence or discard it.'
@@ -260,7 +490,7 @@ export function createDrawingRevisePreviewTool(semantic: SemanticEditService) {
       currentPreviewHandle: { type: 'string', required: true },
       currentCandidateDigest: { type: 'string', required: true },
       groundingId: { type: 'string', required: true },
-      program: { type: 'json', required: true },
+      program: { ...spatialEditProgramToolSchema, required: true },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args, exec) {
