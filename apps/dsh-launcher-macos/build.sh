@@ -19,6 +19,7 @@ swiftc -O \
   -o "$BUNDLE/Contents/MacOS/DSH"
 
 cp "$APP_SOURCE_DIR/Info.plist" "$BUNDLE/Contents/Info.plist"
+cp "$APP_SOURCE_DIR/Resources/AppIcon.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
 cp "$VECTORAI_ROOT/scripts/dsh-inline-workspace-patch.mjs" \
   "$BUNDLE/Contents/Resources/dsh-inline-workspace-patch.mjs"
 codesign --force --deep --sign - "$BUNDLE"

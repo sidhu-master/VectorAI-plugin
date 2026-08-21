@@ -12,3 +12,20 @@ swiftc \
   -o "$BUILD_DIR/LauncherCoreTests"
 
 "$BUILD_DIR/LauncherCoreTests"
+
+TEST_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TEST_ROOT"' EXIT
+TEST_APP="$TEST_ROOT/DSH.app"
+"$APP_SOURCE_DIR/build.sh" "$TEST_APP" >/dev/null
+
+if [[ ! -f "$TEST_APP/Contents/Resources/AppIcon.icns" ]]; then
+  print -u2 -- "FAIL: built DSH app contains its declared icon resource"
+  exit 1
+fi
+
+if [[ "$(plutil -extract CFBundleIconFile raw -o - "$TEST_APP/Contents/Info.plist")" != "AppIcon" ]]; then
+  print -u2 -- "FAIL: built DSH app declares AppIcon"
+  exit 1
+fi
+
+print -r -- "PASS: built DSH app contains its declared icon resource"
