@@ -15,6 +15,7 @@ import {
   type DrawingWorkspacePort,
   type DrawingWorkspacePreview,
   type DrawingWorkspaceSnapshot,
+  type DrawingGroundingOverlay,
 } from './index';
 
 function drawing(id: string, geometryIds: string[] = []): DrawingDocument {
@@ -53,6 +54,7 @@ function snapshot(
 class TestPort implements DrawingWorkspacePort {
   current: DrawingWorkspaceSnapshot | null;
   preview: DrawingWorkspacePreview | null = null;
+  groundingOverlay: DrawingGroundingOverlay | null = null;
   commits: DrawingWorkspaceCommitRequest[] = [];
   listeners = new Set<() => void>();
   loadSource?: DrawingWorkspacePort['loadSource'];
@@ -69,6 +71,10 @@ class TestPort implements DrawingWorkspacePort {
 
   async loadPreview(): Promise<DrawingWorkspacePreview | null> {
     return this.preview === null ? null : structuredClone(this.preview);
+  }
+
+  async loadGroundingOverlay(): Promise<DrawingGroundingOverlay | null> {
+    return this.groundingOverlay === null ? null : structuredClone(this.groundingOverlay);
   }
 
   async commit(request: DrawingWorkspaceCommitRequest): Promise<DrawingWorkspaceCommitResult> {
@@ -115,6 +121,47 @@ function snapshotWithText(revision = 1): DrawingWorkspaceSnapshot {
 }
 
 describe('createDrawingWorkspaceStore', () => {
+  it('loads a matching Grounding Overlay without changing local Selection', async () => {
+    const port = new TestPort(snapshot(1, ['carrier-a', 'carrier-b']));
+    port.groundingOverlay = {
+      version: 1,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      taskId: 'task-1',
+      groups: [{
+        groundingId: 'ground-a', partKey: 'part-a', label: 'Part A', colorIndex: 0,
+        nodeIds: ['carrier-a'], interfaces: [],
+      }],
+    };
+    const store = createDrawingWorkspaceStore({ port });
+
+    await store.getState().load();
+
+    expect(store.getState().groundingOverlay).toEqual(port.groundingOverlay);
+    expect(store.getState().selectedIds).toEqual([]);
+    expect(store.getState().selectionProjection).toBeNull();
+  });
+
+  it('drops a stale Grounding Overlay when the formal Drawing revision changes', async () => {
+    const port = new TestPort(snapshot(1, ['carrier-a']));
+    port.groundingOverlay = {
+      version: 1,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      taskId: 'task-1',
+      groups: [{
+        groundingId: 'ground-a', partKey: 'part-a', label: 'Part A', colorIndex: 0,
+        nodeIds: ['carrier-a'], interfaces: [],
+      }],
+    };
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    port.current = snapshot(2, ['carrier-a']);
+
+    await store.getState().refresh();
+
+    expect(store.getState().snapshot?.ref.revision).toBe(2);
+    expect(store.getState().groundingOverlay).toBeNull();
+  });
+
   it('publishes a Host-verified projection whenever the canvas selection changes', async () => {
     const port = new TestPort(snapshot(1, ['right-hand']));
     const selections: string[][] = [];

@@ -28,6 +28,28 @@ export type DrawingSelectionProjectionResult =
   | { status: 'stale'; currentRef: DrawingWorkspaceRef }
   | { status: 'rejected'; code: string; message: string };
 
+export interface DrawingGroundingOverlayInterface {
+  interfaceId: string;
+  nodeId: string;
+  endpoint: 'start' | 'end';
+}
+
+export interface DrawingGroundingOverlayGroup {
+  groundingId: string;
+  partKey: string;
+  label: string;
+  colorIndex: number;
+  nodeIds: string[];
+  interfaces: DrawingGroundingOverlayInterface[];
+}
+
+export interface DrawingGroundingOverlay {
+  version: 1;
+  drawingRef: DrawingWorkspaceRef;
+  taskId: string;
+  groups: DrawingGroundingOverlayGroup[];
+}
+
 export interface DrawingSourceRef {
   id: string;
   mediaType: string;
@@ -149,6 +171,7 @@ export type DrawingUndoStageResult =
 export interface DrawingWorkspacePort {
   load(signal?: AbortSignal): Promise<DrawingWorkspaceSnapshot | null>;
   loadPreview?(signal?: AbortSignal): Promise<DrawingWorkspacePreview | null>;
+  loadGroundingOverlay?(signal?: AbortSignal): Promise<DrawingGroundingOverlay | null>;
   projectSelection?(
     ref: DrawingWorkspaceRef,
     nodeIds: string[],

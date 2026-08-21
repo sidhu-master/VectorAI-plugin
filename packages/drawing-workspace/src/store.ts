@@ -5,6 +5,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import type {
   DrawingSourceResource,
+  DrawingGroundingOverlay,
   DrawingSelectionProjection,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspacePort,
@@ -44,6 +45,7 @@ export interface DrawingWorkspaceState {
   status: DrawingWorkspaceStatus;
   snapshot: DrawingWorkspaceSnapshot | null;
   preview: DrawingWorkspacePreview | null;
+  groundingOverlay: DrawingGroundingOverlay | null;
   displaySnapshot: DrawingWorkspaceSnapshot | null;
   sourceResource: DrawingSourceResource | null;
   busy: boolean;
@@ -100,9 +102,13 @@ export function createDrawingWorkspaceStore(input: {
     const replaceSnapshot = async (
       snapshot: DrawingWorkspaceSnapshot | null,
       preview: DrawingWorkspacePreview | null = null,
+      groundingOverlay: DrawingGroundingOverlay | null = null,
     ): Promise<void> => {
       const currentPreview = previewMatchesSnapshot(preview, snapshot) ? preview : null;
       const displaySnapshot = currentPreview?.candidate ?? snapshot;
+      const currentGroundingOverlay = groundingOverlayMatchesSnapshot(groundingOverlay, snapshot)
+        ? structuredClone(groundingOverlay)
+        : null;
       const nextIds = displaySnapshot === null ? new Set<string>() : drawingNodeIds(displaySnapshot);
       const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
       const previousSource = sourceResource;
@@ -126,6 +132,7 @@ export function createDrawingWorkspaceStore(input: {
       set({
         snapshot,
         preview: currentPreview,
+        groundingOverlay: currentGroundingOverlay,
         displaySnapshot,
         sourceResource: nextSource,
         selectedIds,
@@ -141,12 +148,13 @@ export function createDrawingWorkspaceStore(input: {
       requestController = controller;
       if (initial) set({ status: 'loading', error: null });
       try {
-        const [snapshot, preview] = await Promise.all([
+        const [snapshot, preview, groundingOverlay] = await Promise.all([
           port.load(controller.signal),
           port.loadPreview?.(controller.signal) ?? Promise.resolve(null),
+          port.loadGroundingOverlay?.(controller.signal) ?? Promise.resolve(null),
         ]);
         if (controller.signal.aborted || disposed) return;
-        await replaceSnapshot(snapshot, preview);
+        await replaceSnapshot(snapshot, preview, groundingOverlay);
       } catch (error) {
         if (controller.signal.aborted || disposed) return;
         set({
@@ -160,6 +168,7 @@ export function createDrawingWorkspaceStore(input: {
       status: 'idle',
       snapshot: null,
       preview: null,
+      groundingOverlay: null,
       displaySnapshot: null,
       sourceResource: null,
       busy: false,
@@ -310,6 +319,16 @@ function drawingNodeIds(snapshot: DrawingWorkspaceSnapshot): Set<string> {
     ...document.relations.map((node) => node.id),
     ...document.features.map((node) => node.id),
   ]);
+}
+
+function groundingOverlayMatchesSnapshot(
+  overlay: DrawingGroundingOverlay | null,
+  snapshot: DrawingWorkspaceSnapshot | null,
+): overlay is DrawingGroundingOverlay {
+  return overlay !== null
+    && snapshot !== null
+    && overlay.drawingRef.drawingId === snapshot.ref.drawingId
+    && overlay.drawingRef.revision === snapshot.ref.revision;
 }
 
 function previewMatchesSnapshot(

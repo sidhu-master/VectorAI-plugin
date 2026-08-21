@@ -15,6 +15,8 @@ export type {
   DrawingWorkspaceCommitRequest,
   DrawingWorkspaceCommitResult,
   DrawingInteractiveStageResult,
+  DrawingGroundingOverlay,
+  DrawingGroundingOverlayGroup,
   DrawingUndoStageRequest,
   DrawingUndoStageResult,
   DrawingWorkspacePreview,
@@ -471,8 +473,6 @@ export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
 export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;
 export type DrawingSelectionProjectionRequest = z.infer<typeof drawingSelectionProjectionRequestSchema>;
 export type DrawingSelectionProjectionResult = z.infer<typeof drawingSelectionProjectionResultSchema>;
-export type DrawingGroundingOverlay = z.infer<typeof drawingGroundingOverlaySchema>;
-export type DrawingGroundingOverlayGroup = DrawingGroundingOverlay['groups'][number];
 
 export interface Bounds2D {
   minX: number;

@@ -9,7 +9,10 @@ import {
 
 describe('DRAWING_SPACE_REMOTE', () => {
   it('uses strict codecs for every JSON field exposed to the DSH client gateway', () => {
-    const [snapshot, query, projectSelection, getPreview, stageInteractive, stageUndo, getOperation] = DRAWING_SPACE_REMOTE.descriptors;
+    const [
+      snapshot, query, projectSelection, getGroundingOverlay, getPreview,
+      stageInteractive, stageUndo, getOperation,
+    ] = DRAWING_SPACE_REMOTE.descriptors;
 
     expect(snapshot?.parameters[0]?.codec.mode).toBe('strict');
     expect(snapshot?.result.mode).toBe('strict');
@@ -21,6 +24,8 @@ describe('DRAWING_SPACE_REMOTE', () => {
     expect(projectSelection?.method).toBe('projectSelection');
     expect(projectSelection?.parameters[1]?.codec.mode).toBe('strict');
     expect(projectSelection?.result.mode).toBe('strict');
+    expect(getGroundingOverlay?.method).toBe('getGroundingOverlay');
+    expect(getGroundingOverlay?.result.mode).toBe('strict');
     expect(getPreview?.method).toBe('getPreview');
     expect(getPreview?.result.mode).toBe('strict');
     expect(stageInteractive?.method).toBe('stageInteractiveEdit');

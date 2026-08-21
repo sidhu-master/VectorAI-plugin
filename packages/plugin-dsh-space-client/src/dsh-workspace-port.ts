@@ -5,6 +5,7 @@ import type { CommandExecution } from '@deepseek-ai/dsh-commands';
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type {
   DrawingInteractiveStageResult,
+  DrawingGroundingOverlay,
   DrawingSelectionProjectionRequest,
   DrawingSelectionProjectionResult,
   DrawingWorkspaceCommitRequest,
@@ -19,6 +20,7 @@ import type { DrawingWorkspacePort } from '@vectorai/drawing-workspace';
 
 export interface DshDrawingSpaceRemote {
   getSnapshot(sessionId: string): Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
+  getGroundingOverlay?(sessionId: string): Promise<RemoteResult<DrawingGroundingOverlay | null>>;
   projectSelection(sessionId: string, request: DrawingSelectionProjectionRequest): Promise<RemoteResult<DrawingSelectionProjectionResult>>;
   stageInteractiveEdit(sessionId: string, request: DrawingWorkspaceCommitRequest): Promise<RemoteResult<DrawingInteractiveStageResult>>;
   stageUndo(sessionId: string, request: DrawingUndoStageRequest): Promise<RemoteResult<DrawingUndoStageResult>>;
@@ -50,6 +52,13 @@ export function createDshDrawingWorkspacePort(input: {
         expectedRef: ref,
         nodeIds,
       });
+      signal?.throwIfAborted();
+      return unwrap(result);
+    },
+    async loadGroundingOverlay(signal) {
+      signal?.throwIfAborted();
+      if (remote.getGroundingOverlay === undefined) return null;
+      const result = await remote.getGroundingOverlay(sessionId);
       signal?.throwIfAborted();
       return unwrap(result);
     },

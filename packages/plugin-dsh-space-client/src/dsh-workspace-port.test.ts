@@ -20,6 +20,30 @@ function snapshot(): DrawingWorkspaceSnapshot {
 }
 
 describe('createDshDrawingWorkspacePort', () => {
+  it('loads the current revision-bound Grounding Overlay without write authority', async () => {
+    const overlay = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      taskId: 'task-1',
+      groups: [{
+        groundingId: 'ground-a', partKey: 'part-a', label: 'Part A', colorIndex: 0,
+        nodeIds: ['carrier-a'], interfaces: [],
+      }],
+    };
+    const getGroundingOverlay = vi.fn(async () => ({ ok: true as const, value: overlay }));
+    const port = createDshDrawingWorkspacePort({
+      sessionId: 'session-1',
+      remote: {
+        getSnapshot: vi.fn(), getGroundingOverlay, projectSelection: vi.fn(),
+        stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(), getOperation: vi.fn(),
+      },
+      commands: { execute: vi.fn() }, resolveImage: vi.fn(),
+    });
+
+    await expect(port.loadGroundingOverlay?.()).resolves.toEqual(overlay);
+    expect(getGroundingOverlay).toHaveBeenCalledWith('session-1');
+  });
+
   it('projects the exact revision-bound canvas selection through the Host Remote', async () => {
     const value = {
       status: 'projected' as const,

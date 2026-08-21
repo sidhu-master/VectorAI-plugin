@@ -3,6 +3,7 @@
 import type { RemoteResult, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol';
 import {
   drawingInteractiveStageResultSchema,
+  drawingGroundingOverlaySchema,
   drawingUndoStageRequestSchema,
   drawingUndoStageResultSchema,
   drawingPreviewSchema,
@@ -15,6 +16,7 @@ import {
   drawingWorkspaceSnapshotSchema,
   operationLookupResultSchema,
   type DrawingInteractiveStageResult,
+  type DrawingGroundingOverlay,
   type DrawingUndoStageRequest,
   type DrawingUndoStageResult,
   type DrawingQueryRequest,
@@ -33,6 +35,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       getSnapshot(sessionId: string): Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
       query(sessionId: string, request: DrawingQueryRequest): Promise<RemoteResult<DrawingQueryResult>>;
       projectSelection(sessionId: string, request: DrawingSelectionProjectionRequest): Promise<RemoteResult<DrawingSelectionProjectionResult>>;
+      getGroundingOverlay(sessionId: string): Promise<RemoteResult<DrawingGroundingOverlay | null>>;
       getPreview(sessionId: string): Promise<RemoteResult<DrawingWorkspacePreview | null>>;
       stageInteractiveEdit(sessionId: string, request: DrawingWorkspaceCommitRequest): Promise<RemoteResult<DrawingInteractiveStageResult>>;
       stageUndo(sessionId: string, request: DrawingUndoStageRequest): Promise<RemoteResult<DrawingUndoStageResult>>;
@@ -43,6 +46,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'drawingSpace/getSnapshot': (sessionId: string) => Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
     'drawingSpace/query': (sessionId: string, request: DrawingQueryRequest) => Promise<RemoteResult<DrawingQueryResult>>;
     'drawingSpace/projectSelection': (sessionId: string, request: DrawingSelectionProjectionRequest) => Promise<RemoteResult<DrawingSelectionProjectionResult>>;
+    'drawingSpace/getGroundingOverlay': (sessionId: string) => Promise<RemoteResult<DrawingGroundingOverlay | null>>;
     'drawingSpace/getPreview': (sessionId: string) => Promise<RemoteResult<DrawingWorkspacePreview | null>>;
     'drawingSpace/stageInteractiveEdit': (sessionId: string, request: DrawingWorkspaceCommitRequest) => Promise<RemoteResult<DrawingInteractiveStageResult>>;
     'drawingSpace/stageUndo': (sessionId: string, request: DrawingUndoStageRequest) => Promise<RemoteResult<DrawingUndoStageResult>>;
@@ -77,6 +81,16 @@ export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest', drawingSelectionProjectionRequestSchema)],
     result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult', schema: drawingSelectionProjectionResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/getGroundingOverlay',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getGroundingOverlay',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter],
+    result: {
+      mode: 'strict',
+      typeSymbol: '@vectorai/plugin-space-contracts#DrawingGroundingOverlay|null',
+      schema: drawingGroundingOverlaySchema.nullable(),
+    },
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getPreview',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getPreview',
