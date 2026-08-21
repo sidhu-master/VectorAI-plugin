@@ -10,6 +10,7 @@ import { InMemoryDrawingRepository } from './repository';
 import { SemanticEditService } from './semantic-edit-service';
 import {
   createDrawingDiscardSemanticTool,
+  createDrawingConfirmSelectionTool,
   createDrawingEvaluatePreviewTool,
   createDrawingFinalizeSemanticTool,
   createDrawingGetOperationTool,
@@ -80,7 +81,8 @@ describe('drawing semantic tools', () => {
 
     expect(tools.map(({ name }) => name)).toEqual([
       'drawing_import', 'drawing_summarize', 'drawing_query',
-      'drawing_observe', 'drawing_select_parts', 'drawing_preview_spatial_intent',
+      'drawing_observe', 'drawing_select_parts', 'drawing_confirm_selection',
+      'drawing_preview_spatial_intent',
       'drawing_revise_spatial_intent', 'drawing_evaluate_preview',
       'drawing_finalize_preview', 'drawing_discard_preview',
       'drawing_get_operation', 'drawing_undo_commit',
@@ -90,7 +92,7 @@ describe('drawing semantic tools', () => {
       /taskId|contextId|groundingId|previewHandle|candidateDigest|translation|pivot|rotationRadians/,
     );
     for (const name of [
-      'drawing_observe', 'drawing_evaluate_preview', 'drawing_finalize_preview',
+      'drawing_observe', 'drawing_confirm_selection', 'drawing_evaluate_preview', 'drawing_finalize_preview',
       'drawing_discard_preview', 'drawing_get_operation',
     ]) {
       expect(tools.find((tool) => tool.name === name)?.parameters)
@@ -107,6 +109,14 @@ describe('drawing semantic tools', () => {
         calls.push('select');
         return { state: 'selected', parts: [{ partKey: 'hand', label: 'right hand', nodeCount: 3, interfaceCount: 1, sourceStatus: 'confirmed' }], nextTools: ['drawing_preview_spatial_intent'] };
       },
+      async renderCurrentSelectionObservation() {
+        calls.push('selection-render');
+        return attachment('selection-feedback');
+      },
+      confirmCurrentSelection() {
+        calls.push('confirm');
+        return { state: 'selection_confirmed', parts: [{ partKey: 'hand', nodeCount: 3 }], nextTools: ['drawing_preview_spatial_intent'] };
+      },
       previewCurrentIntent() { calls.push('preview'); return { previewHandle: 'secret', candidateDigest: 'secret' }; },
       currentPreviewPresentation() {
         return { state: 'preview_ready', summary: 'raise hand', changedNodeCount: 3, nextTools: ['drawing_evaluate_preview'] };
@@ -116,6 +126,7 @@ describe('drawing semantic tools', () => {
         return {
           evaluation: { review: { outcome: 'satisfied', defects: [] }, diagnostics: [] },
           assessment: { disposition: 'auto_safe', reasons: [] },
+          imageAttachment: attachment('review-comparison'),
         };
       },
       finalizeCurrentPreview() {
@@ -129,6 +140,7 @@ describe('drawing semantic tools', () => {
       await createDrawingSelectPartsTool(semantic).execute({
         parts: [{ partKey: 'hand', label: 'right hand', references: [{ kind: 'semantic_query', text: 'right hand' }] }],
       }, exec('session-a')),
+      await createDrawingConfirmSelectionTool(semantic).execute({}, exec('session-a')),
       await createDrawingPreviewSpatialIntentTool(semantic).execute({
         summary: 'raise hand',
         goals: [{ kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' }],
@@ -138,8 +150,12 @@ describe('drawing semantic tools', () => {
       await createDrawingFinalizeSemanticTool(semantic).execute({}, exec('session-a')),
     ];
 
-    expect(calls).toEqual(['observe', 'select', 'preview', 'evaluate', 'finalize']);
+    expect(calls).toEqual(['observe', 'select', 'selection-render', 'confirm', 'preview', 'evaluate', 'finalize']);
     expect(JSON.stringify(results)).not.toMatch(/secret|taskId|groundingId|previewHandle|candidateDigest/);
+    expect(results[1]).toMatchObject({ imageAttachment: { attachmentId: 'selection-feedback' } });
+    expect(results[4]).toMatchObject({ imageAttachment: { attachmentId: 'review-comparison' } });
+    expect(createDrawingSelectPartsTool(semantic).output.render({}, results[1] as never))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]));
     expect(results.at(-1)).toMatchObject({ status: 'committed', revision: 2 });
   });
 
@@ -170,7 +186,8 @@ describe('drawing semantic tools', () => {
     }, exec('session-a'));
     expect(result).toEqual({
       drawingWorkflow: {
-        state: 'invalid_state', code: 'EDIT_SELECTION_REQUIRED', nextTools: ['drawing_select_parts'],
+        state: 'invalid_state', code: 'EDIT_SELECTION_REQUIRED',
+        nextTools: ['drawing_select_parts', 'drawing_confirm_selection'],
       },
     });
   });
@@ -273,13 +290,16 @@ describe('drawing semantic tools', () => {
       evaluateCurrentPreview: async () => ({
         evaluation: { review: { outcome: 'needs_revision', defects: [{ code: 'POSE', reason: 'wrong', scopeDigest: 'secret' }] }, diagnostics: [] },
         assessment: { disposition: 'confirmation_required', reasons: ['POSE'] },
+        imageAttachment: attachment('review-comparison'),
       }),
+      currentObservationAttachment: () => attachment('stale-observation'),
       getCurrentOperation: () => ({ status: 'committed', receipt: { resultingRef: { drawingId: 'drawing-1', revision: 2 }, operationId: 'secret' } }),
     } as unknown as SemanticEditService;
     expect(await createDrawingDiscardSemanticTool(semantic).execute({}, exec('session-a')))
       .toMatchObject({ status: 'discarded', revision: 2 });
-    expect(JSON.stringify(await createDrawingEvaluatePreviewTool(semantic).execute({}, exec('session-a'))))
-      .not.toContain('scopeDigest');
+    const evaluation = await createDrawingEvaluatePreviewTool(semantic).execute({}, exec('session-a'));
+    expect(JSON.stringify(evaluation)).not.toContain('scopeDigest');
+    expect(evaluation).toMatchObject({ imageAttachment: { attachmentId: 'review-comparison' } });
     expect(JSON.stringify(await createDrawingGetOperationTool(semantic).execute({}, exec('session-a'))))
       .not.toContain('secret');
   });

@@ -111,6 +111,7 @@ export interface SemanticEditServicePorts extends EditCorePorts {
     document: DrawingDocument;
     viewport: { minX: number; minY: number; maxX: number; maxY: number };
     selectedNodeIds: string[];
+    candidateMarkers?: Array<{ key: string; nodeIds: string[] }>;
   }): Promise<{
     contentDigest: string;
     attachment: ImageAttachmentRef;
@@ -203,6 +204,7 @@ interface EpisodeSelectionState {
   groundings: Record<string, GroundingState>;
   candidates: Map<string, EpisodeSelectionCandidate>;
   nextCandidate: number;
+  selectionConfirmed: boolean;
 }
 
 export type CurrentPartSelectionResult =
@@ -405,7 +407,11 @@ export class SemanticEditService {
       return this.#currentObservationResult(sessionId, episode.instruction, snapshot.ref);
     }
 
-    const observation = await this.observe(sessionId, { taskId: task.ref.taskId });
+    const initialCandidates = this.#initialSelectionCandidates(snapshot.document, episode.stateEpoch);
+    const observation = await this.observe(sessionId, {
+      taskId: task.ref.taskId,
+      candidateMarkers: initialCandidates.map(({ key, nodeIds }) => ({ key, nodeIds })),
+    });
     const context = this.buildContext(sessionId, {
       taskId: task.ref.taskId,
       observationId: observation.observationId,
@@ -426,8 +432,12 @@ export class SemanticEditService {
       }),
       selectedParts: {},
       groundings: {},
-      candidates: new Map(),
-      nextCandidate: 0,
+      candidates: new Map(initialCandidates.map((candidate) => [candidate.key, {
+        ...candidate,
+        stateEpoch: transitioned.stateEpoch,
+      }])),
+      nextCandidate: initialCandidates.length,
+      selectionConfirmed: false,
     });
     return this.#currentObservationResult(sessionId, transitioned.instruction, snapshot.ref);
   }
@@ -486,6 +496,10 @@ export class SemanticEditService {
       resolved.push({ partKey: part.partKey, label: part.label, nodeIds: candidates[0]!.nodeIds });
     }
 
+    state.selectedParts = {};
+    state.groundings = {};
+    state.selectionConfirmed = false;
+    this.#groundingOverlays.delete(sessionId);
     const selectedResult: Extract<CurrentPartSelectionResult, { state: 'selected' }>['parts'] = [];
     for (const part of resolved) {
       const grounding = this.ground(sessionId, {
@@ -509,7 +523,6 @@ export class SemanticEditService {
         interfaceCount: internal.target.interfaces.length,
       });
     }
-    state.candidates.clear();
     const transitioned = this.#episodes.transition(sessionId, episode.stateEpoch, {
       kind: 'selected', semanticRequest: request,
       selection: { partKeys: resolved.map(({ partKey }) => partKey) },
@@ -520,7 +533,61 @@ export class SemanticEditService {
       stateEpoch: transitioned.stateEpoch,
       disposition: 'active',
     });
-    return { state: 'selected', parts: selectedResult, nextTools: ['drawing_preview_spatial_intent'] };
+    for (const candidate of state.candidates.values()) candidate.stateEpoch = transitioned.stateEpoch;
+    return { state: 'selected', parts: selectedResult, nextTools: ['drawing_confirm_selection'] };
+  }
+
+  async renderCurrentSelectionObservation(sessionId: string): Promise<ImageAttachmentRef | null> {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    const episode = snapshot ? this.#episodes.current(sessionId, snapshot.ref) : null;
+    const state = this.#episodeSelections.get(sessionId);
+    if (!snapshot || !episode || !state || state.episodeId !== episode.episodeId || !this.ports.renderObservation) {
+      return null;
+    }
+    const viewport = this.drawings.summarize(sessionId)?.bounds
+      ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+    const selectedNodeIds = [...new Set(Object.values(state.selectedParts)
+      .flatMap(({ targetNodeIds }) => targetNodeIds))];
+    const selectedNodeSet = new Set(selectedNodeIds);
+    const rendered = await this.ports.renderObservation({
+      document: snapshot.document,
+      viewport,
+      selectedNodeIds,
+      candidateMarkers: [...state.candidates.values()]
+        .filter(({ nodeIds }) => nodeIds.length > 0 && nodeIds.every((nodeId) => selectedNodeSet.has(nodeId)))
+        .map(({ key, nodeIds }) => ({ key, nodeIds })),
+    });
+    const observation = this.#observations.get(state.observationId);
+    if (observation) {
+      observation.attachment = rendered.attachment;
+      observation.view = {
+        width: rendered.width,
+        height: rendered.height,
+        worldToImage: rendered.worldToImage,
+      };
+    }
+    return structuredClone(rendered.attachment);
+  }
+
+  confirmCurrentSelection(sessionId: string): {
+    state: 'selection_confirmed';
+    parts: Array<{ partKey: string; nodeCount: number }>;
+    nextTools: ['drawing_preview_spatial_intent'];
+  } {
+    const snapshot = this.#snapshot(sessionId);
+    const episode = this.#episodes.current(sessionId, snapshot.ref);
+    const state = this.#episodeSelections.get(sessionId);
+    const task = this.#tasks.get(sessionId);
+    if (!episode || !state || state.episodeId !== episode.episodeId || !task?.active) {
+      throw new Error('EDIT_SELECTION_REQUIRED');
+    }
+    const parts = Object.keys(state.selectedParts).sort().map((partKey) => ({
+      partKey,
+      nodeCount: state.selectedParts[partKey]!.targetNodeIds.length,
+    }));
+    if (parts.length === 0) throw new Error('EDIT_SELECTION_REQUIRED');
+    state.selectionConfirmed = true;
+    return { state: 'selection_confirmed', parts, nextTools: ['drawing_preview_spatial_intent'] };
   }
 
   currentSelectedParts(sessionId: string): Record<string, GroundedEditTarget> {
@@ -549,6 +616,7 @@ export class SemanticEditService {
       throw new Error('EDIT_SELECTION_REQUIRED');
     }
     if (Object.keys(selection.selectedParts).length === 0) throw new Error('EDIT_SELECTION_REQUIRED');
+    if (!selection.selectionConfirmed) throw new Error('EDIT_SELECTION_REVIEW_REQUIRED');
     const intentDigest = this.ports.digest(canonicalString(intent));
     const currentPreview = this.#previews.get(sessionId);
     if (currentPreview?.intentDigest === intentDigest && currentPreview.task === task) {
@@ -692,22 +760,9 @@ export class SemanticEditService {
     const episode = this.#episodes.current(sessionId, drawingRef);
     const snapshot = this.drawings.getSnapshot(sessionId);
     if (state && episode && snapshot && state.candidates.size === 0) {
-      const nodes = snapshot.document.geometry
-        .filter(({ visible }) => visible)
-        .map((node) => ({
-          node,
-          size: geometryNodeSize(node),
-        }))
-        .sort((left, right) => right.size - left.size
-          || String(left.node.id).localeCompare(String(right.node.id)))
-        .slice(0, 64);
-      for (const { node } of nodes) {
-        const key = `c${++state.nextCandidate}`;
-        state.candidates.set(key, {
-          ...selectionCandidate(snapshot.document, [String(node.id)], 0, episode.stateEpoch),
-          key,
-        });
-      }
+      const candidates = this.#initialSelectionCandidates(snapshot.document, episode.stateEpoch);
+      state.candidates = new Map(candidates.map((candidate) => [candidate.key, candidate]));
+      state.nextCandidate = candidates.length;
     }
     return {
       state: 'observed' as const,
@@ -721,6 +776,19 @@ export class SemanticEditService {
       })),
       nextTools: ['drawing_select_parts'],
     };
+  }
+
+  #initialSelectionCandidates(document: DrawingDocument, stateEpoch: number): EpisodeSelectionCandidate[] {
+    return document.geometry
+      .filter(({ visible }) => visible)
+      .map((node) => ({ node, size: geometryNodeSize(node) }))
+      .sort((left, right) => right.size - left.size
+        || String(left.node.id).localeCompare(String(right.node.id)))
+      .slice(0, 64)
+      .map(({ node }, index) => ({
+        ...selectionCandidate(document, [String(node.id)], 0, stateEpoch),
+        key: `c${index + 1}`,
+      }));
   }
 
   #resolvePartCandidates(
@@ -872,7 +940,10 @@ export class SemanticEditService {
     });
   }
 
-  async observe(sessionId: string, input: { taskId: string }): Promise<ObservationRef> {
+  async observe(sessionId: string, input: {
+    taskId: string;
+    candidateMarkers?: Array<{ key: string; nodeIds: string[] }>;
+  }): Promise<ObservationRef> {
     const task = this.#task(sessionId, input.taskId);
     const snapshot = this.#snapshotAtTask(sessionId, task);
     const selection = this.currentSelectionProjection(sessionId);
@@ -883,6 +954,7 @@ export class SemanticEditService {
           document: snapshot.document,
           viewport,
           selectedNodeIds: selection?.nodeIds ?? [],
+          ...(input.candidateMarkers ? { candidateMarkers: input.candidateMarkers } : {}),
         })
       : undefined;
     const basis = { kind: 'canonical' as const, ref: structuredClone(snapshot.ref) };
@@ -1829,6 +1901,7 @@ function inferSelectionInterfaces(
   const exactCarrierInterfaces = targets.flatMap((target) => (
     target.type === 'circle' || target.type === 'ellipse'
       ? findConnectedCarrierInterfaces(document, String(target.id))
+        .filter(({ nodeId }) => !selected.has(nodeId))
         .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint }))
       : []
   ));

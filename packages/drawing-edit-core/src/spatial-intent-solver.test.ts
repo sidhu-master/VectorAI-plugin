@@ -81,6 +81,66 @@ describe('solveSpatialIntent', () => {
       .toBe(canonicalSemanticString(before));
   });
 
+  it('moves disconnected geometry as one semantic part without requiring a connected carrier', () => {
+    const before = fixture();
+    const solved = solveSpatialIntent({
+      document: before,
+      baseRef: { drawingId: before.id, revision: 1 },
+      parts: {
+        composite: {
+          targetHandle: 'target-disconnected-composite',
+          targetNodeIds: ['part-a', 'untouched'],
+          interfaces: [],
+          sourceStatus: 'confirmed',
+        },
+      },
+      intent: {
+        summary: 'move the two disconnected contours upward as one semantic part',
+        goals: [{ kind: 'direction', subject: 'composite', direction: 'up', magnitude: 'moderate' }],
+        preserve: [{ kind: 'part_shape', partKey: 'composite' }, { kind: 'minimum_deformation' }],
+      },
+      numericConstraints: [], ports,
+    });
+
+    expect(circleCenter(solved.candidate, 'part-a')[1] - circleCenter(before, 'part-a')[1])
+      .toBeGreaterThan(0);
+    expect(circleCenter(solved.candidate, 'untouched')[1] - circleCenter(before, 'untouched')[1])
+      .toBeCloseTo(circleCenter(solved.candidate, 'part-a')[1] - circleCenter(before, 'part-a')[1], 8);
+    expect(solved.actualEffect.updatedNodeIds).toEqual(['part-a', 'untouched']);
+  });
+
+  it('decomposes a semantic carrier-and-connector selection into carrier motion and endpoint transport', () => {
+    const before = fixture();
+    const beforeConnector = before.geometry.find(({ id }) => id === 'connector-a');
+    if (!beforeConnector || beforeConnector.type !== 'line') throw new Error('missing connector');
+
+    const solved = solveSpatialIntent({
+      document: before,
+      baseRef: { drawingId: before.id, revision: 1 },
+      parts: {
+        articulated: {
+          targetHandle: 'target-articulated-composite',
+          targetNodeIds: ['part-a', 'connector-a'],
+          interfaces: [],
+          sourceStatus: 'confirmed',
+        },
+      },
+      intent: {
+        summary: 'raise the articulated semantic part while keeping its fixed attachment',
+        goals: [{ kind: 'direction', subject: 'articulated', direction: 'up', magnitude: 'moderate' }],
+        preserve: [{ kind: 'connectivity', partKey: 'articulated' }, { kind: 'minimum_deformation' }],
+      },
+      numericConstraints: [], ports,
+    });
+
+    const afterConnector = solved.candidate.geometry.find(({ id }) => id === 'connector-a');
+    if (!afterConnector || afterConnector.type !== 'line') throw new Error('missing connector');
+    expect(afterConnector.start).toEqual(beforeConnector.start);
+    expect(afterConnector.end).not.toEqual(beforeConnector.end);
+    expect(afterConnector.end[1]).toBeGreaterThan(beforeConnector.end[1]);
+    expect(solved.actualEffect.updatedNodeIds).toEqual(['connector-a', 'part-a']);
+  });
+
   it('combines relative position and alignment without a model-authored translation', () => {
     const before = fixture();
     const solved = solveSpatialIntent({
@@ -167,6 +227,46 @@ describe('solveSpatialIntent', () => {
     expect(first.candidateDigest).toBe(second.candidateDigest);
     expect(first.solver).toEqual(second.solver);
     expect(first.solver.candidateCount).toBeLessThanOrEqual(256);
+  });
+
+  it('keeps independent articulated parts attached when solving a multi-part intent', () => {
+    const before = fixture();
+    const solved = solveSpatialIntent({
+      document: before,
+      baseRef: { drawingId: before.id, revision: 1 },
+      parts: {
+        left: {
+          targetHandle: 'target-left-articulated',
+          targetNodeIds: ['part-a', 'connector-a'], interfaces: [], sourceStatus: 'confirmed',
+        },
+        right: {
+          targetHandle: 'target-right-articulated',
+          targetNodeIds: ['part-b', 'connector-b'], interfaces: [], sourceStatus: 'confirmed',
+        },
+      },
+      intent: {
+        summary: 'move both articulated parts downward as one atomic edit',
+        goals: [
+          { kind: 'direction', subject: 'left', direction: 'down', magnitude: 'slight' },
+          { kind: 'direction', subject: 'right', direction: 'down', magnitude: 'slight' },
+        ],
+        preserve: [
+          { kind: 'connectivity', partKey: 'left' },
+          { kind: 'connectivity', partKey: 'right' },
+        ],
+      },
+      numericConstraints: [], ports,
+    });
+
+    const connectorA = solved.candidate.geometry.find(({ id }) => id === 'connector-a');
+    const connectorB = solved.candidate.geometry.find(({ id }) => id === 'connector-b');
+    if (!connectorA || connectorA.type !== 'line' || !connectorB || connectorB.type !== 'line') {
+      throw new Error('missing connectors');
+    }
+    expect(connectorA.start).toEqual([-30, 0]);
+    expect(connectorB.start).toEqual([30, 10]);
+    expect(connectorA.end[1]).toBeLessThan(0);
+    expect(connectorB.end[1]).toBeLessThan(10);
   });
 
   it('aligns unequal parts moving in the same positive direction without cancelling either goal', () => {

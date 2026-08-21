@@ -146,7 +146,7 @@ DSH 第一层使用 Host-owned semantic episode。模型可见工具固定为：
 
 ```text
 drawing_import / drawing_summarize / drawing_query
-drawing_observe / drawing_select_parts
+drawing_observe / drawing_select_parts / drawing_confirm_selection
 drawing_preview_spatial_intent / drawing_revise_spatial_intent
 drawing_evaluate_preview / drawing_finalize_preview / drawing_discard_preview
 drawing_get_operation / drawing_undo_commit
@@ -155,6 +155,8 @@ drawing_get_operation / drawing_undo_commit
 `drawing_observe` 只在本轮用户确实要处理已有图纸时惰性激活。Host 从可信 session、runtime-root user message 和当前 DrawingRef 创建 Task/Observation/Context，并把它们保存在 EpisodeStore。后续模型调用不携带 `taskId`、`observationId`、`contextId`、`groundingId`、`previewHandle`、candidate/operation digest 或 revision。
 
 模型通过 `drawing_select_parts` 使用 current canvas selection、Observation 归一化点/区域、短候选 key 或 semantic query 选择部件；Host 把选择折叠为 GroundingLedger 和精确节点/接口。模型随后提交通用 `SpatialIntentRequest`：direction、relative position、alignment、topology、preservation goal，以及对可信用户原文数值的 `numericKey` 引用。模型协议不接受 translation、pivot、rotation 或世界坐标。
+
+一个语义部件可以由互不连续的图元组成，连通性不参与语义归属判定。进入求解器后，Host 会再按已验证拓扑把运动范围分解为 `carrier + connector interfaces + fixed anchors`：若一个选中组包含唯一闭合载体，且其余选中图元都能被证明是该载体的开放连接器，则只刚体移动载体，并重算连接器的接触端；固定端保持不动。无法证明这种角色关系时，整组才作为普通刚体处理。该分解只依赖几何类型、端点接触和 Grounding scope，不依赖“手、手臂、打招呼”等对象或动作特判。
 
 `@vectorai/drawing-edit-core` 的确定性 solver 从真实几何生成有界候选，按目标残差、移动/变形代价、碰撞和拓扑代价稳定排名，再编译一组 forward/inverse Commands。多个部件共享一次求解、一个 Preview 和一个 Commit。Evaluation/Finalize 在 Host 内解析当前候选并重算三态 assessment；模型只收到 compact disposition 和下一工具，不负责重放内部 lineage。上下文压缩不会影响 EpisodeStore。
 

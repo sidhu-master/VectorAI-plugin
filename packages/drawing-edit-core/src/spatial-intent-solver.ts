@@ -16,6 +16,7 @@ import {
   type GroundedEditTarget,
   type SpatialCompilation,
 } from './compiler';
+import { findConnectedCarrierInterfaces } from './connected-transform';
 import { compileMultiPartTransform } from './multi-part-compiler';
 
 const MAGNITUDE_RATIO = {
@@ -409,12 +410,13 @@ function compileTransforms(
   if (changed.length === 1) {
     const partKey = changed[0]!;
     const transform = transforms[partKey]!;
-    const grounding = input.parts[partKey]!;
-    const pivot = originalPartGeometry(input, partKey).center;
-    const connected = grounding.interfaces.length > 0 || grounding.targetNodeIds.some((nodeId) => {
-      const node = input.document.geometry.find(({ id }) => String(id) === nodeId);
-      return node?.type === 'circle' || node?.type === 'ellipse';
-    });
+    const grounding = articulatedGrounding(input.document, input.parts[partKey]!);
+    const pivot = partGeometry(input.document, grounding).center;
+    const soleTarget = grounding.targetNodeIds.length === 1
+      ? input.document.geometry.find(({ id }) => String(id) === grounding.targetNodeIds[0])
+      : undefined;
+    const connectedCarrier = soleTarget?.type === 'circle' || soleTarget?.type === 'ellipse';
+    const connected = grounding.interfaces.length > 0 || connectedCarrier;
     return compileSpatialEditProgram({
       document: input.document,
       grounding,
@@ -427,8 +429,8 @@ function compileTransforms(
         operations: [connected ? {
           kind: 'connected_transform',
           translation: transform.translation,
-          ...(transform.rotationRadians === undefined ? {} : {
-            rotationRadians: transform.rotationRadians,
+          ...(transform.rotationRadians === undefined && connectedCarrier ? {} : {
+            rotationRadians: transform.rotationRadians ?? 0,
             pivot: [pivot[0], pivot[1]],
           }),
           interfaceIds: grounding.interfaces.map(({ interfaceId }) => interfaceId),
@@ -451,18 +453,53 @@ function compileTransforms(
     summary: input.intent.summary,
     parts: changed.map((partKey) => {
       const transform = transforms[partKey]!;
+      const grounding = articulatedGrounding(input.document, input.parts[partKey]!);
       return {
         groundingId: `semantic-part:${partKey}`,
-        grounding: input.parts[partKey]!,
+        grounding,
         translation: transform.translation,
         ...(transform.rotationRadians === undefined ? {} : {
           rotationRadians: transform.rotationRadians,
-          pivot: originalPartGeometry(input, partKey).center,
+          pivot: partGeometry(input.document, grounding).center,
         }),
       };
     }),
     ports: input.ports,
   });
+}
+
+function articulatedGrounding(
+  document: DrawingDocument,
+  grounding: GroundedEditTarget,
+): GroundedEditTarget {
+  if (grounding.targetNodeIds.length < 1) return grounding;
+  const selected = new Set(grounding.targetNodeIds);
+  const carriers = document.geometry.filter((node) => (
+    selected.has(String(node.id)) && (node.type === 'circle' || node.type === 'ellipse')
+  ));
+  const candidates = carriers.flatMap((carrier) => {
+    const interfaces = findConnectedCarrierInterfaces(document, String(carrier.id));
+    if (interfaces.length === 0) return [];
+    const connectorNodeIds = new Set(interfaces.map(({ nodeId }) => nodeId));
+    const selectedNonCarrierIds = grounding.targetNodeIds.filter((nodeId) => nodeId !== String(carrier.id));
+    return selectedNonCarrierIds.every((nodeId) => connectorNodeIds.has(nodeId))
+      ? [{ carrierNodeId: String(carrier.id), interfaces }]
+      : [];
+  });
+  if (candidates.length !== 1) return grounding;
+
+  const candidate = candidates[0]!;
+  const authorizedConnectorNodeIds = new Set([
+    ...grounding.targetNodeIds,
+    ...grounding.interfaces.map(({ nodeId }) => nodeId),
+  ]);
+  return {
+    ...grounding,
+    targetNodeIds: [candidate.carrierNodeId],
+    interfaces: candidate.interfaces
+      .filter(({ nodeId }) => authorizedConnectorNodeIds.has(nodeId))
+      .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })),
+  };
 }
 
 function goalResidualFor(

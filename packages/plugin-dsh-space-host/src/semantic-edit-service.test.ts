@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { DrawingDurableState } from './durable-envelope';
 import { InMemoryDrawingRepository, type DrawingRepositoryStorage } from './repository';
-import { SemanticEditService } from './semantic-edit-service';
+import { SemanticEditService, type SemanticEditServicePorts } from './semantic-edit-service';
 
 class Storage implements DrawingRepositoryStorage {
   state: DrawingDurableState | null = null;
@@ -21,6 +21,7 @@ class Storage implements DrawingRepositoryStorage {
 async function setup(
   provisional = false,
   review?: ConstructorParameters<typeof SemanticEditService>[1]['review'],
+  renderObservation?: NonNullable<SemanticEditServicePorts['renderObservation']>,
 ) {
   const storage = new Storage();
   let sequence = 0;
@@ -53,7 +54,7 @@ async function setup(
     id: (kind) => `${kind}-${++sequence}`,
     now: () => 1_000 + sequence,
     digest: (value) => `sha256:test-${value.length}-${checksum(value)}`,
-    async renderObservation() {
+    renderObservation: renderObservation ?? (async () => {
       return {
         contentDigest: 'sha256:observation-render',
         attachment,
@@ -61,7 +62,7 @@ async function setup(
         height: 50,
         worldToImage: [1, 0, 0, -1, 30, 30],
       };
-    },
+    }),
     ...(review ? { review } : {}),
   });
   return { drawings, service, storage };
@@ -122,6 +123,7 @@ describe('SemanticEditService', () => {
     service.selectCurrentParts('session-1', {
       parts: [{ partKey: 'moving', label: 'selected part', references: [{ kind: 'current_selection' }] }],
     });
+    service.confirmCurrentSelection('session-1');
     const intent = {
       summary: 'move the selected part upward',
       goals: [{ kind: 'direction' as const, subject: 'moving', direction: 'up' as const, magnitude: 'moderate' as const }],
@@ -168,6 +170,7 @@ describe('SemanticEditService', () => {
     service.selectCurrentParts('session-1', {
       parts: [{ partKey: 'moving', label: 'selected part', references: [{ kind: 'current_selection' }] }],
     });
+    service.confirmCurrentSelection('session-1');
     const first = service.previewCurrentIntent('session-1', {
       summary: 'move upward',
       goals: [{ kind: 'direction', subject: 'moving', direction: 'up', magnitude: 'slight' }],
@@ -200,6 +203,7 @@ describe('SemanticEditService', () => {
         partKey: 'right', label: 'right part', references: [{ kind: 'semantic_query', text: 'right hand' }],
       }],
     });
+    service.confirmCurrentSelection('session-1');
     service.previewCurrentIntent('session-1', {
       summary: 'move both parts downward',
       goals: [
@@ -237,6 +241,7 @@ describe('SemanticEditService', () => {
     service.selectCurrentParts('session-1', {
       parts: [{ partKey: 'moving', label: 'candidate part', references: [{ kind: 'current_selection' }] }],
     });
+    service.confirmCurrentSelection('session-1');
     service.previewCurrentIntent('session-1', {
       summary: 'move candidate upward',
       goals: [{ kind: 'direction', subject: 'moving', direction: 'up', magnitude: 'slight' }],
@@ -265,6 +270,7 @@ describe('SemanticEditService', () => {
         partKey: 'right', label: 'right part', references: [{ kind: 'semantic_query', text: 'right hand' }],
       }],
     });
+    service.confirmCurrentSelection('session-1');
     expect(() => service.previewCurrentIntent('session-1', {
       summary: 'keep the parts from crossing',
       goals: [{
@@ -395,6 +401,75 @@ describe('SemanticEditService', () => {
     });
   });
 
+  it('binds every short candidate key to the same model-only observation render', async () => {
+    const renders: Parameters<NonNullable<SemanticEditServicePorts['renderObservation']>>[0][] = [];
+    const { service } = await setup(false, undefined, async (input) => {
+      renders.push(structuredClone(input));
+      return {
+        contentDigest: `sha256:observation-${renders.length}`,
+        attachment: {
+          attachmentId: `observation-${renders.length}` as never,
+          mediaType: 'image/png', bytes: 1, width: 60, height: 50,
+        },
+        width: 60, height: 50, worldToImage: [1, 0, 0, -1, 30, 30],
+      };
+    });
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-marked-observation', objective: '选择一个部件',
+      rootUserMessageDigest: 'sha256:message-marked-observation', numericConstraints: [],
+    });
+
+    const observed = await service.observeCurrent('session-1');
+
+    expect(renders).toHaveLength(1);
+    expect(renders[0]?.candidateMarkers?.map(({ key }) => key))
+      .toEqual(observed.selectionCandidates.map(({ key }) => key));
+    expect(renders[0]?.candidateMarkers?.every(({ nodeIds }) => nodeIds.length === 1)).toBe(true);
+  });
+
+  it('rerenders the exact resolved selection for visual verification without requiring connectivity', async () => {
+    const renders: Parameters<NonNullable<SemanticEditServicePorts['renderObservation']>>[0][] = [];
+    const { service } = await setup(false, undefined, async (input) => {
+      renders.push(structuredClone(input));
+      return {
+        contentDigest: `sha256:observation-${renders.length}`,
+        attachment: {
+          attachmentId: `observation-${renders.length}` as never,
+          mediaType: 'image/png', bytes: 1, width: 60, height: 50,
+        },
+        width: 60, height: 50, worldToImage: [1, 0, 0, -1, 30, 30],
+      };
+    });
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-selection-feedback', objective: '选择分离的两个轮廓作为一个部件',
+      rootUserMessageDigest: 'sha256:message-selection-feedback', numericConstraints: [],
+    });
+    const observed = await service.observeCurrent('session-1');
+    const lines = observed.selectionCandidates.filter(({ summary }) => summary.includes('line')).slice(0, 2);
+    expect(lines).toHaveLength(2);
+    expect(service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'disconnected-part', label: 'two separate contours',
+        references: lines.map(({ key }) => ({ kind: 'candidate' as const, key })),
+      }],
+    })).toMatchObject({ state: 'selected' });
+
+    const attachment = await service.renderCurrentSelectionObservation('session-1');
+
+    expect(attachment?.attachmentId).toBe('observation-2');
+    expect(renders[1]?.selectedNodeIds).toHaveLength(2);
+    expect(renders[1]?.candidateMarkers?.map(({ key }) => key))
+      .toEqual(lines.map(({ key }) => key));
+    expect(() => service.previewCurrentIntent('session-1', {
+      summary: 'move the visually verified disconnected part',
+      goals: [{ kind: 'direction', subject: 'disconnected-part', direction: 'up', magnitude: 'slight' }],
+      preserve: [{ kind: 'part_shape', partKey: 'disconnected-part' }],
+    })).toThrow('EDIT_SELECTION_REVIEW_REQUIRED');
+    expect(service.confirmCurrentSelection('session-1')).toMatchObject({
+      state: 'selection_confirmed', nextTools: ['drawing_preview_spatial_intent'],
+    });
+  });
+
   it('merges multiple exact candidate references into one semantic part', async () => {
     const { service } = await setup();
     service.bindUserInstruction('session-1', {
@@ -420,7 +495,7 @@ describe('SemanticEditService', () => {
     });
 
     expect(selected).toMatchObject({
-      state: 'selected', parts: [{ partKey: 'right-composite', nodeCount: 3 }],
+      state: 'selected', parts: [{ partKey: 'right-composite', nodeCount: 3, interfaceCount: 0 }],
     });
   });
 
@@ -539,7 +614,7 @@ describe('SemanticEditService', () => {
     })).toThrow('EDIT_SELECTION_REQUIRED');
   });
 
-  it('returns short ambiguous candidates and accepts only a current-episode candidate key', async () => {
+  it('returns short ambiguous candidates and keeps them usable for visual selection correction', async () => {
     const { service } = await setup();
     service.bindUserInstruction('session-1', {
       rootUserMessageId: 'message-ambiguous-selection',
@@ -571,14 +646,18 @@ describe('SemanticEditService', () => {
       }],
     });
     expect(selected.state).toBe('selected');
-    const expired = service.selectCurrentParts('session-1', {
+    const corrected = service.selectCurrentParts('session-1', {
       parts: [{
         partKey: 'part-b',
-        label: 'stale candidate',
+        label: 'corrected candidate',
         references: [{ kind: 'candidate', key: ambiguous.candidates[0]!.key }],
       }],
     });
-    expect(expired).toMatchObject({ state: 'invalid_state', code: 'EDIT_CANDIDATE_EXPIRED' });
+    expect(corrected).toMatchObject({ state: 'selected', parts: [{ partKey: 'part-b' }] });
+    expect(service.currentSelectedParts('session-1')).toEqual(expect.objectContaining({
+      'part-b': expect.any(Object),
+    }));
+    expect(service.currentSelectedParts('session-1')).not.toHaveProperty('part-a');
   });
 
   it('applies semantic-query exclusions and fails closed across sessions or revisions', async () => {

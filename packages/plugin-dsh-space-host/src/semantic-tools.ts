@@ -117,6 +117,7 @@ export function createSemanticEditToolCatalog(
   return [
     createDrawingObserveTool(semantic),
     createDrawingSelectPartsTool(semantic),
+    createDrawingConfirmSelectionTool(semantic),
     createDrawingPreviewSpatialIntentTool(semantic),
     createDrawingReviseSpatialIntentTool(semantic),
     createDrawingEvaluatePreviewTool(semantic),
@@ -151,18 +152,48 @@ export function createDrawingObserveTool(semantic: SemanticEditService) {
 export function createDrawingSelectPartsTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_select_parts',
-    description: 'Name the semantic parts to edit. Prefer candidate cN keys returned by drawing_observe; multiple exact candidate references inside one part are merged as that part. Otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. The Host resolves exact nodes and interfaces.',
+    description: 'Name the semantic parts to edit. Prefer candidate cN labels shown directly on the drawing_observe image; multiple exact candidate references inside one part are merged even when their contours are disconnected. Otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. Inspect the returned highlighted image. If it is wrong, call drawing_select_parts again; if it is exact, call drawing_confirm_selection. Preview is blocked until this review step is completed.',
     parameters: {
       parts: array(object({
         partKey: string('Stable semantic name used by later goals.'), label: string(),
         references: array(selectionReference), exclude: array(selectionExclusion, false),
       })),
     },
-    output: { schema: { type: 'json' }, render: renderJson },
+    output: { schema: { type: 'json' }, render: renderObservation },
     async execute(args, exec) {
       const input = drawingSelectPartsRequestSchema.parse(args);
-      const result = semantic.selectCurrentParts(requireSession(exec.agent?.id), input);
-      return { ...result, drawingWorkflow: workflow(result.state, result.nextTools) } as unknown as JsonValue;
+      const sessionId = requireSession(exec.agent?.id);
+      const result = semantic.selectCurrentParts(sessionId, input);
+      const imageAttachment = result.state === 'selected'
+        ? await semantic.renderCurrentSelectionObservation(sessionId)
+        : null;
+      return {
+        ...result,
+        ...(imageAttachment ? {
+          imageAttachment,
+          selectionReview: 'Inspect the highlighted geometry now. If any unrelated geometry is highlighted or any intended geometry is missing, call drawing_select_parts again with corrected cN references. Only when it is exact, call drawing_confirm_selection.',
+        } : {}),
+        drawingWorkflow: workflow(result.state, result.nextTools),
+      } as unknown as JsonValue;
+    },
+  });
+}
+
+export function createDrawingConfirmSelectionTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_confirm_selection',
+    description: 'Confirm that the most recent highlighted selection image exactly matches the requested semantic parts. Call this only after inspecting that image. If the highlight is wrong or incomplete, call drawing_select_parts again instead.',
+    parameters: {},
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(_args, exec) {
+      const sessionId = requireSession(exec.agent?.id);
+      return recover(['drawing_select_parts'], () => {
+        const result = semantic.confirmCurrentSelection(sessionId);
+        return {
+          ...result,
+          drawingWorkflow: workflow(result.state, result.nextTools),
+        } as unknown as JsonValue;
+      });
     },
   });
 }
@@ -176,7 +207,7 @@ export function createDrawingPreviewSpatialIntentTool(semantic: SemanticEditServ
     async execute(args, exec) {
       const input = spatialIntentRequestSchema.parse(args);
       const sessionId = requireSession(exec.agent?.id);
-      return recover(['drawing_select_parts'], () => {
+      return recover(['drawing_select_parts', 'drawing_confirm_selection'], () => {
         semantic.previewCurrentIntent(sessionId, input);
         return semantic.currentPreviewPresentation(sessionId) as unknown as JsonValue;
       });
@@ -213,8 +244,7 @@ export function createDrawingEvaluatePreviewTool(semantic: SemanticEditService) 
     async execute(_args, exec) {
       const sessionId = requireSession(exec.agent?.id);
       return recover(['drawing_observe'], async () => {
-        const { evaluation, assessment } = await semantic.evaluateCurrentPreview(sessionId, exec.signal);
-        const imageAttachment = semantic.currentObservationAttachment(sessionId);
+        const { evaluation, assessment, imageAttachment } = await semantic.evaluateCurrentPreview(sessionId, exec.signal);
         const revisionRequired = evaluation.review.outcome !== 'satisfied'
           || assessment.disposition === 'blocked';
         const nextTools = assessment.disposition === 'blocked'

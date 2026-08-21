@@ -11,6 +11,7 @@ import { LocalCleanLineVectorizer } from './vectorizer';
 import { InMemoryDrawingRepository } from './repository';
 import { SemanticEditService } from './semantic-edit-service';
 import { FileDrawingRepositoryStorage } from './repository-storage';
+import { renderDrawingObservation, type ObservationRenderManifest } from './review-renderer';
 
 const fixturePath = resolve(import.meta.dirname, '../../../test2.png');
 
@@ -72,72 +73,128 @@ describe.skipIf(!existsSync(fixturePath))('LocalCleanLineVectorizer', () => {
       data, signal: new AbortController().signal,
     });
     let sequence = 0;
+    const observationRenders: Array<{
+      input: Parameters<typeof renderDrawingObservation>[0];
+      manifest: ObservationRenderManifest;
+      contentDigest: string;
+    }> = [];
     const semantic = new SemanticEditService(drawings, {
       id: (kind) => `${kind}-real-${++sequence}`,
       now: () => 1_000 + sequence,
       digest: (value) => `sha256:real-${value.length}-${sequence}`,
+      renderObservation: async (input) => {
+        const rendered = await renderDrawingObservation(input);
+        observationRenders.push({
+          input: structuredClone(input), manifest: rendered.manifest,
+          contentDigest: rendered.contentDigest,
+        });
+        return {
+          contentDigest: rendered.contentDigest,
+          attachment: {
+            attachmentId: `observation-${observationRenders.length}` as never,
+            mediaType: 'image/png', bytes: rendered.png.byteLength,
+            width: rendered.manifest.width, height: rendered.manifest.height,
+          },
+          width: rendered.manifest.width, height: rendered.manifest.height,
+          worldToImage: rendered.manifest.worldToImage,
+        };
+      },
     });
     semantic.bindUserInstruction('session-real-selection', {
       rootUserMessageId: 'message-real-multipart',
       rootUserMessageDigest: 'sha256:message-real-multipart',
-      objective: '把画面左右两侧的圆形部件向内并向上移动',
+      objective: '把角色右手抬起来打招呼',
       numericConstraints: [],
     });
 
     const observed = await semantic.observeCurrent('session-real-selection');
-    const left = observed.selectionCandidates.find(({ summary }) => (
+    const rightHand = observed.selectionCandidates.find(({ summary }) => (
       summary.includes('circle') && summary.includes('lower-left')
     ));
-    const right = observed.selectionCandidates.find(({ summary }) => (
-      summary.includes('circle') && summary.includes('lower-right')
-    ));
-    const rightArm = [
-      observed.selectionCandidates.find(({ summary }) => (
-        summary.includes('polyline') && summary.includes('middle-right')
-      )),
-      observed.selectionCandidates.find(({ summary }) => (
-        summary.includes('line') && summary.includes('lower-right')
-      )),
-    ];
-    expect(left?.key).toMatch(/^c\d+$/);
-    expect(right?.key).toMatch(/^c\d+$/);
-    expect(rightArm.every((candidate) => candidate?.key !== undefined)).toBe(true);
+    const initialRender = observationRenders[0];
+    expect(initialRender?.manifest.candidateMarkers.map(({ key }) => key))
+      .toEqual(observed.selectionCandidates.map(({ key }) => key));
+    const nodes = new Map(result.document.geometry.map((node) => [String(node.id), node]));
+    const markerFor = (predicate: (node: typeof result.document.geometry[number]) => boolean) => (
+      initialRender?.input.candidateMarkers?.find(({ nodeIds }) => (
+        nodeIds.length === 1 && predicate(nodes.get(nodeIds[0]!)!)
+      ))
+    );
+    const upperRightArm = markerFor((node) => {
+      if (node.type !== 'line') return false;
+      const xs = [node.start[0], node.end[0]];
+      const ys = [node.start[1], node.end[1]];
+      return Math.min(...xs) > 60 && Math.min(...xs) < 70
+        && Math.max(...xs) > 120 && Math.max(...xs) < 130
+        && Math.min(...ys) > 240 && Math.min(...ys) < 255
+        && Math.max(...ys) > 280 && Math.max(...ys) < 300;
+    });
+    const lowerRightArm = markerFor((node) => {
+      if (node.type !== 'line') return false;
+      const xs = [node.start[0], node.end[0]];
+      const ys = [node.start[1], node.end[1]];
+      return Math.min(...xs) > 95 && Math.min(...xs) < 110
+        && Math.max(...xs) > 115 && Math.max(...xs) < 125
+        && Math.min(...ys) > 185 && Math.min(...ys) < 200
+        && Math.max(...ys) > 200 && Math.max(...ys) < 215;
+    });
+    expect(rightHand?.key).toMatch(/^c\d+$/);
+    expect(upperRightArm?.key).toMatch(/^c\d+$/);
+    expect(lowerRightArm?.key).toMatch(/^c\d+$/);
     expect(JSON.stringify(observed)).not.toMatch(/node_vec_/);
 
     const selected = semantic.selectCurrentParts('session-real-selection', {
       parts: [{
-        partKey: 'left-part', label: 'left circular part',
-        references: [{ kind: 'candidate', key: left!.key }],
-      }, {
-        partKey: 'right-part', label: 'right multi-element part',
-        references: [right!, ...rightArm].map((candidate) => ({
-          kind: 'candidate' as const, key: candidate!.key,
+        partKey: 'character-right-arm', label: 'character right hand and disconnected arm contours',
+        references: [rightHand!, upperRightArm!, lowerRightArm!].map((candidate) => ({
+          kind: 'candidate' as const, key: candidate.key,
         })),
       }],
     });
     expect(selected).toMatchObject({
       state: 'selected',
-      parts: [{ partKey: 'left-part', nodeCount: 1 }, { partKey: 'right-part', nodeCount: 3 }],
+      parts: [{ partKey: 'character-right-arm', nodeCount: 3 }],
     });
+    const selectionAttachment = await semantic.renderCurrentSelectionObservation('session-real-selection');
+    expect(selectionAttachment?.attachmentId).toBe('observation-2');
+    expect(observationRenders[1]?.manifest.selectedNodeCount).toBe(3);
+    expect(observationRenders[1]?.contentDigest).not.toBe(observationRenders[0]?.contentDigest);
+    semantic.confirmCurrentSelection('session-real-selection');
 
     const preview = semantic.previewCurrentIntent('session-real-selection', {
-      summary: 'move both side components inward and upward as one edit',
+      summary: 'raise the character right arm and hand to wave',
       goals: [
-        { kind: 'direction', subject: 'left-part', direction: 'right', magnitude: 'strong' },
-        { kind: 'direction', subject: 'left-part', direction: 'up', magnitude: 'moderate' },
-        { kind: 'direction', subject: 'right-part', direction: 'left', magnitude: 'strong' },
-        { kind: 'direction', subject: 'right-part', direction: 'up', magnitude: 'moderate' },
-        { kind: 'alignment', subject: 'left-part', reference: { kind: 'part', partKey: 'right-part' }, axis: 'y' },
+        { kind: 'direction', subject: 'character-right-arm', direction: 'up', magnitude: 'strong' },
       ],
       preserve: [
-        { kind: 'part_shape', partKey: 'left-part' },
-        { kind: 'part_shape', partKey: 'right-part' },
+        { kind: 'part_shape', partKey: 'character-right-arm' },
         { kind: 'minimum_deformation' },
       ],
     });
     expect(preview.candidateDigest).toMatch(/^sha256:/);
     expect(semantic.currentPreviewPresentation('session-real-selection').changedNodeCount)
       .toBeGreaterThan(0);
+    const previewDocument = drawings.getPreview('session-real-selection')?.candidate.document;
+    expect(previewDocument).toBeDefined();
+    for (const marker of [upperRightArm!, lowerRightArm!]) {
+      const nodeId = marker.nodeIds[0]!;
+      const before = result.document.geometry.find(({ id }) => String(id) === nodeId);
+      const after = previewDocument?.geometry.find(({ id }) => String(id) === nodeId);
+      if (!before || before.type !== 'line' || !after || after.type !== 'line') {
+        throw new Error('expected articulated line connector');
+      }
+      const changedEndpointCount = Number(JSON.stringify(before.start) !== JSON.stringify(after.start))
+        + Number(JSON.stringify(before.end) !== JSON.stringify(after.end));
+      expect(changedEndpointCount).toBe(1);
+    }
+    const faceCandidate = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('polyline') && summary.includes('middle-left')
+    ));
+    const faceNodeId = initialRender?.input.candidateMarkers
+      ?.find(({ key }) => key === faceCandidate?.key)?.nodeIds[0];
+    expect(faceNodeId).toBeDefined();
+    expect(drawings.getPreview('session-real-selection')?.diff.updatedNodeIds)
+      .not.toContain(faceNodeId);
     await semantic.evaluateCurrentPreview('session-real-selection');
     expect(semantic.finalizeCurrentPreview('session-real-selection')).toMatchObject({
       status: 'rejected', disposition: 'confirmation_required',

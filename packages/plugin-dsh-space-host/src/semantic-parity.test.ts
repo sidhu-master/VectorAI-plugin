@@ -120,6 +120,7 @@ describe('DSH semantic edit production parity', () => {
     service.selectCurrentParts('session-parity', {
       parts: [{ partKey: 'subject', label: 'selected component', references: [{ kind: 'current_selection' }] }],
     });
+    service.confirmCurrentSelection('session-parity');
     const intent = {
       summary: 'move selected component upward',
       goals: [{ kind: 'direction' as const, subject: 'subject', direction: 'up' as const, magnitude: 'slight' as const }],

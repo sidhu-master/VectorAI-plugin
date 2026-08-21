@@ -4,7 +4,7 @@ import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 
-import { renderReviewComparison } from './review-renderer';
+import { renderDrawingObservation, renderReviewComparison } from './review-renderer';
 
 const quality = { status: 'confirmed' as const, evidenceRefs: [] };
 
@@ -22,6 +22,44 @@ function document(y: number) {
 }
 
 describe('renderReviewComparison', () => {
+  it('renders model-only candidate labels at their exact geometry anchors', async () => {
+    const source = document(0);
+    const plain = await renderDrawingObservation({
+      document: source,
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+    });
+    const marked = await renderDrawingObservation({
+      document: source,
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+      candidateMarkers: [{ key: 'c1', nodeIds: ['arm'] }],
+    });
+
+    expect(marked.manifest).toMatchObject({
+      overlays: ['selection', 'candidate-labels'],
+      candidateMarkers: [{ key: 'c1', nodeCount: 1 }],
+    });
+    expect(marked.contentDigest).not.toBe(plain.contentDigest);
+    expect(marked.png.byteLength).toBeGreaterThan(plain.png.byteLength);
+  });
+
+  it('renders the resolved model selection as a distinct feedback image', async () => {
+    const source = document(0);
+    const unselected = await renderDrawingObservation({
+      document: source,
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+      candidateMarkers: [{ key: 'c1', nodeIds: ['arm'] }],
+    });
+    const selected = await renderDrawingObservation({
+      document: source,
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+      selectedNodeIds: ['arm'],
+      candidateMarkers: [{ key: 'c1', nodeIds: ['arm'] }],
+    });
+
+    expect(selected.manifest.selectedNodeCount).toBe(1);
+    expect(selected.contentDigest).not.toBe(unselected.contentDigest);
+  });
+
   it('renders a real same-viewport before-after PNG with changed-node overlays', async () => {
     const rendered = await renderReviewComparison({
       before: document(0),

@@ -14,18 +14,26 @@ export interface ReviewRenderManifest {
 }
 
 export interface ObservationRenderManifest {
-  rendererVersion: 'vectorai-observation-svg-v1';
+  rendererVersion: 'vectorai-observation-svg-v2';
   width: 960;
   height: 720;
   worldToImage: [number, number, number, number, number, number];
   viewport: { minX: number; minY: number; maxX: number; maxY: number };
-  overlays: ['selection'];
+  overlays: ['selection', 'candidate-labels'];
+  selectedNodeCount: number;
+  candidateMarkers: Array<{
+    key: string;
+    nodeCount: number;
+    anchor: [number, number];
+    labelPosition: [number, number];
+  }>;
 }
 
 export async function renderDrawingObservation(input: {
   document: DrawingDocument;
   viewport: { minX: number; minY: number; maxX: number; maxY: number };
   selectedNodeIds?: string[];
+  candidateMarkers?: Array<{ key: string; nodeIds: string[] }>;
 }): Promise<{ png: Uint8Array; contentDigest: string; manifest: ObservationRenderManifest }> {
   const width = 960 as const;
   const height = 720 as const;
@@ -39,19 +47,93 @@ export async function renderDrawingObservation(input: {
   const selected = new Set(input.selectedNodeIds ?? []);
   const normal = renderDocument(input.document, new Set(), '#d7e0ea');
   const highlight = selected.size === 0 ? '' : renderDocument(input.document, selected, '#ffad42', true);
+  const candidateLayout = layoutCandidateMarkers(input.document, input.candidateMarkers ?? [], transform, width, height);
+  const candidateLabels = candidateLayout.map(({ key, anchor, labelPosition, boxWidth }) => {
+    const [anchorX, anchorY] = anchor;
+    const [labelX, labelY] = labelPosition;
+    return `<g data-candidate="${escapeXml(key)}">
+      <line x1="${anchorX}" y1="${anchorY}" x2="${labelX + 2}" y2="${labelY + 9}" stroke="#50b7ff" stroke-width="1" opacity="0.72"/>
+      <circle cx="${anchorX}" cy="${anchorY}" r="2.4" fill="#50b7ff"/>
+      <rect x="${labelX}" y="${labelY}" width="${boxWidth}" height="18" rx="4" fill="#0a3650" stroke="#50b7ff" stroke-width="1"/>
+      <text x="${labelX + 4}" y="${labelY + 12.5}" fill="#f4fbff" font-family="ui-monospace, monospace" font-size="11" font-weight="700">${escapeXml(key)}</text>
+    </g>`;
+  }).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="${width}" height="${height}" fill="#101419"/>
     <g transform="matrix(${transform.join(' ')})">${normal}${highlight}</g>
+    ${candidateLabels}
   </svg>`;
   const png = await sharp(Buffer.from(svg)).png().toBuffer();
   return {
     png,
     contentDigest: `sha256:${createHash('sha256').update(png).digest('hex')}`,
     manifest: {
-      rendererVersion: 'vectorai-observation-svg-v1', width, height, worldToImage: transform,
-      viewport: structuredClone(input.viewport), overlays: ['selection'],
+      rendererVersion: 'vectorai-observation-svg-v2', width, height, worldToImage: transform,
+      viewport: structuredClone(input.viewport), overlays: ['selection', 'candidate-labels'],
+      selectedNodeCount: selected.size,
+      candidateMarkers: candidateLayout.map(({ key, nodeCount, anchor, labelPosition }) => ({
+        key, nodeCount, anchor, labelPosition,
+      })),
     },
   };
+}
+
+function layoutCandidateMarkers(
+  document: DrawingDocument,
+  candidates: Array<{ key: string; nodeIds: string[] }>,
+  transform: ObservationRenderManifest['worldToImage'],
+  width: number,
+  height: number,
+) {
+  const nodes = new Map([...document.geometry, ...document.annotations].map((node) => [String(node.id), node]));
+  const occupied: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
+  return candidates.flatMap(({ key, nodeIds }) => {
+    const centers = nodeIds.flatMap((nodeId) => {
+      const value = center(nodes.get(nodeId));
+      return value ? [value] : [];
+    });
+    const world = average(centers);
+    if (!world) return [];
+    const anchor: [number, number] = [
+      transform[0] * world[0] + transform[2] * world[1] + transform[4],
+      transform[1] * world[0] + transform[3] * world[1] + transform[5],
+    ];
+    const boxWidth = Math.max(24, 8 + key.length * 7);
+    const labelPosition = placeCandidateLabel(anchor, boxWidth, width, height, occupied);
+    occupied.push({
+      minX: labelPosition[0], minY: labelPosition[1],
+      maxX: labelPosition[0] + boxWidth, maxY: labelPosition[1] + 18,
+    });
+    return [{ key, nodeCount: nodeIds.length, anchor, labelPosition, boxWidth }];
+  });
+}
+
+function placeCandidateLabel(
+  anchor: [number, number],
+  boxWidth: number,
+  width: number,
+  height: number,
+  occupied: Array<{ minX: number; minY: number; maxX: number; maxY: number }>,
+): [number, number] {
+  const offsets: Array<[number, number]> = [[7, -22], [7, 5], [-boxWidth - 7, -22], [-boxWidth - 7, 5]];
+  for (let radius = 24; radius <= 120; radius += 16) {
+    for (let step = 0; step < 16; step += 1) {
+      const angle = step * Math.PI / 8;
+      offsets.push([Math.cos(angle) * radius - boxWidth / 2, Math.sin(angle) * radius - 9]);
+    }
+  }
+  for (const [dx, dy] of offsets) {
+    const x = Math.max(2, Math.min(width - boxWidth - 2, anchor[0] + dx));
+    const y = Math.max(2, Math.min(height - 20, anchor[1] + dy));
+    const box = { minX: x - 2, minY: y - 2, maxX: x + boxWidth + 2, maxY: y + 20 };
+    if (occupied.every((other) => (
+      box.maxX < other.minX || box.minX > other.maxX || box.maxY < other.minY || box.minY > other.maxY
+    ))) return [x, y];
+  }
+  return [
+    Math.max(2, Math.min(width - boxWidth - 2, anchor[0] + 7)),
+    Math.max(2, Math.min(height - 20, anchor[1] - 22)),
+  ];
 }
 
 export async function renderReviewComparison(input: {

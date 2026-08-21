@@ -277,7 +277,8 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 | `drawing_summarize` | 只读 | 返回单位、bounds、plane/type 计数与 revision |
 | `drawing_query` | 只读 | 执行 bounds、node、topology、path 等有界查询 |
 | `drawing_observe` | 只读 | 惰性激活当前图纸 episode；Host 内部创建并绑定 Observation/context |
-| `drawing_select_parts` | 语义选择 | 模型用 current selection、Observation 归一化区域、候选短键或语义查询描述部件；Host 解析精确节点和接口 |
+| `drawing_select_parts` | 语义选择 | 模型用 current selection、Observation 归一化区域、候选短键或语义查询描述部件；Host 解析精确节点和接口。部件可由不连续图元组成；Host 在求解前把可证明的闭合载体、开放连接端和固定锚点分角色 |
+| `drawing_confirm_selection` | 选择确认 | 模型检查 Host 返回的真实高亮图；错误时重新选择，确认后才允许进入数值求解 |
 | `drawing_preview_spatial_intent` | 候选写 | 模型声明通用定性空间目标和保持条件；Host 求解数值并生成一个原子 Preview |
 | `drawing_revise_spatial_intent` | 候选写 | 只修订语义目标/保持条件；Host 替换候选并重新求解，每任务最多三个候选 |
 | `drawing_evaluate_preview` | 只读/评审 | 运行 hard validators、来源质量和本地 reviewer |
@@ -288,7 +289,7 @@ DSH 当前仍是 release candidate。所有 slot、Remote、Cordis 和 rc.8 布�
 
 模型可见目录不含 `taskId`、`observationId`、`contextId`、`groundingId`、`previewHandle`、candidate/operation digest、裸 Drawing Command、translation、pivot、rotation 或世界坐标。精确数值只有在用户原始指令中被 Host 确定性提取后，才以 `numericKey` 被空间目标引用。旧裸 transaction/Commit 与旧 handle 工具都不属于模型目录或 Typert Remote 发布面。
 
-第一层采用多插件友好的惰性激活，不在每个直接用户回合注入完整固定流水线。图片只被 Host 暂存为可选附件，不产生 `drawing_import` 提示，也不改变本轮路由；DSH 仍把它作为普通多模态上下文交给模型。只有用户明确要求把图片导入为可编辑图纸时，模型才调用 `drawing_import`。已有图纸时只声明“可用但仅在本轮意图涉及图纸时调用 `drawing_observe`”，否则明确要求忽略并继续使用其他插件。每个成功结果只返回当前允许的紧凑下一步，例如 `observed → drawing_select_parts → drawing_preview_spatial_intent → drawing_evaluate_preview`。顺序、revision 和权限由 Host episode 强制，模型上下文压缩不会丢失状态；入口只对 DSH runtime root 生效。
+第一层采用多插件友好的惰性激活，不在每个直接用户回合注入完整固定流水线。图片只被 Host 暂存为可选附件，不产生 `drawing_import` 提示，也不改变本轮路由；DSH 仍把它作为普通多模态上下文交给模型。只有用户明确要求把图片导入为可编辑图纸时，模型才调用 `drawing_import`。已有图纸时只声明“可用但仅在本轮意图涉及图纸时调用 `drawing_observe`”，否则明确要求忽略并继续使用其他插件。每个成功结果只返回当前允许的紧凑下一步，例如 `observed → drawing_select_parts → drawing_confirm_selection → drawing_preview_spatial_intent → drawing_evaluate_preview`。顺序、revision 和权限由 Host episode 强制，模型上下文压缩不会丢失状态；入口只对 DSH runtime root 生效。
 
 ## 7. 第二层插件：Engineering Annotation
 
