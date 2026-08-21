@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _ports, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _SemanticEditService_instances, commitPreview_fn, assess_fn, task_fn, preview_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
+var _ports, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _groundingOverlays, _SemanticEditService_instances, commitPreview_fn, assess_fn, task_fn, preview_fn, storeCompilation_fn, updateGroundingOverlay_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _getGroundingOverlay_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -932,6 +932,148 @@ function allNodes$2(document) {
     ...document.relations,
     ...document.features
   ].map((node) => [node.id, node]));
+}
+function compileMultiPartTransform(input) {
+  if (input.baseRef.drawingId !== input.document.id) throw new Error("EDIT_DRAWING_MISMATCH");
+  if (input.parts.length < 2 || input.parts.length > 16) throw new Error("EDIT_PART_COUNT_INVALID");
+  assertPartScopes(input.document, input.parts);
+  const initial = structuredClone(input.document);
+  let working = structuredClone(input.document);
+  const forward = [];
+  const diagnostics = [];
+  const effects = [];
+  for (const part of input.parts) {
+    const compiled = compileSpatialEditProgram({
+      document: working,
+      program: programForPart(input, part),
+      grounding: part.grounding,
+      ports: input.ports
+    });
+    working = compiled.candidate;
+    forward.push(...compiled.forward);
+    diagnostics.push(...compiled.diagnostics);
+    effects.push(compiled.actualEffect);
+  }
+  const inverse = invertDrawingTransaction(initial, forward);
+  const restored = applyDrawingTransaction(working, inverse, input.ports.now());
+  if (canonicalSemanticString(restored) !== canonicalSemanticString(initial)) {
+    throw new Error("EDIT_INVERSE_VERIFICATION_FAILED");
+  }
+  const actualEffect = mergeEffects(effects);
+  const effectDigest = input.ports.digest(canonicalString(actualEffect));
+  const semanticParts = input.parts.map((part) => ({
+    translation: structuredClone(part.translation),
+    ...part.rotationRadians === void 0 ? {} : {
+      rotationRadians: part.rotationRadians,
+      pivot: structuredClone(part.pivot)
+    },
+    targetScope: [...part.grounding.targetNodeIds].sort(),
+    interfaceScopes: part.grounding.interfaces.map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })).sort((left, right) => left.interfaceId.localeCompare(right.interfaceId))
+  }));
+  const candidateDigest = input.ports.digest(canonicalString({
+    baseRef: input.baseRef,
+    resultingSemanticDocument: JSON.parse(canonicalSemanticString(working)),
+    effectDigest,
+    forward,
+    inverse,
+    parts: semanticParts
+  }));
+  const semanticRiskKey = input.ports.digest(canonicalString({
+    baseRef: input.baseRef,
+    resultingSemanticDigest: input.ports.digest(canonicalSemanticString(working)),
+    effectDigest,
+    authoritativeObjective: input.objective,
+    partScopes: semanticParts.map(({ targetScope, interfaceScopes }) => ({ targetScope, interfaceScopes }))
+  }));
+  return {
+    forward,
+    inverse,
+    candidate: working,
+    actualEffect,
+    diagnostics,
+    candidateDigest,
+    effectDigest,
+    semanticRiskKey
+  };
+}
+function assertPartScopes(document, parts) {
+  const groundingIds = /* @__PURE__ */ new Set();
+  const targetNodeIds = /* @__PURE__ */ new Set();
+  const endpointSlots = /* @__PURE__ */ new Set();
+  for (const part of parts) {
+    if (groundingIds.has(part.groundingId)) throw new Error("EDIT_GROUNDING_DUPLICATE");
+    groundingIds.add(part.groundingId);
+    if (part.rotationRadians === void 0 !== (part.pivot === void 0)) {
+      throw new Error("EDIT_ROTATION_PIVOT_PAIR_REQUIRED");
+    }
+    if (![...part.translation, ...part.pivot ?? [], part.rotationRadians ?? 0].every(Number.isFinite)) {
+      throw new Error("EDIT_TRANSFORM_INVALID");
+    }
+    for (const nodeId of part.grounding.targetNodeIds) {
+      if (!findDrawingNode(document, nodeId)) throw new Error("EDIT_TARGET_UNRESOLVED");
+      if (targetNodeIds.has(nodeId)) throw new Error("EDIT_PART_TARGET_OVERLAP");
+      targetNodeIds.add(nodeId);
+    }
+    for (const port of part.grounding.interfaces) {
+      if (!port.endpoint || !findDrawingNode(document, port.nodeId)) {
+        throw new Error("EDIT_INTERFACE_UNRESOLVED");
+      }
+      const slot = `${port.nodeId}:${port.endpoint}`;
+      if (endpointSlots.has(slot)) throw new Error("EDIT_PART_INTERFACE_CONFLICT");
+      endpointSlots.add(slot);
+    }
+  }
+}
+function programForPart(input, part) {
+  const target = part.grounding.targetNodeIds.length === 1 ? findDrawingNode(input.document, part.grounding.targetNodeIds[0]) : null;
+  const connectedCarrier = (target == null ? void 0 : target.plane) === "geometry" && (target.node.type === "circle" || target.node.type === "ellipse");
+  const connected = connectedCarrier || part.grounding.interfaces.length > 0;
+  const operation = connected ? {
+    kind: "connected_transform",
+    translation: [...part.translation],
+    ...part.rotationRadians === void 0 && connectedCarrier ? {} : {
+      rotationRadians: part.rotationRadians ?? 0,
+      pivot: [...part.pivot ?? [0, 0]]
+    },
+    interfaceIds: part.grounding.interfaces.map(({ interfaceId }) => interfaceId)
+  } : {
+    kind: "rigid_transform",
+    translation: [...part.translation],
+    rotationRadians: part.rotationRadians ?? 0,
+    pivot: [...part.pivot ?? [0, 0]]
+  };
+  return {
+    baseRef: structuredClone(input.baseRef),
+    targetHandle: part.grounding.targetHandle,
+    summary: input.summary,
+    objective: input.objective,
+    operations: [operation],
+    preserveScopes: [],
+    postconditions: [],
+    evidenceRefs: [`grounding:${part.groundingId}`]
+  };
+}
+function mergeEffects(effects) {
+  const createdNodeIds = /* @__PURE__ */ new Set();
+  const updatedNodeIds = /* @__PURE__ */ new Set();
+  const deletedNodeIds = /* @__PURE__ */ new Set();
+  const changedFields = /* @__PURE__ */ new Map();
+  for (const effect of effects) {
+    effect.createdNodeIds.forEach((id) => createdNodeIds.add(id));
+    effect.updatedNodeIds.forEach((id) => updatedNodeIds.add(id));
+    effect.deletedNodeIds.forEach((id) => deletedNodeIds.add(id));
+    for (const [id, fields] of Object.entries(effect.changedFields)) {
+      const aggregate = changedFields.get(id) ?? /* @__PURE__ */ new Set();
+      fields.forEach((field) => aggregate.add(field));
+      changedFields.set(id, aggregate);
+    }
+  }
+  return {
+    createdNodeIds: [...createdNodeIds].sort(),
+    updatedNodeIds: [...updatedNodeIds].sort(),
+    deletedNodeIds: [...deletedNodeIds].sort(),
+    changedFields: Object.fromEntries([...changedFields.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([id, fields]) => [id, [...fields].sort()]))
+  };
 }
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
@@ -6850,10 +6992,10 @@ function superRefine(fn, params) {
 }
 const protocolIdSchema = string().trim().min(1).max(256);
 const contentDigestSchema = string().trim().min(1).max(512);
-const idSchema$3 = protocolIdSchema;
+const idSchema$4 = protocolIdSchema;
 const digestSchema$1 = contentDigestSchema;
 const drawingRefSchema$1 = object({
-  drawingId: idSchema$3,
+  drawingId: idSchema$4,
   revision: number().int().nonnegative()
 }).strict();
 const editBasisSchema = discriminatedUnion("kind", [
@@ -6864,26 +7006,26 @@ const editBasisSchema = discriminatedUnion("kind", [
   object({
     kind: literal("preview"),
     baseRef: drawingRefSchema$1,
-    previewHandle: idSchema$3,
+    previewHandle: idSchema$4,
     previewDigest: digestSchema$1
   }).strict(),
   object({
     kind: literal("carried-candidate"),
-    handoffId: idSchema$3,
-    taskId: idSchema$3,
-    originTaskId: idSchema$3,
+    handoffId: idSchema$4,
+    taskId: idSchema$4,
+    originTaskId: idSchema$4,
     baseRef: drawingRefSchema$1,
     candidateDigest: digestSchema$1
   }).strict()
 ]);
 const observationArtifactRefSchema = object({
-  id: idSchema$3,
+  id: idSchema$4,
   contentDigest: digestSchema$1,
   mimeType: _enum(["image/png", "image/webp"]),
   basis: editBasisSchema
 }).strict();
 object({
-  taskId: idSchema$3,
+  taskId: idSchema$4,
   rootUserMessageDigest: digestSchema$1,
   authoritativeObjectiveDigest: digestSchema$1,
   baseRef: drawingRefSchema$1,
@@ -6891,28 +7033,28 @@ object({
   stateEpoch: number().int().nonnegative()
 }).strict();
 object({
-  observationId: idSchema$3,
-  taskId: idSchema$3,
+  observationId: idSchema$4,
+  taskId: idSchema$4,
   basis: editBasisSchema,
   artifactRefs: array(observationArtifactRefSchema).max(16),
-  selectionProjectionId: idSchema$3.optional(),
+  selectionProjectionId: idSchema$4.optional(),
   observationDigest: digestSchema$1
 }).strict();
 object({
-  contextId: idSchema$3,
-  taskId: idSchema$3,
-  observationId: idSchema$3,
+  contextId: idSchema$4,
+  taskId: idSchema$4,
+  observationId: idSchema$4,
   contextDigest: digestSchema$1
 }).strict();
 object({
-  groundingId: idSchema$3,
-  taskId: idSchema$3,
-  contextId: idSchema$3,
-  targetHandle: idSchema$3,
-  targetNodeIds: array(idSchema$3).min(1).max(256),
+  groundingId: idSchema$4,
+  taskId: idSchema$4,
+  contextId: idSchema$4,
+  targetHandle: idSchema$4,
+  targetNodeIds: array(idSchema$4).min(1).max(256),
   interfaces: array(object({
-    interfaceId: idSchema$3,
-    nodeId: idSchema$3,
+    interfaceId: idSchema$4,
+    nodeId: idSchema$4,
     endpoint: _enum(["start", "end"])
   }).strict()).max(256),
   targetScopeDigest: digestSchema$1,
@@ -6920,51 +7062,57 @@ object({
   evidenceDigest: digestSchema$1
 }).strict();
 object({
-  previewHandle: idSchema$3,
-  taskId: idSchema$3,
-  groundingId: idSchema$3,
+  previewHandle: idSchema$4,
+  taskId: idSchema$4,
+  groundingId: idSchema$4,
+  groundingIds: array(idSchema$4).min(2).max(16).optional(),
   baseRef: drawingRefSchema$1,
   candidateDigest: digestSchema$1,
   effectDigest: digestSchema$1,
-  finalizeOperationId: idSchema$3,
+  finalizeOperationId: idSchema$4,
   finalizeOperationBindingDigest: digestSchema$1
-}).strict();
+}).strict().superRefine(({ groundingId, groundingIds }, context) => {
+  if (groundingIds === void 0) return;
+  if (groundingIds[0] !== groundingId || new Set(groundingIds).size !== groundingIds.length) {
+    context.addIssue({ code: "custom", path: ["groundingIds"], message: "EDIT_GROUNDING_SET_INVALID" });
+  }
+});
 object({
-  evaluationId: idSchema$3,
-  taskId: idSchema$3,
-  previewHandle: idSchema$3,
+  evaluationId: idSchema$4,
+  taskId: idSchema$4,
+  previewHandle: idSchema$4,
   candidateDigest: digestSchema$1,
   evaluationDigest: digestSchema$1
 }).strict();
 const selectionProjectionRefSchema = object({
-  selectionProjectionId: idSchema$3,
+  selectionProjectionId: idSchema$4,
   drawingRef: drawingRefSchema$1,
-  nodeIds: array(idSchema$3).min(1).max(256),
+  nodeIds: array(idSchema$4).min(1).max(256),
   projectionDigest: digestSchema$1,
   expiresAt: number().int().nonnegative()
 }).strict();
-const idSchema$2 = string().trim().min(1).max(256);
+const idSchema$3 = string().trim().min(1).max(256);
 const digestSchema = string().trim().min(1).max(512);
 const finalizePreviewRequestSchema = object({
-  previewHandle: idSchema$2,
+  previewHandle: idSchema$3,
   previewDigest: digestSchema,
-  finalizeOperationId: idSchema$2,
+  finalizeOperationId: idSchema$3,
   finalizeOperationBindingDigest: digestSchema,
-  evaluationId: idSchema$2
+  evaluationId: idSchema$3
 }).strict();
 const finalizePreviewResultSchema = discriminatedUnion("status", [
   object({
     status: literal("committed"),
     mode: _enum(["auto-safe", "confirmed"]),
-    commitId: idSchema$2,
+    commitId: idSchema$3,
     ref: drawingRefSchema$1,
-    operationId: idSchema$2,
+    operationId: idSchema$3,
     operationBindingDigest: digestSchema
   }).strict(),
   object({
     status: literal("already-satisfied"),
     ref: drawingRefSchema$1,
-    operationId: idSchema$2,
+    operationId: idSchema$3,
     operationBindingDigest: digestSchema
   }).strict(),
   object({
@@ -6973,7 +7121,7 @@ const finalizePreviewResultSchema = discriminatedUnion("status", [
   }).strict(),
   object({
     status: literal("needs-revision"),
-    evaluationId: idSchema$2,
+    evaluationId: idSchema$3,
     reasons: array(string().trim().min(1).max(1e3)).min(1).max(64)
   }).strict(),
   object({
@@ -6983,15 +7131,58 @@ const finalizePreviewResultSchema = discriminatedUnion("status", [
   object({
     status: literal("rejected"),
     disposition: _enum(["blocked", "confirmation_required"]),
-    code: idSchema$2,
+    code: idSchema$3,
     message: string().trim().min(1).max(2e3)
   }).strict(),
   object({
     status: literal("outcome-unknown"),
-    operationId: idSchema$2,
+    operationId: idSchema$3,
     operationBindingDigest: digestSchema
   }).strict()
 ]);
+const idSchema$2 = string().trim().min(1).max(256);
+const boundedTextSchema$1 = string().trim().min(1).max(2e3);
+const finiteSchema$1 = number().finite();
+const vec2Schema$2 = tuple([finiteSchema$1, finiteSchema$1]);
+const multiPartTransformPartSchema = object({
+  groundingId: idSchema$2,
+  translation: vec2Schema$2,
+  rotationRadians: finiteSchema$1.optional(),
+  pivot: vec2Schema$2.optional()
+}).strict().superRefine(({ rotationRadians, pivot }, context) => {
+  if (rotationRadians === void 0 !== (pivot === void 0)) {
+    context.addIssue({
+      code: "custom",
+      message: "EDIT_ROTATION_PIVOT_PAIR_REQUIRED"
+    });
+  }
+});
+const multiPartTransformRequestShape = {
+  taskId: idSchema$2,
+  parts: array(multiPartTransformPartSchema).min(2).max(16),
+  summary: boundedTextSchema$1
+};
+function validateUniqueGroundings({ parts }, context) {
+  const groundingIds = /* @__PURE__ */ new Set();
+  for (const [index, part] of parts.entries()) {
+    if (groundingIds.has(part.groundingId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["parts", index, "groundingId"],
+        message: "EDIT_GROUNDING_DUPLICATE"
+      });
+    }
+    groundingIds.add(part.groundingId);
+  }
+}
+const multiPartTransformRequestSchema = object({
+  ...multiPartTransformRequestShape
+}).strict().superRefine(validateUniqueGroundings);
+const multiPartTransformRevisionRequestSchema = object({
+  ...multiPartTransformRequestShape,
+  currentPreviewHandle: idSchema$2,
+  currentCandidateDigest: idSchema$2
+}).strict().superRefine(validateUniqueGroundings);
 const idSchema$1 = string().trim().min(1).max(256);
 const boundedTextSchema = string().trim().min(1).max(2e3);
 const finiteSchema = number().finite();
@@ -7444,6 +7635,46 @@ discriminatedUnion("status", [
   object({ status: literal("stale"), currentRef: drawingRefSchema$1 }).strict(),
   object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
 ]);
+const drawingGroundingOverlayInterfaceSchema = object({
+  interfaceId: idSchema,
+  nodeId: idSchema,
+  endpoint: _enum(["start", "end"])
+}).strict();
+const drawingGroundingOverlayGroupSchema = object({
+  groundingId: idSchema,
+  partKey: string().trim().min(1).max(64),
+  label: string().trim().min(1).max(80),
+  colorIndex: number().int().nonnegative(),
+  nodeIds: array(idSchema).min(1).max(256),
+  interfaces: array(drawingGroundingOverlayInterfaceSchema).max(256)
+}).strict();
+object({
+  version: literal(1),
+  drawingRef: drawingRefSchema$1,
+  taskId: idSchema,
+  groups: array(drawingGroundingOverlayGroupSchema).min(1).max(16)
+}).strict().superRefine(({ groups }, context) => {
+  const groundingIds = /* @__PURE__ */ new Set();
+  const partKeys = /* @__PURE__ */ new Set();
+  for (const [index, group] of groups.entries()) {
+    if (groundingIds.has(group.groundingId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["groups", index, "groundingId"],
+        message: "GROUNDING_ID_DUPLICATE"
+      });
+    }
+    if (partKeys.has(group.partKey)) {
+      context.addIssue({
+        code: "custom",
+        path: ["groups", index, "partKey"],
+        message: "GROUNDING_PART_KEY_DUPLICATE"
+      });
+    }
+    groundingIds.add(group.groundingId);
+    partKeys.add(group.partKey);
+  }
+});
 object({
   ref: drawingRefSchema$1,
   commands: array(workspaceCommandSchema).min(1),
@@ -8238,6 +8469,144 @@ function bounds(value) {
   const candidate = value;
   return ["minX", "minY", "maxX", "maxY"].every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]));
 }
+const vec2ToolSchema = {
+  type: "array",
+  items: { type: "number" },
+  description: "Exactly two finite Drawing coordinates [x, y]."
+};
+const drawingRefToolSchema = {
+  type: "object",
+  properties: {
+    drawingId: { type: "string", required: true },
+    revision: { type: "integer", required: true }
+  },
+  additionalProperties: false
+};
+const effectScopeToolSchema = {
+  oneOf: [
+    objectSchema({
+      kind: literalSchema("node-field"),
+      nodeId: requiredString(),
+      fields: requiredArray({ type: "string" })
+    }),
+    objectSchema({
+      kind: literalSchema("source-span"),
+      nodeId: requiredString(),
+      start: requiredInteger(),
+      end: requiredInteger()
+    }),
+    objectSchema({ kind: literalSchema("half-edge"), nodeId: requiredString(), halfEdgeId: requiredString() }),
+    objectSchema({ kind: literalSchema("interface"), interfaceId: requiredString() }),
+    objectSchema({
+      kind: literalSchema("endpoint-slot"),
+      nodeId: requiredString(),
+      endpoint: { type: "string", enum: ["start", "end"], required: true }
+    }),
+    objectSchema({
+      kind: literalSchema("creation"),
+      plane: { type: "string", enum: ["geometry", "annotation", "relation", "feature"], required: true },
+      nodeType: requiredString(),
+      containerId: { type: "string" },
+      maxCount: requiredInteger()
+    }),
+    objectSchema({ kind: literalSchema("deletion"), nodeIds: requiredArray({ type: "string" }) })
+  ]
+};
+const spatialOperationToolSchema = {
+  oneOf: [
+    objectSchema({
+      kind: literalSchema("rigid_transform"),
+      translation: { ...vec2ToolSchema, required: true },
+      rotationRadians: requiredNumber(),
+      pivot: { ...vec2ToolSchema, required: true }
+    }),
+    objectSchema({
+      kind: literalSchema("connected_transform"),
+      translation: { ...vec2ToolSchema, required: true },
+      rotationRadians: { type: "number" },
+      pivot: vec2ToolSchema,
+      interfaceIds: requiredArray({ type: "string" })
+    }),
+    objectSchema({
+      kind: literalSchema("set_endpoint"),
+      nodeId: requiredString(),
+      endpoint: { type: "string", enum: ["start", "end"], required: true },
+      point: { ...vec2ToolSchema, required: true }
+    }),
+    objectSchema({
+      kind: literalSchema("create_path"),
+      nodeId: requiredString(),
+      points: requiredArray(vec2ToolSchema),
+      closed: { type: "boolean", required: true }
+    }),
+    objectSchema({ kind: literalSchema("delete_nodes"), nodeIds: requiredArray({ type: "string" }) }),
+    objectSchema({
+      kind: literalSchema("create_annotation_batch"),
+      annotations: requiredArray({
+        type: "object",
+        properties: { id: requiredString(), type: requiredString() },
+        additionalProperties: true
+      }),
+      associations: requiredArray({
+        type: "object",
+        properties: { id: requiredString(), type: { type: "string", const: "association", required: true } },
+        additionalProperties: true
+      })
+    })
+  ]
+};
+const spatialPostconditionToolSchema = {
+  oneOf: [
+    objectSchema({ kind: literalSchema("preserve_connectivity"), nodeIds: requiredArray({ type: "string" }) }),
+    objectSchema({
+      kind: literalSchema("within_bounds"),
+      bounds: {
+        type: "object",
+        required: true,
+        additionalProperties: false,
+        properties: {
+          minX: requiredNumber(),
+          minY: requiredNumber(),
+          maxX: requiredNumber(),
+          maxY: requiredNumber()
+        }
+      }
+    }),
+    objectSchema({
+      kind: literalSchema("target_position"),
+      targetHandle: requiredString(),
+      point: { ...vec2ToolSchema, required: true },
+      tolerance: requiredNumber()
+    })
+  ]
+};
+const spatialEditProgramToolSchema = {
+  type: "object",
+  properties: {
+    baseRef: { ...drawingRefToolSchema, required: true },
+    targetHandle: requiredString(),
+    summary: requiredString(),
+    objective: requiredString(),
+    operations: requiredArray(spatialOperationToolSchema),
+    preserveScopes: requiredArray(effectScopeToolSchema),
+    postconditions: requiredArray(spatialPostconditionToolSchema),
+    evidenceRefs: requiredArray({ type: "string" })
+  },
+  additionalProperties: false
+};
+const multiPartTransformPartToolSchema = {
+  type: "object",
+  properties: {
+    groundingId: { type: "string", required: true },
+    translation: { ...vec2ToolSchema, required: true },
+    rotationRadians: {
+      type: "number",
+      description: "Optional exact rotation in radians. When present, pivot is also required."
+    },
+    pivot: vec2ToolSchema
+  },
+  additionalProperties: false
+};
 function withDrawingWorkflow(result, state, nextTools, instruction) {
   return {
     ...result,
@@ -8250,7 +8619,9 @@ function createSemanticEditToolCatalog(semantic, questions) {
     createDrawingBuildContextTool(semantic),
     createDrawingGroundTool(semantic),
     createDrawingPreviewGroundedTransformTool(semantic),
+    createDrawingPreviewMultiPartTransformTool(semantic),
     createDrawingReviseGroundedTransformTool(semantic),
+    createDrawingReviseMultiPartTransformTool(semantic),
     createDrawingPreviewProgramTool(semantic),
     createDrawingRevisePreviewTool(semantic),
     createDrawingEvaluatePreviewTool(semantic),
@@ -8290,6 +8661,64 @@ function createDrawingPreviewGroundedTransformTool(semantic) {
         "preview_ready",
         ["drawing_evaluate_preview"],
         "Evaluate this exact Preview before attempting to finalize it."
+      );
+    }
+  });
+}
+function createDrawingPreviewMultiPartTransformTool(semantic) {
+  return defineTool({
+    name: "drawing_preview_multi_part_transform",
+    description: "Create one atomic Preview for 2-16 independently moving grounded parts. Ground each semantic carrier separately with a stable partKey and label, then give every grounding its own translation and optional exact rotation/pivot. Use this for coordinated poses; never split one user intent into sequential commits.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      parts: {
+        type: "array",
+        required: true,
+        description: "Two to sixteen exact Groundings. Each groundingId may appear once.",
+        items: multiPartTransformPartToolSchema
+      },
+      summary: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      const input = multiPartTransformRequestSchema.parse(args);
+      const preview = semantic.previewMultiPartTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), input);
+      return withDrawingWorkflow(
+        preview,
+        "preview_ready",
+        ["drawing_evaluate_preview"],
+        "Evaluate the complete multi-part Preview before attempting to finalize it."
+      );
+    }
+  });
+}
+function createDrawingReviseMultiPartTransformTool(semantic) {
+  return defineTool({
+    name: "drawing_revise_multi_part_transform",
+    description: "Atomically replace the exact current multi-part Preview after visual feedback. Keep the same task and Groundings, adjust any part transforms, and bind the replacement to the current Preview handle and candidate digest.",
+    parameters: {
+      taskId: { type: "string", required: true },
+      currentPreviewHandle: { type: "string", required: true },
+      currentCandidateDigest: { type: "string", required: true },
+      parts: {
+        type: "array",
+        required: true,
+        description: "Two to sixteen exact Groundings with revised transforms.",
+        items: multiPartTransformPartToolSchema
+      },
+      summary: { type: "string", required: true }
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(args, exec) {
+      var _a3;
+      const input = multiPartTransformRevisionRequestSchema.parse(args);
+      const preview = semantic.reviseMultiPartTransform(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), input);
+      return withDrawingWorkflow(
+        preview,
+        "preview_ready",
+        ["drawing_evaluate_preview"],
+        "Evaluate the replacement multi-part Preview; the previous handle is no longer current."
       );
     }
   });
@@ -8381,7 +8810,7 @@ function createDrawingBuildContextTool(semantic) {
 function createDrawingGroundTool(semantic) {
   return defineTool({
     name: "drawing_ground",
-    description: "Ground a semantic target to exact node ids and topology interfaces. Choose only the semantic carrier being transformed; pass empty interfaces so the Host derives true contacted endpoint slots. When the user refers to a Host selection, pass its selectionProjectionId with empty targetNodeIds.",
+    description: "Ground one exact semantic carrier to node ids and topology interfaces. For a coordinated multi-part edit, call once per independently moving part with a stable partKey and user-facing label. Pass empty interfaces so the Host derives true contacted endpoint slots. When the user refers to a Host selection, pass its selectionProjectionId with empty targetNodeIds.",
     parameters: {
       taskId: { type: "string", required: true },
       contextId: { type: "string", required: true },
@@ -8389,8 +8818,28 @@ function createDrawingGroundTool(semantic) {
         type: "string",
         description: "Optional Host selection handle. Omit this field entirely when drawing_observe did not return one; never send an empty string."
       },
+      partKey: {
+        type: "string",
+        description: "Stable per-task key for one independently moving part. Provide together with label for multi-part edits."
+      },
+      label: {
+        type: "string",
+        description: "Short user-facing canvas label for this part. Provide together with partKey."
+      },
       targetNodeIds: { type: "array", items: { type: "string" }, required: true },
-      interfaces: { type: "array", items: { type: "json" }, required: true }
+      interfaces: {
+        type: "array",
+        required: true,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            interfaceId: { type: "string", required: true },
+            nodeId: { type: "string", required: true },
+            endpoint: { type: "string", enum: ["start", "end"], required: true }
+          }
+        }
+      }
     },
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
@@ -8399,8 +8848,8 @@ function createDrawingGroundTool(semantic) {
       return withDrawingWorkflow(
         grounding,
         "grounded",
-        ["drawing_preview_grounded_transform", "drawing_preview_program"],
-        "Use grounded transform for ordinary movement or posing; use the advanced program only for other explicit spatial operations."
+        ["drawing_preview_grounded_transform", "drawing_preview_multi_part_transform", "drawing_preview_program"],
+        "Use grounded transform for one part, multi-part transform after grounding every independent part, or the advanced program only for other explicit spatial operations."
       );
     }
   });
@@ -8412,15 +8861,16 @@ function createDrawingPreviewProgramTool(semantic) {
     parameters: {
       taskId: { type: "string", required: true },
       groundingId: { type: "string", required: true },
-      program: { type: "json", required: true }
+      program: { ...spatialEditProgramToolSchema, required: true }
     },
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
       var _a3;
       const program = spatialEditProgramSchema.parse(args.program);
+      const input = args;
       const preview = semantic.previewProgram(requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id), {
-        taskId: args.taskId,
-        groundingId: args.groundingId,
+        taskId: input.taskId,
+        groundingId: input.groundingId,
         program
       });
       return withDrawingWorkflow(
@@ -8431,6 +8881,24 @@ function createDrawingPreviewProgramTool(semantic) {
       );
     }
   });
+}
+function requiredString() {
+  return { type: "string", required: true };
+}
+function requiredNumber() {
+  return { type: "number", required: true };
+}
+function requiredInteger() {
+  return { type: "integer", required: true };
+}
+function requiredArray(items) {
+  return { type: "array", items, required: true };
+}
+function literalSchema(value) {
+  return { type: "string", const: value, required: true };
+}
+function objectSchema(properties) {
+  return { type: "object", properties, additionalProperties: false };
 }
 function createDrawingEvaluatePreviewTool(semantic) {
   return defineTool({
@@ -8449,7 +8917,12 @@ function createDrawingEvaluatePreviewTool(semantic) {
       return withDrawingWorkflow(
         result,
         revisionRequired ? "revision_required" : "evaluated",
-        revisionRequired ? ["drawing_revise_grounded_transform", "drawing_revise_preview", "drawing_discard_preview"] : ["drawing_finalize_preview"],
+        revisionRequired ? [
+          "drawing_revise_grounded_transform",
+          "drawing_revise_multi_part_transform",
+          "drawing_revise_preview",
+          "drawing_discard_preview"
+        ] : ["drawing_finalize_preview"],
         revisionRequired ? "Do not finalize this candidate. Revise it from the reported evidence or discard it." : "Finalize this exact evaluated Preview; the Host will apply auto-safe or request the required user decision."
       );
     }
@@ -8464,7 +8937,7 @@ function createDrawingRevisePreviewTool(semantic) {
       currentPreviewHandle: { type: "string", required: true },
       currentCandidateDigest: { type: "string", required: true },
       groundingId: { type: "string", required: true },
-      program: { type: "json", required: true }
+      program: { ...spatialEditProgramToolSchema, required: true }
     },
     output: { schema: { type: "json" }, render: renderJson },
     async execute(args, exec) {
@@ -9257,6 +9730,7 @@ class SemanticEditService {
     __privateAdd(this, _reviewInflight, /* @__PURE__ */ new Map());
     __privateAdd(this, _stickyReviewDefects, /* @__PURE__ */ new Map());
     __privateAdd(this, _selectionProjections, /* @__PURE__ */ new Map());
+    __privateAdd(this, _groundingOverlays, /* @__PURE__ */ new Map());
     this.drawings = drawings;
     this.ports = ports;
   }
@@ -9320,6 +9794,7 @@ class SemanticEditService {
     const workspacePreview = this.drawings.getPreview(sessionId);
     if (workspacePreview) this.drawings.discardPreview(sessionId, { handle: workspacePreview.handle });
     __privateGet(this, _previews2).delete(sessionId);
+    __privateGet(this, _groundingOverlays).delete(sessionId);
     const objective = input.objective.trim();
     if (!objective) throw new Error("EDIT_OBJECTIVE_REQUIRED");
     const ref = {
@@ -9508,7 +9983,18 @@ class SemanticEditService {
       }))
     };
     __privateGet(this, _groundings).set(ref.groundingId, { ref, target });
+    __privateMethod(this, _SemanticEditService_instances, updateGroundingOverlay_fn).call(this, sessionId, task, snapshot.ref, ref, input.partKey, input.label);
     return structuredClone(ref);
+  }
+  currentGroundingOverlay(sessionId) {
+    const overlay = __privateGet(this, _groundingOverlays).get(sessionId);
+    const task = __privateGet(this, _tasks).get(sessionId);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!overlay || !(task == null ? void 0 : task.active) || overlay.taskId !== task.ref.taskId || !snapshot || overlay.drawingRef.drawingId !== snapshot.ref.drawingId || overlay.drawingRef.revision !== snapshot.ref.revision) {
+      if (overlay) __privateGet(this, _groundingOverlays).delete(sessionId);
+      return null;
+    }
+    return structuredClone(overlay);
   }
   previewProgram(sessionId, input) {
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
@@ -9525,36 +10011,50 @@ class SemanticEditService {
       grounding: grounding.target,
       ports: this.ports
     });
-    const workspace = this.drawings.createPreview(sessionId, {
-      ref: snapshot.ref,
-      commands: compilation.forward,
-      summary: program.summary
+    return __privateMethod(this, _SemanticEditService_instances, storeCompilation_fn).call(this, sessionId, task, snapshot.ref, [grounding], compilation, program.summary, program);
+  }
+  previewMultiPartTransform(sessionId, raw) {
+    var _a3;
+    const input = multiPartTransformRequestSchema.parse(raw);
+    const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
+    if (task.candidateCount >= 3) throw new Error("EDIT_CANDIDATE_BUDGET_EXHAUSTED");
+    const groundings = input.parts.map(({ groundingId }) => {
+      const grounding = __privateGet(this, _groundings).get(groundingId);
+      if (!grounding || grounding.ref.taskId !== task.ref.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+      return grounding;
     });
-    if (workspace.status !== "previewed") {
-      throw new Error(workspace.status === "rejected" ? workspace.code ?? "EDIT_PREVIEW_REJECTED" : "EDIT_BASE_STALE");
+    const contextId = (_a3 = groundings[0]) == null ? void 0 : _a3.ref.contextId;
+    if (!contextId || groundings.some(({ ref }) => ref.contextId !== contextId)) {
+      throw new Error("EDIT_CONTEXT_MISMATCH");
     }
-    const finalizeOperationId = this.ports.id("finalize");
-    const finalizeOperationBindingDigest = this.ports.digest(canonicalString({
-      mode: "semantic",
-      sessionId,
-      drawingId: snapshot.ref.drawingId,
-      operationId: finalizeOperationId,
-      previewHandle: workspace.preview.handle,
-      candidateDigest: compilation.candidateDigest
-    }));
-    const ref = {
-      previewHandle: workspace.preview.handle,
-      taskId: task.ref.taskId,
-      groundingId: grounding.ref.groundingId,
-      baseRef: structuredClone(snapshot.ref),
-      candidateDigest: compilation.candidateDigest,
-      effectDigest: compilation.effectDigest,
-      finalizeOperationId,
-      finalizeOperationBindingDigest
-    };
-    task.candidateCount += 1;
-    __privateGet(this, _previews2).set(sessionId, { ref, task, grounding, program, compilation });
-    return structuredClone(ref);
+    const snapshot = __privateMethod(this, _SemanticEditService_instances, snapshotAtTask_fn).call(this, sessionId, task);
+    const compilation = compileMultiPartTransform({
+      document: snapshot.document,
+      baseRef: task.ref.baseRef,
+      objective: task.objective,
+      summary: input.summary,
+      parts: input.parts.map((part, index) => ({
+        groundingId: part.groundingId,
+        grounding: groundings[index].target,
+        translation: [part.translation[0], part.translation[1]],
+        ...part.rotationRadians === void 0 ? {} : {
+          rotationRadians: part.rotationRadians,
+          pivot: [part.pivot[0], part.pivot[1]]
+        }
+      })),
+      ports: this.ports
+    });
+    return __privateMethod(this, _SemanticEditService_instances, storeCompilation_fn).call(this, sessionId, task, snapshot.ref, groundings, compilation, input.summary);
+  }
+  reviseMultiPartTransform(sessionId, raw) {
+    const input = multiPartTransformRevisionRequestSchema.parse(raw);
+    const current = __privateMethod(this, _SemanticEditService_instances, preview_fn).call(this, sessionId, input.currentPreviewHandle, input.currentCandidateDigest);
+    if (current.ref.taskId !== input.taskId) throw new Error("EDIT_LINEAGE_MISMATCH");
+    return this.previewMultiPartTransform(sessionId, {
+      taskId: input.taskId,
+      parts: input.parts,
+      summary: input.summary
+    });
   }
   previewGroundedTransform(sessionId, input) {
     const task = __privateMethod(this, _SemanticEditService_instances, task_fn).call(this, sessionId, input.taskId);
@@ -9763,6 +10263,7 @@ class SemanticEditService {
     const result = this.drawings.discardPreview(sessionId, { handle: previewHandle });
     if (result.status !== "discarded") throw new Error(result.code ?? "EDIT_DISCARD_REJECTED");
     __privateGet(this, _previews2).delete(sessionId);
+    __privateGet(this, _groundingOverlays).delete(sessionId);
     return result;
   }
   getOperation(sessionId, operationId, bindingDigest) {
@@ -9770,6 +10271,16 @@ class SemanticEditService {
   }
   undo(sessionId, request) {
     return this.drawings.undoCommit(sessionId, request);
+  }
+  disposeSession(sessionId) {
+    const task = __privateGet(this, _tasks).get(sessionId);
+    if (task) task.active = false;
+    __privateGet(this, _pendingInstructions).delete(sessionId);
+    __privateGet(this, _sessionPolicies).delete(sessionId);
+    __privateGet(this, _tasks).delete(sessionId);
+    __privateGet(this, _previews2).delete(sessionId);
+    __privateGet(this, _selectionProjections).delete(sessionId);
+    __privateGet(this, _groundingOverlays).delete(sessionId);
   }
   undoAuthorized(sessionId, input) {
     const operationId = this.ports.id("undo");
@@ -9859,6 +10370,7 @@ _evaluations = new WeakMap();
 _reviewInflight = new WeakMap();
 _stickyReviewDefects = new WeakMap();
 _selectionProjections = new WeakMap();
+_groundingOverlays = new WeakMap();
 _SemanticEditService_instances = new WeakSet();
 commitPreview_fn = function(sessionId, preview, evaluated, mode) {
   const receipt = this.drawings.commitSemantic(sessionId, {
@@ -9872,16 +10384,21 @@ commitPreview_fn = function(sessionId, preview, evaluated, mode) {
     assessment: evaluated.assessment,
     reviewEvidence: evaluated.evaluation.review
   });
-  if (receipt.status === "no-effect") return {
-    status: "already-satisfied",
-    ref: receipt.ref,
-    operationId: receipt.operationId,
-    operationBindingDigest: receipt.operationBindingDigest
-  };
+  if (receipt.status === "no-effect") {
+    __privateGet(this, _previews2).delete(sessionId);
+    __privateGet(this, _groundingOverlays).delete(sessionId);
+    return {
+      status: "already-satisfied",
+      ref: receipt.ref,
+      operationId: receipt.operationId,
+      operationBindingDigest: receipt.operationBindingDigest
+    };
+  }
   if (receipt.status !== "committed" || receipt.mode !== "semantic") {
     throw new Error("EDIT_COMMIT_RECEIPT_INVALID");
   }
   __privateGet(this, _previews2).delete(sessionId);
+  __privateGet(this, _groundingOverlays).delete(sessionId);
   return {
     status: "committed",
     mode,
@@ -9892,19 +10409,20 @@ commitPreview_fn = function(sessionId, preview, evaluated, mode) {
   };
 };
 assess_fn = function(sessionId, preview, evaluation) {
+  var _a3;
   const reasons = [];
   const hard = evaluation.diagnostics.some((diagnostic) => diagnostic.severity === "error" && diagnostic.hard);
   if (hard) reasons.push("HARD_VALIDATION_FAILED");
-  if (preview.grounding.target.sourceStatus !== "confirmed") reasons.push("SOURCE_NOT_CONFIRMED");
+  if (preview.groundings.some(({ target }) => target.sourceStatus !== "confirmed")) reasons.push("SOURCE_NOT_CONFIRMED");
   if (evaluation.diagnostics.some((diagnostic) => diagnostic.severity !== "info")) reasons.push("DIAGNOSTICS_PRESENT");
   if (evaluation.review.outcome !== "satisfied") reasons.push("REVIEW_NOT_SATISFIED");
-  const safeAnnotationCreate = preview.program.operations.every((operation) => operation.kind === "create_annotation_batch" && operation.annotations.every((node) => annotationConfirmed(node)) && operation.associations.every((node) => associationResolved(node)));
+  const safeAnnotationCreate = ((_a3 = preview.program) == null ? void 0 : _a3.operations.every((operation) => operation.kind === "create_annotation_batch" && operation.annotations.every((node) => annotationConfirmed(node)) && operation.associations.every((node) => associationResolved(node)))) ?? false;
   if (preview.compilation.actualEffect.deletedNodeIds.length > 0 || preview.compilation.actualEffect.createdNodeIds.length > 0 && !safeAnnotationCreate) {
     reasons.push("LIFECYCLE_CHANGE");
   }
   const allowed = /* @__PURE__ */ new Set([
-    ...preview.grounding.target.targetNodeIds,
-    ...preview.grounding.target.interfaces.map(({ nodeId }) => nodeId)
+    ...preview.groundings.flatMap(({ target }) => target.targetNodeIds),
+    ...preview.groundings.flatMap(({ target }) => target.interfaces.map(({ nodeId }) => nodeId))
   ]);
   if (preview.compilation.actualEffect.updatedNodeIds.some((id) => !allowed.has(id))) {
     reasons.push("OUT_OF_SCOPE_EFFECT");
@@ -9957,6 +10475,77 @@ preview_fn = function(sessionId, handle, digest2) {
     throw new Error("EDIT_PREVIEW_STALE");
   }
   return preview;
+};
+storeCompilation_fn = function(sessionId, task, baseRef, groundings, compilation, summary, program) {
+  const workspace = this.drawings.createPreview(sessionId, {
+    ref: baseRef,
+    commands: compilation.forward,
+    summary
+  });
+  if (workspace.status !== "previewed") {
+    throw new Error(workspace.status === "rejected" ? workspace.code ?? "EDIT_PREVIEW_REJECTED" : "EDIT_BASE_STALE");
+  }
+  const finalizeOperationId = this.ports.id("finalize");
+  const finalizeOperationBindingDigest = this.ports.digest(canonicalString({
+    mode: "semantic",
+    sessionId,
+    drawingId: baseRef.drawingId,
+    operationId: finalizeOperationId,
+    previewHandle: workspace.preview.handle,
+    candidateDigest: compilation.candidateDigest
+  }));
+  const groundingIds = groundings.map(({ ref: ref2 }) => ref2.groundingId);
+  const ref = {
+    previewHandle: workspace.preview.handle,
+    taskId: task.ref.taskId,
+    groundingId: groundingIds[0],
+    ...groundingIds.length > 1 ? { groundingIds } : {},
+    baseRef: structuredClone(baseRef),
+    candidateDigest: compilation.candidateDigest,
+    effectDigest: compilation.effectDigest,
+    finalizeOperationId,
+    finalizeOperationBindingDigest
+  };
+  task.candidateCount += 1;
+  __privateGet(this, _previews2).set(sessionId, {
+    ref,
+    task,
+    groundings: [...groundings],
+    ...program ? { program } : {},
+    compilation
+  });
+  return structuredClone(ref);
+};
+updateGroundingOverlay_fn = function(sessionId, task, drawingRef, grounding, rawPartKey, rawLabel) {
+  const partKey = rawPartKey == null ? void 0 : rawPartKey.trim();
+  const label = rawLabel == null ? void 0 : rawLabel.trim();
+  if (partKey !== void 0 && (partKey.length === 0 || partKey.length > 64)) {
+    throw new Error("EDIT_PART_KEY_INVALID");
+  }
+  if (label !== void 0 && (label.length === 0 || label.length > 80)) {
+    throw new Error("EDIT_PART_LABEL_INVALID");
+  }
+  if (partKey === void 0 !== (label === void 0)) throw new Error("EDIT_PART_DISPLAY_PAIR_REQUIRED");
+  const current = __privateGet(this, _groundingOverlays).get(sessionId);
+  const existingGroups = partKey && (current == null ? void 0 : current.taskId) === task.ref.taskId ? [...current.groups] : [];
+  const existingIndex = partKey ? existingGroups.findIndex((group2) => group2.partKey === partKey) : -1;
+  const colorIndex = existingIndex >= 0 ? existingGroups[existingIndex].colorIndex : existingGroups.length;
+  const group = {
+    groundingId: grounding.groundingId,
+    partKey: partKey ?? `grounding:${grounding.groundingId}`,
+    label: label ?? "Grounded target",
+    colorIndex,
+    nodeIds: [...grounding.targetNodeIds].sort(),
+    interfaces: grounding.interfaces.map((port) => structuredClone(port)).sort((left, right) => left.interfaceId.localeCompare(right.interfaceId))
+  };
+  if (existingIndex >= 0) existingGroups.splice(existingIndex, 1, group);
+  else existingGroups.push(group);
+  __privateGet(this, _groundingOverlays).set(sessionId, {
+    version: 1,
+    drawingRef: structuredClone(drawingRef),
+    taskId: task.ref.taskId,
+    groups: existingGroups
+  });
 };
 snapshot_fn = function(sessionId) {
   const snapshot = this.drawings.getSnapshot(sessionId);
@@ -10592,7 +11181,7 @@ function validReview(value) {
     return typeof item.code === "string" && typeof item.reason === "string" && typeof item.scopeDigest === "string";
   });
 }
-class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _projectSelection_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
+class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _projectSelection_dec = [Remote], _getGroundingOverlay_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingSpace");
     __runInitializers(_init, 5, this);
@@ -10639,6 +11228,7 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
       isRuntimeRoot: (agent) => ctx.agents.roots().includes(agent)
     }));
     ctx.on("session/disposed", (session) => {
+      this.semantic.disposeSession(String(session.id));
       this.drawings.disposeSession(String(session.id));
     });
   }
@@ -10650,6 +11240,9 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
   }
   projectSelection(agent, request) {
     return this.semantic.projectSelection(String(agent.id), request);
+  }
+  getGroundingOverlay(agent) {
+    return this.semantic.currentGroundingOverlay(String(agent.id));
   }
   stageInteractiveEdit(agent, request) {
     return this.interactive.stage(String(agent.id), request);
@@ -10671,6 +11264,7 @@ _init = __decoratorStart(_a2);
 __decorateElement(_init, 1, "getSnapshot", _getSnapshot_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "query", _query_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "projectSelection", _projectSelection_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "getGroundingOverlay", _getGroundingOverlay_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "stageInteractiveEdit", _stageInteractiveEdit_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "stageUndo", _stageUndo_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getOperation", _getOperation_dec, DrawingSpaceHostService);

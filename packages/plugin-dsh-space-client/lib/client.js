@@ -496,6 +496,128 @@ window.__ModuleLoader__.load({
     function modulo(value, divisor) {
       return (value % divisor + divisor) % divisor;
     }
+    function GroundingOverlay({
+      document,
+      overlay,
+      viewport
+    }) {
+      const nodes = new Map([
+        ...document.geometry,
+        ...document.annotations
+      ].map((node) => [node.id, node]));
+      const scale = Math.max(viewport.scale, 1e-3);
+      const padding = 6 / scale;
+      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-grounding", pointerEvents: "none", "aria-label": "AI 识别图元", children: overlay.groups.map((group) => {
+        const groundedNodes = group.nodeIds.flatMap((id) => {
+          const node = nodes.get(id);
+          const bounds2 = node === void 0 ? null : nodeBounds(node);
+          return node === void 0 || bounds2 === null ? [] : [{ node, bounds: bounds2 }];
+        });
+        const bounds = combineBounds(groundedNodes.map(({ bounds: nodeBoundsValue }) => nodeBoundsValue));
+        if (bounds === null) return null;
+        const colorClass = `vai-grounding--color-${Math.abs(group.colorIndex) % 6}`;
+        const outline = expandBounds(bounds, padding);
+        const labelWidth = Math.max(34, group.label.length * 13 + 14) / scale;
+        const labelHeight = 20 / scale;
+        const labelPosition = [outline.minX, outline.maxY + 4 / scale];
+        return /* @__PURE__ */ jsxRuntime.jsxs(
+          "g",
+          {
+            className: `vai-grounding__group ${colorClass}`,
+            "data-grounding-group": group.partKey,
+            "data-grounding-id": group.groundingId,
+            children: [
+              /* @__PURE__ */ jsxRuntime.jsx(
+                "rect",
+                {
+                  className: "vai-grounding__outline",
+                  x: outline.minX,
+                  y: outline.minY,
+                  width: Math.max(outline.maxX - outline.minX, 12 / scale),
+                  height: Math.max(outline.maxY - outline.minY, 12 / scale),
+                  vectorEffect: "non-scaling-stroke"
+                }
+              ),
+              groundedNodes.map(({ node, bounds: nodeBoundsValue }) => {
+                const highlighted = expandBounds(nodeBoundsValue, 3 / scale);
+                return /* @__PURE__ */ jsxRuntime.jsx(
+                  "rect",
+                  {
+                    "data-grounding-node": node.id,
+                    className: "vai-grounding__node",
+                    x: highlighted.minX,
+                    y: highlighted.minY,
+                    width: Math.max(highlighted.maxX - highlighted.minX, 8 / scale),
+                    height: Math.max(highlighted.maxY - highlighted.minY, 8 / scale),
+                    vectorEffect: "non-scaling-stroke"
+                  },
+                  node.id
+                );
+              }),
+              group.interfaces.flatMap((item) => {
+                const node = document.geometry.find((candidate) => candidate.id === item.nodeId);
+                if ((node == null ? void 0 : node.type) !== "line") return [];
+                const point = node[item.endpoint];
+                return [/* @__PURE__ */ jsxRuntime.jsx(
+                  "circle",
+                  {
+                    "data-grounding-interface": item.interfaceId,
+                    className: "vai-grounding__interface",
+                    cx: point[0],
+                    cy: point[1],
+                    r: 4 / scale,
+                    vectorEffect: "non-scaling-stroke"
+                  },
+                  item.interfaceId
+                )];
+              }),
+              /* @__PURE__ */ jsxRuntime.jsxs("g", { transform: `translate(${labelPosition[0]} ${labelPosition[1]}) scale(1 -1)`, children: [
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  "rect",
+                  {
+                    className: "vai-grounding__label-bg",
+                    x: 0,
+                    y: -labelHeight,
+                    width: labelWidth,
+                    height: labelHeight,
+                    rx: 4 / scale
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  "text",
+                  {
+                    "data-grounding-label": group.label,
+                    className: "vai-grounding__label",
+                    x: 7 / scale,
+                    y: -6 / scale,
+                    fontSize: 11 / scale,
+                    children: group.label
+                  }
+                )
+              ] })
+            ]
+          },
+          group.groundingId
+        );
+      }) });
+    }
+    function combineBounds(bounds) {
+      if (bounds.length === 0) return null;
+      return bounds.slice(1).reduce((combined, current) => ({
+        minX: Math.min(combined.minX, current.minX),
+        minY: Math.min(combined.minY, current.minY),
+        maxX: Math.max(combined.maxX, current.maxX),
+        maxY: Math.max(combined.maxY, current.maxY)
+      }), bounds[0]);
+    }
+    function expandBounds(bounds, padding) {
+      return {
+        minX: bounds.minX - padding,
+        minY: bounds.minY - padding,
+        maxX: bounds.maxX + padding,
+        maxY: bounds.maxY + padding
+      };
+    }
     function SourceUnderlay({
       source,
       resource,
@@ -522,6 +644,7 @@ window.__ModuleLoader__.load({
       const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
       const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
       const preview = useDrawingWorkspace((state) => state.preview);
+      const groundingOverlay = useDrawingWorkspace((state) => state.groundingOverlay);
       const sourceResource = useDrawingWorkspace((state) => state.sourceResource);
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -761,6 +884,14 @@ window.__ModuleLoader__.load({
                     },
                     `preview-motion:${id}`
                   )),
+                  groundingOverlay === null ? null : /* @__PURE__ */ jsxRuntime.jsx(
+                    GroundingOverlay,
+                    {
+                      document: snapshot.document,
+                      overlay: groundingOverlay,
+                      viewport
+                    }
+                  ),
                   entities.map((node) => /* @__PURE__ */ jsxRuntime.jsx(
                     EntityRenderer,
                     {
@@ -853,6 +984,7 @@ window.__ModuleLoader__.load({
       const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
       const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
       const preview = useDrawingWorkspace((state) => state.preview);
+      const groundingOverlay = useDrawingWorkspace((state) => state.groundingOverlay);
       const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
       const busy = useDrawingWorkspace((state) => state.busy);
       const setSelection = useDrawingWorkspace((state) => state.setSelection);
@@ -872,61 +1004,74 @@ window.__ModuleLoader__.load({
             group.label,
             /* @__PURE__ */ jsxRuntime.jsx("span", { children: group.nodes.length })
           ] }),
-          group.nodes.length === 0 ? /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-object-group__empty", children: "无" }) : group.nodes.map((node) => /* @__PURE__ */ jsxRuntime.jsxs(
-            "div",
-            {
-              className: `vai-object-row${selectedIds.includes(node.id) ? " vai-object-row--selected" : ""}`,
-              "data-object-id": node.id,
-              children: [
-                /* @__PURE__ */ jsxRuntime.jsxs(
-                  "button",
-                  {
-                    type: "button",
-                    className: "vai-object-row__main",
-                    onClick: (event) => {
-                      if (event.metaKey || event.ctrlKey) {
-                        setSelection(selectedIds.includes(node.id) ? selectedIds.filter((id) => id !== node.id) : [...selectedIds, node.id]);
-                      } else setSelection([node.id]);
-                    },
-                    children: [
-                      /* @__PURE__ */ jsxRuntime.jsx(ObjectGlyph, { type: node.type }),
-                      /* @__PURE__ */ jsxRuntime.jsxs("span", { className: "vai-object-row__identity", children: [
-                        /* @__PURE__ */ jsxRuntime.jsx("strong", { children: node.id }),
-                        /* @__PURE__ */ jsxRuntime.jsx("small", { children: node.type })
-                      ] })
-                    ]
-                  }
-                ),
-                /* @__PURE__ */ jsxRuntime.jsx(
-                  "button",
-                  {
-                    type: "button",
-                    className: "vai-icon-button",
-                    "aria-label": `${node.visible ? "隐藏" : "显示"} ${node.id}`,
-                    disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.edit),
-                    onClick: () => {
-                      void updateNode(node.id, { visible: !node.visible });
-                    },
-                    children: node.visible ? "◉" : "○"
-                  }
-                ),
-                /* @__PURE__ */ jsxRuntime.jsx(
-                  "button",
-                  {
-                    type: "button",
-                    className: "vai-icon-button vai-icon-button--danger",
-                    "aria-label": `删除 ${node.id}`,
-                    disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.delete),
-                    onClick: () => {
-                      void deleteNodes([node.id]);
-                    },
-                    children: "×"
-                  }
-                )
-              ]
-            },
-            node.id
-          ))
+          group.nodes.length === 0 ? /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-object-group__empty", children: "无" }) : group.nodes.map((node) => {
+            const groundedParts = (groundingOverlay == null ? void 0 : groundingOverlay.groups.filter((part) => part.nodeIds.includes(node.id))) ?? [];
+            return /* @__PURE__ */ jsxRuntime.jsxs(
+              "div",
+              {
+                className: `vai-object-row${selectedIds.includes(node.id) ? " vai-object-row--selected" : ""}`,
+                "data-object-id": node.id,
+                children: [
+                  /* @__PURE__ */ jsxRuntime.jsxs(
+                    "button",
+                    {
+                      type: "button",
+                      className: "vai-object-row__main",
+                      onClick: (event) => {
+                        if (event.metaKey || event.ctrlKey) {
+                          setSelection(selectedIds.includes(node.id) ? selectedIds.filter((id) => id !== node.id) : [...selectedIds, node.id]);
+                        } else setSelection([node.id]);
+                      },
+                      children: [
+                        /* @__PURE__ */ jsxRuntime.jsx(ObjectGlyph, { type: node.type }),
+                        /* @__PURE__ */ jsxRuntime.jsxs("span", { className: "vai-object-row__identity", children: [
+                          /* @__PURE__ */ jsxRuntime.jsx("strong", { children: node.id }),
+                          /* @__PURE__ */ jsxRuntime.jsx("small", { children: node.type })
+                        ] }),
+                        groundedParts.map((part) => /* @__PURE__ */ jsxRuntime.jsx(
+                          "span",
+                          {
+                            className: `vai-object-row__grounding vai-grounding--color-${Math.abs(part.colorIndex) % 6}`,
+                            "data-grounding-object": node.id,
+                            title: `AI 识别：${part.label}`,
+                            children: part.label
+                          },
+                          part.groundingId
+                        ))
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntime.jsx(
+                    "button",
+                    {
+                      type: "button",
+                      className: "vai-icon-button",
+                      "aria-label": `${node.visible ? "隐藏" : "显示"} ${node.id}`,
+                      disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.edit),
+                      onClick: () => {
+                        void updateNode(node.id, { visible: !node.visible });
+                      },
+                      children: node.visible ? "◉" : "○"
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntime.jsx(
+                    "button",
+                    {
+                      type: "button",
+                      className: "vai-icon-button vai-icon-button--danger",
+                      "aria-label": `删除 ${node.id}`,
+                      disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.delete),
+                      onClick: () => {
+                        void deleteNodes([node.id]);
+                      },
+                      children: "×"
+                    }
+                  )
+                ]
+              },
+              node.id
+            );
+          })
         ] }, group.label)) })
       ] });
     }
@@ -1357,9 +1502,10 @@ window.__ModuleLoader__.load({
       let sourceResource = null;
       let selectionSequence = 0;
       const store = createStore((set, get) => {
-        const replaceSnapshot = async (snapshot, preview = null) => {
+        const replaceSnapshot = async (snapshot, preview = null, groundingOverlay = null) => {
           const currentPreview = previewMatchesSnapshot(preview, snapshot) ? preview : null;
           const displaySnapshot = (currentPreview == null ? void 0 : currentPreview.candidate) ?? snapshot;
+          const currentGroundingOverlay = groundingOverlayMatchesSnapshot(groundingOverlay, snapshot) ? structuredClone(groundingOverlay) : null;
           const nextIds = displaySnapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(displaySnapshot);
           const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
           const previousSource = sourceResource;
@@ -1381,6 +1527,7 @@ window.__ModuleLoader__.load({
           set({
             snapshot,
             preview: currentPreview,
+            groundingOverlay: currentGroundingOverlay,
             displaySnapshot,
             sourceResource: nextSource,
             selectedIds,
@@ -1389,19 +1536,20 @@ window.__ModuleLoader__.load({
           });
         };
         const refresh = async (initial) => {
-          var _a2;
+          var _a2, _b;
           if (disposed) return;
           requestController == null ? void 0 : requestController.abort();
           const controller = new AbortController();
           requestController = controller;
           if (initial) set({ status: "loading", error: null });
           try {
-            const [snapshot, preview] = await Promise.all([
+            const [snapshot, preview, groundingOverlay] = await Promise.all([
               port.load(controller.signal),
-              ((_a2 = port.loadPreview) == null ? void 0 : _a2.call(port, controller.signal)) ?? Promise.resolve(null)
+              ((_a2 = port.loadPreview) == null ? void 0 : _a2.call(port, controller.signal)) ?? Promise.resolve(null),
+              ((_b = port.loadGroundingOverlay) == null ? void 0 : _b.call(port, controller.signal)) ?? Promise.resolve(null)
             ]);
             if (controller.signal.aborted || disposed) return;
-            await replaceSnapshot(snapshot, preview);
+            await replaceSnapshot(snapshot, preview, groundingOverlay);
           } catch (error) {
             if (controller.signal.aborted || disposed) return;
             set({
@@ -1414,6 +1562,7 @@ window.__ModuleLoader__.load({
           status: "idle",
           snapshot: null,
           preview: null,
+          groundingOverlay: null,
           displaySnapshot: null,
           sourceResource: null,
           busy: false,
@@ -1560,6 +1709,9 @@ window.__ModuleLoader__.load({
         ...document.features.map((node) => node.id)
       ]);
     }
+    function groundingOverlayMatchesSnapshot(overlay, snapshot) {
+      return overlay !== null && snapshot !== null && overlay.drawingRef.drawingId === snapshot.ref.drawingId && overlay.drawingRef.revision === snapshot.ref.revision;
+    }
     function previewMatchesSnapshot(preview, snapshot) {
       return preview !== null && snapshot !== null && preview.baseRef.drawingId === snapshot.ref.drawingId && preview.baseRef.revision === snapshot.ref.revision;
     }
@@ -1581,6 +1733,13 @@ window.__ModuleLoader__.load({
             expectedRef: ref,
             nodeIds
           });
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async loadGroundingOverlay(signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          if (remote.getGroundingOverlay === void 0) return null;
+          const result = await remote.getGroundingOverlay(sessionId);
           signal == null ? void 0 : signal.throwIfAborted();
           return unwrap(result);
         },
@@ -6612,12 +6771,18 @@ window.__ModuleLoader__.load({
       previewHandle: idSchema$1,
       taskId: idSchema$1,
       groundingId: idSchema$1,
+      groundingIds: array(idSchema$1).min(2).max(16).optional(),
       baseRef: drawingRefSchema,
       candidateDigest: digestSchema,
       effectDigest: digestSchema,
       finalizeOperationId: idSchema$1,
       finalizeOperationBindingDigest: digestSchema
-    }).strict();
+    }).strict().superRefine(({ groundingId, groundingIds }, context) => {
+      if (groundingIds === void 0) return;
+      if (groundingIds[0] !== groundingId || new Set(groundingIds).size !== groundingIds.length) {
+        context.addIssue({ code: "custom", path: ["groundingIds"], message: "EDIT_GROUNDING_SET_INVALID" });
+      }
+    });
     object({
       evaluationId: idSchema$1,
       taskId: idSchema$1,
@@ -7069,6 +7234,46 @@ window.__ModuleLoader__.load({
       object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
       object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
     ]);
+    const drawingGroundingOverlayInterfaceSchema = object({
+      interfaceId: idSchema,
+      nodeId: idSchema,
+      endpoint: _enum(["start", "end"])
+    }).strict();
+    const drawingGroundingOverlayGroupSchema = object({
+      groundingId: idSchema,
+      partKey: string().trim().min(1).max(64),
+      label: string().trim().min(1).max(80),
+      colorIndex: number().int().nonnegative(),
+      nodeIds: array(idSchema).min(1).max(256),
+      interfaces: array(drawingGroundingOverlayInterfaceSchema).max(256)
+    }).strict();
+    const drawingGroundingOverlaySchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      taskId: idSchema,
+      groups: array(drawingGroundingOverlayGroupSchema).min(1).max(16)
+    }).strict().superRefine(({ groups }, context) => {
+      const groundingIds = /* @__PURE__ */ new Set();
+      const partKeys = /* @__PURE__ */ new Set();
+      for (const [index, group] of groups.entries()) {
+        if (groundingIds.has(group.groundingId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["groups", index, "groundingId"],
+            message: "GROUNDING_ID_DUPLICATE"
+          });
+        }
+        if (partKeys.has(group.partKey)) {
+          context.addIssue({
+            code: "custom",
+            path: ["groups", index, "partKey"],
+            message: "GROUNDING_PART_KEY_DUPLICATE"
+          });
+        }
+        groundingIds.add(group.groundingId);
+        partKeys.add(group.partKey);
+      }
+    });
     object({
       ref: drawingRefSchema,
       commands: array(workspaceCommandSchema).min(1),
@@ -7104,6 +7309,7 @@ window.__ModuleLoader__.load({
       typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
       schema: drawingSessionIdSchema
     };
+    const nonEmptyStringSchema = string().min(1);
     const agentParameter = {
       name: "agent",
       wire: "agentId",
@@ -7140,6 +7346,19 @@ window.__ModuleLoader__.load({
         scope: { context: "agent", wire: "agentId" },
         parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest", drawingSelectionProjectionRequestSchema)],
         result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult", schema: drawingSelectionProjectionResultSchema }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/getGroundingOverlay",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "getGroundingOverlay",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingGroundingOverlay|null",
+          schema: drawingGroundingOverlaySchema.nullable()
+        }
       }, {
         id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
         service: "drawingSpace",
@@ -7186,10 +7405,7 @@ window.__ModuleLoader__.load({
         name,
         wire: name,
         source: "json",
-        codec: { mode: "strict", typeSymbol: "string", schema: { parse(input) {
-          if (typeof input !== "string" || input.length === 0) throw new Error("STRING_REQUIRED");
-          return input;
-        } } }
+        codec: { mode: "strict", typeSymbol: "string", schema: nonEmptyStringSchema }
       };
     }
     const inject = ["slots", "remote", "conversation"];
@@ -7259,7 +7475,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset.vectoraiDshSpace = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__grounding {\n  max-width: 72px;\n  overflow: hidden;\n  border: 1px solid currentColor;\n  border-radius: 999px;\n  padding: 1px 5px;\n  color: var(--vai-grounding-color);\n  font-size: 9px;\n  line-height: 1.4;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-grounding {\n  pointer-events: none;\n}\n\n.vai-grounding__group {\n  color: var(--vai-grounding-color);\n}\n\n.vai-grounding--color-0 { --vai-grounding-color: #f59e0b; }\n.vai-grounding--color-1 { --vai-grounding-color: #a78bfa; }\n.vai-grounding--color-2 { --vai-grounding-color: #34d399; }\n.vai-grounding--color-3 { --vai-grounding-color: #fb7185; }\n.vai-grounding--color-4 { --vai-grounding-color: #22d3ee; }\n.vai-grounding--color-5 { --vai-grounding-color: #facc15; }\n\n.vai-grounding__outline {\n  fill: color-mix(in srgb, currentColor 7%, transparent);\n  stroke: currentColor;\n  stroke-width: 1.5;\n  stroke-dasharray: 6 4;\n}\n\n.vai-grounding__node {\n  fill: transparent;\n  stroke: currentColor;\n  stroke-width: 1;\n  opacity: 0.55;\n}\n\n.vai-grounding__interface {\n  fill: var(--vai-bg);\n  stroke: currentColor;\n  stroke-width: 2;\n}\n\n.vai-grounding__label-bg {\n  fill: color-mix(in srgb, var(--vai-panel-deep) 82%, currentColor);\n  stroke: currentColor;\n  stroke-width: 0.75;\n  vector-effect: non-scaling-stroke;\n}\n\n.vai-grounding__label {\n  fill: currentColor;\n  stroke: none;\n  font-family: Inter, ui-sans-serif, system-ui, sans-serif;\n  font-weight: 650;\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
       document.head.append(style);
       var dispose;
       try {

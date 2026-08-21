@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RemoteResult, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol';
+import { z } from 'zod';
 import {
   drawingInteractiveStageResultSchema,
   drawingGroundingOverlaySchema,
@@ -57,6 +58,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 const agentCodec = {
   mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId', schema: drawingSessionIdSchema,
 } as const;
+const nonEmptyStringSchema = z.string().min(1);
 const agentParameter = {
   name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent', codec: agentCodec,
 } as const;
@@ -125,9 +127,6 @@ function jsonRequest(typeSymbol: string, schema: { parse(input: unknown): unknow
 function stringParameter(name: string) {
   return {
     name, wire: name, source: 'json',
-    codec: { mode: 'strict', typeSymbol: 'string', schema: { parse(input: unknown) {
-      if (typeof input !== 'string' || input.length === 0) throw new Error('STRING_REQUIRED');
-      return input;
-    } } },
+    codec: { mode: 'strict', typeSymbol: 'string', schema: nonEmptyStringSchema },
   } as const;
 }

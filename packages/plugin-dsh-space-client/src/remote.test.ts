@@ -36,6 +36,16 @@ describe('DRAWING_SPACE_REMOTE', () => {
     expect(stageUndo?.result.mode).toBe('strict');
     expect(getOperation?.method).toBe('getOperation');
     expect(getOperation?.parameters[1]?.codec.mode).toBe('strict');
+    for (const descriptor of DRAWING_SPACE_REMOTE.descriptors) {
+      for (const parameter of descriptor.parameters) {
+        expect(parameter.codec.mode).toBe('strict');
+        if (parameter.codec.mode !== 'strict') throw new Error('expected strict parameter codec');
+        expect(parameter.codec.schema).toHaveProperty('_zod');
+      }
+      expect(descriptor.result.mode).toBe('strict');
+      if (descriptor.result.mode !== 'strict') throw new Error('expected strict result codec');
+      expect(descriptor.result.schema).toHaveProperty('_zod');
+    }
     expect(DRAWING_SPACE_REMOTE.descriptors.map(({ method }) => method)).not.toEqual(
       expect.arrayContaining(['commit', 'createPreview', 'commitPreview', 'discardPreview']),
     );

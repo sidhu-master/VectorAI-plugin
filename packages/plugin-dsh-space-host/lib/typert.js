@@ -4937,12 +4937,18 @@ object({
   previewHandle: idSchema$1,
   taskId: idSchema$1,
   groundingId: idSchema$1,
+  groundingIds: array(idSchema$1).min(2).max(16).optional(),
   baseRef: drawingRefSchema,
   candidateDigest: digestSchema,
   effectDigest: digestSchema,
   finalizeOperationId: idSchema$1,
   finalizeOperationBindingDigest: digestSchema
-}).strict();
+}).strict().superRefine(({ groundingId, groundingIds }, context) => {
+  if (groundingIds === void 0) return;
+  if (groundingIds[0] !== groundingId || new Set(groundingIds).size !== groundingIds.length) {
+    context.addIssue({ code: "custom", path: ["groundingIds"], message: "EDIT_GROUNDING_SET_INVALID" });
+  }
+});
 object({
   evaluationId: idSchema$1,
   taskId: idSchema$1,
@@ -5394,6 +5400,46 @@ const drawingSelectionProjectionResultSchema = discriminatedUnion("status", [
   object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
 ]);
+const drawingGroundingOverlayInterfaceSchema = object({
+  interfaceId: idSchema,
+  nodeId: idSchema,
+  endpoint: _enum(["start", "end"])
+}).strict();
+const drawingGroundingOverlayGroupSchema = object({
+  groundingId: idSchema,
+  partKey: string().trim().min(1).max(64),
+  label: string().trim().min(1).max(80),
+  colorIndex: number().int().nonnegative(),
+  nodeIds: array(idSchema).min(1).max(256),
+  interfaces: array(drawingGroundingOverlayInterfaceSchema).max(256)
+}).strict();
+const drawingGroundingOverlaySchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  taskId: idSchema,
+  groups: array(drawingGroundingOverlayGroupSchema).min(1).max(16)
+}).strict().superRefine(({ groups }, context) => {
+  const groundingIds = /* @__PURE__ */ new Set();
+  const partKeys = /* @__PURE__ */ new Set();
+  for (const [index, group] of groups.entries()) {
+    if (groundingIds.has(group.groundingId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["groups", index, "groundingId"],
+        message: "GROUNDING_ID_DUPLICATE"
+      });
+    }
+    if (partKeys.has(group.partKey)) {
+      context.addIssue({
+        code: "custom",
+        path: ["groups", index, "partKey"],
+        message: "GROUNDING_PART_KEY_DUPLICATE"
+      });
+    }
+    groundingIds.add(group.groundingId);
+    partKeys.add(group.partKey);
+  }
+});
 object({
   ref: drawingRefSchema,
   commands: array(workspaceCommandSchema).min(1),
@@ -5471,6 +5517,20 @@ const TYPERT = {
     parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest", drawingSelectionProjectionRequestSchema)],
     result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult", schema: drawingSelectionProjectionResultSchema },
     sourceLocation: serviceLocation(76)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getGroundingOverlay",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "getGroundingOverlay",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingGroundingOverlay|null",
+      schema: drawingGroundingOverlaySchema.nullable()
+    },
+    sourceLocation: serviceLocation(116)
   }, {
     id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit",
     service: "drawingSpace",

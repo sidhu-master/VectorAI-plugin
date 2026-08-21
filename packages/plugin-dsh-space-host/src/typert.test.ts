@@ -7,7 +7,8 @@ describe('TYPERT host contribution', () => {
   it('publishes only the strict, session-scoped read and staged-write routes', () => {
     const methods = TYPERT.invocations.map(({ method }) => method);
     expect(methods).toEqual([
-      'getSnapshot', 'query', 'projectSelection', 'stageInteractiveEdit', 'stageUndo', 'getOperation', 'getPreview',
+      'getSnapshot', 'query', 'projectSelection', 'getGroundingOverlay',
+      'stageInteractiveEdit', 'stageUndo', 'getOperation', 'getPreview',
     ]);
     expect(methods).not.toEqual(expect.arrayContaining([
       'commit', 'createPreview', 'commitPreview', 'discardPreview',

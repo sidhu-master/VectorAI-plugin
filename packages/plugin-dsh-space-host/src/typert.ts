@@ -2,6 +2,7 @@
 
 import {
   drawingInteractiveStageResultSchema,
+  drawingGroundingOverlaySchema,
   drawingPreviewSchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
@@ -49,6 +50,17 @@ export const TYPERT = {
     parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest', drawingSelectionProjectionRequestSchema)],
     result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult', schema: drawingSelectionProjectionResultSchema },
     sourceLocation: serviceLocation(76),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/getGroundingOverlay',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getGroundingOverlay',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter],
+    result: {
+      mode: 'strict',
+      typeSymbol: '@vectorai/plugin-space-contracts#DrawingGroundingOverlay|null',
+      schema: drawingGroundingOverlaySchema.nullable(),
+    },
+    sourceLocation: serviceLocation(116),
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageInteractiveEdit',
