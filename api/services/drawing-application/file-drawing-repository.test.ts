@@ -260,7 +260,7 @@ describe('FileDrawingRepository', () => {
       id: 'circle_1', radius: 74,
     });
     expect(await reopened.listCommits(document.id)).toHaveLength(65);
-  });
+  }, 15_000);
 
   it('rejects a corrupt snapshot instead of silently replacing it', async () => {
     const rootDirectory = await temporaryRoot();

@@ -5,6 +5,7 @@ import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
 import { solveSpatialIntent } from '@vectorai/drawing-edit-core';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { InMemoryDrawingRepository } from './repository';
@@ -137,10 +138,11 @@ describe('DSH semantic edit production parity', () => {
   });
 
   it('keeps fixture identities, coordinates, and gesture-specific rules out of production code', async () => {
+    const workspaceRoot = fileURLToPath(new URL('../../../', import.meta.url));
     const roots = [
-      resolve(process.cwd(), '../drawing-edit-protocol/src'),
-      resolve(process.cwd(), '../drawing-edit-core/src'),
-      resolve(process.cwd(), 'src'),
+      resolve(workspaceRoot, 'packages/drawing-edit-protocol/src'),
+      resolve(workspaceRoot, 'packages/drawing-edit-core/src'),
+      resolve(workspaceRoot, 'packages/plugin-dsh-space-host/src'),
     ];
     const forbidden = /right-hand|left-hand|doraemon|打招呼|wave[_-]?hand|crossed[_-]?hands|12\.7639320225|\[-3,\s*11\]/i;
     const violations: string[] = [];

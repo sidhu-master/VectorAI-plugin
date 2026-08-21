@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { ImageAttachmentRef, StoredImageAttachment } from '@deepseek-ai/dsh-attachment';
-import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { createEmptyDrawing, type GeometryId } from '../packages/drawing-core/src/index';
 import { createHash } from 'node:crypto';
 
@@ -37,8 +34,8 @@ async function runScenario(label: string) {
   const sessionId = `session-${label}`;
   const storage = new MemoryStorage();
   let sequence = 0;
-  const source: ImageAttachmentRef = {
-    attachmentId: `source-${label}` as ImageAttachmentRef['attachmentId'],
+  const source = {
+    attachmentId: `source-${label}`,
     mediaType: 'image/png', bytes: 1, width: 100, height: 80,
   };
   const drawings = new InMemoryDrawingRepository({
@@ -66,7 +63,7 @@ async function runScenario(label: string) {
       },
     },
   });
-  drawings.bindPending(sessionId, source);
+  drawings.bindPending(sessionId, source as never);
   const digest = (value: string) => `sha256:${createHash('sha256').update(value).digest('hex')}`;
   const semantic = new SemanticEditService(drawings, {
     id: (kind) => `${kind}-${++sequence}`,
@@ -86,7 +83,7 @@ async function runScenario(label: string) {
     },
   };
   const tools = createDrawingAgentToolCatalog(drawings, {
-    async readImage(ref): Promise<StoredImageAttachment> {
+    async readImage(ref) {
       return { ref, data: new Uint8Array([1]) };
     },
   }, semantic, questions as never);
@@ -145,10 +142,10 @@ async function runScenario(label: string) {
     throw new Error(`E2E_UNDO_FAILED:${JSON.stringify(undone)}`);
   }
   const restored = drawings.getSnapshot(sessionId)?.document.geometry;
-  if (restored?.find(({ id }) => id === 'component-west')?.type !== 'circle'
-    || restored.find(({ id }) => id === 'component-west')?.center[1] !== 8
-    || restored.find(({ id }) => id === 'component-east')?.type !== 'circle'
-    || restored.find(({ id }) => id === 'component-east')?.center[1] !== 8) {
+  const west = restored?.find(({ id }) => id === 'component-west');
+  const east = restored?.find(({ id }) => id === 'component-east');
+  if (west?.type !== 'circle' || west.center[1] !== 8
+    || east?.type !== 'circle' || east.center[1] !== 8) {
     throw new Error('E2E_UNDO_SEMANTIC_MISMATCH');
   }
   return {
@@ -160,13 +157,13 @@ async function runScenario(label: string) {
   };
 }
 
-function toolContext(sessionId: string): ToolRunContext {
+function toolContext(sessionId: string) {
   return {
     callId: 'e2e-call', rootCallId: 'e2e-call', name: 'drawing', arguments: {},
     signal: new AbortController().signal, token: Symbol('tool'),
-    agent: { id: sessionId } as unknown as Agent,
+    agent: { id: sessionId },
     deferContext() {}, concludeTurn() {},
-  } as unknown as ToolRunContext;
+  } as never;
 }
 
 function assertNoForbiddenKeys(value: unknown, path: string): void {
