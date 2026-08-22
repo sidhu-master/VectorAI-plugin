@@ -3,6 +3,11 @@
 import {
   drawingInteractiveStageResultSchema,
   drawingGroundingOverlaySchema,
+  drawingMotionRigDiscardRequestSchema,
+  drawingMotionRigDiscardResultSchema,
+  drawingMotionRigProjectionSchema,
+  drawingMotionRigRebuildRequestSchema,
+  drawingMotionRigResultSchema,
   drawingPreviewSchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
@@ -11,6 +16,8 @@ import {
   drawingSessionIdSchema,
   drawingUndoStageRequestSchema,
   drawingUndoStageResultSchema,
+  drawingRedoStageRequestSchema,
+  drawingRedoStageResultSchema,
   drawingWorkspaceCommitRequestSchema,
   drawingWorkspaceSnapshotSchema,
   operationLookupResultSchema,
@@ -62,6 +69,42 @@ export const TYPERT = {
     },
     sourceLocation: serviceLocation(116),
   }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/getMotionRig',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getMotionRig',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter],
+    result: {
+      mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingMotionRigProjection|null',
+      schema: drawingMotionRigProjectionSchema.nullable(),
+    },
+    sourceLocation: serviceLocation(122),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/rebuildMotionRig',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'rebuildMotionRig',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest(
+      '@vectorai/plugin-space-contracts#DrawingMotionRigRebuildRequest',
+      drawingMotionRigRebuildRequestSchema,
+    )],
+    result: {
+      mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingMotionRigResult',
+      schema: drawingMotionRigResultSchema,
+    },
+    sourceLocation: serviceLocation(127),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/discardMotionRig',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'discardMotionRig',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest(
+      '@vectorai/plugin-space-contracts#DrawingMotionRigDiscardRequest',
+      drawingMotionRigDiscardRequestSchema,
+    )],
+    result: {
+      mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingMotionRigDiscardResult',
+      schema: drawingMotionRigDiscardResultSchema,
+    },
+    sourceLocation: serviceLocation(136),
+  }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageInteractiveEdit',
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
@@ -75,6 +118,13 @@ export const TYPERT = {
     parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingUndoStageRequest', drawingUndoStageRequestSchema)],
     result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingUndoStageResult', schema: drawingUndoStageResultSchema },
     sourceLocation: serviceLocation(84),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageRedo',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageRedo',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingRedoStageRequest', drawingRedoStageRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingRedoStageResult', schema: drawingRedoStageResultSchema },
+    sourceLocation: serviceLocation(89),
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getOperation',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getOperation',

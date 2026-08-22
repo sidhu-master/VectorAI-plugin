@@ -8,7 +8,8 @@ describe('TYPERT host contribution', () => {
     const methods = TYPERT.invocations.map(({ method }) => method);
     expect(methods).toEqual([
       'getSnapshot', 'query', 'projectSelection', 'getGroundingOverlay',
-      'stageInteractiveEdit', 'stageUndo', 'getOperation', 'getPreview',
+      'getMotionRig', 'rebuildMotionRig', 'discardMotionRig',
+      'stageInteractiveEdit', 'stageUndo', 'stageRedo', 'getOperation', 'getPreview',
     ]);
     expect(methods).not.toEqual(expect.arrayContaining([
       'commit', 'createPreview', 'commitPreview', 'discardPreview',

@@ -5439,11 +5439,11 @@ const drawingMotionRigProjectionSchema = object({
   preserveConnectivity: literal(true),
   allowControlRotation: literal(false)
 }).strict();
-object({
+const drawingMotionRigRebuildRequestSchema = object({
   ref: drawingRefSchema,
   nodeIds: array(idSchema).min(1).max(256)
 }).strict();
-discriminatedUnion("status", [
+const drawingMotionRigResultSchema = discriminatedUnion("status", [
   object({ status: literal("ready"), projection: drawingMotionRigProjectionSchema }).strict(),
   object({
     status: literal("needs-correction"),
@@ -5453,8 +5453,8 @@ discriminatedUnion("status", [
   object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
 ]);
-object({ ref: drawingRefSchema }).strict();
-discriminatedUnion("status", [
+const drawingMotionRigDiscardRequestSchema = object({ ref: drawingRefSchema }).strict();
+const drawingMotionRigDiscardResultSchema = discriminatedUnion("status", [
   object({ status: literal("discarded") }).strict(),
   object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
@@ -5598,6 +5598,54 @@ const TYPERT = {
       schema: drawingGroundingOverlaySchema.nullable()
     },
     sourceLocation: serviceLocation(116)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getMotionRig",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "getMotionRig",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigProjection|null",
+      schema: drawingMotionRigProjectionSchema.nullable()
+    },
+    sourceLocation: serviceLocation(122)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/rebuildMotionRig",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "rebuildMotionRig",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest(
+      "@vectorai/plugin-space-contracts#DrawingMotionRigRebuildRequest",
+      drawingMotionRigRebuildRequestSchema
+    )],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigResult",
+      schema: drawingMotionRigResultSchema
+    },
+    sourceLocation: serviceLocation(127)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardMotionRig",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "discardMotionRig",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest(
+      "@vectorai/plugin-space-contracts#DrawingMotionRigDiscardRequest",
+      drawingMotionRigDiscardRequestSchema
+    )],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigDiscardResult",
+      schema: drawingMotionRigDiscardResultSchema
+    },
+    sourceLocation: serviceLocation(136)
   }, {
     id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit",
     service: "drawingSpace",
