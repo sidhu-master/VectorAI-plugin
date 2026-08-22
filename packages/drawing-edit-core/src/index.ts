@@ -6,4 +6,5 @@ export * from './compiler';
 export * from './document-transaction';
 export * from './inverse';
 export * from './multi-part-compiler';
+export * from './motion-rig';
 export * from './spatial-intent-solver';
