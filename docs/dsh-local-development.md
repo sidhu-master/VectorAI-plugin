@@ -37,12 +37,26 @@ The patch validates known source anchors and creates a backup before changing DS
 - Paste or attach a drawing image in the direct user message.
 - `drawing_import` reads the DSH attachment and runs the packaged local clean-line worker.
 - The same conversation page shows chat and the shared VectorAI canvas.
-- The canvas supports pan/zoom, axes/grid, click and box selection, object/property panels, source-underlay toggle, annotation display, staged property edits, and Undo.
+- The canvas supports pan/zoom, axes/grid, click and box selection, object/property panels, annotation display, and staged property edits. Its icon-only bottom floating toolbar provides fit-to-drawing, durable Undo/Redo, explicit image upload, and local DXF export; the top row only keeps the Object and Property panel switches.
 - A semantic transform request uses `drawing_observe`, `drawing_build_context`, `drawing_ground`, `drawing_preview_grounded_transform`, `drawing_evaluate_preview`, and `drawing_finalize_preview`. Visual revisions use `drawing_revise_grounded_transform`; the generic `drawing_preview_program` remains the advanced path for non-transform operations.
 - Drawing tools are lazily activated: unrelated turns receive no fixed workflow injection, while an active Drawing or verified selection contributes only a conditional capability hint. After `drawing_observe`, each tool result reports the next Host-valid tool choices.
-- Legacy version-1 local Drawing files are promoted in place to the durable version-2 commit/Undo envelope on their first semantic commit.
+- Legacy version-1 local Drawing files are promoted in place to the durable version-2 commit/Undo/Redo envelope on their first semantic commit.
 - `/drawing-policy review` immediately makes the current task review-only. `/drawing-policy auto-safe` applies to future tasks and never upgrades an existing review task.
 - Formal Drawing state is stored under `~/.dsh/vectorai/drawings/`. Source images remain in DSH's attachment store.
+
+### Temporary movement constraints
+
+For an explicit request such as “给左臂创建移动铰链”, the model first identifies the intended semantic geometry and then calls `drawing_create_motion_rig`. The tool passes only semantic labels; the Host resolves exact control and connector nodes from its verified selection state.
+
+When the rig is ready, the shared canvas displays one fixed anchor and one draggable control handle. Handle movement is solved locally with no model or Host round trip: the control body translates without rotation, fixed connector endpoints stay unchanged, and line/polyline/spline connectors reshape to remain attached. Clicking, box-selecting, or additively selecting geometry rebuilds the entire Host constraint instead of mutating internal role arrays.
+
+Pointer-up enters Preview. The bottom toolbar shows icon-only confirm and cancel actions. Confirm creates one durable interactive commit with Undo/Redo; cancel restores the original geometry. The temporary rig is cleared after either action, invalidated by any Drawing revision change, and never appears in DXF export.
+
+Run the deterministic integrated smoke test with:
+
+```bash
+pnpm e2e:motion-rig
+```
 
 ## Verification
 

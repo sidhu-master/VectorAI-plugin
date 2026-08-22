@@ -166,6 +166,9 @@ importers:
       '@vectorai/drawing-workspace':
         specifier: workspace:*
         version: link:../drawing-workspace
+      lucide-react:
+        specifier: 0.511.0
+        version: 0.511.0(react@18.3.1)
       react:
         specifier: 18.3.1
         version: 18.3.1
@@ -191,6 +194,9 @@ importers:
       '@vectorai/drawing-core':
         specifier: workspace:*
         version: link:../drawing-core
+      '@vectorai/drawing-edit-core':
+        specifier: workspace:*
+        version: link:../drawing-edit-core
       zustand:
         specifier: ^5.0.3
         version: 5.0.14(@types/react@18.3.31)(react@18.3.1)

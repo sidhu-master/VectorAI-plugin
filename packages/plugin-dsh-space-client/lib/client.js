@@ -4,9 +4,239 @@ window.__ModuleLoader__.load({
     var module = { exports: {} };
     var exports = module.exports;
     "use strict";
+    var __typeError = (msg) => {
+      throw TypeError(msg);
+    };
+    var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
+    var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
+    var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
+    var _lines;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const jsxRuntime = require("react/jsx-runtime");
     const react = require("react");
+    const GEOMETRY_LAYER = "GEOMETRY";
+    const ANNOTATION_LAYER = "ANNOTATIONS";
+    function exportDrawingDxf(document2) {
+      const writer = new DxfWriter();
+      writer.section("HEADER", () => {
+        writer.pair(9, "$ACADVER");
+        writer.pair(1, "AC1015");
+        writer.pair(9, "$INSUNITS");
+        writer.pair(70, insertionUnit(document2.unitSystem.length));
+      });
+      writer.section("TABLES", () => {
+        writer.pair(0, "TABLE");
+        writer.pair(2, "LAYER");
+        writer.pair(70, 2);
+        writeLayer(writer, GEOMETRY_LAYER, 7);
+        writeLayer(writer, ANNOTATION_LAYER, 3);
+        writer.pair(0, "ENDTAB");
+      });
+      writer.section("ENTITIES", () => {
+        for (const node of document2.geometry) {
+          if (node.visible) writeGeometry(writer, node);
+        }
+        for (const node of document2.annotations) {
+          if (node.visible) writeAnnotation(writer, node);
+        }
+      });
+      writer.pair(0, "EOF");
+      return writer.toString();
+    }
+    class DxfWriter {
+      constructor() {
+        __privateAdd(this, _lines, []);
+      }
+      pair(code, value) {
+        __privateGet(this, _lines).push(String(code), typeof value === "number" ? formatNumber(value) : value);
+      }
+      section(name, write) {
+        this.pair(0, "SECTION");
+        this.pair(2, name);
+        write();
+        this.pair(0, "ENDSEC");
+      }
+      toString() {
+        return `${__privateGet(this, _lines).join("\r\n")}\r
+    `;
+      }
+    }
+    _lines = new WeakMap();
+    function writeLayer(writer, name, color) {
+      writer.pair(0, "LAYER");
+      writer.pair(2, name);
+      writer.pair(70, 0);
+      writer.pair(62, color);
+      writer.pair(6, "CONTINUOUS");
+    }
+    function writeGeometry(writer, node) {
+      switch (node.type) {
+        case "point":
+          entity(writer, "POINT", GEOMETRY_LAYER);
+          point(writer, 10, [node.x, node.y]);
+          return;
+        case "line":
+          writeLine(writer, node.start, node.end, GEOMETRY_LAYER);
+          return;
+        case "ray":
+        case "xline":
+          entity(writer, node.type === "ray" ? "RAY" : "XLINE", GEOMETRY_LAYER);
+          point(writer, 10, node.origin);
+          point(writer, 11, node.direction);
+          return;
+        case "circle":
+          entity(writer, "CIRCLE", GEOMETRY_LAYER);
+          point(writer, 10, node.center);
+          writer.pair(40, node.radius);
+          return;
+        case "arc": {
+          entity(writer, "ARC", GEOMETRY_LAYER);
+          point(writer, 10, node.center);
+          writer.pair(40, node.radius);
+          writer.pair(50, normalizeDegrees(node.counterClockwise ? node.startAngle : node.endAngle));
+          writer.pair(51, normalizeDegrees(node.counterClockwise ? node.endAngle : node.startAngle));
+          return;
+        }
+        case "ellipse":
+          entity(writer, "ELLIPSE", GEOMETRY_LAYER);
+          point(writer, 10, node.center);
+          point(writer, 11, node.majorAxis);
+          writer.pair(40, node.ratio);
+          writer.pair(41, node.startParam ?? 0);
+          writer.pair(42, node.endParam ?? Math.PI * 2);
+          return;
+        case "polyline":
+          if (node.vertices.length === 0) return;
+          entity(writer, "LWPOLYLINE", GEOMETRY_LAYER);
+          writer.pair(90, node.vertices.length);
+          writer.pair(70, node.closed ? 1 : 0);
+          for (const vertex of node.vertices) {
+            writer.pair(10, vertex.point[0]);
+            writer.pair(20, vertex.point[1]);
+            if (vertex.bulge !== void 0) writer.pair(42, vertex.bulge);
+          }
+          return;
+        case "spline":
+          if (node.controlPoints.length === 0) return;
+          entity(writer, "SPLINE", GEOMETRY_LAYER);
+          writer.pair(70, 8 | (node.closed ? 1 : 0) | (node.periodic ? 2 : 0) | (node.weights ? 4 : 0));
+          writer.pair(71, node.degree);
+          writer.pair(72, node.knots.length);
+          writer.pair(73, node.controlPoints.length);
+          writer.pair(74, 0);
+          for (const knot of node.knots) writer.pair(40, knot);
+          for (const weight of node.weights ?? []) writer.pair(41, weight);
+          for (const controlPoint of node.controlPoints) point(writer, 10, controlPoint);
+      }
+    }
+    function writeAnnotation(writer, node) {
+      switch (node.type) {
+        case "text":
+          writeText(
+            writer,
+            node.position,
+            node.content,
+            node.height,
+            node.rotation,
+            node.alignment,
+            node.verticalAlignment
+          );
+          return;
+        case "dimension": {
+          writePolyline(writer, node.definitionPoints, false, ANNOTATION_LAYER);
+          writeText(writer, node.textPosition, dimensionLabel$1(node), annotationTextHeight(node), 0, "center", "middle");
+          return;
+        }
+        case "leader": {
+          writePolyline(writer, node.points, false, ANNOTATION_LAYER);
+          const textPosition = node.points.at(-1);
+          if (textPosition !== void 0) {
+            writeText(writer, textPosition, node.content, node.textHeight, 0, "left", "baseline");
+          }
+          return;
+        }
+        case "centerline": {
+          const [start, end] = extendLine(node.start, node.end, node.extension);
+          writeLine(writer, start, end, ANNOTATION_LAYER, "CENTER");
+          return;
+        }
+        case "section-hatch":
+          for (const segment of node.segments) {
+            writeLine(writer, segment.start, segment.end, ANNOTATION_LAYER);
+          }
+      }
+    }
+    function entity(writer, type, layer) {
+      writer.pair(0, type);
+      writer.pair(8, layer);
+    }
+    function point(writer, xCode, value) {
+      writer.pair(xCode, value[0]);
+      writer.pair(xCode + 10, value[1]);
+      writer.pair(xCode + 20, 0);
+    }
+    function writeLine(writer, start, end, layer, lineType) {
+      entity(writer, "LINE", layer);
+      if (lineType !== void 0) writer.pair(6, lineType);
+      point(writer, 10, start);
+      point(writer, 11, end);
+    }
+    function writePolyline(writer, points, closed, layer) {
+      if (points.length === 0) return;
+      entity(writer, "LWPOLYLINE", layer);
+      writer.pair(90, points.length);
+      writer.pair(70, 0);
+      for (const value of points) {
+        writer.pair(10, value[0]);
+        writer.pair(20, value[1]);
+      }
+    }
+    function writeText(writer, position, content, height, rotation, alignment, verticalAlignment) {
+      entity(writer, "TEXT", ANNOTATION_LAYER);
+      point(writer, 10, position);
+      writer.pair(40, Math.max(height, Number.EPSILON));
+      writer.pair(1, dxfText(content));
+      writer.pair(50, rotation);
+      writer.pair(72, { left: 0, center: 1, right: 2 }[alignment]);
+      writer.pair(73, { baseline: 0, bottom: 1, middle: 2, top: 3 }[verticalAlignment]);
+      if (alignment !== "left" || verticalAlignment !== "baseline") point(writer, 11, position);
+    }
+    function extendLine(start, end, extension) {
+      const dx = end[0] - start[0];
+      const dy = end[1] - start[1];
+      const length = Math.hypot(dx, dy);
+      if (!(length > 0) || !(extension > 0)) return [start, end];
+      const extendX = dx / length * extension;
+      const extendY = dy / length * extension;
+      return [
+        [start[0] - extendX, start[1] - extendY],
+        [end[0] + extendX, end[1] + extendY]
+      ];
+    }
+    function annotationTextHeight(node) {
+      const points = node.definitionPoints;
+      if (points.length < 2) return 2.5;
+      return Math.max(Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]) * 0.05, 0.1);
+    }
+    function dimensionLabel$1(node) {
+      if (node.displayText !== void 0) return node.displayText;
+      const value = node.observedValue ?? node.computedValue;
+      if (value === void 0) return "—";
+      return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
+    }
+    function dxfText(value) {
+      return value.replace(/\r\n|\r|\n/g, "\\P").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+    }
+    function insertionUnit(unit) {
+      return { mm: 4, cm: 5, m: 6 }[unit];
+    }
+    function normalizeDegrees(value) {
+      return (value % 360 + 360) % 360;
+    }
+    function formatNumber(value) {
+      if (!Number.isFinite(value)) throw new TypeError("DXF values must be finite numbers");
+      return Object.is(value, -0) ? "0" : String(value);
+    }
     const DrawingWorkspaceStoreContext = react.createContext(null);
     function DrawingWorkspaceProvider({
       store,
@@ -101,47 +331,47 @@ window.__ModuleLoader__.load({
     }
     const MIN_SCALE = 0.01;
     const MAX_SCALE = 1e3;
-    function screenToWorld(point, viewport) {
+    function screenToWorld(point2, viewport) {
       return [
-        (point[0] - viewport.x) / viewport.scale,
-        (viewport.y - point[1]) / viewport.scale
+        (point2[0] - viewport.x) / viewport.scale,
+        (viewport.y - point2[1]) / viewport.scale
       ];
     }
     function zoomViewportAt(viewport, screenPoint, factor) {
       const anchor = screenToWorld(screenPoint, viewport);
-      const scale = clamp(viewport.scale * factor, MIN_SCALE, MAX_SCALE);
+      const scale2 = clamp(viewport.scale * factor, MIN_SCALE, MAX_SCALE);
       return {
         ...viewport,
-        scale,
-        x: screenPoint[0] - anchor[0] * scale,
-        y: screenPoint[1] + anchor[1] * scale
+        scale: scale2,
+        x: screenPoint[0] - anchor[0] * scale2,
+        y: screenPoint[1] + anchor[1] * scale2
       };
     }
-    function fitViewportToDrawing(document, size, padding = 1.2) {
-      const bounds = drawingBounds(document) ?? { minX: -50, minY: -50, maxX: 50, maxY: 50 };
+    function fitViewportToDrawing(document2, size, padding = 1.2) {
+      const bounds = drawingBounds(document2) ?? { minX: -50, minY: -50, maxX: 50, maxY: 50 };
       const boundsWidth = Math.max(bounds.maxX - bounds.minX, 1);
       const boundsHeight = Math.max(bounds.maxY - bounds.minY, 1);
       const safePadding = Number.isFinite(padding) && padding > 0 ? padding : 1.2;
-      const scale = clamp(Math.min(
+      const scale2 = clamp(Math.min(
         Math.max(size.width, 1) / (boundsWidth * safePadding),
         Math.max(size.height, 1) / (boundsHeight * safePadding)
       ), MIN_SCALE, MAX_SCALE);
       const centerX = (bounds.minX + bounds.maxX) / 2;
       const centerY = (bounds.minY + bounds.maxY) / 2;
       return {
-        x: size.width / 2 - centerX * scale,
-        y: size.height / 2 + centerY * scale,
-        scale,
+        x: size.width / 2 - centerX * scale2,
+        y: size.height / 2 + centerY * scale2,
+        scale: scale2,
         width: size.width,
         height: size.height
       };
     }
-    function drawingBounds(document) {
-      const bounds = [...document.geometry, ...document.annotations].filter((node) => node.visible).map(nodeBounds).filter((value) => value !== null);
+    function drawingBounds(document2) {
+      const bounds = [...document2.geometry, ...document2.annotations].filter((node) => node.visible).map(nodeBounds).filter((value) => value !== null);
       return unionBounds(bounds);
     }
-    function nodesInWorldBox(document, box) {
-      return [...document.geometry, ...document.annotations].filter((node) => node.visible).filter((node) => {
+    function nodesInWorldBox(document2, box) {
+      return [...document2.geometry, ...document2.annotations].filter((node) => node.visible).filter((node) => {
         const bounds = nodeBounds(node);
         return bounds !== null && boundsIntersect(bounds, box);
       }).map((node) => node.id);
@@ -183,7 +413,7 @@ window.__ModuleLoader__.load({
       return normalizeBounds$1(first, second);
     }
     function finiteCircleBounds(center, radius) {
-      if (!finitePoint(center) || !Number.isFinite(radius) || radius < 0) return null;
+      if (!finitePoint$1(center) || !Number.isFinite(radius) || radius < 0) return null;
       return {
         minX: center[0] - radius,
         minY: center[1] - radius,
@@ -202,7 +432,7 @@ window.__ModuleLoader__.load({
       }));
     }
     function ellipseBounds(node) {
-      if (!finitePoint(node.center) || !finitePoint(node.majorAxis) || !Number.isFinite(node.ratio) || node.ratio <= 0) return null;
+      if (!finitePoint$1(node.center) || !finitePoint$1(node.majorAxis) || !Number.isFinite(node.ratio) || node.ratio <= 0) return null;
       const [axisX, axisY] = node.majorAxis;
       const majorRadius = Math.hypot(axisX, axisY);
       if (majorRadius === 0) return null;
@@ -219,7 +449,7 @@ window.__ModuleLoader__.load({
       };
     }
     function textBounds(node) {
-      if (!finitePoint(node.position) || !Number.isFinite(node.height) || !Number.isFinite(node.rotation)) {
+      if (!finitePoint$1(node.position) || !Number.isFinite(node.height) || !Number.isFinite(node.rotation)) {
         return null;
       }
       const width = node.maxWidth ?? node.content.length * node.height * 0.6;
@@ -249,12 +479,12 @@ window.__ModuleLoader__.load({
       ]);
     }
     function boundsFromPoints(points) {
-      if (points.length === 0 || points.some((point) => !finitePoint(point))) return null;
+      if (points.length === 0 || points.some((point2) => !finitePoint$1(point2))) return null;
       return {
-        minX: Math.min(...points.map((point) => point[0])),
-        minY: Math.min(...points.map((point) => point[1])),
-        maxX: Math.max(...points.map((point) => point[0])),
-        maxY: Math.max(...points.map((point) => point[1]))
+        minX: Math.min(...points.map((point2) => point2[0])),
+        minY: Math.min(...points.map((point2) => point2[1])),
+        maxX: Math.max(...points.map((point2) => point2[0])),
+        maxY: Math.max(...points.map((point2) => point2[1]))
       };
     }
     function unionBounds(bounds) {
@@ -292,8 +522,8 @@ window.__ModuleLoader__.load({
     function modulo$1(value, divisor) {
       return (value % divisor + divisor) % divisor;
     }
-    function finitePoint(point) {
-      return Number.isFinite(point[0]) && Number.isFinite(point[1]);
+    function finitePoint$1(point2) {
+      return Number.isFinite(point2[0]) && Number.isFinite(point2[1]);
     }
     function clamp(value, minimum, maximum) {
       return Math.max(minimum, Math.min(maximum, value));
@@ -303,12 +533,13 @@ window.__ModuleLoader__.load({
       viewport,
       selected,
       aiGrounded = false,
+      motionRigActive = false,
       onSelect,
       onTextPointerDown,
       previewDiff
     }) {
       if (!node.visible) return null;
-      const className = `vai-entity vai-entity--${node.quality.status}${selected ? " vai-entity--selected" : ""}${aiGrounded ? " vai-entity--ai-grounded" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
+      const className = `vai-entity vai-entity--${node.quality.status}${selected ? " vai-entity--selected" : ""}${aiGrounded ? " vai-entity--ai-grounded" : ""}${motionRigActive ? " vai-entity--motion-rig" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
       const interactiveText = (node.type === "text" || node.type === "dimension") && onTextPointerDown !== void 0;
       return /* @__PURE__ */ jsxRuntime.jsx(
         "g",
@@ -318,6 +549,7 @@ window.__ModuleLoader__.load({
           "data-entity-type": node.type,
           "data-selected": selected || void 0,
           "data-ai-grounded": aiGrounded || void 0,
+          "data-motion-rig-active": motionRigActive || void 0,
           "data-preview-diff": previewDiff,
           onClick: onSelect,
           onMouseDown: interactiveText ? onTextPointerDown : void 0,
@@ -426,7 +658,7 @@ window.__ModuleLoader__.load({
       return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
     }
     function pointsAttribute(points) {
-      return points.map((point) => `${point[0]},${point[1]}`).join(" ");
+      return points.map((point2) => `${point2[0]},${point2[1]}`).join(" ");
     }
     function splinePath(points, closed) {
       if (points.length === 0) return "";
@@ -463,12 +695,12 @@ window.__ModuleLoader__.load({
       return output.join(" ");
     }
     function arcPath(center, radius, start, end, counterClockwise) {
-      const point = (angle) => {
+      const point2 = (angle) => {
         const radians = angle * Math.PI / 180;
         return [center[0] + radius * Math.cos(radians), center[1] + radius * Math.sin(radians)];
       };
-      const first = point(start);
-      const last = point(end);
+      const first = point2(start);
+      const last = point2(end);
       const span = counterClockwise ? modulo(end - start, 360) : modulo(start - end, 360);
       return `M ${first[0]} ${first[1]} A ${radius} ${radius} 0 ${span > 180 ? 1 : 0} ${counterClockwise ? 1 : 0} ${last[0]} ${last[1]}`;
     }
@@ -498,12 +730,76 @@ window.__ModuleLoader__.load({
     function modulo(value, divisor) {
       return (value % divisor + divisor) % divisor;
     }
+    function MotionRigOverlay({
+      rig,
+      viewportScale,
+      onHandleMouseDown
+    }) {
+      const scale2 = Math.max(viewportScale, 1e-3);
+      const { anchor, handle } = rig.projection;
+      const status = rig.phase === "preview" ? "等待确认" : rig.message ?? "拖动控制点调整部件";
+      return /* @__PURE__ */ jsxRuntime.jsxs("g", { className: `vai-motion-rig vai-motion-rig--${rig.phase}`, "data-motion-rig-state": rig.phase, children: [
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "line",
+          {
+            className: "vai-motion-rig__guide",
+            x1: anchor[0],
+            y1: anchor[1],
+            x2: handle[0],
+            y2: handle[1],
+            vectorEffect: "non-scaling-stroke",
+            pointerEvents: "none"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "circle",
+          {
+            "data-motion-rig-anchor": true,
+            className: "vai-motion-rig__anchor",
+            cx: anchor[0],
+            cy: anchor[1],
+            r: 6 / scale2,
+            vectorEffect: "non-scaling-stroke",
+            pointerEvents: "none"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "circle",
+          {
+            role: "button",
+            "aria-label": "拖动可动部件",
+            tabIndex: 0,
+            className: "vai-motion-rig__handle",
+            cx: handle[0],
+            cy: handle[1],
+            r: 8 / scale2,
+            vectorEffect: "non-scaling-stroke",
+            onMouseDown: (event) => {
+              if (event.button !== 0 || rig.phase === "preview") return;
+              event.preventDefault();
+              event.stopPropagation();
+              onHandleMouseDown(event);
+            }
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${handle[0]} ${handle[1] + 14 / scale2}) scale(1 -1)`, pointerEvents: "none", children: /* @__PURE__ */ jsxRuntime.jsx(
+          "text",
+          {
+            "data-motion-rig-status": rig.phase,
+            className: "vai-motion-rig__status",
+            fontSize: 11 / scale2,
+            textAnchor: "middle",
+            children: status
+          }
+        ) })
+      ] });
+    }
     function SourceUnderlay({
       source,
       resource,
-      document
+      document: document2
     }) {
-      const sourceFrame = document.coordinateFrames.find((frame) => frame.kind === "source" && frame.id === `frame_source_${safeId(source.id)}`) ?? document.coordinateFrames.find((frame) => frame.kind === "source");
+      const sourceFrame = document2.coordinateFrames.find((frame) => frame.kind === "source" && frame.id === `frame_source_${safeId(source.id)}`) ?? document2.coordinateFrames.find((frame) => frame.kind === "source");
       const transform2 = sourceFrame == null ? void 0 : sourceFrame.transform;
       return /* @__PURE__ */ jsxRuntime.jsx("g", { "data-source-underlay": source.id, pointerEvents: "none", opacity: 0.28, children: /* @__PURE__ */ jsxRuntime.jsx("g", { transform: transform2 === void 0 ? `translate(0 ${source.height}) scale(1 -1)` : `matrix(${transform2.join(" ")})`, children: /* @__PURE__ */ jsxRuntime.jsx(
         "image",
@@ -525,6 +821,7 @@ window.__ModuleLoader__.load({
       const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
       const preview = useDrawingWorkspace((state) => state.preview);
       const groundingOverlay = useDrawingWorkspace((state) => state.groundingOverlay);
+      const motionRig = useDrawingWorkspace((state) => state.motionRig);
       const sourceResource = useDrawingWorkspace((state) => state.sourceResource);
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -533,11 +830,17 @@ window.__ModuleLoader__.load({
       const setMouseWorld = useDrawingWorkspace((state) => state.setMouseWorld);
       const setSelection = useDrawingWorkspace((state) => state.setSelection);
       const moveAnnotationText = useDrawingWorkspace((state) => state.moveAnnotationText);
+      const rebuildMotionRigFromSelection = useDrawingWorkspace((state) => state.rebuildMotionRigFromSelection);
+      const beginMotionRigDrag = useDrawingWorkspace((state) => state.beginMotionRigDrag);
+      const updateMotionRigDrag = useDrawingWorkspace((state) => state.updateMotionRigDrag);
+      const finishMotionRigDrag = useDrawingWorkspace((state) => state.finishMotionRigDrag);
+      const resetMotionRigDrag = useDrawingWorkspace((state) => state.resetMotionRigDrag);
+      const cancelMotionRig = useDrawingWorkspace((state) => state.cancelMotionRig);
       const containerRef = react.useRef(null);
       const dragRef = react.useRef(null);
       const spacePressed = react.useRef(false);
       const [selectionBox, setSelectionBox] = react.useState(null);
-      const document = snapshot == null ? void 0 : snapshot.document;
+      const document2 = snapshot == null ? void 0 : snapshot.document;
       react.useEffect(() => {
         const element = containerRef.current;
         if (element === null) return;
@@ -547,12 +850,12 @@ window.__ModuleLoader__.load({
       }, []);
       react.useEffect(() => {
         const element = containerRef.current;
-        if (element === null || document === void 0 || typeof ResizeObserver === "undefined") return;
+        if (element === null || document2 === void 0 || typeof ResizeObserver === "undefined") return;
         const resize = () => {
           const { width, height } = element.getBoundingClientRect();
           if (!(width > 0 && height > 0)) return;
           if (viewport.width === 0 || viewport.height === 0) {
-            setViewport(fitViewportToDrawing(document, { width, height }));
+            setViewport(fitViewportToDrawing(document2, { width, height }));
           } else if (viewport.width !== width || viewport.height !== height) {
             setViewport({ ...viewport, width, height });
           }
@@ -561,7 +864,7 @@ window.__ModuleLoader__.load({
         const observer = new ResizeObserver(resize);
         observer.observe(element);
         return () => observer.disconnect();
-      }, [document, setViewport, viewport]);
+      }, [document2, setViewport, viewport]);
       if (snapshot === null) return null;
       const entities = [
         ...snapshot.document.geometry,
@@ -570,6 +873,10 @@ window.__ModuleLoader__.load({
       const groundedNodeIds = new Set(
         (groundingOverlay == null ? void 0 : groundingOverlay.groups.flatMap((group) => group.nodeIds)) ?? []
       );
+      const motionRigNodeIds = /* @__PURE__ */ new Set([
+        ...(motionRig == null ? void 0 : motionRig.projection.controlBodyNodeIds) ?? [],
+        ...(motionRig == null ? void 0 : motionRig.projection.connectors.map(({ nodeId }) => nodeId)) ?? []
+      ]);
       const previewBeforeEntities = preview === null || formalSnapshot === null ? [] : [
         ...formalSnapshot.document.geometry,
         ...display.annotations ? formalSnapshot.document.annotations : []
@@ -587,17 +894,17 @@ window.__ModuleLoader__.load({
       const handleWheel = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const point = eventScreenPoint(event);
-        setViewport(zoomViewportAt(viewport, point, event.deltaY < 0 ? 1.1 : 1 / 1.1));
+        const point2 = eventScreenPoint(event);
+        setViewport(zoomViewportAt(viewport, point2, event.deltaY < 0 ? 1.1 : 1 / 1.1));
       };
       const handleCanvasMouseDown = (event) => {
-        const point = eventScreenPoint(event);
+        const point2 = eventScreenPoint(event);
         const boxSelect = event.button === 0 && (event.metaKey || event.ctrlKey) && !spacePressed.current;
         if (event.button === 1 || event.button === 0 && !boxSelect) {
           event.preventDefault();
           dragRef.current = {
             kind: "pan",
-            start: point,
+            start: point2,
             viewport,
             clearSelectionOnClick: event.button === 0 && isBlankCanvasTarget(event)
           };
@@ -606,54 +913,69 @@ window.__ModuleLoader__.load({
         if (!boxSelect) return;
         dragRef.current = {
           kind: "box",
-          start: point,
-          current: point,
+          start: point2,
+          current: point2,
           additive: true
         };
-        setSelectionBox({ start: point, current: point });
+        setSelectionBox({ start: point2, current: point2 });
       };
       const handleMouseMove = (event) => {
-        const point = eventScreenPoint(event);
-        setMouseWorld(screenToWorld(point, viewport));
+        const point2 = eventScreenPoint(event);
+        setMouseWorld(screenToWorld(point2, viewport));
         const drag = dragRef.current;
         if (drag === null) return;
         if (drag.kind === "pan") {
           setViewport({
             ...drag.viewport,
-            x: drag.viewport.x + point[0] - drag.start[0],
-            y: drag.viewport.y + point[1] - drag.start[1]
+            x: drag.viewport.x + point2[0] - drag.start[0],
+            y: drag.viewport.y + point2[1] - drag.start[1]
           });
           return;
         }
         if (drag.kind === "box") {
-          drag.current = point;
-          setSelectionBox({ start: drag.start, current: point });
+          drag.current = point2;
+          setSelectionBox({ start: drag.start, current: point2 });
           return;
         }
-        drag.currentWorld = screenToWorld(point, viewport);
+        if (drag.kind === "motion-rig") {
+          drag.currentWorld = screenToWorld(point2, viewport);
+          updateMotionRigDrag(drag.currentWorld);
+          return;
+        }
+        drag.currentWorld = screenToWorld(point2, viewport);
       };
       const handleMouseUp = (event) => {
         const drag = dragRef.current;
         dragRef.current = null;
         if (drag === null) return;
         if (drag.kind === "pan") {
-          const point = eventScreenPoint(event);
-          const distance = Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]);
-          if (drag.clearSelectionOnClick && distance < 3) setSelection([]);
+          const point2 = eventScreenPoint(event);
+          const distance2 = Math.hypot(point2[0] - drag.start[0], point2[1] - drag.start[1]);
+          if (drag.clearSelectionOnClick && distance2 < 3) setSelection([]);
           return;
         }
         if (drag.kind === "box") {
-          const point = eventScreenPoint(event);
-          const distance = Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]);
-          if (distance < 3) {
+          const point2 = eventScreenPoint(event);
+          const distance2 = Math.hypot(point2[0] - drag.start[0], point2[1] - drag.start[1]);
+          if (distance2 < 3) {
             if (!drag.additive) setSelection([]);
           } else {
             const first = screenToWorld(drag.start, viewport);
-            const second = screenToWorld(point, viewport);
+            const second = screenToWorld(point2, viewport);
             const ids = nodesInWorldBox(snapshot.document, normalizeBounds(first, second));
-            setSelection(drag.additive ? [...selectedIds, ...ids] : ids);
+            const nextSelection = drag.additive ? [...selectedIds, ...ids] : ids;
+            setSelection(nextSelection);
+            if (motionRig !== null && nextSelection.length > 0) {
+              queueMicrotask(() => {
+                void rebuildMotionRigFromSelection();
+              });
+            }
           }
           setSelectionBox(null);
+          return;
+        }
+        if (drag.kind === "motion-rig") {
+          finishMotionRigDrag();
           return;
         }
         if (drag.kind === "annotation") {
@@ -666,11 +988,21 @@ window.__ModuleLoader__.load({
         }
       };
       const handleKeyDown = (event) => {
+        var _a2;
         if (event.code === "Space") {
           spacePressed.current = true;
           event.preventDefault();
         }
         if (event.key === "Escape") {
+          if (((_a2 = dragRef.current) == null ? void 0 : _a2.kind) === "motion-rig") {
+            dragRef.current = null;
+            resetMotionRigDrag();
+            return;
+          }
+          if (motionRig !== null) {
+            void cancelMotionRig();
+            return;
+          }
           dragRef.current = null;
           setSelectionBox(null);
           setSelection([]);
@@ -678,17 +1010,25 @@ window.__ModuleLoader__.load({
       };
       const handleEntitySelect = (id, event) => {
         event.stopPropagation();
-        if (event.metaKey || event.ctrlKey) {
-          setSelection(selectedIds.includes(id) ? selectedIds.filter((selectedId) => selectedId !== id) : [...selectedIds, id]);
-        } else {
-          setSelection([id]);
+        const nextSelection = event.metaKey || event.ctrlKey ? selectedIds.includes(id) ? selectedIds.filter((selectedId) => selectedId !== id) : [...selectedIds, id] : [id];
+        setSelection(nextSelection);
+        if (motionRig !== null && nextSelection.length > 0) {
+          queueMicrotask(() => {
+            void rebuildMotionRigFromSelection();
+          });
         }
+      };
+      const handleMotionRigPointerDown = (event) => {
+        const point2 = eventScreenPoint(event);
+        const world = screenToWorld(point2, viewport);
+        beginMotionRigDrag(world);
+        dragRef.current = { kind: "motion-rig", startWorld: world, currentWorld: world };
       };
       const handleAnnotationPointerDown = (annotation, event) => {
         if (event.button !== 0) return;
         event.stopPropagation();
-        const point = eventScreenPoint(event);
-        const world = screenToWorld(point, viewport);
+        const point2 = eventScreenPoint(event);
+        const world = screenToWorld(point2, viewport);
         dragRef.current = { kind: "annotation", id: annotation.id, startWorld: world, currentWorld: world };
         setSelection([annotation.id]);
       };
@@ -774,12 +1114,21 @@ window.__ModuleLoader__.load({
                       viewport,
                       selected: selectedIds.includes(node.id),
                       aiGrounded: groundedNodeIds.has(node.id),
+                      motionRigActive: motionRigNodeIds.has(node.id),
                       previewDiff: (preview == null ? void 0 : preview.diff.createdNodeIds.includes(node.id)) ? "created" : (preview == null ? void 0 : preview.diff.updatedNodeIds.includes(node.id)) ? "updated" : void 0,
                       onSelect: (event) => handleEntitySelect(node.id, event),
                       onTextPointerDown: node.type === "text" || node.type === "dimension" ? (event) => handleAnnotationPointerDown(node, event) : void 0
                     },
                     node.id
-                  ))
+                  )),
+                  motionRig === null ? null : /* @__PURE__ */ jsxRuntime.jsx(
+                    MotionRigOverlay,
+                    {
+                      rig: motionRig,
+                      viewportScale: viewport.scale,
+                      onHandleMouseDown: handleMotionRigPointerDown
+                    }
+                  )
                 ] }),
                 selectionBox === null ? null : /* @__PURE__ */ jsxRuntime.jsx(SelectionBox, { box: selectionBox })
               ]
@@ -789,12 +1138,12 @@ window.__ModuleLoader__.load({
       );
     }
     function RelationLayer({
-      document,
+      document: document2,
       viewport
     }) {
-      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-relations", children: document.relations.filter((relation) => relation.visible && relation.plane !== "topology").flatMap((relation) => {
+      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-relations", children: document2.relations.filter((relation) => relation.visible && relation.plane !== "topology").flatMap((relation) => {
         const centers = relationNodeIds(relation).flatMap((id) => {
-          const node = [...document.geometry, ...document.annotations].find((candidate) => candidate.id === id);
+          const node = [...document2.geometry, ...document2.annotations].find((candidate) => candidate.id === id);
           const bounds = node === void 0 ? null : nodeBounds(node);
           return bounds === null ? [] : [[(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2]];
         });
@@ -1121,9 +1470,9 @@ window.__ModuleLoader__.load({
     function booleanField(key, label, value, property) {
       return { key, label, value, kind: "boolean", change: (next) => ({ [property]: Boolean(next) }) };
     }
-    function locateNode(document, id) {
+    function locateNode(document2, id) {
       if (id === void 0) return null;
-      return document.geometry.find((node) => node.id === id) ?? document.annotations.find((node) => node.id === id) ?? document.relations.find((node) => node.id === id) ?? document.features.find((node) => node.id === id) ?? null;
+      return document2.geometry.find((node) => node.id === id) ?? document2.annotations.find((node) => node.id === id) ?? document2.relations.find((node) => node.id === id) ?? document2.features.find((node) => node.id === id) ?? null;
     }
     function WorkspaceStatus() {
       const snapshot = useDrawingWorkspace((state) => state.snapshot);
@@ -1157,47 +1506,308 @@ window.__ModuleLoader__.load({
         busy ? /* @__PURE__ */ jsxRuntime.jsx("span", { children: "正在保存…" }) : null
       ] });
     }
-    function WorkspaceToolbar() {
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const toKebabCase = (string2) => string2.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    const toCamelCase = (string2) => string2.replace(
+      /^([A-Z])|[\s-_]+(\w)/g,
+      (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
+    );
+    const toPascalCase = (string2) => {
+      const camelCase = toCamelCase(string2);
+      return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
+    };
+    const mergeClasses = (...classes) => classes.filter((className, index, array2) => {
+      return Boolean(className) && className.trim() !== "" && array2.indexOf(className) === index;
+    }).join(" ").trim();
+    const hasA11yProp = (props) => {
+      for (const prop in props) {
+        if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
+          return true;
+        }
+      }
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    var defaultAttributes = {
+      xmlns: "http://www.w3.org/2000/svg",
+      width: 24,
+      height: 24,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: 2,
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const Icon = react.forwardRef(
+      ({
+        color = "currentColor",
+        size = 24,
+        strokeWidth = 2,
+        absoluteStrokeWidth,
+        className = "",
+        children,
+        iconNode,
+        ...rest
+      }, ref) => react.createElement(
+        "svg",
+        {
+          ref,
+          ...defaultAttributes,
+          width: size,
+          height: size,
+          stroke: color,
+          strokeWidth: absoluteStrokeWidth ? Number(strokeWidth) * 24 / Number(size) : strokeWidth,
+          className: mergeClasses("lucide", className),
+          ...!children && !hasA11yProp(rest) && { "aria-hidden": "true" },
+          ...rest
+        },
+        [
+          ...iconNode.map(([tag, attrs]) => react.createElement(tag, attrs)),
+          ...Array.isArray(children) ? children : [children]
+        ]
+      )
+    );
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const createLucideIcon = (iconName, iconNode) => {
+      const Component = react.forwardRef(
+        ({ className, ...props }, ref) => react.createElement(Icon, {
+          ref,
+          iconNode,
+          className: mergeClasses(
+            `lucide-${toKebabCase(toPascalCase(iconName))}`,
+            `lucide-${iconName}`,
+            className
+          ),
+          ...props
+        })
+      );
+      Component.displayName = toPascalCase(iconName);
+      return Component;
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$6 = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
+    const Check = createLucideIcon("check", __iconNode$6);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$5 = [
+      ["path", { d: "M12 15V3", key: "m9g1x1" }],
+      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
+      ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
+    ];
+    const Download = createLucideIcon("download", __iconNode$5);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$4 = [
+      ["path", { d: "m15 14 5-5-5-5", key: "12vg1m" }],
+      ["path", { d: "M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13", key: "6uklza" }]
+    ];
+    const Redo2 = createLucideIcon("redo-2", __iconNode$4);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$3 = [
+      ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
+      ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
+      ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
+      ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
+    ];
+    const Scan = createLucideIcon("scan", __iconNode$3);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$2 = [
+      ["path", { d: "M9 14 4 9l5-5", key: "102s5s" }],
+      ["path", { d: "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11", key: "f3b9sd" }]
+    ];
+    const Undo2 = createLucideIcon("undo-2", __iconNode$2);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$1 = [
+      ["path", { d: "M12 3v12", key: "1x0j5s" }],
+      ["path", { d: "m17 8-5-5-5 5", key: "7q97r8" }],
+      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }]
+    ];
+    const Upload = createLucideIcon("upload", __iconNode$1);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode = [
+      ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+      ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
+    ];
+    const X = createLucideIcon("x", __iconNode);
+    function WorkspaceToolbar({ onUploadFiles, onExport }) {
       const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
       const viewport = useDrawingWorkspace((state) => state.viewport);
-      const display = useDrawingWorkspace((state) => state.display);
+      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
+      const motionRig = useDrawingWorkspace((state) => state.motionRig);
+      const busy = useDrawingWorkspace((state) => state.busy);
       const setViewport = useDrawingWorkspace((state) => state.setViewport);
-      const setDisplay = useDrawingWorkspace((state) => state.setDisplay);
+      const undoLast = useDrawingWorkspace((state) => state.undoLast);
+      const redoLast = useDrawingWorkspace((state) => state.redoLast);
+      const confirmMotionRig = useDrawingWorkspace((state) => state.confirmMotionRig);
+      const cancelMotionRig = useDrawingWorkspace((state) => state.cancelMotionRig);
       if (snapshot === null) return null;
-      const toggles = [
-        ["grid", "网格"],
-        ["axes", "坐标轴"],
-        ["relations", "关系"],
-        ["annotations", "标注"],
-        ["sourceUnderlay", "源图"]
-      ];
-      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-toolbar", role: "toolbar", "aria-label": "图纸视图工具", children: [
+      const lastCommit = formalSnapshot == null ? void 0 : formalSnapshot.lastCommit;
+      const unavailable = busy || preview !== null || motionRig !== null;
+      const handleUpload = (event) => {
+        const files = Array.from(event.currentTarget.files ?? []);
+        event.currentTarget.value = "";
+        if (files.length > 0) onUploadFiles == null ? void 0 : onUploadFiles(files);
+      };
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-toolbar", role: "toolbar", "aria-label": "图纸操作工具", children: [
+        (motionRig == null ? void 0 : motionRig.phase) === "preview" ? /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              "aria-label": "确认姿态",
+              title: "确认姿态",
+              onClick: () => {
+                void confirmMotionRig();
+              },
+              children: /* @__PURE__ */ jsxRuntime.jsx(Check, { "aria-hidden": "true", size: 17 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              "aria-label": "取消姿态",
+              title: "取消姿态",
+              onClick: () => {
+                void cancelMotionRig();
+              },
+              children: /* @__PURE__ */ jsxRuntime.jsx(X, { "aria-hidden": "true", size: 17 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" })
+        ] }) : null,
         /* @__PURE__ */ jsxRuntime.jsx(
           "button",
           {
             type: "button",
+            "aria-label": "适配图纸",
+            title: "缩放并居中显示整张图纸",
             onClick: () => setViewport(fitViewportToDrawing(snapshot.document, viewport)),
-            children: "适配图纸"
+            children: /* @__PURE__ */ jsxRuntime.jsx(Scan, { "aria-hidden": "true", size: 17 })
           }
         ),
         /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
-        toggles.map(([key, label]) => /* @__PURE__ */ jsxRuntime.jsx(
+        /* @__PURE__ */ jsxRuntime.jsx(
           "button",
           {
             type: "button",
-            "aria-pressed": display[key],
-            onClick: () => setDisplay({ [key]: !display[key] }),
-            children: label
-          },
-          key
-        ))
+            "aria-label": "撤销",
+            disabled: unavailable || !(lastCommit == null ? void 0 : lastCommit.undoable),
+            title: "撤销最近一次图纸修改",
+            onClick: () => {
+              void undoLast();
+            },
+            children: /* @__PURE__ */ jsxRuntime.jsx(Undo2, { "aria-hidden": "true", size: 17 })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            "aria-label": "反撤销",
+            disabled: unavailable || !(lastCommit == null ? void 0 : lastCommit.redoable),
+            title: "恢复最近一次撤销",
+            onClick: () => {
+              void redoLast();
+            },
+            children: /* @__PURE__ */ jsxRuntime.jsx(Redo2, { "aria-hidden": "true", size: 17 })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
+        /* @__PURE__ */ jsxRuntime.jsxs(
+          "label",
+          {
+            className: `vai-toolbar__upload${onUploadFiles === void 0 ? " vai-toolbar__upload--disabled" : ""}`,
+            "aria-label": "上传图纸",
+            title: "上传图纸",
+            children: [
+              /* @__PURE__ */ jsxRuntime.jsx(Upload, { "aria-hidden": "true", size: 17 }),
+              /* @__PURE__ */ jsxRuntime.jsx(
+                "input",
+                {
+                  type: "file",
+                  accept: "image/png,image/jpeg,image/webp,image/gif",
+                  disabled: onUploadFiles === void 0,
+                  onChange: handleUpload
+                }
+              )
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            "aria-label": "导出 DXF",
+            disabled: formalSnapshot === null,
+            title: "导出当前 DXF 图纸",
+            onClick: onExport,
+            children: /* @__PURE__ */ jsxRuntime.jsx(Download, { "aria-hidden": "true", size: 17 })
+          }
+        )
       ] });
     }
     function DrawingWorkspace({
       previewContributions = [],
-      emptyMessage = "还没有图纸"
+      emptyMessage = "还没有图纸",
+      onUploadFiles,
+      onExport
     }) {
-      var _a2;
       const [objectsOpen, setObjectsOpen] = react.useState(true);
       const [inspectorOpen, setInspectorOpen] = react.useState(true);
       const status = useDrawingWorkspace((state) => state.status);
@@ -1207,7 +1817,6 @@ window.__ModuleLoader__.load({
       const viewport = useDrawingWorkspace((state) => state.viewport);
       const busy = useDrawingWorkspace((state) => state.busy);
       const error = useDrawingWorkspace((state) => state.error);
-      const undoLast = useDrawingWorkspace((state) => state.undoLast);
       if (status === "idle" || status === "loading") {
         return /* @__PURE__ */ jsxRuntime.jsx("section", { className: "vai-workspace", "aria-label": "图纸工作区", "data-workspace-state": "loading", children: /* @__PURE__ */ jsxRuntime.jsx(WorkspaceState, { title: "正在读取本地图纸…" }) });
       }
@@ -1236,19 +1845,6 @@ window.__ModuleLoader__.load({
                 snapshot.provisional ? /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge", children: "候选几何" }) : null,
                 preview === null ? null : /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge vai-workspace__badge--preview", children: "候选 Preview" })
               ] }),
-              /* @__PURE__ */ jsxRuntime.jsx(WorkspaceToolbar, {}),
-              /* @__PURE__ */ jsxRuntime.jsx(
-                "button",
-                {
-                  type: "button",
-                  disabled: busy || preview !== null || !((_a2 = snapshot.lastCommit) == null ? void 0 : _a2.undoable),
-                  title: preview !== null ? "先处理当前 Preview" : "撤销最近一次图纸提交",
-                  onClick: () => {
-                    void undoLast();
-                  },
-                  children: "撤销"
-                }
-              ),
               /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__panel-toggles", children: [
                 /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": objectsOpen, onClick: () => setObjectsOpen(!objectsOpen), children: "对象" }),
                 /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": inspectorOpen, onClick: () => setInspectorOpen(!inspectorOpen), children: "属性" })
@@ -1261,13 +1857,31 @@ window.__ModuleLoader__.load({
                 objectsOpen ? /* @__PURE__ */ jsxRuntime.jsx(ObjectList, {}) : null,
                 inspectorOpen ? /* @__PURE__ */ jsxRuntime.jsx(PropertyInspector, {}) : null
               ] }) : null,
-              /* @__PURE__ */ jsxRuntime.jsx(Canvas, {}),
+              /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__canvas-region", children: [
+                /* @__PURE__ */ jsxRuntime.jsx(Canvas, {}),
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  WorkspaceToolbar,
+                  {
+                    onUploadFiles,
+                    onExport: onExport ?? (() => exportDxf(snapshot))
+                  }
+                )
+              ] }),
               previewContributions.map((contribution) => /* @__PURE__ */ jsxRuntime.jsx("div", { "data-preview-overlay": contribution.id, children: contribution.render({ snapshot: displaySnapshot ?? snapshot, viewport }) }, contribution.id))
             ] }),
             /* @__PURE__ */ jsxRuntime.jsx(WorkspaceStatus, {})
           ]
         }
       );
+    }
+    function exportDxf(snapshot) {
+      const blob = new Blob([exportDrawingDxf(snapshot.document)], { type: "application/dxf;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${snapshot.ref.drawingId}-R${snapshot.ref.revision}.dxf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
     }
     function WorkspaceState({
       title,
@@ -1280,8 +1894,8 @@ window.__ModuleLoader__.load({
       ] });
     }
     const IMMUTABLE_NODE_FIELDS = /* @__PURE__ */ new Set(["id", "type", "plane"]);
-    function buildNodeUpdateCommand(document, id, changes) {
-      const node = findDrawingNode(document, id);
+    function buildNodeUpdateCommand(document2, id, changes) {
+      const node = findDrawingNode$1(document2, id);
       if (node === null) return null;
       const fields = Object.keys(changes);
       if (fields.length === 0) return null;
@@ -1297,12 +1911,12 @@ window.__ModuleLoader__.load({
         expected: Object.fromEntries(fields.map((field) => [field, clone$1(record2[field])]))
       };
     }
-    function buildNodeDeleteCommands(document, ids) {
+    function buildNodeDeleteCommands(document2, ids) {
       const uniqueIds = [...new Set(ids)];
-      return uniqueIds.flatMap((id) => findDrawingNode(document, id) === null ? [] : [{ type: "node.delete", id }]);
+      return uniqueIds.flatMap((id) => findDrawingNode$1(document2, id) === null ? [] : [{ type: "node.delete", id }]);
     }
-    function buildAnnotationTextMoveCommand(document, id, position) {
-      const annotation = document.annotations.find((node) => node.id === id);
+    function buildAnnotationTextMoveCommand(document2, id, position) {
+      const annotation = document2.annotations.find((node) => node.id === id);
       if (annotation === void 0) return null;
       const expectedPosition = annotationTextPosition(annotation);
       if (expectedPosition === null) return null;
@@ -1313,8 +1927,8 @@ window.__ModuleLoader__.load({
         expectedPosition: [...expectedPosition]
       };
     }
-    function findDrawingNode(document, id) {
-      return document.geometry.find((node) => node.id === id) ?? document.annotations.find((node) => node.id === id) ?? document.relations.find((node) => node.id === id) ?? document.features.find((node) => node.id === id) ?? null;
+    function findDrawingNode$1(document2, id) {
+      return document2.geometry.find((node) => node.id === id) ?? document2.annotations.find((node) => node.id === id) ?? document2.relations.find((node) => node.id === id) ?? document2.features.find((node) => node.id === id) ?? null;
     }
     function annotationTextPosition(annotation) {
       switch (annotation.type) {
@@ -1328,6 +1942,213 @@ window.__ModuleLoader__.load({
     }
     function clone$1(value) {
       return value === void 0 ? value : structuredClone(value);
+    }
+    function applyDrawingTransaction(source, commands, now) {
+      const document2 = structuredClone(source);
+      for (const command of commands) applyCommand(document2, command);
+      validateDocument(document2);
+      document2.metadata.updatedAt = now;
+      return document2;
+    }
+    function findDrawingNode(document2, id) {
+      for (const plane of ["geometry", "annotation", "relation", "feature"]) {
+        const collection = collectionFor(document2, plane);
+        const node = collection.find((candidate) => candidate.id === id);
+        if (node) return { plane, node };
+      }
+      return null;
+    }
+    function applyCommand(document2, command) {
+      if (command.type === "node.create") {
+        if (findDrawingNode(document2, command.node.id)) throw new Error("EDIT_NODE_ALREADY_EXISTS");
+        const collection = collectionFor(document2, command.plane);
+        collection.push(structuredClone(command.node));
+        return;
+      }
+      const located = findDrawingNode(document2, command.id);
+      if (!located) throw new Error("EDIT_NODE_NOT_FOUND");
+      if (command.type === "node.delete") {
+        const collection = collectionFor(document2, located.plane);
+        const index = collection.findIndex(({ id }) => id === command.id);
+        collection.splice(index, 1);
+        removeReferences(document2, command.id);
+        return;
+      }
+      if (command.type === "annotation.move-text") {
+        if (located.plane !== "annotation") throw new Error("EDIT_NODE_TYPE_MISMATCH");
+        const node2 = located.node;
+        const key = node2.type === "text" ? "position" : "textPosition";
+        assertExpected(node2[key], command.expectedPosition);
+        node2[key] = structuredClone(command.position);
+        return;
+      }
+      const node = located.node;
+      for (const [key, expected] of Object.entries(command.expected)) assertExpected(node[key], expected);
+      for (const [key, value] of Object.entries(command.changes)) node[key] = structuredClone(value);
+    }
+    function collectionFor(document2, plane) {
+      if (plane === "geometry") return document2.geometry;
+      if (plane === "annotation") return document2.annotations;
+      if (plane === "relation") return document2.relations;
+      return document2.features;
+    }
+    function removeReferences(document2, id) {
+      document2.relations = document2.relations.filter((relation) => {
+        if (relation.type === "topology") return !relation.nodeIds.includes(id);
+        if (relation.type === "constraint") return !relation.geometryIds.includes(id);
+        if (relation.type === "association") {
+          return relation.annotationId !== id && !relation.geometryIds.includes(id);
+        }
+        return relation.featureId !== id && !relation.nodeIds.includes(id);
+      });
+      document2.features = document2.features.filter((feature) => feature.id !== id).map((feature) => ({
+        ...feature,
+        geometryIds: feature.geometryIds.filter((nodeId) => nodeId !== id),
+        annotationIds: feature.annotationIds.filter((nodeId) => nodeId !== id),
+        relationIds: feature.relationIds.filter((nodeId) => nodeId !== id)
+      }));
+    }
+    function validateDocument(document2) {
+      const ids = [
+        ...document2.geometry.map(({ id }) => id),
+        ...document2.annotations.map(({ id }) => id),
+        ...document2.relations.map(({ id }) => id),
+        ...document2.features.map(({ id }) => id)
+      ].map(String);
+      if (new Set(ids).size !== ids.length) throw new Error("EDIT_DUPLICATE_NODE_ID");
+      const geometry = new Set(document2.geometry.map(({ id }) => id));
+      const annotation = new Set(document2.annotations.map(({ id }) => id));
+      const feature = new Set(document2.features.map(({ id }) => id));
+      for (const relation of document2.relations) {
+        const valid = relation.type === "topology" ? relation.nodeIds.every((id) => ids.includes(String(id))) : relation.type === "constraint" ? relation.geometryIds.every((id) => geometry.has(id)) : relation.type === "association" ? annotation.has(relation.annotationId) && relation.geometryIds.every((id) => geometry.has(id)) : feature.has(relation.featureId) && relation.nodeIds.every((id) => ids.includes(String(id)));
+        if (!valid) throw new Error("EDIT_DANGLING_REFERENCE");
+      }
+    }
+    function assertExpected(actual, expected) {
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("EDIT_PRECONDITION_FAILED");
+    }
+    function solveTranslationMotionRig(document2, rig, delta) {
+      if (!finitePoint(delta)) throw new Error("MOTION_RIG_DELTA_INVALID");
+      const commands = [];
+      const connectorIds = new Set(rig.connectors.map(({ nodeId }) => nodeId));
+      for (const id of rig.controlBodyNodeIds) {
+        if (connectorIds.has(id)) throw new Error("MOTION_RIG_ROLE_CONFLICT");
+        const located = findDrawingNode(document2, id);
+        if (!located || located.plane !== "geometry") throw new Error("MOTION_RIG_CONTROL_NODE_MISSING");
+        const translated = translatedFields(located.node, delta);
+        commands.push({ type: "node.update", id, changes: translated.after, expected: translated.before });
+      }
+      for (const binding of rig.connectors) {
+        const located = findDrawingNode(document2, binding.nodeId);
+        if (!located || located.plane !== "geometry") throw new Error("MOTION_RIG_CONNECTOR_MISSING");
+        commands.push(deformConnector(located.node, binding, delta));
+      }
+      if (commands.length === 0) throw new Error("MOTION_RIG_NO_EFFECT");
+      const candidate = applyDrawingTransaction(document2, commands, document2.metadata.updatedAt);
+      for (const binding of rig.connectors) {
+        const node = candidate.geometry.find(({ id }) => String(id) === binding.nodeId);
+        if (!node || distance(fixedEndpoint(node, binding.movingEndpoint), binding.fixedPoint) > 1e-8) {
+          throw new Error("MOTION_RIG_ANCHOR_CHANGED");
+        }
+      }
+      return { commands, candidate };
+    }
+    function deformConnector(node, binding, delta) {
+      if (node.type === "line" && (binding.movingEndpoint === "start" || binding.movingEndpoint === "end")) {
+        const before = node[binding.movingEndpoint];
+        return {
+          type: "node.update",
+          id: String(node.id),
+          changes: { [binding.movingEndpoint]: add(before, delta) },
+          expected: { [binding.movingEndpoint]: structuredClone(before) }
+        };
+      }
+      if (node.type === "polyline" && (binding.movingEndpoint === "first" || binding.movingEndpoint === "last")) {
+        const before = structuredClone(node.vertices);
+        const points = before.map(({ point: point2 }) => point2);
+        const moved = deformPointChain(points, binding.movingEndpoint, delta);
+        return {
+          type: "node.update",
+          id: String(node.id),
+          changes: { vertices: before.map((vertex, index) => ({ ...vertex, point: moved[index] })) },
+          expected: { vertices: structuredClone(node.vertices) }
+        };
+      }
+      if (node.type === "spline" && (binding.movingEndpoint === "first" || binding.movingEndpoint === "last")) {
+        return {
+          type: "node.update",
+          id: String(node.id),
+          changes: { controlPoints: deformPointChain(node.controlPoints, binding.movingEndpoint, delta) },
+          expected: { controlPoints: structuredClone(node.controlPoints) }
+        };
+      }
+      throw new Error("MOTION_RIG_GEOMETRY_UNSUPPORTED");
+    }
+    function deformPointChain(input, movingEndpoint, delta) {
+      const points = movingEndpoint === "last" ? [...input] : [...input].reverse();
+      const cumulative = [0];
+      for (let index = 1; index < points.length; index += 1) {
+        cumulative.push(cumulative[index - 1] + distance(points[index - 1], points[index]));
+      }
+      const total = cumulative[cumulative.length - 1];
+      if (!(total > 1e-12)) throw new Error("MOTION_RIG_CONNECTOR_DEGENERATE");
+      const deformed = points.map((point2, index) => add(point2, scale(delta, cumulative[index] / total)));
+      return movingEndpoint === "last" ? deformed : deformed.reverse();
+    }
+    function translatedFields(node, delta) {
+      if (node.type === "point") return {
+        before: { x: node.x, y: node.y },
+        after: { x: clean(node.x + delta[0]), y: clean(node.y + delta[1]) }
+      };
+      if (node.type === "line") return pair("start", node.start, "end", node.end, delta);
+      if (node.type === "circle" || node.type === "arc" || node.type === "ellipse") return {
+        before: { center: structuredClone(node.center) },
+        after: { center: add(node.center, delta) }
+      };
+      if (node.type === "polyline") return {
+        before: { vertices: structuredClone(node.vertices) },
+        after: { vertices: node.vertices.map((vertex) => ({ ...structuredClone(vertex), point: add(vertex.point, delta) })) }
+      };
+      if (node.type === "spline") return {
+        before: { controlPoints: structuredClone(node.controlPoints) },
+        after: { controlPoints: node.controlPoints.map((point2) => add(point2, delta)) }
+      };
+      if (node.type === "ray" || node.type === "xline") return {
+        before: { origin: structuredClone(node.origin) },
+        after: { origin: add(node.origin, delta) }
+      };
+      throw new Error("MOTION_RIG_GEOMETRY_UNSUPPORTED");
+    }
+    function pair(firstKey, first, secondKey, second, delta) {
+      return {
+        before: { [firstKey]: structuredClone(first), [secondKey]: structuredClone(second) },
+        after: { [firstKey]: add(first, delta), [secondKey]: add(second, delta) }
+      };
+    }
+    function fixedEndpoint(node, moving) {
+      if (node.type === "line") return moving === "start" ? node.end : node.start;
+      if (node.type === "polyline") return moving === "first" ? node.vertices[node.vertices.length - 1].point : node.vertices[0].point;
+      if (node.type === "spline") return moving === "first" ? node.controlPoints[node.controlPoints.length - 1] : node.controlPoints[0];
+      throw new Error("MOTION_RIG_GEOMETRY_UNSUPPORTED");
+    }
+    function add(point2, delta) {
+      return cleanPoint([point2[0] + delta[0], point2[1] + delta[1]]);
+    }
+    function scale(point2, factor) {
+      return [point2[0] * factor, point2[1] * factor];
+    }
+    function distance(left, right) {
+      return Math.hypot(left[0] - right[0], left[1] - right[1]);
+    }
+    function finitePoint(point2) {
+      return Number.isFinite(point2[0]) && Number.isFinite(point2[1]);
+    }
+    function cleanPoint(point2) {
+      return [clean(point2[0]), clean(point2[1])];
+    }
+    function clean(value) {
+      const rounded = Number(value.toFixed(9));
+      return Object.is(rounded, -0) ? 0 : rounded;
     }
     const createStoreImpl = (createState) => {
       let state;
@@ -1373,8 +2194,12 @@ window.__ModuleLoader__.load({
       let sourceResource = null;
       let selectionSequence = 0;
       let groundingCursor = null;
+      let motionRigBaseSnapshot = null;
+      let motionRigBaseProjection = null;
+      let motionRigDragStart = null;
+      let motionRigCommands = [];
       const store = createStore((set, get) => {
-        const replaceSnapshot = async (snapshot, preview = null, groundingOverlay = null) => {
+        const replaceSnapshot = async (snapshot, preview = null, groundingOverlay = null, motionRigProjection = null) => {
           const previousOverlay = get().groundingOverlay;
           const sameDrawing = snapshot !== null && (groundingCursor == null ? void 0 : groundingCursor.drawingId) === snapshot.ref.drawingId;
           if (!sameDrawing) groundingCursor = null;
@@ -1399,6 +2224,7 @@ window.__ModuleLoader__.load({
             currentGroundingOverlay = null;
           }
           const currentPreview = !terminalOverlay && previewMatchesSnapshot(preview, snapshot) ? preview : null;
+          const currentMotionRig = motionRigMatchesSnapshot(motionRigProjection, snapshot) ? { projection: structuredClone(motionRigProjection), phase: "ready" } : null;
           const displaySnapshot = (currentPreview == null ? void 0 : currentPreview.candidate) ?? snapshot;
           const nextIds = displaySnapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(displaySnapshot);
           const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
@@ -1422,6 +2248,7 @@ window.__ModuleLoader__.load({
             snapshot,
             preview: currentPreview,
             groundingOverlay: currentGroundingOverlay,
+            motionRig: currentMotionRig,
             displaySnapshot,
             sourceResource: nextSource,
             selectedIds,
@@ -1430,20 +2257,21 @@ window.__ModuleLoader__.load({
           });
         };
         const refresh = async (initial) => {
-          var _a2, _b;
+          var _a2, _b, _c;
           if (disposed) return;
           requestController == null ? void 0 : requestController.abort();
           const controller = new AbortController();
           requestController = controller;
           if (initial) set({ status: "loading", error: null });
           try {
-            const [snapshot, preview, groundingOverlay] = await Promise.all([
+            const [snapshot, preview, groundingOverlay, motionRig] = await Promise.all([
               port.load(controller.signal),
               ((_a2 = port.loadPreview) == null ? void 0 : _a2.call(port, controller.signal)) ?? Promise.resolve(null),
-              ((_b = port.loadGroundingOverlay) == null ? void 0 : _b.call(port, controller.signal)) ?? Promise.resolve(null)
+              ((_b = port.loadGroundingOverlay) == null ? void 0 : _b.call(port, controller.signal)) ?? Promise.resolve(null),
+              ((_c = port.loadMotionRig) == null ? void 0 : _c.call(port, controller.signal)) ?? Promise.resolve(null)
             ]);
             if (controller.signal.aborted || disposed) return;
-            await replaceSnapshot(snapshot, preview, groundingOverlay);
+            await replaceSnapshot(snapshot, preview, groundingOverlay, motionRig);
           } catch (error) {
             if (controller.signal.aborted || disposed) return;
             set({
@@ -1457,6 +2285,7 @@ window.__ModuleLoader__.load({
           snapshot: null,
           preview: null,
           groundingOverlay: null,
+          motionRig: null,
           displaySnapshot: null,
           sourceResource: null,
           busy: false,
@@ -1552,11 +2381,35 @@ window.__ModuleLoader__.load({
               if (!disposed) set({ busy: false });
             }
           },
+          async redoLast() {
+            var _a2;
+            const snapshot = get().snapshot;
+            if (!((_a2 = snapshot == null ? void 0 : snapshot.lastCommit) == null ? void 0 : _a2.redoable) || !port.redoLast || disposed) return false;
+            set({ busy: true, error: null });
+            const controller = new AbortController();
+            requestController = controller;
+            try {
+              const result = await port.redoLast(snapshot, controller.signal);
+              if (controller.signal.aborted || disposed) return false;
+              if (result.status === "committed") {
+                await replaceSnapshot(result.snapshot, null);
+                return true;
+              }
+              set({ error: { code: "redo_failed", message: result.message } });
+              return false;
+            } catch (error) {
+              if (controller.signal.aborted || disposed) return false;
+              set({ error: { code: "redo_failed", message: errorMessage(error) } });
+              return false;
+            } finally {
+              if (!disposed) set({ busy: false });
+            }
+          },
           setViewport(viewport) {
             set({ viewport: { ...viewport } });
           },
-          setMouseWorld(point) {
-            set({ mouseWorld: point === null ? null : [...point] });
+          setMouseWorld(point2) {
+            set({ mouseWorld: point2 === null ? null : [...point2] });
           },
           setSelection(ids) {
             const displaySnapshot = get().displaySnapshot;
@@ -1575,6 +2428,128 @@ window.__ModuleLoader__.load({
             }).catch(() => {
             });
           },
+          async rebuildMotionRigFromSelection() {
+            var _a2;
+            const current = get();
+            if (current.snapshot === null || current.motionRig === null || port.rebuildMotionRig === void 0) return false;
+            const result = await port.rebuildMotionRig(
+              current.snapshot.ref,
+              current.selectedIds,
+              requestController == null ? void 0 : requestController.signal
+            );
+            if (disposed) return false;
+            if (result.status === "ready") {
+              motionRigBaseSnapshot = structuredClone(current.snapshot);
+              motionRigBaseProjection = structuredClone(result.projection);
+              motionRigCommands = [];
+              motionRigDragStart = null;
+              set({
+                motionRig: { projection: structuredClone(result.projection), phase: "ready" },
+                displaySnapshot: ((_a2 = current.preview) == null ? void 0 : _a2.candidate) ?? current.snapshot
+              });
+              return true;
+            }
+            if (result.status === "stale") await refresh(false);
+            else set({
+              motionRig: current.motionRig === null ? null : { ...current.motionRig, message: result.message }
+            });
+            return false;
+          },
+          beginMotionRigDrag(point2) {
+            const current = get();
+            if (current.motionRig === null || current.snapshot === null || current.motionRig.phase === "preview") return;
+            motionRigBaseSnapshot = structuredClone(current.snapshot);
+            motionRigBaseProjection = structuredClone(current.motionRig.projection);
+            motionRigDragStart = [...point2];
+            motionRigCommands = [];
+            set({ motionRig: { ...current.motionRig, phase: "dragging", message: void 0 } });
+          },
+          updateMotionRigDrag(point2) {
+            var _a2;
+            const current = get();
+            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging" || motionRigDragStart === null || motionRigBaseSnapshot === null || motionRigBaseProjection === null) return;
+            try {
+              const delta = [
+                point2[0] - motionRigDragStart[0],
+                point2[1] - motionRigDragStart[1]
+              ];
+              const solved = solveTranslationMotionRig(
+                motionRigBaseSnapshot.document,
+                motionRigBaseProjection,
+                delta
+              );
+              motionRigCommands = structuredClone(solved.commands);
+              set({
+                displaySnapshot: { ...structuredClone(motionRigBaseSnapshot), document: solved.candidate },
+                motionRig: {
+                  ...current.motionRig,
+                  projection: {
+                    ...current.motionRig.projection,
+                    handle: [
+                      motionRigBaseProjection.handle[0] + delta[0],
+                      motionRigBaseProjection.handle[1] + delta[1]
+                    ]
+                  },
+                  phase: "dragging",
+                  message: void 0
+                }
+              });
+            } catch (error) {
+              set({ motionRig: { ...current.motionRig, message: errorMessage(error) } });
+            }
+          },
+          finishMotionRigDrag() {
+            var _a2;
+            const current = get();
+            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging") return;
+            set({ motionRig: { ...current.motionRig, phase: motionRigCommands.length > 0 ? "preview" : "ready" } });
+            motionRigDragStart = null;
+          },
+          resetMotionRigDrag() {
+            var _a2, _b;
+            const current = get();
+            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging" || motionRigBaseProjection === null) return;
+            motionRigCommands = [];
+            motionRigDragStart = null;
+            motionRigBaseSnapshot = null;
+            const projection = structuredClone(motionRigBaseProjection);
+            motionRigBaseProjection = null;
+            set({
+              motionRig: { projection, phase: "ready" },
+              displaySnapshot: ((_b = current.preview) == null ? void 0 : _b.candidate) ?? current.snapshot
+            });
+          },
+          async confirmMotionRig() {
+            var _a2, _b;
+            const current = get();
+            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "preview" || motionRigCommands.length === 0) return false;
+            const commands = structuredClone(motionRigCommands);
+            const committed = await get().commit({ commands });
+            if (!committed) return false;
+            const committedRef = (_b = get().snapshot) == null ? void 0 : _b.ref;
+            if (committedRef && port.discardMotionRig) await port.discardMotionRig(committedRef);
+            motionRigBaseSnapshot = null;
+            motionRigBaseProjection = null;
+            motionRigDragStart = null;
+            motionRigCommands = [];
+            set({ motionRig: null });
+            return true;
+          },
+          async cancelMotionRig() {
+            var _a2;
+            const current = get();
+            if (current.snapshot && port.discardMotionRig) {
+              await port.discardMotionRig(current.snapshot.ref, requestController == null ? void 0 : requestController.signal);
+            }
+            motionRigBaseSnapshot = null;
+            motionRigBaseProjection = null;
+            motionRigDragStart = null;
+            motionRigCommands = [];
+            set({
+              motionRig: null,
+              displaySnapshot: ((_a2 = current.preview) == null ? void 0 : _a2.candidate) ?? current.snapshot
+            });
+          },
           setDisplay(display) {
             set({ display: { ...get().display, ...display } });
           },
@@ -1589,18 +2564,25 @@ window.__ModuleLoader__.load({
             unsubscribe = void 0;
             sourceResource == null ? void 0 : sourceResource.dispose();
             sourceResource = null;
+            motionRigBaseSnapshot = null;
+            motionRigBaseProjection = null;
+            motionRigDragStart = null;
+            motionRigCommands = [];
           }
         };
       });
       return store;
     }
+    function motionRigMatchesSnapshot(rig, snapshot) {
+      return rig !== null && snapshot !== null && rig.drawingRef.drawingId === snapshot.ref.drawingId && rig.drawingRef.revision === snapshot.ref.revision;
+    }
     function drawingNodeIds(snapshot) {
-      const { document } = snapshot;
+      const { document: document2 } = snapshot;
       return /* @__PURE__ */ new Set([
-        ...document.geometry.map((node) => node.id),
-        ...document.annotations.map((node) => node.id),
-        ...document.relations.map((node) => node.id),
-        ...document.features.map((node) => node.id)
+        ...document2.geometry.map((node) => node.id),
+        ...document2.annotations.map((node) => node.id),
+        ...document2.relations.map((node) => node.id),
+        ...document2.features.map((node) => node.id)
       ]);
     }
     function groundingOverlayMatchesSnapshot(overlay, snapshot) {
@@ -1634,6 +2616,31 @@ window.__ModuleLoader__.load({
           signal == null ? void 0 : signal.throwIfAborted();
           if (remote.getGroundingOverlay === void 0) return null;
           const result = await remote.getGroundingOverlay(sessionId);
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async loadMotionRig(signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          if (remote.getMotionRig === void 0) return null;
+          const result = await remote.getMotionRig(sessionId);
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async rebuildMotionRig(ref, nodeIds, signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          if (remote.rebuildMotionRig === void 0) {
+            return { status: "rejected", code: "MOTION_RIG_UNAVAILABLE", message: "Motion rig correction is unavailable." };
+          }
+          const result = await remote.rebuildMotionRig(sessionId, { ref, nodeIds });
+          signal == null ? void 0 : signal.throwIfAborted();
+          return unwrap(result);
+        },
+        async discardMotionRig(ref, signal) {
+          signal == null ? void 0 : signal.throwIfAborted();
+          if (remote.discardMotionRig === void 0) {
+            return { status: "rejected", code: "MOTION_RIG_UNAVAILABLE", message: "Motion rig discard is unavailable." };
+          }
+          const result = await remote.discardMotionRig(sessionId, { ref });
           signal == null ? void 0 : signal.throwIfAborted();
           return unwrap(result);
         },
@@ -1679,6 +2686,35 @@ window.__ModuleLoader__.load({
           ));
           if (lookup.status === "committed") return committedSnapshot(remote, sessionId);
           return { status: "rejected", code: "COMMIT_OUTCOME_UNKNOWN", message: "Undo outcome is uncertain; refresh the Drawing before retrying." };
+        },
+        async redoLast(snapshot, signal) {
+          var _a2;
+          const last = snapshot.lastCommit;
+          if (!(last == null ? void 0 : last.redoable) || remote.stageRedo === void 0) {
+            return { status: "rejected", code: "REDO_UNAVAILABLE", message: "No redoable Drawing Undo is current." };
+          }
+          signal == null ? void 0 : signal.throwIfAborted();
+          const staged = unwrap(await remote.stageRedo(sessionId, {
+            targetCommitId: last.commitId,
+            expectedCurrentRef: snapshot.ref
+          }));
+          if (staged.status !== "staged") return staged;
+          let execution;
+          try {
+            execution = await commands.execute(sessionId, staged.commandLine, [], signal);
+          } catch {
+            execution = void 0;
+          }
+          if ((execution == null ? void 0 : execution.ok) === true && ((_a2 = execution.value) == null ? void 0 : _a2.result.kind) === "success") {
+            return committedSnapshot(remote, sessionId);
+          }
+          const lookup = unwrap(await remote.getOperation(
+            sessionId,
+            staged.operationId,
+            staged.operationBindingDigest
+          ));
+          if (lookup.status === "committed") return committedSnapshot(remote, sessionId);
+          return { status: "rejected", code: "COMMIT_OUTCOME_UNKNOWN", message: "Redo outcome is uncertain; refresh the Drawing before retrying." };
         },
         async loadPreview(signal) {
           signal == null ? void 0 : signal.throwIfAborted();
@@ -6720,6 +7756,12 @@ window.__ModuleLoader__.load({
         mode: literal("undo"),
         targetCommitId: protocolIdSchema,
         expectedCurrentRef: drawingRefSchema
+      }).strict(),
+      object({
+        ...operationBase,
+        mode: literal("redo"),
+        targetCommitId: protocolIdSchema,
+        expectedCurrentRef: drawingRefSchema
       }).strict()
     ]);
     const committedReceiptBase = {
@@ -6736,7 +7778,8 @@ window.__ModuleLoader__.load({
     const committedOperationReceiptSchema = discriminatedUnion("mode", [
       object({ ...committedReceiptBase, status: literal("committed"), mode: literal("semantic") }).strict(),
       object({ ...committedReceiptBase, status: literal("committed"), mode: literal("interactive") }).strict(),
-      object({ ...committedReceiptBase, status: literal("committed"), mode: literal("undo"), targetCommitId: protocolIdSchema }).strict()
+      object({ ...committedReceiptBase, status: literal("committed"), mode: literal("undo"), targetCommitId: protocolIdSchema }).strict(),
+      object({ ...committedReceiptBase, status: literal("committed"), mode: literal("redo"), targetCommitId: protocolIdSchema }).strict()
     ]);
     const durableOperationReceiptSchema = union([
       committedOperationReceiptSchema,
@@ -7054,8 +8097,9 @@ window.__ModuleLoader__.load({
       provisional: boolean().optional(),
       lastCommit: object({
         commitId: idSchema,
-        mode: _enum(["auto-safe", "confirmed", "interactive", "undo"]),
-        undoable: boolean()
+        mode: _enum(["auto-safe", "confirmed", "interactive", "undo", "redo"]),
+        undoable: boolean(),
+        redoable: boolean().optional()
       }).strict().optional()
     }).strict().nullable();
     const nodeCreateCommandSchema = object({
@@ -7118,6 +8162,18 @@ window.__ModuleLoader__.load({
       }).strict(),
       object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
     ]);
+    const drawingRedoStageRequestSchema = drawingUndoStageRequestSchema;
+    const drawingRedoStageResultSchema = discriminatedUnion("status", [
+      object({
+        status: literal("staged"),
+        targetCommitId: idSchema,
+        expectedCurrentRef: drawingRefSchema,
+        operationId: idSchema,
+        operationBindingDigest: idSchema,
+        commandLine: string().startsWith("/drawing-redo ")
+      }).strict(),
+      object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+    ]);
     const drawingSelectionProjectionRequestSchema = object({
       expectedRef: drawingRefSchema,
       nodeIds: array(idSchema).max(256)
@@ -7125,6 +8181,45 @@ window.__ModuleLoader__.load({
     const drawingSelectionProjectionResultSchema = discriminatedUnion("status", [
       object({ status: literal("projected"), projection: selectionProjectionRefSchema }).strict(),
       object({ status: literal("cleared") }).strict(),
+      object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+      object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+    ]);
+    const drawingMotionRigConnectorSchema = object({
+      nodeId: idSchema,
+      movingEndpoint: _enum(["start", "end", "first", "last"]),
+      fixedPoint: vec2Schema
+    }).strict();
+    const drawingMotionRigProjectionSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      state: _enum(["ready", "needs-correction"]),
+      message: string().min(1).optional(),
+      controlBodyNodeIds: array(idSchema).min(1).max(256),
+      connectors: array(drawingMotionRigConnectorSchema).min(1).max(256),
+      anchor: vec2Schema,
+      handle: vec2Schema,
+      keepAnchorFixed: literal(true),
+      keepControlBodyRigid: literal(true),
+      preserveConnectivity: literal(true),
+      allowControlRotation: literal(false)
+    }).strict();
+    const drawingMotionRigRebuildRequestSchema = object({
+      ref: drawingRefSchema,
+      nodeIds: array(idSchema).min(1).max(256)
+    }).strict();
+    const drawingMotionRigResultSchema = discriminatedUnion("status", [
+      object({ status: literal("ready"), projection: drawingMotionRigProjectionSchema }).strict(),
+      object({
+        status: literal("needs-correction"),
+        projection: drawingMotionRigProjectionSchema.optional(),
+        message: string().min(1)
+      }).strict(),
+      object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+      object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+    ]);
+    const drawingMotionRigDiscardRequestSchema = object({ ref: drawingRefSchema }).strict();
+    const drawingMotionRigDiscardResultSchema = discriminatedUnion("status", [
+      object({ status: literal("discarded") }).strict(),
       object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
       object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
     ]);
@@ -7262,6 +8357,37 @@ window.__ModuleLoader__.load({
           schema: drawingGroundingOverlaySchema.nullable()
         }
       }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/getMotionRig",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "getMotionRig",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigProjection|null",
+          schema: drawingMotionRigProjectionSchema.nullable()
+        }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/rebuildMotionRig",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "rebuildMotionRig",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingMotionRigRebuildRequest", drawingMotionRigRebuildRequestSchema)],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigResult", schema: drawingMotionRigResultSchema }
+      }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardMotionRig",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "discardMotionRig",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingMotionRigDiscardRequest", drawingMotionRigDiscardRequestSchema)],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigDiscardResult", schema: drawingMotionRigDiscardResultSchema }
+      }, {
         id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
         service: "drawingSpace",
         namespace: "drawingSpace",
@@ -7289,6 +8415,15 @@ window.__ModuleLoader__.load({
         parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingUndoStageRequest", drawingUndoStageRequestSchema)],
         result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingUndoStageResult", schema: drawingUndoStageResultSchema }
       }, {
+        id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageRedo",
+        service: "drawingSpace",
+        namespace: "drawingSpace",
+        method: "stageRedo",
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingRedoStageRequest", drawingRedoStageRequestSchema)],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingRedoStageResult", schema: drawingRedoStageResultSchema }
+      }, {
         id: "@vectorai/plugin-dsh-space-host#drawingSpace/getOperation",
         service: "drawingSpace",
         namespace: "drawingSpace",
@@ -7311,7 +8446,9 @@ window.__ModuleLoader__.load({
       };
     }
     const inject = ["slots", "remote", "conversation"];
-    function MountedDrawingWorkspace() {
+    function MountedDrawingWorkspace({
+      onUploadFiles
+    }) {
       const hasDrawing = useDrawingWorkspace((state) => state.snapshot !== null);
       if (!hasDrawing) return null;
       return /* @__PURE__ */ jsxRuntime.jsx(
@@ -7319,13 +8456,15 @@ window.__ModuleLoader__.load({
         {
           className: "vai-dsh-workspace-host",
           "data-conversation-workspace-active": "",
-          children: /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspace, {})
+          children: /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspace, { onUploadFiles })
         }
       );
     }
     function DrawingConversationView({
       useSession,
       workspacePort,
+      inputActions,
+      createDraftImages,
       releaseSources
     }) {
       const runningCallCount = useSession((snapshot) => snapshot.runningCalls.length);
@@ -7339,7 +8478,13 @@ window.__ModuleLoader__.load({
         else didObserveInitialCallCount.current = true;
       }, [runningCallCount, store]);
       react.useEffect(() => releaseSources, [releaseSources]);
-      return /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspaceProvider, { store, children: /* @__PURE__ */ jsxRuntime.jsx(MountedDrawingWorkspace, {}) });
+      const uploadDrawing = (files) => {
+        const attachments = createDraftImages(files);
+        if (attachments.length === 0 || !inputActions.addImages(attachments.map(({ id }) => id))) return;
+        inputActions.setDraft("请将上传的图片导入并矢量化为可编辑图纸");
+        inputActions.submit();
+      };
+      return /* @__PURE__ */ jsxRuntime.jsx(DrawingWorkspaceProvider, { store, children: /* @__PURE__ */ jsxRuntime.jsx(MountedDrawingWorkspace, { onUploadFiles: uploadDrawing }) });
     }
     async function apply(ctx) {
       const remote = ctx.get("remote");
@@ -7360,6 +8505,7 @@ window.__ModuleLoader__.load({
                 commands,
                 resolveImage: (ownerId, attachment) => conversation.resolveImage(ownerId, attachment)
               }),
+              createDraftImages: (files) => conversation.createDraftImages(files),
               releaseSources: () => conversation.releaseSessionImages(id)
             };
           }
@@ -7377,7 +8523,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset.vectoraiDshSpace = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  justify-content: center;\n  gap: 5px;\n  overflow-x: auto;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  margin-left: auto;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: default;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
       document.head.append(style);
       var dispose;
       try {

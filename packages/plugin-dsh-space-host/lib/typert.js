@@ -4992,6 +4992,12 @@ discriminatedUnion("mode", [
     mode: literal("undo"),
     targetCommitId: protocolIdSchema,
     expectedCurrentRef: drawingRefSchema
+  }).strict(),
+  object({
+    ...operationBase,
+    mode: literal("redo"),
+    targetCommitId: protocolIdSchema,
+    expectedCurrentRef: drawingRefSchema
   }).strict()
 ]);
 const committedReceiptBase = {
@@ -5008,7 +5014,8 @@ const committedReceiptBase = {
 const committedOperationReceiptSchema = discriminatedUnion("mode", [
   object({ ...committedReceiptBase, status: literal("committed"), mode: literal("semantic") }).strict(),
   object({ ...committedReceiptBase, status: literal("committed"), mode: literal("interactive") }).strict(),
-  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("undo"), targetCommitId: protocolIdSchema }).strict()
+  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("undo"), targetCommitId: protocolIdSchema }).strict(),
+  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("redo"), targetCommitId: protocolIdSchema }).strict()
 ]);
 const durableOperationReceiptSchema = union([
   committedOperationReceiptSchema,
@@ -5326,8 +5333,9 @@ const drawingWorkspaceSnapshotSchema = object({
   provisional: boolean().optional(),
   lastCommit: object({
     commitId: idSchema,
-    mode: _enum(["auto-safe", "confirmed", "interactive", "undo"]),
-    undoable: boolean()
+    mode: _enum(["auto-safe", "confirmed", "interactive", "undo", "redo"]),
+    undoable: boolean(),
+    redoable: boolean().optional()
   }).strict().optional()
 }).strict().nullable();
 const nodeCreateCommandSchema = object({
@@ -5390,6 +5398,18 @@ const drawingUndoStageResultSchema = discriminatedUnion("status", [
   }).strict(),
   object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
 ]);
+const drawingRedoStageRequestSchema = drawingUndoStageRequestSchema;
+const drawingRedoStageResultSchema = discriminatedUnion("status", [
+  object({
+    status: literal("staged"),
+    targetCommitId: idSchema,
+    expectedCurrentRef: drawingRefSchema,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: string().startsWith("/drawing-redo ")
+  }).strict(),
+  object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
+]);
 const drawingSelectionProjectionRequestSchema = object({
   expectedRef: drawingRefSchema,
   nodeIds: array(idSchema).max(256)
@@ -5397,6 +5417,45 @@ const drawingSelectionProjectionRequestSchema = object({
 const drawingSelectionProjectionResultSchema = discriminatedUnion("status", [
   object({ status: literal("projected"), projection: selectionProjectionRefSchema }).strict(),
   object({ status: literal("cleared") }).strict(),
+  object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+  object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+]);
+const drawingMotionRigConnectorSchema = object({
+  nodeId: idSchema,
+  movingEndpoint: _enum(["start", "end", "first", "last"]),
+  fixedPoint: vec2Schema
+}).strict();
+const drawingMotionRigProjectionSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  state: _enum(["ready", "needs-correction"]),
+  message: string().min(1).optional(),
+  controlBodyNodeIds: array(idSchema).min(1).max(256),
+  connectors: array(drawingMotionRigConnectorSchema).min(1).max(256),
+  anchor: vec2Schema,
+  handle: vec2Schema,
+  keepAnchorFixed: literal(true),
+  keepControlBodyRigid: literal(true),
+  preserveConnectivity: literal(true),
+  allowControlRotation: literal(false)
+}).strict();
+object({
+  ref: drawingRefSchema,
+  nodeIds: array(idSchema).min(1).max(256)
+}).strict();
+discriminatedUnion("status", [
+  object({ status: literal("ready"), projection: drawingMotionRigProjectionSchema }).strict(),
+  object({
+    status: literal("needs-correction"),
+    projection: drawingMotionRigProjectionSchema.optional(),
+    message: string().min(1)
+  }).strict(),
+  object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+  object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+]);
+object({ ref: drawingRefSchema }).strict();
+discriminatedUnion("status", [
+  object({ status: literal("discarded") }).strict(),
   object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
 ]);
@@ -5559,6 +5618,16 @@ const TYPERT = {
     parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingUndoStageRequest", drawingUndoStageRequestSchema)],
     result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingUndoStageResult", schema: drawingUndoStageResultSchema },
     sourceLocation: serviceLocation(84)
+  }, {
+    id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageRedo",
+    service: "drawingSpace",
+    namespace: "drawingSpace",
+    method: "stageRedo",
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingRedoStageRequest", drawingRedoStageRequestSchema)],
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingRedoStageResult", schema: drawingRedoStageResultSchema },
+    sourceLocation: serviceLocation(89)
   }, {
     id: "@vectorai/plugin-dsh-space-host#drawingSpace/getOperation",
     service: "drawingSpace",

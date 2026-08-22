@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _ports, _episodeId, _drawingId, _revision, _events, _eventIds, _current, _GroundingLedger_instances, apply_fn, assertScope_fn, validateEvent_fn, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId2, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _instructions, _episodes, _epochs, _SemanticEditEpisodeStore_instances, nextEpoch_fn, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _groundingOverlays, _episodes2, _episodeSelections, _currentOperations, _terminalFinalizeResults, _SemanticEditService_instances, currentObservationResult_fn, initialSelectionCandidates_fn, resolvePartCandidates_fn, currentSelectionProjectionForRef_fn, appendGroundingEvidence_fn, commitPreview_fn, assess_fn, task_fn, preview_fn, storeCompilation_fn, updateGroundingOverlay_fn, snapshot_fn, snapshotAtTask_fn, _intents, _getPreview_dec, _getOperation_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _getGroundingOverlay_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
+var _ports, _episodeId, _drawingId, _revision, _events, _eventIds, _current, _GroundingLedger_instances, apply_fn, assertScope_fn, validateEvent_fn, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId2, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _instructions, _episodes, _epochs, _SemanticEditEpisodeStore_instances, nextEpoch_fn, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _groundingOverlays, _episodes2, _episodeSelections, _currentOperations, _terminalFinalizeResults, _SemanticEditService_instances, currentObservationResult_fn, initialSelectionCandidates_fn, resolvePartCandidates_fn, currentSelectionProjectionForRef_fn, appendGroundingEvidence_fn, commitPreview_fn, assess_fn, task_fn, preview_fn, storeCompilation_fn, updateGroundingOverlay_fn, snapshot_fn, snapshotAtTask_fn, _intents, _rigs, _getPreview_dec, _getOperation_dec, _stageRedo_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _discardMotionRig_dec, _rebuildMotionRig_dec, _getMotionRig_dec, _getGroundingOverlay_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -289,7 +289,7 @@ function compileConnectedTransform(input) {
   assertPoint(input.targetCenter, "CONNECTED_TRANSFORM_TARGET_CENTER_INVALID");
   const extent = drawingExtent(input.document);
   const explicitRotation = input.rotationDegrees === void 0 ? void 0 : normalizedRotationDegrees(input.rotationDegrees);
-  if (distance$2(carrier.center, input.targetCenter) <= Math.max(extent * 1e-9, 1e-9) && Math.abs(explicitRotation ?? 0) <= 1e-9) throw new Error("CONNECTED_TRANSFORM_NO_EFFECT");
+  if (distance$3(carrier.center, input.targetCenter) <= Math.max(extent * 1e-9, 1e-9) && Math.abs(explicitRotation ?? 0) <= 1e-9) throw new Error("CONNECTED_TRANSFORM_NO_EFFECT");
   const tolerance = input.contactTolerance ?? drawingRelativeTolerance(input.document);
   if (!Number.isFinite(tolerance) || tolerance <= 0) {
     throw new Error("CONNECTED_TRANSFORM_TOLERANCE_INVALID");
@@ -307,20 +307,20 @@ function compileConnectedTransform(input) {
   const rotationRadians = rotationDegrees * Math.PI / 180;
   const ports = contacts.map(({ node, endpoint, projected }) => {
     const after = transportCarrierPoint(carrier, projected, input.targetCenter, rotationRadians);
-    const beforeLength = distance$2(projected, endpoint.fixedAnchor);
-    const afterLength = distance$2(after, endpoint.fixedAnchor);
+    const beforeLength = distance$3(projected, endpoint.fixedAnchor);
+    const afterLength = distance$3(after, endpoint.fixedAnchor);
     return {
       connectorNodeId: String(node.id),
       endpointRole: endpoint.role,
       before: structuredClone(projected),
       after,
       fixedAnchor: structuredClone(endpoint.fixedAnchor),
-      originalAngle: clean$1(angleOf(carrier.center, projected) * 180 / Math.PI),
-      transportedAngle: clean$1(angleOf(input.targetCenter, after) * 180 / Math.PI),
-      beforeConnectorLength: clean$1(beforeLength),
-      afterConnectorLength: clean$1(afterLength),
-      stretchRatio: clean$1(safeRatio(afterLength, beforeLength)),
-      lengthChange: clean$1(afterLength - beforeLength)
+      originalAngle: clean$2(angleOf(carrier.center, projected) * 180 / Math.PI),
+      transportedAngle: clean$2(angleOf(input.targetCenter, after) * 180 / Math.PI),
+      beforeConnectorLength: clean$2(beforeLength),
+      afterConnectorLength: clean$2(afterLength),
+      stretchRatio: clean$2(safeRatio(afterLength, beforeLength)),
+      lengthChange: clean$2(afterLength - beforeLength)
     };
   }).sort((left, right) => left.originalAngle - right.originalAngle || left.connectorNodeId.localeCompare(right.connectorNodeId) || left.endpointRole.localeCompare(right.endpointRole));
   const commands = [{
@@ -362,7 +362,7 @@ function compileConnectedTransform(input) {
       carrierType: carrier.type,
       beforeCenter: structuredClone(carrier.center),
       targetCenter: structuredClone(input.targetCenter),
-      rotationDegrees: clean$1(rotationDegrees),
+      rotationDegrees: clean$2(rotationDegrees),
       orientationMode: explicitRotation !== void 0 ? "explicit-rotation" : ports.length > 0 ? "minimum-deformation" : "translated",
       contactTolerance: tolerance,
       connectorNodeIds: [...new Set(ports.map(({ connectorNodeId }) => connectorNodeId))],
@@ -379,7 +379,7 @@ function findCarrierContacts(document, carrier, tolerance) {
       { role: "end", point: node.end, fixedAnchor: node.start }
     ].flatMap((endpoint) => {
       const projected = closestPointOnCarrier(carrier, endpoint.point);
-      return projected && distance$2(projected, endpoint.point) <= tolerance ? [{ node, endpoint, projected }] : [];
+      return projected && distance$3(projected, endpoint.point) <= tolerance ? [{ node, endpoint, projected }] : [];
     });
   });
 }
@@ -388,7 +388,7 @@ function closestPointOnCarrier(carrier, point) {
     const delta2 = [point[0] - carrier.center[0], point[1] - carrier.center[1]];
     const length = Math.hypot(...delta2);
     if (length <= 1e-12) return null;
-    return cleanPoint$2([
+    return cleanPoint$3([
       carrier.center[0] + delta2[0] * carrier.radius / length,
       carrier.center[1] + delta2[1] * carrier.radius / length
     ]);
@@ -403,7 +403,7 @@ function closestPointOnCarrier(carrier, point) {
     dot(delta, major) / majorLength
   );
   const minorAxis = [-carrier.majorAxis[1] * carrier.ratio, carrier.majorAxis[0] * carrier.ratio];
-  return cleanPoint$2([
+  return cleanPoint$3([
     carrier.center[0] + carrier.majorAxis[0] * Math.cos(parameter) + minorAxis[0] * Math.sin(parameter),
     carrier.center[1] + carrier.majorAxis[1] * Math.cos(parameter) + minorAxis[1] * Math.sin(parameter)
   ]);
@@ -423,7 +423,7 @@ function inferMinimumDeformationRotation(input) {
     dotSum += dot(local, target);
     crossSum += local[0] * target[1] - local[1] * target[0];
   }
-  return Math.hypot(dotSum, crossSum) <= 1e-12 ? 0 : clean$1(Math.atan2(crossSum, dotSum) * 180 / Math.PI);
+  return Math.hypot(dotSum, crossSum) <= 1e-12 ? 0 : clean$2(Math.atan2(crossSum, dotSum) * 180 / Math.PI);
 }
 function interfaceMetrics(input) {
   const drawingDiagonal2 = drawingExtent(input.document);
@@ -433,19 +433,19 @@ function interfaceMetrics(input) {
   const referenceRadians = input.minimumDeformationRotationDegrees * Math.PI / 180;
   const minimumDeformationCost = input.ports.reduce((sum, port) => {
     const reference = transportCarrierPoint(input.carrier, port.before, input.targetCenter, referenceRadians);
-    return sum + distance$2(reference, port.fixedAnchor) ** 2;
+    return sum + distance$3(reference, port.fixedAnchor) ** 2;
   }, 0);
   const result = {
-    drawingDiagonal: clean$1(drawingDiagonal2),
+    drawingDiagonal: clean$2(drawingDiagonal2),
     portCount: input.ports.length,
-    maximumStretchRatio: clean$1(maximumStretchRatio),
-    maximumLengthIncrease: clean$1(maximumLengthIncrease),
-    normalizedMaximumLengthIncrease: clean$1(maximumLengthIncrease / Math.max(drawingDiagonal2, 1e-12)),
-    selectedDeformationCost: clean$1(selectedDeformationCost),
-    minimumDeformationCost: clean$1(minimumDeformationCost),
-    deformationCostRatio: clean$1(safeRatio(selectedDeformationCost, minimumDeformationCost)),
-    selectedRotationDegrees: clean$1(input.selectedRotationDegrees),
-    minimumDeformationRotationDegrees: clean$1(input.minimumDeformationRotationDegrees)
+    maximumStretchRatio: clean$2(maximumStretchRatio),
+    maximumLengthIncrease: clean$2(maximumLengthIncrease),
+    normalizedMaximumLengthIncrease: clean$2(maximumLengthIncrease / Math.max(drawingDiagonal2, 1e-12)),
+    selectedDeformationCost: clean$2(selectedDeformationCost),
+    minimumDeformationCost: clean$2(minimumDeformationCost),
+    deformationCostRatio: clean$2(safeRatio(selectedDeformationCost, minimumDeformationCost)),
+    selectedRotationDegrees: clean$2(input.selectedRotationDegrees),
+    minimumDeformationRotationDegrees: clean$2(input.minimumDeformationRotationDegrees)
   };
   if (input.ports.length === 2) {
     const before = signedArea([
@@ -461,9 +461,9 @@ function interfaceMetrics(input) {
       input.ports[1].fixedAnchor
     ]);
     if (Math.abs(before) > Math.max(drawingDiagonal2 ** 2 * 1e-8, 1e-12)) {
-      result.beforeSignedArea = clean$1(before);
-      result.afterSignedArea = clean$1(after);
-      result.areaRetentionRatio = clean$1(Math.abs(after / before));
+      result.beforeSignedArea = clean$2(before);
+      result.afterSignedArea = clean$2(after);
+      result.areaRetentionRatio = clean$2(Math.abs(after / before));
       result.orientationInverted = Math.sign(after) !== Math.sign(before);
     }
   }
@@ -527,7 +527,7 @@ function interfaceFacts(metrics) {
 function transportCarrierPoint(carrier, point, center2, radians) {
   const local = [point[0] - carrier.center[0], point[1] - carrier.center[1]];
   const rotated = rotateVector(local, radians);
-  return cleanPoint$2([center2[0] + rotated[0], center2[1] + rotated[1]]);
+  return cleanPoint$3([center2[0] + rotated[0], center2[1] + rotated[1]]);
 }
 function drawingRelativeTolerance(document) {
   const diagonal = drawingExtent(document);
@@ -567,7 +567,7 @@ function normalizedRotationDegrees(value) {
   return Object.is(normalized, -0) ? 0 : normalized;
 }
 function rotateVector(vector, radians) {
-  return cleanPoint$2([
+  return cleanPoint$3([
     vector[0] * Math.cos(radians) - vector[1] * Math.sin(radians),
     vector[0] * Math.sin(radians) + vector[1] * Math.cos(radians)
   ]);
@@ -584,16 +584,16 @@ function safeRatio(numerator, denominator) {
 function angleOf(center2, point) {
   return Math.atan2(point[1] - center2[1], point[0] - center2[0]);
 }
-function distance$2(left, right) {
+function distance$3(left, right) {
   return Math.hypot(left[0] - right[0], left[1] - right[1]);
 }
 function dot(left, right) {
   return left[0] * right[0] + left[1] * right[1];
 }
-function cleanPoint$2(point) {
-  return [clean$1(point[0]), clean$1(point[1])];
+function cleanPoint$3(point) {
+  return [clean$2(point[0]), clean$2(point[1])];
 }
-function clean$1(value) {
+function clean$2(value) {
   const rounded = Number(value.toFixed(9));
   return Object.is(rounded, -0) ? 0 : rounded;
 }
@@ -937,7 +937,7 @@ function pair(before, after) {
 function transformPoint(point, transform2) {
   const relative = [point[0] - transform2.pivot[0], point[1] - transform2.pivot[1]];
   const rotated = rotate(relative, transform2.rotationRadians);
-  return cleanPoint$1([
+  return cleanPoint$2([
     rotated[0] + transform2.pivot[0] + transform2.translation[0],
     rotated[1] + transform2.pivot[1] + transform2.translation[1]
   ]);
@@ -945,12 +945,12 @@ function transformPoint(point, transform2) {
 function rotate(vector, radians) {
   const cosine = Math.cos(radians);
   const sine = Math.sin(radians);
-  return cleanPoint$1([vector[0] * cosine - vector[1] * sine, vector[0] * sine + vector[1] * cosine]);
+  return cleanPoint$2([vector[0] * cosine - vector[1] * sine, vector[0] * sine + vector[1] * cosine]);
 }
-function cleanPoint$1(point) {
-  return [clean(point[0]), clean(point[1])];
+function cleanPoint$2(point) {
+  return [clean$1(point[0]), clean$1(point[1])];
 }
-function clean(value) {
+function clean$1(value) {
   const result = Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
   return Object.is(result, -0) ? 0 : result;
 }
@@ -1188,6 +1188,123 @@ function mergeEffects(effects) {
     changedFields: Object.fromEntries([...changedFields.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([id, fields]) => [id, [...fields].sort()]))
   };
 }
+function resolveTranslationMotionRig(document, selectedNodeIds) {
+  var _a3;
+  const selected = [...new Set(selectedNodeIds)];
+  if (selected.length === 0) throw new Error("MOTION_RIG_SELECTION_REQUIRED");
+  const visibleGeometry = new Map(document.geometry.filter(({ visible }) => visible).map((node) => [String(node.id), node]));
+  if (selected.some((id) => !visibleGeometry.has(id))) throw new Error("MOTION_RIG_SELECTION_INVALID");
+  const tolerance = drawingTolerance(document);
+  const candidates = selected.flatMap((id) => {
+    const node = visibleGeometry.get(id);
+    if (!node || node.type !== "circle" && node.type !== "ellipse") return [];
+    const contacts2 = connectorContacts(document, node, tolerance);
+    return contacts2.length === 0 ? [] : [{ carrier: node, contacts: contacts2 }];
+  }).sort((left, right) => right.contacts.length - left.contacts.length || String(left.carrier.id).localeCompare(String(right.carrier.id)));
+  if (candidates.length === 0) throw new Error("MOTION_RIG_INVALID");
+  if (((_a3 = candidates[1]) == null ? void 0 : _a3.contacts.length) === candidates[0].contacts.length) {
+    throw new Error("MOTION_RIG_AMBIGUOUS");
+  }
+  const { carrier, contacts } = candidates[0];
+  const unsupported = contacts.find(({ node }) => node.type === "arc");
+  if (unsupported) throw new Error("MOTION_RIG_GEOMETRY_UNSUPPORTED");
+  const connectorIds = new Set(contacts.map(({ node }) => String(node.id)));
+  const controlBodyNodeIds = selected.filter((id) => !connectorIds.has(id)).sort();
+  if (!controlBodyNodeIds.includes(String(carrier.id))) controlBodyNodeIds.push(String(carrier.id));
+  controlBodyNodeIds.sort();
+  const connectors = contacts.map(({ node, movingEndpoint, fixedPoint }) => ({
+    nodeId: String(node.id),
+    movingEndpoint,
+    fixedPoint: cleanPoint$1(fixedPoint)
+  })).sort((left, right) => left.nodeId.localeCompare(right.nodeId));
+  const anchor = cleanPoint$1([
+    connectors.reduce((sum, connector) => sum + connector.fixedPoint[0], 0) / connectors.length,
+    connectors.reduce((sum, connector) => sum + connector.fixedPoint[1], 0) / connectors.length
+  ]);
+  return {
+    controlBodyNodeIds,
+    connectors,
+    anchor,
+    handle: cleanPoint$1(carrier.center),
+    keepAnchorFixed: true,
+    keepControlBodyRigid: true,
+    preserveConnectivity: true,
+    allowControlRotation: false
+  };
+}
+function connectorContacts(document, carrier, tolerance) {
+  return document.geometry.flatMap((node) => {
+    if (node.id === carrier.id || !node.visible) return [];
+    const endpoints = connectorEndpoints(node);
+    if (!endpoints) return [];
+    const startContact = onCarrier(carrier, endpoints.start, tolerance);
+    const endContact = onCarrier(carrier, endpoints.end, tolerance);
+    if (startContact === endContact) return [];
+    return [startContact ? { node, movingEndpoint: endpoints.startRole, movingPoint: endpoints.start, fixedPoint: endpoints.end } : { node, movingEndpoint: endpoints.endRole, movingPoint: endpoints.end, fixedPoint: endpoints.start }];
+  });
+}
+function connectorEndpoints(node) {
+  if (node.type === "line") return { start: node.start, end: node.end, startRole: "start", endRole: "end" };
+  if (node.type === "polyline" && !node.closed && node.vertices.length >= 2) return {
+    start: node.vertices[0].point,
+    end: node.vertices[node.vertices.length - 1].point,
+    startRole: "first",
+    endRole: "last"
+  };
+  if (node.type === "spline" && !node.closed && node.controlPoints.length >= 2) return {
+    start: node.controlPoints[0],
+    end: node.controlPoints[node.controlPoints.length - 1],
+    startRole: "first",
+    endRole: "last"
+  };
+  if (node.type === "arc") return {
+    start: arcPoint(node, node.startAngle),
+    end: arcPoint(node, node.endAngle),
+    startRole: "start",
+    endRole: "end"
+  };
+  return null;
+}
+function onCarrier(carrier, point, tolerance) {
+  if (carrier.type === "circle") return Math.abs(distance$2(carrier.center, point) - carrier.radius) <= tolerance;
+  const majorLength = Math.hypot(...carrier.majorAxis);
+  if (!(majorLength > 1e-12) || !(carrier.ratio > 0)) return false;
+  const ux = carrier.majorAxis[0] / majorLength;
+  const uy = carrier.majorAxis[1] / majorLength;
+  const dx = point[0] - carrier.center[0];
+  const dy = point[1] - carrier.center[1];
+  const normalized = Math.hypot((dx * ux + dy * uy) / majorLength, (-dx * uy + dy * ux) / (majorLength * carrier.ratio));
+  return Math.abs(normalized - 1) * majorLength <= tolerance;
+}
+function drawingTolerance(document) {
+  const points = document.geometry.flatMap((node) => geometryPoints(node));
+  if (points.length === 0) return 1e-6;
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  return Math.max(Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1e-5, 1e-6);
+}
+function geometryPoints(node) {
+  if (node.type === "point") return [[node.x, node.y]];
+  if (node.type === "line") return [node.start, node.end];
+  if (node.type === "ray" || node.type === "xline") return [node.origin];
+  if (node.type === "circle" || node.type === "arc" || node.type === "ellipse") return [node.center];
+  if (node.type === "polyline") return node.vertices.map(({ point }) => point);
+  return [...node.controlPoints];
+}
+function arcPoint(node, degrees2) {
+  const radians = degrees2 * Math.PI / 180;
+  return cleanPoint$1([node.center[0] + Math.cos(radians) * node.radius, node.center[1] + Math.sin(radians) * node.radius]);
+}
+function distance$2(left, right) {
+  return Math.hypot(left[0] - right[0], left[1] - right[1]);
+}
+function cleanPoint$1(point) {
+  return [clean(point[0]), clean(point[1])];
+}
+function clean(value) {
+  const rounded = Number(value.toFixed(9));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
 const MAGNITUDE_RATIO = {
   minimum: 0.02,
   slight: 0.05,
@@ -1197,6 +1314,14 @@ const MAGNITUDE_RATIO = {
 const SOLVER_VERSION = "spatial-intent-solver-0.1.0";
 const MAX_CANDIDATES = 256;
 const EPSILON = 1e-7;
+class SpatialIntentValidationError extends Error {
+  constructor(code, details) {
+    super(code);
+    __publicField(this, "name", "SpatialIntentValidationError");
+    this.code = code;
+    Object.assign(this, structuredClone(details));
+  }
+}
 function solveSpatialIntent(input) {
   validateInput(input);
   if (input.intent.goals.every(({ kind }) => kind === "topology") && topologyPenaltyFor(input, input.document) === 0) {
@@ -1259,6 +1384,33 @@ function validateInput(input) {
   if (input.baseRef.drawingId !== input.document.id) throw new Error("EDIT_DRAWING_MISMATCH");
   const partKeys = Object.keys(input.parts);
   if (partKeys.length < 1 || partKeys.length > 16) throw new Error("EDIT_PART_COUNT_INVALID");
+  const fragmented = findFragmentedArticulatedSelection(input.document, input.parts);
+  if (fragmented) {
+    throw new SpatialIntentValidationError("EDIT_ARTICULATED_SELECTION_FRAGMENTED", fragmented);
+  }
+  const usedPartKeys = new Set(input.intent.goals.flatMap((goal) => [
+    goal.subject,
+    ..."reference" in goal && goal.reference.kind === "part" ? [goal.reference.partKey] : []
+  ]));
+  for (const preserve of input.intent.preserve) {
+    if (preserve.kind === "anchor" && preserve.reference.kind === "part") {
+      usedPartKeys.add(preserve.reference.partKey);
+    }
+  }
+  const unusedPartKeys = [...new Set(input.intent.preserve.flatMap((preserve) => "partKey" in preserve && preserve.partKey !== void 0 && input.parts[preserve.partKey] !== void 0 && !usedPartKeys.has(preserve.partKey) ? [preserve.partKey] : []))].sort();
+  if (unusedPartKeys.length > 0) {
+    throw new SpatialIntentValidationError("EDIT_SELECTED_PART_UNUSED", { unusedPartKeys });
+  }
+  const articulationByPart = Object.fromEntries(Object.entries(input.parts).map(([partKey, target]) => [partKey, analyzeArticulatedGrounding(input.document, target)]));
+  if (Object.values(articulationByPart).some(({ kind }) => kind === "resolved")) {
+    const unexpectedPartKeys = Object.entries(articulationByPart).filter(([partKey, analysis]) => analysis.kind !== "resolved" && !input.document.geometry.some((node) => input.parts[partKey].targetNodeIds.includes(String(node.id)) && (node.type === "circle" || node.type === "ellipse"))).map(([partKey]) => partKey).sort();
+    if (unexpectedPartKeys.length > 0) {
+      throw new SpatialIntentValidationError("EDIT_ARTICULATED_COMPANION_PART_INVALID", {
+        unexpectedPartKeys,
+        unexpectedNodeIds: unexpectedPartKeys.flatMap((partKey) => input.parts[partKey].targetNodeIds).sort()
+      });
+    }
+  }
   for (const goal of input.intent.goals) {
     if (!input.parts[goal.subject]) throw new Error("EDIT_PART_UNRESOLVED");
     if ("reference" in goal && goal.reference.kind === "part" && !input.parts[goal.reference.partKey]) {
@@ -1268,12 +1420,52 @@ function validateInput(input) {
       throw new Error("EDIT_NUMERIC_EVIDENCE_MISSING");
     }
   }
-  for (const target of Object.values(input.parts)) {
+  for (const [partKey, target] of Object.entries(input.parts)) {
     if (target.targetNodeIds.length === 0) throw new Error("EDIT_TARGET_UNRESOLVED");
     for (const nodeId of target.targetNodeIds) {
       if (!input.document.geometry.some(({ id }) => String(id) === nodeId)) throw new Error("EDIT_TARGET_UNRESOLVED");
     }
+    const articulation = analyzeArticulatedGrounding(input.document, target);
+    if (articulation.kind === "invalid") {
+      throw new SpatialIntentValidationError("EDIT_ARTICULATED_SELECTION_INVALID", {
+        partKey,
+        unexpectedNodeIds: articulation.unexpectedNodeIds
+      });
+    }
   }
+}
+function findFragmentedArticulatedSelection(document, parts) {
+  const nodePartKeys = /* @__PURE__ */ new Map();
+  for (const [partKey, target] of Object.entries(parts)) {
+    for (const nodeId of target.targetNodeIds) {
+      nodePartKeys.set(nodeId, [...nodePartKeys.get(nodeId) ?? [], partKey]);
+    }
+  }
+  const carrierPartKeys = /* @__PURE__ */ new Set();
+  const fragmented = [];
+  for (const [partKey, target] of Object.entries(parts).sort(([left], [right]) => left.localeCompare(right))) {
+    const carriers = document.geometry.filter((node) => target.targetNodeIds.includes(String(node.id)) && (node.type === "circle" || node.type === "ellipse"));
+    if (carriers.length > 0) carrierPartKeys.add(partKey);
+    for (const carrier of carriers) {
+      const connectorIds = new Set(findConnectedCarrierInterfaces(document, String(carrier.id)).map(({ nodeId }) => nodeId));
+      const splitEntries = [...connectorIds].flatMap((nodeId) => (nodePartKeys.get(nodeId) ?? []).filter((ownerPartKey) => ownerPartKey !== partKey).map((ownerPartKey) => ({ ownerPartKey, nodeId })));
+      if (splitEntries.length === 0) continue;
+      fragmented.push({
+        partKey,
+        mergePartKeys: [...new Set(splitEntries.map(({ ownerPartKey }) => ownerPartKey))].sort(),
+        mergeNodeIds: [...new Set(splitEntries.map(({ nodeId }) => nodeId))].sort()
+      });
+    }
+  }
+  const first = fragmented[0];
+  if (!first) return null;
+  const groupedPartKeys = /* @__PURE__ */ new Set([first.partKey, ...first.mergePartKeys]);
+  const unexpectedPartKeys = carrierPartKeys.size === 1 ? Object.keys(parts).filter((partKey) => !groupedPartKeys.has(partKey)).sort() : [];
+  return {
+    ...first,
+    unexpectedPartKeys,
+    unexpectedNodeIds: unexpectedPartKeys.flatMap((partKey) => parts[partKey].targetNodeIds).sort()
+  };
 }
 function solvePrimaryTransforms(input, scale2) {
   const transforms = Object.fromEntries(Object.keys(input.parts).sort().map((partKey) => [
@@ -1511,26 +1703,45 @@ function compileTransforms(input, transforms) {
   });
 }
 function articulatedGrounding(document, grounding) {
-  if (grounding.targetNodeIds.length < 1) return grounding;
+  const analysis = analyzeArticulatedGrounding(document, grounding);
+  return analysis.kind === "resolved" ? analysis.grounding : grounding;
+}
+function analyzeArticulatedGrounding(document, grounding) {
+  if (grounding.targetNodeIds.length < 1) return { kind: "not_applicable" };
   const selected = new Set(grounding.targetNodeIds);
   const carriers = document.geometry.filter((node) => selected.has(String(node.id)) && (node.type === "circle" || node.type === "ellipse"));
+  let mixedCarrierAndConnector = false;
+  const unexpectedNodeIds = /* @__PURE__ */ new Set();
   const candidates = carriers.flatMap((carrier) => {
     const interfaces = findConnectedCarrierInterfaces(document, String(carrier.id));
     if (interfaces.length === 0) return [];
     const connectorNodeIds = new Set(interfaces.map(({ nodeId }) => nodeId));
     const selectedNonCarrierIds = grounding.targetNodeIds.filter((nodeId) => nodeId !== String(carrier.id));
+    const selectedConnectorCount = selectedNonCarrierIds.filter((nodeId) => connectorNodeIds.has(nodeId)).length;
+    if (selectedConnectorCount > 0 && selectedConnectorCount < selectedNonCarrierIds.length) {
+      mixedCarrierAndConnector = true;
+      for (const nodeId of selectedNonCarrierIds) {
+        if (!connectorNodeIds.has(nodeId)) unexpectedNodeIds.add(nodeId);
+      }
+    }
     return selectedNonCarrierIds.every((nodeId) => connectorNodeIds.has(nodeId)) ? [{ carrierNodeId: String(carrier.id), interfaces }] : [];
   });
-  if (candidates.length !== 1) return grounding;
+  if (mixedCarrierAndConnector || candidates.length > 1) {
+    return { kind: "invalid", unexpectedNodeIds: [...unexpectedNodeIds].sort() };
+  }
+  if (candidates.length !== 1) return { kind: "not_applicable" };
   const candidate = candidates[0];
   const authorizedConnectorNodeIds = /* @__PURE__ */ new Set([
     ...grounding.targetNodeIds,
     ...grounding.interfaces.map(({ nodeId }) => nodeId)
   ]);
   return {
-    ...grounding,
-    targetNodeIds: [candidate.carrierNodeId],
-    interfaces: candidate.interfaces.filter(({ nodeId }) => authorizedConnectorNodeIds.has(nodeId)).map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint }))
+    kind: "resolved",
+    grounding: {
+      ...grounding,
+      targetNodeIds: [candidate.carrierNodeId],
+      interfaces: candidate.interfaces.filter(({ nodeId }) => authorizedConnectorNodeIds.has(nodeId)).map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint }))
+    }
   };
 }
 function goalResidualFor(input, candidate, transforms, scale2) {
@@ -8637,8 +8848,9 @@ const drawingWorkspaceSnapshotSchema = object$1({
   provisional: boolean().optional(),
   lastCommit: object$1({
     commitId: idSchema,
-    mode: _enum(["auto-safe", "confirmed", "interactive", "undo"]),
-    undoable: boolean()
+    mode: _enum(["auto-safe", "confirmed", "interactive", "undo", "redo"]),
+    undoable: boolean(),
+    redoable: boolean().optional()
   }).strict().optional()
 }).strict().nullable();
 const nodeCreateCommandSchema = object$1({
@@ -8701,6 +8913,17 @@ discriminatedUnion("status", [
   }).strict(),
   object$1({ status: literal$1("rejected"), message: string$1(), code: idSchema }).strict()
 ]);
+discriminatedUnion("status", [
+  object$1({
+    status: literal$1("staged"),
+    targetCommitId: idSchema,
+    expectedCurrentRef: drawingRefSchema$1,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: string$1().startsWith("/drawing-redo ")
+  }).strict(),
+  object$1({ status: literal$1("rejected"), message: string$1(), code: idSchema }).strict()
+]);
 object$1({
   expectedRef: drawingRefSchema$1,
   nodeIds: array$1(idSchema).max(256)
@@ -8708,6 +8931,45 @@ object$1({
 discriminatedUnion("status", [
   object$1({ status: literal$1("projected"), projection: selectionProjectionRefSchema }).strict(),
   object$1({ status: literal$1("cleared") }).strict(),
+  object$1({ status: literal$1("stale"), currentRef: drawingRefSchema$1 }).strict(),
+  object$1({ status: literal$1("rejected"), code: idSchema, message: string$1().min(1) }).strict()
+]);
+const drawingMotionRigConnectorSchema = object$1({
+  nodeId: idSchema,
+  movingEndpoint: _enum(["start", "end", "first", "last"]),
+  fixedPoint: vec2Schema
+}).strict();
+const drawingMotionRigProjectionSchema = object$1({
+  version: literal$1(1),
+  drawingRef: drawingRefSchema$1,
+  state: _enum(["ready", "needs-correction"]),
+  message: string$1().min(1).optional(),
+  controlBodyNodeIds: array$1(idSchema).min(1).max(256),
+  connectors: array$1(drawingMotionRigConnectorSchema).min(1).max(256),
+  anchor: vec2Schema,
+  handle: vec2Schema,
+  keepAnchorFixed: literal$1(true),
+  keepControlBodyRigid: literal$1(true),
+  preserveConnectivity: literal$1(true),
+  allowControlRotation: literal$1(false)
+}).strict();
+object$1({
+  ref: drawingRefSchema$1,
+  nodeIds: array$1(idSchema).min(1).max(256)
+}).strict();
+discriminatedUnion("status", [
+  object$1({ status: literal$1("ready"), projection: drawingMotionRigProjectionSchema }).strict(),
+  object$1({
+    status: literal$1("needs-correction"),
+    projection: drawingMotionRigProjectionSchema.optional(),
+    message: string$1().min(1)
+  }).strict(),
+  object$1({ status: literal$1("stale"), currentRef: drawingRefSchema$1 }).strict(),
+  object$1({ status: literal$1("rejected"), code: idSchema, message: string$1().min(1) }).strict()
+]);
+object$1({ ref: drawingRefSchema$1 }).strict();
+discriminatedUnion("status", [
+  object$1({ status: literal$1("discarded") }).strict(),
   object$1({ status: literal$1("stale"), currentRef: drawingRefSchema$1 }).strict(),
   object$1({ status: literal$1("rejected"), code: idSchema, message: string$1().min(1) }).strict()
 ]);
@@ -9057,6 +9319,63 @@ class InMemoryDrawingRepository {
     });
     return structuredClone(receipt);
   }
+  redoCommit(sessionId, request) {
+    if (__privateGet(this, _previews).has(sessionId)) throw new Error("REDO_PREVIEW_ACTIVE");
+    const state = __privateMethod(this, _InMemoryDrawingRepository_instances, requireDurable_fn).call(this, sessionId);
+    const replay = findOperation(state, request.operationId);
+    if (replay) {
+      if (replay.operationBindingDigest !== request.operationBindingDigest) {
+        throw new Error("IDEMPOTENCY_KEY_REUSED");
+      }
+      return structuredClone(replay);
+    }
+    const currentRef = { drawingId: state.entry.drawingId, revision: state.entry.revision };
+    if (!isDeepStrictEqual(currentRef, request.expectedCurrentRef)) throw new Error("REDO_CONFLICT");
+    const target = state.commits.find(({ commitId: commitId2 }) => commitId2 === request.targetCommitId);
+    if (!target) throw new Error("REDO_TARGET_NOT_FOUND");
+    if (target.mode !== "undo") throw new Error("REDO_TARGET_NOT_UNDO");
+    if (target.resultingRevision !== state.entry.revision) throw new Error("REDO_CONFLICT");
+    const document = applyDrawingTransaction(state.entry.document, target.inverse, __privateGet(this, _now).call(this));
+    const nextEntry = { ...state.entry, document, revision: state.entry.revision + 1 };
+    const semanticDigest = digest(canonicalSemanticString(document));
+    const snapshotIntegrityDigest = digest(JSON.stringify(nextEntry));
+    const commitId = `commit_${request.operationId}`;
+    const receipt = {
+      status: "committed",
+      mode: "redo",
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      sessionId,
+      drawingId: state.entry.drawingId,
+      parentRef: currentRef,
+      resultingRef: { drawingId: state.entry.drawingId, revision: nextEntry.revision },
+      commitId,
+      targetCommitId: target.commitId,
+      semanticDigest,
+      snapshotIntegrityDigest
+    };
+    const record2 = {
+      commitId,
+      mode: "redo",
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      parentRevision: state.entry.revision,
+      resultingRevision: nextEntry.revision,
+      forward: structuredClone(target.inverse),
+      inverse: structuredClone(target.forward),
+      targetCommitId: target.commitId,
+      semanticDigest,
+      snapshotIntegrityDigest,
+      committedAt: __privateGet(this, _now).call(this)
+    };
+    __privateMethod(this, _InMemoryDrawingRepository_instances, saveDurable_fn).call(this, sessionId, {
+      version: 2,
+      entry: nextEntry,
+      commits: [...state.commits, record2],
+      operations: [...state.operations, receipt]
+    });
+    return structuredClone(receipt);
+  }
   summarize(sessionId) {
     const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
     if (entry === null) return null;
@@ -9273,7 +9592,8 @@ function snapshotOf(entry, lastCommit) {
     ...lastCommit ? { lastCommit: {
       commitId: lastCommit.commitId,
       mode: lastCommit.mode,
-      undoable: lastCommit.mode !== "undo"
+      undoable: lastCommit.mode !== "undo",
+      redoable: lastCommit.mode === "undo"
     } } : {}
   });
 }
@@ -9651,10 +9971,11 @@ const intentParameters = {
   goals: array(spatialGoal),
   preserve: array(preservationGoal)
 };
-function createSemanticEditToolCatalog(semantic, questions) {
+function createSemanticEditToolCatalog(semantic, questions, motionRigs) {
   return [
     createDrawingObserveTool(semantic),
     createDrawingSelectPartsTool(semantic),
+    createDrawingApplySelectionCorrectionTool(semantic),
     createDrawingConfirmSelectionTool(semantic),
     createDrawingPreviewSpatialIntentTool(semantic),
     createDrawingReviseSpatialIntentTool(semantic),
@@ -9662,8 +9983,52 @@ function createSemanticEditToolCatalog(semantic, questions) {
     createDrawingFinalizeSemanticTool(semantic, questions),
     createDrawingDiscardSemanticTool(semantic),
     createDrawingGetOperationTool(semantic),
-    createDrawingUndoTool(semantic, questions)
+    createDrawingUndoTool(semantic, questions),
+    ...motionRigs ? [createDrawingCreateMotionRigTool(semantic, motionRigs)] : []
   ];
+}
+function createDrawingCreateMotionRigTool(semantic, motionRigs) {
+  return defineTool({
+    name: "drawing_create_motion_rig",
+    description: "Create a temporary local movement constraint only after the user explicitly asks to hinge, drag, articulate, or interactively pose part of the active vector Drawing. First identify the intended semantic geometry with drawing_select_parts. This tool never chooses final coordinates and must not be used for ordinary image uploads or image questions.",
+    parameters: {
+      target: string("Semantic name of the movable assembly requested by the user."),
+      controlRole: optionalString(),
+      fixedRole: optionalString(),
+      motion: literal("translate")
+    },
+    output: { schema: { type: "json" }, render: renderJson },
+    async execute(_args, exec) {
+      var _a3, _b;
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const selectedParts = semantic.currentSelectedParts(sessionId);
+      const semanticNodeIds = [...new Set(Object.values(selectedParts).flatMap(({ targetNodeIds }) => targetNodeIds))];
+      const projected = semanticNodeIds.length === 0 ? ((_b = semantic.currentSelectionProjection(sessionId)) == null ? void 0 : _b.nodeIds) ?? [] : semanticNodeIds;
+      return motionRigs.create(sessionId, projected);
+    }
+  });
+}
+function createDrawingApplySelectionCorrectionTool(semantic) {
+  return defineTool({
+    name: "drawing_apply_selection_correction",
+    description: "Apply the Host-computed correction after a selection validation error. This takes no candidate ids: the Host removes or regroups only the geometry identified by deterministic validation. Inspect the returned highlighted image, then confirm it if exact.",
+    parameters: {},
+    output: { schema: { type: "json" }, render: renderObservation },
+    async execute(_args, exec) {
+      var _a3;
+      const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
+      const result = semantic.applyCurrentSelectionCorrection(sessionId);
+      const imageAttachment = result.state === "selected" ? await semantic.renderCurrentSelectionObservation(sessionId) : null;
+      return {
+        ...result,
+        ...imageAttachment ? {
+          imageAttachment,
+          selectionReview: "Inspect the corrected highlighted geometry. If it is exact, call drawing_confirm_selection; otherwise call drawing_select_parts."
+        } : {},
+        drawingWorkflow: workflow(result.state, result.nextTools)
+      };
+    }
+  });
 }
 function createDrawingObserveTool(semantic) {
   return defineTool({
@@ -9745,7 +10110,7 @@ function createDrawingPreviewSpatialIntentTool(semantic) {
       var _a3;
       const input = spatialIntentRequestSchema.parse(args);
       const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
-      return recover(["drawing_select_parts", "drawing_confirm_selection"], () => {
+      return recover(["drawing_apply_selection_correction", "drawing_select_parts", "drawing_confirm_selection"], () => {
         semantic.previewCurrentIntent(sessionId, input);
         return semantic.currentPreviewPresentation(sessionId);
       });
@@ -9964,7 +10329,13 @@ async function recover(nextTools, operation) {
     return await operation();
   } catch (error) {
     const code = error instanceof Error ? error.message : "EDIT_INVALID_STATE";
-    return { drawingWorkflow: { state: "invalid_state", code, nextTools } };
+    const correction = error && typeof error === "object" && "correction" in error ? error.correction : void 0;
+    const message = code === "EDIT_ARTICULATED_COMPANION_PART_INVALID" ? "The articulated moving part includes separate non-articulated companion parts. Call drawing_apply_selection_correction to remove them without rewriting candidate ids, then inspect and confirm the corrected highlight." : code === "EDIT_ARTICULATED_SELECTION_FRAGMENTED" ? "The articulated selection was split into primitive-sized parts. Call drawing_apply_selection_correction to regroup it without rewriting candidate ids, then inspect and confirm the corrected highlight." : code === "EDIT_ARTICULATED_SELECTION_INVALID" ? "The articulated selection contains unrelated geometry. Call drawing_apply_selection_correction to remove it without rewriting candidate ids, then inspect and confirm the corrected highlight." : code === "EDIT_SELECTED_PART_UNUSED" ? "One or more selected parts are not used by any goal or spatial reference. Call drawing_apply_selection_correction to remove them, then inspect and confirm the corrected highlight." : void 0;
+    return {
+      ...message ? { message } : {},
+      ...correction ? { correction } : {},
+      drawingWorkflow: { state: "invalid_state", code, nextTools }
+    };
   }
 }
 function presentFinalize(result) {
@@ -10017,12 +10388,12 @@ function renderObservation(_args, value) {
   }
   return content;
 }
-function createDrawingAgentToolCatalog(drawings, attachments, semantic, questions) {
+function createDrawingAgentToolCatalog(drawings, attachments, semantic, questions, motionRigs) {
   return [
     createDrawingImportTool(drawings, attachments),
     createDrawingSummarizeTool(drawings),
     createDrawingQueryTool(drawings),
-    ...semantic ? createSemanticEditToolCatalog(semantic, questions) : [
+    ...semantic ? createSemanticEditToolCatalog(semantic, questions, motionRigs) : [
       createDrawingFinalizePreviewTool(),
       createDrawingDiscardPreviewTool(drawings)
     ]
@@ -10951,6 +11322,17 @@ class SemanticEditService {
       }
       resolved.push({ partKey: part.partKey, label: part.label, nodeIds: candidates[0].nodeIds });
     }
+    if (state.correctionAllowedNodeIds) {
+      const allowed = new Set(state.correctionAllowedNodeIds);
+      const addsGeometry = resolved.some(({ nodeIds }) => nodeIds.some((nodeId) => !allowed.has(nodeId)));
+      if (addsGeometry) {
+        return {
+          state: "invalid_state",
+          code: "EDIT_SELECTION_CORRECTION_ADDED_GEOMETRY",
+          nextTools: ["drawing_select_parts", "drawing_confirm_selection"]
+        };
+      }
+    }
     state.selectedParts = {};
     state.groundings = {};
     state.selectionConfirmed = false;
@@ -10991,6 +11373,20 @@ class SemanticEditService {
     });
     for (const candidate of state.candidates.values()) candidate.stateEpoch = transitioned.stateEpoch;
     return { state: "selected", parts: selectedResult, nextTools: ["drawing_confirm_selection"] };
+  }
+  applyCurrentSelectionCorrection(sessionId) {
+    const state = __privateGet(this, _episodeSelections).get(sessionId);
+    if (!(state == null ? void 0 : state.pendingCorrectionRequest)) {
+      return {
+        state: "invalid_state",
+        code: "EDIT_SELECTION_CORRECTION_REQUIRED",
+        nextTools: ["drawing_select_parts"]
+      };
+    }
+    const request = structuredClone(state.pendingCorrectionRequest);
+    const result = this.selectCurrentParts(sessionId, request);
+    if (result.state === "selected") state.pendingCorrectionRequest = void 0;
+    return result;
   }
   async renderCurrentSelectionObservation(sessionId) {
     var _a3;
@@ -11064,14 +11460,23 @@ class SemanticEditService {
       return structuredClone(currentPreview.ref);
     }
     if (task.candidateCount >= 3) throw new Error("EDIT_CANDIDATE_BUDGET_EXHAUSTED");
-    const compilation = solveSpatialIntent({
-      document: snapshot.document,
-      baseRef: snapshot.ref,
-      parts: selection.selectedParts,
-      intent,
-      numericConstraints: episode.instruction.numericConstraints,
-      ports: this.ports
-    });
+    let compilation;
+    try {
+      compilation = solveSpatialIntent({
+        document: snapshot.document,
+        baseRef: snapshot.ref,
+        parts: selection.selectedParts,
+        intent,
+        numericConstraints: episode.instruction.numericConstraints,
+        ports: this.ports
+      });
+    } catch (error) {
+      selection.correctionAllowedNodeIds = spatialCorrectionAllowedNodeIds(error, selection);
+      selection.pendingCorrectionRequest = spatialCorrectionRequest(error, selection);
+      throw projectSpatialSelectionCorrection(error, selection);
+    }
+    selection.correctionAllowedNodeIds = void 0;
+    selection.pendingCorrectionRequest = void 0;
     const selectedPartScopeDigests = Object.fromEntries(Object.keys(selection.selectedParts).sort().map((partKey) => {
       const part = selection.selectedParts[partKey];
       return [partKey, this.ports.digest(canonicalString({
@@ -11682,6 +12087,9 @@ class SemanticEditService {
   undo(sessionId, request) {
     return this.drawings.undoCommit(sessionId, request);
   }
+  redo(sessionId, request) {
+    return this.drawings.redoCommit(sessionId, request);
+  }
   disposeSession(sessionId) {
     const task = __privateGet(this, _tasks).get(sessionId);
     if (task) task.active = false;
@@ -11731,6 +12139,31 @@ class SemanticEditService {
       operationId,
       operationBindingDigest,
       commandLine: `/drawing-undo ${input.targetCommitId} ${input.expectedCurrentRef.drawingId}@${input.expectedCurrentRef.revision} ${operationId} ${operationBindingDigest}`
+    };
+  }
+  stageRedo(sessionId, input) {
+    var _a3;
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return { status: "rejected", code: "DRAWING_REQUIRED", message: "No Drawing is loaded." };
+    if (snapshot.ref.drawingId !== input.expectedCurrentRef.drawingId || snapshot.ref.revision !== input.expectedCurrentRef.revision) return { status: "rejected", code: "REDO_CONFLICT", message: "The Drawing revision changed." };
+    if (!((_a3 = snapshot.lastCommit) == null ? void 0 : _a3.redoable) || snapshot.lastCommit.commitId !== input.targetCommitId) {
+      return { status: "rejected", code: "REDO_TARGET_NOT_CURRENT", message: "The requested Undo is not the current Redo target." };
+    }
+    const operationId = this.ports.id("redo");
+    const operationBindingDigest = this.ports.digest(canonicalString({
+      mode: "redo",
+      operationId,
+      sessionId,
+      drawingId: input.expectedCurrentRef.drawingId,
+      targetCommitId: input.targetCommitId,
+      expectedCurrentRef: input.expectedCurrentRef
+    }));
+    return {
+      status: "staged",
+      ...structuredClone(input),
+      operationId,
+      operationBindingDigest,
+      commandLine: `/drawing-redo ${input.targetCommitId} ${input.expectedCurrentRef.drawingId}@${input.expectedCurrentRef.revision} ${operationId} ${operationBindingDigest}`
     };
   }
   async runExtensionProgram(sessionId, input, signal) {
@@ -12132,6 +12565,119 @@ snapshotAtTask_fn = function(sessionId, task) {
 function allNodes(document) {
   return [...document.geometry, ...document.annotations, ...document.relations, ...document.features];
 }
+function projectSpatialSelectionCorrection(error, state) {
+  if (!error || typeof error !== "object") return error;
+  const failure = error;
+  const candidateKeysFor = (nodeIds) => {
+    const selected = new Set(nodeIds);
+    return [...state.candidates.entries()].filter(([, candidate]) => candidate.nodeIds.length === 1 && selected.has(candidate.nodeIds[0])).map(([key]) => key).sort((left, right) => Number(left.slice(1)) - Number(right.slice(1)));
+  };
+  if (failure.code === "EDIT_ARTICULATED_COMPANION_PART_INVALID" && Array.isArray(failure.unexpectedPartKeys) && failure.unexpectedPartKeys.every((partKey) => typeof partKey === "string")) {
+    const removeParts = failure.unexpectedPartKeys.flatMap((partKey) => {
+      const target = state.selectedParts[partKey];
+      if (!target) return [];
+      return [{ partKey, candidates: candidateKeysFor(target.targetNodeIds) }];
+    });
+    if (removeParts.length > 0) return Object.assign(
+      new Error("EDIT_ARTICULATED_COMPANION_PART_INVALID"),
+      { correction: { removeParts } }
+    );
+  }
+  if (failure.code === "EDIT_ARTICULATED_SELECTION_FRAGMENTED" && typeof failure.partKey === "string" && Array.isArray(failure.mergePartKeys) && failure.mergePartKeys.every((partKey) => typeof partKey === "string") && Array.isArray(failure.mergeNodeIds) && failure.mergeNodeIds.every((nodeId) => typeof nodeId === "string") && Array.isArray(failure.unexpectedPartKeys) && failure.unexpectedPartKeys.every((partKey) => typeof partKey === "string")) {
+    const mergeCandidates = candidateKeysFor(failure.mergeNodeIds);
+    const removeParts = failure.unexpectedPartKeys.flatMap((partKey) => {
+      const target = state.selectedParts[partKey];
+      if (!target) return [];
+      return [{ partKey, candidates: candidateKeysFor(target.targetNodeIds) }];
+    });
+    if (mergeCandidates.length > 0) return Object.assign(
+      new Error("EDIT_ARTICULATED_SELECTION_FRAGMENTED"),
+      { correction: { mergeIntoPart: { partKey: failure.partKey, candidates: mergeCandidates }, removeParts } }
+    );
+  }
+  if (failure.code === "EDIT_ARTICULATED_SELECTION_INVALID" && typeof failure.partKey === "string" && Array.isArray(failure.unexpectedNodeIds) && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === "string")) {
+    const removeCandidates = candidateKeysFor(failure.unexpectedNodeIds);
+    if (removeCandidates.length > 0) return Object.assign(
+      new Error("EDIT_ARTICULATED_SELECTION_INVALID"),
+      { correction: { parts: [{ partKey: failure.partKey, removeCandidates }] } }
+    );
+  }
+  if (failure.code === "EDIT_SELECTED_PART_UNUSED" && Array.isArray(failure.unusedPartKeys) && failure.unusedPartKeys.every((partKey) => typeof partKey === "string")) {
+    const removeParts = failure.unusedPartKeys.flatMap((partKey) => {
+      const target = state.selectedParts[partKey];
+      if (!target) return [];
+      return [{ partKey, candidates: candidateKeysFor(target.targetNodeIds) }];
+    });
+    if (removeParts.length > 0) return Object.assign(
+      new Error("EDIT_SELECTED_PART_UNUSED"),
+      { correction: { removeParts } }
+    );
+  }
+  return error;
+}
+function spatialCorrectionAllowedNodeIds(error, state) {
+  var _a3;
+  if (!error || typeof error !== "object") return void 0;
+  const failure = error;
+  const excluded = /* @__PURE__ */ new Set();
+  if (failure.code === "EDIT_ARTICULATED_COMPANION_PART_INVALID" && Array.isArray(failure.unexpectedNodeIds) && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === "string")) {
+    for (const nodeId of failure.unexpectedNodeIds) excluded.add(nodeId);
+  }
+  if (failure.code === "EDIT_ARTICULATED_SELECTION_FRAGMENTED" && Array.isArray(failure.unexpectedNodeIds) && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === "string")) {
+    for (const nodeId of failure.unexpectedNodeIds) excluded.add(nodeId);
+  }
+  if (failure.code === "EDIT_ARTICULATED_SELECTION_INVALID" && Array.isArray(failure.unexpectedNodeIds) && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === "string")) {
+    for (const nodeId of failure.unexpectedNodeIds) excluded.add(nodeId);
+  }
+  if (failure.code === "EDIT_SELECTED_PART_UNUSED" && Array.isArray(failure.unusedPartKeys) && failure.unusedPartKeys.every((partKey) => typeof partKey === "string")) {
+    for (const partKey of failure.unusedPartKeys) {
+      for (const nodeId of ((_a3 = state.selectedParts[partKey]) == null ? void 0 : _a3.targetNodeIds) ?? []) excluded.add(nodeId);
+    }
+  }
+  if (excluded.size === 0) return void 0;
+  return [...new Set(Object.values(state.selectedParts).flatMap(({ targetNodeIds }) => targetNodeIds))].filter((nodeId) => !excluded.has(nodeId)).sort();
+}
+function spatialCorrectionRequest(error, state) {
+  if (!error || typeof error !== "object") return void 0;
+  const failure = error;
+  const nodesByPart = new Map(Object.entries(state.selectedParts).map(([partKey, target]) => [partKey, new Set(target.targetNodeIds)]));
+  if (failure.code === "EDIT_ARTICULATED_SELECTION_FRAGMENTED" && typeof failure.partKey === "string" && Array.isArray(failure.mergePartKeys) && failure.mergePartKeys.every((partKey) => typeof partKey === "string") && Array.isArray(failure.unexpectedPartKeys) && failure.unexpectedPartKeys.every((partKey) => typeof partKey === "string")) {
+    const destination = nodesByPart.get(failure.partKey);
+    if (!destination) return void 0;
+    for (const partKey of failure.mergePartKeys) {
+      for (const nodeId of nodesByPart.get(partKey) ?? []) destination.add(nodeId);
+      nodesByPart.delete(partKey);
+    }
+    for (const partKey of failure.unexpectedPartKeys) nodesByPart.delete(partKey);
+  } else if (failure.code === "EDIT_ARTICULATED_SELECTION_INVALID" && typeof failure.partKey === "string" && Array.isArray(failure.unexpectedNodeIds) && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === "string")) {
+    const target = nodesByPart.get(failure.partKey);
+    if (!target) return void 0;
+    for (const nodeId of failure.unexpectedNodeIds) target.delete(nodeId);
+  } else if (failure.code === "EDIT_SELECTED_PART_UNUSED" && Array.isArray(failure.unusedPartKeys) && failure.unusedPartKeys.every((partKey) => typeof partKey === "string") || failure.code === "EDIT_ARTICULATED_COMPANION_PART_INVALID" && Array.isArray(failure.unexpectedPartKeys) && failure.unexpectedPartKeys.every((partKey) => typeof partKey === "string")) {
+    const removePartKeys = failure.code === "EDIT_SELECTED_PART_UNUSED" ? failure.unusedPartKeys : failure.unexpectedPartKeys;
+    for (const partKey of removePartKeys) nodesByPart.delete(partKey);
+  } else {
+    return void 0;
+  }
+  const candidateKeyFor = (nodeId) => {
+    var _a3;
+    return (_a3 = [...state.candidates.entries()].find(([, candidate]) => candidate.nodeIds.length === 1 && candidate.nodeIds[0] === nodeId)) == null ? void 0 : _a3[0];
+  };
+  const parts = [...nodesByPart.entries()].sort(([left], [right]) => left.localeCompare(right)).flatMap(([
+    partKey,
+    nodeIds
+  ]) => {
+    const keys = [...nodeIds].map(candidateKeyFor).filter((key) => key !== void 0).sort((left, right) => Number(left.slice(1)) - Number(right.slice(1)));
+    if (keys.length !== nodeIds.size || keys.length === 0) return [];
+    return [{
+      partKey,
+      label: partKey,
+      references: keys.map((key) => ({ kind: "candidate", key })),
+      exclude: []
+    }];
+  });
+  return parts.length > 0 ? { parts } : void 0;
+}
 function inferSelectionInterfaces(document, targetNodeIds, revision) {
   const selected = new Set(targetNodeIds);
   const targets = document.geometry.filter((node) => selected.has(String(node.id)));
@@ -12448,7 +12994,7 @@ class InteractiveEditService {
         throw new Error("INVERSE_VERIFICATION_FAILED");
       }
     } catch (error) {
-      return { status: "rejected", message: errorMessage(error), code: "INTERACTIVE_EDIT_REJECTED" };
+      return { status: "rejected", message: errorMessage$1(error), code: "INTERACTIVE_EDIT_REJECTED" };
     }
     const intentId = this.ports.id("intent");
     const operationId = this.ports.id("interactive");
@@ -12521,6 +13067,111 @@ function publicIntent(intent) {
   const { intentId, intentDigest, operationId, operationBindingDigest, commandLine } = intent;
   return { status: "staged", intentId, intentDigest, operationId, operationBindingDigest, commandLine };
 }
+function errorMessage$1(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+class MotionRigService {
+  constructor(drawings) {
+    __privateAdd(this, _rigs, /* @__PURE__ */ new Map());
+    this.drawings = drawings;
+  }
+  create(sessionId, semanticNodeIds) {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return {
+      state: "blocked",
+      code: "drawing_required",
+      message: "No editable vector Drawing is loaded."
+    };
+    try {
+      const definition = resolveTranslationMotionRig(snapshot.document, semanticNodeIds);
+      const projection = {
+        version: 1,
+        drawingRef: structuredClone(snapshot.ref),
+        state: "ready",
+        ...definition
+      };
+      __privateGet(this, _rigs).set(sessionId, projection);
+      return {
+        state: "ready",
+        summary: "Temporary movement constraint is ready.",
+        controlNodeCount: projection.controlBodyNodeIds.length,
+        connectorNodeCount: projection.connectors.length
+      };
+    } catch (error) {
+      return createFailure(error);
+    }
+  }
+  current(sessionId) {
+    const rig = __privateGet(this, _rigs).get(sessionId);
+    if (!rig) return null;
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot || !sameRef(snapshot.ref, rig.drawingRef)) {
+      __privateGet(this, _rigs).delete(sessionId);
+      return null;
+    }
+    return structuredClone(rig);
+  }
+  rebuild(sessionId, expectedRef, nodeIds) {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return { status: "rejected", code: "DRAWING_REQUIRED", message: "No Drawing is loaded." };
+    if (!sameRef(snapshot.ref, expectedRef)) return {
+      status: "stale",
+      currentRef: structuredClone(snapshot.ref)
+    };
+    try {
+      const definition = resolveTranslationMotionRig(snapshot.document, nodeIds);
+      const projection = {
+        version: 1,
+        drawingRef: structuredClone(snapshot.ref),
+        state: "ready",
+        ...definition
+      };
+      __privateGet(this, _rigs).set(sessionId, projection);
+      return { status: "ready", projection: structuredClone(projection) };
+    } catch (error) {
+      const previous = this.current(sessionId);
+      return {
+        status: "needs-correction",
+        ...previous ? { projection: previous } : {},
+        message: errorMessage(error)
+      };
+    }
+  }
+  discard(sessionId, expectedRef) {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) {
+      __privateGet(this, _rigs).delete(sessionId);
+      return { status: "rejected", code: "DRAWING_REQUIRED", message: "No Drawing is loaded." };
+    }
+    if (expectedRef && !sameRef(snapshot.ref, expectedRef)) return {
+      status: "stale",
+      currentRef: structuredClone(snapshot.ref)
+    };
+    __privateGet(this, _rigs).delete(sessionId);
+    return { status: "discarded" };
+  }
+  disposeSession(sessionId) {
+    __privateGet(this, _rigs).delete(sessionId);
+  }
+}
+_rigs = new WeakMap();
+function createFailure(error) {
+  const reason = errorMessage(error);
+  if (reason === "MOTION_RIG_AMBIGUOUS") return {
+    state: "blocked",
+    code: "ambiguous_topology",
+    message: "Multiple movement anchors are equally plausible."
+  };
+  if (reason === "MOTION_RIG_GEOMETRY_UNSUPPORTED") return {
+    state: "blocked",
+    code: "unsupported_geometry",
+    message: "The selected connector geometry is not safely deformable."
+  };
+  return { state: "needs_correction", summary: "The movement constraint needs selection correction.", reason };
+}
+function sameRef(left, right) {
+  return left.drawingId === right.drawingId && left.revision === right.revision;
+}
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -12575,7 +13226,32 @@ function registerDrawingCommands(commands, interactive, semantic) {
       }
     }
   });
+  const disposeRedo = commands.register({
+    name: "drawing-redo",
+    description: "Redo the exact current Drawing Undo as a new durable revision.",
+    input: { hint: "<undoCommitId> <drawingId>@<revision> <operationId> <operationBindingDigest>" },
+    recordInput: false,
+    async handler(invocation) {
+      const [targetCommitId, encodedRef, operationId, operationBindingDigest, ...extra] = invocation.rawInput.trim().split(/\s+/);
+      const match = encodedRef == null ? void 0 : encodedRef.match(/^(.+)@(\d+)$/);
+      if (!targetCommitId || !match || !operationId || !operationBindingDigest || extra.length > 0) {
+        return { kind: "error", text: "Usage: /drawing-redo <undoCommitId> <drawingId>@<revision> <operationId> <operationBindingDigest>" };
+      }
+      try {
+        const receipt = semantic.redo(String(invocation.agent.id), {
+          targetCommitId,
+          expectedCurrentRef: { drawingId: match[1], revision: Number(match[2]) },
+          operationId,
+          operationBindingDigest
+        });
+        return { kind: "success", text: JSON.stringify(receipt) };
+      } catch (error) {
+        return { kind: "error", text: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  });
   return () => {
+    disposeRedo();
     disposeUndo();
     disposePolicy();
     disposeApply();
@@ -12938,13 +13614,14 @@ function validReview(value) {
     return typeof item.code === "string" && typeof item.reason === "string" && typeof item.scopeDigest === "string";
   });
 }
-class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _projectSelection_dec = [Remote], _getGroundingOverlay_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
+class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _projectSelection_dec = [Remote], _getGroundingOverlay_dec = [Remote], _getMotionRig_dec = [Remote], _rebuildMotionRig_dec = [Remote], _discardMotionRig_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _stageRedo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingSpace");
     __runInitializers(_init, 5, this);
     __publicField(this, "drawings");
     __publicField(this, "semantic");
     __publicField(this, "interactive");
+    __publicField(this, "motionRigs");
     this.drawings = new InMemoryDrawingRepository({
       vectorizer: new LocalCleanLineVectorizer(),
       storage: new FileDrawingRepositoryStorage(resolve(homedir(), ".dsh/vectorai/drawings"))
@@ -12972,12 +13649,14 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
     };
     this.semantic = new SemanticEditService(this.drawings, editPorts);
     this.interactive = new InteractiveEditService(this.drawings, editPorts);
+    this.motionRigs = new MotionRigService(this.drawings);
     ctx.effect(() => registerDrawingCommands(ctx.commands, this.interactive, this.semantic));
     for (const tool of createDrawingAgentToolCatalog(
       this.drawings,
       ctx.attachments,
       this.semantic,
-      ctx.userQuestions
+      ctx.userQuestions,
+      this.motionRigs
     )) {
       ctx.tools.register(tool);
     }
@@ -12986,6 +13665,7 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
     }));
     ctx.on("session/disposed", (session) => {
       this.semantic.disposeSession(String(session.id));
+      this.motionRigs.disposeSession(String(session.id));
       this.drawings.disposeSession(String(session.id));
     });
   }
@@ -13001,11 +13681,23 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
   getGroundingOverlay(agent) {
     return this.semantic.currentGroundingOverlay(String(agent.id));
   }
+  getMotionRig(agent) {
+    return this.motionRigs.current(String(agent.id));
+  }
+  rebuildMotionRig(agent, request) {
+    return this.motionRigs.rebuild(String(agent.id), request.ref, request.nodeIds);
+  }
+  discardMotionRig(agent, request) {
+    return this.motionRigs.discard(String(agent.id), request.ref);
+  }
   stageInteractiveEdit(agent, request) {
     return this.interactive.stage(String(agent.id), request);
   }
   stageUndo(agent, request) {
     return this.semantic.stageUndo(String(agent.id), request);
+  }
+  stageRedo(agent, request) {
+    return this.semantic.stageRedo(String(agent.id), request);
   }
   getOperation(agent, operationId, operationBindingDigest) {
     return this.semantic.getOperation(String(agent.id), operationId, operationBindingDigest);
@@ -13022,8 +13714,12 @@ __decorateElement(_init, 1, "getSnapshot", _getSnapshot_dec, DrawingSpaceHostSer
 __decorateElement(_init, 1, "query", _query_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "projectSelection", _projectSelection_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getGroundingOverlay", _getGroundingOverlay_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "getMotionRig", _getMotionRig_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "rebuildMotionRig", _rebuildMotionRig_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "discardMotionRig", _discardMotionRig_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "stageInteractiveEdit", _stageInteractiveEdit_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "stageUndo", _stageUndo_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "stageRedo", _stageRedo_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getOperation", _getOperation_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getPreview", _getPreview_dec, DrawingSpaceHostService);
 __decoratorMetadata(_init, DrawingSpaceHostService);
