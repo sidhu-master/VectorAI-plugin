@@ -8,6 +8,7 @@ import type {
   SemanticFeature,
   Vec2,
 } from '@vectorai/drawing-core';
+import type { MotionRigDefinition } from '@vectorai/drawing-edit-core';
 
 export interface DrawingWorkspaceRef {
   drawingId: string;
@@ -25,6 +26,30 @@ export interface DrawingSelectionProjection {
 export type DrawingSelectionProjectionResult =
   | { status: 'projected'; projection: DrawingSelectionProjection }
   | { status: 'cleared' }
+  | { status: 'stale'; currentRef: DrawingWorkspaceRef }
+  | { status: 'rejected'; code: string; message: string };
+
+export interface DrawingMotionRigProjection extends MotionRigDefinition {
+  version: 1;
+  drawingRef: DrawingWorkspaceRef;
+  state: 'ready' | 'needs-correction';
+  message?: string;
+}
+
+export interface DrawingMotionRigWorkspaceState {
+  projection: DrawingMotionRigProjection;
+  phase: 'ready' | 'dragging' | 'preview';
+  message?: string;
+}
+
+export type DrawingMotionRigResult =
+  | { status: 'ready'; projection: DrawingMotionRigProjection }
+  | { status: 'needs-correction'; projection?: DrawingMotionRigProjection; message: string }
+  | { status: 'stale'; currentRef: DrawingWorkspaceRef }
+  | { status: 'rejected'; code: string; message: string };
+
+export type DrawingMotionRigDiscardResult =
+  | { status: 'discarded' }
   | { status: 'stale'; currentRef: DrawingWorkspaceRef }
   | { status: 'rejected'; code: string; message: string };
 
@@ -82,8 +107,9 @@ export interface DrawingWorkspaceSnapshot {
   provisional?: boolean;
   lastCommit?: {
     commitId: string;
-    mode: 'auto-safe' | 'confirmed' | 'interactive' | 'undo';
+    mode: 'auto-safe' | 'confirmed' | 'interactive' | 'undo' | 'redo';
     undoable: boolean;
+    redoable?: boolean;
   };
 }
 
@@ -170,10 +196,23 @@ export type DrawingUndoStageResult =
   }
   | { status: 'rejected'; message: string; code: string };
 
+export type DrawingRedoStageRequest = DrawingUndoStageRequest;
+export type DrawingRedoStageResult = DrawingUndoStageResult;
+
 export interface DrawingWorkspacePort {
   load(signal?: AbortSignal): Promise<DrawingWorkspaceSnapshot | null>;
   loadPreview?(signal?: AbortSignal): Promise<DrawingWorkspacePreview | null>;
   loadGroundingOverlay?(signal?: AbortSignal): Promise<DrawingGroundingOverlay | null>;
+  loadMotionRig?(signal?: AbortSignal): Promise<DrawingMotionRigProjection | null>;
+  rebuildMotionRig?(
+    ref: DrawingWorkspaceRef,
+    nodeIds: string[],
+    signal?: AbortSignal,
+  ): Promise<DrawingMotionRigResult>;
+  discardMotionRig?(
+    ref: DrawingWorkspaceRef,
+    signal?: AbortSignal,
+  ): Promise<DrawingMotionRigDiscardResult>;
   projectSelection?(
     ref: DrawingWorkspaceRef,
     nodeIds: string[],
@@ -184,6 +223,10 @@ export interface DrawingWorkspacePort {
     signal?: AbortSignal,
   ): Promise<DrawingWorkspaceCommitResult>;
   undoLast?(
+    snapshot: DrawingWorkspaceSnapshot,
+    signal?: AbortSignal,
+  ): Promise<DrawingWorkspaceCommitResult>;
+  redoLast?(
     snapshot: DrawingWorkspaceSnapshot,
     signal?: AbortSignal,
   ): Promise<DrawingWorkspaceCommitResult>;

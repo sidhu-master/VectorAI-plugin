@@ -16,6 +16,8 @@ import {
   type DrawingWorkspacePreview,
   type DrawingWorkspaceSnapshot,
   type DrawingGroundingOverlay,
+  type DrawingMotionRigProjection,
+  type DrawingMotionRigResult,
 } from './index';
 
 function drawing(id: string, geometryIds: string[] = []): DrawingDocument {
@@ -55,11 +57,15 @@ class TestPort implements DrawingWorkspacePort {
   current: DrawingWorkspaceSnapshot | null;
   preview: DrawingWorkspacePreview | null = null;
   groundingOverlay: DrawingGroundingOverlay | null = null;
+  motionRig: DrawingMotionRigProjection | null = null;
   commits: DrawingWorkspaceCommitRequest[] = [];
+  rebuilds: Array<{ ref: DrawingWorkspaceSnapshot['ref']; nodeIds: string[] }> = [];
+  discards: DrawingWorkspaceSnapshot['ref'][] = [];
   listeners = new Set<() => void>();
   loadSource?: DrawingWorkspacePort['loadSource'];
   undoLast?: DrawingWorkspacePort['undoLast'];
   projectSelection?: DrawingWorkspacePort['projectSelection'];
+  redoLast?: DrawingWorkspacePort['redoLast'];
 
   constructor(current: DrawingWorkspaceSnapshot | null) {
     this.current = current;
@@ -75,6 +81,23 @@ class TestPort implements DrawingWorkspacePort {
 
   async loadGroundingOverlay(): Promise<DrawingGroundingOverlay | null> {
     return this.groundingOverlay === null ? null : structuredClone(this.groundingOverlay);
+  }
+
+  async loadMotionRig(): Promise<DrawingMotionRigProjection | null> {
+    return this.motionRig === null ? null : structuredClone(this.motionRig);
+  }
+
+  async rebuildMotionRig(ref: DrawingWorkspaceSnapshot['ref'], nodeIds: string[]): Promise<DrawingMotionRigResult> {
+    this.rebuilds.push({ ref: structuredClone(ref), nodeIds: [...nodeIds] });
+    return this.motionRig === null
+      ? { status: 'rejected', code: 'MOTION_RIG_INVALID', message: 'No valid rig.' }
+      : { status: 'ready', projection: structuredClone(this.motionRig) };
+  }
+
+  async discardMotionRig(ref: DrawingWorkspaceSnapshot['ref']) {
+    this.discards.push(structuredClone(ref));
+    this.motionRig = null;
+    return { status: 'discarded' as const };
   }
 
   async commit(request: DrawingWorkspaceCommitRequest): Promise<DrawingWorkspaceCommitResult> {
@@ -103,6 +126,37 @@ class TestPort implements DrawingWorkspacePort {
   }
 }
 
+function motionSnapshot(revision = 1): DrawingWorkspaceSnapshot {
+  const value = snapshot(revision, []);
+  value.document.geometry = [
+    {
+      id: 'hand' as GeometryId, type: 'circle', center: [20, 20], radius: 3,
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    },
+    {
+      id: 'arm' as GeometryId, type: 'line', start: [0, 20], end: [17, 20],
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    },
+  ];
+  return value;
+}
+
+function motionRig(revision = 1): DrawingMotionRigProjection {
+  return {
+    version: 1,
+    drawingRef: { drawingId: 'drawing-1', revision },
+    state: 'ready',
+    controlBodyNodeIds: ['hand'],
+    connectors: [{ nodeId: 'arm', movingEndpoint: 'end', fixedPoint: [0, 20] }],
+    anchor: [0, 20],
+    handle: [20, 20],
+    keepAnchorFixed: true,
+    keepControlBodyRigid: true,
+    preserveConnectivity: true,
+    allowControlRotation: false,
+  };
+}
+
 function snapshotWithText(revision = 1): DrawingWorkspaceSnapshot {
   const value = snapshot(revision);
   value.document.annotations = [{
@@ -121,6 +175,76 @@ function snapshotWithText(revision = 1): DrawingWorkspaceSnapshot {
 }
 
 describe('createDrawingWorkspaceStore', () => {
+  it('solves handle movement locally, previews it, and commits one interactive command batch', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([30, 25]);
+
+    expect(port.commits).toEqual([]);
+    expect(store.getState().motionRig?.phase).toBe('dragging');
+    expect(store.getState().displaySnapshot?.document.geometry).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'hand', center: [30, 25] }),
+      expect.objectContaining({ id: 'arm', start: [0, 20], end: [27, 25] }),
+    ]));
+
+    store.getState().finishMotionRigDrag();
+    expect(store.getState().motionRig?.phase).toBe('preview');
+    expect(await store.getState().confirmMotionRig()).toBe(true);
+    expect(port.commits).toHaveLength(1);
+    expect(port.commits[0]?.commands).toHaveLength(2);
+    expect(port.discards).toEqual([{ drawingId: 'drawing-1', revision: 2 }]);
+    expect(store.getState().motionRig).toBeNull();
+  });
+
+  it('rebuilds the complete Host rig from the current direct selection', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().setSelection(['hand']);
+
+    expect(await store.getState().rebuildMotionRigFromSelection()).toBe(true);
+    expect(port.rebuilds).toEqual([{
+      ref: { drawingId: 'drawing-1', revision: 1 }, nodeIds: ['hand'],
+    }]);
+    expect(store.getState().motionRig?.projection.controlBodyNodeIds).toEqual(['hand']);
+  });
+
+  it('cancels a local rig candidate without committing geometry', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([25, 22]);
+    store.getState().finishMotionRigDrag();
+
+    await store.getState().cancelMotionRig();
+
+    expect(port.commits).toEqual([]);
+    expect(port.discards).toEqual([{ drawingId: 'drawing-1', revision: 1 }]);
+    expect(store.getState().displaySnapshot).toEqual(store.getState().snapshot);
+    expect(store.getState().motionRig).toBeNull();
+  });
+
+  it('drops a stale motion rig on authoritative revision refresh', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    port.current = motionSnapshot(2);
+    port.motionRig = motionRig(1);
+
+    await store.getState().refresh();
+
+    expect(store.getState().motionRig).toBeNull();
+    expect(store.getState().snapshot?.ref.revision).toBe(2);
+  });
+
   it('loads a matching Grounding Overlay without changing local Selection', async () => {
     const port = new TestPort(snapshot(1, ['carrier-a', 'carrier-b']));
     port.groundingOverlay = {
@@ -475,6 +599,28 @@ describe('createDrawingWorkspaceStore', () => {
     expect(store.getState().snapshot?.ref.revision).toBe(3);
     expect(store.getState().snapshot?.lastCommit).toEqual({
       commitId: 'undo-1', mode: 'undo', undoable: false,
+    });
+  });
+
+  it('redoes the exact latest undo and adopts the restored revision', async () => {
+    const current = snapshot(3);
+    current.lastCommit = { commitId: 'undo-1', mode: 'undo', undoable: false, redoable: true };
+    const port = new TestPort(current);
+    port.redoLast = async (received) => ({
+      status: 'committed',
+      snapshot: {
+        ...structuredClone(received),
+        ref: { ...received.ref, revision: 4 },
+        lastCommit: { commitId: 'redo-1', mode: 'redo', undoable: true, redoable: false },
+      },
+    });
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+
+    await expect(store.getState().redoLast()).resolves.toBe(true);
+    expect(store.getState().snapshot?.ref.revision).toBe(4);
+    expect(store.getState().snapshot?.lastCommit).toEqual({
+      commitId: 'redo-1', mode: 'redo', undoable: true, redoable: false,
     });
   });
 });

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@vectorai/drawing-core": "workspace:*",
+    "@vectorai/drawing-edit-core": "workspace:*",
     "zustand": "^5.0.3"
   }
 }

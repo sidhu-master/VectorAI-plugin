@@ -23,9 +23,11 @@ export interface MotionRigDefinition {
 }
 
 export interface MotionRigSolveResult {
-  commands: DrawingTransactionCommand[];
+  commands: MotionRigUpdateCommand[];
   candidate: DrawingDocument;
 }
+
+export type MotionRigUpdateCommand = Extract<DrawingTransactionCommand, { type: 'node.update' }>;
 
 type Carrier = Extract<GeometryNode, { type: 'circle' | 'ellipse' }>;
 
@@ -95,7 +97,7 @@ export function solveTranslationMotionRig(
   delta: Vec2,
 ): MotionRigSolveResult {
   if (!finitePoint(delta)) throw new Error('MOTION_RIG_DELTA_INVALID');
-  const commands: DrawingTransactionCommand[] = [];
+  const commands: MotionRigUpdateCommand[] = [];
   const connectorIds = new Set(rig.connectors.map(({ nodeId }) => nodeId));
   for (const id of rig.controlBodyNodeIds) {
     if (connectorIds.has(id)) throw new Error('MOTION_RIG_ROLE_CONFLICT');
@@ -162,7 +164,7 @@ function deformConnector(
   node: GeometryNode,
   binding: MotionRigConnectorBinding,
   delta: Vec2,
-): DrawingTransactionCommand {
+): MotionRigUpdateCommand {
   if (node.type === 'line' && (binding.movingEndpoint === 'start' || binding.movingEndpoint === 'end')) {
     const before = node[binding.movingEndpoint];
     return {

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Vec2 } from '@vectorai/drawing-core';
+import { solveTranslationMotionRig } from '@vectorai/drawing-edit-core';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import type {
   DrawingSourceResource,
   DrawingGroundingOverlay,
+  DrawingMotionRigProjection,
+  DrawingMotionRigWorkspaceState,
   DrawingSelectionProjection,
   DrawingWorkspaceCommitRequest,
   DrawingWorkspacePort,
@@ -21,7 +24,7 @@ import {
 export type DrawingWorkspaceStatus = 'idle' | 'loading' | 'empty' | 'ready' | 'error';
 
 export interface DrawingWorkspaceError {
-  code: 'load_failed' | 'commit_failed' | 'revision_conflict' | 'source_failed' | 'undo_failed';
+  code: 'load_failed' | 'commit_failed' | 'revision_conflict' | 'source_failed' | 'undo_failed' | 'redo_failed';
   message: string;
 }
 
@@ -46,6 +49,7 @@ export interface DrawingWorkspaceState {
   snapshot: DrawingWorkspaceSnapshot | null;
   preview: DrawingWorkspacePreview | null;
   groundingOverlay: DrawingGroundingOverlay | null;
+  motionRig: DrawingMotionRigWorkspaceState | null;
   displaySnapshot: DrawingWorkspaceSnapshot | null;
   sourceResource: DrawingSourceResource | null;
   busy: boolean;
@@ -62,9 +66,16 @@ export interface DrawingWorkspaceState {
   deleteNodes(ids: string[]): Promise<boolean>;
   moveAnnotationText(id: string, position: Vec2): Promise<boolean>;
   undoLast(): Promise<boolean>;
+  redoLast(): Promise<boolean>;
   setViewport(viewport: DrawingWorkspaceViewport): void;
   setMouseWorld(point: Vec2 | null): void;
   setSelection(ids: string[]): void;
+  rebuildMotionRigFromSelection(): Promise<boolean>;
+  beginMotionRigDrag(point: Vec2): void;
+  updateMotionRigDrag(point: Vec2): void;
+  finishMotionRigDrag(): void;
+  confirmMotionRig(): Promise<boolean>;
+  cancelMotionRig(): Promise<void>;
   setDisplay(display: Partial<DrawingWorkspaceDisplay>): void;
   clearError(): void;
   destroy(): void;
@@ -98,12 +109,16 @@ export function createDrawingWorkspaceStore(input: {
   let sourceResource: DrawingSourceResource | null = null;
   let selectionSequence = 0;
   let groundingCursor: { drawingId: string; stateEpoch: number } | null = null;
+  let motionRigBaseSnapshot: DrawingWorkspaceSnapshot | null = null;
+  let motionRigDragStart: Vec2 | null = null;
+  let motionRigCommands: DrawingWorkspaceCommitRequest['commands'] = [];
 
   const store = createStore<DrawingWorkspaceState>((set, get) => {
     const replaceSnapshot = async (
       snapshot: DrawingWorkspaceSnapshot | null,
       preview: DrawingWorkspacePreview | null = null,
       groundingOverlay: DrawingGroundingOverlay | null = null,
+      motionRigProjection: DrawingMotionRigProjection | null = null,
     ): Promise<void> => {
       const previousOverlay = get().groundingOverlay;
       const sameDrawing = snapshot !== null
@@ -143,6 +158,9 @@ export function createDrawingWorkspaceStore(input: {
         currentGroundingOverlay = null;
       }
       const currentPreview = !terminalOverlay && previewMatchesSnapshot(preview, snapshot) ? preview : null;
+      const currentMotionRig = motionRigMatchesSnapshot(motionRigProjection, snapshot)
+        ? { projection: structuredClone(motionRigProjection), phase: 'ready' as const }
+        : null;
       const displaySnapshot = currentPreview?.candidate ?? snapshot;
       const nextIds = displaySnapshot === null ? new Set<string>() : drawingNodeIds(displaySnapshot);
       const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
@@ -168,6 +186,7 @@ export function createDrawingWorkspaceStore(input: {
         snapshot,
         preview: currentPreview,
         groundingOverlay: currentGroundingOverlay,
+        motionRig: currentMotionRig,
         displaySnapshot,
         sourceResource: nextSource,
         selectedIds,
@@ -183,13 +202,14 @@ export function createDrawingWorkspaceStore(input: {
       requestController = controller;
       if (initial) set({ status: 'loading', error: null });
       try {
-        const [snapshot, preview, groundingOverlay] = await Promise.all([
+        const [snapshot, preview, groundingOverlay, motionRig] = await Promise.all([
           port.load(controller.signal),
           port.loadPreview?.(controller.signal) ?? Promise.resolve(null),
           port.loadGroundingOverlay?.(controller.signal) ?? Promise.resolve(null),
+          port.loadMotionRig?.(controller.signal) ?? Promise.resolve(null),
         ]);
         if (controller.signal.aborted || disposed) return;
-        await replaceSnapshot(snapshot, preview, groundingOverlay);
+        await replaceSnapshot(snapshot, preview, groundingOverlay, motionRig);
       } catch (error) {
         if (controller.signal.aborted || disposed) return;
         set({
@@ -204,6 +224,7 @@ export function createDrawingWorkspaceStore(input: {
       snapshot: null,
       preview: null,
       groundingOverlay: null,
+      motionRig: null,
       displaySnapshot: null,
       sourceResource: null,
       busy: false,
@@ -298,6 +319,29 @@ export function createDrawingWorkspaceStore(input: {
           if (!disposed) set({ busy: false });
         }
       },
+      async redoLast() {
+        const snapshot = get().snapshot;
+        if (!snapshot?.lastCommit?.redoable || !port.redoLast || disposed) return false;
+        set({ busy: true, error: null });
+        const controller = new AbortController();
+        requestController = controller;
+        try {
+          const result = await port.redoLast(snapshot, controller.signal);
+          if (controller.signal.aborted || disposed) return false;
+          if (result.status === 'committed') {
+            await replaceSnapshot(result.snapshot, null);
+            return true;
+          }
+          set({ error: { code: 'redo_failed', message: result.message } });
+          return false;
+        } catch (error) {
+          if (controller.signal.aborted || disposed) return false;
+          set({ error: { code: 'redo_failed', message: errorMessage(error) } });
+          return false;
+        } finally {
+          if (!disposed) set({ busy: false });
+        }
+      },
       setViewport(viewport) {
         set({ viewport: { ...viewport } });
       },
@@ -325,6 +369,92 @@ export function createDrawingWorkspaceStore(input: {
           // Selection remains a local visual state when Host projection is unavailable.
         });
       },
+      async rebuildMotionRigFromSelection() {
+        const current = get();
+        if (current.snapshot === null || current.motionRig === null || port.rebuildMotionRig === undefined) return false;
+        const result = await port.rebuildMotionRig(
+          current.snapshot.ref,
+          current.selectedIds,
+          requestController?.signal,
+        );
+        if (disposed) return false;
+        if (result.status === 'ready') {
+          motionRigBaseSnapshot = structuredClone(current.snapshot);
+          motionRigCommands = [];
+          motionRigDragStart = null;
+          set({
+            motionRig: { projection: structuredClone(result.projection), phase: 'ready' },
+            displaySnapshot: current.preview?.candidate ?? current.snapshot,
+          });
+          return true;
+        }
+        if (result.status === 'stale') await refresh(false);
+        else set({
+          motionRig: current.motionRig === null
+            ? null
+            : { ...current.motionRig, message: result.message },
+        });
+        return false;
+      },
+      beginMotionRigDrag(point) {
+        const current = get();
+        if (current.motionRig === null || current.snapshot === null || current.motionRig.phase === 'preview') return;
+        motionRigBaseSnapshot = structuredClone(current.snapshot);
+        motionRigDragStart = [...point];
+        motionRigCommands = [];
+        set({ motionRig: { ...current.motionRig, phase: 'dragging', message: undefined } });
+      },
+      updateMotionRigDrag(point) {
+        const current = get();
+        if (current.motionRig?.phase !== 'dragging' || motionRigDragStart === null || motionRigBaseSnapshot === null) return;
+        try {
+          const solved = solveTranslationMotionRig(
+            motionRigBaseSnapshot.document,
+            current.motionRig.projection,
+            [point[0] - motionRigDragStart[0], point[1] - motionRigDragStart[1]],
+          );
+          motionRigCommands = structuredClone(solved.commands);
+          set({
+            displaySnapshot: { ...structuredClone(motionRigBaseSnapshot), document: solved.candidate },
+            motionRig: { ...current.motionRig, phase: 'dragging', message: undefined },
+          });
+        } catch (error) {
+          set({ motionRig: { ...current.motionRig, message: errorMessage(error) } });
+        }
+      },
+      finishMotionRigDrag() {
+        const current = get();
+        if (current.motionRig?.phase !== 'dragging') return;
+        set({ motionRig: { ...current.motionRig, phase: motionRigCommands.length > 0 ? 'preview' : 'ready' } });
+        motionRigDragStart = null;
+      },
+      async confirmMotionRig() {
+        const current = get();
+        if (current.motionRig?.phase !== 'preview' || motionRigCommands.length === 0) return false;
+        const commands = structuredClone(motionRigCommands);
+        const committed = await get().commit({ commands });
+        if (!committed) return false;
+        const committedRef = get().snapshot?.ref;
+        if (committedRef && port.discardMotionRig) await port.discardMotionRig(committedRef);
+        motionRigBaseSnapshot = null;
+        motionRigDragStart = null;
+        motionRigCommands = [];
+        set({ motionRig: null });
+        return true;
+      },
+      async cancelMotionRig() {
+        const current = get();
+        if (current.snapshot && port.discardMotionRig) {
+          await port.discardMotionRig(current.snapshot.ref, requestController?.signal);
+        }
+        motionRigBaseSnapshot = null;
+        motionRigDragStart = null;
+        motionRigCommands = [];
+        set({
+          motionRig: null,
+          displaySnapshot: current.preview?.candidate ?? current.snapshot,
+        });
+      },
       setDisplay(display) {
         set({ display: { ...get().display, ...display } });
       },
@@ -339,11 +469,24 @@ export function createDrawingWorkspaceStore(input: {
         unsubscribe = undefined;
         sourceResource?.dispose();
         sourceResource = null;
+        motionRigBaseSnapshot = null;
+        motionRigDragStart = null;
+        motionRigCommands = [];
       },
     };
   });
 
   return store;
+}
+
+function motionRigMatchesSnapshot(
+  rig: DrawingMotionRigProjection | null,
+  snapshot: DrawingWorkspaceSnapshot | null,
+): rig is DrawingMotionRigProjection {
+  return rig !== null
+    && snapshot !== null
+    && rig.drawingRef.drawingId === snapshot.ref.drawingId
+    && rig.drawingRef.revision === snapshot.ref.revision;
 }
 
 function drawingNodeIds(snapshot: DrawingWorkspaceSnapshot): Set<string> {
