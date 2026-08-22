@@ -9,7 +9,7 @@ import {
   type DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
 import TestRenderer, { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { DrawingWorkspaceProvider } from '../provider';
 import { ObjectList } from './ObjectList';
@@ -106,17 +106,62 @@ describe('shared workspace panel actions', () => {
     act(() => renderer.unmount());
   });
 
-  it('toggles local display state and fits without committing', async () => {
+  it('fits the viewport without committing', async () => {
     const { port, store, renderer } = await renderPanel(<WorkspaceToolbar />);
-    const button = (label: string) => renderer.root.findAllByType('button')
-      .find((candidate) => candidate.children.includes(label));
 
-    act(() => button('网格')?.props.onClick());
-    act(() => button('适配图纸')?.props.onClick());
+    act(() => renderer.root.findByProps({ 'aria-label': '适配图纸' }).props.onClick());
 
-    expect(store.getState().display.grid).toBe(false);
     expect(store.getState().viewport.scale).toBeGreaterThan(1);
     expect(port.commits).toEqual([]);
+    act(() => renderer.unmount());
+  });
+
+  it('forwards explicit upload and export gestures from the floating toolbar', async () => {
+    const onUploadFiles = vi.fn();
+    const onExport = vi.fn();
+    const { renderer } = await renderPanel(
+      <WorkspaceToolbar onUploadFiles={onUploadFiles} onExport={onExport} />,
+    );
+    const file = { name: 'drawing.png', type: 'image/png' } as File;
+    const input = renderer.root.findByType('input');
+    const exportButton = renderer.root.findByProps({ 'aria-label': '导出 DXF' });
+
+    act(() => input.props.onChange({ currentTarget: { files: [file], value: 'drawing.png' } }));
+    act(() => exportButton?.props.onClick());
+
+    expect(onUploadFiles).toHaveBeenCalledWith([file]);
+    expect(onExport).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
+  });
+
+  it('shows icon-only confirm and cancel actions for a motion-rig Preview', async () => {
+    const { store, renderer } = await renderPanel(<WorkspaceToolbar />);
+    const confirmMotionRig = vi.fn(async () => true);
+    const cancelMotionRig = vi.fn(async () => {});
+    act(() => store.setState({
+      motionRig: {
+        phase: 'preview',
+        projection: {
+          version: 1, drawingRef: { drawingId: 'drawing', revision: 5 }, state: 'ready',
+          controlBodyNodeIds: ['circle-1'],
+          connectors: [{ nodeId: 'arm', movingEndpoint: 'end', fixedPoint: [0, 0] }],
+          anchor: [0, 0], handle: [10, 20], keepAnchorFixed: true,
+          keepControlBodyRigid: true, preserveConnectivity: true, allowControlRotation: false,
+        },
+      },
+      confirmMotionRig,
+      cancelMotionRig,
+    }));
+
+    const confirm = renderer.root.findByProps({ 'aria-label': '确认姿态' });
+    const cancel = renderer.root.findByProps({ 'aria-label': '取消姿态' });
+    await act(async () => { confirm.props.onClick(); await Promise.resolve(); });
+    await act(async () => { cancel.props.onClick(); await Promise.resolve(); });
+
+    expect(confirmMotionRig).toHaveBeenCalledOnce();
+    expect(cancelMotionRig).toHaveBeenCalledOnce();
+    expect(confirm.findAllByType('span')).toHaveLength(0);
+    expect(cancel.findAllByType('span')).toHaveLength(0);
     act(() => renderer.unmount());
   });
 });

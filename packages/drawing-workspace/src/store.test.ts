@@ -231,6 +231,21 @@ describe('createDrawingWorkspaceStore', () => {
     expect(store.getState().motionRig).toBeNull();
   });
 
+  it('resets only the active drag on first Escape while keeping the valid rig', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([25, 22]);
+
+    store.getState().resetMotionRigDrag();
+
+    expect(store.getState().motionRig?.phase).toBe('ready');
+    expect(store.getState().displaySnapshot).toEqual(store.getState().snapshot);
+    expect(port.discards).toEqual([]);
+  });
+
   it('drops a stale motion rig on authoritative revision refresh', async () => {
     const port = new TestPort(motionSnapshot());
     port.motionRig = motionRig();

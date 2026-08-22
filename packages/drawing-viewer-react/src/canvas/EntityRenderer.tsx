@@ -11,6 +11,7 @@ export interface EntityRendererProps {
   viewport: DrawingWorkspaceViewport;
   selected: boolean;
   aiGrounded?: boolean;
+  motionRigActive?: boolean;
   onSelect(event: MouseEvent<SVGGElement>): void;
   onTextPointerDown?(event: MouseEvent<SVGGElement>): void;
   previewDiff?: 'created' | 'updated' | 'before' | 'deleted';
@@ -21,12 +22,13 @@ export function EntityRenderer({
   viewport,
   selected,
   aiGrounded = false,
+  motionRigActive = false,
   onSelect,
   onTextPointerDown,
   previewDiff,
 }: EntityRendererProps) {
   if (!node.visible) return null;
-  const className = `vai-entity vai-entity--${node.quality.status}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
+  const className = `vai-entity vai-entity--${node.quality.status}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${motionRigActive ? ' vai-entity--motion-rig' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
   const interactiveText = (node.type === 'text' || node.type === 'dimension') && onTextPointerDown !== undefined;
   return (
     <g
@@ -35,6 +37,7 @@ export function EntityRenderer({
       data-entity-type={node.type}
       data-selected={selected || undefined}
       data-ai-grounded={aiGrounded || undefined}
+      data-motion-rig-active={motionRigActive || undefined}
       data-preview-diff={previewDiff}
       onClick={onSelect}
       onMouseDown={interactiveText ? onTextPointerDown : undefined}

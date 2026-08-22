@@ -74,6 +74,7 @@ export interface DrawingWorkspaceState {
   beginMotionRigDrag(point: Vec2): void;
   updateMotionRigDrag(point: Vec2): void;
   finishMotionRigDrag(): void;
+  resetMotionRigDrag(): void;
   confirmMotionRig(): Promise<boolean>;
   cancelMotionRig(): Promise<void>;
   setDisplay(display: Partial<DrawingWorkspaceDisplay>): void;
@@ -110,6 +111,7 @@ export function createDrawingWorkspaceStore(input: {
   let selectionSequence = 0;
   let groundingCursor: { drawingId: string; stateEpoch: number } | null = null;
   let motionRigBaseSnapshot: DrawingWorkspaceSnapshot | null = null;
+  let motionRigBaseProjection: DrawingMotionRigProjection | null = null;
   let motionRigDragStart: Vec2 | null = null;
   let motionRigCommands: DrawingWorkspaceCommitRequest['commands'] = [];
 
@@ -380,6 +382,7 @@ export function createDrawingWorkspaceStore(input: {
         if (disposed) return false;
         if (result.status === 'ready') {
           motionRigBaseSnapshot = structuredClone(current.snapshot);
+          motionRigBaseProjection = structuredClone(result.projection);
           motionRigCommands = [];
           motionRigDragStart = null;
           set({
@@ -400,23 +403,43 @@ export function createDrawingWorkspaceStore(input: {
         const current = get();
         if (current.motionRig === null || current.snapshot === null || current.motionRig.phase === 'preview') return;
         motionRigBaseSnapshot = structuredClone(current.snapshot);
+        motionRigBaseProjection = structuredClone(current.motionRig.projection);
         motionRigDragStart = [...point];
         motionRigCommands = [];
         set({ motionRig: { ...current.motionRig, phase: 'dragging', message: undefined } });
       },
       updateMotionRigDrag(point) {
         const current = get();
-        if (current.motionRig?.phase !== 'dragging' || motionRigDragStart === null || motionRigBaseSnapshot === null) return;
+        if (
+          current.motionRig?.phase !== 'dragging'
+          || motionRigDragStart === null
+          || motionRigBaseSnapshot === null
+          || motionRigBaseProjection === null
+        ) return;
         try {
+          const delta: Vec2 = [
+            point[0] - motionRigDragStart[0],
+            point[1] - motionRigDragStart[1],
+          ];
           const solved = solveTranslationMotionRig(
             motionRigBaseSnapshot.document,
-            current.motionRig.projection,
-            [point[0] - motionRigDragStart[0], point[1] - motionRigDragStart[1]],
+            motionRigBaseProjection,
+            delta,
           );
           motionRigCommands = structuredClone(solved.commands);
           set({
             displaySnapshot: { ...structuredClone(motionRigBaseSnapshot), document: solved.candidate },
-            motionRig: { ...current.motionRig, phase: 'dragging', message: undefined },
+            motionRig: {
+              ...current.motionRig,
+              projection: {
+                ...current.motionRig.projection,
+                handle: [
+                  motionRigBaseProjection.handle[0] + delta[0],
+                  motionRigBaseProjection.handle[1] + delta[1],
+                ],
+              },
+              phase: 'dragging', message: undefined,
+            },
           });
         } catch (error) {
           set({ motionRig: { ...current.motionRig, message: errorMessage(error) } });
@@ -428,6 +451,19 @@ export function createDrawingWorkspaceStore(input: {
         set({ motionRig: { ...current.motionRig, phase: motionRigCommands.length > 0 ? 'preview' : 'ready' } });
         motionRigDragStart = null;
       },
+      resetMotionRigDrag() {
+        const current = get();
+        if (current.motionRig?.phase !== 'dragging' || motionRigBaseProjection === null) return;
+        motionRigCommands = [];
+        motionRigDragStart = null;
+        motionRigBaseSnapshot = null;
+        const projection = structuredClone(motionRigBaseProjection);
+        motionRigBaseProjection = null;
+        set({
+          motionRig: { projection, phase: 'ready' },
+          displaySnapshot: current.preview?.candidate ?? current.snapshot,
+        });
+      },
       async confirmMotionRig() {
         const current = get();
         if (current.motionRig?.phase !== 'preview' || motionRigCommands.length === 0) return false;
@@ -437,6 +473,7 @@ export function createDrawingWorkspaceStore(input: {
         const committedRef = get().snapshot?.ref;
         if (committedRef && port.discardMotionRig) await port.discardMotionRig(committedRef);
         motionRigBaseSnapshot = null;
+        motionRigBaseProjection = null;
         motionRigDragStart = null;
         motionRigCommands = [];
         set({ motionRig: null });
@@ -448,6 +485,7 @@ export function createDrawingWorkspaceStore(input: {
           await port.discardMotionRig(current.snapshot.ref, requestController?.signal);
         }
         motionRigBaseSnapshot = null;
+        motionRigBaseProjection = null;
         motionRigDragStart = null;
         motionRigCommands = [];
         set({
@@ -470,6 +508,7 @@ export function createDrawingWorkspaceStore(input: {
         sourceResource?.dispose();
         sourceResource = null;
         motionRigBaseSnapshot = null;
+        motionRigBaseProjection = null;
         motionRigDragStart = null;
         motionRigCommands = [];
       },

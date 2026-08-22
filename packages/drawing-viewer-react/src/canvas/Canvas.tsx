@@ -14,6 +14,7 @@ import {
 import { useDrawingWorkspace } from '../hooks';
 import { CadGrid } from './Grid';
 import { EntityRenderer } from './EntityRenderer';
+import { MotionRigOverlay } from './MotionRigOverlay';
 import { SourceUnderlay } from './SourceUnderlay';
 import {
   fitViewportToDrawing,
@@ -32,13 +33,15 @@ type DragState =
     clearSelectionOnClick: boolean;
   }
   | { kind: 'box'; start: Vec2; current: Vec2; additive: boolean }
-  | { kind: 'annotation'; id: string; startWorld: Vec2; currentWorld: Vec2 };
+  | { kind: 'annotation'; id: string; startWorld: Vec2; currentWorld: Vec2 }
+  | { kind: 'motion-rig'; startWorld: Vec2; currentWorld: Vec2 };
 
 export function Canvas() {
   const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
   const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
   const preview = useDrawingWorkspace((state) => state.preview);
   const groundingOverlay = useDrawingWorkspace((state) => state.groundingOverlay);
+  const motionRig = useDrawingWorkspace((state) => state.motionRig);
   const sourceResource = useDrawingWorkspace((state) => state.sourceResource);
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
@@ -47,6 +50,12 @@ export function Canvas() {
   const setMouseWorld = useDrawingWorkspace((state) => state.setMouseWorld);
   const setSelection = useDrawingWorkspace((state) => state.setSelection);
   const moveAnnotationText = useDrawingWorkspace((state) => state.moveAnnotationText);
+  const rebuildMotionRigFromSelection = useDrawingWorkspace((state) => state.rebuildMotionRigFromSelection);
+  const beginMotionRigDrag = useDrawingWorkspace((state) => state.beginMotionRigDrag);
+  const updateMotionRigDrag = useDrawingWorkspace((state) => state.updateMotionRigDrag);
+  const finishMotionRigDrag = useDrawingWorkspace((state) => state.finishMotionRigDrag);
+  const resetMotionRigDrag = useDrawingWorkspace((state) => state.resetMotionRigDrag);
+  const cancelMotionRig = useDrawingWorkspace((state) => state.cancelMotionRig);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const spacePressed = useRef(false);
@@ -89,6 +98,10 @@ export function Canvas() {
   const groundedNodeIds = new Set(
     groundingOverlay?.groups.flatMap((group) => group.nodeIds) ?? [],
   );
+  const motionRigNodeIds = new Set([
+    ...(motionRig?.projection.controlBodyNodeIds ?? []),
+    ...(motionRig?.projection.connectors.map(({ nodeId }) => nodeId) ?? []),
+  ]);
   const previewBeforeEntities = preview === null || formalSnapshot === null ? [] : [
     ...formalSnapshot.document.geometry,
     ...(display.annotations ? formalSnapshot.document.annotations : []),
@@ -156,6 +169,11 @@ export function Canvas() {
       setSelectionBox({ start: drag.start, current: point });
       return;
     }
+    if (drag.kind === 'motion-rig') {
+      drag.currentWorld = screenToWorld(point, viewport);
+      updateMotionRigDrag(drag.currentWorld);
+      return;
+    }
     drag.currentWorld = screenToWorld(point, viewport);
   };
 
@@ -178,9 +196,17 @@ export function Canvas() {
         const first = screenToWorld(drag.start, viewport);
         const second = screenToWorld(point, viewport);
         const ids = nodesInWorldBox(snapshot.document, normalizeBounds(first, second));
-        setSelection(drag.additive ? [...selectedIds, ...ids] : ids);
+        const nextSelection = drag.additive ? [...selectedIds, ...ids] : ids;
+        setSelection(nextSelection);
+        if (motionRig !== null && nextSelection.length > 0) {
+          queueMicrotask(() => { void rebuildMotionRigFromSelection(); });
+        }
       }
       setSelectionBox(null);
+      return;
+    }
+    if (drag.kind === 'motion-rig') {
+      finishMotionRigDrag();
       return;
     }
     if (drag.kind === 'annotation') {
@@ -199,6 +225,15 @@ export function Canvas() {
       event.preventDefault();
     }
     if (event.key === 'Escape') {
+      if (dragRef.current?.kind === 'motion-rig') {
+        dragRef.current = null;
+        resetMotionRigDrag();
+        return;
+      }
+      if (motionRig !== null) {
+        void cancelMotionRig();
+        return;
+      }
       dragRef.current = null;
       setSelectionBox(null);
       setSelection([]);
@@ -207,13 +242,22 @@ export function Canvas() {
 
   const handleEntitySelect = (id: string, event: MouseEvent<SVGGElement>) => {
     event.stopPropagation();
-    if (event.metaKey || event.ctrlKey) {
-      setSelection(selectedIds.includes(id)
+    const nextSelection = event.metaKey || event.ctrlKey
+      ? (selectedIds.includes(id)
         ? selectedIds.filter((selectedId) => selectedId !== id)
-        : [...selectedIds, id]);
-    } else {
-      setSelection([id]);
+        : [...selectedIds, id])
+      : [id];
+    setSelection(nextSelection);
+    if (motionRig !== null && nextSelection.length > 0) {
+      queueMicrotask(() => { void rebuildMotionRigFromSelection(); });
     }
+  };
+
+  const handleMotionRigPointerDown = (event: MouseEvent<SVGCircleElement>) => {
+    const point = eventScreenPoint(event);
+    const world = screenToWorld(point, viewport);
+    beginMotionRigDrag(world);
+    dragRef.current = { kind: 'motion-rig', startWorld: world, currentWorld: world };
   };
 
   const handleAnnotationPointerDown = (annotation: AnnotationNode, event: MouseEvent<SVGGElement>) => {
@@ -300,6 +344,7 @@ export function Canvas() {
               viewport={viewport}
               selected={selectedIds.includes(node.id)}
               aiGrounded={groundedNodeIds.has(node.id)}
+              motionRigActive={motionRigNodeIds.has(node.id)}
               previewDiff={preview?.diff.createdNodeIds.includes(node.id)
                 ? 'created'
                 : preview?.diff.updatedNodeIds.includes(node.id)
@@ -311,6 +356,13 @@ export function Canvas() {
                 : undefined}
             />
           ))}
+          {motionRig === null ? null : (
+            <MotionRigOverlay
+              rig={motionRig}
+              viewportScale={viewport.scale}
+              onHandleMouseDown={handleMotionRigPointerDown}
+            />
+          )}
         </g>
         {selectionBox === null ? null : <SelectionBox box={selectionBox} />}
       </svg>

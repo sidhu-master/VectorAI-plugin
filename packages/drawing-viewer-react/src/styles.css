@@ -106,8 +106,18 @@
   flex: 1;
 }
 
+.vai-workspace__canvas-region {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
 .vai-workspace__panel-toggles {
   display: flex;
+  margin-left: auto;
   align-items: center;
   gap: 3px;
 }
@@ -135,19 +145,67 @@
 }
 
 .vai-toolbar {
+  position: absolute;
+  z-index: 8;
+  bottom: 16px;
+  left: 50%;
   display: flex;
-  min-width: 0;
-  flex: 1;
+  max-width: calc(100% - 32px);
+  align-items: center;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(18, 22, 27, 0.92);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(14px);
+  transform: translateX(-50%);
+}
+
+.vai-toolbar button,
+.vai-toolbar__upload {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  overflow-x: auto;
+  padding: 0;
+  white-space: nowrap;
 }
 
 .vai-toolbar__separator {
   width: 1px;
   height: 20px;
   background: var(--vai-border);
+}
+
+.vai-toolbar__upload {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--vai-muted);
+  cursor: pointer;
+}
+
+.vai-toolbar__upload:hover {
+  border-color: rgba(109, 169, 210, 0.22);
+  color: var(--vai-accent);
+  background: rgba(109, 169, 210, 0.08);
+}
+
+.vai-toolbar__upload--disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.vai-toolbar__upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
 .vai-inspector-stack {
@@ -440,12 +498,59 @@
   stroke-width: 2;
 }
 
+.vai-entity--motion-rig {
+  fill: #38bdf8;
+  stroke: #38bdf8;
+  stroke-width: 2.25;
+  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));
+}
+
+.vai-motion-rig__guide {
+  stroke: rgba(125, 211, 252, 0.65);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+}
+
+.vai-motion-rig__anchor {
+  fill: #101419;
+  stroke: #e2e8f0;
+  stroke-width: 2;
+}
+
+.vai-motion-rig__handle {
+  cursor: grab;
+  fill: #0ea5e9;
+  stroke: #e0f2fe;
+  stroke-width: 2;
+}
+
+.vai-motion-rig--dragging .vai-motion-rig__handle {
+  cursor: grabbing;
+}
+
+.vai-motion-rig--preview .vai-motion-rig__handle {
+  cursor: default;
+  fill: #22c55e;
+}
+
+.vai-motion-rig__status {
+  fill: #e0f2fe;
+  stroke: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .vai-entity--ai-grounded {
   fill: #2dd4bf;
   stroke: #2dd4bf;
   stroke-width: 2;
   filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));
   animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;
+}
+
+.vai-entity--motion-rig.vai-entity--ai-grounded {
+  fill: #38bdf8;
+  stroke: #38bdf8;
+  animation: none;
 }
 
 @keyframes vai-ai-grounded-pulse {
