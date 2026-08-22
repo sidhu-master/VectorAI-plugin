@@ -20,6 +20,44 @@ function snapshot(): DrawingWorkspaceSnapshot {
 }
 
 describe('createDshDrawingWorkspacePort', () => {
+  it('loads, rebuilds, and discards the current revision-bound motion rig', async () => {
+    const projection = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 }, state: 'ready' as const,
+      controlBodyNodeIds: ['hand'],
+      connectors: [{ nodeId: 'arm', movingEndpoint: 'end' as const, fixedPoint: [0, 20] as const }],
+      anchor: [0, 20] as const, handle: [20, 20] as const,
+      keepAnchorFixed: true as const, keepControlBodyRigid: true as const,
+      preserveConnectivity: true as const, allowControlRotation: false as const,
+    };
+    const getMotionRig = vi.fn(async () => ({ ok: true as const, value: projection }));
+    const rebuildMotionRig = vi.fn(async () => ({
+      ok: true as const, value: { status: 'ready' as const, projection },
+    }));
+    const discardMotionRig = vi.fn(async () => ({
+      ok: true as const, value: { status: 'discarded' as const },
+    }));
+    const port = createDshDrawingWorkspacePort({
+      sessionId: 'session-1',
+      remote: {
+        getSnapshot: vi.fn(), projectSelection: vi.fn(), stageInteractiveEdit: vi.fn(),
+        stageUndo: vi.fn(), getOperation: vi.fn(), getMotionRig, rebuildMotionRig, discardMotionRig,
+      },
+      commands: { execute: vi.fn() }, resolveImage: vi.fn(),
+    });
+
+    await expect(port.loadMotionRig?.()).resolves.toEqual(projection);
+    await expect(port.rebuildMotionRig?.(projection.drawingRef, ['hand'])).resolves.toEqual({
+      status: 'ready', projection,
+    });
+    await expect(port.discardMotionRig?.(projection.drawingRef)).resolves.toEqual({ status: 'discarded' });
+    expect(getMotionRig).toHaveBeenCalledWith('session-1');
+    expect(rebuildMotionRig).toHaveBeenCalledWith('session-1', {
+      ref: projection.drawingRef, nodeIds: ['hand'],
+    });
+    expect(discardMotionRig).toHaveBeenCalledWith('session-1', { ref: projection.drawingRef });
+  });
+
   it('loads the current revision-bound Grounding Overlay without write authority', async () => {
     const overlay = {
       version: 1 as const,
@@ -221,5 +259,39 @@ describe('createDshDrawingWorkspacePort', () => {
     expect(stageUndo).toHaveBeenCalledWith('session-1', {
       targetCommitId: 'commit-1', expectedCurrentRef: current.ref,
     });
+  });
+
+  it('routes Redo through the exact current Undo command and reloads the restored revision', async () => {
+    const current = snapshot();
+    current.lastCommit = { commitId: 'undo-1', mode: 'undo', undoable: false, redoable: true };
+    const redone = { ...snapshot(), ref: { drawingId: 'drawing-1', revision: 2 } };
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      value: { commandId: 'command-redo' as never, result: { kind: 'success' as const } },
+    }));
+    const staged = {
+      status: 'staged' as const,
+      targetCommitId: 'undo-1',
+      expectedCurrentRef: { drawingId: 'drawing-1', revision: 1 },
+      operationId: 'redo-operation-1',
+      operationBindingDigest: 'sha256:redo-binding',
+      commandLine: '/drawing-redo undo-1 drawing-1@1 redo-operation-1 sha256:redo-binding',
+    };
+    const stageRedo = vi.fn(async () => ({ ok: true as const, value: staged }));
+    const port = createDshDrawingWorkspacePort({
+      sessionId: 'session-1',
+      remote: {
+        getSnapshot: vi.fn(async () => ({ ok: true as const, value: redone })),
+        projectSelection: vi.fn(), stageInteractiveEdit: vi.fn(), stageUndo: vi.fn(),
+        stageRedo, getOperation: vi.fn(),
+      },
+      commands: { execute }, resolveImage: vi.fn(),
+    });
+
+    await expect(port.redoLast?.(current)).resolves.toEqual({ status: 'committed', snapshot: redone });
+    expect(stageRedo).toHaveBeenCalledWith('session-1', {
+      targetCommitId: 'undo-1', expectedCurrentRef: current.ref,
+    });
+    expect(execute).toHaveBeenCalledWith('session-1', staged.commandLine, [], undefined);
   });
 });

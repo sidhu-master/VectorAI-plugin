@@ -417,6 +417,51 @@ export const drawingSelectionProjectionResultSchema = z.discriminatedUnion('stat
   z.object({ status: z.literal('rejected'), code: idSchema, message: z.string().min(1) }).strict(),
 ]);
 
+const drawingMotionRigConnectorSchema = z.object({
+  nodeId: idSchema,
+  movingEndpoint: z.enum(['start', 'end', 'first', 'last']),
+  fixedPoint: vec2Schema,
+}).strict();
+
+export const drawingMotionRigProjectionSchema = z.object({
+  version: z.literal(1),
+  drawingRef: drawingRefSchema,
+  state: z.enum(['ready', 'needs-correction']),
+  message: z.string().min(1).optional(),
+  controlBodyNodeIds: z.array(idSchema).min(1).max(256),
+  connectors: z.array(drawingMotionRigConnectorSchema).min(1).max(256),
+  anchor: vec2Schema,
+  handle: vec2Schema,
+  keepAnchorFixed: z.literal(true),
+  keepControlBodyRigid: z.literal(true),
+  preserveConnectivity: z.literal(true),
+  allowControlRotation: z.literal(false),
+}).strict();
+
+export const drawingMotionRigRebuildRequestSchema = z.object({
+  ref: drawingRefSchema,
+  nodeIds: z.array(idSchema).min(1).max(256),
+}).strict();
+
+export const drawingMotionRigResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('ready'), projection: drawingMotionRigProjectionSchema }).strict(),
+  z.object({
+    status: z.literal('needs-correction'),
+    projection: drawingMotionRigProjectionSchema.optional(),
+    message: z.string().min(1),
+  }).strict(),
+  z.object({ status: z.literal('stale'), currentRef: drawingRefSchema }).strict(),
+  z.object({ status: z.literal('rejected'), code: idSchema, message: z.string().min(1) }).strict(),
+]);
+
+export const drawingMotionRigDiscardRequestSchema = z.object({ ref: drawingRefSchema }).strict();
+
+export const drawingMotionRigDiscardResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('discarded') }).strict(),
+  z.object({ status: z.literal('stale'), currentRef: drawingRefSchema }).strict(),
+  z.object({ status: z.literal('rejected'), code: idSchema, message: z.string().min(1) }).strict(),
+]);
+
 const drawingGroundingOverlayInterfaceSchema = z.object({
   interfaceId: idSchema,
   nodeId: idSchema,
@@ -502,6 +547,8 @@ export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
 export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;
 export type DrawingSelectionProjectionRequest = z.infer<typeof drawingSelectionProjectionRequestSchema>;
 export type DrawingSelectionProjectionResult = z.infer<typeof drawingSelectionProjectionResultSchema>;
+export type DrawingMotionRigRebuildRequest = z.infer<typeof drawingMotionRigRebuildRequestSchema>;
+export type DrawingMotionRigDiscardRequest = z.infer<typeof drawingMotionRigDiscardRequestSchema>;
 
 export interface Bounds2D {
   minX: number;

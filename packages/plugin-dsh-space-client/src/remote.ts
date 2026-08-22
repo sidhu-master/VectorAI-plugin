@@ -5,8 +5,15 @@ import { z } from 'zod';
 import {
   drawingInteractiveStageResultSchema,
   drawingGroundingOverlaySchema,
+  drawingMotionRigProjectionSchema,
+  drawingMotionRigRebuildRequestSchema,
+  drawingMotionRigResultSchema,
+  drawingMotionRigDiscardRequestSchema,
+  drawingMotionRigDiscardResultSchema,
   drawingUndoStageRequestSchema,
   drawingUndoStageResultSchema,
+  drawingRedoStageRequestSchema,
+  drawingRedoStageResultSchema,
   drawingPreviewSchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
@@ -18,8 +25,15 @@ import {
   operationLookupResultSchema,
   type DrawingInteractiveStageResult,
   type DrawingGroundingOverlay,
+  type DrawingMotionRigProjection,
+  type DrawingMotionRigRebuildRequest,
+  type DrawingMotionRigResult,
+  type DrawingMotionRigDiscardRequest,
+  type DrawingMotionRigDiscardResult,
   type DrawingUndoStageRequest,
   type DrawingUndoStageResult,
+  type DrawingRedoStageRequest,
+  type DrawingRedoStageResult,
   type DrawingQueryRequest,
   type DrawingQueryResult,
   type DrawingSelectionProjectionRequest,
@@ -37,9 +51,13 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       query(sessionId: string, request: DrawingQueryRequest): Promise<RemoteResult<DrawingQueryResult>>;
       projectSelection(sessionId: string, request: DrawingSelectionProjectionRequest): Promise<RemoteResult<DrawingSelectionProjectionResult>>;
       getGroundingOverlay(sessionId: string): Promise<RemoteResult<DrawingGroundingOverlay | null>>;
+      getMotionRig(sessionId: string): Promise<RemoteResult<DrawingMotionRigProjection | null>>;
+      rebuildMotionRig(sessionId: string, request: DrawingMotionRigRebuildRequest): Promise<RemoteResult<DrawingMotionRigResult>>;
+      discardMotionRig(sessionId: string, request: DrawingMotionRigDiscardRequest): Promise<RemoteResult<DrawingMotionRigDiscardResult>>;
       getPreview(sessionId: string): Promise<RemoteResult<DrawingWorkspacePreview | null>>;
       stageInteractiveEdit(sessionId: string, request: DrawingWorkspaceCommitRequest): Promise<RemoteResult<DrawingInteractiveStageResult>>;
       stageUndo(sessionId: string, request: DrawingUndoStageRequest): Promise<RemoteResult<DrawingUndoStageResult>>;
+      stageRedo(sessionId: string, request: DrawingRedoStageRequest): Promise<RemoteResult<DrawingRedoStageResult>>;
       getOperation(sessionId: string, operationId: string, operationBindingDigest: string): Promise<RemoteResult<OperationLookupResult>>;
     };
   }
@@ -48,9 +66,13 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'drawingSpace/query': (sessionId: string, request: DrawingQueryRequest) => Promise<RemoteResult<DrawingQueryResult>>;
     'drawingSpace/projectSelection': (sessionId: string, request: DrawingSelectionProjectionRequest) => Promise<RemoteResult<DrawingSelectionProjectionResult>>;
     'drawingSpace/getGroundingOverlay': (sessionId: string) => Promise<RemoteResult<DrawingGroundingOverlay | null>>;
+    'drawingSpace/getMotionRig': (sessionId: string) => Promise<RemoteResult<DrawingMotionRigProjection | null>>;
+    'drawingSpace/rebuildMotionRig': (sessionId: string, request: DrawingMotionRigRebuildRequest) => Promise<RemoteResult<DrawingMotionRigResult>>;
+    'drawingSpace/discardMotionRig': (sessionId: string, request: DrawingMotionRigDiscardRequest) => Promise<RemoteResult<DrawingMotionRigDiscardResult>>;
     'drawingSpace/getPreview': (sessionId: string) => Promise<RemoteResult<DrawingWorkspacePreview | null>>;
     'drawingSpace/stageInteractiveEdit': (sessionId: string, request: DrawingWorkspaceCommitRequest) => Promise<RemoteResult<DrawingInteractiveStageResult>>;
     'drawingSpace/stageUndo': (sessionId: string, request: DrawingUndoStageRequest) => Promise<RemoteResult<DrawingUndoStageResult>>;
+    'drawingSpace/stageRedo': (sessionId: string, request: DrawingRedoStageRequest) => Promise<RemoteResult<DrawingRedoStageResult>>;
     'drawingSpace/getOperation': (sessionId: string, operationId: string, operationBindingDigest: string) => Promise<RemoteResult<OperationLookupResult>>;
   }
 }
@@ -94,6 +116,27 @@ export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
       schema: drawingGroundingOverlaySchema.nullable(),
     },
   }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/getMotionRig',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'getMotionRig',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter],
+    result: {
+      mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingMotionRigProjection|null',
+      schema: drawingMotionRigProjectionSchema.nullable(),
+    },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/rebuildMotionRig',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'rebuildMotionRig',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingMotionRigRebuildRequest', drawingMotionRigRebuildRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingMotionRigResult', schema: drawingMotionRigResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/discardMotionRig',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'discardMotionRig',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingMotionRigDiscardRequest', drawingMotionRigDiscardRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingMotionRigDiscardResult', schema: drawingMotionRigDiscardResultSchema },
+  }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getPreview',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getPreview',
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
@@ -111,6 +154,12 @@ export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingUndoStageRequest', drawingUndoStageRequestSchema)],
     result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingUndoStageResult', schema: drawingUndoStageResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/stageRedo',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'stageRedo',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingRedoStageRequest', drawingRedoStageRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingRedoStageResult', schema: drawingRedoStageResultSchema },
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getOperation',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getOperation',

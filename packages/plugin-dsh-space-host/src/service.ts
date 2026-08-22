@@ -15,6 +15,8 @@ import type {
   DrawingMotionRigProjection,
   DrawingMotionRigResult,
   DrawingMotionRigDiscardResult,
+  DrawingMotionRigRebuildRequest,
+  DrawingMotionRigDiscardRequest,
   DrawingUndoStageRequest,
   DrawingUndoStageResult,
   DrawingRedoStageRequest,
@@ -136,18 +138,17 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   @Remote
   rebuildMotionRig(
     agent: Agent,
-    ref: { drawingId: string; revision: number },
-    nodeIds: string[],
+    request: DrawingMotionRigRebuildRequest,
   ): DrawingMotionRigResult {
-    return this.motionRigs.rebuild(String(agent.id), ref, nodeIds);
+    return this.motionRigs.rebuild(String(agent.id), request.ref, request.nodeIds);
   }
 
   @Remote
   discardMotionRig(
     agent: Agent,
-    ref: { drawingId: string; revision: number },
+    request: DrawingMotionRigDiscardRequest,
   ): DrawingMotionRigDiscardResult {
-    return this.motionRigs.discard(String(agent.id), ref);
+    return this.motionRigs.discard(String(agent.id), request.ref);
   }
 
   @Remote

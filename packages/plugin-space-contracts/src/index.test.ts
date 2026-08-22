@@ -16,6 +16,11 @@ import {
   drawingWorkspaceCommitRequestSchema,
   drawingWorkspaceCommitResultSchema,
   drawingWorkspaceSnapshotSchema,
+  drawingMotionRigProjectionSchema,
+  drawingMotionRigRebuildRequestSchema,
+  drawingMotionRigResultSchema,
+  drawingMotionRigDiscardRequestSchema,
+  drawingMotionRigDiscardResultSchema,
 } from './index';
 
 function snapshot() {
@@ -273,5 +278,34 @@ describe('DSH drawing workspace wire schemas', () => {
       ...preview,
       diff: { ...preview.diff, unknown: true },
     })).toThrow();
+  });
+
+  it('validates strict revision-bound temporary motion-rig projections and controls', () => {
+    const projection = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      state: 'ready' as const,
+      controlBodyNodeIds: ['hand'],
+      connectors: [{ nodeId: 'arm', movingEndpoint: 'end' as const, fixedPoint: [0, 20] as const }],
+      anchor: [0, 20] as const,
+      handle: [20, 20] as const,
+      keepAnchorFixed: true as const,
+      keepControlBodyRigid: true as const,
+      preserveConnectivity: true as const,
+      allowControlRotation: false as const,
+    };
+    const rebuild = { ref: projection.drawingRef, nodeIds: ['hand'] };
+
+    expect(drawingMotionRigProjectionSchema.parse(projection)).toEqual(projection);
+    expect(drawingMotionRigRebuildRequestSchema.parse(rebuild)).toEqual(rebuild);
+    expect(drawingMotionRigResultSchema.parse({ status: 'ready', projection })).toEqual({
+      status: 'ready', projection,
+    });
+    expect(drawingMotionRigDiscardRequestSchema.parse({ ref: projection.drawingRef })).toEqual({
+      ref: projection.drawingRef,
+    });
+    expect(drawingMotionRigDiscardResultSchema.parse({ status: 'discarded' })).toEqual({ status: 'discarded' });
+    expect(() => drawingMotionRigProjectionSchema.parse({ ...projection, rigId: 'private' })).toThrow();
+    expect(() => drawingMotionRigRebuildRequestSchema.parse({ ...rebuild, translation: [1, 2] })).toThrow();
   });
 });

@@ -10,8 +10,9 @@ import {
 describe('DRAWING_SPACE_REMOTE', () => {
   it('uses strict codecs for every JSON field exposed to the DSH client gateway', () => {
     const [
-      snapshot, query, projectSelection, getGroundingOverlay, getPreview,
-      stageInteractive, stageUndo, getOperation,
+      snapshot, query, projectSelection, getGroundingOverlay,
+      getMotionRig, rebuildMotionRig, discardMotionRig, getPreview,
+      stageInteractive, stageUndo, stageRedo, getOperation,
     ] = DRAWING_SPACE_REMOTE.descriptors;
 
     expect(snapshot?.parameters[0]?.codec.mode).toBe('strict');
@@ -26,6 +27,12 @@ describe('DRAWING_SPACE_REMOTE', () => {
     expect(projectSelection?.result.mode).toBe('strict');
     expect(getGroundingOverlay?.method).toBe('getGroundingOverlay');
     expect(getGroundingOverlay?.result.mode).toBe('strict');
+    expect(getMotionRig?.method).toBe('getMotionRig');
+    expect(getMotionRig?.result.mode).toBe('strict');
+    expect(rebuildMotionRig?.method).toBe('rebuildMotionRig');
+    expect(rebuildMotionRig?.parameters[1]?.codec.mode).toBe('strict');
+    expect(discardMotionRig?.method).toBe('discardMotionRig');
+    expect(discardMotionRig?.parameters[1]?.codec.mode).toBe('strict');
     expect(getPreview?.method).toBe('getPreview');
     expect(getPreview?.result.mode).toBe('strict');
     expect(stageInteractive?.method).toBe('stageInteractiveEdit');
@@ -34,6 +41,9 @@ describe('DRAWING_SPACE_REMOTE', () => {
     expect(stageUndo?.method).toBe('stageUndo');
     expect(stageUndo?.parameters[1]?.codec.mode).toBe('strict');
     expect(stageUndo?.result.mode).toBe('strict');
+    expect(stageRedo?.method).toBe('stageRedo');
+    expect(stageRedo?.parameters[1]?.codec.mode).toBe('strict');
+    expect(stageRedo?.result.mode).toBe('strict');
     expect(getOperation?.method).toBe('getOperation');
     expect(getOperation?.parameters[1]?.codec.mode).toBe('strict');
     for (const descriptor of DRAWING_SPACE_REMOTE.descriptors) {

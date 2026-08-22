@@ -6,6 +6,11 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type {
   DrawingInteractiveStageResult,
   DrawingGroundingOverlay,
+  DrawingMotionRigProjection,
+  DrawingMotionRigRebuildRequest,
+  DrawingMotionRigResult,
+  DrawingMotionRigDiscardRequest,
+  DrawingMotionRigDiscardResult,
   DrawingSelectionProjectionRequest,
   DrawingSelectionProjectionResult,
   DrawingWorkspaceCommitRequest,
@@ -14,6 +19,8 @@ import type {
   DrawingWorkspaceSnapshot,
   DrawingUndoStageRequest,
   DrawingUndoStageResult,
+  DrawingRedoStageRequest,
+  DrawingRedoStageResult,
   OperationLookupResult,
 } from '@vectorai/plugin-space-contracts';
 import type { DrawingWorkspacePort } from '@vectorai/drawing-workspace';
@@ -21,9 +28,13 @@ import type { DrawingWorkspacePort } from '@vectorai/drawing-workspace';
 export interface DshDrawingSpaceRemote {
   getSnapshot(sessionId: string): Promise<RemoteResult<DrawingWorkspaceSnapshot | null>>;
   getGroundingOverlay?(sessionId: string): Promise<RemoteResult<DrawingGroundingOverlay | null>>;
+  getMotionRig?(sessionId: string): Promise<RemoteResult<DrawingMotionRigProjection | null>>;
+  rebuildMotionRig?(sessionId: string, request: DrawingMotionRigRebuildRequest): Promise<RemoteResult<DrawingMotionRigResult>>;
+  discardMotionRig?(sessionId: string, request: DrawingMotionRigDiscardRequest): Promise<RemoteResult<DrawingMotionRigDiscardResult>>;
   projectSelection(sessionId: string, request: DrawingSelectionProjectionRequest): Promise<RemoteResult<DrawingSelectionProjectionResult>>;
   stageInteractiveEdit(sessionId: string, request: DrawingWorkspaceCommitRequest): Promise<RemoteResult<DrawingInteractiveStageResult>>;
   stageUndo(sessionId: string, request: DrawingUndoStageRequest): Promise<RemoteResult<DrawingUndoStageResult>>;
+  stageRedo?(sessionId: string, request: DrawingRedoStageRequest): Promise<RemoteResult<DrawingRedoStageResult>>;
   getOperation(sessionId: string, operationId: string, operationBindingDigest: string): Promise<RemoteResult<OperationLookupResult>>;
   getPreview?(sessionId: string): Promise<RemoteResult<DrawingWorkspacePreview | null>>;
 }
@@ -59,6 +70,31 @@ export function createDshDrawingWorkspacePort(input: {
       signal?.throwIfAborted();
       if (remote.getGroundingOverlay === undefined) return null;
       const result = await remote.getGroundingOverlay(sessionId);
+      signal?.throwIfAborted();
+      return unwrap(result);
+    },
+    async loadMotionRig(signal) {
+      signal?.throwIfAborted();
+      if (remote.getMotionRig === undefined) return null;
+      const result = await remote.getMotionRig(sessionId);
+      signal?.throwIfAborted();
+      return unwrap(result);
+    },
+    async rebuildMotionRig(ref, nodeIds, signal) {
+      signal?.throwIfAborted();
+      if (remote.rebuildMotionRig === undefined) {
+        return { status: 'rejected', code: 'MOTION_RIG_UNAVAILABLE', message: 'Motion rig correction is unavailable.' };
+      }
+      const result = await remote.rebuildMotionRig(sessionId, { ref, nodeIds });
+      signal?.throwIfAborted();
+      return unwrap(result);
+    },
+    async discardMotionRig(ref, signal) {
+      signal?.throwIfAborted();
+      if (remote.discardMotionRig === undefined) {
+        return { status: 'rejected', code: 'MOTION_RIG_UNAVAILABLE', message: 'Motion rig discard is unavailable.' };
+      }
+      const result = await remote.discardMotionRig(sessionId, { ref });
       signal?.throwIfAborted();
       return unwrap(result);
     },
@@ -100,6 +136,32 @@ export function createDshDrawingWorkspacePort(input: {
       ));
       if (lookup.status === 'committed') return committedSnapshot(remote, sessionId);
       return { status: 'rejected', code: 'COMMIT_OUTCOME_UNKNOWN', message: 'Undo outcome is uncertain; refresh the Drawing before retrying.' };
+    },
+    async redoLast(snapshot, signal) {
+      const last = snapshot.lastCommit;
+      if (!last?.redoable || remote.stageRedo === undefined) {
+        return { status: 'rejected', code: 'REDO_UNAVAILABLE', message: 'No redoable Drawing Undo is current.' };
+      }
+      signal?.throwIfAborted();
+      const staged = unwrap(await remote.stageRedo(sessionId, {
+        targetCommitId: last.commitId,
+        expectedCurrentRef: snapshot.ref,
+      }));
+      if (staged.status !== 'staged') return staged;
+      let execution: RemoteResult<CommandExecution | undefined> | undefined;
+      try {
+        execution = await commands.execute(sessionId, staged.commandLine, [], signal);
+      } catch {
+        execution = undefined;
+      }
+      if (execution?.ok === true && execution.value?.result.kind === 'success') {
+        return committedSnapshot(remote, sessionId);
+      }
+      const lookup = unwrap(await remote.getOperation(
+        sessionId, staged.operationId, staged.operationBindingDigest,
+      ));
+      if (lookup.status === 'committed') return committedSnapshot(remote, sessionId);
+      return { status: 'rejected', code: 'COMMIT_OUTCOME_UNKNOWN', message: 'Redo outcome is uncertain; refresh the Drawing before retrying.' };
     },
     async loadPreview(signal) {
       signal?.throwIfAborted();
