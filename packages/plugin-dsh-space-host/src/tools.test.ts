@@ -91,8 +91,9 @@ describe('drawing semantic tools', () => {
     }, exec('session-a'));
 
     expect(JSON.stringify(tool.parameters)).not.toMatch(/nodeId|coordinate|translation|pivot|rigId/);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       state: 'ready', summary: 'ready', controlNodeCount: 1, connectorNodeCount: 2,
+      drawingWorkflow: { state: 'motion_rig_ready', nextTools: [] },
     });
     expect(motionRigs.create).toHaveBeenCalledWith('session-a', ['hand']);
   });
@@ -181,6 +182,11 @@ describe('drawing semantic tools', () => {
     expect(calls).toEqual(['observe', 'select', 'selection-render', 'confirm', 'preview', 'evaluate', 'finalize']);
     expect(JSON.stringify(results)).not.toMatch(/secret|taskId|groundingId|previewHandle|candidateDigest/);
     expect(results[1]).toMatchObject({ imageAttachment: { attachmentId: 'selection-feedback' } });
+    expect(results[2]).toMatchObject({
+      drawingWorkflow: {
+        nextTools: expect.arrayContaining(['drawing_create_motion_rig', 'drawing_preview_spatial_intent']),
+      },
+    });
     expect(results[4]).toMatchObject({ imageAttachment: { attachmentId: 'review-comparison' } });
     expect(createDrawingSelectPartsTool(semantic).output.render({}, results[1] as never))
       .toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]));

@@ -154,7 +154,17 @@ export function createDrawingCreateMotionRigTool(
       const projected = semanticNodeIds.length === 0
         ? semantic.currentSelectionProjection(sessionId)?.nodeIds ?? []
         : semanticNodeIds;
-      return motionRigs.create(sessionId, projected) as unknown as JsonValue;
+      const result = motionRigs.create(sessionId, projected);
+      const nextTools = result.state === 'needs_correction'
+        ? ['drawing_observe', 'drawing_select_parts']
+        : [];
+      return {
+        ...result,
+        drawingWorkflow: workflow(
+          result.state === 'ready' ? 'motion_rig_ready' : result.state,
+          nextTools,
+        ),
+      } as unknown as JsonValue;
     },
   });
 }
@@ -244,9 +254,11 @@ export function createDrawingConfirmSelectionTool(semantic: SemanticEditService)
       const sessionId = requireSession(exec.agent?.id);
       return recover(['drawing_select_parts'], () => {
         const result = semantic.confirmCurrentSelection(sessionId);
+        const nextTools = [...new Set([...result.nextTools, 'drawing_create_motion_rig'])];
         return {
           ...result,
-          drawingWorkflow: workflow(result.state, result.nextTools),
+          nextTools,
+          drawingWorkflow: workflow(result.state, nextTools),
         } as unknown as JsonValue;
       });
     },

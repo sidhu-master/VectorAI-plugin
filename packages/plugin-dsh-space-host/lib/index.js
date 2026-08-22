@@ -10004,7 +10004,15 @@ function createDrawingCreateMotionRigTool(semantic, motionRigs) {
       const selectedParts = semantic.currentSelectedParts(sessionId);
       const semanticNodeIds = [...new Set(Object.values(selectedParts).flatMap(({ targetNodeIds }) => targetNodeIds))];
       const projected = semanticNodeIds.length === 0 ? ((_b = semantic.currentSelectionProjection(sessionId)) == null ? void 0 : _b.nodeIds) ?? [] : semanticNodeIds;
-      return motionRigs.create(sessionId, projected);
+      const result = motionRigs.create(sessionId, projected);
+      const nextTools = result.state === "needs_correction" ? ["drawing_observe", "drawing_select_parts"] : [];
+      return {
+        ...result,
+        drawingWorkflow: workflow(
+          result.state === "ready" ? "motion_rig_ready" : result.state,
+          nextTools
+        )
+      };
     }
   });
 }
@@ -10092,9 +10100,11 @@ function createDrawingConfirmSelectionTool(semantic) {
       const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
       return recover(["drawing_select_parts"], () => {
         const result = semantic.confirmCurrentSelection(sessionId);
+        const nextTools = [.../* @__PURE__ */ new Set([...result.nextTools, "drawing_create_motion_rig"])];
         return {
           ...result,
-          drawingWorkflow: workflow(result.state, result.nextTools)
+          nextTools,
+          drawingWorkflow: workflow(result.state, nextTools)
         };
       });
     }
