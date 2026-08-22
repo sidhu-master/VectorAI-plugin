@@ -12,8 +12,13 @@ import type {
   DrawingSelectionProjectionResult,
   DrawingWorkspacePreview,
   DrawingGroundingOverlay,
+  DrawingMotionRigProjection,
+  DrawingMotionRigResult,
+  DrawingMotionRigDiscardResult,
   DrawingUndoStageRequest,
   DrawingUndoStageResult,
+  DrawingRedoStageRequest,
+  DrawingRedoStageResult,
 } from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -29,6 +34,7 @@ import { LocalCleanLineVectorizer } from './vectorizer';
 import { SemanticEditService } from './semantic-edit-service';
 import type { ExtensionProgramRequest } from './semantic-edit-service';
 import { InteractiveEditService } from './interactive-edit';
+import { MotionRigService } from './motion-rig-service';
 import { registerDrawingCommands } from './commands';
 import { createDshReviewer } from './reviewer';
 import { renderDrawingObservation } from './review-renderer';
@@ -47,6 +53,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   private readonly drawings: InMemoryDrawingRepository;
   private readonly semantic: SemanticEditService;
   private readonly interactive: InteractiveEditService;
+  private readonly motionRigs: MotionRigService;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingSpace');
@@ -77,12 +84,14 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     };
     this.semantic = new SemanticEditService(this.drawings, editPorts);
     this.interactive = new InteractiveEditService(this.drawings, editPorts);
+    this.motionRigs = new MotionRigService(this.drawings);
     ctx.effect(() => registerDrawingCommands(ctx.commands, this.interactive, this.semantic));
     for (const tool of createDrawingAgentToolCatalog(
       this.drawings,
       ctx.attachments,
       this.semantic,
       ctx.userQuestions,
+      this.motionRigs,
     )) {
       ctx.tools.register(tool);
     }
@@ -91,6 +100,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     }));
     ctx.on('session/disposed', (session) => {
       this.semantic.disposeSession(String(session.id));
+      this.motionRigs.disposeSession(String(session.id));
       this.drawings.disposeSession(String(session.id));
     });
   }
@@ -119,6 +129,28 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   }
 
   @Remote
+  getMotionRig(agent: Agent): DrawingMotionRigProjection | null {
+    return this.motionRigs.current(String(agent.id));
+  }
+
+  @Remote
+  rebuildMotionRig(
+    agent: Agent,
+    ref: { drawingId: string; revision: number },
+    nodeIds: string[],
+  ): DrawingMotionRigResult {
+    return this.motionRigs.rebuild(String(agent.id), ref, nodeIds);
+  }
+
+  @Remote
+  discardMotionRig(
+    agent: Agent,
+    ref: { drawingId: string; revision: number },
+  ): DrawingMotionRigDiscardResult {
+    return this.motionRigs.discard(String(agent.id), ref);
+  }
+
+  @Remote
   stageInteractiveEdit(
     agent: Agent,
     request: DrawingWorkspaceCommitRequest,
@@ -129,6 +161,11 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   @Remote
   stageUndo(agent: Agent, request: DrawingUndoStageRequest): DrawingUndoStageResult {
     return this.semantic.stageUndo(String(agent.id), request);
+  }
+
+  @Remote
+  stageRedo(agent: Agent, request: DrawingRedoStageRequest): DrawingRedoStageResult {
+    return this.semantic.stageRedo(String(agent.id), request);
   }
 
   @Remote

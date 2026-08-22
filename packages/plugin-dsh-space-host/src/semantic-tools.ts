@@ -17,6 +17,7 @@ import {
 } from '@vectorai/drawing-edit-protocol';
 
 import type { SemanticEditService } from './semantic-edit-service';
+import type { MotionRigService } from './motion-rig-service';
 
 type Questions = Pick<UserQuestionService, 'ask'>;
 
@@ -113,10 +114,12 @@ const intentParameters: ParameterSchemaSpec = {
 export function createSemanticEditToolCatalog(
   semantic: SemanticEditService,
   questions?: Questions,
+  motionRigs?: MotionRigService,
 ) {
   return [
     createDrawingObserveTool(semantic),
     createDrawingSelectPartsTool(semantic),
+    createDrawingApplySelectionCorrectionTool(semantic),
     createDrawingConfirmSelectionTool(semantic),
     createDrawingPreviewSpatialIntentTool(semantic),
     createDrawingReviseSpatialIntentTool(semantic),
@@ -125,7 +128,59 @@ export function createSemanticEditToolCatalog(
     createDrawingDiscardSemanticTool(semantic),
     createDrawingGetOperationTool(semantic),
     createDrawingUndoTool(semantic, questions),
+    ...(motionRigs ? [createDrawingCreateMotionRigTool(semantic, motionRigs)] : []),
   ];
+}
+
+export function createDrawingCreateMotionRigTool(
+  semantic: SemanticEditService,
+  motionRigs: MotionRigService,
+) {
+  return defineTool({
+    name: 'drawing_create_motion_rig',
+    description: 'Create a temporary local movement constraint only after the user explicitly asks to hinge, drag, articulate, or interactively pose part of the active vector Drawing. First identify the intended semantic geometry with drawing_select_parts. This tool never chooses final coordinates and must not be used for ordinary image uploads or image questions.',
+    parameters: {
+      target: string('Semantic name of the movable assembly requested by the user.'),
+      controlRole: optionalString(),
+      fixedRole: optionalString(),
+      motion: literal('translate'),
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(_args, exec) {
+      const sessionId = requireSession(exec.agent?.id);
+      const selectedParts = semantic.currentSelectedParts(sessionId);
+      const semanticNodeIds = [...new Set(Object.values(selectedParts)
+        .flatMap(({ targetNodeIds }) => targetNodeIds))];
+      const projected = semanticNodeIds.length === 0
+        ? semantic.currentSelectionProjection(sessionId)?.nodeIds ?? []
+        : semanticNodeIds;
+      return motionRigs.create(sessionId, projected) as unknown as JsonValue;
+    },
+  });
+}
+
+export function createDrawingApplySelectionCorrectionTool(semantic: SemanticEditService) {
+  return defineTool({
+    name: 'drawing_apply_selection_correction',
+    description: 'Apply the Host-computed correction after a selection validation error. This takes no candidate ids: the Host removes or regroups only the geometry identified by deterministic validation. Inspect the returned highlighted image, then confirm it if exact.',
+    parameters: {},
+    output: { schema: { type: 'json' }, render: renderObservation },
+    async execute(_args, exec) {
+      const sessionId = requireSession(exec.agent?.id);
+      const result = semantic.applyCurrentSelectionCorrection(sessionId);
+      const imageAttachment = result.state === 'selected'
+        ? await semantic.renderCurrentSelectionObservation(sessionId)
+        : null;
+      return {
+        ...result,
+        ...(imageAttachment ? {
+          imageAttachment,
+          selectionReview: 'Inspect the corrected highlighted geometry. If it is exact, call drawing_confirm_selection; otherwise call drawing_select_parts.',
+        } : {}),
+        drawingWorkflow: workflow(result.state, result.nextTools),
+      } as unknown as JsonValue;
+    },
+  });
 }
 
 export function createDrawingObserveTool(semantic: SemanticEditService) {
@@ -207,7 +262,7 @@ export function createDrawingPreviewSpatialIntentTool(semantic: SemanticEditServ
     async execute(args, exec) {
       const input = spatialIntentRequestSchema.parse(args);
       const sessionId = requireSession(exec.agent?.id);
-      return recover(['drawing_select_parts', 'drawing_confirm_selection'], () => {
+      return recover(['drawing_apply_selection_correction', 'drawing_select_parts', 'drawing_confirm_selection'], () => {
         semantic.previewCurrentIntent(sessionId, input);
         return semantic.currentPreviewPresentation(sessionId) as unknown as JsonValue;
       });
@@ -420,7 +475,23 @@ function workflow(state: string, nextTools: string[]) {
 async function recover(nextTools: string[], operation: () => JsonValue | Promise<JsonValue>): Promise<JsonValue> {
   try { return await operation(); } catch (error) {
     const code = error instanceof Error ? error.message : 'EDIT_INVALID_STATE';
-    return { drawingWorkflow: { state: 'invalid_state', code, nextTools } } as JsonValue;
+    const correction = error && typeof error === 'object' && 'correction' in error
+      ? (error as { correction?: JsonValue }).correction
+      : undefined;
+    const message = code === 'EDIT_ARTICULATED_COMPANION_PART_INVALID'
+      ? 'The articulated moving part includes separate non-articulated companion parts. Call drawing_apply_selection_correction to remove them without rewriting candidate ids, then inspect and confirm the corrected highlight.'
+      : code === 'EDIT_ARTICULATED_SELECTION_FRAGMENTED'
+        ? 'The articulated selection was split into primitive-sized parts. Call drawing_apply_selection_correction to regroup it without rewriting candidate ids, then inspect and confirm the corrected highlight.'
+      : code === 'EDIT_ARTICULATED_SELECTION_INVALID'
+        ? 'The articulated selection contains unrelated geometry. Call drawing_apply_selection_correction to remove it without rewriting candidate ids, then inspect and confirm the corrected highlight.'
+      : code === 'EDIT_SELECTED_PART_UNUSED'
+        ? 'One or more selected parts are not used by any goal or spatial reference. Call drawing_apply_selection_correction to remove them, then inspect and confirm the corrected highlight.'
+        : undefined;
+    return {
+      ...(message ? { message } : {}),
+      ...(correction ? { correction } : {}),
+      drawingWorkflow: { state: 'invalid_state', code, nextTools },
+    } as JsonValue;
   }
 }
 

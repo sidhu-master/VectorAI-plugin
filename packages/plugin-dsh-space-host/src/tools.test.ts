@@ -11,6 +11,7 @@ import { SemanticEditService } from './semantic-edit-service';
 import {
   createDrawingDiscardSemanticTool,
   createDrawingConfirmSelectionTool,
+  createDrawingCreateMotionRigTool,
   createDrawingEvaluatePreviewTool,
   createDrawingFinalizeSemanticTool,
   createDrawingGetOperationTool,
@@ -20,6 +21,7 @@ import {
   createDrawingSelectPartsTool,
   createDrawingUndoTool,
 } from './semantic-tools';
+import type { MotionRigService } from './motion-rig-service';
 import {
   createDrawingAgentToolCatalog,
   createDrawingImportTool,
@@ -70,6 +72,31 @@ function repository() {
 }
 
 describe('drawing semantic tools', () => {
+  it('creates a temporary rig from Host-owned selection without model coordinates or node ids', async () => {
+    const semantic = {
+      currentSelectedParts: () => ({
+        hand: { targetNodeIds: ['hand'], interfaces: [], targetHandle: 'private', sourceStatus: 'confirmed' },
+      }),
+      currentSelectionProjection: () => null,
+    } as unknown as SemanticEditService;
+    const motionRigs = {
+      create: vi.fn(() => ({
+        state: 'ready', summary: 'ready', controlNodeCount: 1, connectorNodeCount: 2,
+      })),
+    } as unknown as MotionRigService;
+    const tool = createDrawingCreateMotionRigTool(semantic, motionRigs);
+
+    const result = await tool.execute({
+      target: '左臂', controlRole: '手掌', fixedRole: '肩部', motion: 'translate',
+    }, exec('session-a'));
+
+    expect(JSON.stringify(tool.parameters)).not.toMatch(/nodeId|coordinate|translation|pivot|rigId/);
+    expect(result).toEqual({
+      state: 'ready', summary: 'ready', controlNodeCount: 1, connectorNodeCount: 2,
+    });
+    expect(motionRigs.create).toHaveBeenCalledWith('session-a', ['hand']);
+  });
+
   it('exposes only high-level semantic editing tools and no model-carried internal handles', () => {
     const drawings = repository();
     const semantic = new SemanticEditService(drawings, {
@@ -81,7 +108,8 @@ describe('drawing semantic tools', () => {
 
     expect(tools.map(({ name }) => name)).toEqual([
       'drawing_import', 'drawing_summarize', 'drawing_query',
-      'drawing_observe', 'drawing_select_parts', 'drawing_confirm_selection',
+      'drawing_observe', 'drawing_select_parts', 'drawing_apply_selection_correction',
+      'drawing_confirm_selection',
       'drawing_preview_spatial_intent',
       'drawing_revise_spatial_intent', 'drawing_evaluate_preview',
       'drawing_finalize_preview', 'drawing_discard_preview',
@@ -187,7 +215,55 @@ describe('drawing semantic tools', () => {
     expect(result).toEqual({
       drawingWorkflow: {
         state: 'invalid_state', code: 'EDIT_SELECTION_REQUIRED',
-        nextTools: ['drawing_select_parts', 'drawing_confirm_selection'],
+        nextTools: ['drawing_apply_selection_correction', 'drawing_select_parts', 'drawing_confirm_selection'],
+      },
+    });
+  });
+
+  it('returns actionable reselection guidance when an articulated selection contains unrelated geometry', async () => {
+    const semantic = {
+      previewCurrentIntent() {
+        throw Object.assign(new Error('EDIT_ARTICULATED_SELECTION_INVALID'), {
+          correction: { parts: [{ partKey: 'hand', removeCandidates: ['c12'] }] },
+        });
+      },
+    } as unknown as SemanticEditService;
+    const result = await createDrawingPreviewSpatialIntentTool(semantic).execute({
+      summary: 'raise hand',
+      goals: [{ kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' }],
+      preserve: [{ kind: 'connectivity', partKey: 'hand' }],
+    }, exec('session-a'));
+
+    expect(result).toEqual({
+      message: 'The articulated selection contains unrelated geometry. Call drawing_apply_selection_correction to remove it without rewriting candidate ids, then inspect and confirm the corrected highlight.',
+      correction: { parts: [{ partKey: 'hand', removeCandidates: ['c12'] }] },
+      drawingWorkflow: {
+        state: 'invalid_state', code: 'EDIT_ARTICULATED_SELECTION_INVALID',
+        nextTools: ['drawing_apply_selection_correction', 'drawing_select_parts', 'drawing_confirm_selection'],
+      },
+    });
+  });
+
+  it('asks the model to remove selected parts that have no semantic role in the intent', async () => {
+    const semantic = {
+      previewCurrentIntent() {
+        throw Object.assign(new Error('EDIT_SELECTED_PART_UNUSED'), {
+          correction: { removeParts: [{ partKey: 'shoulder', candidates: ['c42'] }] },
+        });
+      },
+    } as unknown as SemanticEditService;
+    const result = await createDrawingPreviewSpatialIntentTool(semantic).execute({
+      summary: 'raise hand',
+      goals: [{ kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' }],
+      preserve: [{ kind: 'connectivity', partKey: 'hand' }],
+    }, exec('session-a'));
+
+    expect(result).toEqual({
+      message: 'One or more selected parts are not used by any goal or spatial reference. Call drawing_apply_selection_correction to remove them, then inspect and confirm the corrected highlight.',
+      correction: { removeParts: [{ partKey: 'shoulder', candidates: ['c42'] }] },
+      drawingWorkflow: {
+        state: 'invalid_state', code: 'EDIT_SELECTED_PART_UNUSED',
+        nextTools: ['drawing_apply_selection_correction', 'drawing_select_parts', 'drawing_confirm_selection'],
       },
     });
   });

@@ -17,9 +17,15 @@ export type {
   DrawingInteractiveStageResult,
   DrawingGroundingOverlay,
   DrawingGroundingOverlayGroup,
+  DrawingMotionRigProjection,
+  DrawingMotionRigResult,
+  DrawingMotionRigDiscardResult,
   DrawingUndoStageRequest,
   DrawingUndoStageResult,
+  DrawingRedoStageRequest,
+  DrawingRedoStageResult,
   DrawingWorkspacePreview,
+  DrawingWorkspaceRef,
   DrawingWorkspacePreviewControlRequest,
   DrawingWorkspacePreviewCreateRequest,
   DrawingWorkspacePreviewCreateResult,
@@ -306,8 +312,9 @@ export const drawingWorkspaceSnapshotSchema = z.object({
   provisional: z.boolean().optional(),
   lastCommit: z.object({
     commitId: idSchema,
-    mode: z.enum(['auto-safe', 'confirmed', 'interactive', 'undo']),
+    mode: z.enum(['auto-safe', 'confirmed', 'interactive', 'undo', 'redo']),
     undoable: z.boolean(),
+    redoable: z.boolean().optional(),
   }).strict().optional(),
 }).strict().nullable();
 
@@ -380,6 +387,20 @@ export const drawingUndoStageResultSchema = z.discriminatedUnion('status', [
     operationId: idSchema,
     operationBindingDigest: idSchema,
     commandLine: z.string().startsWith('/drawing-undo '),
+  }).strict(),
+  z.object({ status: z.literal('rejected'), message: z.string(), code: idSchema }).strict(),
+]);
+
+export const drawingRedoStageRequestSchema = drawingUndoStageRequestSchema;
+
+export const drawingRedoStageResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('staged'),
+    targetCommitId: idSchema,
+    expectedCurrentRef: drawingRefSchema,
+    operationId: idSchema,
+    operationBindingDigest: idSchema,
+    commandLine: z.string().startsWith('/drawing-redo '),
   }).strict(),
   z.object({ status: z.literal('rejected'), message: z.string(), code: idSchema }).strict(),
 ]);

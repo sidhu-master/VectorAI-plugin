@@ -15,6 +15,7 @@ import {
 
 import type { InMemoryDrawingRepository } from './repository';
 import type { SemanticEditService } from './semantic-edit-service';
+import type { MotionRigService } from './motion-rig-service';
 import { createSemanticEditToolCatalog } from './semantic-tools';
 import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions';
 
@@ -23,12 +24,13 @@ export function createDrawingAgentToolCatalog(
   attachments: Pick<AttachmentStore, 'readImage'>,
   semantic?: SemanticEditService,
   questions?: Pick<UserQuestionService, 'ask'>,
+  motionRigs?: MotionRigService,
 ) {
   return [
     createDrawingImportTool(drawings, attachments),
     createDrawingSummarizeTool(drawings),
     createDrawingQueryTool(drawings),
-    ...(semantic ? createSemanticEditToolCatalog(semantic, questions) : [
+    ...(semantic ? createSemanticEditToolCatalog(semantic, questions, motionRigs) : [
       createDrawingFinalizePreviewTool(drawings),
       createDrawingDiscardPreviewTool(drawings),
     ]),
