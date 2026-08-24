@@ -1,0 +1,33 @@
+.vai-annotation-workspace {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--vai-text, #d8e0eb);
+  background: var(--vai-bg, #0e141b);
+}
+
+.vai-annotation-workspace__header {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, .18);
+}
+
+.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }
+.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }
+.vai-annotation-workspace__body { display: grid; min-height: 0; flex: 1; grid-template-columns: 48px minmax(0, 1fr) 248px; }
+.vai-annotation-workspace__rail { display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid rgba(148, 163, 184, .18); }
+.vai-annotation-workspace__rail button { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #8fa1b5; background: transparent; }
+.vai-annotation-workspace__rail button:hover { color: #e2e8f0; background: rgba(96, 165, 250, .12); }
+.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; }
+.vai-annotation-workspace__surface { position: absolute; inset: 0; }
+.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }
+.vai-annotation-workspace__inspector { padding: 14px; border-left: 1px solid rgba(148, 163, 184, .18); background: rgba(15, 23, 32, .72); }
+.vai-annotation-workspace__inspector h2 { margin: 0 0 16px; font-size: 13px; }
+.vai-annotation-workspace__inspector dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }
+.vai-annotation-workspace__inspector dt { color: #8fa1b5; }
+.vai-annotation-workspace__inspector dd { margin: 0; }

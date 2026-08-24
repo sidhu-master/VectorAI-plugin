@@ -24,6 +24,7 @@ import {
   extensionPreviewCreateRequestSchema,
   extensionPreviewCreateResultSchema,
   extensionPreviewControlRequestSchema,
+  annotationSessionStateSchema,
 } from './index';
 
 function snapshot() {
@@ -361,5 +362,16 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(extensionPreviewControlRequestSchema.parse(control)).toEqual(control);
     expect(() => extensionPreviewControlRequestSchema.parse({ ...control, workflowId: '' })).toThrow();
     expect(() => extensionPreviewControlRequestSchema.parse({ ...control, approved: true })).toThrow();
+  });
+
+  it('validates a sticky annotation workspace claim projection', () => {
+    const state = {
+      version: 1 as const,
+      workspaceClaimed: true,
+      activationEpoch: 42,
+      workflow: { status: 'completed' as const, workflowId: 'workflow-1' },
+    };
+    expect(annotationSessionStateSchema.parse(state)).toEqual(state);
+    expect(() => annotationSessionStateSchema.parse({ ...state, releaseAfterTask: true })).toThrow();
   });
 });

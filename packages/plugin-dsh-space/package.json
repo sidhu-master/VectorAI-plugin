@@ -11,7 +11,8 @@
   "dependencies": {
     "@vectorai/plugin-dsh-space-client": "workspace:*",
     "@vectorai/plugin-dsh-space-host": "workspace:*",
-    "@vectorai/plugin-dsh-annotation": "workspace:*"
+    "@vectorai/plugin-dsh-annotation": "workspace:*",
+    "@vectorai/plugin-dsh-annotation-client": "workspace:*"
   },
   "dsh": {
     "bundle": {

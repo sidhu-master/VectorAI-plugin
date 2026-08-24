@@ -1,3 +1,4028 @@
+var jsxRuntime = { exports: {} };
+var reactJsxRuntime_production_min = {};
+var react = { exports: {} };
+var react_production_min = {};
+/**
+ * @license React
+ * react.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+var hasRequiredReact_production_min;
+function requireReact_production_min() {
+  if (hasRequiredReact_production_min) return react_production_min;
+  hasRequiredReact_production_min = 1;
+  var l = Symbol.for("react.element"), n = Symbol.for("react.portal"), p = Symbol.for("react.fragment"), q = Symbol.for("react.strict_mode"), r = Symbol.for("react.profiler"), t = Symbol.for("react.provider"), u = Symbol.for("react.context"), v = Symbol.for("react.forward_ref"), w = Symbol.for("react.suspense"), x = Symbol.for("react.memo"), y = Symbol.for("react.lazy"), z = Symbol.iterator;
+  function A(a) {
+    if (null === a || "object" !== typeof a) return null;
+    a = z && a[z] || a["@@iterator"];
+    return "function" === typeof a ? a : null;
+  }
+  var B = { isMounted: function() {
+    return false;
+  }, enqueueForceUpdate: function() {
+  }, enqueueReplaceState: function() {
+  }, enqueueSetState: function() {
+  } }, C = Object.assign, D = {};
+  function E(a, b, e) {
+    this.props = a;
+    this.context = b;
+    this.refs = D;
+    this.updater = e || B;
+  }
+  E.prototype.isReactComponent = {};
+  E.prototype.setState = function(a, b) {
+    if ("object" !== typeof a && "function" !== typeof a && null != a) throw Error("setState(...): takes an object of state variables to update or a function which returns an object of state variables.");
+    this.updater.enqueueSetState(this, a, b, "setState");
+  };
+  E.prototype.forceUpdate = function(a) {
+    this.updater.enqueueForceUpdate(this, a, "forceUpdate");
+  };
+  function F() {
+  }
+  F.prototype = E.prototype;
+  function G(a, b, e) {
+    this.props = a;
+    this.context = b;
+    this.refs = D;
+    this.updater = e || B;
+  }
+  var H = G.prototype = new F();
+  H.constructor = G;
+  C(H, E.prototype);
+  H.isPureReactComponent = true;
+  var I = Array.isArray, J = Object.prototype.hasOwnProperty, K = { current: null }, L = { key: true, ref: true, __self: true, __source: true };
+  function M(a, b, e) {
+    var d, c = {}, k = null, h = null;
+    if (null != b) for (d in void 0 !== b.ref && (h = b.ref), void 0 !== b.key && (k = "" + b.key), b) J.call(b, d) && !L.hasOwnProperty(d) && (c[d] = b[d]);
+    var g = arguments.length - 2;
+    if (1 === g) c.children = e;
+    else if (1 < g) {
+      for (var f = Array(g), m = 0; m < g; m++) f[m] = arguments[m + 2];
+      c.children = f;
+    }
+    if (a && a.defaultProps) for (d in g = a.defaultProps, g) void 0 === c[d] && (c[d] = g[d]);
+    return { $$typeof: l, type: a, key: k, ref: h, props: c, _owner: K.current };
+  }
+  function N(a, b) {
+    return { $$typeof: l, type: a.type, key: b, ref: a.ref, props: a.props, _owner: a._owner };
+  }
+  function O(a) {
+    return "object" === typeof a && null !== a && a.$$typeof === l;
+  }
+  function escape(a) {
+    var b = { "=": "=0", ":": "=2" };
+    return "$" + a.replace(/[=:]/g, function(a2) {
+      return b[a2];
+    });
+  }
+  var P = /\/+/g;
+  function Q(a, b) {
+    return "object" === typeof a && null !== a && null != a.key ? escape("" + a.key) : b.toString(36);
+  }
+  function R(a, b, e, d, c) {
+    var k = typeof a;
+    if ("undefined" === k || "boolean" === k) a = null;
+    var h = false;
+    if (null === a) h = true;
+    else switch (k) {
+      case "string":
+      case "number":
+        h = true;
+        break;
+      case "object":
+        switch (a.$$typeof) {
+          case l:
+          case n:
+            h = true;
+        }
+    }
+    if (h) return h = a, c = c(h), a = "" === d ? "." + Q(h, 0) : d, I(c) ? (e = "", null != a && (e = a.replace(P, "$&/") + "/"), R(c, b, e, "", function(a2) {
+      return a2;
+    })) : null != c && (O(c) && (c = N(c, e + (!c.key || h && h.key === c.key ? "" : ("" + c.key).replace(P, "$&/") + "/") + a)), b.push(c)), 1;
+    h = 0;
+    d = "" === d ? "." : d + ":";
+    if (I(a)) for (var g = 0; g < a.length; g++) {
+      k = a[g];
+      var f = d + Q(k, g);
+      h += R(k, b, e, f, c);
+    }
+    else if (f = A(a), "function" === typeof f) for (a = f.call(a), g = 0; !(k = a.next()).done; ) k = k.value, f = d + Q(k, g++), h += R(k, b, e, f, c);
+    else if ("object" === k) throw b = String(a), Error("Objects are not valid as a React child (found: " + ("[object Object]" === b ? "object with keys {" + Object.keys(a).join(", ") + "}" : b) + "). If you meant to render a collection of children, use an array instead.");
+    return h;
+  }
+  function S(a, b, e) {
+    if (null == a) return a;
+    var d = [], c = 0;
+    R(a, d, "", "", function(a2) {
+      return b.call(e, a2, c++);
+    });
+    return d;
+  }
+  function T(a) {
+    if (-1 === a._status) {
+      var b = a._result;
+      b = b();
+      b.then(function(b2) {
+        if (0 === a._status || -1 === a._status) a._status = 1, a._result = b2;
+      }, function(b2) {
+        if (0 === a._status || -1 === a._status) a._status = 2, a._result = b2;
+      });
+      -1 === a._status && (a._status = 0, a._result = b);
+    }
+    if (1 === a._status) return a._result.default;
+    throw a._result;
+  }
+  var U = { current: null }, V = { transition: null }, W = { ReactCurrentDispatcher: U, ReactCurrentBatchConfig: V, ReactCurrentOwner: K };
+  function X() {
+    throw Error("act(...) is not supported in production builds of React.");
+  }
+  react_production_min.Children = { map: S, forEach: function(a, b, e) {
+    S(a, function() {
+      b.apply(this, arguments);
+    }, e);
+  }, count: function(a) {
+    var b = 0;
+    S(a, function() {
+      b++;
+    });
+    return b;
+  }, toArray: function(a) {
+    return S(a, function(a2) {
+      return a2;
+    }) || [];
+  }, only: function(a) {
+    if (!O(a)) throw Error("React.Children.only expected to receive a single React element child.");
+    return a;
+  } };
+  react_production_min.Component = E;
+  react_production_min.Fragment = p;
+  react_production_min.Profiler = r;
+  react_production_min.PureComponent = G;
+  react_production_min.StrictMode = q;
+  react_production_min.Suspense = w;
+  react_production_min.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = W;
+  react_production_min.act = X;
+  react_production_min.cloneElement = function(a, b, e) {
+    if (null === a || void 0 === a) throw Error("React.cloneElement(...): The argument must be a React element, but you passed " + a + ".");
+    var d = C({}, a.props), c = a.key, k = a.ref, h = a._owner;
+    if (null != b) {
+      void 0 !== b.ref && (k = b.ref, h = K.current);
+      void 0 !== b.key && (c = "" + b.key);
+      if (a.type && a.type.defaultProps) var g = a.type.defaultProps;
+      for (f in b) J.call(b, f) && !L.hasOwnProperty(f) && (d[f] = void 0 === b[f] && void 0 !== g ? g[f] : b[f]);
+    }
+    var f = arguments.length - 2;
+    if (1 === f) d.children = e;
+    else if (1 < f) {
+      g = Array(f);
+      for (var m = 0; m < f; m++) g[m] = arguments[m + 2];
+      d.children = g;
+    }
+    return { $$typeof: l, type: a.type, key: c, ref: k, props: d, _owner: h };
+  };
+  react_production_min.createContext = function(a) {
+    a = { $$typeof: u, _currentValue: a, _currentValue2: a, _threadCount: 0, Provider: null, Consumer: null, _defaultValue: null, _globalName: null };
+    a.Provider = { $$typeof: t, _context: a };
+    return a.Consumer = a;
+  };
+  react_production_min.createElement = M;
+  react_production_min.createFactory = function(a) {
+    var b = M.bind(null, a);
+    b.type = a;
+    return b;
+  };
+  react_production_min.createRef = function() {
+    return { current: null };
+  };
+  react_production_min.forwardRef = function(a) {
+    return { $$typeof: v, render: a };
+  };
+  react_production_min.isValidElement = O;
+  react_production_min.lazy = function(a) {
+    return { $$typeof: y, _payload: { _status: -1, _result: a }, _init: T };
+  };
+  react_production_min.memo = function(a, b) {
+    return { $$typeof: x, type: a, compare: void 0 === b ? null : b };
+  };
+  react_production_min.startTransition = function(a) {
+    var b = V.transition;
+    V.transition = {};
+    try {
+      a();
+    } finally {
+      V.transition = b;
+    }
+  };
+  react_production_min.unstable_act = X;
+  react_production_min.useCallback = function(a, b) {
+    return U.current.useCallback(a, b);
+  };
+  react_production_min.useContext = function(a) {
+    return U.current.useContext(a);
+  };
+  react_production_min.useDebugValue = function() {
+  };
+  react_production_min.useDeferredValue = function(a) {
+    return U.current.useDeferredValue(a);
+  };
+  react_production_min.useEffect = function(a, b) {
+    return U.current.useEffect(a, b);
+  };
+  react_production_min.useId = function() {
+    return U.current.useId();
+  };
+  react_production_min.useImperativeHandle = function(a, b, e) {
+    return U.current.useImperativeHandle(a, b, e);
+  };
+  react_production_min.useInsertionEffect = function(a, b) {
+    return U.current.useInsertionEffect(a, b);
+  };
+  react_production_min.useLayoutEffect = function(a, b) {
+    return U.current.useLayoutEffect(a, b);
+  };
+  react_production_min.useMemo = function(a, b) {
+    return U.current.useMemo(a, b);
+  };
+  react_production_min.useReducer = function(a, b, e) {
+    return U.current.useReducer(a, b, e);
+  };
+  react_production_min.useRef = function(a) {
+    return U.current.useRef(a);
+  };
+  react_production_min.useState = function(a) {
+    return U.current.useState(a);
+  };
+  react_production_min.useSyncExternalStore = function(a, b, e) {
+    return U.current.useSyncExternalStore(a, b, e);
+  };
+  react_production_min.useTransition = function() {
+    return U.current.useTransition();
+  };
+  react_production_min.version = "18.3.1";
+  return react_production_min;
+}
+var react_development = { exports: {} };
+/**
+ * @license React
+ * react.development.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+react_development.exports;
+var hasRequiredReact_development;
+function requireReact_development() {
+  if (hasRequiredReact_development) return react_development.exports;
+  hasRequiredReact_development = 1;
+  (function(module, exports) {
+    if (process.env.NODE_ENV !== "production") {
+      (function() {
+        if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart === "function") {
+          __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(new Error());
+        }
+        var ReactVersion = "18.3.1";
+        var REACT_ELEMENT_TYPE = Symbol.for("react.element");
+        var REACT_PORTAL_TYPE = Symbol.for("react.portal");
+        var REACT_FRAGMENT_TYPE = Symbol.for("react.fragment");
+        var REACT_STRICT_MODE_TYPE = Symbol.for("react.strict_mode");
+        var REACT_PROFILER_TYPE = Symbol.for("react.profiler");
+        var REACT_PROVIDER_TYPE = Symbol.for("react.provider");
+        var REACT_CONTEXT_TYPE = Symbol.for("react.context");
+        var REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref");
+        var REACT_SUSPENSE_TYPE = Symbol.for("react.suspense");
+        var REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list");
+        var REACT_MEMO_TYPE = Symbol.for("react.memo");
+        var REACT_LAZY_TYPE = Symbol.for("react.lazy");
+        var REACT_OFFSCREEN_TYPE = Symbol.for("react.offscreen");
+        var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
+        var FAUX_ITERATOR_SYMBOL = "@@iterator";
+        function getIteratorFn(maybeIterable) {
+          if (maybeIterable === null || typeof maybeIterable !== "object") {
+            return null;
+          }
+          var maybeIterator = MAYBE_ITERATOR_SYMBOL && maybeIterable[MAYBE_ITERATOR_SYMBOL] || maybeIterable[FAUX_ITERATOR_SYMBOL];
+          if (typeof maybeIterator === "function") {
+            return maybeIterator;
+          }
+          return null;
+        }
+        var ReactCurrentDispatcher = {
+          /**
+           * @internal
+           * @type {ReactComponent}
+           */
+          current: null
+        };
+        var ReactCurrentBatchConfig = {
+          transition: null
+        };
+        var ReactCurrentActQueue = {
+          current: null,
+          // Used to reproduce behavior of `batchedUpdates` in legacy mode.
+          isBatchingLegacy: false,
+          didScheduleLegacyUpdate: false
+        };
+        var ReactCurrentOwner = {
+          /**
+           * @internal
+           * @type {ReactComponent}
+           */
+          current: null
+        };
+        var ReactDebugCurrentFrame = {};
+        var currentExtraStackFrame = null;
+        function setExtraStackFrame(stack) {
+          {
+            currentExtraStackFrame = stack;
+          }
+        }
+        {
+          ReactDebugCurrentFrame.setExtraStackFrame = function(stack) {
+            {
+              currentExtraStackFrame = stack;
+            }
+          };
+          ReactDebugCurrentFrame.getCurrentStack = null;
+          ReactDebugCurrentFrame.getStackAddendum = function() {
+            var stack = "";
+            if (currentExtraStackFrame) {
+              stack += currentExtraStackFrame;
+            }
+            var impl = ReactDebugCurrentFrame.getCurrentStack;
+            if (impl) {
+              stack += impl() || "";
+            }
+            return stack;
+          };
+        }
+        var enableScopeAPI = false;
+        var enableCacheElement = false;
+        var enableTransitionTracing = false;
+        var enableLegacyHidden = false;
+        var enableDebugTracing = false;
+        var ReactSharedInternals = {
+          ReactCurrentDispatcher,
+          ReactCurrentBatchConfig,
+          ReactCurrentOwner
+        };
+        {
+          ReactSharedInternals.ReactDebugCurrentFrame = ReactDebugCurrentFrame;
+          ReactSharedInternals.ReactCurrentActQueue = ReactCurrentActQueue;
+        }
+        function warn(format) {
+          {
+            {
+              for (var _len = arguments.length, args = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+                args[_key - 1] = arguments[_key];
+              }
+              printWarning("warn", format, args);
+            }
+          }
+        }
+        function error(format) {
+          {
+            {
+              for (var _len2 = arguments.length, args = new Array(_len2 > 1 ? _len2 - 1 : 0), _key2 = 1; _key2 < _len2; _key2++) {
+                args[_key2 - 1] = arguments[_key2];
+              }
+              printWarning("error", format, args);
+            }
+          }
+        }
+        function printWarning(level, format, args) {
+          {
+            var ReactDebugCurrentFrame2 = ReactSharedInternals.ReactDebugCurrentFrame;
+            var stack = ReactDebugCurrentFrame2.getStackAddendum();
+            if (stack !== "") {
+              format += "%s";
+              args = args.concat([stack]);
+            }
+            var argsWithFormat = args.map(function(item) {
+              return String(item);
+            });
+            argsWithFormat.unshift("Warning: " + format);
+            Function.prototype.apply.call(console[level], console, argsWithFormat);
+          }
+        }
+        var didWarnStateUpdateForUnmountedComponent = {};
+        function warnNoop(publicInstance, callerName) {
+          {
+            var _constructor = publicInstance.constructor;
+            var componentName = _constructor && (_constructor.displayName || _constructor.name) || "ReactClass";
+            var warningKey = componentName + "." + callerName;
+            if (didWarnStateUpdateForUnmountedComponent[warningKey]) {
+              return;
+            }
+            error("Can't call %s on a component that is not yet mounted. This is a no-op, but it might indicate a bug in your application. Instead, assign to `this.state` directly or define a `state = {};` class property with the desired state in the %s component.", callerName, componentName);
+            didWarnStateUpdateForUnmountedComponent[warningKey] = true;
+          }
+        }
+        var ReactNoopUpdateQueue = {
+          /**
+           * Checks whether or not this composite component is mounted.
+           * @param {ReactClass} publicInstance The instance we want to test.
+           * @return {boolean} True if mounted, false otherwise.
+           * @protected
+           * @final
+           */
+          isMounted: function(publicInstance) {
+            return false;
+          },
+          /**
+           * Forces an update. This should only be invoked when it is known with
+           * certainty that we are **not** in a DOM transaction.
+           *
+           * You may want to call this when you know that some deeper aspect of the
+           * component's state has changed but `setState` was not called.
+           *
+           * This will not invoke `shouldComponentUpdate`, but it will invoke
+           * `componentWillUpdate` and `componentDidUpdate`.
+           *
+           * @param {ReactClass} publicInstance The instance that should rerender.
+           * @param {?function} callback Called after component is updated.
+           * @param {?string} callerName name of the calling function in the public API.
+           * @internal
+           */
+          enqueueForceUpdate: function(publicInstance, callback, callerName) {
+            warnNoop(publicInstance, "forceUpdate");
+          },
+          /**
+           * Replaces all of the state. Always use this or `setState` to mutate state.
+           * You should treat `this.state` as immutable.
+           *
+           * There is no guarantee that `this.state` will be immediately updated, so
+           * accessing `this.state` after calling this method may return the old value.
+           *
+           * @param {ReactClass} publicInstance The instance that should rerender.
+           * @param {object} completeState Next state.
+           * @param {?function} callback Called after component is updated.
+           * @param {?string} callerName name of the calling function in the public API.
+           * @internal
+           */
+          enqueueReplaceState: function(publicInstance, completeState, callback, callerName) {
+            warnNoop(publicInstance, "replaceState");
+          },
+          /**
+           * Sets a subset of the state. This only exists because _pendingState is
+           * internal. This provides a merging strategy that is not available to deep
+           * properties which is confusing. TODO: Expose pendingState or don't use it
+           * during the merge.
+           *
+           * @param {ReactClass} publicInstance The instance that should rerender.
+           * @param {object} partialState Next partial state to be merged with state.
+           * @param {?function} callback Called after component is updated.
+           * @param {?string} Name of the calling function in the public API.
+           * @internal
+           */
+          enqueueSetState: function(publicInstance, partialState, callback, callerName) {
+            warnNoop(publicInstance, "setState");
+          }
+        };
+        var assign = Object.assign;
+        var emptyObject = {};
+        {
+          Object.freeze(emptyObject);
+        }
+        function Component(props, context, updater) {
+          this.props = props;
+          this.context = context;
+          this.refs = emptyObject;
+          this.updater = updater || ReactNoopUpdateQueue;
+        }
+        Component.prototype.isReactComponent = {};
+        Component.prototype.setState = function(partialState, callback) {
+          if (typeof partialState !== "object" && typeof partialState !== "function" && partialState != null) {
+            throw new Error("setState(...): takes an object of state variables to update or a function which returns an object of state variables.");
+          }
+          this.updater.enqueueSetState(this, partialState, callback, "setState");
+        };
+        Component.prototype.forceUpdate = function(callback) {
+          this.updater.enqueueForceUpdate(this, callback, "forceUpdate");
+        };
+        {
+          var deprecatedAPIs = {
+            isMounted: ["isMounted", "Instead, make sure to clean up subscriptions and pending requests in componentWillUnmount to prevent memory leaks."],
+            replaceState: ["replaceState", "Refactor your code to use setState instead (see https://github.com/facebook/react/issues/3236)."]
+          };
+          var defineDeprecationWarning = function(methodName, info) {
+            Object.defineProperty(Component.prototype, methodName, {
+              get: function() {
+                warn("%s(...) is deprecated in plain JavaScript React classes. %s", info[0], info[1]);
+                return void 0;
+              }
+            });
+          };
+          for (var fnName in deprecatedAPIs) {
+            if (deprecatedAPIs.hasOwnProperty(fnName)) {
+              defineDeprecationWarning(fnName, deprecatedAPIs[fnName]);
+            }
+          }
+        }
+        function ComponentDummy() {
+        }
+        ComponentDummy.prototype = Component.prototype;
+        function PureComponent(props, context, updater) {
+          this.props = props;
+          this.context = context;
+          this.refs = emptyObject;
+          this.updater = updater || ReactNoopUpdateQueue;
+        }
+        var pureComponentPrototype = PureComponent.prototype = new ComponentDummy();
+        pureComponentPrototype.constructor = PureComponent;
+        assign(pureComponentPrototype, Component.prototype);
+        pureComponentPrototype.isPureReactComponent = true;
+        function createRef() {
+          var refObject = {
+            current: null
+          };
+          {
+            Object.seal(refObject);
+          }
+          return refObject;
+        }
+        var isArrayImpl = Array.isArray;
+        function isArray(a) {
+          return isArrayImpl(a);
+        }
+        function typeName(value) {
+          {
+            var hasToStringTag = typeof Symbol === "function" && Symbol.toStringTag;
+            var type = hasToStringTag && value[Symbol.toStringTag] || value.constructor.name || "Object";
+            return type;
+          }
+        }
+        function willCoercionThrow(value) {
+          {
+            try {
+              testStringCoercion(value);
+              return false;
+            } catch (e) {
+              return true;
+            }
+          }
+        }
+        function testStringCoercion(value) {
+          return "" + value;
+        }
+        function checkKeyStringCoercion(value) {
+          {
+            if (willCoercionThrow(value)) {
+              error("The provided key is an unsupported type %s. This value must be coerced to a string before before using it here.", typeName(value));
+              return testStringCoercion(value);
+            }
+          }
+        }
+        function getWrappedName(outerType, innerType, wrapperName) {
+          var displayName = outerType.displayName;
+          if (displayName) {
+            return displayName;
+          }
+          var functionName = innerType.displayName || innerType.name || "";
+          return functionName !== "" ? wrapperName + "(" + functionName + ")" : wrapperName;
+        }
+        function getContextName(type) {
+          return type.displayName || "Context";
+        }
+        function getComponentNameFromType(type) {
+          if (type == null) {
+            return null;
+          }
+          {
+            if (typeof type.tag === "number") {
+              error("Received an unexpected object in getComponentNameFromType(). This is likely a bug in React. Please file an issue.");
+            }
+          }
+          if (typeof type === "function") {
+            return type.displayName || type.name || null;
+          }
+          if (typeof type === "string") {
+            return type;
+          }
+          switch (type) {
+            case REACT_FRAGMENT_TYPE:
+              return "Fragment";
+            case REACT_PORTAL_TYPE:
+              return "Portal";
+            case REACT_PROFILER_TYPE:
+              return "Profiler";
+            case REACT_STRICT_MODE_TYPE:
+              return "StrictMode";
+            case REACT_SUSPENSE_TYPE:
+              return "Suspense";
+            case REACT_SUSPENSE_LIST_TYPE:
+              return "SuspenseList";
+          }
+          if (typeof type === "object") {
+            switch (type.$$typeof) {
+              case REACT_CONTEXT_TYPE:
+                var context = type;
+                return getContextName(context) + ".Consumer";
+              case REACT_PROVIDER_TYPE:
+                var provider = type;
+                return getContextName(provider._context) + ".Provider";
+              case REACT_FORWARD_REF_TYPE:
+                return getWrappedName(type, type.render, "ForwardRef");
+              case REACT_MEMO_TYPE:
+                var outerName = type.displayName || null;
+                if (outerName !== null) {
+                  return outerName;
+                }
+                return getComponentNameFromType(type.type) || "Memo";
+              case REACT_LAZY_TYPE: {
+                var lazyComponent = type;
+                var payload = lazyComponent._payload;
+                var init = lazyComponent._init;
+                try {
+                  return getComponentNameFromType(init(payload));
+                } catch (x) {
+                  return null;
+                }
+              }
+            }
+          }
+          return null;
+        }
+        var hasOwnProperty = Object.prototype.hasOwnProperty;
+        var RESERVED_PROPS = {
+          key: true,
+          ref: true,
+          __self: true,
+          __source: true
+        };
+        var specialPropKeyWarningShown, specialPropRefWarningShown, didWarnAboutStringRefs;
+        {
+          didWarnAboutStringRefs = {};
+        }
+        function hasValidRef(config2) {
+          {
+            if (hasOwnProperty.call(config2, "ref")) {
+              var getter = Object.getOwnPropertyDescriptor(config2, "ref").get;
+              if (getter && getter.isReactWarning) {
+                return false;
+              }
+            }
+          }
+          return config2.ref !== void 0;
+        }
+        function hasValidKey(config2) {
+          {
+            if (hasOwnProperty.call(config2, "key")) {
+              var getter = Object.getOwnPropertyDescriptor(config2, "key").get;
+              if (getter && getter.isReactWarning) {
+                return false;
+              }
+            }
+          }
+          return config2.key !== void 0;
+        }
+        function defineKeyPropWarningGetter(props, displayName) {
+          var warnAboutAccessingKey = function() {
+            {
+              if (!specialPropKeyWarningShown) {
+                specialPropKeyWarningShown = true;
+                error("%s: `key` is not a prop. Trying to access it will result in `undefined` being returned. If you need to access the same value within the child component, you should pass it as a different prop. (https://reactjs.org/link/special-props)", displayName);
+              }
+            }
+          };
+          warnAboutAccessingKey.isReactWarning = true;
+          Object.defineProperty(props, "key", {
+            get: warnAboutAccessingKey,
+            configurable: true
+          });
+        }
+        function defineRefPropWarningGetter(props, displayName) {
+          var warnAboutAccessingRef = function() {
+            {
+              if (!specialPropRefWarningShown) {
+                specialPropRefWarningShown = true;
+                error("%s: `ref` is not a prop. Trying to access it will result in `undefined` being returned. If you need to access the same value within the child component, you should pass it as a different prop. (https://reactjs.org/link/special-props)", displayName);
+              }
+            }
+          };
+          warnAboutAccessingRef.isReactWarning = true;
+          Object.defineProperty(props, "ref", {
+            get: warnAboutAccessingRef,
+            configurable: true
+          });
+        }
+        function warnIfStringRefCannotBeAutoConverted(config2) {
+          {
+            if (typeof config2.ref === "string" && ReactCurrentOwner.current && config2.__self && ReactCurrentOwner.current.stateNode !== config2.__self) {
+              var componentName = getComponentNameFromType(ReactCurrentOwner.current.type);
+              if (!didWarnAboutStringRefs[componentName]) {
+                error('Component "%s" contains the string ref "%s". Support for string refs will be removed in a future major release. This case cannot be automatically converted to an arrow function. We ask you to manually fix this case by using useRef() or createRef() instead. Learn more about using refs safely here: https://reactjs.org/link/strict-mode-string-ref', componentName, config2.ref);
+                didWarnAboutStringRefs[componentName] = true;
+              }
+            }
+          }
+        }
+        var ReactElement = function(type, key, ref, self, source, owner, props) {
+          var element = {
+            // This tag allows us to uniquely identify this as a React Element
+            $$typeof: REACT_ELEMENT_TYPE,
+            // Built-in properties that belong on the element
+            type,
+            key,
+            ref,
+            props,
+            // Record the component responsible for creating this element.
+            _owner: owner
+          };
+          {
+            element._store = {};
+            Object.defineProperty(element._store, "validated", {
+              configurable: false,
+              enumerable: false,
+              writable: true,
+              value: false
+            });
+            Object.defineProperty(element, "_self", {
+              configurable: false,
+              enumerable: false,
+              writable: false,
+              value: self
+            });
+            Object.defineProperty(element, "_source", {
+              configurable: false,
+              enumerable: false,
+              writable: false,
+              value: source
+            });
+            if (Object.freeze) {
+              Object.freeze(element.props);
+              Object.freeze(element);
+            }
+          }
+          return element;
+        };
+        function createElement(type, config2, children) {
+          var propName;
+          var props = {};
+          var key = null;
+          var ref = null;
+          var self = null;
+          var source = null;
+          if (config2 != null) {
+            if (hasValidRef(config2)) {
+              ref = config2.ref;
+              {
+                warnIfStringRefCannotBeAutoConverted(config2);
+              }
+            }
+            if (hasValidKey(config2)) {
+              {
+                checkKeyStringCoercion(config2.key);
+              }
+              key = "" + config2.key;
+            }
+            self = config2.__self === void 0 ? null : config2.__self;
+            source = config2.__source === void 0 ? null : config2.__source;
+            for (propName in config2) {
+              if (hasOwnProperty.call(config2, propName) && !RESERVED_PROPS.hasOwnProperty(propName)) {
+                props[propName] = config2[propName];
+              }
+            }
+          }
+          var childrenLength = arguments.length - 2;
+          if (childrenLength === 1) {
+            props.children = children;
+          } else if (childrenLength > 1) {
+            var childArray = Array(childrenLength);
+            for (var i = 0; i < childrenLength; i++) {
+              childArray[i] = arguments[i + 2];
+            }
+            {
+              if (Object.freeze) {
+                Object.freeze(childArray);
+              }
+            }
+            props.children = childArray;
+          }
+          if (type && type.defaultProps) {
+            var defaultProps = type.defaultProps;
+            for (propName in defaultProps) {
+              if (props[propName] === void 0) {
+                props[propName] = defaultProps[propName];
+              }
+            }
+          }
+          {
+            if (key || ref) {
+              var displayName = typeof type === "function" ? type.displayName || type.name || "Unknown" : type;
+              if (key) {
+                defineKeyPropWarningGetter(props, displayName);
+              }
+              if (ref) {
+                defineRefPropWarningGetter(props, displayName);
+              }
+            }
+          }
+          return ReactElement(type, key, ref, self, source, ReactCurrentOwner.current, props);
+        }
+        function cloneAndReplaceKey(oldElement, newKey) {
+          var newElement = ReactElement(oldElement.type, newKey, oldElement.ref, oldElement._self, oldElement._source, oldElement._owner, oldElement.props);
+          return newElement;
+        }
+        function cloneElement(element, config2, children) {
+          if (element === null || element === void 0) {
+            throw new Error("React.cloneElement(...): The argument must be a React element, but you passed " + element + ".");
+          }
+          var propName;
+          var props = assign({}, element.props);
+          var key = element.key;
+          var ref = element.ref;
+          var self = element._self;
+          var source = element._source;
+          var owner = element._owner;
+          if (config2 != null) {
+            if (hasValidRef(config2)) {
+              ref = config2.ref;
+              owner = ReactCurrentOwner.current;
+            }
+            if (hasValidKey(config2)) {
+              {
+                checkKeyStringCoercion(config2.key);
+              }
+              key = "" + config2.key;
+            }
+            var defaultProps;
+            if (element.type && element.type.defaultProps) {
+              defaultProps = element.type.defaultProps;
+            }
+            for (propName in config2) {
+              if (hasOwnProperty.call(config2, propName) && !RESERVED_PROPS.hasOwnProperty(propName)) {
+                if (config2[propName] === void 0 && defaultProps !== void 0) {
+                  props[propName] = defaultProps[propName];
+                } else {
+                  props[propName] = config2[propName];
+                }
+              }
+            }
+          }
+          var childrenLength = arguments.length - 2;
+          if (childrenLength === 1) {
+            props.children = children;
+          } else if (childrenLength > 1) {
+            var childArray = Array(childrenLength);
+            for (var i = 0; i < childrenLength; i++) {
+              childArray[i] = arguments[i + 2];
+            }
+            props.children = childArray;
+          }
+          return ReactElement(element.type, key, ref, self, source, owner, props);
+        }
+        function isValidElement(object2) {
+          return typeof object2 === "object" && object2 !== null && object2.$$typeof === REACT_ELEMENT_TYPE;
+        }
+        var SEPARATOR = ".";
+        var SUBSEPARATOR = ":";
+        function escape(key) {
+          var escapeRegex2 = /[=:]/g;
+          var escaperLookup = {
+            "=": "=0",
+            ":": "=2"
+          };
+          var escapedString = key.replace(escapeRegex2, function(match) {
+            return escaperLookup[match];
+          });
+          return "$" + escapedString;
+        }
+        var didWarnAboutMaps = false;
+        var userProvidedKeyEscapeRegex = /\/+/g;
+        function escapeUserProvidedKey(text) {
+          return text.replace(userProvidedKeyEscapeRegex, "$&/");
+        }
+        function getElementKey(element, index) {
+          if (typeof element === "object" && element !== null && element.key != null) {
+            {
+              checkKeyStringCoercion(element.key);
+            }
+            return escape("" + element.key);
+          }
+          return index.toString(36);
+        }
+        function mapIntoArray(children, array2, escapedPrefix, nameSoFar, callback) {
+          var type = typeof children;
+          if (type === "undefined" || type === "boolean") {
+            children = null;
+          }
+          var invokeCallback = false;
+          if (children === null) {
+            invokeCallback = true;
+          } else {
+            switch (type) {
+              case "string":
+              case "number":
+                invokeCallback = true;
+                break;
+              case "object":
+                switch (children.$$typeof) {
+                  case REACT_ELEMENT_TYPE:
+                  case REACT_PORTAL_TYPE:
+                    invokeCallback = true;
+                }
+            }
+          }
+          if (invokeCallback) {
+            var _child = children;
+            var mappedChild = callback(_child);
+            var childKey = nameSoFar === "" ? SEPARATOR + getElementKey(_child, 0) : nameSoFar;
+            if (isArray(mappedChild)) {
+              var escapedChildKey = "";
+              if (childKey != null) {
+                escapedChildKey = escapeUserProvidedKey(childKey) + "/";
+              }
+              mapIntoArray(mappedChild, array2, escapedChildKey, "", function(c) {
+                return c;
+              });
+            } else if (mappedChild != null) {
+              if (isValidElement(mappedChild)) {
+                {
+                  if (mappedChild.key && (!_child || _child.key !== mappedChild.key)) {
+                    checkKeyStringCoercion(mappedChild.key);
+                  }
+                }
+                mappedChild = cloneAndReplaceKey(
+                  mappedChild,
+                  // Keep both the (mapped) and old keys if they differ, just as
+                  // traverseAllChildren used to do for objects as children
+                  escapedPrefix + // $FlowFixMe Flow incorrectly thinks React.Portal doesn't have a key
+                  (mappedChild.key && (!_child || _child.key !== mappedChild.key) ? (
+                    // $FlowFixMe Flow incorrectly thinks existing element's key can be a number
+                    // eslint-disable-next-line react-internal/safe-string-coercion
+                    escapeUserProvidedKey("" + mappedChild.key) + "/"
+                  ) : "") + childKey
+                );
+              }
+              array2.push(mappedChild);
+            }
+            return 1;
+          }
+          var child;
+          var nextName;
+          var subtreeCount = 0;
+          var nextNamePrefix = nameSoFar === "" ? SEPARATOR : nameSoFar + SUBSEPARATOR;
+          if (isArray(children)) {
+            for (var i = 0; i < children.length; i++) {
+              child = children[i];
+              nextName = nextNamePrefix + getElementKey(child, i);
+              subtreeCount += mapIntoArray(child, array2, escapedPrefix, nextName, callback);
+            }
+          } else {
+            var iteratorFn = getIteratorFn(children);
+            if (typeof iteratorFn === "function") {
+              var iterableChildren = children;
+              {
+                if (iteratorFn === iterableChildren.entries) {
+                  if (!didWarnAboutMaps) {
+                    warn("Using Maps as children is not supported. Use an array of keyed ReactElements instead.");
+                  }
+                  didWarnAboutMaps = true;
+                }
+              }
+              var iterator = iteratorFn.call(iterableChildren);
+              var step;
+              var ii = 0;
+              while (!(step = iterator.next()).done) {
+                child = step.value;
+                nextName = nextNamePrefix + getElementKey(child, ii++);
+                subtreeCount += mapIntoArray(child, array2, escapedPrefix, nextName, callback);
+              }
+            } else if (type === "object") {
+              var childrenString = String(children);
+              throw new Error("Objects are not valid as a React child (found: " + (childrenString === "[object Object]" ? "object with keys {" + Object.keys(children).join(", ") + "}" : childrenString) + "). If you meant to render a collection of children, use an array instead.");
+            }
+          }
+          return subtreeCount;
+        }
+        function mapChildren(children, func, context) {
+          if (children == null) {
+            return children;
+          }
+          var result = [];
+          var count = 0;
+          mapIntoArray(children, result, "", "", function(child) {
+            return func.call(context, child, count++);
+          });
+          return result;
+        }
+        function countChildren(children) {
+          var n = 0;
+          mapChildren(children, function() {
+            n++;
+          });
+          return n;
+        }
+        function forEachChildren(children, forEachFunc, forEachContext) {
+          mapChildren(children, function() {
+            forEachFunc.apply(this, arguments);
+          }, forEachContext);
+        }
+        function toArray(children) {
+          return mapChildren(children, function(child) {
+            return child;
+          }) || [];
+        }
+        function onlyChild(children) {
+          if (!isValidElement(children)) {
+            throw new Error("React.Children.only expected to receive a single React element child.");
+          }
+          return children;
+        }
+        function createContext(defaultValue) {
+          var context = {
+            $$typeof: REACT_CONTEXT_TYPE,
+            // As a workaround to support multiple concurrent renderers, we categorize
+            // some renderers as primary and others as secondary. We only expect
+            // there to be two concurrent renderers at most: React Native (primary) and
+            // Fabric (secondary); React DOM (primary) and React ART (secondary).
+            // Secondary renderers store their context values on separate fields.
+            _currentValue: defaultValue,
+            _currentValue2: defaultValue,
+            // Used to track how many concurrent renderers this context currently
+            // supports within in a single renderer. Such as parallel server rendering.
+            _threadCount: 0,
+            // These are circular
+            Provider: null,
+            Consumer: null,
+            // Add these to use same hidden class in VM as ServerContext
+            _defaultValue: null,
+            _globalName: null
+          };
+          context.Provider = {
+            $$typeof: REACT_PROVIDER_TYPE,
+            _context: context
+          };
+          var hasWarnedAboutUsingNestedContextConsumers = false;
+          var hasWarnedAboutUsingConsumerProvider = false;
+          var hasWarnedAboutDisplayNameOnConsumer = false;
+          {
+            var Consumer = {
+              $$typeof: REACT_CONTEXT_TYPE,
+              _context: context
+            };
+            Object.defineProperties(Consumer, {
+              Provider: {
+                get: function() {
+                  if (!hasWarnedAboutUsingConsumerProvider) {
+                    hasWarnedAboutUsingConsumerProvider = true;
+                    error("Rendering <Context.Consumer.Provider> is not supported and will be removed in a future major release. Did you mean to render <Context.Provider> instead?");
+                  }
+                  return context.Provider;
+                },
+                set: function(_Provider) {
+                  context.Provider = _Provider;
+                }
+              },
+              _currentValue: {
+                get: function() {
+                  return context._currentValue;
+                },
+                set: function(_currentValue) {
+                  context._currentValue = _currentValue;
+                }
+              },
+              _currentValue2: {
+                get: function() {
+                  return context._currentValue2;
+                },
+                set: function(_currentValue2) {
+                  context._currentValue2 = _currentValue2;
+                }
+              },
+              _threadCount: {
+                get: function() {
+                  return context._threadCount;
+                },
+                set: function(_threadCount) {
+                  context._threadCount = _threadCount;
+                }
+              },
+              Consumer: {
+                get: function() {
+                  if (!hasWarnedAboutUsingNestedContextConsumers) {
+                    hasWarnedAboutUsingNestedContextConsumers = true;
+                    error("Rendering <Context.Consumer.Consumer> is not supported and will be removed in a future major release. Did you mean to render <Context.Consumer> instead?");
+                  }
+                  return context.Consumer;
+                }
+              },
+              displayName: {
+                get: function() {
+                  return context.displayName;
+                },
+                set: function(displayName) {
+                  if (!hasWarnedAboutDisplayNameOnConsumer) {
+                    warn("Setting `displayName` on Context.Consumer has no effect. You should set it directly on the context with Context.displayName = '%s'.", displayName);
+                    hasWarnedAboutDisplayNameOnConsumer = true;
+                  }
+                }
+              }
+            });
+            context.Consumer = Consumer;
+          }
+          {
+            context._currentRenderer = null;
+            context._currentRenderer2 = null;
+          }
+          return context;
+        }
+        var Uninitialized = -1;
+        var Pending = 0;
+        var Resolved = 1;
+        var Rejected = 2;
+        function lazyInitializer(payload) {
+          if (payload._status === Uninitialized) {
+            var ctor = payload._result;
+            var thenable = ctor();
+            thenable.then(function(moduleObject2) {
+              if (payload._status === Pending || payload._status === Uninitialized) {
+                var resolved = payload;
+                resolved._status = Resolved;
+                resolved._result = moduleObject2;
+              }
+            }, function(error2) {
+              if (payload._status === Pending || payload._status === Uninitialized) {
+                var rejected = payload;
+                rejected._status = Rejected;
+                rejected._result = error2;
+              }
+            });
+            if (payload._status === Uninitialized) {
+              var pending = payload;
+              pending._status = Pending;
+              pending._result = thenable;
+            }
+          }
+          if (payload._status === Resolved) {
+            var moduleObject = payload._result;
+            {
+              if (moduleObject === void 0) {
+                error("lazy: Expected the result of a dynamic import() call. Instead received: %s\n\nYour code should look like: \n  const MyComponent = lazy(() => import('./MyComponent'))\n\nDid you accidentally put curly braces around the import?", moduleObject);
+              }
+            }
+            {
+              if (!("default" in moduleObject)) {
+                error("lazy: Expected the result of a dynamic import() call. Instead received: %s\n\nYour code should look like: \n  const MyComponent = lazy(() => import('./MyComponent'))", moduleObject);
+              }
+            }
+            return moduleObject.default;
+          } else {
+            throw payload._result;
+          }
+        }
+        function lazy(ctor) {
+          var payload = {
+            // We use these fields to store the result.
+            _status: Uninitialized,
+            _result: ctor
+          };
+          var lazyType = {
+            $$typeof: REACT_LAZY_TYPE,
+            _payload: payload,
+            _init: lazyInitializer
+          };
+          {
+            var defaultProps;
+            var propTypes;
+            Object.defineProperties(lazyType, {
+              defaultProps: {
+                configurable: true,
+                get: function() {
+                  return defaultProps;
+                },
+                set: function(newDefaultProps) {
+                  error("React.lazy(...): It is not supported to assign `defaultProps` to a lazy component import. Either specify them where the component is defined, or create a wrapping component around it.");
+                  defaultProps = newDefaultProps;
+                  Object.defineProperty(lazyType, "defaultProps", {
+                    enumerable: true
+                  });
+                }
+              },
+              propTypes: {
+                configurable: true,
+                get: function() {
+                  return propTypes;
+                },
+                set: function(newPropTypes) {
+                  error("React.lazy(...): It is not supported to assign `propTypes` to a lazy component import. Either specify them where the component is defined, or create a wrapping component around it.");
+                  propTypes = newPropTypes;
+                  Object.defineProperty(lazyType, "propTypes", {
+                    enumerable: true
+                  });
+                }
+              }
+            });
+          }
+          return lazyType;
+        }
+        function forwardRef(render) {
+          {
+            if (render != null && render.$$typeof === REACT_MEMO_TYPE) {
+              error("forwardRef requires a render function but received a `memo` component. Instead of forwardRef(memo(...)), use memo(forwardRef(...)).");
+            } else if (typeof render !== "function") {
+              error("forwardRef requires a render function but was given %s.", render === null ? "null" : typeof render);
+            } else {
+              if (render.length !== 0 && render.length !== 2) {
+                error("forwardRef render functions accept exactly two parameters: props and ref. %s", render.length === 1 ? "Did you forget to use the ref parameter?" : "Any additional parameter will be undefined.");
+              }
+            }
+            if (render != null) {
+              if (render.defaultProps != null || render.propTypes != null) {
+                error("forwardRef render functions do not support propTypes or defaultProps. Did you accidentally pass a React component?");
+              }
+            }
+          }
+          var elementType = {
+            $$typeof: REACT_FORWARD_REF_TYPE,
+            render
+          };
+          {
+            var ownName;
+            Object.defineProperty(elementType, "displayName", {
+              enumerable: false,
+              configurable: true,
+              get: function() {
+                return ownName;
+              },
+              set: function(name) {
+                ownName = name;
+                if (!render.name && !render.displayName) {
+                  render.displayName = name;
+                }
+              }
+            });
+          }
+          return elementType;
+        }
+        var REACT_MODULE_REFERENCE;
+        {
+          REACT_MODULE_REFERENCE = Symbol.for("react.module.reference");
+        }
+        function isValidElementType(type) {
+          if (typeof type === "string" || typeof type === "function") {
+            return true;
+          }
+          if (type === REACT_FRAGMENT_TYPE || type === REACT_PROFILER_TYPE || enableDebugTracing || type === REACT_STRICT_MODE_TYPE || type === REACT_SUSPENSE_TYPE || type === REACT_SUSPENSE_LIST_TYPE || enableLegacyHidden || type === REACT_OFFSCREEN_TYPE || enableScopeAPI || enableCacheElement || enableTransitionTracing) {
+            return true;
+          }
+          if (typeof type === "object" && type !== null) {
+            if (type.$$typeof === REACT_LAZY_TYPE || type.$$typeof === REACT_MEMO_TYPE || type.$$typeof === REACT_PROVIDER_TYPE || type.$$typeof === REACT_CONTEXT_TYPE || type.$$typeof === REACT_FORWARD_REF_TYPE || // This needs to include all possible module reference object
+            // types supported by any Flight configuration anywhere since
+            // we don't know which Flight build this will end up being used
+            // with.
+            type.$$typeof === REACT_MODULE_REFERENCE || type.getModuleId !== void 0) {
+              return true;
+            }
+          }
+          return false;
+        }
+        function memo(type, compare) {
+          {
+            if (!isValidElementType(type)) {
+              error("memo: The first argument must be a component. Instead received: %s", type === null ? "null" : typeof type);
+            }
+          }
+          var elementType = {
+            $$typeof: REACT_MEMO_TYPE,
+            type,
+            compare: compare === void 0 ? null : compare
+          };
+          {
+            var ownName;
+            Object.defineProperty(elementType, "displayName", {
+              enumerable: false,
+              configurable: true,
+              get: function() {
+                return ownName;
+              },
+              set: function(name) {
+                ownName = name;
+                if (!type.name && !type.displayName) {
+                  type.displayName = name;
+                }
+              }
+            });
+          }
+          return elementType;
+        }
+        function resolveDispatcher() {
+          var dispatcher = ReactCurrentDispatcher.current;
+          {
+            if (dispatcher === null) {
+              error("Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:\n1. You might have mismatching versions of React and the renderer (such as React DOM)\n2. You might be breaking the Rules of Hooks\n3. You might have more than one copy of React in the same app\nSee https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem.");
+            }
+          }
+          return dispatcher;
+        }
+        function useContext(Context) {
+          var dispatcher = resolveDispatcher();
+          {
+            if (Context._context !== void 0) {
+              var realContext = Context._context;
+              if (realContext.Consumer === Context) {
+                error("Calling useContext(Context.Consumer) is not supported, may cause bugs, and will be removed in a future major release. Did you mean to call useContext(Context) instead?");
+              } else if (realContext.Provider === Context) {
+                error("Calling useContext(Context.Provider) is not supported. Did you mean to call useContext(Context) instead?");
+              }
+            }
+          }
+          return dispatcher.useContext(Context);
+        }
+        function useState(initialState) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useState(initialState);
+        }
+        function useReducer(reducer, initialArg, init) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useReducer(reducer, initialArg, init);
+        }
+        function useRef(initialValue) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useRef(initialValue);
+        }
+        function useEffect(create, deps) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useEffect(create, deps);
+        }
+        function useInsertionEffect(create, deps) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useInsertionEffect(create, deps);
+        }
+        function useLayoutEffect(create, deps) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useLayoutEffect(create, deps);
+        }
+        function useCallback(callback, deps) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useCallback(callback, deps);
+        }
+        function useMemo(create, deps) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useMemo(create, deps);
+        }
+        function useImperativeHandle(ref, create, deps) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useImperativeHandle(ref, create, deps);
+        }
+        function useDebugValue(value, formatterFn) {
+          {
+            var dispatcher = resolveDispatcher();
+            return dispatcher.useDebugValue(value, formatterFn);
+          }
+        }
+        function useTransition() {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useTransition();
+        }
+        function useDeferredValue(value) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useDeferredValue(value);
+        }
+        function useId() {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useId();
+        }
+        function useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot) {
+          var dispatcher = resolveDispatcher();
+          return dispatcher.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+        }
+        var disabledDepth = 0;
+        var prevLog;
+        var prevInfo;
+        var prevWarn;
+        var prevError;
+        var prevGroup;
+        var prevGroupCollapsed;
+        var prevGroupEnd;
+        function disabledLog() {
+        }
+        disabledLog.__reactDisabledLog = true;
+        function disableLogs() {
+          {
+            if (disabledDepth === 0) {
+              prevLog = console.log;
+              prevInfo = console.info;
+              prevWarn = console.warn;
+              prevError = console.error;
+              prevGroup = console.group;
+              prevGroupCollapsed = console.groupCollapsed;
+              prevGroupEnd = console.groupEnd;
+              var props = {
+                configurable: true,
+                enumerable: true,
+                value: disabledLog,
+                writable: true
+              };
+              Object.defineProperties(console, {
+                info: props,
+                log: props,
+                warn: props,
+                error: props,
+                group: props,
+                groupCollapsed: props,
+                groupEnd: props
+              });
+            }
+            disabledDepth++;
+          }
+        }
+        function reenableLogs() {
+          {
+            disabledDepth--;
+            if (disabledDepth === 0) {
+              var props = {
+                configurable: true,
+                enumerable: true,
+                writable: true
+              };
+              Object.defineProperties(console, {
+                log: assign({}, props, {
+                  value: prevLog
+                }),
+                info: assign({}, props, {
+                  value: prevInfo
+                }),
+                warn: assign({}, props, {
+                  value: prevWarn
+                }),
+                error: assign({}, props, {
+                  value: prevError
+                }),
+                group: assign({}, props, {
+                  value: prevGroup
+                }),
+                groupCollapsed: assign({}, props, {
+                  value: prevGroupCollapsed
+                }),
+                groupEnd: assign({}, props, {
+                  value: prevGroupEnd
+                })
+              });
+            }
+            if (disabledDepth < 0) {
+              error("disabledDepth fell below zero. This is a bug in React. Please file an issue.");
+            }
+          }
+        }
+        var ReactCurrentDispatcher$1 = ReactSharedInternals.ReactCurrentDispatcher;
+        var prefix;
+        function describeBuiltInComponentFrame(name, source, ownerFn) {
+          {
+            if (prefix === void 0) {
+              try {
+                throw Error();
+              } catch (x) {
+                var match = x.stack.trim().match(/\n( *(at )?)/);
+                prefix = match && match[1] || "";
+              }
+            }
+            return "\n" + prefix + name;
+          }
+        }
+        var reentry = false;
+        var componentFrameCache;
+        {
+          var PossiblyWeakMap = typeof WeakMap === "function" ? WeakMap : Map;
+          componentFrameCache = new PossiblyWeakMap();
+        }
+        function describeNativeComponentFrame(fn, construct) {
+          if (!fn || reentry) {
+            return "";
+          }
+          {
+            var frame = componentFrameCache.get(fn);
+            if (frame !== void 0) {
+              return frame;
+            }
+          }
+          var control;
+          reentry = true;
+          var previousPrepareStackTrace = Error.prepareStackTrace;
+          Error.prepareStackTrace = void 0;
+          var previousDispatcher;
+          {
+            previousDispatcher = ReactCurrentDispatcher$1.current;
+            ReactCurrentDispatcher$1.current = null;
+            disableLogs();
+          }
+          try {
+            if (construct) {
+              var Fake = function() {
+                throw Error();
+              };
+              Object.defineProperty(Fake.prototype, "props", {
+                set: function() {
+                  throw Error();
+                }
+              });
+              if (typeof Reflect === "object" && Reflect.construct) {
+                try {
+                  Reflect.construct(Fake, []);
+                } catch (x) {
+                  control = x;
+                }
+                Reflect.construct(fn, [], Fake);
+              } else {
+                try {
+                  Fake.call();
+                } catch (x) {
+                  control = x;
+                }
+                fn.call(Fake.prototype);
+              }
+            } else {
+              try {
+                throw Error();
+              } catch (x) {
+                control = x;
+              }
+              fn();
+            }
+          } catch (sample) {
+            if (sample && control && typeof sample.stack === "string") {
+              var sampleLines = sample.stack.split("\n");
+              var controlLines = control.stack.split("\n");
+              var s = sampleLines.length - 1;
+              var c = controlLines.length - 1;
+              while (s >= 1 && c >= 0 && sampleLines[s] !== controlLines[c]) {
+                c--;
+              }
+              for (; s >= 1 && c >= 0; s--, c--) {
+                if (sampleLines[s] !== controlLines[c]) {
+                  if (s !== 1 || c !== 1) {
+                    do {
+                      s--;
+                      c--;
+                      if (c < 0 || sampleLines[s] !== controlLines[c]) {
+                        var _frame = "\n" + sampleLines[s].replace(" at new ", " at ");
+                        if (fn.displayName && _frame.includes("<anonymous>")) {
+                          _frame = _frame.replace("<anonymous>", fn.displayName);
+                        }
+                        {
+                          if (typeof fn === "function") {
+                            componentFrameCache.set(fn, _frame);
+                          }
+                        }
+                        return _frame;
+                      }
+                    } while (s >= 1 && c >= 0);
+                  }
+                  break;
+                }
+              }
+            }
+          } finally {
+            reentry = false;
+            {
+              ReactCurrentDispatcher$1.current = previousDispatcher;
+              reenableLogs();
+            }
+            Error.prepareStackTrace = previousPrepareStackTrace;
+          }
+          var name = fn ? fn.displayName || fn.name : "";
+          var syntheticFrame = name ? describeBuiltInComponentFrame(name) : "";
+          {
+            if (typeof fn === "function") {
+              componentFrameCache.set(fn, syntheticFrame);
+            }
+          }
+          return syntheticFrame;
+        }
+        function describeFunctionComponentFrame(fn, source, ownerFn) {
+          {
+            return describeNativeComponentFrame(fn, false);
+          }
+        }
+        function shouldConstruct(Component2) {
+          var prototype = Component2.prototype;
+          return !!(prototype && prototype.isReactComponent);
+        }
+        function describeUnknownElementTypeFrameInDEV(type, source, ownerFn) {
+          if (type == null) {
+            return "";
+          }
+          if (typeof type === "function") {
+            {
+              return describeNativeComponentFrame(type, shouldConstruct(type));
+            }
+          }
+          if (typeof type === "string") {
+            return describeBuiltInComponentFrame(type);
+          }
+          switch (type) {
+            case REACT_SUSPENSE_TYPE:
+              return describeBuiltInComponentFrame("Suspense");
+            case REACT_SUSPENSE_LIST_TYPE:
+              return describeBuiltInComponentFrame("SuspenseList");
+          }
+          if (typeof type === "object") {
+            switch (type.$$typeof) {
+              case REACT_FORWARD_REF_TYPE:
+                return describeFunctionComponentFrame(type.render);
+              case REACT_MEMO_TYPE:
+                return describeUnknownElementTypeFrameInDEV(type.type, source, ownerFn);
+              case REACT_LAZY_TYPE: {
+                var lazyComponent = type;
+                var payload = lazyComponent._payload;
+                var init = lazyComponent._init;
+                try {
+                  return describeUnknownElementTypeFrameInDEV(init(payload), source, ownerFn);
+                } catch (x) {
+                }
+              }
+            }
+          }
+          return "";
+        }
+        var loggedTypeFailures = {};
+        var ReactDebugCurrentFrame$1 = ReactSharedInternals.ReactDebugCurrentFrame;
+        function setCurrentlyValidatingElement(element) {
+          {
+            if (element) {
+              var owner = element._owner;
+              var stack = describeUnknownElementTypeFrameInDEV(element.type, element._source, owner ? owner.type : null);
+              ReactDebugCurrentFrame$1.setExtraStackFrame(stack);
+            } else {
+              ReactDebugCurrentFrame$1.setExtraStackFrame(null);
+            }
+          }
+        }
+        function checkPropTypes(typeSpecs, values, location, componentName, element) {
+          {
+            var has = Function.call.bind(hasOwnProperty);
+            for (var typeSpecName in typeSpecs) {
+              if (has(typeSpecs, typeSpecName)) {
+                var error$1 = void 0;
+                try {
+                  if (typeof typeSpecs[typeSpecName] !== "function") {
+                    var err = Error((componentName || "React class") + ": " + location + " type `" + typeSpecName + "` is invalid; it must be a function, usually from the `prop-types` package, but received `" + typeof typeSpecs[typeSpecName] + "`.This often happens because of typos such as `PropTypes.function` instead of `PropTypes.func`.");
+                    err.name = "Invariant Violation";
+                    throw err;
+                  }
+                  error$1 = typeSpecs[typeSpecName](values, typeSpecName, componentName, location, null, "SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED");
+                } catch (ex) {
+                  error$1 = ex;
+                }
+                if (error$1 && !(error$1 instanceof Error)) {
+                  setCurrentlyValidatingElement(element);
+                  error("%s: type specification of %s `%s` is invalid; the type checker function must return `null` or an `Error` but returned a %s. You may have forgotten to pass an argument to the type checker creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and shape all require an argument).", componentName || "React class", location, typeSpecName, typeof error$1);
+                  setCurrentlyValidatingElement(null);
+                }
+                if (error$1 instanceof Error && !(error$1.message in loggedTypeFailures)) {
+                  loggedTypeFailures[error$1.message] = true;
+                  setCurrentlyValidatingElement(element);
+                  error("Failed %s type: %s", location, error$1.message);
+                  setCurrentlyValidatingElement(null);
+                }
+              }
+            }
+          }
+        }
+        function setCurrentlyValidatingElement$1(element) {
+          {
+            if (element) {
+              var owner = element._owner;
+              var stack = describeUnknownElementTypeFrameInDEV(element.type, element._source, owner ? owner.type : null);
+              setExtraStackFrame(stack);
+            } else {
+              setExtraStackFrame(null);
+            }
+          }
+        }
+        var propTypesMisspellWarningShown;
+        {
+          propTypesMisspellWarningShown = false;
+        }
+        function getDeclarationErrorAddendum() {
+          if (ReactCurrentOwner.current) {
+            var name = getComponentNameFromType(ReactCurrentOwner.current.type);
+            if (name) {
+              return "\n\nCheck the render method of `" + name + "`.";
+            }
+          }
+          return "";
+        }
+        function getSourceInfoErrorAddendum(source) {
+          if (source !== void 0) {
+            var fileName = source.fileName.replace(/^.*[\\\/]/, "");
+            var lineNumber = source.lineNumber;
+            return "\n\nCheck your code at " + fileName + ":" + lineNumber + ".";
+          }
+          return "";
+        }
+        function getSourceInfoErrorAddendumForProps(elementProps) {
+          if (elementProps !== null && elementProps !== void 0) {
+            return getSourceInfoErrorAddendum(elementProps.__source);
+          }
+          return "";
+        }
+        var ownerHasKeyUseWarning = {};
+        function getCurrentComponentErrorInfo(parentType) {
+          var info = getDeclarationErrorAddendum();
+          if (!info) {
+            var parentName = typeof parentType === "string" ? parentType : parentType.displayName || parentType.name;
+            if (parentName) {
+              info = "\n\nCheck the top-level render call using <" + parentName + ">.";
+            }
+          }
+          return info;
+        }
+        function validateExplicitKey(element, parentType) {
+          if (!element._store || element._store.validated || element.key != null) {
+            return;
+          }
+          element._store.validated = true;
+          var currentComponentErrorInfo = getCurrentComponentErrorInfo(parentType);
+          if (ownerHasKeyUseWarning[currentComponentErrorInfo]) {
+            return;
+          }
+          ownerHasKeyUseWarning[currentComponentErrorInfo] = true;
+          var childOwner = "";
+          if (element && element._owner && element._owner !== ReactCurrentOwner.current) {
+            childOwner = " It was passed a child from " + getComponentNameFromType(element._owner.type) + ".";
+          }
+          {
+            setCurrentlyValidatingElement$1(element);
+            error('Each child in a list should have a unique "key" prop.%s%s See https://reactjs.org/link/warning-keys for more information.', currentComponentErrorInfo, childOwner);
+            setCurrentlyValidatingElement$1(null);
+          }
+        }
+        function validateChildKeys(node, parentType) {
+          if (typeof node !== "object") {
+            return;
+          }
+          if (isArray(node)) {
+            for (var i = 0; i < node.length; i++) {
+              var child = node[i];
+              if (isValidElement(child)) {
+                validateExplicitKey(child, parentType);
+              }
+            }
+          } else if (isValidElement(node)) {
+            if (node._store) {
+              node._store.validated = true;
+            }
+          } else if (node) {
+            var iteratorFn = getIteratorFn(node);
+            if (typeof iteratorFn === "function") {
+              if (iteratorFn !== node.entries) {
+                var iterator = iteratorFn.call(node);
+                var step;
+                while (!(step = iterator.next()).done) {
+                  if (isValidElement(step.value)) {
+                    validateExplicitKey(step.value, parentType);
+                  }
+                }
+              }
+            }
+          }
+        }
+        function validatePropTypes(element) {
+          {
+            var type = element.type;
+            if (type === null || type === void 0 || typeof type === "string") {
+              return;
+            }
+            var propTypes;
+            if (typeof type === "function") {
+              propTypes = type.propTypes;
+            } else if (typeof type === "object" && (type.$$typeof === REACT_FORWARD_REF_TYPE || // Note: Memo only checks outer props here.
+            // Inner props are checked in the reconciler.
+            type.$$typeof === REACT_MEMO_TYPE)) {
+              propTypes = type.propTypes;
+            } else {
+              return;
+            }
+            if (propTypes) {
+              var name = getComponentNameFromType(type);
+              checkPropTypes(propTypes, element.props, "prop", name, element);
+            } else if (type.PropTypes !== void 0 && !propTypesMisspellWarningShown) {
+              propTypesMisspellWarningShown = true;
+              var _name = getComponentNameFromType(type);
+              error("Component %s declared `PropTypes` instead of `propTypes`. Did you misspell the property assignment?", _name || "Unknown");
+            }
+            if (typeof type.getDefaultProps === "function" && !type.getDefaultProps.isReactClassApproved) {
+              error("getDefaultProps is only used on classic React.createClass definitions. Use a static property named `defaultProps` instead.");
+            }
+          }
+        }
+        function validateFragmentProps(fragment) {
+          {
+            var keys = Object.keys(fragment.props);
+            for (var i = 0; i < keys.length; i++) {
+              var key = keys[i];
+              if (key !== "children" && key !== "key") {
+                setCurrentlyValidatingElement$1(fragment);
+                error("Invalid prop `%s` supplied to `React.Fragment`. React.Fragment can only have `key` and `children` props.", key);
+                setCurrentlyValidatingElement$1(null);
+                break;
+              }
+            }
+            if (fragment.ref !== null) {
+              setCurrentlyValidatingElement$1(fragment);
+              error("Invalid attribute `ref` supplied to `React.Fragment`.");
+              setCurrentlyValidatingElement$1(null);
+            }
+          }
+        }
+        function createElementWithValidation(type, props, children) {
+          var validType = isValidElementType(type);
+          if (!validType) {
+            var info = "";
+            if (type === void 0 || typeof type === "object" && type !== null && Object.keys(type).length === 0) {
+              info += " You likely forgot to export your component from the file it's defined in, or you might have mixed up default and named imports.";
+            }
+            var sourceInfo = getSourceInfoErrorAddendumForProps(props);
+            if (sourceInfo) {
+              info += sourceInfo;
+            } else {
+              info += getDeclarationErrorAddendum();
+            }
+            var typeString;
+            if (type === null) {
+              typeString = "null";
+            } else if (isArray(type)) {
+              typeString = "array";
+            } else if (type !== void 0 && type.$$typeof === REACT_ELEMENT_TYPE) {
+              typeString = "<" + (getComponentNameFromType(type.type) || "Unknown") + " />";
+              info = " Did you accidentally export a JSX literal instead of a component?";
+            } else {
+              typeString = typeof type;
+            }
+            {
+              error("React.createElement: type is invalid -- expected a string (for built-in components) or a class/function (for composite components) but got: %s.%s", typeString, info);
+            }
+          }
+          var element = createElement.apply(this, arguments);
+          if (element == null) {
+            return element;
+          }
+          if (validType) {
+            for (var i = 2; i < arguments.length; i++) {
+              validateChildKeys(arguments[i], type);
+            }
+          }
+          if (type === REACT_FRAGMENT_TYPE) {
+            validateFragmentProps(element);
+          } else {
+            validatePropTypes(element);
+          }
+          return element;
+        }
+        var didWarnAboutDeprecatedCreateFactory = false;
+        function createFactoryWithValidation(type) {
+          var validatedFactory = createElementWithValidation.bind(null, type);
+          validatedFactory.type = type;
+          {
+            if (!didWarnAboutDeprecatedCreateFactory) {
+              didWarnAboutDeprecatedCreateFactory = true;
+              warn("React.createFactory() is deprecated and will be removed in a future major release. Consider using JSX or use React.createElement() directly instead.");
+            }
+            Object.defineProperty(validatedFactory, "type", {
+              enumerable: false,
+              get: function() {
+                warn("Factory.type is deprecated. Access the class directly before passing it to createFactory.");
+                Object.defineProperty(this, "type", {
+                  value: type
+                });
+                return type;
+              }
+            });
+          }
+          return validatedFactory;
+        }
+        function cloneElementWithValidation(element, props, children) {
+          var newElement = cloneElement.apply(this, arguments);
+          for (var i = 2; i < arguments.length; i++) {
+            validateChildKeys(arguments[i], newElement.type);
+          }
+          validatePropTypes(newElement);
+          return newElement;
+        }
+        function startTransition(scope, options) {
+          var prevTransition = ReactCurrentBatchConfig.transition;
+          ReactCurrentBatchConfig.transition = {};
+          var currentTransition = ReactCurrentBatchConfig.transition;
+          {
+            ReactCurrentBatchConfig.transition._updatedFibers = /* @__PURE__ */ new Set();
+          }
+          try {
+            scope();
+          } finally {
+            ReactCurrentBatchConfig.transition = prevTransition;
+            {
+              if (prevTransition === null && currentTransition._updatedFibers) {
+                var updatedFibersCount = currentTransition._updatedFibers.size;
+                if (updatedFibersCount > 10) {
+                  warn("Detected a large number of updates inside startTransition. If this is due to a subscription please re-write it to use React provided hooks. Otherwise concurrent mode guarantees are off the table.");
+                }
+                currentTransition._updatedFibers.clear();
+              }
+            }
+          }
+        }
+        var didWarnAboutMessageChannel = false;
+        var enqueueTaskImpl = null;
+        function enqueueTask(task) {
+          if (enqueueTaskImpl === null) {
+            try {
+              var requireString = ("require" + Math.random()).slice(0, 7);
+              var nodeRequire = module && module[requireString];
+              enqueueTaskImpl = nodeRequire.call(module, "timers").setImmediate;
+            } catch (_err) {
+              enqueueTaskImpl = function(callback) {
+                {
+                  if (didWarnAboutMessageChannel === false) {
+                    didWarnAboutMessageChannel = true;
+                    if (typeof MessageChannel === "undefined") {
+                      error("This browser does not have a MessageChannel implementation, so enqueuing tasks via await act(async () => ...) will fail. Please file an issue at https://github.com/facebook/react/issues if you encounter this warning.");
+                    }
+                  }
+                }
+                var channel = new MessageChannel();
+                channel.port1.onmessage = callback;
+                channel.port2.postMessage(void 0);
+              };
+            }
+          }
+          return enqueueTaskImpl(task);
+        }
+        var actScopeDepth = 0;
+        var didWarnNoAwaitAct = false;
+        function act(callback) {
+          {
+            var prevActScopeDepth = actScopeDepth;
+            actScopeDepth++;
+            if (ReactCurrentActQueue.current === null) {
+              ReactCurrentActQueue.current = [];
+            }
+            var prevIsBatchingLegacy = ReactCurrentActQueue.isBatchingLegacy;
+            var result;
+            try {
+              ReactCurrentActQueue.isBatchingLegacy = true;
+              result = callback();
+              if (!prevIsBatchingLegacy && ReactCurrentActQueue.didScheduleLegacyUpdate) {
+                var queue = ReactCurrentActQueue.current;
+                if (queue !== null) {
+                  ReactCurrentActQueue.didScheduleLegacyUpdate = false;
+                  flushActQueue(queue);
+                }
+              }
+            } catch (error2) {
+              popActScope(prevActScopeDepth);
+              throw error2;
+            } finally {
+              ReactCurrentActQueue.isBatchingLegacy = prevIsBatchingLegacy;
+            }
+            if (result !== null && typeof result === "object" && typeof result.then === "function") {
+              var thenableResult = result;
+              var wasAwaited = false;
+              var thenable = {
+                then: function(resolve, reject) {
+                  wasAwaited = true;
+                  thenableResult.then(function(returnValue2) {
+                    popActScope(prevActScopeDepth);
+                    if (actScopeDepth === 0) {
+                      recursivelyFlushAsyncActWork(returnValue2, resolve, reject);
+                    } else {
+                      resolve(returnValue2);
+                    }
+                  }, function(error2) {
+                    popActScope(prevActScopeDepth);
+                    reject(error2);
+                  });
+                }
+              };
+              {
+                if (!didWarnNoAwaitAct && typeof Promise !== "undefined") {
+                  Promise.resolve().then(function() {
+                  }).then(function() {
+                    if (!wasAwaited) {
+                      didWarnNoAwaitAct = true;
+                      error("You called act(async () => ...) without await. This could lead to unexpected testing behaviour, interleaving multiple act calls and mixing their scopes. You should - await act(async () => ...);");
+                    }
+                  });
+                }
+              }
+              return thenable;
+            } else {
+              var returnValue = result;
+              popActScope(prevActScopeDepth);
+              if (actScopeDepth === 0) {
+                var _queue = ReactCurrentActQueue.current;
+                if (_queue !== null) {
+                  flushActQueue(_queue);
+                  ReactCurrentActQueue.current = null;
+                }
+                var _thenable = {
+                  then: function(resolve, reject) {
+                    if (ReactCurrentActQueue.current === null) {
+                      ReactCurrentActQueue.current = [];
+                      recursivelyFlushAsyncActWork(returnValue, resolve, reject);
+                    } else {
+                      resolve(returnValue);
+                    }
+                  }
+                };
+                return _thenable;
+              } else {
+                var _thenable2 = {
+                  then: function(resolve, reject) {
+                    resolve(returnValue);
+                  }
+                };
+                return _thenable2;
+              }
+            }
+          }
+        }
+        function popActScope(prevActScopeDepth) {
+          {
+            if (prevActScopeDepth !== actScopeDepth - 1) {
+              error("You seem to have overlapping act() calls, this is not supported. Be sure to await previous act() calls before making a new one. ");
+            }
+            actScopeDepth = prevActScopeDepth;
+          }
+        }
+        function recursivelyFlushAsyncActWork(returnValue, resolve, reject) {
+          {
+            var queue = ReactCurrentActQueue.current;
+            if (queue !== null) {
+              try {
+                flushActQueue(queue);
+                enqueueTask(function() {
+                  if (queue.length === 0) {
+                    ReactCurrentActQueue.current = null;
+                    resolve(returnValue);
+                  } else {
+                    recursivelyFlushAsyncActWork(returnValue, resolve, reject);
+                  }
+                });
+              } catch (error2) {
+                reject(error2);
+              }
+            } else {
+              resolve(returnValue);
+            }
+          }
+        }
+        var isFlushing = false;
+        function flushActQueue(queue) {
+          {
+            if (!isFlushing) {
+              isFlushing = true;
+              var i = 0;
+              try {
+                for (; i < queue.length; i++) {
+                  var callback = queue[i];
+                  do {
+                    callback = callback(true);
+                  } while (callback !== null);
+                }
+                queue.length = 0;
+              } catch (error2) {
+                queue = queue.slice(i + 1);
+                throw error2;
+              } finally {
+                isFlushing = false;
+              }
+            }
+          }
+        }
+        var createElement$1 = createElementWithValidation;
+        var cloneElement$1 = cloneElementWithValidation;
+        var createFactory = createFactoryWithValidation;
+        var Children = {
+          map: mapChildren,
+          forEach: forEachChildren,
+          count: countChildren,
+          toArray,
+          only: onlyChild
+        };
+        exports.Children = Children;
+        exports.Component = Component;
+        exports.Fragment = REACT_FRAGMENT_TYPE;
+        exports.Profiler = REACT_PROFILER_TYPE;
+        exports.PureComponent = PureComponent;
+        exports.StrictMode = REACT_STRICT_MODE_TYPE;
+        exports.Suspense = REACT_SUSPENSE_TYPE;
+        exports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = ReactSharedInternals;
+        exports.act = act;
+        exports.cloneElement = cloneElement$1;
+        exports.createContext = createContext;
+        exports.createElement = createElement$1;
+        exports.createFactory = createFactory;
+        exports.createRef = createRef;
+        exports.forwardRef = forwardRef;
+        exports.isValidElement = isValidElement;
+        exports.lazy = lazy;
+        exports.memo = memo;
+        exports.startTransition = startTransition;
+        exports.unstable_act = act;
+        exports.useCallback = useCallback;
+        exports.useContext = useContext;
+        exports.useDebugValue = useDebugValue;
+        exports.useDeferredValue = useDeferredValue;
+        exports.useEffect = useEffect;
+        exports.useId = useId;
+        exports.useImperativeHandle = useImperativeHandle;
+        exports.useInsertionEffect = useInsertionEffect;
+        exports.useLayoutEffect = useLayoutEffect;
+        exports.useMemo = useMemo;
+        exports.useReducer = useReducer;
+        exports.useRef = useRef;
+        exports.useState = useState;
+        exports.useSyncExternalStore = useSyncExternalStore;
+        exports.useTransition = useTransition;
+        exports.version = ReactVersion;
+        if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop === "function") {
+          __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop(new Error());
+        }
+      })();
+    }
+  })(react_development, react_development.exports);
+  return react_development.exports;
+}
+var hasRequiredReact;
+function requireReact() {
+  if (hasRequiredReact) return react.exports;
+  hasRequiredReact = 1;
+  if (process.env.NODE_ENV === "production") {
+    react.exports = requireReact_production_min();
+  } else {
+    react.exports = requireReact_development();
+  }
+  return react.exports;
+}
+/**
+ * @license React
+ * react-jsx-runtime.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+var hasRequiredReactJsxRuntime_production_min;
+function requireReactJsxRuntime_production_min() {
+  if (hasRequiredReactJsxRuntime_production_min) return reactJsxRuntime_production_min;
+  hasRequiredReactJsxRuntime_production_min = 1;
+  var f = requireReact(), k = Symbol.for("react.element"), l = Symbol.for("react.fragment"), m = Object.prototype.hasOwnProperty, n = f.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentOwner, p = { key: true, ref: true, __self: true, __source: true };
+  function q(c, a, g) {
+    var b, d = {}, e = null, h = null;
+    void 0 !== g && (e = "" + g);
+    void 0 !== a.key && (e = "" + a.key);
+    void 0 !== a.ref && (h = a.ref);
+    for (b in a) m.call(a, b) && !p.hasOwnProperty(b) && (d[b] = a[b]);
+    if (c && c.defaultProps) for (b in a = c.defaultProps, a) void 0 === d[b] && (d[b] = a[b]);
+    return { $$typeof: k, type: c, key: e, ref: h, props: d, _owner: n.current };
+  }
+  reactJsxRuntime_production_min.Fragment = l;
+  reactJsxRuntime_production_min.jsx = q;
+  reactJsxRuntime_production_min.jsxs = q;
+  return reactJsxRuntime_production_min;
+}
+var reactJsxRuntime_development = {};
+/**
+ * @license React
+ * react-jsx-runtime.development.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+var hasRequiredReactJsxRuntime_development;
+function requireReactJsxRuntime_development() {
+  if (hasRequiredReactJsxRuntime_development) return reactJsxRuntime_development;
+  hasRequiredReactJsxRuntime_development = 1;
+  if (process.env.NODE_ENV !== "production") {
+    (function() {
+      var React = requireReact();
+      var REACT_ELEMENT_TYPE = Symbol.for("react.element");
+      var REACT_PORTAL_TYPE = Symbol.for("react.portal");
+      var REACT_FRAGMENT_TYPE = Symbol.for("react.fragment");
+      var REACT_STRICT_MODE_TYPE = Symbol.for("react.strict_mode");
+      var REACT_PROFILER_TYPE = Symbol.for("react.profiler");
+      var REACT_PROVIDER_TYPE = Symbol.for("react.provider");
+      var REACT_CONTEXT_TYPE = Symbol.for("react.context");
+      var REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref");
+      var REACT_SUSPENSE_TYPE = Symbol.for("react.suspense");
+      var REACT_SUSPENSE_LIST_TYPE = Symbol.for("react.suspense_list");
+      var REACT_MEMO_TYPE = Symbol.for("react.memo");
+      var REACT_LAZY_TYPE = Symbol.for("react.lazy");
+      var REACT_OFFSCREEN_TYPE = Symbol.for("react.offscreen");
+      var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
+      var FAUX_ITERATOR_SYMBOL = "@@iterator";
+      function getIteratorFn(maybeIterable) {
+        if (maybeIterable === null || typeof maybeIterable !== "object") {
+          return null;
+        }
+        var maybeIterator = MAYBE_ITERATOR_SYMBOL && maybeIterable[MAYBE_ITERATOR_SYMBOL] || maybeIterable[FAUX_ITERATOR_SYMBOL];
+        if (typeof maybeIterator === "function") {
+          return maybeIterator;
+        }
+        return null;
+      }
+      var ReactSharedInternals = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+      function error(format) {
+        {
+          {
+            for (var _len2 = arguments.length, args = new Array(_len2 > 1 ? _len2 - 1 : 0), _key2 = 1; _key2 < _len2; _key2++) {
+              args[_key2 - 1] = arguments[_key2];
+            }
+            printWarning("error", format, args);
+          }
+        }
+      }
+      function printWarning(level, format, args) {
+        {
+          var ReactDebugCurrentFrame2 = ReactSharedInternals.ReactDebugCurrentFrame;
+          var stack = ReactDebugCurrentFrame2.getStackAddendum();
+          if (stack !== "") {
+            format += "%s";
+            args = args.concat([stack]);
+          }
+          var argsWithFormat = args.map(function(item) {
+            return String(item);
+          });
+          argsWithFormat.unshift("Warning: " + format);
+          Function.prototype.apply.call(console[level], console, argsWithFormat);
+        }
+      }
+      var enableScopeAPI = false;
+      var enableCacheElement = false;
+      var enableTransitionTracing = false;
+      var enableLegacyHidden = false;
+      var enableDebugTracing = false;
+      var REACT_MODULE_REFERENCE;
+      {
+        REACT_MODULE_REFERENCE = Symbol.for("react.module.reference");
+      }
+      function isValidElementType(type) {
+        if (typeof type === "string" || typeof type === "function") {
+          return true;
+        }
+        if (type === REACT_FRAGMENT_TYPE || type === REACT_PROFILER_TYPE || enableDebugTracing || type === REACT_STRICT_MODE_TYPE || type === REACT_SUSPENSE_TYPE || type === REACT_SUSPENSE_LIST_TYPE || enableLegacyHidden || type === REACT_OFFSCREEN_TYPE || enableScopeAPI || enableCacheElement || enableTransitionTracing) {
+          return true;
+        }
+        if (typeof type === "object" && type !== null) {
+          if (type.$$typeof === REACT_LAZY_TYPE || type.$$typeof === REACT_MEMO_TYPE || type.$$typeof === REACT_PROVIDER_TYPE || type.$$typeof === REACT_CONTEXT_TYPE || type.$$typeof === REACT_FORWARD_REF_TYPE || // This needs to include all possible module reference object
+          // types supported by any Flight configuration anywhere since
+          // we don't know which Flight build this will end up being used
+          // with.
+          type.$$typeof === REACT_MODULE_REFERENCE || type.getModuleId !== void 0) {
+            return true;
+          }
+        }
+        return false;
+      }
+      function getWrappedName(outerType, innerType, wrapperName) {
+        var displayName = outerType.displayName;
+        if (displayName) {
+          return displayName;
+        }
+        var functionName = innerType.displayName || innerType.name || "";
+        return functionName !== "" ? wrapperName + "(" + functionName + ")" : wrapperName;
+      }
+      function getContextName(type) {
+        return type.displayName || "Context";
+      }
+      function getComponentNameFromType(type) {
+        if (type == null) {
+          return null;
+        }
+        {
+          if (typeof type.tag === "number") {
+            error("Received an unexpected object in getComponentNameFromType(). This is likely a bug in React. Please file an issue.");
+          }
+        }
+        if (typeof type === "function") {
+          return type.displayName || type.name || null;
+        }
+        if (typeof type === "string") {
+          return type;
+        }
+        switch (type) {
+          case REACT_FRAGMENT_TYPE:
+            return "Fragment";
+          case REACT_PORTAL_TYPE:
+            return "Portal";
+          case REACT_PROFILER_TYPE:
+            return "Profiler";
+          case REACT_STRICT_MODE_TYPE:
+            return "StrictMode";
+          case REACT_SUSPENSE_TYPE:
+            return "Suspense";
+          case REACT_SUSPENSE_LIST_TYPE:
+            return "SuspenseList";
+        }
+        if (typeof type === "object") {
+          switch (type.$$typeof) {
+            case REACT_CONTEXT_TYPE:
+              var context = type;
+              return getContextName(context) + ".Consumer";
+            case REACT_PROVIDER_TYPE:
+              var provider = type;
+              return getContextName(provider._context) + ".Provider";
+            case REACT_FORWARD_REF_TYPE:
+              return getWrappedName(type, type.render, "ForwardRef");
+            case REACT_MEMO_TYPE:
+              var outerName = type.displayName || null;
+              if (outerName !== null) {
+                return outerName;
+              }
+              return getComponentNameFromType(type.type) || "Memo";
+            case REACT_LAZY_TYPE: {
+              var lazyComponent = type;
+              var payload = lazyComponent._payload;
+              var init = lazyComponent._init;
+              try {
+                return getComponentNameFromType(init(payload));
+              } catch (x) {
+                return null;
+              }
+            }
+          }
+        }
+        return null;
+      }
+      var assign = Object.assign;
+      var disabledDepth = 0;
+      var prevLog;
+      var prevInfo;
+      var prevWarn;
+      var prevError;
+      var prevGroup;
+      var prevGroupCollapsed;
+      var prevGroupEnd;
+      function disabledLog() {
+      }
+      disabledLog.__reactDisabledLog = true;
+      function disableLogs() {
+        {
+          if (disabledDepth === 0) {
+            prevLog = console.log;
+            prevInfo = console.info;
+            prevWarn = console.warn;
+            prevError = console.error;
+            prevGroup = console.group;
+            prevGroupCollapsed = console.groupCollapsed;
+            prevGroupEnd = console.groupEnd;
+            var props = {
+              configurable: true,
+              enumerable: true,
+              value: disabledLog,
+              writable: true
+            };
+            Object.defineProperties(console, {
+              info: props,
+              log: props,
+              warn: props,
+              error: props,
+              group: props,
+              groupCollapsed: props,
+              groupEnd: props
+            });
+          }
+          disabledDepth++;
+        }
+      }
+      function reenableLogs() {
+        {
+          disabledDepth--;
+          if (disabledDepth === 0) {
+            var props = {
+              configurable: true,
+              enumerable: true,
+              writable: true
+            };
+            Object.defineProperties(console, {
+              log: assign({}, props, {
+                value: prevLog
+              }),
+              info: assign({}, props, {
+                value: prevInfo
+              }),
+              warn: assign({}, props, {
+                value: prevWarn
+              }),
+              error: assign({}, props, {
+                value: prevError
+              }),
+              group: assign({}, props, {
+                value: prevGroup
+              }),
+              groupCollapsed: assign({}, props, {
+                value: prevGroupCollapsed
+              }),
+              groupEnd: assign({}, props, {
+                value: prevGroupEnd
+              })
+            });
+          }
+          if (disabledDepth < 0) {
+            error("disabledDepth fell below zero. This is a bug in React. Please file an issue.");
+          }
+        }
+      }
+      var ReactCurrentDispatcher = ReactSharedInternals.ReactCurrentDispatcher;
+      var prefix;
+      function describeBuiltInComponentFrame(name, source, ownerFn) {
+        {
+          if (prefix === void 0) {
+            try {
+              throw Error();
+            } catch (x) {
+              var match = x.stack.trim().match(/\n( *(at )?)/);
+              prefix = match && match[1] || "";
+            }
+          }
+          return "\n" + prefix + name;
+        }
+      }
+      var reentry = false;
+      var componentFrameCache;
+      {
+        var PossiblyWeakMap = typeof WeakMap === "function" ? WeakMap : Map;
+        componentFrameCache = new PossiblyWeakMap();
+      }
+      function describeNativeComponentFrame(fn, construct) {
+        if (!fn || reentry) {
+          return "";
+        }
+        {
+          var frame = componentFrameCache.get(fn);
+          if (frame !== void 0) {
+            return frame;
+          }
+        }
+        var control;
+        reentry = true;
+        var previousPrepareStackTrace = Error.prepareStackTrace;
+        Error.prepareStackTrace = void 0;
+        var previousDispatcher;
+        {
+          previousDispatcher = ReactCurrentDispatcher.current;
+          ReactCurrentDispatcher.current = null;
+          disableLogs();
+        }
+        try {
+          if (construct) {
+            var Fake = function() {
+              throw Error();
+            };
+            Object.defineProperty(Fake.prototype, "props", {
+              set: function() {
+                throw Error();
+              }
+            });
+            if (typeof Reflect === "object" && Reflect.construct) {
+              try {
+                Reflect.construct(Fake, []);
+              } catch (x) {
+                control = x;
+              }
+              Reflect.construct(fn, [], Fake);
+            } else {
+              try {
+                Fake.call();
+              } catch (x) {
+                control = x;
+              }
+              fn.call(Fake.prototype);
+            }
+          } else {
+            try {
+              throw Error();
+            } catch (x) {
+              control = x;
+            }
+            fn();
+          }
+        } catch (sample) {
+          if (sample && control && typeof sample.stack === "string") {
+            var sampleLines = sample.stack.split("\n");
+            var controlLines = control.stack.split("\n");
+            var s = sampleLines.length - 1;
+            var c = controlLines.length - 1;
+            while (s >= 1 && c >= 0 && sampleLines[s] !== controlLines[c]) {
+              c--;
+            }
+            for (; s >= 1 && c >= 0; s--, c--) {
+              if (sampleLines[s] !== controlLines[c]) {
+                if (s !== 1 || c !== 1) {
+                  do {
+                    s--;
+                    c--;
+                    if (c < 0 || sampleLines[s] !== controlLines[c]) {
+                      var _frame = "\n" + sampleLines[s].replace(" at new ", " at ");
+                      if (fn.displayName && _frame.includes("<anonymous>")) {
+                        _frame = _frame.replace("<anonymous>", fn.displayName);
+                      }
+                      {
+                        if (typeof fn === "function") {
+                          componentFrameCache.set(fn, _frame);
+                        }
+                      }
+                      return _frame;
+                    }
+                  } while (s >= 1 && c >= 0);
+                }
+                break;
+              }
+            }
+          }
+        } finally {
+          reentry = false;
+          {
+            ReactCurrentDispatcher.current = previousDispatcher;
+            reenableLogs();
+          }
+          Error.prepareStackTrace = previousPrepareStackTrace;
+        }
+        var name = fn ? fn.displayName || fn.name : "";
+        var syntheticFrame = name ? describeBuiltInComponentFrame(name) : "";
+        {
+          if (typeof fn === "function") {
+            componentFrameCache.set(fn, syntheticFrame);
+          }
+        }
+        return syntheticFrame;
+      }
+      function describeFunctionComponentFrame(fn, source, ownerFn) {
+        {
+          return describeNativeComponentFrame(fn, false);
+        }
+      }
+      function shouldConstruct(Component) {
+        var prototype = Component.prototype;
+        return !!(prototype && prototype.isReactComponent);
+      }
+      function describeUnknownElementTypeFrameInDEV(type, source, ownerFn) {
+        if (type == null) {
+          return "";
+        }
+        if (typeof type === "function") {
+          {
+            return describeNativeComponentFrame(type, shouldConstruct(type));
+          }
+        }
+        if (typeof type === "string") {
+          return describeBuiltInComponentFrame(type);
+        }
+        switch (type) {
+          case REACT_SUSPENSE_TYPE:
+            return describeBuiltInComponentFrame("Suspense");
+          case REACT_SUSPENSE_LIST_TYPE:
+            return describeBuiltInComponentFrame("SuspenseList");
+        }
+        if (typeof type === "object") {
+          switch (type.$$typeof) {
+            case REACT_FORWARD_REF_TYPE:
+              return describeFunctionComponentFrame(type.render);
+            case REACT_MEMO_TYPE:
+              return describeUnknownElementTypeFrameInDEV(type.type, source, ownerFn);
+            case REACT_LAZY_TYPE: {
+              var lazyComponent = type;
+              var payload = lazyComponent._payload;
+              var init = lazyComponent._init;
+              try {
+                return describeUnknownElementTypeFrameInDEV(init(payload), source, ownerFn);
+              } catch (x) {
+              }
+            }
+          }
+        }
+        return "";
+      }
+      var hasOwnProperty = Object.prototype.hasOwnProperty;
+      var loggedTypeFailures = {};
+      var ReactDebugCurrentFrame = ReactSharedInternals.ReactDebugCurrentFrame;
+      function setCurrentlyValidatingElement(element) {
+        {
+          if (element) {
+            var owner = element._owner;
+            var stack = describeUnknownElementTypeFrameInDEV(element.type, element._source, owner ? owner.type : null);
+            ReactDebugCurrentFrame.setExtraStackFrame(stack);
+          } else {
+            ReactDebugCurrentFrame.setExtraStackFrame(null);
+          }
+        }
+      }
+      function checkPropTypes(typeSpecs, values, location, componentName, element) {
+        {
+          var has = Function.call.bind(hasOwnProperty);
+          for (var typeSpecName in typeSpecs) {
+            if (has(typeSpecs, typeSpecName)) {
+              var error$1 = void 0;
+              try {
+                if (typeof typeSpecs[typeSpecName] !== "function") {
+                  var err = Error((componentName || "React class") + ": " + location + " type `" + typeSpecName + "` is invalid; it must be a function, usually from the `prop-types` package, but received `" + typeof typeSpecs[typeSpecName] + "`.This often happens because of typos such as `PropTypes.function` instead of `PropTypes.func`.");
+                  err.name = "Invariant Violation";
+                  throw err;
+                }
+                error$1 = typeSpecs[typeSpecName](values, typeSpecName, componentName, location, null, "SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED");
+              } catch (ex) {
+                error$1 = ex;
+              }
+              if (error$1 && !(error$1 instanceof Error)) {
+                setCurrentlyValidatingElement(element);
+                error("%s: type specification of %s `%s` is invalid; the type checker function must return `null` or an `Error` but returned a %s. You may have forgotten to pass an argument to the type checker creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and shape all require an argument).", componentName || "React class", location, typeSpecName, typeof error$1);
+                setCurrentlyValidatingElement(null);
+              }
+              if (error$1 instanceof Error && !(error$1.message in loggedTypeFailures)) {
+                loggedTypeFailures[error$1.message] = true;
+                setCurrentlyValidatingElement(element);
+                error("Failed %s type: %s", location, error$1.message);
+                setCurrentlyValidatingElement(null);
+              }
+            }
+          }
+        }
+      }
+      var isArrayImpl = Array.isArray;
+      function isArray(a) {
+        return isArrayImpl(a);
+      }
+      function typeName(value) {
+        {
+          var hasToStringTag = typeof Symbol === "function" && Symbol.toStringTag;
+          var type = hasToStringTag && value[Symbol.toStringTag] || value.constructor.name || "Object";
+          return type;
+        }
+      }
+      function willCoercionThrow(value) {
+        {
+          try {
+            testStringCoercion(value);
+            return false;
+          } catch (e) {
+            return true;
+          }
+        }
+      }
+      function testStringCoercion(value) {
+        return "" + value;
+      }
+      function checkKeyStringCoercion(value) {
+        {
+          if (willCoercionThrow(value)) {
+            error("The provided key is an unsupported type %s. This value must be coerced to a string before before using it here.", typeName(value));
+            return testStringCoercion(value);
+          }
+        }
+      }
+      var ReactCurrentOwner = ReactSharedInternals.ReactCurrentOwner;
+      var RESERVED_PROPS = {
+        key: true,
+        ref: true,
+        __self: true,
+        __source: true
+      };
+      var specialPropKeyWarningShown;
+      var specialPropRefWarningShown;
+      function hasValidRef(config2) {
+        {
+          if (hasOwnProperty.call(config2, "ref")) {
+            var getter = Object.getOwnPropertyDescriptor(config2, "ref").get;
+            if (getter && getter.isReactWarning) {
+              return false;
+            }
+          }
+        }
+        return config2.ref !== void 0;
+      }
+      function hasValidKey(config2) {
+        {
+          if (hasOwnProperty.call(config2, "key")) {
+            var getter = Object.getOwnPropertyDescriptor(config2, "key").get;
+            if (getter && getter.isReactWarning) {
+              return false;
+            }
+          }
+        }
+        return config2.key !== void 0;
+      }
+      function warnIfStringRefCannotBeAutoConverted(config2, self) {
+        {
+          if (typeof config2.ref === "string" && ReactCurrentOwner.current && self) ;
+        }
+      }
+      function defineKeyPropWarningGetter(props, displayName) {
+        {
+          var warnAboutAccessingKey = function() {
+            if (!specialPropKeyWarningShown) {
+              specialPropKeyWarningShown = true;
+              error("%s: `key` is not a prop. Trying to access it will result in `undefined` being returned. If you need to access the same value within the child component, you should pass it as a different prop. (https://reactjs.org/link/special-props)", displayName);
+            }
+          };
+          warnAboutAccessingKey.isReactWarning = true;
+          Object.defineProperty(props, "key", {
+            get: warnAboutAccessingKey,
+            configurable: true
+          });
+        }
+      }
+      function defineRefPropWarningGetter(props, displayName) {
+        {
+          var warnAboutAccessingRef = function() {
+            if (!specialPropRefWarningShown) {
+              specialPropRefWarningShown = true;
+              error("%s: `ref` is not a prop. Trying to access it will result in `undefined` being returned. If you need to access the same value within the child component, you should pass it as a different prop. (https://reactjs.org/link/special-props)", displayName);
+            }
+          };
+          warnAboutAccessingRef.isReactWarning = true;
+          Object.defineProperty(props, "ref", {
+            get: warnAboutAccessingRef,
+            configurable: true
+          });
+        }
+      }
+      var ReactElement = function(type, key, ref, self, source, owner, props) {
+        var element = {
+          // This tag allows us to uniquely identify this as a React Element
+          $$typeof: REACT_ELEMENT_TYPE,
+          // Built-in properties that belong on the element
+          type,
+          key,
+          ref,
+          props,
+          // Record the component responsible for creating this element.
+          _owner: owner
+        };
+        {
+          element._store = {};
+          Object.defineProperty(element._store, "validated", {
+            configurable: false,
+            enumerable: false,
+            writable: true,
+            value: false
+          });
+          Object.defineProperty(element, "_self", {
+            configurable: false,
+            enumerable: false,
+            writable: false,
+            value: self
+          });
+          Object.defineProperty(element, "_source", {
+            configurable: false,
+            enumerable: false,
+            writable: false,
+            value: source
+          });
+          if (Object.freeze) {
+            Object.freeze(element.props);
+            Object.freeze(element);
+          }
+        }
+        return element;
+      };
+      function jsxDEV(type, config2, maybeKey, source, self) {
+        {
+          var propName;
+          var props = {};
+          var key = null;
+          var ref = null;
+          if (maybeKey !== void 0) {
+            {
+              checkKeyStringCoercion(maybeKey);
+            }
+            key = "" + maybeKey;
+          }
+          if (hasValidKey(config2)) {
+            {
+              checkKeyStringCoercion(config2.key);
+            }
+            key = "" + config2.key;
+          }
+          if (hasValidRef(config2)) {
+            ref = config2.ref;
+            warnIfStringRefCannotBeAutoConverted(config2, self);
+          }
+          for (propName in config2) {
+            if (hasOwnProperty.call(config2, propName) && !RESERVED_PROPS.hasOwnProperty(propName)) {
+              props[propName] = config2[propName];
+            }
+          }
+          if (type && type.defaultProps) {
+            var defaultProps = type.defaultProps;
+            for (propName in defaultProps) {
+              if (props[propName] === void 0) {
+                props[propName] = defaultProps[propName];
+              }
+            }
+          }
+          if (key || ref) {
+            var displayName = typeof type === "function" ? type.displayName || type.name || "Unknown" : type;
+            if (key) {
+              defineKeyPropWarningGetter(props, displayName);
+            }
+            if (ref) {
+              defineRefPropWarningGetter(props, displayName);
+            }
+          }
+          return ReactElement(type, key, ref, self, source, ReactCurrentOwner.current, props);
+        }
+      }
+      var ReactCurrentOwner$1 = ReactSharedInternals.ReactCurrentOwner;
+      var ReactDebugCurrentFrame$1 = ReactSharedInternals.ReactDebugCurrentFrame;
+      function setCurrentlyValidatingElement$1(element) {
+        {
+          if (element) {
+            var owner = element._owner;
+            var stack = describeUnknownElementTypeFrameInDEV(element.type, element._source, owner ? owner.type : null);
+            ReactDebugCurrentFrame$1.setExtraStackFrame(stack);
+          } else {
+            ReactDebugCurrentFrame$1.setExtraStackFrame(null);
+          }
+        }
+      }
+      var propTypesMisspellWarningShown;
+      {
+        propTypesMisspellWarningShown = false;
+      }
+      function isValidElement(object2) {
+        {
+          return typeof object2 === "object" && object2 !== null && object2.$$typeof === REACT_ELEMENT_TYPE;
+        }
+      }
+      function getDeclarationErrorAddendum() {
+        {
+          if (ReactCurrentOwner$1.current) {
+            var name = getComponentNameFromType(ReactCurrentOwner$1.current.type);
+            if (name) {
+              return "\n\nCheck the render method of `" + name + "`.";
+            }
+          }
+          return "";
+        }
+      }
+      function getSourceInfoErrorAddendum(source) {
+        {
+          return "";
+        }
+      }
+      var ownerHasKeyUseWarning = {};
+      function getCurrentComponentErrorInfo(parentType) {
+        {
+          var info = getDeclarationErrorAddendum();
+          if (!info) {
+            var parentName = typeof parentType === "string" ? parentType : parentType.displayName || parentType.name;
+            if (parentName) {
+              info = "\n\nCheck the top-level render call using <" + parentName + ">.";
+            }
+          }
+          return info;
+        }
+      }
+      function validateExplicitKey(element, parentType) {
+        {
+          if (!element._store || element._store.validated || element.key != null) {
+            return;
+          }
+          element._store.validated = true;
+          var currentComponentErrorInfo = getCurrentComponentErrorInfo(parentType);
+          if (ownerHasKeyUseWarning[currentComponentErrorInfo]) {
+            return;
+          }
+          ownerHasKeyUseWarning[currentComponentErrorInfo] = true;
+          var childOwner = "";
+          if (element && element._owner && element._owner !== ReactCurrentOwner$1.current) {
+            childOwner = " It was passed a child from " + getComponentNameFromType(element._owner.type) + ".";
+          }
+          setCurrentlyValidatingElement$1(element);
+          error('Each child in a list should have a unique "key" prop.%s%s See https://reactjs.org/link/warning-keys for more information.', currentComponentErrorInfo, childOwner);
+          setCurrentlyValidatingElement$1(null);
+        }
+      }
+      function validateChildKeys(node, parentType) {
+        {
+          if (typeof node !== "object") {
+            return;
+          }
+          if (isArray(node)) {
+            for (var i = 0; i < node.length; i++) {
+              var child = node[i];
+              if (isValidElement(child)) {
+                validateExplicitKey(child, parentType);
+              }
+            }
+          } else if (isValidElement(node)) {
+            if (node._store) {
+              node._store.validated = true;
+            }
+          } else if (node) {
+            var iteratorFn = getIteratorFn(node);
+            if (typeof iteratorFn === "function") {
+              if (iteratorFn !== node.entries) {
+                var iterator = iteratorFn.call(node);
+                var step;
+                while (!(step = iterator.next()).done) {
+                  if (isValidElement(step.value)) {
+                    validateExplicitKey(step.value, parentType);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      function validatePropTypes(element) {
+        {
+          var type = element.type;
+          if (type === null || type === void 0 || typeof type === "string") {
+            return;
+          }
+          var propTypes;
+          if (typeof type === "function") {
+            propTypes = type.propTypes;
+          } else if (typeof type === "object" && (type.$$typeof === REACT_FORWARD_REF_TYPE || // Note: Memo only checks outer props here.
+          // Inner props are checked in the reconciler.
+          type.$$typeof === REACT_MEMO_TYPE)) {
+            propTypes = type.propTypes;
+          } else {
+            return;
+          }
+          if (propTypes) {
+            var name = getComponentNameFromType(type);
+            checkPropTypes(propTypes, element.props, "prop", name, element);
+          } else if (type.PropTypes !== void 0 && !propTypesMisspellWarningShown) {
+            propTypesMisspellWarningShown = true;
+            var _name = getComponentNameFromType(type);
+            error("Component %s declared `PropTypes` instead of `propTypes`. Did you misspell the property assignment?", _name || "Unknown");
+          }
+          if (typeof type.getDefaultProps === "function" && !type.getDefaultProps.isReactClassApproved) {
+            error("getDefaultProps is only used on classic React.createClass definitions. Use a static property named `defaultProps` instead.");
+          }
+        }
+      }
+      function validateFragmentProps(fragment) {
+        {
+          var keys = Object.keys(fragment.props);
+          for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            if (key !== "children" && key !== "key") {
+              setCurrentlyValidatingElement$1(fragment);
+              error("Invalid prop `%s` supplied to `React.Fragment`. React.Fragment can only have `key` and `children` props.", key);
+              setCurrentlyValidatingElement$1(null);
+              break;
+            }
+          }
+          if (fragment.ref !== null) {
+            setCurrentlyValidatingElement$1(fragment);
+            error("Invalid attribute `ref` supplied to `React.Fragment`.");
+            setCurrentlyValidatingElement$1(null);
+          }
+        }
+      }
+      var didWarnAboutKeySpread = {};
+      function jsxWithValidation(type, props, key, isStaticChildren, source, self) {
+        {
+          var validType = isValidElementType(type);
+          if (!validType) {
+            var info = "";
+            if (type === void 0 || typeof type === "object" && type !== null && Object.keys(type).length === 0) {
+              info += " You likely forgot to export your component from the file it's defined in, or you might have mixed up default and named imports.";
+            }
+            var sourceInfo = getSourceInfoErrorAddendum();
+            if (sourceInfo) {
+              info += sourceInfo;
+            } else {
+              info += getDeclarationErrorAddendum();
+            }
+            var typeString;
+            if (type === null) {
+              typeString = "null";
+            } else if (isArray(type)) {
+              typeString = "array";
+            } else if (type !== void 0 && type.$$typeof === REACT_ELEMENT_TYPE) {
+              typeString = "<" + (getComponentNameFromType(type.type) || "Unknown") + " />";
+              info = " Did you accidentally export a JSX literal instead of a component?";
+            } else {
+              typeString = typeof type;
+            }
+            error("React.jsx: type is invalid -- expected a string (for built-in components) or a class/function (for composite components) but got: %s.%s", typeString, info);
+          }
+          var element = jsxDEV(type, props, key, source, self);
+          if (element == null) {
+            return element;
+          }
+          if (validType) {
+            var children = props.children;
+            if (children !== void 0) {
+              if (isStaticChildren) {
+                if (isArray(children)) {
+                  for (var i = 0; i < children.length; i++) {
+                    validateChildKeys(children[i], type);
+                  }
+                  if (Object.freeze) {
+                    Object.freeze(children);
+                  }
+                } else {
+                  error("React.jsx: Static children should always be an array. You are likely explicitly calling React.jsxs or React.jsxDEV. Use the Babel transform instead.");
+                }
+              } else {
+                validateChildKeys(children, type);
+              }
+            }
+          }
+          {
+            if (hasOwnProperty.call(props, "key")) {
+              var componentName = getComponentNameFromType(type);
+              var keys = Object.keys(props).filter(function(k) {
+                return k !== "key";
+              });
+              var beforeExample = keys.length > 0 ? "{key: someKey, " + keys.join(": ..., ") + ": ...}" : "{key: someKey}";
+              if (!didWarnAboutKeySpread[componentName + beforeExample]) {
+                var afterExample = keys.length > 0 ? "{" + keys.join(": ..., ") + ": ...}" : "{}";
+                error('A props object containing a "key" prop is being spread into JSX:\n  let props = %s;\n  <%s {...props} />\nReact keys must be passed directly to JSX without using spread:\n  let props = %s;\n  <%s key={someKey} {...props} />', beforeExample, componentName, afterExample, componentName);
+                didWarnAboutKeySpread[componentName + beforeExample] = true;
+              }
+            }
+          }
+          if (type === REACT_FRAGMENT_TYPE) {
+            validateFragmentProps(element);
+          } else {
+            validatePropTypes(element);
+          }
+          return element;
+        }
+      }
+      function jsxWithValidationStatic(type, props, key) {
+        {
+          return jsxWithValidation(type, props, key, true);
+        }
+      }
+      function jsxWithValidationDynamic(type, props, key) {
+        {
+          return jsxWithValidation(type, props, key, false);
+        }
+      }
+      var jsx = jsxWithValidationDynamic;
+      var jsxs = jsxWithValidationStatic;
+      reactJsxRuntime_development.Fragment = REACT_FRAGMENT_TYPE;
+      reactJsxRuntime_development.jsx = jsx;
+      reactJsxRuntime_development.jsxs = jsxs;
+    })();
+  }
+  return reactJsxRuntime_development;
+}
+var hasRequiredJsxRuntime;
+function requireJsxRuntime() {
+  if (hasRequiredJsxRuntime) return jsxRuntime.exports;
+  hasRequiredJsxRuntime = 1;
+  if (process.env.NODE_ENV === "production") {
+    jsxRuntime.exports = requireReactJsxRuntime_production_min();
+  } else {
+    jsxRuntime.exports = requireReactJsxRuntime_development();
+  }
+  return jsxRuntime.exports;
+}
+var jsxRuntimeExports = requireJsxRuntime();
+var reactExports = requireReact();
+function gridPatternMetrics(viewport) {
+  const minorSize = 10 * viewport.scale;
+  const majorSize = 50 * viewport.scale;
+  return {
+    minorSize,
+    majorSize,
+    minorX: modulo$2(viewport.x, minorSize),
+    minorY: modulo$2(viewport.y, minorSize),
+    majorX: modulo$2(viewport.x, majorSize),
+    majorY: modulo$2(viewport.y, majorSize)
+  };
+}
+function modulo$2(value, divisor) {
+  return (value % divisor + divisor) % divisor;
+}
+function CadGrid({
+  viewport,
+  showGrid,
+  showAxes
+}) {
+  const id = reactExports.useId().replace(/:/g, "");
+  const metrics = gridPatternMetrics(viewport);
+  const minorId = `vai-grid-minor-${id}`;
+  const majorId = `vai-grid-major-${id}`;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-cad-grid": "true", pointerEvents: "none", children: [
+    showGrid ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("defs", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "pattern",
+          {
+            id: minorId,
+            "data-grid-pattern": "minor",
+            width: metrics.minorSize,
+            height: metrics.minorSize,
+            patternUnits: "userSpaceOnUse",
+            x: metrics.minorX,
+            y: metrics.minorY,
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: `M ${metrics.minorSize} 0 H 0 V ${metrics.minorSize}`, className: "vai-grid__minor", fill: "none" })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "pattern",
+          {
+            id: majorId,
+            "data-grid-pattern": "major",
+            width: metrics.majorSize,
+            height: metrics.majorSize,
+            patternUnits: "userSpaceOnUse",
+            x: metrics.majorX,
+            y: metrics.majorY,
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: `M ${metrics.majorSize} 0 H 0 V ${metrics.majorSize}`, className: "vai-grid__major", fill: "none" })
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { "data-grid-layer": "minor", width: "100%", height: "100%", fill: `url(#${minorId})` }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { "data-grid-layer": "major", width: "100%", height: "100%", fill: `url(#${majorId})` })
+    ] }) : null,
+    showAxes ? /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { className: "vai-grid__axes", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("line", { "data-axis": "x", x1: 0, y1: viewport.y, x2: "100%", y2: viewport.y, vectorEffect: "non-scaling-stroke" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("line", { "data-axis": "y", x1: viewport.x, y1: 0, x2: viewport.x, y2: "100%", vectorEffect: "non-scaling-stroke" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("text", { "data-axis-label": "x", x: Math.max(8, viewport.width - 18), y: viewport.y - 7, children: "X" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("text", { "data-axis-label": "y", x: viewport.x + 7, y: 14, children: "Y" })
+    ] }) : null
+  ] });
+}
+const MIN_SCALE = 0.01;
+const MAX_SCALE = 1e3;
+function screenToWorld(point, viewport) {
+  return [
+    (point[0] - viewport.x) / viewport.scale,
+    (viewport.y - point[1]) / viewport.scale
+  ];
+}
+function zoomViewportAt(viewport, screenPoint, factor) {
+  const anchor = screenToWorld(screenPoint, viewport);
+  const scale = clamp(viewport.scale * factor, MIN_SCALE, MAX_SCALE);
+  return {
+    ...viewport,
+    scale,
+    x: screenPoint[0] - anchor[0] * scale,
+    y: screenPoint[1] + anchor[1] * scale
+  };
+}
+function fitViewportToDrawing(document, size, padding = 1.2) {
+  const bounds = drawingBounds(document) ?? { minX: -50, minY: -50, maxX: 50, maxY: 50 };
+  const boundsWidth = Math.max(bounds.maxX - bounds.minX, 1);
+  const boundsHeight = Math.max(bounds.maxY - bounds.minY, 1);
+  const safePadding = Number.isFinite(padding) && padding > 0 ? padding : 1.2;
+  const scale = clamp(Math.min(
+    Math.max(size.width, 1) / (boundsWidth * safePadding),
+    Math.max(size.height, 1) / (boundsHeight * safePadding)
+  ), MIN_SCALE, MAX_SCALE);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  return {
+    x: size.width / 2 - centerX * scale,
+    y: size.height / 2 + centerY * scale,
+    scale,
+    width: size.width,
+    height: size.height
+  };
+}
+function drawingBounds(document) {
+  const bounds = [...document.geometry, ...document.annotations].filter((node) => node.visible).map(nodeBounds).filter((value) => value !== null);
+  return unionBounds(bounds);
+}
+function nodesInWorldBox(document, box) {
+  return [...document.geometry, ...document.annotations].filter((node) => node.visible).filter((node) => {
+    const bounds = nodeBounds(node);
+    return bounds !== null && boundsIntersect(bounds, box);
+  }).map((node) => node.id);
+}
+function nodeBounds(node) {
+  switch (node.type) {
+    case "point":
+      return boundsFromPoints([[node.x, node.y]]);
+    case "line":
+      return boundsFromPoints([node.start, node.end]);
+    case "ray":
+    case "xline":
+      return null;
+    case "circle":
+      return finiteCircleBounds(node.center, node.radius);
+    case "arc":
+      return arcBounds(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise);
+    case "ellipse":
+      return ellipseBounds(node);
+    case "polyline":
+      return boundsFromPoints(node.vertices.map((vertex) => vertex.point));
+    case "spline":
+      return boundsFromPoints(node.controlPoints);
+    case "text":
+      return textBounds(node);
+    case "dimension":
+      return boundsFromPoints([...node.definitionPoints, node.textPosition]);
+    case "leader":
+      return boundsFromPoints(node.points);
+    case "centerline":
+      return extendedLineBounds(node.start, node.end, node.extension);
+    case "section-hatch":
+      return boundsFromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+  }
+}
+function worldBoundsForViewport(viewport) {
+  const first = screenToWorld([0, 0], viewport);
+  const second = screenToWorld([viewport.width, viewport.height], viewport);
+  return normalizeBounds$1(first, second);
+}
+function finiteCircleBounds(center, radius) {
+  if (!finitePoint(center) || !Number.isFinite(radius) || radius < 0) return null;
+  return {
+    minX: center[0] - radius,
+    minY: center[1] - radius,
+    maxX: center[0] + radius,
+    maxY: center[1] + radius
+  };
+}
+function arcBounds(center, radius, start, end, counterClockwise) {
+  if (finiteCircleBounds(center, radius) === null || !Number.isFinite(start) || !Number.isFinite(end)) {
+    return null;
+  }
+  const candidates = [start, end, ...[0, 90, 180, 270].filter((angle) => angleOnArc(angle, start, end, counterClockwise))];
+  return boundsFromPoints(candidates.map((angle) => {
+    const radians = angle * Math.PI / 180;
+    return [center[0] + Math.cos(radians) * radius, center[1] + Math.sin(radians) * radius];
+  }));
+}
+function ellipseBounds(node) {
+  if (!finitePoint(node.center) || !finitePoint(node.majorAxis) || !Number.isFinite(node.ratio) || node.ratio <= 0) return null;
+  const [axisX, axisY] = node.majorAxis;
+  const majorRadius = Math.hypot(axisX, axisY);
+  if (majorRadius === 0) return null;
+  const minorRadius = majorRadius * node.ratio;
+  const minorX = -axisY / majorRadius * minorRadius;
+  const minorY = axisX / majorRadius * minorRadius;
+  const extentX = Math.hypot(axisX, minorX);
+  const extentY = Math.hypot(axisY, minorY);
+  return {
+    minX: node.center[0] - extentX,
+    minY: node.center[1] - extentY,
+    maxX: node.center[0] + extentX,
+    maxY: node.center[1] + extentY
+  };
+}
+function textBounds(node) {
+  if (!finitePoint(node.position) || !Number.isFinite(node.height) || !Number.isFinite(node.rotation)) {
+    return null;
+  }
+  const width = node.maxWidth ?? node.content.length * node.height * 0.6;
+  const left = node.alignment === "center" ? -width / 2 : node.alignment === "right" ? -width : 0;
+  const bottom = node.verticalAlignment === "top" ? -node.height : node.verticalAlignment === "middle" ? -node.height / 2 : node.verticalAlignment === "baseline" ? -node.height : 0;
+  const radians = node.rotation * Math.PI / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return boundsFromPoints([
+    [left, bottom],
+    [left + width, bottom],
+    [left + width, bottom + node.height],
+    [left, bottom + node.height]
+  ].map(([x, y]) => [
+    node.position[0] + x * cos - y * sin,
+    node.position[1] + x * sin + y * cos
+  ]));
+}
+function extendedLineBounds(start, end, extension) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const length = Math.hypot(dx, dy);
+  if (!(length > 0)) return boundsFromPoints([start]);
+  return boundsFromPoints([
+    [start[0] - dx / length * extension, start[1] - dy / length * extension],
+    [end[0] + dx / length * extension, end[1] + dy / length * extension]
+  ]);
+}
+function boundsFromPoints(points) {
+  if (points.length === 0 || points.some((point) => !finitePoint(point))) return null;
+  return {
+    minX: Math.min(...points.map((point) => point[0])),
+    minY: Math.min(...points.map((point) => point[1])),
+    maxX: Math.max(...points.map((point) => point[0])),
+    maxY: Math.max(...points.map((point) => point[1]))
+  };
+}
+function unionBounds(bounds) {
+  if (bounds.length === 0) return null;
+  return bounds.reduce((combined, current) => ({
+    minX: Math.min(combined.minX, current.minX),
+    minY: Math.min(combined.minY, current.minY),
+    maxX: Math.max(combined.maxX, current.maxX),
+    maxY: Math.max(combined.maxY, current.maxY)
+  }));
+}
+function normalizeBounds$1(first, second) {
+  return {
+    minX: Math.min(first[0], second[0]),
+    minY: Math.min(first[1], second[1]),
+    maxX: Math.max(first[0], second[0]),
+    maxY: Math.max(first[1], second[1])
+  };
+}
+function boundsIntersect(first, second) {
+  return first.minX <= second.maxX && first.maxX >= second.minX && first.minY <= second.maxY && first.maxY >= second.minY;
+}
+function angleOnArc(angle, start, end, counterClockwise) {
+  const normalizedAngle = normalizeAngle(angle);
+  const normalizedStart = normalizeAngle(start);
+  const normalizedEnd = normalizeAngle(end);
+  if (counterClockwise) {
+    return modulo$1(normalizedAngle - normalizedStart, 360) <= modulo$1(normalizedEnd - normalizedStart, 360);
+  }
+  return modulo$1(normalizedStart - normalizedAngle, 360) <= modulo$1(normalizedStart - normalizedEnd, 360);
+}
+function normalizeAngle(value) {
+  return modulo$1(value, 360);
+}
+function modulo$1(value, divisor) {
+  return (value % divisor + divisor) % divisor;
+}
+function finitePoint(point) {
+  return Number.isFinite(point[0]) && Number.isFinite(point[1]);
+}
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+function EntityRenderer({
+  node,
+  viewport,
+  selected,
+  aiGrounded = false,
+  motionRigActive = false,
+  onSelect,
+  onTextPointerDown,
+  previewDiff
+}) {
+  if (!node.visible) return null;
+  const className = `vai-entity vai-entity--${node.quality.status}${selected ? " vai-entity--selected" : ""}${aiGrounded ? " vai-entity--ai-grounded" : ""}${motionRigActive ? " vai-entity--motion-rig" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
+  const interactiveText = (node.type === "text" || node.type === "dimension") && onTextPointerDown !== void 0;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "g",
+    {
+      className,
+      "data-entity-id": node.id,
+      "data-entity-type": node.type,
+      "data-selected": selected || void 0,
+      "data-ai-grounded": aiGrounded || void 0,
+      "data-motion-rig-active": motionRigActive || void 0,
+      "data-preview-diff": previewDiff,
+      onClick: onSelect,
+      onMouseDown: interactiveText ? onTextPointerDown : void 0,
+      children: renderNode(node, viewport)
+    }
+  );
+}
+function renderNode(node, viewport) {
+  const vectorStroke = { vectorEffect: "non-scaling-stroke" };
+  switch (node.type) {
+    case "point":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: node.x, cy: node.y, r: 3 / viewport.scale, ...vectorStroke });
+    case "line":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: node.start[0], y1: node.start[1], x2: node.end[0], y2: node.end[1], ...vectorStroke });
+    case "ray":
+    case "xline": {
+      const points = clipExtendedLine(node.origin, node.direction, worldBoundsForViewport(viewport), node.type === "ray");
+      return points === null ? null : /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: points[0][0], y1: points[0][1], x2: points[1][0], y2: points[1][1], ...vectorStroke });
+    }
+    case "circle":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: node.center[0], cy: node.center[1], r: node.radius, fill: "none", ...vectorStroke });
+    case "arc":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: arcPath(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise), fill: "none", ...vectorStroke });
+    case "ellipse": {
+      const radiusX = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+      const rotation = Math.atan2(node.majorAxis[1], node.majorAxis[0]) * 180 / Math.PI;
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "ellipse",
+        {
+          cx: node.center[0],
+          cy: node.center[1],
+          rx: radiusX,
+          ry: radiusX * node.ratio,
+          transform: `rotate(${rotation} ${node.center[0]} ${node.center[1]})`,
+          fill: "none",
+          ...vectorStroke
+        }
+      );
+    }
+    case "polyline":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: polylinePath(node), fill: "none", ...vectorStroke });
+    case "spline":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: splinePath(node.controlPoints, node.closed), fill: "none", ...vectorStroke });
+    case "text":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.position, rotation: node.rotation, height: node.height, align: node.alignment, children: node.content });
+    case "dimension":
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        node.definitionPoints.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: pointsAttribute(node.definitionPoints), fill: "none", ...vectorStroke }) : null,
+        /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
+      ] });
+    case "leader": {
+      const textPosition = node.points.at(-1) ?? [0, 0];
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: pointsAttribute(node.points), fill: "none", ...vectorStroke }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: textPosition, height: node.textHeight, align: "left", children: node.content })
+      ] });
+    }
+    case "centerline": {
+      const bounds = nodeBounds(node);
+      return bounds === null ? null : /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "line",
+        {
+          x1: bounds.minX,
+          y1: bounds.minY,
+          x2: bounds.maxX,
+          y2: bounds.maxY,
+          strokeDasharray: "10 4 2 4",
+          ...vectorStroke
+        }
+      );
+    }
+    case "section-hatch":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-section-hatch": node.pattern, children: node.segments.map((segment, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "line",
+        {
+          x1: segment.start[0],
+          y1: segment.start[1],
+          x2: segment.end[0],
+          y2: segment.end[1],
+          ...vectorStroke
+        },
+        index
+      )) });
+  }
+}
+function WorldText({
+  position,
+  rotation = 0,
+  height,
+  align,
+  children
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { transform: `translate(${position[0]} ${position[1]}) rotate(${-rotation}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "text",
+    {
+      fontSize: height,
+      textAnchor: align === "center" ? "middle" : align === "right" ? "end" : "start",
+      children
+    }
+  ) });
+}
+function dimensionLabel(node) {
+  if (node.displayText !== void 0) return node.displayText;
+  const value = node.observedValue ?? node.computedValue;
+  if (value === void 0) return "—";
+  return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
+}
+function pointsAttribute(points) {
+  return points.map((point) => `${point[0]},${point[1]}`).join(" ");
+}
+function splinePath(points, closed) {
+  if (points.length === 0) return "";
+  if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
+  if (points.length === 2) return `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]}${closed ? " Z" : ""}`;
+  const commands = [`M ${points[0][0]} ${points[0][1]}`];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const control = points[index];
+    const next = points[index + 1];
+    const end = index === points.length - 2 ? next : [(control[0] + next[0]) / 2, (control[1] + next[1]) / 2];
+    commands.push(`Q ${control[0]} ${control[1]} ${end[0]} ${end[1]}`);
+  }
+  if (closed) commands.push("Z");
+  return commands.join(" ");
+}
+function polylinePath(node) {
+  if (node.vertices.length === 0) return "";
+  const output = [`M ${node.vertices[0].point[0]} ${node.vertices[0].point[1]}`];
+  const segments = node.closed ? node.vertices.length : node.vertices.length - 1;
+  for (let index = 0; index < segments; index += 1) {
+    const current = node.vertices[index];
+    const next = node.vertices[(index + 1) % node.vertices.length];
+    if (current.bulge !== void 0 && Math.abs(current.bulge) > 1e-9) {
+      const radius = Math.hypot(
+        next.point[0] - current.point[0],
+        next.point[1] - current.point[1]
+      ) * (1 + current.bulge * current.bulge) / (4 * Math.abs(current.bulge));
+      output.push(`A ${radius} ${radius} 0 ${Math.abs(current.bulge) > 1 ? 1 : 0} ${current.bulge > 0 ? 1 : 0} ${next.point[0]} ${next.point[1]}`);
+    } else {
+      output.push(`L ${next.point[0]} ${next.point[1]}`);
+    }
+  }
+  if (node.closed) output.push("Z");
+  return output.join(" ");
+}
+function arcPath(center, radius, start, end, counterClockwise) {
+  const point = (angle) => {
+    const radians = angle * Math.PI / 180;
+    return [center[0] + radius * Math.cos(radians), center[1] + radius * Math.sin(radians)];
+  };
+  const first = point(start);
+  const last = point(end);
+  const span = counterClockwise ? modulo(end - start, 360) : modulo(start - end, 360);
+  return `M ${first[0]} ${first[1]} A ${radius} ${radius} 0 ${span > 180 ? 1 : 0} ${counterClockwise ? 1 : 0} ${last[0]} ${last[1]}`;
+}
+function clipExtendedLine(origin, direction, bounds, ray) {
+  if (Math.hypot(direction[0], direction[1]) <= 1e-9) return null;
+  let minimum = ray ? 0 : Number.NEGATIVE_INFINITY;
+  let maximum = Number.POSITIVE_INFINITY;
+  for (const [axisOrigin, axisDirection, low, high] of [
+    [origin[0], direction[0], bounds.minX, bounds.maxX],
+    [origin[1], direction[1], bounds.minY, bounds.maxY]
+  ]) {
+    if (Math.abs(axisDirection) <= 1e-9) {
+      if (axisOrigin < low || axisOrigin > high) return null;
+      continue;
+    }
+    const first = (low - axisOrigin) / axisDirection;
+    const second = (high - axisOrigin) / axisDirection;
+    minimum = Math.max(minimum, Math.min(first, second));
+    maximum = Math.min(maximum, Math.max(first, second));
+  }
+  if (minimum > maximum) return null;
+  return [
+    [origin[0] + direction[0] * minimum, origin[1] + direction[1] * minimum],
+    [origin[0] + direction[0] * maximum, origin[1] + direction[1] * maximum]
+  ];
+}
+function modulo(value, divisor) {
+  return (value % divisor + divisor) % divisor;
+}
+function SourceUnderlay({
+  source,
+  resource,
+  document
+}) {
+  const sourceFrame = document.coordinateFrames.find((frame) => frame.kind === "source" && frame.id === `frame_source_${safeId(source.id)}`) ?? document.coordinateFrames.find((frame) => frame.kind === "source");
+  const transform2 = sourceFrame == null ? void 0 : sourceFrame.transform;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-source-underlay": source.id, pointerEvents: "none", opacity: 0.28, children: /* @__PURE__ */ jsxRuntimeExports.jsx("g", { transform: transform2 === void 0 ? `translate(0 ${source.height}) scale(1 -1)` : `matrix(${transform2.join(" ")})`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "image",
+    {
+      href: resource.url,
+      x: 0,
+      y: 0,
+      width: source.width,
+      height: source.height,
+      preserveAspectRatio: "none"
+    }
+  ) }) });
+}
+function safeId(value) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+function SourceLayer({
+  document,
+  source,
+  sourceUrl
+}) {
+  if (source === void 0 || sourceUrl === null) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    SourceUnderlay,
+    {
+      source,
+      resource: { url: sourceUrl, dispose() {
+      } },
+      document
+    }
+  );
+}
+function GeometryLayer({
+  nodes,
+  viewport,
+  selectedIds,
+  attentionIds,
+  onSelect
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-layer": "geometry", children: nodes.map((node) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+    EntityRenderer,
+    {
+      node,
+      viewport,
+      selected: selectedIds.includes(node.id),
+      aiGrounded: attentionIds.includes(node.id),
+      onSelect: (event) => onSelect(node.id, event)
+    },
+    node.id
+  )) });
+}
+function AnnotationLayer({
+  nodes,
+  viewport,
+  selectedIds,
+  attentionIds,
+  onSelect
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-layer": "annotations", children: nodes.map((node) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+    EntityRenderer,
+    {
+      node,
+      viewport,
+      selected: selectedIds.includes(node.id),
+      aiGrounded: attentionIds.includes(node.id),
+      onSelect: (event) => onSelect(node.id, event)
+    },
+    node.id
+  )) });
+}
+function RelationLayer({
+  document,
+  viewport
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { className: "vai-relations", "data-layer": "relations", children: document.relations.filter((relation) => relation.visible && relation.plane !== "topology").flatMap((relation) => relationSegments(document, relation, viewport)) });
+}
+function SelectionLayer({
+  box
+}) {
+  if (box === null) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "rect",
+    {
+      "data-selection-box": "true",
+      "data-layer": "selection",
+      x: Math.min(box.start[0], box.current[0]),
+      y: Math.min(box.start[1], box.current[1]),
+      width: Math.abs(box.current[0] - box.start[0]),
+      height: Math.abs(box.current[1] - box.start[1]),
+      className: "vai-canvas__selection-box",
+      pointerEvents: "none"
+    }
+  );
+}
+function relationSegments(document, relation, viewport) {
+  const centers = relationNodeIds(relation).flatMap((id) => {
+    const node = [...document.geometry, ...document.annotations].find((candidate) => candidate.id === id);
+    const bounds = node === void 0 ? null : nodeBounds(node);
+    return bounds === null ? [] : [[(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2]];
+  });
+  return centers.slice(1).map((center, index) => {
+    const start = centers[index];
+    const midpoint = [(start[0] + center[0]) / 2, (start[1] + center[1]) / 2];
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-relation-id": relation.id, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: start[0], y1: start[1], x2: center[0], y2: center[1], vectorEffect: "non-scaling-stroke" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("g", { transform: `translate(${midpoint[0]} ${midpoint[1]}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("text", { fontSize: 10 / Math.max(viewport.scale, 1e-3), textAnchor: "middle", children: relation.kind }) })
+    ] }, `${relation.id}:${index}`);
+  });
+}
+function relationNodeIds(relation) {
+  switch (relation.type) {
+    case "topology":
+      return relation.nodeIds;
+    case "constraint":
+      return relation.geometryIds;
+    case "association":
+      return [relation.annotationId, ...relation.geometryIds];
+    case "semantic":
+      return relation.nodeIds;
+  }
+}
+const DEFAULT_DISPLAY = {
+  grid: true,
+  axes: true,
+  relations: true,
+  annotations: true,
+  sourceUnderlay: false
+};
+function DrawingSurface({
+  snapshot,
+  viewport,
+  selectedIds,
+  attentionIds = [],
+  display: displayInput,
+  sourceUrl = null,
+  worldLayers,
+  screenLayers,
+  className = "vai-canvas",
+  onViewportChange,
+  onSelectionChange,
+  onMouseWorldChange
+}) {
+  const display = { ...DEFAULT_DISPLAY, ...displayInput };
+  const containerRef = reactExports.useRef(null);
+  const dragRef = reactExports.useRef(null);
+  const [selectionBox, setSelectionBox] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    const element = containerRef.current;
+    if (element === null) return;
+    const preventConversationScroll = (event) => event.preventDefault();
+    element.addEventListener("wheel", preventConversationScroll, { passive: false });
+    return () => element.removeEventListener("wheel", preventConversationScroll);
+  }, []);
+  const handleWheel = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onViewportChange(zoomViewportAt(viewport, eventScreenPoint(event), event.deltaY < 0 ? 1.1 : 1 / 1.1));
+  };
+  const handleMouseDown = (event) => {
+    const point = eventScreenPoint(event);
+    const boxSelect = event.button === 0 && (event.metaKey || event.ctrlKey);
+    if (event.button === 1 || event.button === 0 && !boxSelect) {
+      event.preventDefault();
+      dragRef.current = {
+        kind: "pan",
+        start: point,
+        viewport,
+        clearSelectionOnClick: event.button === 0 && isBlankCanvasTarget(event)
+      };
+      return;
+    }
+    if (!boxSelect) return;
+    dragRef.current = { kind: "box", start: point, current: point, additive: true };
+    setSelectionBox({ start: point, current: point });
+  };
+  const handleMouseMove = (event) => {
+    const point = eventScreenPoint(event);
+    onMouseWorldChange == null ? void 0 : onMouseWorldChange(screenToWorld(point, viewport));
+    const drag = dragRef.current;
+    if ((drag == null ? void 0 : drag.kind) === "pan") {
+      onViewportChange({
+        ...drag.viewport,
+        x: drag.viewport.x + point[0] - drag.start[0],
+        y: drag.viewport.y + point[1] - drag.start[1]
+      });
+    } else if ((drag == null ? void 0 : drag.kind) === "box") {
+      drag.current = point;
+      setSelectionBox({ start: drag.start, current: point });
+    }
+  };
+  const handleMouseUp = (event) => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if ((drag == null ? void 0 : drag.kind) === "pan") {
+      const point = eventScreenPoint(event);
+      if (drag.clearSelectionOnClick && Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]) < 3) {
+        onSelectionChange([]);
+      }
+      return;
+    }
+    if ((drag == null ? void 0 : drag.kind) === "box") {
+      const point = eventScreenPoint(event);
+      if (Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]) >= 3) {
+        const first = screenToWorld(drag.start, viewport);
+        const second = screenToWorld(point, viewport);
+        const ids = nodesInWorldBox(snapshot.document, normalizeBounds(first, second));
+        onSelectionChange(drag.additive ? [.../* @__PURE__ */ new Set([...selectedIds, ...ids])] : ids);
+      }
+      setSelectionBox(null);
+    }
+  };
+  const selectEntity = (id, event) => {
+    event.stopPropagation();
+    onSelectionChange(event.metaKey || event.ctrlKey ? selectedIds.includes(id) ? selectedIds.filter((selectedId) => selectedId !== id) : [...selectedIds, id] : [id]);
+  };
+  const handleKeyDown = (event) => {
+    if (event.key !== "Escape") return;
+    dragRef.current = null;
+    setSelectionBox(null);
+    onSelectionChange([]);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      ref: containerRef,
+      className,
+      "data-canvas-root": "true",
+      "data-controlled-drawing-surface": "true",
+      role: "application",
+      "aria-label": "可交互图纸画布",
+      tabIndex: 0,
+      onKeyDown: handleKeyDown,
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "svg",
+        {
+          className: "vai-canvas__svg",
+          width: "100%",
+          height: "100%",
+          "aria-label": "图纸画布",
+          onWheel: handleWheel,
+          onMouseDown: handleMouseDown,
+          onMouseMove: handleMouseMove,
+          onMouseUp: handleMouseUp,
+          onMouseLeave: () => onMouseWorldChange == null ? void 0 : onMouseWorldChange(null),
+          onDoubleClick: () => onViewportChange(fitViewportToDrawing(snapshot.document, viewport)),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(CadGrid, { viewport, showGrid: display.grid, showAxes: display.axes }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { "data-canvas-background": "true", width: "100%", height: "100%", fill: "transparent" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { transform: `translate(${viewport.x} ${viewport.y}) scale(${viewport.scale} ${-viewport.scale})`, children: [
+              display.sourceUnderlay ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                SourceLayer,
+                {
+                  document: snapshot.document,
+                  source: snapshot.source,
+                  sourceUrl
+                }
+              ) : null,
+              display.relations ? /* @__PURE__ */ jsxRuntimeExports.jsx(RelationLayer, { document: snapshot.document, viewport }) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                GeometryLayer,
+                {
+                  nodes: snapshot.document.geometry,
+                  viewport,
+                  selectedIds,
+                  attentionIds,
+                  onSelect: selectEntity
+                }
+              ),
+              display.annotations ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                AnnotationLayer,
+                {
+                  nodes: snapshot.document.annotations,
+                  viewport,
+                  selectedIds,
+                  attentionIds,
+                  onSelect: selectEntity
+                }
+              ) : null,
+              worldLayers
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(SelectionLayer, { box: selectionBox }),
+            screenLayers
+          ]
+        }
+      )
+    }
+  );
+}
+function eventScreenPoint(event) {
+  const target = event.currentTarget;
+  const svg = target.tagName.toLowerCase() === "svg" ? target : target.ownerSVGElement;
+  const bounds = svg == null ? void 0 : svg.getBoundingClientRect();
+  return [event.clientX - ((bounds == null ? void 0 : bounds.left) ?? 0), event.clientY - ((bounds == null ? void 0 : bounds.top) ?? 0)];
+}
+function isBlankCanvasTarget(event) {
+  var _a2;
+  const target = event.target;
+  return target === event.currentTarget || ((_a2 = target.dataset) == null ? void 0 : _a2.canvasBackground) === "true";
+}
+function normalizeBounds(first, second) {
+  return {
+    minX: Math.min(first[0], second[0]),
+    minY: Math.min(first[1], second[1]),
+    maxX: Math.max(first[0], second[0]),
+    maxY: Math.max(first[1], second[1])
+  };
+}
+function AnnotationWorkspace({ namespace, runtime, state }) {
+  var _a2;
+  const snapshot = useObservable(runtime.snapshot);
+  const viewport = useObservable(runtime.viewport);
+  const selectedIds = useObservable(runtime.selection);
+  const presentation = useObservable(runtime.presentation);
+  const annotationState = useObservable(state);
+  const displaySnapshot = presentation.displaySnapshot ?? snapshot;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "section",
+    {
+      className: "vai-annotation-workspace",
+      "data-annotation-workspace": "true",
+      "data-drawing-surface-namespace": namespace,
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "vai-annotation-workspace__header", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "工程图自动标注" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: displaySnapshot === null ? "等待图纸" : `${displaySnapshot.ref.drawingId} · R${displaySnapshot.ref.revision}` })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "data-annotation-workflow": annotationState.workflow.status, children: workflowLabel(annotationState.workflow.status) })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-workspace__body", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "vai-annotation-workspace__rail", "aria-label": "标注流程", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "图纸结构", title: "图纸结构", children: "⌗" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "标注候选", title: "标注候选", children: "⌖" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "冲突检查", title: "冲突检查", children: "△" })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "vai-annotation-workspace__canvas", children: displaySnapshot === null ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-annotation-workspace__empty", children: "自动标注工作区已接管。请先导入一张工程图纸。" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+            DrawingSurface,
+            {
+              snapshot: displaySnapshot,
+              viewport,
+              selectedIds,
+              display: presentation.display,
+              sourceUrl: presentation.sourceUrl,
+              className: "vai-canvas vai-annotation-workspace__surface",
+              onViewportChange: runtime.actions.setViewport,
+              onSelectionChange: runtime.actions.setSelection,
+              worldLayers: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "g",
+                {
+                  "data-annotation-candidate-layer": "true",
+                  "data-preview-active": presentation.preview === null ? void 0 : "true",
+                  pointerEvents: "none"
+                }
+              )
+            }
+          ) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "vai-annotation-workspace__inspector", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "候选" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: ((_a2 = presentation.preview) == null ? void 0 : _a2.diff.createdNodeIds.length) ?? 0 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "选中" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: selectedIds.length })
+            ] })
+          ] })
+        ] })
+      ]
+    }
+  );
+}
+function useObservable(observable) {
+  return reactExports.useSyncExternalStore(observable.subscribe, observable.getSnapshot, observable.getSnapshot);
+}
+function workflowLabel(status) {
+  return {
+    idle: "待开始",
+    running: "分析中",
+    reviewing: "检查中",
+    completed: "已完成",
+    canceled: "已取消",
+    failed: "需要处理",
+    "needs-rebase": "图纸已变化"
+  }[status];
+}
+function createAnnotationRemoteStateSource(remote, options = {}) {
+  const entries = /* @__PURE__ */ new Map();
+  const pollIntervalMs = options.pollIntervalMs ?? 1e3;
+  const ensure = (sessionId) => {
+    const current = entries.get(sessionId);
+    if (current !== void 0) return current;
+    const state = emptyState();
+    const entry = {};
+    entry.state = state;
+    entry.claim = claimOf(state);
+    entry.listeners = /* @__PURE__ */ new Set();
+    const subscribe = (listener) => {
+      entry.listeners.add(listener);
+      if (entry.listeners.size === 1) {
+        void refresh(sessionId);
+        entry.timer = setInterval(() => {
+          void refresh(sessionId);
+        }, pollIntervalMs);
+      }
+      return () => {
+        entry.listeners.delete(listener);
+        if (entry.listeners.size === 0 && entry.timer !== void 0) {
+          clearInterval(entry.timer);
+          entry.timer = void 0;
+        }
+      };
+    };
+    entry.stateObservable = { getSnapshot: () => entry.state, subscribe };
+    entry.claimObservable = { getSnapshot: () => entry.claim, subscribe };
+    entries.set(sessionId, entry);
+    return entry;
+  };
+  const refresh = async (sessionId) => {
+    const entry = ensure(sessionId);
+    if (entry.inFlight !== void 0) return entry.inFlight;
+    entry.inFlight = (async () => {
+      try {
+        const result = await remote.getSessionState(sessionId);
+        if (result.ok !== true) return;
+        const next = structuredClone(result.value);
+        if (JSON.stringify(next) === JSON.stringify(entry.state)) return;
+        entry.state = next;
+        entry.claim = claimOf(next);
+        for (const listener of entry.listeners) listener();
+      } finally {
+        entry.inFlight = void 0;
+      }
+    })();
+    return entry.inFlight;
+  };
+  return {
+    claimSource: { observe: (sessionId) => ensure(sessionId).claimObservable },
+    observeState: (sessionId) => ensure(sessionId).stateObservable,
+    refresh,
+    dispose() {
+      for (const entry of entries.values()) {
+        if (entry.timer !== void 0) clearInterval(entry.timer);
+        entry.listeners.clear();
+      }
+      entries.clear();
+    }
+  };
+}
+function emptyState() {
+  return {
+    version: 1,
+    workspaceClaimed: false,
+    activationEpoch: 0,
+    workflow: { status: "idle" }
+  };
+}
+function claimOf(state) {
+  return {
+    active: state.workspaceClaimed,
+    activationEpoch: state.activationEpoch
+  };
+}
 var _a$1;
 function $constructor(name, initializer2, params) {
   function init(inst, def) {
@@ -3251,7 +7276,7 @@ function initializeContext(params) {
     external: (params == null ? void 0 : params.external) ?? void 0
   };
 }
-function process(schema, ctx, _params = { path: [], schemaPath: [] }) {
+function process$1(schema, ctx, _params = { path: [], schemaPath: [] }) {
   var _a3, _b;
   var _a2;
   const def = schema._zod.def;
@@ -3289,7 +7314,7 @@ function process(schema, ctx, _params = { path: [], schemaPath: [] }) {
     if (parent) {
       if (!result.ref)
         result.ref = parent;
-      process(parent, ctx, params);
+      process$1(parent, ctx, params);
       ctx.seen.get(parent).isParent = true;
     }
   }
@@ -3579,14 +7604,14 @@ function isTransforming(_schema, _ctx) {
 }
 const createToJSONSchemaMethod = (schema, processors = {}) => (params) => {
   const ctx = initializeContext({ ...params, processors });
-  process(schema, ctx);
+  process$1(schema, ctx);
   extractDefs(ctx, schema);
   return finalize(ctx, schema);
 };
 const createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) => {
   const { libraryOptions, target } = params ?? {};
   const ctx = initializeContext({ ...libraryOptions ?? {}, target, io, processors });
-  process(schema, ctx);
+  process$1(schema, ctx);
   extractDefs(ctx, schema);
   return finalize(ctx, schema);
 };
@@ -3738,7 +7763,7 @@ const arrayProcessor = (schema, ctx, _json, params) => {
   if (typeof maximum === "number")
     json.maxItems = maximum;
   json.type = "array";
-  json.items = process(def.element, ctx, {
+  json.items = process$1(def.element, ctx, {
     ...params,
     path: [...params.path, "items"]
   });
@@ -3751,7 +7776,7 @@ const objectProcessor = (schema, ctx, _json, params) => {
   json.properties = {};
   const shape = def.shape;
   for (const key in shape) {
-    json.properties[key] = process(shape[key], ctx, {
+    json.properties[key] = process$1(shape[key], ctx, {
       ...params,
       path: [...params.path, "properties", key]
     });
@@ -3774,7 +7799,7 @@ const objectProcessor = (schema, ctx, _json, params) => {
     if (ctx.io === "output")
       json.additionalProperties = false;
   } else if (def.catchall) {
-    json.additionalProperties = process(def.catchall, ctx, {
+    json.additionalProperties = process$1(def.catchall, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
@@ -3783,7 +7808,7 @@ const objectProcessor = (schema, ctx, _json, params) => {
 const unionProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   const isExclusive = def.inclusive === false;
-  const options = def.options.map((x, i) => process(x, ctx, {
+  const options = def.options.map((x, i) => process$1(x, ctx, {
     ...params,
     path: [...params.path, isExclusive ? "oneOf" : "anyOf", i]
   }));
@@ -3795,11 +7820,11 @@ const unionProcessor = (schema, ctx, json, params) => {
 };
 const intersectionProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  const a = process(def.left, ctx, {
+  const a = process$1(def.left, ctx, {
     ...params,
     path: [...params.path, "allOf", 0]
   });
-  const b = process(def.right, ctx, {
+  const b = process$1(def.right, ctx, {
     ...params,
     path: [...params.path, "allOf", 1]
   });
@@ -3816,11 +7841,11 @@ const tupleProcessor = (schema, ctx, _json, params) => {
   json.type = "array";
   const prefixPath = ctx.target === "draft-2020-12" ? "prefixItems" : "items";
   const restPath = ctx.target === "draft-2020-12" ? "items" : ctx.target === "openapi-3.0" ? "items" : "additionalItems";
-  const prefixItems = def.items.map((x, i) => process(x, ctx, {
+  const prefixItems = def.items.map((x, i) => process$1(x, ctx, {
     ...params,
     path: [...params.path, prefixPath, i]
   }));
-  const rest = def.rest ? process(def.rest, ctx, {
+  const rest = def.rest ? process$1(def.rest, ctx, {
     ...params,
     path: [...params.path, restPath, ...ctx.target === "openapi-3.0" ? [def.items.length] : []]
   }) : null;
@@ -3860,7 +7885,7 @@ const recordProcessor = (schema, ctx, _json, params) => {
   const keyBag = keyType._zod.bag;
   const patterns = keyBag == null ? void 0 : keyBag.patterns;
   if (def.mode === "loose" && patterns && patterns.size > 0) {
-    const valueSchema = process(def.valueType, ctx, {
+    const valueSchema = process$1(def.valueType, ctx, {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
@@ -3870,12 +7895,12 @@ const recordProcessor = (schema, ctx, _json, params) => {
     }
   } else {
     if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
-      json.propertyNames = process(def.keyType, ctx, {
+      json.propertyNames = process$1(def.keyType, ctx, {
         ...params,
         path: [...params.path, "propertyNames"]
       });
     }
-    json.additionalProperties = process(def.valueType, ctx, {
+    json.additionalProperties = process$1(def.valueType, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
@@ -3890,7 +7915,7 @@ const recordProcessor = (schema, ctx, _json, params) => {
 };
 const nullableProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  const inner = process(def.innerType, ctx, params);
+  const inner = process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   if (ctx.target === "openapi-3.0") {
     seen.ref = def.innerType;
@@ -3901,20 +7926,20 @@ const nullableProcessor = (schema, ctx, json, params) => {
 };
 const nonoptionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
 };
 const defaultProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   json.default = JSON.parse(JSON.stringify(def.defaultValue));
 };
 const prefaultProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   if (ctx.io === "input")
@@ -3922,7 +7947,7 @@ const prefaultProcessor = (schema, ctx, json, params) => {
 };
 const catchProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   let catchValue;
@@ -3937,20 +7962,20 @@ const pipeProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   const inIsTransform = def.in._zod.traits.has("$ZodTransform");
   const innerType = ctx.io === "input" ? inIsTransform ? def.out : def.in : def.out;
-  process(innerType, ctx, params);
+  process$1(innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = innerType;
 };
 const readonlyProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   json.readOnly = true;
 };
 const optionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
 };
@@ -4896,7 +8921,7 @@ const observationArtifactRefSchema = object({
   mimeType: _enum(["image/png", "image/webp"]),
   basis: editBasisSchema
 }).strict();
-const taskRefSchema = object({
+object({
   taskId: idSchema$3,
   rootUserMessageDigest: digestSchema$1,
   authoritativeObjectiveDigest: digestSchema$1,
@@ -5116,111 +9141,6 @@ const finalizePreviewResultSchema = discriminatedUnion("status", [
     status: literal("outcome-unknown"),
     operationId: idSchema$2,
     operationBindingDigest: digestSchema
-  }).strict()
-]);
-const operationBase = {
-  operationId: protocolIdSchema,
-  sessionId: protocolIdSchema,
-  drawingId: protocolIdSchema
-};
-discriminatedUnion("mode", [
-  object({
-    ...operationBase,
-    mode: literal("semantic"),
-    candidateDigest: contentDigestSchema,
-    previewHandle: protocolIdSchema
-  }).strict(),
-  object({
-    ...operationBase,
-    mode: literal("interactive"),
-    intentId: protocolIdSchema,
-    intentDigest: contentDigestSchema,
-    effectDigest: contentDigestSchema
-  }).strict(),
-  object({
-    ...operationBase,
-    mode: literal("genesis"),
-    sourceDigest: contentDigestSchema
-  }).strict(),
-  object({
-    ...operationBase,
-    mode: literal("undo"),
-    targetCommitId: protocolIdSchema,
-    expectedCurrentRef: drawingRefSchema
-  }).strict(),
-  object({
-    ...operationBase,
-    mode: literal("redo"),
-    targetCommitId: protocolIdSchema,
-    expectedCurrentRef: drawingRefSchema
-  }).strict()
-]);
-const committedReceiptBase = {
-  operationId: protocolIdSchema,
-  operationBindingDigest: contentDigestSchema,
-  sessionId: protocolIdSchema,
-  drawingId: protocolIdSchema,
-  parentRef: drawingRefSchema,
-  resultingRef: drawingRefSchema,
-  commitId: protocolIdSchema,
-  semanticDigest: contentDigestSchema,
-  snapshotIntegrityDigest: contentDigestSchema
-};
-const committedOperationReceiptSchema = discriminatedUnion("mode", [
-  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("semantic") }).strict(),
-  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("interactive") }).strict(),
-  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("undo"), targetCommitId: protocolIdSchema }).strict(),
-  object({ ...committedReceiptBase, status: literal("committed"), mode: literal("redo"), targetCommitId: protocolIdSchema }).strict()
-]);
-const durableOperationReceiptSchema = union([
-  committedOperationReceiptSchema,
-  object({
-    status: literal("initialized"),
-    mode: literal("genesis"),
-    operationId: protocolIdSchema,
-    operationBindingDigest: contentDigestSchema,
-    sessionId: protocolIdSchema,
-    drawingId: protocolIdSchema,
-    resultingRef: drawingRefSchema,
-    semanticDigest: contentDigestSchema,
-    snapshotIntegrityDigest: contentDigestSchema,
-    initialTask: taskRefSchema,
-    taskStatus: _enum(["active", "expired"])
-  }).strict(),
-  object({
-    status: literal("no-effect"),
-    mode: _enum(["semantic", "interactive"]),
-    operationId: protocolIdSchema,
-    operationBindingDigest: contentDigestSchema,
-    sessionId: protocolIdSchema,
-    drawingId: protocolIdSchema,
-    ref: drawingRefSchema,
-    semanticDigest: contentDigestSchema
-  }).strict()
-]);
-const operationLookupResultSchema = discriminatedUnion("status", [
-  object({ status: literal("committed"), receipt: durableOperationReceiptSchema }).strict(),
-  object({ status: literal("no-effect"), receipt: durableOperationReceiptSchema }).strict(),
-  object({
-    status: literal("pending"),
-    operationId: protocolIdSchema,
-    operationBindingDigest: contentDigestSchema
-  }).strict(),
-  object({
-    status: literal("outcome-unknown"),
-    operationId: protocolIdSchema,
-    operationBindingDigest: contentDigestSchema
-  }).strict(),
-  object({
-    status: literal("recovering"),
-    operationId: protocolIdSchema,
-    operationBindingDigest: contentDigestSchema,
-    retryAfterMs: number().int().positive().max(6e4)
-  }).strict(),
-  object({ status: literal("absent") }).strict(),
-  object({
-    status: literal("digest-mismatch"),
-    operationId: protocolIdSchema
   }).strict()
 ]);
 const idSchema$1 = string().trim().min(1).max(256);
@@ -5532,7 +9452,7 @@ const drawingSpatialNodeSchema = discriminatedUnion("plane", [
   object({ plane: literal("relation"), node: relationSchema }).strict(),
   object({ plane: literal("feature"), node: featureSchema }).strict()
 ]);
-const drawingQueryRequestSchema = discriminatedUnion("kind", [
+discriminatedUnion("kind", [
   object({
     kind: literal("world-slice"),
     ref: drawingRefSchema,
@@ -5552,7 +9472,7 @@ const drawingQueryRequestSchema = discriminatedUnion("kind", [
     limit: number().int().min(1).max(200).optional()
   }).strict()
 ]);
-const drawingQueryResultSchema = discriminatedUnion("kind", [
+discriminatedUnion("kind", [
   object({
     kind: literal("world-slice"),
     ref: drawingRefSchema,
@@ -5630,7 +9550,7 @@ const workspaceCommandSchema = union([
     expectedPosition: vec2Schema
   }).strict()
 ]);
-const drawingWorkspaceCommitRequestSchema = object({
+object({
   expectedRevision: number().int().nonnegative(),
   commands: array(workspaceCommandSchema).min(1)
 }).strict();
@@ -5639,7 +9559,7 @@ discriminatedUnion("status", [
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   object({ status: literal("rejected"), message: string(), code: string().optional() }).strict()
 ]);
-const drawingInteractiveStageResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({
     status: literal("staged"),
     intentId: idSchema,
@@ -5651,11 +9571,11 @@ const drawingInteractiveStageResultSchema = discriminatedUnion("status", [
   object({ status: literal("conflict"), message: string(), snapshot: drawingWorkspaceSnapshotSchema.unwrap().optional() }).strict(),
   object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
 ]);
-const drawingUndoStageRequestSchema = object({
+object({
   targetCommitId: idSchema,
   expectedCurrentRef: drawingRefSchema
 }).strict();
-const drawingUndoStageResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({
     status: literal("staged"),
     targetCommitId: idSchema,
@@ -5666,8 +9586,7 @@ const drawingUndoStageResultSchema = discriminatedUnion("status", [
   }).strict(),
   object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
 ]);
-const drawingRedoStageRequestSchema = drawingUndoStageRequestSchema;
-const drawingRedoStageResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({
     status: literal("staged"),
     targetCommitId: idSchema,
@@ -5678,11 +9597,11 @@ const drawingRedoStageResultSchema = discriminatedUnion("status", [
   }).strict(),
   object({ status: literal("rejected"), message: string(), code: idSchema }).strict()
 ]);
-const drawingSelectionProjectionRequestSchema = object({
+object({
   expectedRef: drawingRefSchema,
   nodeIds: array(idSchema).max(256)
 }).strict();
-const drawingSelectionProjectionResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({ status: literal("projected"), projection: selectionProjectionRefSchema }).strict(),
   object({ status: literal("cleared") }).strict(),
   object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
@@ -5708,11 +9627,11 @@ const drawingMotionRigProjectionSchema = object({
   preserveConnectivity: literal(true),
   allowControlRotation: literal(false)
 }).strict();
-const drawingMotionRigRebuildRequestSchema = object({
+object({
   ref: drawingRefSchema,
   nodeIds: array(idSchema).min(1).max(256)
 }).strict();
-const drawingMotionRigResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({ status: literal("ready"), projection: drawingMotionRigProjectionSchema }).strict(),
   object({
     status: literal("needs-correction"),
@@ -5722,8 +9641,8 @@ const drawingMotionRigResultSchema = discriminatedUnion("status", [
   object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
 ]);
-const drawingMotionRigDiscardRequestSchema = object({ ref: drawingRefSchema }).strict();
-const drawingMotionRigDiscardResultSchema = discriminatedUnion("status", [
+object({ ref: drawingRefSchema }).strict();
+discriminatedUnion("status", [
   object({ status: literal("discarded") }).strict(),
   object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
   object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
@@ -5742,7 +9661,7 @@ const drawingGroundingOverlayGroupSchema = object({
   nodeIds: array(idSchema).min(1).max(256),
   interfaces: array(drawingGroundingOverlayInterfaceSchema).max(256)
 }).strict();
-const drawingGroundingOverlaySchema = object({
+object({
   version: literal(1),
   drawingRef: drawingRefSchema,
   taskId: idSchema,
@@ -5816,18 +9735,18 @@ const extensionInterfaceSchema = object({
   nodeId: idSchema,
   endpoint: _enum(["start", "end"])
 }).strict();
-const extensionPreviewCreateRequestSchema = object({
+object({
   ...extensionOwnershipShape,
   targetNodeIds: array(idSchema).min(1).max(256),
   interfaces: array(extensionInterfaceSchema).max(256).optional(),
   program: spatialEditProgramSchema
 }).strict();
-const extensionPreviewControlRequestSchema = object({
+object({
   ...extensionOwnershipShape,
   previewToken: idSchema,
   candidateDigest: idSchema
 }).strict();
-const extensionPreviewReplaceRequestSchema = object({
+object({
   ...extensionOwnershipShape,
   previewToken: idSchema,
   candidateDigest: idSchema,
@@ -5849,12 +9768,12 @@ const extensionPreviewReadyResultSchema = object({
   ref: drawingRefSchema,
   expiresAt: number().int().nonnegative()
 }).strict();
-const extensionPreviewCreateResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   extensionPreviewReadyResultSchema,
   extensionNeedsRebaseResultSchema,
   extensionRejectedResultSchema
 ]);
-const extensionPreviewAssessmentResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({
     status: literal("assessed"),
     previewToken: idSchema,
@@ -5864,17 +9783,17 @@ const extensionPreviewAssessmentResultSchema = discriminatedUnion("status", [
   extensionNeedsRebaseResultSchema,
   extensionRejectedResultSchema
 ]);
-const extensionPreviewFinalizeResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({ status: literal("finalized"), result: finalizePreviewResultSchema }).strict(),
   extensionNeedsRebaseResultSchema,
   extensionRejectedResultSchema
 ]);
-const extensionPreviewDiscardResultSchema = discriminatedUnion("status", [
+discriminatedUnion("status", [
   object({ status: literal("discarded"), ref: drawingRefSchema }).strict(),
   extensionNeedsRebaseResultSchema,
   extensionRejectedResultSchema
 ]);
-object({
+const annotationSessionStateSchema = object({
   version: literal(1),
   workspaceClaimed: boolean(),
   activationEpoch: number().int().nonnegative(),
@@ -5885,233 +9804,36 @@ object({
   }).strict()
 }).strict();
 const drawingSessionIdSchema = string().min(1);
-const nonEmptyStringSchema = string().min(1);
-const agentCodec = {
-  mode: "strict",
-  typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
-  schema: drawingSessionIdSchema
-};
 const agentParameter = {
   name: "agent",
   wire: "agentId",
   source: "lookup",
   lookup: "agent",
-  codec: agentCodec
+  codec: {
+    mode: "strict",
+    typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
+    schema: drawingSessionIdSchema
+  }
 };
-const TYPERT = {
-  package: "@vectorai/plugin-dsh-space-host",
-  face: "host",
-  schemas: [],
-  invocations: [{
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getSnapshot",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "getSnapshot",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspaceSnapshot|null", schema: drawingWorkspaceSnapshotSchema },
-    sourceLocation: serviceLocation(66)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/query",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "query",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingQueryRequest", drawingQueryRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingQueryResult", schema: drawingQueryResultSchema },
-    sourceLocation: serviceLocation(71)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/projectSelection",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "projectSelection",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingSelectionProjectionRequest", drawingSelectionProjectionRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingSelectionProjectionResult", schema: drawingSelectionProjectionResultSchema },
-    sourceLocation: serviceLocation(76)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getGroundingOverlay",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "getGroundingOverlay",
+const ANNOTATION_REMOTE = {
+  package: "@vectorai/plugin-dsh-annotation",
+  descriptors: [{
+    id: "@vectorai/plugin-dsh-annotation#drawingAnnotation/getSessionState",
+    service: "drawingAnnotation",
+    namespace: "drawingAnnotation",
+    method: "getSessionState",
     invocation: { kind: "direct" },
     scope: { context: "agent", wire: "agentId" },
     parameters: [agentParameter],
     result: {
       mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingGroundingOverlay|null",
-      schema: drawingGroundingOverlaySchema.nullable()
-    },
-    sourceLocation: serviceLocation(116)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getMotionRig",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "getMotionRig",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigProjection|null",
-      schema: drawingMotionRigProjectionSchema.nullable()
-    },
-    sourceLocation: serviceLocation(122)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/rebuildMotionRig",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "rebuildMotionRig",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest(
-      "@vectorai/plugin-space-contracts#DrawingMotionRigRebuildRequest",
-      drawingMotionRigRebuildRequestSchema
-    )],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigResult",
-      schema: drawingMotionRigResultSchema
-    },
-    sourceLocation: serviceLocation(127)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardMotionRig",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "discardMotionRig",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest(
-      "@vectorai/plugin-space-contracts#DrawingMotionRigDiscardRequest",
-      drawingMotionRigDiscardRequestSchema
-    )],
-    result: {
-      mode: "strict",
-      typeSymbol: "@vectorai/plugin-space-contracts#DrawingMotionRigDiscardResult",
-      schema: drawingMotionRigDiscardResultSchema
-    },
-    sourceLocation: serviceLocation(136)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageInteractiveEdit",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "stageInteractiveEdit",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingWorkspaceCommitRequest", drawingWorkspaceCommitRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingInteractiveStageResult", schema: drawingInteractiveStageResultSchema },
-    sourceLocation: serviceLocation(76)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageUndo",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "stageUndo",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingUndoStageRequest", drawingUndoStageRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingUndoStageResult", schema: drawingUndoStageResultSchema },
-    sourceLocation: serviceLocation(84)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/stageRedo",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "stageRedo",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#DrawingRedoStageRequest", drawingRedoStageRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingRedoStageResult", schema: drawingRedoStageResultSchema },
-    sourceLocation: serviceLocation(89)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getOperation",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "getOperation",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, stringParameter("operationId"), stringParameter("operationBindingDigest")],
-    result: { mode: "strict", typeSymbol: "@vectorai/drawing-edit-protocol#OperationLookupResult", schema: operationLookupResultSchema },
-    sourceLocation: serviceLocation(89)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/createExtensionPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "createExtensionPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#ExtensionPreviewCreateRequest", extensionPreviewCreateRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#ExtensionPreviewCreateResult", schema: extensionPreviewCreateResultSchema },
-    sourceLocation: serviceLocation(181)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/replaceExtensionPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "replaceExtensionPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#ExtensionPreviewReplaceRequest", extensionPreviewReplaceRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#ExtensionPreviewCreateResult", schema: extensionPreviewCreateResultSchema },
-    sourceLocation: serviceLocation(190)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/assessExtensionPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "assessExtensionPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest", extensionPreviewControlRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#ExtensionPreviewAssessmentResult", schema: extensionPreviewAssessmentResultSchema },
-    sourceLocation: serviceLocation(199)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/finalizeExtensionPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "finalizeExtensionPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest", extensionPreviewControlRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#ExtensionPreviewFinalizeResult", schema: extensionPreviewFinalizeResultSchema },
-    sourceLocation: serviceLocation(208)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/discardExtensionPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "discardExtensionPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter, jsonRequest("@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest", extensionPreviewControlRequestSchema)],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#ExtensionPreviewDiscardResult", schema: extensionPreviewDiscardResultSchema },
-    sourceLocation: serviceLocation(217)
-  }, {
-    id: "@vectorai/plugin-dsh-space-host#drawingSpace/getPreview",
-    service: "drawingSpace",
-    namespace: "drawingSpace",
-    method: "getPreview",
-    invocation: { kind: "direct" },
-    scope: { context: "agent", wire: "agentId" },
-    parameters: [agentParameter],
-    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#DrawingWorkspacePreview|null", schema: drawingPreviewSchema.nullable() },
-    sourceLocation: serviceLocation(103)
-  }],
-  model: { services: [], events: [], objects: [] }
+      typeSymbol: "@vectorai/plugin-space-contracts#AnnotationSessionState",
+      schema: annotationSessionStateSchema
+    }
+  }]
 };
-function jsonRequest(typeSymbol, schema) {
-  return { name: "request", wire: "request", source: "json", codec: { mode: "strict", typeSymbol, schema } };
-}
-function stringParameter(name) {
-  return {
-    name,
-    wire: name,
-    source: "json",
-    codec: { mode: "strict", typeSymbol: "string", schema: nonEmptyStringSchema }
-  };
-}
-function serviceLocation(line) {
-  return { file: "packages/plugin-dsh-space-host/src/service.ts", line, column: 3 };
-}
 export {
-  TYPERT,
-  TYPERT as default
+  ANNOTATION_REMOTE,
+  AnnotationWorkspace,
+  createAnnotationRemoteStateSource
 };

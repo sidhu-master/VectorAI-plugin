@@ -1,0 +1,46 @@
+{
+  "name": "@vectorai/plugin-dsh-annotation-client",
+  "version": "0.1.0-alpha.0",
+  "description": "Independent DSH client workspace contribution for VectorAI engineering annotation",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./lib/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./lib/index.js" },
+    "./client": { "types": "./src/client.tsx", "default": "./lib/client.js" }
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@vectorai/plugin-dsh-space-client"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "files": ["lib/index.js", "lib/client.js", "src/**/*.ts", "src/**/*.tsx"],
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-api-remotes": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.8",
+    "@vectorai/drawing-surface-api": "workspace:*",
+    "@vectorai/drawing-viewer-react": "workspace:*",
+    "@vectorai/drawing-workspace": "workspace:*",
+    "@vectorai/plugin-space-contracts": "workspace:*",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@types/react-test-renderer": "18.3.1",
+    "react-test-renderer": "18.3.1",
+    "@vectorai/drawing-core": "workspace:*"
+  }
+}

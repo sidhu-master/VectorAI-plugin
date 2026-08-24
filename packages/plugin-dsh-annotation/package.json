@@ -7,8 +7,11 @@
   "sideEffects": false,
   "main": "./lib/index.js",
   "types": "./src/index.ts",
-  "exports": { ".": { "types": "./src/index.ts", "default": "./lib/index.js" } },
-  "files": ["lib/index.js", "src/**/*.ts"],
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./lib/index.js" },
+    "./typert": { "types": "./src/typert.ts", "default": "./lib/typert.js" }
+  },
+  "files": ["lib/index.js", "lib/typert.js", "src/**/*.ts"],
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src"
@@ -17,8 +20,10 @@
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.8",
     "@vectorai/engineering-annotation": "workspace:*",
-    "@vectorai/plugin-dsh-space-host": "workspace:*"
+    "@vectorai/plugin-dsh-space-host": "workspace:*",
+    "@vectorai/plugin-space-contracts": "workspace:*"
   },
   "devDependencies": {
     "@vectorai/drawing-core": "workspace:*"

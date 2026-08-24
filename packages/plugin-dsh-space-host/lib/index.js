@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _ports, _episodeId, _drawingId, _revision, _events, _eventIds, _current, _GroundingLedger_instances, apply_fn, assertScope_fn, validateEvent_fn, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId2, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _instructions, _episodes, _epochs, _SemanticEditEpisodeStore_instances, nextEpoch_fn, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _groundingOverlays, _episodes2, _episodeSelections, _currentOperations, _terminalFinalizeResults, _SemanticEditService_instances, currentObservationResult_fn, initialSelectionCandidates_fn, resolvePartCandidates_fn, currentSelectionProjectionForRef_fn, appendGroundingEvidence_fn, commitPreview_fn, assess_fn, task_fn, preview_fn, storeCompilation_fn, updateGroundingOverlay_fn, snapshot_fn, snapshotAtTask_fn, _intents, _rigs, _getPreview_dec, _getOperation_dec, _stageRedo_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _discardMotionRig_dec, _rebuildMotionRig_dec, _getMotionRig_dec, _getGroundingOverlay_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
+var _ports, _episodeId, _drawingId, _revision, _events, _eventIds, _current, _GroundingLedger_instances, apply_fn, assertScope_fn, validateEvent_fn, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId2, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _instructions, _episodes, _epochs, _SemanticEditEpisodeStore_instances, nextEpoch_fn, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _groundingOverlays, _episodes2, _episodeSelections, _currentOperations, _terminalFinalizeResults, _SemanticEditService_instances, currentObservationResult_fn, initialSelectionCandidates_fn, resolvePartCandidates_fn, currentSelectionProjectionForRef_fn, appendGroundingEvidence_fn, commitPreview_fn, assess_fn, task_fn, preview_fn, storeCompilation_fn, updateGroundingOverlay_fn, snapshot_fn, snapshotAtTask_fn, _intents, _rigs, _states, _ttlMs, _ExtensionPreviewService_instances, validate_fn, ownedState_fn, currentRefResult_fn, expired_fn, expire_fn, _getPreview_dec, _discardExtensionPreview_dec, _finalizeExtensionPreview_dec, _assessExtensionPreview_dec, _replaceExtensionPreview_dec, _createExtensionPreview_dec, _getOperation_dec, _stageRedo_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _discardMotionRig_dec, _rebuildMotionRig_dec, _getMotionRig_dec, _getGroundingOverlay_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -8198,6 +8198,112 @@ const selectionProjectionRefSchema = object$1({
   projectionDigest: digestSchema$1,
   expiresAt: number().int().nonnegative()
 }).strict();
+const boundedTextSchema$2 = string$1().trim().min(1).max(2e3);
+const boundsSchema$1 = object$1({
+  minX: number().finite(),
+  minY: number().finite(),
+  maxX: number().finite(),
+  maxY: number().finite()
+}).strict().refine(({ minX, minY, maxX, maxY }) => minX <= maxX && minY <= maxY);
+const diagnosticSchema = object$1({
+  code: protocolIdSchema,
+  severity: _enum(["info", "candidate", "warning", "decision_required", "error"]),
+  message: boundedTextSchema$2,
+  nodeIds: array$1(protocolIdSchema).max(256).optional(),
+  action: boundedTextSchema$2.optional(),
+  facts: record(string$1(), unknown()).optional(),
+  scopeDigest: contentDigestSchema.optional(),
+  hard: boolean().optional()
+}).strict();
+const authoritativeObjectiveSchema = object$1({
+  text: string$1().trim().min(1).max(8e3),
+  attachmentContentDigests: array$1(contentDigestSchema).max(16)
+}).strict();
+const resolvedDefectSchema = object$1({
+  defectId: protocolIdSchema,
+  scopeDigest: contentDigestSchema,
+  evidenceDigests: array$1(contentDigestSchema).min(1).max(32)
+}).strict();
+const reviewEvidenceSchema = object$1({
+  kind: literal$1("reviewer"),
+  provider: protocolIdSchema,
+  providerVersion: protocolIdSchema,
+  authoritativeObjective: authoritativeObjectiveSchema,
+  renderManifest: object$1({
+    rendererVersion: protocolIdSchema,
+    beforeContentDigest: contentDigestSchema,
+    afterContentDigest: contentDigestSchema,
+    artifactContentDigest: contentDigestSchema,
+    comparisonLayout: literal$1("before | after"),
+    worldToImage: tuple([
+      number().finite(),
+      number().finite(),
+      number().finite(),
+      number().finite(),
+      number().finite(),
+      number().finite()
+    ]),
+    viewport: boundsSchema$1,
+    width: number().int().positive().max(8192),
+    height: number().int().positive().max(8192),
+    overlays: array$1(protocolIdSchema).max(32)
+  }).strict(),
+  outcome: _enum(["satisfied", "needs_revision", "unavailable"]),
+  defects: array$1(object$1({
+    defectId: protocolIdSchema,
+    code: protocolIdSchema,
+    reason: boundedTextSchema$2,
+    scopeDigest: contentDigestSchema
+  }).strict()).max(64),
+  resolvedDefects: array$1(resolvedDefectSchema).max(64)
+}).strict();
+const assessmentBase = {
+  assessmentId: protocolIdSchema,
+  taskId: protocolIdSchema,
+  drawingId: protocolIdSchema,
+  baseRef: drawingRefSchema$1,
+  previewHandle: protocolIdSchema,
+  candidateDigest: contentDigestSchema,
+  evaluationDigest: contentDigestSchema,
+  policyVersion: protocolIdSchema,
+  evaluatorVersions: array$1(protocolIdSchema).min(1).max(64),
+  effectDigest: contentDigestSchema,
+  reasons: array$1(protocolIdSchema).max(64)
+};
+const assessmentSchema = discriminatedUnion("disposition", [
+  object$1({
+    ...assessmentBase,
+    disposition: literal$1("blocked"),
+    hardDeny: boolean(),
+    nonOverridableProtected: boolean()
+  }).strict(),
+  object$1({
+    ...assessmentBase,
+    disposition: literal$1("confirmation_required"),
+    requiredEffectDigest: contentDigestSchema
+  }).strict(),
+  object$1({
+    ...assessmentBase,
+    disposition: literal$1("auto_safe"),
+    autoQualification: object$1({
+      exactScope: literal$1(true),
+      cleanDiagnostics: literal$1(true),
+      sourceConfirmed: literal$1(true),
+      reviewerSatisfied: literal$1(true),
+      inverseVerified: literal$1(true)
+    }).strict()
+  }).strict()
+]);
+object$1({
+  evaluationId: protocolIdSchema,
+  taskId: protocolIdSchema,
+  previewHandle: protocolIdSchema,
+  candidateDigest: contentDigestSchema,
+  diagnostics: array$1(diagnosticSchema).max(256),
+  mandatoryEvaluatorVersions: array$1(protocolIdSchema).min(1).max(64),
+  review: reviewEvidenceSchema,
+  evaluationDigest: contentDigestSchema
+}).strict();
 const idSchema$3 = string$1().trim().min(1).max(256);
 const digestSchema = string$1().trim().min(1).max(512);
 const finalizePreviewRequestSchema = object$1({
@@ -9058,6 +9164,84 @@ discriminatedUnion("status", [
   object$1({ status: literal$1("discarded"), ref: drawingRefSchema$1 }).strict(),
   object$1({ status: literal$1("rejected"), message: string$1(), code: string$1().optional() }).strict()
 ]);
+const extensionOwnershipShape = {
+  extensionId: idSchema,
+  workflowId: idSchema,
+  ref: drawingRefSchema$1
+};
+const extensionInterfaceSchema = object$1({
+  interfaceId: idSchema,
+  nodeId: idSchema,
+  endpoint: _enum(["start", "end"])
+}).strict();
+const extensionPreviewCreateRequestSchema = object$1({
+  ...extensionOwnershipShape,
+  targetNodeIds: array$1(idSchema).min(1).max(256),
+  interfaces: array$1(extensionInterfaceSchema).max(256).optional(),
+  program: spatialEditProgramSchema
+}).strict();
+const extensionPreviewControlRequestSchema = object$1({
+  ...extensionOwnershipShape,
+  previewToken: idSchema,
+  candidateDigest: idSchema
+}).strict();
+const extensionPreviewReplaceRequestSchema = object$1({
+  ...extensionOwnershipShape,
+  previewToken: idSchema,
+  candidateDigest: idSchema,
+  program: spatialEditProgramSchema
+}).strict();
+const extensionNeedsRebaseResultSchema = object$1({
+  status: literal$1("needs-rebase"),
+  currentRef: drawingRefSchema$1
+}).strict();
+const extensionRejectedResultSchema = object$1({
+  status: literal$1("rejected"),
+  code: idSchema,
+  message: string$1().min(1)
+}).strict();
+const extensionPreviewReadyResultSchema = object$1({
+  status: literal$1("previewed"),
+  previewToken: idSchema,
+  candidateDigest: idSchema,
+  ref: drawingRefSchema$1,
+  expiresAt: number().int().nonnegative()
+}).strict();
+discriminatedUnion("status", [
+  extensionPreviewReadyResultSchema,
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema
+]);
+discriminatedUnion("status", [
+  object$1({
+    status: literal$1("assessed"),
+    previewToken: idSchema,
+    candidateDigest: idSchema,
+    assessment: assessmentSchema
+  }).strict(),
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema
+]);
+discriminatedUnion("status", [
+  object$1({ status: literal$1("finalized"), result: finalizePreviewResultSchema }).strict(),
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema
+]);
+discriminatedUnion("status", [
+  object$1({ status: literal$1("discarded"), ref: drawingRefSchema$1 }).strict(),
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema
+]);
+object$1({
+  version: literal$1(1),
+  workspaceClaimed: boolean(),
+  activationEpoch: number().int().nonnegative(),
+  workflow: object$1({
+    status: _enum(["idle", "running", "reviewing", "completed", "canceled", "failed", "needs-rebase"]),
+    workflowId: idSchema.optional(),
+    message: string$1().min(1).optional()
+  }).strict()
+}).strict();
 string$1().min(1);
 class InMemoryDrawingRepository {
   constructor(input) {
@@ -13163,7 +13347,7 @@ class MotionRigService {
     const rig = __privateGet(this, _rigs).get(sessionId);
     if (!rig) return null;
     const snapshot = this.drawings.getSnapshot(sessionId);
-    if (!snapshot || !sameRef(snapshot.ref, rig.drawingRef)) {
+    if (!snapshot || !sameRef$1(snapshot.ref, rig.drawingRef)) {
       __privateGet(this, _rigs).delete(sessionId);
       return null;
     }
@@ -13172,7 +13356,7 @@ class MotionRigService {
   rebuild(sessionId, expectedRef, nodeIds) {
     const snapshot = this.drawings.getSnapshot(sessionId);
     if (!snapshot) return { status: "rejected", code: "DRAWING_REQUIRED", message: "No Drawing is loaded." };
-    if (!sameRef(snapshot.ref, expectedRef)) return {
+    if (!sameRef$1(snapshot.ref, expectedRef)) return {
       status: "stale",
       currentRef: structuredClone(snapshot.ref)
     };
@@ -13201,7 +13385,7 @@ class MotionRigService {
       __privateGet(this, _rigs).delete(sessionId);
       return { status: "rejected", code: "DRAWING_REQUIRED", message: "No Drawing is loaded." };
     }
-    if (expectedRef && !sameRef(snapshot.ref, expectedRef)) return {
+    if (expectedRef && !sameRef$1(snapshot.ref, expectedRef)) return {
       status: "stale",
       currentRef: structuredClone(snapshot.ref)
     };
@@ -13227,7 +13411,7 @@ function createFailure(error) {
   };
   return { state: "needs_correction", summary: "The movement constraint needs selection correction.", reason };
 }
-function sameRef(left, right) {
+function sameRef$1(left, right) {
   return left.drawingId === right.drawingId && left.revision === right.revision;
 }
 function errorMessage(error) {
@@ -13672,7 +13856,217 @@ function validReview(value) {
     return typeof item.code === "string" && typeof item.reason === "string" && typeof item.scopeDigest === "string";
   });
 }
-class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _projectSelection_dec = [Remote], _getGroundingOverlay_dec = [Remote], _getMotionRig_dec = [Remote], _rebuildMotionRig_dec = [Remote], _discardMotionRig_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _stageRedo_dec = [Remote], _getOperation_dec = [Remote], _getPreview_dec = [Remote], _a2) {
+class ExtensionPreviewService {
+  constructor(drawings, semantic, ports) {
+    __privateAdd(this, _ExtensionPreviewService_instances);
+    __privateAdd(this, _states, /* @__PURE__ */ new Map());
+    __privateAdd(this, _ttlMs);
+    this.drawings = drawings;
+    this.semantic = semantic;
+    this.ports = ports;
+    __privateSet(this, _ttlMs, ports.ttlMs ?? 15 * 6e4);
+  }
+  async create(sessionId, raw, signal) {
+    const request = extensionPreviewCreateRequestSchema.parse(raw);
+    const stale = __privateMethod(this, _ExtensionPreviewService_instances, currentRefResult_fn).call(this, sessionId, request.ref);
+    if (stale !== null) return stale;
+    if (!sameRef(request.program.baseRef, request.ref)) {
+      return rejected("EXTENSION_BASE_MISMATCH", "The extension program base does not match the requested Drawing revision.");
+    }
+    const existing = __privateGet(this, _states).get(sessionId);
+    if (existing !== void 0) {
+      if (__privateMethod(this, _ExtensionPreviewService_instances, expired_fn).call(this, existing)) __privateMethod(this, _ExtensionPreviewService_instances, expire_fn).call(this, sessionId, existing);
+      else return rejected("EXTENSION_PREVIEW_BUSY", "Another extension Preview is active for this session.");
+    }
+    signal == null ? void 0 : signal.throwIfAborted();
+    const task = this.semantic.startTask(sessionId, {
+      objective: request.program.objective,
+      rootUserMessageDigest: this.ports.digest(JSON.stringify({
+        extensionId: request.extensionId,
+        workflowId: request.workflowId,
+        ref: request.ref,
+        objective: request.program.objective
+      })),
+      policy: "auto-safe"
+    });
+    const observation = await this.semantic.observe(sessionId, { taskId: task.taskId });
+    signal == null ? void 0 : signal.throwIfAborted();
+    const context = this.semantic.buildContext(sessionId, {
+      taskId: task.taskId,
+      observationId: observation.observationId
+    });
+    const grounding = this.semantic.ground(sessionId, {
+      taskId: task.taskId,
+      contextId: context.contextId,
+      targetNodeIds: request.targetNodeIds,
+      interfaces: (request.interfaces ?? []).map(({ interfaceId, nodeId, endpoint }) => ({
+        interfaceId,
+        nodeId,
+        endpoint
+      }))
+    });
+    const preview = this.semantic.previewProgram(sessionId, {
+      taskId: task.taskId,
+      groundingId: grounding.groundingId,
+      program: {
+        ...structuredClone(request.program),
+        baseRef: structuredClone(task.baseRef),
+        targetHandle: grounding.targetHandle,
+        objective: request.program.objective
+      }
+    });
+    const state = {
+      extensionId: request.extensionId,
+      workflowId: request.workflowId,
+      baseRef: structuredClone(request.ref),
+      previewToken: this.ports.id("extension-preview"),
+      expiresAt: this.ports.now() + __privateGet(this, _ttlMs),
+      taskId: task.taskId,
+      groundingId: grounding.groundingId,
+      targetHandle: grounding.targetHandle,
+      objective: request.program.objective,
+      preview: structuredClone(preview)
+    };
+    __privateGet(this, _states).set(sessionId, state);
+    return ready(state);
+  }
+  async replace(sessionId, raw, signal) {
+    const request = extensionPreviewReplaceRequestSchema.parse(raw);
+    const checked = __privateMethod(this, _ExtensionPreviewService_instances, validate_fn).call(this, sessionId, request);
+    if ("status" in checked) return checked;
+    if (!sameRef(request.program.baseRef, checked.baseRef)) {
+      return rejected("EXTENSION_BASE_MISMATCH", "The replacement program base does not match the active Preview.");
+    }
+    signal == null ? void 0 : signal.throwIfAborted();
+    const replacement = this.semantic.previewProgram(sessionId, {
+      taskId: checked.taskId,
+      groundingId: checked.groundingId,
+      program: {
+        ...structuredClone(request.program),
+        baseRef: structuredClone(checked.baseRef),
+        targetHandle: checked.targetHandle,
+        objective: checked.objective
+      }
+    });
+    checked.preview = structuredClone(replacement);
+    checked.expiresAt = this.ports.now() + __privateGet(this, _ttlMs);
+    checked.evaluationId = void 0;
+    checked.finalized = void 0;
+    return ready(checked);
+  }
+  async assess(sessionId, raw, signal) {
+    const request = extensionPreviewControlRequestSchema.parse(raw);
+    const checked = __privateMethod(this, _ExtensionPreviewService_instances, validate_fn).call(this, sessionId, request);
+    if ("status" in checked) return checked;
+    signal == null ? void 0 : signal.throwIfAborted();
+    const evaluated = await this.semantic.evaluatePreview(sessionId, {
+      taskId: checked.taskId,
+      previewHandle: checked.preview.previewHandle,
+      candidateDigest: checked.preview.candidateDigest,
+      signal
+    });
+    checked.evaluationId = evaluated.evaluation.evaluationId;
+    return {
+      status: "assessed",
+      previewToken: checked.previewToken,
+      candidateDigest: checked.preview.candidateDigest,
+      assessment: structuredClone(evaluated.assessment)
+    };
+  }
+  async finalize(sessionId, raw) {
+    const request = extensionPreviewControlRequestSchema.parse(raw);
+    const replay = __privateMethod(this, _ExtensionPreviewService_instances, ownedState_fn).call(this, sessionId, request);
+    if (replay !== null && replay.finalized !== void 0) return structuredClone(replay.finalized);
+    const checked = __privateMethod(this, _ExtensionPreviewService_instances, validate_fn).call(this, sessionId, request);
+    if ("status" in checked) return checked;
+    if (checked.evaluationId === void 0) {
+      return rejected("EXTENSION_ASSESSMENT_REQUIRED", "The current extension Preview must be assessed before finalization.");
+    }
+    const result = this.semantic.finalizePreview(sessionId, {
+      previewHandle: checked.preview.previewHandle,
+      previewDigest: checked.preview.candidateDigest,
+      finalizeOperationId: checked.preview.finalizeOperationId,
+      finalizeOperationBindingDigest: checked.preview.finalizeOperationBindingDigest,
+      evaluationId: checked.evaluationId
+    });
+    const response = { status: "finalized", result };
+    checked.finalized = structuredClone(response);
+    return response;
+  }
+  async discard(sessionId, raw) {
+    const request = extensionPreviewControlRequestSchema.parse(raw);
+    const checked = __privateMethod(this, _ExtensionPreviewService_instances, validate_fn).call(this, sessionId, request);
+    if ("status" in checked) return checked;
+    const result = this.semantic.discardPreview(sessionId, checked.preview.previewHandle);
+    __privateGet(this, _states).delete(sessionId);
+    return result.status === "discarded" ? { status: "discarded", ref: structuredClone(checked.baseRef) } : rejected("EXTENSION_DISCARD_REJECTED", "The first-layer Preview could not be discarded.");
+  }
+  disposeSession(sessionId) {
+    const state = __privateGet(this, _states).get(sessionId);
+    if (state === void 0) return;
+    if (state.finalized === void 0) {
+      try {
+        this.semantic.discardPreview(sessionId, state.preview.previewHandle);
+      } catch {
+      }
+    }
+    __privateGet(this, _states).delete(sessionId);
+  }
+}
+_states = new WeakMap();
+_ttlMs = new WeakMap();
+_ExtensionPreviewService_instances = new WeakSet();
+validate_fn = function(sessionId, request) {
+  const state = __privateMethod(this, _ExtensionPreviewService_instances, ownedState_fn).call(this, sessionId, request);
+  if (state === null) return rejected("EXTENSION_PREVIEW_NOT_FOUND", "No Preview belongs to this extension workflow.");
+  if (state.previewToken !== request.previewToken || state.preview.candidateDigest !== request.candidateDigest) return rejected("EXTENSION_PREVIEW_MISMATCH", "The Preview token or candidate digest is no longer current.");
+  if (__privateMethod(this, _ExtensionPreviewService_instances, expired_fn).call(this, state)) {
+    __privateMethod(this, _ExtensionPreviewService_instances, expire_fn).call(this, sessionId, state);
+    return rejected("EXTENSION_PREVIEW_EXPIRED", "The extension Preview token expired.");
+  }
+  if (!sameRef(request.ref, state.baseRef)) {
+    return rejected("EXTENSION_PREVIEW_BINDING_MISMATCH", "The request is not bound to the active Preview revision.");
+  }
+  const stale = __privateMethod(this, _ExtensionPreviewService_instances, currentRefResult_fn).call(this, sessionId, state.baseRef);
+  return stale ?? state;
+};
+ownedState_fn = function(sessionId, request) {
+  const state = __privateGet(this, _states).get(sessionId);
+  return state !== void 0 && state.extensionId === request.extensionId && state.workflowId === request.workflowId ? state : null;
+};
+currentRefResult_fn = function(sessionId, ref) {
+  const snapshot = this.drawings.getSnapshot(sessionId);
+  if (snapshot === null) {
+    return rejected("DRAWING_REQUIRED", "No Drawing is loaded for this session.");
+  }
+  return sameRef(snapshot.ref, ref) ? null : { status: "needs-rebase", currentRef: structuredClone(snapshot.ref) };
+};
+expired_fn = function(state) {
+  return this.ports.now() > state.expiresAt;
+};
+expire_fn = function(sessionId, state) {
+  try {
+    this.semantic.discardPreview(sessionId, state.preview.previewHandle);
+  } catch {
+  }
+  if (__privateGet(this, _states).get(sessionId) === state) __privateGet(this, _states).delete(sessionId);
+};
+function ready(state) {
+  return {
+    status: "previewed",
+    previewToken: state.previewToken,
+    candidateDigest: state.preview.candidateDigest,
+    ref: structuredClone(state.baseRef),
+    expiresAt: state.expiresAt
+  };
+}
+function rejected(code, message) {
+  return { status: "rejected", code, message };
+}
+function sameRef(left, right) {
+  return left.drawingId === right.drawingId && left.revision === right.revision;
+}
+class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_dec = [Remote], _query_dec = [Remote], _projectSelection_dec = [Remote], _getGroundingOverlay_dec = [Remote], _getMotionRig_dec = [Remote], _rebuildMotionRig_dec = [Remote], _discardMotionRig_dec = [Remote], _stageInteractiveEdit_dec = [Remote], _stageUndo_dec = [Remote], _stageRedo_dec = [Remote], _getOperation_dec = [Remote], _createExtensionPreview_dec = [Remote], _replaceExtensionPreview_dec = [Remote], _assessExtensionPreview_dec = [Remote], _finalizeExtensionPreview_dec = [Remote], _discardExtensionPreview_dec = [Remote], _getPreview_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingSpace");
     __runInitializers(_init, 5, this);
@@ -13680,6 +14074,7 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
     __publicField(this, "semantic");
     __publicField(this, "interactive");
     __publicField(this, "motionRigs");
+    __publicField(this, "extensionPreviews");
     this.drawings = new InMemoryDrawingRepository({
       vectorizer: new LocalCleanLineVectorizer(),
       storage: new FileDrawingRepositoryStorage(resolve(homedir(), ".dsh/vectorai/drawings"))
@@ -13706,6 +14101,7 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
       review: createDshReviewer(ctx)
     };
     this.semantic = new SemanticEditService(this.drawings, editPorts);
+    this.extensionPreviews = new ExtensionPreviewService(this.drawings, this.semantic, editPorts);
     this.interactive = new InteractiveEditService(this.drawings, editPorts);
     this.motionRigs = new MotionRigService(this.drawings);
     ctx.effect(() => registerDrawingCommands(ctx.commands, this.interactive, this.semantic));
@@ -13724,6 +14120,7 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
     ctx.on("session/disposed", (session) => {
       this.semantic.disposeSession(String(session.id));
       this.motionRigs.disposeSession(String(session.id));
+      this.extensionPreviews.disposeSession(String(session.id));
       this.drawings.disposeSession(String(session.id));
     });
   }
@@ -13760,8 +14157,55 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
   getOperation(agent, operationId, operationBindingDigest) {
     return this.semantic.getOperation(String(agent.id), operationId, operationBindingDigest);
   }
+  createExtensionPreview(agent, request) {
+    return this.extensionPreviews.create(String(agent.id), request);
+  }
+  replaceExtensionPreview(agent, request) {
+    return this.extensionPreviews.replace(String(agent.id), request);
+  }
+  assessExtensionPreview(agent, request) {
+    return this.extensionPreviews.assess(String(agent.id), request);
+  }
+  finalizeExtensionPreview(agent, request) {
+    return this.extensionPreviews.finalize(String(agent.id), request);
+  }
+  discardExtensionPreview(agent, request) {
+    return this.extensionPreviews.discard(String(agent.id), request);
+  }
   async runExtensionProgram(agent, request, signal) {
-    return await this.semantic.runExtensionProgram(String(agent.id), request, signal);
+    const sessionId = String(agent.id);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (snapshot === null) throw new Error("DRAWING_REQUIRED");
+    const extensionId = "vectorai.one-shot-extension";
+    const workflowId = `workflow_${randomUUID()}`;
+    const preview = await this.extensionPreviews.create(sessionId, {
+      extensionId,
+      workflowId,
+      ref: snapshot.ref,
+      targetNodeIds: request.targetNodeIds,
+      ...request.interfaces === void 0 ? {} : { interfaces: request.interfaces.map((binding) => ({
+        interfaceId: binding.interfaceId,
+        nodeId: binding.nodeId,
+        endpoint: binding.endpoint
+      })) },
+      program: request.program
+    }, signal);
+    if (preview.status !== "previewed") return { preview, result: preview };
+    const control = {
+      extensionId,
+      workflowId,
+      ref: preview.ref,
+      previewToken: preview.previewToken,
+      candidateDigest: preview.candidateDigest
+    };
+    const assessed = await this.extensionPreviews.assess(sessionId, control, signal);
+    if (assessed.status !== "assessed") return { preview, assessed, result: assessed };
+    const finalized = await this.extensionPreviews.finalize(sessionId, control);
+    return {
+      preview,
+      assessment: assessed.assessment,
+      result: finalized.status === "finalized" ? finalized.result : finalized
+    };
   }
   getPreview(agent) {
     return this.drawings.getPreview(String(agent.id));
@@ -13779,11 +14223,17 @@ __decorateElement(_init, 1, "stageInteractiveEdit", _stageInteractiveEdit_dec, D
 __decorateElement(_init, 1, "stageUndo", _stageUndo_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "stageRedo", _stageRedo_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getOperation", _getOperation_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "createExtensionPreview", _createExtensionPreview_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "replaceExtensionPreview", _replaceExtensionPreview_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "assessExtensionPreview", _assessExtensionPreview_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "finalizeExtensionPreview", _finalizeExtensionPreview_dec, DrawingSpaceHostService);
+__decorateElement(_init, 1, "discardExtensionPreview", _discardExtensionPreview_dec, DrawingSpaceHostService);
 __decorateElement(_init, 1, "getPreview", _getPreview_dec, DrawingSpaceHostService);
 __decoratorMetadata(_init, DrawingSpaceHostService);
 __publicField(DrawingSpaceHostService, "inject", ["tools", "attachments", "userQuestions", "commands", "agents", "subagents"]);
 export {
   DrawingSpaceHostService,
+  ExtensionPreviewService,
   FileDrawingRepositoryStorage,
   InMemoryDrawingRepository,
   InteractiveEditService,

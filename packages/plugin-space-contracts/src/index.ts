@@ -628,6 +628,17 @@ export const extensionPreviewDiscardResultSchema = z.discriminatedUnion('status'
   extensionRejectedResultSchema,
 ]);
 
+export const annotationSessionStateSchema = z.object({
+  version: z.literal(1),
+  workspaceClaimed: z.boolean(),
+  activationEpoch: z.number().int().nonnegative(),
+  workflow: z.object({
+    status: z.enum(['idle', 'running', 'reviewing', 'completed', 'canceled', 'failed', 'needs-rebase']),
+    workflowId: idSchema.optional(),
+    message: z.string().min(1).optional(),
+  }).strict(),
+}).strict();
+
 export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
 export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;
 export type DrawingSelectionProjectionRequest = z.infer<typeof drawingSelectionProjectionRequestSchema>;
@@ -641,6 +652,7 @@ export type ExtensionPreviewCreateResult = z.infer<typeof extensionPreviewCreate
 export type ExtensionPreviewAssessmentResult = z.infer<typeof extensionPreviewAssessmentResultSchema>;
 export type ExtensionPreviewFinalizeResult = z.infer<typeof extensionPreviewFinalizeResultSchema>;
 export type ExtensionPreviewDiscardResult = z.infer<typeof extensionPreviewDiscardResultSchema>;
+export type AnnotationSessionState = z.infer<typeof annotationSessionStateSchema>;
 
 export interface Bounds2D {
   minX: number;

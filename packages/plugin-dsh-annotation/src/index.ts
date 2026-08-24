@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Context } from '@deepseek-ai/cordis';
-
-import { createEngineeringAnnotationTool } from './tools';
-
 export { createEngineeringAnnotationTool } from './tools';
-
-export const inject = ['tools', 'drawingSpace'];
-
-export function apply(ctx: Context) {
-  return ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace));
-}
-
-const plugin = Object.assign(apply, { inject });
-
-export default plugin;
+export {
+  AnnotationSessionStateStore,
+  FileAnnotationSessionStorage,
+} from './session-state';
+export type {
+  AnnotationSessionState,
+  AnnotationSessionStorage,
+  AnnotationWorkflowStatus,
+} from './session-state';
+export { DrawingAnnotationHostService, default } from './service';
