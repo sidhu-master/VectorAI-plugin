@@ -109,13 +109,14 @@ async function runScenario(label: string) {
   }
   await call('drawing_select_parts', {
     parts: [{
-      partKey: 'west', label: 'western component',
+      partKey: 'west', label: 'western component', role: 'target',
       references: [{ kind: 'candidate', key: westCandidate.key }],
     }, {
-      partKey: 'east', label: 'eastern component',
+      partKey: 'east', label: 'eastern component', role: 'target',
       references: [{ kind: 'candidate', key: eastCandidate.key }],
     }],
   });
+  await call('drawing_confirm_selection', {});
   await call('drawing_preview_spatial_intent', {
     summary: 'move both components downward as one atomic edit',
     goals: [
