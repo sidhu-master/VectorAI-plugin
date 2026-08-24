@@ -30,7 +30,9 @@ export function ObjectList() {
     { label: '语义特征', nodes: snapshot.document.features },
   ];
   const groundedNodeIds = new Set(
-    groundingOverlay?.groups.flatMap((group) => group.nodeIds) ?? [],
+    groundingOverlay?.groups
+      .filter((group) => group.role !== 'reference')
+      .flatMap((group) => group.nodeIds) ?? [],
   );
 
   return (

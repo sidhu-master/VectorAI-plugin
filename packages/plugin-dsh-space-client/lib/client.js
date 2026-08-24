@@ -733,7 +733,9 @@ window.__ModuleLoader__.load({
     function MotionRigOverlay({
       rig,
       viewportScale,
-      onHandleMouseDown
+      connectorHandles = [],
+      onHandleMouseDown,
+      onConnectorMouseDown
     }) {
       const scale2 = Math.max(viewportScale, 1e-3);
       const { anchor, handle } = rig.projection;
@@ -775,13 +777,33 @@ window.__ModuleLoader__.load({
             r: 8 / scale2,
             vectorEffect: "non-scaling-stroke",
             onMouseDown: (event) => {
-              if (event.button !== 0 || rig.phase === "preview") return;
+              if (event.button !== 0) return;
               event.preventDefault();
               event.stopPropagation();
               onHandleMouseDown(event);
             }
           }
         ),
+        connectorHandles.map(({ nodeId, point: point2 }) => /* @__PURE__ */ jsxRuntime.jsx(
+          "circle",
+          {
+            role: "button",
+            "aria-label": `调整 ${nodeId} 与可动部件的接点`,
+            tabIndex: 0,
+            className: "vai-motion-rig__connector-handle",
+            cx: point2[0],
+            cy: point2[1],
+            r: 5 / scale2,
+            vectorEffect: "non-scaling-stroke",
+            onMouseDown: (event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onConnectorMouseDown == null ? void 0 : onConnectorMouseDown(nodeId, event);
+            }
+          },
+          nodeId
+        )),
         /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${handle[0]} ${handle[1] + 14 / scale2}) scale(1 -1)`, pointerEvents: "none", children: /* @__PURE__ */ jsxRuntime.jsx(
           "text",
           {
@@ -816,7 +838,7 @@ window.__ModuleLoader__.load({
     function safeId(value) {
       return value.replace(/[^a-zA-Z0-9_-]/g, "_");
     }
-    function Canvas() {
+    function Canvas({ motionPreviewHeld = false }) {
       const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
       const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
       const preview = useDrawingWorkspace((state) => state.preview);
@@ -832,6 +854,7 @@ window.__ModuleLoader__.load({
       const moveAnnotationText = useDrawingWorkspace((state) => state.moveAnnotationText);
       const rebuildMotionRigFromSelection = useDrawingWorkspace((state) => state.rebuildMotionRigFromSelection);
       const beginMotionRigDrag = useDrawingWorkspace((state) => state.beginMotionRigDrag);
+      const beginMotionRigConnectorDrag = useDrawingWorkspace((state) => state.beginMotionRigConnectorDrag);
       const updateMotionRigDrag = useDrawingWorkspace((state) => state.updateMotionRigDrag);
       const finishMotionRigDrag = useDrawingWorkspace((state) => state.finishMotionRigDrag);
       const resetMotionRigDrag = useDrawingWorkspace((state) => state.resetMotionRigDrag);
@@ -871,17 +894,28 @@ window.__ModuleLoader__.load({
         ...display.annotations ? snapshot.document.annotations : []
       ];
       const groundedNodeIds = new Set(
-        (groundingOverlay == null ? void 0 : groundingOverlay.groups.flatMap((group) => group.nodeIds)) ?? []
+        (groundingOverlay == null ? void 0 : groundingOverlay.groups.filter((group) => group.role !== "reference").flatMap((group) => group.nodeIds)) ?? []
       );
       const motionRigNodeIds = /* @__PURE__ */ new Set([
         ...(motionRig == null ? void 0 : motionRig.projection.controlBodyNodeIds) ?? [],
         ...(motionRig == null ? void 0 : motionRig.projection.connectors.map(({ nodeId }) => nodeId)) ?? []
       ]);
-      const previewBeforeEntities = preview === null || formalSnapshot === null ? [] : [
+      const motionRigConnectorHandles = (motionRig == null ? void 0 : motionRig.projection.connectors.flatMap((binding) => {
+        const node = snapshot.document.geometry.find(({ id }) => String(id) === binding.nodeId);
+        if (!node) return [];
+        const point2 = connectorMovingPoint(node, binding.movingEndpoint);
+        return point2 === null ? [] : [{ nodeId: binding.nodeId, point: point2 }];
+      })) ?? [];
+      const motionPreviewBeforeEntities = !motionPreviewHeld || formalSnapshot === null || motionRig === null ? [] : [...motionRigNodeIds].flatMap((id) => {
+        const before = formalSnapshot.document.geometry.find((node) => String(node.id) === id);
+        const after = snapshot.document.geometry.find((node) => String(node.id) === id);
+        return before === void 0 || after === void 0 || drawingNodesEqual(before, after) ? [] : [before];
+      });
+      const previewBeforeEntities = motionPreviewHeld || preview === null || formalSnapshot === null ? [] : [
         ...formalSnapshot.document.geometry,
         ...display.annotations ? formalSnapshot.document.annotations : []
       ].filter((node) => preview.diff.updatedNodeIds.includes(node.id) || preview.diff.deletedNodeIds.includes(node.id));
-      const previewMotion = preview === null || formalSnapshot === null ? [] : preview.diff.updatedNodeIds.flatMap((id) => {
+      const previewMotion = motionPreviewHeld || preview === null || formalSnapshot === null ? [] : preview.diff.updatedNodeIds.flatMap((id) => {
         const before = [...formalSnapshot.document.geometry, ...formalSnapshot.document.annotations].find((node) => node.id === id);
         const after = [...snapshot.document.geometry, ...snapshot.document.annotations].find((node) => node.id === id);
         const first = before === void 0 ? null : nodeBounds(before);
@@ -1024,6 +1058,12 @@ window.__ModuleLoader__.load({
         beginMotionRigDrag(world);
         dragRef.current = { kind: "motion-rig", startWorld: world, currentWorld: world };
       };
+      const handleMotionRigConnectorPointerDown = (nodeId, event) => {
+        const point2 = eventScreenPoint(event);
+        const world = screenToWorld(point2, viewport);
+        beginMotionRigConnectorDrag(nodeId, world);
+        dragRef.current = { kind: "motion-rig", startWorld: world, currentWorld: world };
+      };
       const handleAnnotationPointerDown = (annotation, event) => {
         if (event.button !== 0) return;
         event.stopPropagation();
@@ -1038,6 +1078,7 @@ window.__ModuleLoader__.load({
           ref: containerRef,
           className: "vai-canvas",
           "data-canvas-root": "true",
+          "data-motion-preview-held": motionPreviewHeld || void 0,
           role: "application",
           "aria-label": "可交互图纸画布",
           tabIndex: 0,
@@ -1080,6 +1121,25 @@ window.__ModuleLoader__.load({
                     }
                   ) : null,
                   display.relations ? /* @__PURE__ */ jsxRuntime.jsx(RelationLayer, { document: snapshot.document, viewport }) : null,
+                  motionPreviewBeforeEntities.map((node) => /* @__PURE__ */ jsxRuntime.jsx(
+                    "g",
+                    {
+                      className: "vai-motion-preview__before",
+                      "data-motion-preview-before": node.id,
+                      pointerEvents: "none",
+                      children: /* @__PURE__ */ jsxRuntime.jsx(
+                        EntityRenderer,
+                        {
+                          node,
+                          viewport,
+                          selected: false,
+                          onSelect: () => {
+                          }
+                        }
+                      )
+                    },
+                    `motion-preview-before:${node.id}`
+                  )),
                   previewBeforeEntities.map((node) => /* @__PURE__ */ jsxRuntime.jsx(
                     EntityRenderer,
                     {
@@ -1112,30 +1172,50 @@ window.__ModuleLoader__.load({
                     {
                       node,
                       viewport,
-                      selected: selectedIds.includes(node.id),
-                      aiGrounded: groundedNodeIds.has(node.id),
-                      motionRigActive: motionRigNodeIds.has(node.id),
-                      previewDiff: (preview == null ? void 0 : preview.diff.createdNodeIds.includes(node.id)) ? "created" : (preview == null ? void 0 : preview.diff.updatedNodeIds.includes(node.id)) ? "updated" : void 0,
+                      selected: !motionPreviewHeld && selectedIds.includes(node.id),
+                      aiGrounded: !motionPreviewHeld && groundedNodeIds.has(node.id),
+                      motionRigActive: !motionPreviewHeld && motionRigNodeIds.has(node.id),
+                      previewDiff: motionPreviewHeld ? void 0 : (preview == null ? void 0 : preview.diff.createdNodeIds.includes(node.id)) ? "created" : (preview == null ? void 0 : preview.diff.updatedNodeIds.includes(node.id)) ? "updated" : void 0,
                       onSelect: (event) => handleEntitySelect(node.id, event),
                       onTextPointerDown: node.type === "text" || node.type === "dimension" ? (event) => handleAnnotationPointerDown(node, event) : void 0
                     },
                     node.id
                   )),
-                  motionRig === null ? null : /* @__PURE__ */ jsxRuntime.jsx(
+                  motionRig === null || motionPreviewHeld ? null : /* @__PURE__ */ jsxRuntime.jsx(
                     MotionRigOverlay,
                     {
                       rig: motionRig,
                       viewportScale: viewport.scale,
-                      onHandleMouseDown: handleMotionRigPointerDown
+                      connectorHandles: motionRigConnectorHandles,
+                      onHandleMouseDown: handleMotionRigPointerDown,
+                      onConnectorMouseDown: handleMotionRigConnectorPointerDown
                     }
                   )
                 ] }),
-                selectionBox === null ? null : /* @__PURE__ */ jsxRuntime.jsx(SelectionBox, { box: selectionBox })
+                selectionBox === null || motionPreviewHeld ? null : /* @__PURE__ */ jsxRuntime.jsx(SelectionBox, { box: selectionBox })
               ]
             }
           )
         }
       );
+    }
+    function drawingNodesEqual(first, second) {
+      return JSON.stringify(first) === JSON.stringify(second);
+    }
+    function connectorMovingPoint(node, movingEndpoint2) {
+      var _a2, _b;
+      if (node.type === "line") {
+        if (movingEndpoint2 === "start" || movingEndpoint2 === "end") return node[movingEndpoint2];
+      }
+      if (node.type === "polyline") {
+        if (movingEndpoint2 === "first") return ((_a2 = node.vertices[0]) == null ? void 0 : _a2.point) ?? null;
+        if (movingEndpoint2 === "last") return ((_b = node.vertices[node.vertices.length - 1]) == null ? void 0 : _b.point) ?? null;
+      }
+      if (node.type === "spline") {
+        if (movingEndpoint2 === "first") return node.controlPoints[0] ?? null;
+        if (movingEndpoint2 === "last") return node.controlPoints[node.controlPoints.length - 1] ?? null;
+      }
+      return null;
     }
     function RelationLayer({
       document: document2,
@@ -1205,6 +1285,472 @@ window.__ModuleLoader__.load({
       const target = event.target;
       return ((_a2 = target.dataset) == null ? void 0 : _a2.canvasBackground) === "true";
     }
+    function WorkspaceStatus() {
+      const snapshot = useDrawingWorkspace((state) => state.snapshot);
+      const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
+      const viewport = useDrawingWorkspace((state) => state.viewport);
+      const mouseWorld = useDrawingWorkspace((state) => state.mouseWorld);
+      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      if (snapshot === null) return null;
+      return /* @__PURE__ */ jsxRuntime.jsxs("footer", { className: "vai-status", "aria-label": "图纸状态", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: snapshot.ref.drawingId }),
+        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          "Revision ",
+          snapshot.ref.revision
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: (displaySnapshot == null ? void 0 : displaySnapshot.document.unitSystem.length) ?? snapshot.document.unitSystem.length }),
+        preview === null ? null : /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          "Preview ",
+          preview.handle
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          Math.round(viewport.scale * 100),
+          "%"
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+          selectedIds.length,
+          " 个已选"
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-status__coords", children: mouseWorld === null ? "X —  Y —" : `X ${mouseWorld[0].toFixed(3)}  Y ${mouseWorld[1].toFixed(3)}` }),
+        busy ? /* @__PURE__ */ jsxRuntime.jsx("span", { children: "正在保存…" }) : null
+      ] });
+    }
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const toKebabCase = (string2) => string2.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    const toCamelCase = (string2) => string2.replace(
+      /^([A-Z])|[\s-_]+(\w)/g,
+      (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
+    );
+    const toPascalCase = (string2) => {
+      const camelCase = toCamelCase(string2);
+      return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
+    };
+    const mergeClasses = (...classes) => classes.filter((className, index, array2) => {
+      return Boolean(className) && className.trim() !== "" && array2.indexOf(className) === index;
+    }).join(" ").trim();
+    const hasA11yProp = (props) => {
+      for (const prop in props) {
+        if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
+          return true;
+        }
+      }
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    var defaultAttributes = {
+      xmlns: "http://www.w3.org/2000/svg",
+      width: 24,
+      height: 24,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: 2,
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const Icon = react.forwardRef(
+      ({
+        color = "currentColor",
+        size = 24,
+        strokeWidth = 2,
+        absoluteStrokeWidth,
+        className = "",
+        children,
+        iconNode,
+        ...rest
+      }, ref) => react.createElement(
+        "svg",
+        {
+          ref,
+          ...defaultAttributes,
+          width: size,
+          height: size,
+          stroke: color,
+          strokeWidth: absoluteStrokeWidth ? Number(strokeWidth) * 24 / Number(size) : strokeWidth,
+          className: mergeClasses("lucide", className),
+          ...!children && !hasA11yProp(rest) && { "aria-hidden": "true" },
+          ...rest
+        },
+        [
+          ...iconNode.map(([tag, attrs]) => react.createElement(tag, attrs)),
+          ...Array.isArray(children) ? children : [children]
+        ]
+      )
+    );
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const createLucideIcon = (iconName, iconNode) => {
+      const Component = react.forwardRef(
+        ({ className, ...props }, ref) => react.createElement(Icon, {
+          ref,
+          iconNode,
+          className: mergeClasses(
+            `lucide-${toKebabCase(toPascalCase(iconName))}`,
+            `lucide-${iconName}`,
+            className
+          ),
+          ...props
+        })
+      );
+      Component.displayName = toPascalCase(iconName);
+      return Component;
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$9 = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
+    const Check = createLucideIcon("check", __iconNode$9);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$8 = [
+      ["path", { d: "M12 15V3", key: "m9g1x1" }],
+      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
+      ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
+    ];
+    const Download = createLucideIcon("download", __iconNode$8);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$7 = [
+      [
+        "path",
+        {
+          d: "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",
+          key: "1nclc0"
+        }
+      ],
+      ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
+    ];
+    const Eye = createLucideIcon("eye", __iconNode$7);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$6 = [
+      [
+        "path",
+        {
+          d: "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z",
+          key: "zw3jo"
+        }
+      ],
+      [
+        "path",
+        {
+          d: "M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12",
+          key: "1wduqc"
+        }
+      ],
+      [
+        "path",
+        {
+          d: "M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17",
+          key: "kqbvx6"
+        }
+      ]
+    ];
+    const Layers = createLucideIcon("layers", __iconNode$6);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$5 = [
+      ["path", { d: "m15 14 5-5-5-5", key: "12vg1m" }],
+      ["path", { d: "M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13", key: "6uklza" }]
+    ];
+    const Redo2 = createLucideIcon("redo-2", __iconNode$5);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$4 = [
+      ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
+      ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
+      ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
+      ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
+    ];
+    const Scan = createLucideIcon("scan", __iconNode$4);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$3 = [
+      ["line", { x1: "21", x2: "14", y1: "4", y2: "4", key: "obuewd" }],
+      ["line", { x1: "10", x2: "3", y1: "4", y2: "4", key: "1q6298" }],
+      ["line", { x1: "21", x2: "12", y1: "12", y2: "12", key: "1iu8h1" }],
+      ["line", { x1: "8", x2: "3", y1: "12", y2: "12", key: "ntss68" }],
+      ["line", { x1: "21", x2: "16", y1: "20", y2: "20", key: "14d8ph" }],
+      ["line", { x1: "12", x2: "3", y1: "20", y2: "20", key: "m0wm8r" }],
+      ["line", { x1: "14", x2: "14", y1: "2", y2: "6", key: "14e1ph" }],
+      ["line", { x1: "8", x2: "8", y1: "10", y2: "14", key: "1i6ji0" }],
+      ["line", { x1: "16", x2: "16", y1: "18", y2: "22", key: "1lctlv" }]
+    ];
+    const SlidersHorizontal = createLucideIcon("sliders-horizontal", __iconNode$3);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$2 = [
+      ["path", { d: "M9 14 4 9l5-5", key: "102s5s" }],
+      ["path", { d: "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11", key: "f3b9sd" }]
+    ];
+    const Undo2 = createLucideIcon("undo-2", __iconNode$2);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$1 = [
+      ["path", { d: "M12 3v12", key: "1x0j5s" }],
+      ["path", { d: "m17 8-5-5-5 5", key: "7q97r8" }],
+      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }]
+    ];
+    const Upload = createLucideIcon("upload", __iconNode$1);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode = [
+      ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+      ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
+    ];
+    const X = createLucideIcon("x", __iconNode);
+    function WorkspaceToolbar({
+      onUploadFiles,
+      onExport,
+      motionPreviewHeld = false,
+      onMotionPreviewHeldChange
+    }) {
+      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const viewport = useDrawingWorkspace((state) => state.viewport);
+      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
+      const motionRig = useDrawingWorkspace((state) => state.motionRig);
+      const canRestoreMotionRig = useDrawingWorkspace((state) => state.canRestoreMotionRig);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      const setViewport = useDrawingWorkspace((state) => state.setViewport);
+      const undoLast = useDrawingWorkspace((state) => state.undoLast);
+      const redoLast = useDrawingWorkspace((state) => state.redoLast);
+      const confirmMotionRig = useDrawingWorkspace((state) => state.confirmMotionRig);
+      const cancelMotionRig = useDrawingWorkspace((state) => state.cancelMotionRig);
+      const motionPreviewAvailable = (motionRig == null ? void 0 : motionRig.phase) === "preview" && onMotionPreviewHeldChange !== void 0;
+      react.useEffect(() => {
+        if (!motionPreviewHeld || onMotionPreviewHeldChange === void 0) return;
+        if ((motionRig == null ? void 0 : motionRig.phase) !== "preview") onMotionPreviewHeldChange(false);
+      }, [motionPreviewHeld, motionRig == null ? void 0 : motionRig.phase, onMotionPreviewHeldChange]);
+      react.useEffect(() => {
+        if (!motionPreviewHeld || onMotionPreviewHeldChange === void 0 || typeof window === "undefined") return;
+        const release = () => onMotionPreviewHeldChange(false);
+        window.addEventListener("blur", release);
+        return () => window.removeEventListener("blur", release);
+      }, [motionPreviewHeld, onMotionPreviewHeldChange]);
+      if (snapshot === null) return null;
+      const lastCommit = formalSnapshot == null ? void 0 : formalSnapshot.lastCommit;
+      const unavailable = busy || preview !== null || motionRig !== null;
+      const handleUpload = (event) => {
+        const files = Array.from(event.currentTarget.files ?? []);
+        event.currentTarget.value = "";
+        if (files.length > 0) onUploadFiles == null ? void 0 : onUploadFiles(files);
+      };
+      const beginMotionPreview = (event) => {
+        if (event.button !== 0 || !motionPreviewAvailable) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onMotionPreviewHeldChange(true);
+      };
+      const endMotionPreview = () => {
+        onMotionPreviewHeldChange == null ? void 0 : onMotionPreviewHeldChange(false);
+      };
+      const handleMotionPreviewKeyDown = (event) => {
+        if (!motionPreviewAvailable || event.repeat || event.key !== " " && event.key !== "Enter") return;
+        event.preventDefault();
+        onMotionPreviewHeldChange(true);
+      };
+      const handleMotionPreviewKeyUp = (event) => {
+        if (event.key !== " " && event.key !== "Enter") return;
+        event.preventDefault();
+        onMotionPreviewHeldChange == null ? void 0 : onMotionPreviewHeldChange(false);
+      };
+      return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+        motionRig !== null ? /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-toolbar vai-toolbar--motion-rig", role: "toolbar", "aria-label": "姿态编辑操作", children: [
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              className: "vai-toolbar__action vai-toolbar__action--cancel",
+              type: "button",
+              "aria-label": "取消姿态",
+              title: "取消姿态",
+              onClick: () => {
+                void cancelMotionRig();
+              },
+              children: /* @__PURE__ */ jsxRuntime.jsx(X, { "aria-hidden": "true", size: 17 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "span",
+            {
+              className: "vai-toolbar__separator vai-toolbar__separator--motion-rig",
+              "aria-hidden": "true"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              className: "vai-toolbar__action vai-toolbar__action--preview",
+              type: "button",
+              "aria-label": "按住预览修改效果",
+              "aria-pressed": motionPreviewHeld,
+              disabled: !motionPreviewAvailable,
+              title: "按住预览修改前后位置",
+              onPointerDown: beginMotionPreview,
+              onPointerUp: endMotionPreview,
+              onPointerCancel: endMotionPreview,
+              onBlur: endMotionPreview,
+              onKeyDown: handleMotionPreviewKeyDown,
+              onKeyUp: handleMotionPreviewKeyUp,
+              onClick: (event) => event.preventDefault(),
+              children: /* @__PURE__ */ jsxRuntime.jsx(Eye, { "aria-hidden": "true", size: 17 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "span",
+            {
+              className: "vai-toolbar__separator vai-toolbar__separator--motion-rig",
+              "aria-hidden": "true"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              className: "vai-toolbar__action vai-toolbar__action--confirm",
+              type: "button",
+              "aria-label": "确认姿态",
+              disabled: motionRig.phase !== "preview",
+              title: "确认姿态",
+              onClick: () => {
+                void confirmMotionRig();
+              },
+              children: /* @__PURE__ */ jsxRuntime.jsx(Check, { "aria-hidden": "true", size: 17 })
+            }
+          )
+        ] }) : null,
+        /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-toolbar", role: "toolbar", "aria-label": "图纸操作工具", children: [
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              "aria-label": "适配图纸",
+              title: "缩放并居中显示整张图纸",
+              onClick: () => setViewport(fitViewportToDrawing(snapshot.document, viewport)),
+              children: /* @__PURE__ */ jsxRuntime.jsx(Scan, { "aria-hidden": "true", size: 17 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              "aria-label": "撤销",
+              disabled: unavailable || !canRestoreMotionRig && !(lastCommit == null ? void 0 : lastCommit.undoable),
+              title: "撤销最近一次图纸修改",
+              onClick: () => {
+                void undoLast();
+              },
+              children: /* @__PURE__ */ jsxRuntime.jsx(Undo2, { "aria-hidden": "true", size: 17 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              "aria-label": "反撤销",
+              disabled: unavailable || !(lastCommit == null ? void 0 : lastCommit.redoable),
+              title: "恢复最近一次撤销",
+              onClick: () => {
+                void redoLast();
+              },
+              children: /* @__PURE__ */ jsxRuntime.jsx(Redo2, { "aria-hidden": "true", size: 17 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
+          /* @__PURE__ */ jsxRuntime.jsxs(
+            "label",
+            {
+              className: `vai-toolbar__upload${onUploadFiles === void 0 ? " vai-toolbar__upload--disabled" : ""}`,
+              "aria-label": "上传图纸",
+              title: "上传图纸",
+              children: [
+                /* @__PURE__ */ jsxRuntime.jsx(Upload, { "aria-hidden": "true", size: 17 }),
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  "input",
+                  {
+                    type: "file",
+                    accept: "image/png,image/jpeg,image/webp,image/gif",
+                    disabled: onUploadFiles === void 0,
+                    onChange: handleUpload
+                  }
+                )
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              "aria-label": "导出 DXF",
+              disabled: formalSnapshot === null,
+              title: "导出当前 DXF 图纸",
+              onClick: onExport,
+              children: /* @__PURE__ */ jsxRuntime.jsx(Download, { "aria-hidden": "true", size: 17 })
+            }
+          )
+        ] })
+      ] });
+    }
     function ObjectList() {
       const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
       const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
@@ -1223,7 +1769,7 @@ window.__ModuleLoader__.load({
         { label: "语义特征", nodes: snapshot.document.features }
       ];
       const groundedNodeIds = new Set(
-        (groundingOverlay == null ? void 0 : groundingOverlay.groups.flatMap((group) => group.nodeIds)) ?? []
+        (groundingOverlay == null ? void 0 : groundingOverlay.groups.filter((group) => group.role !== "reference").flatMap((group) => group.nodeIds)) ?? []
       );
       return /* @__PURE__ */ jsxRuntime.jsxs("aside", { className: "vai-panel vai-object-list", "aria-label": "图纸对象", children: [
         /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-panel__title", children: "对象" }),
@@ -1474,333 +2020,120 @@ window.__ModuleLoader__.load({
       if (id === void 0) return null;
       return document2.geometry.find((node) => node.id === id) ?? document2.annotations.find((node) => node.id === id) ?? document2.relations.find((node) => node.id === id) ?? document2.features.find((node) => node.id === id) ?? null;
     }
-    function WorkspaceStatus() {
-      const snapshot = useDrawingWorkspace((state) => state.snapshot);
-      const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
-      const preview = useDrawingWorkspace((state) => state.preview);
-      const viewport = useDrawingWorkspace((state) => state.viewport);
-      const mouseWorld = useDrawingWorkspace((state) => state.mouseWorld);
-      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
-      const busy = useDrawingWorkspace((state) => state.busy);
-      if (snapshot === null) return null;
-      return /* @__PURE__ */ jsxRuntime.jsxs("footer", { className: "vai-status", "aria-label": "图纸状态", children: [
-        /* @__PURE__ */ jsxRuntime.jsx("span", { children: snapshot.ref.drawingId }),
-        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
-          "Revision ",
-          snapshot.ref.revision
-        ] }),
-        /* @__PURE__ */ jsxRuntime.jsx("span", { children: (displaySnapshot == null ? void 0 : displaySnapshot.document.unitSystem.length) ?? snapshot.document.unitSystem.length }),
-        preview === null ? null : /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
-          "Preview ",
-          preview.handle
-        ] }),
-        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
-          Math.round(viewport.scale * 100),
-          "%"
-        ] }),
-        /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
-          selectedIds.length,
-          " 个已选"
-        ] }),
-        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-status__coords", children: mouseWorld === null ? "X —  Y —" : `X ${mouseWorld[0].toFixed(3)}  Y ${mouseWorld[1].toFixed(3)}` }),
-        busy ? /* @__PURE__ */ jsxRuntime.jsx("span", { children: "正在保存…" }) : null
-      ] });
-    }
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const toKebabCase = (string2) => string2.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-    const toCamelCase = (string2) => string2.replace(
-      /^([A-Z])|[\s-_]+(\w)/g,
-      (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
-    );
-    const toPascalCase = (string2) => {
-      const camelCase = toCamelCase(string2);
-      return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
-    };
-    const mergeClasses = (...classes) => classes.filter((className, index, array2) => {
-      return Boolean(className) && className.trim() !== "" && array2.indexOf(className) === index;
-    }).join(" ").trim();
-    const hasA11yProp = (props) => {
-      for (const prop in props) {
-        if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
-          return true;
+    const MIN_PANEL_WIDTH = 220;
+    const MAX_PANEL_WIDTH = 420;
+    const PANEL_RESIZE_STEP = 16;
+    const panelDefinitions = [
+      { id: "objects", label: "对象", icon: Layers, component: ObjectList },
+      { id: "properties", label: "属性", icon: SlidersHorizontal, component: PropertyInspector }
+    ];
+    function WorkspaceActivityBar({
+      activePanel,
+      panelWidth,
+      onActivePanelChange,
+      onPanelWidthChange
+    }) {
+      const resizeStart = react.useRef(null);
+      const latestWidth = react.useRef(panelWidth);
+      latestWidth.current = panelWidth;
+      const activeDefinition = panelDefinitions.find(({ id }) => id === activePanel);
+      const ActivePanel = activeDefinition == null ? void 0 : activeDefinition.component;
+      function commitWidth(width) {
+        const nextWidth = clampPanelWidth(width);
+        latestWidth.current = nextWidth;
+        onPanelWidthChange(nextWidth);
+      }
+      function handlePointerDown(event) {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        resizeStart.current = {
+          pointerId: event.pointerId,
+          clientX: event.clientX,
+          width: latestWidth.current
+        };
+      }
+      function handlePointerMove(event) {
+        const start = resizeStart.current;
+        if (start === null || start.pointerId !== event.pointerId) return;
+        commitWidth(start.width + event.clientX - start.clientX);
+      }
+      function finishPointerResize(event) {
+        var _a2;
+        if (((_a2 = resizeStart.current) == null ? void 0 : _a2.pointerId) === event.pointerId) resizeStart.current = null;
+      }
+      function handleResizeKeyDown(event) {
+        const delta = event.key === "ArrowLeft" ? -PANEL_RESIZE_STEP : event.key === "ArrowRight" ? PANEL_RESIZE_STEP : 0;
+        if (delta !== 0) {
+          event.preventDefault();
+          commitWidth(latestWidth.current + delta);
+        } else if (event.key === "Home" || event.key === "End") {
+          event.preventDefault();
+          commitWidth(event.key === "Home" ? MIN_PANEL_WIDTH : MAX_PANEL_WIDTH);
         }
       }
-    };
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    var defaultAttributes = {
-      xmlns: "http://www.w3.org/2000/svg",
-      width: 24,
-      height: 24,
-      viewBox: "0 0 24 24",
-      fill: "none",
-      stroke: "currentColor",
-      strokeWidth: 2,
-      strokeLinecap: "round",
-      strokeLinejoin: "round"
-    };
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const Icon = react.forwardRef(
-      ({
-        color = "currentColor",
-        size = 24,
-        strokeWidth = 2,
-        absoluteStrokeWidth,
-        className = "",
-        children,
-        iconNode,
-        ...rest
-      }, ref) => react.createElement(
-        "svg",
-        {
-          ref,
-          ...defaultAttributes,
-          width: size,
-          height: size,
-          stroke: color,
-          strokeWidth: absoluteStrokeWidth ? Number(strokeWidth) * 24 / Number(size) : strokeWidth,
-          className: mergeClasses("lucide", className),
-          ...!children && !hasA11yProp(rest) && { "aria-hidden": "true" },
-          ...rest
-        },
-        [
-          ...iconNode.map(([tag, attrs]) => react.createElement(tag, attrs)),
-          ...Array.isArray(children) ? children : [children]
-        ]
-      )
-    );
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const createLucideIcon = (iconName, iconNode) => {
-      const Component = react.forwardRef(
-        ({ className, ...props }, ref) => react.createElement(Icon, {
-          ref,
-          iconNode,
-          className: mergeClasses(
-            `lucide-${toKebabCase(toPascalCase(iconName))}`,
-            `lucide-${iconName}`,
-            className
-          ),
-          ...props
-        })
-      );
-      Component.displayName = toPascalCase(iconName);
-      return Component;
-    };
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const __iconNode$6 = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
-    const Check = createLucideIcon("check", __iconNode$6);
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const __iconNode$5 = [
-      ["path", { d: "M12 15V3", key: "m9g1x1" }],
-      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
-      ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
-    ];
-    const Download = createLucideIcon("download", __iconNode$5);
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const __iconNode$4 = [
-      ["path", { d: "m15 14 5-5-5-5", key: "12vg1m" }],
-      ["path", { d: "M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13", key: "6uklza" }]
-    ];
-    const Redo2 = createLucideIcon("redo-2", __iconNode$4);
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const __iconNode$3 = [
-      ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
-      ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
-      ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
-      ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
-    ];
-    const Scan = createLucideIcon("scan", __iconNode$3);
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const __iconNode$2 = [
-      ["path", { d: "M9 14 4 9l5-5", key: "102s5s" }],
-      ["path", { d: "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11", key: "f3b9sd" }]
-    ];
-    const Undo2 = createLucideIcon("undo-2", __iconNode$2);
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const __iconNode$1 = [
-      ["path", { d: "M12 3v12", key: "1x0j5s" }],
-      ["path", { d: "m17 8-5-5-5 5", key: "7q97r8" }],
-      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }]
-    ];
-    const Upload = createLucideIcon("upload", __iconNode$1);
-    /**
-     * @license lucide-react v0.511.0 - ISC
-     *
-     * This source code is licensed under the ISC license.
-     * See the LICENSE file in the root directory of this source tree.
-     */
-    const __iconNode = [
-      ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
-      ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
-    ];
-    const X = createLucideIcon("x", __iconNode);
-    function WorkspaceToolbar({ onUploadFiles, onExport }) {
-      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
-      const viewport = useDrawingWorkspace((state) => state.viewport);
-      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
-      const preview = useDrawingWorkspace((state) => state.preview);
-      const motionRig = useDrawingWorkspace((state) => state.motionRig);
-      const busy = useDrawingWorkspace((state) => state.busy);
-      const setViewport = useDrawingWorkspace((state) => state.setViewport);
-      const undoLast = useDrawingWorkspace((state) => state.undoLast);
-      const redoLast = useDrawingWorkspace((state) => state.redoLast);
-      const confirmMotionRig = useDrawingWorkspace((state) => state.confirmMotionRig);
-      const cancelMotionRig = useDrawingWorkspace((state) => state.cancelMotionRig);
-      if (snapshot === null) return null;
-      const lastCommit = formalSnapshot == null ? void 0 : formalSnapshot.lastCommit;
-      const unavailable = busy || preview !== null || motionRig !== null;
-      const handleUpload = (event) => {
-        const files = Array.from(event.currentTarget.files ?? []);
-        event.currentTarget.value = "";
-        if (files.length > 0) onUploadFiles == null ? void 0 : onUploadFiles(files);
-      };
-      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-toolbar", role: "toolbar", "aria-label": "图纸操作工具", children: [
-        (motionRig == null ? void 0 : motionRig.phase) === "preview" ? /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
-          /* @__PURE__ */ jsxRuntime.jsx(
+      return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntime.jsx("nav", { className: "vai-activity-bar", "aria-label": "信息面板工具栏", children: panelDefinitions.map(({ id, label, icon: Icon2 }) => {
+          const active = activePanel === id;
+          return /* @__PURE__ */ jsxRuntime.jsx(
             "button",
             {
               type: "button",
-              "aria-label": "确认姿态",
-              title: "确认姿态",
-              onClick: () => {
-                void confirmMotionRig();
-              },
-              children: /* @__PURE__ */ jsxRuntime.jsx(Check, { "aria-hidden": "true", size: 17 })
-            }
-          ),
-          /* @__PURE__ */ jsxRuntime.jsx(
-            "button",
-            {
-              type: "button",
-              "aria-label": "取消姿态",
-              title: "取消姿态",
-              onClick: () => {
-                void cancelMotionRig();
-              },
-              children: /* @__PURE__ */ jsxRuntime.jsx(X, { "aria-hidden": "true", size: 17 })
-            }
-          ),
-          /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" })
-        ] }) : null,
-        /* @__PURE__ */ jsxRuntime.jsx(
-          "button",
-          {
-            type: "button",
-            "aria-label": "适配图纸",
-            title: "缩放并居中显示整张图纸",
-            onClick: () => setViewport(fitViewportToDrawing(snapshot.document, viewport)),
-            children: /* @__PURE__ */ jsxRuntime.jsx(Scan, { "aria-hidden": "true", size: 17 })
-          }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
-        /* @__PURE__ */ jsxRuntime.jsx(
-          "button",
-          {
-            type: "button",
-            "aria-label": "撤销",
-            disabled: unavailable || !(lastCommit == null ? void 0 : lastCommit.undoable),
-            title: "撤销最近一次图纸修改",
-            onClick: () => {
-              void undoLast();
+              className: "vai-activity-bar__button",
+              "aria-label": `${label}面板`,
+              "aria-pressed": active,
+              title: label,
+              onClick: () => onActivePanelChange(active ? null : id),
+              children: /* @__PURE__ */ jsxRuntime.jsx(Icon2, { size: 19, strokeWidth: 1.75, "aria-hidden": "true" })
             },
-            children: /* @__PURE__ */ jsxRuntime.jsx(Undo2, { "aria-hidden": "true", size: 17 })
-          }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsx(
-          "button",
+            id
+          );
+        }) }),
+        activeDefinition === void 0 || ActivePanel === void 0 ? null : /* @__PURE__ */ jsxRuntime.jsxs(
+          "aside",
           {
-            type: "button",
-            "aria-label": "反撤销",
-            disabled: unavailable || !(lastCommit == null ? void 0 : lastCommit.redoable),
-            title: "恢复最近一次撤销",
-            onClick: () => {
-              void redoLast();
-            },
-            children: /* @__PURE__ */ jsxRuntime.jsx(Redo2, { "aria-hidden": "true", size: 17 })
-          }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
-        /* @__PURE__ */ jsxRuntime.jsxs(
-          "label",
-          {
-            className: `vai-toolbar__upload${onUploadFiles === void 0 ? " vai-toolbar__upload--disabled" : ""}`,
-            "aria-label": "上传图纸",
-            title: "上传图纸",
+            className: "vai-inspector-stack vai-inspector-stack--activity",
+            "data-panel": activeDefinition.id,
+            "aria-label": `${activeDefinition.label}信息面板`,
+            style: { width: panelWidth },
             children: [
-              /* @__PURE__ */ jsxRuntime.jsx(Upload, { "aria-hidden": "true", size: 17 }),
               /* @__PURE__ */ jsxRuntime.jsx(
-                "input",
+                "button",
                 {
-                  type: "file",
-                  accept: "image/png,image/jpeg,image/webp,image/gif",
-                  disabled: onUploadFiles === void 0,
-                  onChange: handleUpload
+                  type: "button",
+                  className: "vai-panel-close",
+                  "aria-label": "关闭信息面板",
+                  title: "关闭",
+                  onClick: () => onActivePanelChange(null),
+                  children: /* @__PURE__ */ jsxRuntime.jsx(X, { size: 16, "aria-hidden": "true" })
+                }
+              ),
+              /* @__PURE__ */ jsxRuntime.jsx(ActivePanel, {}),
+              /* @__PURE__ */ jsxRuntime.jsx(
+                "div",
+                {
+                  className: "vai-panel-resizer",
+                  role: "separator",
+                  "aria-label": "调整信息面板宽度",
+                  "aria-orientation": "vertical",
+                  "aria-valuemin": MIN_PANEL_WIDTH,
+                  "aria-valuemax": MAX_PANEL_WIDTH,
+                  "aria-valuenow": panelWidth,
+                  tabIndex: 0,
+                  onPointerDown: handlePointerDown,
+                  onPointerMove: handlePointerMove,
+                  onPointerUp: finishPointerResize,
+                  onPointerCancel: finishPointerResize,
+                  onKeyDown: handleResizeKeyDown
                 }
               )
             ]
           }
-        ),
-        /* @__PURE__ */ jsxRuntime.jsx(
-          "button",
-          {
-            type: "button",
-            "aria-label": "导出 DXF",
-            disabled: formalSnapshot === null,
-            title: "导出当前 DXF 图纸",
-            onClick: onExport,
-            children: /* @__PURE__ */ jsxRuntime.jsx(Download, { "aria-hidden": "true", size: 17 })
-          }
         )
       ] });
+    }
+    function clampPanelWidth(width) {
+      return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, width));
     }
     function DrawingWorkspace({
       previewContributions = [],
@@ -1808,8 +2141,9 @@ window.__ModuleLoader__.load({
       onUploadFiles,
       onExport
     }) {
-      const [objectsOpen, setObjectsOpen] = react.useState(true);
-      const [inspectorOpen, setInspectorOpen] = react.useState(true);
+      const [activePanel, setActivePanel] = react.useState(null);
+      const [panelWidth, setPanelWidth] = react.useState(260);
+      const [motionPreviewHeld, setMotionPreviewHeld] = react.useState(false);
       const status = useDrawingWorkspace((state) => state.status);
       const snapshot = useDrawingWorkspace((state) => state.snapshot);
       const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
@@ -1845,25 +2179,28 @@ window.__ModuleLoader__.load({
                 snapshot.provisional ? /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge", children: "候选几何" }) : null,
                 preview === null ? null : /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__badge vai-workspace__badge--preview", children: "候选 Preview" })
               ] }),
-              /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__panel-toggles", children: [
-                /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": objectsOpen, onClick: () => setObjectsOpen(!objectsOpen), children: "对象" }),
-                /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-pressed": inspectorOpen, onClick: () => setInspectorOpen(!inspectorOpen), children: "属性" })
-              ] }),
               busy ? /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-workspace__busy", children: "正在保存…" }) : null
             ] }),
             error === null ? null : /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-workspace__error", role: "alert", children: error.message }),
             /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__body", "data-workspace-region": "viewer", children: [
-              objectsOpen || inspectorOpen ? /* @__PURE__ */ jsxRuntime.jsxs("aside", { className: "vai-inspector-stack", "data-panel": "inspector", "aria-label": "对象与属性", children: [
-                objectsOpen ? /* @__PURE__ */ jsxRuntime.jsx(ObjectList, {}) : null,
-                inspectorOpen ? /* @__PURE__ */ jsxRuntime.jsx(PropertyInspector, {}) : null
-              ] }) : null,
+              /* @__PURE__ */ jsxRuntime.jsx(
+                WorkspaceActivityBar,
+                {
+                  activePanel,
+                  panelWidth,
+                  onActivePanelChange: setActivePanel,
+                  onPanelWidthChange: setPanelWidth
+                }
+              ),
               /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-workspace__canvas-region", children: [
-                /* @__PURE__ */ jsxRuntime.jsx(Canvas, {}),
+                /* @__PURE__ */ jsxRuntime.jsx(Canvas, { motionPreviewHeld }),
                 /* @__PURE__ */ jsxRuntime.jsx(
                   WorkspaceToolbar,
                   {
                     onUploadFiles,
-                    onExport: onExport ?? (() => exportDxf(snapshot))
+                    onExport: onExport ?? (() => exportDxf(snapshot)),
+                    motionPreviewHeld,
+                    onMotionPreviewHeldChange: setMotionPreviewHeld
                   }
                 )
               ] }),
@@ -2027,6 +2364,34 @@ window.__ModuleLoader__.load({
     function assertExpected(actual, expected) {
       if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error("EDIT_PRECONDITION_FAILED");
     }
+    function solveMotionRigConnectorAttachment(document2, rig, connectorId, target) {
+      if (!finitePoint(target)) throw new Error("MOTION_RIG_CONTACT_TARGET_INVALID");
+      const binding = rig.connectors.find(({ nodeId }) => nodeId === connectorId);
+      if (!binding) throw new Error("MOTION_RIG_CONNECTOR_MISSING");
+      const carrierId = rig.carrierNodeId ?? rig.controlBodyNodeIds.find((id) => {
+        const located = findDrawingNode(document2, id);
+        return (located == null ? void 0 : located.plane) === "geometry" && (located.node.type === "circle" || located.node.type === "ellipse");
+      });
+      const carrierLocated = carrierId ? findDrawingNode(document2, carrierId) : null;
+      if (!carrierLocated || carrierLocated.plane !== "geometry" || carrierLocated.node.type !== "circle" && carrierLocated.node.type !== "ellipse") throw new Error("MOTION_RIG_CONTROL_NODE_MISSING");
+      const connectorLocated = findDrawingNode(document2, connectorId);
+      if (!connectorLocated || connectorLocated.plane !== "geometry") {
+        throw new Error("MOTION_RIG_CONNECTOR_MISSING");
+      }
+      const connector = connectorLocated.node;
+      const currentPoint = movingEndpoint(connector, binding.movingEndpoint);
+      const projected = projectToCarrierBoundary(carrierLocated.node, target, currentPoint);
+      const command = deformConnector(connector, binding, [
+        projected[0] - currentPoint[0],
+        projected[1] - currentPoint[1]
+      ]);
+      const candidate = applyDrawingTransaction(document2, [command], document2.metadata.updatedAt);
+      const updated = candidate.geometry.find(({ id }) => String(id) === connectorId);
+      if (!updated || distance(fixedEndpoint(updated, binding.movingEndpoint), binding.fixedPoint) > 1e-8) {
+        throw new Error("MOTION_RIG_ANCHOR_CHANGED");
+      }
+      return { commands: [command], candidate };
+    }
     function solveTranslationMotionRig(document2, rig, delta) {
       if (!finitePoint(delta)) throw new Error("MOTION_RIG_DELTA_INVALID");
       const commands = [];
@@ -2084,8 +2449,56 @@ window.__ModuleLoader__.load({
       }
       throw new Error("MOTION_RIG_GEOMETRY_UNSUPPORTED");
     }
-    function deformPointChain(input, movingEndpoint, delta) {
-      const points = movingEndpoint === "last" ? [...input] : [...input].reverse();
+    function movingEndpoint(node, moving) {
+      if (node.type === "line") {
+        if (moving === "start" || moving === "end") return node[moving];
+      }
+      if (node.type === "polyline") {
+        if (moving === "first") return node.vertices[0].point;
+        if (moving === "last") return node.vertices[node.vertices.length - 1].point;
+      }
+      if (node.type === "spline") {
+        if (moving === "first") return node.controlPoints[0];
+        if (moving === "last") return node.controlPoints[node.controlPoints.length - 1];
+      }
+      throw new Error("MOTION_RIG_GEOMETRY_UNSUPPORTED");
+    }
+    function projectToCarrierBoundary(carrier, target, fallback) {
+      const dx = target[0] - carrier.center[0];
+      const dy = target[1] - carrier.center[1];
+      if (carrier.type === "circle") {
+        const length = Math.hypot(dx, dy);
+        const fallbackDx = fallback[0] - carrier.center[0];
+        const fallbackDy = fallback[1] - carrier.center[1];
+        const directionLength = length > 1e-12 ? length : Math.hypot(fallbackDx, fallbackDy);
+        if (!(directionLength > 1e-12)) throw new Error("MOTION_RIG_CONTACT_DIRECTION_INVALID");
+        const direction = length > 1e-12 ? [dx, dy] : [fallbackDx, fallbackDy];
+        return cleanPoint([
+          carrier.center[0] + direction[0] * carrier.radius / directionLength,
+          carrier.center[1] + direction[1] * carrier.radius / directionLength
+        ]);
+      }
+      const major = Math.hypot(...carrier.majorAxis);
+      const minor = major * carrier.ratio;
+      if (!(major > 1e-12) || !(minor > 1e-12)) throw new Error("MOTION_RIG_CONTACT_CARRIER_INVALID");
+      const ux = carrier.majorAxis[0] / major;
+      const uy = carrier.majorAxis[1] / major;
+      const local = (point2) => {
+        const offsetX = point2[0] - carrier.center[0];
+        const offsetY = point2[1] - carrier.center[1];
+        return [offsetX * ux + offsetY * uy, -offsetX * uy + offsetY * ux];
+      };
+      let [localX, localY] = local(target);
+      if (Math.hypot(localX, localY) <= 1e-12) [localX, localY] = local(fallback);
+      const factor = 1 / Math.hypot(localX / major, localY / minor);
+      if (!Number.isFinite(factor)) throw new Error("MOTION_RIG_CONTACT_DIRECTION_INVALID");
+      return cleanPoint([
+        carrier.center[0] + ux * localX * factor - uy * localY * factor,
+        carrier.center[1] + uy * localX * factor + ux * localY * factor
+      ]);
+    }
+    function deformPointChain(input, movingEndpoint2, delta) {
+      const points = movingEndpoint2 === "last" ? [...input] : [...input].reverse();
       const cumulative = [0];
       for (let index = 1; index < points.length; index += 1) {
         cumulative.push(cumulative[index - 1] + distance(points[index - 1], points[index]));
@@ -2093,7 +2506,7 @@ window.__ModuleLoader__.load({
       const total = cumulative[cumulative.length - 1];
       if (!(total > 1e-12)) throw new Error("MOTION_RIG_CONNECTOR_DEGENERATE");
       const deformed = points.map((point2, index) => add(point2, scale(delta, cumulative[index] / total)));
-      return movingEndpoint === "last" ? deformed : deformed.reverse();
+      return movingEndpoint2 === "last" ? deformed : deformed.reverse();
     }
     function translatedFields(node, delta) {
       if (node.type === "point") return {
@@ -2197,8 +2610,45 @@ window.__ModuleLoader__.load({
       let motionRigBaseSnapshot = null;
       let motionRigBaseProjection = null;
       let motionRigDragStart = null;
+      let motionRigDragTarget = null;
       let motionRigCommands = [];
+      let motionRigSettledCommands = [];
+      let closedMotionRig = null;
       const store = createStore((set, get) => {
+        const clearMotionRigSession = () => {
+          motionRigBaseSnapshot = null;
+          motionRigBaseProjection = null;
+          motionRigDragStart = null;
+          motionRigDragTarget = null;
+          motionRigCommands = [];
+          motionRigSettledCommands = [];
+        };
+        const clearClosedMotionRig = () => {
+          closedMotionRig = null;
+          set({ canRestoreMotionRig: false });
+        };
+        const restoreClosedMotionRig = (recovery, snapshot) => {
+          const projection = structuredClone(recovery.projection);
+          projection.drawingRef = structuredClone(snapshot.ref);
+          motionRigBaseSnapshot = null;
+          motionRigBaseProjection = null;
+          motionRigDragStart = null;
+          motionRigDragTarget = null;
+          motionRigCommands = structuredClone(recovery.commands);
+          motionRigSettledCommands = structuredClone(recovery.commands);
+          closedMotionRig = null;
+          set({
+            canRestoreMotionRig: false,
+            motionRig: {
+              projection,
+              phase: recovery.commands.length > 0 ? "preview" : "ready"
+            },
+            displaySnapshot: {
+              ...structuredClone(snapshot),
+              document: structuredClone(recovery.candidate.document)
+            }
+          });
+        };
         const replaceSnapshot = async (snapshot, preview = null, groundingOverlay = null, motionRigProjection = null) => {
           const previousOverlay = get().groundingOverlay;
           const sameDrawing = snapshot !== null && (groundingCursor == null ? void 0 : groundingCursor.drawingId) === snapshot.ref.drawingId;
@@ -2225,6 +2675,7 @@ window.__ModuleLoader__.load({
           }
           const currentPreview = !terminalOverlay && previewMatchesSnapshot(preview, snapshot) ? preview : null;
           const currentMotionRig = motionRigMatchesSnapshot(motionRigProjection, snapshot) ? { projection: structuredClone(motionRigProjection), phase: "ready" } : null;
+          if (currentMotionRig !== null) currentGroundingOverlay = null;
           const displaySnapshot = (currentPreview == null ? void 0 : currentPreview.candidate) ?? snapshot;
           const nextIds = displaySnapshot === null ? /* @__PURE__ */ new Set() : drawingNodeIds(displaySnapshot);
           const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
@@ -2242,6 +2693,7 @@ window.__ModuleLoader__.load({
             nextSource == null ? void 0 : nextSource.dispose();
             return;
           }
+          clearMotionRigSession();
           if (previousSource !== nextSource) previousSource == null ? void 0 : previousSource.dispose();
           sourceResource = nextSource;
           set({
@@ -2259,6 +2711,7 @@ window.__ModuleLoader__.load({
         const refresh = async (initial) => {
           var _a2, _b, _c;
           if (disposed) return;
+          clearClosedMotionRig();
           requestController == null ? void 0 : requestController.abort();
           const controller = new AbortController();
           requestController = controller;
@@ -2286,6 +2739,7 @@ window.__ModuleLoader__.load({
           preview: null,
           groundingOverlay: null,
           motionRig: null,
+          canRestoreMotionRig: false,
           displaySnapshot: null,
           sourceResource: null,
           busy: false,
@@ -2310,6 +2764,7 @@ window.__ModuleLoader__.load({
           async commit(request) {
             const current = get().snapshot;
             if (current === null || disposed) return false;
+            clearClosedMotionRig();
             set({ busy: true, error: null });
             const controller = new AbortController();
             requestController = controller;
@@ -2360,7 +2815,13 @@ window.__ModuleLoader__.load({
           async undoLast() {
             var _a2;
             const snapshot = get().snapshot;
-            if (!((_a2 = snapshot == null ? void 0 : snapshot.lastCommit) == null ? void 0 : _a2.undoable) || !port.undoLast || disposed) return false;
+            if (snapshot === null || disposed) return false;
+            const recovery = closedMotionRig === null ? null : structuredClone(closedMotionRig);
+            if ((recovery == null ? void 0 : recovery.action) === "canceled") {
+              restoreClosedMotionRig(recovery, snapshot);
+              return true;
+            }
+            if (!((_a2 = snapshot.lastCommit) == null ? void 0 : _a2.undoable) || !port.undoLast) return false;
             set({ busy: true, error: null });
             const controller = new AbortController();
             requestController = controller;
@@ -2369,6 +2830,11 @@ window.__ModuleLoader__.load({
               if (controller.signal.aborted || disposed) return false;
               if (result.status === "committed") {
                 await replaceSnapshot(result.snapshot, null);
+                if ((recovery == null ? void 0 : recovery.action) === "confirmed") {
+                  restoreClosedMotionRig(recovery, result.snapshot);
+                } else {
+                  clearClosedMotionRig();
+                }
                 return true;
               }
               set({ error: { code: "undo_failed", message: result.message } });
@@ -2393,6 +2859,7 @@ window.__ModuleLoader__.load({
               if (controller.signal.aborted || disposed) return false;
               if (result.status === "committed") {
                 await replaceSnapshot(result.snapshot, null);
+                clearClosedMotionRig();
                 return true;
               }
               set({ error: { code: "redo_failed", message: result.message } });
@@ -2442,7 +2909,9 @@ window.__ModuleLoader__.load({
               motionRigBaseSnapshot = structuredClone(current.snapshot);
               motionRigBaseProjection = structuredClone(result.projection);
               motionRigCommands = [];
+              motionRigSettledCommands = [];
               motionRigDragStart = null;
+              motionRigDragTarget = null;
               set({
                 motionRig: { projection: structuredClone(result.projection), phase: "ready" },
                 displaySnapshot: ((_a2 = current.preview) == null ? void 0 : _a2.candidate) ?? current.snapshot
@@ -2457,38 +2926,48 @@ window.__ModuleLoader__.load({
           },
           beginMotionRigDrag(point2) {
             const current = get();
-            if (current.motionRig === null || current.snapshot === null || current.motionRig.phase === "preview") return;
-            motionRigBaseSnapshot = structuredClone(current.snapshot);
+            if (current.motionRig === null || current.snapshot === null) return;
+            motionRigBaseSnapshot = structuredClone(current.displaySnapshot ?? current.snapshot);
             motionRigBaseProjection = structuredClone(current.motionRig.projection);
             motionRigDragStart = [...point2];
-            motionRigCommands = [];
+            motionRigDragTarget = { kind: "control" };
+            set({ motionRig: { ...current.motionRig, phase: "dragging", message: void 0 } });
+          },
+          beginMotionRigConnectorDrag(nodeId, point2) {
+            const current = get();
+            if (current.motionRig === null || current.snapshot === null || !current.motionRig.projection.connectors.some((connector) => connector.nodeId === nodeId)) return;
+            motionRigBaseSnapshot = structuredClone(current.displaySnapshot ?? current.snapshot);
+            motionRigBaseProjection = structuredClone(current.motionRig.projection);
+            motionRigDragStart = [...point2];
+            motionRigDragTarget = { kind: "connector", nodeId };
             set({ motionRig: { ...current.motionRig, phase: "dragging", message: void 0 } });
           },
           updateMotionRigDrag(point2) {
             var _a2;
             const current = get();
-            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging" || motionRigDragStart === null || motionRigBaseSnapshot === null || motionRigBaseProjection === null) return;
+            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging" || motionRigDragStart === null || motionRigBaseSnapshot === null || motionRigBaseProjection === null || motionRigDragTarget === null) return;
             try {
-              const delta = [
-                point2[0] - motionRigDragStart[0],
-                point2[1] - motionRigDragStart[1]
-              ];
-              const solved = solveTranslationMotionRig(
+              const delta = [point2[0] - motionRigDragStart[0], point2[1] - motionRigDragStart[1]];
+              const solved = motionRigDragTarget.kind === "control" ? solveTranslationMotionRig(motionRigBaseSnapshot.document, motionRigBaseProjection, delta) : solveMotionRigConnectorAttachment(
                 motionRigBaseSnapshot.document,
                 motionRigBaseProjection,
-                delta
+                motionRigDragTarget.nodeId,
+                point2
               );
-              motionRigCommands = structuredClone(solved.commands);
+              motionRigCommands = [
+                ...structuredClone(motionRigSettledCommands),
+                ...structuredClone(solved.commands)
+              ];
               set({
                 displaySnapshot: { ...structuredClone(motionRigBaseSnapshot), document: solved.candidate },
                 motionRig: {
                   ...current.motionRig,
                   projection: {
                     ...current.motionRig.projection,
-                    handle: [
+                    handle: motionRigDragTarget.kind === "control" ? [
                       motionRigBaseProjection.handle[0] + delta[0],
                       motionRigBaseProjection.handle[1] + delta[1]
-                    ]
+                    ] : structuredClone(motionRigBaseProjection.handle)
                   },
                   phase: "dragging",
                   message: void 0
@@ -2502,27 +2981,46 @@ window.__ModuleLoader__.load({
             var _a2;
             const current = get();
             if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging") return;
+            motionRigSettledCommands = structuredClone(motionRigCommands);
             set({ motionRig: { ...current.motionRig, phase: motionRigCommands.length > 0 ? "preview" : "ready" } });
             motionRigDragStart = null;
+            motionRigDragTarget = null;
           },
           resetMotionRigDrag() {
-            var _a2, _b;
+            var _a2;
             const current = get();
-            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging" || motionRigBaseProjection === null) return;
-            motionRigCommands = [];
+            if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "dragging" || motionRigBaseProjection === null || motionRigBaseSnapshot === null) return;
+            motionRigCommands = structuredClone(motionRigSettledCommands);
             motionRigDragStart = null;
-            motionRigBaseSnapshot = null;
+            motionRigDragTarget = null;
             const projection = structuredClone(motionRigBaseProjection);
+            const displaySnapshot = structuredClone(motionRigBaseSnapshot);
+            motionRigBaseSnapshot = null;
             motionRigBaseProjection = null;
             set({
-              motionRig: { projection, phase: "ready" },
-              displaySnapshot: ((_b = current.preview) == null ? void 0 : _b.candidate) ?? current.snapshot
+              motionRig: { projection, phase: motionRigSettledCommands.length > 0 ? "preview" : "ready" },
+              displaySnapshot
             });
           },
           async confirmMotionRig() {
             var _a2, _b;
             const current = get();
             if (((_a2 = current.motionRig) == null ? void 0 : _a2.phase) !== "preview" || motionRigCommands.length === 0) return false;
+            if (!motionRigCommandsBelongToProjection(motionRigCommands, current.motionRig.projection)) {
+              set({
+                motionRig: {
+                  ...current.motionRig,
+                  message: "当前编辑包含不属于当前铰链的图元，请重新生成铰链后再确认。"
+                }
+              });
+              return false;
+            }
+            const recovery = {
+              action: "confirmed",
+              projection: structuredClone(current.motionRig.projection),
+              candidate: structuredClone(current.displaySnapshot ?? current.snapshot),
+              commands: structuredClone(motionRigCommands)
+            };
             const commands = structuredClone(motionRigCommands);
             const committed = await get().commit({ commands });
             if (!committed) return false;
@@ -2531,22 +3029,35 @@ window.__ModuleLoader__.load({
             motionRigBaseSnapshot = null;
             motionRigBaseProjection = null;
             motionRigDragStart = null;
+            motionRigDragTarget = null;
             motionRigCommands = [];
-            set({ motionRig: null });
+            motionRigSettledCommands = [];
+            closedMotionRig = recovery;
+            set({ motionRig: null, canRestoreMotionRig: true });
             return true;
           },
           async cancelMotionRig() {
             var _a2;
             const current = get();
+            const recovery = current.motionRig === null || current.snapshot === null ? null : {
+              action: "canceled",
+              projection: structuredClone(current.motionRig.projection),
+              candidate: structuredClone(current.displaySnapshot ?? current.snapshot),
+              commands: structuredClone(motionRigCommands)
+            };
             if (current.snapshot && port.discardMotionRig) {
               await port.discardMotionRig(current.snapshot.ref, requestController == null ? void 0 : requestController.signal);
             }
             motionRigBaseSnapshot = null;
             motionRigBaseProjection = null;
             motionRigDragStart = null;
+            motionRigDragTarget = null;
             motionRigCommands = [];
+            motionRigSettledCommands = [];
+            closedMotionRig = recovery;
             set({
               motionRig: null,
+              canRestoreMotionRig: recovery !== null,
               displaySnapshot: ((_a2 = current.preview) == null ? void 0 : _a2.candidate) ?? current.snapshot
             });
           },
@@ -2567,7 +3078,10 @@ window.__ModuleLoader__.load({
             motionRigBaseSnapshot = null;
             motionRigBaseProjection = null;
             motionRigDragStart = null;
+            motionRigDragTarget = null;
             motionRigCommands = [];
+            motionRigSettledCommands = [];
+            closedMotionRig = null;
           }
         };
       });
@@ -2575,6 +3089,13 @@ window.__ModuleLoader__.load({
     }
     function motionRigMatchesSnapshot(rig, snapshot) {
       return rig !== null && snapshot !== null && rig.drawingRef.drawingId === snapshot.ref.drawingId && rig.drawingRef.revision === snapshot.ref.revision;
+    }
+    function motionRigCommandsBelongToProjection(commands, projection) {
+      const allowedNodeIds = /* @__PURE__ */ new Set([
+        ...projection.controlBodyNodeIds,
+        ...projection.connectors.map(({ nodeId }) => nodeId)
+      ]);
+      return commands.every((command) => "id" in command && allowedNodeIds.has(command.id));
     }
     function drawingNodeIds(snapshot) {
       const { document: document2 } = snapshot;
@@ -8194,6 +8715,7 @@ window.__ModuleLoader__.load({
       drawingRef: drawingRefSchema,
       state: _enum(["ready", "needs-correction"]),
       message: string().min(1).optional(),
+      carrierNodeId: idSchema.optional(),
       controlBodyNodeIds: array(idSchema).min(1).max(256),
       connectors: array(drawingMotionRigConnectorSchema).min(1).max(256),
       anchor: vec2Schema,
@@ -8232,6 +8754,7 @@ window.__ModuleLoader__.load({
       groundingId: idSchema,
       partKey: string().trim().min(1).max(64),
       label: string().trim().min(1).max(80),
+      role: _enum(["target", "reference"]).optional(),
       colorIndex: number().int().nonnegative(),
       nodeIds: array(idSchema).min(1).max(256),
       interfaces: array(drawingGroundingOverlayInterfaceSchema).max(256)
@@ -8523,7 +9046,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset.vectoraiDshSpace = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace__panel-toggles {\n  display: flex;\n  margin-left: auto;\n  align-items: center;\n  gap: 3px;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: default;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel-deep);\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n/* SPDX-License-Identifier: Apache-2.0 */\n\n.vai-dsh-workspace-host {\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}\n";
       document.head.append(style);
       var dispose;
       try {

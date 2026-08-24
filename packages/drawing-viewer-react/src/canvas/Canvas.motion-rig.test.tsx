@@ -42,7 +42,7 @@ function fixture(): { snapshot: DrawingWorkspaceSnapshot; rig: DrawingMotionRigP
 }
 
 describe('Canvas temporary motion rig', () => {
-  it('routes handle movement through local solve and enters Preview on pointer-up', async () => {
+  it('keeps routing the same handle after pointer-up until the user confirms or cancels', async () => {
     const value = fixture();
     const port: DrawingWorkspacePort = {
       load: async () => value.snapshot,
@@ -78,11 +78,22 @@ describe('Canvas temporary motion rig', () => {
       clientX: 30, clientY: -25, currentTarget: svgElement,
     }));
 
+    act(() => handle.props.onMouseDown({
+      button: 0, clientX: 30, clientY: -25, currentTarget: handleElement,
+      preventDefault, stopPropagation,
+    }));
+    act(() => svg.props.onMouseMove({
+      clientX: 35, clientY: -35, currentTarget: svgElement,
+    }));
+    act(() => svg.props.onMouseUp({
+      clientX: 35, clientY: -35, currentTarget: svgElement,
+    }));
+
     expect(store.getState().motionRig?.phase).toBe('preview');
-    expect(store.getState().motionRig?.projection.handle).toEqual([30, 25]);
+    expect(store.getState().motionRig?.projection.handle).toEqual([35, 35]);
     expect(store.getState().displaySnapshot?.document.geometry).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'hand', center: [30, 25] }),
-      expect.objectContaining({ id: 'arm', start: [0, 20], end: [27, 25] }),
+      expect.objectContaining({ id: 'hand', center: [35, 35] }),
+      expect.objectContaining({ id: 'arm', start: [0, 20], end: [32, 35] }),
     ]));
     act(() => renderer.unmount());
   });

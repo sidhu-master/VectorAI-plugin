@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Vec2 } from '@vectorai/drawing-core';
 import type { DrawingMotionRigWorkspaceState } from '@vectorai/drawing-workspace';
 import type { MouseEvent } from 'react';
 
 export interface MotionRigOverlayProps {
   rig: DrawingMotionRigWorkspaceState;
   viewportScale: number;
+  connectorHandles?: Array<{ nodeId: string; point: Vec2 }>;
   onHandleMouseDown(event: MouseEvent<SVGCircleElement>): void;
+  onConnectorMouseDown?(nodeId: string, event: MouseEvent<SVGCircleElement>): void;
 }
 
 export function MotionRigOverlay({
   rig,
   viewportScale,
+  connectorHandles = [],
   onHandleMouseDown,
+  onConnectorMouseDown,
 }: MotionRigOverlayProps) {
   const scale = Math.max(viewportScale, 0.001);
   const { anchor, handle } = rig.projection;
@@ -49,12 +54,31 @@ export function MotionRigOverlay({
         r={8 / scale}
         vectorEffect="non-scaling-stroke"
         onMouseDown={(event) => {
-          if (event.button !== 0 || rig.phase === 'preview') return;
+          if (event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
           onHandleMouseDown(event);
         }}
       />
+      {connectorHandles.map(({ nodeId, point }) => (
+        <circle
+          key={nodeId}
+          role="button"
+          aria-label={`调整 ${nodeId} 与可动部件的接点`}
+          tabIndex={0}
+          className="vai-motion-rig__connector-handle"
+          cx={point[0]}
+          cy={point[1]}
+          r={5 / scale}
+          vectorEffect="non-scaling-stroke"
+          onMouseDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onConnectorMouseDown?.(nodeId, event);
+          }}
+        />
+      ))}
       <g transform={`translate(${handle[0]} ${handle[1] + 14 / scale}) scale(1 -1)`} pointerEvents="none">
         <text
           data-motion-rig-status={rig.phase}

@@ -141,6 +141,172 @@ describe('solveSpatialIntent', () => {
     expect(solved.actualEffect.updatedNodeIds).toEqual(['connector-a', 'part-a']);
   });
 
+  it('rejects an articulated selection that mixes a carrier and its connector with unrelated geometry', () => {
+    const before = fixture();
+    before.geometry.push({
+      id: 'shoulder-detail' as GeometryId,
+      type: 'arc',
+      center: [-8, 0],
+      radius: 2,
+      startAngle: 0,
+      endAngle: Math.PI,
+      counterClockwise: true,
+      visible: true,
+      quality,
+    });
+
+    let failure: unknown;
+    try {
+      solveSpatialIntent({
+        document: before,
+        baseRef: { drawingId: before.id, revision: 1 },
+        parts: {
+          articulated: {
+            targetHandle: 'target-articulated-with-unrelated-detail',
+            targetNodeIds: ['part-a', 'connector-a', 'shoulder-detail'],
+            interfaces: [],
+            sourceStatus: 'confirmed',
+          },
+        },
+        intent: {
+          summary: 'raise the articulated semantic part while keeping its fixed attachment',
+          goals: [{ kind: 'direction', subject: 'articulated', direction: 'up', magnitude: 'moderate' }],
+          preserve: [{ kind: 'connectivity', partKey: 'articulated' }, { kind: 'minimum_deformation' }],
+        },
+        numericConstraints: [], ports,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      message: 'EDIT_ARTICULATED_SELECTION_INVALID',
+      code: 'EDIT_ARTICULATED_SELECTION_INVALID',
+      partKey: 'articulated',
+      unexpectedNodeIds: ['shoulder-detail'],
+    });
+  });
+
+  it('rejects an articulated carrier and its connectors split across primitive-sized parts', () => {
+    const before = fixture();
+    before.geometry.push({
+      id: 'shoulder-detail' as GeometryId,
+      type: 'arc',
+      center: [-8, 0],
+      radius: 2,
+      startAngle: 0,
+      endAngle: Math.PI,
+      counterClockwise: true,
+      visible: true,
+      quality,
+    });
+
+    let failure: unknown;
+    try {
+      solveSpatialIntent({
+        document: before,
+        baseRef: { drawingId: before.id, revision: 1 },
+        parts: {
+          hand: target('part-a'),
+          armLine: target('connector-a'),
+          shoulder: target('shoulder-detail'),
+        },
+        intent: {
+          summary: 'raise the articulated hand and arm',
+          goals: [{ kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' }],
+          preserve: [
+            { kind: 'connectivity', partKey: 'hand' },
+            { kind: 'connectivity', partKey: 'armLine' },
+            { kind: 'connectivity', partKey: 'shoulder' },
+          ],
+        },
+        numericConstraints: [], ports,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      message: 'EDIT_ARTICULATED_SELECTION_FRAGMENTED',
+      code: 'EDIT_ARTICULATED_SELECTION_FRAGMENTED',
+      partKey: 'hand',
+      mergePartKeys: ['armLine'],
+      mergeNodeIds: ['connector-a'],
+      unexpectedPartKeys: ['shoulder'],
+      unexpectedNodeIds: ['shoulder-detail'],
+    });
+  });
+
+  it('rejects a non-articulated companion part even when the model invents a goal for it', () => {
+    const before = fixture();
+    let failure: unknown;
+    try {
+      solveSpatialIntent({
+        document: before,
+        baseRef: { drawingId: before.id, revision: 1 },
+        parts: {
+          hand: {
+            targetHandle: 'target-articulated-hand',
+            targetNodeIds: ['part-a', 'connector-a'],
+            interfaces: [],
+            sourceStatus: 'confirmed',
+          },
+          inventedArmSegment: target('connector-b'),
+        },
+        intent: {
+          summary: 'raise the hand and an incorrectly inferred body segment',
+          goals: [
+            { kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' },
+            { kind: 'direction', subject: 'inventedArmSegment', direction: 'up', magnitude: 'moderate' },
+          ],
+          preserve: [
+            { kind: 'connectivity', partKey: 'hand' },
+            { kind: 'connectivity', partKey: 'inventedArmSegment' },
+          ],
+        },
+        numericConstraints: [], ports,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      message: 'EDIT_ARTICULATED_COMPANION_PART_INVALID',
+      code: 'EDIT_ARTICULATED_COMPANION_PART_INVALID',
+      unexpectedPartKeys: ['inventedArmSegment'],
+      unexpectedNodeIds: ['connector-b'],
+    });
+  });
+
+  it('rejects selected parts that are neither a goal subject nor a spatial reference', () => {
+    const before = fixture();
+
+    let failure: unknown;
+    try {
+      solveSpatialIntent({
+      document: before,
+      baseRef: { drawingId: before.id, revision: 1 },
+      parts: {
+        hand: target('part-a', 'connector-a'),
+        unrelatedBodyLine: target('connector-b'),
+      },
+      intent: {
+        summary: 'raise only the hand',
+        goals: [{ kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' }],
+        preserve: [
+          { kind: 'connectivity', partKey: 'hand' },
+          { kind: 'topology', partKey: 'unrelatedBodyLine' },
+        ],
+      },
+        numericConstraints: [], ports,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      message: 'EDIT_SELECTED_PART_UNUSED',
+      code: 'EDIT_SELECTED_PART_UNUSED',
+      unusedPartKeys: ['unrelatedBodyLine'],
+    });
+  });
+
   it('combines relative position and alignment without a model-authored translation', () => {
     const before = fixture();
     const solved = solveSpatialIntent({

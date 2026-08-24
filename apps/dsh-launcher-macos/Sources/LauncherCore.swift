@@ -121,6 +121,61 @@ enum LocalPort {
             }
         }
     }
+
+    static func reclaim(_ port: UInt16, terminationGracePeriod: TimeInterval = 1) -> Bool {
+        if isAvailable(port) { return true }
+
+        let initialListeners = listenerProcessIdentifiers(port)
+        guard !initialListeners.isEmpty else { return false }
+        for pid in initialListeners where pid != getpid() {
+            _ = kill(pid, SIGTERM)
+        }
+        if waitUntilAvailable(port, timeout: max(0, terminationGracePeriod)) {
+            return true
+        }
+
+        let remainingListeners = listenerProcessIdentifiers(port)
+        for pid in remainingListeners where pid != getpid() {
+            _ = kill(pid, SIGKILL)
+        }
+        return waitUntilAvailable(port, timeout: 2)
+    }
+
+    private static func listenerProcessIdentifiers(_ port: UInt16) -> [pid_t] {
+        let lsofURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        guard FileManager.default.isExecutableFile(atPath: lsofURL.path) else { return [] }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = lsofURL
+        process.arguments = ["-nP", "-t", "-iTCP:\(port)", "-sTCP:LISTEN"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return []
+        }
+        guard process.terminationStatus == 0 else { return [] }
+
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        return Array(Set(text
+            .split(whereSeparator: \Character.isWhitespace)
+            .compactMap { pid_t($0) }
+            .filter { $0 > 1 }))
+            .sorted()
+    }
+
+    private static func waitUntilAvailable(_ port: UInt16, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if isAvailable(port) { return true }
+            Thread.sleep(forTimeInterval: 0.03)
+        } while Date() < deadline
+        return isAvailable(port)
+    }
 }
 
 enum ManagedProcessError: LocalizedError {

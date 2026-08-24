@@ -99,6 +99,7 @@ describe('DSH drawing workspace wire schemas', () => {
         groundingId: 'ground-left',
         partKey: 'part-left',
         label: 'Part Left',
+        role: 'target' as const,
         colorIndex: 0,
         nodeIds: ['carrier-left'],
         interfaces: [{
@@ -110,6 +111,7 @@ describe('DSH drawing workspace wire schemas', () => {
         groundingId: 'ground-right',
         partKey: 'part-right',
         label: 'Part Right',
+        role: 'reference' as const,
         colorIndex: 1,
         nodeIds: ['carrier-right'],
         interfaces: [],

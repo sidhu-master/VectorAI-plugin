@@ -52,4 +52,29 @@ describe('MotionRigOverlay', () => {
     expect(renderer.root.findByProps({ 'data-motion-rig-status': 'preview' }).children).toEqual(['等待确认']);
     act(() => renderer.unmount());
   });
+
+  it('renders directly draggable connector contacts while Preview remains active', () => {
+    const onConnectorMouseDown = vi.fn();
+    let renderer: TestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = TestRenderer.create(
+        <svg>
+          <MotionRigOverlay
+            rig={{ ...rig, phase: 'preview' }}
+            viewportScale={2}
+            connectorHandles={[{ nodeId: 'arm', point: [17, 20] }]}
+            onHandleMouseDown={() => {}}
+            onConnectorMouseDown={onConnectorMouseDown}
+          />
+        </svg>,
+      );
+    });
+
+    const handle = renderer.root.findByProps({ 'aria-label': '调整 arm 与可动部件的接点' });
+    expect(handle.props).toMatchObject({ cx: 17, cy: 20, role: 'button' });
+    const event = { button: 0, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    act(() => handle.props.onMouseDown(event));
+    expect(onConnectorMouseDown).toHaveBeenCalledWith('arm', event);
+    act(() => renderer.unmount());
+  });
 });

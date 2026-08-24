@@ -119,9 +119,25 @@ describe('DrawingWorkspaceProvider', () => {
     expect(emptyMarkup).toContain('还没有图纸');
     expect(readyMarkup).toContain('data-workspace-state="ready"');
     expect(readyMarkup).toContain('data-layout="website-parity"');
-    expect(readyMarkup).toContain('data-panel="inspector"');
-    expect(readyMarkup).toMatch(/data-panel="inspector"[\s\S]*vai-object-list[\s\S]*vai-inspector[\s\S]*data-canvas-root="true"/);
+    expect(readyMarkup).toContain('aria-label="信息面板工具栏"');
+    expect(readyMarkup).toContain('aria-label="对象面板"');
+    expect(readyMarkup).toContain('aria-label="属性面板"');
+    expect(readyMarkup).not.toContain('data-panel="objects"');
+    expect(readyMarkup).not.toContain('data-panel="properties"');
+    expect(readyMarkup).not.toContain('class="vai-panel vai-object-list"');
+    expect(readyMarkup).not.toContain('class="vai-panel vai-inspector"');
+    expect(readyMarkup).not.toMatch(/<button[^>]*>对象<\/button>|<button[^>]*>属性<\/button>/);
     expect(readyMarkup).toContain('ready-drawing');
+    expect(readyMarkup).toContain('aria-label="图纸操作工具"');
+    expect(readyMarkup).toContain('aria-label="适配图纸"');
+    expect(readyMarkup).toContain('aria-label="撤销"');
+    expect(readyMarkup).toContain('aria-label="反撤销"');
+    expect(readyMarkup).toContain('aria-label="上传图纸"');
+    expect(readyMarkup).toContain('aria-label="导出 DXF"');
+    expect(readyMarkup).not.toContain('>网格<');
+    expect(readyMarkup).not.toContain('>坐标轴<');
+    expect(readyMarkup).not.toContain('>源图<');
+    expect(readyMarkup).not.toContain('aria-label="图纸视图工具"');
     expect(errorMarkup).toContain('data-workspace-state="error"');
     expect(errorMarkup).toContain('offline');
   });
@@ -184,4 +200,5 @@ describe('DrawingWorkspaceProvider', () => {
     expect(markup).toContain('data-preview-diff="created"');
     expect(markup).toContain('data-preview-diff="deleted"');
   });
+
 });

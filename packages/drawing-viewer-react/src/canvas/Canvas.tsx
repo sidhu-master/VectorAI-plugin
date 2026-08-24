@@ -36,7 +36,11 @@ type DragState =
   | { kind: 'annotation'; id: string; startWorld: Vec2; currentWorld: Vec2 }
   | { kind: 'motion-rig'; startWorld: Vec2; currentWorld: Vec2 };
 
-export function Canvas() {
+export interface CanvasProps {
+  motionPreviewHeld?: boolean;
+}
+
+export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
   const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
   const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
   const preview = useDrawingWorkspace((state) => state.preview);
@@ -52,6 +56,7 @@ export function Canvas() {
   const moveAnnotationText = useDrawingWorkspace((state) => state.moveAnnotationText);
   const rebuildMotionRigFromSelection = useDrawingWorkspace((state) => state.rebuildMotionRigFromSelection);
   const beginMotionRigDrag = useDrawingWorkspace((state) => state.beginMotionRigDrag);
+  const beginMotionRigConnectorDrag = useDrawingWorkspace((state) => state.beginMotionRigConnectorDrag);
   const updateMotionRigDrag = useDrawingWorkspace((state) => state.updateMotionRigDrag);
   const finishMotionRigDrag = useDrawingWorkspace((state) => state.finishMotionRigDrag);
   const resetMotionRigDrag = useDrawingWorkspace((state) => state.resetMotionRigDrag);
@@ -96,19 +101,36 @@ export function Canvas() {
     ...(display.annotations ? snapshot.document.annotations : []),
   ];
   const groundedNodeIds = new Set(
-    groundingOverlay?.groups.flatMap((group) => group.nodeIds) ?? [],
+    groundingOverlay?.groups
+      .filter((group) => group.role !== 'reference')
+      .flatMap((group) => group.nodeIds) ?? [],
   );
   const motionRigNodeIds = new Set([
     ...(motionRig?.projection.controlBodyNodeIds ?? []),
     ...(motionRig?.projection.connectors.map(({ nodeId }) => nodeId) ?? []),
   ]);
-  const previewBeforeEntities = preview === null || formalSnapshot === null ? [] : [
+  const motionRigConnectorHandles = motionRig?.projection.connectors.flatMap((binding) => {
+    const node = snapshot.document.geometry.find(({ id }) => String(id) === binding.nodeId);
+    if (!node) return [];
+    const point = connectorMovingPoint(node, binding.movingEndpoint);
+    return point === null ? [] : [{ nodeId: binding.nodeId, point }];
+  }) ?? [];
+  const motionPreviewBeforeEntities = !motionPreviewHeld || formalSnapshot === null || motionRig === null
+    ? []
+    : [...motionRigNodeIds].flatMap((id) => {
+      const before = formalSnapshot.document.geometry.find((node) => String(node.id) === id);
+      const after = snapshot.document.geometry.find((node) => String(node.id) === id);
+      return before === undefined || after === undefined || drawingNodesEqual(before, after) ? [] : [before];
+    });
+  const previewBeforeEntities = motionPreviewHeld || preview === null || formalSnapshot === null ? [] : [
     ...formalSnapshot.document.geometry,
     ...(display.annotations ? formalSnapshot.document.annotations : []),
   ].filter((node) => (
     preview.diff.updatedNodeIds.includes(node.id) || preview.diff.deletedNodeIds.includes(node.id)
   ));
-  const previewMotion = preview === null || formalSnapshot === null ? [] : preview.diff.updatedNodeIds.flatMap((id) => {
+  const previewMotion = motionPreviewHeld || preview === null || formalSnapshot === null
+    ? []
+    : preview.diff.updatedNodeIds.flatMap((id) => {
     const before = [...formalSnapshot.document.geometry, ...formalSnapshot.document.annotations]
       .find((node) => node.id === id);
     const after = [...snapshot.document.geometry, ...snapshot.document.annotations]
@@ -260,6 +282,13 @@ export function Canvas() {
     dragRef.current = { kind: 'motion-rig', startWorld: world, currentWorld: world };
   };
 
+  const handleMotionRigConnectorPointerDown = (nodeId: string, event: MouseEvent<SVGCircleElement>) => {
+    const point = eventScreenPoint(event);
+    const world = screenToWorld(point, viewport);
+    beginMotionRigConnectorDrag(nodeId, world);
+    dragRef.current = { kind: 'motion-rig', startWorld: world, currentWorld: world };
+  };
+
   const handleAnnotationPointerDown = (annotation: AnnotationNode, event: MouseEvent<SVGGElement>) => {
     if (event.button !== 0) return;
     event.stopPropagation();
@@ -274,6 +303,7 @@ export function Canvas() {
       ref={containerRef}
       className="vai-canvas"
       data-canvas-root="true"
+      data-motion-preview-held={motionPreviewHeld || undefined}
       role="application"
       aria-label="可交互图纸画布"
       tabIndex={0}
@@ -313,6 +343,21 @@ export function Canvas() {
             />
           ) : null}
           {display.relations ? <RelationLayer document={snapshot.document} viewport={viewport} /> : null}
+          {motionPreviewBeforeEntities.map((node) => (
+            <g
+              key={`motion-preview-before:${node.id}`}
+              className="vai-motion-preview__before"
+              data-motion-preview-before={node.id}
+              pointerEvents="none"
+            >
+              <EntityRenderer
+                node={node}
+                viewport={viewport}
+                selected={false}
+                onSelect={() => {}}
+              />
+            </g>
+          ))}
           {previewBeforeEntities.map((node) => (
             <EntityRenderer
               key={`preview-before:${node.id}`}
@@ -342,10 +387,10 @@ export function Canvas() {
               key={node.id}
               node={node}
               viewport={viewport}
-              selected={selectedIds.includes(node.id)}
-              aiGrounded={groundedNodeIds.has(node.id)}
-              motionRigActive={motionRigNodeIds.has(node.id)}
-              previewDiff={preview?.diff.createdNodeIds.includes(node.id)
+              selected={!motionPreviewHeld && selectedIds.includes(node.id)}
+              aiGrounded={!motionPreviewHeld && groundedNodeIds.has(node.id)}
+              motionRigActive={!motionPreviewHeld && motionRigNodeIds.has(node.id)}
+              previewDiff={motionPreviewHeld ? undefined : preview?.diff.createdNodeIds.includes(node.id)
                 ? 'created'
                 : preview?.diff.updatedNodeIds.includes(node.id)
                   ? 'updated'
@@ -356,18 +401,45 @@ export function Canvas() {
                 : undefined}
             />
           ))}
-          {motionRig === null ? null : (
+          {motionRig === null || motionPreviewHeld ? null : (
             <MotionRigOverlay
               rig={motionRig}
               viewportScale={viewport.scale}
+              connectorHandles={motionRigConnectorHandles}
               onHandleMouseDown={handleMotionRigPointerDown}
+              onConnectorMouseDown={handleMotionRigConnectorPointerDown}
             />
           )}
         </g>
-        {selectionBox === null ? null : <SelectionBox box={selectionBox} />}
+        {selectionBox === null || motionPreviewHeld ? null : <SelectionBox box={selectionBox} />}
       </svg>
     </div>
   );
+}
+
+function drawingNodesEqual(
+  first: DrawingDocument['geometry'][number],
+  second: DrawingDocument['geometry'][number],
+): boolean {
+  return JSON.stringify(first) === JSON.stringify(second);
+}
+
+function connectorMovingPoint(
+  node: DrawingDocument['geometry'][number],
+  movingEndpoint: 'start' | 'end' | 'first' | 'last',
+): Vec2 | null {
+  if (node.type === 'line') {
+    if (movingEndpoint === 'start' || movingEndpoint === 'end') return node[movingEndpoint];
+  }
+  if (node.type === 'polyline') {
+    if (movingEndpoint === 'first') return node.vertices[0]?.point ?? null;
+    if (movingEndpoint === 'last') return node.vertices[node.vertices.length - 1]?.point ?? null;
+  }
+  if (node.type === 'spline') {
+    if (movingEndpoint === 'first') return node.controlPoints[0] ?? null;
+    if (movingEndpoint === 'last') return node.controlPoints[node.controlPoints.length - 1] ?? null;
+  }
+  return null;
 }
 
 function RelationLayer({

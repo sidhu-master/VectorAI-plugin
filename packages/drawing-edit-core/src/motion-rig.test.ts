@@ -52,6 +52,48 @@ function update(result: ReturnType<typeof solveTranslationMotionRig>, id: string
 }
 
 describe('temporary translation motion rig', () => {
+  it('slides one connector endpoint along the carrier boundary without moving its fixed end', async () => {
+    const motionRigModule = await import('./index');
+    const solveAttachment = (motionRigModule as typeof motionRigModule & {
+      solveMotionRigConnectorAttachment?: (
+        document: DrawingDocument,
+        rig: MotionRigDefinition,
+        connectorId: string,
+        target: [number, number],
+      ) => ReturnType<typeof solveTranslationMotionRig>;
+    }).solveMotionRigConnectorAttachment;
+    expect(solveAttachment).toBeTypeOf('function');
+    if (!solveAttachment) return;
+    const document = fixture();
+    const rig = resolveTranslationMotionRig(document, ['hand', 'hand-detail']);
+
+    const solved = solveAttachment(document, rig, 'arm-line', [20, 40]);
+
+    expect(update(solved, 'arm-line').changes).toEqual({ end: [20, 23] });
+    expect(solved.candidate.geometry.find(({ id }) => id === 'arm-line')).toMatchObject({
+      start: [0, 20], end: [20, 23],
+    });
+    expect(solved.candidate.geometry.find(({ id }) => id === 'hand')).toMatchObject({
+      center: [20, 20], radius: 3,
+    });
+  });
+
+  it('accepts a vectorized connector endpoint with the same drawing-relative tolerance as connected transforms', () => {
+    const document = fixture();
+    document.geometry = [
+      { id: 'control' as GeometryId, type: 'circle', center: [430, 205], radius: 41.5, visible: true, quality },
+      { id: 'connector' as GeometryId, type: 'line', start: [367, 289], end: [427, 247], visible: true, quality },
+      { id: 'extent' as GeometryId, type: 'line', start: [0, 0], end: [500, 600], visible: true, quality },
+    ];
+
+    const rig = resolveTranslationMotionRig(document, ['control']);
+
+    expect(rig.controlBodyNodeIds).toEqual(['control']);
+    expect(rig.connectors).toEqual([
+      { nodeId: 'connector', movingEndpoint: 'end', fixedPoint: [367, 289] },
+    ]);
+  });
+
   it('resolves one rigid multi-node control body and disconnected connector primitives', () => {
     const rig = resolveTranslationMotionRig(fixture(), ['hand-detail', 'hand']);
 

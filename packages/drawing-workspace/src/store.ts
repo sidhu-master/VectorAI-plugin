@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Vec2 } from '@vectorai/drawing-core';
-import { solveTranslationMotionRig } from '@vectorai/drawing-edit-core';
+import {
+  solveMotionRigConnectorAttachment,
+  solveTranslationMotionRig,
+} from '@vectorai/drawing-edit-core';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import type {
@@ -50,6 +53,7 @@ export interface DrawingWorkspaceState {
   preview: DrawingWorkspacePreview | null;
   groundingOverlay: DrawingGroundingOverlay | null;
   motionRig: DrawingMotionRigWorkspaceState | null;
+  canRestoreMotionRig: boolean;
   displaySnapshot: DrawingWorkspaceSnapshot | null;
   sourceResource: DrawingSourceResource | null;
   busy: boolean;
@@ -72,6 +76,7 @@ export interface DrawingWorkspaceState {
   setSelection(ids: string[]): void;
   rebuildMotionRigFromSelection(): Promise<boolean>;
   beginMotionRigDrag(point: Vec2): void;
+  beginMotionRigConnectorDrag(nodeId: string, point: Vec2): void;
   updateMotionRigDrag(point: Vec2): void;
   finishMotionRigDrag(): void;
   resetMotionRigDrag(): void;
@@ -113,9 +118,57 @@ export function createDrawingWorkspaceStore(input: {
   let motionRigBaseSnapshot: DrawingWorkspaceSnapshot | null = null;
   let motionRigBaseProjection: DrawingMotionRigProjection | null = null;
   let motionRigDragStart: Vec2 | null = null;
+  let motionRigDragTarget: { kind: 'control' } | { kind: 'connector'; nodeId: string } | null = null;
   let motionRigCommands: DrawingWorkspaceCommitRequest['commands'] = [];
+  let motionRigSettledCommands: DrawingWorkspaceCommitRequest['commands'] = [];
+  let closedMotionRig: {
+    action: 'confirmed' | 'canceled';
+    projection: DrawingMotionRigProjection;
+    candidate: DrawingWorkspaceSnapshot;
+    commands: DrawingWorkspaceCommitRequest['commands'];
+  } | null = null;
 
   const store = createStore<DrawingWorkspaceState>((set, get) => {
+    const clearMotionRigSession = (): void => {
+      motionRigBaseSnapshot = null;
+      motionRigBaseProjection = null;
+      motionRigDragStart = null;
+      motionRigDragTarget = null;
+      motionRigCommands = [];
+      motionRigSettledCommands = [];
+    };
+
+    const clearClosedMotionRig = (): void => {
+      closedMotionRig = null;
+      set({ canRestoreMotionRig: false });
+    };
+
+    const restoreClosedMotionRig = (
+      recovery: NonNullable<typeof closedMotionRig>,
+      snapshot: DrawingWorkspaceSnapshot,
+    ): void => {
+      const projection = structuredClone(recovery.projection);
+      projection.drawingRef = structuredClone(snapshot.ref);
+      motionRigBaseSnapshot = null;
+      motionRigBaseProjection = null;
+      motionRigDragStart = null;
+      motionRigDragTarget = null;
+      motionRigCommands = structuredClone(recovery.commands);
+      motionRigSettledCommands = structuredClone(recovery.commands);
+      closedMotionRig = null;
+      set({
+        canRestoreMotionRig: false,
+        motionRig: {
+          projection,
+          phase: recovery.commands.length > 0 ? 'preview' : 'ready',
+        },
+        displaySnapshot: {
+          ...structuredClone(snapshot),
+          document: structuredClone(recovery.candidate.document),
+        },
+      });
+    };
+
     const replaceSnapshot = async (
       snapshot: DrawingWorkspaceSnapshot | null,
       preview: DrawingWorkspacePreview | null = null,
@@ -163,6 +216,7 @@ export function createDrawingWorkspaceStore(input: {
       const currentMotionRig = motionRigMatchesSnapshot(motionRigProjection, snapshot)
         ? { projection: structuredClone(motionRigProjection), phase: 'ready' as const }
         : null;
+      if (currentMotionRig !== null) currentGroundingOverlay = null;
       const displaySnapshot = currentPreview?.candidate ?? snapshot;
       const nextIds = displaySnapshot === null ? new Set<string>() : drawingNodeIds(displaySnapshot);
       const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
@@ -182,6 +236,7 @@ export function createDrawingWorkspaceStore(input: {
         nextSource?.dispose();
         return;
       }
+      clearMotionRigSession();
       if (previousSource !== nextSource) previousSource?.dispose();
       sourceResource = nextSource;
       set({
@@ -199,6 +254,7 @@ export function createDrawingWorkspaceStore(input: {
 
     const refresh = async (initial: boolean): Promise<void> => {
       if (disposed) return;
+      clearClosedMotionRig();
       requestController?.abort();
       const controller = new AbortController();
       requestController = controller;
@@ -227,6 +283,7 @@ export function createDrawingWorkspaceStore(input: {
       preview: null,
       groundingOverlay: null,
       motionRig: null,
+      canRestoreMotionRig: false,
       displaySnapshot: null,
       sourceResource: null,
       busy: false,
@@ -251,6 +308,7 @@ export function createDrawingWorkspaceStore(input: {
       async commit(request) {
         const current = get().snapshot;
         if (current === null || disposed) return false;
+        clearClosedMotionRig();
         set({ busy: true, error: null });
         const controller = new AbortController();
         requestController = controller;
@@ -300,7 +358,13 @@ export function createDrawingWorkspaceStore(input: {
       },
       async undoLast() {
         const snapshot = get().snapshot;
-        if (!snapshot?.lastCommit?.undoable || !port.undoLast || disposed) return false;
+        if (snapshot === null || disposed) return false;
+        const recovery = closedMotionRig === null ? null : structuredClone(closedMotionRig);
+        if (recovery?.action === 'canceled') {
+          restoreClosedMotionRig(recovery, snapshot);
+          return true;
+        }
+        if (!snapshot.lastCommit?.undoable || !port.undoLast) return false;
         set({ busy: true, error: null });
         const controller = new AbortController();
         requestController = controller;
@@ -309,6 +373,11 @@ export function createDrawingWorkspaceStore(input: {
           if (controller.signal.aborted || disposed) return false;
           if (result.status === 'committed') {
             await replaceSnapshot(result.snapshot, null);
+            if (recovery?.action === 'confirmed') {
+              restoreClosedMotionRig(recovery, result.snapshot);
+            } else {
+              clearClosedMotionRig();
+            }
             return true;
           }
           set({ error: { code: 'undo_failed', message: result.message } });
@@ -332,6 +401,7 @@ export function createDrawingWorkspaceStore(input: {
           if (controller.signal.aborted || disposed) return false;
           if (result.status === 'committed') {
             await replaceSnapshot(result.snapshot, null);
+            clearClosedMotionRig();
             return true;
           }
           set({ error: { code: 'redo_failed', message: result.message } });
@@ -384,7 +454,9 @@ export function createDrawingWorkspaceStore(input: {
           motionRigBaseSnapshot = structuredClone(current.snapshot);
           motionRigBaseProjection = structuredClone(result.projection);
           motionRigCommands = [];
+          motionRigSettledCommands = [];
           motionRigDragStart = null;
+          motionRigDragTarget = null;
           set({
             motionRig: { projection: structuredClone(result.projection), phase: 'ready' },
             displaySnapshot: current.preview?.candidate ?? current.snapshot,
@@ -401,11 +473,24 @@ export function createDrawingWorkspaceStore(input: {
       },
       beginMotionRigDrag(point) {
         const current = get();
-        if (current.motionRig === null || current.snapshot === null || current.motionRig.phase === 'preview') return;
-        motionRigBaseSnapshot = structuredClone(current.snapshot);
+        if (current.motionRig === null || current.snapshot === null) return;
+        motionRigBaseSnapshot = structuredClone(current.displaySnapshot ?? current.snapshot);
         motionRigBaseProjection = structuredClone(current.motionRig.projection);
         motionRigDragStart = [...point];
-        motionRigCommands = [];
+        motionRigDragTarget = { kind: 'control' };
+        set({ motionRig: { ...current.motionRig, phase: 'dragging', message: undefined } });
+      },
+      beginMotionRigConnectorDrag(nodeId, point) {
+        const current = get();
+        if (
+          current.motionRig === null
+          || current.snapshot === null
+          || !current.motionRig.projection.connectors.some((connector) => connector.nodeId === nodeId)
+        ) return;
+        motionRigBaseSnapshot = structuredClone(current.displaySnapshot ?? current.snapshot);
+        motionRigBaseProjection = structuredClone(current.motionRig.projection);
+        motionRigDragStart = [...point];
+        motionRigDragTarget = { kind: 'connector', nodeId };
         set({ motionRig: { ...current.motionRig, phase: 'dragging', message: undefined } });
       },
       updateMotionRigDrag(point) {
@@ -415,28 +500,34 @@ export function createDrawingWorkspaceStore(input: {
           || motionRigDragStart === null
           || motionRigBaseSnapshot === null
           || motionRigBaseProjection === null
+          || motionRigDragTarget === null
         ) return;
         try {
-          const delta: Vec2 = [
-            point[0] - motionRigDragStart[0],
-            point[1] - motionRigDragStart[1],
+          const delta: Vec2 = [point[0] - motionRigDragStart[0], point[1] - motionRigDragStart[1]];
+          const solved = motionRigDragTarget.kind === 'control'
+            ? solveTranslationMotionRig(motionRigBaseSnapshot.document, motionRigBaseProjection, delta)
+            : solveMotionRigConnectorAttachment(
+              motionRigBaseSnapshot.document,
+              motionRigBaseProjection,
+              motionRigDragTarget.nodeId,
+              point,
+            );
+          motionRigCommands = [
+            ...structuredClone(motionRigSettledCommands),
+            ...structuredClone(solved.commands),
           ];
-          const solved = solveTranslationMotionRig(
-            motionRigBaseSnapshot.document,
-            motionRigBaseProjection,
-            delta,
-          );
-          motionRigCommands = structuredClone(solved.commands);
           set({
             displaySnapshot: { ...structuredClone(motionRigBaseSnapshot), document: solved.candidate },
             motionRig: {
               ...current.motionRig,
               projection: {
                 ...current.motionRig.projection,
-                handle: [
-                  motionRigBaseProjection.handle[0] + delta[0],
-                  motionRigBaseProjection.handle[1] + delta[1],
-                ],
+                handle: motionRigDragTarget.kind === 'control'
+                  ? [
+                    motionRigBaseProjection.handle[0] + delta[0],
+                    motionRigBaseProjection.handle[1] + delta[1],
+                  ]
+                  : structuredClone(motionRigBaseProjection.handle),
               },
               phase: 'dragging', message: undefined,
             },
@@ -448,25 +539,48 @@ export function createDrawingWorkspaceStore(input: {
       finishMotionRigDrag() {
         const current = get();
         if (current.motionRig?.phase !== 'dragging') return;
+        motionRigSettledCommands = structuredClone(motionRigCommands);
         set({ motionRig: { ...current.motionRig, phase: motionRigCommands.length > 0 ? 'preview' : 'ready' } });
         motionRigDragStart = null;
+        motionRigDragTarget = null;
       },
       resetMotionRigDrag() {
         const current = get();
-        if (current.motionRig?.phase !== 'dragging' || motionRigBaseProjection === null) return;
-        motionRigCommands = [];
+        if (
+          current.motionRig?.phase !== 'dragging'
+          || motionRigBaseProjection === null
+          || motionRigBaseSnapshot === null
+        ) return;
+        motionRigCommands = structuredClone(motionRigSettledCommands);
         motionRigDragStart = null;
-        motionRigBaseSnapshot = null;
+        motionRigDragTarget = null;
         const projection = structuredClone(motionRigBaseProjection);
+        const displaySnapshot = structuredClone(motionRigBaseSnapshot);
+        motionRigBaseSnapshot = null;
         motionRigBaseProjection = null;
         set({
-          motionRig: { projection, phase: 'ready' },
-          displaySnapshot: current.preview?.candidate ?? current.snapshot,
+          motionRig: { projection, phase: motionRigSettledCommands.length > 0 ? 'preview' : 'ready' },
+          displaySnapshot,
         });
       },
       async confirmMotionRig() {
         const current = get();
         if (current.motionRig?.phase !== 'preview' || motionRigCommands.length === 0) return false;
+        if (!motionRigCommandsBelongToProjection(motionRigCommands, current.motionRig.projection)) {
+          set({
+            motionRig: {
+              ...current.motionRig,
+              message: '当前编辑包含不属于当前铰链的图元，请重新生成铰链后再确认。',
+            },
+          });
+          return false;
+        }
+        const recovery = {
+          action: 'confirmed' as const,
+          projection: structuredClone(current.motionRig.projection),
+          candidate: structuredClone(current.displaySnapshot ?? current.snapshot),
+          commands: structuredClone(motionRigCommands),
+        };
         const commands = structuredClone(motionRigCommands);
         const committed = await get().commit({ commands });
         if (!committed) return false;
@@ -475,21 +589,36 @@ export function createDrawingWorkspaceStore(input: {
         motionRigBaseSnapshot = null;
         motionRigBaseProjection = null;
         motionRigDragStart = null;
+        motionRigDragTarget = null;
         motionRigCommands = [];
-        set({ motionRig: null });
+        motionRigSettledCommands = [];
+        closedMotionRig = recovery;
+        set({ motionRig: null, canRestoreMotionRig: true });
         return true;
       },
       async cancelMotionRig() {
         const current = get();
+        const recovery = current.motionRig === null || current.snapshot === null
+          ? null
+          : {
+            action: 'canceled' as const,
+            projection: structuredClone(current.motionRig.projection),
+            candidate: structuredClone(current.displaySnapshot ?? current.snapshot),
+            commands: structuredClone(motionRigCommands),
+          };
         if (current.snapshot && port.discardMotionRig) {
           await port.discardMotionRig(current.snapshot.ref, requestController?.signal);
         }
         motionRigBaseSnapshot = null;
         motionRigBaseProjection = null;
         motionRigDragStart = null;
+        motionRigDragTarget = null;
         motionRigCommands = [];
+        motionRigSettledCommands = [];
+        closedMotionRig = recovery;
         set({
           motionRig: null,
+          canRestoreMotionRig: recovery !== null,
           displaySnapshot: current.preview?.candidate ?? current.snapshot,
         });
       },
@@ -510,7 +639,10 @@ export function createDrawingWorkspaceStore(input: {
         motionRigBaseSnapshot = null;
         motionRigBaseProjection = null;
         motionRigDragStart = null;
+        motionRigDragTarget = null;
         motionRigCommands = [];
+        motionRigSettledCommands = [];
+        closedMotionRig = null;
       },
     };
   });
@@ -526,6 +658,17 @@ function motionRigMatchesSnapshot(
     && snapshot !== null
     && rig.drawingRef.drawingId === snapshot.ref.drawingId
     && rig.drawingRef.revision === snapshot.ref.revision;
+}
+
+function motionRigCommandsBelongToProjection(
+  commands: DrawingWorkspaceCommitRequest['commands'],
+  projection: DrawingMotionRigProjection,
+): boolean {
+  const allowedNodeIds = new Set([
+    ...projection.controlBodyNodeIds,
+    ...projection.connectors.map(({ nodeId }) => nodeId),
+  ]);
+  return commands.every((command) => 'id' in command && allowedNodeIds.has(command.id));
 }
 
 function drawingNodeIds(snapshot: DrawingWorkspaceSnapshot): Set<string> {

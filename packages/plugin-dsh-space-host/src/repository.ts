@@ -81,6 +81,8 @@ export interface UndoCommitRequest {
   operationBindingDigest: string;
 }
 
+export type RedoCommitRequest = UndoCommitRequest;
+
 export class InMemoryDrawingRepository {
   readonly #pending = new Map<string, ImageAttachmentRef>();
   readonly #drawings = new Map<string, DrawingEntry>();
@@ -374,6 +376,58 @@ export class InMemoryDrawingRepository {
     return structuredClone(receipt);
   }
 
+  redoCommit(sessionId: string, request: RedoCommitRequest): DurableOperationReceipt {
+    if (this.#previews.has(sessionId)) throw new Error('REDO_PREVIEW_ACTIVE');
+    const state = this.#requireDurable(sessionId);
+    const replay = findOperation(state, request.operationId);
+    if (replay) {
+      if (replay.operationBindingDigest !== request.operationBindingDigest) {
+        throw new Error('IDEMPOTENCY_KEY_REUSED');
+      }
+      return structuredClone(replay);
+    }
+    const currentRef = { drawingId: state.entry.drawingId, revision: state.entry.revision };
+    if (!isDeepStrictEqual(currentRef, request.expectedCurrentRef)) throw new Error('REDO_CONFLICT');
+    const target = state.commits.find(({ commitId }) => commitId === request.targetCommitId);
+    if (!target) throw new Error('REDO_TARGET_NOT_FOUND');
+    if (target.mode !== 'undo') throw new Error('REDO_TARGET_NOT_UNDO');
+    if (target.resultingRevision !== state.entry.revision) throw new Error('REDO_CONFLICT');
+    const document = applyDrawingTransaction(state.entry.document, target.inverse, this.#now());
+    const nextEntry: DrawingEntry = { ...state.entry, document, revision: state.entry.revision + 1 };
+    const semanticDigest = digest(canonicalSemanticString(document));
+    const snapshotIntegrityDigest = digest(JSON.stringify(nextEntry));
+    const commitId = `commit_${request.operationId}`;
+    const receipt: DurableOperationReceipt = {
+      status: 'committed', mode: 'redo',
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      sessionId, drawingId: state.entry.drawingId,
+      parentRef: currentRef,
+      resultingRef: { drawingId: state.entry.drawingId, revision: nextEntry.revision },
+      commitId, targetCommitId: target.commitId,
+      semanticDigest, snapshotIntegrityDigest,
+    };
+    const record: DrawingCommitRecord = {
+      commitId, mode: 'redo',
+      operationId: request.operationId,
+      operationBindingDigest: request.operationBindingDigest,
+      parentRevision: state.entry.revision,
+      resultingRevision: nextEntry.revision,
+      forward: structuredClone(target.inverse),
+      inverse: structuredClone(target.forward),
+      targetCommitId: target.commitId,
+      semanticDigest, snapshotIntegrityDigest,
+      committedAt: this.#now(),
+    };
+    this.#saveDurable(sessionId, {
+      version: 2,
+      entry: nextEntry,
+      commits: [...state.commits, record],
+      operations: [...state.operations, receipt],
+    });
+    return structuredClone(receipt);
+  }
+
   summarize(sessionId: string): DrawingSummary | null {
     const entry = this.#getDrawing(sessionId);
     if (entry === null) return null;
@@ -615,6 +669,7 @@ function snapshotOf(entry: DrawingEntry, lastCommit?: DrawingCommitRecord): Draw
       commitId: lastCommit.commitId,
       mode: lastCommit.mode,
       undoable: lastCommit.mode !== 'undo',
+      redoable: lastCommit.mode === 'undo',
     } } : {}),
   });
 }

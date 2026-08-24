@@ -198,6 +198,7 @@ describe('drawing image intake', () => {
     if (text?.type !== 'text') throw new Error('expected text');
     expect(text.text).toMatch(/drawing-1@3[\s\S]*drawing_observe[\s\S]*only if[\s\S]*otherwise ignore/i);
     expect(text.text).toMatch(/selection candidates[\s\S]*cN[\s\S]*drawing_select_parts/i);
+    expect(text.text).toMatch(/role=target[\s\S]*role=reference[\s\S]*fixed/i);
     expect(text.text).toMatch(/do not use drawing_query node ids or guessed coordinates/i);
     expect(text.text).not.toMatch(/drawing_build_context[\s\S]*drawing_ground[\s\S]*drawing_preview/i);
   });

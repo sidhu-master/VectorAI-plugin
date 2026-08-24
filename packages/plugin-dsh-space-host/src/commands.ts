@@ -64,7 +64,32 @@ export function registerDrawingCommands(
       }
     },
   });
+  const disposeRedo = commands.register({
+    name: 'drawing-redo',
+    description: 'Redo the exact current Drawing Undo as a new durable revision.',
+    input: { hint: '<undoCommitId> <drawingId>@<revision> <operationId> <operationBindingDigest>' },
+    recordInput: false,
+    async handler(invocation) {
+      const [targetCommitId, encodedRef, operationId, operationBindingDigest, ...extra] = invocation.rawInput.trim().split(/\s+/);
+      const match = encodedRef?.match(/^(.+)@(\d+)$/);
+      if (!targetCommitId || !match || !operationId || !operationBindingDigest || extra.length > 0) {
+        return { kind: 'error', text: 'Usage: /drawing-redo <undoCommitId> <drawingId>@<revision> <operationId> <operationBindingDigest>' };
+      }
+      try {
+        const receipt = semantic.redo(String(invocation.agent.id), {
+          targetCommitId,
+          expectedCurrentRef: { drawingId: match[1], revision: Number(match[2]) },
+          operationId,
+          operationBindingDigest,
+        });
+        return { kind: 'success', text: JSON.stringify(receipt) };
+      } catch (error) {
+        return { kind: 'error', text: error instanceof Error ? error.message : String(error) };
+      }
+    },
+  });
   return () => {
+    disposeRedo();
     disposeUndo();
     disposePolicy();
     disposeApply();

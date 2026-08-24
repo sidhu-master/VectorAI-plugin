@@ -63,6 +63,7 @@ export interface DrawingGroundingOverlayGroup {
   groundingId: string;
   partKey: string;
   label: string;
+  role?: 'target' | 'reference';
   colorIndex: number;
   nodeIds: string[];
   interfaces: DrawingGroundingOverlayInterface[];

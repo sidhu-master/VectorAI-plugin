@@ -17,6 +17,7 @@
   "dependencies": {
     "@vectorai/drawing-core": "workspace:*",
     "@vectorai/drawing-workspace": "workspace:*",
+    "lucide-react": "0.511.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },

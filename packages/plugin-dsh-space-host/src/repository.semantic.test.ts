@@ -105,6 +105,36 @@ describe('durable semantic commits', () => {
     expect(storage.state?.commits.map(({ mode }) => mode)).toEqual(['auto-safe', 'undo']);
   });
 
+  it('redoes the latest undo as a new durable revision', async () => {
+    const storage = new MemoryDurableStorage();
+    const drawings = await imported(storage);
+    const committed = drawings.commitSemantic('session-1', {
+      expectedRef: { drawingId: 'drawing-1', revision: 1 },
+      operationId: 'op-semantic-1', operationBindingDigest: 'sha256:binding',
+      candidateDigest: 'sha256:candidate', mode: 'auto-safe',
+      forward: [{ type: 'node.update', id: 'hand', changes: { center: [12, 20] }, expected: { center: [10, 10] } }],
+      inverse: [{ type: 'node.update', id: 'hand', changes: { center: [10, 10] }, expected: { center: [12, 20] } }],
+    });
+    if (committed.status !== 'committed') throw new Error('expected semantic commit');
+    const undone = drawings.undoCommit('session-1', {
+      targetCommitId: committed.commitId,
+      expectedCurrentRef: committed.resultingRef,
+      operationId: 'op-undo-1', operationBindingDigest: 'sha256:undo-binding',
+    });
+    if (undone.status !== 'committed') throw new Error('expected undo commit');
+
+    const redone = drawings.redoCommit('session-1', {
+      targetCommitId: undone.commitId,
+      expectedCurrentRef: undone.resultingRef,
+      operationId: 'op-redo-1', operationBindingDigest: 'sha256:redo-binding',
+    });
+
+    expect(redone.status).toBe('committed');
+    expect(drawings.getSnapshot('session-1')?.ref.revision).toBe(4);
+    expect(drawings.getSnapshot('session-1')?.document.geometry[0]).toMatchObject({ center: [12, 20] });
+    expect(storage.state?.commits.map(({ mode }) => mode)).toEqual(['auto-safe', 'undo', 'redo']);
+  });
+
   it('rejects idempotency key reuse with a different binding', async () => {
     const drawings = await imported(new MemoryDurableStorage());
     const base = {

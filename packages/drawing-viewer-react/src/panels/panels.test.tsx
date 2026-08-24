@@ -102,7 +102,7 @@ describe('shared drawing workspace panels', () => {
     expect(markup).toContain('value="8"');
   });
 
-  it('shows display tools and precise workspace status', async () => {
+  it('shows drawing actions and precise workspace status', async () => {
     const store = createDrawingWorkspaceStore({ port: new PanelPort() });
     await store.getState().load();
     store.getState().setViewport({ x: 0, y: 0, scale: 2, width: 800, height: 600 });
@@ -115,15 +115,97 @@ describe('shared drawing workspace panels', () => {
       </DrawingWorkspaceProvider>,
     );
 
-    expect(markup).toContain('适配图纸');
-    expect(markup).toContain('网格');
-    expect(markup).toContain('坐标轴');
-    expect(markup).toContain('关系');
-    expect(markup).toContain('标注');
+    expect(markup).toContain('aria-label="适配图纸"');
+    expect(markup).toContain('aria-label="撤销"');
+    expect(markup).toContain('aria-label="反撤销"');
+    expect(markup).toContain('aria-label="上传图纸"');
+    expect(markup).toContain('aria-label="导出 DXF"');
+    expect(markup).not.toMatch(/>适配图纸<|>撤销<|>反撤销<|>上传<|>导出</);
+    expect(markup.match(/<svg/g)).toHaveLength(5);
     expect(markup).toContain('X 50.000');
     expect(markup).toContain('Y 25.000');
     expect(markup).toContain('200%');
     expect(markup).toContain('Revision 12');
+  });
+
+  it('renders cancel and confirm in a separate motion-rig toolbar', async () => {
+    const store = createDrawingWorkspaceStore({ port: new PanelPort() });
+    await store.getState().load();
+    store.setState({
+      motionRig: {
+        projection: {
+          version: 1,
+          drawingRef: { drawingId: 'drawing-panels', revision: 12 },
+          state: 'ready',
+          controlBodyNodeIds: ['circle-1'],
+          connectors: [],
+          anchor: [10, 20],
+          handle: [10, 20],
+          keepAnchorFixed: true,
+          keepControlBodyRigid: true,
+          preserveConnectivity: true,
+          allowControlRotation: false,
+        },
+        phase: 'preview',
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <WorkspaceToolbar />
+      </DrawingWorkspaceProvider>,
+    );
+
+    const motionToolbarIndex = markup.indexOf('aria-label="姿态编辑操作"');
+    const mainToolbarIndex = markup.indexOf('aria-label="图纸操作工具"');
+    const cancelIndex = markup.indexOf('aria-label="取消姿态"');
+    const previewIndex = markup.indexOf('aria-label="按住预览修改效果"');
+    const separatorIndexes = [...markup.matchAll(/vai-toolbar__separator--motion-rig/g)]
+      .map(({ index }) => index);
+    const confirmIndex = markup.indexOf('aria-label="确认姿态"');
+    expect(markup.match(/role="toolbar"/g)).toHaveLength(2);
+    expect(motionToolbarIndex).toBeGreaterThan(-1);
+    expect(cancelIndex).toBeGreaterThan(motionToolbarIndex);
+    expect(separatorIndexes).toHaveLength(2);
+    expect(separatorIndexes[0]).toBeGreaterThan(cancelIndex);
+    expect(previewIndex).toBeGreaterThan(separatorIndexes[0]);
+    expect(markup).toMatch(/class="vai-toolbar__action vai-toolbar__action--preview"[^>]*aria-label="按住预览修改效果"/);
+    expect(separatorIndexes[1]).toBeGreaterThan(previewIndex);
+    expect(confirmIndex).toBeGreaterThan(separatorIndexes[1]);
+    expect(mainToolbarIndex).toBeGreaterThan(confirmIndex);
+  });
+
+  it('keeps colored motion-rig actions visible while dragging', async () => {
+    const store = createDrawingWorkspaceStore({ port: new PanelPort() });
+    await store.getState().load();
+    store.setState({
+      motionRig: {
+        projection: {
+          version: 1,
+          drawingRef: { drawingId: 'drawing-panels', revision: 12 },
+          state: 'ready',
+          controlBodyNodeIds: ['circle-1'],
+          connectors: [],
+          anchor: [10, 20],
+          handle: [10, 20],
+          keepAnchorFixed: true,
+          keepControlBodyRigid: true,
+          preserveConnectivity: true,
+          allowControlRotation: false,
+        },
+        phase: 'dragging',
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <WorkspaceToolbar />
+      </DrawingWorkspaceProvider>,
+    );
+
+    expect(markup).toContain('aria-label="姿态编辑操作"');
+    expect(markup).toMatch(/class="vai-toolbar__action vai-toolbar__action--cancel"[^>]*aria-label="取消姿态"/);
+    expect(markup).toMatch(/class="vai-toolbar__action vai-toolbar__action--confirm"[^>]*aria-label="确认姿态"[^>]*disabled=""/);
   });
 
   it('shows AI-grounded objects with a transient row state distinct from user selection', async () => {
@@ -136,9 +218,12 @@ describe('shared drawing workspace panels', () => {
       disposition: 'active',
       groups: [{
         groundingId: 'ground-arm', partKey: 'arm', label: '左臂', colorIndex: 2,
-        nodeIds: ['line-1'], interfaces: [],
+        role: 'target', nodeIds: ['line-1'], interfaces: [],
+      }, {
+        groundingId: 'ground-body', partKey: 'fixed-body', label: '固定身体', colorIndex: 3,
+        role: 'reference', nodeIds: ['circle-1'], interfaces: [],
       }],
-    };
+    } as never;
     const store = createDrawingWorkspaceStore({ port });
     await store.getState().load();
 
@@ -149,6 +234,7 @@ describe('shared drawing workspace panels', () => {
     );
 
     expect(markup).toMatch(/class="vai-object-row vai-object-row--ai-grounded"[^>]*data-object-id="line-1"/);
+    expect(markup).not.toMatch(/class="vai-object-row vai-object-row--ai-grounded"[^>]*data-object-id="circle-1"/);
     expect(markup).not.toContain('vai-object-row--selected');
     expect(markup).not.toContain('data-grounding-object');
     expect(markup).not.toContain('AI 识别：左臂');

@@ -106,6 +106,7 @@ describe('@vectorai/drawing-edit-protocol', () => {
         {
           partKey: 'part-a',
           label: 'left selected carrier',
+          role: 'target' as const,
           references: [
             { kind: 'current_selection' as const },
             { kind: 'observation_point' as const, normalized: [0.25, 0.75] as const },

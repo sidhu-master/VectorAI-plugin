@@ -43,6 +43,7 @@ export const partSelectionExclusionSchema = z.discriminatedUnion('kind', [
 export const semanticPartSelectionSchema = z.strictObject({
   partKey: partKeySchema,
   label: boundedLabelSchema,
+  role: z.enum(['target', 'reference']).default('target'),
   references: z.array(partSelectionReferenceSchema).min(1).max(8),
   exclude: z.array(partSelectionExclusionSchema).max(16).optional(),
 }).superRefine(({ exclude }, context) => {
@@ -205,7 +206,7 @@ export const drawingWorkflowDispositionSchema = z.enum([
 export type PartSelectionReference = z.infer<typeof partSelectionReferenceSchema>;
 export type PartSelectionExclusion = z.infer<typeof partSelectionExclusionSchema>;
 export type SemanticPartSelection = z.infer<typeof semanticPartSelectionSchema>;
-export type DrawingSelectPartsRequest = z.infer<typeof drawingSelectPartsRequestSchema>;
+export type DrawingSelectPartsRequest = z.input<typeof drawingSelectPartsRequestSchema>;
 export type SpatialReference = z.infer<typeof spatialReferenceSchema>;
 export type SpatialGoal = z.infer<typeof spatialGoalSchema>;
 export type PreservationGoal = z.infer<typeof preservationGoalSchema>;

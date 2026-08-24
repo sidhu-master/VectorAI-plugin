@@ -40,6 +40,10 @@ async function setup(
           { id: 'right-arm-top' as GeometryId, type: 'line', start: [9, 2], end: [12.7639320225, 2], visible: true, quality },
           { id: 'right-arm-bottom' as GeometryId, type: 'line', start: [9, -2], end: [12.7639320225, -2], visible: true, quality },
           { id: 'left-hand' as GeometryId, type: 'circle', center: [-15, 0], radius: 3, visible: true, quality },
+          {
+            id: 'unrelated-arc' as GeometryId, type: 'arc', center: [0, 0], radius: 2,
+            startAngle: 0, endAngle: Math.PI, counterClockwise: true, visible: true, quality,
+          },
         ];
         return { document, bounds: { minX: -30, minY: -20, maxX: 30, maxY: 30 }, provisional };
       },
@@ -499,6 +503,186 @@ describe('SemanticEditService', () => {
     });
   });
 
+  it('projects invalid articulated node ids back to short candidate keys for model correction', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-articulated-correction',
+      objective: '把右手抬起来打招呼',
+      rootUserMessageDigest: 'sha256:message-articulated-correction', numericConstraints: [],
+    });
+    const observed = await service.observeCurrent('session-1');
+    const hand = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-right')
+    ));
+    const body = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('arc') && summary.includes('middle-center')
+    ));
+    const connectors = observed.selectionCandidates.filter(({ summary }) => (
+      summary.includes('line') && summary.includes('middle-right')
+    ));
+    expect(hand?.key).toMatch(/^c\d+$/);
+    expect(body?.key).toMatch(/^c\d+$/);
+    expect(connectors).toHaveLength(2);
+    service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'right-arm', label: 'right hand and arm',
+        references: [hand!, ...connectors, body!].map(({ key }) => ({ kind: 'candidate' as const, key })),
+      }],
+    });
+    service.confirmCurrentSelection('session-1');
+
+    let failure: unknown;
+    try {
+      service.previewCurrentIntent('session-1', {
+        summary: 'raise the right hand',
+        goals: [{ kind: 'direction', subject: 'right-arm', direction: 'up', magnitude: 'moderate' }],
+        preserve: [{ kind: 'connectivity', partKey: 'right-arm' }],
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      message: 'EDIT_ARTICULATED_SELECTION_INVALID',
+      correction: {
+        parts: [{ partKey: 'right-arm', removeCandidates: [body!.key] }],
+      },
+    });
+    expect(JSON.stringify(failure)).not.toMatch(/right-hand|body|node_/);
+
+    expect(service.applyCurrentSelectionCorrection('session-1')).toMatchObject({
+      state: 'selected', parts: [{ partKey: 'right-arm', nodeCount: 3 }],
+    });
+
+    expect(service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'right-arm', label: 'corrected right hand and arm',
+        references: [hand!, ...connectors].map(({ key }) => ({ kind: 'candidate' as const, key })),
+      }, {
+        partKey: 'extra-body', label: 'newly added unrelated body geometry',
+        references: [{ kind: 'candidate', key: body!.key }],
+      }],
+    })).toEqual({
+      state: 'invalid_state',
+      code: 'EDIT_SELECTION_CORRECTION_ADDED_GEOMETRY',
+      nextTools: ['drawing_select_parts', 'drawing_confirm_selection'],
+    });
+
+    expect(Object.keys(service.currentSelectedParts('session-1'))).toEqual(['right-arm']);
+  });
+
+  it('asks the model to merge an articulated carrier and connectors split into primitive parts', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-fragmented-articulation',
+      objective: '把右手抬起来打招呼',
+      rootUserMessageDigest: 'sha256:message-fragmented-articulation', numericConstraints: [],
+    });
+    const observed = await service.observeCurrent('session-1');
+    const hand = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-right')
+    ));
+    const body = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-center')
+    ));
+    const connectors = observed.selectionCandidates.filter(({ summary }) => (
+      summary.includes('line') && summary.includes('middle-right')
+    ));
+    expect(connectors).toHaveLength(2);
+    service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'hand', label: 'hand carrier',
+        references: [{ kind: 'candidate', key: hand!.key }],
+      }, ...connectors.map(({ key }, index) => ({
+        partKey: `arm-${index + 1}`, label: `arm connector ${index + 1}`,
+        references: [{ kind: 'candidate' as const, key }],
+      })), {
+        partKey: 'body', label: 'unrelated body',
+        references: [{ kind: 'candidate', key: body!.key }],
+      }],
+    });
+    service.confirmCurrentSelection('session-1');
+
+    let failure: unknown;
+    try {
+      service.previewCurrentIntent('session-1', {
+        summary: 'raise the right hand and connected arm',
+        goals: [{ kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' }],
+        preserve: [
+          { kind: 'connectivity', partKey: 'hand' },
+          { kind: 'connectivity', partKey: 'arm-1' },
+          { kind: 'connectivity', partKey: 'arm-2' },
+          { kind: 'connectivity', partKey: 'body' },
+        ],
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      message: 'EDIT_ARTICULATED_SELECTION_FRAGMENTED',
+      correction: {
+        mergeIntoPart: {
+          partKey: 'hand',
+          candidates: connectors.map(({ key }) => key),
+        },
+        removeParts: [],
+      },
+    });
+    expect(JSON.stringify(failure)).not.toMatch(/right-hand|node_/);
+  });
+
+  it('rejects a model-authored goal that makes unrelated geometry accompany an articulated part', async () => {
+    const { service } = await setup();
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-articulated-companion',
+      objective: '把右手抬起来打招呼',
+      rootUserMessageDigest: 'sha256:message-articulated-companion', numericConstraints: [],
+    });
+    const observed = await service.observeCurrent('session-1');
+    const hand = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('circle') && summary.includes('middle-right')
+    ));
+    const body = observed.selectionCandidates.find(({ summary }) => (
+      summary.includes('arc') && summary.includes('middle-center')
+    ));
+    const connectors = observed.selectionCandidates.filter(({ summary }) => (
+      summary.includes('line') && summary.includes('middle-right')
+    ));
+    service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'hand', label: 'complete articulated hand',
+        references: [hand!, ...connectors].map(({ key }) => ({ kind: 'candidate' as const, key })),
+      }, {
+        partKey: 'invented-body-segment', label: 'unrelated companion',
+        references: [{ kind: 'candidate', key: body!.key }],
+      }],
+    });
+    service.confirmCurrentSelection('session-1');
+
+    let failure: unknown;
+    try {
+      service.previewCurrentIntent('session-1', {
+        summary: 'raise both selected parts',
+        goals: [
+          { kind: 'direction', subject: 'hand', direction: 'up', magnitude: 'moderate' },
+          { kind: 'direction', subject: 'invented-body-segment', direction: 'up', magnitude: 'moderate' },
+        ],
+        preserve: [
+          { kind: 'connectivity', partKey: 'hand' },
+          { kind: 'connectivity', partKey: 'invented-body-segment' },
+        ],
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      message: 'EDIT_ARTICULATED_COMPANION_PART_INVALID',
+      correction: {
+        removeParts: [{ partKey: 'invented-body-segment', candidates: [body!.key] }],
+      },
+    });
+    expect(JSON.stringify(failure)).not.toMatch(/right-hand|node_/);
+  });
+
   it('keeps existing episode candidates valid while resolving a genuine ambiguity', async () => {
     const { service } = await setup();
     service.bindUserInstruction('session-1', {
@@ -752,6 +936,59 @@ describe('SemanticEditService', () => {
     if (!first) throw new Error('overlay missing');
     first.groups[0]!.label = 'caller mutation';
     expect(service.currentGroundingOverlay('session-1')?.groups[0]?.label).toBe('Part A refined');
+  });
+
+  it('keeps fixed motion references out of the highlighted selection feedback', async () => {
+    const renderedSelections: string[][] = [];
+    const { service } = await setup(false, undefined, async (input) => {
+      renderedSelections.push([...input.selectedNodeIds].sort());
+      return {
+        contentDigest: 'sha256:motion-selection',
+        attachment: {
+          attachmentId: 'motion-selection' as never,
+          mediaType: 'image/png', bytes: 1, width: 60, height: 50,
+        },
+        width: 60,
+        height: 50,
+        worldToImage: [1, 0, 0, -1, 30, 30],
+      };
+    });
+    service.bindUserInstruction('session-1', {
+      rootUserMessageId: 'message-motion-selection',
+      objective: '为左手创建移动铰链',
+      rootUserMessageDigest: 'sha256:motion-selection',
+      numericConstraints: [],
+    });
+    await service.observeCurrent('session-1');
+
+    const result = service.selectCurrentParts('session-1', {
+      parts: [{
+        partKey: 'left_arm_assembly', label: '左手及左臂', role: 'target',
+        references: [{ kind: 'semantic_query', text: 'left hand' }],
+      }, {
+        partKey: 'fixed_body', label: '固定主体', role: 'reference',
+        references: [{ kind: 'semantic_query', text: 'body' }],
+      }],
+    } as never);
+
+    expect(result).toMatchObject({
+      state: 'selected',
+      parts: [
+        { partKey: 'left_arm_assembly', role: 'target' },
+        { partKey: 'fixed_body', role: 'reference' },
+      ],
+    });
+    expect(service.currentGroundingOverlay('session-1')?.groups).toMatchObject([
+      { partKey: 'left_arm_assembly', role: 'target' },
+      { partKey: 'fixed_body', role: 'reference' },
+    ]);
+
+    await service.renderCurrentSelectionObservation('session-1');
+    expect(renderedSelections.at(-1)).toEqual(['left-hand']);
+    expect(service.currentSelectedParts('session-1')).toMatchObject({
+      left_arm_assembly: { targetNodeIds: ['left-hand'] },
+      fixed_body: { targetNodeIds: ['body'] },
+    });
   });
 
   it('lets a legacy Grounding replace named groups and clears them for a new task', async () => {

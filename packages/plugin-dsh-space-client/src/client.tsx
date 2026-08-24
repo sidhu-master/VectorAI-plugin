@@ -29,10 +29,16 @@ export const inject = ['slots', 'remote', 'conversation'];
 
 interface DrawingConversationViewProps extends Pick<DrawingWorkspaceSlotProps, 'useSession'> {
   workspacePort: DrawingWorkspacePort;
+  inputActions: DrawingWorkspaceSlotProps['inputActions'];
+  createDraftImages(files: readonly File[]): readonly { id: string }[];
   releaseSources(): void;
 }
 
-function MountedDrawingWorkspace() {
+function MountedDrawingWorkspace({
+  onUploadFiles,
+}: {
+  onUploadFiles(files: readonly File[]): void;
+}) {
   const hasDrawing = useDrawingWorkspace((state) => state.snapshot !== null);
   if (!hasDrawing) return null;
 
@@ -41,7 +47,7 @@ function MountedDrawingWorkspace() {
       className="vai-dsh-workspace-host"
       data-conversation-workspace-active=""
     >
-      <DrawingWorkspace />
+      <DrawingWorkspace onUploadFiles={onUploadFiles} />
     </div>
   );
 }
@@ -49,6 +55,8 @@ function MountedDrawingWorkspace() {
 export function DrawingConversationView({
   useSession,
   workspacePort,
+  inputActions,
+  createDraftImages,
   releaseSources,
 }: DrawingConversationViewProps) {
   const runningCallCount = useSession((snapshot) => snapshot.runningCalls.length);
@@ -65,9 +73,16 @@ export function DrawingConversationView({
 
   useEffect(() => releaseSources, [releaseSources]);
 
+  const uploadDrawing = (files: readonly File[]) => {
+    const attachments = createDraftImages(files);
+    if (attachments.length === 0 || !inputActions.addImages(attachments.map(({ id }) => id as never))) return;
+    inputActions.setDraft('请将上传的图片导入并矢量化为可编辑图纸');
+    inputActions.submit();
+  };
+
   return (
     <DrawingWorkspaceProvider store={store}>
-      <MountedDrawingWorkspace />
+      <MountedDrawingWorkspace onUploadFiles={uploadDrawing} />
     </DrawingWorkspaceProvider>
   );
 }
@@ -82,7 +97,7 @@ export async function apply(ctx: Context) {
     const commands = scope.get('remote').commands;
     const conversation = scope.get('conversation') as unknown as Pick<
       ConversationController,
-      'resolveImage' | 'releaseSessionImages'
+      'createDraftImages' | 'resolveImage' | 'releaseSessionImages'
     >;
     return slots.inject('conversation.workspace', () => slots.register({
       name: 'conversation.workspace',
@@ -97,6 +112,7 @@ export async function apply(ctx: Context) {
               conversation.resolveImage(ownerId as SessionId, attachment)
             ),
           }),
+          createDraftImages: (files: readonly File[]) => conversation.createDraftImages(files),
           releaseSources: () => conversation.releaseSessionImages(id as SessionId),
         };
       },

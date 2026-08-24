@@ -12,6 +12,7 @@ export interface MotionRigConnectorBinding {
 }
 
 export interface MotionRigDefinition {
+  carrierNodeId?: string;
   controlBodyNodeIds: string[];
   connectors: MotionRigConnectorBinding[];
   anchor: Vec2;
@@ -80,6 +81,7 @@ export function resolveTranslationMotionRig(
     connectors.reduce((sum, connector) => sum + connector.fixedPoint[1], 0) / connectors.length,
   ]);
   return {
+    carrierNodeId: String(carrier.id),
     controlBodyNodeIds,
     connectors,
     anchor,
@@ -89,6 +91,45 @@ export function resolveTranslationMotionRig(
     preserveConnectivity: true,
     allowControlRotation: false,
   };
+}
+
+export function solveMotionRigConnectorAttachment(
+  document: DrawingDocument,
+  rig: MotionRigDefinition,
+  connectorId: string,
+  target: Vec2,
+): MotionRigSolveResult {
+  if (!finitePoint(target)) throw new Error('MOTION_RIG_CONTACT_TARGET_INVALID');
+  const binding = rig.connectors.find(({ nodeId }) => nodeId === connectorId);
+  if (!binding) throw new Error('MOTION_RIG_CONNECTOR_MISSING');
+  const carrierId = rig.carrierNodeId ?? rig.controlBodyNodeIds.find((id) => {
+    const located = findDrawingNode(document, id);
+    return located?.plane === 'geometry'
+      && (located.node.type === 'circle' || located.node.type === 'ellipse');
+  });
+  const carrierLocated = carrierId ? findDrawingNode(document, carrierId) : null;
+  if (
+    !carrierLocated
+    || carrierLocated.plane !== 'geometry'
+    || (carrierLocated.node.type !== 'circle' && carrierLocated.node.type !== 'ellipse')
+  ) throw new Error('MOTION_RIG_CONTROL_NODE_MISSING');
+  const connectorLocated = findDrawingNode(document, connectorId);
+  if (!connectorLocated || connectorLocated.plane !== 'geometry') {
+    throw new Error('MOTION_RIG_CONNECTOR_MISSING');
+  }
+  const connector = connectorLocated.node as GeometryNode;
+  const currentPoint = movingEndpoint(connector, binding.movingEndpoint);
+  const projected = projectToCarrierBoundary(carrierLocated.node, target, currentPoint);
+  const command = deformConnector(connector, binding, [
+    projected[0] - currentPoint[0],
+    projected[1] - currentPoint[1],
+  ]);
+  const candidate = applyDrawingTransaction(document, [command], document.metadata.updatedAt);
+  const updated = candidate.geometry.find(({ id }) => String(id) === connectorId);
+  if (!updated || distance(fixedEndpoint(updated, binding.movingEndpoint), binding.fixedPoint) > 1e-8) {
+    throw new Error('MOTION_RIG_ANCHOR_CHANGED');
+  }
+  return { commands: [command], candidate };
 }
 
 export function solveTranslationMotionRig(
@@ -193,6 +234,59 @@ function deformConnector(
   throw new Error('MOTION_RIG_GEOMETRY_UNSUPPORTED');
 }
 
+function movingEndpoint(
+  node: GeometryNode,
+  moving: MotionRigConnectorBinding['movingEndpoint'],
+): Vec2 {
+  if (node.type === 'line') {
+    if (moving === 'start' || moving === 'end') return node[moving];
+  }
+  if (node.type === 'polyline') {
+    if (moving === 'first') return node.vertices[0]!.point;
+    if (moving === 'last') return node.vertices[node.vertices.length - 1]!.point;
+  }
+  if (node.type === 'spline') {
+    if (moving === 'first') return node.controlPoints[0]!;
+    if (moving === 'last') return node.controlPoints[node.controlPoints.length - 1]!;
+  }
+  throw new Error('MOTION_RIG_GEOMETRY_UNSUPPORTED');
+}
+
+function projectToCarrierBoundary(carrier: Carrier, target: Vec2, fallback: Vec2): Vec2 {
+  const dx = target[0] - carrier.center[0];
+  const dy = target[1] - carrier.center[1];
+  if (carrier.type === 'circle') {
+    const length = Math.hypot(dx, dy);
+    const fallbackDx = fallback[0] - carrier.center[0];
+    const fallbackDy = fallback[1] - carrier.center[1];
+    const directionLength = length > 1e-12 ? length : Math.hypot(fallbackDx, fallbackDy);
+    if (!(directionLength > 1e-12)) throw new Error('MOTION_RIG_CONTACT_DIRECTION_INVALID');
+    const direction = length > 1e-12 ? [dx, dy] as Vec2 : [fallbackDx, fallbackDy] as Vec2;
+    return cleanPoint([
+      carrier.center[0] + direction[0] * carrier.radius / directionLength,
+      carrier.center[1] + direction[1] * carrier.radius / directionLength,
+    ]);
+  }
+  const major = Math.hypot(...carrier.majorAxis);
+  const minor = major * carrier.ratio;
+  if (!(major > 1e-12) || !(minor > 1e-12)) throw new Error('MOTION_RIG_CONTACT_CARRIER_INVALID');
+  const ux = carrier.majorAxis[0] / major;
+  const uy = carrier.majorAxis[1] / major;
+  const local = (point: Vec2): Vec2 => {
+    const offsetX = point[0] - carrier.center[0];
+    const offsetY = point[1] - carrier.center[1];
+    return [offsetX * ux + offsetY * uy, -offsetX * uy + offsetY * ux];
+  };
+  let [localX, localY] = local(target);
+  if (Math.hypot(localX, localY) <= 1e-12) [localX, localY] = local(fallback);
+  const factor = 1 / Math.hypot(localX / major, localY / minor);
+  if (!Number.isFinite(factor)) throw new Error('MOTION_RIG_CONTACT_DIRECTION_INVALID');
+  return cleanPoint([
+    carrier.center[0] + ux * localX * factor - uy * localY * factor,
+    carrier.center[1] + uy * localX * factor + ux * localY * factor,
+  ]);
+}
+
 function deformPointChain(
   input: readonly Vec2[],
   movingEndpoint: 'first' | 'last',
@@ -267,7 +361,10 @@ function drawingTolerance(document: DrawingDocument): number {
   if (points.length === 0) return 1e-6;
   const xs = points.map(([x]) => x);
   const ys = points.map(([, y]) => y);
-  return Math.max(Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1e-5, 1e-6);
+  return Math.max(
+    Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.0025,
+    1e-6,
+  );
 }
 
 function geometryPoints(node: GeometryNode): Vec2[] {

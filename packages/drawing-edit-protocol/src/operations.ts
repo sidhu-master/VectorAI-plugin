@@ -40,6 +40,12 @@ export const durableOperationBindingSchema = z.discriminatedUnion('mode', [
     targetCommitId: protocolIdSchema,
     expectedCurrentRef: drawingRefSchema,
   }).strict(),
+  z.object({
+    ...operationBase,
+    mode: z.literal('redo'),
+    targetCommitId: protocolIdSchema,
+    expectedCurrentRef: drawingRefSchema,
+  }).strict(),
 ]);
 
 const committedReceiptBase = {
@@ -58,6 +64,7 @@ const committedOperationReceiptSchema = z.discriminatedUnion('mode', [
   z.object({ ...committedReceiptBase, status: z.literal('committed'), mode: z.literal('semantic') }).strict(),
   z.object({ ...committedReceiptBase, status: z.literal('committed'), mode: z.literal('interactive') }).strict(),
   z.object({ ...committedReceiptBase, status: z.literal('committed'), mode: z.literal('undo'), targetCommitId: protocolIdSchema }).strict(),
+  z.object({ ...committedReceiptBase, status: z.literal('committed'), mode: z.literal('redo'), targetCommitId: protocolIdSchema }).strict(),
 ]);
 
 export const durableOperationReceiptSchema = z.union([

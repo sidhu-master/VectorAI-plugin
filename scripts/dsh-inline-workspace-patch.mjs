@@ -21,6 +21,60 @@ const PREVIOUS_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
 const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
 const LEGACY_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane]:not(:empty)';
 const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
+const AGENT_LOOP_ARGUMENT_REPAIR_MARKER = 'function repairToolArgumentsJson(raw)';
+const AGENT_LOOP_PARSE_ARGUMENTS_PATTERN = /function parseArguments\(raw\) \{\s*try \{\s*return raw \? JSON\.parse\(raw\) : \{\};\s*\} catch \{\s*return raw;\s*\}\s*\}/g;
+const AGENT_LOOP_PARSE_ARGUMENTS_REPLACEMENT = `function parseArguments(raw) {
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return repairToolArgumentsJson(raw) ?? raw;
+  }
+}
+function repairToolArgumentsJson(raw) {
+  if (typeof raw !== "string" || raw.length === 0) return;
+  const stack = [];
+  let repaired = "";
+  let inString = false;
+  let escaped = false;
+  const openingFor = { "]": "[", "}": "{" };
+  const closingFor = { "[": "]", "{": "}" };
+  for (const character of raw) {
+    if (inString) {
+      repaired += character;
+      if (escaped) escaped = false;
+      else if (character === "\\\\") escaped = true;
+      else if (character === "\\\"") inString = false;
+      continue;
+    }
+    if (character === "\\\"") {
+      inString = true;
+      repaired += character;
+      continue;
+    }
+    if (character === "[" || character === "{") {
+      stack.push(character);
+      repaired += character;
+      continue;
+    }
+    if (character === "]" || character === "}") {
+      const expectedOpening = openingFor[character];
+      const ancestor = stack.lastIndexOf(expectedOpening);
+      if (ancestor < 0) return;
+      while (stack.length - 1 > ancestor) repaired += closingFor[stack.pop()];
+      stack.pop();
+      repaired += character;
+      continue;
+    }
+    repaired += character;
+  }
+  if (inString) return;
+  while (stack.length > 0) repaired += closingFor[stack.pop()];
+  try {
+    return JSON.parse(repaired);
+  } catch {
+    return;
+  }
+}`;
 
 const ROOT_STATE_ANCHOR = `
 \t\t\tconst [pendingWorkspaceId, setPendingWorkspaceId] = (0, react.useState)();
@@ -260,16 +314,44 @@ export function patchConversationClient(source) {
   return { status: 'patched', source: patched };
 }
 
+export function patchAgentLoopToolArgumentsParser(source) {
+  if (source.includes(AGENT_LOOP_ARGUMENT_REPAIR_MARKER)) {
+    return { status: 'already-patched', source };
+  }
+  const matches = source.match(AGENT_LOOP_PARSE_ARGUMENTS_PATTERN) ?? [];
+  if (matches.length !== 1) throw new Error('DSH_AGENT_LOOP_ARGUMENT_PATCH_ANCHOR_MISMATCH');
+  return {
+    status: 'patched',
+    source: source.replace(AGENT_LOOP_PARSE_ARGUMENTS_PATTERN, AGENT_LOOP_PARSE_ARGUMENTS_REPLACEMENT),
+  };
+}
+
 export function resolveConversationPackageFromDshBin(dshBin) {
+  return resolveDshPackageFromBin(
+    dshBin,
+    'dsh-client-ui-conversation',
+    'DSH_WORKSPACE_CONVERSATION_PACKAGE_NOT_FOUND',
+  );
+}
+
+export function resolveAgentLoopPackageFromDshBin(dshBin) {
+  return resolveDshPackageFromBin(
+    dshBin,
+    'dsh-agent-loop',
+    'DSH_AGENT_LOOP_PACKAGE_NOT_FOUND',
+  );
+}
+
+function resolveDshPackageFromBin(dshBin, packageName, notFoundCode) {
   let cursor = dirname(realpathSync(resolve(dshBin)));
   while (true) {
-    const candidate = join(cursor, '@deepseek-ai', 'dsh-client-ui-conversation');
+    const candidate = join(cursor, '@deepseek-ai', packageName);
     if (existsSync(join(candidate, 'package.json'))) return candidate;
     const parent = dirname(cursor);
     if (parent === cursor) break;
     cursor = parent;
   }
-  throw new Error('DSH_WORKSPACE_CONVERSATION_PACKAGE_NOT_FOUND');
+  throw new Error(notFoundCode);
 }
 
 export async function applyConversationWorkspacePatch(conversationDirectory) {
@@ -308,6 +390,51 @@ export async function applyConversationWorkspacePatch(conversationDirectory) {
   return { status: result.status, clientPath, backupPath };
 }
 
+export async function applyAgentLoopToolArgumentsPatch(agentLoopDirectory) {
+  const manifestPath = join(agentLoopDirectory, 'package.json');
+  const loopPath = join(agentLoopDirectory, 'lib', 'index.js');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  if (manifest.version !== SUPPORTED_VERSION) {
+    throw new Error(
+      `DSH_AGENT_LOOP_UNSUPPORTED_VERSION:${String(manifest.version)} (expected ${SUPPORTED_VERSION})`,
+    );
+  }
+
+  const source = await readFile(loopPath, 'utf8');
+  const result = patchAgentLoopToolArgumentsParser(source);
+  if (result.status === 'already-patched') {
+    return { status: result.status, loopPath };
+  }
+
+  const backupPath = `${loopPath}.vectorai-tool-arguments.bak`;
+  try {
+    await copyFile(loopPath, backupPath, fsConstants.COPYFILE_EXCL);
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+  }
+
+  const temporaryPath = `${loopPath}.${process.pid}.${randomUUID()}.tmp`;
+  const current = await stat(loopPath);
+  try {
+    await writeFile(temporaryPath, result.source, { mode: current.mode });
+    await rename(temporaryPath, loopPath);
+  } finally {
+    await unlink(temporaryPath).catch((error) => {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    });
+  }
+  return { status: result.status, loopPath, backupPath };
+}
+
+export async function applyDshCompatibilityPatches(dshBin) {
+  const conversationDirectory = resolveConversationPackageFromDshBin(dshBin);
+  const agentLoopDirectory = resolveAgentLoopPackageFromDshBin(dshBin);
+  return {
+    conversation: await applyConversationWorkspacePatch(conversationDirectory),
+    agentLoop: await applyAgentLoopToolArgumentsPatch(agentLoopDirectory),
+  };
+}
+
 function replaceExactlyOnce(source, anchor, replacement) {
   const first = source.indexOf(anchor);
   if (first < 0 || source.indexOf(anchor, first + anchor.length) >= 0) {
@@ -322,8 +449,7 @@ async function main() {
   if (typeof dshBin !== 'string' || dshBin.length === 0) {
     throw new Error('DSH_WORKSPACE_DSH_BIN_REQUIRED: pass --dsh-bin /absolute/path/to/dsh');
   }
-  const conversationDirectory = resolveConversationPackageFromDshBin(dshBin);
-  const result = await applyConversationWorkspacePatch(conversationDirectory);
+  const result = await applyDshCompatibilityPatches(dshBin);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

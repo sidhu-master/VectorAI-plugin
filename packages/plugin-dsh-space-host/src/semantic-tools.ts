@@ -146,15 +146,19 @@ export function createDrawingCreateMotionRigTool(
       motion: literal('translate'),
     },
     output: { schema: { type: 'json' }, render: renderJson },
-    async execute(_args, exec) {
+    async execute(args, exec) {
       const sessionId = requireSession(exec.agent?.id);
       const selectedParts = semantic.currentSelectedParts(sessionId);
-      const semanticNodeIds = [...new Set(Object.values(selectedParts)
-        .flatMap(({ targetNodeIds }) => targetNodeIds))];
+      const semanticNodeIds = motionRigControlNodeIds(selectedParts, {
+        target: requiredStringArgument(args.target, 'target'),
+        ...(typeof args.controlRole === 'string' ? { controlRole: args.controlRole } : {}),
+        ...(typeof args.fixedRole === 'string' ? { fixedRole: args.fixedRole } : {}),
+      });
       const projected = semanticNodeIds.length === 0
         ? semantic.currentSelectionProjection(sessionId)?.nodeIds ?? []
         : semanticNodeIds;
       const result = motionRigs.create(sessionId, projected);
+      if (result.state === 'ready') semantic.clearCurrentGroundingOverlay(sessionId);
       const nextTools = result.state === 'needs_correction'
         ? ['drawing_observe', 'drawing_select_parts']
         : [];
@@ -167,6 +171,32 @@ export function createDrawingCreateMotionRigTool(
       } as unknown as JsonValue;
     },
   });
+}
+
+function motionRigControlNodeIds(
+  selectedParts: Record<string, { targetNodeIds: string[] }>,
+  args: { target: string; controlRole?: string; fixedRole?: string },
+): string[] {
+  const entries = Object.entries(selectedParts);
+  for (const role of [args.controlRole, args.target]) {
+    if (!role) continue;
+    const matched = entries.find(([partKey]) => normalizedRole(partKey) === normalizedRole(role));
+    if (matched) return [...new Set(matched[1].targetNodeIds)];
+  }
+  const fixedRole = args.fixedRole ? normalizedRole(args.fixedRole) : '';
+  const movable = fixedRole
+    ? entries.filter(([partKey]) => normalizedRole(partKey) !== fixedRole)
+    : entries;
+  return [...new Set(movable.flatMap(([, { targetNodeIds }]) => targetNodeIds))];
+}
+
+function normalizedRole(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function requiredStringArgument(value: unknown, name: string): string {
+  if (typeof value !== 'string') throw new Error(`Invalid ${name}`);
+  return value;
 }
 
 export function createDrawingApplySelectionCorrectionTool(semantic: SemanticEditService) {
@@ -217,10 +247,11 @@ export function createDrawingObserveTool(semantic: SemanticEditService) {
 export function createDrawingSelectPartsTool(semantic: SemanticEditService) {
   return defineTool({
     name: 'drawing_select_parts',
-    description: 'Name the semantic parts to edit. Prefer candidate cN labels shown directly on the drawing_observe image; multiple exact candidate references inside one part are merged even when their contours are disconnected. Otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. Inspect the returned highlighted image. If it is wrong, call drawing_select_parts again; if it is exact, call drawing_confirm_selection. Preview is blocked until this review step is completed.',
+    description: 'Name semantic parts with an explicit role. Use role=target only for geometry the user will move or edit; use role=reference for fixed context and anchors. Fixed references remain available to the Host but are intentionally not highlighted. For a motion rig, normally select only the movable assembly because the Host infers its fixed connection locally. Prefer candidate cN labels shown directly on the drawing_observe image; multiple exact candidate references inside one part are merged even when their contours are disconnected. Never use drawing_query node ids. Inspect the returned highlighted target geometry. If it is wrong, call drawing_select_parts again; if it is exact, call drawing_confirm_selection.',
     parameters: {
       parts: array(object({
         partKey: string('Stable semantic name used by later goals.'), label: string(),
+        role: enumeration(['target', 'reference']),
         references: array(selectionReference), exclude: array(selectionExclusion, false),
       })),
     },
@@ -236,7 +267,7 @@ export function createDrawingSelectPartsTool(semantic: SemanticEditService) {
         ...result,
         ...(imageAttachment ? {
           imageAttachment,
-          selectionReview: 'Inspect the highlighted geometry now. If any unrelated geometry is highlighted or any intended geometry is missing, call drawing_select_parts again with corrected cN references. Only when it is exact, call drawing_confirm_selection.',
+          selectionReview: 'Inspect the highlighted target geometry now. Fixed reference parts are intentionally not highlighted. If any unrelated target geometry is highlighted or any intended movable/editable geometry is missing, call drawing_select_parts again with corrected cN references. Only when it is exact, call drawing_confirm_selection.',
         } : {}),
         drawingWorkflow: workflow(result.state, result.nextTools),
       } as unknown as JsonValue;

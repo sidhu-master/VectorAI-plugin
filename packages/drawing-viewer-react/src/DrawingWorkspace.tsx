@@ -4,14 +4,17 @@ import type {
   DrawingWorkspaceSnapshot,
   DrawingWorkspaceViewport,
 } from '@vectorai/drawing-workspace';
+import { exportDrawingDxf } from '@vectorai/drawing-core';
 import { useState, type ReactNode } from 'react';
 
 import { useDrawingWorkspace } from './hooks';
 import { Canvas } from './canvas/Canvas';
-import { ObjectList } from './panels/ObjectList';
-import { PropertyInspector } from './panels/PropertyInspector';
 import { WorkspaceStatus } from './panels/WorkspaceStatus';
 import { WorkspaceToolbar } from './panels/WorkspaceToolbar';
+import {
+  WorkspaceActivityBar,
+  type WorkspacePanelId,
+} from './panels/WorkspaceActivityBar';
 
 export interface PreviewOverlayContext {
   readonly snapshot: DeepReadonly<DrawingWorkspaceSnapshot>;
@@ -34,14 +37,19 @@ export interface PreviewOverlayContribution {
 export interface DrawingWorkspaceProps {
   previewContributions?: readonly PreviewOverlayContribution[];
   emptyMessage?: ReactNode;
+  onUploadFiles?: (files: readonly File[]) => void;
+  onExport?: () => void;
 }
 
 export function DrawingWorkspace({
   previewContributions = [],
   emptyMessage = '还没有图纸',
+  onUploadFiles,
+  onExport,
 }: DrawingWorkspaceProps) {
-  const [objectsOpen, setObjectsOpen] = useState(true);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [activePanel, setActivePanel] = useState<WorkspacePanelId | null>(null);
+  const [panelWidth, setPanelWidth] = useState(260);
+  const [motionPreviewHeld, setMotionPreviewHeld] = useState(false);
   const status = useDrawingWorkspace((state) => state.status);
   const snapshot = useDrawingWorkspace((state) => state.snapshot);
   const displaySnapshot = useDrawingWorkspace((state) => state.displaySnapshot);
@@ -49,7 +57,6 @@ export function DrawingWorkspace({
   const viewport = useDrawingWorkspace((state) => state.viewport);
   const busy = useDrawingWorkspace((state) => state.busy);
   const error = useDrawingWorkspace((state) => state.error);
-  const undoLast = useDrawingWorkspace((state) => state.undoLast);
 
   if (status === 'idle' || status === 'loading') {
     return (
@@ -90,30 +97,27 @@ export function DrawingWorkspace({
           {snapshot.provisional ? <span className="vai-workspace__badge">候选几何</span> : null}
           {preview === null ? null : <span className="vai-workspace__badge vai-workspace__badge--preview">候选 Preview</span>}
         </div>
-        <WorkspaceToolbar />
-        <button
-          type="button"
-          disabled={busy || preview !== null || !snapshot.lastCommit?.undoable}
-          title={preview !== null ? '先处理当前 Preview' : '撤销最近一次图纸提交'}
-          onClick={() => { void undoLast(); }}
-        >撤销</button>
-        <div className="vai-workspace__panel-toggles">
-          <button type="button" aria-pressed={objectsOpen} onClick={() => setObjectsOpen(!objectsOpen)}>对象</button>
-          <button type="button" aria-pressed={inspectorOpen} onClick={() => setInspectorOpen(!inspectorOpen)}>属性</button>
-        </div>
         {busy ? <span className="vai-workspace__busy">正在保存…</span> : null}
       </header>
       {error === null ? null : (
         <div className="vai-workspace__error" role="alert">{error.message}</div>
       )}
       <div className="vai-workspace__body" data-workspace-region="viewer">
-        {objectsOpen || inspectorOpen ? (
-          <aside className="vai-inspector-stack" data-panel="inspector" aria-label="对象与属性">
-            {objectsOpen ? <ObjectList /> : null}
-            {inspectorOpen ? <PropertyInspector /> : null}
-          </aside>
-        ) : null}
-        <Canvas />
+        <WorkspaceActivityBar
+          activePanel={activePanel}
+          panelWidth={panelWidth}
+          onActivePanelChange={setActivePanel}
+          onPanelWidthChange={setPanelWidth}
+        />
+        <div className="vai-workspace__canvas-region">
+          <Canvas motionPreviewHeld={motionPreviewHeld} />
+          <WorkspaceToolbar
+            onUploadFiles={onUploadFiles}
+            onExport={onExport ?? (() => exportDxf(snapshot))}
+            motionPreviewHeld={motionPreviewHeld}
+            onMotionPreviewHeldChange={setMotionPreviewHeld}
+          />
+        </div>
         {previewContributions.map((contribution) => (
           <div key={contribution.id} data-preview-overlay={contribution.id}>
             {contribution.render({ snapshot: displaySnapshot ?? snapshot, viewport })}
@@ -123,6 +127,16 @@ export function DrawingWorkspace({
       <WorkspaceStatus />
     </section>
   );
+}
+
+function exportDxf(snapshot: DrawingWorkspaceSnapshot): void {
+  const blob = new Blob([exportDrawingDxf(snapshot.document)], { type: 'application/dxf;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${snapshot.ref.drawingId}-R${snapshot.ref.revision}.dxf`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function WorkspaceState({

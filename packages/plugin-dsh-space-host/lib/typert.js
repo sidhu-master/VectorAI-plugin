@@ -5430,6 +5430,7 @@ const drawingMotionRigProjectionSchema = object({
   drawingRef: drawingRefSchema,
   state: _enum(["ready", "needs-correction"]),
   message: string().min(1).optional(),
+  carrierNodeId: idSchema.optional(),
   controlBodyNodeIds: array(idSchema).min(1).max(256),
   connectors: array(drawingMotionRigConnectorSchema).min(1).max(256),
   anchor: vec2Schema,
@@ -5468,6 +5469,7 @@ const drawingGroundingOverlayGroupSchema = object({
   groundingId: idSchema,
   partKey: string().trim().min(1).max(64),
   label: string().trim().min(1).max(80),
+  role: _enum(["target", "reference"]).optional(),
   colorIndex: number().int().nonnegative(),
   nodeIds: array(idSchema).min(1).max(256),
   interfaces: array(drawingGroundingOverlayInterfaceSchema).max(256)

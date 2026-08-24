@@ -9,6 +9,7 @@
   --vai-subtle: #334155;
   --vai-accent: #6da9d2;
   --vai-danger: #ef6a6a;
+  --vai-success: #4ade80;
   box-sizing: border-box;
   display: flex;
   width: 100%;
@@ -115,13 +116,6 @@
   overflow: hidden;
 }
 
-.vai-workspace__panel-toggles {
-  display: flex;
-  margin-left: auto;
-  align-items: center;
-  gap: 3px;
-}
-
 .vai-workspace button {
   border: 1px solid transparent;
   border-radius: 6px;
@@ -160,6 +154,65 @@
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
   backdrop-filter: blur(14px);
   transform: translateX(-50%);
+}
+
+.vai-toolbar--motion-rig {
+  bottom: 70px;
+  gap: 0;
+  padding: 4px;
+  border-color: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(15, 19, 24, 0.9);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+}
+
+.vai-toolbar--motion-rig .vai-toolbar__action--cancel {
+  border-color: transparent;
+  color: var(--vai-danger);
+  background: transparent;
+}
+
+.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {
+  border-color: transparent;
+  color: #fca5a5;
+  background: rgba(239, 106, 106, 0.1);
+}
+
+.vai-toolbar--motion-rig .vai-toolbar__action--confirm {
+  border-color: transparent;
+  color: var(--vai-success);
+  background: transparent;
+}
+
+.vai-toolbar--motion-rig .vai-toolbar__action--preview {
+  border-color: transparent;
+  color: var(--vai-accent);
+  background: transparent;
+}
+
+.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),
+.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed="true"] {
+  border-color: transparent;
+  color: #bae6fd;
+  background: rgba(109, 169, 210, 0.12);
+}
+
+.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {
+  border-color: transparent;
+  color: #86efac;
+  background: rgba(74, 222, 128, 0.1);
+}
+
+.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {
+  color: #476455;
+  background: transparent;
+  opacity: 0.55;
+}
+
+.vai-toolbar__separator--motion-rig {
+  height: 18px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .vai-toolbar button,
@@ -218,6 +271,110 @@
   overflow: hidden;
   border-right: 1px solid var(--vai-border);
   background: var(--vai-panel);
+}
+
+.vai-activity-bar {
+  z-index: 6;
+  display: flex;
+  width: 42px;
+  min-width: 42px;
+  flex: 0 0 42px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  border-right: 1px solid var(--vai-border);
+  background: var(--vai-panel-deep);
+}
+
+.vai-activity-bar__button {
+  position: relative;
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  border-radius: 7px !important;
+}
+
+.vai-activity-bar__button[aria-pressed="true"]::before {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: -5px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--vai-accent);
+  content: "";
+}
+
+.vai-inspector-stack--activity {
+  position: relative;
+  width: 260px;
+  min-width: 220px;
+  max-width: 420px;
+  flex: 0 0 auto;
+}
+
+.vai-inspector-stack--activity > .vai-panel {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.vai-inspector-stack--activity > .vai-inspector {
+  height: auto;
+  border-top: 0;
+}
+
+.vai-inspector-stack--activity .vai-panel__title {
+  padding-right: 42px;
+}
+
+.vai-panel-close {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  right: 7px;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+}
+
+.vai-panel-resizer {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.vai-panel-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--vai-accent);
+  content: "";
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.vai-panel-resizer:hover::after,
+.vai-panel-resizer:focus-visible::after {
+  opacity: 0.9;
+}
+
+.vai-panel-resizer:focus-visible {
+  outline: none;
 }
 
 .vai-panel {
@@ -529,8 +686,19 @@
 }
 
 .vai-motion-rig--preview .vai-motion-rig__handle {
-  cursor: default;
+  cursor: grab;
   fill: #22c55e;
+}
+
+.vai-motion-rig__connector-handle {
+  cursor: grab;
+  fill: #101419;
+  stroke: #38bdf8;
+  stroke-width: 2;
+}
+
+.vai-motion-rig--dragging .vai-motion-rig__connector-handle {
+  cursor: grabbing;
 }
 
 .vai-motion-rig__status {
@@ -551,6 +719,17 @@
   fill: #38bdf8;
   stroke: #38bdf8;
   animation: none;
+}
+
+.vai-motion-preview__before .vai-entity {
+  cursor: default;
+  opacity: 0.32;
+  fill: #a69b87;
+  stroke: #a69b87;
+  stroke-width: 1.2;
+  stroke-dasharray: 5 4;
+  filter: none;
+  pointer-events: none;
 }
 
 @keyframes vai-ai-grounded-pulse {

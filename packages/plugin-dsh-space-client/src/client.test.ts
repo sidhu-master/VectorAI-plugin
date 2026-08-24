@@ -12,6 +12,7 @@ describe('client apply', () => {
     const getOperation = vi.fn();
     const execute = vi.fn();
     const resolveImage = vi.fn();
+    const createDraftImages = vi.fn();
     const releaseSessionImages = vi.fn();
     const disposeRemote = vi.fn();
     const disposeSlot = vi.fn();
@@ -25,7 +26,7 @@ describe('client apply', () => {
 
     let pluginActive = true;
     const drawingSpace = { getSnapshot, stageInteractiveEdit, stageUndo, getOperation };
-    const conversation = { resolveImage, releaseSessionImages };
+    const conversation = { createDraftImages, resolveImage, releaseSessionImages };
     const remote = {
       $mount: vi.fn(async () => disposeRemote),
       get drawingSpace() {

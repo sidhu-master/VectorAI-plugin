@@ -170,10 +170,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     private func startServer() {
-        guard LocalPort.isAvailable(LauncherConstants.port) else {
+        if !LocalPort.isAvailable(LauncherConstants.port) {
+            showStartingPage(message: "正在关闭占用 3080 端口的旧进程…")
+        }
+        guard LocalPort.reclaim(LauncherConstants.port) else {
             showErrorPage(
-                title: "端口 3080 已被占用",
-                detail: "DSH 没有接管或终止现有进程。请先关闭占用 127.0.0.1:3080 的程序，然后重新打开 DSH。"
+                title: "无法释放 3080 端口",
+                detail: "启动器未能终止监听 127.0.0.1:3080 的进程。请检查该进程是否属于其他用户，然后重新打开 DSH。"
             )
             return
         }

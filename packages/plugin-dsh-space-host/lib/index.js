@@ -213,6 +213,7 @@ function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () =
         `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
         "To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.",
         "drawing_observe returns short selection candidates such as cN; use those keys with drawing_select_parts, and do not use drawing_query node ids or guessed coordinates for semantic selection.",
+        "In drawing_select_parts, mark movable or editable geometry as role=target and fixed context as role=reference. For a motion rig, select only the movable assembly when possible; the Host infers the fixed connection locally, and fixed references are never highlighted.",
         ...selection ? [
           `A Host-verified canvas selection exists and covers ${selection.nodeIds.length} visible Drawing nodes.`,
           'When the user asks to edit that selection, drawing_select_parts can reference it with { kind: "current_selection" }; the Host keeps its exact node ids and revision private.',
@@ -1212,9 +1213,9 @@ function resolveTranslationMotionRig(document, selectedNodeIds) {
   const controlBodyNodeIds = selected.filter((id) => !connectorIds.has(id)).sort();
   if (!controlBodyNodeIds.includes(String(carrier.id))) controlBodyNodeIds.push(String(carrier.id));
   controlBodyNodeIds.sort();
-  const connectors = contacts.map(({ node, movingEndpoint, fixedPoint }) => ({
+  const connectors = contacts.map(({ node, movingEndpoint: movingEndpoint2, fixedPoint }) => ({
     nodeId: String(node.id),
-    movingEndpoint,
+    movingEndpoint: movingEndpoint2,
     fixedPoint: cleanPoint$1(fixedPoint)
   })).sort((left, right) => left.nodeId.localeCompare(right.nodeId));
   const anchor = cleanPoint$1([
@@ -1222,6 +1223,7 @@ function resolveTranslationMotionRig(document, selectedNodeIds) {
     connectors.reduce((sum, connector) => sum + connector.fixedPoint[1], 0) / connectors.length
   ]);
   return {
+    carrierNodeId: String(carrier.id),
     controlBodyNodeIds,
     connectors,
     anchor,
@@ -1281,7 +1283,10 @@ function drawingTolerance(document) {
   if (points.length === 0) return 1e-6;
   const xs = points.map(([x]) => x);
   const ys = points.map(([, y]) => y);
-  return Math.max(Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1e-5, 1e-6);
+  return Math.max(
+    Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 25e-4,
+    1e-6
+  );
 }
 function geometryPoints(node) {
   if (node.type === "point") return [[node.x, node.y]];
@@ -8436,6 +8441,7 @@ const partSelectionExclusionSchema = discriminatedUnion("kind", [
 const semanticPartSelectionSchema = strictObject({
   partKey: partKeySchema,
   label: boundedLabelSchema,
+  role: _enum(["target", "reference"]).default("target"),
   references: array$1(partSelectionReferenceSchema).min(1).max(8),
   exclude: array$1(partSelectionExclusionSchema).max(16).optional()
 }).superRefine(({ exclude }, context) => {
@@ -8944,6 +8950,7 @@ const drawingMotionRigProjectionSchema = object$1({
   drawingRef: drawingRefSchema$1,
   state: _enum(["ready", "needs-correction"]),
   message: string$1().min(1).optional(),
+  carrierNodeId: idSchema.optional(),
   controlBodyNodeIds: array$1(idSchema).min(1).max(256),
   connectors: array$1(drawingMotionRigConnectorSchema).min(1).max(256),
   anchor: vec2Schema,
@@ -8982,6 +8989,7 @@ const drawingGroundingOverlayGroupSchema = object$1({
   groundingId: idSchema,
   partKey: string$1().trim().min(1).max(64),
   label: string$1().trim().min(1).max(80),
+  role: _enum(["target", "reference"]).optional(),
   colorIndex: number().int().nonnegative(),
   nodeIds: array$1(idSchema).min(1).max(256),
   interfaces: array$1(drawingGroundingOverlayInterfaceSchema).max(256)
@@ -9998,13 +10006,18 @@ function createDrawingCreateMotionRigTool(semantic, motionRigs) {
       motion: literal("translate")
     },
     output: { schema: { type: "json" }, render: renderJson },
-    async execute(_args, exec) {
+    async execute(args, exec) {
       var _a3, _b;
       const sessionId = requireSession((_a3 = exec.agent) == null ? void 0 : _a3.id);
       const selectedParts = semantic.currentSelectedParts(sessionId);
-      const semanticNodeIds = [...new Set(Object.values(selectedParts).flatMap(({ targetNodeIds }) => targetNodeIds))];
+      const semanticNodeIds = motionRigControlNodeIds(selectedParts, {
+        target: requiredStringArgument(args.target, "target"),
+        ...typeof args.controlRole === "string" ? { controlRole: args.controlRole } : {},
+        ...typeof args.fixedRole === "string" ? { fixedRole: args.fixedRole } : {}
+      });
       const projected = semanticNodeIds.length === 0 ? ((_b = semantic.currentSelectionProjection(sessionId)) == null ? void 0 : _b.nodeIds) ?? [] : semanticNodeIds;
       const result = motionRigs.create(sessionId, projected);
+      if (result.state === "ready") semantic.clearCurrentGroundingOverlay(sessionId);
       const nextTools = result.state === "needs_correction" ? ["drawing_observe", "drawing_select_parts"] : [];
       return {
         ...result,
@@ -10015,6 +10028,24 @@ function createDrawingCreateMotionRigTool(semantic, motionRigs) {
       };
     }
   });
+}
+function motionRigControlNodeIds(selectedParts, args) {
+  const entries = Object.entries(selectedParts);
+  for (const role of [args.controlRole, args.target]) {
+    if (!role) continue;
+    const matched = entries.find(([partKey]) => normalizedRole(partKey) === normalizedRole(role));
+    if (matched) return [...new Set(matched[1].targetNodeIds)];
+  }
+  const fixedRole = args.fixedRole ? normalizedRole(args.fixedRole) : "";
+  const movable = fixedRole ? entries.filter(([partKey]) => normalizedRole(partKey) !== fixedRole) : entries;
+  return [...new Set(movable.flatMap(([, { targetNodeIds }]) => targetNodeIds))];
+}
+function normalizedRole(value) {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+function requiredStringArgument(value, name) {
+  if (typeof value !== "string") throw new Error(`Invalid ${name}`);
+  return value;
 }
 function createDrawingApplySelectionCorrectionTool(semantic) {
   return defineTool({
@@ -10062,11 +10093,12 @@ function createDrawingObserveTool(semantic) {
 function createDrawingSelectPartsTool(semantic) {
   return defineTool({
     name: "drawing_select_parts",
-    description: "Name the semantic parts to edit. Prefer candidate cN labels shown directly on the drawing_observe image; multiple exact candidate references inside one part are merged even when their contours are disconnected. Otherwise use current canvas selection or observation points/regions. Never use drawing_query node ids. Inspect the returned highlighted image. If it is wrong, call drawing_select_parts again; if it is exact, call drawing_confirm_selection. Preview is blocked until this review step is completed.",
+    description: "Name semantic parts with an explicit role. Use role=target only for geometry the user will move or edit; use role=reference for fixed context and anchors. Fixed references remain available to the Host but are intentionally not highlighted. For a motion rig, normally select only the movable assembly because the Host infers its fixed connection locally. Prefer candidate cN labels shown directly on the drawing_observe image; multiple exact candidate references inside one part are merged even when their contours are disconnected. Never use drawing_query node ids. Inspect the returned highlighted target geometry. If it is wrong, call drawing_select_parts again; if it is exact, call drawing_confirm_selection.",
     parameters: {
       parts: array(object({
         partKey: string("Stable semantic name used by later goals."),
         label: string(),
+        role: enumeration(["target", "reference"]),
         references: array(selectionReference),
         exclude: array(selectionExclusion, false)
       }))
@@ -10082,7 +10114,7 @@ function createDrawingSelectPartsTool(semantic) {
         ...result,
         ...imageAttachment ? {
           imageAttachment,
-          selectionReview: "Inspect the highlighted geometry now. If any unrelated geometry is highlighted or any intended geometry is missing, call drawing_select_parts again with corrected cN references. Only when it is exact, call drawing_confirm_selection."
+          selectionReview: "Inspect the highlighted target geometry now. Fixed reference parts are intentionally not highlighted. If any unrelated target geometry is highlighted or any intended movable/editable geometry is missing, call drawing_select_parts again with corrected cN references. Only when it is exact, call drawing_confirm_selection."
         } : {},
         drawingWorkflow: workflow(result.state, result.nextTools)
       };
@@ -11277,6 +11309,7 @@ class SemanticEditService {
         revision: String(snapshot.ref.revision)
       }),
       selectedParts: {},
+      selectionRoles: {},
       groundings: {},
       candidates: new Map(initialCandidates.map((candidate) => [candidate.key, {
         ...candidate,
@@ -11330,7 +11363,12 @@ class SemanticEditService {
           nextTools: ["drawing_select_parts"]
         };
       }
-      resolved.push({ partKey: part.partKey, label: part.label, nodeIds: candidates[0].nodeIds });
+      resolved.push({
+        partKey: part.partKey,
+        label: part.label,
+        role: part.role,
+        nodeIds: candidates[0].nodeIds
+      });
     }
     if (state.correctionAllowedNodeIds) {
       const allowed = new Set(state.correctionAllowedNodeIds);
@@ -11344,6 +11382,7 @@ class SemanticEditService {
       }
     }
     state.selectedParts = {};
+    state.selectionRoles = {};
     state.groundings = {};
     state.selectionConfirmed = false;
     __privateGet(this, _groundingOverlays).delete(sessionId);
@@ -11355,16 +11394,19 @@ class SemanticEditService {
         targetNodeIds: part.nodeIds,
         interfaces: inferSelectionInterfaces(snapshot.document, part.nodeIds, snapshot.ref.revision),
         partKey: part.partKey,
-        label: part.label
+        label: part.label,
+        overlayRole: part.role
       });
       const internal = __privateGet(this, _groundings).get(grounding.groundingId);
       if (!internal) throw new Error("EDIT_GROUNDING_REQUIRED");
       state.selectedParts[part.partKey] = structuredClone(internal.target);
+      state.selectionRoles[part.partKey] = part.role;
       state.groundings[part.partKey] = internal;
       __privateMethod(this, _SemanticEditService_instances, appendGroundingEvidence_fn).call(this, state, episode, snapshot.ref, part, grounding);
       selectedResult.push({
         partKey: part.partKey,
         label: part.label,
+        role: part.role,
         sourceStatus: internal.target.sourceStatus,
         nodeCount: internal.target.targetNodeIds.length,
         interfaceCount: internal.target.interfaces.length
@@ -11407,7 +11449,7 @@ class SemanticEditService {
       return null;
     }
     const viewport = ((_a3 = this.drawings.summarize(sessionId)) == null ? void 0 : _a3.bounds) ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-    const selectedNodeIds = [...new Set(Object.values(state.selectedParts).flatMap(({ targetNodeIds }) => targetNodeIds))];
+    const selectedNodeIds = [...new Set(Object.entries(state.selectedParts).filter(([partKey]) => state.selectionRoles[partKey] !== "reference").flatMap(([, { targetNodeIds }]) => targetNodeIds))];
     const selectedNodeSet = new Set(selectedNodeIds);
     const rendered = await this.ports.renderObservation({
       document: snapshot.document,
@@ -11436,6 +11478,7 @@ class SemanticEditService {
     }
     const parts = Object.keys(state.selectedParts).sort().map((partKey) => ({
       partKey,
+      role: state.selectionRoles[partKey] ?? "target",
       nodeCount: state.selectedParts[partKey].targetNodeIds.length
     }));
     if (parts.length === 0) throw new Error("EDIT_SELECTION_REQUIRED");
@@ -11803,7 +11846,7 @@ class SemanticEditService {
       }))
     };
     __privateGet(this, _groundings).set(ref.groundingId, { ref, target });
-    __privateMethod(this, _SemanticEditService_instances, updateGroundingOverlay_fn).call(this, sessionId, task, snapshot.ref, ref, input.partKey, input.label);
+    __privateMethod(this, _SemanticEditService_instances, updateGroundingOverlay_fn).call(this, sessionId, task, snapshot.ref, ref, input.partKey, input.label, input.overlayRole ?? "target");
     return structuredClone(ref);
   }
   currentGroundingOverlay(sessionId) {
@@ -11815,6 +11858,9 @@ class SemanticEditService {
       return null;
     }
     return structuredClone(overlay);
+  }
+  clearCurrentGroundingOverlay(sessionId) {
+    __privateGet(this, _groundingOverlays).delete(sessionId);
   }
   resolveCurrentPreview(sessionId, previewHandle) {
     const preview = __privateGet(this, _previews2).get(sessionId);
@@ -12529,7 +12575,7 @@ storeCompilation_fn = function(sessionId, task, baseRef, groundings, compilation
   __privateGet(this, _groundingOverlays).delete(sessionId);
   return structuredClone(ref);
 };
-updateGroundingOverlay_fn = function(sessionId, task, drawingRef, grounding, rawPartKey, rawLabel) {
+updateGroundingOverlay_fn = function(sessionId, task, drawingRef, grounding, rawPartKey, rawLabel, role = "target") {
   const partKey = rawPartKey == null ? void 0 : rawPartKey.trim();
   const label = rawLabel == null ? void 0 : rawLabel.trim();
   if (partKey !== void 0 && (partKey.length === 0 || partKey.length > 64)) {
@@ -12547,6 +12593,7 @@ updateGroundingOverlay_fn = function(sessionId, task, drawingRef, grounding, raw
     groundingId: grounding.groundingId,
     partKey: partKey ?? `grounding:${grounding.groundingId}`,
     label: label ?? "Grounded target",
+    role,
     colorIndex,
     nodeIds: [...grounding.targetNodeIds].sort(),
     interfaces: grounding.interfaces.map((port) => structuredClone(port)).sort((left, right) => left.interfaceId.localeCompare(right.interfaceId))
@@ -12682,6 +12729,7 @@ function spatialCorrectionRequest(error, state) {
     return [{
       partKey,
       label: partKey,
+      role: state.selectionRoles[partKey] ?? "target",
       references: keys.map((key) => ({ kind: "candidate", key })),
       exclude: []
     }];

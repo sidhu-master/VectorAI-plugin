@@ -60,6 +60,35 @@ export interface SpatialIntentSolverInput {
 
 export type SpatialIntentSolution = SpatialCompilation & { solver: SpatialSolverReceipt };
 
+export class SpatialIntentValidationError extends Error {
+  readonly name = 'SpatialIntentValidationError';
+
+  constructor(
+    readonly code: 'EDIT_ARTICULATED_SELECTION_INVALID'
+      | 'EDIT_ARTICULATED_SELECTION_FRAGMENTED'
+      | 'EDIT_ARTICULATED_COMPANION_PART_INVALID'
+      | 'EDIT_SELECTED_PART_UNUSED',
+    details: {
+      partKey?: string;
+      unexpectedNodeIds?: string[];
+      unusedPartKeys?: string[];
+      mergePartKeys?: string[];
+      mergeNodeIds?: string[];
+      unexpectedPartKeys?: string[];
+    },
+  ) {
+    super(code);
+    Object.assign(this, structuredClone(details));
+  }
+
+  declare readonly partKey?: string;
+  declare readonly unexpectedNodeIds?: string[];
+  declare readonly unusedPartKeys?: string[];
+  declare readonly mergePartKeys?: string[];
+  declare readonly mergeNodeIds?: string[];
+  declare readonly unexpectedPartKeys?: string[];
+}
+
 interface TransformState {
   translation: [number, number];
   rotationRadians?: number;
@@ -156,6 +185,51 @@ function validateInput(input: SpatialIntentSolverInput): void {
   if (input.baseRef.drawingId !== input.document.id) throw new Error('EDIT_DRAWING_MISMATCH');
   const partKeys = Object.keys(input.parts);
   if (partKeys.length < 1 || partKeys.length > 16) throw new Error('EDIT_PART_COUNT_INVALID');
+  const fragmented = findFragmentedArticulatedSelection(input.document, input.parts);
+  if (fragmented) {
+    throw new SpatialIntentValidationError('EDIT_ARTICULATED_SELECTION_FRAGMENTED', fragmented);
+  }
+  const usedPartKeys = new Set(input.intent.goals.flatMap((goal) => [
+    goal.subject,
+    ...('reference' in goal && goal.reference.kind === 'part' ? [goal.reference.partKey] : []),
+  ]));
+  for (const preserve of input.intent.preserve) {
+    if (preserve.kind === 'anchor' && preserve.reference.kind === 'part') {
+      usedPartKeys.add(preserve.reference.partKey);
+    }
+  }
+  const unusedPartKeys = [...new Set(input.intent.preserve.flatMap((preserve) => (
+    'partKey' in preserve
+    && preserve.partKey !== undefined
+    && input.parts[preserve.partKey] !== undefined
+    && !usedPartKeys.has(preserve.partKey)
+      ? [preserve.partKey]
+      : []
+  )))].sort();
+  if (unusedPartKeys.length > 0) {
+    throw new SpatialIntentValidationError('EDIT_SELECTED_PART_UNUSED', { unusedPartKeys });
+  }
+  const articulationByPart = Object.fromEntries(Object.entries(input.parts).map(([partKey, target]) => (
+    [partKey, analyzeArticulatedGrounding(input.document, target)]
+  )));
+  if (Object.values(articulationByPart).some(({ kind }) => kind === 'resolved')) {
+    const unexpectedPartKeys = Object.entries(articulationByPart)
+      .filter(([partKey, analysis]) => (
+        analysis.kind !== 'resolved'
+        && !input.document.geometry.some((node) => (
+          input.parts[partKey]!.targetNodeIds.includes(String(node.id))
+          && (node.type === 'circle' || node.type === 'ellipse')
+        ))
+      ))
+      .map(([partKey]) => partKey)
+      .sort();
+    if (unexpectedPartKeys.length > 0) {
+      throw new SpatialIntentValidationError('EDIT_ARTICULATED_COMPANION_PART_INVALID', {
+        unexpectedPartKeys,
+        unexpectedNodeIds: unexpectedPartKeys.flatMap((partKey) => input.parts[partKey]!.targetNodeIds).sort(),
+      });
+    }
+  }
   for (const goal of input.intent.goals) {
     if (!input.parts[goal.subject]) throw new Error('EDIT_PART_UNRESOLVED');
     if ('reference' in goal && goal.reference.kind === 'part' && !input.parts[goal.reference.partKey]) {
@@ -165,12 +239,75 @@ function validateInput(input: SpatialIntentSolverInput): void {
       throw new Error('EDIT_NUMERIC_EVIDENCE_MISSING');
     }
   }
-  for (const target of Object.values(input.parts)) {
+  for (const [partKey, target] of Object.entries(input.parts)) {
     if (target.targetNodeIds.length === 0) throw new Error('EDIT_TARGET_UNRESOLVED');
     for (const nodeId of target.targetNodeIds) {
       if (!input.document.geometry.some(({ id }) => String(id) === nodeId)) throw new Error('EDIT_TARGET_UNRESOLVED');
     }
+    const articulation = analyzeArticulatedGrounding(input.document, target);
+    if (articulation.kind === 'invalid') {
+      throw new SpatialIntentValidationError('EDIT_ARTICULATED_SELECTION_INVALID', {
+        partKey,
+        unexpectedNodeIds: articulation.unexpectedNodeIds,
+      });
+    }
   }
+}
+
+function findFragmentedArticulatedSelection(
+  document: DrawingDocument,
+  parts: Record<string, GroundedEditTarget>,
+): {
+  partKey: string;
+  mergePartKeys: string[];
+  mergeNodeIds: string[];
+  unexpectedPartKeys: string[];
+  unexpectedNodeIds: string[];
+} | null {
+  const nodePartKeys = new Map<string, string[]>();
+  for (const [partKey, target] of Object.entries(parts)) {
+    for (const nodeId of target.targetNodeIds) {
+      nodePartKeys.set(nodeId, [...(nodePartKeys.get(nodeId) ?? []), partKey]);
+    }
+  }
+  const carrierPartKeys = new Set<string>();
+  const fragmented: Array<{
+    partKey: string;
+    mergePartKeys: string[];
+    mergeNodeIds: string[];
+  }> = [];
+  for (const [partKey, target] of Object.entries(parts).sort(([left], [right]) => left.localeCompare(right))) {
+    const carriers = document.geometry.filter((node) => (
+      target.targetNodeIds.includes(String(node.id)) && (node.type === 'circle' || node.type === 'ellipse')
+    ));
+    if (carriers.length > 0) carrierPartKeys.add(partKey);
+    for (const carrier of carriers) {
+      const connectorIds = new Set(findConnectedCarrierInterfaces(document, String(carrier.id))
+        .map(({ nodeId }) => nodeId));
+      const splitEntries = [...connectorIds].flatMap((nodeId) => (
+        (nodePartKeys.get(nodeId) ?? [])
+          .filter((ownerPartKey) => ownerPartKey !== partKey)
+          .map((ownerPartKey) => ({ ownerPartKey, nodeId }))
+      ));
+      if (splitEntries.length === 0) continue;
+      fragmented.push({
+        partKey,
+        mergePartKeys: [...new Set(splitEntries.map(({ ownerPartKey }) => ownerPartKey))].sort(),
+        mergeNodeIds: [...new Set(splitEntries.map(({ nodeId }) => nodeId))].sort(),
+      });
+    }
+  }
+  const first = fragmented[0];
+  if (!first) return null;
+  const groupedPartKeys = new Set([first.partKey, ...first.mergePartKeys]);
+  const unexpectedPartKeys = carrierPartKeys.size === 1
+    ? Object.keys(parts).filter((partKey) => !groupedPartKeys.has(partKey)).sort()
+    : [];
+  return {
+    ...first,
+    unexpectedPartKeys,
+    unexpectedNodeIds: unexpectedPartKeys.flatMap((partKey) => parts[partKey]!.targetNodeIds).sort(),
+  };
 }
 
 function solvePrimaryTransforms(
@@ -472,21 +609,43 @@ function articulatedGrounding(
   document: DrawingDocument,
   grounding: GroundedEditTarget,
 ): GroundedEditTarget {
-  if (grounding.targetNodeIds.length < 1) return grounding;
+  const analysis = analyzeArticulatedGrounding(document, grounding);
+  return analysis.kind === 'resolved' ? analysis.grounding : grounding;
+}
+
+function analyzeArticulatedGrounding(
+  document: DrawingDocument,
+  grounding: GroundedEditTarget,
+): { kind: 'not_applicable' }
+  | { kind: 'invalid'; unexpectedNodeIds: string[] }
+  | { kind: 'resolved'; grounding: GroundedEditTarget } {
+  if (grounding.targetNodeIds.length < 1) return { kind: 'not_applicable' };
   const selected = new Set(grounding.targetNodeIds);
   const carriers = document.geometry.filter((node) => (
     selected.has(String(node.id)) && (node.type === 'circle' || node.type === 'ellipse')
   ));
+  let mixedCarrierAndConnector = false;
+  const unexpectedNodeIds = new Set<string>();
   const candidates = carriers.flatMap((carrier) => {
     const interfaces = findConnectedCarrierInterfaces(document, String(carrier.id));
     if (interfaces.length === 0) return [];
     const connectorNodeIds = new Set(interfaces.map(({ nodeId }) => nodeId));
     const selectedNonCarrierIds = grounding.targetNodeIds.filter((nodeId) => nodeId !== String(carrier.id));
+    const selectedConnectorCount = selectedNonCarrierIds.filter((nodeId) => connectorNodeIds.has(nodeId)).length;
+    if (selectedConnectorCount > 0 && selectedConnectorCount < selectedNonCarrierIds.length) {
+      mixedCarrierAndConnector = true;
+      for (const nodeId of selectedNonCarrierIds) {
+        if (!connectorNodeIds.has(nodeId)) unexpectedNodeIds.add(nodeId);
+      }
+    }
     return selectedNonCarrierIds.every((nodeId) => connectorNodeIds.has(nodeId))
       ? [{ carrierNodeId: String(carrier.id), interfaces }]
       : [];
   });
-  if (candidates.length !== 1) return grounding;
+  if (mixedCarrierAndConnector || candidates.length > 1) {
+    return { kind: 'invalid', unexpectedNodeIds: [...unexpectedNodeIds].sort() };
+  }
+  if (candidates.length !== 1) return { kind: 'not_applicable' };
 
   const candidate = candidates[0]!;
   const authorizedConnectorNodeIds = new Set([
@@ -494,11 +653,14 @@ function articulatedGrounding(
     ...grounding.interfaces.map(({ nodeId }) => nodeId),
   ]);
   return {
-    ...grounding,
-    targetNodeIds: [candidate.carrierNodeId],
-    interfaces: candidate.interfaces
-      .filter(({ nodeId }) => authorizedConnectorNodeIds.has(nodeId))
-      .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })),
+    kind: 'resolved',
+    grounding: {
+      ...grounding,
+      targetNodeIds: [candidate.carrierNodeId],
+      interfaces: candidate.interfaces
+        .filter(({ nodeId }) => authorizedConnectorNodeIds.has(nodeId))
+        .map(({ interfaceId, nodeId, endpoint }) => ({ interfaceId, nodeId, endpoint })),
+    },
   };
 }
 

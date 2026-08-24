@@ -10,8 +10,9 @@ import {
   solveSpatialIntent,
   type EditCorePorts,
   type GroundedEditTarget,
-  type SpatialSolverReceipt,
   type SpatialCompilation,
+  type SpatialIntentSolution,
+  type SpatialSolverReceipt,
 } from '@vectorai/drawing-edit-core';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import {
@@ -53,10 +54,16 @@ import {
   WorldModelCompiler,
   type GroundingEvidenceEvent,
 } from '@vectorai/drawing-spatial';
-import type { DrawingUndoStageRequest, DrawingUndoStageResult } from '@vectorai/drawing-workspace';
+import type {
+  DrawingRedoStageRequest,
+  DrawingRedoStageResult,
+  DrawingUndoStageRequest,
+  DrawingUndoStageResult,
+} from '@vectorai/drawing-workspace';
 
 import {
   InMemoryDrawingRepository,
+  type RedoCommitRequest,
   type UndoCommitRequest,
 } from './repository';
 import type { DrawingSolverProvenance } from './durable-envelope';
@@ -201,10 +208,13 @@ interface EpisodeSelectionState {
   contextId: string;
   ledger: GroundingLedger;
   selectedParts: Record<string, GroundedEditTarget>;
+  selectionRoles: Record<string, 'target' | 'reference'>;
   groundings: Record<string, GroundingState>;
   candidates: Map<string, EpisodeSelectionCandidate>;
   nextCandidate: number;
   selectionConfirmed: boolean;
+  correctionAllowedNodeIds?: string[];
+  pendingCorrectionRequest?: DrawingSelectPartsRequest;
 }
 
 export type CurrentPartSelectionResult =
@@ -213,6 +223,7 @@ export type CurrentPartSelectionResult =
     parts: Array<{
       partKey: string;
       label: string;
+      role: 'target' | 'reference';
       sourceStatus: GroundedEditTarget['sourceStatus'];
       nodeCount: number;
       interfaceCount: number;
@@ -431,6 +442,7 @@ export class SemanticEditService {
         revision: String(snapshot.ref.revision) as never,
       }),
       selectedParts: {},
+      selectionRoles: {},
       groundings: {},
       candidates: new Map(initialCandidates.map((candidate) => [candidate.key, {
         ...candidate,
@@ -466,6 +478,7 @@ export class SemanticEditService {
     const resolved: Array<{
       partKey: string;
       label: string;
+      role: 'target' | 'reference';
       nodeIds: string[];
     }> = [];
 
@@ -493,10 +506,28 @@ export class SemanticEditService {
           nextTools: ['drawing_select_parts'],
         };
       }
-      resolved.push({ partKey: part.partKey, label: part.label, nodeIds: candidates[0]!.nodeIds });
+      resolved.push({
+        partKey: part.partKey,
+        label: part.label,
+        role: part.role,
+        nodeIds: candidates[0]!.nodeIds,
+      });
+    }
+
+    if (state.correctionAllowedNodeIds) {
+      const allowed = new Set(state.correctionAllowedNodeIds);
+      const addsGeometry = resolved.some(({ nodeIds }) => nodeIds.some((nodeId) => !allowed.has(nodeId)));
+      if (addsGeometry) {
+        return {
+          state: 'invalid_state',
+          code: 'EDIT_SELECTION_CORRECTION_ADDED_GEOMETRY',
+          nextTools: ['drawing_select_parts', 'drawing_confirm_selection'],
+        };
+      }
     }
 
     state.selectedParts = {};
+    state.selectionRoles = {};
     state.groundings = {};
     state.selectionConfirmed = false;
     this.#groundingOverlays.delete(sessionId);
@@ -509,15 +540,18 @@ export class SemanticEditService {
         interfaces: inferSelectionInterfaces(snapshot.document, part.nodeIds, snapshot.ref.revision),
         partKey: part.partKey,
         label: part.label,
+        overlayRole: part.role,
       });
       const internal = this.#groundings.get(grounding.groundingId);
       if (!internal) throw new Error('EDIT_GROUNDING_REQUIRED');
       state.selectedParts[part.partKey] = structuredClone(internal.target);
+      state.selectionRoles[part.partKey] = part.role;
       state.groundings[part.partKey] = internal;
       this.#appendGroundingEvidence(state, episode, snapshot.ref, part, grounding);
       selectedResult.push({
         partKey: part.partKey,
         label: part.label,
+        role: part.role,
         sourceStatus: internal.target.sourceStatus,
         nodeCount: internal.target.targetNodeIds.length,
         interfaceCount: internal.target.interfaces.length,
@@ -537,6 +571,21 @@ export class SemanticEditService {
     return { state: 'selected', parts: selectedResult, nextTools: ['drawing_confirm_selection'] };
   }
 
+  applyCurrentSelectionCorrection(sessionId: string): CurrentPartSelectionResult {
+    const state = this.#episodeSelections.get(sessionId);
+    if (!state?.pendingCorrectionRequest) {
+      return {
+        state: 'invalid_state',
+        code: 'EDIT_SELECTION_CORRECTION_REQUIRED',
+        nextTools: ['drawing_select_parts'],
+      };
+    }
+    const request = structuredClone(state.pendingCorrectionRequest);
+    const result = this.selectCurrentParts(sessionId, request);
+    if (result.state === 'selected') state.pendingCorrectionRequest = undefined;
+    return result;
+  }
+
   async renderCurrentSelectionObservation(sessionId: string): Promise<ImageAttachmentRef | null> {
     const snapshot = this.drawings.getSnapshot(sessionId);
     const episode = snapshot ? this.#episodes.current(sessionId, snapshot.ref) : null;
@@ -546,8 +595,9 @@ export class SemanticEditService {
     }
     const viewport = this.drawings.summarize(sessionId)?.bounds
       ?? { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-    const selectedNodeIds = [...new Set(Object.values(state.selectedParts)
-      .flatMap(({ targetNodeIds }) => targetNodeIds))];
+    const selectedNodeIds = [...new Set(Object.entries(state.selectedParts)
+      .filter(([partKey]) => state.selectionRoles[partKey] !== 'reference')
+      .flatMap(([, { targetNodeIds }]) => targetNodeIds))];
     const selectedNodeSet = new Set(selectedNodeIds);
     const rendered = await this.ports.renderObservation({
       document: snapshot.document,
@@ -571,7 +621,7 @@ export class SemanticEditService {
 
   confirmCurrentSelection(sessionId: string): {
     state: 'selection_confirmed';
-    parts: Array<{ partKey: string; nodeCount: number }>;
+    parts: Array<{ partKey: string; role: 'target' | 'reference'; nodeCount: number }>;
     nextTools: ['drawing_preview_spatial_intent'];
   } {
     const snapshot = this.#snapshot(sessionId);
@@ -583,6 +633,7 @@ export class SemanticEditService {
     }
     const parts = Object.keys(state.selectedParts).sort().map((partKey) => ({
       partKey,
+      role: state.selectionRoles[partKey] ?? 'target',
       nodeCount: state.selectedParts[partKey]!.targetNodeIds.length,
     }));
     if (parts.length === 0) throw new Error('EDIT_SELECTION_REQUIRED');
@@ -623,14 +674,23 @@ export class SemanticEditService {
       return structuredClone(currentPreview.ref);
     }
     if (task.candidateCount >= 3) throw new Error('EDIT_CANDIDATE_BUDGET_EXHAUSTED');
-    const compilation = solveSpatialIntent({
-      document: snapshot.document,
-      baseRef: snapshot.ref,
-      parts: selection.selectedParts,
-      intent,
-      numericConstraints: episode.instruction.numericConstraints,
-      ports: this.ports,
-    });
+    let compilation: SpatialIntentSolution;
+    try {
+      compilation = solveSpatialIntent({
+        document: snapshot.document,
+        baseRef: snapshot.ref,
+        parts: selection.selectedParts,
+        intent,
+        numericConstraints: episode.instruction.numericConstraints,
+        ports: this.ports,
+      });
+    } catch (error) {
+      selection.correctionAllowedNodeIds = spatialCorrectionAllowedNodeIds(error, selection);
+      selection.pendingCorrectionRequest = spatialCorrectionRequest(error, selection);
+      throw projectSpatialSelectionCorrection(error, selection);
+    }
+    selection.correctionAllowedNodeIds = undefined;
+    selection.pendingCorrectionRequest = undefined;
     const selectedPartScopeDigests = Object.fromEntries(Object.keys(selection.selectedParts).sort().map((partKey) => {
       const part = selection.selectedParts[partKey]!;
       return [partKey, this.ports.digest(canonicalString({
@@ -1126,6 +1186,7 @@ export class SemanticEditService {
     selectionProjectionId?: string;
     partKey?: string;
     label?: string;
+    overlayRole?: 'target' | 'reference';
   }): GroundingRef {
     const task = this.#task(sessionId, input.taskId);
     const context = this.#contexts.get(input.contextId);
@@ -1200,7 +1261,9 @@ export class SemanticEditService {
       })),
     };
     this.#groundings.set(ref.groundingId, { ref, target });
-    this.#updateGroundingOverlay(sessionId, task, snapshot.ref, ref, input.partKey, input.label);
+    this.#updateGroundingOverlay(
+      sessionId, task, snapshot.ref, ref, input.partKey, input.label, input.overlayRole ?? 'target',
+    );
     return structuredClone(ref);
   }
 
@@ -1220,6 +1283,10 @@ export class SemanticEditService {
       return null;
     }
     return structuredClone(overlay);
+  }
+
+  clearCurrentGroundingOverlay(sessionId: string): void {
+    this.#groundingOverlays.delete(sessionId);
   }
 
   resolveCurrentPreview(sessionId: string, previewHandle: string): PreviewRef {
@@ -1620,6 +1687,10 @@ export class SemanticEditService {
     return this.drawings.undoCommit(sessionId, request);
   }
 
+  redo(sessionId: string, request: RedoCommitRequest) {
+    return this.drawings.redoCommit(sessionId, request);
+  }
+
   disposeSession(sessionId: string): void {
     const task = this.#tasks.get(sessionId);
     if (task) task.active = false;
@@ -1666,6 +1737,29 @@ export class SemanticEditService {
     return {
       status: 'staged', ...structuredClone(input), operationId, operationBindingDigest,
       commandLine: `/drawing-undo ${input.targetCommitId} ${input.expectedCurrentRef.drawingId}@${input.expectedCurrentRef.revision} ${operationId} ${operationBindingDigest}`,
+    };
+  }
+
+  stageRedo(sessionId: string, input: DrawingRedoStageRequest): DrawingRedoStageResult {
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (!snapshot) return { status: 'rejected', code: 'DRAWING_REQUIRED', message: 'No Drawing is loaded.' };
+    if (
+      snapshot.ref.drawingId !== input.expectedCurrentRef.drawingId
+      || snapshot.ref.revision !== input.expectedCurrentRef.revision
+    ) return { status: 'rejected', code: 'REDO_CONFLICT', message: 'The Drawing revision changed.' };
+    if (!snapshot.lastCommit?.redoable || snapshot.lastCommit.commitId !== input.targetCommitId) {
+      return { status: 'rejected', code: 'REDO_TARGET_NOT_CURRENT', message: 'The requested Undo is not the current Redo target.' };
+    }
+    const operationId = this.ports.id('redo');
+    const operationBindingDigest = this.ports.digest(canonicalString({
+      mode: 'redo', operationId, sessionId,
+      drawingId: input.expectedCurrentRef.drawingId,
+      targetCommitId: input.targetCommitId,
+      expectedCurrentRef: input.expectedCurrentRef,
+    }));
+    return {
+      status: 'staged', ...structuredClone(input), operationId, operationBindingDigest,
+      commandLine: `/drawing-redo ${input.targetCommitId} ${input.expectedCurrentRef.drawingId}@${input.expectedCurrentRef.revision} ${operationId} ${operationBindingDigest}`,
     };
   }
 
@@ -1829,6 +1923,7 @@ export class SemanticEditService {
     grounding: GroundingRef,
     rawPartKey?: string,
     rawLabel?: string,
+    role: 'target' | 'reference' = 'target',
   ): void {
     const partKey = rawPartKey?.trim();
     const label = rawLabel?.trim();
@@ -1853,6 +1948,7 @@ export class SemanticEditService {
       groundingId: grounding.groundingId,
       partKey: partKey ?? `grounding:${grounding.groundingId}`,
       label: label ?? 'Grounded target',
+      role,
       colorIndex,
       nodeIds: [...grounding.targetNodeIds].sort(),
       interfaces: grounding.interfaces
@@ -1889,6 +1985,211 @@ export class SemanticEditService {
 
 function allNodes(document: DrawingDocument) {
   return [...document.geometry, ...document.annotations, ...document.relations, ...document.features];
+}
+
+function projectSpatialSelectionCorrection(error: unknown, state: EpisodeSelectionState): unknown {
+  if (!error || typeof error !== 'object') return error;
+  const failure = error as {
+    code?: unknown;
+    partKey?: unknown;
+    unexpectedNodeIds?: unknown;
+    unusedPartKeys?: unknown;
+    mergePartKeys?: unknown;
+    mergeNodeIds?: unknown;
+    unexpectedPartKeys?: unknown;
+  };
+  const candidateKeysFor = (nodeIds: string[]) => {
+    const selected = new Set(nodeIds);
+    return [...state.candidates.entries()]
+      .filter(([, candidate]) => (
+        candidate.nodeIds.length === 1 && selected.has(candidate.nodeIds[0]!)
+      ))
+      .map(([key]) => key)
+      .sort((left, right) => Number(left.slice(1)) - Number(right.slice(1)));
+  };
+  if (
+    failure.code === 'EDIT_ARTICULATED_COMPANION_PART_INVALID'
+    && Array.isArray(failure.unexpectedPartKeys)
+    && failure.unexpectedPartKeys.every((partKey) => typeof partKey === 'string')
+  ) {
+    const removeParts = failure.unexpectedPartKeys.flatMap((partKey) => {
+      const target = state.selectedParts[partKey];
+      if (!target) return [];
+      return [{ partKey, candidates: candidateKeysFor(target.targetNodeIds) }];
+    });
+    if (removeParts.length > 0) return Object.assign(
+      new Error('EDIT_ARTICULATED_COMPANION_PART_INVALID'),
+      { correction: { removeParts } },
+    );
+  }
+  if (
+    failure.code === 'EDIT_ARTICULATED_SELECTION_FRAGMENTED'
+    && typeof failure.partKey === 'string'
+    && Array.isArray(failure.mergePartKeys)
+    && failure.mergePartKeys.every((partKey) => typeof partKey === 'string')
+    && Array.isArray(failure.mergeNodeIds)
+    && failure.mergeNodeIds.every((nodeId) => typeof nodeId === 'string')
+    && Array.isArray(failure.unexpectedPartKeys)
+    && failure.unexpectedPartKeys.every((partKey) => typeof partKey === 'string')
+  ) {
+    const mergeCandidates = candidateKeysFor(failure.mergeNodeIds);
+    const removeParts = failure.unexpectedPartKeys.flatMap((partKey) => {
+      const target = state.selectedParts[partKey];
+      if (!target) return [];
+      return [{ partKey, candidates: candidateKeysFor(target.targetNodeIds) }];
+    });
+    if (mergeCandidates.length > 0) return Object.assign(
+      new Error('EDIT_ARTICULATED_SELECTION_FRAGMENTED'),
+      { correction: { mergeIntoPart: { partKey: failure.partKey, candidates: mergeCandidates }, removeParts } },
+    );
+  }
+  if (
+    failure.code === 'EDIT_ARTICULATED_SELECTION_INVALID'
+    && typeof failure.partKey === 'string'
+    && Array.isArray(failure.unexpectedNodeIds)
+    && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === 'string')
+  ) {
+    const removeCandidates = candidateKeysFor(failure.unexpectedNodeIds);
+    if (removeCandidates.length > 0) return Object.assign(
+      new Error('EDIT_ARTICULATED_SELECTION_INVALID'),
+      { correction: { parts: [{ partKey: failure.partKey, removeCandidates }] } },
+    );
+  }
+  if (
+    failure.code === 'EDIT_SELECTED_PART_UNUSED'
+    && Array.isArray(failure.unusedPartKeys)
+    && failure.unusedPartKeys.every((partKey) => typeof partKey === 'string')
+  ) {
+    const removeParts = failure.unusedPartKeys.flatMap((partKey) => {
+      const target = state.selectedParts[partKey];
+      if (!target) return [];
+      return [{ partKey, candidates: candidateKeysFor(target.targetNodeIds) }];
+    });
+    if (removeParts.length > 0) return Object.assign(
+      new Error('EDIT_SELECTED_PART_UNUSED'),
+      { correction: { removeParts } },
+    );
+  }
+  return error;
+}
+
+function spatialCorrectionAllowedNodeIds(error: unknown, state: EpisodeSelectionState): string[] | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const failure = error as {
+    code?: unknown;
+    unexpectedNodeIds?: unknown;
+    unusedPartKeys?: unknown;
+  };
+  const excluded = new Set<string>();
+  if (
+    failure.code === 'EDIT_ARTICULATED_COMPANION_PART_INVALID'
+    && Array.isArray(failure.unexpectedNodeIds)
+    && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === 'string')
+  ) {
+    for (const nodeId of failure.unexpectedNodeIds) excluded.add(nodeId);
+  }
+  if (
+    failure.code === 'EDIT_ARTICULATED_SELECTION_FRAGMENTED'
+    && Array.isArray(failure.unexpectedNodeIds)
+    && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === 'string')
+  ) {
+    for (const nodeId of failure.unexpectedNodeIds) excluded.add(nodeId);
+  }
+  if (
+    failure.code === 'EDIT_ARTICULATED_SELECTION_INVALID'
+    && Array.isArray(failure.unexpectedNodeIds)
+    && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === 'string')
+  ) {
+    for (const nodeId of failure.unexpectedNodeIds) excluded.add(nodeId);
+  }
+  if (
+    failure.code === 'EDIT_SELECTED_PART_UNUSED'
+    && Array.isArray(failure.unusedPartKeys)
+    && failure.unusedPartKeys.every((partKey) => typeof partKey === 'string')
+  ) {
+    for (const partKey of failure.unusedPartKeys) {
+      for (const nodeId of state.selectedParts[partKey]?.targetNodeIds ?? []) excluded.add(nodeId);
+    }
+  }
+  if (excluded.size === 0) return undefined;
+  return [...new Set(Object.values(state.selectedParts).flatMap(({ targetNodeIds }) => targetNodeIds))]
+    .filter((nodeId) => !excluded.has(nodeId))
+    .sort();
+}
+
+function spatialCorrectionRequest(
+  error: unknown,
+  state: EpisodeSelectionState,
+): DrawingSelectPartsRequest | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const failure = error as {
+    code?: unknown;
+    partKey?: unknown;
+    unexpectedNodeIds?: unknown;
+    unusedPartKeys?: unknown;
+    mergePartKeys?: unknown;
+    unexpectedPartKeys?: unknown;
+  };
+  const nodesByPart = new Map(Object.entries(state.selectedParts).map(([partKey, target]) => (
+    [partKey, new Set(target.targetNodeIds)]
+  )));
+  if (
+    failure.code === 'EDIT_ARTICULATED_SELECTION_FRAGMENTED'
+    && typeof failure.partKey === 'string'
+    && Array.isArray(failure.mergePartKeys)
+    && failure.mergePartKeys.every((partKey) => typeof partKey === 'string')
+    && Array.isArray(failure.unexpectedPartKeys)
+    && failure.unexpectedPartKeys.every((partKey) => typeof partKey === 'string')
+  ) {
+    const destination = nodesByPart.get(failure.partKey);
+    if (!destination) return undefined;
+    for (const partKey of failure.mergePartKeys) {
+      for (const nodeId of nodesByPart.get(partKey) ?? []) destination.add(nodeId);
+      nodesByPart.delete(partKey);
+    }
+    for (const partKey of failure.unexpectedPartKeys) nodesByPart.delete(partKey);
+  } else if (
+    failure.code === 'EDIT_ARTICULATED_SELECTION_INVALID'
+    && typeof failure.partKey === 'string'
+    && Array.isArray(failure.unexpectedNodeIds)
+    && failure.unexpectedNodeIds.every((nodeId) => typeof nodeId === 'string')
+  ) {
+    const target = nodesByPart.get(failure.partKey);
+    if (!target) return undefined;
+    for (const nodeId of failure.unexpectedNodeIds) target.delete(nodeId);
+  } else if (
+    (failure.code === 'EDIT_SELECTED_PART_UNUSED'
+      && Array.isArray(failure.unusedPartKeys)
+      && failure.unusedPartKeys.every((partKey) => typeof partKey === 'string'))
+    || (failure.code === 'EDIT_ARTICULATED_COMPANION_PART_INVALID'
+      && Array.isArray(failure.unexpectedPartKeys)
+      && failure.unexpectedPartKeys.every((partKey) => typeof partKey === 'string'))
+  ) {
+    const removePartKeys = failure.code === 'EDIT_SELECTED_PART_UNUSED'
+      ? failure.unusedPartKeys as string[]
+      : failure.unexpectedPartKeys as string[];
+    for (const partKey of removePartKeys) nodesByPart.delete(partKey);
+  } else {
+    return undefined;
+  }
+
+  const candidateKeyFor = (nodeId: string) => [...state.candidates.entries()]
+    .find(([, candidate]) => candidate.nodeIds.length === 1 && candidate.nodeIds[0] === nodeId)?.[0];
+  const parts = [...nodesByPart.entries()].sort(([left], [right]) => left.localeCompare(right)).flatMap(([
+    partKey, nodeIds,
+  ]) => {
+    const keys = [...nodeIds].map(candidateKeyFor).filter((key): key is string => key !== undefined)
+      .sort((left, right) => Number(left.slice(1)) - Number(right.slice(1)));
+    if (keys.length !== nodeIds.size || keys.length === 0) return [];
+    return [{
+      partKey,
+      label: partKey,
+      role: state.selectionRoles[partKey] ?? 'target',
+      references: keys.map((key) => ({ kind: 'candidate' as const, key })),
+      exclude: [],
+    }];
+  });
+  return parts.length > 0 ? { parts } : undefined;
 }
 
 function inferSelectionInterfaces(

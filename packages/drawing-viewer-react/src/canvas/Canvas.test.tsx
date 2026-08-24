@@ -177,4 +177,91 @@ describe('shared Canvas rendering', () => {
     expect(markup).not.toContain('data-grounding-label');
     expect(store.getState().selectedIds).toEqual([]);
   });
+
+  it('does not flash fixed reference groups as AI-selected geometry', async () => {
+    const port = new CanvasPort();
+    port.groundingOverlay = {
+      version: 1,
+      drawingRef: structuredClone(port.value.ref),
+      taskId: 'task-motion-reference',
+      stateEpoch: 1,
+      disposition: 'active',
+      groups: [{
+        groundingId: 'ground-arm', partKey: 'left-arm', label: '左臂', colorIndex: 0,
+        role: 'target', nodeIds: ['line-1'], interfaces: [],
+      }, {
+        groundingId: 'ground-body', partKey: 'fixed-body', label: '固定身体', colorIndex: 1,
+        role: 'reference', nodeIds: ['circle-1'], interfaces: [],
+      }],
+    } as never;
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <Canvas />
+      </DrawingWorkspaceProvider>,
+    );
+
+    expect(markup).toMatch(/class="[^"]*vai-entity--ai-grounded[^"]*"[^>]*data-entity-id="line-1"/);
+    expect(markup).not.toMatch(/class="[^"]*vai-entity--ai-grounded[^"]*"[^>]*data-entity-id="circle-1"/);
+  });
+
+  it('shows a clean candidate with only changed original positions ghosted while motion preview is held', async () => {
+    const store = await loadedStore();
+    const formal = store.getState().snapshot;
+    if (formal === null) throw new Error('expected drawing');
+    const candidate = structuredClone(formal);
+    const movedLine = candidate.document.geometry.find(({ id }) => id === 'line-1');
+    if (movedLine?.type !== 'line') throw new Error('expected line');
+    movedLine.start = [20, 10];
+    movedLine.end = [120, 10];
+    store.setState({
+      displaySnapshot: candidate,
+      selectedIds: ['line-1'],
+      groundingOverlay: {
+        version: 1,
+        drawingRef: structuredClone(formal.ref),
+        taskId: 'task-preview',
+        stateEpoch: 1,
+        disposition: 'active',
+        groups: [{
+          groundingId: 'ground-line', partKey: 'arm', label: '手臂', colorIndex: 0,
+          nodeIds: ['line-1'], interfaces: [],
+        }],
+      },
+      motionRig: {
+        phase: 'preview',
+        projection: {
+          version: 1,
+          drawingRef: structuredClone(formal.ref),
+          state: 'ready',
+          controlBodyNodeIds: ['line-1', 'circle-1'],
+          connectors: [],
+          anchor: [0, 0],
+          handle: [20, 10],
+          keepAnchorFixed: true,
+          keepControlBodyRigid: true,
+          preserveConnectivity: true,
+          allowControlRotation: false,
+        },
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <DrawingWorkspaceProvider store={store} autoLoad={false}>
+        <Canvas motionPreviewHeld />
+      </DrawingWorkspaceProvider>,
+    );
+
+    expect(markup).toContain('data-motion-preview-held="true"');
+    expect(markup).toContain('data-motion-preview-before="line-1"');
+    expect(markup).not.toContain('data-motion-preview-before="circle-1"');
+    expect(markup).toContain('<line x1="0" y1="0" x2="100" y2="0"');
+    expect(markup).toContain('<line x1="20" y1="10" x2="120" y2="10"');
+    expect(markup).not.toContain('data-selected="true"');
+    expect(markup).not.toContain('data-ai-grounded="true"');
+    expect(markup).not.toContain('data-motion-rig-active="true"');
+    expect(markup).not.toContain('data-motion-rig-state');
+  });
 });

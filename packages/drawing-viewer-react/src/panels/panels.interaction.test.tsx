@@ -164,4 +164,41 @@ describe('shared workspace panel actions', () => {
     expect(cancel.findAllByType('span')).toHaveLength(0);
     act(() => renderer.unmount());
   });
+
+  it('previews only while the motion-rig preview action is held', async () => {
+    const onMotionPreviewHeldChange = vi.fn();
+    const { store, renderer } = await renderPanel(
+      <WorkspaceToolbar
+        motionPreviewHeld={false}
+        onMotionPreviewHeldChange={onMotionPreviewHeldChange}
+      />,
+    );
+    act(() => store.setState({
+      motionRig: {
+        phase: 'preview',
+        projection: {
+          version: 1, drawingRef: { drawingId: 'drawing', revision: 5 }, state: 'ready',
+          controlBodyNodeIds: ['circle-1'], connectors: [], anchor: [0, 0], handle: [10, 20],
+          keepAnchorFixed: true, keepControlBodyRigid: true,
+          preserveConnectivity: true, allowControlRotation: false,
+        },
+      },
+    }));
+    const preview = renderer.root.findByProps({ 'aria-label': '按住预览修改效果' });
+    const setPointerCapture = vi.fn();
+
+    act(() => preview.props.onPointerDown?.({
+      button: 0,
+      pointerId: 7,
+      preventDefault: vi.fn(),
+      currentTarget: { setPointerCapture },
+    }));
+    act(() => preview.props.onPointerUp?.({ preventDefault: vi.fn() }));
+    act(() => preview.props.onKeyDown?.({ key: ' ', repeat: false, preventDefault: vi.fn() }));
+    act(() => preview.props.onKeyUp?.({ key: ' ', preventDefault: vi.fn() }));
+
+    expect(setPointerCapture).toHaveBeenCalledWith(7);
+    expect(onMotionPreviewHeldChange.mock.calls).toEqual([[true], [false], [true], [false]]);
+    act(() => renderer.unmount());
+  });
 });

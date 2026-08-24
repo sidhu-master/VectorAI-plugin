@@ -20,7 +20,7 @@ export interface DrawingSolverProvenance {
 
 export interface DrawingCommitRecord {
   commitId: string;
-  mode: 'auto-safe' | 'confirmed' | 'interactive' | 'undo';
+  mode: 'auto-safe' | 'confirmed' | 'interactive' | 'undo' | 'redo';
   operationId: string;
   operationBindingDigest: string;
   parentRevision: number;

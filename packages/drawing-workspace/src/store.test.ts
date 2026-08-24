@@ -141,6 +141,21 @@ function motionSnapshot(revision = 1): DrawingWorkspaceSnapshot {
   return value;
 }
 
+function twoHandMotionSnapshot(revision = 1): DrawingWorkspaceSnapshot {
+  const value = motionSnapshot(revision);
+  value.document.geometry.push(
+    {
+      id: 'other-hand' as GeometryId, type: 'circle', center: [50, 20], radius: 3,
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    },
+    {
+      id: 'other-arm' as GeometryId, type: 'line', start: [70, 20], end: [53, 20],
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    },
+  );
+  return value;
+}
+
 function motionRig(revision = 1): DrawingMotionRigProjection {
   return {
     version: 1,
@@ -154,6 +169,16 @@ function motionRig(revision = 1): DrawingMotionRigProjection {
     keepControlBodyRigid: true,
     preserveConnectivity: true,
     allowControlRotation: false,
+  };
+}
+
+function otherMotionRig(revision = 1): DrawingMotionRigProjection {
+  return {
+    ...motionRig(revision),
+    controlBodyNodeIds: ['other-hand'],
+    connectors: [{ nodeId: 'other-arm', movingEndpoint: 'end', fixedPoint: [70, 20] }],
+    anchor: [70, 20],
+    handle: [50, 20],
   };
 }
 
@@ -200,6 +225,89 @@ describe('createDrawingWorkspaceStore', () => {
     expect(store.getState().motionRig).toBeNull();
   });
 
+  it('keeps the same rig preview repeatedly draggable until confirmation', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([30, 25]);
+    store.getState().finishMotionRigDrag();
+    store.getState().beginMotionRigDrag([30, 25]);
+    store.getState().updateMotionRigDrag([35, 35]);
+    store.getState().finishMotionRigDrag();
+
+    expect(store.getState().motionRig).toMatchObject({
+      phase: 'preview', projection: { handle: [35, 35] },
+    });
+    expect(store.getState().displaySnapshot?.document.geometry).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'hand', center: [35, 35] }),
+      expect.objectContaining({ id: 'arm', start: [0, 20], end: [32, 35] }),
+    ]));
+  });
+
+  it('drops the first rig commands when an authoritative replacement rig arrives', async () => {
+    const port = new TestPort(twoHandMotionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([25, 22]);
+    store.getState().finishMotionRigDrag();
+
+    port.motionRig = otherMotionRig();
+    await store.getState().refresh();
+    store.getState().beginMotionRigDrag([50, 20]);
+    store.getState().updateMotionRigDrag([60, 25]);
+    store.getState().finishMotionRigDrag();
+
+    await expect(store.getState().confirmMotionRig()).resolves.toBe(true);
+    expect(port.commits).toHaveLength(1);
+    expect(port.commits[0]?.commands.map((command) => (
+      'id' in command ? command.id : undefined
+    ))).toEqual(['other-hand', 'other-arm']);
+  });
+
+  it('refuses to confirm commands that do not belong to the active rig', async () => {
+    const port = new TestPort(twoHandMotionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([25, 22]);
+    store.getState().finishMotionRigDrag();
+    store.setState({
+      motionRig: { projection: otherMotionRig(), phase: 'preview' },
+    });
+
+    await expect(store.getState().confirmMotionRig()).resolves.toBe(false);
+    expect(port.commits).toEqual([]);
+    expect(store.getState().motionRig?.message).toContain('不属于当前铰链');
+  });
+
+  it('lets a connector contact slide on the carrier while preserving the fixed endpoint', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    const state = store.getState() as typeof store.getState extends () => infer State
+      ? State & { beginMotionRigConnectorDrag?: (nodeId: string, point: [number, number]) => void }
+      : never;
+    expect(state.beginMotionRigConnectorDrag).toBeTypeOf('function');
+    if (!state.beginMotionRigConnectorDrag) return;
+
+    state.beginMotionRigConnectorDrag('arm', [17, 20]);
+    store.getState().updateMotionRigDrag([20, 30]);
+    store.getState().finishMotionRigDrag();
+
+    expect(store.getState().motionRig?.phase).toBe('preview');
+    expect(store.getState().displaySnapshot?.document.geometry).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'hand', center: [20, 20], radius: 3 }),
+      expect.objectContaining({ id: 'arm', start: [0, 20], end: [20, 23] }),
+    ]));
+  });
+
   it('rebuilds the complete Host rig from the current direct selection', async () => {
     const port = new TestPort(motionSnapshot());
     port.motionRig = motionRig();
@@ -229,6 +337,74 @@ describe('createDrawingWorkspaceStore', () => {
     expect(port.discards).toEqual([{ drawingId: 'drawing-1', revision: 1 }]);
     expect(store.getState().displaySnapshot).toEqual(store.getState().snapshot);
     expect(store.getState().motionRig).toBeNull();
+  });
+
+  it('restores the canceled rig preview before undoing older drawing history', async () => {
+    const current = motionSnapshot();
+    current.lastCommit = { commitId: 'older-commit', mode: 'interactive', undoable: true };
+    const port = new TestPort(current);
+    port.motionRig = motionRig();
+    let formalUndoCalled = false;
+    port.undoLast = async () => {
+      formalUndoCalled = true;
+      throw new Error('older drawing history must not be undone first');
+    };
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([25, 22]);
+    store.getState().finishMotionRigDrag();
+    await store.getState().cancelMotionRig();
+
+    await expect(store.getState().undoLast()).resolves.toBe(true);
+
+    expect(formalUndoCalled).toBe(false);
+    expect(store.getState().motionRig).toMatchObject({
+      phase: 'preview', projection: { handle: [25, 22] },
+    });
+    expect(store.getState().displaySnapshot?.document.geometry).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'hand', center: [25, 22] }),
+      expect.objectContaining({ id: 'arm', start: [0, 20], end: [22, 22] }),
+    ]));
+  });
+
+  it('undoes a confirmed rig commit and restores its preview as editable', async () => {
+    const original = motionSnapshot();
+    const port = new TestPort(original);
+    port.motionRig = motionRig();
+    port.commit = async (request) => {
+      port.commits.push(structuredClone(request));
+      const committed = structuredClone(original);
+      committed.ref.revision = 2;
+      committed.lastCommit = { commitId: 'rig-commit', mode: 'interactive', undoable: true };
+      port.current = committed;
+      return { status: 'committed', snapshot: structuredClone(committed) };
+    };
+    port.undoLast = async () => {
+      const undone = structuredClone(original);
+      undone.ref.revision = 3;
+      undone.lastCommit = { commitId: 'undo-rig', mode: 'undo', undoable: false, redoable: true };
+      port.current = undone;
+      return { status: 'committed', snapshot: undone };
+    };
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    store.getState().beginMotionRigDrag([20, 20]);
+    store.getState().updateMotionRigDrag([25, 22]);
+    store.getState().finishMotionRigDrag();
+    await expect(store.getState().confirmMotionRig()).resolves.toBe(true);
+
+    await expect(store.getState().undoLast()).resolves.toBe(true);
+
+    expect(store.getState().snapshot?.ref.revision).toBe(3);
+    expect(store.getState().motionRig).toMatchObject({
+      phase: 'preview',
+      projection: { drawingRef: { drawingId: 'drawing-1', revision: 3 }, handle: [25, 22] },
+    });
+    expect(store.getState().displaySnapshot?.document.geometry).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'hand', center: [25, 22] }),
+      expect.objectContaining({ id: 'arm', start: [0, 20], end: [22, 22] }),
+    ]));
   });
 
   it('resets only the active drag on first Escape while keeping the valid rig', async () => {
@@ -280,6 +456,31 @@ describe('createDrawingWorkspaceStore', () => {
     expect(store.getState().groundingOverlay).toEqual(port.groundingOverlay);
     expect(store.getState().selectedIds).toEqual([]);
     expect(store.getState().selectionProjection).toBeNull();
+  });
+
+  it('hides the AI grounding overlay once a matching motion rig is ready', async () => {
+    const port = new TestPort(motionSnapshot());
+    port.groundingOverlay = {
+      version: 1,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      taskId: 'task-1',
+      stateEpoch: 2,
+      disposition: 'active',
+      groups: [{
+        groundingId: 'ground-fixed', partKey: 'fixed-body', label: 'Fixed body', colorIndex: 0,
+        nodeIds: ['body'], interfaces: [],
+      }, {
+        groundingId: 'ground-hand', partKey: 'movable-hand', label: 'Movable hand', colorIndex: 1,
+        nodeIds: ['hand'], interfaces: [],
+      }],
+    };
+    port.motionRig = motionRig();
+    const store = createDrawingWorkspaceStore({ port });
+
+    await store.getState().load();
+
+    expect(store.getState().motionRig?.phase).toBe('ready');
+    expect(store.getState().groundingOverlay).toBeNull();
   });
 
   it('drops a stale Grounding Overlay when the formal Drawing revision changes', async () => {

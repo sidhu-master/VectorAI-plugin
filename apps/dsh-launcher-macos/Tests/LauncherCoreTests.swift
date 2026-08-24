@@ -260,6 +260,42 @@ private func testPortProbeAllowsImmediateRestartAfterServerCloses() throws {
     try expect(LocalPort.isAvailable(port), "a recently closed DSH listener must be restartable immediately")
 }
 
+private func testOccupiedPortReclaimStopsOnlyItsListenerAndMakesThePortReusable() throws {
+    let port = try unusedLoopbackPort()
+    let listener = Process()
+    listener.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    listener.arguments = [
+        "-c",
+        "import signal,socket,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',int(sys.argv[1]))); s.listen(); time.sleep(30)",
+        String(port),
+    ]
+    try listener.run()
+    let listenerPID = pid_t(listener.processIdentifier)
+    defer {
+        _ = kill(listenerPID, SIGKILL)
+        listener.waitUntilExit()
+    }
+
+    let outsider = Process()
+    outsider.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    outsider.arguments = ["30"]
+    try outsider.run()
+    defer {
+        if outsider.isRunning { outsider.terminate() }
+    }
+
+    try expect(
+        waitUntil(timeout: 2) { !LocalPort.isAvailable(port) },
+        "the child must own the test port before reclaim"
+    )
+    try expect(
+        LocalPort.reclaim(port, terminationGracePeriod: 0.1),
+        "reclaim must force-stop a listener that ignores graceful termination"
+    )
+    try expect(LocalPort.isAvailable(port), "reclaim must make the occupied port reusable")
+    try expect(outsider.isRunning, "reclaim must leave processes that do not listen on the target port alive")
+}
+
 private func testManagedProcessStopsItsWholeGroupAndLeavesOutsidersAlive() throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("dsh-launcher-tests-\(UUID().uuidString)", isDirectory: true)
@@ -335,6 +371,7 @@ private struct LauncherCoreTestRunner {
             ("titlebar double-click zooms only in native chrome", testTitlebarDoubleClickRequestsWindowZoomOnlyInChrome),
             ("port probe rejects occupied loopback port", testPortProbeRejectsAnOccupiedLoopbackPort),
             ("port probe allows immediate restart after close", testPortProbeAllowsImmediateRestartAfterServerCloses),
+            ("occupied port reclaim stops only its listener", testOccupiedPortReclaimStopsOnlyItsListenerAndMakesThePortReusable),
             ("managed process stops its group and leaves outsiders alive", testManagedProcessStopsItsWholeGroupAndLeavesOutsidersAlive),
             ("managed process passes environment overrides", testManagedProcessPassesEnvironmentOverridesToChild),
         ]

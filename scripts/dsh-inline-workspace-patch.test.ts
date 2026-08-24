@@ -3,11 +3,13 @@ import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import {
+import * as dshPatch from './dsh-inline-workspace-patch.mjs';
+
+const {
   applyConversationWorkspacePatch,
   patchConversationClient,
   resolveConversationPackageFromDshBin,
-} from './dsh-inline-workspace-patch.mjs';
+} = dshPatch;
 
 const ROOT_STATE_ANCHOR = `
 \t\t\tconst [pendingWorkspaceId, setPendingWorkspaceId] = (0, react.useState)();
@@ -60,6 +62,36 @@ function legacyPatchedResizeFixture(): string {
 \t\t\tconst workspaceLayoutStyles = "[data-conversation-workspace-pane]:not(:empty)";
 \t\t\t"data-vectorai-dsh-workspace-patch": "rc.8"`;
 }
+
+function agentLoopFixture(): string {
+  return `function parseArguments(raw) {
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return raw;
+  }
+}
+export { parseArguments };`;
+}
+
+describe('patchAgentLoopToolArgumentsParser', () => {
+  it('repairs only missing structural closers before typed tool validation', async () => {
+    const patchAgentLoopToolArgumentsParser = (
+      dshPatch as unknown as {
+        patchAgentLoopToolArgumentsParser(source: string): { status: string; source: string };
+      }
+    ).patchAgentLoopToolArgumentsParser;
+
+    const result = patchAgentLoopToolArgumentsParser(agentLoopFixture());
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(result.source).toString('base64')}`;
+    const loop = await import(moduleUrl) as { parseArguments(raw: string): unknown };
+
+    expect(loop.parseArguments('{"parts":[{"partKey":"right_hand","references":[]}}'))
+      .toEqual({ parts: [{ partKey: 'right_hand', references: [] }] });
+    expect(loop.parseArguments('{"parts":[]}')).toEqual({ parts: [] });
+    expect(loop.parseArguments('{"parts":')).toBe('{"parts":');
+  });
+});
 
 describe('patchConversationClient', () => {
   it('adds one generic workspace slot and split conversation shell', () => {
@@ -142,6 +174,33 @@ describe('patchConversationClient', () => {
 });
 
 describe('DSH workspace patch filesystem boundary', () => {
+  it('patches both the conversation layout and the agent-loop argument parser', async () => {
+    const fixture = await createInstallationFixture('0.1.0-rc.8');
+    try {
+      const applyDshCompatibilityPatches = (
+        dshPatch as unknown as {
+          applyDshCompatibilityPatches(dshBin: string): Promise<{
+            conversation: { status: string };
+            agentLoop: { status: string };
+          }>;
+        }
+      ).applyDshCompatibilityPatches;
+
+      await expect(applyDshCompatibilityPatches(fixture.dshBin)).resolves.toMatchObject({
+        conversation: { status: 'patched' },
+        agentLoop: { status: 'patched' },
+      });
+
+      const patchedLoopSource = await readFile(fixture.agentLoopPath, 'utf8');
+      const patchedLoopUrl = `data:text/javascript;base64,${Buffer.from(patchedLoopSource).toString('base64')}`;
+      const loop = await import(patchedLoopUrl) as { parseArguments(raw: string): unknown };
+      expect(loop.parseArguments('{"parts":[{"partKey":"arm"}}'))
+        .toEqual({ parts: [{ partKey: 'arm' }] });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it('resolves the conversation package from the real dsh executable', async () => {
     const fixture = await createInstallationFixture('0.1.0-rc.8');
     try {
@@ -193,17 +252,25 @@ async function createInstallationFixture(version: string) {
     'dsh-client-ui-conversation',
   );
   const clientPath = join(conversationDirectory, 'lib', 'client.js');
+  const agentLoopDirectory = join(nodeModules, '@deepseek-ai', 'dsh-agent-loop');
+  const agentLoopPath = join(agentLoopDirectory, 'lib', 'index.js');
   const dshScript = join(nodeModules, '@deepseek-ai', 'dsh', 'lib', 'bin.js');
   const dshBin = join(nodeModules, '.bin', 'dsh');
   await mkdir(dirname(clientPath), { recursive: true });
   await mkdir(dirname(dshScript), { recursive: true });
+  await mkdir(dirname(agentLoopPath), { recursive: true });
   await mkdir(dirname(dshBin), { recursive: true });
   await writeFile(
     join(conversationDirectory, 'package.json'),
     JSON.stringify({ name: '@deepseek-ai/dsh-client-ui-conversation', version }),
   );
   await writeFile(clientPath, rc8Fixture());
+  await writeFile(
+    join(agentLoopDirectory, 'package.json'),
+    JSON.stringify({ name: '@deepseek-ai/dsh-agent-loop', version, type: 'module' }),
+  );
+  await writeFile(agentLoopPath, agentLoopFixture());
   await writeFile(dshScript, '#!/usr/bin/env node\n');
   await symlink('../@deepseek-ai/dsh/lib/bin.js', dshBin);
-  return { root, conversationDirectory, clientPath, dshBin };
+  return { root, conversationDirectory, clientPath, agentLoopPath, dshBin };
 }

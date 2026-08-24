@@ -73,11 +73,14 @@ function repository() {
 
 describe('drawing semantic tools', () => {
   it('creates a temporary rig from Host-owned selection without model coordinates or node ids', async () => {
+    const clearCurrentGroundingOverlay = vi.fn();
     const semantic = {
       currentSelectedParts: () => ({
         hand: { targetNodeIds: ['hand'], interfaces: [], targetHandle: 'private', sourceStatus: 'confirmed' },
+        body: { targetNodeIds: ['body'], interfaces: [], targetHandle: 'private-fixed', sourceStatus: 'confirmed' },
       }),
       currentSelectionProjection: () => null,
+      clearCurrentGroundingOverlay,
     } as unknown as SemanticEditService;
     const motionRigs = {
       create: vi.fn(() => ({
@@ -87,7 +90,7 @@ describe('drawing semantic tools', () => {
     const tool = createDrawingCreateMotionRigTool(semantic, motionRigs);
 
     const result = await tool.execute({
-      target: '左臂', controlRole: '手掌', fixedRole: '肩部', motion: 'translate',
+      target: 'hand', controlRole: 'hand', fixedRole: 'body', motion: 'translate',
     }, exec('session-a'));
 
     expect(JSON.stringify(tool.parameters)).not.toMatch(/nodeId|coordinate|translation|pivot|rigId/);
@@ -96,6 +99,26 @@ describe('drawing semantic tools', () => {
       drawingWorkflow: { state: 'motion_rig_ready', nextTools: [] },
     });
     expect(motionRigs.create).toHaveBeenCalledWith('session-a', ['hand']);
+    expect(clearCurrentGroundingOverlay).toHaveBeenCalledWith('session-a');
+  });
+
+  it('keeps the current AI grounding visible while a motion rig still needs correction', async () => {
+    const clearCurrentGroundingOverlay = vi.fn();
+    const semantic = {
+      currentSelectedParts: () => ({
+        hand: { targetNodeIds: ['hand'], interfaces: [], targetHandle: 'private', sourceStatus: 'confirmed' },
+      }),
+      currentSelectionProjection: () => null,
+      clearCurrentGroundingOverlay,
+    } as unknown as SemanticEditService;
+    const motionRigs = {
+      create: vi.fn(() => ({ state: 'needs_correction', summary: 'ambiguous connection' })),
+    } as unknown as MotionRigService;
+    const tool = createDrawingCreateMotionRigTool(semantic, motionRigs);
+
+    await tool.execute({ target: 'hand', controlRole: 'hand', motion: 'translate' }, exec('session-a'));
+
+    expect(clearCurrentGroundingOverlay).not.toHaveBeenCalled();
   });
 
   it('exposes only high-level semantic editing tools and no model-carried internal handles', () => {
@@ -120,6 +143,19 @@ describe('drawing semantic tools', () => {
     expect(semanticSchemas).not.toMatch(
       /taskId|contextId|groundingId|previewHandle|candidateDigest|translation|pivot|rotationRadians/,
     );
+    const selectPartsSchema = tools.find(({ name }) => name === 'drawing_select_parts')?.parameters;
+    expect(selectPartsSchema).toMatchObject({
+      properties: {
+        parts: {
+          items: {
+            required: expect.arrayContaining(['role']),
+            properties: {
+              role: { type: 'string', enum: ['target', 'reference'] },
+            },
+          },
+        },
+      },
+    });
     for (const name of [
       'drawing_observe', 'drawing_confirm_selection', 'drawing_evaluate_preview', 'drawing_finalize_preview',
       'drawing_discard_preview', 'drawing_get_operation',
@@ -167,7 +203,10 @@ describe('drawing semantic tools', () => {
     const results = [
       await createDrawingObserveTool(semantic).execute({}, exec('session-a')),
       await createDrawingSelectPartsTool(semantic).execute({
-        parts: [{ partKey: 'hand', label: 'right hand', references: [{ kind: 'semantic_query', text: 'right hand' }] }],
+        parts: [{
+          partKey: 'hand', label: 'right hand', role: 'target',
+          references: [{ kind: 'semantic_query', text: 'right hand' }],
+        }],
       }, exec('session-a')),
       await createDrawingConfirmSelectionTool(semantic).execute({}, exec('session-a')),
       await createDrawingPreviewSpatialIntentTool(semantic).execute({
