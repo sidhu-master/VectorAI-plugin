@@ -9,3 +9,8 @@ export {
 } from './commands';
 export { createDrawingWorkspaceStore } from './store';
 export type * from './store';
+export {
+  createDrawingSurfaceRuntime,
+  createStoreObservable,
+} from './surface-runtime';
+export type * from './surface-runtime';

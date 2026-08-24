@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
-  DrawingSpatialQuery,
-  DrawingSpatialQueryResult,
-} from '@vectorai/drawing-spatial';
-import type {
-  DrawingGroundingOverlay,
-  DrawingMotionRigWorkspaceState,
-  DrawingSourceResource,
-  DrawingWorkspaceCommitRequest,
-  DrawingWorkspaceDisplay,
-  DrawingWorkspacePreview,
+  DeepReadonly,
+  DrawingSurfaceObservable,
+  DrawingSurfaceRuntime,
   DrawingWorkspaceSnapshot,
   DrawingWorkspaceViewport,
+} from '@vectorai/drawing-workspace';
+
+export type {
+  DeepReadonly,
+  DrawingSurfaceActions,
+  DrawingSurfaceObservable,
+  DrawingSurfacePresentationSnapshot,
+  DrawingSurfaceRuntime,
 } from '@vectorai/drawing-workspace';
 
 export const DRAWING_SURFACE_API_VERSION = 1 as const;
@@ -21,42 +22,9 @@ export interface Disposable {
   dispose(): void;
 }
 
-export interface DrawingSurfaceObservable<T> {
-  getSnapshot(): T;
-  subscribe(listener: () => void): () => void;
-}
-
 export interface DrawingWorkspaceClaim {
   active: boolean;
   activationEpoch: number;
-}
-
-export interface DrawingSurfacePresentationSnapshot {
-  displaySnapshot: DrawingWorkspaceSnapshot | null;
-  preview: DrawingWorkspacePreview | null;
-  groundingOverlay: DrawingGroundingOverlay | null;
-  motionRig: DrawingMotionRigWorkspaceState | null;
-  sourceResource: DrawingSourceResource | null;
-  display: DrawingWorkspaceDisplay;
-  busy: boolean;
-  error: { code: string; message: string } | null;
-}
-
-export interface DrawingSurfaceActions {
-  setViewport(viewport: DrawingWorkspaceViewport): void;
-  setSelection(ids: readonly string[]): void;
-  query(request: DrawingSpatialQuery, signal?: AbortSignal): Promise<DrawingSpatialQueryResult>;
-  stage(request: DrawingWorkspaceCommitRequest, signal?: AbortSignal): Promise<boolean>;
-  undo(signal?: AbortSignal): Promise<boolean>;
-  redo(signal?: AbortSignal): Promise<boolean>;
-}
-
-export interface DrawingSurfaceRuntime {
-  snapshot: DrawingSurfaceObservable<DrawingWorkspaceSnapshot | null>;
-  viewport: DrawingSurfaceObservable<DrawingWorkspaceViewport>;
-  selection: DrawingSurfaceObservable<readonly string[]>;
-  presentation: DrawingSurfaceObservable<DrawingSurfacePresentationSnapshot>;
-  actions: DrawingSurfaceActions;
 }
 
 export interface DrawingSurfaceComponentProps {
@@ -94,8 +62,8 @@ export interface DrawingSurfaceRegistry {
 }
 
 export interface DrawingCanvasLayerContext {
-  snapshot: DrawingWorkspaceSnapshot;
-  viewport: DrawingWorkspaceViewport;
+  snapshot: DeepReadonly<DrawingWorkspaceSnapshot>;
+  viewport: DeepReadonly<DrawingWorkspaceViewport>;
   selectedIds: readonly string[];
 }
 

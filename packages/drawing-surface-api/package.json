@@ -12,7 +12,6 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@vectorai/drawing-spatial": "workspace:*",
     "@vectorai/drawing-workspace": "workspace:*"
   }
 }

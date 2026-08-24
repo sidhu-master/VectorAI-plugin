@@ -16,6 +16,7 @@
   "dependencies": {
     "@vectorai/drawing-core": "workspace:*",
     "@vectorai/drawing-edit-core": "workspace:*",
+    "@vectorai/drawing-spatial": "workspace:*",
     "zustand": "^5.0.3"
   }
 }
