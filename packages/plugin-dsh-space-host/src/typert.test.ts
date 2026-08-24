@@ -9,7 +9,10 @@ describe('TYPERT host contribution', () => {
     expect(methods).toEqual([
       'getSnapshot', 'query', 'projectSelection', 'getGroundingOverlay',
       'getMotionRig', 'rebuildMotionRig', 'discardMotionRig',
-      'stageInteractiveEdit', 'stageUndo', 'stageRedo', 'getOperation', 'getPreview',
+      'stageInteractiveEdit', 'stageUndo', 'stageRedo', 'getOperation',
+      'createExtensionPreview', 'replaceExtensionPreview', 'assessExtensionPreview',
+      'finalizeExtensionPreview', 'discardExtensionPreview',
+      'getPreview',
     ]);
     expect(methods).not.toEqual(expect.arrayContaining([
       'commit', 'createPreview', 'commitPreview', 'discardPreview',

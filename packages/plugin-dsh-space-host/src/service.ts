@@ -21,6 +21,13 @@ import type {
   DrawingUndoStageResult,
   DrawingRedoStageRequest,
   DrawingRedoStageResult,
+  ExtensionPreviewCreateRequest,
+  ExtensionPreviewCreateResult,
+  ExtensionPreviewReplaceRequest,
+  ExtensionPreviewAssessmentResult,
+  ExtensionPreviewControlRequest,
+  ExtensionPreviewFinalizeResult,
+  ExtensionPreviewDiscardResult,
 } from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -42,6 +49,7 @@ import { createDshReviewer } from './reviewer';
 import { renderDrawingObservation } from './review-renderer';
 import type { DrawingInteractiveStageResult } from '@vectorai/drawing-workspace';
 import type { OperationLookupResult } from '@vectorai/drawing-edit-protocol';
+import { ExtensionPreviewService } from './extension-preview-service';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -56,6 +64,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
   private readonly semantic: SemanticEditService;
   private readonly interactive: InteractiveEditService;
   private readonly motionRigs: MotionRigService;
+  private readonly extensionPreviews: ExtensionPreviewService;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingSpace');
@@ -85,6 +94,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
       review: createDshReviewer(ctx),
     };
     this.semantic = new SemanticEditService(this.drawings, editPorts);
+    this.extensionPreviews = new ExtensionPreviewService(this.drawings, this.semantic, editPorts);
     this.interactive = new InteractiveEditService(this.drawings, editPorts);
     this.motionRigs = new MotionRigService(this.drawings);
     ctx.effect(() => registerDrawingCommands(ctx.commands, this.interactive, this.semantic));
@@ -103,6 +113,7 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     ctx.on('session/disposed', (session) => {
       this.semantic.disposeSession(String(session.id));
       this.motionRigs.disposeSession(String(session.id));
+      this.extensionPreviews.disposeSession(String(session.id));
       this.drawings.disposeSession(String(session.id));
     });
   }
@@ -178,8 +189,80 @@ export class DrawingSpaceHostService extends TypertRemoteService {
     return this.semantic.getOperation(String(agent.id), operationId, operationBindingDigest);
   }
 
+  @Remote
+  createExtensionPreview(
+    agent: Agent,
+    request: ExtensionPreviewCreateRequest,
+  ): Promise<ExtensionPreviewCreateResult> {
+    return this.extensionPreviews.create(String(agent.id), request);
+  }
+
+  @Remote
+  replaceExtensionPreview(
+    agent: Agent,
+    request: ExtensionPreviewReplaceRequest,
+  ): Promise<ExtensionPreviewCreateResult> {
+    return this.extensionPreviews.replace(String(agent.id), request);
+  }
+
+  @Remote
+  assessExtensionPreview(
+    agent: Agent,
+    request: ExtensionPreviewControlRequest,
+  ): Promise<ExtensionPreviewAssessmentResult> {
+    return this.extensionPreviews.assess(String(agent.id), request);
+  }
+
+  @Remote
+  finalizeExtensionPreview(
+    agent: Agent,
+    request: ExtensionPreviewControlRequest,
+  ): Promise<ExtensionPreviewFinalizeResult> {
+    return this.extensionPreviews.finalize(String(agent.id), request);
+  }
+
+  @Remote
+  discardExtensionPreview(
+    agent: Agent,
+    request: ExtensionPreviewControlRequest,
+  ): Promise<ExtensionPreviewDiscardResult> {
+    return this.extensionPreviews.discard(String(agent.id), request);
+  }
+
   async runExtensionProgram(agent: Agent, request: ExtensionProgramRequest, signal?: AbortSignal) {
-    return await this.semantic.runExtensionProgram(String(agent.id), request, signal);
+    const sessionId = String(agent.id);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (snapshot === null) throw new Error('DRAWING_REQUIRED');
+    const extensionId = 'vectorai.one-shot-extension';
+    const workflowId = `workflow_${randomUUID()}`;
+    const preview = await this.extensionPreviews.create(sessionId, {
+      extensionId,
+      workflowId,
+      ref: snapshot.ref,
+      targetNodeIds: request.targetNodeIds,
+      ...(request.interfaces === undefined ? {} : { interfaces: request.interfaces.map((binding) => ({
+        interfaceId: binding.interfaceId,
+        nodeId: binding.nodeId,
+        endpoint: binding.endpoint,
+      })) }),
+      program: request.program,
+    }, signal);
+    if (preview.status !== 'previewed') return { preview, result: preview };
+    const control = {
+      extensionId,
+      workflowId,
+      ref: preview.ref,
+      previewToken: preview.previewToken,
+      candidateDigest: preview.candidateDigest,
+    };
+    const assessed = await this.extensionPreviews.assess(sessionId, control, signal);
+    if (assessed.status !== 'assessed') return { preview, assessed, result: assessed };
+    const finalized = await this.extensionPreviews.finalize(sessionId, control);
+    return {
+      preview,
+      assessment: assessed.assessment,
+      result: finalized.status === 'finalized' ? finalized.result : finalized,
+    };
   }
 
   @Remote

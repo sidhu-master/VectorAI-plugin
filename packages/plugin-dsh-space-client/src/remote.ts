@@ -23,6 +23,13 @@ import {
   drawingWorkspaceCommitRequestSchema,
   drawingWorkspaceSnapshotSchema,
   operationLookupResultSchema,
+  extensionPreviewCreateRequestSchema,
+  extensionPreviewCreateResultSchema,
+  extensionPreviewReplaceRequestSchema,
+  extensionPreviewControlRequestSchema,
+  extensionPreviewAssessmentResultSchema,
+  extensionPreviewFinalizeResultSchema,
+  extensionPreviewDiscardResultSchema,
   type DrawingInteractiveStageResult,
   type DrawingGroundingOverlay,
   type DrawingMotionRigProjection,
@@ -42,6 +49,13 @@ import {
   type DrawingWorkspacePreview,
   type DrawingWorkspaceSnapshot,
   type OperationLookupResult,
+  type ExtensionPreviewCreateRequest,
+  type ExtensionPreviewCreateResult,
+  type ExtensionPreviewReplaceRequest,
+  type ExtensionPreviewControlRequest,
+  type ExtensionPreviewAssessmentResult,
+  type ExtensionPreviewFinalizeResult,
+  type ExtensionPreviewDiscardResult,
 } from '@vectorai/plugin-space-contracts';
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -59,6 +73,11 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       stageUndo(sessionId: string, request: DrawingUndoStageRequest): Promise<RemoteResult<DrawingUndoStageResult>>;
       stageRedo(sessionId: string, request: DrawingRedoStageRequest): Promise<RemoteResult<DrawingRedoStageResult>>;
       getOperation(sessionId: string, operationId: string, operationBindingDigest: string): Promise<RemoteResult<OperationLookupResult>>;
+      createExtensionPreview(sessionId: string, request: ExtensionPreviewCreateRequest): Promise<RemoteResult<ExtensionPreviewCreateResult>>;
+      replaceExtensionPreview(sessionId: string, request: ExtensionPreviewReplaceRequest): Promise<RemoteResult<ExtensionPreviewCreateResult>>;
+      assessExtensionPreview(sessionId: string, request: ExtensionPreviewControlRequest): Promise<RemoteResult<ExtensionPreviewAssessmentResult>>;
+      finalizeExtensionPreview(sessionId: string, request: ExtensionPreviewControlRequest): Promise<RemoteResult<ExtensionPreviewFinalizeResult>>;
+      discardExtensionPreview(sessionId: string, request: ExtensionPreviewControlRequest): Promise<RemoteResult<ExtensionPreviewDiscardResult>>;
     };
   }
   interface TypertRemoteMap {
@@ -74,6 +93,11 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'drawingSpace/stageUndo': (sessionId: string, request: DrawingUndoStageRequest) => Promise<RemoteResult<DrawingUndoStageResult>>;
     'drawingSpace/stageRedo': (sessionId: string, request: DrawingRedoStageRequest) => Promise<RemoteResult<DrawingRedoStageResult>>;
     'drawingSpace/getOperation': (sessionId: string, operationId: string, operationBindingDigest: string) => Promise<RemoteResult<OperationLookupResult>>;
+    'drawingSpace/createExtensionPreview': (sessionId: string, request: ExtensionPreviewCreateRequest) => Promise<RemoteResult<ExtensionPreviewCreateResult>>;
+    'drawingSpace/replaceExtensionPreview': (sessionId: string, request: ExtensionPreviewReplaceRequest) => Promise<RemoteResult<ExtensionPreviewCreateResult>>;
+    'drawingSpace/assessExtensionPreview': (sessionId: string, request: ExtensionPreviewControlRequest) => Promise<RemoteResult<ExtensionPreviewAssessmentResult>>;
+    'drawingSpace/finalizeExtensionPreview': (sessionId: string, request: ExtensionPreviewControlRequest) => Promise<RemoteResult<ExtensionPreviewFinalizeResult>>;
+    'drawingSpace/discardExtensionPreview': (sessionId: string, request: ExtensionPreviewControlRequest) => Promise<RemoteResult<ExtensionPreviewDiscardResult>>;
   }
 }
 
@@ -136,6 +160,36 @@ export const DRAWING_SPACE_REMOTE: TypertRemoteContribution = {
     invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
     parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#DrawingMotionRigDiscardRequest', drawingMotionRigDiscardRequestSchema)],
     result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DrawingMotionRigDiscardResult', schema: drawingMotionRigDiscardResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/createExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'createExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewCreateRequest', extensionPreviewCreateRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewCreateResult', schema: extensionPreviewCreateResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/replaceExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'replaceExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewReplaceRequest', extensionPreviewReplaceRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewCreateResult', schema: extensionPreviewCreateResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/assessExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'assessExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest', extensionPreviewControlRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewAssessmentResult', schema: extensionPreviewAssessmentResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/finalizeExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'finalizeExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest', extensionPreviewControlRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewFinalizeResult', schema: extensionPreviewFinalizeResultSchema },
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/discardExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'discardExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest', extensionPreviewControlRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewDiscardResult', schema: extensionPreviewDiscardResultSchema },
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getPreview',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getPreview',

@@ -21,6 +21,13 @@ import {
   drawingWorkspaceCommitRequestSchema,
   drawingWorkspaceSnapshotSchema,
   operationLookupResultSchema,
+  extensionPreviewCreateRequestSchema,
+  extensionPreviewCreateResultSchema,
+  extensionPreviewReplaceRequestSchema,
+  extensionPreviewControlRequestSchema,
+  extensionPreviewAssessmentResultSchema,
+  extensionPreviewFinalizeResultSchema,
+  extensionPreviewDiscardResultSchema,
 } from '@vectorai/plugin-space-contracts';
 import { z } from 'zod';
 
@@ -132,6 +139,41 @@ export const TYPERT = {
     parameters: [agentParameter, stringParameter('operationId'), stringParameter('operationBindingDigest')],
     result: { mode: 'strict', typeSymbol: '@vectorai/drawing-edit-protocol#OperationLookupResult', schema: operationLookupResultSchema },
     sourceLocation: serviceLocation(89),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/createExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'createExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewCreateRequest', extensionPreviewCreateRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewCreateResult', schema: extensionPreviewCreateResultSchema },
+    sourceLocation: serviceLocation(181),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/replaceExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'replaceExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewReplaceRequest', extensionPreviewReplaceRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewCreateResult', schema: extensionPreviewCreateResultSchema },
+    sourceLocation: serviceLocation(190),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/assessExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'assessExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest', extensionPreviewControlRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewAssessmentResult', schema: extensionPreviewAssessmentResultSchema },
+    sourceLocation: serviceLocation(199),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/finalizeExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'finalizeExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest', extensionPreviewControlRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewFinalizeResult', schema: extensionPreviewFinalizeResultSchema },
+    sourceLocation: serviceLocation(208),
+  }, {
+    id: '@vectorai/plugin-dsh-space-host#drawingSpace/discardExtensionPreview',
+    service: 'drawingSpace', namespace: 'drawingSpace', method: 'discardExtensionPreview',
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonRequest('@vectorai/plugin-space-contracts#ExtensionPreviewControlRequest', extensionPreviewControlRequestSchema)],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#ExtensionPreviewDiscardResult', schema: extensionPreviewDiscardResultSchema },
+    sourceLocation: serviceLocation(217),
   }, {
     id: '@vectorai/plugin-dsh-space-host#drawingSpace/getPreview',
     service: 'drawingSpace', namespace: 'drawingSpace', method: 'getPreview',

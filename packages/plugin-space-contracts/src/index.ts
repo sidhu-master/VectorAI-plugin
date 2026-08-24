@@ -2,8 +2,11 @@
 
 import { z } from 'zod';
 import {
+  assessmentSchema,
   drawingRefSchema,
+  finalizePreviewResultSchema,
   selectionProjectionRefSchema,
+  spatialEditProgramSchema,
   type DrawingRef,
 } from '@vectorai/drawing-edit-protocol';
 
@@ -545,12 +548,99 @@ export const drawingPreviewDiscardResultSchema = z.discriminatedUnion('status', 
   z.object({ status: z.literal('rejected'), message: z.string(), code: z.string().optional() }).strict(),
 ]);
 
+const extensionOwnershipShape = {
+  extensionId: idSchema,
+  workflowId: idSchema,
+  ref: drawingRefSchema,
+};
+
+const extensionInterfaceSchema = z.object({
+  interfaceId: idSchema,
+  nodeId: idSchema,
+  endpoint: z.enum(['start', 'end']),
+}).strict();
+
+export const extensionPreviewCreateRequestSchema = z.object({
+  ...extensionOwnershipShape,
+  targetNodeIds: z.array(idSchema).min(1).max(256),
+  interfaces: z.array(extensionInterfaceSchema).max(256).optional(),
+  program: spatialEditProgramSchema,
+}).strict();
+
+export const extensionPreviewControlRequestSchema = z.object({
+  ...extensionOwnershipShape,
+  previewToken: idSchema,
+  candidateDigest: idSchema,
+}).strict();
+
+export const extensionPreviewReplaceRequestSchema = z.object({
+  ...extensionOwnershipShape,
+  previewToken: idSchema,
+  candidateDigest: idSchema,
+  program: spatialEditProgramSchema,
+}).strict();
+
+const extensionNeedsRebaseResultSchema = z.object({
+  status: z.literal('needs-rebase'),
+  currentRef: drawingRefSchema,
+}).strict();
+
+const extensionRejectedResultSchema = z.object({
+  status: z.literal('rejected'),
+  code: idSchema,
+  message: z.string().min(1),
+}).strict();
+
+const extensionPreviewReadyResultSchema = z.object({
+  status: z.literal('previewed'),
+  previewToken: idSchema,
+  candidateDigest: idSchema,
+  ref: drawingRefSchema,
+  expiresAt: z.number().int().nonnegative(),
+}).strict();
+
+export const extensionPreviewCreateResultSchema = z.discriminatedUnion('status', [
+  extensionPreviewReadyResultSchema,
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema,
+]);
+
+export const extensionPreviewAssessmentResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('assessed'),
+    previewToken: idSchema,
+    candidateDigest: idSchema,
+    assessment: assessmentSchema,
+  }).strict(),
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema,
+]);
+
+export const extensionPreviewFinalizeResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('finalized'), result: finalizePreviewResultSchema }).strict(),
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema,
+]);
+
+export const extensionPreviewDiscardResultSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('discarded'), ref: drawingRefSchema }).strict(),
+  extensionNeedsRebaseResultSchema,
+  extensionRejectedResultSchema,
+]);
+
 export type DrawingQueryRequest = z.infer<typeof drawingQueryRequestSchema>;
 export type DrawingQueryResult = z.infer<typeof drawingQueryResultSchema>;
 export type DrawingSelectionProjectionRequest = z.infer<typeof drawingSelectionProjectionRequestSchema>;
 export type DrawingSelectionProjectionResult = z.infer<typeof drawingSelectionProjectionResultSchema>;
 export type DrawingMotionRigRebuildRequest = z.infer<typeof drawingMotionRigRebuildRequestSchema>;
 export type DrawingMotionRigDiscardRequest = z.infer<typeof drawingMotionRigDiscardRequestSchema>;
+export type ExtensionPreviewCreateRequest = z.infer<typeof extensionPreviewCreateRequestSchema>;
+export type ExtensionPreviewControlRequest = z.infer<typeof extensionPreviewControlRequestSchema>;
+export type ExtensionPreviewReplaceRequest = z.infer<typeof extensionPreviewReplaceRequestSchema>;
+export type ExtensionPreviewCreateResult = z.infer<typeof extensionPreviewCreateResultSchema>;
+export type ExtensionPreviewAssessmentResult = z.infer<typeof extensionPreviewAssessmentResultSchema>;
+export type ExtensionPreviewFinalizeResult = z.infer<typeof extensionPreviewFinalizeResultSchema>;
+export type ExtensionPreviewDiscardResult = z.infer<typeof extensionPreviewDiscardResultSchema>;
 
 export interface Bounds2D {
   minX: number;

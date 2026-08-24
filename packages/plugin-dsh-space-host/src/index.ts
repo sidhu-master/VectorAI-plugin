@@ -6,6 +6,8 @@ export { FileDrawingRepositoryStorage } from './repository-storage';
 export type { ImageVectorizer } from './vectorizer';
 export { LocalCleanLineVectorizer } from './vectorizer';
 export { SemanticEditService } from './semantic-edit-service';
+export { ExtensionPreviewService } from './extension-preview-service';
+export type { ExtensionPreviewServicePorts } from './extension-preview-service';
 export { InteractiveEditService } from './interactive-edit';
 export { extractNumericConstraints } from './numeric-instruction';
 export { SemanticEditEpisodeStore } from './semantic-episode';

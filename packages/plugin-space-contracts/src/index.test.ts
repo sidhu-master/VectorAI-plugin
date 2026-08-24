@@ -21,6 +21,9 @@ import {
   drawingMotionRigResultSchema,
   drawingMotionRigDiscardRequestSchema,
   drawingMotionRigDiscardResultSchema,
+  extensionPreviewCreateRequestSchema,
+  extensionPreviewCreateResultSchema,
+  extensionPreviewControlRequestSchema,
 } from './index';
 
 function snapshot() {
@@ -309,5 +312,54 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(drawingMotionRigDiscardResultSchema.parse({ status: 'discarded' })).toEqual({ status: 'discarded' });
     expect(() => drawingMotionRigProjectionSchema.parse({ ...projection, rigId: 'private' })).toThrow();
     expect(() => drawingMotionRigRebuildRequestSchema.parse({ ...rebuild, translation: [1, 2] })).toThrow();
+  });
+
+  it('validates opaque extension Preview ownership without exposing semantic handles', () => {
+    const request = {
+      extensionId: 'engineering-annotation',
+      workflowId: 'workflow-1',
+      ref: { drawingId: 'drawing-1', revision: 1 },
+      targetNodeIds: ['circle-1'],
+      interfaces: [],
+      program: {
+        baseRef: { drawingId: 'drawing-1', revision: 1 },
+        targetHandle: 'extension-input',
+        summary: 'add a diameter dimension',
+        objective: '工程图纸自动标注',
+        operations: [{
+          kind: 'create_annotation_batch',
+          annotations: [{ id: 'dimension-1', type: 'dimension' }],
+          associations: [],
+        }],
+        preserveScopes: [],
+        postconditions: [],
+        evidenceRefs: ['planner-1'],
+      },
+    };
+    const parsed = extensionPreviewCreateRequestSchema.parse(request);
+    expect(parsed).toEqual(request);
+    expect(() => extensionPreviewCreateRequestSchema.parse({ ...request, commitDirectly: true })).toThrow();
+
+    const result = {
+      status: 'previewed' as const,
+      previewToken: 'opaque-token',
+      candidateDigest: 'sha256:candidate',
+      ref: request.ref,
+      expiresAt: 1234,
+    };
+    expect(extensionPreviewCreateResultSchema.parse(result)).toEqual(result);
+    expect(result).not.toHaveProperty('taskId');
+    expect(result).not.toHaveProperty('previewHandle');
+
+    const control = {
+      extensionId: request.extensionId,
+      workflowId: request.workflowId,
+      ref: request.ref,
+      previewToken: result.previewToken,
+      candidateDigest: result.candidateDigest,
+    };
+    expect(extensionPreviewControlRequestSchema.parse(control)).toEqual(control);
+    expect(() => extensionPreviewControlRequestSchema.parse({ ...control, workflowId: '' })).toThrow();
+    expect(() => extensionPreviewControlRequestSchema.parse({ ...control, approved: true })).toThrow();
   });
 });
