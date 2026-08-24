@@ -9,50 +9,45 @@ import type { SessionId } from '@deepseek-ai/dsh-session';
 import {
   DrawingWorkspace,
   DrawingWorkspaceProvider,
-  useDrawingWorkspace,
 } from '@vectorai/drawing-viewer-react';
 import '@vectorai/drawing-viewer-react/styles.css';
 import './client.css';
 import {
+  createDrawingSurfaceRuntime,
   createDrawingWorkspaceStore,
   type DrawingWorkspacePort,
 } from '@vectorai/drawing-workspace';
+import type { DrawingSurfaceRegistry } from '@vectorai/drawing-surface-api';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { createDshDrawingWorkspacePort } from './dsh-workspace-port';
 import { DRAWING_SPACE_REMOTE } from './remote';
+import { DrawingSurfaceHost } from './DrawingSurfaceHost';
+import { createDrawingSurfaceRegistry } from './surface-registry';
 import type { DrawingWorkspaceSlotProps } from './workspace-slot';
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    drawingSurfaceRegistry: DrawingSurfaceRegistry;
+  }
+}
 
 // DSH discovers entry metadata and lifecycle exports from this client module.
 // eslint-disable-next-line react-refresh/only-export-components
 export const inject = ['slots', 'remote', 'conversation'];
 
 interface DrawingConversationViewProps extends Pick<DrawingWorkspaceSlotProps, 'useSession'> {
+  sessionId: string;
+  surfaceRegistry: DrawingSurfaceRegistry;
   workspacePort: DrawingWorkspacePort;
   inputActions: DrawingWorkspaceSlotProps['inputActions'];
   createDraftImages(files: readonly File[]): readonly { id: string }[];
   releaseSources(): void;
 }
 
-function MountedDrawingWorkspace({
-  onUploadFiles,
-}: {
-  onUploadFiles(files: readonly File[]): void;
-}) {
-  const hasDrawing = useDrawingWorkspace((state) => state.snapshot !== null);
-  if (!hasDrawing) return null;
-
-  return (
-    <div
-      className="vai-dsh-workspace-host"
-      data-conversation-workspace-active=""
-    >
-      <DrawingWorkspace onUploadFiles={onUploadFiles} />
-    </div>
-  );
-}
-
 export function DrawingConversationView({
+  sessionId,
+  surfaceRegistry,
   useSession,
   workspacePort,
   inputActions,
@@ -64,6 +59,7 @@ export function DrawingConversationView({
     () => createDrawingWorkspaceStore({ port: workspacePort }),
     [workspacePort],
   );
+  const surfaceRuntime = useMemo(() => createDrawingSurfaceRuntime(store), [store]);
   const didObserveInitialCallCount = useRef(false);
 
   useEffect(() => {
@@ -82,13 +78,25 @@ export function DrawingConversationView({
 
   return (
     <DrawingWorkspaceProvider store={store}>
-      <MountedDrawingWorkspace onUploadFiles={uploadDrawing} />
+      <DrawingSurfaceHost
+        sessionId={sessionId}
+        registry={surfaceRegistry}
+        runtime={surfaceRuntime}
+        fallback={<div
+          className="vai-dsh-workspace-host"
+          data-conversation-workspace-active=""
+        >
+          <DrawingWorkspace onUploadFiles={uploadDrawing} />
+        </div>}
+      />
     </DrawingWorkspaceProvider>
   );
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
 export async function apply(ctx: Context) {
+  const surfaceRegistry = createDrawingSurfaceRegistry();
+  const disposeRegistry = ctx.provide('drawingSurfaceRegistry', surfaceRegistry);
   const remote = ctx.get('remote');
   const slots = ctx.get('slots');
   const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
@@ -104,6 +112,7 @@ export async function apply(ctx: Context) {
       inject: (sessionId) => {
         const id = String(sessionId);
         return {
+          surfaceRegistry,
           workspacePort: createDshDrawingWorkspacePort({
             sessionId: id,
             remote: drawingSpace,
@@ -120,6 +129,7 @@ export async function apply(ctx: Context) {
   });
   return async () => {
     await viewFiber.dispose();
+    await disposeRegistry();
     await disposeRemote();
   };
 }

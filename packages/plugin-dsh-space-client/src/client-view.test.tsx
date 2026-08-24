@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 
 import { DrawingConversationView } from './client';
+import { createDrawingSurfaceRegistry } from './surface-registry';
 
 const useIdleSession = ((selector: (state: { runningCalls: unknown[] }) => unknown) => (
   selector({ runningCalls: [] })
@@ -48,6 +49,8 @@ describe('DrawingConversationView', () => {
     await act(async () => {
       renderer = TestRenderer.create(
         <DrawingConversationView
+          sessionId="session-1"
+          surfaceRegistry={createDrawingSurfaceRegistry()}
           useSession={useIdleSession}
           workspacePort={workspacePort}
           inputActions={inputActions}
@@ -72,6 +75,8 @@ describe('DrawingConversationView', () => {
     await act(async () => {
       renderer = TestRenderer.create(
         <DrawingConversationView
+          sessionId="session-1"
+          surfaceRegistry={createDrawingSurfaceRegistry()}
           useSession={useIdleSession}
           workspacePort={workspacePort}
           inputActions={inputActions}
@@ -107,6 +112,8 @@ describe('DrawingConversationView', () => {
     await act(async () => {
       renderer = TestRenderer.create(
         <DrawingConversationView
+          sessionId="session-1"
+          surfaceRegistry={createDrawingSurfaceRegistry()}
           useSession={useIdleSession}
           workspacePort={workspacePort}
           inputActions={localInputActions}

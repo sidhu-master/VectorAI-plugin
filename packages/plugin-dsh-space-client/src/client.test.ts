@@ -15,6 +15,7 @@ describe('client apply', () => {
     const createDraftImages = vi.fn();
     const releaseSessionImages = vi.fn();
     const disposeRemote = vi.fn();
+    const disposeRegistry = vi.fn();
     const disposeSlot = vi.fn();
     const disposeViewFiber = vi.fn(async () => disposeSlot());
     let registration: {
@@ -48,6 +49,11 @@ describe('client apply', () => {
       }),
     };
     const ctx = {
+      provide: vi.fn((name: string, value: unknown) => {
+        expect(name).toBe('drawingSurfaceRegistry');
+        expect(value).toMatchObject({ registerWorkspace: expect.any(Function) });
+        return disposeRegistry;
+      }),
       get(name: string) {
         if (name === 'remote') return remote;
         if (name === 'slots') return slots;
@@ -87,5 +93,6 @@ describe('client apply', () => {
     expect(disposeViewFiber).toHaveBeenCalledOnce();
     expect(disposeSlot).toHaveBeenCalledOnce();
     expect(disposeRemote).toHaveBeenCalledOnce();
+    expect(disposeRegistry).toHaveBeenCalledOnce();
   });
 });

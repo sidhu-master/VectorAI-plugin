@@ -231,6 +231,9 @@ importers:
       '@vectorai/drawing-core':
         specifier: workspace:*
         version: link:../drawing-core
+      '@vectorai/drawing-surface-api':
+        specifier: workspace:*
+        version: link:../drawing-surface-api
       '@vectorai/drawing-viewer-react':
         specifier: workspace:*
         version: link:../drawing-viewer-react

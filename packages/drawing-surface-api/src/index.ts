@@ -27,6 +27,10 @@ export interface DrawingWorkspaceClaim {
   activationEpoch: number;
 }
 
+export interface DrawingWorkspaceClaimSource {
+  observe(sessionId: string): DrawingSurfaceObservable<DrawingWorkspaceClaim>;
+}
+
 export interface DrawingSurfaceComponentProps {
   sessionId: string;
   namespace: string;
@@ -41,7 +45,7 @@ export interface DrawingWorkspaceContribution<Props = DrawingSurfaceComponentPro
   id: string;
   apiVersion: 1;
   priority: number;
-  claim: DrawingSurfaceObservable<DrawingWorkspaceClaim>;
+  claimSource: DrawingWorkspaceClaimSource;
   Component: DrawingSurfaceComponent<Props>;
 }
 
@@ -57,8 +61,10 @@ export interface DrawingWorkspaceRegistrySnapshot {
 
 export interface DrawingSurfaceRegistry {
   registerWorkspace(contribution: DrawingWorkspaceContribution): Disposable;
-  getWorkspaceSnapshot(): DrawingWorkspaceRegistrySnapshot;
-  subscribe(listener: () => void): () => void;
+  getWorkspaceSnapshot(sessionId: string): DrawingWorkspaceRegistrySnapshot;
+  getWorkspaceContribution(id: string): DrawingWorkspaceContribution | null;
+  subscribe(sessionId: string, listener: () => void): () => void;
+  disposeSession(sessionId: string): void;
 }
 
 export interface DrawingCanvasLayerContext {
@@ -97,18 +103,18 @@ export interface DrawingInteractionToolContribution {
 }
 
 export function electDrawingWorkspaceContribution(
+  sessionId: string,
   candidates: readonly DrawingWorkspaceContributionCandidate[],
 ): DrawingWorkspaceContribution | null {
   const eligible = candidates
     .filter(({ available, contribution }) => (
-      available
-      && contribution.apiVersion === DRAWING_SURFACE_API_VERSION
-      && contribution.claim.getSnapshot().active
+      available && contribution.apiVersion === DRAWING_SURFACE_API_VERSION
     ))
     .map(({ contribution }) => ({
       contribution,
-      claim: contribution.claim.getSnapshot(),
-    }));
+      claim: contribution.claimSource.observe(sessionId).getSnapshot(),
+    }))
+    .filter(({ claim }) => claim.active);
 
   eligible.sort((left, right) => (
     right.claim.activationEpoch - left.claim.activationEpoch
