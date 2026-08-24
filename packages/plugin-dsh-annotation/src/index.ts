@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export { createEngineeringAnnotationTool } from './tools';
+export { planEngineeringAnnotations } from '@vectorai/engineering-annotation';
 export {
   AnnotationSessionStateStore,
   FileAnnotationSessionStorage,

@@ -6152,5 +6152,6 @@ export {
   DrawingAnnotationHostService,
   FileAnnotationSessionStorage,
   createEngineeringAnnotationTool,
-  DrawingAnnotationHostService as default
+  DrawingAnnotationHostService as default,
+  planEngineeringAnnotations
 };

@@ -36,7 +36,8 @@ dsh plugin --profile web add --ignore-workspace-root-check \
   ./packages/plugin-dsh-space \
   ./packages/plugin-dsh-space-host \
   ./packages/plugin-dsh-space-client \
-  ./packages/plugin-dsh-annotation
+  ./packages/plugin-dsh-annotation \
+  ./packages/plugin-dsh-annotation-client
 ```
 
 本地 monorepo 开发需要列出 workspace 包；发布后的 bundle 由包管理器解析依赖。
@@ -63,8 +64,9 @@ Launcher 使用独立应用窗口启动 DSH，不显示终端黑窗。它在启�
 - 普通上传/粘贴图片只作为 DSH 对话附件，不会自动矢量化或打开画布。
 - 用户明确调用图纸导入时，`drawing_import` 读取 DSH attachment 并运行随 Host 打包的本地 Python worker。
 - 正式状态位于 `~/.dsh/vectorai/drawings/`；源图片仍由 DSH attachment store 管理。
+- 自动标注 Workspace claim 位于 `~/.dsh/vectorai/annotation-sessions/`；任务完成、取消或失败不会清除，session 销毁时删除。
 - Drawing 工具按需激活；无 Drawing 的普通会话不显示 VectorAI Workspace。
-- 第一层与第二层未来的 UI 路由遵循成功能力认领，不使用消息文本或附件启发式。
+- 第一层与第二层 UI 路由已使用成功能力认领，不使用消息文本或附件启发式；第二层不可用时临时回退第一层。
 
 ## 6. 测试
 
@@ -83,6 +85,7 @@ pnpm build:dsh-space
 pnpm test:dsh-launcher
 pnpm e2e:host-owned-semantic-edit
 pnpm e2e:motion-rig
+pnpm e2e:drawing-surface
 ```
 
 包级调试示例：
@@ -94,6 +97,7 @@ pnpm --filter @vectorai/plugin-dsh-space-host test
 pnpm --filter @vectorai/plugin-dsh-space-client test
 pnpm --filter @vectorai/engineering-annotation test
 pnpm --filter @vectorai/plugin-dsh-annotation test
+pnpm --filter @vectorai/plugin-dsh-annotation-client test
 ```
 
 构建产物不得重新暴露旧 raw write routes：
@@ -128,4 +132,3 @@ pnpm --filter @vectorai/plugin-dsh-annotation test
 - Client bundle 和 Host Typert 都要从干净安装构建。
 - 不提交 `.env`、`.local/`、DSH 用户状态、媒体正文或 HyperFrames 生成素材。
 - 更新 PRD/技术架构时明确区分“当前实现”和“已批准目标”。
-

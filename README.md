@@ -10,11 +10,14 @@ VectorAI 是一个本地优先、可嵌入宿主的二维空间与工程图插�
 - 二维空间查询与确定性语义编辑求解
 - React 画布：网格/坐标轴、缩放拖动、框选、对象/属性面板、Preview、Undo/Redo、DXF 导出
 - DSH 会话内画布、附件导入、本地矢量化、Host-owned 语义编辑与临时运动铰链
-- 独立的工程标注核心及 DSH 第二层插件原型
+- 版本化 Drawing Surface API、受限 Runtime 和受控画布原语
+- DSH 会话级 Workspace registry、sticky claim 与永久第一层 fallback
+- 第一层 staged extension Preview 权限边界
+- 独立构建的工程标注 Host/Client 插件和专业工作区骨架
 - macOS 原生 DSH 启动器
 - 无服务端的浏览器本地画布预览站
 
-正在实施的下一阶段是可扩展 2D Surface：第一层继续拥有唯一画布入口和提交权限，第二层可以按会话接管完整专业 UI，同时复用受控画布原语。详见 [可扩展二维空间规范](docs/specs/extensible-2d-space-surface.md)。
+可扩展 2D Surface 平台已落地：第一层继续拥有唯一画布入口和提交权限，第二层按成功能力路由在会话内接管专业 UI，同时只使用受控画布和受限 Runtime。下一阶段集中在生产级标注识别、分区、布局与冲突优化。详见 [可扩展二维空间规范](docs/specs/extensible-2d-space-surface.md)。
 
 ## 快速开始
 
@@ -40,10 +43,12 @@ pnpm build:dsh-space
 ```text
 apps/dsh-launcher-macos/       macOS 原生启动器
 packages/drawing-*             Drawing、空间、编辑、Workspace 与 Viewer
+packages/drawing-surface-api/  版本化跨插件 Surface 契约
 packages/plugin-space-contracts/  宿主无关公共插件协议
 packages/plugin-dsh-space-*    第一层 DSH Host/Client 适配器
 packages/engineering-annotation/  工程标注确定性核心
 packages/plugin-dsh-annotation/   第二层 DSH 插件
+packages/plugin-dsh-annotation-client/ 第二层独立 Client 工作区
 src/                           浏览器本地预览站
 scripts/                       当前构建、兼容与 E2E 脚本
 docs/                          当前权威文档与未完成规范
@@ -59,6 +64,7 @@ pnpm build:dsh-space              # DSH Host/Client 产物
 pnpm test:dsh-launcher            # macOS Launcher 测试
 pnpm e2e:host-owned-semantic-edit # 真实第一层语义链路
 pnpm e2e:motion-rig               # 临时运动铰链链路
+pnpm e2e:drawing-surface          # 跨包接管、恢复、提交与 Undo
 ```
 
 ## 文档
@@ -70,4 +76,3 @@ pnpm e2e:motion-rig               # 临时运动铰链链路
 - [可扩展二维空间规范](docs/specs/extensible-2d-space-surface.md)
 
 历史方案不在工作树内保留；需要追溯时使用 Git 历史。
-

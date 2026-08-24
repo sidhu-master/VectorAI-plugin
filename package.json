@@ -17,6 +17,7 @@
     "test:dsh-launcher": "pnpm --filter @vectorai/dsh-launcher-macos test",
     "e2e:host-owned-semantic-edit": "tsx scripts/e2e-host-owned-semantic-edit.ts",
     "e2e:motion-rig": "tsx scripts/e2e-temporary-motion-rig.ts",
+    "e2e:drawing-surface": "tsx scripts/e2e-drawing-surface-contribution.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

@@ -32,6 +32,7 @@ Drawing Core -> Spatial/Edit -> Workspace -> React Viewer
 | `drawing-edit-protocol` | 模型可见的语义编辑协议 |
 | `drawing-edit-core` | 语义选择后的确定性求解、forward/inverse Commands |
 | `drawing-workspace` | React-free Store、Port、revision 冲突、Preview、选择与交互状态 |
+| `drawing-surface-api` | 版本化 Workspace/Layer/Tool contribution 与受限 Runtime 契约 |
 | `drawing-viewer-react` | 共享画布、图层、面板和交互组合 |
 | `plugin-space-contracts` | DSH 与高层插件使用的严格公共协议 |
 | `plugin-dsh-space-host` | 会话仓库、工具、策略、持久化与唯一提交权限 |
@@ -39,6 +40,7 @@ Drawing Core -> Spatial/Edit -> Workspace -> React Viewer
 | `plugin-dsh-space` | 可安装的第一层 bundle |
 | `engineering-annotation` | 宿主无关的工程标注识别/规划核心 |
 | `plugin-dsh-annotation` | 第二层 DSH 工具与流程适配器 |
+| `plugin-dsh-annotation-client` | 独立构建的第二层专业 Workspace contribution |
 
 依赖只能朝内。Core/Workspace 不依赖 React、DSH、Node 文件系统或模型 SDK；专业插件不能 deep import 第一层 Host 仓库或 Client Store。
 
@@ -67,7 +69,7 @@ DSH 持久化使用版本化 durable envelope，包含当前 Drawing、追加式
 
 ### Client 与布局
 
-第一层 Client 当前是 `conversation.workspace` 的唯一注册者。DSH rc.8 尚无完整的可组合同页布局 API，因此仓库保留一个受版本/锚点保护的兼容补丁；该补丁只属于 DSH Adapter，不改变 Drawing 或 AI 协议。正式布局 API 可用后应删除兼容层。
+第一层 Client 是 `conversation.workspace` 的唯一注册者，并在内部维护 `DrawingSurfaceRegistry`。专业插件注册 contribution，但注册本身不激活 UI；只有当前 session 的成功能力 claim 才参与确定性选举。第一层默认工作区是不可移除的 fallback。DSH rc.8 尚无完整的可组合同页布局 API，因此仓库保留一个受版本/锚点保护的兼容补丁；该补丁只属于 DSH Adapter，不改变 Drawing 或 AI 协议。正式布局 API 可用后应删除兼容层。
 
 macOS Launcher 在无终端窗口下启动 DSH，处理 3080 端口占用、独立窗口和关闭窗口后终止所属进程组。
 
@@ -105,20 +107,21 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 
 ## 7. 第二层 Engineering Annotation
 
-当前实现包含确定性标注核心和 DSH Host 工具原型。正式 Drawing 仍由第一层拥有，第二层提交高层 `SpatialEditProgram`，第一层负责编译、评估、提交与 Undo。
+当前实现包含确定性标注核心、持久 session claim、DSH Host 工具和独立 Client 工作区。正式 Drawing 仍由第一层拥有，第二层提交高层 `SpatialEditProgram`，第一层负责编译、评估、提交与 Undo。
 
-目标 Surface 架构（尚未全部实现）增加：
+当前 Surface 架构提供：
 
 - `drawing-surface-api` 版本化 contribution 契约；
 - 只读 Observable + 受限 Action face，不跨 bundle 传 Store/React Context；
 - 受控 DrawingSurface、Canvas Layers、Interaction Controllers；
 - 第一层 Client 内部的 Workspace registry 和永久 fallback；
 - 第二层按成功能力路由创建、持久化 sticky session claim；
-- create/replace/assess/finalize/discard extension Preview。
+- create/replace/assess/finalize/discard extension Preview；
+- 独立 Client 通过只读 annotation session projection 驱动 claim，不检查消息文本或附件。
 
 第二层认领的是会话 Workspace，不是一次任务的 modal。completed、canceled、failed、idle 或 needs-rebase 均不释放 claim。插件暂时不可用时显示第一层 fallback，但保留 claim。
 
-完整契约与验收见 [可扩展二维空间规范](specs/extensible-2d-space-surface.md)。
+生产级分区、候选布局、碰撞优化和覆盖策略仍属于下一阶段。完整契约与验收见 [可扩展二维空间规范](specs/extensible-2d-space-surface.md)。
 
 ## 8. Viewer 与宿主适配
 
@@ -142,5 +145,4 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 - 集成：仓库持久化、幂等 receipt、Preview/Finalize/Undo、Client 生命周期；
 - E2E：Host-owned semantic edit、Motion Rig、Launcher；
 - 构建：静态网站、DSH Host Typert 与 Client bundle；
-- 目标 Surface 还需 packaged cross-bundle、sticky routing、Layer/Controller arbitration 和 visual parity 测试。
-
+- packaged cross-bundle E2E 覆盖 sticky routing、卸载 fallback、重装恢复、一笔正式提交和 Undo。

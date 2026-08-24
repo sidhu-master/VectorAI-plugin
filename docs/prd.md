@@ -91,16 +91,18 @@ VectorAI 让 AI 与用户共同操作真实、可查询、可撤销的二维空�
 - 本地清洁线稿导入和矢量化；
 - Host-owned 语义选择、Preview、评估、提交与 Undo；
 - 多部件确定性变换和临时运动铰链；
-- 工程标注确定性核心和第二层 Host 工具原型；
+- `drawing-surface-api`、受限 Runtime 与不依赖共享 Provider 的受控画布；
+- 第一层 Client 内的会话级 Workspace registry、永久 fallback 和错误隔离；
+- extension/workflow/revision/token/digest 绑定的 staged Preview 协议；
+- 工程标注确定性核心、sticky claim、独立 Host/Client 包和专业 UI 骨架；
 - 浏览器本地预览站与 macOS DSH Launcher。
 
 下一阶段计划：
 
-- 版本化 Drawing Surface API；
-- 受控 Canvas Layers 与 Interaction Controllers；
-- 会话级、粘性的 Workspace contribution 路由；
-- staged extension Preview 公共协议；
-- 独立构建的第二层 Client UI 与生产标注工作流。
+- 生产级工程特征识别与智能分区；
+- 尺寸候选覆盖策略、碰撞优化和冲突修复；
+- 专业工作区内的候选调整、批量确认和质量报告；
+- 更多基于同一 Surface API 的专业插件。
 
 ## 6. 非目标
 
@@ -120,4 +122,3 @@ VectorAI 让 AI 与用户共同操作真实、可查询、可撤销的二维空�
 - 第二层通过公共契约工作，卸载后不破坏正式 Drawing 或第一层 Viewer。
 - 第二层认领后，完成、取消、失败、刷新均保持专业 UI；不可用时安全 fallback。
 - 网站、核心包、DSH 产物、Launcher 与关键 E2E 均通过仓库发布检查。
-
