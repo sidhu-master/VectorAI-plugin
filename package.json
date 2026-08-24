@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@techstark/opencv-js": "5.0.0-release.1",
+    "@vectorai/drawing-core": "workspace:*",
     "@vectorai/drawing-edit-core": "workspace:*",
     "@vectorai/drawing-spatial": "workspace:*",
     "@vectorai/drawing-viewer-react": "workspace:*",
