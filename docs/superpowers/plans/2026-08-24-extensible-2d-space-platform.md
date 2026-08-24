@@ -34,7 +34,7 @@
 - Create: `packages/drawing-surface-api/src/dependency-boundary.test.ts`
 
 **Interfaces:**
-- Consumes: type-only `DrawingWorkspaceSnapshot`, `DrawingWorkspaceViewport`, `DrawingWorkspaceCommitRequest`, and query contracts from public VectorAI packages.
+- Consumes: type-only `DrawingWorkspaceSnapshot`, `DrawingWorkspaceViewport`, `DrawingWorkspaceCommitRequest`, and query contracts from public VectorAI packages. The dependency direction is `drawing-workspace -> drawing-surface-api`; `drawing-workspace` must not import this package.
 - Produces: `DRAWING_SURFACE_API_VERSION`, `DrawingSurfaceObservable<T>`, `DrawingSurfaceRuntime`, `DrawingWorkspaceContribution`, `DrawingCanvasLayerContribution`, `DrawingInteractionToolContribution`, `DrawingWorkspaceClaim`, `Disposable`.
 
 - [ ] **Step 1: Write contract tests**
@@ -101,11 +101,10 @@ git commit -m "feat add versioned drawing surface contracts"
 - Create: `packages/drawing-workspace/src/surface-runtime.ts`
 - Create: `packages/drawing-workspace/src/surface-runtime.test.ts`
 - Modify: `packages/drawing-workspace/src/index.ts`
-- Modify: `packages/drawing-workspace/package.json`
 
 **Interfaces:**
-- Consumes: `DrawingWorkspaceStore` and Task 1 observable/action contracts.
-- Produces: `createDrawingSurfaceRuntime(store): DrawingSurfaceRuntime` and `createStoreObservable(store, selector)`.
+- Consumes: `DrawingWorkspaceStore`; it implements structurally compatible observable/action contracts locally so the inner package does not depend outward on `drawing-surface-api`.
+- Produces: `createDrawingSurfaceRuntime(store): DrawingSurfaceRuntime` and `createStoreObservable(store, selector)`. Task 1 aliases these public runtime types from `drawing-workspace`.
 
 - [ ] **Step 1: Write failing authority tests**
 
@@ -130,7 +129,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/drawing-workspace packages/drawing-surface-api/package.json pnpm-lock.yaml
+git add packages/drawing-workspace packages/drawing-surface-api pnpm-lock.yaml
 git commit -m "feat expose restricted drawing surface runtime"
 ```
 
@@ -374,4 +373,3 @@ git rm docs/superpowers/plans/2026-08-24-extensible-2d-space-platform.md
 git add README.md docs package.json scripts packages
 git commit -m "docs complete extensible drawing surface platform"
 ```
-

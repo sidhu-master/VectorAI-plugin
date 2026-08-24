@@ -101,6 +101,15 @@ importers:
         specifier: workspace:*
         version: link:../drawing-core
 
+  packages/drawing-surface-api:
+    dependencies:
+      '@vectorai/drawing-spatial':
+        specifier: workspace:*
+        version: link:../drawing-spatial
+      '@vectorai/drawing-workspace':
+        specifier: workspace:*
+        version: link:../drawing-workspace
+
   packages/drawing-viewer-react:
     dependencies:
       '@vectorai/drawing-core':

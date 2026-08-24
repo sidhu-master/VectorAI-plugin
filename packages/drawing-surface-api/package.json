@@ -1,0 +1,18 @@
+{
+  "name": "@vectorai/drawing-surface-api",
+  "version": "0.1.0-alpha.0",
+  "description": "Versioned host-neutral contribution contracts for VectorAI drawing surfaces",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": { ".": "./src/index.ts" },
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@vectorai/drawing-spatial": "workspace:*",
+    "@vectorai/drawing-workspace": "workspace:*"
+  }
+}
