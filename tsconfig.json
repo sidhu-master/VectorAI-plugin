@@ -28,14 +28,10 @@
         "./src/*"
       ]
     },
-    "types": [
-      "node",
-      "express"
-    ]
+    "types": ["node"]
   },
   "include": [
     "src",
-    "api",
     "scripts"
   ]
 }
