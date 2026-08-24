@@ -1,6 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export { DrawingWorkspace } from './DrawingWorkspace';
+export { DrawingSurface } from './surface/DrawingSurface';
+export type { DrawingSurfaceProps } from './surface/DrawingSurface';
+export {
+  AnnotationLayer,
+  AxesLayer,
+  GeometryLayer,
+  GridLayer,
+  PreviewLayer,
+  RelationLayer,
+  SelectionLayer,
+  SourceLayer,
+} from './surface/layers';
+export {
+  dispatchPrimaryPointerEvent,
+  PanZoomController,
+  SelectionController,
+} from './surface/controllers';
+export type {
+  DrawingPointerController,
+  DrawingPointerDispatchResult,
+} from './surface/controllers';
 export { Canvas } from './canvas/Canvas';
 export { EntityRenderer } from './canvas/EntityRenderer';
 export {
