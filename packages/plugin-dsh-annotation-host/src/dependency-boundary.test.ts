@@ -7,10 +7,11 @@ import { describe, expect, it } from 'vitest';
 
 import plugin from './index';
 
-describe('@vectorai/plugin-dsh-annotation boundary', () => {
-  it('does not deep-import first-layer Host implementation files', () => {
+describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
+  it('depends on the public extension contract instead of the concrete first-layer Host', () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'tools.ts'), 'utf8');
-    expect(source).not.toMatch(/plugin-dsh-space-host\/(?:src|lib)\//);
+    expect(source).not.toContain('@vectorai/plugin-dsh-space-host');
+    expect(source).toContain('DrawingSpaceExtensionHost');
   });
 
   it('attaches Cordis service dependencies to the loader-visible default plugin', () => {

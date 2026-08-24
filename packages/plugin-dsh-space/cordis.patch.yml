@@ -6,9 +6,3 @@
 
     - id: vectorai-space-client
       name: '@vectorai/plugin-dsh-space-client'
-
-    - id: vectorai-engineering-annotation
-      name: '@vectorai/plugin-dsh-annotation'
-
-    - id: vectorai-engineering-annotation-client
-      name: '@vectorai/plugin-dsh-annotation-client'

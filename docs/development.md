@@ -35,8 +35,17 @@ pnpm build:dsh-space
 dsh plugin --profile web add --ignore-workspace-root-check \
   ./packages/plugin-dsh-space \
   ./packages/plugin-dsh-space-host \
-  ./packages/plugin-dsh-space-client \
+  ./packages/plugin-dsh-space-client
+```
+
+第二层自动标注插件独立构建、独立安装；本地开发时先安装第一层：
+
+```bash
+pnpm build:dsh-annotation
+
+dsh plugin --profile web add --ignore-workspace-root-check \
   ./packages/plugin-dsh-annotation \
+  ./packages/plugin-dsh-annotation-host \
   ./packages/plugin-dsh-annotation-client
 ```
 
@@ -77,6 +86,7 @@ pnpm test
 pnpm check
 pnpm build
 pnpm build:dsh-space
+pnpm build:dsh-annotation
 ```
 
 独立验证：
@@ -96,7 +106,7 @@ pnpm --filter @vectorai/drawing-viewer-react test
 pnpm --filter @vectorai/plugin-dsh-space-host test
 pnpm --filter @vectorai/plugin-dsh-space-client test
 pnpm --filter @vectorai/engineering-annotation test
-pnpm --filter @vectorai/plugin-dsh-annotation test
+pnpm --filter @vectorai/plugin-dsh-annotation-host test
 pnpm --filter @vectorai/plugin-dsh-annotation-client test
 ```
 

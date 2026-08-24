@@ -249,7 +249,7 @@ function createEngineeringAnnotationTool(host, sessions) {
   });
 }
 function terminalStatus(status) {
-  if (status === "committed" || status === "already-satisfied" || status === "no-effect") return "completed";
+  if (status === "committed" || status === "already-satisfied") return "completed";
   if (status === "discarded") return "canceled";
   if (status === "needs-rebase") return "needs-rebase";
   return "failed";

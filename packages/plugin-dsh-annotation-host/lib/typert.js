@@ -5791,11 +5791,11 @@ const agentParameter = {
   }
 };
 const TYPERT = {
-  package: "@vectorai/plugin-dsh-annotation",
+  package: "@vectorai/plugin-dsh-annotation-host",
   face: "host",
   schemas: [],
   invocations: [{
-    id: "@vectorai/plugin-dsh-annotation#drawingAnnotation/getSessionState",
+    id: "@vectorai/plugin-dsh-annotation-host#drawingAnnotation/getSessionState",
     service: "drawingAnnotation",
     namespace: "drawingAnnotation",
     method: "getSessionState",
@@ -5808,8 +5808,8 @@ const TYPERT = {
       schema: annotationSessionStateSchema
     },
     sourceLocation: {
-      file: "packages/plugin-dsh-annotation/src/service.ts",
-      line: 37,
+      file: "packages/plugin-dsh-annotation-host/src/service.ts",
+      line: 41,
       column: 3
     }
   }],

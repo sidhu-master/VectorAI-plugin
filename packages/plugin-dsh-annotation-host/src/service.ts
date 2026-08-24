@@ -3,7 +3,10 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
-import type { AnnotationSessionState } from '@vectorai/plugin-space-contracts';
+import type {
+  AnnotationSessionState,
+  DrawingSpaceExtensionHost,
+} from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -16,6 +19,7 @@ import { createEngineeringAnnotationTool } from './tools';
 declare module '@deepseek-ai/cordis' {
   interface Context {
     drawingAnnotation: DrawingAnnotationHostService;
+    drawingSpace: DrawingSpaceExtensionHost<Agent>;
   }
 }
 

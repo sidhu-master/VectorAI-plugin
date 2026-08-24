@@ -8,7 +8,10 @@ import {
   selectionProjectionRefSchema,
   spatialEditProgramSchema,
   type DrawingRef,
+  type FinalizePreviewResult,
+  type SpatialEditProgram,
 } from '@vectorai/drawing-edit-protocol';
+import type { DrawingWorkspaceSnapshot } from '@vectorai/drawing-workspace';
 
 export * from '@vectorai/drawing-edit-protocol';
 
@@ -653,6 +656,30 @@ export type ExtensionPreviewAssessmentResult = z.infer<typeof extensionPreviewAs
 export type ExtensionPreviewFinalizeResult = z.infer<typeof extensionPreviewFinalizeResultSchema>;
 export type ExtensionPreviewDiscardResult = z.infer<typeof extensionPreviewDiscardResultSchema>;
 export type AnnotationSessionState = z.infer<typeof annotationSessionStateSchema>;
+
+export interface DrawingExtensionProgramRequest {
+  targetNodeIds: string[];
+  interfaces?: ExtensionPreviewCreateRequest['interfaces'];
+  program: SpatialEditProgram;
+}
+
+export type DrawingExtensionProgramTerminalResult =
+  | FinalizePreviewResult
+  | Extract<ExtensionPreviewCreateResult, { status: 'needs-rebase' | 'rejected' }>
+  | Extract<ExtensionPreviewAssessmentResult, { status: 'needs-rebase' | 'rejected' }>;
+
+export interface DrawingExtensionProgramWorkflow {
+  result: DrawingExtensionProgramTerminalResult;
+}
+
+export interface DrawingSpaceExtensionHost<TSession = unknown> {
+  getSnapshot(session: TSession): DrawingWorkspaceSnapshot | null;
+  runExtensionProgram(
+    session: TSession,
+    request: DrawingExtensionProgramRequest,
+    signal?: AbortSignal,
+  ): Promise<DrawingExtensionProgramWorkflow>;
+}
 
 export interface Bounds2D {
   minX: number;

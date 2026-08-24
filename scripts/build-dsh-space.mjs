@@ -7,138 +7,126 @@ import { join, resolve } from 'node:path';
 import { build } from 'vite';
 
 const root = resolve(import.meta.dirname, '..');
-const hostDir = join(root, 'packages/plugin-dsh-space-host');
-const clientDir = join(root, 'packages/plugin-dsh-space-client');
-const annotationDir = join(root, 'packages/plugin-dsh-annotation');
+const spaceHostDir = join(root, 'packages/plugin-dsh-space-host');
+const spaceClientDir = join(root, 'packages/plugin-dsh-space-client');
+const annotationHostDir = join(root, 'packages/plugin-dsh-annotation-host');
 const annotationClientDir = join(root, 'packages/plugin-dsh-annotation-client');
 const deepseekExternal = (id) => id.startsWith('@deepseek-ai/') || id === '@deepseek-ai/cordis';
+const target = process.argv[2] ?? 'all';
 
-await Promise.all([
-  buildLibrary({
-    entry: join(hostDir, 'src/index.ts'),
-    outDir: join(hostDir, 'lib'),
-    fileName: 'index.js',
-    format: 'es',
-    external: (id) => deepseekExternal(id) || id.startsWith('node:') || id === 'sharp',
-  }),
-  buildLibrary({
-    entry: join(clientDir, 'src/index.ts'),
-    outDir: join(clientDir, 'lib'),
-    fileName: 'index.js',
-    format: 'es',
-    external: deepseekExternal,
-  }),
-  buildLibrary({
-    entry: join(annotationDir, 'src/index.ts'),
-    outDir: join(annotationDir, 'lib'),
-    fileName: 'index.js',
-    format: 'es',
-    external: (id) => deepseekExternal(id) || id.startsWith('node:') || id === 'sharp',
-  }),
-  buildLibrary({
-    entry: join(annotationClientDir, 'src/index.ts'),
-    outDir: join(annotationClientDir, 'lib'),
-    fileName: 'index.js',
-    format: 'es',
-    external: deepseekExternal,
-  }),
-]);
-
-await stripTrailingWhitespace(join(hostDir, 'lib/index.js'));
-await stripTrailingWhitespace(join(annotationDir, 'lib/index.js'));
-await copyFile(
-  join(root, 'python/vectorai_vectorizer.py'),
-  join(hostDir, 'lib/vectorai_vectorizer.py'),
-);
-
-await buildLibrary({
-  entry: join(hostDir, 'src/typert.ts'),
-  outDir: join(hostDir, 'lib'),
-  fileName: 'typert.js',
-  format: 'es',
-  emptyOutDir: false,
-  external: (id) => deepseekExternal(id) || id.startsWith('node:') || id === 'sharp',
-});
-
-await buildLibrary({
-  entry: join(annotationDir, 'src/typert.ts'),
-  outDir: join(annotationDir, 'lib'),
-  fileName: 'typert.js',
-  format: 'es',
-  emptyOutDir: false,
-  external: (id) => deepseekExternal(id) || id.startsWith('node:') || id === 'sharp',
-});
-await stripTrailingWhitespace(join(annotationDir, 'lib/typert.js'));
-
-const temporary = await mkdtemp(join(tmpdir(), 'vectorai-dsh-client-'));
-try {
-  await buildLibrary({
-    entry: join(clientDir, 'src/client.tsx'),
-    outDir: temporary,
-    fileName: 'client.cjs',
-    format: 'cjs',
-    external: (id) => (
-      deepseekExternal(id)
-      || id === 'react'
-      || id === 'react/jsx-runtime'
-      || id === 'react-dom'
-    ),
-  });
-  const commonJs = await readFile(join(temporary, 'client.cjs'), 'utf8');
-  const outputFiles = await readdir(temporary);
-  const cssFiles = outputFiles.filter((file) => file.endsWith('.css'));
-  if (cssFiles.length !== 1) {
-    throw new Error(`Expected one DSH client CSS asset, found: ${outputFiles.join(', ')}`);
-  }
-  const css = await readFile(join(temporary, cssFiles[0]), 'utf8');
-  const wrapped = wrapClient(
-    commonJs, css, '@vectorai/plugin-dsh-space-client', 'vectoraiDshSpace',
-  );
-  if (/\b(?:import|require)\(["']node:/.test(wrapped)) {
-    throw new Error('DSH client bundle contains a Node builtin import');
-  }
-  if (!wrapped.startsWith('window.__ModuleLoader__.load({')) {
-    throw new Error('DSH client bundle lacks the ModuleLoader wrapper');
-  }
-  await writeFile(join(clientDir, 'lib/client.js'), wrapped);
-} finally {
-  await rm(temporary, { recursive: true, force: true });
+if (!['space', 'annotation', 'all'].includes(target)) {
+  throw new Error(`Unknown DSH build target: ${target}`);
 }
 
-const annotationTemporary = await mkdtemp(join(tmpdir(), 'vectorai-dsh-annotation-client-'));
-try {
-  await buildLibrary({
-    entry: join(annotationClientDir, 'src/client.tsx'),
-    outDir: annotationTemporary,
-    fileName: 'client.cjs',
-    format: 'cjs',
-    external: (id) => (
-      deepseekExternal(id)
-      || id === 'react'
-      || id === 'react/jsx-runtime'
-      || id === 'react-dom'
-    ),
+if (target === 'space' || target === 'all') {
+  await buildPluginPair({
+    hostDir: spaceHostDir,
+    clientDir: spaceClientDir,
+    clientModuleId: '@vectorai/plugin-dsh-space-client',
+    clientStyleKey: 'vectoraiDshSpace',
+    clientLabel: 'DSH client',
+    temporaryPrefix: 'vectorai-dsh-client-',
   });
-  const commonJs = await readFile(join(annotationTemporary, 'client.cjs'), 'utf8');
-  const outputFiles = await readdir(annotationTemporary);
-  const cssFiles = outputFiles.filter((file) => file.endsWith('.css'));
-  if (cssFiles.length !== 1) {
-    throw new Error(`Expected one annotation client CSS asset, found: ${outputFiles.join(', ')}`);
-  }
-  const css = await readFile(join(annotationTemporary, cssFiles[0]), 'utf8');
-  const wrapped = wrapClient(
-    commonJs, css, '@vectorai/plugin-dsh-annotation-client', 'vectoraiDshAnnotation',
+  await copyFile(
+    join(root, 'python/vectorai_vectorizer.py'),
+    join(spaceHostDir, 'lib/vectorai_vectorizer.py'),
   );
-  if (/\b(?:import|require)\(["']node:/.test(wrapped)) {
-    throw new Error('Annotation client bundle contains a Node builtin import');
+}
+
+if (target === 'annotation' || target === 'all') {
+  await buildPluginPair({
+    hostDir: annotationHostDir,
+    clientDir: annotationClientDir,
+    clientModuleId: '@vectorai/plugin-dsh-annotation-client',
+    clientStyleKey: 'vectoraiDshAnnotation',
+    clientLabel: 'Annotation client',
+    temporaryPrefix: 'vectorai-dsh-annotation-client-',
+  });
+}
+
+async function buildPluginPair({
+  hostDir,
+  clientDir,
+  clientModuleId,
+  clientStyleKey,
+  clientLabel,
+  temporaryPrefix,
+}) {
+  await Promise.all([
+    buildLibrary({
+      entry: join(hostDir, 'src/index.ts'),
+      outDir: join(hostDir, 'lib'),
+      fileName: 'index.js',
+      format: 'es',
+      external: serverExternal,
+    }),
+    buildLibrary({
+      entry: join(clientDir, 'src/index.ts'),
+      outDir: join(clientDir, 'lib'),
+      fileName: 'index.js',
+      format: 'es',
+      external: deepseekExternal,
+    }),
+  ]);
+  await stripTrailingWhitespace(join(hostDir, 'lib/index.js'));
+  await buildLibrary({
+    entry: join(hostDir, 'src/typert.ts'),
+    outDir: join(hostDir, 'lib'),
+    fileName: 'typert.js',
+    format: 'es',
+    emptyOutDir: false,
+    external: serverExternal,
+  });
+  await stripTrailingWhitespace(join(hostDir, 'lib/typert.js'));
+  await buildClient({
+    directory: clientDir,
+    temporaryPrefix,
+    moduleId: clientModuleId,
+    styleKey: clientStyleKey,
+    label: clientLabel,
+  });
+}
+
+async function buildClient({ directory, temporaryPrefix, moduleId, styleKey, label }) {
+  const temporary = await mkdtemp(join(tmpdir(), temporaryPrefix));
+  try {
+    await buildLibrary({
+      entry: join(directory, 'src/client.tsx'),
+      outDir: temporary,
+      fileName: 'client.cjs',
+      format: 'cjs',
+      external: browserExternal,
+    });
+    const commonJs = await readFile(join(temporary, 'client.cjs'), 'utf8');
+    const outputFiles = await readdir(temporary);
+    const cssFiles = outputFiles.filter((file) => file.endsWith('.css'));
+    if (cssFiles.length !== 1) {
+      throw new Error(`Expected one ${label} CSS asset, found: ${outputFiles.join(', ')}`);
+    }
+    const css = await readFile(join(temporary, cssFiles[0]), 'utf8');
+    const wrapped = wrapClient(commonJs, css, moduleId, styleKey);
+    if (/\b(?:import|require)\(["']node:/.test(wrapped)) {
+      throw new Error(`${label} bundle contains a Node builtin import`);
+    }
+    if (!wrapped.startsWith('window.__ModuleLoader__.load({')) {
+      throw new Error(`${label} bundle lacks the ModuleLoader wrapper`);
+    }
+    await writeFile(join(directory, 'lib/client.js'), wrapped);
+    await stripTrailingWhitespace(join(directory, 'lib/client.js'));
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
   }
-  if (!wrapped.startsWith('window.__ModuleLoader__.load({')) {
-    throw new Error('Annotation client bundle lacks the ModuleLoader wrapper');
-  }
-  await writeFile(join(annotationClientDir, 'lib/client.js'), wrapped);
-  await stripTrailingWhitespace(join(annotationClientDir, 'lib/client.js'));
-} finally {
-  await rm(annotationTemporary, { recursive: true, force: true });
+}
+
+function serverExternal(id) {
+  return deepseekExternal(id) || id.startsWith('node:') || id === 'sharp';
+}
+
+function browserExternal(id) {
+  return deepseekExternal(id)
+    || id === 'react'
+    || id === 'react/jsx-runtime'
+    || id === 'react-dom';
 }
 
 async function buildLibrary({ entry, outDir, fileName, format, external, emptyOutDir = true }) {

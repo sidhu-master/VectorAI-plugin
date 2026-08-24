@@ -1,0 +1,9 @@
+# VectorAI Engineering Annotation for the DSH Web profile. The first-layer
+# Drawing Surface remains the workspace outlet and commit authority; this
+# bundle contributes the specialized Host workflow and Client workspace.
+- insert:
+    - id: vectorai-engineering-annotation-host
+      name: '@vectorai/plugin-dsh-annotation-host'
+
+    - id: vectorai-engineering-annotation-client
+      name: '@vectorai/plugin-dsh-annotation-client'

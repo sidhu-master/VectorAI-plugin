@@ -85,10 +85,10 @@ Host-side dependencies remain inward:
         ^
 @vectorai/plugin-dsh-space-host      implementation and authority
         ^
-@vectorai/plugin-dsh-annotation      second-layer workflow/orchestration
+@vectorai/plugin-dsh-annotation-host second-layer workflow/orchestration
 ```
 
-`plugin-dsh-annotation` must stop importing the concrete `DrawingSpaceHostService` class. It consumes a public `DrawingSpaceExtensionHost` interface declared in the contract layer and receives the implementation through Cordis injection.
+`plugin-dsh-annotation-host` must stop importing the concrete `DrawingSpaceHostService` class. It consumes a public `DrawingSpaceExtensionHost` interface declared in the contract layer and receives the implementation through Cordis injection.
 
 ## Headless drawing runtime
 

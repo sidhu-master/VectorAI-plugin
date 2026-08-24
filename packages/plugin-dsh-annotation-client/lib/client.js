@@ -6735,9 +6735,9 @@ window.__ModuleLoader__.load({
       }
     };
     const ANNOTATION_REMOTE = {
-      package: "@vectorai/plugin-dsh-annotation",
+      package: "@vectorai/plugin-dsh-annotation-host",
       descriptors: [{
-        id: "@vectorai/plugin-dsh-annotation#drawingAnnotation/getSessionState",
+        id: "@vectorai/plugin-dsh-annotation-host#drawingAnnotation/getSessionState",
         service: "drawingAnnotation",
         namespace: "drawingAnnotation",
         method: "getSessionState",

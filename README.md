@@ -34,6 +34,7 @@ pnpm dev
 
 ```bash
 pnpm build:dsh-space
+pnpm build:dsh-annotation
 ```
 
 完整的 DSH 安装、兼容补丁、Launcher 和验证说明见 [开发指南](docs/development.md)。
@@ -47,7 +48,8 @@ packages/drawing-surface-api/  版本化跨插件 Surface 契约
 packages/plugin-space-contracts/  宿主无关公共插件协议
 packages/plugin-dsh-space-*    第一层 DSH Host/Client 适配器
 packages/engineering-annotation/  工程标注确定性核心
-packages/plugin-dsh-annotation/   第二层 DSH 插件
+packages/plugin-dsh-annotation/   第二层可安装 bundle
+packages/plugin-dsh-annotation-host/ 第二层 DSH Host 流程
 packages/plugin-dsh-annotation-client/ 第二层独立 Client 工作区
 src/                           浏览器本地预览站
 scripts/                       当前构建、兼容与 E2E 脚本
@@ -61,6 +63,7 @@ pnpm test                         # 当前单元与集成测试
 pnpm check                        # TypeScript 检查
 pnpm build                        # 静态网站生产构建
 pnpm build:dsh-space              # DSH Host/Client 产物
+pnpm build:dsh-annotation         # 第二层 Host/Client 产物
 pnpm test:dsh-launcher            # macOS Launcher 测试
 pnpm e2e:host-owned-semantic-edit # 真实第一层语义链路
 pnpm e2e:motion-rig               # 临时运动铰链链路

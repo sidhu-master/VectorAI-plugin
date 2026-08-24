@@ -5374,7 +5374,7 @@ window.__ModuleLoader__.load({
                 })));
               }
             }
-            
+
             if (${id}.value === undefined) {
               if (${k} in input) {
                 newResult[${k}] = undefined;
@@ -5382,7 +5382,7 @@ window.__ModuleLoader__.load({
             } else {
               newResult[${k}] = ${id}.value;
             }
-            
+
           `);
           } else if (!isOptionalIn) {
             doc.write(`
@@ -5401,7 +5401,7 @@ window.__ModuleLoader__.load({
                 path: [${k}]
               });
             }
-    
+
             if (${id}_present) {
               if (${id}.value === undefined) {
                 newResult[${k}] = undefined;
@@ -5409,7 +5409,7 @@ window.__ModuleLoader__.load({
                 newResult[${k}] = ${id}.value;
               }
             }
-    
+
           `);
           } else {
             doc.write(`
@@ -5419,7 +5419,7 @@ window.__ModuleLoader__.load({
                 path: iss.path ? [${k}, ...iss.path] : [${k}]
               })));
             }
-            
+
             if (${id}.value === undefined) {
               if (${k} in input) {
                 newResult[${k}] = undefined;
@@ -5427,7 +5427,7 @@ window.__ModuleLoader__.load({
             } else {
               newResult[${k}] = ${id}.value;
             }
-            
+
           `);
           }
         }
@@ -6931,7 +6931,7 @@ window.__ModuleLoader__.load({
           const seen = entry[1];
           if (seen.cycle) {
             throw new Error(`Cycle detected: #/${(_b = seen.cycle) == null ? void 0 : _b.join("/")}/<root>
-    
+
     Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.`);
           }
         }

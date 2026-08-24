@@ -167,31 +167,15 @@ importers:
 
   packages/plugin-dsh-annotation:
     dependencies:
-      '@deepseek-ai/cordis':
-        specifier: 4.0.1
-        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
-      '@deepseek-ai/dsh-agent':
-        specifier: 0.1.0-rc.8
-        version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.8)(@deepseek-ai/dsh-llm@0.1.0-rc.8)(@deepseek-ai/dsh-scope@0.1.0-rc.8)(@deepseek-ai/dsh-session@0.1.0-rc.8)(@deepseek-ai/dsh-system-prompt@0.1.0-rc.8)(@deepseek-ai/dsh-typert-protocol@0.1.0-rc.8)
-      '@deepseek-ai/dsh-tools':
-        specifier: 0.1.0-rc.8
-        version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-agent@0.1.0-rc.8)(@deepseek-ai/dsh-code-runtime@0.1.0-rc.8)(@deepseek-ai/dsh-invariants@0.1.0-rc.8)(@deepseek-ai/dsh-llm@0.1.0-rc.8)(@deepseek-ai/dsh-scope@0.1.0-rc.8)(@deepseek-ai/dsh-session@0.1.0-rc.8)(@deepseek-ai/dsh-system-prompt@0.1.0-rc.8)(@deepseek-ai/dsh-user-approval@0.1.0-rc.8)
-      '@deepseek-ai/dsh-typert-protocol':
-        specifier: 0.1.0-rc.8
-        version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.8)
-      '@vectorai/engineering-annotation':
+      '@vectorai/plugin-dsh-annotation-client':
         specifier: workspace:*
-        version: link:../engineering-annotation
-      '@vectorai/plugin-dsh-space-host':
+        version: link:../plugin-dsh-annotation-client
+      '@vectorai/plugin-dsh-annotation-host':
         specifier: workspace:*
-        version: link:../plugin-dsh-space-host
-      '@vectorai/plugin-space-contracts':
+        version: link:../plugin-dsh-annotation-host
+      '@vectorai/plugin-dsh-space':
         specifier: workspace:*
-        version: link:../plugin-space-contracts
-    devDependencies:
-      '@vectorai/drawing-core':
-        specifier: workspace:*
-        version: link:../drawing-core
+        version: link:../plugin-dsh-space
 
   packages/plugin-dsh-annotation-client:
     dependencies:
@@ -239,14 +223,33 @@ importers:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
 
+  packages/plugin-dsh-annotation-host:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.1
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+      '@deepseek-ai/dsh-agent':
+        specifier: 0.1.0-rc.8
+        version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.8)(@deepseek-ai/dsh-llm@0.1.0-rc.8)(@deepseek-ai/dsh-scope@0.1.0-rc.8)(@deepseek-ai/dsh-session@0.1.0-rc.8)(@deepseek-ai/dsh-system-prompt@0.1.0-rc.8)(@deepseek-ai/dsh-typert-protocol@0.1.0-rc.8)
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.1.0-rc.8
+        version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-agent@0.1.0-rc.8)(@deepseek-ai/dsh-code-runtime@0.1.0-rc.8)(@deepseek-ai/dsh-invariants@0.1.0-rc.8)(@deepseek-ai/dsh-llm@0.1.0-rc.8)(@deepseek-ai/dsh-scope@0.1.0-rc.8)(@deepseek-ai/dsh-session@0.1.0-rc.8)(@deepseek-ai/dsh-system-prompt@0.1.0-rc.8)(@deepseek-ai/dsh-user-approval@0.1.0-rc.8)
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: 0.1.0-rc.8
+        version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.8)
+      '@vectorai/engineering-annotation':
+        specifier: workspace:*
+        version: link:../engineering-annotation
+      '@vectorai/plugin-space-contracts':
+        specifier: workspace:*
+        version: link:../plugin-space-contracts
+    devDependencies:
+      '@vectorai/drawing-core':
+        specifier: workspace:*
+        version: link:../drawing-core
+
   packages/plugin-dsh-space:
     dependencies:
-      '@vectorai/plugin-dsh-annotation':
-        specifier: workspace:*
-        version: link:../plugin-dsh-annotation
-      '@vectorai/plugin-dsh-annotation-client':
-        specifier: workspace:*
-        version: link:../plugin-dsh-annotation-client
       '@vectorai/plugin-dsh-space-client':
         specifier: workspace:*
         version: link:../plugin-dsh-space-client

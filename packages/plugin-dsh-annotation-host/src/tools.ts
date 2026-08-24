@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools';
+import type { Agent } from '@deepseek-ai/dsh-agent';
 import { planEngineeringAnnotations } from '@vectorai/engineering-annotation';
-import type { DrawingSpaceHostService } from '@vectorai/plugin-dsh-space-host';
+import type {
+  DrawingExtensionProgramWorkflow,
+  DrawingSpaceExtensionHost,
+} from '@vectorai/plugin-space-contracts';
 import type { AnnotationSessionStateStore } from './session-state';
 
-type DrawingExtensionHost = Pick<DrawingSpaceHostService, 'getSnapshot' | 'runExtensionProgram'>;
-
 export function createEngineeringAnnotationTool(
-  host: DrawingExtensionHost,
+  host: DrawingSpaceExtensionHost<Agent>,
   sessions: AnnotationSessionStateStore,
 ) {
   return defineTool({
@@ -58,8 +60,10 @@ export function createEngineeringAnnotationTool(
   });
 }
 
-function terminalStatus(status: string): 'completed' | 'canceled' | 'failed' | 'needs-rebase' {
-  if (status === 'committed' || status === 'already-satisfied' || status === 'no-effect') return 'completed';
+function terminalStatus(
+  status: DrawingExtensionProgramWorkflow['result']['status'],
+): 'completed' | 'canceled' | 'failed' | 'needs-rebase' {
+  if (status === 'committed' || status === 'already-satisfied') return 'completed';
   if (status === 'discarded') return 'canceled';
   if (status === 'needs-rebase') return 'needs-rebase';
   return 'failed';

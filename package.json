@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "build:dsh-space": "node scripts/build-dsh-space.mjs",
+    "build:dsh-space": "node scripts/build-dsh-space.mjs space",
+    "build:dsh-annotation": "node scripts/build-dsh-space.mjs annotation",
     "build:dsh-launcher": "pnpm --filter @vectorai/dsh-launcher-macos build",
     "patch:dsh-workspace": "node scripts/dsh-inline-workspace-patch.mjs",
     "lint": "eslint .",

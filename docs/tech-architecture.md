@@ -39,7 +39,8 @@ Drawing Core -> Spatial/Edit -> Workspace -> React Viewer
 | `plugin-dsh-space-client` | DSH 同页画布、Remote Adapter 与资源生命周期 |
 | `plugin-dsh-space` | 可安装的第一层 bundle |
 | `engineering-annotation` | 宿主无关的工程标注识别/规划核心 |
-| `plugin-dsh-annotation` | 第二层 DSH 工具与流程适配器 |
+| `plugin-dsh-annotation` | 第二层可安装 bundle，仅组装依赖与 Cordis patch |
+| `plugin-dsh-annotation-host` | 第二层 DSH 工具与流程适配器 |
 | `plugin-dsh-annotation-client` | 独立构建的第二层专业 Workspace contribution |
 
 依赖只能朝内。Core/Workspace 不依赖 React、DSH、Node 文件系统或模型 SDK；专业插件不能 deep import 第一层 Host 仓库或 Client Store。

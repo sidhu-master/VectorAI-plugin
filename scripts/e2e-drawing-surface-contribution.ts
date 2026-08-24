@@ -30,7 +30,7 @@ const spaceClient = await import(pathToFileURL(resolve(
   root, 'packages/plugin-dsh-space-client/lib/index.js',
 )).href);
 const annotationHost = await import(pathToFileURL(resolve(
-  root, 'packages/plugin-dsh-annotation/lib/index.js',
+  root, 'packages/plugin-dsh-annotation-host/lib/index.js',
 )).href);
 const annotationClient = await import(pathToFileURL(resolve(
   root, 'packages/plugin-dsh-annotation-client/lib/index.js',

@@ -28,6 +28,7 @@ import type {
   ExtensionPreviewControlRequest,
   ExtensionPreviewFinalizeResult,
   ExtensionPreviewDiscardResult,
+  DrawingSpaceExtensionHost,
 } from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -53,11 +54,11 @@ import { ExtensionPreviewService } from './extension-preview-service';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    drawingSpace: DrawingSpaceHostService;
+    drawingSpace: DrawingSpaceExtensionHost<Agent>;
   }
 }
 
-export class DrawingSpaceHostService extends TypertRemoteService {
+export class DrawingSpaceHostService extends TypertRemoteService implements DrawingSpaceExtensionHost<Agent> {
   static inject = ['tools', 'attachments', 'userQuestions', 'commands', 'agents', 'subagents'];
 
   private readonly drawings: InMemoryDrawingRepository;

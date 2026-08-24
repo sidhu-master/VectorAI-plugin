@@ -9,19 +9,17 @@ pnpm build:dsh-space
 dsh plugin --profile web add --ignore-workspace-root-check \
   ./packages/plugin-dsh-space \
   ./packages/plugin-dsh-space-host \
-  ./packages/plugin-dsh-space-client \
-  ./packages/plugin-dsh-annotation
+  ./packages/plugin-dsh-space-client
 ```
 
-The four local paths are required during workspace development because pnpm
+The three local paths are required during workspace development because pnpm
 does not promote the bundle's `workspace:*` dependencies into the DSH profile.
 Published packages will resolve those dependencies normally.
 
 The bundle adds `drawing_import`, `drawing_summarize`, revision-bound
 `drawing_query`, the Host-authoritative
 `observe → select_parts → preview_spatial_intent/revise → evaluate → finalize` chain,
-operation lookup, compensating Undo, and the second-layer
-`drawing_auto_annotate` tool. The canvas is mounted in the session-scoped
+operation lookup and compensating Undo. The canvas is mounted in the session-scoped
 `conversation.workspace`, beside the native chat. `drawing_query` supports
 bounded world slices, exact node lookup, and direct relation/feature neighbors.
 
@@ -65,3 +63,7 @@ The image importer runs the packaged local Python/OpenCV clean-line worker and
 produces analytic line/circle/arc/ellipse nodes, polyline fallbacks, topology
 relations, and compound-path features. PDF, DXF, and optional WASM compute
 backends remain separate adapters and do not require another Viewer migration.
+
+Engineering Annotation is installed separately through
+`@vectorai/plugin-dsh-annotation`; its absence does not affect this fallback
+workspace.
