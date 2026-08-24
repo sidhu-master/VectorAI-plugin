@@ -38,9 +38,8 @@ test2.png
 .probe-*
 .superpowers/
 
-# Reproducible HyperFrames preview/render artifacts
-video-assets/hyperframes/*/.thumbnails/
-video-assets/hyperframes/*/renders/
+# Media production lives outside this source repository
+/video-assets/
 
 # Python-generated caches
 __pycache__/
