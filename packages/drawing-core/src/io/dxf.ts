@@ -257,9 +257,13 @@ function toleranceLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): s
   if (projection && (projection.status === 'resolved' || projection.status === 'confirmed')) {
     switch (projection.mode) {
       case 'bilateral':
-      case 'unilateral':
         if (finite(projection.upperDeviation) && finite(projection.lowerDeviation)) {
           return `${signed(projection.upperDeviation)}/${signed(projection.lowerDeviation)}`;
+        }
+        return undefined;
+      case 'unilateral':
+        if (finite(projection.upperDeviation) || finite(projection.lowerDeviation)) {
+          return `${signed(projection.upperDeviation ?? 0)}/${signed(projection.lowerDeviation ?? 0)}`;
         }
         return undefined;
       case 'limits':

@@ -100,4 +100,46 @@ describe('portable engineering annotation projection', () => {
       'TOLERANCE_RESULT_REQUIRED',
     ]);
   });
+
+  it('preserves placement but replaces stale semantic and display payload during reprojection', () => {
+    const changed = draft();
+    changed.intents[0]!.nominalValue = 21;
+    changed.tolerances = [];
+    const stale = existing();
+    if (stale.type !== 'dimension') throw new Error('fixture');
+    stale.displayText = '19';
+    stale.observedValue = 19;
+    stale.tolerance = { upper: 0.5, lower: -0.5 };
+    stale.toleranceProjection = {
+      mode: 'fit', fitDesignation: 'OLD', unit: 'mm', source: 'manual', status: 'confirmed',
+      evidenceRefs: ['manual:old'],
+    };
+    stale.prefix = 'OLD';
+    stale.suffix = 'OLD';
+
+    const result = projectEngineeringAnnotations({
+      draft: changed, orderedIntentIds: ['intent-a'], existingAnnotations: [stale],
+    });
+    expect(result.annotations[0]).toMatchObject({
+      id: 'annotation-existing', computedValue: 21, displayText: '21',
+      textPosition: [10, 5], definitionPoints: [[0, 0], [20, 0]],
+    });
+    expect(result.annotations[0]).not.toHaveProperty('observedValue');
+    expect(result.annotations[0]).not.toHaveProperty('tolerance');
+    expect(result.annotations[0]).not.toHaveProperty('toleranceProjection');
+    expect(result.annotations[0]).not.toHaveProperty('prefix');
+    expect(result.annotations[0]).not.toHaveProperty('suffix');
+  });
+
+  it('does not project a structurally invalid resolved tolerance', () => {
+    const invalid = draft();
+    invalid.tolerances[0]!.resolved = {
+      upperDeviation: 0.02, inputDigest: 'sha256:invalid', evaluatedAt: 1,
+    };
+    const result = projectEngineeringAnnotations({
+      draft: invalid, orderedIntentIds: ['intent-a'], existingAnnotations: [],
+    });
+    expect(result.annotations).toEqual([]);
+    expect(result.diagnostics[0]?.code).toBe('TOLERANCE_RESULT_INVALID');
+  });
 });

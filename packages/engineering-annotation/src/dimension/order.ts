@@ -74,8 +74,8 @@ export function orderDimensionIntents(input: {
     const first = intentsById.get(firstId)!;
     const second = intentsById.get(secondId)!;
     return ROLE_RANK[first.functionalRole] - ROLE_RANK[second.functionalRole]
-      || targetKey(first).localeCompare(targetKey(second))
-      || first.id.localeCompare(second.id);
+      || compareText(targetKey(first), targetKey(second))
+      || compareText(first.id, second.id);
   };
   const ready = [...intentsById.keys()].filter((id) => indegree.get(id) === 0).sort(compare);
   const orderedIntentIds: string[] = [];
@@ -137,4 +137,8 @@ function issue(code: string, message: string, entityIds: string[]): EngineeringD
     message,
     entityIds,
   };
+}
+
+function compareText(first: string, second: string): number {
+  return first < second ? -1 : first > second ? 1 : 0;
 }

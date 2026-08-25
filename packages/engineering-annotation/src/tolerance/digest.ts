@@ -15,14 +15,14 @@ function canonical(value: unknown): unknown {
   }
   if (Array.isArray(value)) return value.map(canonical);
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, canonical(item)]));
+    return Object.fromEntries(Object.entries(value).sort(([first], [second]) => compareText(first, second)).map(([key, item]) => [key, canonical(item)]));
   }
   if (typeof value === 'string' || typeof value === 'boolean' || value === null) return value;
   throw new TypeError('TOLERANCE_INPUT_INVALID');
 }
 
 function sha256(text: string): string {
-  const bytes = [...new TextEncoder().encode(text)];
+  const bytes = utf8(text);
   const bitLength = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
@@ -72,4 +72,29 @@ function sha256(text: string): string {
 
 function rotate(value: number, bits: number): number {
   return (value >>> bits) | (value << (32 - bits));
+}
+
+function utf8(value: string): number[] {
+  const bytes: number[] = [];
+  for (const character of value) {
+    const codePoint = character.codePointAt(0)!;
+    if (codePoint <= 0x7f) bytes.push(codePoint);
+    else if (codePoint <= 0x7ff) {
+      bytes.push(0xc0 | codePoint >>> 6, 0x80 | codePoint & 0x3f);
+    } else if (codePoint <= 0xffff) {
+      bytes.push(0xe0 | codePoint >>> 12, 0x80 | codePoint >>> 6 & 0x3f, 0x80 | codePoint & 0x3f);
+    } else {
+      bytes.push(
+        0xf0 | codePoint >>> 18,
+        0x80 | codePoint >>> 12 & 0x3f,
+        0x80 | codePoint >>> 6 & 0x3f,
+        0x80 | codePoint & 0x3f,
+      );
+    }
+  }
+  return bytes;
+}
+
+function compareText(first: string, second: string): number {
+  return first < second ? -1 : first > second ? 1 : 0;
 }

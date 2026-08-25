@@ -82,4 +82,15 @@ describe('engineering dimension domain invariants', () => {
       expect.objectContaining({ code: 'DIMENSION_DEPENDENCY_UNKNOWN' }),
     ]));
   });
+
+  it('rejects resolved tolerance payloads that do not match their declared mode', () => {
+    const draft = validDraft();
+    draft.tolerances[0]!.mode = 'limits';
+    draft.tolerances[0]!.resolved = {
+      upperLimit: 19.9, lowerLimit: 20.1, inputDigest: 'sha256:invalid', evaluatedAt: 1,
+    };
+    expect(validateEngineeringDraft(draft)).toEqual([
+      expect.objectContaining({ code: 'TOLERANCE_RESULT_INVALID' }),
+    ]);
+  });
 });

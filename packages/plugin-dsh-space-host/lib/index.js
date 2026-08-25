@@ -8663,6 +8663,9 @@ function _instanceof(cls, params = {}) {
   };
   return inst;
 }
+const ZodIssueCode = {
+  custom: "custom"
+};
 const protocolIdSchema = string$1().trim().min(1).max(256);
 const contentDigestSchema = string$1().trim().min(1).max(512);
 const idSchema$4 = protocolIdSchema;
@@ -9336,6 +9339,45 @@ const dimensionCandidateSchema = object$1({
   score: number(),
   reasons: array$1(string$1())
 }).strict();
+const toleranceProjectionSchema = object$1({
+  mode: _enum(["none", "bilateral", "unilateral", "limits", "fit"]),
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string$1().min(1).max(32).optional(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  status: _enum(["candidate", "resolved", "confirmed", "conflict"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object$1({
+    id: idSchema,
+    version: idSchema,
+    inputDigest: idSchema
+  }).strict().optional(),
+  evidenceRefs: array$1(idSchema)
+}).strict().superRefine((value2, context) => {
+  if (value2.mode === "limits" && (value2.lowerLimit === void 0 || value2.upperLimit === void 0 || value2.lowerLimit > value2.upperLimit)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_LIMIT_ORDER" });
+  }
+  if (value2.mode === "bilateral" && (value2.upperDeviation === void 0 || value2.lowerDeviation === void 0)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATIONS_REQUIRED" });
+  }
+  if (value2.mode === "unilateral" && value2.upperDeviation === void 0 && value2.lowerDeviation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATION_REQUIRED" });
+  }
+  if (value2.mode === "fit" && value2.fitDesignation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_FIT_REQUIRED" });
+  }
+  if (value2.status === "confirmed" && value2.evidenceRefs.length === 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
+  }
+});
+const datumReferenceSchema = object$1({
+  datumId: idSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema
+}).strict();
 const annotationSchema = discriminatedUnion("type", [
   object$1({
     ...baseNodeShape,
@@ -9360,6 +9402,11 @@ const annotationSchema = discriminatedUnion("type", [
     displayText: string$1().optional(),
     unit: _enum(["mm", "cm", "m", "deg"]).optional(),
     tolerance: object$1({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+    toleranceProjection: toleranceProjectionSchema.optional(),
+    datumReferences: array$1(datumReferenceSchema).optional(),
+    engineeringIntentId: idSchema.optional(),
+    engineeringChainIds: array$1(idSchema).optional(),
+    generationOrder: number().int().nonnegative().optional(),
     prefix: string$1().optional(),
     suffix: string$1().optional(),
     textPosition: vec2Schema,
@@ -9953,6 +10000,116 @@ object$1({
 object$1({
   dxf: object$1({ name: string$1().min(1).max(255), digest: idSchema, base64: string$1().min(1).max(27962028) }).strict(),
   engineeringDocument: object$1({ name: string$1().min(1).max(255), text: string$1() }).strict().optional()
+}).strict();
+const engineeringDiagnosticSchema = object$1({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string$1(),
+  entityIds: array$1(idSchema).optional(),
+  evidenceIds: array$1(idSchema).optional()
+}).strict();
+const engineeringStateSchema = _enum(["candidate", "resolved", "confirmed", "conflict", "stale"]);
+const engineeringDatumSchema = object$1({
+  id: idSchema,
+  drawingRef: drawingRefSchema$1,
+  name: string$1().min(1).max(120),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: _enum(["candidate", "confirmed", "conflict", "stale"]),
+  evidenceIds: array$1(idSchema)
+}).strict();
+const dimensionIntentSchema = object$1({
+  id: idSchema,
+  drawingRef: drawingRefSchema$1,
+  kind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+  targets: array$1(dimensionTargetSchema),
+  datumIds: array$1(idSchema),
+  nominalValue: number().finite(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  functionalRole: _enum(["datum", "overall", "functional", "assembly", "process", "inspection", "auxiliary", "closure"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: engineeringStateSchema,
+  evidenceIds: array$1(idSchema)
+}).strict();
+const resolvedToleranceSchema = object$1({
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string$1().min(1).max(32).optional(),
+  inputDigest: idSchema,
+  evaluatedAt: number().finite()
+}).strict();
+const toleranceSpecSchema = object$1({
+  id: idSchema,
+  dimensionIntentId: idSchema,
+  mode: _enum(["bilateral", "unilateral", "limits", "fit", "formula"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object$1({ id: idSchema, version: idSchema }).strict().optional(),
+  inputs: record(string$1(), union([number().finite(), string$1(), boolean()])),
+  resolved: resolvedToleranceSchema.optional(),
+  status: engineeringStateSchema,
+  evidenceIds: array$1(idSchema),
+  diagnostics: array$1(engineeringDiagnosticSchema)
+}).strict();
+const dimensionChainSchema = object$1({
+  id: idSchema,
+  drawingRef: drawingRefSchema$1,
+  name: string$1().max(120).optional(),
+  datumIds: array$1(idSchema),
+  members: array$1(object$1({
+    dimensionIntentId: idSchema,
+    coefficient: union([literal$1(1), literal$1(-1)]),
+    role: _enum(["functional", "component", "closure"]),
+    sequenceHint: number().int().optional()
+  }).strict()),
+  equation: object$1({
+    closureIntentId: idSchema,
+    targetValue: number().finite().optional()
+  }).strict(),
+  analysisMode: _enum(["worst-case", "statistical", "reference-only"]),
+  status: engineeringStateSchema,
+  evidenceIds: array$1(idSchema),
+  diagnostics: array$1(engineeringDiagnosticSchema)
+}).strict();
+const annotationDependencySchema = object$1({
+  beforeIntentId: idSchema,
+  afterIntentId: idSchema,
+  reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
+  evidenceIds: array$1(idSchema)
+}).strict();
+const engineeringAnnotationDraftSchema = object$1({
+  version: literal$1(1),
+  drawingRef: drawingRefSchema$1,
+  datums: array$1(engineeringDatumSchema),
+  intents: array$1(dimensionIntentSchema),
+  tolerances: array$1(toleranceSpecSchema),
+  chains: array$1(dimensionChainSchema),
+  dependencies: array$1(annotationDependencySchema),
+  diagnostics: array$1(engineeringDiagnosticSchema),
+  baseRevisionId: idSchema.optional()
+}).strict();
+const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+  baseRevisionId: true
+}).extend({
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  generationOrder: array$1(idSchema),
+  confirmedAt: number().finite()
+}).strict();
+object$1({
+  version: literal$1(1),
+  phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema$1.optional(),
+  draft: engineeringAnnotationDraftSchema.optional(),
+  confirmed: engineeringAnnotationRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string$1().optional(),
+  updatedAt: number().finite()
 }).strict();
 class InMemoryDrawingRepository {
   constructor(input) {

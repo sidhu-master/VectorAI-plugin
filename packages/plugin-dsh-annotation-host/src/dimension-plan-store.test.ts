@@ -89,6 +89,18 @@ describe('DimensionPlanStore', () => {
     expect(() => store.confirm('session', drawingRef)).toThrow('ANNOTATION_PLAN_INVALID');
     expect(() => store.confirm('session', { drawingId: 'drawing-1', revision: 2 })).toThrow('ANNOTATION_PLAN_DRAWING_STALE');
     expect(store.markNeedsRebase('session', { drawingId: 'drawing-1', revision: 2 })).toMatchObject({ phase: 'needs-rebase' });
+    expect(() => store.confirm('session', { drawingId: 'drawing-1', revision: 2 })).toThrow('ANNOTATION_PLAN_DRAWING_STALE');
+    expect(store.get('session')).toMatchObject({ phase: 'needs-rebase', draft: { drawingRef } });
+  });
+
+  it('rejects a draft bound to a superseded second-layer base revision', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    store.begin('session', drawingRef);
+    store.setDraft('session', draft());
+    store.confirm('session', drawingRef);
+    store.begin('session', drawingRef);
+    store.setDraft('session', { ...draft(), baseRevisionId: 'older-revision' });
+    expect(() => store.confirm('session', drawingRef)).toThrow('ANNOTATION_PLAN_BASE_STALE');
   });
 
   it('round-trips a strict durable envelope and falls back safely from corrupt data', () => {

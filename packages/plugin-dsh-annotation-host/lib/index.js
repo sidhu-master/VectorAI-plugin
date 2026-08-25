@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, current_fn, _redoPartition_dec, _undoPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
+var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
@@ -222,8 +222,333 @@ function pointSegmentDistance(point, start, end) {
 function samePoint(first, second) {
   return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
 }
-function planEngineeringAnnotations(input) {
+const ROLE_RANK = {
+  datum: 0,
+  overall: 1,
+  functional: 2,
+  assembly: 2,
+  process: 3,
+  inspection: 3,
+  closure: 5,
+  auxiliary: 6
+};
+function orderDimensionIntents(input) {
+  const diagnostics = [];
+  const intentsById = /* @__PURE__ */ new Map();
+  const duplicateIds = /* @__PURE__ */ new Set();
+  for (const intent of input.intents) {
+    if (intentsById.has(intent.id)) duplicateIds.add(intent.id);
+    else intentsById.set(intent.id, intent);
+  }
+  if (duplicateIds.size > 0) {
+    diagnostics.push(issue$3(
+      "DIMENSION_ID_DUPLICATE",
+      "尺寸意图 ID 必须唯一，无法生成稳定顺序。",
+      [...duplicateIds].sort()
+    ));
+  }
+  const outgoing = /* @__PURE__ */ new Map();
+  const indegree = /* @__PURE__ */ new Map();
+  for (const id of intentsById.keys()) {
+    outgoing.set(id, /* @__PURE__ */ new Set());
+    indegree.set(id, 0);
+  }
+  const unknownIds = /* @__PURE__ */ new Set();
+  for (const dependency of input.dependencies) {
+    const beforeKnown = intentsById.has(dependency.beforeIntentId);
+    const afterKnown = intentsById.has(dependency.afterIntentId);
+    if (!beforeKnown) unknownIds.add(dependency.beforeIntentId);
+    if (!afterKnown) unknownIds.add(dependency.afterIntentId);
+    if (!beforeKnown || !afterKnown) continue;
+    const targets = outgoing.get(dependency.beforeIntentId);
+    if (targets.has(dependency.afterIntentId)) continue;
+    targets.add(dependency.afterIntentId);
+    indegree.set(dependency.afterIntentId, indegree.get(dependency.afterIntentId) + 1);
+  }
+  if (unknownIds.size > 0) {
+    diagnostics.push(issue$3(
+      "DIMENSION_DEPENDENCY_UNKNOWN",
+      "尺寸依赖引用了不存在的尺寸意图。",
+      [...unknownIds].sort()
+    ));
+  }
+  const compare = (firstId, secondId) => {
+    const first = intentsById.get(firstId);
+    const second = intentsById.get(secondId);
+    return ROLE_RANK[first.functionalRole] - ROLE_RANK[second.functionalRole] || compareText(targetKey(first), targetKey(second)) || compareText(first.id, second.id);
+  };
+  const ready = [...intentsById.keys()].filter((id) => indegree.get(id) === 0).sort(compare);
+  const orderedIntentIds = [];
+  while (ready.length > 0) {
+    const current = ready.shift();
+    orderedIntentIds.push(current);
+    const nextIds = [...outgoing.get(current)].sort(compare);
+    for (const nextId of nextIds) {
+      const nextDegree = indegree.get(nextId) - 1;
+      indegree.set(nextId, nextDegree);
+      if (nextDegree === 0) {
+        ready.push(nextId);
+        ready.sort(compare);
+      }
+    }
+  }
+  if (orderedIntentIds.length !== intentsById.size) {
+    const emitted = new Set(orderedIntentIds);
+    const blockedIds = [...intentsById.keys()].filter((id) => !emitted.has(id)).sort();
+    diagnostics.push(issue$3(
+      "DIMENSION_DEPENDENCY_CYCLE",
+      "尺寸依赖图存在环，不能静默打破依赖关系。",
+      blockedIds
+    ));
+  }
+  return { orderedIntentIds, diagnostics };
+}
+function targetKey(intent) {
+  return intent.targets.map((target) => `${target.geometryId}:${anchorKey(target.anchor)}`).sort().join("|");
+}
+function anchorKey(anchor) {
+  switch (anchor.kind) {
+    case "start":
+    case "end":
+    case "center":
+      return anchor.kind;
+    case "vertex":
+      return `vertex:${anchor.index}`;
+    case "curve-parameter":
+      return `curve-parameter:${anchor.parameter}`;
+    case "nearest":
+      return `nearest:${anchor.point[0]}:${anchor.point[1]}`;
+  }
+}
+function issue$3(code, message, entityIds) {
+  return {
+    id: `dimension-order:${code}:${entityIds.join(",")}`,
+    severity: "error",
+    code,
+    message,
+    entityIds
+  };
+}
+function compareText(first, second) {
+  return first < second ? -1 : first > second ? 1 : 0;
+}
+function validateEngineeringDraft(draft) {
+  const diagnostics = [];
+  const intentIds = /* @__PURE__ */ new Set();
+  for (const intent of draft.intents) {
+    if (intentIds.has(intent.id)) diagnostics.push(problem$2("DIMENSION_ID_DUPLICATE", intent.id, "Duplicate dimension intent ID"));
+    intentIds.add(intent.id);
+  }
+  const datumIds = new Set(draft.datums.map(({ id }) => id));
+  for (const datum of draft.datums) {
+    if (datum.status === "stale") diagnostics.push(problem$2("DIMENSION_DATUM_STALE", datum.id, "Datum references stale geometry"));
+  }
+  for (const intent of draft.intents) {
+    if (intent.targets.length === 0) diagnostics.push(problem$2("DIMENSION_TARGET_REQUIRED", intent.id, "Dimension intent has no target"));
+    if (!Number.isFinite(intent.nominalValue)) diagnostics.push(problem$2("DIMENSION_NOMINAL_INVALID", intent.id, "Nominal value must be finite"));
+    for (const datumId of intent.datumIds) {
+      if (!datumIds.has(datumId)) diagnostics.push(problem$2("DIMENSION_DATUM_UNKNOWN", intent.id, `Unknown datum ${datumId}`));
+    }
+  }
+  for (const tolerance of draft.tolerances) {
+    if (!intentIds.has(tolerance.dimensionIntentId)) diagnostics.push(problem$2("TOLERANCE_INTENT_UNKNOWN", tolerance.id, "Tolerance references an unknown intent"));
+    if ((tolerance.status === "resolved" || tolerance.status === "confirmed") && tolerance.resolved === void 0) {
+      diagnostics.push(problem$2("TOLERANCE_RESULT_REQUIRED", tolerance.id, "Confirmed tolerance requires a resolved result"));
+    } else if (tolerance.resolved !== void 0 && !isResolvedToleranceValid(tolerance)) {
+      diagnostics.push(problem$2("TOLERANCE_RESULT_INVALID", tolerance.id, "Resolved tolerance does not match its declared mode"));
+    }
+  }
+  for (const chain of draft.chains) {
+    for (const member of chain.members) {
+      if (member.coefficient !== 1 && member.coefficient !== -1) {
+        diagnostics.push(problem$2("DIMENSION_CHAIN_COEFFICIENT_INVALID", chain.id, "Chain coefficient must be 1 or -1"));
+      }
+      if (!intentIds.has(member.dimensionIntentId)) diagnostics.push(problem$2("DIMENSION_CHAIN_MEMBER_UNKNOWN", chain.id, `Unknown chain member ${member.dimensionIntentId}`));
+    }
+    if (!intentIds.has(chain.equation.closureIntentId) || !chain.members.some(({ dimensionIntentId }) => dimensionIntentId === chain.equation.closureIntentId)) {
+      diagnostics.push(problem$2("DIMENSION_CHAIN_CLOSURE_UNKNOWN", chain.id, "Closure intent must be a known chain member"));
+    }
+  }
+  for (const dependency of draft.dependencies) {
+    if (!intentIds.has(dependency.beforeIntentId) || !intentIds.has(dependency.afterIntentId)) {
+      diagnostics.push(problem$2("DIMENSION_DEPENDENCY_UNKNOWN", `${dependency.beforeIntentId}->${dependency.afterIntentId}`, "Dependency references an unknown intent"));
+    }
+  }
+  return diagnostics;
+}
+function isResolvedToleranceValid(tolerance) {
+  const resolved = tolerance.resolved;
+  if (!resolved || !resolved.inputDigest || !Number.isFinite(resolved.evaluatedAt) || [resolved.upperDeviation, resolved.lowerDeviation, resolved.upperLimit, resolved.lowerLimit].some((value) => value !== void 0 && !Number.isFinite(value))) return false;
+  switch (tolerance.mode) {
+    case "bilateral":
+      return finite(resolved.upperDeviation) && finite(resolved.lowerDeviation) && resolved.lowerDeviation <= resolved.upperDeviation;
+    case "unilateral": {
+      if (!finite(resolved.upperDeviation) && !finite(resolved.lowerDeviation)) return false;
+      const upper = resolved.upperDeviation ?? 0;
+      const lower = resolved.lowerDeviation ?? 0;
+      return lower <= upper;
+    }
+    case "limits":
+      return finite(resolved.upperLimit) && finite(resolved.lowerLimit) && resolved.lowerLimit <= resolved.upperLimit;
+    case "fit":
+      return typeof resolved.fitDesignation === "string" && resolved.fitDesignation.trim().length > 0 && resolved.fitDesignation.length <= 32;
+    case "formula":
+      return false;
+  }
+}
+function finite(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+function problem$2(code, id, message) {
+  return { id: `diagnostic:${code}:${id}`, severity: "error", code, message, entityIds: [id] };
+}
+function projectEngineeringAnnotations(input) {
+  const diagnostics = [];
   const annotations = [];
+  const intentsById = new Map(input.draft.intents.map((intent) => [intent.id, intent]));
+  const toleranceByIntentId = new Map(input.draft.tolerances.map((spec) => [spec.dimensionIntentId, spec]));
+  const datumsById = new Map(input.draft.datums.map((datum) => [datum.id, datum]));
+  const existingByIntentId = new Map(
+    input.existingAnnotations.filter((node) => node.type === "dimension" && node.engineeringIntentId !== void 0).map((node) => [node.engineeringIntentId, node])
+  );
+  for (const [generationOrder, intentId] of input.orderedIntentIds.entries()) {
+    const intent = intentsById.get(intentId);
+    if (!intent) {
+      diagnostics.push(issue$2("ANNOTATION_INTENT_UNKNOWN", "标注顺序引用了不存在的尺寸意图。", [intentId]));
+      continue;
+    }
+    const intentDiagnostics = [];
+    if (intent.status !== "confirmed") {
+      intentDiagnostics.push(issue$2("ANNOTATION_INTENT_NOT_CONFIRMED", "只有已确认的尺寸意图可以投影到第一层。", [intent.id]));
+    }
+    const tolerance = toleranceByIntentId.get(intent.id);
+    const toleranceProjection = tolerance === void 0 ? void 0 : projectTolerance(tolerance, intent, intentDiagnostics);
+    const datumReferences = intent.datumIds.flatMap((datumId) => {
+      const datum = datumsById.get(datumId);
+      if (!datum || datum.status !== "confirmed") {
+        intentDiagnostics.push(issue$2("ANNOTATION_DATUM_NOT_CONFIRMED", "尺寸意图引用的基准不存在或尚未确认。", [intent.id, datumId]));
+        return [];
+      }
+      return [{
+        datumId: datum.id,
+        role: datum.role,
+        geometryId: datum.geometryId,
+        anchor: structuredClone(datum.anchor)
+      }];
+    });
+    diagnostics.push(...intentDiagnostics);
+    if (intentDiagnostics.some(({ severity }) => severity === "error")) continue;
+    const chainIds = input.draft.chains.filter((chain) => chain.members.some((member) => member.dimensionIntentId === intent.id)).map(({ id }) => id).sort();
+    const evidenceRefs = unique$1([
+      ...intent.evidenceIds,
+      ...intent.datumIds.flatMap((datumId) => {
+        var _a3;
+        return ((_a3 = datumsById.get(datumId)) == null ? void 0 : _a3.evidenceIds) ?? [];
+      }),
+      ...(tolerance == null ? void 0 : tolerance.evidenceIds) ?? []
+    ]);
+    const existing = existingByIntentId.get(intent.id);
+    const base = defaultAnnotation(intent);
+    if (existing) {
+      base.id = existing.id;
+      base.visible = existing.visible;
+      base.textPosition = structuredClone(existing.textPosition);
+      base.definitionPoints = structuredClone(existing.definitionPoints);
+      if (existing.sourceRef) base.sourceRef = structuredClone(existing.sourceRef);
+    }
+    annotations.push({
+      ...base,
+      dimensionKind: intent.kind,
+      targets: structuredClone(intent.targets),
+      associationStatus: "resolved",
+      computedValue: intent.nominalValue,
+      unit: intent.unit,
+      quality: { status: "confirmed", confidence: 1, evidenceRefs },
+      datumReferences,
+      engineeringIntentId: intent.id,
+      engineeringChainIds: chainIds,
+      generationOrder,
+      ...toleranceProjection === void 0 ? {} : { toleranceProjection }
+    });
+  }
+  return { annotations, diagnostics };
+}
+function projectTolerance(spec, intent, diagnostics) {
+  if (spec.source === "ai-candidate") {
+    diagnostics.push(issue$2("TOLERANCE_AI_AUTHORITY_FORBIDDEN", "AI 候选公差不能投影为确认数据。", [spec.id, intent.id]));
+    return void 0;
+  }
+  if (!["resolved", "confirmed"].includes(spec.status) || !spec.resolved) {
+    diagnostics.push(issue$2("TOLERANCE_RESULT_REQUIRED", "公差投影需要已解析的确定性结果。", [spec.id, intent.id]));
+    return void 0;
+  }
+  if (!isResolvedToleranceValid(spec)) {
+    diagnostics.push(issue$2("TOLERANCE_RESULT_INVALID", "公差结果与声明模式不匹配。", [spec.id, intent.id]));
+    return void 0;
+  }
+  if (spec.mode === "formula") {
+    diagnostics.push(issue$2("TOLERANCE_RESULT_INVALID", "公式模式必须先解析为可移植公差模式。", [spec.id, intent.id]));
+    return void 0;
+  }
+  const resolved = spec.resolved;
+  return {
+    mode: spec.mode,
+    ...resolved.upperDeviation === void 0 ? {} : { upperDeviation: resolved.upperDeviation },
+    ...resolved.lowerDeviation === void 0 ? {} : { lowerDeviation: resolved.lowerDeviation },
+    ...resolved.upperLimit === void 0 ? {} : { upperLimit: resolved.upperLimit },
+    ...resolved.lowerLimit === void 0 ? {} : { lowerLimit: resolved.lowerLimit },
+    ...resolved.fitDesignation === void 0 ? {} : { fitDesignation: resolved.fitDesignation },
+    unit: intent.unit,
+    status: spec.status === "confirmed" ? "confirmed" : "resolved",
+    source: spec.source,
+    ...spec.ruleRef === void 0 ? {} : {
+      ruleRef: { ...spec.ruleRef, inputDigest: resolved.inputDigest }
+    },
+    evidenceRefs: [...spec.evidenceIds]
+  };
+}
+function defaultAnnotation(intent) {
+  const prefix = intent.kind === "diameter" ? "Ø" : intent.kind === "radius" ? "R" : "";
+  return {
+    id: `annotation_engineering_${stableKey$1(intent.id)}`,
+    type: "dimension",
+    visible: true,
+    quality: { status: "confirmed", confidence: 1, evidenceRefs: [] },
+    dimensionKind: intent.kind,
+    associationStatus: "resolved",
+    targets: structuredClone(intent.targets),
+    computedValue: intent.nominalValue,
+    displayText: `${prefix}${format$1(intent.nominalValue)}`,
+    unit: intent.unit,
+    textPosition: [0, 0],
+    definitionPoints: []
+  };
+}
+function unique$1(values) {
+  return [...new Set(values)].sort();
+}
+function issue$2(code, message, entityIds) {
+  return {
+    id: `annotation-projection:${code}:${entityIds.join(",")}`,
+    severity: "error",
+    code,
+    message,
+    entityIds
+  };
+}
+function stableKey$1(value) {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+function format$1(value) {
+  return Number(value.toFixed(6)).toString();
+}
+function planEngineeringAnnotations(input) {
+  const annotationTemplates = [];
   const associations = [];
   const pending = [];
   const suppressed = [];
@@ -241,7 +566,7 @@ function planEngineeringAnnotations(input) {
       suppressed.push({ nodeId: node.id, reason: "No deterministic engineering dimension rule applies." });
       continue;
     }
-    annotations.push(annotation);
+    annotationTemplates.push(annotation);
     associations.push({
       id: `relation_${stableKey(`${input.document.id}:${annotation.id}`)}`,
       type: "association",
@@ -253,6 +578,38 @@ function planEngineeringAnnotations(input) {
       quality: { status: "confirmed", confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] }
     });
   }
+  const dimensionTemplates = annotationTemplates.filter(
+    (annotation) => annotation.type === "dimension"
+  );
+  const draft = {
+    version: 1,
+    drawingRef: structuredClone(input.ref),
+    datums: [],
+    intents: dimensionTemplates.map((annotation) => ({
+      id: annotation.engineeringIntentId,
+      drawingRef: structuredClone(input.ref),
+      kind: annotation.dimensionKind,
+      targets: structuredClone(annotation.targets),
+      datumIds: [],
+      nominalValue: annotation.computedValue ?? annotation.observedValue ?? 0,
+      unit: annotation.unit ?? input.document.unitSystem.length,
+      functionalRole: "inspection",
+      source: "geometry",
+      status: "confirmed",
+      evidenceIds: annotation.quality.evidenceRefs.map(String)
+    })),
+    tolerances: [],
+    chains: [],
+    dependencies: [],
+    diagnostics: []
+  };
+  const order = orderDimensionIntents({ intents: draft.intents, dependencies: draft.dependencies });
+  const projection = projectEngineeringAnnotations({
+    draft,
+    orderedIntentIds: order.orderedIntentIds,
+    existingAnnotations: annotationTemplates
+  });
+  const annotations = projection.annotations;
   const targetNodeIds = [...new Set(associations.flatMap(({ geometryIds }) => geometryIds))].sort();
   const evidenceRefs = [...new Set(targetNodeIds.flatMap((id) => {
     const node = geometry.find((candidate) => candidate.id === id);
@@ -286,7 +643,8 @@ function annotationFor(node, unit, offset) {
     quality: { status: "confirmed", confidence: 1, evidenceRefs },
     associationStatus: "resolved",
     targets: [{ geometryId: node.id, anchor: { kind: "center" } }],
-    unit
+    unit,
+    engineeringIntentId: `intent_auto_${stableKey(String(node.id))}`
   };
   if (node.type === "circle") {
     const first = [node.center[0] - node.radius, node.center[1]];
@@ -375,19 +733,19 @@ function validatePartition(draft) {
   const ids = /* @__PURE__ */ new Set();
   const evidence = new Set(draft.evidence.map(({ id }) => id));
   for (const [index, segment] of draft.segments.entries()) {
-    if (ids.has(segment.id)) diagnostics.push(problem("PARTITION_ID_DUPLICATE", `Duplicate segment ${segment.id}`, segment.id));
+    if (ids.has(segment.id)) diagnostics.push(problem$1("PARTITION_ID_DUPLICATE", `Duplicate segment ${segment.id}`, segment.id));
     ids.add(segment.id);
     if (![segment.zStart, segment.zEnd].every(Number.isFinite) || segment.zEnd - segment.zStart <= tolerance) {
-      diagnostics.push(problem("PARTITION_SEGMENT_INVALID", `Invalid segment ${segment.id}`, segment.id));
+      diagnostics.push(problem$1("PARTITION_SEGMENT_INVALID", `Invalid segment ${segment.id}`, segment.id));
     }
     if (index > 0) {
       const previous = draft.segments[index - 1];
       const delta = segment.zStart - previous.zEnd;
-      if (delta > tolerance) diagnostics.push(problem("PARTITION_GAP", `Gap before ${segment.id}`, segment.id));
-      if (delta < -tolerance) diagnostics.push(problem("PARTITION_OVERLAP", `Overlap before ${segment.id}`, segment.id));
+      if (delta > tolerance) diagnostics.push(problem$1("PARTITION_GAP", `Gap before ${segment.id}`, segment.id));
+      if (delta < -tolerance) diagnostics.push(problem$1("PARTITION_OVERLAP", `Overlap before ${segment.id}`, segment.id));
     }
     for (const id of [...segment.boundaryEvidenceIds, ...segment.semanticEvidenceIds]) {
-      if (!evidence.has(id)) diagnostics.push(problem("PARTITION_EVIDENCE_MISSING", `Missing evidence ${id}`, segment.id));
+      if (!evidence.has(id)) diagnostics.push(problem$1("PARTITION_EVIDENCE_MISSING", `Missing evidence ${id}`, segment.id));
     }
   }
   if (draft.segments.length === 0 || Math.abs(draft.segments[0].zStart - draft.axis.zMin) > tolerance || Math.abs(draft.segments.at(-1).zEnd - draft.axis.zMax) > tolerance) {
@@ -400,7 +758,7 @@ function validatePartition(draft) {
   }
   return diagnostics;
 }
-function problem(code, message, segmentId) {
+function problem$1(code, message, segmentId) {
   return { id: `diagnostic:${code}:${segmentId}`, severity: "error", code, message, segmentIds: [segmentId] };
 }
 function moveBoundary(draft, input) {
@@ -1095,6 +1453,111 @@ function applySemanticProposals(draft, proposals, options = {}) {
     }
   }
   return { draft: output, applied: proposals.length };
+}
+function analyzeDimensionChain(input) {
+  const intentsById = new Map(input.intents.map((intent) => [intent.id, intent]));
+  const tolerancesByIntentId = new Map(input.tolerances.map((tolerance) => [tolerance.dimensionIntentId, tolerance]));
+  const diagnostics = [];
+  let nominalClosure = 0;
+  for (const member of input.chain.members) {
+    const intent = intentsById.get(member.dimensionIntentId);
+    if (!intent) {
+      diagnostics.push(issue$1(input.chain, "DIMENSION_CHAIN_MEMBER_UNKNOWN", "尺寸链引用了不存在的尺寸意图。", member.dimensionIntentId));
+      continue;
+    }
+    nominalClosure += member.coefficient * intent.nominalValue;
+  }
+  nominalClosure = precise(nominalClosure);
+  for (const member of input.chain.members) {
+    const intent = intentsById.get(member.dimensionIntentId);
+    if (intent && (intent.status === "conflict" || intent.status === "stale")) {
+      diagnostics.push(issue$1(input.chain, "DIMENSION_CHAIN_MEMBER_CONFLICT", "尺寸链成员处于冲突或过期状态。", intent.id));
+    }
+  }
+  const base = {
+    chainId: input.chain.id,
+    analysisMode: input.chain.analysisMode,
+    nominalClosure,
+    diagnostics
+  };
+  if (input.chain.analysisMode === "reference-only") return base;
+  if (input.chain.analysisMode === "statistical") {
+    diagnostics.push(issue$1(
+      input.chain,
+      "DIMENSION_CHAIN_STATISTICAL_UNSUPPORTED",
+      "当前里程碑不支持统计尺寸链分析。",
+      input.chain.id
+    ));
+    return base;
+  }
+  let lowerDeviation = 0;
+  let upperDeviation = 0;
+  for (const member of input.chain.members) {
+    const intent = intentsById.get(member.dimensionIntentId);
+    if (!intent) continue;
+    const tolerance = tolerancesByIntentId.get(intent.id);
+    const range = toleranceRange(tolerance, intent.nominalValue);
+    if (!range) {
+      diagnostics.push(issue$1(
+        input.chain,
+        "DIMENSION_CHAIN_TOLERANCE_MISSING",
+        "最坏情况尺寸链分析需要每个成员都有已解析的数值公差。",
+        intent.id
+      ));
+      continue;
+    }
+    if (member.coefficient === 1) {
+      lowerDeviation += range.lower;
+      upperDeviation += range.upper;
+    } else {
+      lowerDeviation -= range.upper;
+      upperDeviation -= range.lower;
+    }
+  }
+  lowerDeviation = precise(lowerDeviation);
+  upperDeviation = precise(upperDeviation);
+  return {
+    ...base,
+    lowerDeviation,
+    upperDeviation,
+    lowerValue: precise(nominalClosure + lowerDeviation),
+    upperValue: precise(nominalClosure + upperDeviation)
+  };
+}
+function toleranceRange(tolerance, nominalValue) {
+  if (!tolerance || !["resolved", "confirmed"].includes(tolerance.status) || !tolerance.resolved) return void 0;
+  const resolved = tolerance.resolved;
+  switch (tolerance.mode) {
+    case "bilateral":
+      return finiteRange(resolved.lowerDeviation, resolved.upperDeviation);
+    case "unilateral":
+      return finiteRange(resolved.lowerDeviation ?? 0, resolved.upperDeviation ?? 0);
+    case "limits":
+      return finiteRange(
+        resolved.lowerLimit === void 0 ? void 0 : resolved.lowerLimit - nominalValue,
+        resolved.upperLimit === void 0 ? void 0 : resolved.upperLimit - nominalValue
+      );
+    case "fit":
+    case "formula":
+      return void 0;
+  }
+}
+function finiteRange(lower, upper) {
+  if (lower === void 0 || upper === void 0 || !Number.isFinite(lower) || !Number.isFinite(upper) || lower > upper) return void 0;
+  return { lower, upper };
+}
+function precise(value) {
+  return Number(value.toPrecision(12));
+}
+function issue$1(chain, code, message, entityId) {
+  return {
+    id: `${chain.id}:${code}:${entityId}`,
+    severity: "error",
+    code,
+    message,
+    entityIds: [entityId],
+    evidenceIds: [...chain.evidenceIds]
+  };
 }
 function createEngineeringAnnotationTool(host, sessions) {
   return defineTool({
@@ -4354,11 +4817,11 @@ function _refine(Class, fn, _params) {
 // @__NO_SIDE_EFFECTS__
 function _superRefine(fn, params) {
   const ch = /* @__PURE__ */ _check((payload) => {
-    payload.addIssue = (issue$1) => {
-      if (typeof issue$1 === "string") {
-        payload.issues.push(issue(issue$1, payload.value, ch._zod.def));
+    payload.addIssue = (issue$12) => {
+      if (typeof issue$12 === "string") {
+        payload.issues.push(issue(issue$12, payload.value, ch._zod.def));
       } else {
-        const _issue = issue$1;
+        const _issue = issue$12;
         if (_issue.fatal)
           _issue.continue = false;
         _issue.code ?? (_issue.code = "custom");
@@ -5849,11 +6312,11 @@ const ZodTransform = /* @__PURE__ */ $constructor("ZodTransform", (inst, def) =>
     if (_ctx.direction === "backward") {
       throw new $ZodEncodeError(inst.constructor.name);
     }
-    payload.addIssue = (issue$1) => {
-      if (typeof issue$1 === "string") {
-        payload.issues.push(issue(issue$1, payload.value, def));
+    payload.addIssue = (issue$12) => {
+      if (typeof issue$12 === "string") {
+        payload.issues.push(issue(issue$12, payload.value, def));
       } else {
-        const _issue = issue$1;
+        const _issue = issue$12;
         if (_issue.fatal)
           _issue.continue = false;
         _issue.code ?? (_issue.code = "custom");
@@ -6035,6 +6498,9 @@ function _instanceof(cls, params = {}) {
   };
   return inst;
 }
+const ZodIssueCode = {
+  custom: "custom"
+};
 const protocolIdSchema = string().trim().min(1).max(256);
 const contentDigestSchema = string().trim().min(1).max(512);
 const idSchema$3 = protocolIdSchema;
@@ -6479,6 +6945,45 @@ const dimensionCandidateSchema = object({
   score: number(),
   reasons: array(string())
 }).strict();
+const toleranceProjectionSchema = object({
+  mode: _enum(["none", "bilateral", "unilateral", "limits", "fit"]),
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string().min(1).max(32).optional(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  status: _enum(["candidate", "resolved", "confirmed", "conflict"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object({
+    id: idSchema,
+    version: idSchema,
+    inputDigest: idSchema
+  }).strict().optional(),
+  evidenceRefs: array(idSchema)
+}).strict().superRefine((value, context) => {
+  if (value.mode === "limits" && (value.lowerLimit === void 0 || value.upperLimit === void 0 || value.lowerLimit > value.upperLimit)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_LIMIT_ORDER" });
+  }
+  if (value.mode === "bilateral" && (value.upperDeviation === void 0 || value.lowerDeviation === void 0)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATIONS_REQUIRED" });
+  }
+  if (value.mode === "unilateral" && value.upperDeviation === void 0 && value.lowerDeviation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATION_REQUIRED" });
+  }
+  if (value.mode === "fit" && value.fitDesignation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_FIT_REQUIRED" });
+  }
+  if (value.status === "confirmed" && value.evidenceRefs.length === 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
+  }
+});
+const datumReferenceSchema = object({
+  datumId: idSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema
+}).strict();
 const annotationSchema = discriminatedUnion("type", [
   object({
     ...baseNodeShape,
@@ -6503,6 +7008,11 @@ const annotationSchema = discriminatedUnion("type", [
     displayText: string().optional(),
     unit: _enum(["mm", "cm", "m", "deg"]).optional(),
     tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+    toleranceProjection: toleranceProjectionSchema.optional(),
+    datumReferences: array(datumReferenceSchema).optional(),
+    engineeringIntentId: idSchema.optional(),
+    engineeringChainIds: array(idSchema).optional(),
+    generationOrder: number().int().nonnegative().optional(),
     prefix: string().optional(),
     suffix: string().optional(),
     textPosition: vec2Schema,
@@ -7097,6 +7607,116 @@ object({
   dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
   engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
 }).strict();
+const engineeringDiagnosticSchema = object({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string(),
+  entityIds: array(idSchema).optional(),
+  evidenceIds: array(idSchema).optional()
+}).strict();
+const engineeringStateSchema = _enum(["candidate", "resolved", "confirmed", "conflict", "stale"]);
+const engineeringDatumSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: string().min(1).max(120),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: _enum(["candidate", "confirmed", "conflict", "stale"]),
+  evidenceIds: array(idSchema)
+}).strict();
+const dimensionIntentSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  kind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+  targets: array(dimensionTargetSchema),
+  datumIds: array(idSchema),
+  nominalValue: number().finite(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  functionalRole: _enum(["datum", "overall", "functional", "assembly", "process", "inspection", "auxiliary", "closure"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema)
+}).strict();
+const resolvedToleranceSchema = object({
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string().min(1).max(32).optional(),
+  inputDigest: idSchema,
+  evaluatedAt: number().finite()
+}).strict();
+const toleranceSpecSchema = object({
+  id: idSchema,
+  dimensionIntentId: idSchema,
+  mode: _enum(["bilateral", "unilateral", "limits", "fit", "formula"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+  inputs: record(string(), union([number().finite(), string(), boolean()])),
+  resolved: resolvedToleranceSchema.optional(),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema),
+  diagnostics: array(engineeringDiagnosticSchema)
+}).strict();
+const dimensionChainSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: string().max(120).optional(),
+  datumIds: array(idSchema),
+  members: array(object({
+    dimensionIntentId: idSchema,
+    coefficient: union([literal(1), literal(-1)]),
+    role: _enum(["functional", "component", "closure"]),
+    sequenceHint: number().int().optional()
+  }).strict()),
+  equation: object({
+    closureIntentId: idSchema,
+    targetValue: number().finite().optional()
+  }).strict(),
+  analysisMode: _enum(["worst-case", "statistical", "reference-only"]),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema),
+  diagnostics: array(engineeringDiagnosticSchema)
+}).strict();
+const annotationDependencySchema = object({
+  beforeIntentId: idSchema,
+  afterIntentId: idSchema,
+  reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
+  evidenceIds: array(idSchema)
+}).strict();
+const engineeringAnnotationDraftSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  datums: array(engineeringDatumSchema),
+  intents: array(dimensionIntentSchema),
+  tolerances: array(toleranceSpecSchema),
+  chains: array(dimensionChainSchema),
+  dependencies: array(annotationDependencySchema),
+  diagnostics: array(engineeringDiagnosticSchema),
+  baseRevisionId: idSchema.optional()
+}).strict();
+const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+  baseRevisionId: true
+}).extend({
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  generationOrder: array(idSchema),
+  confirmedAt: number().finite()
+}).strict();
+const dimensionPlanSessionSnapshotSchema = object({
+  version: literal(1),
+  phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema.optional(),
+  draft: engineeringAnnotationDraftSchema.optional(),
+  confirmed: engineeringAnnotationRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string().optional(),
+  updatedAt: number().finite()
+}).strict();
 class AnnotationSessionStateStore {
   constructor(storage, ports = { now: Date.now }) {
     __privateAdd(this, _AnnotationSessionStateStore_instances);
@@ -7201,7 +7821,7 @@ class PartitionSessionStore {
     return structuredClone(__privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId).snapshot);
   }
   beginAnalysis(sessionId, drawingRef) {
-    const confirmed = latestConfirmed(__privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId));
+    const confirmed = latestConfirmed$1(__privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId));
     return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, {
       version: 1,
       phase: "analyzing",
@@ -7214,7 +7834,7 @@ class PartitionSessionStore {
   }
   setDraft(sessionId, draft) {
     const current = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
-    requireRef(current.snapshot, draft.drawingRef);
+    requireRef$1(current.snapshot, draft.drawingRef);
     return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, {
       version: 1,
       phase: "editing",
@@ -7228,7 +7848,7 @@ class PartitionSessionStore {
   }
   edit(sessionId, command) {
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
-    requireRef(state.snapshot, command.expectedDrawingRef);
+    requireRef$1(state.snapshot, command.expectedDrawingRef);
     if (state.snapshot.phase !== "editing" || !state.snapshot.draft) throw new Error("PARTITION_DRAFT_REQUIRED");
     const draft = structuredClone(state.snapshot.draft);
     const next = command.type === "boundary.move" ? moveBoundary(draft, { boundaryIndex: command.boundaryIndex, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "segment.split" ? splitSegment(draft, { segmentId: command.segmentId, z: command.z, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "boundary.merge" ? mergeBoundary(draft, { boundaryIndex: command.boundaryIndex }) : updateSegmentMetadata(draft, { segmentId: command.segmentId, ...command.name === void 0 ? {} : { name: command.name }, ...command.semanticType === void 0 ? {} : { semanticType: command.semanticType } });
@@ -7236,11 +7856,11 @@ class PartitionSessionStore {
   }
   confirm(sessionId, expected) {
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
-    requireRef(state.snapshot, expected);
+    requireRef$1(state.snapshot, expected);
     if (!state.snapshot.draft) throw new Error("PARTITION_DRAFT_REQUIRED");
     const draft = state.snapshot.draft;
     if (validatePartition(draft).length) throw new Error("PARTITION_INVALID");
-    const previous = latestConfirmed(state);
+    const previous = latestConfirmed$1(state);
     const revision = {
       version: 1,
       drawingRef: draft.drawingRef,
@@ -7257,13 +7877,13 @@ class PartitionSessionStore {
   }
   cancel(sessionId, expected) {
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
-    requireRef(state.snapshot, expected);
-    const confirmed = latestConfirmed(state);
+    requireRef$1(state.snapshot, expected);
+    const confirmed = latestConfirmed$1(state);
     return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, confirmed === void 0 ? { version: 1, phase: "idle", drawingRef: expected, canUndo: true, canRedo: false, updatedAt: this.ports.now() } : { version: 1, phase: "confirmed", drawingRef: expected, confirmed, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
   }
   undo(sessionId, expected) {
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
-    requireRef(state.snapshot, expected);
+    requireRef$1(state.snapshot, expected);
     const previous = state.undo.at(-1);
     if (!previous) throw new Error("PARTITION_UNDO_EMPTY");
     const restored = structuredClone(previous);
@@ -7271,7 +7891,7 @@ class PartitionSessionStore {
   }
   redo(sessionId, expected) {
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
-    requireRef(state.snapshot, expected);
+    requireRef$1(state.snapshot, expected);
     const next = state.redo.at(-1);
     if (!next) throw new Error("PARTITION_REDO_EMPTY");
     return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, { ...next, canUndo: true, canRedo: state.redo.length > 1, updatedAt: this.ports.now() }, [...state.undo, state.snapshot], state.redo.slice(0, -1));
@@ -7291,9 +7911,9 @@ replace_fn = function(sessionId, snapshot, undo, redo) {
   var _a3, _b;
   const previousConfirmed = (_a3 = __privateGet(this, _states).get(sessionId)) == null ? void 0 : _a3.lastConfirmed;
   const envelope = {
-    snapshot: partitionSessionSnapshotSchema.parse(compact(snapshot)),
-    undo: undo.map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
-    redo: redo.map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
+    snapshot: partitionSessionSnapshotSchema.parse(compact$1(snapshot)),
+    undo: undo.map(compact$1).map((item) => partitionSessionSnapshotSchema.parse(item)),
+    redo: redo.map(compact$1).map((item) => partitionSessionSnapshotSchema.parse(item)),
     ...snapshot.confirmed === void 0 && previousConfirmed === void 0 ? {} : { lastConfirmed: snapshot.confirmed ?? previousConfirmed }
   };
   (_b = this.storage) == null ? void 0 : _b.save(sessionId, envelope);
@@ -7304,7 +7924,7 @@ envelope_fn = function(sessionId) {
   var _a3;
   const existing = __privateGet(this, _states).get(sessionId);
   if (existing) return existing;
-  const loaded = parseEnvelope((_a3 = this.storage) == null ? void 0 : _a3.load(sessionId));
+  const loaded = parseEnvelope$1((_a3 = this.storage) == null ? void 0 : _a3.load(sessionId));
   const initial = loaded ?? { snapshot: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 }, undo: [], redo: [] };
   __privateGet(this, _states).set(sessionId, initial);
   return initial;
@@ -7336,16 +7956,16 @@ _FilePartitionStorage_instances = new WeakSet();
 path_fn2 = function(sessionId) {
   return join(this.directory, `${createHash("sha256").update(sessionId).digest("hex")}.json`);
 };
-function requireRef(snapshot, expected) {
+function requireRef$1(snapshot, expected) {
   if (!snapshot.drawingRef || snapshot.drawingRef.drawingId !== expected.drawingId || snapshot.drawingRef.revision !== expected.revision) throw new Error("PARTITION_DRAWING_STALE");
 }
-function compact(value) {
+function compact$1(value) {
   return JSON.parse(JSON.stringify(value));
 }
-function latestConfirmed(envelope) {
+function latestConfirmed$1(envelope) {
   return envelope.lastConfirmed ?? [envelope.snapshot, ...envelope.undo, ...envelope.redo].flatMap((snapshot) => snapshot.confirmed === void 0 ? [] : [snapshot.confirmed]).sort((a, b) => b.confirmedAt - a.confirmedAt)[0];
 }
-function parseEnvelope(value) {
+function parseEnvelope$1(value) {
   if (!value || typeof value !== "object") return null;
   const item = value;
   const snapshot = partitionSessionSnapshotSchema.safeParse(item.snapshot);
@@ -7573,6 +8193,270 @@ function segmentPolygon(axis, zStart, zEnd, radius) {
   const at = (z, r) => [axis.origin[0] + axis.direction[0] * z + axis.normal[0] * r, axis.origin[1] + axis.direction[1] * z + axis.normal[1] * r];
   return [at(zStart, -radius), at(zEnd, -radius), at(zEnd, radius), at(zStart, radius)];
 }
+class DimensionPlanStore {
+  constructor(storage, ports = {
+    now: Date.now,
+    id: () => `dimension_plan_${globalThis.crypto.randomUUID()}`
+  }) {
+    __privateAdd(this, _DimensionPlanStore_instances);
+    __privateAdd(this, _states2, /* @__PURE__ */ new Map());
+    this.storage = storage;
+    this.ports = ports;
+  }
+  get(sessionId) {
+    return structuredClone(__privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId).snapshot);
+  }
+  begin(sessionId, drawingRef) {
+    const confirmed = latestConfirmed(__privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId));
+    return __privateMethod(this, _DimensionPlanStore_instances, replace_fn2).call(this, sessionId, {
+      version: 1,
+      phase: "editing",
+      drawingRef,
+      ...confirmed === void 0 ? {} : { confirmed },
+      canUndo: false,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    }, [], []);
+  }
+  setDraft(sessionId, draft) {
+    const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    requireRef(state.snapshot, draft.drawingRef);
+    const parsedDraft = engineeringAnnotationDraftSchema.parse(compact(draft));
+    return __privateMethod(this, _DimensionPlanStore_instances, push_fn2).call(this, sessionId, {
+      version: 1,
+      phase: "editing",
+      drawingRef: parsedDraft.drawingRef,
+      draft: parsedDraft,
+      ...state.snapshot.confirmed === void 0 ? {} : { confirmed: state.snapshot.confirmed },
+      canUndo: true,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    });
+  }
+  confirm(sessionId, expected) {
+    const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    if (state.snapshot.phase === "needs-rebase") throw new Error("ANNOTATION_PLAN_DRAWING_STALE");
+    if (!state.snapshot.draft) throw new Error("ANNOTATION_PLAN_DRAFT_REQUIRED");
+    const draft = state.snapshot.draft;
+    if (!sameRef(draft.drawingRef, expected)) throw new Error("ANNOTATION_PLAN_DRAWING_STALE");
+    const previous = latestConfirmed(state);
+    if (draft.baseRevisionId !== void 0 && draft.baseRevisionId !== (previous == null ? void 0 : previous.id)) {
+      throw new Error("ANNOTATION_PLAN_BASE_STALE");
+    }
+    const order = orderDimensionIntents({ intents: draft.intents, dependencies: draft.dependencies });
+    const diagnostics = confirmationDiagnostics(draft, order.diagnostics);
+    if (diagnostics.some(({ severity }) => severity === "error")) throw new Error("ANNOTATION_PLAN_INVALID");
+    const revision = engineeringAnnotationRevisionSchema.parse(compact({
+      version: 1,
+      drawingRef: draft.drawingRef,
+      datums: draft.datums,
+      intents: draft.intents,
+      tolerances: draft.tolerances,
+      chains: draft.chains,
+      dependencies: draft.dependencies,
+      diagnostics: [...draft.diagnostics, ...diagnostics],
+      id: this.ports.id(),
+      ...previous === void 0 ? {} : { parentRevisionId: previous.id },
+      generationOrder: order.orderedIntentIds,
+      confirmedAt: this.ports.now()
+    }));
+    return __privateMethod(this, _DimensionPlanStore_instances, push_fn2).call(this, sessionId, {
+      version: 1,
+      phase: "confirmed",
+      drawingRef: revision.drawingRef,
+      confirmed: revision,
+      canUndo: true,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    });
+  }
+  cancel(sessionId, expected) {
+    const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    const confirmed = latestConfirmed(state);
+    return __privateMethod(this, _DimensionPlanStore_instances, push_fn2).call(this, sessionId, confirmed === void 0 ? {
+      version: 1,
+      phase: "idle",
+      drawingRef: expected,
+      canUndo: true,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    } : {
+      version: 1,
+      phase: "confirmed",
+      drawingRef: expected,
+      confirmed,
+      canUndo: true,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    });
+  }
+  undo(sessionId, expected) {
+    const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    const previous = state.undo.at(-1);
+    if (!previous) throw new Error("ANNOTATION_PLAN_UNDO_EMPTY");
+    return __privateMethod(this, _DimensionPlanStore_instances, replace_fn2).call(this, sessionId, {
+      ...structuredClone(previous),
+      canUndo: state.undo.length > 1,
+      canRedo: true,
+      updatedAt: this.ports.now()
+    }, state.undo.slice(0, -1), [...state.redo, state.snapshot]);
+  }
+  redo(sessionId, expected) {
+    const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    const next = state.redo.at(-1);
+    if (!next) throw new Error("ANNOTATION_PLAN_REDO_EMPTY");
+    return __privateMethod(this, _DimensionPlanStore_instances, replace_fn2).call(this, sessionId, {
+      ...structuredClone(next),
+      canUndo: true,
+      canRedo: state.redo.length > 1,
+      updatedAt: this.ports.now()
+    }, [...state.undo, state.snapshot], state.redo.slice(0, -1));
+  }
+  markNeedsRebase(sessionId, currentRef) {
+    const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    return __privateMethod(this, _DimensionPlanStore_instances, replace_fn2).call(this, sessionId, {
+      ...state.snapshot,
+      phase: "needs-rebase",
+      drawingRef: currentRef,
+      message: "Drawing revision changed",
+      updatedAt: this.ports.now()
+    }, state.undo, state.redo);
+  }
+}
+_states2 = new WeakMap();
+_DimensionPlanStore_instances = new WeakSet();
+push_fn2 = function(sessionId, snapshot) {
+  const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+  return __privateMethod(this, _DimensionPlanStore_instances, replace_fn2).call(this, sessionId, snapshot, [...state.undo, state.snapshot], []);
+};
+replace_fn2 = function(sessionId, snapshot, undo, redo) {
+  var _a3, _b;
+  const previousConfirmed = (_a3 = __privateGet(this, _states2).get(sessionId)) == null ? void 0 : _a3.lastConfirmed;
+  const parsedSnapshot = dimensionPlanSessionSnapshotSchema.parse(compact(snapshot));
+  const envelope = {
+    snapshot: parsedSnapshot,
+    undo: undo.map(compact).map((item) => dimensionPlanSessionSnapshotSchema.parse(item)),
+    redo: redo.map(compact).map((item) => dimensionPlanSessionSnapshotSchema.parse(item)),
+    ...parsedSnapshot.confirmed === void 0 && previousConfirmed === void 0 ? {} : { lastConfirmed: parsedSnapshot.confirmed ?? previousConfirmed }
+  };
+  (_b = this.storage) == null ? void 0 : _b.save(sessionId, envelope);
+  __privateGet(this, _states2).set(sessionId, envelope);
+  return structuredClone(envelope.snapshot);
+};
+envelope_fn2 = function(sessionId) {
+  var _a3;
+  const existing = __privateGet(this, _states2).get(sessionId);
+  if (existing) return existing;
+  const loaded = parseEnvelope((_a3 = this.storage) == null ? void 0 : _a3.load(sessionId));
+  const initial = loaded ?? {
+    snapshot: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 },
+    undo: [],
+    redo: []
+  };
+  __privateGet(this, _states2).set(sessionId, initial);
+  return initial;
+};
+class FileDimensionPlanStorage {
+  constructor(directory) {
+    __privateAdd(this, _FileDimensionPlanStorage_instances);
+    this.directory = directory;
+  }
+  load(sessionId) {
+    const path = __privateMethod(this, _FileDimensionPlanStorage_instances, path_fn3).call(this, sessionId);
+    if (!existsSync(path)) return null;
+    try {
+      return JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+  save(sessionId, value) {
+    mkdirSync(this.directory, { recursive: true });
+    const path = __privateMethod(this, _FileDimensionPlanStorage_instances, path_fn3).call(this, sessionId);
+    const temporary = `${path}.${process.pid}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(value)}
+`, "utf8");
+    renameSync(temporary, path);
+  }
+}
+_FileDimensionPlanStorage_instances = new WeakSet();
+path_fn3 = function(sessionId) {
+  return join(this.directory, `${createHash("sha256").update(sessionId).digest("hex")}.json`);
+};
+function confirmationDiagnostics(draft, orderDiagnostics) {
+  const diagnostics = [...validateEngineeringDraft(draft), ...orderDiagnostics];
+  diagnostics.push(...draft.diagnostics.filter(({ severity }) => severity === "error"));
+  for (const datum of draft.datums) {
+    if (datum.status === "conflict" || datum.status === "stale") {
+      diagnostics.push(problem("DIMENSION_DATUM_CONFLICT", datum.id));
+    }
+  }
+  for (const intent of draft.intents) {
+    if (intent.status === "conflict" || intent.status === "stale") {
+      diagnostics.push(problem("DIMENSION_INTENT_CONFLICT", intent.id));
+    }
+  }
+  for (const tolerance of draft.tolerances) {
+    if (!["resolved", "confirmed"].includes(tolerance.status) || !tolerance.resolved || tolerance.source === "ai-candidate") {
+      diagnostics.push(problem("TOLERANCE_RESULT_REQUIRED", tolerance.id));
+    }
+  }
+  for (const chain of draft.chains) {
+    if (chain.status === "conflict" || chain.status === "stale") {
+      diagnostics.push(problem("DIMENSION_CHAIN_CONFLICT", chain.id));
+    }
+    diagnostics.push(...analyzeDimensionChain({
+      chain,
+      intents: draft.intents,
+      tolerances: draft.tolerances
+    }).diagnostics);
+  }
+  return diagnostics.sort((first, second) => first.id < second.id ? -1 : first.id > second.id ? 1 : 0);
+}
+function requireRef(snapshot, expected) {
+  if (!snapshot.drawingRef || !sameRef(snapshot.drawingRef, expected)) {
+    throw new Error("ANNOTATION_PLAN_DRAWING_STALE");
+  }
+}
+function sameRef(first, second) {
+  return first.drawingId === second.drawingId && first.revision === second.revision;
+}
+function problem(code, entityId) {
+  return {
+    id: `dimension-plan:${code}:${entityId}`,
+    severity: "error",
+    code,
+    message: code,
+    entityIds: [entityId]
+  };
+}
+function latestConfirmed(envelope) {
+  return envelope.lastConfirmed ?? [envelope.snapshot, ...envelope.undo, ...envelope.redo].flatMap((snapshot) => snapshot.confirmed === void 0 ? [] : [snapshot.confirmed]).sort((first, second) => second.confirmedAt - first.confirmedAt)[0];
+}
+function parseEnvelope(value) {
+  if (!value || typeof value !== "object") return null;
+  const item = value;
+  const snapshot = dimensionPlanSessionSnapshotSchema.safeParse(item.snapshot);
+  if (!snapshot.success || !Array.isArray(item.undo) || !Array.isArray(item.redo)) return null;
+  const undo = item.undo.map((entry) => dimensionPlanSessionSnapshotSchema.safeParse(entry));
+  const redo = item.redo.map((entry) => dimensionPlanSessionSnapshotSchema.safeParse(entry));
+  if (undo.some(({ success }) => !success) || redo.some(({ success }) => !success)) return null;
+  const confirmed = item.lastConfirmed === void 0 ? void 0 : engineeringAnnotationRevisionSchema.safeParse(item.lastConfirmed);
+  if (confirmed !== void 0 && !confirmed.success) return null;
+  return {
+    snapshot: snapshot.data,
+    undo: undo.map((entry) => entry.data),
+    redo: redo.map((entry) => entry.data),
+    ...(confirmed == null ? void 0 : confirmed.data) === void 0 ? {} : { lastConfirmed: confirmed.data }
+  };
+}
+function compact(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importAndAnalyze_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingAnnotation");
@@ -7580,11 +8464,15 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
     __publicField(this, "sessions");
     __publicField(this, "partitions");
     __publicField(this, "partitionWorkflow");
+    __publicField(this, "dimensionPlans");
     this.sessions = new AnnotationSessionStateStore(new FileAnnotationSessionStorage(
       resolve(homedir(), ".dsh/vectorai/annotation-sessions")
     ));
     this.partitions = new PartitionSessionStore(new FilePartitionStorage(
       resolve(homedir(), ".dsh/vectorai/annotation-partitions")
+    ));
+    this.dimensionPlans = new DimensionPlanStore(new FileDimensionPlanStorage(
+      resolve(homedir(), ".dsh/vectorai/dimension-plans")
     ));
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,
@@ -7633,8 +8521,10 @@ __decoratorMetadata(_init, DrawingAnnotationHostService);
 __publicField(DrawingAnnotationHostService, "inject", ["tools", "drawingSpace", "attachments", "agents", "subagents"]);
 export {
   AnnotationSessionStateStore,
+  DimensionPlanStore,
   DrawingAnnotationHostService,
   FileAnnotationSessionStorage,
+  FileDimensionPlanStorage,
   createEngineeringAnnotationTool,
   DrawingAnnotationHostService as default,
   planEngineeringAnnotations

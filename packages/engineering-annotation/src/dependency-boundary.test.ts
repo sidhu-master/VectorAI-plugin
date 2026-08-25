@@ -17,6 +17,6 @@ describe('@vectorai/engineering-annotation dependency boundary', () => {
       .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
       .map((name) => readFileSync(join(directory, name), 'utf8'))
       .join('\n');
-    expect(source).not.toMatch(/@deepseek-ai|@vectorai\/plugin-|react|express|node:fs|\bfetch\s*\(|XMLHttpRequest|WebSocket/);
+    expect(source).not.toMatch(/@deepseek-ai|@vectorai\/plugin-|react|express|node:fs|\bfetch\s*\(|XMLHttpRequest|WebSocket|TextEncoder/);
   });
 });

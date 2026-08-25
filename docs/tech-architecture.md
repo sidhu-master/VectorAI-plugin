@@ -2,7 +2,7 @@
 
 > 状态：当前架构与已批准目标的权威说明
 >
-> 更新日期：2026-08-24
+> 更新日期：2026-08-25
 
 ## 1. 架构结论
 
@@ -27,7 +27,7 @@ Drawing Core -> Spatial/Edit -> Workspace -> React Viewer
 
 | 包 | 职责 |
 |---|---|
-| `drawing-core` | Canonical Drawing 文档、图元、事务、验证 |
+| `drawing-core` | Canonical Drawing 文档、图元、可移植公差/基准结果、事务、验证 |
 | `drawing-spatial` | 有界、宿主无关的空间查询 |
 | `drawing-edit-protocol` | 模型可见的语义编辑协议 |
 | `drawing-edit-core` | 语义选择后的确定性求解、forward/inverse Commands |
@@ -38,7 +38,7 @@ Drawing Core -> Spatial/Edit -> Workspace -> React Viewer
 | `plugin-dsh-space-host` | 会话仓库、工具、策略、持久化与唯一提交权限 |
 | `plugin-dsh-space-client` | DSH 同页画布、Remote Adapter 与资源生命周期 |
 | `plugin-dsh-space` | 可安装的第一层 bundle |
-| `engineering-annotation` | 宿主无关的工程标注识别/规划核心 |
+| `engineering-annotation` | 宿主无关的工程标注识别、尺寸意图、公差规则边界、尺寸链与投影核心 |
 | `plugin-dsh-annotation` | 第二层可安装 bundle，仅组装依赖与 Cordis patch |
 | `plugin-dsh-annotation-host` | 第二层 DSH 工具与流程适配器 |
 | `plugin-dsh-annotation-client` | 独立构建的第二层专业 Workspace contribution |
@@ -126,7 +126,22 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 
 第二层认领的是会话 Workspace，不是一次任务的 modal。completed、canceled、failed、idle 或 needs-rebase 均不释放 claim。插件暂时不可用时显示第一层 fallback，但保留 claim。
 
-当前轴类智能分区是第二层的第一项完整能力；最终尺寸候选布局、碰撞优化和覆盖策略属于下一阶段。完整契约与验收见 [DXF 智能分区设计](superpowers/specs/2026-08-25-dxf-smart-partition-design.md)。
+当前轴类智能分区是第二层的第一项完整交互能力；公差与尺寸链数据基础也已落地。最终尺寸候选布局、碰撞优化、覆盖策略和生产公差公式属于后续阶段。分区契约与验收见 [DXF 智能分区设计](superpowers/specs/2026-08-25-dxf-smart-partition-design.md)。
+
+### 公差与尺寸链数据边界
+
+第一层 `drawing-core` 只保存通用 Viewer/Exporter 能理解的已解析结果：公差显示模式、偏差或极限值、配合代号、基准引用、规则 ID/版本/输入摘要及证据。旧 `tolerance.upper/lower` 字段仍可读取。第一层不保存公式源码、尺寸链方程、AI 提示词或可变工作流状态。
+
+第二层 `engineering-annotation` 是工程规划权威，维护：
+
+- `DimensionIntent`、`EngineeringDatum`、`ToleranceSpec`、`DimensionChain` 与显式依赖边；
+- 按角色、稳定几何引用和意图 ID 打破平局的 Kahn 拓扑排序；依赖环只报错，不自动断边；
+- worst-case 尺寸链上下界分析；`statistical` 当前返回明确 unsupported 诊断；
+- 投影前的状态、证据、规则结果与 Drawing revision 校验。
+
+`ToleranceRuleProvider` 是同步、确定性、宿主无关的扩展口。同一规则 ID、不可变版本、名义值、单位和规范化输入必须产生相同输出。输入用 UTF-8 canonical JSON 的 SHA-256 摘要记录。规则模块不能访问 DSH、模型、网络、React、Node 文件系统或可变 Drawing；AI candidate 不具有最终数值权限。当前仅测试和 E2E 使用 Fixture provider，尚未包含生产公差公式。
+
+确认后的第二层 revision 通过 `projectEngineeringAnnotations` 生成第一层 `DimensionAnnotation`，DXF 只格式化 portable projection，绝不回调规则提供器。第二层标注计划使用独立 durable envelope 保存 snapshot、undo、redo 和 `lastConfirmed`，先成功落盘再发布内存状态；Drawing revision 变化进入 `needs-rebase`。
 
 ## 8. Viewer 与宿主适配
 
@@ -149,5 +164,6 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 - 单元/契约：Core、Spatial、Edit、Workspace、Viewer、Remote codec、依赖边界；
 - 集成：仓库持久化、幂等 receipt、Preview/Finalize/Undo、Client 生命周期；
 - E2E：Host-owned semantic edit、Motion Rig、Launcher；
+- 工程数据 E2E：DXF 智能分区；公差规则解析、DAG 顺序、尺寸链、第一层投影、DXF 与持久恢复；
 - 构建：静态网站、DSH Host Typert 与 Client bundle；
 - packaged cross-bundle E2E 覆盖 sticky routing、卸载 fallback、重装恢复、一笔正式提交和 Undo。

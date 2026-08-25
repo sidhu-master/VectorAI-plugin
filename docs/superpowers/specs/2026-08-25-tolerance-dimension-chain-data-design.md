@@ -1,6 +1,6 @@
 # Tolerance and Dimension-Chain Data Architecture
 
-Status: Proposed for review
+Status: Implemented data foundation; production formulas intentionally absent
 
 Date: 2026-08-25
 

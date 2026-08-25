@@ -4884,6 +4884,9 @@ function _instanceof(cls, params = {}) {
   };
   return inst;
 }
+const ZodIssueCode = {
+  custom: "custom"
+};
 const protocolIdSchema = string().trim().min(1).max(256);
 const contentDigestSchema = string().trim().min(1).max(512);
 const idSchema$3 = protocolIdSchema;
@@ -5433,6 +5436,45 @@ const dimensionCandidateSchema = object({
   score: number(),
   reasons: array(string())
 }).strict();
+const toleranceProjectionSchema = object({
+  mode: _enum(["none", "bilateral", "unilateral", "limits", "fit"]),
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string().min(1).max(32).optional(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  status: _enum(["candidate", "resolved", "confirmed", "conflict"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object({
+    id: idSchema,
+    version: idSchema,
+    inputDigest: idSchema
+  }).strict().optional(),
+  evidenceRefs: array(idSchema)
+}).strict().superRefine((value, context) => {
+  if (value.mode === "limits" && (value.lowerLimit === void 0 || value.upperLimit === void 0 || value.lowerLimit > value.upperLimit)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_LIMIT_ORDER" });
+  }
+  if (value.mode === "bilateral" && (value.upperDeviation === void 0 || value.lowerDeviation === void 0)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATIONS_REQUIRED" });
+  }
+  if (value.mode === "unilateral" && value.upperDeviation === void 0 && value.lowerDeviation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATION_REQUIRED" });
+  }
+  if (value.mode === "fit" && value.fitDesignation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_FIT_REQUIRED" });
+  }
+  if (value.status === "confirmed" && value.evidenceRefs.length === 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
+  }
+});
+const datumReferenceSchema = object({
+  datumId: idSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema
+}).strict();
 const annotationSchema = discriminatedUnion("type", [
   object({
     ...baseNodeShape,
@@ -5457,6 +5499,11 @@ const annotationSchema = discriminatedUnion("type", [
     displayText: string().optional(),
     unit: _enum(["mm", "cm", "m", "deg"]).optional(),
     tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+    toleranceProjection: toleranceProjectionSchema.optional(),
+    datumReferences: array(datumReferenceSchema).optional(),
+    engineeringIntentId: idSchema.optional(),
+    engineeringChainIds: array(idSchema).optional(),
+    generationOrder: number().int().nonnegative().optional(),
     prefix: string().optional(),
     suffix: string().optional(),
     textPosition: vec2Schema,
@@ -6051,6 +6098,116 @@ object({
 object({
   dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
   engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+}).strict();
+const engineeringDiagnosticSchema = object({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string(),
+  entityIds: array(idSchema).optional(),
+  evidenceIds: array(idSchema).optional()
+}).strict();
+const engineeringStateSchema = _enum(["candidate", "resolved", "confirmed", "conflict", "stale"]);
+const engineeringDatumSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: string().min(1).max(120),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: _enum(["candidate", "confirmed", "conflict", "stale"]),
+  evidenceIds: array(idSchema)
+}).strict();
+const dimensionIntentSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  kind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+  targets: array(dimensionTargetSchema),
+  datumIds: array(idSchema),
+  nominalValue: number().finite(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  functionalRole: _enum(["datum", "overall", "functional", "assembly", "process", "inspection", "auxiliary", "closure"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema)
+}).strict();
+const resolvedToleranceSchema = object({
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string().min(1).max(32).optional(),
+  inputDigest: idSchema,
+  evaluatedAt: number().finite()
+}).strict();
+const toleranceSpecSchema = object({
+  id: idSchema,
+  dimensionIntentId: idSchema,
+  mode: _enum(["bilateral", "unilateral", "limits", "fit", "formula"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+  inputs: record(string(), union([number().finite(), string(), boolean()])),
+  resolved: resolvedToleranceSchema.optional(),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema),
+  diagnostics: array(engineeringDiagnosticSchema)
+}).strict();
+const dimensionChainSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: string().max(120).optional(),
+  datumIds: array(idSchema),
+  members: array(object({
+    dimensionIntentId: idSchema,
+    coefficient: union([literal(1), literal(-1)]),
+    role: _enum(["functional", "component", "closure"]),
+    sequenceHint: number().int().optional()
+  }).strict()),
+  equation: object({
+    closureIntentId: idSchema,
+    targetValue: number().finite().optional()
+  }).strict(),
+  analysisMode: _enum(["worst-case", "statistical", "reference-only"]),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema),
+  diagnostics: array(engineeringDiagnosticSchema)
+}).strict();
+const annotationDependencySchema = object({
+  beforeIntentId: idSchema,
+  afterIntentId: idSchema,
+  reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
+  evidenceIds: array(idSchema)
+}).strict();
+const engineeringAnnotationDraftSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  datums: array(engineeringDatumSchema),
+  intents: array(dimensionIntentSchema),
+  tolerances: array(toleranceSpecSchema),
+  chains: array(dimensionChainSchema),
+  dependencies: array(annotationDependencySchema),
+  diagnostics: array(engineeringDiagnosticSchema),
+  baseRevisionId: idSchema.optional()
+}).strict();
+const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+  baseRevisionId: true
+}).extend({
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  generationOrder: array(idSchema),
+  confirmedAt: number().finite()
+}).strict();
+object({
+  version: literal(1),
+  phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema.optional(),
+  draft: engineeringAnnotationDraftSchema.optional(),
+  confirmed: engineeringAnnotationRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string().optional(),
+  updatedAt: number().finite()
 }).strict();
 const nonEmptyStringSchema = string().min(1);
 const agentCodec = {

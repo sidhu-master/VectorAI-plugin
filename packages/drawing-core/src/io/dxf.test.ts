@@ -81,7 +81,7 @@ describe('exportDrawingDxf', () => {
       {
         ...dimension('unilateral', '10'),
         toleranceProjection: {
-          mode: 'unilateral', upperDeviation: 0.02, lowerDeviation: 0, unit: 'mm',
+          mode: 'unilateral', upperDeviation: 0.02, unit: 'mm',
           source: 'manual', status: 'confirmed', evidenceRefs: ['manual:1'],
         },
       },

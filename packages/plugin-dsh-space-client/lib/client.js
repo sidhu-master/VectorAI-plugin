@@ -405,10 +405,57 @@ window.__ModuleLoader__.load({
       return Math.max(Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]) * 0.05, 0.1);
     }
     function dimensionLabel$1(node) {
+      const base = baseDimensionLabel(node);
+      const tolerance = toleranceLabel(node);
+      return tolerance === void 0 ? base : `${base} ${tolerance}`;
+    }
+    function baseDimensionLabel(node) {
       if (node.displayText !== void 0) return node.displayText;
       const value = node.observedValue ?? node.computedValue;
       if (value === void 0) return "—";
       return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
+    }
+    function toleranceLabel(node) {
+      var _a2;
+      const projection = node.toleranceProjection;
+      if (projection && (projection.status === "resolved" || projection.status === "confirmed")) {
+        switch (projection.mode) {
+          case "bilateral":
+            if (finite(projection.upperDeviation) && finite(projection.lowerDeviation)) {
+              return `${signed(projection.upperDeviation)}/${signed(projection.lowerDeviation)}`;
+            }
+            return void 0;
+          case "unilateral":
+            if (finite(projection.upperDeviation) || finite(projection.lowerDeviation)) {
+              return `${signed(projection.upperDeviation ?? 0)}/${signed(projection.lowerDeviation ?? 0)}`;
+            }
+            return void 0;
+          case "limits":
+            if (finite(projection.upperLimit) && finite(projection.lowerLimit) && projection.lowerLimit <= projection.upperLimit) {
+              return `[${textNumber(projection.upperLimit)}/${textNumber(projection.lowerLimit)}]`;
+            }
+            return void 0;
+          case "fit":
+            return ((_a2 = projection.fitDesignation) == null ? void 0 : _a2.trim()) || void 0;
+          case "none":
+            return void 0;
+        }
+      }
+      const legacy = node.tolerance;
+      if (legacy && (finite(legacy.upper) || finite(legacy.lower))) {
+        return `${signed(legacy.upper ?? 0)}/${signed(legacy.lower ?? 0)}`;
+      }
+      return void 0;
+    }
+    function finite(value) {
+      return typeof value === "number" && Number.isFinite(value);
+    }
+    function signed(value) {
+      if (Object.is(value, -0) || value === 0) return "0";
+      return value > 0 ? `+${textNumber(value)}` : textNumber(value);
+    }
+    function textNumber(value) {
+      return Object.is(value, -0) ? "0" : String(value);
     }
     function dxfText(value) {
       return [...value.replace(/\r\n|\r|\n/g, "\\P")].filter((character) => {
@@ -8639,6 +8686,9 @@ window.__ModuleLoader__.load({
       };
       return inst;
     }
+    const ZodIssueCode = {
+      custom: "custom"
+    };
     const protocolIdSchema = string().trim().min(1).max(256);
     const contentDigestSchema = string().trim().min(1).max(512);
     const idSchema$3 = protocolIdSchema;
@@ -9188,6 +9238,45 @@ window.__ModuleLoader__.load({
       score: number(),
       reasons: array(string())
     }).strict();
+    const toleranceProjectionSchema = object({
+      mode: _enum(["none", "bilateral", "unilateral", "limits", "fit"]),
+      upperDeviation: number().finite().optional(),
+      lowerDeviation: number().finite().optional(),
+      upperLimit: number().finite().optional(),
+      lowerLimit: number().finite().optional(),
+      fitDesignation: string().min(1).max(32).optional(),
+      unit: _enum(["mm", "cm", "m", "deg"]),
+      status: _enum(["candidate", "resolved", "confirmed", "conflict"]),
+      source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+      ruleRef: object({
+        id: idSchema,
+        version: idSchema,
+        inputDigest: idSchema
+      }).strict().optional(),
+      evidenceRefs: array(idSchema)
+    }).strict().superRefine((value, context) => {
+      if (value.mode === "limits" && (value.lowerLimit === void 0 || value.upperLimit === void 0 || value.lowerLimit > value.upperLimit)) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_LIMIT_ORDER" });
+      }
+      if (value.mode === "bilateral" && (value.upperDeviation === void 0 || value.lowerDeviation === void 0)) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATIONS_REQUIRED" });
+      }
+      if (value.mode === "unilateral" && value.upperDeviation === void 0 && value.lowerDeviation === void 0) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATION_REQUIRED" });
+      }
+      if (value.mode === "fit" && value.fitDesignation === void 0) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_FIT_REQUIRED" });
+      }
+      if (value.status === "confirmed" && value.evidenceRefs.length === 0) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
+      }
+    });
+    const datumReferenceSchema = object({
+      datumId: idSchema,
+      role: _enum(["primary", "secondary", "tertiary", "origin"]),
+      geometryId: idSchema,
+      anchor: entityAnchorSchema
+    }).strict();
     const annotationSchema = discriminatedUnion("type", [
       object({
         ...baseNodeShape,
@@ -9212,6 +9301,11 @@ window.__ModuleLoader__.load({
         displayText: string().optional(),
         unit: _enum(["mm", "cm", "m", "deg"]).optional(),
         tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+        toleranceProjection: toleranceProjectionSchema.optional(),
+        datumReferences: array(datumReferenceSchema).optional(),
+        engineeringIntentId: idSchema.optional(),
+        engineeringChainIds: array(idSchema).optional(),
+        generationOrder: number().int().nonnegative().optional(),
         prefix: string().optional(),
         suffix: string().optional(),
         textPosition: vec2Schema,
@@ -9806,6 +9900,116 @@ window.__ModuleLoader__.load({
     object({
       dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
       engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+    }).strict();
+    const engineeringDiagnosticSchema = object({
+      id: idSchema,
+      severity: _enum(["info", "warning", "error"]),
+      code: idSchema,
+      message: string(),
+      entityIds: array(idSchema).optional(),
+      evidenceIds: array(idSchema).optional()
+    }).strict();
+    const engineeringStateSchema = _enum(["candidate", "resolved", "confirmed", "conflict", "stale"]);
+    const engineeringDatumSchema = object({
+      id: idSchema,
+      drawingRef: drawingRefSchema,
+      name: string().min(1).max(120),
+      geometryId: idSchema,
+      anchor: entityAnchorSchema,
+      role: _enum(["primary", "secondary", "tertiary", "origin"]),
+      source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+      status: _enum(["candidate", "confirmed", "conflict", "stale"]),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const dimensionIntentSchema = object({
+      id: idSchema,
+      drawingRef: drawingRefSchema,
+      kind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+      targets: array(dimensionTargetSchema),
+      datumIds: array(idSchema),
+      nominalValue: number().finite(),
+      unit: _enum(["mm", "cm", "m", "deg"]),
+      functionalRole: _enum(["datum", "overall", "functional", "assembly", "process", "inspection", "auxiliary", "closure"]),
+      source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+      status: engineeringStateSchema,
+      evidenceIds: array(idSchema)
+    }).strict();
+    const resolvedToleranceSchema = object({
+      upperDeviation: number().finite().optional(),
+      lowerDeviation: number().finite().optional(),
+      upperLimit: number().finite().optional(),
+      lowerLimit: number().finite().optional(),
+      fitDesignation: string().min(1).max(32).optional(),
+      inputDigest: idSchema,
+      evaluatedAt: number().finite()
+    }).strict();
+    const toleranceSpecSchema = object({
+      id: idSchema,
+      dimensionIntentId: idSchema,
+      mode: _enum(["bilateral", "unilateral", "limits", "fit", "formula"]),
+      source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+      ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+      inputs: record(string(), union([number().finite(), string(), boolean()])),
+      resolved: resolvedToleranceSchema.optional(),
+      status: engineeringStateSchema,
+      evidenceIds: array(idSchema),
+      diagnostics: array(engineeringDiagnosticSchema)
+    }).strict();
+    const dimensionChainSchema = object({
+      id: idSchema,
+      drawingRef: drawingRefSchema,
+      name: string().max(120).optional(),
+      datumIds: array(idSchema),
+      members: array(object({
+        dimensionIntentId: idSchema,
+        coefficient: union([literal(1), literal(-1)]),
+        role: _enum(["functional", "component", "closure"]),
+        sequenceHint: number().int().optional()
+      }).strict()),
+      equation: object({
+        closureIntentId: idSchema,
+        targetValue: number().finite().optional()
+      }).strict(),
+      analysisMode: _enum(["worst-case", "statistical", "reference-only"]),
+      status: engineeringStateSchema,
+      evidenceIds: array(idSchema),
+      diagnostics: array(engineeringDiagnosticSchema)
+    }).strict();
+    const annotationDependencySchema = object({
+      beforeIntentId: idSchema,
+      afterIntentId: idSchema,
+      reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const engineeringAnnotationDraftSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      datums: array(engineeringDatumSchema),
+      intents: array(dimensionIntentSchema),
+      tolerances: array(toleranceSpecSchema),
+      chains: array(dimensionChainSchema),
+      dependencies: array(annotationDependencySchema),
+      diagnostics: array(engineeringDiagnosticSchema),
+      baseRevisionId: idSchema.optional()
+    }).strict();
+    const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+      baseRevisionId: true
+    }).extend({
+      id: idSchema,
+      parentRevisionId: idSchema.optional(),
+      generationOrder: array(idSchema),
+      confirmedAt: number().finite()
+    }).strict();
+    object({
+      version: literal(1),
+      phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
+      drawingRef: drawingRefSchema.optional(),
+      draft: engineeringAnnotationDraftSchema.optional(),
+      confirmed: engineeringAnnotationRevisionSchema.optional(),
+      canUndo: boolean(),
+      canRedo: boolean(),
+      message: string().optional(),
+      updatedAt: number().finite()
     }).strict();
     const agentCodec = {
       mode: "strict",

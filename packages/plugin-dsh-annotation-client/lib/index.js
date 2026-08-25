@@ -4159,7 +4159,115 @@ function PartitionInspector({ draft, controller }) {
     draft.diagnostics.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-partition-diagnostics", children: draft.diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: diagnostic.code }, diagnostic.id)) })
   ] });
 }
-function AnnotationWorkspace({ namespace, runtime, state, partition }) {
+function DimensionPlanInspector({ draft, generationOrder }) {
+  const intentsById = new Map(draft.intents.map((intent) => [intent.id, intent]));
+  const tolerancesByIntentId = new Map(draft.tolerances.map((tolerance) => [tolerance.dimensionIntentId, tolerance]));
+  const datumsById = new Map(draft.datums.map((datum) => [datum.id, datum]));
+  const orderedIntents = generationOrder.flatMap((id) => {
+    const intent = intentsById.get(id);
+    return intent === void 0 ? [] : [intent];
+  });
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "vai-dimension-plan", "aria-label": "尺寸计划检查", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "尺寸标注计划" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        orderedIntents.length,
+        " 项"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { "aria-label": "尺寸标注顺序", children: orderedIntents.map((intent, index) => {
+      const tolerance = tolerancesByIntentId.get(intent.id);
+      const datumNames = intent.datumIds.flatMap((id) => {
+        const datum = datumsById.get(id);
+        return datum === void 0 ? [] : [datum.name];
+      });
+      const chainRoles = draft.chains.flatMap((chain) => chain.members.filter((member) => member.dimensionIntentId === intent.id).map((member) => `${chain.name ?? chain.id} · ${chainRoleLabel(member.role)}`));
+      const diagnostics = [
+        ...draft.diagnostics.filter(({ entityIds }) => entityIds == null ? void 0 : entityIds.includes(intent.id)),
+        ...(tolerance == null ? void 0 : tolerance.diagnostics) ?? []
+      ];
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "li",
+        {
+          "data-dimension-intent-id": intent.id,
+          "aria-label": `标注 ${index + 1}: ${intent.id}`,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-dimension-plan__row-title", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-dimension-plan__order", children: index + 1 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: roleLabel(intent.functionalRole) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `vai-dimension-badge vai-dimension-badge--${intent.status}`, children: stateLabel(intent.status) })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-dimension-plan__nominal", children: [
+              intent.nominalValue,
+              " ",
+              intent.unit
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "意图" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: intent.id }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "基准" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: datumNames.length === 0 ? "无" : datumNames.map((name) => `基准 ${name}`).join("、") }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "尺寸链" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: chainRoles.length === 0 ? "无" : chainRoles.join("；") }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "公差" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: tolerance === void 0 ? "未设置" : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                  toleranceSourceLabel(tolerance.source),
+                  " · ",
+                  toleranceStateLabel(tolerance.status)
+                ] }),
+                tolerance.ruleRef && /* @__PURE__ */ jsxRuntimeExports.jsxs("code", { children: [
+                  tolerance.ruleRef.id,
+                  "@",
+                  tolerance.ruleRef.version
+                ] })
+              ] }) })
+            ] }),
+            diagnostics.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-dimension-plan__diagnostics", "aria-label": `${intent.id} 诊断`, children: diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: diagnostic.code }, diagnostic.id)) })
+          ]
+        },
+        intent.id
+      );
+    }) })
+  ] });
+}
+function roleLabel(role) {
+  return {
+    datum: "基准建立",
+    overall: "总体尺寸",
+    functional: "功能尺寸",
+    assembly: "装配尺寸",
+    process: "组成尺寸",
+    inspection: "检验尺寸",
+    auxiliary: "辅助尺寸",
+    closure: "闭环尺寸"
+  }[role];
+}
+function stateLabel(status) {
+  return {
+    candidate: "候选",
+    resolved: "已解析",
+    confirmed: "已确认",
+    conflict: "冲突",
+    stale: "已过期"
+  }[status];
+}
+function toleranceStateLabel(status) {
+  return status === "candidate" ? "待解析" : stateLabel(status);
+}
+function toleranceSourceLabel(source) {
+  return {
+    document: "文档",
+    standard: "标准",
+    "enterprise-rule": "企业规则",
+    manual: "手动",
+    "ai-candidate": "AI 候选"
+  }[source];
+}
+function chainRoleLabel(role) {
+  return { functional: "功能环", component: "组成环", closure: "封闭环" }[role];
+}
+function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPlan }) {
   var _a2;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport);
@@ -4258,7 +4366,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition }) {
               /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "重做分区", disabled: !partitionState.partition.canRedo, onClick: () => void partition.actions.redo().catch(() => void 0), children: "↷" })
             ] })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("aside", { className: "vai-annotation-workspace__inspector", children: draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition }, partitionState.partition.updatedAt) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("aside", { className: "vai-annotation-workspace__inspector", children: dimensionPlan ? /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }) : draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition }, partitionState.partition.updatedAt) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
@@ -9251,6 +9359,9 @@ function _instanceof(cls, params = {}) {
   };
   return inst;
 }
+const ZodIssueCode = {
+  custom: "custom"
+};
 const protocolIdSchema = string().trim().min(1).max(256);
 const contentDigestSchema = string().trim().min(1).max(512);
 const idSchema$3 = protocolIdSchema;
@@ -9695,6 +9806,45 @@ const dimensionCandidateSchema = object({
   score: number(),
   reasons: array(string())
 }).strict();
+const toleranceProjectionSchema = object({
+  mode: _enum(["none", "bilateral", "unilateral", "limits", "fit"]),
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string().min(1).max(32).optional(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  status: _enum(["candidate", "resolved", "confirmed", "conflict"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object({
+    id: idSchema,
+    version: idSchema,
+    inputDigest: idSchema
+  }).strict().optional(),
+  evidenceRefs: array(idSchema)
+}).strict().superRefine((value, context) => {
+  if (value.mode === "limits" && (value.lowerLimit === void 0 || value.upperLimit === void 0 || value.lowerLimit > value.upperLimit)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_LIMIT_ORDER" });
+  }
+  if (value.mode === "bilateral" && (value.upperDeviation === void 0 || value.lowerDeviation === void 0)) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATIONS_REQUIRED" });
+  }
+  if (value.mode === "unilateral" && value.upperDeviation === void 0 && value.lowerDeviation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATION_REQUIRED" });
+  }
+  if (value.mode === "fit" && value.fitDesignation === void 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_FIT_REQUIRED" });
+  }
+  if (value.status === "confirmed" && value.evidenceRefs.length === 0) {
+    context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
+  }
+});
+const datumReferenceSchema = object({
+  datumId: idSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema
+}).strict();
 const annotationSchema = discriminatedUnion("type", [
   object({
     ...baseNodeShape,
@@ -9719,6 +9869,11 @@ const annotationSchema = discriminatedUnion("type", [
     displayText: string().optional(),
     unit: _enum(["mm", "cm", "m", "deg"]).optional(),
     tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+    toleranceProjection: toleranceProjectionSchema.optional(),
+    datumReferences: array(datumReferenceSchema).optional(),
+    engineeringIntentId: idSchema.optional(),
+    engineeringChainIds: array(idSchema).optional(),
+    generationOrder: number().int().nonnegative().optional(),
     prefix: string().optional(),
     suffix: string().optional(),
     textPosition: vec2Schema,
@@ -10313,6 +10468,116 @@ const partitionImportRequestSchema = object({
   dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
   engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
 }).strict();
+const engineeringDiagnosticSchema = object({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string(),
+  entityIds: array(idSchema).optional(),
+  evidenceIds: array(idSchema).optional()
+}).strict();
+const engineeringStateSchema = _enum(["candidate", "resolved", "confirmed", "conflict", "stale"]);
+const engineeringDatumSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: string().min(1).max(120),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+  role: _enum(["primary", "secondary", "tertiary", "origin"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: _enum(["candidate", "confirmed", "conflict", "stale"]),
+  evidenceIds: array(idSchema)
+}).strict();
+const dimensionIntentSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  kind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+  targets: array(dimensionTargetSchema),
+  datumIds: array(idSchema),
+  nominalValue: number().finite(),
+  unit: _enum(["mm", "cm", "m", "deg"]),
+  functionalRole: _enum(["datum", "overall", "functional", "assembly", "process", "inspection", "auxiliary", "closure"]),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema)
+}).strict();
+const resolvedToleranceSchema = object({
+  upperDeviation: number().finite().optional(),
+  lowerDeviation: number().finite().optional(),
+  upperLimit: number().finite().optional(),
+  lowerLimit: number().finite().optional(),
+  fitDesignation: string().min(1).max(32).optional(),
+  inputDigest: idSchema,
+  evaluatedAt: number().finite()
+}).strict();
+const toleranceSpecSchema = object({
+  id: idSchema,
+  dimensionIntentId: idSchema,
+  mode: _enum(["bilateral", "unilateral", "limits", "fit", "formula"]),
+  source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+  ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+  inputs: record(string(), union([number().finite(), string(), boolean()])),
+  resolved: resolvedToleranceSchema.optional(),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema),
+  diagnostics: array(engineeringDiagnosticSchema)
+}).strict();
+const dimensionChainSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: string().max(120).optional(),
+  datumIds: array(idSchema),
+  members: array(object({
+    dimensionIntentId: idSchema,
+    coefficient: union([literal(1), literal(-1)]),
+    role: _enum(["functional", "component", "closure"]),
+    sequenceHint: number().int().optional()
+  }).strict()),
+  equation: object({
+    closureIntentId: idSchema,
+    targetValue: number().finite().optional()
+  }).strict(),
+  analysisMode: _enum(["worst-case", "statistical", "reference-only"]),
+  status: engineeringStateSchema,
+  evidenceIds: array(idSchema),
+  diagnostics: array(engineeringDiagnosticSchema)
+}).strict();
+const annotationDependencySchema = object({
+  beforeIntentId: idSchema,
+  afterIntentId: idSchema,
+  reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
+  evidenceIds: array(idSchema)
+}).strict();
+const engineeringAnnotationDraftSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  datums: array(engineeringDatumSchema),
+  intents: array(dimensionIntentSchema),
+  tolerances: array(toleranceSpecSchema),
+  chains: array(dimensionChainSchema),
+  dependencies: array(annotationDependencySchema),
+  diagnostics: array(engineeringDiagnosticSchema),
+  baseRevisionId: idSchema.optional()
+}).strict();
+const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+  baseRevisionId: true
+}).extend({
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  generationOrder: array(idSchema),
+  confirmedAt: number().finite()
+}).strict();
+object({
+  version: literal(1),
+  phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema.optional(),
+  draft: engineeringAnnotationDraftSchema.optional(),
+  confirmed: engineeringAnnotationRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string().optional(),
+  updatedAt: number().finite()
+}).strict();
 const agentParameter = {
   name: "agent",
   wire: "agentId",
@@ -10450,6 +10715,7 @@ function base64(bytes) {
 export {
   ANNOTATION_REMOTE,
   AnnotationWorkspace,
+  DimensionPlanInspector,
   createAnnotationRemoteStateSource,
   createPartitionController
 };

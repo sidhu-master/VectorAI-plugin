@@ -13,6 +13,7 @@ import type {
   EngineeringDiagnostic,
   ToleranceSpec,
 } from './types';
+import { isResolvedToleranceValid } from './validate';
 
 export interface EngineeringAnnotationProjection {
   annotations: DimensionAnnotation[];
@@ -76,7 +77,14 @@ export function projectEngineeringAnnotations(input: {
       ...(tolerance?.evidenceIds ?? []),
     ]) as EvidenceId[];
     const existing = existingByIntentId.get(intent.id);
-    const base = existing ? structuredClone(existing) : defaultAnnotation(intent);
+    const base = defaultAnnotation(intent);
+    if (existing) {
+      base.id = existing.id;
+      base.visible = existing.visible;
+      base.textPosition = structuredClone(existing.textPosition);
+      base.definitionPoints = structuredClone(existing.definitionPoints);
+      if (existing.sourceRef) base.sourceRef = structuredClone(existing.sourceRef);
+    }
     annotations.push({
       ...base,
       dimensionKind: intent.kind,
@@ -89,7 +97,7 @@ export function projectEngineeringAnnotations(input: {
       engineeringIntentId: intent.id,
       engineeringChainIds: chainIds,
       generationOrder,
-      ...(toleranceProjection === undefined ? { toleranceProjection: undefined } : { toleranceProjection }),
+      ...(toleranceProjection === undefined ? {} : { toleranceProjection }),
     });
   }
 
@@ -107,6 +115,10 @@ function projectTolerance(
   }
   if (!['resolved', 'confirmed'].includes(spec.status) || !spec.resolved) {
     diagnostics.push(issue('TOLERANCE_RESULT_REQUIRED', '公差投影需要已解析的确定性结果。', [spec.id, intent.id]));
+    return undefined;
+  }
+  if (!isResolvedToleranceValid(spec)) {
+    diagnostics.push(issue('TOLERANCE_RESULT_INVALID', '公差结果与声明模式不匹配。', [spec.id, intent.id]));
     return undefined;
   }
   if (spec.mode === 'formula') {

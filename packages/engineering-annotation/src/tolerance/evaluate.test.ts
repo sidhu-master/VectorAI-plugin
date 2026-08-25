@@ -41,6 +41,8 @@ describe('deterministic tolerance rule resolution', () => {
     const second = canonicalRuleInputDigest({ nominalValue: 20, unit: 'mm', inputs: { process: 2, grade: 'A' } });
     expect(first).toBe(second);
     expect(first).toBe('sha256:7b371431133009774bb1feb09758d26ee207094066f37460011a253a08d92c9e');
+    expect(canonicalRuleInputDigest({ nominalValue: 20, unit: 'mm', inputs: { grade: '轴类' } }))
+      .toBe('sha256:0e3c6b7849aaaae8271da4e1f2f84fee081857eec1665c5d44a22c2de311b9b3');
     expect(canonicalRuleInputDigest({ nominalValue: 21, unit: 'mm', inputs: { grade: 'A', process: 2 } })).not.toBe(first);
   });
 
@@ -62,6 +64,9 @@ describe('deterministic tolerance rule resolution', () => {
     }).diagnostics[0]?.code).toBe('TOLERANCE_RULE_VERSION_MISMATCH');
     expect(resolveToleranceSpec({
       intent, spec: spec(), provider: { ...provider, evaluate: () => ({ mode: 'limits', upperLimit: 1, lowerLimit: 2 }) }, now: () => 1,
+    }).diagnostics[0]?.code).toBe('TOLERANCE_RESULT_INVALID');
+    expect(resolveToleranceSpec({
+      intent, spec: spec(), provider: { ...provider, evaluate: () => ({ mode: 'bilateral', upperDeviation: -0.02, lowerDeviation: 0.02 }) }, now: () => 1,
     }).diagnostics[0]?.code).toBe('TOLERANCE_RESULT_INVALID');
     expect(resolveToleranceSpec({
       intent, spec: spec({ source: 'ai-candidate' }), provider, now: () => 1,

@@ -77,13 +77,18 @@ export class DimensionPlanStore {
   confirm(sessionId: string, expected: DrawingRef): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, expected);
+    if (state.snapshot.phase === 'needs-rebase') throw new Error('ANNOTATION_PLAN_DRAWING_STALE');
     if (!state.snapshot.draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
     const draft = state.snapshot.draft as unknown as EngineeringAnnotationDraft;
+    if (!sameRef(draft.drawingRef, expected)) throw new Error('ANNOTATION_PLAN_DRAWING_STALE');
+    const previous = latestConfirmed(state);
+    if (draft.baseRevisionId !== undefined && draft.baseRevisionId !== previous?.id) {
+      throw new Error('ANNOTATION_PLAN_BASE_STALE');
+    }
     const order = orderDimensionIntents({ intents: draft.intents, dependencies: draft.dependencies });
     const diagnostics = confirmationDiagnostics(draft, order.diagnostics);
     if (diagnostics.some(({ severity }) => severity === 'error')) throw new Error('ANNOTATION_PLAN_INVALID');
 
-    const previous = latestConfirmed(state);
     const revision = engineeringAnnotationRevisionSchema.parse(compact({
       version: 1,
       drawingRef: draft.drawingRef,
@@ -255,15 +260,17 @@ function confirmationDiagnostics(
       tolerances: draft.tolerances,
     }).diagnostics);
   }
-  return diagnostics.sort((first, second) => first.id.localeCompare(second.id));
+  return diagnostics.sort((first, second) => first.id < second.id ? -1 : first.id > second.id ? 1 : 0);
 }
 
 function requireRef(snapshot: DimensionPlanSessionSnapshot, expected: DrawingRef): void {
-  if (!snapshot.drawingRef
-    || snapshot.drawingRef.drawingId !== expected.drawingId
-    || snapshot.drawingRef.revision !== expected.revision) {
+  if (!snapshot.drawingRef || !sameRef(snapshot.drawingRef, expected)) {
     throw new Error('ANNOTATION_PLAN_DRAWING_STALE');
   }
+}
+
+function sameRef(first: DrawingRef, second: DrawingRef): boolean {
+  return first.drawingId === second.drawingId && first.revision === second.revision;
 }
 
 function problem(code: string, entityId: string): EngineeringDiagnostic {

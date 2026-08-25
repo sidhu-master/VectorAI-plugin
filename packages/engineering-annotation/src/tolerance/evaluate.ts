@@ -17,7 +17,7 @@ export interface ResolveToleranceSpecOptions {
   intent: DimensionIntent;
   spec: ToleranceSpec;
   provider: ToleranceRuleProvider;
-  now?: () => number;
+  now: () => number;
 }
 
 export interface ResolveToleranceSpecResult {
@@ -82,7 +82,7 @@ export function resolveToleranceSpec(options: ResolveToleranceSpecOptions): Reso
   next.resolved = {
     ...copyResolvedFields(result),
     inputDigest,
-    evaluatedAt: (options.now ?? Date.now)(),
+    evaluatedAt: options.now(),
   };
   next.status = 'resolved';
   next.diagnostics = [];
@@ -108,9 +108,12 @@ function validResult(result: ToleranceRuleResult, descriptor: ToleranceRuleDescr
 
   switch (result.mode) {
     case 'bilateral':
-      return finite(result.upperDeviation) && finite(result.lowerDeviation);
-    case 'unilateral':
-      return finite(result.upperDeviation) || finite(result.lowerDeviation);
+      return finite(result.upperDeviation) && finite(result.lowerDeviation)
+        && result.lowerDeviation <= result.upperDeviation;
+    case 'unilateral': {
+      if (!finite(result.upperDeviation) && !finite(result.lowerDeviation)) return false;
+      return (result.lowerDeviation ?? 0) <= (result.upperDeviation ?? 0);
+    }
     case 'limits':
       return finite(result.upperLimit) && finite(result.lowerLimit) && result.lowerLimit <= result.upperLimit;
     case 'fit':

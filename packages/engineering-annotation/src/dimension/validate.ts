@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { EngineeringAnnotationDraft, EngineeringDiagnostic } from './types';
+import type { EngineeringAnnotationDraft, EngineeringDiagnostic, ToleranceSpec } from './types';
 
 export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): EngineeringDiagnostic[] {
   const diagnostics: EngineeringDiagnostic[] = [];
@@ -22,8 +22,10 @@ export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): Eng
   }
   for (const tolerance of draft.tolerances) {
     if (!intentIds.has(tolerance.dimensionIntentId)) diagnostics.push(problem('TOLERANCE_INTENT_UNKNOWN', tolerance.id, 'Tolerance references an unknown intent'));
-    if (tolerance.status === 'confirmed' && tolerance.resolved === undefined) {
+    if ((tolerance.status === 'resolved' || tolerance.status === 'confirmed') && tolerance.resolved === undefined) {
       diagnostics.push(problem('TOLERANCE_RESULT_REQUIRED', tolerance.id, 'Confirmed tolerance requires a resolved result'));
+    } else if (tolerance.resolved !== undefined && !isResolvedToleranceValid(tolerance)) {
+      diagnostics.push(problem('TOLERANCE_RESULT_INVALID', tolerance.id, 'Resolved tolerance does not match its declared mode'));
     }
   }
   for (const chain of draft.chains) {
@@ -43,6 +45,38 @@ export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): Eng
     }
   }
   return diagnostics;
+}
+
+export function isResolvedToleranceValid(tolerance: ToleranceSpec): boolean {
+  const resolved = tolerance.resolved;
+  if (!resolved
+    || !resolved.inputDigest
+    || !Number.isFinite(resolved.evaluatedAt)
+    || [resolved.upperDeviation, resolved.lowerDeviation, resolved.upperLimit, resolved.lowerLimit]
+      .some((value) => value !== undefined && !Number.isFinite(value))) return false;
+  switch (tolerance.mode) {
+    case 'bilateral':
+      return finite(resolved.upperDeviation) && finite(resolved.lowerDeviation)
+        && resolved.lowerDeviation <= resolved.upperDeviation;
+    case 'unilateral': {
+      if (!finite(resolved.upperDeviation) && !finite(resolved.lowerDeviation)) return false;
+      const upper = resolved.upperDeviation ?? 0;
+      const lower = resolved.lowerDeviation ?? 0;
+      return lower <= upper;
+    }
+    case 'limits':
+      return finite(resolved.upperLimit) && finite(resolved.lowerLimit) && resolved.lowerLimit <= resolved.upperLimit;
+    case 'fit':
+      return typeof resolved.fitDesignation === 'string'
+        && resolved.fitDesignation.trim().length > 0
+        && resolved.fitDesignation.length <= 32;
+    case 'formula':
+      return false;
+  }
+}
+
+function finite(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function problem(code: string, id: string, message: string): EngineeringDiagnostic {

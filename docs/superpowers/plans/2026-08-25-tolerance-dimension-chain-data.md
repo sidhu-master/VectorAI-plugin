@@ -1,5 +1,7 @@
 # Tolerance and Dimension-Chain Data Foundation Implementation Plan
 
+Status: Completed on 2026-08-25; production tolerance formulas remain an extension point.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
 **Goal:** Build the portable tolerance contracts and second-layer dimension-chain domain needed for later production formulas, deterministic annotation order, durable review, and first-layer projection.
