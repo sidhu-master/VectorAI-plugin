@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 interface PackageManifest {
   name: string;
   dependencies?: Record<string, string>;
+  exports?: Record<string, unknown>;
   dsh?: { bundle?: { patch?: string } };
 }
 
@@ -44,6 +45,7 @@ describe('DSH plugin bundle boundaries', () => {
     ]);
     expect(host.name).toBe('@vectorai/plugin-dsh-annotation-host');
     expect(client.name).toBe('@vectorai/plugin-dsh-annotation-client');
+    expect(client.exports?.['./package.json']).toBe('./package.json');
     expect(readPatchServices('packages/plugin-dsh-annotation/cordis.patch.yml')).toEqual([
       '@vectorai/plugin-dsh-annotation-host',
       '@vectorai/plugin-dsh-annotation-client',
