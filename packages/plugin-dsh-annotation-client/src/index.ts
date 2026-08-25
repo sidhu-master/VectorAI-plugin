@@ -10,3 +10,5 @@ export type {
 export { ANNOTATION_REMOTE } from './remote';
 export { createPartitionController } from './partition-controller';
 export type { PartitionController, PartitionControllerState, PartitionRemote } from './partition-controller';
+export { DimensionPlanInspector } from './DimensionPlanInspector';
+export type { DimensionPlanInspectorProps } from './DimensionPlanInspector';

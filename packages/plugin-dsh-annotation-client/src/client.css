@@ -64,3 +64,24 @@
 .vai-partition-history { position: absolute; z-index: 8; left: 50%; bottom: 28px; display: flex; gap: 6px; transform: translateX(-50%); }
 .vai-partition-history button { width: 36px; height: 32px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 9px; color: #aebdce; background: rgba(14, 21, 29, .92); font-size: 18px; }
 .vai-partition-history button:disabled { opacity: .3; }
+
+.vai-dimension-plan { min-width: 0; }
+.vai-dimension-plan > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.vai-dimension-plan > header h2 { margin: 0; }
+.vai-dimension-plan > header span { color: #8295aa; font-size: 11px; }
+.vai-dimension-plan ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.vai-dimension-plan li { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(148, 163, 184, .055); }
+.vai-dimension-plan__row-title { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.vai-dimension-plan__order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #8fdcff; background: rgba(14, 165, 233, .14); font: 600 10px ui-monospace, monospace; }
+.vai-dimension-plan__row-title strong { flex: 1; }
+.vai-dimension-plan__nominal { color: #e2e8f0; font: 600 13px ui-monospace, monospace; }
+.vai-dimension-plan dl { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 7px; margin: 0; font-size: 10px; line-height: 1.45; }
+.vai-dimension-plan dt { color: #71859a; }
+.vai-dimension-plan dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #aebdce; }
+.vai-dimension-plan dd code { display: block; margin-top: 2px; color: #7dd3fc; font-size: 10px; }
+.vai-dimension-badge { padding: 2px 6px; border-radius: 999px; color: #9fb0c2; background: rgba(148, 163, 184, .1); font-size: 9px; }
+.vai-dimension-badge--confirmed, .vai-dimension-badge--resolved { color: #64dca2; background: rgba(34, 197, 94, .13); }
+.vai-dimension-badge--candidate { color: #f7c86c; background: rgba(245, 158, 11, .13); }
+.vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }
+.vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }
+.vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }

@@ -7,12 +7,13 @@ import type {
   DrawingWorkspaceSnapshot,
   DrawingWorkspaceViewport,
 } from '@vectorai/drawing-workspace';
-import type { AnnotationSessionState } from '@vectorai/plugin-space-contracts';
+import type { AnnotationSessionState, EngineeringAnnotationDraft } from '@vectorai/plugin-space-contracts';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { PartitionController } from './partition-controller';
 import { PartitionOverlay } from './PartitionOverlay';
 import { PartitionActionToolbar } from './PartitionActionToolbar';
 import { PartitionInspector } from './PartitionInspector';
+import { DimensionPlanInspector } from './DimensionPlanInspector';
 
 export interface AnnotationWorkspaceProps {
   sessionId: string;
@@ -20,9 +21,10 @@ export interface AnnotationWorkspaceProps {
   runtime: DrawingSurfaceRuntime;
   state: DrawingSurfaceObservable<AnnotationSessionState>;
   partition: PartitionController;
+  dimensionPlan?: { draft: EngineeringAnnotationDraft; generationOrder: string[] };
 }
 
-export function AnnotationWorkspace({ namespace, runtime, state, partition }: AnnotationWorkspaceProps) {
+export function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPlan }: AnnotationWorkspaceProps) {
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport) as DrawingWorkspaceViewport;
   const selectedIds = useObservable(runtime.selection);
@@ -97,7 +99,8 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition }: An
         </div>}
       </main>
       <aside className="vai-annotation-workspace__inspector">
-        {draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} /> : <><h2>标注检查</h2><dl>
+        {dimensionPlan ? <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />
+          : draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} /> : <><h2>标注检查</h2><dl>
           <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
           <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
           <dt>选中</dt><dd>{selectedIds.length}</dd>
