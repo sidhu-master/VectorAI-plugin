@@ -15,7 +15,8 @@
     "./typert": {
       "types": "./src/typert.ts",
       "default": "./lib/typert.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",

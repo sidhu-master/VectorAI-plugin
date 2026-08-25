@@ -45,6 +45,7 @@ describe('DSH plugin bundle boundaries', () => {
     ]);
     expect(host.name).toBe('@vectorai/plugin-dsh-annotation-host');
     expect(client.name).toBe('@vectorai/plugin-dsh-annotation-client');
+    expect(host.exports?.['./package.json']).toBe('./package.json');
     expect(client.exports?.['./package.json']).toBe('./package.json');
     expect(readPatchServices('packages/plugin-dsh-annotation/cordis.patch.yml')).toEqual([
       '@vectorai/plugin-dsh-annotation-host',
