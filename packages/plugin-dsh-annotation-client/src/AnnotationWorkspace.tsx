@@ -82,7 +82,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
         />}
         {(displaySnapshot === null || showImport) && <form className="vai-annotation-import" onSubmit={(event) => {
           event.preventDefault();
-          if (dxf) void partition.actions.importFiles(dxf, engineering ?? undefined).then(() => setShowImport(false)).catch(() => undefined);
+          if (dxf) void partition.actions.importFiles(dxf, engineering === null ? undefined : [engineering]).then(() => setShowImport(false)).catch(() => undefined);
         }}>
           <strong>导入轴类工程图</strong>
           <p>DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。</p>

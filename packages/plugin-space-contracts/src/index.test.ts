@@ -31,6 +31,7 @@ import {
   drawingObservationResultSchema,
   partitionSessionSnapshotSchema,
   partitionEditCommandSchema,
+  partitionImportRequestSchema,
   engineeringAnnotationDraftSchema,
   dimensionPlanSessionSnapshotSchema,
 } from './index';
@@ -54,6 +55,25 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('accepts ordered immutable engineering document inputs', () => {
+    const request = {
+      dxf: { name: 'shaft.dxf', digest: `sha256:${'a'.repeat(64)}`, base64: 'WA==' },
+      engineeringDocuments: [
+        { name: 'limits.pdf', digest: `sha256:${'b'.repeat(64)}`, mediaType: 'application/pdf', base64: 'WA==' },
+        { name: 'notes.txt', digest: `sha256:${'c'.repeat(64)}`, base64: 'WA==' },
+      ],
+    };
+    expect(partitionImportRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it('retains the legacy single text document input during migration', () => {
+    const request = {
+      dxf: { name: 'shaft.dxf', digest: `sha256:${'a'.repeat(64)}`, base64: 'WA==' },
+      engineeringDocument: { name: 'notes.txt', text: '轴段' },
+    };
+    expect(partitionImportRequestSchema.parse(request)).toEqual(request);
+  });
+
   it('strictly carries revision-bound engineering annotation drafts', () => {
     const draft = {
       version: 1 as const,

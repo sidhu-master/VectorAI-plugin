@@ -3,6 +3,7 @@
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
 import type { DrawingRef, PartitionEditCommand, PartitionImportRequest, PartitionSessionSnapshot } from '@vectorai/plugin-space-contracts';
+import { ENGINEERING_IMPORT_LIMITS, validateEngineeringDocumentFiles } from './engineering-file-policy';
 
 export interface PartitionRemote {
   importAndAnalyze(sessionId: string, request: PartitionImportRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
@@ -22,7 +23,7 @@ export interface PartitionController {
   state: DrawingSurfaceObservable<PartitionControllerState>;
   actions: {
     refresh(): Promise<void>;
-    importFiles(dxf: File, engineeringDocument?: File): Promise<void>;
+    importFiles(dxf: File, engineeringDocuments?: readonly File[]): Promise<void>;
     moveBoundary(boundaryIndex: number, requestedZ: number, snapTolerance: number): Promise<void>;
     splitSegment(segmentId: string, z: number, snapTolerance: number): Promise<void>;
     mergeBoundary(boundaryIndex: number): Promise<void>;
@@ -65,14 +66,23 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
     },
     actions: {
       refresh: () => run(() => remote.getPartitionState(sessionId)),
-      async importFiles(dxf, engineeringDocument) {
-        if (dxf.size > 20 * 1024 * 1024) throw new Error('DXF_SIZE_LIMIT');
-        if (engineeringDocument && engineeringDocument.size > 2 * 1024 * 1024) throw new Error('ENGINEERING_DOCUMENT_SIZE_LIMIT');
+      async importFiles(dxf, engineeringDocuments = []) {
+        if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error('DXF_SIZE_LIMIT');
+        validateEngineeringDocumentFiles(engineeringDocuments);
         const bytes = new Uint8Array(await dxf.arrayBuffer());
         const digest = `sha256:${hex(await crypto.subtle.digest('SHA-256', bytes))}`;
+        const documents = await Promise.all(engineeringDocuments.map(async (file) => {
+          const documentBytes = new Uint8Array(await file.arrayBuffer());
+          return {
+            name: file.name,
+            digest: `sha256:${hex(await crypto.subtle.digest('SHA-256', documentBytes))}`,
+            ...(file.type === '' ? {} : { mediaType: file.type }),
+            base64: base64(documentBytes),
+          };
+        }));
         const request: PartitionImportRequest = {
           dxf: { name: dxf.name, digest, base64: base64(bytes) },
-          ...(engineeringDocument === undefined ? {} : { engineeringDocument: { name: engineeringDocument.name, text: await engineeringDocument.text() } }),
+          engineeringDocuments: documents,
         };
         await run(() => remote.importAndAnalyze(sessionId, request));
       },

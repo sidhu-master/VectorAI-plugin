@@ -870,15 +870,28 @@ export const partitionSessionSnapshotSchema = z.object({
   canUndo: z.boolean(), canRedo: z.boolean(), message: z.string().optional(), updatedAt: z.number(),
 }).strict();
 
+export const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+export const engineeringDocumentInputSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  digest: sha256DigestSchema,
+  mediaType: z.string().trim().min(1).max(127).optional(),
+  base64: z.string().min(1).max(27_962_028),
+}).strict();
 export const partitionImportRequestSchema = z.object({
   dxf: z.object({ name: z.string().min(1).max(255), digest: idSchema, base64: z.string().min(1).max(27_962_028) }).strict(),
+  engineeringDocuments: z.array(engineeringDocumentInputSchema).max(16).optional(),
   engineeringDocument: z.object({ name: z.string().min(1).max(255), text: z.string() }).strict().optional(),
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.engineeringDocuments !== undefined && request.engineeringDocument !== undefined) {
+    context.addIssue({ code: 'custom', path: ['engineeringDocuments'], message: 'ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS' });
+  }
+});
 
 export type PartitionDraft = z.infer<typeof partitionDraftSchema>;
 export type PartitionRevision = z.infer<typeof partitionRevisionSchema>;
 export type PartitionEditCommand = z.infer<typeof partitionEditCommandSchema>;
 export type PartitionSessionSnapshot = z.infer<typeof partitionSessionSnapshotSchema>;
+export type EngineeringDocumentInput = z.infer<typeof engineeringDocumentInputSchema>;
 export type PartitionImportRequest = z.infer<typeof partitionImportRequestSchema>;
 
 const engineeringDiagnosticSchema = z.object({
