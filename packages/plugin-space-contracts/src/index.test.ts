@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
+import { createEmptyDrawing, type AnnotationId, type GeometryId } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -52,6 +52,44 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('round-trips portable tolerance and datum projections strictly', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-tolerance' }, now: () => 1 });
+    document.annotations = [{
+      id: 'dimension-1' as AnnotationId,
+      type: 'dimension',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      dimensionKind: 'linear',
+      associationStatus: 'resolved',
+      targets: [{ geometryId: 'line-1' as GeometryId, anchor: { kind: 'start' } }],
+      computedValue: 20,
+      unit: 'mm',
+      toleranceProjection: {
+        mode: 'fit', fitDesignation: 'H7', unit: 'mm', status: 'confirmed',
+        source: 'standard', ruleRef: { id: 'iso-fit', version: '1', inputDigest: 'sha256:abc' },
+        evidenceRefs: ['evidence:fit'],
+      },
+      datumReferences: [{
+        datumId: 'datum-a', role: 'primary', geometryId: 'line-1' as GeometryId, anchor: { kind: 'start' },
+      }],
+      engineeringIntentId: 'intent-1',
+      engineeringChainIds: ['chain-1'],
+      generationOrder: 2,
+      textPosition: [10, 5],
+      definitionPoints: [[0, 0], [20, 0]],
+    }];
+    expect(drawingDocumentSchema.parse(document).annotations[0]).toMatchObject({
+      engineeringIntentId: 'intent-1',
+      toleranceProjection: { mode: 'fit', fitDesignation: 'H7' },
+    });
+    const invalid = structuredClone(document);
+    (invalid.annotations[0] as { toleranceProjection?: { upperLimit?: number } }).toleranceProjection = {
+      ...(invalid.annotations[0] as { toleranceProjection: object }).toleranceProjection,
+      upperLimit: Number.POSITIVE_INFINITY,
+    };
+    expect(() => drawingDocumentSchema.parse(invalid)).toThrow();
+  });
+
   it('strictly carries revision-bound partition state and edits', () => {
     const ref = { drawingId: 'drawing-1', revision: 1 };
     const command = { type: 'boundary.move', expectedDrawingRef: ref, boundaryIndex: 1, requestedZ: 12, snapTolerance: 0.5 };

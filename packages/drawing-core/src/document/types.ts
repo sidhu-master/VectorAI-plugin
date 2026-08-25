@@ -139,6 +139,30 @@ export interface TextAnnotation extends BaseNode<AnnotationId, 'text'> {
   maxWidth?: number;
 }
 
+export type ToleranceDisplayMode = 'none' | 'bilateral' | 'unilateral' | 'limits' | 'fit';
+export type ToleranceSource = 'document' | 'standard' | 'enterprise-rule' | 'manual' | 'ai-candidate';
+
+export interface ToleranceProjection {
+  mode: ToleranceDisplayMode;
+  upperDeviation?: number;
+  lowerDeviation?: number;
+  upperLimit?: number;
+  lowerLimit?: number;
+  fitDesignation?: string;
+  unit: 'mm' | 'cm' | 'm' | 'deg';
+  status: 'candidate' | 'resolved' | 'confirmed' | 'conflict';
+  source: ToleranceSource;
+  ruleRef?: { id: string; version: string; inputDigest: string };
+  evidenceRefs: string[];
+}
+
+export interface DatumReference {
+  datumId: string;
+  role: 'primary' | 'secondary' | 'tertiary' | 'origin';
+  geometryId: GeometryId;
+  anchor: EntityAnchor;
+}
+
 export interface DimensionAnnotation extends BaseNode<AnnotationId, 'dimension'> {
   dimensionKind:
     | 'linear'
@@ -156,6 +180,11 @@ export interface DimensionAnnotation extends BaseNode<AnnotationId, 'dimension'>
   displayText?: string;
   unit?: 'mm' | 'cm' | 'm' | 'deg';
   tolerance?: { upper?: number; lower?: number };
+  toleranceProjection?: ToleranceProjection;
+  datumReferences?: DatumReference[];
+  engineeringIntentId?: string;
+  engineeringChainIds?: string[];
+  generationOrder?: number;
   prefix?: string;
   suffix?: string;
   textPosition: Vec2;

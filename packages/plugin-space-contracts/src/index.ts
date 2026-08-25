@@ -116,6 +116,45 @@ const dimensionCandidateSchema = z.object({
   score: z.number(),
   reasons: z.array(z.string()),
 }).strict();
+const toleranceProjectionSchema = z.object({
+  mode: z.enum(['none', 'bilateral', 'unilateral', 'limits', 'fit']),
+  upperDeviation: z.number().finite().optional(),
+  lowerDeviation: z.number().finite().optional(),
+  upperLimit: z.number().finite().optional(),
+  lowerLimit: z.number().finite().optional(),
+  fitDesignation: z.string().min(1).max(32).optional(),
+  unit: z.enum(['mm', 'cm', 'm', 'deg']),
+  status: z.enum(['candidate', 'resolved', 'confirmed', 'conflict']),
+  source: z.enum(['document', 'standard', 'enterprise-rule', 'manual', 'ai-candidate']),
+  ruleRef: z.object({
+    id: idSchema,
+    version: idSchema,
+    inputDigest: idSchema,
+  }).strict().optional(),
+  evidenceRefs: z.array(idSchema),
+}).strict().superRefine((value, context) => {
+  if (value.mode === 'limits' && (value.lowerLimit === undefined || value.upperLimit === undefined || value.lowerLimit > value.upperLimit)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_LIMIT_ORDER' });
+  }
+  if (value.mode === 'bilateral' && (value.upperDeviation === undefined || value.lowerDeviation === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATIONS_REQUIRED' });
+  }
+  if (value.mode === 'unilateral' && value.upperDeviation === undefined && value.lowerDeviation === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_REQUIRED' });
+  }
+  if (value.mode === 'fit' && value.fitDesignation === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_FIT_REQUIRED' });
+  }
+  if (value.status === 'confirmed' && value.evidenceRefs.length === 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_EVIDENCE_REQUIRED' });
+  }
+});
+const datumReferenceSchema = z.object({
+  datumId: idSchema,
+  role: z.enum(['primary', 'secondary', 'tertiary', 'origin']),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+}).strict();
 
 const annotationSchema = z.discriminatedUnion('type', [
   z.object({
@@ -141,6 +180,11 @@ const annotationSchema = z.discriminatedUnion('type', [
     displayText: z.string().optional(),
     unit: z.enum(['mm', 'cm', 'm', 'deg']).optional(),
     tolerance: z.object({ upper: z.number().optional(), lower: z.number().optional() }).strict().optional(),
+    toleranceProjection: toleranceProjectionSchema.optional(),
+    datumReferences: z.array(datumReferenceSchema).optional(),
+    engineeringIntentId: idSchema.optional(),
+    engineeringChainIds: z.array(idSchema).optional(),
+    generationOrder: z.number().int().nonnegative().optional(),
     prefix: z.string().optional(),
     suffix: z.string().optional(),
     textPosition: vec2Schema,
