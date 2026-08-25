@@ -65,7 +65,11 @@ describe('engineering drop bridge', () => {
       expect.objectContaining({ name: 'limits.pdf' }),
     ]));
     expect(refreshClaim).toHaveBeenCalledOnce();
-    expect(bridge.state.getSnapshot()).toMatchObject({ phase: 'idle', pendingDocuments: [] });
+    expect(bridge.state.getSnapshot()).toMatchObject({
+      phase: 'success',
+      pendingDocuments: [],
+      filenames: ['shaft.dxf', 'notes.txt', 'limits.pdf'],
+    });
   });
 
   it('accumulates documents dropped in more than one batch before the DXF', async () => {

@@ -24,7 +24,7 @@ export interface EngineeringDropEventTarget {
 }
 
 export interface EngineeringDropBridgeState {
-  phase: 'idle' | 'pending' | 'importing' | 'error';
+  phase: 'idle' | 'pending' | 'importing' | 'success' | 'error';
   pendingDocuments: File[];
   code?: string;
   filenames: string[];
@@ -90,7 +90,11 @@ export function createEngineeringDropBridgeController(input: {
     try {
       await input.importFiles(combined.dxf, combined.documents);
       await input.refreshClaim();
-      update({ phase: 'idle', pendingDocuments: [], filenames: [] });
+      update({
+        phase: 'success',
+        pendingDocuments: [],
+        filenames: [combined.dxf.name, ...combined.documents.map(({ name }) => name)],
+      });
     } catch (error) {
       update({
         phase: 'error',
@@ -169,6 +173,7 @@ function releaseDshNativeDragState(): void {
 function dropStatusText(state: EngineeringDropBridgeState): string {
   if (state.phase === 'pending') return `已暂存 ${state.pendingDocuments.length} 份工程资料，拖入 DXF 后开始智能分区`;
   if (state.phase === 'importing') return `正在本地读取并分析：${state.filenames.join('、')}`;
+  if (state.phase === 'success') return `导入完成，正在打开分区界面：${state.filenames.join('、')}`;
   return engineeringImportErrorText(state.code, state.filenames);
 }
 
