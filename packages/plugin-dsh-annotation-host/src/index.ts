@@ -12,3 +12,8 @@ export type {
   AnnotationWorkflowStatus,
 } from './session-state';
 export { DrawingAnnotationHostService, default } from './service';
+export {
+  DimensionPlanStore,
+  FileDimensionPlanStorage,
+} from './dimension-plan-store';
+export type { DimensionPlanStorage } from './dimension-plan-store';

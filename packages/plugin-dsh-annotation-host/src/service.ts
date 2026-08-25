@@ -22,6 +22,7 @@ import { createEngineeringAnnotationTool } from './tools';
 import { FilePartitionStorage, PartitionSessionStore } from './partition-store';
 import { PartitionWorkflowService } from './partition-service';
 import { createPartitionSemanticReviewer } from './semantic-reviewer';
+import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -36,6 +37,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   readonly sessions: AnnotationSessionStateStore;
   readonly partitions: PartitionSessionStore;
   readonly partitionWorkflow: PartitionWorkflowService;
+  readonly dimensionPlans: DimensionPlanStore;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingAnnotation');
@@ -44,6 +46,9 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     ));
     this.partitions = new PartitionSessionStore(new FilePartitionStorage(
       resolve(homedir(), '.dsh/vectorai/annotation-partitions'),
+    ));
+    this.dimensionPlans = new DimensionPlanStore(new FileDimensionPlanStorage(
+      resolve(homedir(), '.dsh/vectorai/dimension-plans'),
     ));
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,

@@ -32,6 +32,7 @@ import {
   partitionSessionSnapshotSchema,
   partitionEditCommandSchema,
   engineeringAnnotationDraftSchema,
+  dimensionPlanSessionSnapshotSchema,
 } from './index';
 
 function snapshot() {
@@ -75,6 +76,25 @@ describe('DSH drawing workspace wire schemas', () => {
         status: 'candidate', evidenceIds: [], diagnostics: [],
       }],
     })).toThrow();
+  });
+
+  it('strictly carries durable dimension-plan session snapshots', () => {
+    const snapshot = {
+      version: 1 as const,
+      phase: 'editing' as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      draft: {
+        version: 1 as const,
+        drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
+      },
+      canUndo: true,
+      canRedo: false,
+      updatedAt: 7,
+    };
+    expect(dimensionPlanSessionSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(() => dimensionPlanSessionSnapshotSchema.parse({ ...snapshot, formulaSource: 'return 0.1' })).toThrow();
+    expect(() => dimensionPlanSessionSnapshotSchema.parse({ ...snapshot, updatedAt: Number.NaN })).toThrow();
   });
 
   it('round-trips portable tolerance and datum projections strictly', () => {

@@ -981,5 +981,18 @@ export const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSch
   confirmedAt: z.number().finite(),
 }).strict();
 
+export const dimensionPlanSessionSnapshotSchema = z.object({
+  version: z.literal(1),
+  phase: z.enum(['idle', 'editing', 'confirmed', 'needs-rebase', 'failed']),
+  drawingRef: drawingRefSchema.optional(),
+  draft: engineeringAnnotationDraftSchema.optional(),
+  confirmed: engineeringAnnotationRevisionSchema.optional(),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+  message: z.string().optional(),
+  updatedAt: z.number().finite(),
+}).strict();
+
 export type EngineeringAnnotationDraft = z.infer<typeof engineeringAnnotationDraftSchema>;
 export type EngineeringAnnotationRevision = z.infer<typeof engineeringAnnotationRevisionSchema>;
+export type DimensionPlanSessionSnapshot = z.infer<typeof dimensionPlanSessionSnapshotSchema>;
