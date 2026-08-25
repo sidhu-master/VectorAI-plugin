@@ -11,3 +11,5 @@ export * from './shaft/steps';
 export * from './partition/fuse';
 export * from './partition/analyze';
 export * from './partition/semantic';
+export * from './dimension/types';
+export * from './dimension/validate';

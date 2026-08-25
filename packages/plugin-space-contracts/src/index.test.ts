@@ -31,6 +31,7 @@ import {
   drawingObservationResultSchema,
   partitionSessionSnapshotSchema,
   partitionEditCommandSchema,
+  engineeringAnnotationDraftSchema,
 } from './index';
 
 function snapshot() {
@@ -52,6 +53,30 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('strictly carries revision-bound engineering annotation drafts', () => {
+    const draft = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      datums: [],
+      intents: [],
+      tolerances: [],
+      chains: [],
+      dependencies: [],
+      diagnostics: [],
+    };
+    expect(engineeringAnnotationDraftSchema.parse(draft)).toEqual(draft);
+    expect(() => engineeringAnnotationDraftSchema.parse({ ...draft, formulaSource: 'return 0.1' })).toThrow();
+    expect(() => engineeringAnnotationDraftSchema.parse({
+      ...draft,
+      chains: [{
+        id: 'chain-1', drawingRef: draft.drawingRef, datumIds: [],
+        members: [{ dimensionIntentId: 'intent-1', coefficient: 0, role: 'component' }],
+        equation: { closureIntentId: 'intent-1' }, analysisMode: 'worst-case',
+        status: 'candidate', evidenceIds: [], diagnostics: [],
+      }],
+    })).toThrow();
+  });
+
   it('round-trips portable tolerance and datum projections strictly', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-tolerance' }, now: () => 1 });
     document.annotations = [{

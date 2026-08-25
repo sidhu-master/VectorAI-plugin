@@ -880,3 +880,106 @@ export type PartitionRevision = z.infer<typeof partitionRevisionSchema>;
 export type PartitionEditCommand = z.infer<typeof partitionEditCommandSchema>;
 export type PartitionSessionSnapshot = z.infer<typeof partitionSessionSnapshotSchema>;
 export type PartitionImportRequest = z.infer<typeof partitionImportRequestSchema>;
+
+const engineeringDiagnosticSchema = z.object({
+  id: idSchema,
+  severity: z.enum(['info', 'warning', 'error']),
+  code: idSchema,
+  message: z.string(),
+  entityIds: z.array(idSchema).optional(),
+  evidenceIds: z.array(idSchema).optional(),
+}).strict();
+const engineeringStateSchema = z.enum(['candidate', 'resolved', 'confirmed', 'conflict', 'stale']);
+const engineeringDatumSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: z.string().min(1).max(120),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+  role: z.enum(['primary', 'secondary', 'tertiary', 'origin']),
+  source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
+  status: z.enum(['candidate', 'confirmed', 'conflict', 'stale']),
+  evidenceIds: z.array(idSchema),
+}).strict();
+const dimensionIntentSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  kind: z.enum(['linear', 'aligned', 'angular', 'radius', 'diameter', 'ordinate', 'arc-length']),
+  targets: z.array(dimensionTargetSchema),
+  datumIds: z.array(idSchema),
+  nominalValue: z.number().finite(),
+  unit: z.enum(['mm', 'cm', 'm', 'deg']),
+  functionalRole: z.enum(['datum', 'overall', 'functional', 'assembly', 'process', 'inspection', 'auxiliary', 'closure']),
+  source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
+  status: engineeringStateSchema,
+  evidenceIds: z.array(idSchema),
+}).strict();
+const resolvedToleranceSchema = z.object({
+  upperDeviation: z.number().finite().optional(),
+  lowerDeviation: z.number().finite().optional(),
+  upperLimit: z.number().finite().optional(),
+  lowerLimit: z.number().finite().optional(),
+  fitDesignation: z.string().min(1).max(32).optional(),
+  inputDigest: idSchema,
+  evaluatedAt: z.number().finite(),
+}).strict();
+const toleranceSpecSchema = z.object({
+  id: idSchema,
+  dimensionIntentId: idSchema,
+  mode: z.enum(['bilateral', 'unilateral', 'limits', 'fit', 'formula']),
+  source: z.enum(['document', 'standard', 'enterprise-rule', 'manual', 'ai-candidate']),
+  ruleRef: z.object({ id: idSchema, version: idSchema }).strict().optional(),
+  inputs: z.record(z.string(), z.union([z.number().finite(), z.string(), z.boolean()])),
+  resolved: resolvedToleranceSchema.optional(),
+  status: engineeringStateSchema,
+  evidenceIds: z.array(idSchema),
+  diagnostics: z.array(engineeringDiagnosticSchema),
+}).strict();
+const dimensionChainSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: z.string().max(120).optional(),
+  datumIds: z.array(idSchema),
+  members: z.array(z.object({
+    dimensionIntentId: idSchema,
+    coefficient: z.union([z.literal(1), z.literal(-1)]),
+    role: z.enum(['functional', 'component', 'closure']),
+    sequenceHint: z.number().int().optional(),
+  }).strict()),
+  equation: z.object({
+    closureIntentId: idSchema,
+    targetValue: z.number().finite().optional(),
+  }).strict(),
+  analysisMode: z.enum(['worst-case', 'statistical', 'reference-only']),
+  status: engineeringStateSchema,
+  evidenceIds: z.array(idSchema),
+  diagnostics: z.array(engineeringDiagnosticSchema),
+}).strict();
+const annotationDependencySchema = z.object({
+  beforeIntentId: idSchema,
+  afterIntentId: idSchema,
+  reason: z.enum(['datum-before-dependent', 'overall-before-functional', 'functional-before-component', 'component-before-closure', 'explicit-document-order']),
+  evidenceIds: z.array(idSchema),
+}).strict();
+export const engineeringAnnotationDraftSchema = z.object({
+  version: z.literal(1),
+  drawingRef: drawingRefSchema,
+  datums: z.array(engineeringDatumSchema),
+  intents: z.array(dimensionIntentSchema),
+  tolerances: z.array(toleranceSpecSchema),
+  chains: z.array(dimensionChainSchema),
+  dependencies: z.array(annotationDependencySchema),
+  diagnostics: z.array(engineeringDiagnosticSchema),
+  baseRevisionId: idSchema.optional(),
+}).strict();
+export const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+  baseRevisionId: true,
+}).extend({
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  generationOrder: z.array(idSchema),
+  confirmedAt: z.number().finite(),
+}).strict();
+
+export type EngineeringAnnotationDraft = z.infer<typeof engineeringAnnotationDraftSchema>;
+export type EngineeringAnnotationRevision = z.infer<typeof engineeringAnnotationRevisionSchema>;
