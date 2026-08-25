@@ -3235,7 +3235,10 @@ function createDrawingSurfaceRegistry() {
     }
   };
 }
+function apply() {
+}
 export {
   DrawingSurfaceHost,
+  apply,
   createDrawingSurfaceRegistry
 };

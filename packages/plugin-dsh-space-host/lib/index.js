@@ -9997,10 +9997,22 @@ object$1({
   message: string$1().optional(),
   updatedAt: number()
 }).strict();
+const sha256DigestSchema = string$1().regex(/^sha256:[a-f0-9]{64}$/u);
+const engineeringDocumentInputSchema = object$1({
+  name: string$1().trim().min(1).max(255),
+  digest: sha256DigestSchema,
+  mediaType: string$1().trim().min(1).max(127).optional(),
+  base64: string$1().min(1).max(27962028)
+}).strict();
 object$1({
   dxf: object$1({ name: string$1().min(1).max(255), digest: idSchema, base64: string$1().min(1).max(27962028) }).strict(),
+  engineeringDocuments: array$1(engineeringDocumentInputSchema).max(16).optional(),
   engineeringDocument: object$1({ name: string$1().min(1).max(255), text: string$1() }).strict().optional()
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.engineeringDocuments !== void 0 && request.engineeringDocument !== void 0) {
+    context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
+  }
+});
 const engineeringDiagnosticSchema = object$1({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),

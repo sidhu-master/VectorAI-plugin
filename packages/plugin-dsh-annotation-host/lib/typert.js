@@ -5989,10 +5989,22 @@ const partitionSessionSnapshotSchema = object({
   message: string().optional(),
   updatedAt: number()
 }).strict();
+const sha256DigestSchema = string().regex(/^sha256:[a-f0-9]{64}$/u);
+const engineeringDocumentInputSchema = object({
+  name: string().trim().min(1).max(255),
+  digest: sha256DigestSchema,
+  mediaType: string().trim().min(1).max(127).optional(),
+  base64: string().min(1).max(27962028)
+}).strict();
 const partitionImportRequestSchema = object({
   dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+  engineeringDocuments: array(engineeringDocumentInputSchema).max(16).optional(),
   engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.engineeringDocuments !== void 0 && request.engineeringDocument !== void 0) {
+    context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
+  }
+});
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),

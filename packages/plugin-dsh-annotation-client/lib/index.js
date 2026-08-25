@@ -4267,6 +4267,108 @@ function toleranceSourceLabel(source) {
 function chainRoleLabel(role) {
   return { functional: "功能环", component: "组成环", closure: "封闭环" }[role];
 }
+const ENGINEERING_IMPORT_LIMITS = Object.freeze({
+  maxDxfBytes: 20 * 1024 * 1024,
+  maxDocumentBytes: 20 * 1024 * 1024,
+  maxDocumentTotalBytes: 50 * 1024 * 1024,
+  maxDocuments: 16
+});
+const SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS = Object.freeze([
+  "txt",
+  "md",
+  "csv",
+  "tsv",
+  "json",
+  "yaml",
+  "yml",
+  "ini",
+  "xml",
+  "html",
+  "htm",
+  "log",
+  "pdf",
+  "docx",
+  "xlsx",
+  "pptx",
+  "odt",
+  "ods",
+  "odp",
+  "rtf",
+  "epub"
+]);
+const LEGACY_ENGINEERING_DOCUMENT_EXTENSIONS = Object.freeze(["doc", "xls", "ppt"]);
+function extensionOf(name) {
+  const dot = name.lastIndexOf(".");
+  return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
+}
+function validateEngineeringDocumentFiles(files) {
+  if (files.length > ENGINEERING_IMPORT_LIMITS.maxDocuments) {
+    throw new Error("ENGINEERING_DOCUMENT_COUNT_LIMIT");
+  }
+  if (files.some((file) => file.size > ENGINEERING_IMPORT_LIMITS.maxDocumentBytes)) {
+    throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+  }
+  if (files.reduce((total, file) => total + file.size, 0) > ENGINEERING_IMPORT_LIMITS.maxDocumentTotalBytes) {
+    throw new Error("ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT");
+  }
+}
+const supported = new Set(SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS);
+const legacy = new Set(LEGACY_ENGINEERING_DOCUMENT_EXTENSIONS);
+function classifyEngineeringDrop(files) {
+  const dxfs = files.filter((file) => extensionOf(file.name) === "dxf");
+  if (dxfs.length > 1) {
+    return { kind: "reject", code: "ENGINEERING_DROP_MULTIPLE_DXF", filenames: dxfs.map(({ name }) => name) };
+  }
+  const rest = files.filter((file) => extensionOf(file.name) !== "dxf");
+  const supportedDocuments = rest.filter((file) => supported.has(extensionOf(file.name)));
+  const legacyDocuments = rest.filter((file) => legacy.has(extensionOf(file.name)));
+  const engineeringIntent = dxfs.length === 1 || supportedDocuments.length > 0 || legacyDocuments.length > 0;
+  if (!engineeringIntent) return { kind: "pass" };
+  if (legacyDocuments.length > 0) {
+    return { kind: "reject", code: "DOCUMENT_LEGACY_FORMAT_UNSUPPORTED", filenames: legacyDocuments.map(({ name }) => name) };
+  }
+  const unsupported = rest.filter((file) => !supported.has(extensionOf(file.name)));
+  if (unsupported.length > 0) {
+    return { kind: "reject", code: "ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED", filenames: unsupported.map(({ name }) => name) };
+  }
+  if (dxfs[0] && dxfs[0].size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) {
+    return { kind: "reject", code: "DXF_SIZE_LIMIT", filenames: [dxfs[0].name] };
+  }
+  if (supportedDocuments.length > ENGINEERING_IMPORT_LIMITS.maxDocuments) {
+    return { kind: "reject", code: "ENGINEERING_DOCUMENT_COUNT_LIMIT", filenames: supportedDocuments.map(({ name }) => name) };
+  }
+  const oversized = supportedDocuments.filter((file) => file.size > ENGINEERING_IMPORT_LIMITS.maxDocumentBytes);
+  if (oversized.length > 0) {
+    return { kind: "reject", code: "ENGINEERING_DOCUMENT_SIZE_LIMIT", filenames: oversized.map(({ name }) => name) };
+  }
+  if (supportedDocuments.reduce((total, file) => total + file.size, 0) > ENGINEERING_IMPORT_LIMITS.maxDocumentTotalBytes) {
+    return { kind: "reject", code: "ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT", filenames: supportedDocuments.map(({ name }) => name) };
+  }
+  const byName = /* @__PURE__ */ new Map();
+  for (const file of supportedDocuments) {
+    const key = file.name.toLocaleLowerCase();
+    byName.set(key, [...byName.get(key) ?? [], file]);
+  }
+  const duplicates = [...byName.values()].filter((group) => group.length > 1).flat();
+  if (duplicates.length > 0) {
+    return { kind: "reject", code: "ENGINEERING_DOCUMENT_DUPLICATE_NAME", filenames: duplicates.map(({ name }) => name) };
+  }
+  if (dxfs[0]) return { kind: "import", dxf: dxfs[0], documents: supportedDocuments };
+  return { kind: "pending", documents: supportedDocuments };
+}
+function engineeringImportErrorText(code, filenames = []) {
+  const names = filenames.length === 0 ? "" : `（${filenames.join("、")}）`;
+  if (code == null ? void 0 : code.startsWith("DOCUMENT_PARSE_TIMEOUT")) return `文档本地解析超时${names}`;
+  if (code == null ? void 0 : code.startsWith("DOCUMENT_PARSE_FAILED")) return `文档解析失败${names}`;
+  if (code == null ? void 0 : code.startsWith("DOCUMENT_TEXT_EMPTY")) return `文档中没有可提取的文字；扫描件暂不支持 OCR${names}`;
+  if (code == null ? void 0 : code.startsWith("DOCUMENT_LEGACY_FORMAT_UNSUPPORTED")) return `旧版 DOC/XLS/PPT 暂不支持，请另存为新版 Office、PDF 或文本格式${names}`;
+  if (code === "ENGINEERING_DROP_MULTIPLE_DXF") return `一次只能导入一张 DXF 图纸${names}`;
+  if (code == null ? void 0 : code.startsWith("ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED")) return `包含暂不支持的工程资料格式${names}`;
+  if (code === "ENGINEERING_DOCUMENT_DUPLICATE_NAME") return `工程资料存在重名文件${names}`;
+  if ((code == null ? void 0 : code.includes("SIZE_LIMIT")) || (code == null ? void 0 : code.includes("COUNT_LIMIT"))) return `工程文件超过本地导入限制${names}`;
+  return `工程文件导入失败：${code ?? "UNKNOWN"}`;
+}
+const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(",");
 function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPlan }) {
   var _a2;
   const snapshot = useObservable(runtime.snapshot);
@@ -4276,7 +4378,8 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
   const annotationState = useObservable(state);
   const partitionState = useObservable(partition.state);
   const [dxf, setDxf] = reactExports.useState(null);
-  const [engineering, setEngineering] = reactExports.useState(null);
+  const [engineering, setEngineering] = reactExports.useState([]);
+  const [importError, setImportError] = reactExports.useState(null);
   const [showImport, setShowImport] = reactExports.useState(false);
   const displaySnapshot = presentation.displaySnapshot ?? snapshot;
   const draft = partitionState.partition.draft;
@@ -4338,7 +4441,14 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
             ),
             (displaySnapshot === null || showImport) && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { className: "vai-annotation-import", onSubmit: (event) => {
               event.preventDefault();
-              if (dxf) void partition.actions.importFiles(dxf, engineering ?? void 0).then(() => setShowImport(false)).catch(() => void 0);
+              if (!dxf) return;
+              const decision = classifyEngineeringDrop([dxf, ...engineering]);
+              if (decision.kind !== "import") {
+                setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择一张 DXF 图纸");
+                return;
+              }
+              setImportError(null);
+              void partition.actions.importFiles(decision.dxf, decision.documents).then(() => setShowImport(false)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
             }, children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "导入轴类工程图" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。" }),
@@ -4350,15 +4460,13 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                 } })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
-                "工程数据文档（可选）",
-                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "file", accept: ".txt,.ini,text/plain", onChange: (event) => {
-                  var _a3;
-                  return setEngineering(((_a3 = event.currentTarget.files) == null ? void 0 : _a3[0]) ?? null);
-                } })
+                "工程数据文档（可多选）",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "file", multiple: true, accept: ENGINEERING_DOCUMENT_ACCEPT, onChange: (event) => setEngineering(Array.from(event.currentTarget.files ?? [])) })
               ] }),
+              engineering.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "vai-annotation-import__files", children: engineering.map((file) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: file.name }, `${file.name}:${file.size}`)) }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", disabled: !dxf || partitionState.busy, children: partitionState.busy ? "正在分析…" : "导入并智能分区" }),
               displaySnapshot !== null && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-annotation-import__close", onClick: () => setShowImport(false), children: "关闭" }),
-              partitionState.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", children: partitionState.error })
+              (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", children: importError ?? partitionState.error })
             ] }),
             partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
             (partitionState.partition.canUndo || partitionState.partition.canRedo) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-history", role: "toolbar", "aria-label": "分区历史", children: [
@@ -8114,9 +8222,9 @@ const numberProcessor = (schema, ctx, _json, _params) => {
     json.type = "number";
   const exMin = typeof exclusiveMinimum === "number" && exclusiveMinimum >= (minimum ?? Number.NEGATIVE_INFINITY);
   const exMax = typeof exclusiveMaximum === "number" && exclusiveMaximum <= (maximum ?? Number.POSITIVE_INFINITY);
-  const legacy = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
+  const legacy2 = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
   if (exMin) {
-    if (legacy) {
+    if (legacy2) {
       json.minimum = exclusiveMinimum;
       json.exclusiveMinimum = true;
     } else {
@@ -8126,7 +8234,7 @@ const numberProcessor = (schema, ctx, _json, _params) => {
     json.minimum = minimum;
   }
   if (exMax) {
-    if (legacy) {
+    if (legacy2) {
       json.maximum = exclusiveMaximum;
       json.exclusiveMaximum = true;
     } else {
@@ -10464,10 +10572,22 @@ const partitionSessionSnapshotSchema = object({
   message: string().optional(),
   updatedAt: number()
 }).strict();
+const sha256DigestSchema = string().regex(/^sha256:[a-f0-9]{64}$/u);
+const engineeringDocumentInputSchema = object({
+  name: string().trim().min(1).max(255),
+  digest: sha256DigestSchema,
+  mediaType: string().trim().min(1).max(127).optional(),
+  base64: string().min(1).max(27962028)
+}).strict();
 const partitionImportRequestSchema = object({
   dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+  engineeringDocuments: array(engineeringDocumentInputSchema).max(16).optional(),
   engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.engineeringDocuments !== void 0 && request.engineeringDocument !== void 0) {
+    context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
+  }
+});
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),
@@ -10672,14 +10792,23 @@ function createPartitionController(sessionId, remote) {
     },
     actions: {
       refresh: () => run(() => remote.getPartitionState(sessionId)),
-      async importFiles(dxf, engineeringDocument) {
-        if (dxf.size > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
-        if (engineeringDocument && engineeringDocument.size > 2 * 1024 * 1024) throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+      async importFiles(dxf, engineeringDocuments = []) {
+        if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error("DXF_SIZE_LIMIT");
+        validateEngineeringDocumentFiles(engineeringDocuments);
         const bytes = new Uint8Array(await dxf.arrayBuffer());
         const digest = `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`;
+        const documents = await Promise.all(engineeringDocuments.map(async (file) => {
+          const documentBytes = new Uint8Array(await file.arrayBuffer());
+          return {
+            name: file.name,
+            digest: `sha256:${hex(await crypto.subtle.digest("SHA-256", documentBytes))}`,
+            ...file.type === "" ? {} : { mediaType: file.type },
+            base64: base64(documentBytes)
+          };
+        }));
         const request = {
           dxf: { name: dxf.name, digest, base64: base64(bytes) },
-          ...engineeringDocument === void 0 ? {} : { engineeringDocument: { name: engineeringDocument.name, text: await engineeringDocument.text() } }
+          engineeringDocuments: documents
         };
         await run(() => remote.importAndAnalyze(sessionId, request));
       },
@@ -10712,10 +10841,13 @@ function base64(bytes) {
   for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
   return btoa(binary);
 }
+function apply() {
+}
 export {
   ANNOTATION_REMOTE,
   AnnotationWorkspace,
   DimensionPlanInspector,
+  apply,
   createAnnotationRemoteStateSource,
   createPartitionController
 };

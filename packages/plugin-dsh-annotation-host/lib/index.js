@@ -7603,10 +7603,22 @@ const partitionSessionSnapshotSchema = object({
   message: string().optional(),
   updatedAt: number()
 }).strict();
+const sha256DigestSchema = string().regex(/^sha256:[a-f0-9]{64}$/u);
+const engineeringDocumentInputSchema = object({
+  name: string().trim().min(1).max(255),
+  digest: sha256DigestSchema,
+  mediaType: string().trim().min(1).max(127).optional(),
+  base64: string().min(1).max(27962028)
+}).strict();
 object({
   dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+  engineeringDocuments: array(engineeringDocumentInputSchema).max(16).optional(),
   engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.engineeringDocuments !== void 0 && request.engineeringDocument !== void 0) {
+    context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
+  }
+});
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),
@@ -7982,22 +7994,199 @@ function parseEnvelope$1(value) {
     ...(confirmed == null ? void 0 : confirmed.data) === void 0 ? {} : { lastConfirmed: confirmed.data }
   };
 }
+const PLAIN_FORMATS = /* @__PURE__ */ new Set([
+  "txt",
+  "md",
+  "csv",
+  "tsv",
+  "json",
+  "yaml",
+  "yml",
+  "ini",
+  "xml",
+  "html",
+  "htm",
+  "log"
+]);
+const STRUCTURED_FORMATS = /* @__PURE__ */ new Set([
+  "pdf",
+  "docx",
+  "xlsx",
+  "pptx",
+  "odt",
+  "ods",
+  "odp",
+  "rtf",
+  "epub"
+]);
+const LEGACY_FORMATS = /* @__PURE__ */ new Set(["doc", "xls", "ppt"]);
+const ENGINEERING_DOCUMENT_LIMITS = Object.freeze({
+  maxDocuments: 16,
+  maxDocumentBytes: 20 * 1024 * 1024,
+  maxTotalDocumentBytes: 50 * 1024 * 1024,
+  maxDocumentTextBytes: 4 * 1024 * 1024,
+  maxTotalTextBytes: 8 * 1024 * 1024
+});
+async function extractEngineeringDocuments(inputs, options = {}) {
+  var _a3;
+  if (inputs.length > ENGINEERING_DOCUMENT_LIMITS.maxDocuments) {
+    throw new Error("ENGINEERING_DOCUMENT_COUNT_LIMIT");
+  }
+  const admitted = inputs.map((input) => {
+    const format2 = formatOf(input.name);
+    if (LEGACY_FORMATS.has(format2)) throw new Error(`DOCUMENT_LEGACY_FORMAT_UNSUPPORTED:${input.name}`);
+    if (!PLAIN_FORMATS.has(format2) && !STRUCTURED_FORMATS.has(format2)) {
+      throw new Error(`ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED:${input.name}`);
+    }
+    const bytes = decodeCanonicalBase64(input.base64, input.name);
+    if (bytes.byteLength > ENGINEERING_DOCUMENT_LIMITS.maxDocumentBytes) {
+      throw new Error(`ENGINEERING_DOCUMENT_SIZE_LIMIT:${input.name}`);
+    }
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    if (digest !== input.digest) throw new Error(`DOCUMENT_DIGEST_MISMATCH:${input.name}`);
+    return { input, format: format2, bytes };
+  });
+  if (admitted.reduce((total, item) => total + item.bytes.byteLength, 0) > ENGINEERING_DOCUMENT_LIMITS.maxTotalDocumentBytes) {
+    throw new Error("ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT");
+  }
+  const documents = [];
+  let totalTextBytes = 0;
+  for (const { input, format: format2, bytes } of admitted) {
+    (_a3 = options.signal) == null ? void 0 : _a3.throwIfAborted();
+    let extracted;
+    try {
+      extracted = PLAIN_FORMATS.has(format2) ? { text: decodePlainText(bytes), warnings: [] } : await parseWithDeadline(
+        options.parseStructured ?? parseStructuredDocument,
+        { name: input.name, format: format2, bytes },
+        options.signal,
+        options.parseTimeoutMs ?? 3e4
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      if (error instanceof Error && error.message.startsWith("DOCUMENT_PARSE_TIMEOUT:")) throw error;
+      const failure = new Error(`DOCUMENT_PARSE_FAILED:${input.name}`);
+      failure.cause = error;
+      throw failure;
+    }
+    const normalized = normalizeText(extracted.text);
+    if (normalized === "") throw new Error(`DOCUMENT_TEXT_EMPTY:${input.name}`);
+    const textBytes = Buffer.byteLength(normalized, "utf8");
+    if (textBytes > ENGINEERING_DOCUMENT_LIMITS.maxDocumentTextBytes) {
+      throw new Error(`DOCUMENT_TEXT_SIZE_LIMIT:${input.name}`);
+    }
+    totalTextBytes += textBytes;
+    if (totalTextBytes > ENGINEERING_DOCUMENT_LIMITS.maxTotalTextBytes) {
+      throw new Error("DOCUMENT_TOTAL_TEXT_SIZE_LIMIT");
+    }
+    documents.push({
+      name: input.name,
+      format: format2,
+      text: normalized,
+      warnings: [...extracted.warnings]
+    });
+  }
+  if (documents.length === 0) return { documents };
+  return {
+    documents,
+    combinedText: documents.map((document) => [
+      `===== ENGINEERING DOCUMENT: ${document.name} =====`,
+      document.text,
+      `===== END ENGINEERING DOCUMENT: ${document.name} =====`
+    ].join("\n")).join("\n")
+  };
+}
+async function parseWithDeadline(parser, input, parentSignal, timeoutMs) {
+  parentSignal == null ? void 0 : parentSignal.throwIfAborted();
+  const controller = new AbortController();
+  let rejectControl;
+  const control = new Promise((_resolve, reject) => {
+    rejectControl = reject;
+  });
+  const onAbort = () => {
+    controller.abort(parentSignal == null ? void 0 : parentSignal.reason);
+    rejectControl == null ? void 0 : rejectControl((parentSignal == null ? void 0 : parentSignal.reason) ?? new DOMException("Aborted", "AbortError"));
+  };
+  parentSignal == null ? void 0 : parentSignal.addEventListener("abort", onAbort, { once: true });
+  const timeout = setTimeout(() => {
+    const failure = new Error(`DOCUMENT_PARSE_TIMEOUT:${input.name}`);
+    controller.abort(failure);
+    rejectControl == null ? void 0 : rejectControl(failure);
+  }, Math.max(1, timeoutMs));
+  try {
+    return await Promise.race([parser({ ...input, signal: controller.signal }), control]);
+  } finally {
+    clearTimeout(timeout);
+    parentSignal == null ? void 0 : parentSignal.removeEventListener("abort", onAbort);
+  }
+}
+const parseStructuredDocument = async ({ format: format2, bytes, signal }) => {
+  const { OfficeParser } = await import("officeparser");
+  const ast = await OfficeParser.parseOffice(bytes, {
+    fileType: format2,
+    ocr: false,
+    extractAttachments: false,
+    includeRawContent: false,
+    abortSignal: signal ?? null
+  });
+  return {
+    text: ast.toText(),
+    warnings: (ast.warnings ?? []).map((warning) => {
+      if (typeof warning === "string") return warning;
+      if (warning && typeof warning === "object" && "message" in warning) return String(warning.message);
+      return JSON.stringify(warning);
+    })
+  };
+};
+function formatOf(name) {
+  const dot2 = name.lastIndexOf(".");
+  return dot2 < 0 ? "" : name.slice(dot2 + 1).toLowerCase();
+}
+function decodeCanonicalBase64(value, name) {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+    throw new Error(`DOCUMENT_PARSE_FAILED:${name}`);
+  }
+  const bytes = Buffer.from(value, "base64");
+  if (bytes.toString("base64") !== value) throw new Error(`DOCUMENT_PARSE_FAILED:${name}`);
+  return new Uint8Array(bytes);
+}
+function decodePlainText(bytes) {
+  let encoding = "utf-8";
+  let offset = 0;
+  if (bytes[0] === 239 && bytes[1] === 187 && bytes[2] === 191) offset = 3;
+  else if (bytes[0] === 255 && bytes[1] === 254) {
+    encoding = "utf-16le";
+    offset = 2;
+  } else if (bytes[0] === 254 && bytes[1] === 255) {
+    encoding = "utf-16be";
+    offset = 2;
+  }
+  const value = new TextDecoder(encoding, { fatal: true }).decode(bytes.subarray(offset));
+  if (value.includes("\0") || value.includes("�")) throw new Error("DOCUMENT_BINARY_TEXT");
+  return value;
+}
+function normalizeText(value) {
+  return value.replace(/\r\n?/gu, "\n").replace(/[ \t]+$/gmu, "").trim();
+}
 class PartitionWorkflowService {
-  constructor(space, partitions, annotations, reviewer) {
+  constructor(space, partitions, annotations, reviewer, extractDocuments = extractEngineeringDocuments) {
     __privateAdd(this, _PartitionWorkflowService_instances);
     this.space = space;
     this.partitions = partitions;
     this.annotations = annotations;
     this.reviewer = reviewer;
+    this.extractDocuments = extractDocuments;
   }
   async importAndAnalyze(agent, request, signal) {
-    var _a3;
+    var _a3, _b;
     if (request.dxf.base64.length > 27962028) throw new Error("DXF_SIZE_LIMIT");
     const bytes = decodeBase64(request.dxf.base64);
     if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
-    if ((((_a3 = request.engineeringDocument) == null ? void 0 : _a3.text.length) ?? 0) > 2 * 1024 * 1024) throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+    if (Buffer.byteLength(((_a3 = request.engineeringDocument) == null ? void 0 : _a3.text) ?? "", "utf8") > 8 * 1024 * 1024) throw new Error("DOCUMENT_TOTAL_TEXT_SIZE_LIMIT");
     const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
     if (digest !== request.dxf.digest) throw new Error("DXF_DIGEST_MISMATCH");
+    signal == null ? void 0 : signal.throwIfAborted();
+    const extracted = request.engineeringDocuments === void 0 ? void 0 : await this.extractDocuments(request.engineeringDocuments, { signal });
+    const engineeringText = (extracted == null ? void 0 : extracted.combinedText) ?? ((_b = request.engineeringDocument) == null ? void 0 : _b.text);
     signal == null ? void 0 : signal.throwIfAborted();
     await this.space.importDxf(agent, { bytes, digest, name: request.dxf.name }, signal);
     const snapshot = this.space.getSnapshot(agent);
@@ -8008,7 +8197,7 @@ class PartitionWorkflowService {
     const analyzed = analyzeShaftPartition({
       document: snapshot.document,
       drawingRef: snapshot.ref,
-      ...request.engineeringDocument === void 0 ? {} : { engineeringText: request.engineeringDocument.text },
+      ...engineeringText === void 0 ? {} : { engineeringText },
       drawingSourceName: request.dxf.name
     });
     if (analyzed.status === "rejected") {

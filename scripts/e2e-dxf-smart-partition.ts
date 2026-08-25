@@ -4,38 +4,50 @@ import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { analyzeShaftPartition, applySemanticProposals, validatePartition, type EvidenceOrigin } from '../packages/engineering-annotation/src/index';
+import { analyzeShaftPartition, validatePartition, type EvidenceOrigin, type PartitionDraft } from '../packages/engineering-annotation/src/index';
 import { InMemoryDrawingRepository } from '../packages/plugin-dsh-space-host/src/repository';
+import { AnnotationSessionStateStore } from '../packages/plugin-dsh-annotation-host/src/session-state';
+import { PartitionWorkflowService } from '../packages/plugin-dsh-annotation-host/src/partition-service';
 import { PartitionSessionStore } from '../packages/plugin-dsh-annotation-host/src/partition-store';
 
 const dxfPath = resolve('packages/dxf-import/test/fixtures/initial-shaft.dxf');
 const documentPath = resolve('packages/dxf-import/test/fixtures/initial-shaft-engineering.ini');
-const [bytes, engineeringText] = await Promise.all([readFile(dxfPath), readFile(documentPath, 'utf8')]);
+const [bytes, documentBytes] = await Promise.all([readFile(dxfPath), readFile(documentPath)]);
 const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+const documentDigest = `sha256:${createHash('sha256').update(documentBytes).digest('hex')}`;
 const drawings = new InMemoryDrawingRepository({ vectorizer: { async vectorize() { throw new Error('IMAGE_VECTORIZER_MUST_NOT_RUN'); } }, now: () => 1 });
-await drawings.importDxf('e2e', { bytes, digest, name: 'initial-shaft.dxf' });
+const agent = { id: 'e2e' } as Parameters<PartitionWorkflowService['importAndAnalyze']>[0];
+const partitions = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition:e2e' });
+const annotations = new AnnotationSessionStateStore(undefined, { now: () => 7 });
+const service = new PartitionWorkflowService({
+  importDxf: async (_agent, input, signal) => drawings.importDxf('e2e', { ...input, signal }),
+  getSnapshot: () => drawings.getSnapshot('e2e'),
+  renderObservation: async () => { throw new Error('OBSERVATION_MUST_NOT_RUN'); },
+}, partitions, annotations);
+let state = await service.importAndAnalyze(agent, {
+  dxf: { name: 'initial-shaft.dxf', digest, base64: bytes.toString('base64') },
+  engineeringDocuments: [{
+    name: '样本图001# DXF工程数据文档.txt',
+    mediaType: 'text/plain',
+    digest: documentDigest,
+    base64: documentBytes.toString('base64'),
+  }],
+});
 const snapshot = drawings.getSnapshot('e2e');
 assert(snapshot);
 const drawingDigestBefore = hash(snapshot.document.geometry);
-const analysis = analyzeShaftPartition({ document: snapshot.document, drawingRef: snapshot.ref, engineeringText, drawingSourceName: 'initial-shaft.dxf' });
-assert.equal(analysis.status, 'drafted');
-if (analysis.status !== 'drafted') throw new Error('PARTITION_ANALYSIS_FAILED');
-assert.equal(validatePartition(analysis.draft).length, 0);
-const proposals = analysis.unclassifiedSegmentIds.map((id, index) => ({
-  segmentIds: [id], semanticType: 'unclassified-shaft-segment', name: `AI 候选 S${index + 1}`,
-  confidence: 0.4, reason: 'bounded visual candidate awaiting user confirmation', visualEvidenceIds: [`observation:${id}`],
-}));
-const reviewed = applySemanticProposals(analysis.draft, proposals).draft;
-const partitions = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition:e2e' });
-partitions.beginAnalysis('e2e', snapshot.ref);
-let state = partitions.setDraft('e2e', reviewed);
-const lifecycle = [state.phase];
+assert.equal(state.phase, 'editing');
+assert(state.draft);
+const reviewed = state.draft as unknown as PartitionDraft;
+assert.equal(validatePartition(reviewed).length, 0);
+assert.equal(annotations.get('e2e').workspaceClaimed, true);
+const lifecycle: string[] = [state.phase];
 const boundary = reviewed.segments[0]!.zEnd;
-state = partitions.edit('e2e', { type: 'boundary.move', expectedDrawingRef: snapshot.ref, boundaryIndex: 1, requestedZ: boundary + 0.1, snapTolerance: 0.5 });
-state = partitions.confirm('e2e', snapshot.ref); lifecycle.push(state.phase);
-state = partitions.undo('e2e', snapshot.ref); lifecycle.push(state.phase);
-state = partitions.redo('e2e', snapshot.ref); lifecycle.push(state.phase);
-state = partitions.undo('e2e', snapshot.ref); lifecycle.push(state.phase);
+state = service.edit(agent, { type: 'boundary.move', expectedDrawingRef: snapshot.ref, boundaryIndex: 1, requestedZ: boundary + 0.1, snapTolerance: 0.5 });
+state = service.confirm(agent, snapshot.ref); lifecycle.push(state.phase);
+state = service.undo(agent, snapshot.ref); lifecycle.push(state.phase);
+state = service.redo(agent, snapshot.ref); lifecycle.push(state.phase);
+state = service.undo(agent, snapshot.ref); lifecycle.push(state.phase);
 assert.deepEqual(lifecycle, ['editing', 'confirmed', 'editing', 'confirmed', 'editing']);
 const noDocument = analyzeShaftPartition({ document: snapshot.document, drawingRef: snapshot.ref });
 assert.equal(noDocument.status, 'drafted');

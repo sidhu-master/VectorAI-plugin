@@ -76,7 +76,9 @@ Launcher 使用独立应用窗口启动 DSH，不显示终端黑窗。它在启�
 - 自动标注 Workspace claim 位于 `~/.dsh/vectorai/annotation-sessions/`；任务完成、取消或失败不会清除，session 销毁时删除。
 - 分区草稿、确认版本及 Undo/Redo 历史位于 `~/.dsh/vectorai/annotation-partitions/`，使用散列 session 文件名和临时文件 rename 原子写入。
 - 尺寸意图、公差规格、尺寸链及其 Undo/Redo 历史位于 `~/.dsh/vectorai/dimension-plans/`；它与第一层 Drawing 分离，并保留独立的最后确认基线。
-- DXF 智能分区只由专业工作区的显式导入触发。DXF 上限 20 MiB，工程文档上限 2 MiB；Host 会重新计算 SHA-256。
+- DXF 智能分区只由显式工程文件组合触发：可在 DSH 输入区拖入一张 DXF 和多份资料，也可从专业工作区选择。只拖入资料时会在当前会话暂存，下一张 DXF 才开始导入；普通图片仍交给 DSH，不触发图纸流程。
+- 资料格式：`txt/md/csv/tsv/json/yaml/yml/ini/xml/html/htm/log`、`pdf/docx/xlsx/pptx/odt/ods/odp/rtf/epub`。旧 `doc/xls/ppt` 会提示另存为新版 Office、PDF 或文本；扫描 PDF 本阶段不做 OCR。
+- 全部解析在本机 Host 完成。DXF 上限 20 MiB；最多 16 份资料，单份 20 MiB、合计 50 MiB，提取文本单份 4 MiB、合计 8 MiB；结构化文档解析限时 30 秒。Client 和 Host 都校验限制与 SHA-256，任何资料失败都发生在第一层导入 DXF 之前。
 - Drawing 工具按需激活；无 Drawing 的普通会话不显示 VectorAI Workspace。
 - 第一层与第二层 UI 路由已使用成功能力认领，不使用消息文本或附件启发式；第二层不可用时临时回退第一层。
 

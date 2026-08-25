@@ -120,6 +120,8 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 - create/replace/assess/finalize/discard extension Preview；
 - 独立 Client 通过只读 annotation session projection 驱动 claim，不检查消息文本或附件。
 - 第一层提供宿主内 `importDxf` 和受限 `renderObservation` 扩展接口；它们不注册全局上传路由或提示词；
+- 第二层 Client 通过 `conversation.input.dock` 注册会话级工程文件桥，只截获 DXF/受支持资料组合；DSH 原有图片附件链路保持不变。资料可在浏览器内暂存，但不写入聊天历史；DXF 到达后才调用第二层 remote 并认领 Workspace；
+- 第二层 Host 在第一层 `importDxf` 之前完成文档格式、大小、摘要和本地文本抽取。文本类由自有解码器处理，PDF/新版 Office/OpenDocument/RTF/EPUB 由 Host-only `officeparser` 处理，OCR、CDN worker 和远端服务全部关闭；
 - 第二层依次执行文档解析、轴向坐标系、外轮廓、持久台阶、证据融合，几何始终负责完整覆盖；
 - 缺失语义只交给无工具、深度 1、严格输出 schema 的视觉 reviewer；输入是稳定轴段 ID 与本地编号图，输出不含坐标；
 - 分区状态机支持 analyzing/editing/confirmed/needs-rebase，确认、取消、Undo/Redo 不改变 Drawing revision。
@@ -164,6 +166,6 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 - 单元/契约：Core、Spatial、Edit、Workspace、Viewer、Remote codec、依赖边界；
 - 集成：仓库持久化、幂等 receipt、Preview/Finalize/Undo、Client 生命周期；
 - E2E：Host-owned semantic edit、Motion Rig、Launcher；
-- 工程数据 E2E：DXF 智能分区；公差规则解析、DAG 顺序、尺寸链、第一层投影、DXF 与持久恢复；
+- 工程数据 E2E：真实 DXF + 二进制工程资料经统一 Host admission 进入智能分区；公差规则解析、DAG 顺序、尺寸链、第一层投影、DXF 与持久恢复；
 - 构建：静态网站、DSH Host Typert 与 Client bundle；
 - packaged cross-bundle E2E 覆盖 sticky routing、卸载 fallback、重装恢复、一笔正式提交和 Undo。

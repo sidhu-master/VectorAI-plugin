@@ -121,7 +121,6 @@ async function parseWithDeadline(
 ): Promise<{ text: string; warnings: string[] }> {
   parentSignal?.throwIfAborted();
   const controller = new AbortController();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
   let rejectControl: ((reason: unknown) => void) | undefined;
   const control = new Promise<never>((_resolve, reject) => { rejectControl = reject; });
   const onAbort = () => {
@@ -129,7 +128,7 @@ async function parseWithDeadline(
     rejectControl?.(parentSignal?.reason ?? new DOMException('Aborted', 'AbortError'));
   };
   parentSignal?.addEventListener('abort', onAbort, { once: true });
-  timeout = setTimeout(() => {
+  const timeout = setTimeout(() => {
     const failure = new Error(`DOCUMENT_PARSE_TIMEOUT:${input.name}`);
     controller.abort(failure);
     rejectControl?.(failure);

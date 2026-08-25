@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+/* eslint-disable react-refresh/only-export-components -- controller and formatter are shared with non-React admission paths */
 
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import type { PartitionController } from './partition-controller';
