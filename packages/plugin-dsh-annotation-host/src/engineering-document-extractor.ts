@@ -39,7 +39,7 @@ export type StructuredDocumentParser = (
 
 export async function extractEngineeringDocuments(
   inputs: readonly EngineeringDocumentInput[],
-  options: { signal?: AbortSignal; parseStructured?: StructuredDocumentParser } = {},
+  options: { signal?: AbortSignal; parseStructured?: StructuredDocumentParser; parseTimeoutMs?: number } = {},
 ): Promise<{ documents: ExtractedEngineeringDocument[]; combinedText?: string }> {
   if (inputs.length > ENGINEERING_DOCUMENT_LIMITS.maxDocuments) {
     throw new Error('ENGINEERING_DOCUMENT_COUNT_LIMIT');
@@ -71,14 +71,15 @@ export async function extractEngineeringDocuments(
     try {
       extracted = PLAIN_FORMATS.has(format)
         ? { text: decodePlainText(bytes), warnings: [] }
-        : await (options.parseStructured ?? parseStructuredDocument)({
-          name: input.name,
-          format,
-          bytes,
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-        });
+        : await parseWithDeadline(
+          options.parseStructured ?? parseStructuredDocument,
+          { name: input.name, format, bytes },
+          options.signal,
+          options.parseTimeoutMs ?? 30_000,
+        );
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw error;
+      if (error instanceof Error && error.message.startsWith('DOCUMENT_PARSE_TIMEOUT:')) throw error;
       const failure = new Error(`DOCUMENT_PARSE_FAILED:${input.name}`) as Error & { cause?: unknown };
       failure.cause = error;
       throw failure;
@@ -110,6 +111,35 @@ export async function extractEngineeringDocuments(
       `===== END ENGINEERING DOCUMENT: ${document.name} =====`,
     ].join('\n')).join('\n'),
   };
+}
+
+async function parseWithDeadline(
+  parser: StructuredDocumentParser,
+  input: Omit<StructuredDocumentParserInput, 'signal'>,
+  parentSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<{ text: string; warnings: string[] }> {
+  parentSignal?.throwIfAborted();
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let rejectControl: ((reason: unknown) => void) | undefined;
+  const control = new Promise<never>((_resolve, reject) => { rejectControl = reject; });
+  const onAbort = () => {
+    controller.abort(parentSignal?.reason);
+    rejectControl?.(parentSignal?.reason ?? new DOMException('Aborted', 'AbortError'));
+  };
+  parentSignal?.addEventListener('abort', onAbort, { once: true });
+  timeout = setTimeout(() => {
+    const failure = new Error(`DOCUMENT_PARSE_TIMEOUT:${input.name}`);
+    controller.abort(failure);
+    rejectControl?.(failure);
+  }, Math.max(1, timeoutMs));
+  try {
+    return await Promise.race([parser({ ...input, signal: controller.signal }), control]);
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener('abort', onAbort);
+  }
 }
 
 const parseStructuredDocument: StructuredDocumentParser = async ({ format, bytes, signal }) => {

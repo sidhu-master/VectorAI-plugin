@@ -79,6 +79,13 @@ describe('engineering document extractor', () => {
     expect(result.documents[0]?.text).toContain('diameter 20');
   });
 
+  it('bounds a structured parser that ignores cancellation', async () => {
+    await expect(extractEngineeringDocuments([text('stalled.pdf', '%PDF-1.7')], {
+      parseTimeoutMs: 5,
+      parseStructured: async () => new Promise(() => undefined),
+    })).rejects.toThrow('DOCUMENT_PARSE_TIMEOUT:stalled.pdf');
+  });
+
   it('rejects tampered, legacy, empty, and binary-looking text inputs with stable codes', async () => {
     const tampered = text('notes.txt', 'valid');
     tampered.digest = `sha256:${'0'.repeat(64)}`;
