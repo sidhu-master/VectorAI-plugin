@@ -15,6 +15,19 @@ function drop(files: File[]) {
   };
 }
 
+function engineeringDragPreview(files: File[]) {
+  return {
+    dataTransfer: {
+      files: [],
+      items: files.map((entry) => ({ kind: 'file', type: entry.type, getAsFile: () => entry })),
+      types: ['Files'],
+      dropEffect: 'none',
+    },
+    preventDefault: vi.fn(),
+    stopImmediatePropagation: vi.fn(),
+  };
+}
+
 describe('engineering drop bridge', () => {
   it('does not interfere with ordinary DSH image drops', async () => {
     const importFiles = vi.fn();
@@ -99,5 +112,39 @@ describe('engineering drop bridge', () => {
     ]);
     detach();
     expect(removed).toEqual(added);
+  });
+
+  it('owns engineering dragenter before DSH can open its native image overlay', () => {
+    const listeners = new Map<string, (event: never) => void>();
+    const target: EngineeringDropEventTarget = {
+      addEventListener: vi.fn((type, listener) => { listeners.set(type, listener as never); }),
+      removeEventListener: vi.fn(),
+    };
+    const bridge = createEngineeringDropBridgeController({ importFiles: vi.fn(), refreshClaim: vi.fn() });
+    bridge.actions.attach(target);
+    const event = engineeringDragPreview([file('shaft.dxf', 'application/dxf')]);
+
+    listeners.get('dragenter')?.(event as never);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
+    expect(event.dataTransfer.dropEffect).toBe('copy');
+  });
+
+  it('still lets DSH preview and receive ordinary image drags', () => {
+    const listeners = new Map<string, (event: never) => void>();
+    const target: EngineeringDropEventTarget = {
+      addEventListener: vi.fn((type, listener) => { listeners.set(type, listener as never); }),
+      removeEventListener: vi.fn(),
+    };
+    const bridge = createEngineeringDropBridgeController({ importFiles: vi.fn(), refreshClaim: vi.fn() });
+    bridge.actions.attach(target);
+    const event = engineeringDragPreview([file('photo.png', 'image/png')]);
+
+    listeners.get('dragenter')?.(event as never);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+    expect(event.dataTransfer.dropEffect).toBe('none');
   });
 });

@@ -6,7 +6,14 @@ import type { PartitionController } from './partition-controller';
 import { classifyEngineeringDrop } from './engineering-drop';
 
 interface DropEventLike {
-  dataTransfer: { files: ArrayLike<File>; dropEffect?: string } | null;
+  dataTransfer: {
+    files: ArrayLike<File>;
+    items?: ArrayLike<{
+      kind: string;
+      getAsFile(): File | null;
+    }>;
+    dropEffect?: string;
+  } | null;
   preventDefault(): void;
   stopImmediatePropagation(): void;
 }
@@ -50,9 +57,7 @@ export function createEngineeringDropBridgeController(input: {
     event.stopImmediatePropagation();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
   };
-  const inspect = (event: DropEventLike) => classifyEngineeringDrop(
-    event.dataTransfer === null ? [] : Array.from(event.dataTransfer.files),
-  );
+  const inspect = (event: DropEventLike) => classifyEngineeringDrop(filesFromTransfer(event.dataTransfer));
   const handleDrop = async (event: DropEventLike) => {
     const decision = inspect(event);
     if (decision.kind === 'pass') return;
@@ -118,6 +123,23 @@ export function createEngineeringDropBridgeController(input: {
       clear: () => update({ phase: 'idle', pendingDocuments: [], filenames: [] }),
     },
   };
+}
+
+function filesFromTransfer(dataTransfer: DropEventLike['dataTransfer']): File[] {
+  if (dataTransfer === null) return [];
+  const droppedFiles = Array.from(dataTransfer.files);
+  if (droppedFiles.length > 0 || dataTransfer.items === undefined) return droppedFiles;
+  const previewFiles: File[] = [];
+  for (const item of Array.from(dataTransfer.items)) {
+    if (item.kind !== 'file') continue;
+    try {
+      const file = item.getAsFile();
+      if (file !== null) previewFiles.push(file);
+    } catch {
+      // Some browser engines protect file contents until drop; leave the event to DSH when metadata is unavailable.
+    }
+  }
+  return previewFiles;
 }
 
 export function EngineeringDropBridge({ partition, refreshClaim }: {

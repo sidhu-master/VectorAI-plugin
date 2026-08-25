@@ -1287,9 +1287,7 @@ window.__ModuleLoader__.load({
         event.stopImmediatePropagation();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
       };
-      const inspect = (event) => classifyEngineeringDrop(
-        event.dataTransfer === null ? [] : Array.from(event.dataTransfer.files)
-      );
+      const inspect = (event) => classifyEngineeringDrop(filesFromTransfer(event.dataTransfer));
       const handleDrop = async (event) => {
         const decision = inspect(event);
         if (decision.kind === "pass") return;
@@ -1361,6 +1359,21 @@ window.__ModuleLoader__.load({
           clear: () => update({ phase: "idle", pendingDocuments: [], filenames: [] })
         }
       };
+    }
+    function filesFromTransfer(dataTransfer) {
+      if (dataTransfer === null) return [];
+      const droppedFiles = Array.from(dataTransfer.files);
+      if (droppedFiles.length > 0 || dataTransfer.items === void 0) return droppedFiles;
+      const previewFiles = [];
+      for (const item of Array.from(dataTransfer.items)) {
+        if (item.kind !== "file") continue;
+        try {
+          const file = item.getAsFile();
+          if (file !== null) previewFiles.push(file);
+        } catch {
+        }
+      }
+      return previewFiles;
     }
     function EngineeringDropBridge({ partition, refreshClaim }) {
       const bridge = react.useMemo(() => createEngineeringDropBridgeController({
