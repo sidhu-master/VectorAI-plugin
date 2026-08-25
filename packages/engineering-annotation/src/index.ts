@@ -13,6 +13,8 @@ export * from './partition/analyze';
 export * from './partition/semantic';
 export * from './dimension/types';
 export * from './dimension/validate';
+export * from './dimension/order';
+export * from './dimension/chain';
 export * from './tolerance/rules';
 export * from './tolerance/digest';
 export * from './tolerance/evaluate';
