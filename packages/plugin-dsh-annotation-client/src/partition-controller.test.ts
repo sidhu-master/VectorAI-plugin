@@ -61,4 +61,17 @@ describe('partition controller', () => {
     expect(read).not.toHaveBeenCalled();
     expect(importAndAnalyze).not.toHaveBeenCalled();
   });
+
+  it('preserves the remote failure message so live import failures are diagnosable', async () => {
+    const controller = createPartitionController('s', {
+      importAndAnalyze: vi.fn(async () => ({
+        ok: false as const,
+        error: { code: 'INTERNAL', message: 'DXF_IMPORT_FAILED:invalid section', details: {} },
+      })),
+      getPartitionState: vi.fn(), editPartition: vi.fn(), confirmPartition: vi.fn(), cancelPartition: vi.fn(), undoPartition: vi.fn(), redoPartition: vi.fn(),
+    } as never);
+
+    await expect(controller.actions.importFiles(new File(['DXF'], 'shaft.dxf')))
+      .rejects.toThrow('DXF_IMPORT_FAILED:invalid section');
+  });
 });

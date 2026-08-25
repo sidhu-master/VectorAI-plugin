@@ -10829,7 +10829,7 @@ function createPartitionController(sessionId, remote) {
   };
 }
 function unwrap(result) {
-  if (result.ok !== true) throw new Error("PARTITION_REMOTE_FAILED");
+  if (result.ok !== true) throw new Error(result.error.message);
   return structuredClone(result.value);
 }
 function hex(value) {

@@ -101,7 +101,7 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
 }
 
 function unwrap(result: RemoteResult<PartitionSessionSnapshot>): PartitionSessionSnapshot {
-  if (result.ok !== true) throw new Error('PARTITION_REMOTE_FAILED');
+  if (result.ok !== true) throw new Error(result.error.message);
   return structuredClone(result.value);
 }
 function hex(value: ArrayBuffer): string { return [...new Uint8Array(value)].map((byte) => byte.toString(16).padStart(2, '0')).join(''); }

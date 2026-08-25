@@ -1289,9 +1289,11 @@ window.__ModuleLoader__.load({
       };
       const inspect = (event) => classifyEngineeringDrop(filesFromTransfer(event.dataTransfer));
       const handleDrop = async (event) => {
+        var _a2;
         const decision = inspect(event);
         if (decision.kind === "pass") return;
         own(event);
+        (_a2 = input.releaseNativeDragState) == null ? void 0 : _a2.call(input);
         if (decision.kind === "reject") {
           update({ phase: "error", pendingDocuments: [], code: decision.code, filenames: decision.filenames });
           return;
@@ -1378,7 +1380,8 @@ window.__ModuleLoader__.load({
     function EngineeringDropBridge({ partition, refreshClaim }) {
       const bridge = react.useMemo(() => createEngineeringDropBridgeController({
         importFiles: partition.actions.importFiles,
-        refreshClaim
+        refreshClaim,
+        releaseNativeDragState: releaseDshNativeDragState
       }), [partition, refreshClaim]);
       const state = react.useSyncExternalStore(bridge.state.subscribe, bridge.state.getSnapshot, bridge.state.getSnapshot);
       react.useEffect(() => bridge.actions.attach(document), [bridge]);
@@ -1387,6 +1390,9 @@ window.__ModuleLoader__.load({
         /* @__PURE__ */ jsxRuntime.jsx("span", { children: dropStatusText(state) }),
         (state.phase === "pending" || state.phase === "error") && /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", onClick: bridge.actions.clear, children: "清除" })
       ] });
+    }
+    function releaseDshNativeDragState() {
+      window.dispatchEvent(new Event("dragend"));
     }
     function dropStatusText(state) {
       if (state.phase === "pending") return `已暂存 ${state.pendingDocuments.length} 份工程资料，拖入 DXF 后开始智能分区`;
@@ -7866,7 +7872,7 @@ window.__ModuleLoader__.load({
       };
     }
     function unwrap(result) {
-      if (result.ok !== true) throw new Error("PARTITION_REMOTE_FAILED");
+      if (result.ok !== true) throw new Error(result.error.message);
       return structuredClone(result.value);
     }
     function hex(value) {

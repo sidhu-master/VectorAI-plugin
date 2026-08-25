@@ -96,6 +96,21 @@ describe('engineering drop bridge', () => {
     });
   });
 
+  it('releases the DSH native drag lifecycle after owning an engineering drop', async () => {
+    let nativeOverlayActive = true;
+    const nativeWindow = new EventTarget();
+    nativeWindow.addEventListener('dragend', () => { nativeOverlayActive = false; });
+    const bridge = createEngineeringDropBridgeController({
+      importFiles: vi.fn(async () => undefined),
+      refreshClaim: vi.fn(async () => undefined),
+      releaseNativeDragState: () => { nativeWindow.dispatchEvent(new Event('dragend')); },
+    });
+
+    await bridge.actions.handleDrop(drop([file('shaft.dxf')]));
+
+    expect(nativeOverlayActive).toBe(false);
+  });
+
   it('installs capture-phase listeners and removes them on disposal', () => {
     const added: Array<[string, (event: never) => void, boolean?]> = [];
     const removed: Array<[string, (event: never) => void, boolean?]> = [];

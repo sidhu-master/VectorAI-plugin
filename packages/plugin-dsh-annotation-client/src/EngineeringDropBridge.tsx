@@ -45,6 +45,7 @@ export interface EngineeringDropBridgeController {
 export function createEngineeringDropBridgeController(input: {
   importFiles(dxf: File, documents: readonly File[]): Promise<void>;
   refreshClaim(): Promise<void>;
+  releaseNativeDragState?(): void;
 }): EngineeringDropBridgeController {
   let current: EngineeringDropBridgeState = { phase: 'idle', pendingDocuments: [], filenames: [] };
   const listeners = new Set<() => void>();
@@ -62,6 +63,7 @@ export function createEngineeringDropBridgeController(input: {
     const decision = inspect(event);
     if (decision.kind === 'pass') return;
     own(event);
+    input.releaseNativeDragState?.();
     if (decision.kind === 'reject') {
       update({ phase: 'error', pendingDocuments: [], code: decision.code, filenames: decision.filenames });
       return;
@@ -149,6 +151,7 @@ export function EngineeringDropBridge({ partition, refreshClaim }: {
   const bridge = useMemo(() => createEngineeringDropBridgeController({
     importFiles: partition.actions.importFiles,
     refreshClaim,
+    releaseNativeDragState: releaseDshNativeDragState,
   }), [partition, refreshClaim]);
   const state = useSyncExternalStore(bridge.state.subscribe, bridge.state.getSnapshot, bridge.state.getSnapshot);
   useEffect(() => bridge.actions.attach(document as unknown as EngineeringDropEventTarget), [bridge]);
@@ -157,6 +160,10 @@ export function EngineeringDropBridge({ partition, refreshClaim }: {
     <span>{dropStatusText(state)}</span>
     {(state.phase === 'pending' || state.phase === 'error') && <button type="button" onClick={bridge.actions.clear}>清除</button>}
   </div>;
+}
+
+function releaseDshNativeDragState(): void {
+  window.dispatchEvent(new Event('dragend'));
 }
 
 function dropStatusText(state: EngineeringDropBridgeState): string {
