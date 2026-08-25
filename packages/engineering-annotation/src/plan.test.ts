@@ -23,7 +23,8 @@ describe('planEngineeringAnnotations', () => {
     expect(plan.annotations).toHaveLength(1);
     expect(plan.annotations[0]).toMatchObject({
       type: 'dimension', dimensionKind: 'diameter', associationStatus: 'resolved',
-      computedValue: 10, quality: { status: 'confirmed' },
+      computedValue: 10, quality: { status: 'confirmed' }, generationOrder: 0,
+      engineeringIntentId: expect.stringMatching(/^intent_auto_/),
     });
     expect(plan.associations[0]).toMatchObject({
       type: 'association', kind: 'annotation-target', geometryIds: ['hole-1'],

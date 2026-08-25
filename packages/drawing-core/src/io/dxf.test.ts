@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { createEmptyDrawing } from '../document';
+import { createEmptyDrawing, type DimensionAnnotation } from '../document';
 import { exportDrawingDxf } from './dxf';
 
 const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -60,5 +60,69 @@ describe('exportDrawingDxf', () => {
     }];
 
     expect(exportDrawingDxf(document)).toContain('1\r\nA\\PB\\PC');
+  });
+
+  it('renders resolved portable and legacy tolerance labels without evaluating formulas', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-tolerance' }, now: () => 1 });
+    const dimension = (id: string, displayText: string): DimensionAnnotation => ({
+      id: id as never, type: 'dimension', dimensionKind: 'linear',
+      associationStatus: 'resolved', targets: [], computedValue: 10, displayText,
+      unit: 'mm', textPosition: [0, 0], definitionPoints: [[0, 0], [10, 0]],
+      visible: true, quality,
+    });
+    document.annotations = [
+      {
+        ...dimension('bilateral', '10'),
+        toleranceProjection: {
+          mode: 'bilateral', upperDeviation: 0.02, lowerDeviation: -0.01, unit: 'mm',
+          source: 'enterprise-rule', status: 'resolved', evidenceRefs: ['rule:1'],
+        },
+      },
+      {
+        ...dimension('unilateral', '10'),
+        toleranceProjection: {
+          mode: 'unilateral', upperDeviation: 0.02, lowerDeviation: 0, unit: 'mm',
+          source: 'manual', status: 'confirmed', evidenceRefs: ['manual:1'],
+        },
+      },
+      {
+        ...dimension('limits', '10'),
+        toleranceProjection: {
+          mode: 'limits', upperLimit: 10.02, lowerLimit: 9.98, unit: 'mm',
+          source: 'document', status: 'confirmed', evidenceRefs: ['document:1'],
+        },
+      },
+      {
+        ...dimension('fit', '10'),
+        toleranceProjection: {
+          mode: 'fit', fitDesignation: 'H7', unit: 'mm', source: 'standard',
+          status: 'confirmed', evidenceRefs: ['standard:1'],
+        },
+      },
+      { ...dimension('legacy', '10'), tolerance: { upper: 0.03, lower: -0.02 } },
+    ];
+
+    const dxf = exportDrawingDxf(document);
+    expect(dxf).toContain('1\r\n10 +0.02/-0.01');
+    expect(dxf).toContain('1\r\n10 +0.02/0');
+    expect(dxf).toContain('1\r\n10 [10.02/9.98]');
+    expect(dxf).toContain('1\r\n10 H7');
+    expect(dxf).toContain('1\r\n10 +0.03/-0.02');
+  });
+
+  it('sanitizes tolerance designation text before writing a DXF group value', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-fit' }, now: () => 1 });
+    document.annotations = [{
+      id: 'fit' as never, type: 'dimension', dimensionKind: 'linear', associationStatus: 'resolved',
+      targets: [], computedValue: 10, displayText: '10', unit: 'mm', textPosition: [0, 0],
+      definitionPoints: [[0, 0], [10, 0]], visible: true, quality,
+      toleranceProjection: {
+        mode: 'fit', fitDesignation: 'H7\n0\nLINE', unit: 'mm', source: 'manual',
+        status: 'resolved', evidenceRefs: ['manual:fit'],
+      },
+    }];
+    const dxf = exportDrawingDxf(document);
+    expect(dxf).toContain('1\r\n10 H7\\P0\\PLINE\r\n50\r\n0');
+    expect(dxf).not.toContain('1\r\n10 H7\r\n0\r\nLINE');
   });
 });

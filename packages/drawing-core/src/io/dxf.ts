@@ -240,10 +240,57 @@ function annotationTextHeight(node: Extract<AnnotationNode, { type: 'dimension' 
 }
 
 function dimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
+  const base = baseDimensionLabel(node);
+  const tolerance = toleranceLabel(node);
+  return tolerance === undefined ? base : `${base} ${tolerance}`;
+}
+
+function baseDimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
   if (node.displayText !== undefined) return node.displayText;
   const value = node.observedValue ?? node.computedValue;
   if (value === undefined) return '—';
   return `${node.prefix ?? ''}${value}${node.unit ? ` ${node.unit}` : ''}${node.suffix ?? ''}`;
+}
+
+function toleranceLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string | undefined {
+  const projection = node.toleranceProjection;
+  if (projection && (projection.status === 'resolved' || projection.status === 'confirmed')) {
+    switch (projection.mode) {
+      case 'bilateral':
+      case 'unilateral':
+        if (finite(projection.upperDeviation) && finite(projection.lowerDeviation)) {
+          return `${signed(projection.upperDeviation)}/${signed(projection.lowerDeviation)}`;
+        }
+        return undefined;
+      case 'limits':
+        if (finite(projection.upperLimit) && finite(projection.lowerLimit) && projection.lowerLimit <= projection.upperLimit) {
+          return `[${textNumber(projection.upperLimit)}/${textNumber(projection.lowerLimit)}]`;
+        }
+        return undefined;
+      case 'fit':
+        return projection.fitDesignation?.trim() || undefined;
+      case 'none':
+        return undefined;
+    }
+  }
+  const legacy = node.tolerance;
+  if (legacy && (finite(legacy.upper) || finite(legacy.lower))) {
+    return `${signed(legacy.upper ?? 0)}/${signed(legacy.lower ?? 0)}`;
+  }
+  return undefined;
+}
+
+function finite(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function signed(value: number): string {
+  if (Object.is(value, -0) || value === 0) return '0';
+  return value > 0 ? `+${textNumber(value)}` : textNumber(value);
+}
+
+function textNumber(value: number): string {
+  return Object.is(value, -0) ? '0' : String(value);
 }
 
 function dxfText(value: string): string {
