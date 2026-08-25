@@ -60,6 +60,14 @@ describe('DSH plugin bundle boundaries', () => {
     expect(`${result.stdout}${result.stderr}`).toBe('');
     expect(result.status).toBe(0);
   }, 30_000);
+
+  it('keeps the local Office parser on the Host dependency path instead of bundling its browser CDN defaults', () => {
+    const buildScript = readFileSync(resolve(root, 'scripts/build-dsh-space.mjs'), 'utf8');
+
+    expect(buildScript).toContain("id === 'officeparser'");
+    expect(readManifest('packages/plugin-dsh-annotation-host/package.json').dependencies)
+      .toMatchObject({ officeparser: '7.8.0' });
+  });
 });
 
 function readManifest(relativePath: string): PackageManifest {

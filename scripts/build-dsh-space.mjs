@@ -119,7 +119,7 @@ async function buildClient({ directory, temporaryPrefix, moduleId, styleKey, lab
 }
 
 function serverExternal(id) {
-  return deepseekExternal(id) || id.startsWith('node:') || id === 'sharp';
+  return deepseekExternal(id) || id.startsWith('node:') || id === 'sharp' || id === 'officeparser';
 }
 
 function browserExternal(id) {
