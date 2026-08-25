@@ -5,8 +5,11 @@ import { describe, expect, it } from 'vitest';
 import { ANNOTATION_REMOTE } from './remote';
 
 describe('ANNOTATION_REMOTE', () => {
-  it('exposes only the strict readonly session projection', () => {
-    expect(ANNOTATION_REMOTE.descriptors).toHaveLength(1);
+  it('exposes the strict session projection and explicit partition lifecycle', () => {
+    expect(ANNOTATION_REMOTE.descriptors.map(({ method }) => method)).toEqual([
+      'getSessionState', 'importAndAnalyze', 'getPartitionState', 'editPartition',
+      'confirmPartition', 'cancelPartition', 'undoPartition', 'redoPartition',
+    ]);
     const [descriptor] = ANNOTATION_REMOTE.descriptors;
     expect(descriptor?.method).toBe('getSessionState');
     expect(descriptor?.parameters[0]?.codec.mode).toBe('strict');

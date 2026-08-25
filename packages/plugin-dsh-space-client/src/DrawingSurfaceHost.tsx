@@ -11,7 +11,6 @@ import {
   useCallback,
   useSyncExternalStore,
   type ComponentType,
-  type ErrorInfo,
   type ReactNode,
 } from 'react';
 
@@ -86,7 +85,7 @@ class ContributionErrorBoundary extends Component<
     return { error: error instanceof Error ? error : new Error(String(error)) };
   }
 
-  componentDidCatch(_error: Error, _info: ErrorInfo) {
+  componentDidCatch() {
     // React reports the original component stack. The owned diagnostic surface remains mounted.
   }
 

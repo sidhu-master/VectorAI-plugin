@@ -42,6 +42,30 @@ describe('renderReviewComparison', () => {
     expect(marked.png.byteLength).toBeGreaterThan(plain.png.byteLength);
   });
 
+  it('renders bounded world-space polygons with stable labels for extension observations', async () => {
+    const source = document(0);
+    const plain = await renderDrawingObservation({
+      document: source,
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+    });
+    const marked = await renderDrawingObservation({
+      document: source,
+      viewport: { minX: -10, minY: -10, maxX: 110, maxY: 60 },
+      worldOverlays: [{
+        id: 'segment:1',
+        label: 'S1',
+        polygon: [[0, -5], [50, -5], [50, 5], [0, 5]],
+      }],
+    });
+
+    expect(marked.contentDigest).not.toBe(plain.contentDigest);
+    expect(marked.manifest.worldOverlays).toEqual([{
+      id: 'segment:1',
+      label: 'S1',
+      polygon: [[0, -5], [50, -5], [50, 5], [0, 5]],
+    }]);
+  });
+
   it('renders the resolved model selection as a distinct feedback image', async () => {
     const source = document(0);
     const unselected = await renderDrawingObservation({

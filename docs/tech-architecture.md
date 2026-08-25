@@ -108,7 +108,7 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 
 ## 7. 第二层 Engineering Annotation
 
-当前实现包含确定性标注核心、持久 session claim、DSH Host 工具和独立 Client 工作区。正式 Drawing 仍由第一层拥有，第二层提交高层 `SpatialEditProgram`，第一层负责编译、评估、提交与 Undo。
+当前实现包含确定性标注核心、持久 session claim、DSH Host 和独立 Client 工作区。正式 Drawing 仍由第一层拥有。DXF 由第一层 `importDxf` 原子规范化为 Canonical Drawing；第二层把轴段分区作为绑定精确 Drawing revision 的独立语义资产保存，不把分区伪装成 DXF 图元。
 
 当前 Surface 架构提供：
 
@@ -119,10 +119,14 @@ Motion Rig 是第一层可选交互状态。Host 从语义选择推导 control b
 - 第二层按成功能力路由创建、持久化 sticky session claim；
 - create/replace/assess/finalize/discard extension Preview；
 - 独立 Client 通过只读 annotation session projection 驱动 claim，不检查消息文本或附件。
+- 第一层提供宿主内 `importDxf` 和受限 `renderObservation` 扩展接口；它们不注册全局上传路由或提示词；
+- 第二层依次执行文档解析、轴向坐标系、外轮廓、持久台阶、证据融合，几何始终负责完整覆盖；
+- 缺失语义只交给无工具、深度 1、严格输出 schema 的视觉 reviewer；输入是稳定轴段 ID 与本地编号图，输出不含坐标；
+- 分区状态机支持 analyzing/editing/confirmed/needs-rebase，确认、取消、Undo/Redo 不改变 Drawing revision。
 
 第二层认领的是会话 Workspace，不是一次任务的 modal。completed、canceled、failed、idle 或 needs-rebase 均不释放 claim。插件暂时不可用时显示第一层 fallback，但保留 claim。
 
-生产级分区、候选布局、碰撞优化和覆盖策略仍属于下一阶段。完整契约与验收见 [可扩展二维空间规范](specs/extensible-2d-space-surface.md)。
+当前轴类智能分区是第二层的第一项完整能力；最终尺寸候选布局、碰撞优化和覆盖策略属于下一阶段。完整契约与验收见 [DXF 智能分区设计](superpowers/specs/2026-08-25-dxf-smart-partition-design.md)。
 
 ## 8. Viewer 与宿主适配
 

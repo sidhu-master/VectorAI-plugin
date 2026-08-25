@@ -8,3 +8,5 @@ export type {
   DrawingAnnotationRemote,
 } from './annotation-state-source';
 export { ANNOTATION_REMOTE } from './remote';
+export { createPartitionController } from './partition-controller';
+export type { PartitionController, PartitionControllerState, PartitionRemote } from './partition-controller';

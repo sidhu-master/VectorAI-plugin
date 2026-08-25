@@ -46,10 +46,17 @@ const qualitySchema = z.object({
   confidence: z.number().optional(),
   evidenceRefs: z.array(idSchema),
 }).strict();
+const drawingNodeSourceRefSchema = z.object({
+  sourceId: idSchema,
+  objectId: idSchema.optional(),
+  objectType: idSchema.optional(),
+  layer: z.string().min(1).optional(),
+}).strict();
 const baseNodeShape = {
   id: idSchema,
   visible: z.boolean(),
   quality: qualitySchema,
+  sourceRef: drawingNodeSourceRefSchema.optional(),
 };
 
 const geometrySchema = z.discriminatedUnion('type', [
@@ -217,6 +224,14 @@ export const drawingDocumentSchema = z.object({
   id: idSchema,
   metadata: z.object({ createdAt: z.number(), updatedAt: z.number() }).strict(),
   unitSystem: z.object({ length: z.enum(['mm', 'cm', 'm']), angle: z.literal('deg') }).strict(),
+  sources: z.array(z.object({
+    id: idSchema,
+    kind: z.enum(['image', 'dxf']),
+    mediaType: z.string().min(1),
+    digest: idSchema,
+    name: z.string().min(1).optional(),
+    bytes: z.number().int().nonnegative().optional(),
+  }).strict()).optional(),
   coordinateFrames: z.array(z.object({
     id: idSchema,
     kind: z.enum(['document', 'source', 'page', 'view', 'provisional']),
@@ -295,14 +310,22 @@ export const drawingQueryResultSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 
-const drawingSourceRefSchema = z.object({
-  id: idSchema,
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  bytes: z.number().int().nonnegative().optional(),
-  width: z.number().positive(),
-  height: z.number().positive(),
-  name: z.string().optional(),
-}).strict();
+const drawingSourceRefSchema = z.union([
+  z.object({
+    id: idSchema,
+    mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+    bytes: z.number().int().nonnegative().optional(),
+    width: z.number().positive(),
+    height: z.number().positive(),
+    name: z.string().optional(),
+  }).strict(),
+  z.object({
+    id: idSchema,
+    mediaType: z.literal('application/dxf'),
+    bytes: z.number().int().nonnegative().optional(),
+    name: z.string().optional(),
+  }).strict(),
+]);
 
 export const drawingWorkspaceSnapshotSchema = z.object({
   version: z.literal(1),
@@ -672,8 +695,54 @@ export interface DrawingExtensionProgramWorkflow {
   result: DrawingExtensionProgramTerminalResult;
 }
 
+export const drawingDxfImportRequestSchema = z.object({
+  bytes: z.instanceof(Uint8Array),
+  digest: idSchema,
+  name: z.string().trim().min(1).max(255).optional(),
+}).strict();
+
+const drawingObservationOverlaySchema = z.object({
+  id: idSchema,
+  label: z.string().trim().min(1).max(80),
+  polygon: z.array(vec2Schema).min(3).max(16),
+}).strict();
+
+export const drawingObservationRequestSchema = z.object({
+  ref: drawingRefSchema,
+  overlays: z.array(drawingObservationOverlaySchema).max(128).optional(),
+}).strict();
+
+export const drawingObservationResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('rendered'),
+    png: z.instanceof(Uint8Array),
+    contentDigest: idSchema,
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  }).strict(),
+  z.object({ status: z.literal('stale'), currentRef: drawingRefSchema }).strict(),
+  z.object({ status: z.literal('rejected'), code: idSchema, message: z.string().min(1) }).strict(),
+]);
+
+export type DrawingDxfImportRequest = z.infer<typeof drawingDxfImportRequestSchema>;
+export interface DrawingObservationRequest {
+  ref: DrawingRef;
+  overlays?: Array<{ id: string; label: string; polygon: Array<[number, number]> }>;
+}
+export type DrawingObservationResult = z.infer<typeof drawingObservationResultSchema>;
+
 export interface DrawingSpaceExtensionHost<TSession = unknown> {
   getSnapshot(session: TSession): DrawingWorkspaceSnapshot | null;
+  importDxf(
+    session: TSession,
+    request: DrawingDxfImportRequest,
+    signal?: AbortSignal,
+  ): Promise<DrawingImportResult>;
+  renderObservation(
+    session: TSession,
+    request: DrawingObservationRequest,
+    signal?: AbortSignal,
+  ): Promise<DrawingObservationResult>;
   runExtensionProgram(
     session: TSession,
     request: DrawingExtensionProgramRequest,
@@ -703,3 +772,67 @@ export interface DrawingImportResult {
 }
 
 export const drawingSessionIdSchema = z.string().min(1);
+
+const partitionEvidenceSchema = z.object({
+  id: idSchema, origin: z.enum(['document', 'geometry', 'fused', 'ai', 'manual']), label: z.string(),
+  sourceLines: z.array(z.number().int().positive()).optional(), geometryNodeIds: z.array(idSchema).optional(),
+}).strict();
+const partitionDiagnosticSchema = z.object({
+  id: idSchema, severity: z.enum(['info', 'warning', 'error']), code: idSchema, message: z.string(),
+  segmentIds: z.array(idSchema).optional(), evidenceIds: z.array(idSchema).optional(),
+}).strict();
+const shaftAxisSchema = z.object({
+  origin: vec2Schema, direction: vec2Schema, normal: vec2Schema,
+  zMin: z.number(), zMax: z.number(), orientation: z.enum(['forward', 'reversed']),
+  geometryNodeIds: z.array(idSchema).optional(),
+}).strict();
+const stepCandidateSchema = z.object({
+  id: idSchema, z: z.number(), score: z.number(), evidenceIds: z.array(idSchema), accepted: z.boolean(),
+}).strict();
+const partitionSegmentSchema = z.object({
+  id: idSchema, zStart: z.number(), zEnd: z.number(),
+  profile: z.object({ minRadius: z.number(), maxRadius: z.number(), sampleCount: z.number().int().nonnegative() }).strict(),
+  semanticType: z.string().optional(), name: z.string().optional(), boundaryConfidence: z.number(), semanticConfidence: z.number().optional(),
+  geometryNodeIds: z.array(idSchema), boundaryEvidenceIds: z.array(idSchema), semanticEvidenceIds: z.array(idSchema), diagnosticIds: z.array(idSchema),
+  profileSamples: z.array(z.object({ z: z.number(), radius: z.number().nonnegative(), geometryNodeId: idSchema }).strict()).optional(),
+}).strict();
+const partitionGroupSchema = z.object({
+  id: idSchema, segmentIds: z.array(idSchema), semanticType: z.string(), name: z.string().optional(), evidenceIds: z.array(idSchema),
+}).strict();
+export const partitionDraftSchema = z.object({
+  version: z.literal(1), drawingRef: drawingRefSchema, axis: shaftAxisSchema,
+  segments: z.array(partitionSegmentSchema), semanticGroups: z.array(partitionGroupSchema),
+  stepCandidates: z.array(stepCandidateSchema), evidence: z.array(partitionEvidenceSchema), diagnostics: z.array(partitionDiagnosticSchema),
+  basePartitionRevisionId: idSchema.optional(),
+}).strict();
+export const partitionRevisionSchema = z.object({
+  version: z.literal(1), drawingRef: drawingRefSchema, axis: shaftAxisSchema,
+  segments: z.array(partitionSegmentSchema), semanticGroups: z.array(partitionGroupSchema),
+  evidence: z.array(partitionEvidenceSchema), diagnostics: z.array(partitionDiagnosticSchema),
+  id: idSchema, parentRevisionId: idSchema.optional(), confirmedAt: z.number(),
+}).strict();
+
+export const partitionEditCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('boundary.move'), expectedDrawingRef: drawingRefSchema, boundaryIndex: z.number().int().positive(), requestedZ: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
+  z.object({ type: z.literal('segment.split'), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
+  z.object({ type: z.literal('boundary.merge'), expectedDrawingRef: drawingRefSchema, boundaryIndex: z.number().int().positive() }).strict(),
+  z.object({ type: z.literal('segment.metadata'), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: z.string().max(120).optional(), semanticType: z.string().max(80).optional() }).strict(),
+]);
+
+export const partitionSessionSnapshotSchema = z.object({
+  version: z.literal(1),
+  phase: z.enum(['idle', 'analyzing', 'editing', 'confirmed', 'needs-rebase', 'failed']),
+  drawingRef: drawingRefSchema.optional(), draft: partitionDraftSchema.optional(), confirmed: partitionRevisionSchema.optional(),
+  canUndo: z.boolean(), canRedo: z.boolean(), message: z.string().optional(), updatedAt: z.number(),
+}).strict();
+
+export const partitionImportRequestSchema = z.object({
+  dxf: z.object({ name: z.string().min(1).max(255), digest: idSchema, base64: z.string().min(1).max(27_962_028) }).strict(),
+  engineeringDocument: z.object({ name: z.string().min(1).max(255), text: z.string() }).strict().optional(),
+}).strict();
+
+export type PartitionDraft = z.infer<typeof partitionDraftSchema>;
+export type PartitionRevision = z.infer<typeof partitionRevisionSchema>;
+export type PartitionEditCommand = z.infer<typeof partitionEditCommandSchema>;
+export type PartitionSessionSnapshot = z.infer<typeof partitionSessionSnapshotSchema>;
+export type PartitionImportRequest = z.infer<typeof partitionImportRequestSchema>;

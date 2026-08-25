@@ -4862,6 +4862,28 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
+function _instanceof(cls, params = {}) {
+  const inst = new ZodCustom({
+    type: "custom",
+    check: "custom",
+    fn: (data) => data instanceof cls,
+    abort: true,
+    ...normalizeParams(params)
+  });
+  inst._zod.bag.Class = cls;
+  inst._zod.check = (payload) => {
+    if (!(payload.value instanceof cls)) {
+      payload.issues.push({
+        code: "invalid_type",
+        expected: cls.name,
+        input: payload.value,
+        inst,
+        path: [...inst._zod.def.path ?? []]
+      });
+    }
+  };
+  return inst;
+}
 const protocolIdSchema = string().trim().min(1).max(256);
 const contentDigestSchema = string().trim().min(1).max(512);
 const idSchema$3 = protocolIdSchema;
@@ -5238,10 +5260,17 @@ const qualitySchema = object({
   confidence: number().optional(),
   evidenceRefs: array(idSchema)
 }).strict();
+const drawingNodeSourceRefSchema = object({
+  sourceId: idSchema,
+  objectId: idSchema.optional(),
+  objectType: idSchema.optional(),
+  layer: string().min(1).optional()
+}).strict();
 const baseNodeShape = {
   id: idSchema,
   visible: boolean(),
-  quality: qualitySchema
+  quality: qualitySchema,
+  sourceRef: drawingNodeSourceRefSchema.optional()
 };
 const geometrySchema = discriminatedUnion("type", [
   object({ ...baseNodeShape, type: literal("point"), x: number(), y: number() }).strict(),
@@ -5403,6 +5432,14 @@ const drawingDocumentSchema = object({
   id: idSchema,
   metadata: object({ createdAt: number(), updatedAt: number() }).strict(),
   unitSystem: object({ length: _enum(["mm", "cm", "m"]), angle: literal("deg") }).strict(),
+  sources: array(object({
+    id: idSchema,
+    kind: _enum(["image", "dxf"]),
+    mediaType: string().min(1),
+    digest: idSchema,
+    name: string().min(1).optional(),
+    bytes: number().int().nonnegative().optional()
+  }).strict()).optional(),
   coordinateFrames: array(object({
     id: idSchema,
     kind: _enum(["document", "source", "page", "view", "provisional"]),
@@ -5474,14 +5511,22 @@ discriminatedUnion("kind", [
     truncated: boolean()
   }).strict()
 ]);
-const drawingSourceRefSchema = object({
-  id: idSchema,
-  mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
-  bytes: number().int().nonnegative().optional(),
-  width: number().positive(),
-  height: number().positive(),
-  name: string().optional()
-}).strict();
+const drawingSourceRefSchema = union([
+  object({
+    id: idSchema,
+    mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+    bytes: number().int().nonnegative().optional(),
+    width: number().positive(),
+    height: number().positive(),
+    name: string().optional()
+  }).strict(),
+  object({
+    id: idSchema,
+    mediaType: literal("application/dxf"),
+    bytes: number().int().nonnegative().optional(),
+    name: string().optional()
+  }).strict()
+]);
 const drawingWorkspaceSnapshotSchema = object({
   version: literal(1),
   ref: object({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
@@ -5778,7 +5823,129 @@ const annotationSessionStateSchema = object({
     message: string().min(1).optional()
   }).strict()
 }).strict();
+object({
+  bytes: _instanceof(Uint8Array),
+  digest: idSchema,
+  name: string().trim().min(1).max(255).optional()
+}).strict();
+const drawingObservationOverlaySchema = object({
+  id: idSchema,
+  label: string().trim().min(1).max(80),
+  polygon: array(vec2Schema).min(3).max(16)
+}).strict();
+object({
+  ref: drawingRefSchema,
+  overlays: array(drawingObservationOverlaySchema).max(128).optional()
+}).strict();
+discriminatedUnion("status", [
+  object({
+    status: literal("rendered"),
+    png: _instanceof(Uint8Array),
+    contentDigest: idSchema,
+    width: number().int().positive(),
+    height: number().int().positive()
+  }).strict(),
+  object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+  object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+]);
 const drawingSessionIdSchema = string().min(1);
+const partitionEvidenceSchema = object({
+  id: idSchema,
+  origin: _enum(["document", "geometry", "fused", "ai", "manual"]),
+  label: string(),
+  sourceLines: array(number().int().positive()).optional(),
+  geometryNodeIds: array(idSchema).optional()
+}).strict();
+const partitionDiagnosticSchema = object({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string(),
+  segmentIds: array(idSchema).optional(),
+  evidenceIds: array(idSchema).optional()
+}).strict();
+const shaftAxisSchema = object({
+  origin: vec2Schema,
+  direction: vec2Schema,
+  normal: vec2Schema,
+  zMin: number(),
+  zMax: number(),
+  orientation: _enum(["forward", "reversed"]),
+  geometryNodeIds: array(idSchema).optional()
+}).strict();
+const stepCandidateSchema = object({
+  id: idSchema,
+  z: number(),
+  score: number(),
+  evidenceIds: array(idSchema),
+  accepted: boolean()
+}).strict();
+const partitionSegmentSchema = object({
+  id: idSchema,
+  zStart: number(),
+  zEnd: number(),
+  profile: object({ minRadius: number(), maxRadius: number(), sampleCount: number().int().nonnegative() }).strict(),
+  semanticType: string().optional(),
+  name: string().optional(),
+  boundaryConfidence: number(),
+  semanticConfidence: number().optional(),
+  geometryNodeIds: array(idSchema),
+  boundaryEvidenceIds: array(idSchema),
+  semanticEvidenceIds: array(idSchema),
+  diagnosticIds: array(idSchema),
+  profileSamples: array(object({ z: number(), radius: number().nonnegative(), geometryNodeId: idSchema }).strict()).optional()
+}).strict();
+const partitionGroupSchema = object({
+  id: idSchema,
+  segmentIds: array(idSchema),
+  semanticType: string(),
+  name: string().optional(),
+  evidenceIds: array(idSchema)
+}).strict();
+const partitionDraftSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  axis: shaftAxisSchema,
+  segments: array(partitionSegmentSchema),
+  semanticGroups: array(partitionGroupSchema),
+  stepCandidates: array(stepCandidateSchema),
+  evidence: array(partitionEvidenceSchema),
+  diagnostics: array(partitionDiagnosticSchema),
+  basePartitionRevisionId: idSchema.optional()
+}).strict();
+const partitionRevisionSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  axis: shaftAxisSchema,
+  segments: array(partitionSegmentSchema),
+  semanticGroups: array(partitionGroupSchema),
+  evidence: array(partitionEvidenceSchema),
+  diagnostics: array(partitionDiagnosticSchema),
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  confirmedAt: number()
+}).strict();
+const partitionEditCommandSchema = discriminatedUnion("type", [
+  object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
+  object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
+]);
+const partitionSessionSnapshotSchema = object({
+  version: literal(1),
+  phase: _enum(["idle", "analyzing", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema.optional(),
+  draft: partitionDraftSchema.optional(),
+  confirmed: partitionRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string().optional(),
+  updatedAt: number()
+}).strict();
+const partitionImportRequestSchema = object({
+  dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+  engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+}).strict();
 const agentParameter = {
   name: "agent",
   wire: "agentId",
@@ -5812,9 +5979,36 @@ const TYPERT = {
       line: 41,
       column: 3
     }
-  }],
+  }, ...partitionInvocations()],
   model: { services: [], events: [], objects: [] }
 };
+function partitionInvocations() {
+  return [
+    invocation("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
+    invocation("getPartitionState", []),
+    invocation("editPartition", [jsonParameter("command", "@vectorai/plugin-space-contracts#PartitionEditCommand", partitionEditCommandSchema)]),
+    invocation("confirmPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    invocation("cancelPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    invocation("undoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    invocation("redoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
+  ];
+}
+function invocation(method, parameters) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: "drawingAnnotation",
+    namespace: "drawingAnnotation",
+    method,
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, ...parameters],
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#PartitionSessionSnapshot", schema: partitionSessionSnapshotSchema },
+    sourceLocation: { file: "packages/plugin-dsh-annotation-host/src/service.ts", line: 50, column: 3 }
+  };
+}
+function jsonParameter(name, typeSymbol, schema) {
+  return { name, wire: name, source: "json", codec: { mode: "strict", typeSymbol, schema } };
+}
 export {
   TYPERT,
   TYPERT as default

@@ -130,6 +130,30 @@ describe('queryDrawing', () => {
     expect(negative.nodes.map(({ node }) => node.id)).toEqual(['polyline_c']);
   });
 
+  it('does not report empty space inside a spline control polygon as curve geometry', () => {
+    const document = documentFixture();
+    document.geometry = [{
+      id: 'spline_exact' as GeometryId,
+      type: 'spline',
+      degree: 2,
+      controlPoints: [[0, 0], [0, 10], [10, 0]],
+      knots: [0, 0, 0, 1, 1, 1],
+      closed: false,
+      periodic: false,
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs },
+    }];
+    document.annotations = [];
+    document.relations = [];
+    document.features = [];
+
+    expect(queryDrawing(document, {
+      kind: 'world-slice',
+      bounds: { minX: -0.5, minY: 8.5, maxX: 0.5, maxY: 9.5 },
+      planes: ['geometry'],
+    }).nodes).toEqual([]);
+  });
+
   it('applies the default limit and reports counts before truncation', () => {
     const document = documentFixture();
     document.geometry = Array.from({ length: 101 }, (_, index) => ({

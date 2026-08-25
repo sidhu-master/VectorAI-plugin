@@ -29,6 +29,10 @@ import type {
   ExtensionPreviewFinalizeResult,
   ExtensionPreviewDiscardResult,
   DrawingSpaceExtensionHost,
+  DrawingDxfImportRequest,
+  DrawingImportResult,
+  DrawingObservationRequest,
+  DrawingObservationResult,
 } from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -122,6 +126,52 @@ export class DrawingSpaceHostService extends TypertRemoteService implements Draw
   @Remote
   getSnapshot(agent: Agent): DrawingWorkspaceSnapshot | null {
     return this.drawings.getSnapshot(String(agent.id));
+  }
+
+  async importDxf(
+    agent: Agent,
+    request: DrawingDxfImportRequest,
+    signal?: AbortSignal,
+  ): Promise<DrawingImportResult> {
+    return this.drawings.importDxf(String(agent.id), { ...request, signal });
+  }
+
+  async renderObservation(
+    agent: Agent,
+    request: DrawingObservationRequest,
+    signal?: AbortSignal,
+  ): Promise<DrawingObservationResult> {
+    signal?.throwIfAborted();
+    const sessionId = String(agent.id);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (snapshot === null) {
+      return { status: 'rejected', code: 'DRAWING_REQUIRED', message: 'No drawing is loaded' };
+    }
+    if (snapshot.ref.drawingId !== request.ref.drawingId || snapshot.ref.revision !== request.ref.revision) {
+      return { status: 'stale', currentRef: snapshot.ref };
+    }
+    const viewport = this.drawings.getBounds(sessionId);
+    if (viewport === null) {
+      return { status: 'rejected', code: 'DRAWING_BOUNDS_REQUIRED', message: 'Drawing bounds are unavailable' };
+    }
+    const rendered = await renderDrawingObservation({
+      document: snapshot.document,
+      viewport,
+      ...(request.overlays === undefined ? {} : {
+        worldOverlays: request.overlays.map((overlay) => ({
+          ...overlay,
+          polygon: overlay.polygon.map((point) => [point[0]!, point[1]!] as [number, number]),
+        })),
+      }),
+    });
+    signal?.throwIfAborted();
+    return {
+      status: 'rendered',
+      png: rendered.png,
+      contentDigest: rendered.contentDigest,
+      width: rendered.manifest.width,
+      height: rendered.manifest.height,
+    };
   }
 
   @Remote

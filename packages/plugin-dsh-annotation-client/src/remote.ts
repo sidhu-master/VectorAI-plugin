@@ -3,20 +3,42 @@
 import type { RemoteResult, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol';
 import {
   annotationSessionStateSchema,
+  drawingRefSchema,
   drawingSessionIdSchema,
+  partitionEditCommandSchema,
+  partitionImportRequestSchema,
+  partitionSessionSnapshotSchema,
   type AnnotationSessionState,
+  type DrawingRef,
+  type PartitionEditCommand,
+  type PartitionImportRequest,
+  type PartitionSessionSnapshot,
 } from '@vectorai/plugin-space-contracts';
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespaceMap {
     drawingAnnotation: {
       getSessionState(sessionId: string): Promise<RemoteResult<AnnotationSessionState>>;
+      importAndAnalyze(sessionId: string, request: PartitionImportRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      getPartitionState(sessionId: string): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      editPartition(sessionId: string, command: PartitionEditCommand): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      confirmPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      cancelPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      undoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      redoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
     };
   }
   interface TypertRemoteMap {
     'drawingAnnotation/getSessionState': (
       sessionId: string,
     ) => Promise<RemoteResult<AnnotationSessionState>>;
+    'drawingAnnotation/importAndAnalyze': (sessionId: string, request: PartitionImportRequest) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/getPartitionState': (sessionId: string) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/editPartition': (sessionId: string, command: PartitionEditCommand) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/confirmPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/cancelPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/undoPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/redoPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
   }
 }
 
@@ -44,5 +66,31 @@ export const ANNOTATION_REMOTE: TypertRemoteContribution = {
       typeSymbol: '@vectorai/plugin-space-contracts#AnnotationSessionState',
       schema: annotationSessionStateSchema,
     },
-  }],
+  }, ...partitionDescriptors()],
 };
+
+function partitionDescriptors() {
+  return [
+    descriptor('importAndAnalyze', [jsonParameter('request', '@vectorai/plugin-space-contracts#PartitionImportRequest', partitionImportRequestSchema)]),
+    descriptor('getPartitionState', []),
+    descriptor('editPartition', [jsonParameter('command', '@vectorai/plugin-space-contracts#PartitionEditCommand', partitionEditCommandSchema)]),
+    descriptor('confirmPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    descriptor('cancelPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    descriptor('undoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    descriptor('redoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+  ];
+}
+
+function descriptor(method: string, parameters: Array<ReturnType<typeof jsonParameter>>) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: 'drawingAnnotation', namespace: 'drawingAnnotation', method,
+    invocation: { kind: 'direct' as const }, scope: { context: 'agent' as const, wire: 'agentId' },
+    parameters: [agentParameter, ...parameters],
+    result: { mode: 'strict' as const, typeSymbol: '@vectorai/plugin-space-contracts#PartitionSessionSnapshot', schema: partitionSessionSnapshotSchema },
+  };
+}
+
+function jsonParameter(name: string, typeSymbol: string, schema: { parse(input: unknown): unknown }) {
+  return { name, wire: name, source: 'json' as const, codec: { mode: 'strict' as const, typeSymbol, schema } };
+}

@@ -12,7 +12,6 @@ import {
   type GroundedEditTarget,
   type SpatialCompilation,
   type SpatialIntentSolution,
-  type SpatialSolverReceipt,
 } from '@vectorai/drawing-edit-core';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import {

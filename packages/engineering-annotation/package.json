@@ -14,5 +14,8 @@
   "dependencies": {
     "@vectorai/drawing-core": "workspace:*",
     "@vectorai/drawing-edit-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@vectorai/dxf-import": "workspace:*"
   }
 }

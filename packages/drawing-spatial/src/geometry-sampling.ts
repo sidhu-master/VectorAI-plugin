@@ -1,6 +1,8 @@
-import type {
-  GeometryNode,
-  Vec2,
+import {
+  evaluateSpline,
+  splineBounds,
+  type GeometryNode,
+  type Vec2,
 } from '@vectorai/drawing-core';
 import type { SpatialBounds2D } from './query';
 
@@ -73,7 +75,7 @@ export function sampleGeometryRanges(
     }
     case 'spline': {
       const count = Math.max(2, curveSamples);
-      return sampledParameterRanges(count, (parameter) => splinePoint(node, parameter));
+      return sampledParameterRanges(count, (parameter) => evaluateSpline(node, parameter));
     }
   }
 }
@@ -106,7 +108,7 @@ export function roughGeometryBounds(node: GeometryNode): SpatialBounds2D | null 
       const samples = polylineRanges(node, 64).flatMap((item) => item.samples);
       return boundsOf(samples);
     }
-    case 'spline': return node.controlPoints.length > 0 ? boundsOf(node.controlPoints) : null;
+    case 'spline': return splineBounds(node);
   }
 }
 
@@ -154,67 +156,6 @@ function sampledParameterRanges(
       parameterRange: [start, end],
     });
   });
-}
-
-function splinePoint(node: Extract<GeometryNode, { type: 'spline' }>, parameter: number): Vec2 {
-  const points = node.controlPoints;
-  if (points.length === 0) return [0, 0];
-  if (points.length === 1) return points[0];
-  const degree = Math.min(node.degree, points.length - 1);
-  const expectedKnotCount = points.length + degree + 1;
-  if (node.knots.length !== expectedKnotCount) return controlPolygonPoint(points, parameter);
-  const minimum = node.knots[degree];
-  const maximum = node.knots[points.length];
-  const u = parameter >= 1 ? maximum : minimum + (maximum - minimum) * parameter;
-  const weights = node.weights?.length === points.length
-    ? node.weights
-    : points.map(() => 1);
-  let weightSum = 0;
-  let x = 0;
-  let y = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const basis = bsplineBasis(index, degree, u, node.knots, maximum) * weights[index];
-    weightSum += basis;
-    x += basis * points[index][0];
-    y += basis * points[index][1];
-  }
-  return weightSum === 0 ? controlPolygonPoint(points, parameter) : [x / weightSum, y / weightSum];
-}
-
-function bsplineBasis(
-  index: number,
-  degree: number,
-  parameter: number,
-  knots: number[],
-  maximum: number,
-): number {
-  if (degree === 0) {
-    return knots[index] <= parameter
-      && (parameter < knots[index + 1] || parameter === maximum && knots[index + 1] === maximum)
-      ? 1
-      : 0;
-  }
-  const leftDenominator = knots[index + degree] - knots[index];
-  const rightDenominator = knots[index + degree + 1] - knots[index + 1];
-  const left = leftDenominator === 0 ? 0 : (
-    (parameter - knots[index]) / leftDenominator
-    * bsplineBasis(index, degree - 1, parameter, knots, maximum)
-  );
-  const right = rightDenominator === 0 ? 0 : (
-    (knots[index + degree + 1] - parameter) / rightDenominator
-    * bsplineBasis(index + 1, degree - 1, parameter, knots, maximum)
-  );
-  return left + right;
-}
-
-function controlPolygonPoint(points: Vec2[], parameter: number): Vec2 {
-  const scaled = Math.max(0, Math.min(1, parameter)) * (points.length - 1);
-  const index = Math.min(points.length - 2, Math.floor(scaled));
-  const local = scaled - index;
-  return [
-    points[index][0] + (points[index + 1][0] - points[index][0]) * local,
-    points[index][1] + (points[index + 1][1] - points[index][1]) * local,
-  ];
 }
 
 function ellipsePoint(center: Vec2, majorAxis: Vec2, ratio: number, parameter: number): Vec2 {

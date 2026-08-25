@@ -19,6 +19,7 @@
 
 .vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }
 .vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }
+.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }
 .vai-annotation-workspace__body { display: grid; min-height: 0; flex: 1; grid-template-columns: 48px minmax(0, 1fr) 248px; }
 .vai-annotation-workspace__rail { display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid rgba(148, 163, 184, .18); }
 .vai-annotation-workspace__rail button { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #8fa1b5; background: transparent; }
@@ -31,3 +32,35 @@
 .vai-annotation-workspace__inspector dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }
 .vai-annotation-workspace__inspector dt { color: #8fa1b5; }
 .vai-annotation-workspace__inspector dd { margin: 0; }
+
+.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }
+.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }
+.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }
+.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }
+.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }
+
+.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }
+.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }
+.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }
+.vai-partition-band--geometry { stroke-dasharray: 8 5; }
+.vai-partition-label { fill: #dff6ff; font: 600 11px ui-monospace, monospace; paint-order: stroke; stroke: #0d151d; stroke-width: 3px; vector-effect: non-scaling-stroke; }
+.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }
+
+.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }
+.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }
+.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }
+.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }
+.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }
+.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }
+.vai-partition-inspector small { color: #8295aa; }
+.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }
+.vai-partition-inspector__commands { display: flex; gap: 5px; }
+.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }
+.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }
+.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }
+.vai-partition-history { position: absolute; z-index: 8; left: 50%; bottom: 28px; display: flex; gap: 6px; transform: translateX(-50%); }
+.vai-partition-history button { width: 36px; height: 32px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 9px; color: #aebdce; background: rgba(14, 21, 29, .92); font-size: 18px; }
+.vai-partition-history button:disabled { opacity: .3; }

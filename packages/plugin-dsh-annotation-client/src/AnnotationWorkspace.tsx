@@ -8,22 +8,37 @@ import type {
   DrawingWorkspaceViewport,
 } from '@vectorai/drawing-workspace';
 import type { AnnotationSessionState } from '@vectorai/plugin-space-contracts';
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import type { PartitionController } from './partition-controller';
+import { PartitionOverlay } from './PartitionOverlay';
+import { PartitionActionToolbar } from './PartitionActionToolbar';
+import { PartitionInspector } from './PartitionInspector';
 
 export interface AnnotationWorkspaceProps {
   sessionId: string;
   namespace: string;
   runtime: DrawingSurfaceRuntime;
   state: DrawingSurfaceObservable<AnnotationSessionState>;
+  partition: PartitionController;
 }
 
-export function AnnotationWorkspace({ namespace, runtime, state }: AnnotationWorkspaceProps) {
+export function AnnotationWorkspace({ namespace, runtime, state, partition }: AnnotationWorkspaceProps) {
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport) as DrawingWorkspaceViewport;
   const selectedIds = useObservable(runtime.selection);
   const presentation = useObservable(runtime.presentation);
   const annotationState = useObservable(state);
+  const partitionState = useObservable(partition.state);
+  const [dxf, setDxf] = useState<File | null>(null);
+  const [engineering, setEngineering] = useState<File | null>(null);
+  const [showImport, setShowImport] = useState(false);
   const displaySnapshot = (presentation.displaySnapshot ?? snapshot) as DrawingWorkspaceSnapshot | null;
+  const draft = partitionState.partition.draft;
+  useEffect(() => {
+    const release = () => partition.actions.setPreviewHeld(false);
+    window.addEventListener('blur', release);
+    return () => { window.removeEventListener('blur', release); release(); };
+  }, [partition]);
 
   return <section
     className="vai-annotation-workspace"
@@ -34,6 +49,7 @@ export function AnnotationWorkspace({ namespace, runtime, state }: AnnotationWor
       <div>
         <strong>工程图自动标注</strong>
         <span>{displaySnapshot === null ? '等待图纸' : `${displaySnapshot.ref.drawingId} · R${displaySnapshot.ref.revision}`}</span>
+        {displaySnapshot?.provisional && <span className="vai-annotation-provisional">候选图纸</span>}
       </div>
       <span data-annotation-workflow={annotationState.workflow.status}>
         {workflowLabel(annotationState.workflow.status)}
@@ -41,14 +57,13 @@ export function AnnotationWorkspace({ namespace, runtime, state }: AnnotationWor
     </header>
     <div className="vai-annotation-workspace__body">
       <nav className="vai-annotation-workspace__rail" aria-label="标注流程">
+        <button type="button" aria-label="导入 DXF" title="导入 DXF" onClick={() => setShowImport(true)}>↥</button>
         <button type="button" aria-label="图纸结构" title="图纸结构">⌗</button>
         <button type="button" aria-label="标注候选" title="标注候选">⌖</button>
         <button type="button" aria-label="冲突检查" title="冲突检查">△</button>
       </nav>
       <main className="vai-annotation-workspace__canvas">
-        {displaySnapshot === null ? <div className="vai-annotation-workspace__empty">
-          自动标注工作区已接管。请先导入一张工程图纸。
-        </div> : <DrawingSurface
+        {displaySnapshot !== null && <DrawingSurface
           snapshot={displaySnapshot}
           viewport={viewport}
           selectedIds={selectedIds}
@@ -57,20 +72,36 @@ export function AnnotationWorkspace({ namespace, runtime, state }: AnnotationWor
           className="vai-canvas vai-annotation-workspace__surface"
           onViewportChange={runtime.actions.setViewport}
           onSelectionChange={runtime.actions.setSelection}
-          worldLayers={<g
-            data-annotation-candidate-layer="true"
-            data-preview-active={presentation.preview === null ? undefined : 'true'}
-            pointerEvents="none"
-          />}
+          worldLayers={<>
+            <g data-annotation-candidate-layer="true" data-preview-active={presentation.preview === null ? undefined : 'true'} pointerEvents="none" />
+            {draft && <PartitionOverlay draft={draft} previewHeld={partitionState.previewHeld} scale={viewport.scale}
+              onMoveBoundary={(index, z) => void partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 0.003, 0.05)).catch(() => undefined)} />}
+          </>}
         />}
+        {(displaySnapshot === null || showImport) && <form className="vai-annotation-import" onSubmit={(event) => {
+          event.preventDefault();
+          if (dxf) void partition.actions.importFiles(dxf, engineering ?? undefined).then(() => setShowImport(false)).catch(() => undefined);
+        }}>
+          <strong>导入轴类工程图</strong>
+          <p>DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。</p>
+          <label>DXF 图纸<input type="file" accept=".dxf,application/dxf" onChange={(event) => setDxf(event.currentTarget.files?.[0] ?? null)} /></label>
+          <label>工程数据文档（可选）<input type="file" accept=".txt,.ini,text/plain" onChange={(event) => setEngineering(event.currentTarget.files?.[0] ?? null)} /></label>
+          <button type="submit" disabled={!dxf || partitionState.busy}>{partitionState.busy ? '正在分析…' : '导入并智能分区'}</button>
+          {displaySnapshot !== null && <button type="button" className="vai-annotation-import__close" onClick={() => setShowImport(false)}>关闭</button>}
+          {partitionState.error && <p role="alert">{partitionState.error}</p>}
+        </form>}
+        {partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
+        {(partitionState.partition.canUndo || partitionState.partition.canRedo) && <div className="vai-partition-history" role="toolbar" aria-label="分区历史">
+          <button type="button" aria-label="撤销分区" disabled={!partitionState.partition.canUndo} onClick={() => void partition.actions.undo().catch(() => undefined)}>↶</button>
+          <button type="button" aria-label="重做分区" disabled={!partitionState.partition.canRedo} onClick={() => void partition.actions.redo().catch(() => undefined)}>↷</button>
+        </div>}
       </main>
       <aside className="vai-annotation-workspace__inspector">
-        <h2>标注检查</h2>
-        <dl>
+        {draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} /> : <><h2>标注检查</h2><dl>
           <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
           <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
           <dt>选中</dt><dd>{selectedIds.length}</dd>
-        </dl>
+        </dl></>}
       </aside>
     </div>
   </section>;

@@ -3139,7 +3139,7 @@ class ContributionErrorBoundary extends reactExports.Component {
   static getDerivedStateFromError(error) {
     return { error: error instanceof Error ? error : new Error(String(error)) };
   }
-  componentDidCatch(_error, _info) {
+  componentDidCatch() {
   }
   render() {
     if (this.state.error === null) return this.props.children;

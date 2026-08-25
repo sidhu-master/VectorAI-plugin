@@ -29,6 +29,12 @@ function workspaceSnapshot(): DrawingWorkspaceSnapshot {
   }, {
     id: 'circle-1' as GeometryId,
     type: 'circle', center: [50, 40], radius: 12, visible: true, quality,
+  }, {
+    id: 'spline-1' as GeometryId,
+    type: 'spline', degree: 2,
+    controlPoints: [[1, 0], [1, 1], [0, 1]],
+    knots: [0, 0, 0, 1, 1, 1], weights: [1, Math.SQRT1_2, 1],
+    closed: false, periodic: false, visible: true, quality,
   }];
   document.annotations = [{
     id: 'text-1' as AnnotationId,
@@ -103,6 +109,7 @@ describe('shared Canvas rendering', () => {
     expect(markup).not.toContain('href="blob:source-1"');
     expect(markup).toContain('data-entity-id="line-1"');
     expect(markup).toContain('data-entity-id="circle-1"');
+    expect(markup).toMatch(/data-entity-id="spline-1"[^>]*><path d="M 1 0 L /);
     expect(markup).toContain('data-entity-id="text-1"');
     expect(markup).not.toContain('data-relation-id="relation-1"');
     expect(markup).not.toContain('connected');

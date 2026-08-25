@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createEmptyDrawing } from '@vectorai/drawing-core';
+import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import {
   drawingRefSchema,
+  drawingDocumentSchema,
   drawingGroundingOverlaySchema,
   drawingQueryRequestSchema,
   drawingQueryResultSchema,
@@ -25,6 +26,11 @@ import {
   extensionPreviewCreateResultSchema,
   extensionPreviewControlRequestSchema,
   annotationSessionStateSchema,
+  drawingDxfImportRequestSchema,
+  drawingObservationRequestSchema,
+  drawingObservationResultSchema,
+  partitionSessionSnapshotSchema,
+  partitionEditCommandSchema,
 } from './index';
 
 function snapshot() {
@@ -46,6 +52,84 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('strictly carries revision-bound partition state and edits', () => {
+    const ref = { drawingId: 'drawing-1', revision: 1 };
+    const command = { type: 'boundary.move', expectedDrawingRef: ref, boundaryIndex: 1, requestedZ: 12, snapTolerance: 0.5 };
+    expect(partitionEditCommandSchema.parse(command)).toEqual(command);
+    expect(partitionSessionSnapshotSchema.parse({
+      version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 1,
+    })).toMatchObject({ phase: 'idle' });
+    expect(() => partitionEditCommandSchema.parse({ ...command, geometryCommand: 'move' })).toThrow();
+  });
+
+  it('bounds extension DXF import and local observation requests without geometry commands', () => {
+    const bytes = new Uint8Array([48, 10]);
+    expect(drawingDxfImportRequestSchema.parse({
+      bytes,
+      digest: 'sha256:abc',
+      name: 'shaft.dxf',
+    })).toMatchObject({ bytes, digest: 'sha256:abc' });
+
+    const request = {
+      ref: { drawingId: 'drawing-1', revision: 1 },
+      overlays: [{ id: 'segment:1', label: 'S1', polygon: [[0, 0], [2, 0], [2, 1]] }],
+    };
+    expect(drawingObservationRequestSchema.parse(request)).toEqual(request);
+    expect(drawingObservationResultSchema.parse({
+      status: 'rendered',
+      png: bytes,
+      contentDigest: 'sha256:image',
+      width: 960,
+      height: 720,
+    })).toMatchObject({ status: 'rendered', contentDigest: 'sha256:image' });
+    expect(() => drawingObservationRequestSchema.parse({
+      ...request,
+      overlays: [{ ...request.overlays[0], polygon: [[0, 0], [1, 1]] }],
+    })).toThrow();
+  });
+
+  it('preserves DXF file, layer, and entity provenance through the strict document schema', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-dxf' }, now: () => 1 });
+    document.sources = [{
+      id: 'source:dxf',
+      kind: 'dxf',
+      mediaType: 'application/dxf',
+      digest: 'sha256:abc',
+      name: 'shaft.dxf',
+      bytes: 123,
+    }];
+    document.geometry.push({
+      id: 'line:10' as GeometryId,
+      type: 'line',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      sourceRef: {
+        sourceId: 'source:dxf',
+        objectId: '10',
+        objectType: 'LINE',
+        layer: '1轮廓实线层',
+      },
+      start: [0, 0],
+      end: [1, 0],
+    });
+
+    expect(drawingDocumentSchema.parse(document)).toEqual(document);
+  });
+
+  it('accepts a DXF workspace source without raster dimensions', () => {
+    const value = {
+      ...snapshot(),
+      source: {
+        id: 'source:dxf',
+        mediaType: 'application/dxf',
+        bytes: 123,
+        name: 'shaft.dxf',
+      },
+    };
+
+    expect(drawingWorkspaceSnapshotSchema.parse(value)?.source).toEqual(value.source);
+  });
+
   it('re-exports strict provider-neutral semantic edit contracts', () => {
     const ref = { drawingId: 'drawing-1', revision: 3 };
     const request = {

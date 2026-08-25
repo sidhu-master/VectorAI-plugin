@@ -17,11 +17,28 @@ export interface NodeQuality {
   evidenceRefs: EvidenceId[];
 }
 
+export interface DrawingSourceDescriptor {
+  id: string;
+  kind: 'image' | 'dxf';
+  mediaType: string;
+  digest: string;
+  name?: string;
+  bytes?: number;
+}
+
+export interface DrawingNodeSourceRef {
+  sourceId: string;
+  objectId?: string;
+  objectType?: string;
+  layer?: string;
+}
+
 export interface BaseNode<TId extends string, TType extends string> {
   id: TId;
   type: TType;
   visible: boolean;
   quality: NodeQuality;
+  sourceRef?: DrawingNodeSourceRef;
 }
 
 export interface PointGeometry extends BaseNode<GeometryId, 'point'> {
@@ -252,6 +269,7 @@ export interface DrawingDocument {
     length: 'mm' | 'cm' | 'm';
     angle: 'deg';
   };
+  sources?: DrawingSourceDescriptor[];
   coordinateFrames: CoordinateFrame[];
   geometry: GeometryNode[];
   annotations: AnnotationNode[];

@@ -2,7 +2,11 @@
 
 import {
   annotationSessionStateSchema,
+  drawingRefSchema,
   drawingSessionIdSchema,
+  partitionEditCommandSchema,
+  partitionImportRequestSchema,
+  partitionSessionSnapshotSchema,
 } from '@vectorai/plugin-space-contracts';
 
 const agentParameter = {
@@ -34,8 +38,35 @@ export const TYPERT = {
     sourceLocation: {
       file: 'packages/plugin-dsh-annotation-host/src/service.ts', line: 41, column: 3,
     },
-  }],
+  }, ...partitionInvocations()],
   model: { services: [], events: [], objects: [] },
 } as const;
+
+function partitionInvocations() {
+  return [
+    invocation('importAndAnalyze', [jsonParameter('request', '@vectorai/plugin-space-contracts#PartitionImportRequest', partitionImportRequestSchema)]),
+    invocation('getPartitionState', []),
+    invocation('editPartition', [jsonParameter('command', '@vectorai/plugin-space-contracts#PartitionEditCommand', partitionEditCommandSchema)]),
+    invocation('confirmPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    invocation('cancelPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    invocation('undoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    invocation('redoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+  ] as const;
+}
+
+function invocation(method: string, parameters: readonly unknown[]) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: 'drawingAnnotation', namespace: 'drawingAnnotation', method,
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, ...parameters],
+    result: { mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#PartitionSessionSnapshot', schema: partitionSessionSnapshotSchema },
+    sourceLocation: { file: 'packages/plugin-dsh-annotation-host/src/service.ts', line: 50, column: 3 },
+  } as const;
+}
+
+function jsonParameter(name: string, typeSymbol: string, schema: { parse(input: unknown): unknown }) {
+  return { name, wire: name, source: 'json', codec: { mode: 'strict', typeSymbol, schema } } as const;
+}
 
 export default TYPERT;

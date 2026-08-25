@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  DrawingDocument,
-  DrawingId,
-  GeometryNode,
-  RevisionId,
-  Vec2,
+import {
+  sampleSpline,
+  splineBounds,
+  type DrawingDocument,
+  type DrawingId,
+  type GeometryNode,
+  type RevisionId,
+  type Vec2,
 } from '@vectorai/drawing-core';
 
 import type { SpatialBounds2D } from './query';
@@ -315,7 +317,7 @@ function splitLinearDraftsAtIntersections(drafts: SpanDraft[], tolerance: number
 }
 
 function sampleCurve(node: Exclude<GeometryNode, { type: 'point' | 'line' | 'ray' | 'xline' | 'polyline' }>, count: number): Vec2[] {
-  if (node.type === 'spline') return structuredClone(node.controlPoints);
+  if (node.type === 'spline') return sampleSpline(node, { maxError: 0.02, maxDepth: 16 });
   if (node.type === 'circle') return Array.from({ length: count + 1 }, (_, index) => {
     const angle = index / count * Math.PI * 2;
     return [node.center[0] + node.radius * Math.cos(angle), node.center[1] + node.radius * Math.sin(angle)] as Vec2;
@@ -466,7 +468,7 @@ function geometryBounds(node: GeometryNode): SpatialBounds2D {
     return { minX: node.center[0] - radius, minY: node.center[1] - radius, maxX: node.center[0] + radius, maxY: node.center[1] + radius };
   }
   if (node.type === 'polyline') return pointsBounds(node.vertices.map(({ point }) => point));
-  return pointsBounds(node.controlPoints);
+  return splineBounds(node);
 }
 
 function pointsBounds(points: Vec2[]): SpatialBounds2D {

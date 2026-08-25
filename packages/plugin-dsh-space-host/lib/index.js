@@ -5,16 +5,16 @@ var __knownSymbol = (name, symbol) => (symbol = Symbol[name]) ? symbol : Symbol.
 var __typeError = (msg) => {
   throw TypeError(msg);
 };
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
-var __decoratorStart = (base) => [, , , __create((base == null ? void 0 : base[__knownSymbol("metadata")]) ?? null)];
+var __defNormalProp = (obj, key, value2) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value: value2 }) : obj[key] = value2;
+var __name = (target, value2) => __defProp(target, "name", { value: value2, configurable: true });
+var __decoratorStart = (base2) => [, , , __create((base2 == null ? void 0 : base2[__knownSymbol("metadata")]) ?? null)];
 var __decoratorStrings = ["class", "method", "getter", "setter", "accessor", "field", "value", "get", "set"];
 var __expectFn = (fn) => fn !== void 0 && typeof fn !== "function" ? __typeError("Function expected") : fn;
 var __decoratorContext = (kind, name, done, metadata, fns) => ({ kind: __decoratorStrings[kind], name, metadata, addInitializer: (fn) => done._ ? __typeError("Already initialized") : fns.push(__expectFn(fn || null)) });
 var __decoratorMetadata = (array2, target) => __defNormalProp(target, __knownSymbol("metadata"), array2[3]);
-var __runInitializers = (array2, flags, self, value) => {
-  for (var i = 0, fns = array2[flags >> 1], n = fns && fns.length; i < n; i++) flags & 1 ? fns[i].call(self) : value = fns[i].call(self, value);
-  return value;
+var __runInitializers = (array2, flags, self, value2) => {
+  for (var i = 0, fns = array2[flags >> 1], n = fns && fns.length; i < n; i++) flags & 1 ? fns[i].call(self) : value2 = fns[i].call(self, value2);
+  return value2;
 };
 var __decorateElement = (array2, flags, name, decorators, target, extra) => {
   var fn, it, done, ctx, access2, k = flags & 7, s = !!(flags & 8), p = !!(flags & 16);
@@ -40,12 +40,12 @@ var __decorateElement = (array2, flags, name, decorators, target, extra) => {
   }
   return k || __decoratorMetadata(array2, target), desc && __defProp(target, name, desc), p ? k ^ 4 ? extra : desc : target;
 };
-var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __publicField = (obj, key, value2) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value2);
 var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
 var __privateIn = (member, obj) => Object(obj) !== obj ? __typeError('Cannot use the "in" operator on this value') : member.has(obj);
 var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
-var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
-var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
+var __privateAdd = (obj, member, value2) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value2);
+var __privateSet = (obj, member, value2, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value2) : member.set(obj, value2), value2);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 var _ports, _episodeId, _drawingId, _revision, _events, _eventIds, _current, _GroundingLedger_instances, apply_fn, assertScope_fn, validateEvent_fn, _byNode, _segmentById, _vertexById, _pending, _drawings, _durable, _previews, _vectorizer, _drawingId2, _storage, _previewHandle, _now, _InMemoryDrawingRepository_instances, getDrawing_fn, durableState_fn, requireDurable_fn, saveDurable_fn, _directory, _FileDrawingRepositoryStorage_instances, atomicWrite_fn, path_fn, _pending2, _closed, _stderr, _LocalPythonVectorizerProcess_instances, invoke_fn, onLine_fn, reject_fn, failAll_fn, _timeoutMs, _instructions, _episodes, _epochs, _SemanticEditEpisodeStore_instances, nextEpoch_fn, _pendingInstructions, _sessionPolicies, _tasks, _observations, _contexts, _groundings, _previews2, _evaluations, _reviewInflight, _stickyReviewDefects, _selectionProjections, _groundingOverlays, _episodes2, _episodeSelections, _currentOperations, _terminalFinalizeResults, _SemanticEditService_instances, currentObservationResult_fn, initialSelectionCandidates_fn, resolvePartCandidates_fn, currentSelectionProjectionForRef_fn, appendGroundingEvidence_fn, commitPreview_fn, assess_fn, task_fn, preview_fn, storeCompilation_fn, updateGroundingOverlay_fn, snapshot_fn, snapshotAtTask_fn, _intents, _rigs, _states, _ttlMs, _ExtensionPreviewService_instances, validate_fn, ownedState_fn, currentRefResult_fn, expired_fn, expire_fn, _getPreview_dec, _discardExtensionPreview_dec, _finalizeExtensionPreview_dec, _assessExtensionPreview_dec, _replaceExtensionPreview_dec, _createExtensionPreview_dec, _getOperation_dec, _stageRedo_dec, _stageUndo_dec, _stageInteractiveEdit_dec, _discardMotionRig_dec, _rebuildMotionRig_dec, _getMotionRig_dec, _getGroundingOverlay_dec, _projectSelection_dec, _query_dec, _getSnapshot_dec, _a2, _init;
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
@@ -99,8 +99,8 @@ function normalizeUnit(unit, fallback) {
   if (["弧度", "rad", "radian", "radians"].includes(normalized)) return { kind: "angle", unit: "rad" };
   return { kind: "distance", unit: fallback };
 }
-function parseFinite(value) {
-  const parsed = Number(value);
+function parseFinite(value2) {
+  const parsed = Number(value2);
   if (!Number.isFinite(parsed)) throw new Error("EDIT_NUMERIC_VALUE_INVALID");
   return parsed;
 }
@@ -124,14 +124,14 @@ function extractNumericConstraints(instruction, drawingUnit) {
     const end = match.index + whole.length;
     const unit = normalizeUnit(unitText, drawingUnit);
     if ((unit == null ? void 0 : unit.kind) === "angle") continue;
-    const value = [parseFinite(match[2] ?? ""), parseFinite(match[3] ?? "")];
+    const value2 = [parseFinite(match[2] ?? ""), parseFinite(match[3] ?? "")];
     coordinateRanges.push([match.index, end]);
     located.push({
       start,
       end,
       constraint: {
         kind: "coordinate",
-        value,
+        value: value2,
         unit: (unit == null ? void 0 : unit.unit) ?? drawingUnit,
         userEvidenceSpan: { start, end, text: instruction.slice(start, end) }
       }
@@ -204,7 +204,7 @@ function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () =
         numericConstraints
       });
     }
-    let messages = [...decision.messages];
+    const messages = [...decision.messages];
     const attachment = directUser ? findLatestImage([directUser]) : null;
     const selection = ((_c = semantic == null ? void 0 : semantic.currentSelectionProjection) == null ? void 0 : _c.call(semantic, sessionId)) ?? null;
     const drawingRef = (selection == null ? void 0 : selection.drawingRef) ?? (snapshot == null ? void 0 : snapshot.ref);
@@ -220,7 +220,7 @@ function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () =
           "The selection is grounding evidence only and does not grant write authority."
         ] : [],
         ...numericConstraints.length > 0 ? [
-          `Verified numeric evidence: ${JSON.stringify(numericConstraints.map(({ numericKey, kind, value, unit }) => ({ numericKey, kind, value, unit })))}.`,
+          `Verified numeric evidence: ${JSON.stringify(numericConstraints.map(({ numericKey, kind, value: value2, unit }) => ({ numericKey, kind, value: value2, unit })))}.`,
           "A Drawing spatial intent may reference these values only by numericKey."
         ] : []
       ].join(" ");
@@ -238,8 +238,8 @@ function createPreStepIntake(repository, semantic, scope = { isRuntimeRoot: () =
     return { kind: "enter", messages };
   };
 }
-function canonicalString(value) {
-  return JSON.stringify(normalize(value));
+function canonicalString(value2) {
+  return JSON.stringify(normalize(value2));
 }
 function canonicalSemanticString(document) {
   const semantic = Object.fromEntries(
@@ -247,13 +247,13 @@ function canonicalSemanticString(document) {
   );
   return canonicalString(semantic);
 }
-function normalize(value) {
-  if (Array.isArray(value)) return value.map(normalize);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== void 0).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, normalize(item)]));
+function normalize(value2) {
+  if (Array.isArray(value2)) return value2.map(normalize);
+  if (value2 !== null && typeof value2 === "object") {
+    return Object.fromEntries(Object.entries(value2).filter(([, item]) => item !== void 0).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, normalize(item)]));
   }
-  if (typeof value === "number" && Object.is(value, -0)) return 0;
-  return value;
+  if (typeof value2 === "number" && Object.is(value2, -0)) return 0;
+  return value2;
 }
 function findConnectedCarrierCandidates(document) {
   const tolerance = drawingRelativeTolerance(document);
@@ -562,9 +562,9 @@ function endpointValue(document, nodeId, endpoint) {
   if (!node || node.type !== "line") throw new Error("CONNECTED_TRANSFORM_CONNECTOR_STALE");
   return structuredClone(node[endpoint]);
 }
-function normalizedRotationDegrees(value) {
-  if (!Number.isFinite(value)) throw new Error("CONNECTED_TRANSFORM_ROTATION_INVALID");
-  const normalized = (value % 360 + 540) % 360 - 180;
+function normalizedRotationDegrees(value2) {
+  if (!Number.isFinite(value2)) throw new Error("CONNECTED_TRANSFORM_ROTATION_INVALID");
+  const normalized = (value2 % 360 + 540) % 360 - 180;
   return Object.is(normalized, -0) ? 0 : normalized;
 }
 function rotateVector(vector, radians) {
@@ -594,8 +594,8 @@ function dot(left, right) {
 function cleanPoint$3(point) {
   return [clean$2(point[0]), clean$2(point[1])];
 }
-function clean$2(value) {
-  const rounded = Number(value.toFixed(9));
+function clean$2(value2) {
+  const rounded = Number(value2.toFixed(9));
   return Object.is(rounded, -0) ? 0 : rounded;
 }
 function assertPoint(point, code) {
@@ -604,7 +604,7 @@ function assertPoint(point, code) {
 function applyDrawingTransaction(source, commands, now) {
   const document = structuredClone(source);
   for (const command of commands) applyCommand$1(document, command);
-  validateDocument$1(document);
+  validateDocument$2(document);
   document.metadata.updatedAt = now;
   return document;
 }
@@ -642,7 +642,7 @@ function applyCommand$1(document, command) {
   }
   const node = located.node;
   for (const [key, expected] of Object.entries(command.expected)) assertExpected(node[key], expected);
-  for (const [key, value] of Object.entries(command.changes)) node[key] = structuredClone(value);
+  for (const [key, value2] of Object.entries(command.changes)) node[key] = structuredClone(value2);
 }
 function collectionFor(document, plane) {
   if (plane === "geometry") return document.geometry;
@@ -666,7 +666,7 @@ function removeReferences(document, id) {
     relationIds: feature.relationIds.filter((nodeId) => nodeId !== id)
   }));
 }
-function validateDocument$1(document) {
+function validateDocument$2(document) {
   const ids = [
     ...document.geometry.map(({ id }) => id),
     ...document.annotations.map(({ id }) => id),
@@ -878,8 +878,8 @@ function compileOperation(document, operation, grounding, ports) {
     return { type: "node.delete", id };
   }), diagnostics: [] };
 }
-function finitePoint(value, code) {
-  const point = [Number(value[0]), Number(value[1])];
+function finitePoint(value2, code) {
+  const point = [Number(value2[0]), Number(value2[1])];
   if (!point.every(Number.isFinite)) throw new Error(code);
   return point;
 }
@@ -951,8 +951,8 @@ function rotate(vector, radians) {
 function cleanPoint$2(point) {
   return [clean$1(point[0]), clean$1(point[1])];
 }
-function clean$1(value) {
-  const result = Math.abs(value) < 1e-12 ? 0 : Number(value.toFixed(12));
+function clean$1(value2) {
+  const result = Math.abs(value2) < 1e-12 ? 0 : Number(value2.toFixed(12));
   return Object.is(result, -0) ? 0 : result;
 }
 function degrees(radians) {
@@ -1306,8 +1306,8 @@ function distance$2(left, right) {
 function cleanPoint$1(point) {
   return [clean(point[0]), clean(point[1])];
 }
-function clean(value) {
-  const rounded = Number(value.toFixed(9));
+function clean(value2) {
+  const rounded = Number(value2.toFixed(9));
   return Object.is(rounded, -0) ? 0 : rounded;
 }
 const MAGNITUDE_RATIO = {
@@ -1568,16 +1568,16 @@ function applyNumericGoal(input, transforms, goal) {
     return;
   }
   if (constraint.kind === "coordinate" || Array.isArray(constraint.value)) throw new Error("EDIT_NUMERIC_KIND_MISMATCH");
-  const value = distanceInDrawingUnits(constraint.value, constraint.unit, input.document.unitSystem.length);
+  const value2 = distanceInDrawingUnits(constraint.value, constraint.unit, input.document.unitSystem.length);
   const original = originalPartGeometry(input, goal.subject);
-  if (goal.quantity === "delta_x") transform2.translation[0] = value;
-  if (goal.quantity === "delta_y") transform2.translation[1] = value;
-  if (goal.quantity === "target_x") transform2.translation[0] = value - original.center[0];
-  if (goal.quantity === "target_y") transform2.translation[1] = value - original.center[1];
+  if (goal.quantity === "delta_x") transform2.translation[0] = value2;
+  if (goal.quantity === "delta_y") transform2.translation[1] = value2;
+  if (goal.quantity === "target_x") transform2.translation[0] = value2 - original.center[0];
+  if (goal.quantity === "target_y") transform2.translation[1] = value2 - original.center[1];
   if (goal.quantity === "distance") {
     const direction = input.intent.goals.find((candidate) => candidate.kind === "direction" && candidate.subject === goal.subject);
     if (!direction) throw new Error("EDIT_NUMERIC_DIRECTION_REQUIRED");
-    transform2.translation = direction.direction === "up" ? [0, value] : direction.direction === "down" ? [0, -value] : direction.direction === "left" ? [-value, 0] : [value, 0];
+    transform2.translation = direction.direction === "up" ? [0, value2] : direction.direction === "down" ? [0, -value2] : direction.direction === "left" ? [-value2, 0] : [value2, 0];
   }
 }
 function applyTopologySeed(input, transforms, goal, scale2) {
@@ -1764,12 +1764,12 @@ function goalResidualFor(input, candidate, transforms, scale2) {
       const expected = input.numericConstraints.find(({ numericKey }) => numericKey === goal.numericKey);
       const original = originalPartGeometry(input, goal.subject);
       if (goal.quantity === "angle") {
-        const value = Array.isArray(expected.value) ? Number.NaN : angleRadians(expected.value, expected.unit);
-        residual += Math.abs((transforms[goal.subject].rotationRadians ?? 0) - value);
+        const value2 = Array.isArray(expected.value) ? Number.NaN : angleRadians(expected.value, expected.unit);
+        residual += Math.abs((transforms[goal.subject].rotationRadians ?? 0) - value2);
       } else if (!Array.isArray(expected.value)) {
-        const value = distanceInDrawingUnits(expected.value, expected.unit, input.document.unitSystem.length);
+        const value2 = distanceInDrawingUnits(expected.value, expected.unit, input.document.unitSystem.length);
         const actual = goal.quantity === "delta_x" ? subject.center[0] - original.center[0] : goal.quantity === "delta_y" ? subject.center[1] - original.center[1] : goal.quantity === "target_x" ? subject.center[0] : goal.quantity === "target_y" ? subject.center[1] : Math.hypot(subject.center[0] - original.center[0], subject.center[1] - original.center[1]);
-        residual += Math.abs(actual - value) / scale2;
+        residual += Math.abs(actual - value2) / scale2;
       }
       continue;
     }
@@ -2015,15 +2015,229 @@ function distanceToSegment$1(point, start, end) {
   const ratio = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
   return Math.hypot(point[0] - (start[0] + ratio * dx), point[1] - (start[1] + ratio * dy));
 }
-function distanceInDrawingUnits(value, unit, drawingUnit) {
-  const millimeters = unit === "mm" ? value : unit === "cm" ? value * 10 : unit === "m" ? value * 1e3 : unit === "in" ? value * 25.4 : Number.NaN;
+function distanceInDrawingUnits(value2, unit, drawingUnit) {
+  const millimeters = unit === "mm" ? value2 : unit === "cm" ? value2 * 10 : unit === "m" ? value2 * 1e3 : unit === "in" ? value2 * 25.4 : Number.NaN;
   if (!Number.isFinite(millimeters)) throw new Error("EDIT_NUMERIC_UNIT_UNSUPPORTED");
   return drawingUnit === "mm" ? millimeters : drawingUnit === "cm" ? millimeters / 10 : millimeters / 1e3;
 }
-function angleRadians(value, unit) {
-  if (unit === "deg") return value * Math.PI / 180;
-  if (unit === "rad") return value;
+function angleRadians(value2, unit) {
+  if (unit === "deg") return value2 * Math.PI / 180;
+  if (unit === "rad") return value2;
   throw new Error("EDIT_NUMERIC_UNIT_UNSUPPORTED");
+}
+const randomIdFactory = {
+  next: (kind) => `${kind}_${globalThis.crypto.randomUUID()}`
+};
+function createEmptyDrawing(input = {}) {
+  const idFactory = input.idFactory ?? randomIdFactory;
+  const now = (input.now ?? Date.now)();
+  return {
+    protocol: "VectorAI-Drawing",
+    schemaVersion: "1.0",
+    id: idFactory.next("drawing"),
+    metadata: { createdAt: now, updatedAt: now },
+    unitSystem: { length: input.unit ?? "mm", angle: "deg" },
+    sources: [],
+    coordinateFrames: [
+      {
+        id: "frame_document",
+        kind: "document",
+        transform: [1, 0, 0, 1, 0, 0]
+      }
+    ],
+    geometry: [],
+    annotations: [],
+    relations: [],
+    features: []
+  };
+}
+function evaluateSpline(node, parameter) {
+  validateSpline(node);
+  if (!Number.isFinite(parameter)) throw new TypeError("SPLINE_PARAMETER_INVALID");
+  return project(evaluateHomogeneous(node, Math.min(1, Math.max(0, parameter))));
+}
+function evaluateHomogeneous(node, normalized) {
+  const pointCount = node.controlPoints.length;
+  const lastControlIndex = pointCount - 1;
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[lastControlIndex + 1];
+  const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
+  const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
+  const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
+  const work = [];
+  for (let index = 0; index <= node.degree; index += 1) {
+    const sourceIndex = span - node.degree + index;
+    const weight = weights[sourceIndex];
+    const point = node.controlPoints[sourceIndex];
+    work.push([point[0] * weight, point[1] * weight, weight]);
+  }
+  for (let level = 1; level <= node.degree; level += 1) {
+    for (let index = node.degree; index >= level; index -= 1) {
+      const knotIndex = span - node.degree + index;
+      const denominator = node.knots[knotIndex + node.degree - level + 1] - node.knots[knotIndex];
+      const alpha = denominator === 0 ? 0 : (knotParameter - node.knots[knotIndex]) / denominator;
+      work[index] = mixHomogeneous(work[index - 1], work[index], alpha);
+    }
+  }
+  return work[node.degree];
+}
+function sampleSpline(node, { maxError, maxDepth = 12 }) {
+  if (!(Number.isFinite(maxError) && maxError > 0)) {
+    throw new TypeError("SPLINE_MAX_ERROR_INVALID");
+  }
+  if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 24) {
+    throw new TypeError("SPLINE_MAX_DEPTH_INVALID");
+  }
+  validateSpline(node);
+  const first = project(evaluateHomogeneous(node, 0));
+  const output = [first];
+  const spans = normalizedKnotSpans(node);
+  for (let index = 1; index < spans.length; index += 1) {
+    const controls = extractBezierControls(node, spans[index - 1], spans[index]);
+    subdivideBezier(controls, 0, maxDepth, maxError, output);
+  }
+  if (node.closed && !samePoint(output[0], output.at(-1))) output.push(output[0]);
+  return output;
+}
+function normalizedKnotSpans(node) {
+  const start = node.knots[node.degree];
+  const end = node.knots[node.controlPoints.length];
+  return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value2) => (value2 - start) / (end - start)).filter((value2, index, values2) => index === 0 || value2 > values2[index - 1]);
+}
+function splineBounds(node) {
+  validateSpline(node);
+  const controlMinX = Math.min(...node.controlPoints.map(([x]) => x));
+  const controlMaxX = Math.max(...node.controlPoints.map(([x]) => x));
+  const controlMinY = Math.min(...node.controlPoints.map(([, y]) => y));
+  const controlMaxY = Math.max(...node.controlPoints.map(([, y]) => y));
+  const span = Math.max(controlMaxX - controlMinX, controlMaxY - controlMinY, 1);
+  const points = sampleSpline(node, { maxError: Math.max(span * 1e-6, 1e-8), maxDepth: 18 });
+  return {
+    minX: Math.min(...points.map(([x]) => x)),
+    minY: Math.min(...points.map(([, y]) => y)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    maxY: Math.max(...points.map(([, y]) => y))
+  };
+}
+function validateSpline(node) {
+  if (!Number.isInteger(node.degree) || node.degree < 1) {
+    throw new TypeError("SPLINE_DEGREE_INVALID");
+  }
+  if (node.controlPoints.length <= node.degree) {
+    throw new TypeError("SPLINE_CONTROL_POINT_COUNT_INVALID");
+  }
+  if (node.controlPoints.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
+    throw new TypeError("SPLINE_CONTROL_POINT_INVALID");
+  }
+  const expectedKnots = node.controlPoints.length + node.degree + 1;
+  if (node.knots.length !== expectedKnots) {
+    throw new TypeError("SPLINE_KNOT_COUNT_INVALID");
+  }
+  if (node.knots.some((value2, index) => !Number.isFinite(value2) || index > 0 && value2 < node.knots[index - 1])) {
+    throw new TypeError("SPLINE_KNOT_SEQUENCE_INVALID");
+  }
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[node.controlPoints.length];
+  if (!(domainEnd > domainStart)) throw new TypeError("SPLINE_KNOT_DOMAIN_INVALID");
+  if (node.weights !== void 0 && (node.weights.length !== node.controlPoints.length || node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0))) {
+    throw new TypeError("SPLINE_WEIGHTS_INVALID");
+  }
+}
+function findSpan(knots, degree, lastControlIndex, value2) {
+  let low = degree;
+  let high = lastControlIndex + 1;
+  let middle = Math.floor((low + high) / 2);
+  while (value2 < knots[middle] || value2 >= knots[middle + 1]) {
+    if (value2 < knots[middle]) high = middle;
+    else low = middle;
+    middle = Math.floor((low + high) / 2);
+  }
+  return middle;
+}
+function mixHomogeneous(first, second, alpha) {
+  return [
+    first[0] * (1 - alpha) + second[0] * alpha,
+    first[1] * (1 - alpha) + second[1] * alpha,
+    first[2] * (1 - alpha) + second[2] * alpha
+  ];
+}
+function subdivideBezier(controls, depth, maxDepth, maxError, output) {
+  const points = controls.map(project);
+  const start = points[0];
+  const end = points.at(-1);
+  const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
+  if (depth >= maxDepth || flatness <= maxError) {
+    output.push(end);
+    return;
+  }
+  const [left, right] = splitBezier(controls);
+  subdivideBezier(left, depth + 1, maxDepth, maxError, output);
+  subdivideBezier(right, depth + 1, maxDepth, maxError, output);
+}
+function extractBezierControls(node, start, end) {
+  const degree = node.degree;
+  if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
+  const samples = Array.from({ length: degree + 1 }, (_, row) => {
+    const local = row / degree;
+    return evaluateHomogeneous(node, start + (end - start) * local);
+  });
+  const matrix = Array.from({ length: degree + 1 }, (_, row) => {
+    const parameter = row / degree;
+    return Array.from({ length: degree + 1 }, (_2, column) => bernstein(degree, column, parameter));
+  });
+  return solve(matrix, samples);
+}
+function solve(matrix, values2) {
+  const size = matrix.length;
+  const augmented = matrix.map((row, index) => [...row, ...values2[index]]);
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+    const divisor = augmented[column][column];
+    if (Math.abs(divisor) <= 1e-14) throw new TypeError("SPLINE_BEZIER_EXTRACTION_FAILED");
+    for (let index = column; index < size + 3; index += 1) augmented[column][index] = augmented[column][index] / divisor;
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = augmented[row][column];
+      for (let index = column; index < size + 3; index += 1) augmented[row][index] = augmented[row][index] - factor * augmented[column][index];
+    }
+  }
+  return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
+}
+function splitBezier(controls) {
+  const levels = [controls.map((point) => [...point])];
+  while (levels.at(-1).length > 1) {
+    const previous = levels.at(-1);
+    levels.push(previous.slice(1).map((point, index) => mixHomogeneous(previous[index], point, 0.5)));
+  }
+  return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
+}
+function project(point) {
+  if (!(Math.abs(point[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
+  return [point[0] / point[2], point[1] / point[2]];
+}
+function bernstein(degree, index, parameter) {
+  return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
+}
+function binomial(n, k) {
+  let result = 1;
+  for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
+  return result;
+}
+function pointSegmentDistance(point, start, end) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+  return Math.hypot(
+    point[0] - (start[0] + projection * dx),
+    point[1] - (start[1] + projection * dy)
+  );
+}
+function samePoint(first, second) {
+  return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
 }
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
@@ -2101,16 +2315,16 @@ function cloneResult(result) {
   return result === null ? null : structuredClone(result);
 }
 function validateBounds(bounds2) {
-  const values = [bounds2.minX, bounds2.minY, bounds2.maxX, bounds2.maxY];
-  if (!values.every(Number.isFinite) || bounds2.minX > bounds2.maxX || bounds2.minY > bounds2.maxY) {
+  const values2 = [bounds2.minX, bounds2.minY, bounds2.maxX, bounds2.maxY];
+  if (!values2.every(Number.isFinite) || bounds2.minX > bounds2.maxX || bounds2.minY > bounds2.maxY) {
     throw new Error("INVALID_QUERY_BOUNDS");
   }
 }
 function validateLimit(limit) {
-  const value = limit ?? DEFAULT_LIMIT;
-  if (!Number.isInteger(value) || value < 1) throw new Error("INVALID_QUERY_LIMIT");
-  if (value > MAX_LIMIT) throw new Error("QUERY_LIMIT_EXCEEDED");
-  return value;
+  const value2 = limit ?? DEFAULT_LIMIT;
+  if (!Number.isInteger(value2) || value2 < 1) throw new Error("INVALID_QUERY_LIMIT");
+  if (value2 > MAX_LIMIT) throw new Error("QUERY_LIMIT_EXCEEDED");
+  return value2;
 }
 function referencedNodeIntersects(document, id, bounds2) {
   const result = findNode$1(document, id);
@@ -2137,7 +2351,7 @@ function boundsOfNode(node) {
     case "circle":
       return radiusBounds(node.center, node.radius);
     case "arc":
-      return arcBounds(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise);
+      return arcBounds$1(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise);
     case "ellipse": {
       const [ax, ay] = node.majorAxis;
       const bx = -ay * node.ratio;
@@ -2152,7 +2366,7 @@ function boundsOfNode(node) {
     case "polyline":
       return fromPoints(node.vertices.map(({ point }) => point));
     case "spline":
-      return fromPoints(node.controlPoints);
+      return splineBounds(node);
     case "text": {
       const width = node.maxWidth ?? Math.max(node.height, node.content.length * node.height * 0.6);
       return expandPoint(node.position, width, node.height);
@@ -2179,18 +2393,18 @@ function fromPoints(points) {
 function radiusBounds([x, y], radius) {
   return { minX: x - radius, minY: y - radius, maxX: x + radius, maxY: y + radius };
 }
-function arcBounds(center2, radius, startAngle, endAngle, counterClockwise) {
+function arcBounds$1(center2, radius, startAngle, endAngle, counterClockwise) {
   const angles = [startAngle, endAngle];
   for (const angle of [0, 90, 180, 270]) {
-    if (angleOnArc(angle, startAngle, endAngle, counterClockwise)) angles.push(angle);
+    if (angleOnArc$1(angle, startAngle, endAngle, counterClockwise)) angles.push(angle);
   }
   return fromPoints(angles.map((angle) => {
     const radians = angle * Math.PI / 180;
     return [center2[0] + radius * Math.cos(radians), center2[1] + radius * Math.sin(radians)];
   }));
 }
-function angleOnArc(angle, start, end, counterClockwise) {
-  const normalize2 = (value) => (value % 360 + 360) % 360;
+function angleOnArc$1(angle, start, end, counterClockwise) {
+  const normalize2 = (value2) => (value2 % 360 + 360) % 360;
   const a = normalize2(angle);
   const s = normalize2(start);
   const e = normalize2(end);
@@ -2235,8 +2449,8 @@ class WorldModelCompiler {
     const curveSamples = integer$1(request.curveSamples, 8, 512, 64);
     const limit = integer$1(request.limit, 1, 2e3, 2e3);
     const requested = request.nodeIds ? new Set(request.nodeIds) : null;
-    const allCandidates = document.geometry.filter((node) => (!requested || requested.has(String(node.id))) && (!request.bounds || boundsIntersect(geometryBounds(node), request.bounds)));
-    const effectiveScopeBounds = request.bounds ? structuredClone(request.bounds) : unionSpatialBounds(allCandidates.map(geometryBounds));
+    const allCandidates = document.geometry.filter((node) => (!requested || requested.has(String(node.id))) && (!request.bounds || boundsIntersect(geometryBounds$1(node), request.bounds)));
+    const effectiveScopeBounds = request.bounds ? structuredClone(request.bounds) : unionSpatialBounds(allCandidates.map(geometryBounds$1));
     const missing = ((_a3 = request.nodeIds) == null ? void 0 : _a3.filter((id) => !document.geometry.some((node) => node.id === id))) ?? [];
     const scopeDigest = __privateGet(this, _ports).digest(stableStringify({
       drawingId: document.id,
@@ -2282,7 +2496,7 @@ class WorldModelCompiler {
         halfEdgeIds: [`half:${id}:forward`, `half:${id}:reverse`],
         derivation: draft.derivation,
         tolerance,
-        bounds: pointsBounds(draft.samples),
+        bounds: pointsBounds$1(draft.samples),
         samples: structuredClone(draft.samples)
       };
     });
@@ -2414,7 +2628,7 @@ function splitLinearDraftsAtIntersections(drafts, tolerance) {
   });
 }
 function sampleCurve(node, count) {
-  if (node.type === "spline") return structuredClone(node.controlPoints);
+  if (node.type === "spline") return sampleSpline(node, { maxError: 0.02, maxDepth: 16 });
   if (node.type === "circle") return Array.from({ length: count + 1 }, (_, index) => {
     const angle = index / count * Math.PI * 2;
     return [node.center[0] + node.radius * Math.cos(angle), node.center[1] + node.radius * Math.sin(angle)];
@@ -2521,10 +2735,10 @@ function pointAt(start, end, parameter) {
     start[1] + (end[1] - start[1]) * parameter
   ]);
 }
-function geometryBounds(node) {
-  if (node.type === "point") return pointsBounds([[node.x, node.y]]);
-  if (node.type === "line") return pointsBounds([node.start, node.end]);
-  if (node.type === "ray" || node.type === "xline") return pointsBounds([node.origin]);
+function geometryBounds$1(node) {
+  if (node.type === "point") return pointsBounds$1([[node.x, node.y]]);
+  if (node.type === "line") return pointsBounds$1([node.start, node.end]);
+  if (node.type === "ray" || node.type === "xline") return pointsBounds$1([node.origin]);
   if (node.type === "circle" || node.type === "arc") return {
     minX: node.center[0] - node.radius,
     minY: node.center[1] - node.radius,
@@ -2535,10 +2749,10 @@ function geometryBounds(node) {
     const radius = Math.hypot(...node.majorAxis);
     return { minX: node.center[0] - radius, minY: node.center[1] - radius, maxX: node.center[0] + radius, maxY: node.center[1] + radius };
   }
-  if (node.type === "polyline") return pointsBounds(node.vertices.map(({ point }) => point));
-  return pointsBounds(node.controlPoints);
+  if (node.type === "polyline") return pointsBounds$1(node.vertices.map(({ point }) => point));
+  return splineBounds(node);
 }
-function pointsBounds(points) {
+function pointsBounds$1(points) {
   if (points.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   return {
     minX: Math.min(...points.map(([x]) => x)),
@@ -2567,36 +2781,36 @@ function unionSpatialBounds(bounds2) {
     maxY: Math.max(...bounds2.map((item) => item.maxY))
   };
 }
-function stableId$1(ports, kind, value) {
-  return `${kind}_${ports.digest(stableStringify(value)).replace(/^sha256:/, "").slice(0, 24)}`;
+function stableId$1(ports, kind, value2) {
+  return `${kind}_${ports.digest(stableStringify(value2)).replace(/^sha256:/, "").slice(0, 24)}`;
 }
-function portableDigest$1(value) {
+function portableDigest$1(value2) {
   let first = 2166136261;
   let second = 2246822519;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
+  for (let index = 0; index < value2.length; index += 1) {
+    const code = value2.charCodeAt(index);
     first = Math.imul(first ^ code, 16777619) >>> 0;
     second = Math.imul(second ^ code, 3266489917) >>> 0;
   }
   return `sha256:${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
 }
-function stableStringify(value) {
-  return JSON.stringify(canonicalize$1(value));
+function stableStringify(value2) {
+  return JSON.stringify(canonicalize$1(value2));
 }
-function canonicalize$1(value) {
-  if (Array.isArray(value)) return value.map(canonicalize$1);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonicalize$1(child)]));
+function canonicalize$1(value2) {
+  if (Array.isArray(value2)) return value2.map(canonicalize$1);
+  if (!value2 || typeof value2 !== "object") return value2;
+  return Object.fromEntries(Object.entries(value2).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonicalize$1(child)]));
 }
-function integer$1(value, minimum, maximum, fallback) {
-  if (value === void 0) return fallback;
-  if (!Number.isInteger(value) || value < minimum || value > maximum) throw new Error("WORLD_MODEL_REQUEST_INVALID");
-  return value;
+function integer$1(value2, minimum, maximum, fallback) {
+  if (value2 === void 0) return fallback;
+  if (!Number.isInteger(value2) || value2 < minimum || value2 > maximum) throw new Error("WORLD_MODEL_REQUEST_INVALID");
+  return value2;
 }
-function positive$2(value, fallback) {
-  if (value === void 0) return fallback;
-  if (!Number.isFinite(value) || value <= 0) throw new Error("WORLD_MODEL_REQUEST_INVALID");
-  return value;
+function positive$2(value2, fallback) {
+  if (value2 === void 0) return fallback;
+  if (!Number.isFinite(value2) || value2 <= 0) throw new Error("WORLD_MODEL_REQUEST_INVALID");
+  return value2;
 }
 function quantize(point, tolerance) {
   return [Math.round(point[0] / tolerance) * tolerance, Math.round(point[1] / tolerance) * tolerance];
@@ -2759,11 +2973,11 @@ function applySupportDelta(current, delta) {
 function supportKey(support) {
   return `${support.kind}\0${support.ref}\0${support.role}`;
 }
-function portableDigest(value) {
+function portableDigest(value2) {
   let first = 2166136261;
   let second = 2246822519;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
+  for (let index = 0; index < value2.length; index += 1) {
+    const code = value2.charCodeAt(index);
     first = Math.imul(first ^ code, 16777619) >>> 0;
     second = Math.imul(second ^ code, 3266489917) >>> 0;
   }
@@ -2823,7 +3037,7 @@ function sampleGeometryRanges(node, input) {
     }
     case "spline": {
       const count = Math.max(2, curveSamples);
-      return sampledParameterRanges(count, (parameter) => splinePoint(node, parameter));
+      return sampledParameterRanges(count, (parameter) => evaluateSpline(node, parameter));
     }
   }
 }
@@ -2859,7 +3073,7 @@ function roughGeometryBounds(node) {
       return boundsOf(samples);
     }
     case "spline":
-      return node.controlPoints.length > 0 ? boundsOf(node.controlPoints) : null;
+      return splineBounds(node);
   }
 }
 function polylineRanges(node, curveSamples) {
@@ -2895,48 +3109,6 @@ function sampledParameterRanges(count, evaluate) {
     });
   });
 }
-function splinePoint(node, parameter) {
-  var _a3;
-  const points = node.controlPoints;
-  if (points.length === 0) return [0, 0];
-  if (points.length === 1) return points[0];
-  const degree = Math.min(node.degree, points.length - 1);
-  const expectedKnotCount = points.length + degree + 1;
-  if (node.knots.length !== expectedKnotCount) return controlPolygonPoint(points, parameter);
-  const minimum = node.knots[degree];
-  const maximum = node.knots[points.length];
-  const u = parameter >= 1 ? maximum : minimum + (maximum - minimum) * parameter;
-  const weights = ((_a3 = node.weights) == null ? void 0 : _a3.length) === points.length ? node.weights : points.map(() => 1);
-  let weightSum = 0;
-  let x = 0;
-  let y = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const basis = bsplineBasis(index, degree, u, node.knots, maximum) * weights[index];
-    weightSum += basis;
-    x += basis * points[index][0];
-    y += basis * points[index][1];
-  }
-  return weightSum === 0 ? controlPolygonPoint(points, parameter) : [x / weightSum, y / weightSum];
-}
-function bsplineBasis(index, degree, parameter, knots, maximum) {
-  if (degree === 0) {
-    return knots[index] <= parameter && (parameter < knots[index + 1] || parameter === maximum && knots[index + 1] === maximum) ? 1 : 0;
-  }
-  const leftDenominator = knots[index + degree] - knots[index];
-  const rightDenominator = knots[index + degree + 1] - knots[index + 1];
-  const left = leftDenominator === 0 ? 0 : (parameter - knots[index]) / leftDenominator * bsplineBasis(index, degree - 1, parameter, knots, maximum);
-  const right = rightDenominator === 0 ? 0 : (knots[index + degree + 1] - parameter) / rightDenominator * bsplineBasis(index + 1, degree - 1, parameter, knots, maximum);
-  return left + right;
-}
-function controlPolygonPoint(points, parameter) {
-  const scaled = Math.max(0, Math.min(1, parameter)) * (points.length - 1);
-  const index = Math.min(points.length - 2, Math.floor(scaled));
-  const local = scaled - index;
-  return [
-    points[index][0] + (points[index + 1][0] - points[index][0]) * local,
-    points[index][1] + (points[index + 1][1] - points[index][1]) * local
-  ];
-}
 function ellipsePoint(center2, majorAxis, ratio, parameter) {
   const major = Math.hypot(majorAxis[0], majorAxis[1]);
   if (major === 0) return center2;
@@ -2969,13 +3141,13 @@ function arcSweepRadians(start, end, counterClockwise) {
   const raw = degreesToRadians(end - start);
   return counterClockwise ? positiveSweep(raw) : -positiveSweep(-raw);
 }
-function positiveSweep(value) {
+function positiveSweep(value2) {
   const full = Math.PI * 2;
-  const normalized = (value % full + full) % full;
+  const normalized = (value2 % full + full) % full;
   return Math.abs(normalized) < 1e-12 ? full : normalized;
 }
-function degreesToRadians(value) {
-  return value * Math.PI / 180;
+function degreesToRadians(value2) {
+  return value2 * Math.PI / 180;
 }
 function polar$1(center2, radius, angle) {
   return [center2[0] + radius * Math.cos(angle), center2[1] + radius * Math.sin(angle)];
@@ -3172,10 +3344,10 @@ function documentSamplingBounds(document) {
     maxY: bounds2.maxY + span
   };
 }
-function normalizedTolerance(value, bounds2) {
-  if (value !== void 0) {
-    if (!Number.isFinite(value) || value <= 0) throw new Error("TOPOLOGY_TOLERANCE_INVALID");
-    return value;
+function normalizedTolerance(value2, bounds2) {
+  if (value2 !== void 0) {
+    if (!Number.isFinite(value2) || value2 <= 0) throw new Error("TOPOLOGY_TOLERANCE_INVALID");
+    return value2;
   }
   const scale2 = Math.max(
     bounds2.maxX - bounds2.minX,
@@ -3188,8 +3360,8 @@ function normalizedTolerance(value, bounds2) {
   );
   return Math.max(scale2 * 4e-4, scale2 * Number.EPSILON * 64);
 }
-function normalizedCurveSamples(value) {
-  const samples = value ?? 64;
+function normalizedCurveSamples(value2) {
+  const samples = value2 ?? 64;
   if (!Number.isFinite(samples) || samples < 2) throw new Error("TOPOLOGY_CURVE_SAMPLES_INVALID");
   return Math.max(8, Math.min(512, Math.floor(samples)));
 }
@@ -3219,11 +3391,383 @@ function union$1(parent, left, right) {
 function distance(left, right) {
   return Math.hypot(right[0] - left[0], right[1] - left[1]);
 }
-function unique(values) {
-  return [...new Set(values)];
+function unique(values2) {
+  return [...new Set(values2)];
 }
-function digest$1(value) {
-  return portableDigest(value);
+function digest$1(value2) {
+  return portableDigest(value2);
+}
+function decodeDxfPairs(bytes) {
+  const text = new TextDecoder("utf-8").decode(bytes).replace(/^\uFEFF/, "");
+  if (text.includes("\0")) {
+    return rejected$2("DXF_NUL_BYTE", "DXF input contains a NUL byte");
+  }
+  const lines = text.split(/\r?\n/);
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.length % 2 !== 0) {
+    return rejected$2("DXF_GROUP_PAIR_INCOMPLETE", "DXF input ends without a value line", lines.length);
+  }
+  const pairs = [];
+  for (let index = 0; index < lines.length; index += 2) {
+    const codeText = lines[index].trim();
+    if (!/^[+-]?\d+$/.test(codeText)) {
+      return rejected$2("DXF_GROUP_CODE_INVALID", `Invalid DXF group code: ${codeText}`, index + 1);
+    }
+    const code = Number(codeText);
+    if (!Number.isSafeInteger(code)) {
+      return rejected$2("DXF_GROUP_CODE_INVALID", `Invalid DXF group code: ${codeText}`, index + 1);
+    }
+    pairs.push({ code, value: lines[index + 1].trim(), line: index + 1 });
+  }
+  const eof = pairs.at(-1);
+  if ((eof == null ? void 0 : eof.code) !== 0 || eof.value !== "EOF") {
+    return rejected$2("DXF_EOF_REQUIRED", "DXF input does not end with EOF", lines.length || 1);
+  }
+  return { pairs, diagnostics: [] };
+}
+function rejected$2(code, message, line2) {
+  return {
+    pairs: [],
+    diagnostics: [{ severity: "error", code, message, ...line2 === void 0 ? {} : { line: line2 } }]
+  };
+}
+function projectHatch(record2, context) {
+  const points = hatchBoundaryPoints(record2);
+  const segments = points.length < 2 ? [] : points.map((start, index) => ({
+    start,
+    end: points[(index + 1) % points.length]
+  }));
+  return {
+    id: context.nodeId(record2, "annotation"),
+    type: "section-hatch",
+    visible: true,
+    quality: { status: "confirmed", evidenceRefs: [] },
+    sourceRef: sourceRef(record2, context.sourceId),
+    pattern: value(record2, 2) ?? "SOLID",
+    angle: number$2(record2, 52, 0),
+    spacing: Math.abs(number$2(record2, 41, 1)),
+    segments
+  };
+}
+function hatchBoundaryPoints(record2) {
+  const points = coordinates(record2);
+  if (points.length <= 1) return points;
+  const first = points[0];
+  const rest = points.slice(1);
+  return rest.length >= 2 && first[0] === 0 && first[1] === 0 ? rest : points;
+}
+function readEntityRecords(pairs) {
+  const records = [];
+  let current = null;
+  for (const pair2 of pairs) {
+    if (pair2.code === 0) {
+      if (current !== null) records.push(current);
+      current = { type: pair2.value.toUpperCase(), pairs: [], index: records.length };
+    } else if (current !== null) {
+      current.pairs.push(pair2);
+    }
+  }
+  if (current !== null) records.push(current);
+  return records;
+}
+function projectEntity(record2, context) {
+  if (number$2(record2, 67, 0) === 1) {
+    context.diagnostics.push(diagnostic(record2, "info", "DXF_PAPER_SPACE_ENTITY_IGNORED", "Paper-space entity ignored"));
+    return null;
+  }
+  try {
+    if (record2.type === "LINE") return { geometry: line(record2, context) };
+    if (record2.type === "ARC") return { geometry: arc(record2, context) };
+    if (record2.type === "SPLINE") return { geometry: spline(record2, context) };
+    if (record2.type === "HATCH") return { annotation: projectHatch(record2, context) };
+    if (record2.type === "VIEWPORT") {
+      context.diagnostics.push(diagnostic(record2, "info", "DXF_VIEWPORT_IGNORED", "DXF VIEWPORT is presentation metadata, not drawing geometry"));
+      return null;
+    }
+    context.diagnostics.push(diagnostic(record2, "warning", "DXF_ENTITY_UNSUPPORTED", `Unsupported DXF entity ${record2.type}`));
+    return null;
+  } catch (error) {
+    context.diagnostics.push(diagnostic(
+      record2,
+      "error",
+      "DXF_ENTITY_INVALID",
+      error instanceof Error ? error.message : String(error)
+    ));
+    return null;
+  }
+}
+function value(record2, code) {
+  var _a3;
+  return (_a3 = record2.pairs.find((pair2) => pair2.code === code)) == null ? void 0 : _a3.value;
+}
+function values(record2, code) {
+  return record2.pairs.filter((pair2) => pair2.code === code).map((pair2) => pair2.value);
+}
+function number$2(record2, code, fallback) {
+  const raw = value(record2, code);
+  if (raw === void 0) {
+    if (fallback !== void 0) return fallback;
+    throw new TypeError(`DXF_${record2.type}_${code}_REQUIRED`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) throw new TypeError(`DXF_${record2.type}_${code}_INVALID`);
+  return parsed;
+}
+function numbers(record2, code) {
+  return values(record2, code).map((raw) => {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) throw new TypeError(`DXF_${record2.type}_${code}_INVALID`);
+    return parsed;
+  });
+}
+function coordinates(record2, xCode = 10, yCode = 20) {
+  const output = [];
+  let pendingX;
+  for (const pair2 of record2.pairs) {
+    if (pair2.code === xCode) {
+      const x = Number(pair2.value);
+      if (!Number.isFinite(x)) throw new TypeError(`DXF_${record2.type}_${xCode}_INVALID`);
+      pendingX = x;
+    } else if (pair2.code === yCode && pendingX !== void 0) {
+      const y = Number(pair2.value);
+      if (!Number.isFinite(y)) throw new TypeError(`DXF_${record2.type}_${yCode}_INVALID`);
+      output.push([pendingX, y]);
+      pendingX = void 0;
+    }
+  }
+  return output;
+}
+function sourceRef(record2, sourceId) {
+  return {
+    sourceId,
+    ...value(record2, 5) === void 0 ? {} : { objectId: value(record2, 5) },
+    objectType: record2.type,
+    layer: value(record2, 8) ?? "0"
+  };
+}
+function line(record2, context) {
+  return {
+    ...base(record2, context, "geometry"),
+    type: "line",
+    start: [number$2(record2, 10), number$2(record2, 20)],
+    end: [number$2(record2, 11), number$2(record2, 21)]
+  };
+}
+function arc(record2, context) {
+  const radius = number$2(record2, 40);
+  if (!(radius > 0)) throw new TypeError("DXF_ARC_RADIUS_INVALID");
+  return {
+    ...base(record2, context, "geometry"),
+    type: "arc",
+    center: [number$2(record2, 10), number$2(record2, 20)],
+    radius,
+    startAngle: number$2(record2, 50),
+    endAngle: number$2(record2, 51),
+    counterClockwise: true
+  };
+}
+function spline(record2, context) {
+  const flags = number$2(record2, 70, 0);
+  const controlPoints = coordinates(record2);
+  const degree = number$2(record2, 71);
+  const declaredControlPoints = number$2(record2, 73, controlPoints.length);
+  if (controlPoints.length !== declaredControlPoints) throw new TypeError("DXF_SPLINE_CONTROL_POINT_COUNT_MISMATCH");
+  return {
+    ...base(record2, context, "geometry"),
+    type: "spline",
+    degree,
+    controlPoints,
+    knots: numbers(record2, 40),
+    ...values(record2, 41).length === 0 ? {} : { weights: numbers(record2, 41) },
+    closed: (flags & 1) !== 0,
+    periodic: (flags & 2) !== 0
+  };
+}
+function base(record2, context, plane) {
+  return {
+    id: context.nodeId(record2, plane),
+    visible: true,
+    quality: { status: "confirmed", evidenceRefs: [] },
+    sourceRef: sourceRef(record2, context.sourceId)
+  };
+}
+function diagnostic(record2, severity, code, message) {
+  return {
+    severity,
+    code,
+    message,
+    ...record2.pairs[0] === void 0 ? {} : { line: record2.pairs[0].line },
+    ...value(record2, 5) === void 0 ? {} : { sourceHandle: value(record2, 5) }
+  };
+}
+function indexDxfSections(pairs) {
+  const sections = {};
+  for (let index = 0; index < pairs.length - 1; index += 1) {
+    if (pairs[index].code !== 0 || pairs[index].value !== "SECTION") continue;
+    const namePair = pairs[index + 1];
+    if (namePair.code !== 2) continue;
+    let end = index + 2;
+    while (end < pairs.length && !(pairs[end].code === 0 && pairs[end].value === "ENDSEC")) end += 1;
+    const section = { name: namePair.value, pairs: pairs.slice(index + 2, end) };
+    if (namePair.value === "HEADER") sections.header = section;
+    else if (namePair.value === "TABLES") sections.tables = section;
+    else if (namePair.value === "BLOCKS") sections.blocks = section;
+    else if (namePair.value === "ENTITIES") sections.entities = section;
+    index = end;
+  }
+  return sections;
+}
+function importDxf(request) {
+  const decoded = decodeDxfPairs(request.bytes);
+  if (decoded.diagnostics.some(({ severity }) => severity === "error")) {
+    return { status: "rejected", diagnostics: decoded.diagnostics };
+  }
+  const diagnostics = [...decoded.diagnostics];
+  const structureError = validateSectionStructure(decoded.pairs);
+  if (structureError !== null) return rejected$1(diagnostics, "DXF_SECTION_STRUCTURE_INVALID", structureError);
+  const sections = indexDxfSections(decoded.pairs);
+  if (sections.header === void 0 || sections.entities === void 0) {
+    return rejected$1(diagnostics, "DXF_REQUIRED_SECTION_MISSING", "DXF HEADER and ENTITIES sections are required");
+  }
+  const unit = readUnit(sections.header.pairs);
+  if (unit === null) return rejected$1(diagnostics, "DXF_UNITS_REQUIRED", "DXF $INSUNITS must be mm, cm, or m");
+  const records = readEntityRecords(sections.entities.pairs);
+  const counts = {};
+  for (const record2 of records) counts[record2.type] = (counts[record2.type] ?? 0) + 1;
+  const sourceId = `source:${request.source.digest}`;
+  const document = createEmptyDrawing({
+    unit,
+    idFactory: { next: () => request.drawingId },
+    now: request.now
+  });
+  document.id = request.drawingId;
+  document.sources = [{
+    id: sourceId,
+    kind: "dxf",
+    mediaType: "application/dxf",
+    digest: request.source.digest,
+    bytes: request.bytes.byteLength,
+    ...request.source.name === void 0 ? {} : { name: request.source.name }
+  }];
+  for (const record2 of records) {
+    const projected = projectEntity(record2, {
+      sourceId,
+      diagnostics,
+      nodeId: stableNodeId(request.source.digest, record2)
+    });
+    if ((projected == null ? void 0 : projected.geometry) !== void 0) document.geometry.push(projected.geometry);
+    if ((projected == null ? void 0 : projected.annotation) !== void 0) document.annotations.push(projected.annotation);
+  }
+  if (diagnostics.some(({ severity }) => severity === "error")) return { status: "rejected", diagnostics };
+  const validationError = validateDocument$1(document);
+  if (validationError !== null) return rejected$1(diagnostics, "DXF_DOCUMENT_INVALID", validationError);
+  const bounds2 = drawingGeometryBounds(document);
+  if (bounds2 === null) return rejected$1(diagnostics, "DXF_DRAWABLE_GEOMETRY_REQUIRED", "DXF contains no supported drawable geometry");
+  return { status: "imported", document, bounds: bounds2, diagnostics, counts };
+}
+function validateSectionStructure(pairs) {
+  var _a3;
+  let open = false;
+  for (let index = 0; index < pairs.length; index += 1) {
+    const pair2 = pairs[index];
+    if (pair2.code === 0 && pair2.value === "SECTION") {
+      if (open) return "Nested DXF SECTION is not allowed";
+      if (((_a3 = pairs[index + 1]) == null ? void 0 : _a3.code) !== 2) return "DXF SECTION name is missing";
+      open = true;
+    } else if (pair2.code === 0 && pair2.value === "ENDSEC") {
+      if (!open) return "DXF ENDSEC has no matching SECTION";
+      open = false;
+    }
+  }
+  return open ? "DXF SECTION is missing ENDSEC" : null;
+}
+function validateDocument$1(document) {
+  const ids = [...document.geometry.map(({ id }) => String(id)), ...document.annotations.map(({ id }) => String(id))];
+  if (new Set(ids).size !== ids.length) return "Projected entity IDs are not unique";
+  const walk = (value2) => {
+    if (typeof value2 === "number") return Number.isFinite(value2);
+    if (Array.isArray(value2)) return value2.every(walk);
+    if (value2 !== null && typeof value2 === "object") return Object.values(value2).every(walk);
+    return true;
+  };
+  return walk(document) ? null : "Projected document contains non-finite values";
+}
+function readUnit(pairs) {
+  const variable = pairs.findIndex((pair2) => pair2.code === 9 && pair2.value === "$INSUNITS");
+  if (variable < 0) return null;
+  const code = pairs.slice(variable + 1).find((pair2) => pair2.code === 70);
+  if ((code == null ? void 0 : code.value) === "4") return "mm";
+  if ((code == null ? void 0 : code.value) === "5") return "cm";
+  if ((code == null ? void 0 : code.value) === "6") return "m";
+  return null;
+}
+function stableNodeId(digest2, record2) {
+  var _a3, _b;
+  const digestPart = digest2.replace(/[^a-zA-Z0-9_-]/g, "_").slice(-24) || "source";
+  const handle = ((_b = (_a3 = record2.pairs.find((pair2) => pair2.code === 5)) == null ? void 0 : _a3.value) == null ? void 0 : _b.replace(/[^a-zA-Z0-9_-]/g, "_")) ?? String(record2.index);
+  return (_record, plane) => `${plane}:${digestPart}:${handle}:${record2.index}`;
+}
+function drawingGeometryBounds(document) {
+  const bounds2 = document.geometry.map(geometryBounds).filter((item) => item !== null);
+  if (bounds2.length === 0) return null;
+  return bounds2.reduce((combined, current) => ({
+    minX: Math.min(combined.minX, current.minX),
+    minY: Math.min(combined.minY, current.minY),
+    maxX: Math.max(combined.maxX, current.maxX),
+    maxY: Math.max(combined.maxY, current.maxY)
+  }));
+}
+function geometryBounds(node) {
+  if (node.type === "line") return pointsBounds([node.start, node.end]);
+  if (node.type === "arc") return arcBounds(node);
+  if (node.type === "spline") return splineBounds(node);
+  if (node.type === "point") return pointsBounds([[node.x, node.y]]);
+  if (node.type === "circle") return {
+    minX: node.center[0] - node.radius,
+    minY: node.center[1] - node.radius,
+    maxX: node.center[0] + node.radius,
+    maxY: node.center[1] + node.radius
+  };
+  if (node.type === "polyline") return pointsBounds(node.vertices.map(({ point }) => point));
+  if (node.type === "ellipse") {
+    const major = Math.hypot(...node.majorAxis);
+    return {
+      minX: node.center[0] - major,
+      minY: node.center[1] - major,
+      maxX: node.center[0] + major,
+      maxY: node.center[1] + major
+    };
+  }
+  return null;
+}
+function arcBounds(node) {
+  const angles = [node.startAngle, node.endAngle, ...[0, 90, 180, 270].filter((angle) => angleOnArc(
+    angle,
+    node.startAngle,
+    node.endAngle
+  ))];
+  return pointsBounds(angles.map((angle) => {
+    const radians = angle * Math.PI / 180;
+    return [node.center[0] + node.radius * Math.cos(radians), node.center[1] + node.radius * Math.sin(radians)];
+  }));
+}
+function angleOnArc(angle, start, end) {
+  return modulo(angle - start, 360) <= modulo(end - start, 360);
+}
+function modulo(value2, divisor) {
+  return (value2 % divisor + divisor) % divisor;
+}
+function pointsBounds(points) {
+  if (points.length === 0) return null;
+  return {
+    minX: Math.min(...points.map(([x]) => x)),
+    minY: Math.min(...points.map(([, y]) => y)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    maxY: Math.max(...points.map(([, y]) => y))
+  };
+}
+function rejected$1(diagnostics, code, message) {
+  return { status: "rejected", diagnostics: [...diagnostics, { severity: "error", code, message }] };
 }
 var _a$1;
 function $constructor(name, initializer2, params) {
@@ -3296,21 +3840,21 @@ function config(newConfig) {
 }
 function getEnumValues(entries) {
   const numericValues = Object.values(entries).filter((v) => typeof v === "number");
-  const values = Object.entries(entries).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
-  return values;
+  const values2 = Object.entries(entries).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
+  return values2;
 }
-function jsonStringifyReplacer(_, value) {
-  if (typeof value === "bigint")
-    return value.toString();
-  return value;
+function jsonStringifyReplacer(_, value2) {
+  if (typeof value2 === "bigint")
+    return value2.toString();
+  return value2;
 }
 function cached(getter) {
   return {
     get value() {
       {
-        const value = getter();
-        Object.defineProperty(this, "value", { value });
-        return value;
+        const value2 = getter();
+        Object.defineProperty(this, "value", { value: value2 });
+        return value2;
       }
     }
   };
@@ -3333,17 +3877,17 @@ function floatSafeRemainder(val, step) {
 }
 const EVALUATING = /* @__PURE__ */ Symbol("evaluating");
 function defineLazy(object2, key, getter) {
-  let value = void 0;
+  let value2 = void 0;
   Object.defineProperty(object2, key, {
     get() {
-      if (value === EVALUATING) {
+      if (value2 === EVALUATING) {
         return void 0;
       }
-      if (value === void 0) {
-        value = EVALUATING;
-        value = getter();
+      if (value2 === void 0) {
+        value2 = EVALUATING;
+        value2 = getter();
       }
-      return value;
+      return value2;
     },
     set(v) {
       Object.defineProperty(object2, key, {
@@ -3354,9 +3898,9 @@ function defineLazy(object2, key, getter) {
     configurable: true
   });
 }
-function assignProp(target, prop, value) {
+function assignProp(target, prop, value2) {
   Object.defineProperty(target, prop, {
-    value,
+    value: value2,
     writable: true,
     enumerable: true,
     configurable: true
@@ -3765,9 +4309,9 @@ function formatError(error, mapper = (issue2) => issue2.message) {
   processError(error);
   return fieldErrors;
 }
-const _parse = (_Err) => (schema, value, _ctx, _params) => {
+const _parse = (_Err) => (schema, value2, _ctx, _params) => {
   const ctx = _ctx ? { ..._ctx, async: false } : { async: false };
-  const result = schema._zod.run({ value, issues: [] }, ctx);
+  const result = schema._zod.run({ value: value2, issues: [] }, ctx);
   if (result instanceof Promise) {
     throw new $ZodAsyncError();
   }
@@ -3778,9 +4322,9 @@ const _parse = (_Err) => (schema, value, _ctx, _params) => {
   }
   return result.value;
 };
-const _parseAsync = (_Err) => async (schema, value, _ctx, params) => {
+const _parseAsync = (_Err) => async (schema, value2, _ctx, params) => {
   const ctx = _ctx ? { ..._ctx, async: true } : { async: true };
-  let result = schema._zod.run({ value, issues: [] }, ctx);
+  let result = schema._zod.run({ value: value2, issues: [] }, ctx);
   if (result instanceof Promise)
     result = await result;
   if (result.issues.length) {
@@ -3790,9 +4334,9 @@ const _parseAsync = (_Err) => async (schema, value, _ctx, params) => {
   }
   return result.value;
 };
-const _safeParse = (_Err) => (schema, value, _ctx) => {
+const _safeParse = (_Err) => (schema, value2, _ctx) => {
   const ctx = _ctx ? { ..._ctx, async: false } : { async: false };
-  const result = schema._zod.run({ value, issues: [] }, ctx);
+  const result = schema._zod.run({ value: value2, issues: [] }, ctx);
   if (result instanceof Promise) {
     throw new $ZodAsyncError();
   }
@@ -3802,9 +4346,9 @@ const _safeParse = (_Err) => (schema, value, _ctx) => {
   } : { success: true, data: result.value };
 };
 const safeParse$1 = /* @__PURE__ */ _safeParse($ZodRealError);
-const _safeParseAsync = (_Err) => async (schema, value, _ctx) => {
+const _safeParseAsync = (_Err) => async (schema, value2, _ctx) => {
   const ctx = _ctx ? { ..._ctx, async: true } : { async: true };
-  let result = schema._zod.run({ value, issues: [] }, ctx);
+  let result = schema._zod.run({ value: value2, issues: [] }, ctx);
   if (result instanceof Promise)
     result = await result;
   return result.issues.length ? {
@@ -3813,33 +4357,33 @@ const _safeParseAsync = (_Err) => async (schema, value, _ctx) => {
   } : { success: true, data: result.value };
 };
 const safeParseAsync$1 = /* @__PURE__ */ _safeParseAsync($ZodRealError);
-const _encode = (_Err) => (schema, value, _ctx) => {
+const _encode = (_Err) => (schema, value2, _ctx) => {
   const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-  return _parse(_Err)(schema, value, ctx);
+  return _parse(_Err)(schema, value2, ctx);
 };
-const _decode = (_Err) => (schema, value, _ctx) => {
-  return _parse(_Err)(schema, value, _ctx);
+const _decode = (_Err) => (schema, value2, _ctx) => {
+  return _parse(_Err)(schema, value2, _ctx);
 };
-const _encodeAsync = (_Err) => async (schema, value, _ctx) => {
+const _encodeAsync = (_Err) => async (schema, value2, _ctx) => {
   const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-  return _parseAsync(_Err)(schema, value, ctx);
+  return _parseAsync(_Err)(schema, value2, ctx);
 };
-const _decodeAsync = (_Err) => async (schema, value, _ctx) => {
-  return _parseAsync(_Err)(schema, value, _ctx);
+const _decodeAsync = (_Err) => async (schema, value2, _ctx) => {
+  return _parseAsync(_Err)(schema, value2, _ctx);
 };
-const _safeEncode = (_Err) => (schema, value, _ctx) => {
+const _safeEncode = (_Err) => (schema, value2, _ctx) => {
   const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-  return _safeParse(_Err)(schema, value, ctx);
+  return _safeParse(_Err)(schema, value2, ctx);
 };
-const _safeDecode = (_Err) => (schema, value, _ctx) => {
-  return _safeParse(_Err)(schema, value, _ctx);
+const _safeDecode = (_Err) => (schema, value2, _ctx) => {
+  return _safeParse(_Err)(schema, value2, _ctx);
 };
-const _safeEncodeAsync = (_Err) => async (schema, value, _ctx) => {
+const _safeEncodeAsync = (_Err) => async (schema, value2, _ctx) => {
   const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-  return _safeParseAsync(_Err)(schema, value, ctx);
+  return _safeParseAsync(_Err)(schema, value2, ctx);
 };
-const _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
-  return _safeParseAsync(_Err)(schema, value, _ctx);
+const _safeDecodeAsync = (_Err) => async (schema, value2, _ctx) => {
+  return _safeParseAsync(_Err)(schema, value2, _ctx);
 };
 const cuid = /^[cC][0-9a-z]{6,}$/;
 const cuid2 = /^[0-9a-z]+$/;
@@ -4307,8 +4851,8 @@ class Doc {
     const lines = content.split("\n").filter((x) => x);
     const minIndent = Math.min(...lines.map((x) => x.length - x.trimStart().length));
     const dedented = lines.map((x) => x.slice(minIndent)).map((x) => " ".repeat(this.indent * 2) + x);
-    for (const line of dedented) {
-      this.content.push(line);
+    for (const line2 of dedented) {
+      this.content.push(line2);
     }
   }
   compile() {
@@ -4424,13 +4968,13 @@ const $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
     };
   }
   defineLazy(inst, "~standard", () => ({
-    validate: (value) => {
+    validate: (value2) => {
       var _a5;
       try {
-        const r = safeParse$1(inst, value);
+        const r = safeParse$1(inst, value2);
         return r.success ? { value: r.data } : { issues: (_a5 = r.error) == null ? void 0 : _a5.issues };
       } catch (_) {
-        return safeParseAsync$1(inst, value).then((r) => {
+        return safeParseAsync$1(inst, value2).then((r) => {
           var _a6;
           return r.success ? { value: r.data } : { issues: (_a6 = r.error) == null ? void 0 : _a6.issues };
         });
@@ -4964,9 +5508,9 @@ const $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   });
   const isObject$1 = isObject;
   const catchall = def.catchall;
-  let value;
+  let value2;
   inst._zod.parse = (payload, ctx) => {
-    value ?? (value = _normalized.value);
+    value2 ?? (value2 = _normalized.value);
     const input = payload.value;
     if (!isObject$1(input)) {
       payload.issues.push({
@@ -4979,8 +5523,8 @@ const $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     }
     payload.value = {};
     const proms = [];
-    const shape = value.shape;
-    for (const key of value.keys) {
+    const shape = value2.shape;
+    for (const key of value2.keys) {
       const el = shape[key];
       const isOptionalIn = el._zod.optin === "optional";
       const isOptionalOut = el._zod.optout === "optional";
@@ -5101,9 +5645,9 @@ const $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) 
   const allowsEval$1 = allowsEval;
   const fastEnabled = jit && allowsEval$1.value;
   const catchall = def.catchall;
-  let value;
+  let value2;
   inst._zod.parse = (payload, ctx) => {
-    value ?? (value = _normalized.value);
+    value2 ?? (value2 = _normalized.value);
     const input = payload.value;
     if (!isObject$1(input)) {
       payload.issues.push({
@@ -5120,7 +5664,7 @@ const $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) 
       payload = fastpass(payload, ctx);
       if (!catchall)
         return payload;
-      return handleCatchall([], input, payload, ctx, value, inst);
+      return handleCatchall([], input, payload, ctx, value2, inst);
     }
     return superParse(payload, ctx);
   };
@@ -5215,10 +5759,10 @@ const $ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("$ZodDiscriminatedUn
     const opts = def.options;
     const map = /* @__PURE__ */ new Map();
     for (const o of opts) {
-      const values = (_a3 = o._zod.propValues) == null ? void 0 : _a3[def.discriminator];
-      if (!values || values.size === 0)
+      const values2 = (_a3 = o._zod.propValues) == null ? void 0 : _a3[def.discriminator];
+      if (!values2 || values2.size === 0)
         throw new Error(`Invalid discriminated union option at index "${def.options.indexOf(o)}"`);
-      for (const v of values) {
+      for (const v of values2) {
         if (map.has(v)) {
           throw new Error(`Duplicate discriminator value "${String(v)}"`);
         }
@@ -5476,11 +6020,11 @@ const $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
       return payload;
     }
     const proms = [];
-    const values = def.keyType._zod.values;
-    if (values) {
+    const values2 = def.keyType._zod.values;
+    if (values2) {
       payload.value = {};
       const recordKeys = /* @__PURE__ */ new Set();
-      for (const key of values) {
+      for (const key of values2) {
         if (typeof key === "string" || typeof key === "number" || typeof key === "symbol") {
           recordKeys.add(typeof key === "number" ? key.toString() : key);
           const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
@@ -5590,10 +6134,10 @@ const $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
 });
 const $ZodEnum = /* @__PURE__ */ $constructor("$ZodEnum", (inst, def) => {
   $ZodType.init(inst, def);
-  const values = getEnumValues(def.entries);
-  const valuesSet = new Set(values);
+  const values2 = getEnumValues(def.entries);
+  const valuesSet = new Set(values2);
   inst._zod.values = valuesSet;
-  inst._zod.pattern = new RegExp(`^(${values.filter((k) => propertyKeyTypes.has(typeof k)).map((o) => typeof o === "string" ? escapeRegex(o) : o.toString()).join("|")})$`);
+  inst._zod.pattern = new RegExp(`^(${values2.filter((k) => propertyKeyTypes.has(typeof k)).map((o) => typeof o === "string" ? escapeRegex(o) : o.toString()).join("|")})$`);
   inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (valuesSet.has(input)) {
@@ -5601,7 +6145,7 @@ const $ZodEnum = /* @__PURE__ */ $constructor("$ZodEnum", (inst, def) => {
     }
     payload.issues.push({
       code: "invalid_value",
-      values,
+      values: values2,
       input,
       inst
     });
@@ -5613,12 +6157,12 @@ const $ZodLiteral = /* @__PURE__ */ $constructor("$ZodLiteral", (inst, def) => {
   if (def.values.length === 0) {
     throw new Error("Cannot create literal schema with no valid values");
   }
-  const values = new Set(def.values);
-  inst._zod.values = values;
+  const values2 = new Set(def.values);
+  inst._zod.values = values2;
   inst._zod.pattern = new RegExp(`^(${def.values.map((o) => typeof o === "string" ? escapeRegex(o) : o ? escapeRegex(o.toString()) : String(o)).join("|")})$`);
   inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
-    if (values.has(input)) {
+    if (values2.has(input)) {
       return payload;
     }
     payload.issues.push({
@@ -6259,47 +6803,47 @@ function _never(Class, params) {
   });
 }
 // @__NO_SIDE_EFFECTS__
-function _lt(value, params) {
+function _lt(value2, params) {
   return new $ZodCheckLessThan({
     check: "less_than",
     ...normalizeParams(params),
-    value,
+    value: value2,
     inclusive: false
   });
 }
 // @__NO_SIDE_EFFECTS__
-function _lte(value, params) {
+function _lte(value2, params) {
   return new $ZodCheckLessThan({
     check: "less_than",
     ...normalizeParams(params),
-    value,
+    value: value2,
     inclusive: true
   });
 }
 // @__NO_SIDE_EFFECTS__
-function _gt(value, params) {
+function _gt(value2, params) {
   return new $ZodCheckGreaterThan({
     check: "greater_than",
     ...normalizeParams(params),
-    value,
+    value: value2,
     inclusive: false
   });
 }
 // @__NO_SIDE_EFFECTS__
-function _gte(value, params) {
+function _gte(value2, params) {
   return new $ZodCheckGreaterThan({
     check: "greater_than",
     ...normalizeParams(params),
-    value,
+    value: value2,
     inclusive: true
   });
 }
 // @__NO_SIDE_EFFECTS__
-function _multipleOf(value, params) {
+function _multipleOf(value2, params) {
   return new $ZodCheckMultipleOf({
     check: "multiple_of",
     ...normalizeParams(params),
-    value
+    value: value2
   });
 }
 // @__NO_SIDE_EFFECTS__
@@ -6900,12 +7444,12 @@ const unknownProcessor = (_schema, _ctx, _json, _params) => {
 };
 const enumProcessor = (schema, _ctx, json, _params) => {
   const def = schema._zod.def;
-  const values = getEnumValues(def.entries);
-  if (values.every((v) => typeof v === "number"))
+  const values2 = getEnumValues(def.entries);
+  if (values2.every((v) => typeof v === "number"))
     json.type = "number";
-  if (values.every((v) => typeof v === "string"))
+  if (values2.every((v) => typeof v === "string"))
     json.type = "string";
-  json.enum = values;
+  json.enum = values2;
 };
 const literalProcessor = (schema, ctx, json, _params) => {
   const def = schema._zod.def;
@@ -7600,23 +8144,23 @@ const ZodNumber = /* @__PURE__ */ $constructor("ZodNumber", (inst, def) => {
   ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json, params) => numberProcessor(inst, ctx, json);
   _installLazyMethods(inst, "ZodNumber", {
-    gt(value, params) {
-      return this.check(/* @__PURE__ */ _gt(value, params));
+    gt(value2, params) {
+      return this.check(/* @__PURE__ */ _gt(value2, params));
     },
-    gte(value, params) {
-      return this.check(/* @__PURE__ */ _gte(value, params));
+    gte(value2, params) {
+      return this.check(/* @__PURE__ */ _gte(value2, params));
     },
-    min(value, params) {
-      return this.check(/* @__PURE__ */ _gte(value, params));
+    min(value2, params) {
+      return this.check(/* @__PURE__ */ _gte(value2, params));
     },
-    lt(value, params) {
-      return this.check(/* @__PURE__ */ _lt(value, params));
+    lt(value2, params) {
+      return this.check(/* @__PURE__ */ _lt(value2, params));
     },
-    lte(value, params) {
-      return this.check(/* @__PURE__ */ _lte(value, params));
+    lte(value2, params) {
+      return this.check(/* @__PURE__ */ _lte(value2, params));
     },
-    max(value, params) {
-      return this.check(/* @__PURE__ */ _lte(value, params));
+    max(value2, params) {
+      return this.check(/* @__PURE__ */ _lte(value2, params));
     },
     int(params) {
       return this.check(int(params));
@@ -7636,11 +8180,11 @@ const ZodNumber = /* @__PURE__ */ $constructor("ZodNumber", (inst, def) => {
     nonpositive(params) {
       return this.check(/* @__PURE__ */ _lte(0, params));
     },
-    multipleOf(value, params) {
-      return this.check(/* @__PURE__ */ _multipleOf(value, params));
+    multipleOf(value2, params) {
+      return this.check(/* @__PURE__ */ _multipleOf(value2, params));
     },
-    step(value, params) {
-      return this.check(/* @__PURE__ */ _multipleOf(value, params));
+    step(value2, params) {
+      return this.check(/* @__PURE__ */ _multipleOf(value2, params));
     },
     finite() {
       return this;
@@ -7865,13 +8409,13 @@ const ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
   inst.enum = def.entries;
   inst.options = Object.values(def.entries);
   const keys = new Set(Object.keys(def.entries));
-  inst.extract = (values, params) => {
+  inst.extract = (values2, params) => {
     const newEntries = {};
-    for (const value of values) {
-      if (keys.has(value)) {
-        newEntries[value] = def.entries[value];
+    for (const value2 of values2) {
+      if (keys.has(value2)) {
+        newEntries[value2] = def.entries[value2];
       } else
-        throw new Error(`Key ${value} not found in enum`);
+        throw new Error(`Key ${value2} not found in enum`);
     }
     return new ZodEnum({
       ...def,
@@ -7880,13 +8424,13 @@ const ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
       entries: newEntries
     });
   };
-  inst.exclude = (values, params) => {
+  inst.exclude = (values2, params) => {
     const newEntries = { ...def.entries };
-    for (const value of values) {
-      if (keys.has(value)) {
-        delete newEntries[value];
+    for (const value2 of values2) {
+      if (keys.has(value2)) {
+        delete newEntries[value2];
       } else
-        throw new Error(`Key ${value} not found in enum`);
+        throw new Error(`Key ${value2} not found in enum`);
     }
     return new ZodEnum({
       ...def,
@@ -7896,8 +8440,8 @@ const ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
     });
   };
 });
-function _enum(values, params) {
-  const entries = Array.isArray(values) ? Object.fromEntries(values.map((v) => [v, v])) : values;
+function _enum(values2, params) {
+  const entries = Array.isArray(values2) ? Object.fromEntries(values2.map((v) => [v, v])) : values2;
   return new ZodEnum({
     type: "enum",
     entries,
@@ -7918,10 +8462,10 @@ const ZodLiteral = /* @__PURE__ */ $constructor("ZodLiteral", (inst, def) => {
     }
   });
 });
-function literal$1(value, params) {
+function literal$1(value2, params) {
   return new ZodLiteral({
     type: "literal",
-    values: Array.isArray(value) ? value : [value],
+    values: Array.isArray(value2) ? value2 : [value2],
     ...normalizeParams(params)
   });
 }
@@ -8096,6 +8640,28 @@ function refine(fn, _params = {}) {
 }
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
+}
+function _instanceof(cls, params = {}) {
+  const inst = new ZodCustom({
+    type: "custom",
+    check: "custom",
+    fn: (data) => data instanceof cls,
+    abort: true,
+    ...normalizeParams(params)
+  });
+  inst._zod.bag.Class = cls;
+  inst._zod.check = (payload) => {
+    if (!(payload.value instanceof cls)) {
+      payload.issues.push({
+        code: "invalid_type",
+        expected: cls.name,
+        input: payload.value,
+        inst,
+        path: [...inst._zod.def.path ?? []]
+      });
+    }
+  };
+  return inst;
 }
 const protocolIdSchema = string$1().trim().min(1).max(256);
 const contentDigestSchema = string$1().trim().min(1).max(512);
@@ -8702,10 +9268,17 @@ const qualitySchema = object$1({
   confidence: number().optional(),
   evidenceRefs: array$1(idSchema)
 }).strict();
+const drawingNodeSourceRefSchema = object$1({
+  sourceId: idSchema,
+  objectId: idSchema.optional(),
+  objectType: idSchema.optional(),
+  layer: string$1().min(1).optional()
+}).strict();
 const baseNodeShape = {
   id: idSchema,
   visible: boolean(),
-  quality: qualitySchema
+  quality: qualitySchema,
+  sourceRef: drawingNodeSourceRefSchema.optional()
 };
 const geometrySchema = discriminatedUnion("type", [
   object$1({ ...baseNodeShape, type: literal$1("point"), x: number(), y: number() }).strict(),
@@ -8867,6 +9440,14 @@ const drawingDocumentSchema = object$1({
   id: idSchema,
   metadata: object$1({ createdAt: number(), updatedAt: number() }).strict(),
   unitSystem: object$1({ length: _enum(["mm", "cm", "m"]), angle: literal$1("deg") }).strict(),
+  sources: array$1(object$1({
+    id: idSchema,
+    kind: _enum(["image", "dxf"]),
+    mediaType: string$1().min(1),
+    digest: idSchema,
+    name: string$1().min(1).optional(),
+    bytes: number().int().nonnegative().optional()
+  }).strict()).optional(),
   coordinateFrames: array$1(object$1({
     id: idSchema,
     kind: _enum(["document", "source", "page", "view", "provisional"]),
@@ -8938,14 +9519,22 @@ discriminatedUnion("kind", [
     truncated: boolean()
   }).strict()
 ]);
-const drawingSourceRefSchema = object$1({
-  id: idSchema,
-  mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
-  bytes: number().int().nonnegative().optional(),
-  width: number().positive(),
-  height: number().positive(),
-  name: string$1().optional()
-}).strict();
+const drawingSourceRefSchema = union([
+  object$1({
+    id: idSchema,
+    mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+    bytes: number().int().nonnegative().optional(),
+    width: number().positive(),
+    height: number().positive(),
+    name: string$1().optional()
+  }).strict(),
+  object$1({
+    id: idSchema,
+    mediaType: literal$1("application/dxf"),
+    bytes: number().int().nonnegative().optional(),
+    name: string$1().optional()
+  }).strict()
+]);
 const drawingWorkspaceSnapshotSchema = object$1({
   version: literal$1(1),
   ref: object$1({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
@@ -9242,7 +9831,129 @@ object$1({
     message: string$1().min(1).optional()
   }).strict()
 }).strict();
+object$1({
+  bytes: _instanceof(Uint8Array),
+  digest: idSchema,
+  name: string$1().trim().min(1).max(255).optional()
+}).strict();
+const drawingObservationOverlaySchema = object$1({
+  id: idSchema,
+  label: string$1().trim().min(1).max(80),
+  polygon: array$1(vec2Schema).min(3).max(16)
+}).strict();
+object$1({
+  ref: drawingRefSchema$1,
+  overlays: array$1(drawingObservationOverlaySchema).max(128).optional()
+}).strict();
+discriminatedUnion("status", [
+  object$1({
+    status: literal$1("rendered"),
+    png: _instanceof(Uint8Array),
+    contentDigest: idSchema,
+    width: number().int().positive(),
+    height: number().int().positive()
+  }).strict(),
+  object$1({ status: literal$1("stale"), currentRef: drawingRefSchema$1 }).strict(),
+  object$1({ status: literal$1("rejected"), code: idSchema, message: string$1().min(1) }).strict()
+]);
 string$1().min(1);
+const partitionEvidenceSchema = object$1({
+  id: idSchema,
+  origin: _enum(["document", "geometry", "fused", "ai", "manual"]),
+  label: string$1(),
+  sourceLines: array$1(number().int().positive()).optional(),
+  geometryNodeIds: array$1(idSchema).optional()
+}).strict();
+const partitionDiagnosticSchema = object$1({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string$1(),
+  segmentIds: array$1(idSchema).optional(),
+  evidenceIds: array$1(idSchema).optional()
+}).strict();
+const shaftAxisSchema = object$1({
+  origin: vec2Schema,
+  direction: vec2Schema,
+  normal: vec2Schema,
+  zMin: number(),
+  zMax: number(),
+  orientation: _enum(["forward", "reversed"]),
+  geometryNodeIds: array$1(idSchema).optional()
+}).strict();
+const stepCandidateSchema = object$1({
+  id: idSchema,
+  z: number(),
+  score: number(),
+  evidenceIds: array$1(idSchema),
+  accepted: boolean()
+}).strict();
+const partitionSegmentSchema = object$1({
+  id: idSchema,
+  zStart: number(),
+  zEnd: number(),
+  profile: object$1({ minRadius: number(), maxRadius: number(), sampleCount: number().int().nonnegative() }).strict(),
+  semanticType: string$1().optional(),
+  name: string$1().optional(),
+  boundaryConfidence: number(),
+  semanticConfidence: number().optional(),
+  geometryNodeIds: array$1(idSchema),
+  boundaryEvidenceIds: array$1(idSchema),
+  semanticEvidenceIds: array$1(idSchema),
+  diagnosticIds: array$1(idSchema),
+  profileSamples: array$1(object$1({ z: number(), radius: number().nonnegative(), geometryNodeId: idSchema }).strict()).optional()
+}).strict();
+const partitionGroupSchema = object$1({
+  id: idSchema,
+  segmentIds: array$1(idSchema),
+  semanticType: string$1(),
+  name: string$1().optional(),
+  evidenceIds: array$1(idSchema)
+}).strict();
+const partitionDraftSchema = object$1({
+  version: literal$1(1),
+  drawingRef: drawingRefSchema$1,
+  axis: shaftAxisSchema,
+  segments: array$1(partitionSegmentSchema),
+  semanticGroups: array$1(partitionGroupSchema),
+  stepCandidates: array$1(stepCandidateSchema),
+  evidence: array$1(partitionEvidenceSchema),
+  diagnostics: array$1(partitionDiagnosticSchema),
+  basePartitionRevisionId: idSchema.optional()
+}).strict();
+const partitionRevisionSchema = object$1({
+  version: literal$1(1),
+  drawingRef: drawingRefSchema$1,
+  axis: shaftAxisSchema,
+  segments: array$1(partitionSegmentSchema),
+  semanticGroups: array$1(partitionGroupSchema),
+  evidence: array$1(partitionEvidenceSchema),
+  diagnostics: array$1(partitionDiagnosticSchema),
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  confirmedAt: number()
+}).strict();
+discriminatedUnion("type", [
+  object$1({ type: literal$1("boundary.move"), expectedDrawingRef: drawingRefSchema$1, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object$1({ type: literal$1("segment.split"), expectedDrawingRef: drawingRefSchema$1, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
+  object$1({ type: literal$1("boundary.merge"), expectedDrawingRef: drawingRefSchema$1, boundaryIndex: number().int().positive() }).strict(),
+  object$1({ type: literal$1("segment.metadata"), expectedDrawingRef: drawingRefSchema$1, segmentId: idSchema, name: string$1().max(120).optional(), semanticType: string$1().max(80).optional() }).strict()
+]);
+object$1({
+  version: literal$1(1),
+  phase: _enum(["idle", "analyzing", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema$1.optional(),
+  draft: partitionDraftSchema.optional(),
+  confirmed: partitionRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string$1().optional(),
+  updatedAt: number()
+}).strict();
+object$1({
+  dxf: object$1({ name: string$1().min(1).max(255), digest: idSchema, base64: string$1().min(1).max(27962028) }).strict(),
+  engineeringDocument: object$1({ name: string$1().min(1).max(255), text: string$1() }).strict().optional()
+}).strict();
 class InMemoryDrawingRepository {
   constructor(input) {
     __privateAdd(this, _InMemoryDrawingRepository_instances);
@@ -9326,12 +10037,81 @@ class InMemoryDrawingRepository {
       provisional: vectorized.provisional
     };
   }
+  async importDxf(sessionId, input) {
+    var _a3, _b, _c, _d;
+    const current = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    if ((current == null ? void 0 : current.attachmentId) === input.digest) {
+      return {
+        status: "already-imported",
+        ref: { drawingId: current.drawingId, revision: current.revision },
+        provisional: current.provisional
+      };
+    }
+    (_a3 = input.signal) == null ? void 0 : _a3.throwIfAborted();
+    const actualDigest = `sha256:${createHash("sha256").update(input.bytes).digest("hex")}`;
+    if (actualDigest !== input.digest) {
+      throw new Error("DXF_IMPORT_REJECTED:DXF_DIGEST_MISMATCH");
+    }
+    const drawingId = `drawing_dxf_${actualDigest.slice("sha256:".length, "sha256:".length + 24)}`;
+    const imported = importDxf({
+      bytes: input.bytes.slice(),
+      source: {
+        digest: actualDigest,
+        ...input.name === void 0 ? {} : { name: input.name }
+      },
+      drawingId,
+      now: __privateGet(this, _now)
+    });
+    if (imported.status === "rejected") {
+      const codes = imported.diagnostics.filter(({ severity }) => severity === "error").map(({ code }) => code).join(",");
+      throw new Error(`DXF_IMPORT_REJECTED:${codes || "UNKNOWN"}`);
+    }
+    (_b = input.signal) == null ? void 0 : _b.throwIfAborted();
+    const provisional = imported.diagnostics.some(({ severity }) => severity === "warning");
+    const entry = {
+      attachmentId: actualDigest,
+      document: structuredClone(imported.document),
+      drawingId,
+      bounds: structuredClone(imported.bounds),
+      revision: 1,
+      source: {
+        id: actualDigest,
+        mediaType: "application/dxf",
+        bytes: input.bytes.byteLength,
+        ...input.name === void 0 ? {} : { name: input.name }
+      },
+      provisional
+    };
+    if ((_c = __privateGet(this, _storage)) == null ? void 0 : _c.saveDurable) {
+      const state = {
+        version: 2,
+        entry: structuredClone(entry),
+        commits: [],
+        operations: []
+      };
+      __privateGet(this, _storage).saveDurable(sessionId, structuredClone(state));
+      __privateGet(this, _durable).set(sessionId, state);
+    } else {
+      (_d = __privateGet(this, _storage)) == null ? void 0 : _d.save(sessionId, structuredClone(entry));
+    }
+    __privateGet(this, _drawings).set(sessionId, entry);
+    __privateGet(this, _previews).delete(sessionId);
+    return {
+      status: "imported",
+      ref: { drawingId, revision: 1 },
+      provisional
+    };
+  }
   getSnapshot(sessionId) {
     var _a3;
     const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
     if (entry === null) return null;
     const lastCommit = (_a3 = __privateMethod(this, _InMemoryDrawingRepository_instances, durableState_fn).call(this, sessionId)) == null ? void 0 : _a3.commits.at(-1);
     return snapshotOf(entry, lastCommit);
+  }
+  getBounds(sessionId) {
+    const entry = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
+    return entry === null ? null : structuredClone(entry.bounds);
   }
   commit(sessionId, request) {
     var _a3;
@@ -9749,8 +10529,8 @@ saveDurable_fn = function(sessionId, state) {
 function findOperation(state, operationId) {
   return state.operations.find((receipt) => receipt.operationId === operationId);
 }
-function digest(value) {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+function digest(value2) {
+  return `sha256:${createHash("sha256").update(value2).digest("hex")}`;
 }
 function spatialQueryOf(request) {
   if (request.kind === "node") return { kind: "node", id: request.id };
@@ -9821,7 +10601,7 @@ function applyCommand(document, command) {
       };
     }
   }
-  for (const [key, value] of Object.entries(command.changes)) {
+  for (const [key, value2] of Object.entries(command.changes)) {
     if (key === "id" || key === "type" || key === "plane" || !(key in mutable)) {
       return {
         status: "rejected",
@@ -9829,7 +10609,7 @@ function applyCommand(document, command) {
         code: "INVALID_COMMAND"
       };
     }
-    mutable[key] = structuredClone(value);
+    mutable[key] = structuredClone(value2);
   }
   return null;
 }
@@ -9935,17 +10715,17 @@ class FileDrawingRepositoryStorage {
     const path = __privateMethod(this, _FileDrawingRepositoryStorage_instances, path_fn).call(this, sessionId);
     if (!existsSync(path)) return null;
     try {
-      const value = JSON.parse(readFileSync(path, "utf8"));
-      if (value.version !== 1 || typeof value.attachmentId !== "string" || !bounds(value.bounds)) {
+      const value2 = JSON.parse(readFileSync(path, "utf8"));
+      if (value2.version !== 1 || typeof value2.attachmentId !== "string" || !bounds(value2.bounds)) {
         return null;
       }
-      const snapshot = drawingWorkspaceSnapshotSchema.parse(value.snapshot);
+      const snapshot = drawingWorkspaceSnapshotSchema.parse(value2.snapshot);
       if (snapshot === null || snapshot.source === void 0) return null;
       return {
-        attachmentId: value.attachmentId,
+        attachmentId: value2.attachmentId,
         document: snapshot.document,
         drawingId: snapshot.ref.drawingId,
-        bounds: value.bounds,
+        bounds: value2.bounds,
         revision: snapshot.ref.revision,
         source: snapshot.source,
         provisional: snapshot.provisional ?? false
@@ -9957,14 +10737,14 @@ class FileDrawingRepositoryStorage {
   save(sessionId, entry) {
     const path = __privateMethod(this, _FileDrawingRepositoryStorage_instances, path_fn).call(this, sessionId);
     const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-    const value = {
+    const value2 = {
       version: 1,
       attachmentId: entry.attachmentId,
       bounds: structuredClone(entry.bounds),
       snapshot: snapshotForStorage(entry)
     };
     try {
-      __privateMethod(this, _FileDrawingRepositoryStorage_instances, atomicWrite_fn).call(this, path, temporary, value);
+      __privateMethod(this, _FileDrawingRepositoryStorage_instances, atomicWrite_fn).call(this, path, temporary, value2);
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);
     }
@@ -9973,17 +10753,17 @@ class FileDrawingRepositoryStorage {
     const path = __privateMethod(this, _FileDrawingRepositoryStorage_instances, path_fn).call(this, sessionId);
     if (!existsSync(path)) return null;
     try {
-      const value = JSON.parse(readFileSync(path, "utf8"));
-      if (value.version !== 2 || !value.entry || !Array.isArray(value.commits) || !Array.isArray(value.operations)) {
+      const value2 = JSON.parse(readFileSync(path, "utf8"));
+      if (value2.version !== 2 || !value2.entry || !Array.isArray(value2.commits) || !Array.isArray(value2.operations)) {
         return null;
       }
-      const entry = entryFromStored(value.entry);
+      const entry = entryFromStored(value2.entry);
       if (!entry) return null;
       return {
         version: 2,
         entry,
-        commits: structuredClone(value.commits),
-        operations: structuredClone(value.operations)
+        commits: structuredClone(value2.commits),
+        operations: structuredClone(value2.operations)
       };
     } catch {
       return null;
@@ -9992,7 +10772,7 @@ class FileDrawingRepositoryStorage {
   saveDurable(sessionId, state) {
     const path = __privateMethod(this, _FileDrawingRepositoryStorage_instances, path_fn).call(this, sessionId);
     const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-    const value = {
+    const value2 = {
       version: 2,
       entry: {
         attachmentId: state.entry.attachmentId,
@@ -10003,7 +10783,7 @@ class FileDrawingRepositoryStorage {
       operations: structuredClone(state.operations)
     };
     try {
-      __privateMethod(this, _FileDrawingRepositoryStorage_instances, atomicWrite_fn).call(this, path, temporary, value);
+      __privateMethod(this, _FileDrawingRepositoryStorage_instances, atomicWrite_fn).call(this, path, temporary, value2);
     } finally {
       if (existsSync(temporary)) unlinkSync(temporary);
     }
@@ -10011,8 +10791,8 @@ class FileDrawingRepositoryStorage {
 }
 _directory = new WeakMap();
 _FileDrawingRepositoryStorage_instances = new WeakSet();
-atomicWrite_fn = function(path, temporary, value) {
-  writeFileSync(temporary, `${JSON.stringify(value)}
+atomicWrite_fn = function(path, temporary, value2) {
+  writeFileSync(temporary, `${JSON.stringify(value2)}
 `, { encoding: "utf8", mode: 384 });
   const file = openSync(temporary, "r");
   try {
@@ -10032,15 +10812,15 @@ path_fn = function(sessionId) {
   const key = createHash("sha256").update(sessionId).digest("hex");
   return join(__privateGet(this, _directory), `${key}.json`);
 };
-function entryFromStored(value) {
-  if (typeof value.attachmentId !== "string" || !bounds(value.bounds)) return null;
-  const snapshot = drawingWorkspaceSnapshotSchema.safeParse(value.snapshot);
+function entryFromStored(value2) {
+  if (typeof value2.attachmentId !== "string" || !bounds(value2.bounds)) return null;
+  const snapshot = drawingWorkspaceSnapshotSchema.safeParse(value2.snapshot);
   if (!snapshot.success || snapshot.data.source === void 0) return null;
   return {
-    attachmentId: value.attachmentId,
+    attachmentId: value2.attachmentId,
     document: snapshot.data.document,
     drawingId: snapshot.data.ref.drawingId,
-    bounds: value.bounds,
+    bounds: value2.bounds,
     revision: snapshot.data.ref.revision,
     source: snapshot.data.source,
     provisional: snapshot.data.provisional ?? false
@@ -10061,9 +10841,9 @@ function snapshotForStorage(entry) {
     provisional: entry.provisional
   };
 }
-function bounds(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const candidate = value;
+function bounds(value2) {
+  if (value2 === null || typeof value2 !== "object" || Array.isArray(value2)) return false;
+  const candidate = value2;
   return ["minX", "minY", "maxX", "maxY"].every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]));
 }
 const string = (description) => ({
@@ -10072,8 +10852,8 @@ const string = (description) => ({
   ...description ? { description } : {}
 });
 const optionalString = () => ({ type: "string" });
-const literal = (value) => ({ type: "string", const: value, required: true });
-const enumeration = (values) => ({ type: "string", enum: values, required: true });
+const literal = (value2) => ({ type: "string", const: value2, required: true });
+const enumeration = (values2) => ({ type: "string", enum: values2, required: true });
 const array = (items, required2 = true) => ({
   type: "array",
   items,
@@ -10224,12 +11004,12 @@ function motionRigControlNodeIds(selectedParts, args) {
   const movable = fixedRole ? entries.filter(([partKey]) => normalizedRole(partKey) !== fixedRole) : entries;
   return [...new Set(movable.flatMap(([, { targetNodeIds }]) => targetNodeIds))];
 }
-function normalizedRole(value) {
-  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+function normalizedRole(value2) {
+  return value2.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
-function requiredStringArgument(value, name) {
-  if (typeof value !== "string") throw new Error(`Invalid ${name}`);
-  return value;
+function requiredStringArgument(value2, name) {
+  if (typeof value2 !== "string") throw new Error(`Invalid ${name}`);
+  return value2;
 }
 function createDrawingApplySelectionCorrectionTool(semantic) {
   return defineTool({
@@ -10599,15 +11379,15 @@ function presentDiscard(result) {
     drawingWorkflow: workflow("discarded", ["drawing_observe"])
   };
 }
-function renderJson(_args, value) {
-  return [{ type: "text", text: JSON.stringify(value) }];
+function renderJson(_args, value2) {
+  return [{ type: "text", text: JSON.stringify(value2) }];
 }
-function renderObservation(_args, value) {
+function renderObservation(_args, value2) {
   const content = [
-    { type: "text", text: JSON.stringify(value) }
+    { type: "text", text: JSON.stringify(value2) }
   ];
-  if (value && typeof value === "object" && "imageAttachment" in value) {
-    const attachment = value.imageAttachment;
+  if (value2 && typeof value2 === "object" && "imageAttachment" in value2) {
+    const attachment = value2.imageAttachment;
     if (attachment && typeof attachment === "object" && "attachmentId" in attachment) {
       content.push({ type: "image", attachment });
     }
@@ -10652,9 +11432,9 @@ function createDrawingImportTool(drawings, attachments) {
         },
         additionalProperties: false
       },
-      render: (_args, value) => [{
+      render: (_args, value2) => [{
         type: "text",
-        text: `Drawing ${value.ref.drawingId} revision ${value.ref.revision} ${value.status}. ${value.provisional ? "The current geometry is provisional." : "Local vectorization completed; geometry is ready for inspection and editing."}`
+        text: `Drawing ${value2.ref.drawingId} revision ${value2.ref.revision} ${value2.status}. ${value2.provisional ? "The current geometry is provisional." : "Local vectorization completed; geometry is ready for inspection and editing."}`
       }]
     },
     async execute(_args, exec) {
@@ -10702,9 +11482,9 @@ function createDrawingSummarizeTool(drawings) {
         },
         additionalProperties: false
       },
-      render: (_args, value) => [{
+      render: (_args, value2) => [{
         type: "text",
-        text: JSON.stringify(value)
+        text: JSON.stringify(value2)
       }]
     },
     async execute(_args, exec) {
@@ -10764,10 +11544,10 @@ function createDrawingQueryTool(drawings) {
     }
   });
 }
-function renderDrawingQuery(_args, value) {
+function renderDrawingQuery(_args, value2) {
   var _a3;
-  if (value && typeof value === "object" && "kind" in value && value.kind === "world-slice") {
-    const slice = value;
+  if (value2 && typeof value2 === "object" && "kind" in value2 && value2.kind === "world-slice") {
+    const slice = value2;
     const counts = {};
     for (const item of slice.nodes ?? []) {
       const key = `${String(item.plane ?? "unknown")}:${String(((_a3 = item.node) == null ? void 0 : _a3.type) ?? "unknown")}`;
@@ -10786,7 +11566,7 @@ function renderDrawingQuery(_args, value) {
       })
     }];
   }
-  return [{ type: "text", text: JSON.stringify(value) }];
+  return [{ type: "text", text: JSON.stringify(value2) }];
 }
 function createDrawingFinalizePreviewTool(_drawings2) {
   return defineTool({
@@ -10801,7 +11581,7 @@ function createDrawingFinalizePreviewTool(_drawings2) {
     },
     output: {
       schema: { type: "json" },
-      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+      render: (_args, value2) => [{ type: "text", text: JSON.stringify(value2) }]
     },
     async execute(args, exec) {
       var _a3;
@@ -10824,7 +11604,7 @@ function createDrawingDiscardPreviewTool(drawings) {
     parameters: { handle: { type: "string", required: true } },
     output: {
       schema: { type: "json" },
-      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+      render: (_args, value2) => [{ type: "text", text: JSON.stringify(value2) }]
     },
     async execute(args, exec) {
       var _a3;
@@ -10835,31 +11615,6 @@ function createDrawingDiscardPreviewTool(drawings) {
     }
   });
 }
-const randomIdFactory = {
-  next: (kind) => `${kind}_${globalThis.crypto.randomUUID()}`
-};
-function createEmptyDrawing(input = {}) {
-  const idFactory = input.idFactory ?? randomIdFactory;
-  const now = (input.now ?? Date.now)();
-  return {
-    protocol: "VectorAI-Drawing",
-    schemaVersion: "1.0",
-    id: idFactory.next("drawing"),
-    metadata: { createdAt: now, updatedAt: now },
-    unitSystem: { length: input.unit ?? "mm", angle: "deg" },
-    coordinateFrames: [
-      {
-        id: "frame_document",
-        kind: "document",
-        transform: [1, 0, 0, 1, 0, 0]
-      }
-    ],
-    geometry: [],
-    annotations: [],
-    relations: [],
-    features: []
-  };
-}
 const _LocalPythonVectorizerProcess = class _LocalPythonVectorizerProcess {
   constructor(child, timeoutMs) {
     __privateAdd(this, _LocalPythonVectorizerProcess_instances);
@@ -10868,7 +11623,7 @@ const _LocalPythonVectorizerProcess = class _LocalPythonVectorizerProcess {
     __privateAdd(this, _stderr, "");
     this.child = child;
     this.timeoutMs = timeoutMs;
-    createInterface({ input: child.stdout }).on("line", (line) => __privateMethod(this, _LocalPythonVectorizerProcess_instances, onLine_fn).call(this, line));
+    createInterface({ input: child.stdout }).on("line", (line2) => __privateMethod(this, _LocalPythonVectorizerProcess_instances, onLine_fn).call(this, line2));
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
       __privateSet(this, _stderr, `${__privateGet(this, _stderr)}${chunk}`.slice(-4096));
@@ -10897,14 +11652,14 @@ const _LocalPythonVectorizerProcess = class _LocalPythonVectorizerProcess {
     if (input.bytes.byteLength === 0 || input.width < 1 || input.height < 1 || input.maxPixels < 1) {
       throw new Error("PYTHON_VECTORIZATION_SOURCE_INVALID");
     }
-    const value = await __privateMethod(this, _LocalPythonVectorizerProcess_instances, invoke_fn).call(this, {
+    const value2 = await __privateMethod(this, _LocalPythonVectorizerProcess_instances, invoke_fn).call(this, {
       operation: "vectorize",
       sourceId: input.sourceId,
       mimeType: input.mimeType,
       imageBase64: Buffer.from(input.bytes).toString("base64"),
       maxPixels: input.maxPixels
     }, input.signal);
-    return parseResult(value, input.sourceId);
+    return parseResult(value2, input.sourceId);
   }
   async close() {
     if (__privateGet(this, _closed)) return;
@@ -10948,10 +11703,10 @@ invoke_fn = function(payload, signal) {
     });
   });
 };
-onLine_fn = function(line) {
+onLine_fn = function(line2) {
   let response;
   try {
-    response = JSON.parse(line);
+    response = JSON.parse(line2);
   } catch {
     __privateMethod(this, _LocalPythonVectorizerProcess_instances, failAll_fn).call(this, new Error("PYTHON_VECTORIZATION_PROTOCOL_INVALID"));
     return;
@@ -10977,9 +11732,9 @@ failAll_fn = function(error) {
   for (const id of [...__privateGet(this, _pending2).keys()]) __privateMethod(this, _LocalPythonVectorizerProcess_instances, reject_fn).call(this, id, error);
 };
 let LocalPythonVectorizerProcess = _LocalPythonVectorizerProcess;
-function parseResult(value, sourceId) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("PYTHON_VECTORIZATION_RESULT_INVALID");
-  const result = value;
+function parseResult(value2, sourceId) {
+  if (!value2 || typeof value2 !== "object" || Array.isArray(value2)) throw new Error("PYTHON_VECTORIZATION_RESULT_INVALID");
+  const result = value2;
   if (result.sourceId !== sourceId || typeof result.pipelineVersion !== "string" || !positiveInteger(result.width) || !positiveInteger(result.height) || !positive$1(result.analysisScale) || !positive$1(result.medianLineWidthPx) || !Array.isArray(result.chains)) throw new Error("PYTHON_VECTORIZATION_RESULT_INVALID");
   for (const chain of result.chains) {
     if (!chain || typeof chain !== "object" || Array.isArray(chain)) throw new Error("PYTHON_VECTORIZATION_CHAIN_INVALID");
@@ -10990,11 +11745,11 @@ function parseResult(value, sourceId) {
   }
   return structuredClone(result);
 }
-function positive$1(value) {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
+function positive$1(value2) {
+  return typeof value2 === "number" && Number.isFinite(value2) && value2 > 0;
 }
-function positiveInteger(value) {
-  return positive$1(value) && Number.isInteger(value);
+function positiveInteger(value2) {
+  return positive$1(value2) && Number.isInteger(value2);
 }
 const PAGE_WIDTH = 500;
 class LocalCleanLineVectorizer {
@@ -11134,7 +11889,7 @@ function candidateNode(result, chain, piece, index) {
 }
 function candidateIsUsable(candidate, piece, tolerance) {
   if (!finite(candidate.fitErrorP95) || candidate.fitErrorP95 > tolerance) return false;
-  const point = (value) => Array.isArray(value) && value.length === 2 && value.every(finite);
+  const point = (value2) => Array.isArray(value2) && value2.length === 2 && value2.every(finite);
   switch (candidate.type) {
     case "line":
       return !piece.closed && point(candidate.parameters.start) && point(candidate.parameters.end);
@@ -11212,27 +11967,27 @@ function sourcePoint(result, point) {
 function scale(result) {
   return PAGE_WIDTH / result.width;
 }
-function safeId(value) {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+function safeId(value2) {
+  return value2.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
-function positive(value) {
-  return finite(value) && value > 0;
+function positive(value2) {
+  return finite(value2) && value2 > 0;
 }
-function finite(value) {
-  return typeof value === "number" && Number.isFinite(value);
+function finite(value2) {
+  return typeof value2 === "number" && Number.isFinite(value2);
 }
-function normalizeDegrees(value) {
-  return round((value % 360 + 360) % 360);
+function normalizeDegrees(value2) {
+  return round((value2 % 360 + 360) % 360);
 }
-function round(value) {
-  return Math.round(value * 1e6) / 1e6;
+function round(value2) {
+  return Math.round(value2 * 1e6) / 1e6;
 }
-function canonicalize(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${canonicalize(child)}`).join(",")}}`;
+function canonicalize(value2) {
+  if (Array.isArray(value2)) return `[${value2.map(canonicalize).join(",")}]`;
+  if (value2 !== null && typeof value2 === "object") {
+    return `{${Object.entries(value2).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${canonicalize(child)}`).join(",")}}`;
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value2);
 }
 function sameInstruction(left, right) {
   return left.rootUserMessageId === right.rootUserMessageId && left.rootUserMessageDigest === right.rootUserMessageDigest;
@@ -11241,8 +11996,9 @@ function sameDrawingRef(left, right) {
   return left.drawingId === right.drawingId && left.revision === right.revision;
 }
 function publicClone(episode) {
-  const { lastTransitionDigest: _lastTransitionDigest, ...visible } = episode;
-  return structuredClone(visible);
+  const visible = structuredClone(episode);
+  delete visible.lastTransitionDigest;
+  return visible;
 }
 class SemanticEditEpisodeStore {
   constructor(ports) {
@@ -11320,7 +12076,7 @@ class SemanticEditEpisodeStore {
     __privateGet(this, _episodes).set(sessionId, next);
     return publicClone(next);
   }
-  invalidate(sessionId, _reason) {
+  invalidate(sessionId, reason) {
     if (!__privateGet(this, _episodes).has(sessionId)) return;
     __privateGet(this, _episodes).delete(sessionId);
     __privateMethod(this, _SemanticEditEpisodeStore_instances, nextEpoch_fn).call(this, sessionId);
@@ -12208,9 +12964,9 @@ class SemanticEditService {
       }
     } else reviewed = {
       outcome: preview.compilation.diagnostics.some(({ hard }) => hard) ? "needs_revision" : "satisfied",
-      defects: preview.compilation.diagnostics.filter(({ hard }) => hard).map((diagnostic) => ({
-        code: diagnostic.code,
-        reason: diagnostic.message,
+      defects: preview.compilation.diagnostics.filter(({ hard }) => hard).map((diagnostic2) => ({
+        code: diagnostic2.code,
+        reason: diagnostic2.message,
         scopeDigest: preview.ref.effectDigest
       }))
     };
@@ -12238,11 +12994,11 @@ class SemanticEditService {
         overlays: ((_h = reviewed.render) == null ? void 0 : _h.overlays) ?? ["changed-nodes"]
       },
       outcome: reviewed.outcome,
-      defects: reviewed.defects.map((diagnostic) => ({
+      defects: reviewed.defects.map((diagnostic2) => ({
         defectId: this.ports.id("defect"),
-        code: diagnostic.code,
-        reason: diagnostic.reason,
-        scopeDigest: diagnostic.scopeDigest
+        code: diagnostic2.code,
+        reason: diagnostic2.reason,
+        scopeDigest: diagnostic2.scopeDigest
       })),
       resolvedDefects: []
     };
@@ -12477,10 +13233,10 @@ currentObservationResult_fn = function(sessionId, instruction, drawingRef) {
     drawing: structuredClone(drawingRef),
     selectionAvailable: this.currentSelectionProjection(sessionId) !== null,
     selectionCandidates: state ? [...state.candidates.values()].map(({ key, summary }) => ({ key, summary })) : [],
-    numericConstraints: instruction.numericConstraints.map(({ numericKey, kind, value, unit }) => ({
+    numericConstraints: instruction.numericConstraints.map(({ numericKey, kind, value: value2, unit }) => ({
       numericKey,
       kind,
-      value: Array.isArray(value) ? [value[0], value[1]] : value,
+      value: Array.isArray(value2) ? [value2[0], value2[1]] : value2,
       unit
     })),
     nextTools: ["drawing_select_parts"]
@@ -12653,10 +13409,10 @@ commitPreview_fn = function(sessionId, preview, evaluated, mode) {
 assess_fn = function(sessionId, preview, evaluation) {
   var _a3;
   const reasons = [];
-  const hard = evaluation.diagnostics.some((diagnostic) => diagnostic.severity === "error" && diagnostic.hard);
+  const hard = evaluation.diagnostics.some((diagnostic2) => diagnostic2.severity === "error" && diagnostic2.hard);
   if (hard) reasons.push("HARD_VALIDATION_FAILED");
   if (preview.groundings.some(({ target }) => target.sourceStatus !== "confirmed")) reasons.push("SOURCE_NOT_CONFIRMED");
-  if (evaluation.diagnostics.some((diagnostic) => diagnostic.severity !== "info")) reasons.push("DIAGNOSTICS_PRESENT");
+  if (evaluation.diagnostics.some((diagnostic2) => diagnostic2.severity !== "info")) reasons.push("DIAGNOSTICS_PRESENT");
   if (evaluation.review.outcome !== "satisfied") reasons.push("REVIEW_NOT_SATISFIED");
   const safeAnnotationCreate = ((_a3 = preview.program) == null ? void 0 : _a3.operations.every((operation) => operation.kind === "create_annotation_batch" && operation.annotations.every((node) => annotationConfirmed(node)) && operation.associations.every((node) => associationResolved(node)))) ?? false;
   if (preview.compilation.actualEffect.deletedNodeIds.length > 0 || preview.compilation.actualEffect.createdNodeIds.length > 0 && !safeAnnotationCreate) {
@@ -12669,7 +13425,7 @@ assess_fn = function(sessionId, preview, evaluation) {
   if (preview.compilation.actualEffect.updatedNodeIds.some((id) => !allowed.has(id))) {
     reasons.push("OUT_OF_SCOPE_EFFECT");
   }
-  const base = {
+  const base2 = {
     assessmentId: this.ports.id("assessment"),
     taskId: preview.task.ref.taskId,
     drawingId: preview.ref.baseRef.drawingId,
@@ -12683,19 +13439,19 @@ assess_fn = function(sessionId, preview, evaluation) {
     reasons
   };
   if (hard || reasons.includes("OUT_OF_SCOPE_EFFECT")) return {
-    ...base,
+    ...base2,
     disposition: "blocked",
     hardDeny: hard,
     nonOverridableProtected: reasons.includes("OUT_OF_SCOPE_EFFECT")
   };
   if (preview.task.ref.policy !== "auto-safe") reasons.push("TASK_REVIEW_POLICY");
   if (reasons.length > 0) return {
-    ...base,
+    ...base2,
     disposition: "confirmation_required",
     requiredEffectDigest: preview.ref.effectDigest
   };
   return {
-    ...base,
+    ...base2,
     disposition: "auto_safe",
     autoQualification: {
       exactScope: true,
@@ -13110,8 +13866,8 @@ function semanticMatchScore(node, query) {
   const normalizedId = normalizeSemanticText(String(node.id));
   return normalizedId === normalizedQuery ? 0 : normalizedId.includes(normalizedQuery) ? 1 : 2;
 }
-function normalizeSemanticText(value) {
-  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function normalizeSemanticText(value2) {
+  return value2.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 function candidateSummary(document, nodeIds) {
   const nodes = document.geometry.filter(({ id }) => nodeIds.includes(String(id)));
@@ -13124,10 +13880,10 @@ function candidateSummary(document, nodeIds) {
   const centerX = centers.reduce((sum, [x]) => sum + x, 0) / centers.length;
   const centerY = centers.reduce((sum, [, y]) => sum + y, 0) / centers.length;
   const bounds2 = document.geometry.map(geometryNodeBounds);
-  const minX = Math.min(...bounds2.map(({ minX: value }) => value));
-  const maxX = Math.max(...bounds2.map(({ maxX: value }) => value));
-  const minY = Math.min(...bounds2.map(({ minY: value }) => value));
-  const maxY = Math.max(...bounds2.map(({ maxY: value }) => value));
+  const minX = Math.min(...bounds2.map(({ minX: value2 }) => value2));
+  const maxX = Math.max(...bounds2.map(({ maxX: value2 }) => value2));
+  const minY = Math.min(...bounds2.map(({ minY: value2 }) => value2));
+  const maxY = Math.max(...bounds2.map(({ maxY: value2 }) => value2));
   const horizontal = centerX < minX + (maxX - minX) / 3 ? "left" : centerX > minX + (maxX - minX) * 2 / 3 ? "right" : "center";
   const vertical = centerY < minY + (maxY - minY) / 3 ? "lower" : centerY > minY + (maxY - minY) * 2 / 3 ? "upper" : "middle";
   return `${nodeIds.length} ${typeSummary} element in ${vertical}-${horizontal} area`;
@@ -13170,11 +13926,11 @@ function distanceToSegment(point, start, end) {
   const ratio = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
   return Math.hypot(point[0] - (start[0] + ratio * dx), point[1] - (start[1] + ratio * dy));
 }
-function finiteVec2(value, code) {
-  if (!Array.isArray(value) || value.length !== 2 || value.some((coordinate) => !Number.isFinite(coordinate))) {
+function finiteVec2(value2, code) {
+  if (!Array.isArray(value2) || value2.length !== 2 || value2.some((coordinate) => !Number.isFinite(coordinate))) {
     throw new Error(code);
   }
-  return [value[0], value[1]];
+  return [value2[0], value2[1]];
 }
 function groundedGeometryCenter(document, targetNodeIds) {
   const selected = new Set(targetNodeIds);
@@ -13513,6 +14269,12 @@ async function renderDrawingObservation(input) {
   const normal = renderDocument(input.document, /* @__PURE__ */ new Set(), "#d7e0ea");
   const highlight = selected.size === 0 ? "" : renderDocument(input.document, selected, "#ffad42", true);
   const candidateLayout = layoutCandidateMarkers(input.document, input.candidateMarkers ?? [], transform2, width, height);
+  const worldOverlays = validateWorldOverlays(input.worldOverlays ?? []);
+  const worldOverlayShapes = worldOverlays.map(({ id, polygon }) => `<polygon data-world-overlay="${escapeXml(id)}" points="${polygon.map((point) => point.join(",")).join(" ")}" fill="#35bdf455" stroke="#35bdf4" stroke-width="2" vector-effect="non-scaling-stroke"/>`).join("");
+  const worldOverlayLabels = worldOverlays.map(({ id, label, polygon }) => {
+    const anchor = worldToImage(average(polygon), transform2);
+    return `<g data-world-overlay-label="${escapeXml(id)}"><rect x="${anchor[0] - 14}" y="${anchor[1] - 11}" width="28" height="22" rx="5" fill="#08384d" stroke="#35bdf4"/><text x="${anchor[0]}" y="${anchor[1] + 4}" text-anchor="middle" fill="#ecfbff" font-family="ui-monospace, monospace" font-size="12" font-weight="700">${escapeXml(label)}</text></g>`;
+  }).join("");
   const candidateLabels = candidateLayout.map(({ key, anchor, labelPosition, boxWidth }) => {
     const [anchorX, anchorY] = anchor;
     const [labelX, labelY] = labelPosition;
@@ -13525,8 +14287,8 @@ async function renderDrawingObservation(input) {
   }).join("");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="${width}" height="${height}" fill="#101419"/>
-    <g transform="matrix(${transform2.join(" ")})">${normal}${highlight}</g>
-    ${candidateLabels}
+    <g transform="matrix(${transform2.join(" ")})">${worldOverlayShapes}${normal}${highlight}</g>
+    ${candidateLabels}${worldOverlayLabels}
   </svg>`;
   const png = await sharp(Buffer.from(svg)).png().toBuffer();
   return {
@@ -13545,7 +14307,8 @@ async function renderDrawingObservation(input) {
         nodeCount,
         anchor,
         labelPosition
-      }))
+      })),
+      worldOverlays: structuredClone(worldOverlays)
     }
   };
 }
@@ -13554,8 +14317,8 @@ function layoutCandidateMarkers(document, candidates, transform2, width, height)
   const occupied = [];
   return candidates.flatMap(({ key, nodeIds }) => {
     const centers = nodeIds.flatMap((nodeId) => {
-      const value = center(nodes.get(nodeId));
-      return value ? [value] : [];
+      const value2 = center(nodes.get(nodeId));
+      return value2 ? [value2] : [];
     });
     const world = average(centers);
     if (!world) return [];
@@ -13660,7 +14423,7 @@ function renderNode(node, color) {
     case "polyline":
       return `<polyline points="${node.vertices.map(({ point }) => point.join(",")).join(" ")}" ${node.closed ? 'data-closed="true"' : ""} ${style}/>`;
     case "spline":
-      return `<polyline points="${node.controlPoints.map((point) => point.join(",")).join(" ")}" ${style}/>`;
+      return `<polyline points="${sampleSpline(node, { maxError: 0.1 }).map((point) => point.join(",")).join(" ")}" ${style}/>`;
     case "text":
       return textBox(node.position, node.height, node.content, color);
     case "dimension":
@@ -13672,6 +14435,21 @@ function renderNode(node, color) {
     case "section-hatch":
       return node.segments.map(({ start, end }) => `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" ${style}/>`).join("");
   }
+}
+function validateWorldOverlays(overlays) {
+  if (overlays.length > 128) throw new Error("DRAWING_OBSERVATION_OVERLAY_INVALID");
+  for (const overlay of overlays) {
+    if (!overlay.id || !overlay.label || overlay.label.length > 80 || overlay.polygon.length < 3 || overlay.polygon.length > 16 || overlay.polygon.some((point) => point.length !== 2 || point.some((value2) => !Number.isFinite(value2)))) {
+      throw new Error("DRAWING_OBSERVATION_OVERLAY_INVALID");
+    }
+  }
+  return structuredClone(overlays);
+}
+function worldToImage(point, transform2) {
+  return [
+    transform2[0] * point[0] + transform2[2] * point[1] + transform2[4],
+    transform2[1] * point[0] + transform2[3] * point[1] + transform2[5]
+  ];
 }
 function textBox(position, height, text, color) {
   return `<g transform="translate(${position[0]} ${position[1]}) scale(1 -1)"><text fill="${color}" font-size="${height}" font-family="sans-serif">${escapeXml(text)}</text></g>`;
@@ -13723,8 +14501,8 @@ function polar(center2, radius, degrees2) {
   const radians = degrees2 * Math.PI / 180;
   return [center2[0] + radius * Math.cos(radians), center2[1] + radius * Math.sin(radians)];
 }
-function escapeXml(value) {
-  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] ?? character);
+function escapeXml(value2) {
+  return value2.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character] ?? character);
 }
 function createDshReviewer(ctx) {
   return async (input) => {
@@ -13847,9 +14625,9 @@ function reviewerVerdict(structured, output) {
     return null;
   }
 }
-function validReview(value) {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value;
+function validReview(value2) {
+  if (!value2 || typeof value2 !== "object") return false;
+  const candidate = value2;
   return (candidate.outcome === "satisfied" || candidate.outcome === "needs_revision") && Array.isArray(candidate.defects) && candidate.defects.length <= 32 && candidate.defects.every((defect) => {
     if (!defect || typeof defect !== "object") return false;
     const item = defect;
@@ -14082,7 +14860,7 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
     const editPorts = {
       id: (kind) => `${kind}_${randomUUID()}`,
       now: Date.now,
-      digest: (value) => `sha256:${createHash("sha256").update(value).digest("hex")}`,
+      digest: (value2) => `sha256:${createHash("sha256").update(value2).digest("hex")}`,
       renderObservation: async (input) => {
         const rendered = await renderDrawingObservation(input);
         const attachment = await ctx.attachments.saveImage({
@@ -14126,6 +14904,42 @@ class DrawingSpaceHostService extends (_a2 = TypertRemoteService, _getSnapshot_d
   }
   getSnapshot(agent) {
     return this.drawings.getSnapshot(String(agent.id));
+  }
+  async importDxf(agent, request, signal) {
+    return this.drawings.importDxf(String(agent.id), { ...request, signal });
+  }
+  async renderObservation(agent, request, signal) {
+    signal == null ? void 0 : signal.throwIfAborted();
+    const sessionId = String(agent.id);
+    const snapshot = this.drawings.getSnapshot(sessionId);
+    if (snapshot === null) {
+      return { status: "rejected", code: "DRAWING_REQUIRED", message: "No drawing is loaded" };
+    }
+    if (snapshot.ref.drawingId !== request.ref.drawingId || snapshot.ref.revision !== request.ref.revision) {
+      return { status: "stale", currentRef: snapshot.ref };
+    }
+    const viewport = this.drawings.getBounds(sessionId);
+    if (viewport === null) {
+      return { status: "rejected", code: "DRAWING_BOUNDS_REQUIRED", message: "Drawing bounds are unavailable" };
+    }
+    const rendered = await renderDrawingObservation({
+      document: snapshot.document,
+      viewport,
+      ...request.overlays === void 0 ? {} : {
+        worldOverlays: request.overlays.map((overlay) => ({
+          ...overlay,
+          polygon: overlay.polygon.map((point) => [point[0], point[1]])
+        }))
+      }
+    });
+    signal == null ? void 0 : signal.throwIfAborted();
+    return {
+      status: "rendered",
+      png: rendered.png,
+      contentDigest: rendered.contentDigest,
+      width: rendered.manifest.width,
+      height: rendered.manifest.height
+    };
   }
   query(agent, request) {
     return this.drawings.query(String(agent.id), request);

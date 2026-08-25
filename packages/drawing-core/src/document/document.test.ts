@@ -16,6 +16,7 @@ describe('@vectorai/drawing-core document', () => {
       id: 'drawing_package',
       metadata: { createdAt: 42, updatedAt: 42 },
       unitSystem: { length: 'cm', angle: 'deg' },
+      sources: [],
       coordinateFrames: [{
         id: 'frame_document',
         kind: 'document',

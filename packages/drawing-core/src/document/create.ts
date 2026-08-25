@@ -34,6 +34,7 @@ export function createEmptyDrawing(input: {
     id: idFactory.next('drawing') as DrawingId,
     metadata: { createdAt: now, updatedAt: now },
     unitSystem: { length: input.unit ?? 'mm', angle: 'deg' },
+    sources: [],
     coordinateFrames: [
       {
         id: 'frame_document',

@@ -58,7 +58,7 @@ export interface DrawingSurfaceRuntime {
   actions: DrawingSurfaceActions;
 }
 
-export function createStoreObservable<State, Selected>(
+export function createStoreObservable<Selected>(
   store: DrawingWorkspaceStore,
   selector: (state: ReturnType<DrawingWorkspaceStore['getState']>) => Selected,
   equals: (left: Selected, right: Selected) => boolean = Object.is,
@@ -92,16 +92,7 @@ export function createDrawingSurfaceRuntime(store: DrawingWorkspaceStore): Drawi
     snapshot: createStoreObservable(store, (state) => state.snapshot),
     viewport: createStoreObservable(store, (state) => state.viewport, viewportEqual),
     selection: createStoreObservable(store, (state) => state.selectedIds, stringArrayEqual),
-    presentation: createStoreObservable(store, (state) => ({
-      displaySnapshot: state.displaySnapshot,
-      preview: state.preview,
-      groundingOverlay: state.groundingOverlay,
-      motionRig: state.motionRig,
-      sourceUrl: state.sourceResource?.url ?? null,
-      display: state.display,
-      busy: state.busy,
-      error: state.error,
-    }), presentationEqual),
+    presentation: createStoreObservable(store, presentationOf, presentationEqual),
     actions: {
       setViewport(viewport) {
         store.getState().setViewport({ ...viewport });

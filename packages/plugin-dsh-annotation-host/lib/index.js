@@ -47,13 +47,181 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _getSessionState_dec, _a2, _init;
+var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, current_fn, _redoPartition_dec, _undoPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
+function evaluateHomogeneous(node, normalized) {
+  const pointCount = node.controlPoints.length;
+  const lastControlIndex = pointCount - 1;
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[lastControlIndex + 1];
+  const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
+  const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
+  const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
+  const work = [];
+  for (let index = 0; index <= node.degree; index += 1) {
+    const sourceIndex = span - node.degree + index;
+    const weight = weights[sourceIndex];
+    const point = node.controlPoints[sourceIndex];
+    work.push([point[0] * weight, point[1] * weight, weight]);
+  }
+  for (let level = 1; level <= node.degree; level += 1) {
+    for (let index = node.degree; index >= level; index -= 1) {
+      const knotIndex = span - node.degree + index;
+      const denominator = node.knots[knotIndex + node.degree - level + 1] - node.knots[knotIndex];
+      const alpha = denominator === 0 ? 0 : (knotParameter - node.knots[knotIndex]) / denominator;
+      work[index] = mixHomogeneous(work[index - 1], work[index], alpha);
+    }
+  }
+  return work[node.degree];
+}
+function sampleSpline(node, { maxError, maxDepth = 12 }) {
+  if (!(Number.isFinite(maxError) && maxError > 0)) {
+    throw new TypeError("SPLINE_MAX_ERROR_INVALID");
+  }
+  if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 24) {
+    throw new TypeError("SPLINE_MAX_DEPTH_INVALID");
+  }
+  validateSpline(node);
+  const first = project(evaluateHomogeneous(node, 0));
+  const output = [first];
+  const spans = normalizedKnotSpans(node);
+  for (let index = 1; index < spans.length; index += 1) {
+    const controls = extractBezierControls(node, spans[index - 1], spans[index]);
+    subdivideBezier(controls, 0, maxDepth, maxError, output);
+  }
+  if (node.closed && !samePoint(output[0], output.at(-1))) output.push(output[0]);
+  return output;
+}
+function normalizedKnotSpans(node) {
+  const start = node.knots[node.degree];
+  const end = node.knots[node.controlPoints.length];
+  return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start) / (end - start)).filter((value, index, values) => index === 0 || value > values[index - 1]);
+}
+function validateSpline(node) {
+  if (!Number.isInteger(node.degree) || node.degree < 1) {
+    throw new TypeError("SPLINE_DEGREE_INVALID");
+  }
+  if (node.controlPoints.length <= node.degree) {
+    throw new TypeError("SPLINE_CONTROL_POINT_COUNT_INVALID");
+  }
+  if (node.controlPoints.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
+    throw new TypeError("SPLINE_CONTROL_POINT_INVALID");
+  }
+  const expectedKnots = node.controlPoints.length + node.degree + 1;
+  if (node.knots.length !== expectedKnots) {
+    throw new TypeError("SPLINE_KNOT_COUNT_INVALID");
+  }
+  if (node.knots.some((value, index) => !Number.isFinite(value) || index > 0 && value < node.knots[index - 1])) {
+    throw new TypeError("SPLINE_KNOT_SEQUENCE_INVALID");
+  }
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[node.controlPoints.length];
+  if (!(domainEnd > domainStart)) throw new TypeError("SPLINE_KNOT_DOMAIN_INVALID");
+  if (node.weights !== void 0 && (node.weights.length !== node.controlPoints.length || node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0))) {
+    throw new TypeError("SPLINE_WEIGHTS_INVALID");
+  }
+}
+function findSpan(knots, degree, lastControlIndex, value) {
+  let low = degree;
+  let high = lastControlIndex + 1;
+  let middle = Math.floor((low + high) / 2);
+  while (value < knots[middle] || value >= knots[middle + 1]) {
+    if (value < knots[middle]) high = middle;
+    else low = middle;
+    middle = Math.floor((low + high) / 2);
+  }
+  return middle;
+}
+function mixHomogeneous(first, second, alpha) {
+  return [
+    first[0] * (1 - alpha) + second[0] * alpha,
+    first[1] * (1 - alpha) + second[1] * alpha,
+    first[2] * (1 - alpha) + second[2] * alpha
+  ];
+}
+function subdivideBezier(controls, depth, maxDepth, maxError, output) {
+  const points = controls.map(project);
+  const start = points[0];
+  const end = points.at(-1);
+  const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
+  if (depth >= maxDepth || flatness <= maxError) {
+    output.push(end);
+    return;
+  }
+  const [left, right] = splitBezier(controls);
+  subdivideBezier(left, depth + 1, maxDepth, maxError, output);
+  subdivideBezier(right, depth + 1, maxDepth, maxError, output);
+}
+function extractBezierControls(node, start, end) {
+  const degree = node.degree;
+  if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
+  const samples = Array.from({ length: degree + 1 }, (_, row) => {
+    const local2 = row / degree;
+    return evaluateHomogeneous(node, start + (end - start) * local2);
+  });
+  const matrix = Array.from({ length: degree + 1 }, (_, row) => {
+    const parameter = row / degree;
+    return Array.from({ length: degree + 1 }, (_2, column) => bernstein(degree, column, parameter));
+  });
+  return solve(matrix, samples);
+}
+function solve(matrix, values) {
+  const size = matrix.length;
+  const augmented = matrix.map((row, index) => [...row, ...values[index]]);
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+    const divisor = augmented[column][column];
+    if (Math.abs(divisor) <= 1e-14) throw new TypeError("SPLINE_BEZIER_EXTRACTION_FAILED");
+    for (let index = column; index < size + 3; index += 1) augmented[column][index] = augmented[column][index] / divisor;
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = augmented[row][column];
+      for (let index = column; index < size + 3; index += 1) augmented[row][index] = augmented[row][index] - factor * augmented[column][index];
+    }
+  }
+  return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
+}
+function splitBezier(controls) {
+  const levels = [controls.map((point) => [...point])];
+  while (levels.at(-1).length > 1) {
+    const previous = levels.at(-1);
+    levels.push(previous.slice(1).map((point, index) => mixHomogeneous(previous[index], point, 0.5)));
+  }
+  return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
+}
+function project(point) {
+  if (!(Math.abs(point[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
+  return [point[0] / point[2], point[1] / point[2]];
+}
+function bernstein(degree, index, parameter) {
+  return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
+}
+function binomial(n, k) {
+  let result = 1;
+  for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
+  return result;
+}
+function pointSegmentDistance(point, start, end) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+  return Math.hypot(
+    point[0] - (start[0] + projection * dx),
+    point[1] - (start[1] + projection * dy)
+  );
+}
+function samePoint(first, second) {
+  return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
+}
 function planEngineeringAnnotations(input) {
   const annotations = [];
   const associations = [];
@@ -185,7 +353,7 @@ function pointsOf(node) {
     return [[node.center[0] - radius, node.center[1] - radius], [node.center[0] + radius, node.center[1] + radius]];
   }
   if (node.type === "polyline") return node.vertices.map(({ point }) => point);
-  return node.controlPoints;
+  return sampleSpline(node, { maxError: 0.02, maxDepth: 14 });
 }
 function stableKey(value) {
   let hash = 2166136261;
@@ -200,6 +368,733 @@ function clean(value) {
 }
 function format(value) {
   return clean(value).toString();
+}
+function validatePartition(draft) {
+  const diagnostics = [];
+  const tolerance = Math.max(1e-8, Math.abs(draft.axis.zMax - draft.axis.zMin) * 1e-8);
+  const ids = /* @__PURE__ */ new Set();
+  const evidence = new Set(draft.evidence.map(({ id }) => id));
+  for (const [index, segment] of draft.segments.entries()) {
+    if (ids.has(segment.id)) diagnostics.push(problem("PARTITION_ID_DUPLICATE", `Duplicate segment ${segment.id}`, segment.id));
+    ids.add(segment.id);
+    if (![segment.zStart, segment.zEnd].every(Number.isFinite) || segment.zEnd - segment.zStart <= tolerance) {
+      diagnostics.push(problem("PARTITION_SEGMENT_INVALID", `Invalid segment ${segment.id}`, segment.id));
+    }
+    if (index > 0) {
+      const previous = draft.segments[index - 1];
+      const delta = segment.zStart - previous.zEnd;
+      if (delta > tolerance) diagnostics.push(problem("PARTITION_GAP", `Gap before ${segment.id}`, segment.id));
+      if (delta < -tolerance) diagnostics.push(problem("PARTITION_OVERLAP", `Overlap before ${segment.id}`, segment.id));
+    }
+    for (const id of [...segment.boundaryEvidenceIds, ...segment.semanticEvidenceIds]) {
+      if (!evidence.has(id)) diagnostics.push(problem("PARTITION_EVIDENCE_MISSING", `Missing evidence ${id}`, segment.id));
+    }
+  }
+  if (draft.segments.length === 0 || Math.abs(draft.segments[0].zStart - draft.axis.zMin) > tolerance || Math.abs(draft.segments.at(-1).zEnd - draft.axis.zMax) > tolerance) {
+    diagnostics.push({ id: "diagnostic:coverage", severity: "error", code: "PARTITION_COVERAGE", message: "Segments must cover the shaft extent exactly once" });
+  }
+  for (const group of draft.semanticGroups) {
+    if (group.segmentIds.some((id) => !ids.has(id)) || group.evidenceIds.some((id) => !evidence.has(id))) {
+      diagnostics.push({ id: `diagnostic:group:${group.id}`, severity: "error", code: "PARTITION_GROUP_REFERENCE_INVALID", message: `Invalid references in group ${group.id}` });
+    }
+  }
+  return diagnostics;
+}
+function problem(code, message, segmentId) {
+  return { id: `diagnostic:${code}:${segmentId}`, severity: "error", code, message, segmentIds: [segmentId] };
+}
+function moveBoundary(draft, input) {
+  if (input.boundaryIndex <= 0 || input.boundaryIndex >= draft.segments.length) throw new Error("PARTITION_BOUNDARY_INDEX");
+  const z = snap(input.requestedZ, input.snapCandidates, input.snapTolerance);
+  const before = draft.segments[input.boundaryIndex - 1];
+  const after = draft.segments[input.boundaryIndex];
+  if (!(z > before.zStart && z < after.zEnd)) throw new Error("PARTITION_BOUNDARY_ORDER");
+  const evidenceId = `manual:boundary:${input.boundaryIndex}:${canonical$2(z)}`;
+  const profileSamples = uniqueSamples(draft.segments.flatMap((segment) => segment.profileSamples ?? []));
+  const segments = draft.segments.map((segment, index) => index === input.boundaryIndex - 1 ? summarize({ ...segment, zEnd: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : index === input.boundaryIndex ? summarize({ ...segment, zStart: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : segment);
+  return appendManual(draft, segments, evidenceId, `Boundary moved to ${z}`);
+}
+function splitSegment(draft, input) {
+  const index = draft.segments.findIndex(({ id }) => id === input.segmentId);
+  if (index < 0) throw new Error("PARTITION_SEGMENT_UNKNOWN");
+  const source = draft.segments[index];
+  const z = snap(input.z, input.snapCandidates, input.snapTolerance);
+  if (!(z > source.zStart && z < source.zEnd)) throw new Error("PARTITION_BOUNDARY_ORDER");
+  const evidenceId = `manual:split:${source.id}:${canonical$2(z)}`;
+  const make = (side, zStart, zEnd) => ({
+    ...source,
+    id: `${source.id}:${side}:${canonical$2(z)}`,
+    zStart,
+    zEnd,
+    boundaryEvidenceIds: unique([...source.boundaryEvidenceIds, evidenceId])
+  });
+  const left = summarize(make("left", source.zStart, z));
+  const right = summarize(make("right", z, source.zEnd));
+  const segments = [...draft.segments.slice(0, index), left, right, ...draft.segments.slice(index + 1)];
+  const semanticGroups = draft.semanticGroups.map((group) => ({
+    ...group,
+    segmentIds: group.segmentIds.flatMap((id) => id === source.id ? [left.id, right.id] : [id])
+  }));
+  return appendManual({ ...draft, semanticGroups }, segments, evidenceId, `Segment split at ${z}`);
+}
+function mergeBoundary(draft, input) {
+  if (input.boundaryIndex <= 0 || input.boundaryIndex >= draft.segments.length) throw new Error("PARTITION_BOUNDARY_INDEX");
+  const left = draft.segments[input.boundaryIndex - 1];
+  const right = draft.segments[input.boundaryIndex];
+  const evidenceId = `manual:merge:${left.id}:${right.id}`;
+  const merged = {
+    ...left,
+    id: `segment:${canonical$2(left.zStart)}-${canonical$2(right.zEnd)}`,
+    zEnd: right.zEnd,
+    profile: {
+      minRadius: Math.min(left.profile.minRadius, right.profile.minRadius),
+      maxRadius: Math.max(left.profile.maxRadius, right.profile.maxRadius),
+      sampleCount: left.profile.sampleCount + right.profile.sampleCount
+    },
+    geometryNodeIds: unique([...left.geometryNodeIds, ...right.geometryNodeIds]),
+    boundaryEvidenceIds: unique([...left.boundaryEvidenceIds, ...right.boundaryEvidenceIds, evidenceId]),
+    semanticEvidenceIds: unique([...left.semanticEvidenceIds, ...right.semanticEvidenceIds]),
+    diagnosticIds: unique([...left.diagnosticIds, ...right.diagnosticIds]),
+    profileSamples: [...left.profileSamples ?? [], ...right.profileSamples ?? []]
+  };
+  const segments = [...draft.segments.slice(0, input.boundaryIndex - 1), merged, ...draft.segments.slice(input.boundaryIndex + 1)];
+  const removed = /* @__PURE__ */ new Set([left.id, right.id]);
+  const semanticGroups = draft.semanticGroups.map((group) => ({
+    ...group,
+    segmentIds: unique(group.segmentIds.flatMap((id) => removed.has(id) ? [merged.id] : [id]))
+  }));
+  return appendManual({ ...draft, semanticGroups }, segments, evidenceId, "Boundary merged");
+}
+function updateSegmentMetadata(draft, input) {
+  if (!draft.segments.some(({ id }) => id === input.segmentId)) throw new Error("PARTITION_SEGMENT_UNKNOWN");
+  const evidenceId = `manual:metadata:${input.segmentId}:${draft.evidence.length}`;
+  const segments = draft.segments.map((segment) => segment.id === input.segmentId ? {
+    ...segment,
+    ...input.name === void 0 ? {} : { name: input.name },
+    ...input.semanticType === void 0 ? {} : { semanticType: input.semanticType },
+    semanticEvidenceIds: unique([...segment.semanticEvidenceIds, evidenceId])
+  } : segment);
+  return appendManual(draft, segments, evidenceId, `Metadata updated for ${input.segmentId}`);
+}
+function snap(value, candidates, tolerance) {
+  var _a3;
+  if (!Number.isFinite(value) || !Number.isFinite(tolerance) || tolerance < 0) throw new Error("PARTITION_BOUNDARY_INVALID");
+  const eligible = candidates.filter(({ z }) => Math.abs(z - value) <= tolerance).sort((a, b) => b.score - a.score || Math.abs(a.z - value) - Math.abs(b.z - value));
+  return ((_a3 = eligible[0]) == null ? void 0 : _a3.z) ?? value;
+}
+function appendManual(draft, segments, id, label) {
+  return { ...structuredClone(draft), segments: structuredClone(segments), evidence: [...structuredClone(draft.evidence), { id, origin: "manual", label }] };
+}
+function summarize(segment) {
+  if (segment.profileSamples === void 0) return segment;
+  const tolerance = Math.max((segment.zEnd - segment.zStart) * 1e-9, 1e-9);
+  const samples = segment.profileSamples.filter(({ z }) => z >= segment.zStart - tolerance && z <= segment.zEnd + tolerance);
+  const radii = samples.map(({ radius }) => radius);
+  return {
+    ...segment,
+    profile: {
+      minRadius: radii.length === 0 ? 0 : Math.min(...radii),
+      maxRadius: radii.length === 0 ? 0 : Math.max(...radii),
+      sampleCount: radii.length
+    },
+    geometryNodeIds: unique(samples.map(({ geometryNodeId }) => geometryNodeId))
+  };
+}
+function uniqueSamples(samples) {
+  return [...new Map(samples.map((sample) => [`${sample.geometryNodeId}:${canonical$2(sample.z)}:${canonical$2(sample.radius)}`, sample])).values()];
+}
+function unique(values) {
+  return [...new Set(values)];
+}
+function canonical$2(value) {
+  return Number(value.toFixed(9)).toString();
+}
+function parseEngineeringDocument(text) {
+  const result = { drawing: {}, regions: [], unknown: [], diagnostics: [] };
+  const ids = /* @__PURE__ */ new Set();
+  let section = "";
+  let region;
+  for (const [offset, raw] of text.replace(/^\uFEFF/, "").split(/\r?\n/).entries()) {
+    const line = offset + 1;
+    const value = raw.trim();
+    if (!value || value.startsWith("#") || value.startsWith(";")) continue;
+    const heading = /^\[([^\]]+)]$/.exec(value);
+    if (heading) {
+      section = heading[1].trim();
+      const match = /^region:([^:]+):([^:]+)$/.exec(section);
+      region = void 0;
+      if (match) {
+        const id = match[2].trim();
+        region = { id, type: match[1].trim(), sourceLines: [line] };
+        if (ids.has(id)) diagnostic(result, "DOCUMENT_REGION_DUPLICATE", `Duplicate region ${id}`, line);
+        ids.add(id);
+        result.regions.push(region);
+      }
+      continue;
+    }
+    const separator = value.indexOf("=");
+    if (separator < 0) {
+      diagnostic(result, "DOCUMENT_LINE_INVALID", "Expected key=value", line);
+      continue;
+    }
+    const key = value.slice(0, separator).trim();
+    const field = value.slice(separator + 1).trim();
+    if (section === "drawing") parseDrawing(result, key, field, line);
+    else if (region) parseRegion(result, region, key, field, line);
+    else result.unknown.push({ section, key, value: field, line });
+  }
+  for (const item of result.regions) {
+    if (item.center !== void 0 && item.width !== void 0 && item.width > 0) {
+      item.interval = { start: item.center - item.width / 2, end: item.center + item.width / 2 };
+    }
+    delete item.center;
+    delete item.width;
+  }
+  return result;
+}
+function parseDrawing(result, key, value, line) {
+  if (key === "drawing_name") {
+    if (value) result.drawing.drawingName = value;
+    return;
+  }
+  if (key === "drawing_id") {
+    if (value) result.unknown.push({ section: "drawing", key, value, line });
+    return;
+  }
+  if (key === "unit") {
+    if (!value) return;
+    if (value === "mm" || value === "cm" || value === "m") result.drawing.unit = value;
+    else diagnostic(result, "DOCUMENT_UNIT_UNSUPPORTED", `Unsupported unit ${value}`, line);
+    return;
+  }
+  if (key === "axis_origin") {
+    if (!value) return;
+    if (value === "left_end" || value === "right_end") result.drawing.axisOrigin = value;
+    else diagnostic(result, "DOCUMENT_AXIS_ORIGIN_INVALID", `Invalid axis origin ${value}`, line);
+    return;
+  }
+  if (key === "orientation") {
+    if (!value) return;
+    if (value === "auto" || value === "forward" || value === "reversed") result.drawing.orientation = value;
+    else diagnostic(result, "DOCUMENT_ORIENTATION_INVALID", `Invalid orientation ${value}`, line);
+    return;
+  }
+  result.unknown.push({ section: "drawing", key, value, line });
+}
+function parseRegion(result, region, key, value, line) {
+  region.sourceLines.push(line);
+  if (key === "name") {
+    if (value) region.name = value;
+    return;
+  }
+  if (key === "center_z") {
+    region.center = numeric(result, key, value, line);
+    return;
+  }
+  if (key === "width") {
+    region.width = numeric(result, key, value, line);
+    if (region.width !== void 0 && region.width <= 0) diagnostic(result, "DOCUMENT_WIDTH_INVALID", "Region width must be positive", line);
+    return;
+  }
+  if (key === "outer_diameter") {
+    region.outerDiameter = numeric(result, key, value, line);
+    if (region.outerDiameter !== void 0 && region.outerDiameter <= 0) diagnostic(result, "DOCUMENT_DIAMETER_INVALID", "Outer diameter must be positive", line);
+    return;
+  }
+  result.unknown.push({ section: `region:${region.type}:${region.id}`, key, value, line });
+}
+function numeric(result, key, value, line) {
+  if (!value) return void 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    diagnostic(result, "DOCUMENT_NUMBER_INVALID", `Invalid number for ${key}`, line);
+    return void 0;
+  }
+  return parsed;
+}
+function diagnostic(result, code, message, line) {
+  result.diagnostics.push({ id: `document:${line}:${code}`, severity: "warning", code, message });
+}
+function resolveShaftAxis(document, hints) {
+  const nodes = document.geometry.filter(({ visible, type }) => visible && type !== "ray" && type !== "xline").map((node) => {
+    const points = sampleNode(node);
+    return { id: String(node.id), points, bounds: bounds(points) };
+  }).filter(({ points }) => points.length >= 2);
+  if (nodes.length === 0) return null;
+  const global = bounds(nodes.flatMap(({ points }) => points));
+  const tolerance = Math.max(global[2] - global[0], global[3] - global[1], 1) * 1e-5;
+  const candidates = connectedComponents(nodes, tolerance).map((component) => principalCandidate(component, hints)).filter((item) => item !== null).sort((a, b) => b.score - a.score);
+  const selected = candidates[0];
+  if (!selected) return null;
+  const useReverse = hints.orientation === "reversed" || hints.axisOrigin === "right_end";
+  const direction = useReverse ? [-selected.direction[0], -selected.direction[1]] : selected.direction;
+  const normal = [-direction[1], direction[0]];
+  const axial = selected.points.map((point) => dot(point, direction));
+  const radial = selected.points.map((point) => dot(point, normal));
+  const zMinWorld = Math.min(...axial);
+  const zMaxWorld = Math.max(...axial);
+  const radialCenter = (Math.min(...radial) + Math.max(...radial)) / 2;
+  const origin = [
+    direction[0] * zMinWorld + normal[0] * radialCenter,
+    direction[1] * zMinWorld + normal[1] * radialCenter
+  ];
+  return {
+    origin,
+    direction,
+    normal,
+    zMin: 0,
+    zMax: zMaxWorld - zMinWorld,
+    orientation: useReverse ? "reversed" : "forward",
+    geometryNodeIds: selected.nodeIds
+  };
+}
+function connectedComponents(nodes, tolerance) {
+  const remaining = new Set(nodes.map((_, index) => index));
+  const output = [];
+  while (remaining.size > 0) {
+    const first = remaining.values().next().value;
+    remaining.delete(first);
+    const queue = [first];
+    const component = [];
+    while (queue.length > 0) {
+      const current = queue.pop();
+      component.push(nodes[current]);
+      for (const candidate of [...remaining]) {
+        if (!overlaps(nodes[current].bounds, nodes[candidate].bounds, tolerance)) continue;
+        remaining.delete(candidate);
+        queue.push(candidate);
+      }
+    }
+    output.push(component);
+  }
+  return output;
+}
+function principalCandidate(component, hints) {
+  const points = component.flatMap(({ points: points2 }) => points2);
+  if (points.length < 2) return null;
+  const mean = [average(points.map(([x]) => x)), average(points.map(([, y]) => y))];
+  const xx = average(points.map(([x]) => (x - mean[0]) ** 2));
+  const yy = average(points.map(([, y]) => (y - mean[1]) ** 2));
+  const xy = average(points.map(([x, y]) => (x - mean[0]) * (y - mean[1])));
+  const angle = dominantEdgeAngle(component) ?? Math.atan2(2 * xy, xx - yy) / 2;
+  let direction = [Math.cos(angle), Math.sin(angle)];
+  if (Math.abs(direction[0]) >= Math.abs(direction[1]) ? direction[0] < 0 : direction[1] < 0) direction = [-direction[0], -direction[1]];
+  const normal = [-direction[1], direction[0]];
+  const axial = points.map((point) => dot(point, direction));
+  const radial = points.map((point) => dot(point, normal));
+  const length = Math.max(...axial) - Math.min(...axial);
+  const diameter = Math.max(...radial) - Math.min(...radial);
+  if (!(length > 0 && diameter > length * 1e-4)) return null;
+  const elongation = length / Math.max(diameter, length * 1e-4);
+  const expectedDiameters = hints.regions.flatMap(({ outerDiameter }) => outerDiameter === void 0 ? [] : [outerDiameter]);
+  const diameterFit = expectedDiameters.length === 0 ? 1 : 1 / (1 + Math.min(...expectedDiameters.map((expected) => Math.abs(diameter - expected) / Math.max(expected, 1e-9))) * 12);
+  const intervalEnds = hints.regions.flatMap(({ interval }) => interval === void 0 ? [] : [interval.end]);
+  const lengthFit = intervalEnds.length === 0 ? 1 : 1 / (1 + Math.max(0, Math.max(...intervalEnds) - length) / Math.max(length, 1e-9) * 4);
+  const score = Math.log1p(elongation) * Math.sqrt(component.length) * length * diameterFit * lengthFit;
+  return { score, direction, points, nodeIds: component.map(({ id }) => id) };
+}
+function dominantEdgeAngle(component) {
+  const binCount = 1800;
+  const bins = Array.from({ length: binCount }, () => 0);
+  for (const { points } of component) {
+    for (let index = 1; index < points.length; index += 1) {
+      const first = points[index - 1];
+      const second = points[index];
+      const length = Math.hypot(second[0] - first[0], second[1] - first[1]);
+      if (length <= 1e-9) continue;
+      const angle = (Math.atan2(second[1] - first[1], second[0] - first[0]) % Math.PI + Math.PI) % Math.PI;
+      bins[Math.min(binCount - 1, Math.floor(angle / Math.PI * binCount))] += length;
+    }
+  }
+  const smoothed = bins.map((_, index) => [-2, -1, 0, 1, 2].reduce((sum, offset) => sum + bins[(index + offset + binCount) % binCount], 0));
+  const best = smoothed.indexOf(Math.max(...smoothed));
+  if (smoothed[best] === 0) return null;
+  let x = 0;
+  let y = 0;
+  for (const { points } of component) {
+    for (let index = 1; index < points.length; index += 1) {
+      const first = points[index - 1];
+      const second = points[index];
+      const length = Math.hypot(second[0] - first[0], second[1] - first[1]);
+      if (length <= 1e-9) continue;
+      const angle = (Math.atan2(second[1] - first[1], second[0] - first[0]) % Math.PI + Math.PI) % Math.PI;
+      const bin = Math.min(binCount - 1, Math.floor(angle / Math.PI * binCount));
+      const distance = Math.min(Math.abs(bin - best), binCount - Math.abs(bin - best));
+      if (distance > 2) continue;
+      x += Math.cos(angle * 2) * length;
+      y += Math.sin(angle * 2) * length;
+    }
+  }
+  return Math.atan2(y, x) / 2;
+}
+function sampleNode(node) {
+  switch (node.type) {
+    case "point":
+      return [[node.x, node.y]];
+    case "line":
+      return [node.start, node.end];
+    case "polyline":
+      return node.vertices.map(({ point }) => point);
+    case "spline":
+      return sampleSpline(node, { maxError: 0.02, maxDepth: 14 });
+    case "circle":
+      return sampleAngles(64).map((angle) => polar(node.center, node.radius, angle));
+    case "arc": {
+      const span = positiveSpan(node.startAngle, node.endAngle);
+      return sampleCount(Math.max(8, Math.ceil(span / 4))).map((t) => polar(node.center, node.radius, node.startAngle + span * t));
+    }
+    case "ellipse": {
+      const major = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
+      const rotation = Math.atan2(node.majorAxis[1], node.majorAxis[0]);
+      return sampleCount(64).map((t) => {
+        const angle = t * Math.PI * 2;
+        const x = major * Math.cos(angle);
+        const y = major * node.ratio * Math.sin(angle);
+        return [node.center[0] + x * Math.cos(rotation) - y * Math.sin(rotation), node.center[1] + x * Math.sin(rotation) + y * Math.cos(rotation)];
+      });
+    }
+    default:
+      return [];
+  }
+}
+function bounds(points) {
+  return [Math.min(...points.map(([x]) => x)), Math.min(...points.map(([, y]) => y)), Math.max(...points.map(([x]) => x)), Math.max(...points.map(([, y]) => y))];
+}
+function overlaps(a, b, t) {
+  return a[0] <= b[2] + t && a[2] >= b[0] - t && a[1] <= b[3] + t && a[3] >= b[1] - t;
+}
+function dot(point, direction) {
+  return point[0] * direction[0] + point[1] * direction[1];
+}
+function average(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+function sampleAngles(count) {
+  return sampleCount(count).map((t) => t * 360);
+}
+function sampleCount(count) {
+  return Array.from({ length: count + 1 }, (_, index) => index / count);
+}
+function polar(center, radius, degrees) {
+  const angle = degrees * Math.PI / 180;
+  return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius];
+}
+function positiveSpan(start, end) {
+  const span = ((end - start) % 360 + 360) % 360;
+  return span === 0 ? 360 : span;
+}
+function extractShaftProfile(document, axis) {
+  const pieces = [];
+  const selected = axis.geometryNodeIds === void 0 ? void 0 : new Set(axis.geometryNodeIds);
+  for (const node of document.geometry) {
+    if (!node.visible || node.type === "ray" || node.type === "xline" || selected !== void 0 && !selected.has(String(node.id))) continue;
+    const points = sampleNode(node).map((point) => local(point, axis));
+    for (let index = 1; index < points.length; index += 1) {
+      const first = points[index - 1];
+      const second = points[index];
+      pieces.push({ z1: first[0], r1: first[1], z2: second[0], r2: second[1], geometryNodeId: String(node.id) });
+    }
+  }
+  const maxRadius = Math.max(0, ...pieces.flatMap(({ r1, r2 }) => [Math.abs(r1), Math.abs(r2)]));
+  const axialTolerance = Math.max(axis.zMax * 1e-5, 1e-6);
+  const clusters = /* @__PURE__ */ new Map();
+  for (const piece of pieces) {
+    if (Math.abs(piece.z2 - piece.z1) > axialTolerance) continue;
+    const radialSpan = Math.abs(piece.r2 - piece.r1);
+    if (radialSpan <= Math.max(maxRadius * 0.025, 0.05)) continue;
+    if (piece.r1 * piece.r2 <= 0) continue;
+    const z = (piece.z1 + piece.z2) / 2;
+    const positive = (piece.r1 + piece.r2) / 2 > 0;
+    const key = Math.round(z / axialTolerance);
+    const current = clusters.get(key);
+    if (current) {
+      current.z = (current.z + z) / 2;
+      if (positive) current.positiveSpan += radialSpan;
+      else current.negativeSpan += radialSpan;
+      current.geometryNodeIds = [.../* @__PURE__ */ new Set([...current.geometryNodeIds, piece.geometryNodeId])];
+    } else clusters.set(key, {
+      z,
+      positiveSpan: positive ? radialSpan : 0,
+      negativeSpan: positive ? 0 : radialSpan,
+      geometryNodeIds: [piece.geometryNodeId]
+    });
+  }
+  const minimumSideSpan = Math.max(maxRadius * 0.01, 0.05);
+  const shoulders = [...clusters.values()].filter(({ positiveSpan: positiveSpan2, negativeSpan }) => positiveSpan2 > minimumSideSpan && negativeSpan > minimumSideSpan).map(({ positiveSpan: positiveSpan2, negativeSpan, ...shoulder }) => ({ ...shoulder, radialSpan: positiveSpan2 + negativeSpan })).sort((first, second) => first.z - second.z);
+  return { axis, pieces, shoulders, maxRadius, sampleCount: pieces.length + 1 };
+}
+function radiusSummary(profile, zStart, zEnd) {
+  const radii = profile.pieces.flatMap((piece) => {
+    const low = Math.min(piece.z1, piece.z2);
+    const high = Math.max(piece.z1, piece.z2);
+    if (high < zStart || low > zEnd) return [];
+    return [Math.abs(piece.r1), Math.abs(piece.r2)];
+  });
+  return {
+    minRadius: radii.length ? Math.min(...radii) : 0,
+    maxRadius: radii.length ? Math.max(...radii) : 0,
+    sampleCount: radii.length
+  };
+}
+function local(point, axis) {
+  const delta = [point[0] - axis.origin[0], point[1] - axis.origin[1]];
+  return [delta[0] * axis.direction[0] + delta[1] * axis.direction[1], delta[0] * axis.normal[0] + delta[1] * axis.normal[1]];
+}
+function detectShaftSteps(profile) {
+  const tolerance = Math.max(profile.axis.zMax * 1e-5, 1e-6);
+  const candidates = [
+    { z: profile.axis.zMin, score: 1, geometryNodeIds: [] },
+    ...profile.shoulders.map(({ z, radialSpan, geometryNodeIds }) => ({
+      z,
+      score: Math.min(0.99, 0.35 + radialSpan / Math.max(profile.maxRadius, 1) * 0.65),
+      geometryNodeIds
+    })),
+    { z: profile.axis.zMax, score: 1, geometryNodeIds: [] }
+  ].sort((a, b) => a.z - b.z);
+  const clustered = [];
+  for (const candidate of candidates) {
+    const previous = clustered.at(-1);
+    if (previous && Math.abs(previous.z - candidate.z) <= tolerance) {
+      if (candidate.score > previous.score) previous.score = candidate.score;
+      previous.geometryNodeIds = [.../* @__PURE__ */ new Set([...previous.geometryNodeIds, ...candidate.geometryNodeIds])];
+    } else clustered.push({ ...candidate });
+  }
+  return clustered.map(({ z, score, geometryNodeIds }, index) => {
+    const coordinate = index === 0 ? profile.axis.zMin : index === clustered.length - 1 ? profile.axis.zMax : z;
+    return {
+      id: `step:${canonical$1(coordinate)}`,
+      z: Number(canonical$1(coordinate)),
+      score,
+      evidenceIds: geometryNodeIds.map((id) => `geometry:${id}`),
+      accepted: index === 0 || index === clustered.length - 1 || score >= 0.45
+    };
+  });
+}
+function canonical$1(value) {
+  return Number(value.toFixed(6)).toString();
+}
+function fuseDocumentRegions(draft, regions) {
+  const output = structuredClone(draft);
+  for (const region of regions) {
+    if (!region.interval) continue;
+    const evidenceId = `document:region:${region.id}`;
+    const evidence = {
+      id: evidenceId,
+      origin: "document",
+      label: region.name ?? region.id,
+      sourceLines: [...region.sourceLines]
+    };
+    output.evidence.push(evidence);
+    const matches = contiguousMatches(output.segments, region);
+    const best = matches[0];
+    if (!best || best.cost > 0.4) {
+      output.diagnostics.push({
+        id: `diagnostic:document-unmatched:${region.id}`,
+        severity: "warning",
+        code: "DOCUMENT_REGION_UNMATCHED",
+        message: `Document region ${region.id} could not be reconciled with geometric steps`,
+        evidenceIds: [evidenceId]
+      });
+      continue;
+    }
+    if (matches[1] && Math.abs(matches[1].cost - best.cost) < 0.025) {
+      output.diagnostics.push({
+        id: `diagnostic:document-ambiguous:${region.id}`,
+        severity: "warning",
+        code: "DOCUMENT_REGION_AMBIGUOUS",
+        message: `Document region ${region.id} has multiple similarly plausible geometric ranges`,
+        evidenceIds: [evidenceId]
+      });
+    }
+    const confidence = Math.max(0.5, Math.min(0.99, 1 - best.cost));
+    const group = {
+      id: `group:${region.id}`,
+      segmentIds: best.segments.map(({ id }) => id),
+      semanticType: region.type,
+      ...region.name === void 0 ? {} : { name: region.name },
+      evidenceIds: [evidenceId]
+    };
+    output.semanticGroups.push(group);
+    for (const segment of best.segments) {
+      if (segment.semanticType !== void 0 && segment.semanticType !== region.type) {
+        output.diagnostics.push({
+          id: `diagnostic:document-semantic-conflict:${region.id}:${segment.id}`,
+          severity: "warning",
+          code: "DOCUMENT_SEMANTIC_CONFLICT",
+          message: `Document region ${region.id} conflicts with an existing segment classification`,
+          segmentIds: [segment.id],
+          evidenceIds: [evidenceId]
+        });
+        continue;
+      }
+      segment.semanticType = region.type;
+      if (region.name !== void 0) segment.name = region.name;
+      segment.semanticConfidence = confidence;
+      segment.semanticEvidenceIds = [.../* @__PURE__ */ new Set([...segment.semanticEvidenceIds, evidenceId])];
+      if (region.outerDiameter !== void 0 && segment.profile.sampleCount > 0) {
+        const actual = segment.profile.maxRadius * 2;
+        if (Math.abs(actual - region.outerDiameter) > Math.max(1, region.outerDiameter * 0.05)) {
+          const diagnosticId = `diagnostic:diameter:${region.id}:${segment.id}`;
+          output.diagnostics.push({
+            id: diagnosticId,
+            severity: "warning",
+            code: "DOCUMENT_DIAMETER_CONFLICT",
+            message: `Document diameter ${region.outerDiameter} differs from geometric envelope ${actual}`,
+            segmentIds: [segment.id],
+            evidenceIds: [evidenceId]
+          });
+          segment.diagnosticIds.push(diagnosticId);
+        }
+      }
+    }
+  }
+  return output;
+}
+function contiguousMatches(segments, region) {
+  const interval = region.interval;
+  const axisSpan = Math.max(segments.at(-1).zEnd - segments[0].zStart, 1e-9);
+  const targetWidth = Math.max(interval.end - interval.start, axisSpan * 1e-6);
+  const targetCenter = (interval.start + interval.end) / 2;
+  const output = [];
+  for (let start = 0; start < segments.length; start += 1) {
+    for (let end = start; end < segments.length; end += 1) {
+      const selected = segments.slice(start, end + 1);
+      const actualStart = selected[0].zStart;
+      const actualEnd = selected.at(-1).zEnd;
+      const actualWidth = actualEnd - actualStart;
+      const endpointCost = (Math.abs(actualStart - interval.start) + Math.abs(actualEnd - interval.end)) / axisSpan;
+      const centerCost = Math.abs((actualStart + actualEnd) / 2 - targetCenter) / axisSpan;
+      const widthCost = Math.abs(actualWidth - targetWidth) / Math.max(targetWidth, axisSpan * 0.05);
+      let diameterCost = 0;
+      if (region.outerDiameter !== void 0) {
+        const radii = selected.filter(({ profile }) => profile.sampleCount > 0).map(({ profile }) => profile.maxRadius * 2);
+        if (radii.length > 0) diameterCost = Math.min(1, Math.abs(Math.max(...radii) - region.outerDiameter) / Math.max(region.outerDiameter, 1));
+      }
+      output.push({ segments: selected, cost: endpointCost * 0.5 + centerCost * 0.15 + Math.min(widthCost, 2) * 0.2 + diameterCost * 0.15 });
+    }
+  }
+  return output.sort((a, b) => a.cost - b.cost || a.segments.length - b.segments.length);
+}
+function analyzeShaftPartition(request) {
+  const parsed = request.engineeringText === void 0 ? void 0 : parseEngineeringDocument(request.engineeringText);
+  const documentScale = (parsed == null ? void 0 : parsed.drawing.unit) === void 0 ? 1 : unitScale(parsed.drawing.unit) / unitScale(request.document.unitSystem.length);
+  const documentRegions = ((parsed == null ? void 0 : parsed.regions) ?? []).map((region) => ({
+    ...region,
+    ...region.interval === void 0 ? {} : { interval: { start: region.interval.start * documentScale, end: region.interval.end * documentScale } },
+    ...region.outerDiameter === void 0 ? {} : { outerDiameter: region.outerDiameter * documentScale }
+  }));
+  const axis = resolveShaftAxis(request.document, {
+    axisOrigin: parsed == null ? void 0 : parsed.drawing.axisOrigin,
+    orientation: parsed == null ? void 0 : parsed.drawing.orientation,
+    regions: documentRegions
+  });
+  if (!axis) return { status: "rejected", diagnostics: [{ id: "diagnostic:axis", severity: "error", code: "SHAFT_AXIS_UNRESOLVED", message: "No viable shaft axis was found" }] };
+  const profile = extractShaftProfile(request.document, axis);
+  const stepCandidates = detectShaftSteps(profile);
+  const geometryEvidence = /* @__PURE__ */ new Map();
+  for (const step of stepCandidates) {
+    for (const evidenceId of step.evidenceIds) {
+      geometryEvidence.set(evidenceId, { id: evidenceId, origin: "geometry", label: `Geometric step at ${step.z}` });
+    }
+  }
+  const boundaries = stepCandidates.filter(({ accepted }) => accepted).map(({ z }) => z);
+  const tolerance = Math.max(axis.zMax * 1e-8, 1e-8);
+  const sorted = [...boundaries].sort((a, b) => a - b).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > tolerance);
+  let draft = {
+    version: 1,
+    drawingRef: structuredClone(request.drawingRef),
+    axis,
+    segments: sorted.slice(0, -1).map((zStart, index) => {
+      const zEnd = sorted[index + 1];
+      const overlappingPieces = profile.pieces.filter(({ z1, z2 }) => Math.max(z1, z2) >= zStart && Math.min(z1, z2) <= zEnd);
+      const left = stepCandidates.find(({ z }) => Math.abs(z - zStart) <= tolerance);
+      const right = stepCandidates.find(({ z }) => Math.abs(z - zEnd) <= tolerance);
+      return {
+        id: `segment:${canonical(zStart)}-${canonical(zEnd)}`,
+        zStart,
+        zEnd,
+        profile: radiusSummary(profile, zStart, zEnd),
+        boundaryConfidence: Math.min((left == null ? void 0 : left.score) ?? 0.75, (right == null ? void 0 : right.score) ?? 0.75),
+        geometryNodeIds: [...new Set(overlappingPieces.map(({ geometryNodeId }) => geometryNodeId))],
+        profileSamples: overlappingPieces.flatMap(({ z1, r1, z2, r2, geometryNodeId }) => [
+          { z: z1, radius: Math.abs(r1), geometryNodeId },
+          { z: z2, radius: Math.abs(r2), geometryNodeId }
+        ]),
+        boundaryEvidenceIds: [.../* @__PURE__ */ new Set([...(left == null ? void 0 : left.evidenceIds) ?? [], ...(right == null ? void 0 : right.evidenceIds) ?? []])],
+        semanticEvidenceIds: [],
+        diagnosticIds: []
+      };
+    }),
+    semanticGroups: [],
+    stepCandidates,
+    evidence: [...geometryEvidence.values()],
+    diagnostics: [...(parsed == null ? void 0 : parsed.diagnostics) ?? []]
+  };
+  if ((parsed == null ? void 0 : parsed.drawing.drawingName) && request.drawingSourceName && parsed.drawing.drawingName !== request.drawingSourceName) {
+    draft.diagnostics.push({
+      id: "diagnostic:drawing-name-mismatch",
+      severity: "warning",
+      code: "DOCUMENT_DRAWING_NAME_MISMATCH",
+      message: `Selected ${request.drawingSourceName}; document describes ${parsed.drawing.drawingName}`
+    });
+  }
+  if (parsed) draft = fuseDocumentRegions(draft, documentRegions);
+  const invalid = validatePartition(draft);
+  if (invalid.length > 0) return { status: "rejected", diagnostics: [...draft.diagnostics, ...invalid] };
+  return {
+    status: "drafted",
+    draft,
+    unclassifiedSegmentIds: draft.segments.filter(({ semanticType }) => semanticType === void 0).map(({ id }) => id)
+  };
+}
+function canonical(value) {
+  return Number(value.toFixed(6)).toString();
+}
+function unitScale(unit) {
+  return unit === "mm" ? 1e-3 : unit === "cm" ? 0.01 : 1;
+}
+function applySemanticProposals(draft, proposals, options = {}) {
+  if (proposals.length > 64) throw new Error("AI_SEMANTIC_PROPOSAL_LIMIT");
+  const output = structuredClone(draft);
+  const known = new Map(output.segments.map((segment) => [segment.id, segment]));
+  const allowed = options.allowedSegmentIds === void 0 ? void 0 : new Set(options.allowedSegmentIds);
+  const allowedVisual = options.allowedVisualEvidenceIds === void 0 ? void 0 : new Set(options.allowedVisualEvidenceIds);
+  const assigned = /* @__PURE__ */ new Set();
+  for (const [index, proposal] of proposals.entries()) {
+    if (proposal.segmentIds.length === 0 || !proposal.semanticType.trim() || proposal.semanticType.length > 80 || proposal.name !== void 0 && proposal.name.length > 120 || !Number.isFinite(proposal.confidence) || proposal.confidence < 0 || proposal.confidence > 1 || !proposal.reason.trim() || proposal.reason.length > 500) throw new Error("AI_SEMANTIC_PROPOSAL_INVALID");
+    if (/\b(?:x|y|z|radius|diameter|boundary)\s*[=:]\s*-?\d/i.test(proposal.reason)) throw new Error("AI_SEMANTIC_REASON_COORDINATES");
+    const indices = proposal.segmentIds.map((id) => output.segments.findIndex((segment) => segment.id === id)).sort((a, b) => a - b);
+    if (indices.some((value, index2) => index2 > 0 && value !== indices[index2 - 1] + 1)) throw new Error("AI_SEGMENT_RANGE_NONCONTIGUOUS");
+    if (proposal.visualEvidenceIds.some((id) => allowedVisual !== void 0 && !allowedVisual.has(id))) throw new Error("AI_VISUAL_EVIDENCE_UNKNOWN");
+    for (const id of proposal.segmentIds) {
+      const segment = known.get(id);
+      if (!segment) throw new Error("AI_SEGMENT_ID_UNKNOWN");
+      if (allowed !== void 0 && !allowed.has(id)) throw new Error("AI_SEGMENT_NOT_ALLOWED");
+      if (segment.semanticType !== void 0) throw new Error("AI_SEGMENT_ALREADY_CLASSIFIED");
+      if (assigned.has(id)) throw new Error("AI_SEGMENT_DUPLICATE_ASSIGNMENT");
+      assigned.add(id);
+    }
+    const evidenceId = `ai:semantic:${index}:${proposal.segmentIds.join("+")}`;
+    const evidence = { id: evidenceId, origin: "ai", label: proposal.reason };
+    output.evidence.push(evidence);
+    const group = {
+      id: `group:${evidenceId}`,
+      segmentIds: [...proposal.segmentIds],
+      semanticType: proposal.semanticType,
+      ...proposal.name === void 0 ? {} : { name: proposal.name },
+      evidenceIds: [evidenceId, ...proposal.visualEvidenceIds]
+    };
+    group.evidenceIds = [evidenceId];
+    output.semanticGroups.push(group);
+    for (const id of proposal.segmentIds) {
+      const segment = known.get(id);
+      segment.semanticType = proposal.semanticType;
+      if (proposal.name !== void 0) segment.name = proposal.name;
+      segment.semanticConfidence = proposal.confidence;
+      segment.semanticEvidenceIds.push(evidenceId);
+    }
+  }
+  return { draft: output, applied: proposals.length };
 }
 function createEngineeringAnnotationTool(host, sessions) {
   return defineTool({
@@ -3507,7 +4402,7 @@ function initializeContext(params) {
     external: (params == null ? void 0 : params.external) ?? void 0
   };
 }
-function process(schema, ctx, _params = { path: [], schemaPath: [] }) {
+function process$1(schema, ctx, _params = { path: [], schemaPath: [] }) {
   var _a4, _b;
   var _a3;
   const def = schema._zod.def;
@@ -3545,7 +4440,7 @@ function process(schema, ctx, _params = { path: [], schemaPath: [] }) {
     if (parent) {
       if (!result.ref)
         result.ref = parent;
-      process(parent, ctx, params);
+      process$1(parent, ctx, params);
       ctx.seen.get(parent).isParent = true;
     }
   }
@@ -3835,14 +4730,14 @@ function isTransforming(_schema, _ctx) {
 }
 const createToJSONSchemaMethod = (schema, processors = {}) => (params) => {
   const ctx = initializeContext({ ...params, processors });
-  process(schema, ctx);
+  process$1(schema, ctx);
   extractDefs(ctx, schema);
   return finalize(ctx, schema);
 };
 const createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) => {
   const { libraryOptions, target } = params ?? {};
   const ctx = initializeContext({ ...libraryOptions ?? {}, target, io, processors });
-  process(schema, ctx);
+  process$1(schema, ctx);
   extractDefs(ctx, schema);
   return finalize(ctx, schema);
 };
@@ -3994,7 +4889,7 @@ const arrayProcessor = (schema, ctx, _json, params) => {
   if (typeof maximum === "number")
     json.maxItems = maximum;
   json.type = "array";
-  json.items = process(def.element, ctx, {
+  json.items = process$1(def.element, ctx, {
     ...params,
     path: [...params.path, "items"]
   });
@@ -4007,7 +4902,7 @@ const objectProcessor = (schema, ctx, _json, params) => {
   json.properties = {};
   const shape = def.shape;
   for (const key in shape) {
-    json.properties[key] = process(shape[key], ctx, {
+    json.properties[key] = process$1(shape[key], ctx, {
       ...params,
       path: [...params.path, "properties", key]
     });
@@ -4030,7 +4925,7 @@ const objectProcessor = (schema, ctx, _json, params) => {
     if (ctx.io === "output")
       json.additionalProperties = false;
   } else if (def.catchall) {
-    json.additionalProperties = process(def.catchall, ctx, {
+    json.additionalProperties = process$1(def.catchall, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
@@ -4039,7 +4934,7 @@ const objectProcessor = (schema, ctx, _json, params) => {
 const unionProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   const isExclusive = def.inclusive === false;
-  const options = def.options.map((x, i) => process(x, ctx, {
+  const options = def.options.map((x, i) => process$1(x, ctx, {
     ...params,
     path: [...params.path, isExclusive ? "oneOf" : "anyOf", i]
   }));
@@ -4051,11 +4946,11 @@ const unionProcessor = (schema, ctx, json, params) => {
 };
 const intersectionProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  const a = process(def.left, ctx, {
+  const a = process$1(def.left, ctx, {
     ...params,
     path: [...params.path, "allOf", 0]
   });
-  const b = process(def.right, ctx, {
+  const b = process$1(def.right, ctx, {
     ...params,
     path: [...params.path, "allOf", 1]
   });
@@ -4072,11 +4967,11 @@ const tupleProcessor = (schema, ctx, _json, params) => {
   json.type = "array";
   const prefixPath = ctx.target === "draft-2020-12" ? "prefixItems" : "items";
   const restPath = ctx.target === "draft-2020-12" ? "items" : ctx.target === "openapi-3.0" ? "items" : "additionalItems";
-  const prefixItems = def.items.map((x, i) => process(x, ctx, {
+  const prefixItems = def.items.map((x, i) => process$1(x, ctx, {
     ...params,
     path: [...params.path, prefixPath, i]
   }));
-  const rest = def.rest ? process(def.rest, ctx, {
+  const rest = def.rest ? process$1(def.rest, ctx, {
     ...params,
     path: [...params.path, restPath, ...ctx.target === "openapi-3.0" ? [def.items.length] : []]
   }) : null;
@@ -4116,7 +5011,7 @@ const recordProcessor = (schema, ctx, _json, params) => {
   const keyBag = keyType._zod.bag;
   const patterns = keyBag == null ? void 0 : keyBag.patterns;
   if (def.mode === "loose" && patterns && patterns.size > 0) {
-    const valueSchema = process(def.valueType, ctx, {
+    const valueSchema = process$1(def.valueType, ctx, {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
@@ -4126,12 +5021,12 @@ const recordProcessor = (schema, ctx, _json, params) => {
     }
   } else {
     if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
-      json.propertyNames = process(def.keyType, ctx, {
+      json.propertyNames = process$1(def.keyType, ctx, {
         ...params,
         path: [...params.path, "propertyNames"]
       });
     }
-    json.additionalProperties = process(def.valueType, ctx, {
+    json.additionalProperties = process$1(def.valueType, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
@@ -4146,7 +5041,7 @@ const recordProcessor = (schema, ctx, _json, params) => {
 };
 const nullableProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  const inner = process(def.innerType, ctx, params);
+  const inner = process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   if (ctx.target === "openapi-3.0") {
     seen.ref = def.innerType;
@@ -4157,20 +5052,20 @@ const nullableProcessor = (schema, ctx, json, params) => {
 };
 const nonoptionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
 };
 const defaultProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   json.default = JSON.parse(JSON.stringify(def.defaultValue));
 };
 const prefaultProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   if (ctx.io === "input")
@@ -4178,7 +5073,7 @@ const prefaultProcessor = (schema, ctx, json, params) => {
 };
 const catchProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   let catchValue;
@@ -4193,20 +5088,20 @@ const pipeProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   const inIsTransform = def.in._zod.traits.has("$ZodTransform");
   const innerType = ctx.io === "input" ? inIsTransform ? def.out : def.in : def.out;
-  process(innerType, ctx, params);
+  process$1(innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = innerType;
 };
 const readonlyProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   json.readOnly = true;
 };
 const optionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
-  process(def.innerType, ctx, params);
+  process$1(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
 };
@@ -5118,6 +6013,28 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
+function _instanceof(cls, params = {}) {
+  const inst = new ZodCustom({
+    type: "custom",
+    check: "custom",
+    fn: (data) => data instanceof cls,
+    abort: true,
+    ...normalizeParams(params)
+  });
+  inst._zod.bag.Class = cls;
+  inst._zod.check = (payload) => {
+    if (!(payload.value instanceof cls)) {
+      payload.issues.push({
+        code: "invalid_type",
+        expected: cls.name,
+        input: payload.value,
+        inst,
+        path: [...inst._zod.def.path ?? []]
+      });
+    }
+  };
+  return inst;
+}
 const protocolIdSchema = string().trim().min(1).max(256);
 const contentDigestSchema = string().trim().min(1).max(512);
 const idSchema$3 = protocolIdSchema;
@@ -5494,10 +6411,17 @@ const qualitySchema = object({
   confidence: number().optional(),
   evidenceRefs: array(idSchema)
 }).strict();
+const drawingNodeSourceRefSchema = object({
+  sourceId: idSchema,
+  objectId: idSchema.optional(),
+  objectType: idSchema.optional(),
+  layer: string().min(1).optional()
+}).strict();
 const baseNodeShape = {
   id: idSchema,
   visible: boolean(),
-  quality: qualitySchema
+  quality: qualitySchema,
+  sourceRef: drawingNodeSourceRefSchema.optional()
 };
 const geometrySchema = discriminatedUnion("type", [
   object({ ...baseNodeShape, type: literal("point"), x: number(), y: number() }).strict(),
@@ -5659,6 +6583,14 @@ const drawingDocumentSchema = object({
   id: idSchema,
   metadata: object({ createdAt: number(), updatedAt: number() }).strict(),
   unitSystem: object({ length: _enum(["mm", "cm", "m"]), angle: literal("deg") }).strict(),
+  sources: array(object({
+    id: idSchema,
+    kind: _enum(["image", "dxf"]),
+    mediaType: string().min(1),
+    digest: idSchema,
+    name: string().min(1).optional(),
+    bytes: number().int().nonnegative().optional()
+  }).strict()).optional(),
   coordinateFrames: array(object({
     id: idSchema,
     kind: _enum(["document", "source", "page", "view", "provisional"]),
@@ -5730,14 +6662,22 @@ discriminatedUnion("kind", [
     truncated: boolean()
   }).strict()
 ]);
-const drawingSourceRefSchema = object({
-  id: idSchema,
-  mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
-  bytes: number().int().nonnegative().optional(),
-  width: number().positive(),
-  height: number().positive(),
-  name: string().optional()
-}).strict();
+const drawingSourceRefSchema = union([
+  object({
+    id: idSchema,
+    mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+    bytes: number().int().nonnegative().optional(),
+    width: number().positive(),
+    height: number().positive(),
+    name: string().optional()
+  }).strict(),
+  object({
+    id: idSchema,
+    mediaType: literal("application/dxf"),
+    bytes: number().int().nonnegative().optional(),
+    name: string().optional()
+  }).strict()
+]);
 const drawingWorkspaceSnapshotSchema = object({
   version: literal(1),
   ref: object({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
@@ -6034,7 +6974,129 @@ const annotationSessionStateSchema = object({
     message: string().min(1).optional()
   }).strict()
 }).strict();
+object({
+  bytes: _instanceof(Uint8Array),
+  digest: idSchema,
+  name: string().trim().min(1).max(255).optional()
+}).strict();
+const drawingObservationOverlaySchema = object({
+  id: idSchema,
+  label: string().trim().min(1).max(80),
+  polygon: array(vec2Schema).min(3).max(16)
+}).strict();
+object({
+  ref: drawingRefSchema,
+  overlays: array(drawingObservationOverlaySchema).max(128).optional()
+}).strict();
+discriminatedUnion("status", [
+  object({
+    status: literal("rendered"),
+    png: _instanceof(Uint8Array),
+    contentDigest: idSchema,
+    width: number().int().positive(),
+    height: number().int().positive()
+  }).strict(),
+  object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+  object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+]);
 string().min(1);
+const partitionEvidenceSchema = object({
+  id: idSchema,
+  origin: _enum(["document", "geometry", "fused", "ai", "manual"]),
+  label: string(),
+  sourceLines: array(number().int().positive()).optional(),
+  geometryNodeIds: array(idSchema).optional()
+}).strict();
+const partitionDiagnosticSchema = object({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string(),
+  segmentIds: array(idSchema).optional(),
+  evidenceIds: array(idSchema).optional()
+}).strict();
+const shaftAxisSchema = object({
+  origin: vec2Schema,
+  direction: vec2Schema,
+  normal: vec2Schema,
+  zMin: number(),
+  zMax: number(),
+  orientation: _enum(["forward", "reversed"]),
+  geometryNodeIds: array(idSchema).optional()
+}).strict();
+const stepCandidateSchema = object({
+  id: idSchema,
+  z: number(),
+  score: number(),
+  evidenceIds: array(idSchema),
+  accepted: boolean()
+}).strict();
+const partitionSegmentSchema = object({
+  id: idSchema,
+  zStart: number(),
+  zEnd: number(),
+  profile: object({ minRadius: number(), maxRadius: number(), sampleCount: number().int().nonnegative() }).strict(),
+  semanticType: string().optional(),
+  name: string().optional(),
+  boundaryConfidence: number(),
+  semanticConfidence: number().optional(),
+  geometryNodeIds: array(idSchema),
+  boundaryEvidenceIds: array(idSchema),
+  semanticEvidenceIds: array(idSchema),
+  diagnosticIds: array(idSchema),
+  profileSamples: array(object({ z: number(), radius: number().nonnegative(), geometryNodeId: idSchema }).strict()).optional()
+}).strict();
+const partitionGroupSchema = object({
+  id: idSchema,
+  segmentIds: array(idSchema),
+  semanticType: string(),
+  name: string().optional(),
+  evidenceIds: array(idSchema)
+}).strict();
+const partitionDraftSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  axis: shaftAxisSchema,
+  segments: array(partitionSegmentSchema),
+  semanticGroups: array(partitionGroupSchema),
+  stepCandidates: array(stepCandidateSchema),
+  evidence: array(partitionEvidenceSchema),
+  diagnostics: array(partitionDiagnosticSchema),
+  basePartitionRevisionId: idSchema.optional()
+}).strict();
+const partitionRevisionSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  axis: shaftAxisSchema,
+  segments: array(partitionSegmentSchema),
+  semanticGroups: array(partitionGroupSchema),
+  evidence: array(partitionEvidenceSchema),
+  diagnostics: array(partitionDiagnosticSchema),
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  confirmedAt: number()
+}).strict();
+discriminatedUnion("type", [
+  object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
+  object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
+]);
+const partitionSessionSnapshotSchema = object({
+  version: literal(1),
+  phase: _enum(["idle", "analyzing", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema.optional(),
+  draft: partitionDraftSchema.optional(),
+  confirmed: partitionRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string().optional(),
+  updatedAt: number()
+}).strict();
+object({
+  dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+  engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+}).strict();
 class AnnotationSessionStateStore {
   constructor(storage, ports = { now: Date.now }) {
     __privateAdd(this, _AnnotationSessionStateStore_instances);
@@ -6128,25 +7190,447 @@ function parseState(value) {
   const parsed = annotationSessionStateSchema.safeParse(value);
   return parsed.success ? structuredClone(parsed.data) : null;
 }
-class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _a2) {
+class PartitionSessionStore {
+  constructor(storage, ports = { now: Date.now, id: () => `partition_${globalThis.crypto.randomUUID()}` }) {
+    __privateAdd(this, _PartitionSessionStore_instances);
+    __privateAdd(this, _states, /* @__PURE__ */ new Map());
+    this.storage = storage;
+    this.ports = ports;
+  }
+  get(sessionId) {
+    return structuredClone(__privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId).snapshot);
+  }
+  beginAnalysis(sessionId, drawingRef) {
+    const confirmed = latestConfirmed(__privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId));
+    return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, {
+      version: 1,
+      phase: "analyzing",
+      drawingRef,
+      ...confirmed === void 0 ? {} : { confirmed },
+      canUndo: false,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    }, [], []);
+  }
+  setDraft(sessionId, draft) {
+    const current = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef(current.snapshot, draft.drawingRef);
+    return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, {
+      version: 1,
+      phase: "editing",
+      drawingRef: draft.drawingRef,
+      draft,
+      ...current.snapshot.confirmed === void 0 ? {} : { confirmed: current.snapshot.confirmed },
+      canUndo: false,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    }, [], []);
+  }
+  edit(sessionId, command) {
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef(state.snapshot, command.expectedDrawingRef);
+    if (state.snapshot.phase !== "editing" || !state.snapshot.draft) throw new Error("PARTITION_DRAFT_REQUIRED");
+    const draft = structuredClone(state.snapshot.draft);
+    const next = command.type === "boundary.move" ? moveBoundary(draft, { boundaryIndex: command.boundaryIndex, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "segment.split" ? splitSegment(draft, { segmentId: command.segmentId, z: command.z, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "boundary.merge" ? mergeBoundary(draft, { boundaryIndex: command.boundaryIndex }) : updateSegmentMetadata(draft, { segmentId: command.segmentId, ...command.name === void 0 ? {} : { name: command.name }, ...command.semanticType === void 0 ? {} : { semanticType: command.semanticType } });
+    return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, { ...state.snapshot, draft: next, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
+  }
+  confirm(sessionId, expected) {
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    if (!state.snapshot.draft) throw new Error("PARTITION_DRAFT_REQUIRED");
+    const draft = state.snapshot.draft;
+    if (validatePartition(draft).length) throw new Error("PARTITION_INVALID");
+    const previous = latestConfirmed(state);
+    const revision = {
+      version: 1,
+      drawingRef: draft.drawingRef,
+      axis: draft.axis,
+      segments: draft.segments,
+      semanticGroups: draft.semanticGroups,
+      evidence: draft.evidence,
+      diagnostics: draft.diagnostics,
+      id: this.ports.id(),
+      ...previous === void 0 ? {} : { parentRevisionId: previous.id },
+      confirmedAt: this.ports.now()
+    };
+    return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, { ...state.snapshot, phase: "confirmed", draft: void 0, confirmed: revision, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
+  }
+  cancel(sessionId, expected) {
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    const confirmed = latestConfirmed(state);
+    return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, confirmed === void 0 ? { version: 1, phase: "idle", drawingRef: expected, canUndo: true, canRedo: false, updatedAt: this.ports.now() } : { version: 1, phase: "confirmed", drawingRef: expected, confirmed, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
+  }
+  undo(sessionId, expected) {
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    const previous = state.undo.at(-1);
+    if (!previous) throw new Error("PARTITION_UNDO_EMPTY");
+    const restored = structuredClone(previous);
+    return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, { ...restored, canUndo: state.undo.length > 1, canRedo: true, updatedAt: this.ports.now() }, state.undo.slice(0, -1), [...state.redo, state.snapshot]);
+  }
+  redo(sessionId, expected) {
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef(state.snapshot, expected);
+    const next = state.redo.at(-1);
+    if (!next) throw new Error("PARTITION_REDO_EMPTY");
+    return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, { ...next, canUndo: true, canRedo: state.redo.length > 1, updatedAt: this.ports.now() }, [...state.undo, state.snapshot], state.redo.slice(0, -1));
+  }
+  markNeedsRebase(sessionId, currentRef) {
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, { ...state.snapshot, phase: "needs-rebase", drawingRef: currentRef, message: "Drawing revision changed", updatedAt: this.ports.now() }, state.undo, state.redo);
+  }
+}
+_states = new WeakMap();
+_PartitionSessionStore_instances = new WeakSet();
+push_fn = function(sessionId, snapshot) {
+  const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+  return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, snapshot, [...state.undo, state.snapshot], []);
+};
+replace_fn = function(sessionId, snapshot, undo, redo) {
+  var _a3, _b;
+  const previousConfirmed = (_a3 = __privateGet(this, _states).get(sessionId)) == null ? void 0 : _a3.lastConfirmed;
+  const envelope = {
+    snapshot: partitionSessionSnapshotSchema.parse(compact(snapshot)),
+    undo: undo.map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
+    redo: redo.map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
+    ...snapshot.confirmed === void 0 && previousConfirmed === void 0 ? {} : { lastConfirmed: snapshot.confirmed ?? previousConfirmed }
+  };
+  (_b = this.storage) == null ? void 0 : _b.save(sessionId, envelope);
+  __privateGet(this, _states).set(sessionId, envelope);
+  return structuredClone(envelope.snapshot);
+};
+envelope_fn = function(sessionId) {
+  var _a3;
+  const existing = __privateGet(this, _states).get(sessionId);
+  if (existing) return existing;
+  const loaded = parseEnvelope((_a3 = this.storage) == null ? void 0 : _a3.load(sessionId));
+  const initial = loaded ?? { snapshot: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 }, undo: [], redo: [] };
+  __privateGet(this, _states).set(sessionId, initial);
+  return initial;
+};
+class FilePartitionStorage {
+  constructor(directory) {
+    __privateAdd(this, _FilePartitionStorage_instances);
+    this.directory = directory;
+  }
+  load(sessionId) {
+    const path = __privateMethod(this, _FilePartitionStorage_instances, path_fn2).call(this, sessionId);
+    if (!existsSync(path)) return null;
+    try {
+      return JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+  save(sessionId, value) {
+    mkdirSync(this.directory, { recursive: true });
+    const path = __privateMethod(this, _FilePartitionStorage_instances, path_fn2).call(this, sessionId);
+    const temporary = `${path}.${process.pid}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(value)}
+`, "utf8");
+    renameSync(temporary, path);
+  }
+}
+_FilePartitionStorage_instances = new WeakSet();
+path_fn2 = function(sessionId) {
+  return join(this.directory, `${createHash("sha256").update(sessionId).digest("hex")}.json`);
+};
+function requireRef(snapshot, expected) {
+  if (!snapshot.drawingRef || snapshot.drawingRef.drawingId !== expected.drawingId || snapshot.drawingRef.revision !== expected.revision) throw new Error("PARTITION_DRAWING_STALE");
+}
+function compact(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+function latestConfirmed(envelope) {
+  return envelope.lastConfirmed ?? [envelope.snapshot, ...envelope.undo, ...envelope.redo].flatMap((snapshot) => snapshot.confirmed === void 0 ? [] : [snapshot.confirmed]).sort((a, b) => b.confirmedAt - a.confirmedAt)[0];
+}
+function parseEnvelope(value) {
+  if (!value || typeof value !== "object") return null;
+  const item = value;
+  const snapshot = partitionSessionSnapshotSchema.safeParse(item.snapshot);
+  if (!snapshot.success || !Array.isArray(item.undo) || !Array.isArray(item.redo)) return null;
+  const undo = item.undo.map((entry) => partitionSessionSnapshotSchema.safeParse(entry));
+  const redo = item.redo.map((entry) => partitionSessionSnapshotSchema.safeParse(entry));
+  if (undo.some(({ success }) => !success) || redo.some(({ success }) => !success)) return null;
+  const confirmed = item.lastConfirmed === void 0 ? void 0 : partitionSessionSnapshotSchema.shape.confirmed.safeParse(item.lastConfirmed);
+  if (confirmed !== void 0 && !confirmed.success) return null;
+  return {
+    snapshot: snapshot.data,
+    undo: undo.map((entry) => entry.data),
+    redo: redo.map((entry) => entry.data),
+    ...(confirmed == null ? void 0 : confirmed.data) === void 0 ? {} : { lastConfirmed: confirmed.data }
+  };
+}
+class PartitionWorkflowService {
+  constructor(space, partitions, annotations, reviewer) {
+    __privateAdd(this, _PartitionWorkflowService_instances);
+    this.space = space;
+    this.partitions = partitions;
+    this.annotations = annotations;
+    this.reviewer = reviewer;
+  }
+  async importAndAnalyze(agent, request, signal) {
+    var _a3;
+    if (request.dxf.base64.length > 27962028) throw new Error("DXF_SIZE_LIMIT");
+    const bytes = decodeBase64(request.dxf.base64);
+    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
+    if ((((_a3 = request.engineeringDocument) == null ? void 0 : _a3.text.length) ?? 0) > 2 * 1024 * 1024) throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    if (digest !== request.dxf.digest) throw new Error("DXF_DIGEST_MISMATCH");
+    signal == null ? void 0 : signal.throwIfAborted();
+    await this.space.importDxf(agent, { bytes, digest, name: request.dxf.name }, signal);
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error("DRAWING_REQUIRED");
+    const sessionId = String(agent.id);
+    this.annotations.start(sessionId, `partition_${randomUUID()}`);
+    this.partitions.beginAnalysis(sessionId, snapshot.ref);
+    const analyzed = analyzeShaftPartition({
+      document: snapshot.document,
+      drawingRef: snapshot.ref,
+      ...request.engineeringDocument === void 0 ? {} : { engineeringText: request.engineeringDocument.text },
+      drawingSourceName: request.dxf.name
+    });
+    if (analyzed.status === "rejected") {
+      this.annotations.finish(sessionId, "failed", analyzed.diagnostics.map(({ code }) => code).join(", "));
+      throw new Error(`PARTITION_ANALYSIS_REJECTED:${analyzed.diagnostics.map(({ code }) => code).join(",")}`);
+    }
+    let draft = analyzed.draft;
+    if (analyzed.unclassifiedSegmentIds.length > 0 && this.reviewer) {
+      try {
+        draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.unclassifiedSegmentIds, signal })).draft;
+      } catch (error) {
+        draft = structuredClone(draft);
+        draft.diagnostics.push({
+          id: "diagnostic:ai-semantic-unavailable",
+          severity: "warning",
+          code: "AI_SEMANTIC_REVIEW_UNAVAILABLE",
+          message: error instanceof Error ? error.message : String(error),
+          segmentIds: analyzed.unclassifiedSegmentIds
+        });
+      }
+    }
+    return this.partitions.setDraft(sessionId, draft);
+  }
+  getState(agent) {
+    return this.partitions.get(String(agent.id));
+  }
+  edit(agent, command) {
+    if (!__privateMethod(this, _PartitionWorkflowService_instances, current_fn).call(this, agent, command.expectedDrawingRef)) return this.partitions.get(String(agent.id));
+    return this.partitions.edit(String(agent.id), command);
+  }
+  confirm(agent, expected) {
+    if (!__privateMethod(this, _PartitionWorkflowService_instances, current_fn).call(this, agent, expected)) return this.partitions.get(String(agent.id));
+    const sessionId = String(agent.id);
+    const result = this.partitions.confirm(sessionId, expected);
+    this.annotations.finish(sessionId, "completed");
+    return result;
+  }
+  cancel(agent, expected) {
+    if (!__privateMethod(this, _PartitionWorkflowService_instances, current_fn).call(this, agent, expected)) return this.partitions.get(String(agent.id));
+    const sessionId = String(agent.id);
+    const result = this.partitions.cancel(sessionId, expected);
+    this.annotations.finish(sessionId, "canceled");
+    return result;
+  }
+  undo(agent, expected) {
+    if (!__privateMethod(this, _PartitionWorkflowService_instances, current_fn).call(this, agent, expected)) return this.partitions.get(String(agent.id));
+    const sessionId = String(agent.id);
+    const result = this.partitions.undo(sessionId, expected);
+    if (result.phase === "editing") this.annotations.start(sessionId, `partition_${randomUUID()}`);
+    return result;
+  }
+  redo(agent, expected) {
+    if (!__privateMethod(this, _PartitionWorkflowService_instances, current_fn).call(this, agent, expected)) return this.partitions.get(String(agent.id));
+    return this.partitions.redo(String(agent.id), expected);
+  }
+}
+_PartitionWorkflowService_instances = new WeakSet();
+current_fn = function(agent, expected) {
+  var _a3;
+  const current = (_a3 = this.space.getSnapshot(agent)) == null ? void 0 : _a3.ref;
+  if (current && current.drawingId === expected.drawingId && current.revision === expected.revision) return true;
+  this.partitions.markNeedsRebase(String(agent.id), current ?? expected);
+  return false;
+};
+function decodeBase64(value) {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new Error("DXF_BASE64_INVALID");
+  return new Uint8Array(Buffer.from(value, "base64"));
+}
+function createPartitionSemanticReviewer(ctx, space, options = {}) {
+  return async ({ agent, draft, segmentIds, signal }) => {
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(new Error("AI_SEMANTIC_REVIEW_TIMEOUT")), options.timeoutMs ?? 3e4);
+    const reviewSignal = combineSignals(signal, timeout.signal);
+    try {
+      const targets = new Set(segmentIds);
+      const segments = draft.segments.filter(({ id }) => targets.has(id)).slice(0, 128);
+      const overlays = segments.map((segment, index) => ({
+        id: `observation:${segment.id}`,
+        label: `S${index + 1}`,
+        polygon: segmentPolygon(draft.axis, segment.zStart, segment.zEnd, Math.max(segment.profile.maxRadius, 0.1) * 1.08)
+      }));
+      const rendered = await abortable(space.renderObservation(agent, { ref: draft.drawingRef, overlays }, reviewSignal), reviewSignal);
+      if (rendered.status !== "rendered") throw new Error(`AI_SEMANTIC_OBSERVATION_${rendered.status.toUpperCase()}`);
+      const attachment = await abortable(ctx.attachments.saveImage({ data: rendered.png, mediaType: "image/png", name: "shaft-segment-observation.png" }), reviewSignal);
+      const parent = ctx.agents.get(String(agent.id));
+      const providerName = ctx.subagents.list()[0];
+      if (!parent || !providerName) throw new Error("AI_SEMANTIC_REVIEW_UNAVAILABLE");
+      const provider = ctx.subagents.getProvider(providerName);
+      if (!(provider == null ? void 0 : provider.capabilities.outputSchema) || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) throw new Error("AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED");
+      const catalog = segments.map((segment, index) => ({
+        id: segment.id,
+        visualLabel: `S${index + 1}`,
+        visualEvidenceId: `observation:${segment.id}`,
+        ordinal: index + 1,
+        width: segment.zEnd - segment.zStart,
+        diameter: segment.profile.maxRadius * 2,
+        boundaryConfidence: segment.boundaryConfidence,
+        previousSegmentId: index === 0 ? null : segments[index - 1].id,
+        nextSegmentId: index === segments.length - 1 ? null : segments[index + 1].id
+      }));
+      const payload = JSON.stringify({
+        instruction: "Classify only listed shaft segments from the numbered image. Return semantic labels and reasons only. Never return coordinates, boundaries, dimensions, or geometry commands.",
+        segments: catalog,
+        observationDigest: rendered.contentDigest
+      });
+      if (payload.length > 64 * 1024) throw new Error("AI_SEMANTIC_PROMPT_LIMIT");
+      const run = await abortable(ctx.subagents.start(providerName, {
+        label: "shaft-partition-semantic-reviewer",
+        parent,
+        signal: reviewSignal,
+        maxDepth: 1,
+        toolFilter: { allow: [] },
+        prompt: [{ type: "text", text: payload }, { type: "image", attachment }],
+        outputSchema: proposalSchema
+      }), reviewSignal);
+      try {
+        const result = await abortable(run.result, reviewSignal);
+        const proposals = result.stopReason === "completed" ? validateOutput(result.structured) : null;
+        if (!proposals) throw new Error("AI_SEMANTIC_REVIEW_INVALID");
+        return applySemanticProposals(draft, proposals, {
+          allowedSegmentIds: segments.map(({ id }) => id),
+          allowedVisualEvidenceIds: segments.map(({ id }) => `observation:${id}`)
+        });
+      } finally {
+        await abortable(run.dispose(), reviewSignal).catch(() => void 0);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+const proposalSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["proposals"],
+  properties: { proposals: { type: "array", maxItems: 64, items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["segmentIds", "semanticType", "confidence", "reason", "visualEvidenceIds"],
+    properties: {
+      segmentIds: { type: "array", items: { type: "string" }, minItems: 1 },
+      semanticType: { type: "string" },
+      name: { type: "string" },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      reason: { type: "string", maxLength: 500 },
+      visualEvidenceIds: { type: "array", items: { type: "string" } }
+    }
+  } } }
+};
+function validateOutput(value) {
+  if (!value || typeof value !== "object" || !Array.isArray(value.proposals)) return null;
+  const proposals = value.proposals;
+  if (proposals.length > 64 || !proposals.every(validProposal)) return null;
+  return structuredClone(proposals);
+}
+function validProposal(value) {
+  if (!value || typeof value !== "object") return false;
+  const item = value;
+  const keys = Object.keys(item);
+  const allowed = /* @__PURE__ */ new Set(["segmentIds", "semanticType", "name", "confidence", "reason", "visualEvidenceIds"]);
+  return keys.every((key) => allowed.has(key)) && ["segmentIds", "semanticType", "confidence", "reason", "visualEvidenceIds"].every((key) => keys.includes(key)) && Array.isArray(item.segmentIds) && item.segmentIds.length > 0 && item.segmentIds.every((id) => typeof id === "string") && typeof item.semanticType === "string" && (item.name === void 0 || typeof item.name === "string") && typeof item.confidence === "number" && typeof item.reason === "string" && Array.isArray(item.visualEvidenceIds) && item.visualEvidenceIds.every((id) => typeof id === "string");
+}
+function combineSignals(first, second) {
+  if (first === void 0) return second;
+  const controller = new AbortController();
+  const abort = (source) => controller.abort(source.reason);
+  if (first.aborted) abort(first);
+  else first.addEventListener("abort", () => abort(first), { once: true });
+  if (second.aborted) abort(second);
+  else second.addEventListener("abort", () => abort(second), { once: true });
+  return controller.signal;
+}
+function abortable(operation, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve2, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(resolve2, reject).finally(() => signal.removeEventListener("abort", abort)).catch(() => void 0);
+  });
+}
+function segmentPolygon(axis, zStart, zEnd, radius) {
+  const at = (z, r) => [axis.origin[0] + axis.direction[0] * z + axis.normal[0] * r, axis.origin[1] + axis.direction[1] * z + axis.normal[1] * r];
+  return [at(zStart, -radius), at(zEnd, -radius), at(zEnd, radius), at(zStart, radius)];
+}
+class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importAndAnalyze_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingAnnotation");
     __runInitializers(_init, 5, this);
     __publicField(this, "sessions");
+    __publicField(this, "partitions");
+    __publicField(this, "partitionWorkflow");
     this.sessions = new AnnotationSessionStateStore(new FileAnnotationSessionStorage(
       resolve(homedir(), ".dsh/vectorai/annotation-sessions")
     ));
+    this.partitions = new PartitionSessionStore(new FilePartitionStorage(
+      resolve(homedir(), ".dsh/vectorai/annotation-partitions")
+    ));
+    this.partitionWorkflow = new PartitionWorkflowService(
+      ctx.drawingSpace,
+      this.partitions,
+      this.sessions,
+      createPartitionSemanticReviewer(ctx, ctx.drawingSpace)
+    );
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions)));
     ctx.on("session/disposed", (session) => this.sessions.disposeSession(String(session.id)));
   }
   getSessionState(agent) {
     return this.sessions.get(String(agent.id));
   }
+  importAndAnalyze(agent, request) {
+    return this.partitionWorkflow.importAndAnalyze(agent, request);
+  }
+  getPartitionState(agent) {
+    return this.partitionWorkflow.getState(agent);
+  }
+  editPartition(agent, command) {
+    return this.partitionWorkflow.edit(agent, command);
+  }
+  confirmPartition(agent, expected) {
+    return this.partitionWorkflow.confirm(agent, expected);
+  }
+  cancelPartition(agent, expected) {
+    return this.partitionWorkflow.cancel(agent, expected);
+  }
+  undoPartition(agent, expected) {
+    return this.partitionWorkflow.undo(agent, expected);
+  }
+  redoPartition(agent, expected) {
+    return this.partitionWorkflow.redo(agent, expected);
+  }
 }
 _init = __decoratorStart(_a2);
 __decorateElement(_init, 1, "getSessionState", _getSessionState_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "importAndAnalyze", _importAndAnalyze_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "getPartitionState", _getPartitionState_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "editPartition", _editPartition_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "confirmPartition", _confirmPartition_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "cancelPartition", _cancelPartition_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "undoPartition", _undoPartition_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "redoPartition", _redoPartition_dec, DrawingAnnotationHostService);
 __decoratorMetadata(_init, DrawingAnnotationHostService);
-__publicField(DrawingAnnotationHostService, "inject", ["tools", "drawingSpace"]);
+__publicField(DrawingAnnotationHostService, "inject", ["tools", "drawingSpace", "attachments", "agents", "subagents"]);
 export {
   AnnotationSessionStateStore,
   DrawingAnnotationHostService,

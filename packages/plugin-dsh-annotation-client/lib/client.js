@@ -7,6 +7,189 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const jsxRuntime = require("react/jsx-runtime");
     const react = require("react");
+    function evaluateHomogeneous(node, normalized) {
+      const pointCount = node.controlPoints.length;
+      const lastControlIndex = pointCount - 1;
+      const domainStart = node.knots[node.degree];
+      const domainEnd = node.knots[lastControlIndex + 1];
+      const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
+      const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
+      const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
+      const work = [];
+      for (let index = 0; index <= node.degree; index += 1) {
+        const sourceIndex = span - node.degree + index;
+        const weight = weights[sourceIndex];
+        const point = node.controlPoints[sourceIndex];
+        work.push([point[0] * weight, point[1] * weight, weight]);
+      }
+      for (let level = 1; level <= node.degree; level += 1) {
+        for (let index = node.degree; index >= level; index -= 1) {
+          const knotIndex = span - node.degree + index;
+          const denominator = node.knots[knotIndex + node.degree - level + 1] - node.knots[knotIndex];
+          const alpha = denominator === 0 ? 0 : (knotParameter - node.knots[knotIndex]) / denominator;
+          work[index] = mixHomogeneous(work[index - 1], work[index], alpha);
+        }
+      }
+      return work[node.degree];
+    }
+    function sampleSpline(node, { maxError, maxDepth = 12 }) {
+      if (!(Number.isFinite(maxError) && maxError > 0)) {
+        throw new TypeError("SPLINE_MAX_ERROR_INVALID");
+      }
+      if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 24) {
+        throw new TypeError("SPLINE_MAX_DEPTH_INVALID");
+      }
+      validateSpline(node);
+      const first = project(evaluateHomogeneous(node, 0));
+      const output = [first];
+      const spans = normalizedKnotSpans(node);
+      for (let index = 1; index < spans.length; index += 1) {
+        const controls = extractBezierControls(node, spans[index - 1], spans[index]);
+        subdivideBezier(controls, 0, maxDepth, maxError, output);
+      }
+      if (node.closed && !samePoint(output[0], output.at(-1))) output.push(output[0]);
+      return output;
+    }
+    function normalizedKnotSpans(node) {
+      const start = node.knots[node.degree];
+      const end = node.knots[node.controlPoints.length];
+      return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start) / (end - start)).filter((value, index, values) => index === 0 || value > values[index - 1]);
+    }
+    function splineBounds(node) {
+      validateSpline(node);
+      const controlMinX = Math.min(...node.controlPoints.map(([x]) => x));
+      const controlMaxX = Math.max(...node.controlPoints.map(([x]) => x));
+      const controlMinY = Math.min(...node.controlPoints.map(([, y]) => y));
+      const controlMaxY = Math.max(...node.controlPoints.map(([, y]) => y));
+      const span = Math.max(controlMaxX - controlMinX, controlMaxY - controlMinY, 1);
+      const points = sampleSpline(node, { maxError: Math.max(span * 1e-6, 1e-8), maxDepth: 18 });
+      return {
+        minX: Math.min(...points.map(([x]) => x)),
+        minY: Math.min(...points.map(([, y]) => y)),
+        maxX: Math.max(...points.map(([x]) => x)),
+        maxY: Math.max(...points.map(([, y]) => y))
+      };
+    }
+    function validateSpline(node) {
+      if (!Number.isInteger(node.degree) || node.degree < 1) {
+        throw new TypeError("SPLINE_DEGREE_INVALID");
+      }
+      if (node.controlPoints.length <= node.degree) {
+        throw new TypeError("SPLINE_CONTROL_POINT_COUNT_INVALID");
+      }
+      if (node.controlPoints.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
+        throw new TypeError("SPLINE_CONTROL_POINT_INVALID");
+      }
+      const expectedKnots = node.controlPoints.length + node.degree + 1;
+      if (node.knots.length !== expectedKnots) {
+        throw new TypeError("SPLINE_KNOT_COUNT_INVALID");
+      }
+      if (node.knots.some((value, index) => !Number.isFinite(value) || index > 0 && value < node.knots[index - 1])) {
+        throw new TypeError("SPLINE_KNOT_SEQUENCE_INVALID");
+      }
+      const domainStart = node.knots[node.degree];
+      const domainEnd = node.knots[node.controlPoints.length];
+      if (!(domainEnd > domainStart)) throw new TypeError("SPLINE_KNOT_DOMAIN_INVALID");
+      if (node.weights !== void 0 && (node.weights.length !== node.controlPoints.length || node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0))) {
+        throw new TypeError("SPLINE_WEIGHTS_INVALID");
+      }
+    }
+    function findSpan(knots, degree, lastControlIndex, value) {
+      let low = degree;
+      let high = lastControlIndex + 1;
+      let middle = Math.floor((low + high) / 2);
+      while (value < knots[middle] || value >= knots[middle + 1]) {
+        if (value < knots[middle]) high = middle;
+        else low = middle;
+        middle = Math.floor((low + high) / 2);
+      }
+      return middle;
+    }
+    function mixHomogeneous(first, second, alpha) {
+      return [
+        first[0] * (1 - alpha) + second[0] * alpha,
+        first[1] * (1 - alpha) + second[1] * alpha,
+        first[2] * (1 - alpha) + second[2] * alpha
+      ];
+    }
+    function subdivideBezier(controls, depth, maxDepth, maxError, output) {
+      const points = controls.map(project);
+      const start = points[0];
+      const end = points.at(-1);
+      const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
+      if (depth >= maxDepth || flatness <= maxError) {
+        output.push(end);
+        return;
+      }
+      const [left, right] = splitBezier(controls);
+      subdivideBezier(left, depth + 1, maxDepth, maxError, output);
+      subdivideBezier(right, depth + 1, maxDepth, maxError, output);
+    }
+    function extractBezierControls(node, start, end) {
+      const degree = node.degree;
+      if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
+      const samples = Array.from({ length: degree + 1 }, (_, row) => {
+        const local = row / degree;
+        return evaluateHomogeneous(node, start + (end - start) * local);
+      });
+      const matrix = Array.from({ length: degree + 1 }, (_, row) => {
+        const parameter = row / degree;
+        return Array.from({ length: degree + 1 }, (_2, column) => bernstein(degree, column, parameter));
+      });
+      return solve(matrix, samples);
+    }
+    function solve(matrix, values) {
+      const size = matrix.length;
+      const augmented = matrix.map((row, index) => [...row, ...values[index]]);
+      for (let column = 0; column < size; column += 1) {
+        let pivot = column;
+        for (let row = column + 1; row < size; row += 1) if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+        [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+        const divisor = augmented[column][column];
+        if (Math.abs(divisor) <= 1e-14) throw new TypeError("SPLINE_BEZIER_EXTRACTION_FAILED");
+        for (let index = column; index < size + 3; index += 1) augmented[column][index] = augmented[column][index] / divisor;
+        for (let row = 0; row < size; row += 1) {
+          if (row === column) continue;
+          const factor = augmented[row][column];
+          for (let index = column; index < size + 3; index += 1) augmented[row][index] = augmented[row][index] - factor * augmented[column][index];
+        }
+      }
+      return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
+    }
+    function splitBezier(controls) {
+      const levels = [controls.map((point) => [...point])];
+      while (levels.at(-1).length > 1) {
+        const previous = levels.at(-1);
+        levels.push(previous.slice(1).map((point, index) => mixHomogeneous(previous[index], point, 0.5)));
+      }
+      return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
+    }
+    function project(point) {
+      if (!(Math.abs(point[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
+      return [point[0] / point[2], point[1] / point[2]];
+    }
+    function bernstein(degree, index, parameter) {
+      return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
+    }
+    function binomial(n, k) {
+      let result = 1;
+      for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
+      return result;
+    }
+    function pointSegmentDistance(point, start, end) {
+      const dx = end[0] - start[0];
+      const dy = end[1] - start[1];
+      const lengthSquared = dx * dx + dy * dy;
+      if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+      const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+      return Math.hypot(
+        point[0] - (start[0] + projection * dx),
+        point[1] - (start[1] + projection * dy)
+      );
+    }
+    function samePoint(first, second) {
+      return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
+    }
     function gridPatternMetrics(viewport) {
       const minorSize = 10 * viewport.scale;
       const majorSize = 50 * viewport.scale;
@@ -137,7 +320,7 @@ window.__ModuleLoader__.load({
         case "polyline":
           return boundsFromPoints(node.vertices.map((vertex) => vertex.point));
         case "spline":
-          return boundsFromPoints(node.controlPoints);
+          return splineBounds(node);
         case "text":
           return textBounds(node);
         case "dimension":
@@ -335,7 +518,7 @@ window.__ModuleLoader__.load({
         case "polyline":
           return /* @__PURE__ */ jsxRuntime.jsx("path", { d: polylinePath(node), fill: "none", ...vectorStroke });
         case "spline":
-          return /* @__PURE__ */ jsxRuntime.jsx("path", { d: splinePath(node.controlPoints, node.closed), fill: "none", ...vectorStroke });
+          return /* @__PURE__ */ jsxRuntime.jsx("path", { d: splinePath(node, viewport), fill: "none", ...vectorStroke });
         case "text":
           return /* @__PURE__ */ jsxRuntime.jsx(WorldText, { position: node.position, rotation: node.rotation, height: node.height, align: node.alignment, children: node.content });
         case "dimension":
@@ -403,18 +586,15 @@ window.__ModuleLoader__.load({
     function pointsAttribute(points) {
       return points.map((point) => `${point[0]},${point[1]}`).join(" ");
     }
-    function splinePath(points, closed) {
+    function splinePath(node, viewport) {
+      const points = sampleSpline(node, { maxError: Math.max(0.25 / viewport.scale, 1e-8) });
       if (points.length === 0) return "";
       if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
-      if (points.length === 2) return `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]}${closed ? " Z" : ""}`;
-      const commands = [`M ${points[0][0]} ${points[0][1]}`];
-      for (let index = 1; index < points.length - 1; index += 1) {
-        const control = points[index];
-        const next = points[index + 1];
-        const end = index === points.length - 2 ? next : [(control[0] + next[0]) / 2, (control[1] + next[1]) / 2];
-        commands.push(`Q ${control[0]} ${control[1]} ${end[0]} ${end[1]}`);
-      }
-      if (closed) commands.push("Z");
+      const commands = [
+        `M ${points[0][0]} ${points[0][1]}`,
+        ...points.slice(1).map(([x, y]) => `L ${x} ${y}`)
+      ];
+      if (node.closed) commands.push("Z");
       return commands.join(" ");
     }
     function polylinePath(node) {
@@ -495,12 +675,15 @@ window.__ModuleLoader__.load({
     function safeId(value) {
       return value.replace(/[^a-zA-Z0-9_-]/g, "_");
     }
+    function isRasterDrawingSource(source) {
+      return "width" in source && "height" in source;
+    }
     function SourceLayer({
       document,
       source,
       sourceUrl
     }) {
-      if (source === void 0 || sourceUrl === null) return null;
+      if (source === void 0 || !isRasterDrawingSource(source) || sourceUrl === null) return null;
       return /* @__PURE__ */ jsxRuntime.jsx(
         SourceUnderlay,
         {
@@ -786,14 +969,136 @@ window.__ModuleLoader__.load({
         maxY: Math.max(first[1], second[1])
       };
     }
-    function AnnotationWorkspace({ namespace, runtime, state }) {
+    function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
+      const [drag, setDrag] = react.useState(null);
+      const current = react.useRef(null);
+      const point = (z, r) => [
+        draft.axis.origin[0] + draft.axis.direction[0] * z + draft.axis.normal[0] * r,
+        draft.axis.origin[1] + draft.axis.direction[1] * z + draft.axis.normal[1] * r
+      ];
+      const pointerMove = (event) => {
+        if (!current.current) return;
+        const delta = (event.movementX * draft.axis.direction[0] - event.movementY * draft.axis.direction[1]) / Math.max(scale, 1e-6);
+        current.current = { ...current.current, z: current.current.z + delta };
+        setDrag(current.current);
+      };
+      const pointerUp = (event) => {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+        const value = current.current;
+        current.current = null;
+        setDrag(null);
+        if (value) onMoveBoundary(value.index, value.z);
+      };
+      return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-partition-overlay": "true", children: [
+        draft.segments.map((segment, index) => {
+          const radius = Math.max(segment.profile.maxRadius, 0.1) * 1.04;
+          const polygon = [point(segment.zStart, -radius), point(segment.zEnd, -radius), point(segment.zEnd, radius), point(segment.zStart, radius)];
+          const origin = segment.semanticEvidenceIds.map((id) => {
+            var _a2;
+            return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
+          }).find(Boolean) ?? "geometry";
+          return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-partition-origin": origin, "data-segment-id": segment.id, children: [
+            /* @__PURE__ */ jsxRuntime.jsx("polygon", { points: polygon.map((value) => value.join(",")).join(" "), className: `vai-partition-band vai-partition-band--${origin}`, "data-line-style": origin === "document" ? "solid" : origin === "ai" ? "dotted" : "dashed" }),
+            /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${point((segment.zStart + segment.zEnd) / 2, 0).join(" ")}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntime.jsx("text", { className: "vai-partition-label", textAnchor: "middle", children: segment.name ?? `S${index + 1}` }) })
+          ] }, segment.id);
+        }),
+        !previewHeld && draft.segments.slice(0, -1).map((segment, offset) => {
+          const index = offset + 1;
+          const z = (drag == null ? void 0 : drag.index) === index ? drag.z : segment.zEnd;
+          const position = point(z, 0);
+          return /* @__PURE__ */ jsxRuntime.jsx(
+            "circle",
+            {
+              "aria-label": `移动分区边界 ${index}`,
+              className: "vai-partition-handle",
+              cx: position[0],
+              cy: position[1],
+              r: 7 / Math.max(scale, 0.01),
+              onPointerDown: (event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                current.current = { index, z };
+                setDrag(current.current);
+              },
+              onPointerMove: pointerMove,
+              onPointerUp: pointerUp,
+              onPointerCancel: pointerUp
+            },
+            `boundary:${index}`
+          );
+        })
+      ] });
+    }
+    function PartitionActionToolbar({ controller, previewHeld }) {
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": "分区确认工具栏", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--cancel", "aria-label": "取消分区", title: "取消", onClick: () => void controller.actions.cancel().catch(() => void 0), children: "×" }),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            className: `vai-partition-action vai-partition-action--preview${previewHeld ? " is-held" : ""}`,
+            "aria-label": "按住预览分区结果",
+            title: "按住预览",
+            onPointerDown: () => controller.actions.setPreviewHeld(true),
+            onPointerUp: () => controller.actions.setPreviewHeld(false),
+            onPointerCancel: () => controller.actions.setPreviewHeld(false),
+            onPointerLeave: () => controller.actions.setPreviewHeld(false),
+            children: "◉"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--confirm", "aria-label": "确认分区", title: "确认", onClick: () => void controller.actions.confirm().catch(() => void 0), children: "✓" })
+      ] });
+    }
+    function PartitionInspector({ draft, controller }) {
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-inspector", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "轴段分区" }),
+        /* @__PURE__ */ jsxRuntime.jsx("ol", { children: draft.segments.map((segment, index) => /* @__PURE__ */ jsxRuntime.jsxs("li", { children: [
+          /* @__PURE__ */ jsxRuntime.jsx("span", { children: segment.name ?? `轴段 S${index + 1}` }),
+          /* @__PURE__ */ jsxRuntime.jsxs("small", { children: [
+            segment.zStart.toFixed(2),
+            " – ",
+            segment.zEnd.toFixed(2),
+            " · ⌀",
+            (segment.profile.maxRadius * 2).toFixed(2)
+          ] }),
+          /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-inspector__fields", children: [
+            /* @__PURE__ */ jsxRuntime.jsx("input", { "aria-label": `轴段 ${index + 1} 名称`, defaultValue: segment.name ?? "", placeholder: "名称", onBlur: (event) => void controller.actions.updateSegment(segment.id, { name: event.currentTarget.value }).catch(() => void 0) }),
+            /* @__PURE__ */ jsxRuntime.jsx("input", { "aria-label": `轴段 ${index + 1} 类型`, defaultValue: segment.semanticType ?? "", placeholder: "类型", onBlur: (event) => void controller.actions.updateSegment(segment.id, { semanticType: event.currentTarget.value }).catch(() => void 0) })
+          ] }),
+          /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-inspector__commands", children: [
+            /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": `拆分轴段 ${index + 1}`, onClick: () => void controller.actions.splitSegment(segment.id, (segment.zStart + segment.zEnd) / 2, Math.max(draft.axis.zMax * 3e-3, 0.05)).catch(() => void 0), children: "拆分" }),
+            index > 0 && /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": `合并边界 ${index}`, onClick: () => void controller.actions.mergeBoundary(index).catch(() => void 0), children: "与前段合并" })
+          ] }),
+          index < draft.segments.length - 1 && /* @__PURE__ */ jsxRuntime.jsxs("label", { className: "vai-partition-inspector__boundary", children: [
+            "结束位置",
+            /* @__PURE__ */ jsxRuntime.jsx("input", { type: "number", step: "any", defaultValue: segment.zEnd, "aria-label": `边界 ${index + 1} 精确位置`, onKeyDown: (event) => {
+              if (event.key === "Enter") void controller.actions.moveBoundary(index + 1, Number(event.currentTarget.value), 0).catch(() => void 0);
+            } })
+          ] })
+        ] }, segment.id)) }),
+        draft.diagnostics.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-partition-diagnostics", children: draft.diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntime.jsx("p", { children: diagnostic.code }, diagnostic.id)) })
+      ] });
+    }
+    function AnnotationWorkspace({ namespace, runtime, state, partition }) {
       var _a2;
       const snapshot = useObservable(runtime.snapshot);
       const viewport = useObservable(runtime.viewport);
       const selectedIds = useObservable(runtime.selection);
       const presentation = useObservable(runtime.presentation);
       const annotationState = useObservable(state);
+      const partitionState = useObservable(partition.state);
+      const [dxf, setDxf] = react.useState(null);
+      const [engineering, setEngineering] = react.useState(null);
+      const [showImport, setShowImport] = react.useState(false);
       const displaySnapshot = presentation.displaySnapshot ?? snapshot;
+      const draft = partitionState.partition.draft;
+      react.useEffect(() => {
+        const release = () => partition.actions.setPreviewHeld(false);
+        window.addEventListener("blur", release);
+        return () => {
+          window.removeEventListener("blur", release);
+          release();
+        };
+      }, [partition]);
       return /* @__PURE__ */ jsxRuntime.jsxs(
         "section",
         {
@@ -804,38 +1109,75 @@ window.__ModuleLoader__.load({
             /* @__PURE__ */ jsxRuntime.jsxs("header", { className: "vai-annotation-workspace__header", children: [
               /* @__PURE__ */ jsxRuntime.jsxs("div", { children: [
                 /* @__PURE__ */ jsxRuntime.jsx("strong", { children: "工程图自动标注" }),
-                /* @__PURE__ */ jsxRuntime.jsx("span", { children: displaySnapshot === null ? "等待图纸" : `${displaySnapshot.ref.drawingId} · R${displaySnapshot.ref.revision}` })
+                /* @__PURE__ */ jsxRuntime.jsx("span", { children: displaySnapshot === null ? "等待图纸" : `${displaySnapshot.ref.drawingId} · R${displaySnapshot.ref.revision}` }),
+                (displaySnapshot == null ? void 0 : displaySnapshot.provisional) && /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-annotation-provisional", children: "候选图纸" })
               ] }),
               /* @__PURE__ */ jsxRuntime.jsx("span", { "data-annotation-workflow": annotationState.workflow.status, children: workflowLabel(annotationState.workflow.status) })
             ] }),
             /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-annotation-workspace__body", children: [
               /* @__PURE__ */ jsxRuntime.jsxs("nav", { className: "vai-annotation-workspace__rail", "aria-label": "标注流程", children: [
+                /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "导入 DXF", title: "导入 DXF", onClick: () => setShowImport(true), children: "↥" }),
                 /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "图纸结构", title: "图纸结构", children: "⌗" }),
                 /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "标注候选", title: "标注候选", children: "⌖" }),
                 /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "冲突检查", title: "冲突检查", children: "△" })
               ] }),
-              /* @__PURE__ */ jsxRuntime.jsx("main", { className: "vai-annotation-workspace__canvas", children: displaySnapshot === null ? /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-annotation-workspace__empty", children: "自动标注工作区已接管。请先导入一张工程图纸。" }) : /* @__PURE__ */ jsxRuntime.jsx(
-                DrawingSurface,
-                {
-                  snapshot: displaySnapshot,
-                  viewport,
-                  selectedIds,
-                  display: presentation.display,
-                  sourceUrl: presentation.sourceUrl,
-                  className: "vai-canvas vai-annotation-workspace__surface",
-                  onViewportChange: runtime.actions.setViewport,
-                  onSelectionChange: runtime.actions.setSelection,
-                  worldLayers: /* @__PURE__ */ jsxRuntime.jsx(
-                    "g",
-                    {
-                      "data-annotation-candidate-layer": "true",
-                      "data-preview-active": presentation.preview === null ? void 0 : "true",
-                      pointerEvents: "none"
-                    }
-                  )
-                }
-              ) }),
-              /* @__PURE__ */ jsxRuntime.jsxs("aside", { className: "vai-annotation-workspace__inspector", children: [
+              /* @__PURE__ */ jsxRuntime.jsxs("main", { className: "vai-annotation-workspace__canvas", children: [
+                displaySnapshot !== null && /* @__PURE__ */ jsxRuntime.jsx(
+                  DrawingSurface,
+                  {
+                    snapshot: displaySnapshot,
+                    viewport,
+                    selectedIds,
+                    display: presentation.display,
+                    sourceUrl: presentation.sourceUrl,
+                    className: "vai-canvas vai-annotation-workspace__surface",
+                    onViewportChange: runtime.actions.setViewport,
+                    onSelectionChange: runtime.actions.setSelection,
+                    worldLayers: /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+                      /* @__PURE__ */ jsxRuntime.jsx("g", { "data-annotation-candidate-layer": "true", "data-preview-active": presentation.preview === null ? void 0 : "true", pointerEvents: "none" }),
+                      draft && /* @__PURE__ */ jsxRuntime.jsx(
+                        PartitionOverlay,
+                        {
+                          draft,
+                          previewHeld: partitionState.previewHeld,
+                          scale: viewport.scale,
+                          onMoveBoundary: (index, z) => void partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05)).catch(() => void 0)
+                        }
+                      )
+                    ] })
+                  }
+                ),
+                (displaySnapshot === null || showImport) && /* @__PURE__ */ jsxRuntime.jsxs("form", { className: "vai-annotation-import", onSubmit: (event) => {
+                  event.preventDefault();
+                  if (dxf) void partition.actions.importFiles(dxf, engineering ?? void 0).then(() => setShowImport(false)).catch(() => void 0);
+                }, children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("strong", { children: "导入轴类工程图" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("p", { children: "DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。" }),
+                  /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
+                    "DXF 图纸",
+                    /* @__PURE__ */ jsxRuntime.jsx("input", { type: "file", accept: ".dxf,application/dxf", onChange: (event) => {
+                      var _a3;
+                      return setDxf(((_a3 = event.currentTarget.files) == null ? void 0 : _a3[0]) ?? null);
+                    } })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
+                    "工程数据文档（可选）",
+                    /* @__PURE__ */ jsxRuntime.jsx("input", { type: "file", accept: ".txt,.ini,text/plain", onChange: (event) => {
+                      var _a3;
+                      return setEngineering(((_a3 = event.currentTarget.files) == null ? void 0 : _a3[0]) ?? null);
+                    } })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntime.jsx("button", { type: "submit", disabled: !dxf || partitionState.busy, children: partitionState.busy ? "正在分析…" : "导入并智能分区" }),
+                  displaySnapshot !== null && /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-annotation-import__close", onClick: () => setShowImport(false), children: "关闭" }),
+                  partitionState.error && /* @__PURE__ */ jsxRuntime.jsx("p", { role: "alert", children: partitionState.error })
+                ] }),
+                partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
+                (partitionState.partition.canUndo || partitionState.partition.canRedo) && /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-history", role: "toolbar", "aria-label": "分区历史", children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "撤销分区", disabled: !partitionState.partition.canUndo, onClick: () => void partition.actions.undo().catch(() => void 0), children: "↶" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "重做分区", disabled: !partitionState.partition.canRedo, onClick: () => void partition.actions.redo().catch(() => void 0), children: "↷" })
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntime.jsx("aside", { className: "vai-annotation-workspace__inspector", children: draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntime.jsx(PartitionInspector, { draft, controller: partition }, partitionState.partition.updatedAt) : /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
                 /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "标注检查" }),
                 /* @__PURE__ */ jsxRuntime.jsxs("dl", { children: [
                   /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "流程" }),
@@ -845,7 +1187,7 @@ window.__ModuleLoader__.load({
                   /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "选中" }),
                   /* @__PURE__ */ jsxRuntime.jsx("dd", { children: selectedIds.length })
                 ] })
-              ] })
+              ] }) })
             ] })
           ]
         }
@@ -1580,7 +1922,7 @@ window.__ModuleLoader__.load({
     const ipv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
     const cidrv4 = /^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/([0-9]|[1-2][0-9]|3[0-2])$/;
     const cidrv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/;
-    const base64 = /^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$/;
+    const base64$1 = /^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$/;
     const base64url = /^[A-Za-z0-9_-]*$/;
     const httpProtocol = /^https?$/;
     const e164 = /^\+[1-9]\d{6,14}$/;
@@ -2389,7 +2731,7 @@ window.__ModuleLoader__.load({
       }
     }
     const $ZodBase64 = /* @__PURE__ */ $constructor("$ZodBase64", (inst, def) => {
-      def.pattern ?? (def.pattern = base64);
+      def.pattern ?? (def.pattern = base64$1);
       $ZodStringFormat.init(inst, def);
       inst._zod.bag.contentEncoding = "base64";
       inst._zod.check = (payload) => {
@@ -5806,6 +6148,28 @@ window.__ModuleLoader__.load({
     function superRefine(fn, params) {
       return /* @__PURE__ */ _superRefine(fn, params);
     }
+    function _instanceof(cls, params = {}) {
+      const inst = new ZodCustom({
+        type: "custom",
+        check: "custom",
+        fn: (data) => data instanceof cls,
+        abort: true,
+        ...normalizeParams(params)
+      });
+      inst._zod.bag.Class = cls;
+      inst._zod.check = (payload) => {
+        if (!(payload.value instanceof cls)) {
+          payload.issues.push({
+            code: "invalid_type",
+            expected: cls.name,
+            input: payload.value,
+            inst,
+            path: [...inst._zod.def.path ?? []]
+          });
+        }
+      };
+      return inst;
+    }
     const protocolIdSchema = string().trim().min(1).max(256);
     const contentDigestSchema = string().trim().min(1).max(512);
     const idSchema$3 = protocolIdSchema;
@@ -6182,10 +6546,17 @@ window.__ModuleLoader__.load({
       confidence: number().optional(),
       evidenceRefs: array(idSchema)
     }).strict();
+    const drawingNodeSourceRefSchema = object({
+      sourceId: idSchema,
+      objectId: idSchema.optional(),
+      objectType: idSchema.optional(),
+      layer: string().min(1).optional()
+    }).strict();
     const baseNodeShape = {
       id: idSchema,
       visible: boolean(),
-      quality: qualitySchema
+      quality: qualitySchema,
+      sourceRef: drawingNodeSourceRefSchema.optional()
     };
     const geometrySchema = discriminatedUnion("type", [
       object({ ...baseNodeShape, type: literal("point"), x: number(), y: number() }).strict(),
@@ -6347,6 +6718,14 @@ window.__ModuleLoader__.load({
       id: idSchema,
       metadata: object({ createdAt: number(), updatedAt: number() }).strict(),
       unitSystem: object({ length: _enum(["mm", "cm", "m"]), angle: literal("deg") }).strict(),
+      sources: array(object({
+        id: idSchema,
+        kind: _enum(["image", "dxf"]),
+        mediaType: string().min(1),
+        digest: idSchema,
+        name: string().min(1).optional(),
+        bytes: number().int().nonnegative().optional()
+      }).strict()).optional(),
       coordinateFrames: array(object({
         id: idSchema,
         kind: _enum(["document", "source", "page", "view", "provisional"]),
@@ -6418,14 +6797,22 @@ window.__ModuleLoader__.load({
         truncated: boolean()
       }).strict()
     ]);
-    const drawingSourceRefSchema = object({
-      id: idSchema,
-      mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
-      bytes: number().int().nonnegative().optional(),
-      width: number().positive(),
-      height: number().positive(),
-      name: string().optional()
-    }).strict();
+    const drawingSourceRefSchema = union([
+      object({
+        id: idSchema,
+        mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+        bytes: number().int().nonnegative().optional(),
+        width: number().positive(),
+        height: number().positive(),
+        name: string().optional()
+      }).strict(),
+      object({
+        id: idSchema,
+        mediaType: literal("application/dxf"),
+        bytes: number().int().nonnegative().optional(),
+        name: string().optional()
+      }).strict()
+    ]);
     const drawingWorkspaceSnapshotSchema = object({
       version: literal(1),
       ref: object({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
@@ -6722,7 +7109,129 @@ window.__ModuleLoader__.load({
         message: string().min(1).optional()
       }).strict()
     }).strict();
+    object({
+      bytes: _instanceof(Uint8Array),
+      digest: idSchema,
+      name: string().trim().min(1).max(255).optional()
+    }).strict();
+    const drawingObservationOverlaySchema = object({
+      id: idSchema,
+      label: string().trim().min(1).max(80),
+      polygon: array(vec2Schema).min(3).max(16)
+    }).strict();
+    object({
+      ref: drawingRefSchema,
+      overlays: array(drawingObservationOverlaySchema).max(128).optional()
+    }).strict();
+    discriminatedUnion("status", [
+      object({
+        status: literal("rendered"),
+        png: _instanceof(Uint8Array),
+        contentDigest: idSchema,
+        width: number().int().positive(),
+        height: number().int().positive()
+      }).strict(),
+      object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+      object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+    ]);
     const drawingSessionIdSchema = string().min(1);
+    const partitionEvidenceSchema = object({
+      id: idSchema,
+      origin: _enum(["document", "geometry", "fused", "ai", "manual"]),
+      label: string(),
+      sourceLines: array(number().int().positive()).optional(),
+      geometryNodeIds: array(idSchema).optional()
+    }).strict();
+    const partitionDiagnosticSchema = object({
+      id: idSchema,
+      severity: _enum(["info", "warning", "error"]),
+      code: idSchema,
+      message: string(),
+      segmentIds: array(idSchema).optional(),
+      evidenceIds: array(idSchema).optional()
+    }).strict();
+    const shaftAxisSchema = object({
+      origin: vec2Schema,
+      direction: vec2Schema,
+      normal: vec2Schema,
+      zMin: number(),
+      zMax: number(),
+      orientation: _enum(["forward", "reversed"]),
+      geometryNodeIds: array(idSchema).optional()
+    }).strict();
+    const stepCandidateSchema = object({
+      id: idSchema,
+      z: number(),
+      score: number(),
+      evidenceIds: array(idSchema),
+      accepted: boolean()
+    }).strict();
+    const partitionSegmentSchema = object({
+      id: idSchema,
+      zStart: number(),
+      zEnd: number(),
+      profile: object({ minRadius: number(), maxRadius: number(), sampleCount: number().int().nonnegative() }).strict(),
+      semanticType: string().optional(),
+      name: string().optional(),
+      boundaryConfidence: number(),
+      semanticConfidence: number().optional(),
+      geometryNodeIds: array(idSchema),
+      boundaryEvidenceIds: array(idSchema),
+      semanticEvidenceIds: array(idSchema),
+      diagnosticIds: array(idSchema),
+      profileSamples: array(object({ z: number(), radius: number().nonnegative(), geometryNodeId: idSchema }).strict()).optional()
+    }).strict();
+    const partitionGroupSchema = object({
+      id: idSchema,
+      segmentIds: array(idSchema),
+      semanticType: string(),
+      name: string().optional(),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const partitionDraftSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      axis: shaftAxisSchema,
+      segments: array(partitionSegmentSchema),
+      semanticGroups: array(partitionGroupSchema),
+      stepCandidates: array(stepCandidateSchema),
+      evidence: array(partitionEvidenceSchema),
+      diagnostics: array(partitionDiagnosticSchema),
+      basePartitionRevisionId: idSchema.optional()
+    }).strict();
+    const partitionRevisionSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      axis: shaftAxisSchema,
+      segments: array(partitionSegmentSchema),
+      semanticGroups: array(partitionGroupSchema),
+      evidence: array(partitionEvidenceSchema),
+      diagnostics: array(partitionDiagnosticSchema),
+      id: idSchema,
+      parentRevisionId: idSchema.optional(),
+      confirmedAt: number()
+    }).strict();
+    const partitionEditCommandSchema = discriminatedUnion("type", [
+      object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+      object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
+      object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
+      object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
+    ]);
+    const partitionSessionSnapshotSchema = object({
+      version: literal(1),
+      phase: _enum(["idle", "analyzing", "editing", "confirmed", "needs-rebase", "failed"]),
+      drawingRef: drawingRefSchema.optional(),
+      draft: partitionDraftSchema.optional(),
+      confirmed: partitionRevisionSchema.optional(),
+      canUndo: boolean(),
+      canRedo: boolean(),
+      message: string().optional(),
+      updatedAt: number()
+    }).strict();
+    const partitionImportRequestSchema = object({
+      dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+      engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+    }).strict();
     const agentParameter = {
       name: "agent",
       wire: "agentId",
@@ -6749,8 +7258,114 @@ window.__ModuleLoader__.load({
           typeSymbol: "@vectorai/plugin-space-contracts#AnnotationSessionState",
           schema: annotationSessionStateSchema
         }
-      }]
+      }, ...partitionDescriptors()]
     };
+    function partitionDescriptors() {
+      return [
+        descriptor("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
+        descriptor("getPartitionState", []),
+        descriptor("editPartition", [jsonParameter("command", "@vectorai/plugin-space-contracts#PartitionEditCommand", partitionEditCommandSchema)]),
+        descriptor("confirmPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+        descriptor("cancelPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+        descriptor("undoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+        descriptor("redoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
+      ];
+    }
+    function descriptor(method, parameters) {
+      return {
+        id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+        service: "drawingAnnotation",
+        namespace: "drawingAnnotation",
+        method,
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, ...parameters],
+        result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#PartitionSessionSnapshot", schema: partitionSessionSnapshotSchema }
+      };
+    }
+    function jsonParameter(name, typeSymbol, schema) {
+      return { name, wire: name, source: "json", codec: { mode: "strict", typeSymbol, schema } };
+    }
+    function createPartitionController(sessionId, remote) {
+      let current = { partition: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null };
+      const listeners = /* @__PURE__ */ new Set();
+      let queue = Promise.resolve();
+      let disposed = false;
+      const update = (changes) => {
+        if (disposed) return;
+        current = { ...current, ...changes };
+        for (const listener of listeners) listener();
+      };
+      const run = (operation) => {
+        const task = queue.then(async () => {
+          update({ busy: true, error: null });
+          try {
+            update({ partition: unwrap(await operation()) });
+          } catch (error) {
+            update({ error: error instanceof Error ? error.message : String(error) });
+            throw error;
+          } finally {
+            update({ busy: false });
+          }
+        });
+        queue = task.catch(() => void 0);
+        return task;
+      };
+      const ref = () => {
+        if (!current.partition.drawingRef) throw new Error("PARTITION_DRAWING_REQUIRED");
+        return current.partition.drawingRef;
+      };
+      const edit = (command) => run(() => remote.editPartition(sessionId, { ...command, expectedDrawingRef: ref() }));
+      return {
+        state: {
+          getSnapshot: () => current,
+          subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          }
+        },
+        actions: {
+          refresh: () => run(() => remote.getPartitionState(sessionId)),
+          async importFiles(dxf, engineeringDocument) {
+            if (dxf.size > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
+            if (engineeringDocument && engineeringDocument.size > 2 * 1024 * 1024) throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+            const bytes = new Uint8Array(await dxf.arrayBuffer());
+            const digest = `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`;
+            const request = {
+              dxf: { name: dxf.name, digest, base64: base64(bytes) },
+              ...engineeringDocument === void 0 ? {} : { engineeringDocument: { name: engineeringDocument.name, text: await engineeringDocument.text() } }
+            };
+            await run(() => remote.importAndAnalyze(sessionId, request));
+          },
+          moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: "boundary.move", boundaryIndex, requestedZ, snapTolerance }),
+          splitSegment: (segmentId, z, snapTolerance) => edit({ type: "segment.split", segmentId, z, snapTolerance }),
+          mergeBoundary: (boundaryIndex) => edit({ type: "boundary.merge", boundaryIndex }),
+          updateSegment: (segmentId, value) => edit({ type: "segment.metadata", segmentId, ...value }),
+          confirm: () => run(() => remote.confirmPartition(sessionId, ref())),
+          cancel: () => run(() => remote.cancelPartition(sessionId, ref())),
+          undo: () => run(() => remote.undoPartition(sessionId, ref())),
+          redo: () => run(() => remote.redoPartition(sessionId, ref())),
+          setPreviewHeld: (previewHeld) => update({ previewHeld })
+        },
+        dispose() {
+          disposed = true;
+          listeners.clear();
+        }
+      };
+    }
+    function unwrap(result) {
+      if (result.ok !== true) throw new Error("PARTITION_REMOTE_FAILED");
+      return structuredClone(result.value);
+    }
+    function hex(value) {
+      return [...new Uint8Array(value)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    function base64(bytes) {
+      let binary = "";
+      const size = 32768;
+      for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
+      return btoa(binary);
+    }
     const inject = ["remote", "drawingSurfaceRegistry"];
     async function apply(ctx) {
       const remote = ctx.get("remote");
@@ -6761,6 +7376,15 @@ window.__ModuleLoader__.load({
           const annotationRemote = scope.get("remote").drawingAnnotation;
           const registry2 = scope.get("drawingSurfaceRegistry");
           const stateSource = createAnnotationRemoteStateSource(annotationRemote);
+          const partitionControllers = /* @__PURE__ */ new Map();
+          const partitionFor = (sessionId) => {
+            const current = partitionControllers.get(sessionId);
+            if (current) return current;
+            const controller = createPartitionController(sessionId, annotationRemote);
+            partitionControllers.set(sessionId, controller);
+            void controller.actions.refresh();
+            return controller;
+          };
           const registration = registry2.registerWorkspace({
             id: "engineering-annotation",
             apiVersion: 1,
@@ -6770,13 +7394,16 @@ window.__ModuleLoader__.load({
               AnnotationWorkspace,
               {
                 ...props,
-                state: stateSource.observeState(props.sessionId)
+                state: stateSource.observeState(props.sessionId),
+                partition: partitionFor(props.sessionId)
               }
             )
           });
           return () => {
             registration.dispose();
             stateSource.dispose();
+            for (const controller of partitionControllers.values()) controller.dispose();
+            partitionControllers.clear();
           };
         }
       );
@@ -6791,7 +7418,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset["vectoraiDshAnnotation"] = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel-deep);\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  min-height: 0;\n  height: 100%;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__body { display: grid; min-height: 0; flex: 1; grid-template-columns: 48px minmax(0, 1fr) 248px; }\n.vai-annotation-workspace__rail { display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid rgba(148, 163, 184, .18); }\n.vai-annotation-workspace__rail button { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #8fa1b5; background: transparent; }\n.vai-annotation-workspace__rail button:hover { color: #e2e8f0; background: rgba(96, 165, 250, .12); }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-workspace__inspector { padding: 14px; border-left: 1px solid rgba(148, 163, 184, .18); background: rgba(15, 23, 32, .72); }\n.vai-annotation-workspace__inspector h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-workspace__inspector dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-workspace__inspector dt { color: #8fa1b5; }\n.vai-annotation-workspace__inspector dd { margin: 0; }\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel-deep);\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  min-height: 0;\n  height: 100%;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }\n.vai-annotation-workspace__body { display: grid; min-height: 0; flex: 1; grid-template-columns: 48px minmax(0, 1fr) 248px; }\n.vai-annotation-workspace__rail { display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid rgba(148, 163, 184, .18); }\n.vai-annotation-workspace__rail button { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #8fa1b5; background: transparent; }\n.vai-annotation-workspace__rail button:hover { color: #e2e8f0; background: rgba(96, 165, 250, .12); }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-workspace__inspector { padding: 14px; border-left: 1px solid rgba(148, 163, 184, .18); background: rgba(15, 23, 32, .72); }\n.vai-annotation-workspace__inspector h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-workspace__inspector dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-workspace__inspector dt { color: #8fa1b5; }\n.vai-annotation-workspace__inspector dd { margin: 0; }\n\n.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }\n.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }\n.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }\n.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }\n.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }\n\n.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }\n.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }\n.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }\n.vai-partition-band--geometry { stroke-dasharray: 8 5; }\n.vai-partition-label { fill: #dff6ff; font: 600 11px ui-monospace, monospace; paint-order: stroke; stroke: #0d151d; stroke-width: 3px; vector-effect: non-scaling-stroke; }\n.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }\n\n.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }\n.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }\n.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }\n.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }\n.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }\n.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }\n.vai-partition-inspector small { color: #8295aa; }\n.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }\n.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }\n.vai-partition-inspector__commands { display: flex; gap: 5px; }\n.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }\n.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }\n.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }\n.vai-partition-history { position: absolute; z-index: 8; left: 50%; bottom: 28px; display: flex; gap: 6px; transform: translateX(-50%); }\n.vai-partition-history button { width: 36px; height: 32px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 9px; color: #aebdce; background: rgba(14, 21, 29, .92); font-size: 18px; }\n.vai-partition-history button:disabled { opacity: .3; }\n";
       document.head.append(style);
       var dispose;
       try {

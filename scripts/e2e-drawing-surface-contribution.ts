@@ -12,14 +12,16 @@ class MemoryAnnotationStorage {
   delete(sessionId: string) { this.values.delete(sessionId); }
 }
 
+type MemoryDrawingState = { version: number; entry: unknown; commits: unknown[]; operations: unknown[] };
+
 class MemoryDrawingStorage {
-  state: any = null;
+  state: MemoryDrawingState | null = null;
   load() { return this.state?.entry ?? null; }
   save(_sessionId: string, entry: unknown) {
     this.state = { version: 2, entry: structuredClone(entry), commits: [], operations: [] };
   }
   loadDurable() { return this.state === null ? null : structuredClone(this.state); }
-  saveDurable(_sessionId: string, state: unknown) { this.state = structuredClone(state); }
+  saveDurable(_sessionId: string, state: unknown) { this.state = structuredClone(state) as MemoryDrawingState; }
 }
 
 const root = resolve(import.meta.dirname, '..');
@@ -93,7 +95,13 @@ console.log(JSON.stringify({
   ...transaction,
 }, null, 2));
 
-function installAnnotationContribution(registry: any, sessions: any) {
+interface SurfaceRegistryLike {
+  registerWorkspace(input: { id: string; apiVersion: number; priority: number; claimSource: unknown; Component: () => null }): { dispose(): void };
+  getWorkspaceSnapshot(sessionId: string): { electedId: string | null };
+}
+interface AnnotationSessionsLike { get(sessionId: string): unknown }
+
+function installAnnotationContribution(registry: SurfaceRegistryLike, sessions: AnnotationSessionsLike) {
   const source = annotationClient.createAnnotationRemoteStateSource({
     async getSessionState(requestedSessionId: string) {
       return { ok: true, value: sessions.get(requestedSessionId) };
@@ -115,7 +123,7 @@ function installAnnotationContribution(registry: any, sessions: any) {
   };
 }
 
-function assertElection(registry: any, expected: string | null, label: string) {
+function assertElection(registry: SurfaceRegistryLike, expected: string | null, label: string) {
   const actual = registry.getWorkspaceSnapshot(sessionId).electedId;
   if (actual !== expected) throw new Error(`SURFACE_E2E_ELECTION:${label}:${actual}`);
 }

@@ -14,6 +14,7 @@ import type {
   ReviewEvidence,
 } from '@vectorai/drawing-edit-protocol';
 import { queryDrawing, type DrawingSpatialQuery } from '@vectorai/drawing-spatial';
+import { importDxf as parseDxf } from '@vectorai/dxf-import';
 import { drawingDocumentSchema } from '@vectorai/plugin-space-contracts';
 import type {
   Bounds2D,
@@ -181,11 +182,88 @@ export class InMemoryDrawingRepository {
     };
   }
 
+  async importDxf(
+    sessionId: string,
+    input: { bytes: Uint8Array; name?: string; digest: string; signal?: AbortSignal },
+  ): Promise<DrawingImportResult> {
+    const current = this.#getDrawing(sessionId);
+    if (current?.attachmentId === input.digest) {
+      return {
+        status: 'already-imported',
+        ref: { drawingId: current.drawingId, revision: current.revision },
+        provisional: current.provisional,
+      };
+    }
+
+    input.signal?.throwIfAborted();
+    const actualDigest = `sha256:${createHash('sha256').update(input.bytes).digest('hex')}`;
+    if (actualDigest !== input.digest) {
+      throw new Error('DXF_IMPORT_REJECTED:DXF_DIGEST_MISMATCH');
+    }
+    const drawingId = `drawing_dxf_${actualDigest.slice('sha256:'.length, 'sha256:'.length + 24)}`;
+    const imported = parseDxf({
+      bytes: input.bytes.slice(),
+      source: {
+        digest: actualDigest,
+        ...(input.name === undefined ? {} : { name: input.name }),
+      },
+      drawingId,
+      now: this.#now,
+    });
+    if (imported.status === 'rejected') {
+      const codes = imported.diagnostics
+        .filter(({ severity }) => severity === 'error')
+        .map(({ code }) => code)
+        .join(',');
+      throw new Error(`DXF_IMPORT_REJECTED:${codes || 'UNKNOWN'}`);
+    }
+    input.signal?.throwIfAborted();
+    const provisional = imported.diagnostics.some(({ severity }) => severity === 'warning');
+    const entry: DrawingEntry = {
+      attachmentId: actualDigest,
+      document: structuredClone(imported.document),
+      drawingId,
+      bounds: structuredClone(imported.bounds),
+      revision: 1,
+      source: {
+        id: actualDigest,
+        mediaType: 'application/dxf',
+        bytes: input.bytes.byteLength,
+        ...(input.name === undefined ? {} : { name: input.name }),
+      },
+      provisional,
+    };
+    if (this.#storage?.saveDurable) {
+      const state: DrawingDurableState = {
+        version: 2,
+        entry: structuredClone(entry),
+        commits: [],
+        operations: [],
+      };
+      this.#storage.saveDurable(sessionId, structuredClone(state));
+      this.#durable.set(sessionId, state);
+    } else {
+      this.#storage?.save(sessionId, structuredClone(entry));
+    }
+    this.#drawings.set(sessionId, entry);
+    this.#previews.delete(sessionId);
+    return {
+      status: 'imported',
+      ref: { drawingId, revision: 1 },
+      provisional,
+    };
+  }
+
   getSnapshot(sessionId: string): DrawingWorkspaceSnapshot | null {
     const entry = this.#getDrawing(sessionId);
     if (entry === null) return null;
     const lastCommit = this.#durableState(sessionId)?.commits.at(-1);
     return snapshotOf(entry, lastCommit);
+  }
+
+  getBounds(sessionId: string): Bounds2D | null {
+    const entry = this.#getDrawing(sessionId);
+    return entry === null ? null : structuredClone(entry.bounds);
   }
 
   commit(

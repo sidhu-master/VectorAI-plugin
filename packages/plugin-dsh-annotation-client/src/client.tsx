@@ -8,6 +8,7 @@ import './client.css';
 import { AnnotationWorkspace } from './AnnotationWorkspace';
 import { createAnnotationRemoteStateSource } from './annotation-state-source';
 import { ANNOTATION_REMOTE } from './remote';
+import { createPartitionController } from './partition-controller';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -26,6 +27,15 @@ export async function apply(ctx: Context) {
       const annotationRemote = scope.get('remote').drawingAnnotation;
       const registry = scope.get('drawingSurfaceRegistry');
       const stateSource = createAnnotationRemoteStateSource(annotationRemote);
+      const partitionControllers = new Map<string, ReturnType<typeof createPartitionController>>();
+      const partitionFor = (sessionId: string) => {
+        const current = partitionControllers.get(sessionId);
+        if (current) return current;
+        const controller = createPartitionController(sessionId, annotationRemote);
+        partitionControllers.set(sessionId, controller);
+        void controller.actions.refresh();
+        return controller;
+      };
       const registration = registry.registerWorkspace({
         id: 'engineering-annotation',
         apiVersion: 1,
@@ -34,11 +44,14 @@ export async function apply(ctx: Context) {
         Component: (props) => <AnnotationWorkspace
           {...props}
           state={stateSource.observeState(props.sessionId)}
+          partition={partitionFor(props.sessionId)}
         />,
       });
       return () => {
         registration.dispose();
         stateSource.dispose();
+        for (const controller of partitionControllers.values()) controller.dispose();
+        partitionControllers.clear();
       };
     },
   );

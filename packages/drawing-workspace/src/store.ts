@@ -223,7 +223,7 @@ export function createDrawingWorkspaceStore(input: {
       const previousSource = sourceResource;
       let nextSource: DrawingSourceResource | null = null;
 
-      if (snapshot?.source !== undefined && port.loadSource !== undefined) {
+      if (snapshot?.source !== undefined && 'width' in snapshot.source && port.loadSource !== undefined) {
         try {
           nextSource = await port.loadSource(snapshot.source, requestController?.signal);
         } catch (error) {

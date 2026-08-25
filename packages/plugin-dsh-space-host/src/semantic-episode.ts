@@ -76,8 +76,9 @@ function sameDrawingRef(left: DrawingRef, right: DrawingRef): boolean {
 }
 
 function publicClone(episode: StoredEpisode): SemanticEditEpisode {
-  const { lastTransitionDigest: _lastTransitionDigest, ...visible } = episode;
-  return structuredClone(visible);
+  const visible = structuredClone(episode);
+  delete visible.lastTransitionDigest;
+  return visible;
 }
 
 export class SemanticEditEpisodeStore {
@@ -169,7 +170,8 @@ export class SemanticEditEpisodeStore {
     return publicClone(next);
   }
 
-  invalidate(sessionId: string, _reason: string): void {
+  invalidate(sessionId: string, reason: string): void {
+    void reason;
     if (!this.#episodes.has(sessionId)) return;
     this.#episodes.delete(sessionId);
     this.#nextEpoch(sessionId);

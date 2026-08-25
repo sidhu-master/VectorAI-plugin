@@ -15,6 +15,6 @@ describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
   });
 
   it('attaches Cordis service dependencies to the loader-visible default plugin', () => {
-    expect(plugin.inject).toEqual(['tools', 'drawingSpace']);
+    expect(plugin.inject).toEqual(['tools', 'drawingSpace', 'attachments', 'agents', 'subagents']);
   });
 });

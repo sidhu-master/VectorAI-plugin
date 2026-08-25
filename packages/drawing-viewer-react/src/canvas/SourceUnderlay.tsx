@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DrawingDocument } from '@vectorai/drawing-core';
-import type { DrawingSourceRef, DrawingSourceResource } from '@vectorai/drawing-workspace';
+import type { DrawingSourceResource } from '@vectorai/drawing-workspace';
+import type { RasterDrawingSourceRef } from './source-types';
+
 
 export function SourceUnderlay({
   source,
   resource,
   document,
 }: {
-  source: DrawingSourceRef;
+  source: RasterDrawingSourceRef;
   resource: DrawingSourceResource;
   document: DrawingDocument;
 }) {

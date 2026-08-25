@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  AnnotationId,
-  AnnotationNode,
-  AssociationRelation,
-  DrawingDocument,
-  EvidenceId,
-  GeometryNode,
-  RelationId,
-  Vec2,
+import {
+  sampleSpline,
+  type AnnotationId,
+  type AnnotationNode,
+  type AssociationRelation,
+  type DrawingDocument,
+  type EvidenceId,
+  type GeometryNode,
+  type RelationId,
+  type Vec2,
 } from '@vectorai/drawing-core';
 import type { DrawingRef, SpatialEditProgram } from '@vectorai/drawing-edit-protocol';
 
@@ -165,7 +166,7 @@ function pointsOf(node: GeometryNode): Vec2[] {
     return [[node.center[0] - radius, node.center[1] - radius], [node.center[0] + radius, node.center[1] + radius]];
   }
   if (node.type === 'polyline') return node.vertices.map(({ point }) => point);
-  return node.controlPoints;
+  return sampleSpline(node, { maxError: 0.02, maxDepth: 14 });
 }
 
 function stableKey(value: string): string {

@@ -90,4 +90,21 @@ describe('shared canvas geometry', () => {
       'circle-1',
     ]);
   });
+
+  it('fits evaluated spline bounds instead of the control polygon', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-spline' }, now: () => 1 });
+    document.geometry = [{
+      id: 'spline-1' as GeometryId,
+      type: 'spline',
+      degree: 2,
+      controlPoints: [[0, 0], [0, 10], [10, 0]],
+      knots: [0, 0, 0, 1, 1, 1],
+      closed: false,
+      periodic: false,
+      visible: true,
+      quality,
+    }];
+
+    expect(drawingBounds(document)).toEqual({ minX: 0, minY: 0, maxX: 10, maxY: 5 });
+  });
 });

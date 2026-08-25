@@ -16,6 +16,7 @@ import { CadGrid } from './Grid';
 import { EntityRenderer } from './EntityRenderer';
 import { MotionRigOverlay } from './MotionRigOverlay';
 import { SourceUnderlay } from './SourceUnderlay';
+import { isRasterDrawingSource } from './source-types';
 import {
   fitViewportToDrawing,
   nodeBounds,
@@ -335,7 +336,8 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
               <path d="M 0 0 L 10 5 L 0 10 z" />
             </marker>
           </defs>
-          {display.sourceUnderlay && snapshot.source !== undefined && sourceResource !== null ? (
+          {display.sourceUnderlay && snapshot.source !== undefined
+          && isRasterDrawingSource(snapshot.source) && sourceResource !== null ? (
             <SourceUnderlay
               source={snapshot.source}
               resource={sourceResource}

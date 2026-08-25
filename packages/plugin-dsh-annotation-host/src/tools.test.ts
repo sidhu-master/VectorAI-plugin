@@ -15,7 +15,7 @@ describe('drawing_auto_annotate', () => {
       id: 'circle-1' as never, type: 'circle', center: [0, 0], radius: 5, visible: true,
       quality: { status: 'confirmed', evidenceRefs: [] },
     }];
-    const runExtensionProgram = vi.fn(async (_agent: unknown, _request: unknown, _signal?: unknown) => ({ result: {
+    const runExtensionProgram = vi.fn(async () => ({ result: {
       status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
       ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
     } }));

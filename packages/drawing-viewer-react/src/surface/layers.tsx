@@ -13,6 +13,7 @@ import type { MouseEvent } from 'react';
 import { CadGrid } from '../canvas/Grid';
 import { EntityRenderer } from '../canvas/EntityRenderer';
 import { SourceUnderlay } from '../canvas/SourceUnderlay';
+import { isRasterDrawingSource } from '../canvas/source-types';
 import { nodeBounds } from '../canvas/geometry';
 
 export function GridLayer({ viewport }: { viewport: DrawingWorkspaceViewport }) {
@@ -32,7 +33,7 @@ export function SourceLayer({
   source: DrawingSourceRef | undefined;
   sourceUrl: string | null;
 }) {
-  if (source === undefined || sourceUrl === null) return null;
+  if (source === undefined || !isRasterDrawingSource(source) || sourceUrl === null) return null;
   return <SourceUnderlay
     source={source}
     resource={{ url: sourceUrl, dispose() {} }}

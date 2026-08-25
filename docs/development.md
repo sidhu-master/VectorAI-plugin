@@ -74,6 +74,8 @@ Launcher 使用独立应用窗口启动 DSH，不显示终端黑窗。它在启�
 - 用户明确调用图纸导入时，`drawing_import` 读取 DSH attachment 并运行随 Host 打包的本地 Python worker。
 - 正式状态位于 `~/.dsh/vectorai/drawings/`；源图片仍由 DSH attachment store 管理。
 - 自动标注 Workspace claim 位于 `~/.dsh/vectorai/annotation-sessions/`；任务完成、取消或失败不会清除，session 销毁时删除。
+- 分区草稿、确认版本及 Undo/Redo 历史位于 `~/.dsh/vectorai/annotation-partitions/`，使用散列 session 文件名和临时文件 rename 原子写入。
+- DXF 智能分区只由专业工作区的显式导入触发。DXF 上限 20 MiB，工程文档上限 2 MiB；Host 会重新计算 SHA-256。
 - Drawing 工具按需激活；无 Drawing 的普通会话不显示 VectorAI Workspace。
 - 第一层与第二层 UI 路由已使用成功能力认领，不使用消息文本或附件启发式；第二层不可用时临时回退第一层。
 
@@ -96,6 +98,7 @@ pnpm test:dsh-launcher
 pnpm e2e:host-owned-semantic-edit
 pnpm e2e:motion-rig
 pnpm e2e:drawing-surface
+pnpm e2e:dxf-smart-partition
 ```
 
 包级调试示例：

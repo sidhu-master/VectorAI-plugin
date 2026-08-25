@@ -2,6 +2,8 @@
 
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import { createEmptyDrawing } from '@vectorai/drawing-core';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { DrawingDurableState } from './durable-envelope';
@@ -72,6 +74,42 @@ function repository(
 }
 
 describe('InMemoryDrawingRepository', () => {
+  it('publishes a valid DXF atomically and reuses the same source digest', async () => {
+    const drawings = repository();
+    const bytes = await readFile(resolve(import.meta.dirname, '../../dxf-import/test/fixtures/initial-shaft.dxf'));
+    const request = {
+      bytes,
+      name: 'initial-shaft.dxf',
+      digest: 'sha256:57f79b850e95e852e6ea427711e2534effeecf0f90257340504efcc3f498c1b2',
+      signal: new AbortController().signal,
+    };
+
+    const imported = await drawings.importDxf('session-dxf', request);
+    const snapshot = drawings.getSnapshot('session-dxf');
+    const second = await drawings.importDxf('session-dxf', request);
+
+    expect(imported).toEqual({
+      status: 'imported',
+      ref: { drawingId: expect.stringMatching(/^drawing_dxf_/), revision: 1 },
+      provisional: false,
+    });
+    expect(second).toEqual({ ...imported, status: 'already-imported' });
+    expect(snapshot?.source).toEqual({
+      id: request.digest,
+      mediaType: 'application/dxf',
+      bytes: bytes.byteLength,
+      name: 'initial-shaft.dxf',
+    });
+    expect(snapshot?.document.geometry).toHaveLength(134);
+
+    await expect(drawings.importDxf('session-dxf', {
+      ...request,
+      digest: 'sha256:invalid',
+      bytes: new TextEncoder().encode('not a DXF'),
+    })).rejects.toThrow('DXF_IMPORT_REJECTED');
+    expect(drawings.getSnapshot('session-dxf')).toEqual(snapshot);
+  });
+
   it('promotes a legacy version-1 drawing into durable history on first semantic commit', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing_legacy' }, now: () => 1 });
     document.geometry = [{

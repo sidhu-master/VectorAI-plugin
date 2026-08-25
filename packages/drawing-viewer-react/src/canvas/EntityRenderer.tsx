@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AnnotationNode, GeometryNode, Vec2 } from '@vectorai/drawing-core';
+import { sampleSpline, type AnnotationNode, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
 import type { MouseEvent } from 'react';
 
 import { nodeBounds, worldBoundsForViewport } from './geometry';
@@ -83,7 +83,7 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
     case 'polyline':
       return <path d={polylinePath(node)} fill="none" {...vectorStroke} />;
     case 'spline':
-      return <path d={splinePath(node.controlPoints, node.closed)} fill="none" {...vectorStroke} />;
+      return <path d={splinePath(node, viewport)} fill="none" {...vectorStroke} />;
     case 'text':
       return <WorldText position={node.position} rotation={node.rotation} height={node.height} align={node.alignment}>{node.content}</WorldText>;
     case 'dimension':
@@ -173,20 +173,18 @@ function pointsAttribute(points: readonly Vec2[]): string {
   return points.map((point) => `${point[0]},${point[1]}`).join(' ');
 }
 
-function splinePath(points: readonly Vec2[], closed: boolean): string {
+function splinePath(
+  node: Extract<GeometryNode, { type: 'spline' }>,
+  viewport: DrawingWorkspaceViewport,
+): string {
+  const points = sampleSpline(node, { maxError: Math.max(0.25 / viewport.scale, 1e-8) });
   if (points.length === 0) return '';
   if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
-  if (points.length === 2) return `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]}${closed ? ' Z' : ''}`;
-  const commands = [`M ${points[0][0]} ${points[0][1]}`];
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const control = points[index];
-    const next = points[index + 1];
-    const end = index === points.length - 2
-      ? next
-      : [(control[0] + next[0]) / 2, (control[1] + next[1]) / 2];
-    commands.push(`Q ${control[0]} ${control[1]} ${end[0]} ${end[1]}`);
-  }
-  if (closed) commands.push('Z');
+  const commands = [
+    `M ${points[0][0]} ${points[0][1]}`,
+    ...points.slice(1).map(([x, y]) => `L ${x} ${y}`),
+  ];
+  if (node.closed) commands.push('Z');
   return commands.join(' ');
 }
 

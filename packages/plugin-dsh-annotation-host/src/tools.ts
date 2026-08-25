@@ -10,7 +10,7 @@ import type {
 import type { AnnotationSessionStateStore } from './session-state';
 
 export function createEngineeringAnnotationTool(
-  host: DrawingSpaceExtensionHost<Agent>,
+  host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
   sessions: AnnotationSessionStateStore,
 ) {
   return defineTool({

@@ -6,6 +6,7 @@ import type {
   GeometryNode,
   Vec2,
 } from '@vectorai/drawing-core';
+import { splineBounds } from '@vectorai/drawing-core';
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 
 export interface Bounds2D {
@@ -101,7 +102,7 @@ export function nodeBounds(node: DrawingRenderable): Bounds2D | null {
     case 'arc': return arcBounds(node.center, node.radius, node.startAngle, node.endAngle, node.counterClockwise);
     case 'ellipse': return ellipseBounds(node);
     case 'polyline': return boundsFromPoints(node.vertices.map((vertex) => vertex.point));
-    case 'spline': return boundsFromPoints(node.controlPoints);
+    case 'spline': return splineBounds(node);
     case 'text': return textBounds(node);
     case 'dimension': return boundsFromPoints([...node.definitionPoints, node.textPosition]);
     case 'leader': return boundsFromPoints(node.points);

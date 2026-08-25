@@ -4,7 +4,6 @@ import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
 import {
   createDrawingWorkspaceStore,
   type DrawingMotionRigProjection,
-  type DrawingWorkspaceCommitRequest,
   type DrawingWorkspacePort,
   type DrawingWorkspaceSnapshot,
 } from '@vectorai/drawing-workspace';
@@ -47,7 +46,7 @@ describe('Canvas temporary motion rig', () => {
     const port: DrawingWorkspacePort = {
       load: async () => value.snapshot,
       loadMotionRig: async () => value.rig,
-      commit: async (_request: DrawingWorkspaceCommitRequest) => ({
+      commit: async () => ({
         status: 'rejected', code: 'not-used', message: 'not used',
       }),
     };

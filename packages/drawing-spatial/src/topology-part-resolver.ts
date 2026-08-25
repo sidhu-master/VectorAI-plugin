@@ -7,12 +7,13 @@ import type {
   VirtualSplitPlan,
   VirtualSplitRange,
 } from './topology-types';
-import type {
-  DrawingDocument,
-  GeometryNode,
-  GeometryId,
-  RevisionId,
-  Vec2,
+import {
+  sampleSpline,
+  type DrawingDocument,
+  type GeometryNode,
+  type GeometryId,
+  type RevisionId,
+  type Vec2,
 } from '@vectorai/drawing-core';
 import type { SpatialBounds2D } from './query';
 import { portableDigest } from './digest';
@@ -327,7 +328,7 @@ function closedGeometryContains(node: GeometryNode, point: Vec2): boolean {
     case 'polyline':
       return node.closed && pointInPolygon(point, node.vertices.map((vertex) => vertex.point));
     case 'spline':
-      return node.closed && pointInPolygon(point, node.controlPoints);
+      return node.closed && pointInPolygon(point, sampleSpline(node, { maxError: 0.02, maxDepth: 16 }));
     default:
       return false;
   }
@@ -341,7 +342,7 @@ function geometryArea(node: GeometryNode): number {
       return Math.PI * major * major * node.ratio;
     }
     case 'polyline': return Math.abs(polygonSignedArea(node.vertices.map((vertex) => vertex.point)));
-    case 'spline': return Math.abs(polygonSignedArea(node.controlPoints));
+    case 'spline': return Math.abs(polygonSignedArea(sampleSpline(node, { maxError: 0.02, maxDepth: 16 })));
     default: return Number.POSITIVE_INFINITY;
   }
 }

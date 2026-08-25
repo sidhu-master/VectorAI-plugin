@@ -98,7 +98,7 @@ export function createPreStepIntake(
         numericConstraints,
       });
     }
-    let messages = [...decision.messages];
+    const messages = [...decision.messages];
     const attachment = directUser ? findLatestImage([directUser]) : null;
     const selection = semantic?.currentSelectionProjection?.(sessionId) ?? null;
     const drawingRef = selection?.drawingRef ?? snapshot?.ref;

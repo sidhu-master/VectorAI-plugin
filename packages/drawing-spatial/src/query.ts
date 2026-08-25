@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  AnnotationNode,
-  DrawingDocument,
-  DrawingRelation,
-  GeometryNode,
-  SemanticFeature,
-  Vec2,
+import {
+  splineBounds,
+  type AnnotationNode,
+  type DrawingDocument,
+  type DrawingRelation,
+  type GeometryNode,
+  type SemanticFeature,
+  type Vec2,
 } from '@vectorai/drawing-core';
 
 export interface SpatialBounds2D {
@@ -231,7 +232,7 @@ function boundsOfNode(node: Exclude<GeometryNode, { type: 'ray' | 'xline' }> | A
       };
     }
     case 'polyline': return fromPoints(node.vertices.map(({ point }) => point));
-    case 'spline': return fromPoints(node.controlPoints);
+    case 'spline': return splineBounds(node);
     case 'text': {
       const width = node.maxWidth ?? Math.max(node.height, node.content.length * node.height * 0.6);
       return expandPoint(node.position, width, node.height);

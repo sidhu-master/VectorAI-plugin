@@ -78,14 +78,21 @@ export interface DrawingGroundingOverlay {
   groups: DrawingGroundingOverlayGroup[];
 }
 
-export interface DrawingSourceRef {
-  id: string;
-  mediaType: string;
-  bytes?: number;
-  width: number;
-  height: number;
-  name?: string;
-}
+export type DrawingSourceRef =
+  | {
+    id: string;
+    mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+    bytes?: number;
+    width: number;
+    height: number;
+    name?: string;
+  }
+  | {
+    id: string;
+    mediaType: 'application/dxf';
+    bytes?: number;
+    name?: string;
+  };
 
 export interface DrawingSourceResource {
   url: string;

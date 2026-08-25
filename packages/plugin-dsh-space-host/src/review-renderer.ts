@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AnnotationNode, DrawingDocument, GeometryNode, Vec2 } from '@vectorai/drawing-core';
+import { sampleSpline, type AnnotationNode, type DrawingDocument, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 
@@ -27,6 +27,13 @@ export interface ObservationRenderManifest {
     anchor: [number, number];
     labelPosition: [number, number];
   }>;
+  worldOverlays: DrawingWorldOverlay[];
+}
+
+export interface DrawingWorldOverlay {
+  id: string;
+  label: string;
+  polygon: Vec2[];
 }
 
 export async function renderDrawingObservation(input: {
@@ -34,6 +41,7 @@ export async function renderDrawingObservation(input: {
   viewport: { minX: number; minY: number; maxX: number; maxY: number };
   selectedNodeIds?: string[];
   candidateMarkers?: Array<{ key: string; nodeIds: string[] }>;
+  worldOverlays?: DrawingWorldOverlay[];
 }): Promise<{ png: Uint8Array; contentDigest: string; manifest: ObservationRenderManifest }> {
   const width = 960 as const;
   const height = 720 as const;
@@ -48,6 +56,14 @@ export async function renderDrawingObservation(input: {
   const normal = renderDocument(input.document, new Set(), '#d7e0ea');
   const highlight = selected.size === 0 ? '' : renderDocument(input.document, selected, '#ffad42', true);
   const candidateLayout = layoutCandidateMarkers(input.document, input.candidateMarkers ?? [], transform, width, height);
+  const worldOverlays = validateWorldOverlays(input.worldOverlays ?? []);
+  const worldOverlayShapes = worldOverlays.map(({ id, polygon }) => (
+    `<polygon data-world-overlay="${escapeXml(id)}" points="${polygon.map((point) => point.join(',')).join(' ')}" fill="#35bdf455" stroke="#35bdf4" stroke-width="2" vector-effect="non-scaling-stroke"/>`
+  )).join('');
+  const worldOverlayLabels = worldOverlays.map(({ id, label, polygon }) => {
+    const anchor = worldToImage(average(polygon)!, transform);
+    return `<g data-world-overlay-label="${escapeXml(id)}"><rect x="${anchor[0] - 14}" y="${anchor[1] - 11}" width="28" height="22" rx="5" fill="#08384d" stroke="#35bdf4"/><text x="${anchor[0]}" y="${anchor[1] + 4}" text-anchor="middle" fill="#ecfbff" font-family="ui-monospace, monospace" font-size="12" font-weight="700">${escapeXml(label)}</text></g>`;
+  }).join('');
   const candidateLabels = candidateLayout.map(({ key, anchor, labelPosition, boxWidth }) => {
     const [anchorX, anchorY] = anchor;
     const [labelX, labelY] = labelPosition;
@@ -60,8 +76,8 @@ export async function renderDrawingObservation(input: {
   }).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="${width}" height="${height}" fill="#101419"/>
-    <g transform="matrix(${transform.join(' ')})">${normal}${highlight}</g>
-    ${candidateLabels}
+    <g transform="matrix(${transform.join(' ')})">${worldOverlayShapes}${normal}${highlight}</g>
+    ${candidateLabels}${worldOverlayLabels}
   </svg>`;
   const png = await sharp(Buffer.from(svg)).png().toBuffer();
   return {
@@ -74,6 +90,7 @@ export async function renderDrawingObservation(input: {
       candidateMarkers: candidateLayout.map(({ key, nodeCount, anchor, labelPosition }) => ({
         key, nodeCount, anchor, labelPosition,
       })),
+      worldOverlays: structuredClone(worldOverlays),
     },
   };
 }
@@ -211,13 +228,35 @@ function renderNode(node: GeometryNode | AnnotationNode, color: string): string 
       return `<ellipse cx="${node.center[0]}" cy="${node.center[1]}" rx="${rx}" ry="${rx * node.ratio}" transform="rotate(${rotation} ${node.center[0]} ${node.center[1]})" ${style}/>`;
     }
     case 'polyline': return `<polyline points="${node.vertices.map(({ point }) => point.join(',')).join(' ')}" ${node.closed ? 'data-closed="true"' : ''} ${style}/>`;
-    case 'spline': return `<polyline points="${node.controlPoints.map((point) => point.join(',')).join(' ')}" ${style}/>`;
+    case 'spline': return `<polyline points="${sampleSpline(node, { maxError: 0.1 }).map((point) => point.join(',')).join(' ')}" ${style}/>`;
     case 'text': return textBox(node.position, node.height, node.content, color);
     case 'dimension': return `${node.definitionPoints.length > 1 ? `<polyline points="${node.definitionPoints.map((point) => point.join(',')).join(' ')}" ${style}/>` : ''}${textBox(node.textPosition, 4, node.displayText ?? 'DIM', color)}`;
     case 'leader': return `<polyline points="${node.points.map((point) => point.join(',')).join(' ')}" ${style}/>${textBox(node.points.at(-1) ?? [0, 0], node.textHeight, node.content, color)}`;
     case 'centerline': return `<line x1="${node.start[0]}" y1="${node.start[1]}" x2="${node.end[0]}" y2="${node.end[1]}" stroke-dasharray="8 4" ${style}/>`;
     case 'section-hatch': return node.segments.map(({ start, end }) => `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" ${style}/>`).join('');
   }
+}
+
+function validateWorldOverlays(overlays: DrawingWorldOverlay[]): DrawingWorldOverlay[] {
+  if (overlays.length > 128) throw new Error('DRAWING_OBSERVATION_OVERLAY_INVALID');
+  for (const overlay of overlays) {
+    if (!overlay.id || !overlay.label || overlay.label.length > 80
+      || overlay.polygon.length < 3 || overlay.polygon.length > 16
+      || overlay.polygon.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value)))) {
+      throw new Error('DRAWING_OBSERVATION_OVERLAY_INVALID');
+    }
+  }
+  return structuredClone(overlays);
+}
+
+function worldToImage(
+  point: Vec2,
+  transform: ObservationRenderManifest['worldToImage'],
+): [number, number] {
+  return [
+    transform[0] * point[0] + transform[2] * point[1] + transform[4],
+    transform[1] * point[0] + transform[3] * point[1] + transform[5],
+  ];
 }
 
 function textBox(position: Vec2, height: number, text: string, color: string): string {

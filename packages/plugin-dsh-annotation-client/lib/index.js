@@ -3087,6 +3087,189 @@ function requireJsxRuntime() {
   return jsxRuntime.exports;
 }
 var jsxRuntimeExports = requireJsxRuntime();
+function evaluateHomogeneous(node, normalized) {
+  const pointCount = node.controlPoints.length;
+  const lastControlIndex = pointCount - 1;
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[lastControlIndex + 1];
+  const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
+  const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
+  const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
+  const work = [];
+  for (let index = 0; index <= node.degree; index += 1) {
+    const sourceIndex = span - node.degree + index;
+    const weight = weights[sourceIndex];
+    const point = node.controlPoints[sourceIndex];
+    work.push([point[0] * weight, point[1] * weight, weight]);
+  }
+  for (let level = 1; level <= node.degree; level += 1) {
+    for (let index = node.degree; index >= level; index -= 1) {
+      const knotIndex = span - node.degree + index;
+      const denominator = node.knots[knotIndex + node.degree - level + 1] - node.knots[knotIndex];
+      const alpha = denominator === 0 ? 0 : (knotParameter - node.knots[knotIndex]) / denominator;
+      work[index] = mixHomogeneous(work[index - 1], work[index], alpha);
+    }
+  }
+  return work[node.degree];
+}
+function sampleSpline(node, { maxError, maxDepth = 12 }) {
+  if (!(Number.isFinite(maxError) && maxError > 0)) {
+    throw new TypeError("SPLINE_MAX_ERROR_INVALID");
+  }
+  if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 24) {
+    throw new TypeError("SPLINE_MAX_DEPTH_INVALID");
+  }
+  validateSpline(node);
+  const first = project(evaluateHomogeneous(node, 0));
+  const output = [first];
+  const spans = normalizedKnotSpans(node);
+  for (let index = 1; index < spans.length; index += 1) {
+    const controls = extractBezierControls(node, spans[index - 1], spans[index]);
+    subdivideBezier(controls, 0, maxDepth, maxError, output);
+  }
+  if (node.closed && !samePoint(output[0], output.at(-1))) output.push(output[0]);
+  return output;
+}
+function normalizedKnotSpans(node) {
+  const start = node.knots[node.degree];
+  const end = node.knots[node.controlPoints.length];
+  return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start) / (end - start)).filter((value, index, values) => index === 0 || value > values[index - 1]);
+}
+function splineBounds(node) {
+  validateSpline(node);
+  const controlMinX = Math.min(...node.controlPoints.map(([x]) => x));
+  const controlMaxX = Math.max(...node.controlPoints.map(([x]) => x));
+  const controlMinY = Math.min(...node.controlPoints.map(([, y]) => y));
+  const controlMaxY = Math.max(...node.controlPoints.map(([, y]) => y));
+  const span = Math.max(controlMaxX - controlMinX, controlMaxY - controlMinY, 1);
+  const points = sampleSpline(node, { maxError: Math.max(span * 1e-6, 1e-8), maxDepth: 18 });
+  return {
+    minX: Math.min(...points.map(([x]) => x)),
+    minY: Math.min(...points.map(([, y]) => y)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    maxY: Math.max(...points.map(([, y]) => y))
+  };
+}
+function validateSpline(node) {
+  if (!Number.isInteger(node.degree) || node.degree < 1) {
+    throw new TypeError("SPLINE_DEGREE_INVALID");
+  }
+  if (node.controlPoints.length <= node.degree) {
+    throw new TypeError("SPLINE_CONTROL_POINT_COUNT_INVALID");
+  }
+  if (node.controlPoints.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
+    throw new TypeError("SPLINE_CONTROL_POINT_INVALID");
+  }
+  const expectedKnots = node.controlPoints.length + node.degree + 1;
+  if (node.knots.length !== expectedKnots) {
+    throw new TypeError("SPLINE_KNOT_COUNT_INVALID");
+  }
+  if (node.knots.some((value, index) => !Number.isFinite(value) || index > 0 && value < node.knots[index - 1])) {
+    throw new TypeError("SPLINE_KNOT_SEQUENCE_INVALID");
+  }
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[node.controlPoints.length];
+  if (!(domainEnd > domainStart)) throw new TypeError("SPLINE_KNOT_DOMAIN_INVALID");
+  if (node.weights !== void 0 && (node.weights.length !== node.controlPoints.length || node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0))) {
+    throw new TypeError("SPLINE_WEIGHTS_INVALID");
+  }
+}
+function findSpan(knots, degree, lastControlIndex, value) {
+  let low = degree;
+  let high = lastControlIndex + 1;
+  let middle = Math.floor((low + high) / 2);
+  while (value < knots[middle] || value >= knots[middle + 1]) {
+    if (value < knots[middle]) high = middle;
+    else low = middle;
+    middle = Math.floor((low + high) / 2);
+  }
+  return middle;
+}
+function mixHomogeneous(first, second, alpha) {
+  return [
+    first[0] * (1 - alpha) + second[0] * alpha,
+    first[1] * (1 - alpha) + second[1] * alpha,
+    first[2] * (1 - alpha) + second[2] * alpha
+  ];
+}
+function subdivideBezier(controls, depth, maxDepth, maxError, output) {
+  const points = controls.map(project);
+  const start = points[0];
+  const end = points.at(-1);
+  const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
+  if (depth >= maxDepth || flatness <= maxError) {
+    output.push(end);
+    return;
+  }
+  const [left, right] = splitBezier(controls);
+  subdivideBezier(left, depth + 1, maxDepth, maxError, output);
+  subdivideBezier(right, depth + 1, maxDepth, maxError, output);
+}
+function extractBezierControls(node, start, end) {
+  const degree = node.degree;
+  if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
+  const samples = Array.from({ length: degree + 1 }, (_, row) => {
+    const local = row / degree;
+    return evaluateHomogeneous(node, start + (end - start) * local);
+  });
+  const matrix = Array.from({ length: degree + 1 }, (_, row) => {
+    const parameter = row / degree;
+    return Array.from({ length: degree + 1 }, (_2, column) => bernstein(degree, column, parameter));
+  });
+  return solve(matrix, samples);
+}
+function solve(matrix, values) {
+  const size = matrix.length;
+  const augmented = matrix.map((row, index) => [...row, ...values[index]]);
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+    const divisor = augmented[column][column];
+    if (Math.abs(divisor) <= 1e-14) throw new TypeError("SPLINE_BEZIER_EXTRACTION_FAILED");
+    for (let index = column; index < size + 3; index += 1) augmented[column][index] = augmented[column][index] / divisor;
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = augmented[row][column];
+      for (let index = column; index < size + 3; index += 1) augmented[row][index] = augmented[row][index] - factor * augmented[column][index];
+    }
+  }
+  return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
+}
+function splitBezier(controls) {
+  const levels = [controls.map((point) => [...point])];
+  while (levels.at(-1).length > 1) {
+    const previous = levels.at(-1);
+    levels.push(previous.slice(1).map((point, index) => mixHomogeneous(previous[index], point, 0.5)));
+  }
+  return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
+}
+function project(point) {
+  if (!(Math.abs(point[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
+  return [point[0] / point[2], point[1] / point[2]];
+}
+function bernstein(degree, index, parameter) {
+  return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
+}
+function binomial(n, k) {
+  let result = 1;
+  for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
+  return result;
+}
+function pointSegmentDistance(point, start, end) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+  return Math.hypot(
+    point[0] - (start[0] + projection * dx),
+    point[1] - (start[1] + projection * dy)
+  );
+}
+function samePoint(first, second) {
+  return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
+}
 var reactExports = requireReact();
 function gridPatternMetrics(viewport) {
   const minorSize = 10 * viewport.scale;
@@ -3218,7 +3401,7 @@ function nodeBounds(node) {
     case "polyline":
       return boundsFromPoints(node.vertices.map((vertex) => vertex.point));
     case "spline":
-      return boundsFromPoints(node.controlPoints);
+      return splineBounds(node);
     case "text":
       return textBounds(node);
     case "dimension":
@@ -3416,7 +3599,7 @@ function renderNode(node, viewport) {
     case "polyline":
       return /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: polylinePath(node), fill: "none", ...vectorStroke });
     case "spline":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: splinePath(node.controlPoints, node.closed), fill: "none", ...vectorStroke });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: splinePath(node, viewport), fill: "none", ...vectorStroke });
     case "text":
       return /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.position, rotation: node.rotation, height: node.height, align: node.alignment, children: node.content });
     case "dimension":
@@ -3484,18 +3667,15 @@ function dimensionLabel(node) {
 function pointsAttribute(points) {
   return points.map((point) => `${point[0]},${point[1]}`).join(" ");
 }
-function splinePath(points, closed) {
+function splinePath(node, viewport) {
+  const points = sampleSpline(node, { maxError: Math.max(0.25 / viewport.scale, 1e-8) });
   if (points.length === 0) return "";
   if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
-  if (points.length === 2) return `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]}${closed ? " Z" : ""}`;
-  const commands = [`M ${points[0][0]} ${points[0][1]}`];
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const control = points[index];
-    const next = points[index + 1];
-    const end = index === points.length - 2 ? next : [(control[0] + next[0]) / 2, (control[1] + next[1]) / 2];
-    commands.push(`Q ${control[0]} ${control[1]} ${end[0]} ${end[1]}`);
-  }
-  if (closed) commands.push("Z");
+  const commands = [
+    `M ${points[0][0]} ${points[0][1]}`,
+    ...points.slice(1).map(([x, y]) => `L ${x} ${y}`)
+  ];
+  if (node.closed) commands.push("Z");
   return commands.join(" ");
 }
 function polylinePath(node) {
@@ -3576,12 +3756,15 @@ function SourceUnderlay({
 function safeId(value) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
+function isRasterDrawingSource(source) {
+  return "width" in source && "height" in source;
+}
 function SourceLayer({
   document,
   source,
   sourceUrl
 }) {
-  if (source === void 0 || sourceUrl === null) return null;
+  if (source === void 0 || !isRasterDrawingSource(source) || sourceUrl === null) return null;
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     SourceUnderlay,
     {
@@ -3867,14 +4050,136 @@ function normalizeBounds(first, second) {
     maxY: Math.max(first[1], second[1])
   };
 }
-function AnnotationWorkspace({ namespace, runtime, state }) {
+function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
+  const [drag, setDrag] = reactExports.useState(null);
+  const current = reactExports.useRef(null);
+  const point = (z, r) => [
+    draft.axis.origin[0] + draft.axis.direction[0] * z + draft.axis.normal[0] * r,
+    draft.axis.origin[1] + draft.axis.direction[1] * z + draft.axis.normal[1] * r
+  ];
+  const pointerMove = (event) => {
+    if (!current.current) return;
+    const delta = (event.movementX * draft.axis.direction[0] - event.movementY * draft.axis.direction[1]) / Math.max(scale, 1e-6);
+    current.current = { ...current.current, z: current.current.z + delta };
+    setDrag(current.current);
+  };
+  const pointerUp = (event) => {
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    const value = current.current;
+    current.current = null;
+    setDrag(null);
+    if (value) onMoveBoundary(value.index, value.z);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-partition-overlay": "true", children: [
+    draft.segments.map((segment, index) => {
+      const radius = Math.max(segment.profile.maxRadius, 0.1) * 1.04;
+      const polygon = [point(segment.zStart, -radius), point(segment.zEnd, -radius), point(segment.zEnd, radius), point(segment.zStart, radius)];
+      const origin = segment.semanticEvidenceIds.map((id) => {
+        var _a2;
+        return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
+      }).find(Boolean) ?? "geometry";
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-partition-origin": origin, "data-segment-id": segment.id, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("polygon", { points: polygon.map((value) => value.join(",")).join(" "), className: `vai-partition-band vai-partition-band--${origin}`, "data-line-style": origin === "document" ? "solid" : origin === "ai" ? "dotted" : "dashed" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("g", { transform: `translate(${point((segment.zStart + segment.zEnd) / 2, 0).join(" ")}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "vai-partition-label", textAnchor: "middle", children: segment.name ?? `S${index + 1}` }) })
+      ] }, segment.id);
+    }),
+    !previewHeld && draft.segments.slice(0, -1).map((segment, offset) => {
+      const index = offset + 1;
+      const z = (drag == null ? void 0 : drag.index) === index ? drag.z : segment.zEnd;
+      const position = point(z, 0);
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "circle",
+        {
+          "aria-label": `移动分区边界 ${index}`,
+          className: "vai-partition-handle",
+          cx: position[0],
+          cy: position[1],
+          r: 7 / Math.max(scale, 0.01),
+          onPointerDown: (event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            current.current = { index, z };
+            setDrag(current.current);
+          },
+          onPointerMove: pointerMove,
+          onPointerUp: pointerUp,
+          onPointerCancel: pointerUp
+        },
+        `boundary:${index}`
+      );
+    })
+  ] });
+}
+function PartitionActionToolbar({ controller, previewHeld }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": "分区确认工具栏", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--cancel", "aria-label": "取消分区", title: "取消", onClick: () => void controller.actions.cancel().catch(() => void 0), children: "×" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        type: "button",
+        className: `vai-partition-action vai-partition-action--preview${previewHeld ? " is-held" : ""}`,
+        "aria-label": "按住预览分区结果",
+        title: "按住预览",
+        onPointerDown: () => controller.actions.setPreviewHeld(true),
+        onPointerUp: () => controller.actions.setPreviewHeld(false),
+        onPointerCancel: () => controller.actions.setPreviewHeld(false),
+        onPointerLeave: () => controller.actions.setPreviewHeld(false),
+        children: "◉"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--confirm", "aria-label": "确认分区", title: "确认", onClick: () => void controller.actions.confirm().catch(() => void 0), children: "✓" })
+  ] });
+}
+function PartitionInspector({ draft, controller }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "轴段分区" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { children: draft.segments.map((segment, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: segment.name ?? `轴段 S${index + 1}` }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("small", { children: [
+        segment.zStart.toFixed(2),
+        " – ",
+        segment.zEnd.toFixed(2),
+        " · ⌀",
+        (segment.profile.maxRadius * 2).toFixed(2)
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector__fields", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("input", { "aria-label": `轴段 ${index + 1} 名称`, defaultValue: segment.name ?? "", placeholder: "名称", onBlur: (event) => void controller.actions.updateSegment(segment.id, { name: event.currentTarget.value }).catch(() => void 0) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("input", { "aria-label": `轴段 ${index + 1} 类型`, defaultValue: segment.semanticType ?? "", placeholder: "类型", onBlur: (event) => void controller.actions.updateSegment(segment.id, { semanticType: event.currentTarget.value }).catch(() => void 0) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector__commands", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": `拆分轴段 ${index + 1}`, onClick: () => void controller.actions.splitSegment(segment.id, (segment.zStart + segment.zEnd) / 2, Math.max(draft.axis.zMax * 3e-3, 0.05)).catch(() => void 0), children: "拆分" }),
+        index > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": `合并边界 ${index}`, onClick: () => void controller.actions.mergeBoundary(index).catch(() => void 0), children: "与前段合并" })
+      ] }),
+      index < draft.segments.length - 1 && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "vai-partition-inspector__boundary", children: [
+        "结束位置",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "number", step: "any", defaultValue: segment.zEnd, "aria-label": `边界 ${index + 1} 精确位置`, onKeyDown: (event) => {
+          if (event.key === "Enter") void controller.actions.moveBoundary(index + 1, Number(event.currentTarget.value), 0).catch(() => void 0);
+        } })
+      ] })
+    ] }, segment.id)) }),
+    draft.diagnostics.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-partition-diagnostics", children: draft.diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: diagnostic.code }, diagnostic.id)) })
+  ] });
+}
+function AnnotationWorkspace({ namespace, runtime, state, partition }) {
   var _a2;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport);
   const selectedIds = useObservable(runtime.selection);
   const presentation = useObservable(runtime.presentation);
   const annotationState = useObservable(state);
+  const partitionState = useObservable(partition.state);
+  const [dxf, setDxf] = reactExports.useState(null);
+  const [engineering, setEngineering] = reactExports.useState(null);
+  const [showImport, setShowImport] = reactExports.useState(false);
   const displaySnapshot = presentation.displaySnapshot ?? snapshot;
+  const draft = partitionState.partition.draft;
+  reactExports.useEffect(() => {
+    const release = () => partition.actions.setPreviewHeld(false);
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("blur", release);
+      release();
+    };
+  }, [partition]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "section",
     {
@@ -3885,38 +4190,75 @@ function AnnotationWorkspace({ namespace, runtime, state }) {
         /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "vai-annotation-workspace__header", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "工程图自动标注" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: displaySnapshot === null ? "等待图纸" : `${displaySnapshot.ref.drawingId} · R${displaySnapshot.ref.revision}` })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: displaySnapshot === null ? "等待图纸" : `${displaySnapshot.ref.drawingId} · R${displaySnapshot.ref.revision}` }),
+            (displaySnapshot == null ? void 0 : displaySnapshot.provisional) && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-annotation-provisional", children: "候选图纸" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "data-annotation-workflow": annotationState.workflow.status, children: workflowLabel(annotationState.workflow.status) })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-workspace__body", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "vai-annotation-workspace__rail", "aria-label": "标注流程", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "导入 DXF", title: "导入 DXF", onClick: () => setShowImport(true), children: "↥" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "图纸结构", title: "图纸结构", children: "⌗" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "标注候选", title: "标注候选", children: "⌖" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "冲突检查", title: "冲突检查", children: "△" })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "vai-annotation-workspace__canvas", children: displaySnapshot === null ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-annotation-workspace__empty", children: "自动标注工作区已接管。请先导入一张工程图纸。" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-            DrawingSurface,
-            {
-              snapshot: displaySnapshot,
-              viewport,
-              selectedIds,
-              display: presentation.display,
-              sourceUrl: presentation.sourceUrl,
-              className: "vai-canvas vai-annotation-workspace__surface",
-              onViewportChange: runtime.actions.setViewport,
-              onSelectionChange: runtime.actions.setSelection,
-              worldLayers: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "g",
-                {
-                  "data-annotation-candidate-layer": "true",
-                  "data-preview-active": presentation.preview === null ? void 0 : "true",
-                  pointerEvents: "none"
-                }
-              )
-            }
-          ) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "vai-annotation-workspace__inspector", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "vai-annotation-workspace__canvas", children: [
+            displaySnapshot !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
+              DrawingSurface,
+              {
+                snapshot: displaySnapshot,
+                viewport,
+                selectedIds,
+                display: presentation.display,
+                sourceUrl: presentation.sourceUrl,
+                className: "vai-canvas vai-annotation-workspace__surface",
+                onViewportChange: runtime.actions.setViewport,
+                onSelectionChange: runtime.actions.setSelection,
+                worldLayers: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-annotation-candidate-layer": "true", "data-preview-active": presentation.preview === null ? void 0 : "true", pointerEvents: "none" }),
+                  draft && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    PartitionOverlay,
+                    {
+                      draft,
+                      previewHeld: partitionState.previewHeld,
+                      scale: viewport.scale,
+                      onMoveBoundary: (index, z) => void partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05)).catch(() => void 0)
+                    }
+                  )
+                ] })
+              }
+            ),
+            (displaySnapshot === null || showImport) && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { className: "vai-annotation-import", onSubmit: (event) => {
+              event.preventDefault();
+              if (dxf) void partition.actions.importFiles(dxf, engineering ?? void 0).then(() => setShowImport(false)).catch(() => void 0);
+            }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "导入轴类工程图" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+                "DXF 图纸",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "file", accept: ".dxf,application/dxf", onChange: (event) => {
+                  var _a3;
+                  return setDxf(((_a3 = event.currentTarget.files) == null ? void 0 : _a3[0]) ?? null);
+                } })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+                "工程数据文档（可选）",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "file", accept: ".txt,.ini,text/plain", onChange: (event) => {
+                  var _a3;
+                  return setEngineering(((_a3 = event.currentTarget.files) == null ? void 0 : _a3[0]) ?? null);
+                } })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", disabled: !dxf || partitionState.busy, children: partitionState.busy ? "正在分析…" : "导入并智能分区" }),
+              displaySnapshot !== null && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-annotation-import__close", onClick: () => setShowImport(false), children: "关闭" }),
+              partitionState.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", children: partitionState.error })
+            ] }),
+            partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
+            (partitionState.partition.canUndo || partitionState.partition.canRedo) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-history", role: "toolbar", "aria-label": "分区历史", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "撤销分区", disabled: !partitionState.partition.canUndo, onClick: () => void partition.actions.undo().catch(() => void 0), children: "↶" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "重做分区", disabled: !partitionState.partition.canRedo, onClick: () => void partition.actions.redo().catch(() => void 0), children: "↷" })
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("aside", { className: "vai-annotation-workspace__inspector", children: draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition }, partitionState.partition.updatedAt) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
@@ -3926,7 +4268,7 @@ function AnnotationWorkspace({ namespace, runtime, state }) {
               /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "选中" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: selectedIds.length })
             ] })
-          ] })
+          ] }) })
         ] })
       ]
     }
@@ -4661,7 +5003,7 @@ const ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:2
 const ipv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
 const cidrv4 = /^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/([0-9]|[1-2][0-9]|3[0-2])$/;
 const cidrv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/;
-const base64 = /^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$/;
+const base64$1 = /^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$/;
 const base64url = /^[A-Za-z0-9_-]*$/;
 const httpProtocol = /^https?$/;
 const e164 = /^\+[1-9]\d{6,14}$/;
@@ -5470,7 +5812,7 @@ function isValidBase64(data) {
   }
 }
 const $ZodBase64 = /* @__PURE__ */ $constructor("$ZodBase64", (inst, def) => {
-  def.pattern ?? (def.pattern = base64);
+  def.pattern ?? (def.pattern = base64$1);
   $ZodStringFormat.init(inst, def);
   inst._zod.bag.contentEncoding = "base64";
   inst._zod.check = (payload) => {
@@ -8887,6 +9229,28 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
   return /* @__PURE__ */ _superRefine(fn, params);
 }
+function _instanceof(cls, params = {}) {
+  const inst = new ZodCustom({
+    type: "custom",
+    check: "custom",
+    fn: (data) => data instanceof cls,
+    abort: true,
+    ...normalizeParams(params)
+  });
+  inst._zod.bag.Class = cls;
+  inst._zod.check = (payload) => {
+    if (!(payload.value instanceof cls)) {
+      payload.issues.push({
+        code: "invalid_type",
+        expected: cls.name,
+        input: payload.value,
+        inst,
+        path: [...inst._zod.def.path ?? []]
+      });
+    }
+  };
+  return inst;
+}
 const protocolIdSchema = string().trim().min(1).max(256);
 const contentDigestSchema = string().trim().min(1).max(512);
 const idSchema$3 = protocolIdSchema;
@@ -9263,10 +9627,17 @@ const qualitySchema = object({
   confidence: number().optional(),
   evidenceRefs: array(idSchema)
 }).strict();
+const drawingNodeSourceRefSchema = object({
+  sourceId: idSchema,
+  objectId: idSchema.optional(),
+  objectType: idSchema.optional(),
+  layer: string().min(1).optional()
+}).strict();
 const baseNodeShape = {
   id: idSchema,
   visible: boolean(),
-  quality: qualitySchema
+  quality: qualitySchema,
+  sourceRef: drawingNodeSourceRefSchema.optional()
 };
 const geometrySchema = discriminatedUnion("type", [
   object({ ...baseNodeShape, type: literal("point"), x: number(), y: number() }).strict(),
@@ -9428,6 +9799,14 @@ const drawingDocumentSchema = object({
   id: idSchema,
   metadata: object({ createdAt: number(), updatedAt: number() }).strict(),
   unitSystem: object({ length: _enum(["mm", "cm", "m"]), angle: literal("deg") }).strict(),
+  sources: array(object({
+    id: idSchema,
+    kind: _enum(["image", "dxf"]),
+    mediaType: string().min(1),
+    digest: idSchema,
+    name: string().min(1).optional(),
+    bytes: number().int().nonnegative().optional()
+  }).strict()).optional(),
   coordinateFrames: array(object({
     id: idSchema,
     kind: _enum(["document", "source", "page", "view", "provisional"]),
@@ -9499,14 +9878,22 @@ discriminatedUnion("kind", [
     truncated: boolean()
   }).strict()
 ]);
-const drawingSourceRefSchema = object({
-  id: idSchema,
-  mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
-  bytes: number().int().nonnegative().optional(),
-  width: number().positive(),
-  height: number().positive(),
-  name: string().optional()
-}).strict();
+const drawingSourceRefSchema = union([
+  object({
+    id: idSchema,
+    mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+    bytes: number().int().nonnegative().optional(),
+    width: number().positive(),
+    height: number().positive(),
+    name: string().optional()
+  }).strict(),
+  object({
+    id: idSchema,
+    mediaType: literal("application/dxf"),
+    bytes: number().int().nonnegative().optional(),
+    name: string().optional()
+  }).strict()
+]);
 const drawingWorkspaceSnapshotSchema = object({
   version: literal(1),
   ref: object({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
@@ -9803,7 +10190,129 @@ const annotationSessionStateSchema = object({
     message: string().min(1).optional()
   }).strict()
 }).strict();
+object({
+  bytes: _instanceof(Uint8Array),
+  digest: idSchema,
+  name: string().trim().min(1).max(255).optional()
+}).strict();
+const drawingObservationOverlaySchema = object({
+  id: idSchema,
+  label: string().trim().min(1).max(80),
+  polygon: array(vec2Schema).min(3).max(16)
+}).strict();
+object({
+  ref: drawingRefSchema,
+  overlays: array(drawingObservationOverlaySchema).max(128).optional()
+}).strict();
+discriminatedUnion("status", [
+  object({
+    status: literal("rendered"),
+    png: _instanceof(Uint8Array),
+    contentDigest: idSchema,
+    width: number().int().positive(),
+    height: number().int().positive()
+  }).strict(),
+  object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+  object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+]);
 const drawingSessionIdSchema = string().min(1);
+const partitionEvidenceSchema = object({
+  id: idSchema,
+  origin: _enum(["document", "geometry", "fused", "ai", "manual"]),
+  label: string(),
+  sourceLines: array(number().int().positive()).optional(),
+  geometryNodeIds: array(idSchema).optional()
+}).strict();
+const partitionDiagnosticSchema = object({
+  id: idSchema,
+  severity: _enum(["info", "warning", "error"]),
+  code: idSchema,
+  message: string(),
+  segmentIds: array(idSchema).optional(),
+  evidenceIds: array(idSchema).optional()
+}).strict();
+const shaftAxisSchema = object({
+  origin: vec2Schema,
+  direction: vec2Schema,
+  normal: vec2Schema,
+  zMin: number(),
+  zMax: number(),
+  orientation: _enum(["forward", "reversed"]),
+  geometryNodeIds: array(idSchema).optional()
+}).strict();
+const stepCandidateSchema = object({
+  id: idSchema,
+  z: number(),
+  score: number(),
+  evidenceIds: array(idSchema),
+  accepted: boolean()
+}).strict();
+const partitionSegmentSchema = object({
+  id: idSchema,
+  zStart: number(),
+  zEnd: number(),
+  profile: object({ minRadius: number(), maxRadius: number(), sampleCount: number().int().nonnegative() }).strict(),
+  semanticType: string().optional(),
+  name: string().optional(),
+  boundaryConfidence: number(),
+  semanticConfidence: number().optional(),
+  geometryNodeIds: array(idSchema),
+  boundaryEvidenceIds: array(idSchema),
+  semanticEvidenceIds: array(idSchema),
+  diagnosticIds: array(idSchema),
+  profileSamples: array(object({ z: number(), radius: number().nonnegative(), geometryNodeId: idSchema }).strict()).optional()
+}).strict();
+const partitionGroupSchema = object({
+  id: idSchema,
+  segmentIds: array(idSchema),
+  semanticType: string(),
+  name: string().optional(),
+  evidenceIds: array(idSchema)
+}).strict();
+const partitionDraftSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  axis: shaftAxisSchema,
+  segments: array(partitionSegmentSchema),
+  semanticGroups: array(partitionGroupSchema),
+  stepCandidates: array(stepCandidateSchema),
+  evidence: array(partitionEvidenceSchema),
+  diagnostics: array(partitionDiagnosticSchema),
+  basePartitionRevisionId: idSchema.optional()
+}).strict();
+const partitionRevisionSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  axis: shaftAxisSchema,
+  segments: array(partitionSegmentSchema),
+  semanticGroups: array(partitionGroupSchema),
+  evidence: array(partitionEvidenceSchema),
+  diagnostics: array(partitionDiagnosticSchema),
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  confirmedAt: number()
+}).strict();
+const partitionEditCommandSchema = discriminatedUnion("type", [
+  object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
+  object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
+]);
+const partitionSessionSnapshotSchema = object({
+  version: literal(1),
+  phase: _enum(["idle", "analyzing", "editing", "confirmed", "needs-rebase", "failed"]),
+  drawingRef: drawingRefSchema.optional(),
+  draft: partitionDraftSchema.optional(),
+  confirmed: partitionRevisionSchema.optional(),
+  canUndo: boolean(),
+  canRedo: boolean(),
+  message: string().optional(),
+  updatedAt: number()
+}).strict();
+const partitionImportRequestSchema = object({
+  dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+  engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+}).strict();
 const agentParameter = {
   name: "agent",
   wire: "agentId",
@@ -9830,10 +10339,117 @@ const ANNOTATION_REMOTE = {
       typeSymbol: "@vectorai/plugin-space-contracts#AnnotationSessionState",
       schema: annotationSessionStateSchema
     }
-  }]
+  }, ...partitionDescriptors()]
 };
+function partitionDescriptors() {
+  return [
+    descriptor("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
+    descriptor("getPartitionState", []),
+    descriptor("editPartition", [jsonParameter("command", "@vectorai/plugin-space-contracts#PartitionEditCommand", partitionEditCommandSchema)]),
+    descriptor("confirmPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    descriptor("cancelPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    descriptor("undoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    descriptor("redoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
+  ];
+}
+function descriptor(method, parameters) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: "drawingAnnotation",
+    namespace: "drawingAnnotation",
+    method,
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, ...parameters],
+    result: { mode: "strict", typeSymbol: "@vectorai/plugin-space-contracts#PartitionSessionSnapshot", schema: partitionSessionSnapshotSchema }
+  };
+}
+function jsonParameter(name, typeSymbol, schema) {
+  return { name, wire: name, source: "json", codec: { mode: "strict", typeSymbol, schema } };
+}
+function createPartitionController(sessionId, remote) {
+  let current = { partition: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null };
+  const listeners = /* @__PURE__ */ new Set();
+  let queue = Promise.resolve();
+  let disposed = false;
+  const update = (changes) => {
+    if (disposed) return;
+    current = { ...current, ...changes };
+    for (const listener of listeners) listener();
+  };
+  const run = (operation) => {
+    const task = queue.then(async () => {
+      update({ busy: true, error: null });
+      try {
+        update({ partition: unwrap(await operation()) });
+      } catch (error) {
+        update({ error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      } finally {
+        update({ busy: false });
+      }
+    });
+    queue = task.catch(() => void 0);
+    return task;
+  };
+  const ref = () => {
+    if (!current.partition.drawingRef) throw new Error("PARTITION_DRAWING_REQUIRED");
+    return current.partition.drawingRef;
+  };
+  const edit = (command) => run(() => remote.editPartition(sessionId, { ...command, expectedDrawingRef: ref() }));
+  return {
+    state: {
+      getSnapshot: () => current,
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }
+    },
+    actions: {
+      refresh: () => run(() => remote.getPartitionState(sessionId)),
+      async importFiles(dxf, engineeringDocument) {
+        if (dxf.size > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
+        if (engineeringDocument && engineeringDocument.size > 2 * 1024 * 1024) throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+        const bytes = new Uint8Array(await dxf.arrayBuffer());
+        const digest = `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`;
+        const request = {
+          dxf: { name: dxf.name, digest, base64: base64(bytes) },
+          ...engineeringDocument === void 0 ? {} : { engineeringDocument: { name: engineeringDocument.name, text: await engineeringDocument.text() } }
+        };
+        await run(() => remote.importAndAnalyze(sessionId, request));
+      },
+      moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: "boundary.move", boundaryIndex, requestedZ, snapTolerance }),
+      splitSegment: (segmentId, z, snapTolerance) => edit({ type: "segment.split", segmentId, z, snapTolerance }),
+      mergeBoundary: (boundaryIndex) => edit({ type: "boundary.merge", boundaryIndex }),
+      updateSegment: (segmentId, value) => edit({ type: "segment.metadata", segmentId, ...value }),
+      confirm: () => run(() => remote.confirmPartition(sessionId, ref())),
+      cancel: () => run(() => remote.cancelPartition(sessionId, ref())),
+      undo: () => run(() => remote.undoPartition(sessionId, ref())),
+      redo: () => run(() => remote.redoPartition(sessionId, ref())),
+      setPreviewHeld: (previewHeld) => update({ previewHeld })
+    },
+    dispose() {
+      disposed = true;
+      listeners.clear();
+    }
+  };
+}
+function unwrap(result) {
+  if (result.ok !== true) throw new Error("PARTITION_REMOTE_FAILED");
+  return structuredClone(result.value);
+}
+function hex(value) {
+  return [...new Uint8Array(value)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+function base64(bytes) {
+  let binary = "";
+  const size = 32768;
+  for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
+  return btoa(binary);
+}
 export {
   ANNOTATION_REMOTE,
   AnnotationWorkspace,
-  createAnnotationRemoteStateSource
+  createAnnotationRemoteStateSource,
+  createPartitionController
 };

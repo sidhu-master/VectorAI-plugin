@@ -61,7 +61,7 @@ describe('FileDrawingRepositoryStorage', () => {
         drawingId: 'drawing-provenance',
         bounds: { minX: 0, minY: 0, maxX: 100, maxY: 50 },
         revision: 2,
-        source: { id: 'persisted-source', mediaType: 'image/png', width: 120, height: 80 },
+        source: { id: 'persisted-source', mediaType: 'image/png' as const, width: 120, height: 80 },
         provisional: false,
       },
       commits: [{

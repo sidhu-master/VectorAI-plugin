@@ -17,6 +17,189 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const jsxRuntime = require("react/jsx-runtime");
     const react = require("react");
+    function evaluateHomogeneous(node, normalized) {
+      const pointCount = node.controlPoints.length;
+      const lastControlIndex = pointCount - 1;
+      const domainStart = node.knots[node.degree];
+      const domainEnd = node.knots[lastControlIndex + 1];
+      const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
+      const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
+      const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
+      const work = [];
+      for (let index = 0; index <= node.degree; index += 1) {
+        const sourceIndex = span - node.degree + index;
+        const weight = weights[sourceIndex];
+        const point2 = node.controlPoints[sourceIndex];
+        work.push([point2[0] * weight, point2[1] * weight, weight]);
+      }
+      for (let level = 1; level <= node.degree; level += 1) {
+        for (let index = node.degree; index >= level; index -= 1) {
+          const knotIndex = span - node.degree + index;
+          const denominator = node.knots[knotIndex + node.degree - level + 1] - node.knots[knotIndex];
+          const alpha = denominator === 0 ? 0 : (knotParameter - node.knots[knotIndex]) / denominator;
+          work[index] = mixHomogeneous(work[index - 1], work[index], alpha);
+        }
+      }
+      return work[node.degree];
+    }
+    function sampleSpline(node, { maxError, maxDepth = 12 }) {
+      if (!(Number.isFinite(maxError) && maxError > 0)) {
+        throw new TypeError("SPLINE_MAX_ERROR_INVALID");
+      }
+      if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 24) {
+        throw new TypeError("SPLINE_MAX_DEPTH_INVALID");
+      }
+      validateSpline(node);
+      const first = project(evaluateHomogeneous(node, 0));
+      const output = [first];
+      const spans = normalizedKnotSpans(node);
+      for (let index = 1; index < spans.length; index += 1) {
+        const controls = extractBezierControls(node, spans[index - 1], spans[index]);
+        subdivideBezier(controls, 0, maxDepth, maxError, output);
+      }
+      if (node.closed && !samePoint(output[0], output.at(-1))) output.push(output[0]);
+      return output;
+    }
+    function normalizedKnotSpans(node) {
+      const start = node.knots[node.degree];
+      const end = node.knots[node.controlPoints.length];
+      return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start) / (end - start)).filter((value, index, values) => index === 0 || value > values[index - 1]);
+    }
+    function splineBounds(node) {
+      validateSpline(node);
+      const controlMinX = Math.min(...node.controlPoints.map(([x]) => x));
+      const controlMaxX = Math.max(...node.controlPoints.map(([x]) => x));
+      const controlMinY = Math.min(...node.controlPoints.map(([, y]) => y));
+      const controlMaxY = Math.max(...node.controlPoints.map(([, y]) => y));
+      const span = Math.max(controlMaxX - controlMinX, controlMaxY - controlMinY, 1);
+      const points = sampleSpline(node, { maxError: Math.max(span * 1e-6, 1e-8), maxDepth: 18 });
+      return {
+        minX: Math.min(...points.map(([x]) => x)),
+        minY: Math.min(...points.map(([, y]) => y)),
+        maxX: Math.max(...points.map(([x]) => x)),
+        maxY: Math.max(...points.map(([, y]) => y))
+      };
+    }
+    function validateSpline(node) {
+      if (!Number.isInteger(node.degree) || node.degree < 1) {
+        throw new TypeError("SPLINE_DEGREE_INVALID");
+      }
+      if (node.controlPoints.length <= node.degree) {
+        throw new TypeError("SPLINE_CONTROL_POINT_COUNT_INVALID");
+      }
+      if (node.controlPoints.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
+        throw new TypeError("SPLINE_CONTROL_POINT_INVALID");
+      }
+      const expectedKnots = node.controlPoints.length + node.degree + 1;
+      if (node.knots.length !== expectedKnots) {
+        throw new TypeError("SPLINE_KNOT_COUNT_INVALID");
+      }
+      if (node.knots.some((value, index) => !Number.isFinite(value) || index > 0 && value < node.knots[index - 1])) {
+        throw new TypeError("SPLINE_KNOT_SEQUENCE_INVALID");
+      }
+      const domainStart = node.knots[node.degree];
+      const domainEnd = node.knots[node.controlPoints.length];
+      if (!(domainEnd > domainStart)) throw new TypeError("SPLINE_KNOT_DOMAIN_INVALID");
+      if (node.weights !== void 0 && (node.weights.length !== node.controlPoints.length || node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0))) {
+        throw new TypeError("SPLINE_WEIGHTS_INVALID");
+      }
+    }
+    function findSpan(knots, degree, lastControlIndex, value) {
+      let low = degree;
+      let high = lastControlIndex + 1;
+      let middle = Math.floor((low + high) / 2);
+      while (value < knots[middle] || value >= knots[middle + 1]) {
+        if (value < knots[middle]) high = middle;
+        else low = middle;
+        middle = Math.floor((low + high) / 2);
+      }
+      return middle;
+    }
+    function mixHomogeneous(first, second, alpha) {
+      return [
+        first[0] * (1 - alpha) + second[0] * alpha,
+        first[1] * (1 - alpha) + second[1] * alpha,
+        first[2] * (1 - alpha) + second[2] * alpha
+      ];
+    }
+    function subdivideBezier(controls, depth, maxDepth, maxError, output) {
+      const points = controls.map(project);
+      const start = points[0];
+      const end = points.at(-1);
+      const flatness = Math.max(0, ...points.slice(1, -1).map((point2) => pointSegmentDistance(point2, start, end)));
+      if (depth >= maxDepth || flatness <= maxError) {
+        output.push(end);
+        return;
+      }
+      const [left, right] = splitBezier(controls);
+      subdivideBezier(left, depth + 1, maxDepth, maxError, output);
+      subdivideBezier(right, depth + 1, maxDepth, maxError, output);
+    }
+    function extractBezierControls(node, start, end) {
+      const degree = node.degree;
+      if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
+      const samples = Array.from({ length: degree + 1 }, (_, row) => {
+        const local = row / degree;
+        return evaluateHomogeneous(node, start + (end - start) * local);
+      });
+      const matrix = Array.from({ length: degree + 1 }, (_, row) => {
+        const parameter = row / degree;
+        return Array.from({ length: degree + 1 }, (_2, column) => bernstein(degree, column, parameter));
+      });
+      return solve(matrix, samples);
+    }
+    function solve(matrix, values) {
+      const size = matrix.length;
+      const augmented = matrix.map((row, index) => [...row, ...values[index]]);
+      for (let column = 0; column < size; column += 1) {
+        let pivot = column;
+        for (let row = column + 1; row < size; row += 1) if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+        [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+        const divisor = augmented[column][column];
+        if (Math.abs(divisor) <= 1e-14) throw new TypeError("SPLINE_BEZIER_EXTRACTION_FAILED");
+        for (let index = column; index < size + 3; index += 1) augmented[column][index] = augmented[column][index] / divisor;
+        for (let row = 0; row < size; row += 1) {
+          if (row === column) continue;
+          const factor = augmented[row][column];
+          for (let index = column; index < size + 3; index += 1) augmented[row][index] = augmented[row][index] - factor * augmented[column][index];
+        }
+      }
+      return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
+    }
+    function splitBezier(controls) {
+      const levels = [controls.map((point2) => [...point2])];
+      while (levels.at(-1).length > 1) {
+        const previous = levels.at(-1);
+        levels.push(previous.slice(1).map((point2, index) => mixHomogeneous(previous[index], point2, 0.5)));
+      }
+      return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
+    }
+    function project(point2) {
+      if (!(Math.abs(point2[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
+      return [point2[0] / point2[2], point2[1] / point2[2]];
+    }
+    function bernstein(degree, index, parameter) {
+      return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
+    }
+    function binomial(n, k) {
+      let result = 1;
+      for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
+      return result;
+    }
+    function pointSegmentDistance(point2, start, end) {
+      const dx = end[0] - start[0];
+      const dy = end[1] - start[1];
+      const lengthSquared = dx * dx + dy * dy;
+      if (lengthSquared === 0) return Math.hypot(point2[0] - start[0], point2[1] - start[1]);
+      const projection = Math.min(1, Math.max(0, ((point2[0] - start[0]) * dx + (point2[1] - start[1]) * dy) / lengthSquared));
+      return Math.hypot(
+        point2[0] - (start[0] + projection * dx),
+        point2[1] - (start[1] + projection * dy)
+      );
+    }
+    function samePoint(first, second) {
+      return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
+    }
     const GEOMETRY_LAYER = "GEOMETRY";
     const ANNOTATION_LAYER = "ANNOTATIONS";
     function exportDrawingDxf(document2) {
@@ -228,7 +411,10 @@ window.__ModuleLoader__.load({
       return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
     }
     function dxfText(value) {
-      return value.replace(/\r\n|\r|\n/g, "\\P").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
+      return [...value.replace(/\r\n|\r|\n/g, "\\P")].filter((character) => {
+        const code = character.charCodeAt(0);
+        return code === 9 || code >= 32 && code !== 127;
+      }).join("");
     }
     function insertionUnit(unit) {
       return { mm: 4, cm: 5, m: 6 }[unit];
@@ -397,7 +583,7 @@ window.__ModuleLoader__.load({
         case "polyline":
           return boundsFromPoints(node.vertices.map((vertex) => vertex.point));
         case "spline":
-          return boundsFromPoints(node.controlPoints);
+          return splineBounds(node);
         case "text":
           return textBounds(node);
         case "dimension":
@@ -595,7 +781,7 @@ window.__ModuleLoader__.load({
         case "polyline":
           return /* @__PURE__ */ jsxRuntime.jsx("path", { d: polylinePath(node), fill: "none", ...vectorStroke });
         case "spline":
-          return /* @__PURE__ */ jsxRuntime.jsx("path", { d: splinePath(node.controlPoints, node.closed), fill: "none", ...vectorStroke });
+          return /* @__PURE__ */ jsxRuntime.jsx("path", { d: splinePath(node, viewport), fill: "none", ...vectorStroke });
         case "text":
           return /* @__PURE__ */ jsxRuntime.jsx(WorldText, { position: node.position, rotation: node.rotation, height: node.height, align: node.alignment, children: node.content });
         case "dimension":
@@ -663,18 +849,15 @@ window.__ModuleLoader__.load({
     function pointsAttribute(points) {
       return points.map((point2) => `${point2[0]},${point2[1]}`).join(" ");
     }
-    function splinePath(points, closed) {
+    function splinePath(node, viewport) {
+      const points = sampleSpline(node, { maxError: Math.max(0.25 / viewport.scale, 1e-8) });
       if (points.length === 0) return "";
       if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
-      if (points.length === 2) return `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]}${closed ? " Z" : ""}`;
-      const commands = [`M ${points[0][0]} ${points[0][1]}`];
-      for (let index = 1; index < points.length - 1; index += 1) {
-        const control = points[index];
-        const next = points[index + 1];
-        const end = index === points.length - 2 ? next : [(control[0] + next[0]) / 2, (control[1] + next[1]) / 2];
-        commands.push(`Q ${control[0]} ${control[1]} ${end[0]} ${end[1]}`);
-      }
-      if (closed) commands.push("Z");
+      const commands = [
+        `M ${points[0][0]} ${points[0][1]}`,
+        ...points.slice(1).map(([x, y]) => `L ${x} ${y}`)
+      ];
+      if (node.closed) commands.push("Z");
       return commands.join(" ");
     }
     function polylinePath(node) {
@@ -840,6 +1023,9 @@ window.__ModuleLoader__.load({
     }
     function safeId(value) {
       return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+    }
+    function isRasterDrawingSource(source) {
+      return "width" in source && "height" in source;
     }
     function Canvas({ motionPreviewHeld = false }) {
       const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
@@ -1115,7 +1301,7 @@ window.__ModuleLoader__.load({
                 ),
                 /* @__PURE__ */ jsxRuntime.jsxs("g", { transform: `translate(${viewport.x} ${viewport.y}) scale(${viewport.scale} ${-viewport.scale})`, children: [
                   /* @__PURE__ */ jsxRuntime.jsx("defs", { children: /* @__PURE__ */ jsxRuntime.jsx("marker", { id: "vai-preview-motion-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse", children: /* @__PURE__ */ jsxRuntime.jsx("path", { d: "M 0 0 L 10 5 L 0 10 z" }) }) }),
-                  display.sourceUnderlay && snapshot.source !== void 0 && sourceResource !== null ? /* @__PURE__ */ jsxRuntime.jsx(
+                  display.sourceUnderlay && snapshot.source !== void 0 && isRasterDrawingSource(snapshot.source) && sourceResource !== null ? /* @__PURE__ */ jsxRuntime.jsx(
                     SourceUnderlay,
                     {
                       source: snapshot.source,
@@ -2684,7 +2870,7 @@ window.__ModuleLoader__.load({
           const selectedIds = get().selectedIds.filter((id) => nextIds.has(id));
           const previousSource = sourceResource;
           let nextSource = null;
-          if ((snapshot == null ? void 0 : snapshot.source) !== void 0 && port.loadSource !== void 0) {
+          if ((snapshot == null ? void 0 : snapshot.source) !== void 0 && "width" in snapshot.source && port.loadSource !== void 0) {
             try {
               nextSource = await port.loadSource(snapshot.source, requestController == null ? void 0 : requestController.signal);
             } catch (error) {
@@ -3245,7 +3431,7 @@ window.__ModuleLoader__.load({
         case "polyline":
           return fromPoints(node.vertices.map(({ point: point2 }) => point2));
         case "spline":
-          return fromPoints(node.controlPoints);
+          return splineBounds(node);
         case "text": {
           const width = node.maxWidth ?? Math.max(node.height, node.content.length * node.height * 0.6);
           return expandPoint(node.position, width, node.height);
@@ -3343,19 +3529,7 @@ window.__ModuleLoader__.load({
         snapshot: createStoreObservable(store, (state) => state.snapshot),
         viewport: createStoreObservable(store, (state) => state.viewport, viewportEqual),
         selection: createStoreObservable(store, (state) => state.selectedIds, stringArrayEqual),
-        presentation: createStoreObservable(store, (state) => {
-          var _a2;
-          return {
-            displaySnapshot: state.displaySnapshot,
-            preview: state.preview,
-            groundingOverlay: state.groundingOverlay,
-            motionRig: state.motionRig,
-            sourceUrl: ((_a2 = state.sourceResource) == null ? void 0 : _a2.url) ?? null,
-            display: state.display,
-            busy: state.busy,
-            error: state.error
-          };
-        }, presentationEqual),
+        presentation: createStoreObservable(store, presentationOf, presentationEqual),
         actions: {
           setViewport(viewport) {
             store.getState().setViewport({ ...viewport });
@@ -3397,6 +3571,19 @@ window.__ModuleLoader__.load({
     }
     function presentationEqual(left, right) {
       return left.displaySnapshot === right.displaySnapshot && left.preview === right.preview && left.groundingOverlay === right.groundingOverlay && left.motionRig === right.motionRig && left.sourceUrl === right.sourceUrl && left.display === right.display && left.busy === right.busy && left.error === right.error;
+    }
+    function presentationOf(state) {
+      var _a2;
+      return {
+        displaySnapshot: state.displaySnapshot,
+        preview: state.preview,
+        groundingOverlay: state.groundingOverlay,
+        motionRig: state.motionRig,
+        sourceUrl: ((_a2 = state.sourceResource) == null ? void 0 : _a2.url) ?? null,
+        display: state.display,
+        busy: state.busy,
+        error: state.error
+      };
     }
     function createDshDrawingWorkspacePort(input) {
       const { sessionId, remote, commands, resolveImage } = input;
@@ -8430,6 +8617,28 @@ window.__ModuleLoader__.load({
     function superRefine(fn, params) {
       return /* @__PURE__ */ _superRefine(fn, params);
     }
+    function _instanceof(cls, params = {}) {
+      const inst = new ZodCustom({
+        type: "custom",
+        check: "custom",
+        fn: (data) => data instanceof cls,
+        abort: true,
+        ...normalizeParams(params)
+      });
+      inst._zod.bag.Class = cls;
+      inst._zod.check = (payload) => {
+        if (!(payload.value instanceof cls)) {
+          payload.issues.push({
+            code: "invalid_type",
+            expected: cls.name,
+            input: payload.value,
+            inst,
+            path: [...inst._zod.def.path ?? []]
+          });
+        }
+      };
+      return inst;
+    }
     const protocolIdSchema = string().trim().min(1).max(256);
     const contentDigestSchema = string().trim().min(1).max(512);
     const idSchema$3 = protocolIdSchema;
@@ -8911,10 +9120,17 @@ window.__ModuleLoader__.load({
       confidence: number().optional(),
       evidenceRefs: array(idSchema)
     }).strict();
+    const drawingNodeSourceRefSchema = object({
+      sourceId: idSchema,
+      objectId: idSchema.optional(),
+      objectType: idSchema.optional(),
+      layer: string().min(1).optional()
+    }).strict();
     const baseNodeShape = {
       id: idSchema,
       visible: boolean(),
-      quality: qualitySchema
+      quality: qualitySchema,
+      sourceRef: drawingNodeSourceRefSchema.optional()
     };
     const geometrySchema = discriminatedUnion("type", [
       object({ ...baseNodeShape, type: literal("point"), x: number(), y: number() }).strict(),
@@ -9076,6 +9292,14 @@ window.__ModuleLoader__.load({
       id: idSchema,
       metadata: object({ createdAt: number(), updatedAt: number() }).strict(),
       unitSystem: object({ length: _enum(["mm", "cm", "m"]), angle: literal("deg") }).strict(),
+      sources: array(object({
+        id: idSchema,
+        kind: _enum(["image", "dxf"]),
+        mediaType: string().min(1),
+        digest: idSchema,
+        name: string().min(1).optional(),
+        bytes: number().int().nonnegative().optional()
+      }).strict()).optional(),
       coordinateFrames: array(object({
         id: idSchema,
         kind: _enum(["document", "source", "page", "view", "provisional"]),
@@ -9147,14 +9371,22 @@ window.__ModuleLoader__.load({
         truncated: boolean()
       }).strict()
     ]);
-    const drawingSourceRefSchema = object({
-      id: idSchema,
-      mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
-      bytes: number().int().nonnegative().optional(),
-      width: number().positive(),
-      height: number().positive(),
-      name: string().optional()
-    }).strict();
+    const drawingSourceRefSchema = union([
+      object({
+        id: idSchema,
+        mediaType: _enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+        bytes: number().int().nonnegative().optional(),
+        width: number().positive(),
+        height: number().positive(),
+        name: string().optional()
+      }).strict(),
+      object({
+        id: idSchema,
+        mediaType: literal("application/dxf"),
+        bytes: number().int().nonnegative().optional(),
+        name: string().optional()
+      }).strict()
+    ]);
     const drawingWorkspaceSnapshotSchema = object({
       version: literal(1),
       ref: object({ drawingId: idSchema, revision: number().int().nonnegative() }).strict(),
@@ -9452,7 +9684,129 @@ window.__ModuleLoader__.load({
         message: string().min(1).optional()
       }).strict()
     }).strict();
+    object({
+      bytes: _instanceof(Uint8Array),
+      digest: idSchema,
+      name: string().trim().min(1).max(255).optional()
+    }).strict();
+    const drawingObservationOverlaySchema = object({
+      id: idSchema,
+      label: string().trim().min(1).max(80),
+      polygon: array(vec2Schema).min(3).max(16)
+    }).strict();
+    object({
+      ref: drawingRefSchema,
+      overlays: array(drawingObservationOverlaySchema).max(128).optional()
+    }).strict();
+    discriminatedUnion("status", [
+      object({
+        status: literal("rendered"),
+        png: _instanceof(Uint8Array),
+        contentDigest: idSchema,
+        width: number().int().positive(),
+        height: number().int().positive()
+      }).strict(),
+      object({ status: literal("stale"), currentRef: drawingRefSchema }).strict(),
+      object({ status: literal("rejected"), code: idSchema, message: string().min(1) }).strict()
+    ]);
     const drawingSessionIdSchema = string().min(1);
+    const partitionEvidenceSchema = object({
+      id: idSchema,
+      origin: _enum(["document", "geometry", "fused", "ai", "manual"]),
+      label: string(),
+      sourceLines: array(number().int().positive()).optional(),
+      geometryNodeIds: array(idSchema).optional()
+    }).strict();
+    const partitionDiagnosticSchema = object({
+      id: idSchema,
+      severity: _enum(["info", "warning", "error"]),
+      code: idSchema,
+      message: string(),
+      segmentIds: array(idSchema).optional(),
+      evidenceIds: array(idSchema).optional()
+    }).strict();
+    const shaftAxisSchema = object({
+      origin: vec2Schema,
+      direction: vec2Schema,
+      normal: vec2Schema,
+      zMin: number(),
+      zMax: number(),
+      orientation: _enum(["forward", "reversed"]),
+      geometryNodeIds: array(idSchema).optional()
+    }).strict();
+    const stepCandidateSchema = object({
+      id: idSchema,
+      z: number(),
+      score: number(),
+      evidenceIds: array(idSchema),
+      accepted: boolean()
+    }).strict();
+    const partitionSegmentSchema = object({
+      id: idSchema,
+      zStart: number(),
+      zEnd: number(),
+      profile: object({ minRadius: number(), maxRadius: number(), sampleCount: number().int().nonnegative() }).strict(),
+      semanticType: string().optional(),
+      name: string().optional(),
+      boundaryConfidence: number(),
+      semanticConfidence: number().optional(),
+      geometryNodeIds: array(idSchema),
+      boundaryEvidenceIds: array(idSchema),
+      semanticEvidenceIds: array(idSchema),
+      diagnosticIds: array(idSchema),
+      profileSamples: array(object({ z: number(), radius: number().nonnegative(), geometryNodeId: idSchema }).strict()).optional()
+    }).strict();
+    const partitionGroupSchema = object({
+      id: idSchema,
+      segmentIds: array(idSchema),
+      semanticType: string(),
+      name: string().optional(),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const partitionDraftSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      axis: shaftAxisSchema,
+      segments: array(partitionSegmentSchema),
+      semanticGroups: array(partitionGroupSchema),
+      stepCandidates: array(stepCandidateSchema),
+      evidence: array(partitionEvidenceSchema),
+      diagnostics: array(partitionDiagnosticSchema),
+      basePartitionRevisionId: idSchema.optional()
+    }).strict();
+    const partitionRevisionSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      axis: shaftAxisSchema,
+      segments: array(partitionSegmentSchema),
+      semanticGroups: array(partitionGroupSchema),
+      evidence: array(partitionEvidenceSchema),
+      diagnostics: array(partitionDiagnosticSchema),
+      id: idSchema,
+      parentRevisionId: idSchema.optional(),
+      confirmedAt: number()
+    }).strict();
+    discriminatedUnion("type", [
+      object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+      object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
+      object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
+      object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
+    ]);
+    object({
+      version: literal(1),
+      phase: _enum(["idle", "analyzing", "editing", "confirmed", "needs-rebase", "failed"]),
+      drawingRef: drawingRefSchema.optional(),
+      draft: partitionDraftSchema.optional(),
+      confirmed: partitionRevisionSchema.optional(),
+      canUndo: boolean(),
+      canRedo: boolean(),
+      message: string().optional(),
+      updatedAt: number()
+    }).strict();
+    object({
+      dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+      engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+    }).strict();
     const agentCodec = {
       mode: "strict",
       typeSymbol: "@deepseek-ai/dsh-session/types#SessionId",
@@ -9690,7 +10044,7 @@ window.__ModuleLoader__.load({
       static getDerivedStateFromError(error) {
         return { error: error instanceof Error ? error : new Error(String(error)) };
       }
-      componentDidCatch(_error, _info) {
+      componentDidCatch() {
       }
       render() {
         if (this.state.error === null) return this.props.children;
