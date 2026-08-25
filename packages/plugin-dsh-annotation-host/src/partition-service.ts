@@ -12,6 +12,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import type { AnnotationSessionStateStore } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
+import { extractEngineeringDocuments } from './engineering-document-extractor';
 
 export interface PartitionSemanticReviewInput {
   agent: Agent;
@@ -29,15 +30,21 @@ export class PartitionWorkflowService {
     private readonly partitions: PartitionSessionStore,
     private readonly annotations: AnnotationSessionStateStore,
     private readonly reviewer?: PartitionSemanticReviewer,
+    private readonly extractDocuments: typeof extractEngineeringDocuments = extractEngineeringDocuments,
   ) {}
 
   async importAndAnalyze(agent: Agent, request: PartitionImportRequest, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
     if (request.dxf.base64.length > 27_962_028) throw new Error('DXF_SIZE_LIMIT');
     const bytes = decodeBase64(request.dxf.base64);
     if (bytes.byteLength > 20 * 1024 * 1024) throw new Error('DXF_SIZE_LIMIT');
-    if ((request.engineeringDocument?.text.length ?? 0) > 2 * 1024 * 1024) throw new Error('ENGINEERING_DOCUMENT_SIZE_LIMIT');
+    if (Buffer.byteLength(request.engineeringDocument?.text ?? '', 'utf8') > 8 * 1024 * 1024) throw new Error('DOCUMENT_TOTAL_TEXT_SIZE_LIMIT');
     const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
     if (digest !== request.dxf.digest) throw new Error('DXF_DIGEST_MISMATCH');
+    signal?.throwIfAborted();
+    const extracted = request.engineeringDocuments === undefined
+      ? undefined
+      : await this.extractDocuments(request.engineeringDocuments, { signal });
+    const engineeringText = extracted?.combinedText ?? request.engineeringDocument?.text;
     signal?.throwIfAborted();
     await this.space.importDxf(agent, { bytes, digest, name: request.dxf.name }, signal);
     const snapshot = this.space.getSnapshot(agent);
@@ -48,7 +55,7 @@ export class PartitionWorkflowService {
     const analyzed = analyzeShaftPartition({
       document: snapshot.document,
       drawingRef: snapshot.ref,
-      ...(request.engineeringDocument === undefined ? {} : { engineeringText: request.engineeringDocument.text }),
+      ...(engineeringText === undefined ? {} : { engineeringText }),
       drawingSourceName: request.dxf.name,
     });
     if (analyzed.status === 'rejected') {
