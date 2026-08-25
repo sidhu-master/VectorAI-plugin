@@ -13,6 +13,37 @@ function observable<T>(value: T) {
 }
 
 describe('AnnotationWorkspace', () => {
+  it('offers the complete multi-file engineering document matrix in the explicit import panel', () => {
+    const runtime = {
+      snapshot: observable(null),
+      viewport: observable({ x: 0, y: 0, scale: 1, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: null, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport() {}, setSelection() {} },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({
+      version: 1 as const, workspaceClaimed: false, activationEpoch: 0, workflow: { status: 'idle' as const },
+    });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
+      actions: {}, dispose() {},
+    } as unknown as PartitionController;
+
+    const markup = renderToStaticMarkup(<AnnotationWorkspace
+      sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+    />);
+
+    expect(markup).toContain('accept=".dxf,application/dxf"');
+    expect(markup).toContain('multiple=""');
+    for (const extension of ['.txt', '.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf', '.epub']) {
+      expect(markup).toContain(extension);
+    }
+  });
+
   it('renders its own controlled professional layout without a shared Provider', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     const snapshot = {

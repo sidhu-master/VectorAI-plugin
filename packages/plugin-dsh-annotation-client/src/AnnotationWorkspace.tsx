@@ -14,6 +14,11 @@ import { PartitionOverlay } from './PartitionOverlay';
 import { PartitionActionToolbar } from './PartitionActionToolbar';
 import { PartitionInspector } from './PartitionInspector';
 import { DimensionPlanInspector } from './DimensionPlanInspector';
+import { SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS } from './engineering-file-policy';
+import { classifyEngineeringDrop } from './engineering-drop';
+import { engineeringImportErrorText } from './EngineeringDropBridge';
+
+const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
 
 export interface AnnotationWorkspaceProps {
   sessionId: string;
@@ -32,7 +37,8 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   const annotationState = useObservable(state);
   const partitionState = useObservable(partition.state);
   const [dxf, setDxf] = useState<File | null>(null);
-  const [engineering, setEngineering] = useState<File | null>(null);
+  const [engineering, setEngineering] = useState<File[]>([]);
+  const [importError, setImportError] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const displaySnapshot = (presentation.displaySnapshot ?? snapshot) as DrawingWorkspaceSnapshot | null;
   const draft = partitionState.partition.draft;
@@ -82,15 +88,29 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
         />}
         {(displaySnapshot === null || showImport) && <form className="vai-annotation-import" onSubmit={(event) => {
           event.preventDefault();
-          if (dxf) void partition.actions.importFiles(dxf, engineering === null ? undefined : [engineering]).then(() => setShowImport(false)).catch(() => undefined);
+          if (!dxf) return;
+          const decision = classifyEngineeringDrop([dxf, ...engineering]);
+          if (decision.kind !== 'import') {
+            setImportError(decision.kind === 'reject'
+              ? engineeringImportErrorText(decision.code, decision.filenames)
+              : '请选择一张 DXF 图纸');
+            return;
+          }
+          setImportError(null);
+          void partition.actions.importFiles(decision.dxf, decision.documents)
+            .then(() => setShowImport(false))
+            .catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
         }}>
           <strong>导入轴类工程图</strong>
           <p>DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。</p>
           <label>DXF 图纸<input type="file" accept=".dxf,application/dxf" onChange={(event) => setDxf(event.currentTarget.files?.[0] ?? null)} /></label>
-          <label>工程数据文档（可选）<input type="file" accept=".txt,.ini,text/plain" onChange={(event) => setEngineering(event.currentTarget.files?.[0] ?? null)} /></label>
+          <label>工程数据文档（可多选）<input type="file" multiple accept={ENGINEERING_DOCUMENT_ACCEPT} onChange={(event) => setEngineering(Array.from(event.currentTarget.files ?? []))} /></label>
+          {engineering.length > 0 && <ul className="vai-annotation-import__files">
+            {engineering.map((file) => <li key={`${file.name}:${file.size}`}>{file.name}</li>)}
+          </ul>}
           <button type="submit" disabled={!dxf || partitionState.busy}>{partitionState.busy ? '正在分析…' : '导入并智能分区'}</button>
           {displaySnapshot !== null && <button type="button" className="vai-annotation-import__close" onClick={() => setShowImport(false)}>关闭</button>}
-          {partitionState.error && <p role="alert">{partitionState.error}</p>}
+          {(importError ?? partitionState.error) && <p role="alert">{importError ?? partitionState.error}</p>}
         </form>}
         {partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
         {(partitionState.partition.canUndo || partitionState.partition.canRedo) && <div className="vai-partition-history" role="toolbar" aria-label="分区历史">

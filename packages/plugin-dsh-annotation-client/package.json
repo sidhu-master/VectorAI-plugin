@@ -8,13 +8,20 @@
   "main": "./lib/index.js",
   "types": "./src/index.ts",
   "exports": {
-    ".": { "types": "./src/index.ts", "default": "./lib/index.js" },
-    "./client": { "types": "./src/client.tsx", "default": "./lib/client.js" }
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./src/client.tsx",
+      "default": "./lib/client.js"
+    }
   },
   "dsh": {
     "client": {
       "inject": [
         "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@vectorai/plugin-dsh-space-client"
       ],
       "platform": "web"
@@ -24,10 +31,17 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src"
   },
-  "files": ["lib/index.js", "lib/client.js", "src/**/*.ts", "src/**/*.tsx"],
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-api-remotes": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.8",
     "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.8",
     "@vectorai/drawing-surface-api": "workspace:*",
     "@vectorai/drawing-viewer-react": "workspace:*",
@@ -40,7 +54,7 @@
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@types/react-test-renderer": "18.3.1",
-    "react-test-renderer": "18.3.1",
-    "@vectorai/drawing-core": "workspace:*"
+    "@vectorai/drawing-core": "workspace:*",
+    "react-test-renderer": "18.3.1"
   }
 }
