@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   mergeBoundary,
   moveBoundary,
+  moveSemanticRange,
   splitSegment,
   updateSegmentMetadata,
   validatePartition,
@@ -58,5 +59,19 @@ describe('editable shaft partition', () => {
     const renamed = updateSegmentMetadata(merged, { segmentId: merged.segments[1]!.id, name: '轴承位', semanticType: 'bearing-seat' });
     expect(renamed.segments[1]).toMatchObject({ name: '轴承位', semanticType: 'bearing-seat' });
     expect(validatePartition(renamed)).toEqual([]);
+  });
+
+  it('moves a semantic range edge without changing physical segments', () => {
+    const source = draft();
+    source.semanticGroups = [{
+      id: 'group:gear', segmentIds: ['segment:10-20'], range: { zStart: 12, zEnd: 18 },
+      semanticType: 'gear', evidenceIds: [],
+    }];
+    const moved = moveSemanticRange(source, {
+      groupId: 'group:gear', edge: 'start', requestedZ: 11.5, snapCandidates: [], snapTolerance: 0,
+    });
+    expect(moved.semanticGroups[0]?.range).toEqual({ zStart: 11.5, zEnd: 18 });
+    expect(moved.segments).toEqual(source.segments);
+    expect(moved.evidence.at(-1)).toMatchObject({ origin: 'manual' });
   });
 });

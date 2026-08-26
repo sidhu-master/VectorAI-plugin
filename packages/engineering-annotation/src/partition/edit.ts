@@ -20,6 +20,37 @@ export function moveBoundary(draft: PartitionDraft, input: SnapInput & { boundar
   return appendManual(draft, segments, evidenceId, `Boundary moved to ${z}`);
 }
 
+export function moveSemanticRange(draft: PartitionDraft, input: SnapInput & {
+  groupId: string;
+  edge: 'start' | 'end';
+  requestedZ: number;
+}): PartitionDraft {
+  const group = draft.semanticGroups.find(({ id }) => id === input.groupId);
+  if (!group) throw new Error('PARTITION_GROUP_UNKNOWN');
+  const related = group.segmentIds
+    .map((id) => draft.segments.find((segment) => segment.id === id))
+    .filter((segment): segment is ShaftPartitionSegment => segment !== undefined);
+  if (related.length === 0) throw new Error('PARTITION_GROUP_REFERENCE_INVALID');
+  const current = group.range ?? {
+    zStart: Math.min(...related.map(({ zStart }) => zStart)),
+    zEnd: Math.max(...related.map(({ zEnd }) => zEnd)),
+  };
+  const z = snap(input.requestedZ, input.snapCandidates, input.snapTolerance);
+  const nextRange = input.edge === 'start' ? { ...current, zStart: z } : { ...current, zEnd: z };
+  const tolerance = Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 1e-9, 1e-9);
+  if (nextRange.zStart < draft.axis.zMin - tolerance || nextRange.zEnd > draft.axis.zMax + tolerance
+    || nextRange.zEnd - nextRange.zStart <= tolerance) throw new Error('PARTITION_GROUP_RANGE_ORDER');
+  const evidenceId = `manual:semantic-range:${group.id}:${input.edge}:${canonical(z)}`;
+  const semanticGroups = draft.semanticGroups.map((candidate) => candidate.id === group.id
+    ? { ...candidate, range: nextRange, evidenceIds: unique([...candidate.evidenceIds, evidenceId]) }
+    : candidate);
+  return {
+    ...structuredClone(draft),
+    semanticGroups: structuredClone(semanticGroups),
+    evidence: [...structuredClone(draft.evidence), { id: evidenceId, origin: 'manual', label: `Functional range ${input.edge} moved to ${z}` }],
+  };
+}
+
 export function splitSegment(draft: PartitionDraft, input: SnapInput & { segmentId: string; z: number }): PartitionDraft {
   const index = draft.segments.findIndex(({ id }) => id === input.segmentId);
   if (index < 0) throw new Error('PARTITION_SEGMENT_UNKNOWN');

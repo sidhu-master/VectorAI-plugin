@@ -15,7 +15,15 @@ export interface ShaftPartitionSegment {
   geometryNodeIds: string[]; boundaryEvidenceIds: string[]; semanticEvidenceIds: string[]; diagnosticIds: string[];
   profileSamples?: Array<{ z: number; radius: number; geometryNodeId: string }>;
 }
-export interface ShaftSemanticGroup { id: string; segmentIds: string[]; semanticType: string; name?: string; evidenceIds: string[] }
+export interface ShaftSemanticGroup {
+  id: string;
+  segmentIds: string[];
+  /** Independent functional extent. Legacy persisted groups may omit it. */
+  range?: { zStart: number; zEnd: number };
+  semanticType: string;
+  name?: string;
+  evidenceIds: string[];
+}
 export interface PartitionDraft {
   version: 1; drawingRef: DrawingRef; axis: ShaftAxis;
   segments: ShaftPartitionSegment[]; semanticGroups: ShaftSemanticGroup[];

@@ -36,6 +36,7 @@ export function fuseDocumentRegions(draft: PartitionDraft, regions: EngineeringR
     const group: ShaftSemanticGroup = {
       id: `group:${region.id}`,
       segmentIds: best.segments.map(({ id }) => id),
+      range: { zStart: region.interval.start, zEnd: region.interval.end },
       semanticType: region.type,
       ...(region.name === undefined ? {} : { name: region.name }),
       evidenceIds: [evidenceId],

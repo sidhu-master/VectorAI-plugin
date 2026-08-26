@@ -16,6 +16,35 @@ describe('bounded AI semantic proposals', () => {
     expect(result.draft.segments.map(({ zStart, zEnd }) => [zStart, zEnd])).toEqual([[0, 1], [1, 2]]);
     expect(result.draft.evidence.at(-1)?.origin).toBe('ai');
     expect(result.draft.segments[1]).toMatchObject({ semanticType: 'bearing-seat', semanticConfidence: 0.82 });
+    expect(result.draft.semanticGroups[0]?.range).toEqual({ zStart: 1, zEnd: 2 });
+  });
+
+  it('abstains from low-confidence, generic, and incompletely evidenced proposals', () => {
+    const proposals = [
+      { segmentIds: ['segment:1'], semanticType: 'shaft-work-area', name: '工作区域', confidence: 0.95, reason: '普通连续外形', visualEvidenceIds: ['observation:segment:1'] },
+      { segmentIds: ['segment:1'], semanticType: 'gear', name: '齿轮', confidence: 0.6, reason: '可能有齿', visualEvidenceIds: ['observation:segment:1'] },
+      { segmentIds: ['segment:2'], semanticType: 'bearing-seat', name: '轴承位', confidence: 0.95, reason: '明确圆柱定位面', visualEvidenceIds: [] },
+    ];
+    const result = applySemanticProposals(draft, proposals, {
+      allowedSegmentIds: ['segment:1', 'segment:2'],
+      allowedVisualEvidenceIds: ['observation:segment:1', 'observation:segment:2'],
+    });
+    expect(result.applied).toBe(0);
+    expect(result.draft.semanticGroups).toEqual([]);
+  });
+
+  it('clips an AI segment-derived range to the still-uncovered interval', () => {
+    const source = structuredClone(draft);
+    source.semanticGroups = [{
+      id: 'document:gear', segmentIds: ['segment:1'], range: { zStart: 0.4, zEnd: 1.4 },
+      semanticType: 'gear', evidenceIds: [],
+    }];
+    const result = applySemanticProposals(source, [{
+      segmentIds: ['segment:2'], semanticType: 'spline', name: '内花键', confidence: 0.9,
+      reason: '可见重复花键齿形', visualEvidenceIds: ['observation:segment:2'],
+    }]);
+    expect(result.applied).toBe(1);
+    expect(result.draft.semanticGroups.at(-1)?.range).toEqual({ zStart: 1.4, zEnd: 2 });
   });
 
   it('rejects hallucinated IDs and coordinate-bearing output', () => {

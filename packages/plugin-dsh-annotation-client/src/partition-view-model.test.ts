@@ -17,7 +17,7 @@ const draft: PartitionDraft = {
   ],
   semanticGroups: [
     { id: 'bearing', segmentIds: ['s1'], semanticType: 'bearing-seat', name: '左轴承位', evidenceIds: ['document:bearing'] },
-    { id: 'gear', segmentIds: ['s3'], semanticType: 'gear', name: '齿轮区域', evidenceIds: ['document:gear'] },
+    { id: 'gear', segmentIds: ['s3'], range: { zStart: 12, zEnd: 18 }, semanticType: 'gear', name: '齿轮区域', evidenceIds: ['document:gear'] },
   ],
   stepCandidates: [],
   evidence: [
@@ -31,7 +31,7 @@ describe('partition view model', () => {
   it('leaves unclassified transition segments empty in the functional view', () => {
     expect(partitionBands(draft, 'functional').map(({ id, zStart, zEnd }) => [id, zStart, zEnd])).toEqual([
       ['bearing', 0, 8],
-      ['gear', 10, 22],
+      ['gear', 12, 18],
     ]);
   });
 
@@ -39,5 +39,14 @@ describe('partition view model', () => {
     expect(partitionBands(draft, 'segments').map(({ id, zStart, zEnd }) => [id, zStart, zEnd])).toEqual([
       ['s1', 0, 8], ['s2', 8, 10], ['s3', 10, 22], ['s4', 22, 30],
     ]);
+  });
+
+  it('hides a legacy generic AI work-area group instead of filling an intentional gap', () => {
+    const legacy = structuredClone(draft);
+    legacy.semanticGroups.push({
+      id: 'legacy-ai-gap', segmentIds: ['s2'], semanticType: 'shaft-work-area', name: '外花键工作区', evidenceIds: ['ai:legacy'],
+    });
+    legacy.evidence.push({ id: 'ai:legacy', origin: 'ai', label: '旧版泛化分类' });
+    expect(partitionBands(legacy, 'functional').map(({ id }) => id)).not.toContain('legacy-ai-gap');
   });
 });

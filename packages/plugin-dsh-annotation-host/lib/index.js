@@ -755,6 +755,9 @@ function validatePartition(draft) {
     if (group.segmentIds.some((id) => !ids.has(id)) || group.evidenceIds.some((id) => !evidence.has(id))) {
       diagnostics.push({ id: `diagnostic:group:${group.id}`, severity: "error", code: "PARTITION_GROUP_REFERENCE_INVALID", message: `Invalid references in group ${group.id}` });
     }
+    if (group.range !== void 0 && (!Number.isFinite(group.range.zStart) || !Number.isFinite(group.range.zEnd) || group.range.zEnd - group.range.zStart <= tolerance || group.range.zStart < draft.axis.zMin - tolerance || group.range.zEnd > draft.axis.zMax + tolerance)) {
+      diagnostics.push({ id: `diagnostic:group-range:${group.id}`, severity: "error", code: "PARTITION_GROUP_RANGE_INVALID", message: `Invalid functional range in group ${group.id}` });
+    }
   }
   return diagnostics;
 }
@@ -771,6 +774,27 @@ function moveBoundary(draft, input) {
   const profileSamples = uniqueSamples(draft.segments.flatMap((segment) => segment.profileSamples ?? []));
   const segments = draft.segments.map((segment, index) => index === input.boundaryIndex - 1 ? summarize({ ...segment, zEnd: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : index === input.boundaryIndex ? summarize({ ...segment, zStart: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : segment);
   return appendManual(draft, segments, evidenceId, `Boundary moved to ${z}`);
+}
+function moveSemanticRange(draft, input) {
+  const group = draft.semanticGroups.find(({ id }) => id === input.groupId);
+  if (!group) throw new Error("PARTITION_GROUP_UNKNOWN");
+  const related = group.segmentIds.map((id) => draft.segments.find((segment) => segment.id === id)).filter((segment) => segment !== void 0);
+  if (related.length === 0) throw new Error("PARTITION_GROUP_REFERENCE_INVALID");
+  const current = group.range ?? {
+    zStart: Math.min(...related.map(({ zStart }) => zStart)),
+    zEnd: Math.max(...related.map(({ zEnd }) => zEnd))
+  };
+  const z = snap(input.requestedZ, input.snapCandidates, input.snapTolerance);
+  const nextRange = input.edge === "start" ? { ...current, zStart: z } : { ...current, zEnd: z };
+  const tolerance = Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 1e-9, 1e-9);
+  if (nextRange.zStart < draft.axis.zMin - tolerance || nextRange.zEnd > draft.axis.zMax + tolerance || nextRange.zEnd - nextRange.zStart <= tolerance) throw new Error("PARTITION_GROUP_RANGE_ORDER");
+  const evidenceId = `manual:semantic-range:${group.id}:${input.edge}:${canonical$2(z)}`;
+  const semanticGroups = draft.semanticGroups.map((candidate) => candidate.id === group.id ? { ...candidate, range: nextRange, evidenceIds: unique([...candidate.evidenceIds, evidenceId]) } : candidate);
+  return {
+    ...structuredClone(draft),
+    semanticGroups: structuredClone(semanticGroups),
+    evidence: [...structuredClone(draft.evidence), { id: evidenceId, origin: "manual", label: `Functional range ${input.edge} moved to ${z}` }]
+  };
 }
 function splitSegment(draft, input) {
   const index = draft.segments.findIndex(({ id }) => id === input.segmentId);
@@ -1283,6 +1307,7 @@ function fuseDocumentRegions(draft, regions) {
     const group = {
       id: `group:${region.id}`,
       segmentIds: best.segments.map(({ id }) => id),
+      range: { zStart: region.interval.start, zEnd: region.interval.end },
       semanticType: region.type,
       ...region.name === void 0 ? {} : { name: region.name },
       evidenceIds: [evidenceId]
@@ -1433,6 +1458,7 @@ function applySemanticProposals(draft, proposals, options = {}) {
   const allowed = options.allowedSegmentIds === void 0 ? void 0 : new Set(options.allowedSegmentIds);
   const allowedVisual = options.allowedVisualEvidenceIds === void 0 ? void 0 : new Set(options.allowedVisualEvidenceIds);
   const assigned = /* @__PURE__ */ new Set();
+  let applied = 0;
   for (const [index, proposal] of proposals.entries()) {
     if (proposal.segmentIds.length === 0 || !proposal.semanticType.trim() || proposal.semanticType.length > 80 || proposal.name !== void 0 && proposal.name.length > 120 || !Number.isFinite(proposal.confidence) || proposal.confidence < 0 || proposal.confidence > 1 || !proposal.reason.trim() || proposal.reason.length > 500) throw new Error("AI_SEMANTIC_PROPOSAL_INVALID");
     if (/\b(?:x|y|z|radius|diameter|boundary)\s*[=:]\s*-?\d/i.test(proposal.reason)) throw new Error("AI_SEMANTIC_REASON_COORDINATES");
@@ -1443,6 +1469,18 @@ function applySemanticProposals(draft, proposals, options = {}) {
       const segment = known.get(id);
       if (!segment) throw new Error("AI_SEGMENT_ID_UNKNOWN");
       if (allowed !== void 0 && !allowed.has(id)) throw new Error("AI_SEGMENT_NOT_ALLOWED");
+    }
+    const expectedVisual = new Set(proposal.segmentIds.map((id) => `observation:${id}`));
+    const hasCompleteVisualEvidence = [...expectedVisual].every((id) => proposal.visualEvidenceIds.includes(id));
+    if (proposal.confidence < 0.8 || !hasCompleteVisualEvidence || isGenericProposal(proposal)) continue;
+    const proposedRange = {
+      zStart: Math.min(...proposal.segmentIds.map((id) => known.get(id).zStart)),
+      zEnd: Math.max(...proposal.segmentIds.map((id) => known.get(id).zEnd))
+    };
+    const range = singleUncoveredRange(output, proposedRange);
+    if (range === void 0) continue;
+    for (const id of proposal.segmentIds) {
+      const segment = known.get(id);
       if (segment.semanticType !== void 0) throw new Error("AI_SEGMENT_ALREADY_CLASSIFIED");
       if (assigned.has(id)) throw new Error("AI_SEGMENT_DUPLICATE_ASSIGNMENT");
       assigned.add(id);
@@ -1454,6 +1492,7 @@ function applySemanticProposals(draft, proposals, options = {}) {
       id: `group:${evidenceId}`,
       segmentIds: [...proposal.segmentIds],
       semanticType: proposal.semanticType,
+      range,
       ...proposal.name === void 0 ? {} : { name: proposal.name },
       evidenceIds: [evidenceId, ...proposal.visualEvidenceIds]
     };
@@ -1466,8 +1505,49 @@ function applySemanticProposals(draft, proposals, options = {}) {
       segment.semanticConfidence = proposal.confidence;
       segment.semanticEvidenceIds.push(evidenceId);
     }
+    applied += 1;
   }
-  return { draft: output, applied: proposals.length };
+  return { draft: output, applied };
+}
+function isGenericProposal(proposal) {
+  const value = `${proposal.semanticType} ${proposal.name ?? ""}`.toLowerCase();
+  return !SUPPORTED_SEMANTIC_TYPES.has(proposal.semanticType.toLowerCase()) || /(?:work[-_ ]?area|working[-_ ]?area|工作区域|工作区|普通轴段|常规区域|shaft[-_ ]?region)/u.test(value);
+}
+const SUPPORTED_SEMANTIC_TYPES = /* @__PURE__ */ new Set([
+  "gear",
+  "spline",
+  "bearing-seat",
+  "shaft-seat",
+  "seal-seat",
+  "oil-seal-seat",
+  "coupling-seat",
+  "thread",
+  "keyway",
+  "shoulder"
+]);
+function singleUncoveredRange(draft, proposed) {
+  const segmentById = new Map(draft.segments.map((segment) => [segment.id, segment]));
+  const occupied = draft.semanticGroups.flatMap((group) => {
+    if (group.range !== void 0) return [group.range];
+    const related = group.segmentIds.map((id) => segmentById.get(id)).filter((segment) => segment !== void 0);
+    return related.length === 0 ? [] : [{
+      zStart: Math.min(...related.map(({ zStart }) => zStart)),
+      zEnd: Math.max(...related.map(({ zEnd }) => zEnd))
+    }];
+  });
+  const tolerance = Math.max((draft.axis.zMax - draft.axis.zMin) * 1e-9, 1e-9);
+  let available = [proposed];
+  for (const range of occupied) {
+    available = available.flatMap((candidate) => {
+      if (range.zEnd <= candidate.zStart + tolerance || range.zStart >= candidate.zEnd - tolerance) return [candidate];
+      const pieces = [
+        { zStart: candidate.zStart, zEnd: Math.min(candidate.zEnd, range.zStart) },
+        { zStart: Math.max(candidate.zStart, range.zEnd), zEnd: candidate.zEnd }
+      ];
+      return pieces.filter(({ zStart, zEnd }) => zEnd - zStart > tolerance);
+    });
+  }
+  return available.length === 1 ? available[0] : void 0;
 }
 function analyzeDimensionChain(input) {
   const intentsById = new Map(input.intents.map((intent) => [intent.id, intent]));
@@ -7652,6 +7732,7 @@ const partitionSegmentSchema = object({
 const partitionGroupSchema = object({
   id: idSchema,
   segmentIds: array(idSchema),
+  range: object({ zStart: number(), zEnd: number() }).strict().optional(),
   semanticType: string(),
   name: string().optional(),
   evidenceIds: array(idSchema)
@@ -7681,6 +7762,7 @@ const partitionRevisionSchema = object({
 }).strict();
 discriminatedUnion("type", [
   object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("semantic-range.move"), expectedDrawingRef: drawingRefSchema, groupId: idSchema, edge: _enum(["start", "end"]), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
   object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
   object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
   object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
@@ -7960,7 +8042,7 @@ class PartitionSessionStore {
     requireRef$1(state.snapshot, command.expectedDrawingRef);
     if (state.snapshot.phase !== "editing" || !state.snapshot.draft) throw new Error("PARTITION_DRAFT_REQUIRED");
     const draft = structuredClone(state.snapshot.draft);
-    const next = command.type === "boundary.move" ? moveBoundary(draft, { boundaryIndex: command.boundaryIndex, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "segment.split" ? splitSegment(draft, { segmentId: command.segmentId, z: command.z, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "boundary.merge" ? mergeBoundary(draft, { boundaryIndex: command.boundaryIndex }) : updateSegmentMetadata(draft, { segmentId: command.segmentId, ...command.name === void 0 ? {} : { name: command.name }, ...command.semanticType === void 0 ? {} : { semanticType: command.semanticType } });
+    const next = command.type === "boundary.move" ? moveBoundary(draft, { boundaryIndex: command.boundaryIndex, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "semantic-range.move" ? moveSemanticRange(draft, { groupId: command.groupId, edge: command.edge, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "segment.split" ? splitSegment(draft, { segmentId: command.segmentId, z: command.z, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "boundary.merge" ? mergeBoundary(draft, { boundaryIndex: command.boundaryIndex }) : updateSegmentMetadata(draft, { segmentId: command.segmentId, ...command.name === void 0 ? {} : { name: command.name }, ...command.semanticType === void 0 ? {} : { semanticType: command.semanticType } });
     return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, { ...state.snapshot, draft: next, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
   }
   confirm(sessionId, expected) {
@@ -8476,7 +8558,7 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         nextSegmentId: index === segments.length - 1 ? null : segments[index + 1].id
       }));
       const payload = JSON.stringify({
-        instruction: "只根据编号图像识别明确的主要功能区域。允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段不要为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。仅返回语义名称、类型和理由，名称、语义类型和理由必须使用简短中文。不要返回坐标、边界、尺寸或几何编辑命令。",
+        instruction: "只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。",
         segments: catalog,
         observationDigest: rendered.contentDigest
       });

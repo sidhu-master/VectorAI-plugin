@@ -231,6 +231,9 @@ describe('DSH drawing workspace wire schemas', () => {
       version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 1,
     })).toMatchObject({ phase: 'idle' });
     expect(() => partitionEditCommandSchema.parse({ ...command, geometryCommand: 'move' })).toThrow();
+    expect(partitionEditCommandSchema.parse({
+      type: 'semantic-range.move', expectedDrawingRef: ref, groupId: 'group:G01', edge: 'start', requestedZ: 63.5, snapTolerance: 0.5,
+    })).toMatchObject({ type: 'semantic-range.move', groupId: 'group:G01', edge: 'start' });
   });
 
   it('bounds extension DXF import and local observation requests without geometry commands', () => {
