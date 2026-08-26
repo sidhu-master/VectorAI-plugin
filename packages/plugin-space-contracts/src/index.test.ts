@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
+import { createEmptyDrawing, type AnnotationId, type GeometryId } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -31,6 +31,10 @@ import {
   drawingObservationResultSchema,
   partitionSessionSnapshotSchema,
   partitionEditCommandSchema,
+  partitionDocumentSupplementRequestSchema,
+  partitionImportRequestSchema,
+  engineeringAnnotationDraftSchema,
+  dimensionPlanSessionSnapshotSchema,
 } from './index';
 
 function snapshot() {
@@ -52,6 +56,173 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('accepts ordered immutable engineering document inputs', () => {
+    const request = {
+      dxf: { name: 'shaft.dxf', digest: `sha256:${'a'.repeat(64)}`, base64: 'WA==' },
+      engineeringDocuments: [
+        { name: 'limits.pdf', digest: `sha256:${'b'.repeat(64)}`, mediaType: 'application/pdf', base64: 'WA==' },
+        { name: 'notes.txt', digest: `sha256:${'c'.repeat(64)}`, base64: 'WA==' },
+      ],
+    };
+    expect(partitionImportRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it('retains the legacy single text document input during migration', () => {
+    const request = {
+      dxf: { name: 'shaft.dxf', digest: `sha256:${'a'.repeat(64)}`, base64: 'WA==' },
+      engineeringDocument: { name: 'notes.txt', text: '轴段' },
+    };
+    expect(partitionImportRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it('accepts revision-bound documents that supplement an existing partition drawing', () => {
+    const request = {
+      expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+      engineeringDocuments: [
+        { name: 'limits.pdf', digest: `sha256:${'b'.repeat(64)}`, mediaType: 'application/pdf', base64: 'WA==' },
+      ],
+    };
+    expect(partitionDocumentSupplementRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it('strictly carries revision-bound engineering annotation drafts', () => {
+    const draft = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      datums: [],
+      intents: [],
+      tolerances: [],
+      chains: [],
+      dependencies: [],
+      diagnostics: [],
+    };
+    expect(engineeringAnnotationDraftSchema.parse(draft)).toEqual(draft);
+    expect(() => engineeringAnnotationDraftSchema.parse({ ...draft, formulaSource: 'return 0.1' })).toThrow();
+    expect(() => engineeringAnnotationDraftSchema.parse({
+      ...draft,
+      chains: [{
+        id: 'chain-1', drawingRef: draft.drawingRef, datumIds: [],
+        members: [{ dimensionIntentId: 'intent-1', coefficient: 0, role: 'component' }],
+        equation: { closureIntentId: 'intent-1' }, analysisMode: 'worst-case',
+        status: 'candidate', evidenceIds: [], diagnostics: [],
+      }],
+    })).toThrow();
+  });
+
+  it('strictly carries durable dimension-plan session snapshots', () => {
+    const snapshot = {
+      version: 1 as const,
+      phase: 'editing' as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      draft: {
+        version: 1 as const,
+        drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
+      },
+      canUndo: true,
+      canRedo: false,
+      updatedAt: 7,
+    };
+    expect(dimensionPlanSessionSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(() => dimensionPlanSessionSnapshotSchema.parse({ ...snapshot, formulaSource: 'return 0.1' })).toThrow();
+    expect(() => dimensionPlanSessionSnapshotSchema.parse({ ...snapshot, updatedAt: Number.NaN })).toThrow();
+  });
+
+  it('round-trips portable tolerance and datum projections strictly', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-tolerance' }, now: () => 1 });
+    document.annotations = [{
+      id: 'dimension-1' as AnnotationId,
+      type: 'dimension',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      dimensionKind: 'linear',
+      associationStatus: 'resolved',
+      targets: [{ geometryId: 'line-1' as GeometryId, anchor: { kind: 'start' } }],
+      computedValue: 20,
+      unit: 'mm',
+      toleranceProjection: {
+        mode: 'fit', fitDesignation: 'H7', unit: 'mm', status: 'confirmed',
+        source: 'standard', ruleRef: { id: 'iso-fit', version: '1', inputDigest: 'sha256:abc' },
+        evidenceRefs: ['evidence:fit'],
+      },
+      datumReferences: [{
+        datumId: 'datum-a', role: 'primary', geometryId: 'line-1' as GeometryId, anchor: { kind: 'start' },
+      }],
+      engineeringIntentId: 'intent-1',
+      engineeringChainIds: ['chain-1'],
+      generationOrder: 2,
+      textPosition: [10, 5],
+      definitionPoints: [[0, 0], [20, 0]],
+    }];
+    expect(drawingDocumentSchema.parse(document).annotations[0]).toMatchObject({
+      engineeringIntentId: 'intent-1',
+      toleranceProjection: { mode: 'fit', fitDesignation: 'H7' },
+    });
+    const invalid = structuredClone(document);
+    (invalid.annotations[0] as { toleranceProjection?: { upperLimit?: number } }).toleranceProjection = {
+      ...(invalid.annotations[0] as { toleranceProjection: object }).toleranceProjection,
+      upperLimit: Number.POSITIVE_INFINITY,
+    };
+    expect(() => drawingDocumentSchema.parse(invalid)).toThrow();
+  });
+
+  it('round-trips a parametric DXF hatch without flattening it into display segments', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-hatch' }, now: () => 1 });
+    document.annotations = [{
+      id: 'hatch-1' as AnnotationId,
+      type: 'section-hatch',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      pattern: 'ANSI31',
+      angle: 45,
+      spacing: 3.175,
+      hatch: {
+        version: 1,
+        style: 'normal',
+        elevation: 0,
+        extrusion: [0, 0, 1],
+        boundaryPaths: [{
+          flags: 3,
+          closed: true,
+          edges: [
+            { type: 'line', start: [0, 0], end: [20, 0] },
+            { type: 'arc', center: [20, 5], radius: 5, startAngle: -90, endAngle: 90, counterClockwise: true },
+            { type: 'line', start: [20, 10], end: [0, 10] },
+            { type: 'line', start: [0, 10], end: [0, 0] },
+          ],
+        }],
+        patternLines: [{
+          angle: 45,
+          base: [0, 0],
+          offset: [-2.245064, 2.245064],
+          dashLengths: [],
+        }],
+        patternAngle: 0,
+        patternScale: 1,
+        double: false,
+      },
+    }];
+
+    const parsed = drawingDocumentSchema.parse(document);
+    expect(parsed.annotations[0]).toEqual(document.annotations[0]);
+    expect(parsed.annotations[0]).not.toHaveProperty('segments');
+  });
+
+  it('rejects a section hatch that has neither original semantics nor legacy segments', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-hatch' }, now: () => 1 });
+    document.annotations = [{
+      id: 'hatch-1' as AnnotationId,
+      type: 'section-hatch',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      pattern: 'ANSI31',
+      angle: 45,
+      spacing: 3.175,
+    } as never];
+
+    expect(() => drawingDocumentSchema.parse(document)).toThrow();
+  });
+
   it('strictly carries revision-bound partition state and edits', () => {
     const ref = { drawingId: 'drawing-1', revision: 1 };
     const command = { type: 'boundary.move', expectedDrawingRef: ref, boundaryIndex: 1, requestedZ: 12, snapTolerance: 0.5 };

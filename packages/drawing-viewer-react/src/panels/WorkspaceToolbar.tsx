@@ -1,15 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { exportDrawingDxf } from '@vectorai/drawing-core';
+import type { DrawingWorkspaceSnapshot, DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 import { fitViewportToDrawing } from '../canvas/geometry';
 import { useDrawingWorkspace } from '../hooks';
 import { Check, Download, Eye, Redo2, Scan, Undo2, Upload, X } from 'lucide-react';
 import { useEffect, type ChangeEvent, type KeyboardEvent, type PointerEvent } from 'react';
+
+export interface WorkspaceToolbarHistory {
+  canUndo: boolean;
+  canRedo: boolean;
+  undo(): void | Promise<void>;
+  redo(): void | Promise<void>;
+}
 
 export interface WorkspaceToolbarProps {
   onUploadFiles?: (files: readonly File[]) => void;
   onExport?: () => void;
   motionPreviewHeld?: boolean;
   onMotionPreviewHeldChange?: (held: boolean) => void;
+  history?: WorkspaceToolbarHistory;
+  uploadAccept?: string;
+  uploadMultiple?: boolean;
 }
 
 export function WorkspaceToolbar({
@@ -17,6 +29,9 @@ export function WorkspaceToolbar({
   onExport,
   motionPreviewHeld = false,
   onMotionPreviewHeldChange,
+  history,
+  uploadAccept = 'image/png,image/jpeg,image/webp,image/gif',
+  uploadMultiple = false,
 }: WorkspaceToolbarProps) {
   const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
   const viewport = useDrawingWorkspace((state) => state.viewport);
@@ -45,11 +60,6 @@ export function WorkspaceToolbar({
   if (snapshot === null) return null;
   const lastCommit = formalSnapshot?.lastCommit;
   const unavailable = busy || preview !== null || motionRig !== null;
-  const handleUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.currentTarget.files ?? []);
-    event.currentTarget.value = '';
-    if (files.length > 0) onUploadFiles?.(files);
-  };
   const beginMotionPreview = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || !motionPreviewAvailable) return;
     event.preventDefault();
@@ -113,12 +123,64 @@ export function WorkspaceToolbar({
           ><Check aria-hidden="true" size={17} /></button>
         </div>
       ) : null}
-      <div className="vai-toolbar" role="toolbar" aria-label="图纸操作工具">
+      <WorkspaceToolbarView
+        snapshot={snapshot}
+        viewport={viewport}
+        unavailable={unavailable}
+        canUndo={history?.canUndo ?? Boolean(canRestoreMotionRig || lastCommit?.undoable)}
+        canRedo={history?.canRedo ?? Boolean(lastCommit?.redoable)}
+        onFit={(next) => setViewport(next)}
+        onUndo={() => history ? history.undo() : undoLast()}
+        onRedo={() => history ? history.redo() : redoLast()}
+        onUploadFiles={onUploadFiles}
+        uploadAccept={uploadAccept}
+        uploadMultiple={uploadMultiple}
+        onExport={onExport}
+      />
+    </>
+  );
+}
+
+export interface WorkspaceToolbarViewProps {
+  snapshot: DrawingWorkspaceSnapshot;
+  viewport: DrawingWorkspaceViewport;
+  unavailable?: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  onFit(viewport: ReturnType<typeof fitViewportToDrawing>): void;
+  onUndo(): unknown | Promise<unknown>;
+  onRedo(): unknown | Promise<unknown>;
+  onUploadFiles?: (files: readonly File[]) => void;
+  uploadAccept?: string;
+  uploadMultiple?: boolean;
+  onExport?: () => void;
+}
+
+export function WorkspaceToolbarView({
+  snapshot,
+  viewport,
+  unavailable = false,
+  canUndo,
+  canRedo,
+  onFit,
+  onUndo,
+  onRedo,
+  onUploadFiles,
+  uploadAccept = 'image/png,image/jpeg,image/webp,image/gif',
+  uploadMultiple = false,
+  onExport,
+}: WorkspaceToolbarViewProps) {
+  const handleUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = '';
+    if (files.length > 0) onUploadFiles?.(files);
+  };
+  return <div className="vai-toolbar" role="toolbar" aria-label="图纸操作工具">
       <button
         type="button"
         aria-label="适配图纸"
         title="缩放并居中显示整张图纸"
-        onClick={() => setViewport(fitViewportToDrawing(snapshot.document, viewport))}
+        onClick={() => onFit(fitViewportToDrawing(snapshot.document, viewport))}
       >
         <Scan aria-hidden="true" size={17} />
       </button>
@@ -126,16 +188,16 @@ export function WorkspaceToolbar({
       <button
         type="button"
         aria-label="撤销"
-        disabled={unavailable || (!canRestoreMotionRig && !lastCommit?.undoable)}
+        disabled={unavailable || !canUndo}
         title="撤销最近一次图纸修改"
-        onClick={() => { void undoLast(); }}
+        onClick={() => { void onUndo(); }}
       ><Undo2 aria-hidden="true" size={17} /></button>
       <button
         type="button"
         aria-label="反撤销"
-        disabled={unavailable || !lastCommit?.redoable}
+        disabled={unavailable || !canRedo}
         title="恢复最近一次撤销"
-        onClick={() => { void redoLast(); }}
+        onClick={() => { void onRedo(); }}
       ><Redo2 aria-hidden="true" size={17} /></button>
       <span className="vai-toolbar__separator" />
       <label
@@ -146,7 +208,8 @@ export function WorkspaceToolbar({
         <Upload aria-hidden="true" size={17} />
         <input
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
+          accept={uploadAccept}
+          multiple={uploadMultiple}
           disabled={onUploadFiles === undefined}
           onChange={handleUpload}
         />
@@ -154,11 +217,19 @@ export function WorkspaceToolbar({
       <button
         type="button"
         aria-label="导出 DXF"
-        disabled={formalSnapshot === null}
+        disabled={false}
         title="导出当前 DXF 图纸"
-        onClick={onExport}
+        onClick={onExport ?? (() => exportSnapshotDxf(snapshot))}
       ><Download aria-hidden="true" size={17} /></button>
       </div>
-    </>
-  );
+}
+
+function exportSnapshotDxf(snapshot: DrawingWorkspaceSnapshot): void {
+  const blob = new Blob([exportDrawingDxf(snapshot.document)], { type: 'application/dxf;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${snapshot.ref.drawingId}-R${snapshot.ref.revision}.dxf`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

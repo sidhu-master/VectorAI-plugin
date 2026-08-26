@@ -11,6 +11,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DrawingWorkspace } from './DrawingWorkspace';
+import { WorkspaceActivityBar } from './panels/WorkspaceActivityBar';
 import { DrawingWorkspaceProvider } from './provider';
 
 const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -56,6 +57,36 @@ async function renderWorkspace() {
 }
 
 describe('DrawingWorkspace activity bar', () => {
+  it('renders contributed panels in the same left-side rail and resizable panel shell', () => {
+    const onActivePanelChange = vi.fn();
+    const renderer = TestRenderer.create(<WorkspaceActivityBar
+      activePanel={'import' as never}
+      panelWidth={280}
+      overlay
+      onActivePanelChange={onActivePanelChange as never}
+      onPanelWidthChange={() => undefined}
+      panels={[{
+        id: 'import', label: '导入工程文件', icon: () => <svg data-test-icon="import" />,
+        render: () => <div data-test-panel="import">导入内容</div>,
+      }, {
+        id: 'structure', label: '图纸结构', icon: () => <svg data-test-icon="structure" />,
+        render: () => <div data-test-panel="structure">结构内容</div>,
+      }] as never}
+    />);
+
+    expect(renderer.root.findByProps({ 'aria-label': '导入工程文件面板' }).props['aria-pressed']).toBe(true);
+    expect(renderer.root.findByProps({ 'aria-label': '信息面板工具栏' }).props.className).toContain('vai-activity-bar--overlay');
+    expect(renderer.root.findByProps({ 'data-panel': 'import' }).props.className).toContain('vai-inspector-stack--overlay');
+    expect(renderer.root.findByProps({ 'data-panel': 'import' }).props.style).toEqual({
+      width: 280,
+      backgroundColor: 'var(--vai-panel, #12161b)',
+    });
+    expect(renderer.root.findByProps({ 'data-test-panel': 'import' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ 'aria-label': '对象面板' })).toHaveLength(0);
+    act(() => renderer.root.findByProps({ 'aria-label': '图纸结构面板' }).props.onClick());
+    expect(onActivePanelChange).toHaveBeenCalledWith('structure');
+  });
+
   it('opens, switches, toggles, and closes one information panel at a time', async () => {
     const renderer = await renderWorkspace();
 

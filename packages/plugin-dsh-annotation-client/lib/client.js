@@ -4,6 +4,16 @@ window.__ModuleLoader__.load({
     var module = { exports: {} };
     var exports = module.exports;
     "use strict";
+    var __defProp = Object.defineProperty;
+    var __typeError = (msg) => {
+      throw TypeError(msg);
+    };
+    var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+    var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+    var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
+    var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
+    var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
+    var _lines;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const jsxRuntime = require("react/jsx-runtime");
     const react = require("react");
@@ -19,8 +29,8 @@ window.__ModuleLoader__.load({
       for (let index = 0; index <= node.degree; index += 1) {
         const sourceIndex = span - node.degree + index;
         const weight = weights[sourceIndex];
-        const point = node.controlPoints[sourceIndex];
-        work.push([point[0] * weight, point[1] * weight, weight]);
+        const point3 = node.controlPoints[sourceIndex];
+        work.push([point3[0] * weight, point3[1] * weight, weight]);
       }
       for (let level = 1; level <= node.degree; level += 1) {
         for (let index = node.degree; index >= level; index -= 1) {
@@ -116,7 +126,7 @@ window.__ModuleLoader__.load({
       const points = controls.map(project);
       const start = points[0];
       const end = points.at(-1);
-      const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
+      const flatness = Math.max(0, ...points.slice(1, -1).map((point3) => pointSegmentDistance(point3, start, end)));
       if (depth >= maxDepth || flatness <= maxError) {
         output.push(end);
         return;
@@ -157,16 +167,16 @@ window.__ModuleLoader__.load({
       return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
     }
     function splitBezier(controls) {
-      const levels = [controls.map((point) => [...point])];
+      const levels = [controls.map((point3) => [...point3])];
       while (levels.at(-1).length > 1) {
         const previous = levels.at(-1);
-        levels.push(previous.slice(1).map((point, index) => mixHomogeneous(previous[index], point, 0.5)));
+        levels.push(previous.slice(1).map((point3, index) => mixHomogeneous(previous[index], point3, 0.5)));
       }
       return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
     }
-    function project(point) {
-      if (!(Math.abs(point[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
-      return [point[0] / point[2], point[1] / point[2]];
+    function project(point3) {
+      if (!(Math.abs(point3[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
+      return [point3[0] / point3[2], point3[1] / point3[2]];
     }
     function bernstein(degree, index, parameter) {
       return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
@@ -176,19 +186,390 @@ window.__ModuleLoader__.load({
       for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
       return result;
     }
-    function pointSegmentDistance(point, start, end) {
+    function pointSegmentDistance(point3, start, end) {
       const dx = end[0] - start[0];
       const dy = end[1] - start[1];
       const lengthSquared = dx * dx + dy * dy;
-      if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
-      const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+      if (lengthSquared === 0) return Math.hypot(point3[0] - start[0], point3[1] - start[1]);
+      const projection = Math.min(1, Math.max(0, ((point3[0] - start[0]) * dx + (point3[1] - start[1]) * dy) / lengthSquared));
       return Math.hypot(
-        point[0] - (start[0] + projection * dx),
-        point[1] - (start[1] + projection * dy)
+        point3[0] - (start[0] + projection * dx),
+        point3[1] - (start[1] + projection * dy)
       );
     }
     function samePoint(first, second) {
       return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
+    }
+    const GEOMETRY_LAYER = "GEOMETRY";
+    const ANNOTATION_LAYER = "ANNOTATIONS";
+    function exportDrawingDxf(document2) {
+      const writer = new DxfWriter();
+      writer.section("HEADER", () => {
+        writer.pair(9, "$ACADVER");
+        writer.pair(1, "AC1015");
+        writer.pair(9, "$INSUNITS");
+        writer.pair(70, insertionUnit(document2.unitSystem.length));
+      });
+      writer.section("TABLES", () => {
+        writer.pair(0, "TABLE");
+        writer.pair(2, "LAYER");
+        writer.pair(70, 2);
+        writeLayer(writer, GEOMETRY_LAYER, 7);
+        writeLayer(writer, ANNOTATION_LAYER, 3);
+        writer.pair(0, "ENDTAB");
+      });
+      writer.section("ENTITIES", () => {
+        for (const node of document2.geometry) {
+          if (node.visible) writeGeometry(writer, node);
+        }
+        for (const node of document2.annotations) {
+          if (node.visible) writeAnnotation(writer, node);
+        }
+      });
+      writer.pair(0, "EOF");
+      return writer.toString();
+    }
+    class DxfWriter {
+      constructor() {
+        __privateAdd(this, _lines, []);
+      }
+      pair(code, value) {
+        __privateGet(this, _lines).push(String(code), typeof value === "number" ? formatNumber(value) : value);
+      }
+      section(name, write) {
+        this.pair(0, "SECTION");
+        this.pair(2, name);
+        write();
+        this.pair(0, "ENDSEC");
+      }
+      toString() {
+        return `${__privateGet(this, _lines).join("\r\n")}\r
+    `;
+      }
+    }
+    _lines = new WeakMap();
+    function writeLayer(writer, name, color) {
+      writer.pair(0, "LAYER");
+      writer.pair(2, name);
+      writer.pair(70, 0);
+      writer.pair(62, color);
+      writer.pair(6, "CONTINUOUS");
+    }
+    function writeGeometry(writer, node) {
+      switch (node.type) {
+        case "point":
+          entity(writer, "POINT", GEOMETRY_LAYER);
+          point(writer, 10, [node.x, node.y]);
+          return;
+        case "line":
+          writeLine(writer, node.start, node.end, GEOMETRY_LAYER);
+          return;
+        case "ray":
+        case "xline":
+          entity(writer, node.type === "ray" ? "RAY" : "XLINE", GEOMETRY_LAYER);
+          point(writer, 10, node.origin);
+          point(writer, 11, node.direction);
+          return;
+        case "circle":
+          entity(writer, "CIRCLE", GEOMETRY_LAYER);
+          point(writer, 10, node.center);
+          writer.pair(40, node.radius);
+          return;
+        case "arc": {
+          entity(writer, "ARC", GEOMETRY_LAYER);
+          point(writer, 10, node.center);
+          writer.pair(40, node.radius);
+          writer.pair(50, normalizeDegrees(node.counterClockwise ? node.startAngle : node.endAngle));
+          writer.pair(51, normalizeDegrees(node.counterClockwise ? node.endAngle : node.startAngle));
+          return;
+        }
+        case "ellipse":
+          entity(writer, "ELLIPSE", GEOMETRY_LAYER);
+          point(writer, 10, node.center);
+          point(writer, 11, node.majorAxis);
+          writer.pair(40, node.ratio);
+          writer.pair(41, node.startParam ?? 0);
+          writer.pair(42, node.endParam ?? Math.PI * 2);
+          return;
+        case "polyline":
+          if (node.vertices.length === 0) return;
+          entity(writer, "LWPOLYLINE", GEOMETRY_LAYER);
+          writer.pair(90, node.vertices.length);
+          writer.pair(70, node.closed ? 1 : 0);
+          for (const vertex of node.vertices) {
+            writer.pair(10, vertex.point[0]);
+            writer.pair(20, vertex.point[1]);
+            if (vertex.bulge !== void 0) writer.pair(42, vertex.bulge);
+          }
+          return;
+        case "spline":
+          if (node.controlPoints.length === 0) return;
+          entity(writer, "SPLINE", GEOMETRY_LAYER);
+          writer.pair(70, 8 | (node.closed ? 1 : 0) | (node.periodic ? 2 : 0) | (node.weights ? 4 : 0));
+          writer.pair(71, node.degree);
+          writer.pair(72, node.knots.length);
+          writer.pair(73, node.controlPoints.length);
+          writer.pair(74, 0);
+          for (const knot of node.knots) writer.pair(40, knot);
+          for (const weight of node.weights ?? []) writer.pair(41, weight);
+          for (const controlPoint of node.controlPoints) point(writer, 10, controlPoint);
+      }
+    }
+    function writeAnnotation(writer, node) {
+      switch (node.type) {
+        case "text":
+          writeText(
+            writer,
+            node.position,
+            node.content,
+            node.height,
+            node.rotation,
+            node.alignment,
+            node.verticalAlignment
+          );
+          return;
+        case "dimension": {
+          writePolyline(writer, node.definitionPoints, false, ANNOTATION_LAYER);
+          writeText(writer, node.textPosition, dimensionLabel$1(node), annotationTextHeight(node), 0, "center", "middle");
+          return;
+        }
+        case "leader": {
+          writePolyline(writer, node.points, false, ANNOTATION_LAYER);
+          const textPosition = node.points.at(-1);
+          if (textPosition !== void 0) {
+            writeText(writer, textPosition, node.content, node.textHeight, 0, "left", "baseline");
+          }
+          return;
+        }
+        case "centerline": {
+          const [start, end] = extendLine(node.start, node.end, node.extension);
+          writeLine(writer, start, end, ANNOTATION_LAYER, "CENTER");
+          return;
+        }
+        case "section-hatch":
+          if (node.hatch !== void 0) {
+            writeHatch(writer, node);
+            return;
+          }
+          for (const segment of node.segments ?? []) {
+            writeLine(writer, segment.start, segment.end, ANNOTATION_LAYER);
+          }
+      }
+    }
+    function writeHatch(writer, node) {
+      var _a2;
+      const hatch = node.hatch;
+      entity(writer, "HATCH", ANNOTATION_LAYER);
+      writer.pair(100, "AcDbHatch");
+      writer.pair(10, 0);
+      writer.pair(20, 0);
+      writer.pair(30, hatch.elevation);
+      writer.pair(210, hatch.extrusion[0]);
+      writer.pair(220, hatch.extrusion[1]);
+      writer.pair(230, hatch.extrusion[2]);
+      writer.pair(2, node.pattern);
+      writer.pair(70, 0);
+      writer.pair(71, 0);
+      writer.pair(91, hatch.boundaryPaths.length);
+      for (const path of hatch.boundaryPaths) {
+        writer.pair(92, path.flags & -3);
+        writer.pair(93, path.edges.length);
+        for (const edge of path.edges) {
+          if (edge.type === "line") {
+            writer.pair(72, 1);
+            point2(writer, 10, edge.start);
+            point2(writer, 11, edge.end);
+          } else if (edge.type === "arc") {
+            writer.pair(72, 2);
+            point2(writer, 10, edge.center);
+            writer.pair(40, edge.radius);
+            writer.pair(50, edge.startAngle);
+            writer.pair(51, edge.endAngle);
+            writer.pair(73, edge.counterClockwise ? 1 : 0);
+          } else if (edge.type === "ellipse") {
+            writer.pair(72, 3);
+            point2(writer, 10, edge.center);
+            point2(writer, 11, edge.majorAxis);
+            writer.pair(40, edge.axisRatio);
+            writer.pair(50, edge.startParameter);
+            writer.pair(51, edge.endParameter);
+            writer.pair(73, edge.counterClockwise ? 1 : 0);
+          } else {
+            writer.pair(72, 4);
+            writer.pair(94, edge.degree);
+            writer.pair(73, edge.rational ? 1 : 0);
+            writer.pair(74, edge.periodic ? 1 : 0);
+            writer.pair(95, edge.knots.length);
+            writer.pair(96, edge.controlPoints.length);
+            for (const knot of edge.knots) writer.pair(40, knot);
+            edge.controlPoints.forEach((controlPoint, index) => {
+              var _a3;
+              point2(writer, 10, controlPoint);
+              if (edge.rational) writer.pair(42, ((_a3 = edge.weights) == null ? void 0 : _a3[index]) ?? 1);
+            });
+            writer.pair(97, ((_a2 = edge.fitPoints) == null ? void 0 : _a2.length) ?? 0);
+            for (const fitPoint of edge.fitPoints ?? []) point2(writer, 11, fitPoint);
+          }
+        }
+        writer.pair(97, 0);
+      }
+      writer.pair(75, { normal: 0, outer: 1, ignore: 2 }[hatch.style]);
+      writer.pair(76, 0);
+      writer.pair(52, hatch.patternAngle);
+      writer.pair(41, hatch.patternScale);
+      writer.pair(77, hatch.double ? 1 : 0);
+      writer.pair(78, hatch.patternLines.length);
+      for (const line of hatch.patternLines) {
+        writer.pair(53, line.angle);
+        writer.pair(43, line.base[0]);
+        writer.pair(44, line.base[1]);
+        writer.pair(45, line.offset[0]);
+        writer.pair(46, line.offset[1]);
+        writer.pair(79, line.dashLengths.length);
+        for (const dash of line.dashLengths) writer.pair(49, dash);
+      }
+      writer.pair(98, 0);
+    }
+    function entity(writer, type, layer) {
+      writer.pair(0, type);
+      writer.pair(8, layer);
+    }
+    function point(writer, xCode, value) {
+      writer.pair(xCode, value[0]);
+      writer.pair(xCode + 10, value[1]);
+      writer.pair(xCode + 20, 0);
+    }
+    function point2(writer, xCode, value) {
+      writer.pair(xCode, value[0]);
+      writer.pair(xCode + 10, value[1]);
+    }
+    function writeLine(writer, start, end, layer, lineType) {
+      entity(writer, "LINE", layer);
+      if (lineType !== void 0) writer.pair(6, lineType);
+      point(writer, 10, start);
+      point(writer, 11, end);
+    }
+    function writePolyline(writer, points, closed, layer) {
+      if (points.length === 0) return;
+      entity(writer, "LWPOLYLINE", layer);
+      writer.pair(90, points.length);
+      writer.pair(70, 0);
+      for (const value of points) {
+        writer.pair(10, value[0]);
+        writer.pair(20, value[1]);
+      }
+    }
+    function writeText(writer, position, content, height, rotation, alignment, verticalAlignment) {
+      entity(writer, "TEXT", ANNOTATION_LAYER);
+      point(writer, 10, position);
+      writer.pair(40, Math.max(height, Number.EPSILON));
+      writer.pair(1, dxfText(content));
+      writer.pair(50, rotation);
+      writer.pair(72, { left: 0, center: 1, right: 2 }[alignment]);
+      writer.pair(73, { baseline: 0, bottom: 1, middle: 2, top: 3 }[verticalAlignment]);
+      if (alignment !== "left" || verticalAlignment !== "baseline") point(writer, 11, position);
+    }
+    function extendLine(start, end, extension) {
+      const dx = end[0] - start[0];
+      const dy = end[1] - start[1];
+      const length = Math.hypot(dx, dy);
+      if (!(length > 0) || !(extension > 0)) return [start, end];
+      const extendX = dx / length * extension;
+      const extendY = dy / length * extension;
+      return [
+        [start[0] - extendX, start[1] - extendY],
+        [end[0] + extendX, end[1] + extendY]
+      ];
+    }
+    function annotationTextHeight(node) {
+      const points = node.definitionPoints;
+      if (points.length < 2) return 2.5;
+      return Math.max(Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]) * 0.05, 0.1);
+    }
+    function dimensionLabel$1(node) {
+      const base = baseDimensionLabel(node);
+      const tolerance = toleranceLabel(node);
+      return tolerance === void 0 ? base : `${base} ${tolerance}`;
+    }
+    function baseDimensionLabel(node) {
+      if (node.displayText !== void 0) return node.displayText;
+      const value = node.observedValue ?? node.computedValue;
+      if (value === void 0) return "—";
+      return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
+    }
+    function toleranceLabel(node) {
+      var _a2;
+      const projection = node.toleranceProjection;
+      if (projection && (projection.status === "resolved" || projection.status === "confirmed")) {
+        switch (projection.mode) {
+          case "bilateral":
+            if (finite(projection.upperDeviation) && finite(projection.lowerDeviation)) {
+              return `${signed(projection.upperDeviation)}/${signed(projection.lowerDeviation)}`;
+            }
+            return void 0;
+          case "unilateral":
+            if (finite(projection.upperDeviation) || finite(projection.lowerDeviation)) {
+              return `${signed(projection.upperDeviation ?? 0)}/${signed(projection.lowerDeviation ?? 0)}`;
+            }
+            return void 0;
+          case "limits":
+            if (finite(projection.upperLimit) && finite(projection.lowerLimit) && projection.lowerLimit <= projection.upperLimit) {
+              return `[${textNumber(projection.upperLimit)}/${textNumber(projection.lowerLimit)}]`;
+            }
+            return void 0;
+          case "fit":
+            return ((_a2 = projection.fitDesignation) == null ? void 0 : _a2.trim()) || void 0;
+          case "none":
+            return void 0;
+        }
+      }
+      const legacy2 = node.tolerance;
+      if (legacy2 && (finite(legacy2.upper) || finite(legacy2.lower))) {
+        return `${signed(legacy2.upper ?? 0)}/${signed(legacy2.lower ?? 0)}`;
+      }
+      return void 0;
+    }
+    function finite(value) {
+      return typeof value === "number" && Number.isFinite(value);
+    }
+    function signed(value) {
+      if (Object.is(value, -0) || value === 0) return "0";
+      return value > 0 ? `+${textNumber(value)}` : textNumber(value);
+    }
+    function textNumber(value) {
+      return Object.is(value, -0) ? "0" : String(value);
+    }
+    function dxfText(value) {
+      return [...value.replace(/\r\n|\r|\n/g, "\\P")].filter((character) => {
+        const code = character.charCodeAt(0);
+        return code === 9 || code >= 32 && code !== 127;
+      }).join("");
+    }
+    function insertionUnit(unit) {
+      return { mm: 4, cm: 5, m: 6 }[unit];
+    }
+    function normalizeDegrees(value) {
+      return (value % 360 + 360) % 360;
+    }
+    function formatNumber(value) {
+      if (!Number.isFinite(value)) throw new TypeError("DXF values must be finite numbers");
+      return Object.is(value, -0) ? "0" : String(value);
+    }
+    const DrawingWorkspaceStoreContext = react.createContext(null);
+    function useDrawingWorkspaceStore() {
+      const store = react.useContext(DrawingWorkspaceStoreContext);
+      if (store === null) {
+        throw new Error("Drawing workspace components require DrawingWorkspaceProvider");
+      }
+      return store;
+    }
+    function useDrawingWorkspace(selector) {
+      const store = useDrawingWorkspaceStore();
+      return react.useSyncExternalStore(
+        store.subscribe,
+        () => selector(store.getState()),
+        () => selector(store.getState())
+      );
     }
     function gridPatternMetrics(viewport) {
       const minorSize = 10 * viewport.scale;
@@ -255,12 +636,3455 @@ window.__ModuleLoader__.load({
         ] }) : null
       ] });
     }
+    const TAU = Math.PI * 2;
+    function flattenHatchEdge(edge, tolerance) {
+      if (edge.type === "line") return [edge.start, edge.end];
+      if (edge.type === "arc") {
+        const orientation = edge.counterClockwise ? 1 : -1;
+        return sampleAngularCurve(
+          degrees(edge.startAngle),
+          degrees(edge.endAngle),
+          Math.abs(edge.radius),
+          tolerance,
+          (angle) => [
+            edge.center[0] + Math.cos(angle) * edge.radius,
+            edge.center[1] + Math.sin(angle) * edge.radius * orientation
+          ]
+        );
+      }
+      if (edge.type === "ellipse") {
+        const majorLength = Math.hypot(...edge.majorAxis);
+        const minorLength = majorLength * edge.axisRatio;
+        const orientation = edge.counterClockwise ? 1 : -1;
+        const ux = majorLength > 0 ? edge.majorAxis[0] / majorLength : 1;
+        const uy = majorLength > 0 ? edge.majorAxis[1] / majorLength : 0;
+        return sampleAngularCurve(
+          edge.startParameter,
+          edge.endParameter,
+          Math.max(majorLength, minorLength),
+          tolerance,
+          (parameter) => [
+            edge.center[0] + ux * majorLength * Math.cos(parameter) - uy * minorLength * Math.sin(parameter) * orientation,
+            edge.center[1] + uy * majorLength * Math.cos(parameter) + ux * minorLength * Math.sin(parameter) * orientation
+          ]
+        );
+      }
+      return flattenSpline(edge, tolerance);
+    }
+    function sampleAngularCurve(start, end, radius, tolerance, pointAt) {
+      const rawSweep = end - start;
+      const sweep = (rawSweep % TAU + TAU) % TAU || TAU;
+      const safeRadius = Math.max(radius, tolerance);
+      const maxStep = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - tolerance / safeRadius)));
+      const count = Math.max(2, Math.ceil(Math.abs(sweep) / Math.max(maxStep, Math.PI / 90)));
+      return Array.from({ length: count + 1 }, (_, index) => pointAt(start + sweep * index / count));
+    }
+    function flattenSpline(edge, tolerance) {
+      const domainStart = edge.knots[edge.degree] ?? 0;
+      const domainEnd = edge.knots[edge.controlPoints.length] ?? 1;
+      const first = splinePoint(edge, domainStart);
+      const last = splinePoint(edge, domainEnd);
+      const output = [first];
+      subdivideSpline(edge, domainStart, domainEnd, first, last, tolerance, 0, output);
+      return output;
+    }
+    function subdivideSpline(edge, start, end, a, b, tolerance, depth, output) {
+      const middleParameter = (start + end) / 2;
+      const middle = splinePoint(edge, middleParameter);
+      const chordMiddle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (depth >= 16 || Math.hypot(middle[0] - chordMiddle[0], middle[1] - chordMiddle[1]) <= tolerance) {
+        output.push(b);
+        return;
+      }
+      subdivideSpline(edge, start, middleParameter, a, middle, tolerance, depth + 1, output);
+      subdivideSpline(edge, middleParameter, end, middle, b, tolerance, depth + 1, output);
+    }
+    function splinePoint(edge, parameter) {
+      var _a2, _b, _c;
+      const degree = edge.degree;
+      const count = edge.controlPoints.length;
+      const basis = Array.from({ length: count }, (_, index) => basisValue(index, degree, parameter, edge.knots, parameter === edge.knots[count]));
+      let x = 0;
+      let y = 0;
+      let denominator = 0;
+      for (let index = 0; index < count; index += 1) {
+        const weight = ((_a2 = edge.weights) == null ? void 0 : _a2[index]) ?? 1;
+        const weightedBasis = (basis[index] ?? 0) * weight;
+        x += (((_b = edge.controlPoints[index]) == null ? void 0 : _b[0]) ?? 0) * weightedBasis;
+        y += (((_c = edge.controlPoints[index]) == null ? void 0 : _c[1]) ?? 0) * weightedBasis;
+        denominator += weightedBasis;
+      }
+      return denominator === 0 ? edge.controlPoints[0] ?? [0, 0] : [x / denominator, y / denominator];
+    }
+    function basisValue(index, degree, parameter, knots, atEnd) {
+      if (degree === 0) {
+        if (atEnd && parameter === knots[index + 1] && parameter === knots[knots.length - 1]) return 1;
+        return knots[index] <= parameter && parameter < knots[index + 1] ? 1 : 0;
+      }
+      const leftDenominator = knots[index + degree] - knots[index];
+      const rightDenominator = knots[index + degree + 1] - knots[index + 1];
+      const left = leftDenominator === 0 ? 0 : (parameter - knots[index]) / leftDenominator * basisValue(index, degree - 1, parameter, knots, atEnd);
+      const right = rightDenominator === 0 ? 0 : (knots[index + degree + 1] - parameter) / rightDenominator * basisValue(index + 1, degree - 1, parameter, knots, atEnd);
+      return left + right;
+    }
+    function degrees(value) {
+      return value * Math.PI / 180;
+    }
+    var ClipType;
+    (function(ClipType2) {
+      ClipType2[ClipType2["NoClip"] = 0] = "NoClip";
+      ClipType2[ClipType2["Intersection"] = 1] = "Intersection";
+      ClipType2[ClipType2["Union"] = 2] = "Union";
+      ClipType2[ClipType2["Difference"] = 3] = "Difference";
+      ClipType2[ClipType2["Xor"] = 4] = "Xor";
+    })(ClipType || (ClipType = {}));
+    var PathType;
+    (function(PathType2) {
+      PathType2[PathType2["Subject"] = 0] = "Subject";
+      PathType2[PathType2["Clip"] = 1] = "Clip";
+    })(PathType || (PathType = {}));
+    var FillRule;
+    (function(FillRule2) {
+      FillRule2[FillRule2["EvenOdd"] = 0] = "EvenOdd";
+      FillRule2[FillRule2["NonZero"] = 1] = "NonZero";
+      FillRule2[FillRule2["Positive"] = 2] = "Positive";
+      FillRule2[FillRule2["Negative"] = 3] = "Negative";
+    })(FillRule || (FillRule = {}));
+    var PointInPolygonResult;
+    (function(PointInPolygonResult2) {
+      PointInPolygonResult2[PointInPolygonResult2["IsOn"] = 0] = "IsOn";
+      PointInPolygonResult2[PointInPolygonResult2["IsInside"] = 1] = "IsInside";
+      PointInPolygonResult2[PointInPolygonResult2["IsOutside"] = 2] = "IsOutside";
+    })(PointInPolygonResult || (PointInPolygonResult = {}));
+    const maxSafeInteger = Number.MAX_SAFE_INTEGER;
+    const maxDeltaForSafeProduct = Math.floor(Math.sqrt(maxSafeInteger));
+    function isSafeProduct(a, b) {
+      if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b))
+        return false;
+      if (a === 0 || b === 0)
+        return true;
+      return Math.abs(a) <= maxSafeInteger / Math.abs(b);
+    }
+    function isSafeSum(a, b) {
+      return Math.abs(a) + Math.abs(b) <= maxSafeInteger;
+    }
+    function safeMultiplyDifference(a, b, c, d) {
+      if (isSafeProduct(a, b) && isSafeProduct(c, d)) {
+        const prod1 = a * b;
+        const prod2 = c * d;
+        if (isSafeSum(prod1, prod2)) {
+          return prod1 - prod2;
+        }
+      }
+      if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Number.isSafeInteger(c) && Number.isSafeInteger(d)) {
+        return Number(BigInt(a) * BigInt(b) - BigInt(c) * BigInt(d));
+      }
+      return a * b - c * d;
+    }
+    function safeMultiplySum(a, b, c, d) {
+      if (isSafeProduct(a, b) && isSafeProduct(c, d)) {
+        const prod1 = a * b;
+        const prod2 = c * d;
+        if (isSafeSum(prod1, prod2)) {
+          return prod1 + prod2;
+        }
+      }
+      if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Number.isSafeInteger(c) && Number.isSafeInteger(d)) {
+        return Number(BigInt(a) * BigInt(b) + BigInt(c) * BigInt(d));
+      }
+      return a * b + c * d;
+    }
+    const B0$1 = BigInt(0);
+    const B2$1 = BigInt(2);
+    const B4$1 = BigInt(4);
+    const B64 = BigInt(64);
+    const UINT64_MASK = BigInt("0xFFFFFFFFFFFFFFFF");
+    const IC_MaxInt64 = BigInt("9223372036854775807");
+    const IC_MaxCoord = Number(IC_MaxInt64 / B4$1);
+    const IC_Invalid64 = Number(IC_MaxInt64);
+    const IC_floatingPointTolerance = 1e-12;
+    const IC_defaultMinimumEdgeLength = 0.1;
+    const IC_maxCoordForSafeAreaProduct = Math.floor(maxDeltaForSafeProduct / 2);
+    const IC_maxCoordForSafeCrossSq = Math.floor(Math.sqrt(Math.sqrt(maxSafeInteger / 4)));
+    function maxSafeCoordinateForScale(scale) {
+      if (!Number.isFinite(scale)) {
+        throw new RangeError("Scale must be a finite number");
+      }
+      const absScale = Math.abs(scale);
+      if (absScale === 0)
+        return Number.POSITIVE_INFINITY;
+      return maxSafeInteger / absScale;
+    }
+    function checkSafeScaleValue(value, maxAbs, context) {
+      if (!Number.isFinite(value) || Math.abs(value) > maxAbs) {
+        throw new RangeError(`Scaled coordinate exceeds Number.MAX_SAFE_INTEGER in ${context}`);
+      }
+    }
+    function ensureSafeInteger(value, context) {
+      if (!Number.isFinite(value) || Math.abs(value) > maxSafeInteger) {
+        throw new RangeError(`Coordinate exceeds Number.MAX_SAFE_INTEGER in ${context}`);
+      }
+    }
+    function crossProduct(pt1, pt2, pt3) {
+      const a = pt2.x - pt1.x;
+      const b = pt3.y - pt2.y;
+      const c = pt2.y - pt1.y;
+      const d = pt3.x - pt2.x;
+      if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+        return a * b - c * d;
+      }
+      return safeMultiplyDifference(a, b, c, d);
+    }
+    function crossProductSign(pt1, pt2, pt3) {
+      const a = pt2.x - pt1.x;
+      const b = pt3.y - pt2.y;
+      const c = pt2.y - pt1.y;
+      const d = pt3.x - pt2.x;
+      if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+        const prod1 = a * b;
+        const prod2 = c * d;
+        return prod1 > prod2 ? 1 : prod1 < prod2 ? -1 : 0;
+      }
+      if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || !Number.isSafeInteger(c) || !Number.isSafeInteger(d)) {
+        const prod1 = a * b;
+        const prod2 = c * d;
+        return prod1 > prod2 ? 1 : prod1 < prod2 ? -1 : 0;
+      }
+      const bigProd1 = BigInt(a) * BigInt(b);
+      const bigProd2 = BigInt(c) * BigInt(d);
+      if (bigProd1 === bigProd2)
+        return 0;
+      return bigProd1 > bigProd2 ? 1 : -1;
+    }
+    function checkPrecision(precision) {
+      if (precision < -8 || precision > 8) {
+        throw new Error("Error: Precision is out of range.");
+      }
+    }
+    function isAlmostZero(value) {
+      return Math.abs(value) <= IC_floatingPointTolerance;
+    }
+    function triSign(x) {
+      return x < 0 ? -1 : x > 0 ? 1 : 0;
+    }
+    function multiplyUInt64(a, b) {
+      const aBig = BigInt(a);
+      const bBig = BigInt(b);
+      const res = aBig * bBig;
+      return {
+        lo64: res & UINT64_MASK,
+        hi64: res >> B64
+      };
+    }
+    function productsAreEqual(a, b, c, d) {
+      const absA = Math.abs(a);
+      const absB = Math.abs(b);
+      const absC = Math.abs(c);
+      const absD = Math.abs(d);
+      if (absA < maxDeltaForSafeProduct && absB < maxDeltaForSafeProduct && absC < maxDeltaForSafeProduct && absD < maxDeltaForSafeProduct) {
+        return a * b === c * d;
+      }
+      const signAb = (a < 0 ? -1 : a > 0 ? 1 : 0) * (b < 0 ? -1 : b > 0 ? 1 : 0);
+      const signCd = (c < 0 ? -1 : c > 0 ? 1 : 0) * (d < 0 ? -1 : d > 0 ? 1 : 0);
+      if (signAb !== signCd)
+        return false;
+      if (signAb === 0)
+        return true;
+      if (!Number.isSafeInteger(absA) || !Number.isSafeInteger(absB) || !Number.isSafeInteger(absC) || !Number.isSafeInteger(absD)) {
+        return a * b === c * d;
+      }
+      const bigA = BigInt(absA);
+      const bigB = BigInt(absB);
+      const bigC = BigInt(absC);
+      const bigD = BigInt(absD);
+      return bigA * bigB === bigC * bigD;
+    }
+    function isCollinear(pt1, sharedPt, pt2) {
+      const a = sharedPt.x - pt1.x;
+      const b = pt2.y - sharedPt.y;
+      const c = sharedPt.y - pt1.y;
+      const d = pt2.x - sharedPt.x;
+      return productsAreEqual(a, b, c, d);
+    }
+    function dotProduct(pt1, pt2, pt3) {
+      const a = pt2.x - pt1.x;
+      const b = pt3.x - pt2.x;
+      const c = pt2.y - pt1.y;
+      const d = pt3.y - pt2.y;
+      if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+        return a * b + c * d;
+      }
+      return safeMultiplySum(a, b, c, d);
+    }
+    function dotProductSign(pt1, pt2, pt3) {
+      const a = pt2.x - pt1.x;
+      const b = pt3.x - pt2.x;
+      const c = pt2.y - pt1.y;
+      const d = pt3.y - pt2.y;
+      if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+        const sum = a * b + c * d;
+        return sum > 0 ? 1 : sum < 0 ? -1 : 0;
+      }
+      if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || !Number.isSafeInteger(c) || !Number.isSafeInteger(d)) {
+        const sum = a * b + c * d;
+        return sum > 0 ? 1 : sum < 0 ? -1 : 0;
+      }
+      const bigSum = BigInt(a) * BigInt(b) + BigInt(c) * BigInt(d);
+      if (bigSum === B0$1)
+        return 0;
+      return bigSum > B0$1 ? 1 : -1;
+    }
+    function icArea(path) {
+      const cnt = path.length;
+      if (cnt < 3)
+        return 0;
+      let allSmall = true;
+      for (let i = 0; i < cnt && allSmall; i++) {
+        const pt = path[i];
+        if (Math.abs(pt.x) >= IC_maxCoordForSafeAreaProduct || Math.abs(pt.y) >= IC_maxCoordForSafeAreaProduct) {
+          allSmall = false;
+        }
+      }
+      let prevPt = path[cnt - 1];
+      if (allSmall) {
+        let total = 0;
+        for (const pt of path) {
+          total += (prevPt.y + pt.y) * (prevPt.x - pt.x);
+          prevPt = pt;
+        }
+        return total * 0.5;
+      }
+      let totalBig = B0$1;
+      for (const pt of path) {
+        const sum = prevPt.y + pt.y;
+        const diff = prevPt.x - pt.x;
+        if (Number.isSafeInteger(sum) && Number.isSafeInteger(diff)) {
+          totalBig += BigInt(sum) * BigInt(diff);
+        } else if (Number.isSafeInteger(prevPt.y) && Number.isSafeInteger(pt.y) && Number.isSafeInteger(prevPt.x) && Number.isSafeInteger(pt.x)) {
+          const sumBig = BigInt(prevPt.y) + BigInt(pt.y);
+          const diffBig = BigInt(prevPt.x) - BigInt(pt.x);
+          totalBig += sumBig * diffBig;
+        } else {
+          totalBig += BigInt(Math.round(sum * diff));
+        }
+        prevPt = pt;
+      }
+      return Number(totalBig) * 0.5;
+    }
+    function crossProductD(vec1, vec2) {
+      return vec1.y * vec2.x - vec2.y * vec1.x;
+    }
+    function dotProductD(vec1, vec2) {
+      return vec1.x * vec2.x + vec1.y * vec2.y;
+    }
+    function roundToEven(value) {
+      const r = Math.round(value);
+      if (value === r - 0.5 && (r & 1) !== 0)
+        return r - 1;
+      return r;
+    }
+    function checkCastInt64(val) {
+      if (val >= IC_MaxCoord || val <= -IC_MaxCoord)
+        return IC_Invalid64;
+      return Math.round(val);
+    }
+    function getLineIntersectPt(ln1a, ln1b, ln2a, ln2b) {
+      const dy1 = ln1b.y - ln1a.y;
+      const dx1 = ln1b.x - ln1a.x;
+      const dy2 = ln2b.y - ln2a.y;
+      const dx2 = ln2b.x - ln2a.x;
+      const det = safeMultiplyDifference(dy1, dx2, dy2, dx1);
+      if (det === 0) {
+        return null;
+      }
+      const t = safeMultiplyDifference(ln1a.x - ln2a.x, dy2, ln1a.y - ln2a.y, dx2) / det;
+      if (t <= 0) {
+        return { x: ln1a.x, y: ln1a.y, z: ln1a.z || 0 };
+      } else if (t >= 1) {
+        return { x: ln1b.x, y: ln1b.y, z: ln1b.z || 0 };
+      } else {
+        return {
+          x: Math.trunc(ln1a.x + t * dx1),
+          y: Math.trunc(ln1a.y + t * dy1),
+          z: 0
+        };
+      }
+    }
+    function getLineIntersectPtD(ln1a, ln1b, ln2a, ln2b) {
+      const dy1 = ln1b.y - ln1a.y;
+      const dx1 = ln1b.x - ln1a.x;
+      const dy2 = ln2b.y - ln2a.y;
+      const dx2 = ln2b.x - ln2a.x;
+      const det = dy1 * dx2 - dy2 * dx1;
+      if (det === 0) {
+        return { success: false, ip: { x: 0, y: 0, z: 0 } };
+      }
+      const t = ((ln1a.x - ln2a.x) * dy2 - (ln1a.y - ln2a.y) * dx2) / det;
+      let ip;
+      if (t <= 0) {
+        ip = { ...ln1a, z: 0 };
+      } else if (t >= 1) {
+        ip = { ...ln1b, z: 0 };
+      } else {
+        ip = {
+          x: ln1a.x + t * dx1,
+          y: ln1a.y + t * dy1,
+          z: 0
+        };
+      }
+      return { success: true, ip };
+    }
+    function segsIntersect(seg1a, seg1b, seg2a, seg2b, inclusive = false) {
+      if (!inclusive) {
+        const s1 = crossProductSign(seg1a, seg2a, seg2b);
+        const s2 = crossProductSign(seg1b, seg2a, seg2b);
+        const s3 = crossProductSign(seg2a, seg1a, seg1b);
+        const s4 = crossProductSign(seg2b, seg1a, seg1b);
+        return s1 !== 0 && s2 !== 0 && s1 !== s2 && (s3 !== 0 && s4 !== 0 && s3 !== s4);
+      }
+      const res1 = crossProductSign(seg1a, seg2a, seg2b);
+      const res2 = crossProductSign(seg1b, seg2a, seg2b);
+      if (res1 !== 0 && res1 === res2)
+        return false;
+      const res3 = crossProductSign(seg2a, seg1a, seg1b);
+      const res4 = crossProductSign(seg2b, seg1a, seg1b);
+      if (res3 !== 0 && res3 === res4)
+        return false;
+      return res1 !== 0 || res2 !== 0 || res3 !== 0 || res4 !== 0;
+    }
+    function icGetBounds(path) {
+      if (path.length === 0)
+        return { left: 0, top: 0, right: 0, bottom: 0 };
+      const result = {
+        left: Number.MAX_SAFE_INTEGER,
+        top: Number.MAX_SAFE_INTEGER,
+        right: Number.MIN_SAFE_INTEGER,
+        bottom: Number.MIN_SAFE_INTEGER
+      };
+      for (const pt of path) {
+        if (pt.x < result.left)
+          result.left = pt.x;
+        if (pt.x > result.right)
+          result.right = pt.x;
+        if (pt.y < result.top)
+          result.top = pt.y;
+        if (pt.y > result.bottom)
+          result.bottom = pt.y;
+      }
+      return result.left === Number.MAX_SAFE_INTEGER ? { left: 0, top: 0, right: 0, bottom: 0 } : result;
+    }
+    function getClosestPtOnSegment(offPt, seg1, seg2) {
+      if (seg1.x === seg2.x && seg1.y === seg2.y)
+        return { x: seg1.x, y: seg1.y, z: 0 };
+      const dx = seg2.x - seg1.x;
+      const dy = seg2.y - seg1.y;
+      const q = safeMultiplySum(offPt.x - seg1.x, dx, offPt.y - seg1.y, dy) / safeMultiplySum(dx, dx, dy, dy);
+      const qClamped = q < 0 ? 0 : q > 1 ? 1 : q;
+      return {
+        // use Math.round to match the C# MidpointRounding.ToEven behavior
+        x: Math.round(seg1.x + qClamped * dx),
+        y: Math.round(seg1.y + qClamped * dy),
+        z: 0
+      };
+    }
+    function icPointInPolygon(pt, polygon) {
+      const len = polygon.length;
+      let start = 0;
+      if (len < 3)
+        return PointInPolygonResult.IsOutside;
+      while (start < len && polygon[start].y === pt.y)
+        start++;
+      if (start === len)
+        return PointInPolygonResult.IsOutside;
+      let isAbove = polygon[start].y < pt.y;
+      const startingAbove = isAbove;
+      let val = 0;
+      let i = start + 1;
+      let end = len;
+      while (true) {
+        if (i === end) {
+          if (end === 0 || start === 0)
+            break;
+          end = start;
+          i = 0;
+        }
+        if (isAbove) {
+          while (i < end && polygon[i].y < pt.y)
+            i++;
+        } else {
+          while (i < end && polygon[i].y > pt.y)
+            i++;
+        }
+        if (i === end)
+          continue;
+        const curr = polygon[i];
+        const prev = i > 0 ? polygon[i - 1] : polygon[len - 1];
+        if (curr.y === pt.y) {
+          if (curr.x === pt.x || curr.y === prev.y && pt.x < prev.x !== pt.x < curr.x) {
+            return PointInPolygonResult.IsOn;
+          }
+          i++;
+          if (i === start)
+            break;
+          continue;
+        }
+        if (pt.x < curr.x && pt.x < prev.x) ;
+        else if (pt.x > prev.x && pt.x > curr.x) {
+          val = 1 - val;
+        } else {
+          const cps2 = crossProductSign(prev, curr, pt);
+          if (cps2 === 0)
+            return PointInPolygonResult.IsOn;
+          if (cps2 < 0 === isAbove)
+            val = 1 - val;
+        }
+        isAbove = !isAbove;
+        i++;
+      }
+      if (isAbove === startingAbove) {
+        return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+      }
+      if (i === len)
+        i = 0;
+      const cps = i === 0 ? crossProductSign(polygon[len - 1], polygon[0], pt) : crossProductSign(polygon[i - 1], polygon[i], pt);
+      if (cps === 0)
+        return PointInPolygonResult.IsOn;
+      if (cps < 0 === isAbove)
+        val = 1 - val;
+      return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+    }
+    function path2ContainsPath1(path1, path2) {
+      let pip = PointInPolygonResult.IsOn;
+      for (const pt of path1) {
+        switch (icPointInPolygon(pt, path2)) {
+          case PointInPolygonResult.IsOutside:
+            if (pip === PointInPolygonResult.IsOutside)
+              return false;
+            pip = PointInPolygonResult.IsOutside;
+            break;
+          case PointInPolygonResult.IsInside:
+            if (pip === PointInPolygonResult.IsInside)
+              return true;
+            pip = PointInPolygonResult.IsInside;
+            break;
+        }
+      }
+      const mp = icGetBounds(path1);
+      let midX, midY;
+      if (Number.isSafeInteger(mp.left) && Number.isSafeInteger(mp.right) && Math.abs(mp.left) + Math.abs(mp.right) > Number.MAX_SAFE_INTEGER) {
+        midX = Number((BigInt(mp.left) + BigInt(mp.right)) / B2$1);
+        midY = Number((BigInt(mp.top) + BigInt(mp.bottom)) / B2$1);
+      } else {
+        midX = Math.round((mp.left + mp.right) / 2);
+        midY = Math.round((mp.top + mp.bottom) / 2);
+      }
+      const midPt = { x: midX, y: midY };
+      return icPointInPolygon(midPt, path2) !== PointInPolygonResult.IsOutside;
+    }
+    const InternalClipper = {
+      MaxInt64: IC_MaxInt64,
+      MaxCoord: IC_MaxCoord,
+      max_coord: IC_MaxCoord,
+      min_coord: -IC_MaxCoord,
+      Invalid64: IC_Invalid64,
+      floatingPointTolerance: IC_floatingPointTolerance,
+      defaultMinimumEdgeLength: IC_defaultMinimumEdgeLength,
+      maxCoordForSafeAreaProduct: IC_maxCoordForSafeAreaProduct,
+      maxCoordForSafeCrossSq: IC_maxCoordForSafeCrossSq,
+      maxSafeCoordinateForScale,
+      checkSafeScaleValue,
+      ensureSafeInteger,
+      crossProduct,
+      crossProductSign,
+      checkPrecision,
+      isAlmostZero,
+      triSign,
+      multiplyUInt64,
+      productsAreEqual,
+      isCollinear,
+      dotProduct,
+      dotProductSign,
+      area: icArea,
+      crossProductD,
+      dotProductD,
+      roundToEven,
+      checkCastInt64,
+      getLineIntersectPt,
+      getLineIntersectPtD,
+      segsIntersect,
+      getBounds: icGetBounds,
+      getClosestPtOnSegment,
+      pointInPolygon: icPointInPolygon,
+      path2ContainsPath1
+    };
+    const Rect64Utils = {
+      create(l = 0, t = 0, r = 0, b = 0) {
+        return { left: l, top: t, right: r, bottom: b };
+      },
+      createInvalid() {
+        return {
+          left: Number.MAX_SAFE_INTEGER,
+          top: Number.MAX_SAFE_INTEGER,
+          right: Number.MIN_SAFE_INTEGER,
+          bottom: Number.MIN_SAFE_INTEGER
+        };
+      },
+      width(rect) {
+        return rect.right - rect.left;
+      },
+      height(rect) {
+        return rect.bottom - rect.top;
+      },
+      isEmpty(rect) {
+        return rect.bottom <= rect.top || rect.right <= rect.left;
+      },
+      isValid(rect) {
+        return rect.left < Number.MAX_SAFE_INTEGER;
+      },
+      midPoint(rect) {
+        if (Number.isSafeInteger(rect.left) && Number.isSafeInteger(rect.right) && Math.abs(rect.left) + Math.abs(rect.right) > Number.MAX_SAFE_INTEGER) {
+          const midX = Number((BigInt(rect.left) + BigInt(rect.right)) / B2$1);
+          const midY = Number((BigInt(rect.top) + BigInt(rect.bottom)) / B2$1);
+          return { x: midX, y: midY };
+        }
+        return {
+          x: Math.round((rect.left + rect.right) / 2),
+          y: Math.round((rect.top + rect.bottom) / 2)
+        };
+      },
+      contains(rect, pt) {
+        return pt.x > rect.left && pt.x < rect.right && pt.y > rect.top && pt.y < rect.bottom;
+      },
+      containsRect(rect, rec) {
+        return rec.left >= rect.left && rec.right <= rect.right && rec.top >= rect.top && rec.bottom <= rect.bottom;
+      },
+      intersects(rect, rec) {
+        return Math.max(rect.left, rec.left) <= Math.min(rect.right, rec.right) && Math.max(rect.top, rec.top) <= Math.min(rect.bottom, rec.bottom);
+      },
+      asPath(rect) {
+        return [
+          { x: rect.left, y: rect.top, z: 0 },
+          { x: rect.right, y: rect.top, z: 0 },
+          { x: rect.right, y: rect.bottom, z: 0 },
+          { x: rect.left, y: rect.bottom, z: 0 }
+        ];
+      }
+    };
+    const B0 = BigInt(0);
+    const B2 = BigInt(2);
+    const B4 = BigInt(4);
+    var VertexFlags;
+    (function(VertexFlags2) {
+      VertexFlags2[VertexFlags2["None"] = 0] = "None";
+      VertexFlags2[VertexFlags2["OpenStart"] = 1] = "OpenStart";
+      VertexFlags2[VertexFlags2["OpenEnd"] = 2] = "OpenEnd";
+      VertexFlags2[VertexFlags2["LocalMax"] = 4] = "LocalMax";
+      VertexFlags2[VertexFlags2["LocalMin"] = 8] = "LocalMin";
+    })(VertexFlags || (VertexFlags = {}));
+    class ScanlineHeap {
+      constructor() {
+        __publicField(this, "data", []);
+      }
+      push(value) {
+        this.data.push(value);
+        this.siftUp(this.data.length - 1);
+      }
+      pop() {
+        if (this.data.length === 0)
+          return null;
+        const max = this.data[0];
+        const last = this.data.pop();
+        if (this.data.length > 0) {
+          this.data[0] = last;
+          this.siftDown(0);
+        }
+        return max;
+      }
+      clear() {
+        this.data.length = 0;
+      }
+      // Hole-sift: lift the value once, shift parents/children, then place.
+      // Avoids temporary array allocation from destructuring swap on every step.
+      siftUp(index) {
+        const val = this.data[index];
+        while (index > 0) {
+          const parent = index - 1 >> 1;
+          if (this.data[parent] >= val)
+            break;
+          this.data[index] = this.data[parent];
+          index = parent;
+        }
+        this.data[index] = val;
+      }
+      siftDown(index) {
+        const length = this.data.length;
+        const val = this.data[index];
+        while (true) {
+          const left = (index << 1) + 1;
+          if (left >= length)
+            break;
+          const right = left + 1;
+          let child = left;
+          if (right < length && this.data[right] > this.data[left])
+            child = right;
+          if (this.data[child] <= val)
+            break;
+          this.data[index] = this.data[child];
+          index = child;
+        }
+        this.data[index] = val;
+      }
+    }
+    class Vertex {
+      constructor(pt, flags, prev) {
+        __publicField(this, "pt");
+        __publicField(this, "next", null);
+        __publicField(this, "prev", null);
+        __publicField(this, "flags");
+        this.pt = pt;
+        this.flags = flags;
+        this.prev = prev;
+      }
+    }
+    class LocalMinima {
+      constructor(vertex, polytype, isOpen = false) {
+        __publicField(this, "vertex");
+        __publicField(this, "polytype");
+        __publicField(this, "isOpen");
+        this.vertex = vertex;
+        this.polytype = polytype;
+        this.isOpen = isOpen;
+      }
+      equals(other) {
+        return other !== null && this.vertex === other.vertex;
+      }
+    }
+    function createIntersectNode(pt, edge1, edge2) {
+      return { pt, edge1, edge2 };
+    }
+    class OutPt {
+      constructor(pt, outrec) {
+        __publicField(this, "pt");
+        __publicField(this, "next");
+        __publicField(this, "prev");
+        __publicField(this, "outrec");
+        __publicField(this, "horz");
+        this.pt = pt;
+        this.outrec = outrec;
+        this.next = this;
+        this.prev = this;
+        this.horz = null;
+      }
+    }
+    var JoinWith;
+    (function(JoinWith2) {
+      JoinWith2[JoinWith2["None"] = 0] = "None";
+      JoinWith2[JoinWith2["Left"] = 1] = "Left";
+      JoinWith2[JoinWith2["Right"] = 2] = "Right";
+    })(JoinWith || (JoinWith = {}));
+    var HorzPosition;
+    (function(HorzPosition2) {
+      HorzPosition2[HorzPosition2["Bottom"] = 0] = "Bottom";
+      HorzPosition2[HorzPosition2["Middle"] = 1] = "Middle";
+      HorzPosition2[HorzPosition2["Top"] = 2] = "Top";
+    })(HorzPosition || (HorzPosition = {}));
+    class OutRec {
+      constructor() {
+        __publicField(this, "idx", 0);
+        __publicField(this, "owner", null);
+        __publicField(this, "frontEdge", null);
+        __publicField(this, "backEdge", null);
+        __publicField(this, "pts", null);
+        __publicField(this, "polypath", null);
+        __publicField(this, "bounds", { left: 0, top: 0, right: 0, bottom: 0 });
+        __publicField(this, "path", []);
+        __publicField(this, "isOpen", false);
+        __publicField(this, "splits", null);
+        __publicField(this, "recursiveSplit", null);
+      }
+    }
+    class HorzSegment {
+      constructor(op) {
+        __publicField(this, "leftOp");
+        __publicField(this, "rightOp");
+        __publicField(this, "leftToRight");
+        this.leftOp = op;
+        this.rightOp = null;
+        this.leftToRight = true;
+      }
+    }
+    class HorzJoin {
+      constructor(ltor, rtol) {
+        __publicField(this, "op1");
+        __publicField(this, "op2");
+        this.op1 = ltor;
+        this.op2 = rtol;
+      }
+    }
+    function compareHorzSegments(hs1, hs2) {
+      if (hs1.rightOp === null) {
+        return hs2.rightOp === null ? 0 : 1;
+      }
+      if (hs2.rightOp === null)
+        return -1;
+      return hs1.leftOp.pt.x - hs2.leftOp.pt.x;
+    }
+    function compareIntersectNodes(a, b) {
+      if (a.pt.y !== b.pt.y)
+        return a.pt.y > b.pt.y ? -1 : 1;
+      if (a.pt.x !== b.pt.x)
+        return a.pt.x < b.pt.x ? -1 : 1;
+      if (a.edge1.curX !== b.edge1.curX)
+        return a.edge1.curX < b.edge1.curX ? -1 : 1;
+      return a.edge2.curX < b.edge2.curX ? -1 : a.edge2.curX > b.edge2.curX ? 1 : 0;
+    }
+    class Active {
+      constructor() {
+        __publicField(this, "bot", { x: 0, y: 0 });
+        __publicField(this, "top", { x: 0, y: 0 });
+        __publicField(this, "curX", 0);
+        // current (updated at every new scanline) - keep as number but ensure integer precision
+        __publicField(this, "dx", 0);
+        __publicField(this, "windDx", 0);
+        // 1 or -1 depending on winding direction
+        __publicField(this, "windCount", 0);
+        __publicField(this, "windCount2", 0);
+        // winding count of the opposite polytype
+        __publicField(this, "outrec", null);
+        // AEL: 'active edge list' (Vatti's AET - active edge table)
+        //     a linked list of all edges (from left to right) that are present
+        //     (or 'active') within the current scanbeam (a horizontal 'beam' that
+        //     sweeps from bottom to top over the paths in the clipping operation).
+        __publicField(this, "prevInAEL", null);
+        __publicField(this, "nextInAEL", null);
+        // SEL: 'sorted edge list' (Vatti's ST - sorted table)
+        //     linked list used when sorting edges into their new positions at the
+        //     top of scanbeams, but also (re)used to process horizontals.
+        __publicField(this, "prevInSEL", null);
+        __publicField(this, "nextInSEL", null);
+        __publicField(this, "jump", null);
+        __publicField(this, "vertexTop", null);
+        __publicField(this, "localMin", null);
+        // the bottom of an edge 'bound' (also Vatti)
+        __publicField(this, "isLeftBound", false);
+        __publicField(this, "joinWith", JoinWith.None);
+      }
+    }
+    const ClipperEngine = {
+      addLocMin(vert, polytype, isOpen, minimaList) {
+        if ((vert.flags & VertexFlags.LocalMin) !== VertexFlags.None)
+          return;
+        vert.flags |= VertexFlags.LocalMin;
+        const lm = new LocalMinima(vert, polytype, isOpen);
+        minimaList.push(lm);
+      },
+      addPathsToVertexList(paths, polytype, isOpen, minimaList, vertexList) {
+        for (let i = 0, len = paths.length; i < len; i++) {
+          const path = paths[i];
+          let v0 = null;
+          let prevV = null;
+          let prevPt = null;
+          for (let j = 0, len2 = path.length; j < len2; j++) {
+            const pt = path[j];
+            if (v0 === null) {
+              v0 = new Vertex(pt, VertexFlags.None, null);
+              vertexList.push(v0);
+              prevV = v0;
+              prevPt = pt;
+            } else if (!(prevPt.x === pt.x && prevPt.y === pt.y)) {
+              const currV2 = new Vertex(pt, VertexFlags.None, prevV);
+              prevV.next = currV2;
+              prevV = currV2;
+              prevPt = pt;
+            }
+          }
+          if ((prevV == null ? void 0 : prevV.prev) == null)
+            continue;
+          if (!isOpen && prevV.pt.x === v0.pt.x && prevV.pt.y === v0.pt.y)
+            prevV = prevV.prev;
+          prevV.next = v0;
+          v0.prev = prevV;
+          if (!isOpen && prevV.next === prevV)
+            continue;
+          let goingUp;
+          if (isOpen) {
+            let currV2 = v0.next;
+            while (currV2 !== v0 && currV2.pt.y === v0.pt.y)
+              currV2 = currV2.next;
+            goingUp = currV2.pt.y <= v0.pt.y;
+            if (goingUp) {
+              v0.flags = VertexFlags.OpenStart;
+              ClipperEngine.addLocMin(v0, polytype, true, minimaList);
+            } else {
+              v0.flags = VertexFlags.OpenStart | VertexFlags.LocalMax;
+            }
+          } else {
+            prevV = v0.prev;
+            while (prevV !== v0 && prevV.pt.y === v0.pt.y)
+              prevV = prevV.prev;
+            if (prevV === v0)
+              continue;
+            goingUp = prevV.pt.y > v0.pt.y;
+          }
+          const goingUp0 = goingUp;
+          prevV = v0;
+          let currV = v0.next;
+          while (currV !== v0) {
+            if (currV.pt.y > prevV.pt.y && goingUp) {
+              prevV.flags |= VertexFlags.LocalMax;
+              goingUp = false;
+            } else if (currV.pt.y < prevV.pt.y && !goingUp) {
+              goingUp = true;
+              ClipperEngine.addLocMin(prevV, polytype, isOpen, minimaList);
+            }
+            prevV = currV;
+            currV = currV.next;
+          }
+          if (isOpen) {
+            prevV.flags |= VertexFlags.OpenEnd;
+            if (goingUp)
+              prevV.flags |= VertexFlags.LocalMax;
+            else
+              ClipperEngine.addLocMin(prevV, polytype, isOpen, minimaList);
+          } else if (goingUp !== goingUp0) {
+            if (goingUp0)
+              ClipperEngine.addLocMin(prevV, polytype, false, minimaList);
+            else
+              prevV.flags |= VertexFlags.LocalMax;
+          }
+        }
+      }
+    };
+    const _ClipperBase = class _ClipperBase {
+      constructor() {
+        __publicField(this, "cliptype", ClipType.NoClip);
+        __publicField(this, "fillrule", FillRule.EvenOdd);
+        __publicField(this, "actives", null);
+        __publicField(this, "sel", null);
+        __publicField(this, "minimaList", []);
+        __publicField(this, "intersectList", []);
+        __publicField(this, "vertexList", []);
+        __publicField(this, "outrecList", []);
+        __publicField(this, "scanlineHeap", new ScanlineHeap());
+        __publicField(this, "scanlineSet", /* @__PURE__ */ new Set());
+        // For very small inputs, a heap + set can cost more than it saves.
+        // Use an array-based scanline mode initially, and upgrade to heap+set
+        // automatically if the scanline list grows beyond a threshold.
+        __publicField(this, "scanlineArr", []);
+        __publicField(this, "useScanlineArray", false);
+        __publicField(this, "horzSegList", []);
+        __publicField(this, "horzJoinList", []);
+        __publicField(this, "currentLocMin", 0);
+        __publicField(this, "currentBotY", 0);
+        // True when every active edge's curX already equals topX(edge, topY) for the
+        // scanbeam top being processed (set by buildIntersectList when the SEL scan
+        // finds no inversions, i.e. no intersections; consumed by doTopOfScanbeam).
+        __publicField(this, "curXValidAtTop", false);
+        __publicField(this, "isSortedMinimaList", false);
+        __publicField(this, "hasOpenPaths", false);
+        __publicField(this, "usingPolytree", false);
+        __publicField(this, "succeeded", false);
+        // Cache Z callback for the duration of an execute to avoid repeated virtual calls
+        // to getZCallback() in hot paths.
+        __publicField(this, "zCallbackInternal");
+        __publicField(this, "preserveCollinear", true);
+        __publicField(this, "reverseSolution", false);
+      }
+      // Z-coordinate callback support
+      // Override in subclasses (Clipper64/ClipperD) to provide callback
+      getZCallback() {
+        return void 0;
+      }
+      xyEqual(pt1, pt2) {
+        return pt1.x === pt2.x && pt1.y === pt2.y;
+      }
+      setZ(ae1, ae2, intersectPt) {
+        const zCallback = this.zCallbackInternal;
+        if (!zCallback)
+          return;
+        if (_ClipperBase.getPolyType(ae1) === PathType.Subject) {
+          if (this.xyEqual(intersectPt, ae1.bot)) {
+            intersectPt.z = ae1.bot.z ?? 0;
+          } else if (this.xyEqual(intersectPt, ae1.top)) {
+            intersectPt.z = ae1.top.z ?? 0;
+          } else if (this.xyEqual(intersectPt, ae2.bot)) {
+            intersectPt.z = ae2.bot.z ?? 0;
+          } else if (this.xyEqual(intersectPt, ae2.top)) {
+            intersectPt.z = ae2.top.z ?? 0;
+          } else {
+            intersectPt.z = 0;
+          }
+          zCallback(ae1.bot, ae1.top, ae2.bot, ae2.top, intersectPt);
+        } else {
+          if (this.xyEqual(intersectPt, ae2.bot)) {
+            intersectPt.z = ae2.bot.z ?? 0;
+          } else if (this.xyEqual(intersectPt, ae2.top)) {
+            intersectPt.z = ae2.top.z ?? 0;
+          } else if (this.xyEqual(intersectPt, ae1.bot)) {
+            intersectPt.z = ae1.bot.z ?? 0;
+          } else if (this.xyEqual(intersectPt, ae1.top)) {
+            intersectPt.z = ae1.top.z ?? 0;
+          } else {
+            intersectPt.z = 0;
+          }
+          zCallback(ae2.bot, ae2.top, ae1.bot, ae1.top, intersectPt);
+        }
+      }
+      // Helper functions
+      static isOdd(val) {
+        return (val & 1) !== 0;
+      }
+      static isHotEdge(ae) {
+        return ae.outrec != null;
+      }
+      static isOpen(ae) {
+        return _ClipperBase.openPathsEnabled && ae.localMin.isOpen;
+      }
+      static isOpenEnd(ae) {
+        return _ClipperBase.openPathsEnabled && ae.localMin.isOpen && _ClipperBase.isOpenEndVertex(ae.vertexTop);
+      }
+      static isOpenEndVertex(v) {
+        return (v.flags & (VertexFlags.OpenStart | VertexFlags.OpenEnd)) !== VertexFlags.None;
+      }
+      static getPrevHotEdge(ae) {
+        let prev = ae.prevInAEL;
+        if (!_ClipperBase.openPathsEnabled) {
+          while (prev !== null && !_ClipperBase.isHotEdge(prev)) {
+            prev = prev.prevInAEL;
+          }
+          return prev;
+        }
+        while (prev !== null && (prev.localMin.isOpen || !_ClipperBase.isHotEdge(prev))) {
+          prev = prev.prevInAEL;
+        }
+        return prev;
+      }
+      static isFront(ae) {
+        return ae === ae.outrec.frontEdge;
+      }
+      /*******************************************************************************
+      *  Dx:                             0(90deg)                                    *
+      *                                  |                                           *
+      *               +inf (180deg) <--- o ---> -inf (0deg)                          *
+      *******************************************************************************/
+      static getDx(pt1, pt2) {
+        const dy = pt2.y - pt1.y;
+        if (dy !== 0) {
+          return (pt2.x - pt1.x) / dy;
+        }
+        return pt2.x > pt1.x ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+      }
+      static topX(ae, currentY) {
+        if (currentY === ae.top.y || ae.top.x === ae.bot.x)
+          return ae.top.x;
+        if (currentY === ae.bot.y)
+          return ae.bot.x;
+        return InternalClipper.roundToEven(ae.bot.x + ae.dx * (currentY - ae.bot.y));
+      }
+      static isHorizontal(ae) {
+        return ae.dx === Number.NEGATIVE_INFINITY || ae.dx === Number.POSITIVE_INFINITY;
+      }
+      static isHeadingRightHorz(ae) {
+        return ae.dx === Number.NEGATIVE_INFINITY;
+      }
+      static isHeadingLeftHorz(ae) {
+        return ae.dx === Number.POSITIVE_INFINITY;
+      }
+      static getPolyType(ae) {
+        return ae.localMin.polytype;
+      }
+      static isSamePolyType(ae1, ae2) {
+        return ae1.localMin.polytype === ae2.localMin.polytype;
+      }
+      static setDx(ae) {
+        ae.dx = _ClipperBase.getDx(ae.bot, ae.top);
+      }
+      static nextVertex(ae) {
+        return ae.windDx > 0 ? ae.vertexTop.next : ae.vertexTop.prev;
+      }
+      static prevPrevVertex(ae) {
+        return ae.windDx > 0 ? ae.vertexTop.prev.prev : ae.vertexTop.next.next;
+      }
+      static isMaximaVertex(v) {
+        return (v.flags & VertexFlags.LocalMax) !== VertexFlags.None;
+      }
+      static isMaximaEdge(ae) {
+        return (ae.vertexTop.flags & VertexFlags.LocalMax) !== VertexFlags.None;
+      }
+      static getMaximaPair(ae) {
+        let ae2 = ae.nextInAEL;
+        while (ae2 !== null) {
+          if (ae2.vertexTop === ae.vertexTop)
+            return ae2;
+          ae2 = ae2.nextInAEL;
+        }
+        return null;
+      }
+      // optimization (not in C# reference): fast bounding box overlap check for segment intersection
+      boundingBoxesOverlap(p1, p2, p3, p4) {
+        const min1x = p1.x < p2.x ? p1.x : p2.x;
+        const max2x = p3.x > p4.x ? p3.x : p4.x;
+        if (max2x < min1x)
+          return false;
+        const max1x = p1.x > p2.x ? p1.x : p2.x;
+        const min2x = p3.x < p4.x ? p3.x : p4.x;
+        if (max1x < min2x)
+          return false;
+        const min1y = p1.y < p2.y ? p1.y : p2.y;
+        const max2y = p3.y > p4.y ? p3.y : p4.y;
+        if (max2y < min1y)
+          return false;
+        const max1y = p1.y > p2.y ? p1.y : p2.y;
+        const min2y = p3.y < p4.y ? p3.y : p4.y;
+        return max1y >= min2y;
+      }
+      clearSolutionOnly() {
+        while (this.actives !== null)
+          this.deleteFromAEL(this.actives);
+        this.scanlineHeap.clear();
+        this.scanlineSet.clear();
+        this.scanlineArr.length = 0;
+        this.disposeIntersectNodes();
+        this.outrecList.length = 0;
+        this.horzSegList.length = 0;
+        this.horzJoinList.length = 0;
+      }
+      clear() {
+        this.clearSolutionOnly();
+        this.minimaList.length = 0;
+        this.vertexList.length = 0;
+        this.currentLocMin = 0;
+        this.isSortedMinimaList = false;
+        this.hasOpenPaths = false;
+      }
+      reset() {
+        if (!this.isSortedMinimaList) {
+          this.minimaList.sort((a, b) => b.vertex.pt.y - a.vertex.pt.y);
+          this.isSortedMinimaList = true;
+        }
+        this.scanlineHeap.clear();
+        this.scanlineSet.clear();
+        this.scanlineArr.length = 0;
+        this.useScanlineArray = this.minimaList.length <= 16;
+        for (let i = this.minimaList.length - 1; i >= 0; i--) {
+          this.insertScanline(this.minimaList[i].vertex.pt.y);
+        }
+        this.currentBotY = 0;
+        this.currentLocMin = 0;
+        this.actives = null;
+        this.sel = null;
+        this.curXValidAtTop = false;
+        this.succeeded = true;
+      }
+      upgradeScanlineStructureFromArray() {
+        const arr = this.scanlineArr;
+        for (let i = 0, len = arr.length; i < len; i++) {
+          const y = arr[i];
+          this.scanlineSet.add(y);
+          this.scanlineHeap.push(y);
+        }
+        arr.length = 0;
+        this.useScanlineArray = false;
+      }
+      insertScanline(y) {
+        if (this.useScanlineArray) {
+          const arr = this.scanlineArr;
+          for (let i = 0, len = arr.length; i < len; i++) {
+            if (arr[i] === y)
+              return;
+          }
+          arr.push(y);
+          if (arr.length > 64)
+            this.upgradeScanlineStructureFromArray();
+          return;
+        }
+        if (this.scanlineSet.has(y))
+          return;
+        this.scanlineSet.add(y);
+        this.scanlineHeap.push(y);
+      }
+      // Returns the next scanline Y value, or null if empty.
+      // Avoids allocating a wrapper object on every call in the main sweep loop.
+      popScanline() {
+        if (this.useScanlineArray) {
+          const arr = this.scanlineArr;
+          const len = arr.length;
+          if (len === 0)
+            return null;
+          let bestIdx = 0;
+          let bestY = arr[0];
+          for (let i = 1; i < len; i++) {
+            const v = arr[i];
+            if (v > bestY) {
+              bestY = v;
+              bestIdx = i;
+            }
+          }
+          arr[bestIdx] = arr[len - 1];
+          arr.pop();
+          return bestY;
+        }
+        const y = this.scanlineHeap.pop();
+        if (y === null)
+          return null;
+        this.scanlineSet.delete(y);
+        return y;
+      }
+      hasLocMinAtY(y) {
+        return this.currentLocMin < this.minimaList.length && this.minimaList[this.currentLocMin].vertex.pt.y === y;
+      }
+      popLocalMinima() {
+        return this.minimaList[this.currentLocMin++];
+      }
+      addPath(path, polytype, isOpen = false) {
+        const tmp = [path];
+        this.addPaths(tmp, polytype, isOpen);
+      }
+      addPaths(paths, polytype, isOpen = false) {
+        if (isOpen)
+          this.hasOpenPaths = true;
+        this.isSortedMinimaList = false;
+        ClipperEngine.addPathsToVertexList(paths, polytype, isOpen, this.minimaList, this.vertexList);
+      }
+      addReuseableData(reuseableData) {
+        if (reuseableData["minimaList"].length === 0)
+          return;
+        this.isSortedMinimaList = false;
+        for (const lm of reuseableData["minimaList"]) {
+          this.minimaList.push(new LocalMinima(lm.vertex, lm.polytype, lm.isOpen));
+          if (lm.isOpen)
+            this.hasOpenPaths = true;
+        }
+      }
+      deleteFromAEL(ae) {
+        const prev = ae.prevInAEL;
+        const next = ae.nextInAEL;
+        if (prev === null && next === null && ae !== this.actives)
+          return;
+        if (prev !== null) {
+          prev.nextInAEL = next;
+        } else {
+          this.actives = next;
+        }
+        if (next !== null)
+          next.prevInAEL = prev;
+      }
+      getBounds() {
+        const bounds = {
+          left: Number.MAX_SAFE_INTEGER,
+          top: Number.MAX_SAFE_INTEGER,
+          right: Number.MIN_SAFE_INTEGER,
+          bottom: Number.MIN_SAFE_INTEGER
+        };
+        for (const t of this.vertexList) {
+          let v = t;
+          do {
+            if (v.pt.x < bounds.left)
+              bounds.left = v.pt.x;
+            if (v.pt.x > bounds.right)
+              bounds.right = v.pt.x;
+            if (v.pt.y < bounds.top)
+              bounds.top = v.pt.y;
+            if (v.pt.y > bounds.bottom)
+              bounds.bottom = v.pt.y;
+            v = v.next;
+          } while (v !== t);
+        }
+        return Rect64Utils.isEmpty(bounds) ? { left: 0, top: 0, right: 0, bottom: 0 } : bounds;
+      }
+      executeInternal(ct, fillRule) {
+        if (ct === ClipType.NoClip)
+          return;
+        _ClipperBase.openPathsEnabled = this.hasOpenPaths;
+        this.zCallbackInternal = this.getZCallback();
+        this.fillrule = fillRule;
+        this.cliptype = ct;
+        this.reset();
+        let y = this.popScanline();
+        if (y === null)
+          return;
+        while (this.succeeded) {
+          this.insertLocalMinimaIntoAEL(y);
+          let ae;
+          while ((ae = this.popHorz()) !== null)
+            this.doHorizontal(ae);
+          if (this.horzSegList.length > 0) {
+            this.convertHorzSegsToJoins();
+            this.horzSegList.length = 0;
+          }
+          this.currentBotY = y;
+          const nextY = this.popScanline();
+          if (nextY === null)
+            break;
+          y = nextY;
+          this.doIntersections(y);
+          this.doTopOfScanbeam(y);
+          while ((ae = this.popHorz()) !== null)
+            this.doHorizontal(ae);
+        }
+        if (this.succeeded)
+          this.processHorzJoins();
+      }
+      insertLocalMinimaIntoAEL(botY) {
+        while (this.hasLocMinAtY(botY)) {
+          const localMinima = this.popLocalMinima();
+          let leftBound;
+          if ((localMinima.vertex.flags & VertexFlags.OpenStart) !== VertexFlags.None) {
+            leftBound = null;
+          } else {
+            leftBound = new Active();
+            leftBound.bot = localMinima.vertex.pt;
+            leftBound.curX = localMinima.vertex.pt.x;
+            leftBound.windDx = -1;
+            leftBound.vertexTop = localMinima.vertex.prev;
+            leftBound.top = localMinima.vertex.prev.pt;
+            leftBound.outrec = null;
+            leftBound.localMin = localMinima;
+            _ClipperBase.setDx(leftBound);
+          }
+          let rightBound;
+          if ((localMinima.vertex.flags & VertexFlags.OpenEnd) !== VertexFlags.None) {
+            rightBound = null;
+          } else {
+            rightBound = new Active();
+            rightBound.bot = localMinima.vertex.pt;
+            rightBound.curX = localMinima.vertex.pt.x;
+            rightBound.windDx = 1;
+            rightBound.vertexTop = localMinima.vertex.next;
+            rightBound.top = localMinima.vertex.next.pt;
+            rightBound.outrec = null;
+            rightBound.localMin = localMinima;
+            _ClipperBase.setDx(rightBound);
+          }
+          if (leftBound !== null && rightBound !== null) {
+            if (_ClipperBase.isHorizontal(leftBound)) {
+              if (_ClipperBase.isHeadingRightHorz(leftBound)) {
+                const tmp = leftBound;
+                leftBound = rightBound;
+                rightBound = tmp;
+              }
+            } else if (_ClipperBase.isHorizontal(rightBound)) {
+              if (_ClipperBase.isHeadingLeftHorz(rightBound)) {
+                const tmp = leftBound;
+                leftBound = rightBound;
+                rightBound = tmp;
+              }
+            } else if (leftBound.dx < rightBound.dx) {
+              const tmp = leftBound;
+              leftBound = rightBound;
+              rightBound = tmp;
+            }
+          } else if (leftBound === null) {
+            leftBound = rightBound;
+            rightBound = null;
+          }
+          let contributing;
+          leftBound.isLeftBound = true;
+          this.insertLeftEdge(leftBound);
+          if (!_ClipperBase.openPathsEnabled) {
+            this.setWindCountForClosedPathEdge(leftBound);
+            contributing = this.isContributingClosed(leftBound);
+          } else if (_ClipperBase.isOpen(leftBound)) {
+            this.setWindCountForOpenPathEdge(leftBound);
+            contributing = this.isContributingOpen(leftBound);
+          } else {
+            this.setWindCountForClosedPathEdge(leftBound);
+            contributing = this.isContributingClosed(leftBound);
+          }
+          if (rightBound !== null) {
+            rightBound.windCount = leftBound.windCount;
+            rightBound.windCount2 = leftBound.windCount2;
+            this.insertRightEdge(leftBound, rightBound);
+            if (contributing) {
+              this.addLocalMinPoly(leftBound, rightBound, leftBound.bot, true);
+              if (!_ClipperBase.isHorizontal(leftBound)) {
+                this.checkJoinLeft(leftBound, leftBound.bot);
+              }
+            }
+            while (rightBound.nextInAEL !== null && this.isValidAelOrder(rightBound.nextInAEL, rightBound)) {
+              this.intersectEdges(rightBound, rightBound.nextInAEL, rightBound.bot);
+              this.swapPositionsInAEL(rightBound, rightBound.nextInAEL);
+            }
+            if (_ClipperBase.isHorizontal(rightBound)) {
+              this.pushHorz(rightBound);
+            } else {
+              this.checkJoinRight(rightBound, rightBound.bot);
+              this.insertScanline(rightBound.top.y);
+            }
+          } else if (contributing && _ClipperBase.openPathsEnabled) {
+            this.startOpenPath(leftBound, leftBound.bot);
+          }
+          if (_ClipperBase.isHorizontal(leftBound)) {
+            this.pushHorz(leftBound);
+          } else {
+            this.insertScanline(leftBound.top.y);
+          }
+        }
+      }
+      pushHorz(ae) {
+        ae.nextInSEL = this.sel;
+        this.sel = ae;
+      }
+      popHorz() {
+        const ae = this.sel;
+        if (ae === null)
+          return null;
+        this.sel = this.sel.nextInSEL;
+        return ae;
+      }
+      doHorizontal(horz) {
+        if (!_ClipperBase.openPathsEnabled) {
+          this.doHorizontalClosed(horz);
+          return;
+        }
+        const horzIsOpen = _ClipperBase.isOpen(horz);
+        const y = horz.bot.y;
+        const vertexMax = horzIsOpen ? this.getCurrYMaximaVertexOpen(horz) : this.getCurrYMaximaVertex(horz);
+        const { isLeftToRight, leftX, rightX } = this.resetHorzDirection(horz, vertexMax);
+        let leftX2 = leftX;
+        let rightX2 = rightX;
+        if (_ClipperBase.isHotEdge(horz)) {
+          const op = this.addOutPt(horz, { x: horz.curX, y });
+          this.addToHorzSegList(op);
+        }
+        while (true) {
+          let ae = isLeftToRight ? horz.nextInAEL : horz.prevInAEL;
+          while (ae !== null) {
+            if (ae.vertexTop === vertexMax) {
+              if (_ClipperBase.isHotEdge(horz) && this.isJoined(ae))
+                this.split(ae, ae.top);
+              if (_ClipperBase.isHotEdge(horz)) {
+                while (horz.vertexTop !== vertexMax) {
+                  this.addOutPt(horz, horz.top);
+                  this.updateEdgeIntoAEL(horz);
+                }
+                if (isLeftToRight) {
+                  this.addLocalMaxPoly(horz, ae, horz.top);
+                } else {
+                  this.addLocalMaxPoly(ae, horz, horz.top);
+                }
+              }
+              this.deleteFromAEL(ae);
+              this.deleteFromAEL(horz);
+              return;
+            }
+            if (vertexMax !== horz.vertexTop || _ClipperBase.isOpenEnd(horz)) {
+              if (isLeftToRight && ae.curX > rightX2 || !isLeftToRight && ae.curX < leftX2)
+                break;
+              if (ae.curX === horz.top.x && !_ClipperBase.isHorizontal(ae)) {
+                const pt2 = _ClipperBase.nextVertex(horz).pt;
+                if (_ClipperBase.isOpen(ae) && !_ClipperBase.isSamePolyType(ae, horz) && !_ClipperBase.isHotEdge(ae)) {
+                  if (isLeftToRight && _ClipperBase.topX(ae, pt2.y) > pt2.x || !isLeftToRight && _ClipperBase.topX(ae, pt2.y) < pt2.x)
+                    break;
+                } else if (isLeftToRight && _ClipperBase.topX(ae, pt2.y) >= pt2.x || !isLeftToRight && _ClipperBase.topX(ae, pt2.y) <= pt2.x)
+                  break;
+              }
+            }
+            const pt = { x: ae.curX, y };
+            if (isLeftToRight) {
+              this.intersectEdges(horz, ae, pt);
+              this.swapPositionsInAEL(horz, ae);
+              this.checkJoinLeft(ae, pt);
+              horz.curX = ae.curX;
+              ae = horz.nextInAEL;
+            } else {
+              this.intersectEdges(ae, horz, pt);
+              this.swapPositionsInAEL(ae, horz);
+              this.checkJoinRight(ae, pt);
+              horz.curX = ae.curX;
+              ae = horz.prevInAEL;
+            }
+            if (_ClipperBase.isHotEdge(horz)) {
+              this.addToHorzSegList(this.getLastOp(horz));
+            }
+          }
+          if (horzIsOpen && _ClipperBase.isOpenEnd(horz)) {
+            if (_ClipperBase.isHotEdge(horz)) {
+              this.addOutPt(horz, horz.top);
+              if (_ClipperBase.isFront(horz)) {
+                horz.outrec.frontEdge = null;
+              } else {
+                horz.outrec.backEdge = null;
+              }
+              horz.outrec = null;
+            }
+            this.deleteFromAEL(horz);
+            return;
+          }
+          if (_ClipperBase.nextVertex(horz).pt.y !== horz.top.y) {
+            break;
+          }
+          if (_ClipperBase.isHotEdge(horz)) {
+            this.addOutPt(horz, horz.top);
+          }
+          this.updateEdgeIntoAEL(horz);
+          const resetResult = this.resetHorzDirection(horz, vertexMax);
+          leftX2 = resetResult.leftX;
+          rightX2 = resetResult.rightX;
+        }
+        if (_ClipperBase.isHotEdge(horz)) {
+          const op = this.addOutPt(horz, horz.top);
+          this.addToHorzSegList(op);
+        }
+        this.updateEdgeIntoAEL(horz);
+      }
+      // Closed-path-only horizontal processing (no open-path branching).
+      doHorizontalClosed(horz) {
+        const y = horz.bot.y;
+        const vertexMax = this.getCurrYMaximaVertex(horz);
+        const { isLeftToRight, leftX, rightX } = this.resetHorzDirection(horz, vertexMax);
+        let leftX2 = leftX;
+        let rightX2 = rightX;
+        if (_ClipperBase.isHotEdge(horz)) {
+          const op = this.addOutPt(horz, { x: horz.curX, y });
+          this.addToHorzSegList(op);
+        }
+        while (true) {
+          let ae = isLeftToRight ? horz.nextInAEL : horz.prevInAEL;
+          while (ae !== null) {
+            if (ae.vertexTop === vertexMax) {
+              if (_ClipperBase.isHotEdge(horz) && this.isJoined(ae))
+                this.split(ae, ae.top);
+              if (_ClipperBase.isHotEdge(horz)) {
+                while (horz.vertexTop !== vertexMax) {
+                  this.addOutPt(horz, horz.top);
+                  this.updateEdgeIntoAEL(horz);
+                }
+                if (isLeftToRight) {
+                  this.addLocalMaxPoly(horz, ae, horz.top);
+                } else {
+                  this.addLocalMaxPoly(ae, horz, horz.top);
+                }
+              }
+              this.deleteFromAEL(ae);
+              this.deleteFromAEL(horz);
+              return;
+            }
+            if (vertexMax !== horz.vertexTop) {
+              if (isLeftToRight && ae.curX > rightX2 || !isLeftToRight && ae.curX < leftX2)
+                break;
+              if (ae.curX === horz.top.x && !_ClipperBase.isHorizontal(ae)) {
+                const nextPt = _ClipperBase.nextVertex(horz).pt;
+                const tx = _ClipperBase.topX(ae, nextPt.y);
+                if (isLeftToRight && tx >= nextPt.x || !isLeftToRight && tx <= nextPt.x)
+                  break;
+              }
+            }
+            const pt = { x: ae.curX, y };
+            if (isLeftToRight) {
+              this.intersectEdges(horz, ae, pt);
+              this.swapPositionsInAEL(horz, ae);
+              this.checkJoinLeft(ae, pt);
+              horz.curX = ae.curX;
+              ae = horz.nextInAEL;
+            } else {
+              this.intersectEdges(ae, horz, pt);
+              this.swapPositionsInAEL(ae, horz);
+              this.checkJoinRight(ae, pt);
+              horz.curX = ae.curX;
+              ae = horz.prevInAEL;
+            }
+            if (_ClipperBase.isHotEdge(horz)) {
+              this.addToHorzSegList(this.getLastOp(horz));
+            }
+          }
+          if (_ClipperBase.nextVertex(horz).pt.y !== horz.top.y) {
+            break;
+          }
+          if (_ClipperBase.isHotEdge(horz)) {
+            this.addOutPt(horz, horz.top);
+          }
+          this.updateEdgeIntoAEL(horz);
+          const resetResult = this.resetHorzDirection(horz, vertexMax);
+          leftX2 = resetResult.leftX;
+          rightX2 = resetResult.rightX;
+        }
+        if (_ClipperBase.isHotEdge(horz)) {
+          const op = this.addOutPt(horz, horz.top);
+          this.addToHorzSegList(op);
+        }
+        this.updateEdgeIntoAEL(horz);
+      }
+      convertHorzSegsToJoins() {
+        const list = this.horzSegList;
+        let k = 0;
+        for (let i = 0, len = list.length; i < len; i++) {
+          const hs = list[i];
+          if (this.updateHorzSegment(hs))
+            list[k++] = hs;
+        }
+        if (k < 2)
+          return;
+        list.length = k;
+        this.horzSegList.sort(compareHorzSegments);
+        for (let i = 0; i < k - 1; i++) {
+          const hs1 = this.horzSegList[i];
+          for (let j = i + 1; j < k; j++) {
+            const hs2 = this.horzSegList[j];
+            if (hs2.leftOp.pt.x >= hs1.rightOp.pt.x || hs2.leftToRight === hs1.leftToRight || hs2.rightOp.pt.x <= hs1.leftOp.pt.x)
+              continue;
+            const currY = hs1.leftOp.pt.y;
+            if (hs1.leftToRight) {
+              while (hs1.leftOp.next.pt.y === currY && hs1.leftOp.next.pt.x <= hs2.leftOp.pt.x)
+                hs1.leftOp = hs1.leftOp.next;
+              while (hs2.leftOp.prev.pt.y === currY && hs2.leftOp.prev.pt.x <= hs1.leftOp.pt.x)
+                hs2.leftOp = hs2.leftOp.prev;
+              const join = new HorzJoin(this.duplicateOp(hs1.leftOp, true), this.duplicateOp(hs2.leftOp, false));
+              this.horzJoinList.push(join);
+            } else {
+              while (hs1.leftOp.prev.pt.y === currY && hs1.leftOp.prev.pt.x <= hs2.leftOp.pt.x)
+                hs1.leftOp = hs1.leftOp.prev;
+              while (hs2.leftOp.next.pt.y === currY && hs2.leftOp.next.pt.x <= hs1.leftOp.pt.x)
+                hs2.leftOp = hs2.leftOp.next;
+              const join = new HorzJoin(this.duplicateOp(hs2.leftOp, true), this.duplicateOp(hs1.leftOp, false));
+              this.horzJoinList.push(join);
+            }
+          }
+        }
+      }
+      updateHorzSegment(hs) {
+        const op = hs.leftOp;
+        const outrec = this.getRealOutRec(op.outrec);
+        const outrecHasEdges = outrec.frontEdge !== null;
+        const currY = op.pt.y;
+        let opP = op;
+        let opN = op;
+        if (outrecHasEdges) {
+          const opA = outrec.pts;
+          const opZ = opA.next;
+          while (opP !== opZ && opP.prev.pt.y === currY)
+            opP = opP.prev;
+          while (opN !== opA && opN.next.pt.y === currY)
+            opN = opN.next;
+        } else {
+          while (opP.prev !== opN && opP.prev.pt.y === currY)
+            opP = opP.prev;
+          while (opN.next !== opP && opN.next.pt.y === currY)
+            opN = opN.next;
+        }
+        const result = this.setHorzSegHeadingForward(hs, opP, opN) && hs.leftOp.horz === null;
+        if (result) {
+          hs.leftOp.horz = hs;
+        } else {
+          hs.rightOp = null;
+        }
+        return result;
+      }
+      setHorzSegHeadingForward(hs, opP, opN) {
+        if (opP.pt.x === opN.pt.x)
+          return false;
+        if (opP.pt.x < opN.pt.x) {
+          hs.leftOp = opP;
+          hs.rightOp = opN;
+          hs.leftToRight = true;
+        } else {
+          hs.leftOp = opN;
+          hs.rightOp = opP;
+          hs.leftToRight = false;
+        }
+        return true;
+      }
+      duplicateOp(op, insertAfter) {
+        const result = new OutPt(op.pt, op.outrec);
+        if (insertAfter) {
+          result.next = op.next;
+          result.next.prev = result;
+          result.prev = op;
+          op.next = result;
+        } else {
+          result.prev = op.prev;
+          result.prev.next = result;
+          result.next = op;
+          op.prev = result;
+        }
+        return result;
+      }
+      getRealOutRec(outRec) {
+        while (outRec !== null && outRec.pts === null) {
+          outRec = outRec.owner;
+        }
+        return outRec;
+      }
+      doIntersections(y) {
+        if (this.buildIntersectList(y)) {
+          this.processIntersectList();
+          this.disposeIntersectNodes();
+        }
+      }
+      doTopOfScanbeam(y) {
+        const curXValid = this.curXValidAtTop;
+        this.curXValidAtTop = false;
+        this.sel = null;
+        let ae = this.actives;
+        while (ae !== null) {
+          if (ae.top.y === y) {
+            ae.curX = ae.top.x;
+            if (_ClipperBase.isMaximaEdge(ae)) {
+              ae = this.doMaxima(ae);
+              continue;
+            } else {
+              if (_ClipperBase.isHotEdge(ae))
+                this.addOutPt(ae, ae.top);
+              this.updateEdgeIntoAEL(ae);
+              if (_ClipperBase.isHorizontal(ae)) {
+                this.pushHorz(ae);
+              }
+            }
+          } else if (!curXValid) {
+            ae.curX = _ClipperBase.topX(ae, y);
+          }
+          ae = ae.nextInAEL;
+        }
+      }
+      processHorzJoins() {
+        for (const j of this.horzJoinList) {
+          const or1 = this.getRealOutRec(j.op1.outrec);
+          const or2 = this.getRealOutRec(j.op2.outrec);
+          const op1b = j.op1.next;
+          const op2b = j.op2.prev;
+          j.op1.next = j.op2;
+          j.op2.prev = j.op1;
+          op1b.prev = op2b;
+          op2b.next = op1b;
+          if (or1 === or2) {
+            const or2New = this.newOutRec();
+            or2New.pts = op1b;
+            this.fixOutRecPts(or2New);
+            if (or1.pts.outrec === or2New) {
+              or1.pts = j.op1;
+              or1.pts.outrec = or1;
+            }
+            if (this.usingPolytree) {
+              if (this.path1InsidePath2(or1.pts, or2New.pts)) {
+                [or2New.pts, or1.pts] = [or1.pts, or2New.pts];
+                this.fixOutRecPts(or1);
+                this.fixOutRecPts(or2New);
+                or2New.owner = or1;
+              } else if (this.path1InsidePath2(or2New.pts, or1.pts)) {
+                or2New.owner = or1;
+              } else {
+                or2New.owner = or1.owner;
+              }
+              if (or1.splits === null)
+                or1.splits = [];
+              or1.splits.push(or2New.idx);
+            } else {
+              or2New.owner = or1;
+            }
+          } else {
+            or2.pts = null;
+            if (this.usingPolytree) {
+              this.setOwner(or2, or1);
+              this.moveSplits(or2, or1);
+            } else {
+              or2.owner = or1;
+            }
+          }
+        }
+      }
+      fixOutRecPts(outrec) {
+        let op = outrec.pts;
+        do {
+          op.outrec = outrec;
+          op = op.next;
+        } while (op !== outrec.pts);
+      }
+      path1InsidePath2(op1, op2) {
+        let pip = PointInPolygonResult.IsOn;
+        let op = op1;
+        do {
+          switch (this.pointInOpPolygon(op.pt, op2)) {
+            case PointInPolygonResult.IsOutside:
+              if (pip === PointInPolygonResult.IsOutside)
+                return false;
+              pip = PointInPolygonResult.IsOutside;
+              break;
+            case PointInPolygonResult.IsInside:
+              if (pip === PointInPolygonResult.IsInside)
+                return true;
+              pip = PointInPolygonResult.IsInside;
+              break;
+          }
+          op = op.next;
+        } while (op !== op1);
+        return InternalClipper.path2ContainsPath1(this.getCleanPath(op1), this.getCleanPath(op2));
+      }
+      pointInOpPolygon(pt, op) {
+        if (op === op.next || op.prev === op.next) {
+          return PointInPolygonResult.IsOutside;
+        }
+        let op2 = op;
+        do {
+          if (op.pt.y !== pt.y)
+            break;
+          op = op.next;
+        } while (op !== op2);
+        if (op.pt.y === pt.y)
+          return PointInPolygonResult.IsOutside;
+        let isAbove = op.pt.y < pt.y;
+        const startingAbove = isAbove;
+        let val = 0;
+        op2 = op.next;
+        while (op2 !== op) {
+          if (isAbove) {
+            while (op2 !== op && op2.pt.y < pt.y)
+              op2 = op2.next;
+          } else {
+            while (op2 !== op && op2.pt.y > pt.y)
+              op2 = op2.next;
+          }
+          if (op2 === op)
+            break;
+          if (op2.pt.y === pt.y) {
+            if (op2.pt.x === pt.x || op2.pt.y === op2.prev.pt.y && pt.x < op2.prev.pt.x !== pt.x < op2.pt.x)
+              return PointInPolygonResult.IsOn;
+            op2 = op2.next;
+            if (op2 === op)
+              break;
+            continue;
+          }
+          if (op2.pt.x <= pt.x || op2.prev.pt.x <= pt.x) {
+            if (op2.prev.pt.x < pt.x && op2.pt.x < pt.x) {
+              val = 1 - val;
+            } else {
+              const d = InternalClipper.crossProductSign(op2.prev.pt, op2.pt, pt);
+              if (d === 0)
+                return PointInPolygonResult.IsOn;
+              if (d < 0 === isAbove)
+                val = 1 - val;
+            }
+          }
+          isAbove = !isAbove;
+          op2 = op2.next;
+        }
+        if (isAbove === startingAbove)
+          return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+        {
+          const d = InternalClipper.crossProductSign(op2.prev.pt, op2.pt, pt);
+          if (d === 0)
+            return PointInPolygonResult.IsOn;
+          if (d < 0 === isAbove)
+            val = 1 - val;
+        }
+        return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+      }
+      getCleanPath(op) {
+        const result = [];
+        let op2 = op;
+        while (op2.next !== op && (op2.pt.x === op2.next.pt.x && op2.pt.x === op2.prev.pt.x || op2.pt.y === op2.next.pt.y && op2.pt.y === op2.prev.pt.y))
+          op2 = op2.next;
+        result.push(op2.pt);
+        let prevOp = op2;
+        op2 = op2.next;
+        while (op2 !== op) {
+          if ((op2.pt.x !== op2.next.pt.x || op2.pt.x !== prevOp.pt.x) && (op2.pt.y !== op2.next.pt.y || op2.pt.y !== prevOp.pt.y)) {
+            result.push(op2.pt);
+            prevOp = op2;
+          }
+          op2 = op2.next;
+        }
+        return result;
+      }
+      moveSplits(fromOr, toOr) {
+        if (fromOr.splits === null)
+          return;
+        if (toOr.splits === null)
+          toOr.splits = [];
+        for (const i of fromOr.splits) {
+          if (i !== toOr.idx) {
+            toOr.splits.push(i);
+          }
+        }
+        fromOr.splits = null;
+      }
+      buildIntersectList(topY) {
+        var _a2;
+        if (((_a2 = this.actives) == null ? void 0 : _a2.nextInAEL) === null)
+          return false;
+        if (!this.adjustCurrXAndCopyToSEL(topY)) {
+          this.curXValidAtTop = true;
+          return false;
+        }
+        let left = this.sel;
+        while (left !== null && left.jump !== null) {
+          let prevBase = null;
+          while (left !== null && left.jump !== null) {
+            let currBase = left;
+            let right = left.jump;
+            let lEnd = right;
+            const rEnd = (right == null ? void 0 : right.jump) || null;
+            left.jump = rEnd;
+            while (left !== lEnd && right !== rEnd) {
+              if (right.curX < left.curX) {
+                let tmp = right.prevInSEL;
+                while (true) {
+                  this.addNewIntersectNode(tmp, right, topY);
+                  if (tmp === left)
+                    break;
+                  tmp = tmp.prevInSEL;
+                }
+                tmp = right;
+                right = this.extractFromSEL(tmp);
+                lEnd = right;
+                if (left !== null)
+                  this.insert1Before2InSEL(tmp, left);
+                if (left !== currBase)
+                  continue;
+                currBase = tmp;
+                currBase.jump = rEnd;
+                if (prevBase === null) {
+                  this.sel = currBase;
+                } else {
+                  prevBase.jump = currBase;
+                }
+              } else {
+                left = left.nextInSEL;
+              }
+            }
+            prevBase = currBase;
+            left = rEnd;
+          }
+          left = this.sel;
+        }
+        return this.intersectList.length > 0;
+      }
+      processIntersectList() {
+        this.intersectList.sort(compareIntersectNodes);
+        for (let i = 0; i < this.intersectList.length; ++i) {
+          if (!this.edgesAdjacentInAEL(this.intersectList[i])) {
+            let j = i + 1;
+            while (!this.edgesAdjacentInAEL(this.intersectList[j]))
+              j++;
+            [this.intersectList[j], this.intersectList[i]] = [this.intersectList[i], this.intersectList[j]];
+          }
+          const node = this.intersectList[i];
+          this.intersectEdges(node.edge1, node.edge2, node.pt);
+          this.swapPositionsInAEL(node.edge1, node.edge2);
+          node.edge1.curX = node.pt.x;
+          node.edge2.curX = node.pt.x;
+          this.checkJoinLeft(node.edge2, node.pt, true);
+          this.checkJoinRight(node.edge1, node.pt, true);
+        }
+      }
+      edgesAdjacentInAEL(inode) {
+        return inode.edge1.nextInAEL === inode.edge2 || inode.edge1.prevInAEL === inode.edge2;
+      }
+      // Returns true if any adjacent pair is inverted at topY (i.e. at least one
+      // intersection exists within this scanbeam).
+      adjustCurrXAndCopyToSEL(topY) {
+        let ae = this.actives;
+        this.sel = ae;
+        let prevX = Number.NEGATIVE_INFINITY;
+        let inverted = false;
+        while (ae !== null) {
+          ae.prevInSEL = ae.prevInAEL;
+          ae.nextInSEL = ae.nextInAEL;
+          ae.jump = ae.nextInSEL;
+          const x = _ClipperBase.topX(ae, topY);
+          ae.curX = x;
+          if (x < prevX)
+            inverted = true;
+          prevX = x;
+          ae = ae.nextInAEL;
+        }
+        return inverted;
+      }
+      doMaxima(ae) {
+        const prevE = ae.prevInAEL;
+        let nextE = ae.nextInAEL;
+        if (_ClipperBase.isOpenEnd(ae)) {
+          if (_ClipperBase.isHotEdge(ae))
+            this.addOutPt(ae, ae.top);
+          if (_ClipperBase.isHorizontal(ae))
+            return nextE;
+          if (_ClipperBase.isHotEdge(ae)) {
+            if (_ClipperBase.isFront(ae)) {
+              ae.outrec.frontEdge = null;
+            } else {
+              ae.outrec.backEdge = null;
+            }
+            ae.outrec = null;
+          }
+          this.deleteFromAEL(ae);
+          return nextE;
+        }
+        const maxPair = _ClipperBase.getMaximaPair(ae);
+        if (maxPair === null)
+          return nextE;
+        if (this.isJoined(ae))
+          this.split(ae, ae.top);
+        if (this.isJoined(maxPair))
+          this.split(maxPair, maxPair.top);
+        while (nextE !== maxPair) {
+          this.intersectEdges(ae, nextE, ae.top);
+          this.swapPositionsInAEL(ae, nextE);
+          nextE = ae.nextInAEL;
+        }
+        if (_ClipperBase.isOpen(ae)) {
+          if (_ClipperBase.isHotEdge(ae)) {
+            this.addLocalMaxPoly(ae, maxPair, ae.top);
+          }
+          this.deleteFromAEL(maxPair);
+          this.deleteFromAEL(ae);
+          return prevE !== null ? prevE.nextInAEL : this.actives;
+        }
+        if (_ClipperBase.isHotEdge(ae)) {
+          this.addLocalMaxPoly(ae, maxPair, ae.top);
+        }
+        this.deleteFromAEL(ae);
+        this.deleteFromAEL(maxPair);
+        return prevE !== null ? prevE.nextInAEL : this.actives;
+      }
+      updateEdgeIntoAEL(ae) {
+        ae.bot = ae.top;
+        ae.vertexTop = _ClipperBase.nextVertex(ae);
+        ae.top = ae.vertexTop.pt;
+        ae.curX = ae.bot.x;
+        _ClipperBase.setDx(ae);
+        if (this.isJoined(ae))
+          this.split(ae, ae.bot);
+        if (_ClipperBase.isHorizontal(ae)) {
+          if (!_ClipperBase.openPathsEnabled) {
+            this.trimHorz(ae, this.preserveCollinear);
+          } else if (!_ClipperBase.isOpen(ae)) {
+            this.trimHorz(ae, this.preserveCollinear);
+          }
+          return;
+        }
+        this.insertScanline(ae.top.y);
+        this.checkJoinLeft(ae, ae.bot);
+        this.checkJoinRight(ae, ae.bot, true);
+      }
+      trimHorz(horzEdge, preserveCollinear) {
+        let wasTrimmed = false;
+        let pt = _ClipperBase.nextVertex(horzEdge).pt;
+        while (pt.y === horzEdge.top.y) {
+          if (preserveCollinear && pt.x < horzEdge.top.x !== horzEdge.bot.x < horzEdge.top.x) {
+            break;
+          }
+          horzEdge.vertexTop = _ClipperBase.nextVertex(horzEdge);
+          horzEdge.top = pt;
+          wasTrimmed = true;
+          if (_ClipperBase.isMaximaVertex(horzEdge.vertexTop))
+            break;
+          pt = _ClipperBase.nextVertex(horzEdge).pt;
+        }
+        if (wasTrimmed)
+          _ClipperBase.setDx(horzEdge);
+      }
+      addToHorzSegList(op) {
+        if (op.outrec.isOpen)
+          return;
+        this.horzSegList.push(new HorzSegment(op));
+      }
+      addNewIntersectNode(ae1, ae2, topY) {
+        let ip = InternalClipper.getLineIntersectPt(ae1.bot, ae1.top, ae2.bot, ae2.top);
+        if (ip === null) {
+          ip = { x: ae1.curX, y: topY };
+        }
+        if (ip.y > this.currentBotY || ip.y < topY) {
+          const absDx1 = Math.abs(ae1.dx);
+          const absDx2 = Math.abs(ae2.dx);
+          if (absDx1 > 100 && absDx2 > 100) {
+            if (absDx1 > absDx2) {
+              ip = InternalClipper.getClosestPtOnSegment(ip, ae1.bot, ae1.top);
+            } else {
+              ip = InternalClipper.getClosestPtOnSegment(ip, ae2.bot, ae2.top);
+            }
+          } else if (absDx1 > 100) {
+            ip = InternalClipper.getClosestPtOnSegment(ip, ae1.bot, ae1.top);
+          } else if (absDx2 > 100) {
+            ip = InternalClipper.getClosestPtOnSegment(ip, ae2.bot, ae2.top);
+          } else {
+            if (ip.y < topY)
+              ip.y = topY;
+            else
+              ip.y = this.currentBotY;
+            if (absDx1 < absDx2)
+              ip.x = _ClipperBase.topX(ae1, ip.y);
+            else
+              ip.x = _ClipperBase.topX(ae2, ip.y);
+          }
+        }
+        const node = createIntersectNode(ip, ae1, ae2);
+        this.intersectList.push(node);
+      }
+      extractFromSEL(ae) {
+        const res = ae.nextInSEL;
+        if (res !== null) {
+          res.prevInSEL = ae.prevInSEL;
+        }
+        ae.prevInSEL.nextInSEL = res;
+        return res;
+      }
+      insert1Before2InSEL(ae1, ae2) {
+        ae1.prevInSEL = ae2.prevInSEL;
+        if (ae1.prevInSEL !== null) {
+          ae1.prevInSEL.nextInSEL = ae1;
+        }
+        ae1.nextInSEL = ae2;
+        ae2.prevInSEL = ae1;
+      }
+      getCurrYMaximaVertexOpen(ae) {
+        let result = ae.vertexTop;
+        if (ae.windDx > 0) {
+          while (result.next.pt.y === result.pt.y && (result.flags & (VertexFlags.OpenEnd | VertexFlags.LocalMax)) === VertexFlags.None)
+            result = result.next;
+        } else {
+          while (result.prev.pt.y === result.pt.y && (result.flags & (VertexFlags.OpenEnd | VertexFlags.LocalMax)) === VertexFlags.None)
+            result = result.prev;
+        }
+        if (!_ClipperBase.isMaximaVertex(result))
+          result = null;
+        return result;
+      }
+      getCurrYMaximaVertex(ae) {
+        let result = ae.vertexTop;
+        if (ae.windDx > 0) {
+          while (result.next.pt.y === result.pt.y)
+            result = result.next;
+        } else {
+          while (result.prev.pt.y === result.pt.y)
+            result = result.prev;
+        }
+        if (!_ClipperBase.isMaximaVertex(result))
+          result = null;
+        return result;
+      }
+      resetHorzDirection(horz, vertexMax) {
+        if (horz.bot.x === horz.top.x) {
+          const leftX = horz.curX;
+          const rightX = horz.curX;
+          let ae = horz.nextInAEL;
+          while (ae !== null && ae.vertexTop !== vertexMax)
+            ae = ae.nextInAEL;
+          return { isLeftToRight: ae !== null, leftX, rightX };
+        }
+        if (horz.curX < horz.top.x) {
+          return { isLeftToRight: true, leftX: horz.curX, rightX: horz.top.x };
+        } else {
+          return { isLeftToRight: false, leftX: horz.top.x, rightX: horz.curX };
+        }
+      }
+      getLastOp(hotEdge) {
+        const outrec = hotEdge.outrec;
+        return hotEdge === outrec.frontEdge ? outrec.pts : outrec.pts.next;
+      }
+      insertLeftEdge(ae) {
+        if (this.actives === null) {
+          ae.prevInAEL = null;
+          ae.nextInAEL = null;
+          this.actives = ae;
+        } else if (!this.isValidAelOrder(this.actives, ae)) {
+          ae.prevInAEL = null;
+          ae.nextInAEL = this.actives;
+          this.actives.prevInAEL = ae;
+          this.actives = ae;
+        } else {
+          let ae2 = this.actives;
+          while (ae2.nextInAEL !== null && this.isValidAelOrder(ae2.nextInAEL, ae)) {
+            ae2 = ae2.nextInAEL;
+          }
+          if (ae2.joinWith === JoinWith.Right)
+            ae2 = ae2.nextInAEL;
+          ae.nextInAEL = ae2.nextInAEL;
+          if (ae2.nextInAEL !== null)
+            ae2.nextInAEL.prevInAEL = ae;
+          ae.prevInAEL = ae2;
+          ae2.nextInAEL = ae;
+        }
+      }
+      insertRightEdge(ae1, ae2) {
+        ae2.nextInAEL = ae1.nextInAEL;
+        if (ae1.nextInAEL !== null)
+          ae1.nextInAEL.prevInAEL = ae2;
+        ae2.prevInAEL = ae1;
+        ae1.nextInAEL = ae2;
+      }
+      setWindCountForOpenPathEdge(ae) {
+        let ae2 = this.actives;
+        if (this.fillrule === FillRule.EvenOdd) {
+          let cnt1 = 0, cnt2 = 0;
+          while (ae2 !== ae) {
+            if (_ClipperBase.getPolyType(ae2) === PathType.Clip) {
+              cnt2++;
+            } else if (!_ClipperBase.isOpen(ae2)) {
+              cnt1++;
+            }
+            ae2 = ae2.nextInAEL;
+          }
+          ae.windCount = _ClipperBase.isOdd(cnt1) ? 1 : 0;
+          ae.windCount2 = _ClipperBase.isOdd(cnt2) ? 1 : 0;
+        } else {
+          while (ae2 !== ae) {
+            if (_ClipperBase.getPolyType(ae2) === PathType.Clip) {
+              ae.windCount2 += ae2.windDx;
+            } else if (!_ClipperBase.isOpen(ae2)) {
+              ae.windCount += ae2.windDx;
+            }
+            ae2 = ae2.nextInAEL;
+          }
+        }
+      }
+      setWindCountForClosedPathEdge(ae) {
+        let ae2 = ae.prevInAEL;
+        const pt = _ClipperBase.getPolyType(ae);
+        if (!_ClipperBase.openPathsEnabled) {
+          while (ae2 !== null && _ClipperBase.getPolyType(ae2) !== pt)
+            ae2 = ae2.prevInAEL;
+          if (ae2 === null) {
+            ae.windCount = ae.windDx;
+            ae2 = this.actives;
+          } else if (this.fillrule === FillRule.EvenOdd) {
+            ae.windCount = ae.windDx;
+            ae.windCount2 = ae2.windCount2;
+            ae2 = ae2.nextInAEL;
+          } else {
+            if (ae2.windCount * ae2.windDx < 0) {
+              if (Math.abs(ae2.windCount) > 1) {
+                if (ae2.windDx * ae.windDx < 0) {
+                  ae.windCount = ae2.windCount;
+                } else {
+                  ae.windCount = ae2.windCount + ae.windDx;
+                }
+              } else {
+                ae.windCount = ae.windDx;
+              }
+            } else {
+              if (ae2.windDx * ae.windDx < 0) {
+                ae.windCount = ae2.windCount;
+              } else {
+                ae.windCount = ae2.windCount + ae.windDx;
+              }
+            }
+            ae.windCount2 = ae2.windCount2;
+            ae2 = ae2.nextInAEL;
+          }
+          if (this.fillrule === FillRule.EvenOdd) {
+            while (ae2 !== ae) {
+              if (_ClipperBase.getPolyType(ae2) !== pt) {
+                ae.windCount2 = ae.windCount2 === 0 ? 1 : 0;
+              }
+              ae2 = ae2.nextInAEL;
+            }
+          } else {
+            while (ae2 !== ae) {
+              if (_ClipperBase.getPolyType(ae2) !== pt) {
+                ae.windCount2 += ae2.windDx;
+              }
+              ae2 = ae2.nextInAEL;
+            }
+          }
+          return;
+        }
+        while (ae2 !== null && (_ClipperBase.getPolyType(ae2) !== pt || _ClipperBase.isOpen(ae2)))
+          ae2 = ae2.prevInAEL;
+        if (ae2 === null) {
+          ae.windCount = ae.windDx;
+          ae2 = this.actives;
+        } else if (this.fillrule === FillRule.EvenOdd) {
+          ae.windCount = ae.windDx;
+          ae.windCount2 = ae2.windCount2;
+          ae2 = ae2.nextInAEL;
+        } else {
+          if (ae2.windCount * ae2.windDx < 0) {
+            if (Math.abs(ae2.windCount) > 1) {
+              if (ae2.windDx * ae.windDx < 0) {
+                ae.windCount = ae2.windCount;
+              } else {
+                ae.windCount = ae2.windCount + ae.windDx;
+              }
+            } else {
+              ae.windCount = _ClipperBase.isOpen(ae) ? 1 : ae.windDx;
+            }
+          } else {
+            if (ae2.windDx * ae.windDx < 0) {
+              ae.windCount = ae2.windCount;
+            } else {
+              ae.windCount = ae2.windCount + ae.windDx;
+            }
+          }
+          ae.windCount2 = ae2.windCount2;
+          ae2 = ae2.nextInAEL;
+        }
+        if (this.fillrule === FillRule.EvenOdd) {
+          while (ae2 !== ae) {
+            if (_ClipperBase.getPolyType(ae2) !== pt && !_ClipperBase.isOpen(ae2)) {
+              ae.windCount2 = ae.windCount2 === 0 ? 1 : 0;
+            }
+            ae2 = ae2.nextInAEL;
+          }
+        } else {
+          while (ae2 !== ae) {
+            if (_ClipperBase.getPolyType(ae2) !== pt && !_ClipperBase.isOpen(ae2)) {
+              ae.windCount2 += ae2.windDx;
+            }
+            ae2 = ae2.nextInAEL;
+          }
+        }
+      }
+      isContributingOpen(ae) {
+        let isInClip, isInSubj;
+        switch (this.fillrule) {
+          case FillRule.Positive:
+            isInSubj = ae.windCount > 0;
+            isInClip = ae.windCount2 > 0;
+            break;
+          case FillRule.Negative:
+            isInSubj = ae.windCount < 0;
+            isInClip = ae.windCount2 < 0;
+            break;
+          default:
+            isInSubj = ae.windCount !== 0;
+            isInClip = ae.windCount2 !== 0;
+            break;
+        }
+        switch (this.cliptype) {
+          case ClipType.Intersection:
+            return isInClip;
+          case ClipType.Union:
+            return !isInSubj && !isInClip;
+          default:
+            return !isInClip;
+        }
+      }
+      isContributingClosed(ae) {
+        switch (this.fillrule) {
+          case FillRule.Positive:
+            if (ae.windCount !== 1)
+              return false;
+            break;
+          case FillRule.Negative:
+            if (ae.windCount !== -1)
+              return false;
+            break;
+          case FillRule.NonZero:
+            if (Math.abs(ae.windCount) !== 1)
+              return false;
+            break;
+        }
+        switch (this.cliptype) {
+          case ClipType.Intersection:
+            return this.fillrule === FillRule.Positive ? ae.windCount2 > 0 : this.fillrule === FillRule.Negative ? ae.windCount2 < 0 : ae.windCount2 !== 0;
+          case ClipType.Union:
+            return this.fillrule === FillRule.Positive ? ae.windCount2 <= 0 : this.fillrule === FillRule.Negative ? ae.windCount2 >= 0 : ae.windCount2 === 0;
+          case ClipType.Difference: {
+            const result = this.fillrule === FillRule.Positive ? ae.windCount2 <= 0 : this.fillrule === FillRule.Negative ? ae.windCount2 >= 0 : ae.windCount2 === 0;
+            return _ClipperBase.getPolyType(ae) === PathType.Subject ? result : !result;
+          }
+          case ClipType.Xor:
+            return true;
+          // XOr is always contributing unless open
+          default:
+            return false;
+        }
+      }
+      addLocalMinPoly(ae1, ae2, pt, isNew = false) {
+        const outrec = this.newOutRec();
+        ae1.outrec = outrec;
+        ae2.outrec = outrec;
+        if (_ClipperBase.isOpen(ae1)) {
+          outrec.owner = null;
+          outrec.isOpen = true;
+          if (ae1.windDx > 0) {
+            this.setSides(outrec, ae1, ae2);
+          } else {
+            this.setSides(outrec, ae2, ae1);
+          }
+        } else {
+          outrec.isOpen = false;
+          const prevHotEdge = _ClipperBase.getPrevHotEdge(ae1);
+          if (prevHotEdge !== null) {
+            if (this.usingPolytree) {
+              this.setOwner(outrec, prevHotEdge.outrec);
+            }
+            outrec.owner = prevHotEdge.outrec;
+            if (this.outrecIsAscending(prevHotEdge) === isNew) {
+              this.setSides(outrec, ae2, ae1);
+            } else {
+              this.setSides(outrec, ae1, ae2);
+            }
+          } else {
+            outrec.owner = null;
+            if (isNew) {
+              this.setSides(outrec, ae1, ae2);
+            } else {
+              this.setSides(outrec, ae2, ae1);
+            }
+          }
+        }
+        const op = new OutPt(pt, outrec);
+        outrec.pts = op;
+        return op;
+      }
+      outrecIsAscending(hotEdge) {
+        return hotEdge === hotEdge.outrec.frontEdge;
+      }
+      newOutRec() {
+        const result = new OutRec();
+        result.idx = this.outrecList.length;
+        this.outrecList.push(result);
+        return result;
+      }
+      startOpenPath(ae, pt) {
+        const outrec = this.newOutRec();
+        outrec.isOpen = true;
+        if (ae.windDx > 0) {
+          outrec.frontEdge = ae;
+          outrec.backEdge = null;
+        } else {
+          outrec.frontEdge = null;
+          outrec.backEdge = ae;
+        }
+        ae.outrec = outrec;
+        const op = new OutPt(pt, outrec);
+        outrec.pts = op;
+        return op;
+      }
+      checkJoinLeft(ae, pt, checkCurrX = false) {
+        const prev = ae.prevInAEL;
+        if (prev === null)
+          return;
+        if (!checkCurrX && ae.curX !== prev.curX)
+          return;
+        if (!_ClipperBase.isHotEdge(ae) || !_ClipperBase.isHotEdge(prev) || _ClipperBase.isHorizontal(ae) || _ClipperBase.isHorizontal(prev) || _ClipperBase.isOpen(ae) || _ClipperBase.isOpen(prev))
+          return;
+        if ((pt.y < ae.top.y + 2 || pt.y < prev.top.y + 2) && // avoid trivial joins
+        (ae.bot.y > pt.y || prev.bot.y > pt.y))
+          return;
+        if (checkCurrX) {
+          if (this.perpendicDistFromLineSqrdGreaterThanQuarter(pt, prev.bot, prev.top))
+            return;
+        }
+        if (!InternalClipper.isCollinear(ae.top, pt, prev.top))
+          return;
+        if (ae.outrec.idx === prev.outrec.idx) {
+          this.addLocalMaxPoly(prev, ae, pt);
+        } else if (ae.outrec.idx < prev.outrec.idx) {
+          this.joinOutrecPaths(ae, prev);
+        } else {
+          this.joinOutrecPaths(prev, ae);
+        }
+        prev.joinWith = JoinWith.Right;
+        ae.joinWith = JoinWith.Left;
+      }
+      checkJoinRight(ae, pt, checkCurrX = false) {
+        const next = ae.nextInAEL;
+        if (next === null)
+          return;
+        if (!checkCurrX && ae.curX !== next.curX)
+          return;
+        if (!_ClipperBase.isHotEdge(ae) || !_ClipperBase.isHotEdge(next) || _ClipperBase.isHorizontal(ae) || _ClipperBase.isHorizontal(next) || _ClipperBase.isOpen(ae) || _ClipperBase.isOpen(next))
+          return;
+        if ((pt.y < ae.top.y + 2 || pt.y < next.top.y + 2) && // avoid trivial joins
+        (ae.bot.y > pt.y || next.bot.y > pt.y))
+          return;
+        if (checkCurrX) {
+          if (this.perpendicDistFromLineSqrdGreaterThanQuarter(pt, next.bot, next.top))
+            return;
+        }
+        if (!InternalClipper.isCollinear(ae.top, pt, next.top))
+          return;
+        if (ae.outrec.idx === next.outrec.idx) {
+          this.addLocalMaxPoly(ae, next, pt);
+        } else if (ae.outrec.idx < next.outrec.idx) {
+          this.joinOutrecPaths(ae, next);
+        } else {
+          this.joinOutrecPaths(next, ae);
+        }
+        ae.joinWith = JoinWith.Right;
+        next.joinWith = JoinWith.Left;
+      }
+      perpendicDistFromLineSqrdGreaterThanQuarter(pt, line1, line2) {
+        const a = pt.x - line1.x;
+        const b = pt.y - line1.y;
+        const c = line2.x - line1.x;
+        const d = line2.y - line1.y;
+        if (c === 0 && d === 0)
+          return false;
+        const maxCoord = InternalClipper.maxCoordForSafeCrossSq;
+        if (Math.abs(a) < maxCoord && Math.abs(b) < maxCoord && Math.abs(c) < maxCoord && Math.abs(d) < maxCoord) {
+          const cross2 = a * d - c * b;
+          return cross2 * cross2 / (c * c + d * d) > 0.25;
+        }
+        if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Number.isSafeInteger(c) && Number.isSafeInteger(d)) {
+          const cross2 = BigInt(a) * BigInt(d) - BigInt(c) * BigInt(b);
+          const crossSq = cross2 * cross2;
+          const denom = BigInt(c) * BigInt(c) + BigInt(d) * BigInt(d);
+          return B4 * crossSq > denom;
+        }
+        const cross = a * d - c * b;
+        return cross * cross / (c * c + d * d) > 0.25;
+      }
+      intersectEdges(ae1, ae2, pt) {
+        let resultOp;
+        if (this.hasOpenPaths && (_ClipperBase.isOpen(ae1) || _ClipperBase.isOpen(ae2))) {
+          if (_ClipperBase.isOpen(ae1) && _ClipperBase.isOpen(ae2))
+            return;
+          if (_ClipperBase.isOpen(ae2)) {
+            const tmp = ae1;
+            ae1 = ae2;
+            ae2 = tmp;
+          }
+          if (this.isJoined(ae2))
+            this.split(ae2, pt);
+          if (this.cliptype === ClipType.Union) {
+            if (!_ClipperBase.isHotEdge(ae2))
+              return;
+          } else if (ae2.localMin.polytype === PathType.Subject)
+            return;
+          switch (this.fillrule) {
+            case FillRule.Positive:
+              if (ae2.windCount !== 1)
+                return;
+              break;
+            case FillRule.Negative:
+              if (ae2.windCount !== -1)
+                return;
+              break;
+            default:
+              if (Math.abs(ae2.windCount) !== 1)
+                return;
+              break;
+          }
+          if (_ClipperBase.isHotEdge(ae1)) {
+            resultOp = this.addOutPt(ae1, pt);
+            this.setZ(ae1, ae2, resultOp.pt);
+            if (_ClipperBase.isFront(ae1)) {
+              ae1.outrec.frontEdge = null;
+            } else {
+              ae1.outrec.backEdge = null;
+            }
+            ae1.outrec = null;
+          } else if (pt.x === ae1.localMin.vertex.pt.x && pt.y === ae1.localMin.vertex.pt.y && !_ClipperBase.isOpenEndVertex(ae1.localMin.vertex)) {
+            const ae3 = this.findEdgeWithMatchingLocMin(ae1);
+            if (ae3 !== null && _ClipperBase.isHotEdge(ae3)) {
+              ae1.outrec = ae3.outrec;
+              if (ae1.windDx > 0) {
+                this.setSides(ae3.outrec, ae1, ae3);
+              } else {
+                this.setSides(ae3.outrec, ae3, ae1);
+              }
+              return;
+            }
+            resultOp = this.startOpenPath(ae1, pt);
+          } else {
+            resultOp = this.startOpenPath(ae1, pt);
+          }
+          this.setZ(ae1, ae2, resultOp.pt);
+          return;
+        }
+        if (this.isJoined(ae1))
+          this.split(ae1, pt);
+        if (this.isJoined(ae2))
+          this.split(ae2, pt);
+        let oldE1WindCount, oldE2WindCount;
+        if (ae1.localMin.polytype === ae2.localMin.polytype) {
+          if (this.fillrule === FillRule.EvenOdd) {
+            oldE1WindCount = ae1.windCount;
+            ae1.windCount = ae2.windCount;
+            ae2.windCount = oldE1WindCount;
+          } else {
+            if (ae1.windCount + ae2.windDx === 0) {
+              ae1.windCount = -ae1.windCount;
+            } else {
+              ae1.windCount += ae2.windDx;
+            }
+            if (ae2.windCount - ae1.windDx === 0) {
+              ae2.windCount = -ae2.windCount;
+            } else {
+              ae2.windCount -= ae1.windDx;
+            }
+          }
+        } else {
+          if (this.fillrule !== FillRule.EvenOdd) {
+            ae1.windCount2 += ae2.windDx;
+          } else {
+            ae1.windCount2 = ae1.windCount2 === 0 ? 1 : 0;
+          }
+          if (this.fillrule !== FillRule.EvenOdd) {
+            ae2.windCount2 -= ae1.windDx;
+          } else {
+            ae2.windCount2 = ae2.windCount2 === 0 ? 1 : 0;
+          }
+        }
+        switch (this.fillrule) {
+          case FillRule.Positive:
+            oldE1WindCount = ae1.windCount;
+            oldE2WindCount = ae2.windCount;
+            break;
+          case FillRule.Negative:
+            oldE1WindCount = -ae1.windCount;
+            oldE2WindCount = -ae2.windCount;
+            break;
+          default:
+            oldE1WindCount = Math.abs(ae1.windCount);
+            oldE2WindCount = Math.abs(ae2.windCount);
+            break;
+        }
+        const e1WindCountIs0or1 = oldE1WindCount === 0 || oldE1WindCount === 1;
+        const e2WindCountIs0or1 = oldE2WindCount === 0 || oldE2WindCount === 1;
+        if (!_ClipperBase.isHotEdge(ae1) && !e1WindCountIs0or1 || !_ClipperBase.isHotEdge(ae2) && !e2WindCountIs0or1)
+          return;
+        if (_ClipperBase.isHotEdge(ae1) && _ClipperBase.isHotEdge(ae2)) {
+          if (oldE1WindCount !== 0 && oldE1WindCount !== 1 || oldE2WindCount !== 0 && oldE2WindCount !== 1 || ae1.localMin.polytype !== ae2.localMin.polytype && this.cliptype !== ClipType.Xor) {
+            resultOp = this.addLocalMaxPoly(ae1, ae2, pt);
+            if (resultOp)
+              this.setZ(ae1, ae2, resultOp.pt);
+          } else if (_ClipperBase.isFront(ae1) || ae1.outrec === ae2.outrec) {
+            resultOp = this.addLocalMaxPoly(ae1, ae2, pt);
+            if (resultOp)
+              this.setZ(ae1, ae2, resultOp.pt);
+            const op2 = this.addLocalMinPoly(ae1, ae2, pt);
+            this.setZ(ae1, ae2, op2.pt);
+          } else {
+            resultOp = this.addOutPt(ae1, pt);
+            this.setZ(ae1, ae2, resultOp.pt);
+            const op2 = this.addOutPt(ae2, pt);
+            this.setZ(ae1, ae2, op2.pt);
+            this.swapOutrecs(ae1, ae2);
+          }
+        } else if (_ClipperBase.isHotEdge(ae1)) {
+          resultOp = this.addOutPt(ae1, pt);
+          this.setZ(ae1, ae2, resultOp.pt);
+          this.swapOutrecs(ae1, ae2);
+        } else if (_ClipperBase.isHotEdge(ae2)) {
+          resultOp = this.addOutPt(ae2, pt);
+          this.setZ(ae1, ae2, resultOp.pt);
+          this.swapOutrecs(ae1, ae2);
+        } else {
+          let e1Wc2, e2Wc2;
+          switch (this.fillrule) {
+            case FillRule.Positive:
+              e1Wc2 = ae1.windCount2;
+              e2Wc2 = ae2.windCount2;
+              break;
+            case FillRule.Negative:
+              e1Wc2 = -ae1.windCount2;
+              e2Wc2 = -ae2.windCount2;
+              break;
+            default:
+              e1Wc2 = Math.abs(ae1.windCount2);
+              e2Wc2 = Math.abs(ae2.windCount2);
+              break;
+          }
+          if (!_ClipperBase.isSamePolyType(ae1, ae2)) {
+            resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+            this.setZ(ae1, ae2, resultOp.pt);
+          } else if (oldE1WindCount === 1 && oldE2WindCount === 1) {
+            resultOp = null;
+            switch (this.cliptype) {
+              case ClipType.Union:
+                if (e1Wc2 > 0 && e2Wc2 > 0)
+                  return;
+                resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+                break;
+              case ClipType.Difference:
+                if (_ClipperBase.getPolyType(ae1) === PathType.Clip && e1Wc2 > 0 && e2Wc2 > 0 || _ClipperBase.getPolyType(ae1) === PathType.Subject && e1Wc2 <= 0 && e2Wc2 <= 0) {
+                  resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+                }
+                break;
+              case ClipType.Xor:
+                resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+                break;
+              default:
+                if (e1Wc2 <= 0 || e2Wc2 <= 0)
+                  return;
+                resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+                break;
+            }
+            if (resultOp)
+              this.setZ(ae1, ae2, resultOp.pt);
+          }
+        }
+      }
+      swapPositionsInAEL(ae1, ae2) {
+        const next = ae2.nextInAEL;
+        if (next !== null)
+          next.prevInAEL = ae1;
+        const prev = ae1.prevInAEL;
+        if (prev !== null)
+          prev.nextInAEL = ae2;
+        ae2.prevInAEL = prev;
+        ae2.nextInAEL = ae1;
+        ae1.prevInAEL = ae2;
+        ae1.nextInAEL = next;
+        if (ae2.prevInAEL === null)
+          this.actives = ae2;
+      }
+      isValidAelOrder(resident, newcomer) {
+        if (newcomer.curX !== resident.curX) {
+          return newcomer.curX > resident.curX;
+        }
+        const d = InternalClipper.crossProductSign(resident.top, newcomer.bot, newcomer.top);
+        if (d !== 0)
+          return d < 0;
+        if (!_ClipperBase.isMaximaEdge(resident) && resident.top.y > newcomer.top.y) {
+          return InternalClipper.crossProductSign(newcomer.bot, resident.top, _ClipperBase.nextVertex(resident).pt) <= 0;
+        }
+        if (!_ClipperBase.isMaximaEdge(newcomer) && newcomer.top.y > resident.top.y) {
+          return InternalClipper.crossProductSign(newcomer.bot, newcomer.top, _ClipperBase.nextVertex(newcomer).pt) >= 0;
+        }
+        const y = newcomer.bot.y;
+        const newcomerIsLeft = newcomer.isLeftBound;
+        if (resident.bot.y !== y || resident.localMin.vertex.pt.y !== y) {
+          return newcomer.isLeftBound;
+        }
+        if (resident.isLeftBound !== newcomerIsLeft) {
+          return newcomerIsLeft;
+        }
+        if (InternalClipper.isCollinear(_ClipperBase.prevPrevVertex(resident).pt, resident.bot, resident.top))
+          return true;
+        return InternalClipper.crossProductSign(_ClipperBase.prevPrevVertex(resident).pt, newcomer.bot, _ClipperBase.prevPrevVertex(newcomer).pt) > 0 === newcomerIsLeft;
+      }
+      isJoined(e) {
+        return e.joinWith !== JoinWith.None;
+      }
+      split(e, currPt) {
+        if (e.joinWith === JoinWith.Right) {
+          e.joinWith = JoinWith.None;
+          e.nextInAEL.joinWith = JoinWith.None;
+          this.addLocalMinPoly(e, e.nextInAEL, currPt, true);
+        } else {
+          e.joinWith = JoinWith.None;
+          e.prevInAEL.joinWith = JoinWith.None;
+          this.addLocalMinPoly(e.prevInAEL, e, currPt, true);
+        }
+      }
+      setSides(outrec, startEdge, endEdge) {
+        outrec.frontEdge = startEdge;
+        outrec.backEdge = endEdge;
+      }
+      findEdgeWithMatchingLocMin(e) {
+        var _a2, _b;
+        let result = e.nextInAEL;
+        while (result !== null) {
+          if ((_a2 = result.localMin) == null ? void 0 : _a2.equals(e.localMin))
+            return result;
+          if (!_ClipperBase.isHorizontal(result) && !(e.bot.x === result.bot.x && e.bot.y === result.bot.y))
+            result = null;
+          else
+            result = result.nextInAEL;
+        }
+        result = e.prevInAEL;
+        while (result !== null) {
+          if ((_b = result.localMin) == null ? void 0 : _b.equals(e.localMin))
+            return result;
+          if (!_ClipperBase.isHorizontal(result) && !(e.bot.x === result.bot.x && e.bot.y === result.bot.y))
+            return null;
+          result = result.prevInAEL;
+        }
+        return result;
+      }
+      addOutPt(ae, pt) {
+        const outrec = ae.outrec;
+        const toFront = _ClipperBase.isFront(ae);
+        const opFront = outrec.pts;
+        const opBack = opFront.next;
+        if (toFront && pt.x === opFront.pt.x && pt.y === opFront.pt.y) {
+          return opFront;
+        } else if (!toFront && pt.x === opBack.pt.x && pt.y === opBack.pt.y) {
+          return opBack;
+        }
+        const newOp = new OutPt(pt, outrec);
+        opBack.prev = newOp;
+        newOp.prev = opFront;
+        newOp.next = opBack;
+        opFront.next = newOp;
+        if (toFront)
+          outrec.pts = newOp;
+        return newOp;
+      }
+      addLocalMaxPoly(ae1, ae2, pt) {
+        if (this.isJoined(ae1))
+          this.split(ae1, pt);
+        if (this.isJoined(ae2))
+          this.split(ae2, pt);
+        if (_ClipperBase.isFront(ae1) === _ClipperBase.isFront(ae2)) {
+          if (_ClipperBase.isOpenEnd(ae1)) {
+            this.swapFrontBackSides(ae1.outrec);
+          } else if (_ClipperBase.isOpenEnd(ae2)) {
+            this.swapFrontBackSides(ae2.outrec);
+          } else {
+            this.succeeded = false;
+            return null;
+          }
+        }
+        const result = this.addOutPt(ae1, pt);
+        if (ae1.outrec === ae2.outrec) {
+          const outrec = ae1.outrec;
+          outrec.pts = result;
+          if (this.usingPolytree) {
+            const e = _ClipperBase.getPrevHotEdge(ae1);
+            if (e === null) {
+              outrec.owner = null;
+            } else {
+              this.setOwner(outrec, e.outrec);
+            }
+          }
+          this.uncoupleOutRec(ae1);
+        } else if (_ClipperBase.isOpen(ae1)) {
+          if (ae1.windDx < 0) {
+            this.joinOutrecPaths(ae1, ae2);
+          } else {
+            this.joinOutrecPaths(ae2, ae1);
+          }
+        } else if (ae1.outrec.idx < ae2.outrec.idx) {
+          this.joinOutrecPaths(ae1, ae2);
+        } else {
+          this.joinOutrecPaths(ae2, ae1);
+        }
+        return result;
+      }
+      swapFrontBackSides(outrec) {
+        const ae2 = outrec.frontEdge;
+        outrec.frontEdge = outrec.backEdge;
+        outrec.backEdge = ae2;
+        outrec.pts = outrec.pts.next;
+      }
+      setOwner(outrec, newOwner) {
+        while (newOwner.owner !== null && newOwner.owner.pts === null) {
+          newOwner.owner = newOwner.owner.owner;
+        }
+        let tmp = newOwner;
+        while (tmp !== null && tmp !== outrec) {
+          tmp = tmp.owner;
+        }
+        if (tmp !== null) {
+          newOwner.owner = outrec.owner;
+        }
+        outrec.owner = newOwner;
+      }
+      uncoupleOutRec(ae) {
+        const outrec = ae.outrec;
+        if (outrec === null)
+          return;
+        outrec.frontEdge.outrec = null;
+        outrec.backEdge.outrec = null;
+        outrec.frontEdge = null;
+        outrec.backEdge = null;
+      }
+      joinOutrecPaths(ae1, ae2) {
+        const p1Start = ae1.outrec.pts;
+        const p2Start = ae2.outrec.pts;
+        const p1End = p1Start.next;
+        const p2End = p2Start.next;
+        if (_ClipperBase.isFront(ae1)) {
+          p2End.prev = p1Start;
+          p1Start.next = p2End;
+          p2Start.next = p1End;
+          p1End.prev = p2Start;
+          ae1.outrec.pts = p2Start;
+          ae1.outrec.frontEdge = ae2.outrec.frontEdge;
+          if (ae1.outrec.frontEdge !== null) {
+            ae1.outrec.frontEdge.outrec = ae1.outrec;
+          }
+        } else {
+          p1End.prev = p2Start;
+          p2Start.next = p1End;
+          p1Start.next = p2End;
+          p2End.prev = p1Start;
+          ae1.outrec.backEdge = ae2.outrec.backEdge;
+          if (ae1.outrec.backEdge !== null) {
+            ae1.outrec.backEdge.outrec = ae1.outrec;
+          }
+        }
+        ae2.outrec.frontEdge = null;
+        ae2.outrec.backEdge = null;
+        ae2.outrec.pts = null;
+        this.setOwner(ae2.outrec, ae1.outrec);
+        if (_ClipperBase.isOpenEnd(ae1)) {
+          ae2.outrec.pts = ae1.outrec.pts;
+          ae1.outrec.pts = null;
+        }
+        ae1.outrec = null;
+        ae2.outrec = null;
+      }
+      swapOutrecs(ae1, ae2) {
+        const or1 = ae1.outrec;
+        const or2 = ae2.outrec;
+        if (or1 === or2) {
+          const ae = or1.frontEdge;
+          or1.frontEdge = or1.backEdge;
+          or1.backEdge = ae;
+          return;
+        }
+        if (or1 !== null) {
+          if (ae1 === or1.frontEdge) {
+            or1.frontEdge = ae2;
+          } else {
+            or1.backEdge = ae2;
+          }
+        }
+        if (or2 !== null) {
+          if (ae2 === or2.frontEdge) {
+            or2.frontEdge = ae1;
+          } else {
+            or2.backEdge = ae1;
+          }
+        }
+        ae1.outrec = or2;
+        ae2.outrec = or1;
+      }
+      disposeIntersectNodes() {
+        this.intersectList.length = 0;
+      }
+      static ptsReallyClose(pt1, pt2) {
+        return Math.abs(pt1.x - pt2.x) < 2 && Math.abs(pt1.y - pt2.y) < 2;
+      }
+      static isVerySmallTriangle(op) {
+        return op.next.next === op.prev && (_ClipperBase.ptsReallyClose(op.prev.pt, op.next.pt) || _ClipperBase.ptsReallyClose(op.pt, op.next.pt) || _ClipperBase.ptsReallyClose(op.pt, op.prev.pt));
+      }
+      static buildPath(op, reverse, isOpen, path) {
+        if (op === null || op.next === op || !isOpen && op.next === op.prev)
+          return false;
+        path.length = 0;
+        let lastPt;
+        let op2;
+        if (reverse) {
+          lastPt = op.pt;
+          op2 = op.prev;
+        } else {
+          op = op.next;
+          lastPt = op.pt;
+          op2 = op.next;
+        }
+        path.push(lastPt);
+        while (op2 !== op) {
+          if (!(op2.pt.x === lastPt.x && op2.pt.y === lastPt.y)) {
+            lastPt = op2.pt;
+            path.push(lastPt);
+          }
+          if (reverse) {
+            op2 = op2.prev;
+          } else {
+            op2 = op2.next;
+          }
+        }
+        return path.length !== 3 || isOpen || !_ClipperBase.isVerySmallTriangle(op2);
+      }
+      buildPaths(solutionClosed, solutionOpen) {
+        solutionClosed.length = 0;
+        solutionOpen.length = 0;
+        let i = 0;
+        while (i < this.outrecList.length) {
+          const outrec = this.outrecList[i++];
+          if (outrec.pts === null)
+            continue;
+          const path = [];
+          if (outrec.isOpen) {
+            if (_ClipperBase.buildPath(outrec.pts, this.reverseSolution, true, path)) {
+              solutionOpen.push(path);
+            }
+          } else {
+            this.cleanCollinear(outrec);
+            if (_ClipperBase.buildPath(outrec.pts, this.reverseSolution, false, path)) {
+              solutionClosed.push(path);
+            }
+          }
+        }
+        return true;
+      }
+      buildTree(polytree, solutionOpen) {
+        polytree.clear();
+        solutionOpen.length = 0;
+        let i = 0;
+        while (i < this.outrecList.length) {
+          const outrec = this.outrecList[i++];
+          if (outrec.pts === null)
+            continue;
+          if (outrec.isOpen) {
+            const openPath = [];
+            if (_ClipperBase.buildPath(outrec.pts, this.reverseSolution, true, openPath)) {
+              solutionOpen.push(openPath);
+            }
+            continue;
+          }
+          if (this.checkBounds(outrec)) {
+            this.recursiveCheckOwners(outrec, polytree);
+          }
+        }
+      }
+      checkBounds(outrec) {
+        if (outrec.pts === null)
+          return false;
+        if (!Rect64Utils.isEmpty(outrec.bounds))
+          return true;
+        this.cleanCollinear(outrec);
+        if (outrec.pts === null || !_ClipperBase.buildPath(outrec.pts, this.reverseSolution, false, outrec.path)) {
+          return false;
+        }
+        outrec.bounds = InternalClipper.getBounds(outrec.path);
+        return true;
+      }
+      recursiveCheckOwners(outrec, polypath) {
+        if (outrec.polypath !== null || Rect64Utils.isEmpty(outrec.bounds))
+          return;
+        while (outrec.owner !== null) {
+          if (outrec.owner.splits !== null && this.checkSplitOwner(outrec, outrec.owner.splits))
+            break;
+          if (outrec.owner.pts !== null && this.checkBounds(outrec.owner) && // Fast reject: a container must contain the child's bounds.
+          this.containsRect(outrec.owner.bounds, outrec.bounds) && this.path1InsidePath2(outrec.pts, outrec.owner.pts))
+            break;
+          outrec.owner = outrec.owner.owner;
+        }
+        if (outrec.owner !== null) {
+          if (outrec.owner.polypath === null) {
+            this.recursiveCheckOwners(outrec.owner, polypath);
+          }
+          outrec.polypath = outrec.owner.polypath.addChild(outrec.path);
+        } else {
+          outrec.polypath = polypath.addChild(outrec.path);
+        }
+      }
+      cleanCollinear(outrec) {
+        outrec = this.getRealOutRec(outrec);
+        if (outrec === null || outrec.isOpen)
+          return;
+        if (!this.isValidClosedPath(outrec.pts)) {
+          outrec.pts = null;
+          return;
+        }
+        let startOp = outrec.pts;
+        let op2 = startOp;
+        while (true) {
+          if (op2 !== null && InternalClipper.isCollinear(op2.prev.pt, op2.pt, op2.next.pt) && (op2.pt.x === op2.prev.pt.x && op2.pt.y === op2.prev.pt.y || op2.pt.x === op2.next.pt.x && op2.pt.y === op2.next.pt.y || !this.preserveCollinear || InternalClipper.dotProductSign(op2.prev.pt, op2.pt, op2.next.pt) < 0)) {
+            if (op2 === outrec.pts) {
+              outrec.pts = op2.prev;
+            }
+            op2 = this.disposeOutPt(op2);
+            if (!this.isValidClosedPath(op2)) {
+              outrec.pts = null;
+              return;
+            }
+            startOp = op2;
+            continue;
+          }
+          if (op2 === null)
+            break;
+          op2 = op2.next;
+          if (op2 === startOp)
+            break;
+        }
+        this.fixSelfIntersects(outrec);
+      }
+      isValidClosedPath(op) {
+        return op !== null && op.next !== op && (op.next !== op.prev || !_ClipperBase.isVerySmallTriangle(op));
+      }
+      disposeOutPt(op) {
+        const result = op.next === op ? null : op.next;
+        op.prev.next = op.next;
+        op.next.prev = op.prev;
+        return result;
+      }
+      fixSelfIntersects(outrec) {
+        let op2 = outrec.pts;
+        if (op2.prev === op2.next.next) {
+          return;
+        }
+        while (true) {
+          if (op2.next && op2.next.next && this.boundingBoxesOverlap(op2.prev.pt, op2.pt, op2.next.pt, op2.next.next.pt) && InternalClipper.segsIntersect(op2.prev.pt, op2.pt, op2.next.pt, op2.next.next.pt)) {
+            if (op2 === outrec.pts || op2.next === outrec.pts) {
+              outrec.pts = outrec.pts.prev;
+            }
+            this.doSplitOp(outrec, op2);
+            if (outrec.pts === null)
+              return;
+            op2 = outrec.pts;
+            if (op2.prev === op2.next.next)
+              break;
+            continue;
+          }
+          op2 = op2.next;
+          if (op2 === outrec.pts)
+            break;
+        }
+      }
+      doSplitOp(outrec, splitOp) {
+        const prevOp = splitOp.prev;
+        const nextNextOp = splitOp.next.next;
+        outrec.pts = prevOp;
+        const ip = InternalClipper.getLineIntersectPt(prevOp.pt, splitOp.pt, splitOp.next.pt, nextNextOp.pt);
+        if (this.zCallbackInternal) {
+          this.zCallbackInternal(prevOp.pt, splitOp.pt, splitOp.next.pt, nextNextOp.pt, ip);
+        }
+        const doubleArea1 = _ClipperBase.areaOutPt(prevOp);
+        const absDoubleArea1 = doubleArea1 < B0 ? -doubleArea1 : doubleArea1;
+        if (absDoubleArea1 < B4) {
+          outrec.pts = null;
+          return;
+        }
+        const doubleArea2 = this.areaTriangle(ip, splitOp.pt, splitOp.next.pt);
+        const absDoubleArea2 = doubleArea2 < B0 ? -doubleArea2 : doubleArea2;
+        if (ip.x === prevOp.pt.x && ip.y === prevOp.pt.y || ip.x === nextNextOp.pt.x && ip.y === nextNextOp.pt.y) {
+          nextNextOp.prev = prevOp;
+          prevOp.next = nextNextOp;
+        } else {
+          const newOp2 = new OutPt(ip, outrec);
+          newOp2.prev = prevOp;
+          newOp2.next = nextNextOp;
+          nextNextOp.prev = newOp2;
+          prevOp.next = newOp2;
+        }
+        if (!(absDoubleArea2 > B2) || // area > 1
+        !(absDoubleArea2 > absDoubleArea1) && doubleArea2 > B0 !== doubleArea1 > B0)
+          return;
+        const newOutRec = this.newOutRec();
+        newOutRec.owner = outrec.owner;
+        splitOp.outrec = newOutRec;
+        splitOp.next.outrec = newOutRec;
+        const newOp = new OutPt(ip, newOutRec);
+        newOp.prev = splitOp.next;
+        newOp.next = splitOp;
+        newOutRec.pts = newOp;
+        splitOp.prev = newOp;
+        splitOp.next.next = newOp;
+        if (!this.usingPolytree)
+          return;
+        if (this.path1InsidePath2(prevOp, newOp)) {
+          if (newOutRec.splits === null)
+            newOutRec.splits = [];
+          newOutRec.splits.push(outrec.idx);
+        } else {
+          if (outrec.splits === null)
+            outrec.splits = [];
+          outrec.splits.push(newOutRec.idx);
+        }
+      }
+      static areaOutPt(op) {
+        const maxCoord = InternalClipper.maxCoordForSafeAreaProduct;
+        let area = 0;
+        let allSmall = true;
+        let op2 = op;
+        do {
+          const prev = op2.prev;
+          const pt = op2.pt;
+          if (Math.abs(prev.pt.x) >= maxCoord || Math.abs(prev.pt.y) >= maxCoord || Math.abs(pt.x) >= maxCoord || Math.abs(pt.y) >= maxCoord) {
+            allSmall = false;
+            break;
+          }
+          area += (prev.pt.y + pt.y) * (prev.pt.x - pt.x);
+          op2 = op2.next;
+        } while (op2 !== op);
+        if (allSmall) {
+          return BigInt(Math.round(area));
+        }
+        let areaBig = B0;
+        op2 = op;
+        do {
+          const prev = op2.prev;
+          if (Number.isSafeInteger(prev.pt.y) && Number.isSafeInteger(op2.pt.y) && Number.isSafeInteger(prev.pt.x) && Number.isSafeInteger(op2.pt.x)) {
+            const sumBig = BigInt(prev.pt.y) + BigInt(op2.pt.y);
+            const diffBig = BigInt(prev.pt.x) - BigInt(op2.pt.x);
+            areaBig += sumBig * diffBig;
+          } else {
+            const sum = prev.pt.y + op2.pt.y;
+            const diff = prev.pt.x - op2.pt.x;
+            areaBig += BigInt(Math.round(sum * diff));
+          }
+          op2 = op2.next;
+        } while (op2 !== op);
+        return areaBig;
+      }
+      areaTriangle(pt1, pt2, pt3) {
+        const maxCoord = InternalClipper.maxCoordForSafeAreaProduct;
+        if (Math.abs(pt1.x) < maxCoord && Math.abs(pt1.y) < maxCoord && Math.abs(pt2.x) < maxCoord && Math.abs(pt2.y) < maxCoord && Math.abs(pt3.x) < maxCoord && Math.abs(pt3.y) < maxCoord) {
+          const area2 = (pt3.y + pt1.y) * (pt3.x - pt1.x) + (pt1.y + pt2.y) * (pt1.x - pt2.x) + (pt2.y + pt3.y) * (pt2.x - pt3.x);
+          return BigInt(Math.round(area2));
+        }
+        if (Number.isSafeInteger(pt1.x) && Number.isSafeInteger(pt1.y) && Number.isSafeInteger(pt2.x) && Number.isSafeInteger(pt2.y) && Number.isSafeInteger(pt3.x) && Number.isSafeInteger(pt3.y)) {
+          const term1 = (BigInt(pt3.y) + BigInt(pt1.y)) * (BigInt(pt3.x) - BigInt(pt1.x));
+          const term2 = (BigInt(pt1.y) + BigInt(pt2.y)) * (BigInt(pt1.x) - BigInt(pt2.x));
+          const term3 = (BigInt(pt2.y) + BigInt(pt3.y)) * (BigInt(pt2.x) - BigInt(pt3.x));
+          return term1 + term2 + term3;
+        }
+        const area = (pt3.y + pt1.y) * (pt3.x - pt1.x) + (pt1.y + pt2.y) * (pt1.x - pt2.x) + (pt2.y + pt3.y) * (pt2.x - pt3.x);
+        return BigInt(Math.round(area));
+      }
+      isValidOwner(outRec, testOwner) {
+        while (testOwner !== null && testOwner !== outRec) {
+          testOwner = testOwner.owner;
+        }
+        return testOwner === null;
+      }
+      containsRect(rect, rec) {
+        return rec.left >= rect.left && rec.right <= rect.right && rec.top >= rect.top && rec.bottom <= rect.bottom;
+      }
+      checkSplitOwner(outrec, splits) {
+        for (let i = 0; i < splits.length; i++) {
+          let split = this.outrecList[splits[i]];
+          if (split.pts === null && split.splits !== null && this.checkSplitOwner(outrec, split.splits))
+            return true;
+          split = this.getRealOutRec(split);
+          if (split === null || split === outrec || split.recursiveSplit === outrec)
+            continue;
+          split.recursiveSplit = outrec;
+          if (split.splits !== null && this.checkSplitOwner(outrec, split.splits))
+            return true;
+          if (!this.checkBounds(split) || !this.containsRect(split.bounds, outrec.bounds) || !this.path1InsidePath2(outrec.pts, split.pts))
+            continue;
+          if (!this.isValidOwner(outrec, split)) {
+            split.owner = outrec.owner;
+          }
+          outrec.owner = split;
+          return true;
+        }
+        return false;
+      }
+    };
+    // When there are no open paths, a lot of open-path branching becomes dead code.
+    // We set this per execute to allow fast short-circuiting in hot helpers.
+    __publicField(_ClipperBase, "openPathsEnabled", true);
+    let ClipperBase = _ClipperBase;
+    class Clipper64 extends ClipperBase {
+      constructor() {
+        super(...arguments);
+        __publicField(this, "zCallback");
+      }
+      getZCallback() {
+        return this.zCallback;
+      }
+      addPath(path, polytype, isOpen = false) {
+        super.addPath(path, polytype, isOpen);
+      }
+      addReuseableData(reuseableData) {
+        super.addReuseableData(reuseableData);
+      }
+      addPaths(paths, polytype, isOpen = false) {
+        super.addPaths(paths, polytype, isOpen);
+      }
+      addSubject(paths) {
+        this.addPaths(paths, PathType.Subject);
+      }
+      addOpenSubject(paths) {
+        this.addPaths(paths, PathType.Subject, true);
+      }
+      addClip(paths) {
+        this.addPaths(paths, PathType.Clip);
+      }
+      execute(clipType, fillRule, solutionOrTree, openPathsOrSolutionOpen) {
+        if (Array.isArray(solutionOrTree)) {
+          const solutionClosed = solutionOrTree;
+          const solutionOpen = openPathsOrSolutionOpen;
+          solutionClosed.length = 0;
+          if (solutionOpen)
+            solutionOpen.length = 0;
+          try {
+            this.executeInternal(clipType, fillRule);
+            this.buildPaths(solutionClosed, solutionOpen || []);
+          } catch {
+            this.succeeded = false;
+          }
+          this.clearSolutionOnly();
+          return this.succeeded;
+        } else {
+          const polytree = solutionOrTree;
+          const openPaths = openPathsOrSolutionOpen;
+          polytree.clear();
+          if (openPaths)
+            openPaths.length = 0;
+          this.usingPolytree = true;
+          try {
+            this.executeInternal(clipType, fillRule);
+            this.buildTree(polytree, openPaths || []);
+          } catch {
+            this.succeeded = false;
+          }
+          this.clearSolutionOnly();
+          return this.succeeded;
+        }
+      }
+    }
+    BigInt(2);
+    function union$1(subject, clipOrFillRule, fillRule) {
+      if (typeof clipOrFillRule === "number") {
+        return booleanOp(ClipType.Union, subject, null, clipOrFillRule);
+      } else {
+        return booleanOp(ClipType.Union, subject, clipOrFillRule, fillRule);
+      }
+    }
+    function booleanOp(clipType, subject, clip, fillRule) {
+      const solution = [];
+      if (subject === null)
+        return solution;
+      const c = new Clipper64();
+      c.addPaths(subject, PathType.Subject);
+      if (clip !== null) {
+        c.addPaths(clip, PathType.Clip);
+      }
+      c.execute(clipType, fillRule, solution);
+      return solution;
+    }
+    function normalizeHatchRegion(hatch, tolerance) {
+      const safeTolerance = Math.max(1e-9, tolerance);
+      const contours = [];
+      for (const path of hatch.boundaryPaths) {
+        const segments = [];
+        for (const edge of path.edges) {
+          const points = flattenHatchEdge(edge, safeTolerance);
+          for (let index = 1; index < points.length; index += 1) {
+            const start = points[index - 1];
+            const end = points[index];
+            if (Math.hypot(end[0] - start[0], end[1] - start[1]) > safeTolerance) segments.push({ start, end });
+          }
+        }
+        const assembled = assembleContours(segments, safeTolerance);
+        if (!assembled) return { status: "invalid", code: "HATCH_BOUNDARY_OPEN" };
+        contours.push(...assembled);
+      }
+      if (contours.length === 0) return { status: "invalid", code: "HATCH_BOUNDARY_EMPTY" };
+      const largest = Math.max(...contours.flatMap((contour) => contour.flatMap(([x, y]) => [Math.abs(x), Math.abs(y)])), 1);
+      const requestedScale = Math.max(1, Math.ceil(1 / safeTolerance));
+      const maxScale = Math.floor(Number.MAX_SAFE_INTEGER / 1024 / largest);
+      const scale = Math.min(requestedScale, maxScale);
+      if (!(scale >= 1)) return { status: "invalid", code: "HATCH_COORDINATE_OVERFLOW" };
+      try {
+        const paths = contours.map((contour) => contour.map(([x, y]) => ({ x: Math.round(x * scale), y: Math.round(y * scale) })));
+        const normalized = union$1(paths, FillRule.EvenOdd).map((path) => path.map(({ x, y }) => [x / scale, y / scale])).filter((path) => path.length >= 3);
+        if (normalized.length === 0) return { status: "invalid", code: "HATCH_BOUNDARY_EMPTY" };
+        const selected = selectByStyle(normalized, hatch.style);
+        return {
+          status: "ok",
+          region: { contours: selected, fillRule: hatch.style === "normal" ? "evenodd" : "nonzero", bounds: boundsOf(selected) }
+        };
+      } catch {
+        return { status: "invalid", code: "HATCH_COORDINATE_OVERFLOW" };
+      }
+    }
+    function assembleContours(segments, tolerance) {
+      if (segments.length < 3) return null;
+      const key = ([x, y]) => `${Math.round(x / tolerance)},${Math.round(y / tolerance)}`;
+      const incidence = /* @__PURE__ */ new Map();
+      segments.forEach((segment, index) => {
+        for (const point3 of [segment.start, segment.end]) {
+          const bucket = incidence.get(key(point3)) ?? [];
+          bucket.push(index);
+          incidence.set(key(point3), bucket);
+        }
+      });
+      if ([...incidence.values()].some((indices) => indices.length !== 2)) return null;
+      const unused = new Set(segments.map((_, index) => index));
+      const contours = [];
+      while (unused.size > 0) {
+        const firstIndex = unused.values().next().value;
+        const first = segments[firstIndex];
+        unused.delete(firstIndex);
+        const contour = [first.start, first.end];
+        const startKey = key(first.start);
+        let currentKey = key(first.end);
+        while (currentKey !== startKey) {
+          const nextIndex = (incidence.get(currentKey) ?? []).find((index) => unused.has(index));
+          if (nextIndex === void 0) return null;
+          const next = segments[nextIndex];
+          unused.delete(nextIndex);
+          const nextPoint = key(next.start) === currentKey ? next.end : next.start;
+          contour.push(nextPoint);
+          currentKey = key(nextPoint);
+          if (contour.length > segments.length + 1) return null;
+        }
+        contour.pop();
+        if (contour.length < 3) return null;
+        contours.push(contour);
+      }
+      return contours;
+    }
+    function selectByStyle(contours, style) {
+      if (style === "normal") return contours;
+      const depths = contours.map((contour, index) => contours.reduce((depth, candidate, candidateIndex) => candidateIndex !== index && pointInPolygon(contour[0], candidate) ? depth + 1 : depth, 0));
+      if (style === "outer") return contours.filter((_, index) => (depths[index] ?? 0) <= 1);
+      return contours.filter((_, index) => (depths[index] ?? 0) === 0);
+    }
+    function pointInPolygon(point3, polygon) {
+      let inside = false;
+      for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+        const a = polygon[index];
+        const b = polygon[previous];
+        if (a[1] > point3[1] !== b[1] > point3[1] && point3[0] < (b[0] - a[0]) * (point3[1] - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+      }
+      return inside;
+    }
+    function boundsOf(contours) {
+      const points = contours.flat();
+      return {
+        minX: Math.min(...points.map(([x]) => x)),
+        minY: Math.min(...points.map(([, y]) => y)),
+        maxX: Math.max(...points.map(([x]) => x)),
+        maxY: Math.max(...points.map(([, y]) => y))
+      };
+    }
+    const MAX_HATCH_RENDER_LINES = 2e4;
+    function createHatchRenderPlan(hatch, tolerance) {
+      const normalized = normalizeHatchRegion(hatch, tolerance);
+      if (normalized.status !== "ok") return normalized;
+      const lines = [];
+      for (const family of hatch.patternLines) {
+        const generated = generateFamily(transformPatternFamily(family, hatch.patternAngle, hatch.patternScale), normalized.region);
+        if (lines.length + generated.length > MAX_HATCH_RENDER_LINES) {
+          return { status: "invalid", code: "HATCH_PATTERN_DENSITY_LIMIT" };
+        }
+        lines.push(...generated);
+      }
+      return { status: "ok", plan: { region: normalized.region, lines } };
+    }
+    function transformPatternFamily(family, angleDegrees, scale) {
+      const angle = angleDegrees * Math.PI / 180;
+      const rotateScale = ([x, y]) => [
+        scale * (x * Math.cos(angle) - y * Math.sin(angle)),
+        scale * (x * Math.sin(angle) + y * Math.cos(angle))
+      ];
+      return {
+        angle: family.angle + angleDegrees,
+        base: rotateScale(family.base),
+        offset: rotateScale(family.offset),
+        dashLengths: family.dashLengths.map((value) => value * scale)
+      };
+    }
+    function generateFamily(family, region) {
+      const angle = family.angle * Math.PI / 180;
+      const direction = [Math.cos(angle), Math.sin(angle)];
+      const normal = [-direction[1], direction[0]];
+      const spacing = dot(family.offset, normal);
+      if (Math.abs(spacing) <= 1e-12) return [];
+      const corners = [
+        [region.bounds.minX, region.bounds.minY],
+        [region.bounds.maxX, region.bounds.minY],
+        [region.bounds.maxX, region.bounds.maxY],
+        [region.bounds.minX, region.bounds.maxY]
+      ];
+      const cornerProjections = corners.map((point3) => dot(point3, normal));
+      const baseProjection = dot(family.base, normal);
+      const minIndex = Math.floor((Math.min(...cornerProjections) - baseProjection) / spacing) - 1;
+      const maxIndex = Math.ceil((Math.max(...cornerProjections) - baseProjection) / spacing) + 1;
+      const first = Math.min(minIndex, maxIndex);
+      const last = Math.max(minIndex, maxIndex);
+      const diagonal = Math.hypot(region.bounds.maxX - region.bounds.minX, region.bounds.maxY - region.bounds.minY);
+      const alongProjections = corners.map((point3) => dot(point3, direction));
+      const minimumAlong = Math.min(...alongProjections) - Math.max(1, diagonal * 0.01);
+      const maximumAlong = Math.max(...alongProjections) + Math.max(1, diagonal * 0.01);
+      const result = [];
+      for (let index = first; index <= last; index += 1) {
+        const origin = [family.base[0] + family.offset[0] * index, family.base[1] + family.offset[1] * index];
+        const originAlong = dot(origin, direction);
+        const startDistance = minimumAlong - originAlong;
+        const endDistance = maximumAlong - originAlong;
+        result.push({
+          start: [origin[0] + direction[0] * startDistance, origin[1] + direction[1] * startDistance],
+          end: [origin[0] + direction[0] * endDistance, origin[1] + direction[1] * endDistance],
+          dashArray: family.dashLengths.map(Math.abs),
+          dashOffset: startDistance
+        });
+      }
+      return result;
+    }
+    function dot(a, b) {
+      return a[0] * b[0] + a[1] * b[1];
+    }
     const MIN_SCALE = 0.01;
     const MAX_SCALE = 1e3;
-    function screenToWorld(point, viewport) {
+    function screenToWorld(point3, viewport) {
       return [
-        (point[0] - viewport.x) / viewport.scale,
-        (viewport.y - point[1]) / viewport.scale
+        (point3[0] - viewport.x) / viewport.scale,
+        (viewport.y - point3[1]) / viewport.scale
       ];
     }
     function zoomViewportAt(viewport, screenPoint, factor) {
@@ -273,8 +4097,8 @@ window.__ModuleLoader__.load({
         y: screenPoint[1] + anchor[1] * scale
       };
     }
-    function fitViewportToDrawing(document, size, padding = 1.2) {
-      const bounds = drawingBounds(document) ?? { minX: -50, minY: -50, maxX: 50, maxY: 50 };
+    function fitViewportToDrawing(document2, size, padding = 1.2) {
+      const bounds = drawingBounds(document2) ?? { minX: -50, minY: -50, maxX: 50, maxY: 50 };
       const boundsWidth = Math.max(bounds.maxX - bounds.minX, 1);
       const boundsHeight = Math.max(bounds.maxY - bounds.minY, 1);
       const safePadding = Number.isFinite(padding) && padding > 0 ? padding : 1.2;
@@ -292,12 +4116,12 @@ window.__ModuleLoader__.load({
         height: size.height
       };
     }
-    function drawingBounds(document) {
-      const bounds = [...document.geometry, ...document.annotations].filter((node) => node.visible).map(nodeBounds).filter((value) => value !== null);
+    function drawingBounds(document2) {
+      const bounds = [...document2.geometry, ...document2.annotations].filter((node) => node.visible).map(nodeBounds).filter((value) => value !== null);
       return unionBounds(bounds);
     }
-    function nodesInWorldBox(document, box) {
-      return [...document.geometry, ...document.annotations].filter((node) => node.visible).filter((node) => {
+    function nodesInWorldBox(document2, box) {
+      return [...document2.geometry, ...document2.annotations].filter((node) => node.visible).filter((node) => {
         const bounds = nodeBounds(node);
         return bounds !== null && boundsIntersect(bounds, box);
       }).map((node) => node.id);
@@ -329,8 +4153,13 @@ window.__ModuleLoader__.load({
           return boundsFromPoints(node.points);
         case "centerline":
           return extendedLineBounds(node.start, node.end, node.extension);
-        case "section-hatch":
-          return boundsFromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+        case "section-hatch": {
+          if (node.hatch !== void 0) {
+            const normalized = normalizeHatchRegion(node.hatch, 1e-3);
+            return normalized.status === "ok" ? normalized.region.bounds : null;
+          }
+          return boundsFromPoints((node.segments ?? []).flatMap(({ start, end }) => [start, end]));
+        }
       }
     }
     function worldBoundsForViewport(viewport) {
@@ -405,12 +4234,12 @@ window.__ModuleLoader__.load({
       ]);
     }
     function boundsFromPoints(points) {
-      if (points.length === 0 || points.some((point) => !finitePoint(point))) return null;
+      if (points.length === 0 || points.some((point3) => !finitePoint(point3))) return null;
       return {
-        minX: Math.min(...points.map((point) => point[0])),
-        minY: Math.min(...points.map((point) => point[1])),
-        maxX: Math.max(...points.map((point) => point[0])),
-        maxY: Math.max(...points.map((point) => point[1]))
+        minX: Math.min(...points.map((point3) => point3[0])),
+        minY: Math.min(...points.map((point3) => point3[1])),
+        maxX: Math.max(...points.map((point3) => point3[0])),
+        maxY: Math.max(...points.map((point3) => point3[1]))
       };
     }
     function unionBounds(bounds) {
@@ -448,11 +4277,43 @@ window.__ModuleLoader__.load({
     function modulo$1(value, divisor) {
       return (value % divisor + divisor) % divisor;
     }
-    function finitePoint(point) {
-      return Number.isFinite(point[0]) && Number.isFinite(point[1]);
+    function finitePoint(point3) {
+      return Number.isFinite(point3[0]) && Number.isFinite(point3[1]);
     }
     function clamp(value, minimum, maximum) {
       return Math.max(minimum, Math.min(maximum, value));
+    }
+    function HatchRenderer({ node, viewportScale }) {
+      const clipId = `vai-hatch-${react.useId().replace(/:/g, "")}`;
+      const vectorStroke = { vectorEffect: "non-scaling-stroke" };
+      if (node.hatch === void 0) {
+        return /* @__PURE__ */ jsxRuntime.jsx("g", { "data-section-hatch": node.pattern, children: (node.segments ?? []).map((segment, index) => /* @__PURE__ */ jsxRuntime.jsx("line", { x1: segment.start[0], y1: segment.start[1], x2: segment.end[0], y2: segment.end[1], ...vectorStroke }, index)) });
+      }
+      const tolerance = Math.min(0.05, Math.max(1e-6, 0.25 / Math.max(viewportScale, 1e-9)));
+      const result = createHatchRenderPlan(node.hatch, tolerance);
+      if (result.status !== "ok") return /* @__PURE__ */ jsxRuntime.jsx("g", { "data-section-hatch": node.pattern, "data-hatch-error": result.code });
+      const path = result.plan.region.contours.map(contourPath).join(" ");
+      return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-section-hatch": node.pattern, "data-hatch-representation": "parametric", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("defs", { children: /* @__PURE__ */ jsxRuntime.jsx("clipPath", { id: clipId, clipPathUnits: "userSpaceOnUse", children: /* @__PURE__ */ jsxRuntime.jsx("path", { d: path, fillRule: result.plan.region.fillRule, clipRule: result.plan.region.fillRule }) }) }),
+        result.plan.lines.map((line, index) => /* @__PURE__ */ jsxRuntime.jsx(
+          "line",
+          {
+            x1: line.start[0],
+            y1: line.start[1],
+            x2: line.end[0],
+            y2: line.end[1],
+            clipPath: `url(#${clipId})`,
+            strokeDasharray: line.dashArray.length === 0 ? void 0 : line.dashArray.join(" "),
+            strokeDashoffset: line.dashOffset,
+            ...vectorStroke
+          },
+          index
+        ))
+      ] });
+    }
+    function contourPath(points) {
+      if (points.length === 0) return "";
+      return `M ${points[0][0]} ${points[0][1]} ${points.slice(1).map(([x, y]) => `L ${x} ${y}`).join(" ")} Z`;
     }
     function EntityRenderer({
       node,
@@ -548,17 +4409,7 @@ window.__ModuleLoader__.load({
           );
         }
         case "section-hatch":
-          return /* @__PURE__ */ jsxRuntime.jsx("g", { "data-section-hatch": node.pattern, children: node.segments.map((segment, index) => /* @__PURE__ */ jsxRuntime.jsx(
-            "line",
-            {
-              x1: segment.start[0],
-              y1: segment.start[1],
-              x2: segment.end[0],
-              y2: segment.end[1],
-              ...vectorStroke
-            },
-            index
-          )) });
+          return /* @__PURE__ */ jsxRuntime.jsx(HatchRenderer, { node, viewportScale: viewport.scale });
       }
     }
     function WorldText({
@@ -584,7 +4435,7 @@ window.__ModuleLoader__.load({
       return `${node.prefix ?? ""}${value}${node.unit ? ` ${node.unit}` : ""}${node.suffix ?? ""}`;
     }
     function pointsAttribute(points) {
-      return points.map((point) => `${point[0]},${point[1]}`).join(" ");
+      return points.map((point3) => `${point3[0]},${point3[1]}`).join(" ");
     }
     function splinePath(node, viewport) {
       const points = sampleSpline(node, { maxError: Math.max(0.25 / viewport.scale, 1e-8) });
@@ -618,12 +4469,12 @@ window.__ModuleLoader__.load({
       return output.join(" ");
     }
     function arcPath(center, radius, start, end, counterClockwise) {
-      const point = (angle) => {
+      const point3 = (angle) => {
         const radians = angle * Math.PI / 180;
         return [center[0] + radius * Math.cos(radians), center[1] + radius * Math.sin(radians)];
       };
-      const first = point(start);
-      const last = point(end);
+      const first = point3(start);
+      const last = point3(end);
       const span = counterClockwise ? modulo(end - start, 360) : modulo(start - end, 360);
       return `M ${first[0]} ${first[1]} A ${radius} ${radius} 0 ${span > 180 ? 1 : 0} ${counterClockwise ? 1 : 0} ${last[0]} ${last[1]}`;
     }
@@ -656,9 +4507,9 @@ window.__ModuleLoader__.load({
     function SourceUnderlay({
       source,
       resource,
-      document
+      document: document2
     }) {
-      const sourceFrame = document.coordinateFrames.find((frame) => frame.kind === "source" && frame.id === `frame_source_${safeId(source.id)}`) ?? document.coordinateFrames.find((frame) => frame.kind === "source");
+      const sourceFrame = document2.coordinateFrames.find((frame) => frame.kind === "source" && frame.id === `frame_source_${safeId(source.id)}`) ?? document2.coordinateFrames.find((frame) => frame.kind === "source");
       const transform2 = sourceFrame == null ? void 0 : sourceFrame.transform;
       return /* @__PURE__ */ jsxRuntime.jsx("g", { "data-source-underlay": source.id, pointerEvents: "none", opacity: 0.28, children: /* @__PURE__ */ jsxRuntime.jsx("g", { transform: transform2 === void 0 ? `translate(0 ${source.height}) scale(1 -1)` : `matrix(${transform2.join(" ")})`, children: /* @__PURE__ */ jsxRuntime.jsx(
         "image",
@@ -678,8 +4529,744 @@ window.__ModuleLoader__.load({
     function isRasterDrawingSource(source) {
       return "width" in source && "height" in source;
     }
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const toKebabCase = (string2) => string2.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+    const toCamelCase = (string2) => string2.replace(
+      /^([A-Z])|[\s-_]+(\w)/g,
+      (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
+    );
+    const toPascalCase = (string2) => {
+      const camelCase = toCamelCase(string2);
+      return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
+    };
+    const mergeClasses = (...classes) => classes.filter((className, index, array2) => {
+      return Boolean(className) && className.trim() !== "" && array2.indexOf(className) === index;
+    }).join(" ").trim();
+    const hasA11yProp = (props) => {
+      for (const prop in props) {
+        if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
+          return true;
+        }
+      }
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    var defaultAttributes = {
+      xmlns: "http://www.w3.org/2000/svg",
+      width: 24,
+      height: 24,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: 2,
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const Icon = react.forwardRef(
+      ({
+        color = "currentColor",
+        size = 24,
+        strokeWidth = 2,
+        absoluteStrokeWidth,
+        className = "",
+        children,
+        iconNode,
+        ...rest
+      }, ref) => react.createElement(
+        "svg",
+        {
+          ref,
+          ...defaultAttributes,
+          width: size,
+          height: size,
+          stroke: color,
+          strokeWidth: absoluteStrokeWidth ? Number(strokeWidth) * 24 / Number(size) : strokeWidth,
+          className: mergeClasses("lucide", className),
+          ...!children && !hasA11yProp(rest) && { "aria-hidden": "true" },
+          ...rest
+        },
+        [
+          ...iconNode.map(([tag, attrs]) => react.createElement(tag, attrs)),
+          ...Array.isArray(children) ? children : [children]
+        ]
+      )
+    );
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const createLucideIcon = (iconName, iconNode) => {
+      const Component = react.forwardRef(
+        ({ className, ...props }, ref) => react.createElement(Icon, {
+          ref,
+          iconNode,
+          className: mergeClasses(
+            `lucide-${toKebabCase(toPascalCase(iconName))}`,
+            `lucide-${iconName}`,
+            className
+          ),
+          ...props
+        })
+      );
+      Component.displayName = toPascalCase(iconName);
+      return Component;
+    };
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$9 = [
+      ["path", { d: "M12 15V3", key: "m9g1x1" }],
+      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
+      ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
+    ];
+    const Download = createLucideIcon("download", __iconNode$9);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$8 = [
+      [
+        "path",
+        {
+          d: "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z",
+          key: "zw3jo"
+        }
+      ],
+      [
+        "path",
+        {
+          d: "M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12",
+          key: "1wduqc"
+        }
+      ],
+      [
+        "path",
+        {
+          d: "M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17",
+          key: "kqbvx6"
+        }
+      ]
+    ];
+    const Layers = createLucideIcon("layers", __iconNode$8);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$7 = [
+      ["path", { d: "M21 12h-8", key: "1bmf0i" }],
+      ["path", { d: "M21 6H8", key: "1pqkrb" }],
+      ["path", { d: "M21 18h-8", key: "1tm79t" }],
+      ["path", { d: "M3 6v4c0 1.1.9 2 2 2h3", key: "1ywdgy" }],
+      ["path", { d: "M3 10v6c0 1.1.9 2 2 2h3", key: "2wc746" }]
+    ];
+    const ListTree = createLucideIcon("list-tree", __iconNode$7);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$6 = [
+      ["path", { d: "M12 20h9", key: "t2du7b" }],
+      [
+        "path",
+        {
+          d: "M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z",
+          key: "1ykcvy"
+        }
+      ],
+      ["path", { d: "m15 5 3 3", key: "1w25hb" }]
+    ];
+    const PencilLine = createLucideIcon("pencil-line", __iconNode$6);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$5 = [
+      ["path", { d: "m15 14 5-5-5-5", key: "12vg1m" }],
+      ["path", { d: "M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13", key: "6uklza" }]
+    ];
+    const Redo2 = createLucideIcon("redo-2", __iconNode$5);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$4 = [
+      ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
+      ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
+      ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
+      ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
+    ];
+    const Scan = createLucideIcon("scan", __iconNode$4);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$3 = [
+      ["line", { x1: "21", x2: "14", y1: "4", y2: "4", key: "obuewd" }],
+      ["line", { x1: "10", x2: "3", y1: "4", y2: "4", key: "1q6298" }],
+      ["line", { x1: "21", x2: "12", y1: "12", y2: "12", key: "1iu8h1" }],
+      ["line", { x1: "8", x2: "3", y1: "12", y2: "12", key: "ntss68" }],
+      ["line", { x1: "21", x2: "16", y1: "20", y2: "20", key: "14d8ph" }],
+      ["line", { x1: "12", x2: "3", y1: "20", y2: "20", key: "m0wm8r" }],
+      ["line", { x1: "14", x2: "14", y1: "2", y2: "6", key: "14e1ph" }],
+      ["line", { x1: "8", x2: "8", y1: "10", y2: "14", key: "1i6ji0" }],
+      ["line", { x1: "16", x2: "16", y1: "18", y2: "22", key: "1lctlv" }]
+    ];
+    const SlidersHorizontal = createLucideIcon("sliders-horizontal", __iconNode$3);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$2 = [
+      ["path", { d: "M9 14 4 9l5-5", key: "102s5s" }],
+      ["path", { d: "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11", key: "f3b9sd" }]
+    ];
+    const Undo2 = createLucideIcon("undo-2", __iconNode$2);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode$1 = [
+      ["path", { d: "M12 3v12", key: "1x0j5s" }],
+      ["path", { d: "m17 8-5-5-5 5", key: "7q97r8" }],
+      ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }]
+    ];
+    const Upload = createLucideIcon("upload", __iconNode$1);
+    /**
+     * @license lucide-react v0.511.0 - ISC
+     *
+     * This source code is licensed under the ISC license.
+     * See the LICENSE file in the root directory of this source tree.
+     */
+    const __iconNode = [
+      ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+      ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
+    ];
+    const X = createLucideIcon("x", __iconNode);
+    function WorkspaceToolbarView({
+      snapshot,
+      viewport,
+      unavailable = false,
+      canUndo,
+      canRedo,
+      onFit,
+      onUndo,
+      onRedo,
+      onUploadFiles,
+      uploadAccept = "image/png,image/jpeg,image/webp,image/gif",
+      uploadMultiple = false,
+      onExport
+    }) {
+      const handleUpload = (event) => {
+        const files = Array.from(event.currentTarget.files ?? []);
+        event.currentTarget.value = "";
+        if (files.length > 0) onUploadFiles == null ? void 0 : onUploadFiles(files);
+      };
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-toolbar", role: "toolbar", "aria-label": "图纸操作工具", children: [
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            "aria-label": "适配图纸",
+            title: "缩放并居中显示整张图纸",
+            onClick: () => onFit(fitViewportToDrawing(snapshot.document, viewport)),
+            children: /* @__PURE__ */ jsxRuntime.jsx(Scan, { "aria-hidden": "true", size: 17 })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            "aria-label": "撤销",
+            disabled: unavailable || !canUndo,
+            title: "撤销最近一次图纸修改",
+            onClick: () => {
+              void onUndo();
+            },
+            children: /* @__PURE__ */ jsxRuntime.jsx(Undo2, { "aria-hidden": "true", size: 17 })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            "aria-label": "反撤销",
+            disabled: unavailable || !canRedo,
+            title: "恢复最近一次撤销",
+            onClick: () => {
+              void onRedo();
+            },
+            children: /* @__PURE__ */ jsxRuntime.jsx(Redo2, { "aria-hidden": "true", size: 17 })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-toolbar__separator" }),
+        /* @__PURE__ */ jsxRuntime.jsxs(
+          "label",
+          {
+            className: `vai-toolbar__upload${onUploadFiles === void 0 ? " vai-toolbar__upload--disabled" : ""}`,
+            "aria-label": "上传图纸",
+            title: "上传图纸",
+            children: [
+              /* @__PURE__ */ jsxRuntime.jsx(Upload, { "aria-hidden": "true", size: 17 }),
+              /* @__PURE__ */ jsxRuntime.jsx(
+                "input",
+                {
+                  type: "file",
+                  accept: uploadAccept,
+                  multiple: uploadMultiple,
+                  disabled: onUploadFiles === void 0,
+                  onChange: handleUpload
+                }
+              )
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "button",
+          {
+            type: "button",
+            "aria-label": "导出 DXF",
+            disabled: false,
+            title: "导出当前 DXF 图纸",
+            onClick: onExport ?? (() => exportSnapshotDxf(snapshot)),
+            children: /* @__PURE__ */ jsxRuntime.jsx(Download, { "aria-hidden": "true", size: 17 })
+          }
+        )
+      ] });
+    }
+    function exportSnapshotDxf(snapshot) {
+      const blob = new Blob([exportDrawingDxf(snapshot.document)], { type: "application/dxf;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${snapshot.ref.drawingId}-R${snapshot.ref.revision}.dxf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    }
+    function ObjectList() {
+      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
+      const groundingOverlay = useDrawingWorkspace((state) => state.groundingOverlay);
+      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      const setSelection = useDrawingWorkspace((state) => state.setSelection);
+      const updateNode = useDrawingWorkspace((state) => state.updateNode);
+      const deleteNodes = useDrawingWorkspace((state) => state.deleteNodes);
+      if (snapshot === null) return null;
+      const groups = [
+        { label: "几何图元", nodes: snapshot.document.geometry },
+        { label: "标注", nodes: snapshot.document.annotations },
+        { label: "关系", nodes: snapshot.document.relations },
+        { label: "语义特征", nodes: snapshot.document.features }
+      ];
+      const groundedNodeIds = new Set(
+        (groundingOverlay == null ? void 0 : groundingOverlay.groups.filter((group) => group.role !== "reference").flatMap((group) => group.nodeIds)) ?? []
+      );
+      return /* @__PURE__ */ jsxRuntime.jsxs("aside", { className: "vai-panel vai-object-list", "aria-label": "图纸对象", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-panel__title", children: "对象" }),
+        /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-object-list__scroll", children: groups.map((group) => /* @__PURE__ */ jsxRuntime.jsxs("section", { className: "vai-object-group", children: [
+          /* @__PURE__ */ jsxRuntime.jsxs("h3", { children: [
+            group.label,
+            /* @__PURE__ */ jsxRuntime.jsx("span", { children: group.nodes.length })
+          ] }),
+          group.nodes.length === 0 ? /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-object-group__empty", children: "无" }) : group.nodes.map((node) => {
+            const selected = selectedIds.includes(node.id);
+            const aiGrounded = groundedNodeIds.has(node.id);
+            return /* @__PURE__ */ jsxRuntime.jsxs(
+              "div",
+              {
+                className: `vai-object-row${selected ? " vai-object-row--selected" : ""}${aiGrounded ? " vai-object-row--ai-grounded" : ""}`,
+                "data-object-id": node.id,
+                "data-ai-grounded": aiGrounded || void 0,
+                children: [
+                  /* @__PURE__ */ jsxRuntime.jsxs(
+                    "button",
+                    {
+                      type: "button",
+                      className: "vai-object-row__main",
+                      onClick: (event) => {
+                        if (event.metaKey || event.ctrlKey) {
+                          setSelection(selectedIds.includes(node.id) ? selectedIds.filter((id) => id !== node.id) : [...selectedIds, node.id]);
+                        } else setSelection([node.id]);
+                      },
+                      children: [
+                        /* @__PURE__ */ jsxRuntime.jsx(ObjectGlyph, { type: node.type }),
+                        /* @__PURE__ */ jsxRuntime.jsxs("span", { className: "vai-object-row__identity", children: [
+                          /* @__PURE__ */ jsxRuntime.jsx("strong", { children: node.id }),
+                          /* @__PURE__ */ jsxRuntime.jsx("small", { children: node.type })
+                        ] })
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntime.jsx(
+                    "button",
+                    {
+                      type: "button",
+                      className: "vai-icon-button",
+                      "aria-label": `${node.visible ? "隐藏" : "显示"} ${node.id}`,
+                      disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.edit),
+                      onClick: () => {
+                        void updateNode(node.id, { visible: !node.visible });
+                      },
+                      children: node.visible ? "◉" : "○"
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntime.jsx(
+                    "button",
+                    {
+                      type: "button",
+                      className: "vai-icon-button vai-icon-button--danger",
+                      "aria-label": `删除 ${node.id}`,
+                      disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.delete),
+                      onClick: () => {
+                        void deleteNodes([node.id]);
+                      },
+                      children: "×"
+                    }
+                  )
+                ]
+              },
+              node.id
+            );
+          })
+        ] }, group.label)) })
+      ] });
+    }
+    function ObjectGlyph({ type }) {
+      const glyph = type === "circle" ? "○" : type === "point" ? "·" : type === "text" ? "T" : type === "dimension" ? "↔" : type === "feature" ? "◇" : type === "topology" || type === "constraint" || type === "association" || type === "semantic" ? "⌁" : "∕";
+      return /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-object-row__glyph", "aria-hidden": "true", children: glyph });
+    }
+    function PropertyInspector() {
+      const snapshot = useDrawingWorkspace((state) => state.displaySnapshot);
+      const formalSnapshot = useDrawingWorkspace((state) => state.snapshot);
+      const preview = useDrawingWorkspace((state) => state.preview);
+      const selectedIds = useDrawingWorkspace((state) => state.selectedIds);
+      const busy = useDrawingWorkspace((state) => state.busy);
+      const updateNode = useDrawingWorkspace((state) => state.updateNode);
+      if (snapshot === null) return null;
+      const node = locateNode(snapshot.document, selectedIds[0]);
+      return /* @__PURE__ */ jsxRuntime.jsxs("aside", { className: "vai-panel vai-inspector", "aria-label": "图元属性", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-panel__title", children: "图元属性" }),
+        node === null ? /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-panel__empty", children: "选择图元查看和编辑属性" }) : /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-inspector__scroll", children: [
+          /* @__PURE__ */ jsxRuntime.jsxs("dl", { className: "vai-inspector__identity", children: [
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "ID" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.id }),
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "类型" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.type }),
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "状态" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.quality.status }),
+            /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "置信度" }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: node.quality.confidence === void 0 ? "—" : `${Math.round(node.quality.confidence * 100)}%` })
+          ] }),
+          /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-inspector__fields", children: editableProperties(node).map((property) => /* @__PURE__ */ jsxRuntime.jsx(
+            PropertyField,
+            {
+              property,
+              disabled: busy || preview !== null || !(formalSnapshot == null ? void 0 : formalSnapshot.capabilities.edit),
+              commit: (value) => {
+                void updateNode(node.id, property.change(value));
+              }
+            },
+            property.key
+          )) }),
+          /* @__PURE__ */ jsxRuntime.jsxs("details", { className: "vai-inspector__raw", children: [
+            /* @__PURE__ */ jsxRuntime.jsx("summary", { children: "完整属性" }),
+            /* @__PURE__ */ jsxRuntime.jsx("pre", { children: JSON.stringify(node, null, 2) })
+          ] })
+        ] })
+      ] });
+    }
+    function PropertyField({
+      property,
+      disabled,
+      commit
+    }) {
+      if (property.kind === "boolean") {
+        return /* @__PURE__ */ jsxRuntime.jsxs("label", { className: "vai-field vai-field--check", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("span", { children: property.label }),
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "input",
+            {
+              type: "checkbox",
+              defaultChecked: Boolean(property.value),
+              disabled,
+              onChange: (event) => commit(event.currentTarget.checked)
+            }
+          )
+        ] });
+      }
+      return /* @__PURE__ */ jsxRuntime.jsxs("label", { className: "vai-field", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: property.label }),
+        /* @__PURE__ */ jsxRuntime.jsx(
+          "input",
+          {
+            type: property.kind,
+            defaultValue: String(property.value),
+            disabled,
+            step: property.kind === "number" ? "any" : void 0,
+            onBlur: (event) => {
+              const value = property.kind === "number" ? Number(event.currentTarget.value) : event.currentTarget.value;
+              if (property.kind === "number" && !Number.isFinite(value)) return;
+              if (value !== property.value) commit(value);
+            }
+          }
+        )
+      ] });
+    }
+    function editableProperties(node) {
+      const fields = [booleanField("visible", "可见", node.visible, "visible")];
+      switch (node.type) {
+        case "point":
+          return [...fields, numberField("x", "X", node.x, "x"), numberField("y", "Y", node.y, "y")];
+        case "line":
+          return [...fields, ...vec2Fields("start", "起点", node.start), ...vec2Fields("end", "终点", node.end)];
+        case "ray":
+        case "xline":
+          return [...fields, ...vec2Fields("origin", "原点", node.origin), ...vec2Fields("direction", "方向", node.direction)];
+        case "circle":
+          return [...fields, ...vec2Fields("center", "圆心", node.center), numberField("radius", "半径", node.radius, "radius")];
+        case "arc":
+          return [
+            ...fields,
+            ...vec2Fields("center", "圆心", node.center),
+            numberField("radius", "半径", node.radius, "radius"),
+            numberField("startAngle", "起始角", node.startAngle, "startAngle"),
+            numberField("endAngle", "结束角", node.endAngle, "endAngle"),
+            booleanField("counterClockwise", "逆时针", node.counterClockwise, "counterClockwise")
+          ];
+        case "ellipse":
+          return [
+            ...fields,
+            ...vec2Fields("center", "中心", node.center),
+            ...vec2Fields("majorAxis", "主轴", node.majorAxis),
+            numberField("ratio", "轴比", node.ratio, "ratio")
+          ];
+        case "polyline":
+          return [...fields, booleanField("closed", "闭合", node.closed, "closed")];
+        case "spline":
+          return [
+            ...fields,
+            numberField("degree", "阶数", node.degree, "degree"),
+            booleanField("closed", "闭合", node.closed, "closed"),
+            booleanField("periodic", "周期", node.periodic, "periodic")
+          ];
+        case "text":
+          return [
+            ...fields,
+            textField("content", "文字", node.content, "content"),
+            ...vec2Fields("position", "位置", node.position),
+            numberField("height", "字高", node.height, "height"),
+            numberField("rotation", "旋转", node.rotation, "rotation")
+          ];
+        case "dimension":
+          return [
+            ...fields,
+            textField("displayText", "显示文字", node.displayText ?? "", "displayText"),
+            ...vec2Fields("textPosition", "文字位置", node.textPosition),
+            textField("prefix", "前缀", node.prefix ?? "", "prefix"),
+            textField("suffix", "后缀", node.suffix ?? "", "suffix")
+          ];
+        case "leader":
+          return [
+            ...fields,
+            textField("content", "文字", node.content, "content"),
+            numberField("textHeight", "字高", node.textHeight, "textHeight")
+          ];
+        case "centerline":
+          return [...fields, numberField("extension", "延伸", node.extension, "extension")];
+        case "section-hatch":
+          return [
+            ...fields,
+            textField("pattern", "图案", node.pattern, "pattern"),
+            numberField("angle", "角度", node.angle, "angle"),
+            numberField("spacing", "间距", node.spacing, "spacing")
+          ];
+        case "topology":
+        case "constraint":
+        case "association":
+        case "semantic":
+        case "feature":
+          return fields;
+      }
+    }
+    function vec2Fields(key, label, value) {
+      return [0, 1].map((index) => ({
+        key: `${key}.${index}`,
+        label: `${label} ${index === 0 ? "X" : "Y"}`,
+        value: value[index],
+        kind: "number",
+        change: (next) => ({ [key]: value.map((item, itemIndex) => itemIndex === index ? Number(next) : item) })
+      }));
+    }
+    function numberField(key, label, value, property) {
+      return { key, label, value, kind: "number", change: (next) => ({ [property]: Number(next) }) };
+    }
+    function textField(key, label, value, property) {
+      return { key, label, value, kind: "text", change: (next) => ({ [property]: String(next) }) };
+    }
+    function booleanField(key, label, value, property) {
+      return { key, label, value, kind: "boolean", change: (next) => ({ [property]: Boolean(next) }) };
+    }
+    function locateNode(document2, id) {
+      if (id === void 0) return null;
+      return document2.geometry.find((node) => node.id === id) ?? document2.annotations.find((node) => node.id === id) ?? document2.relations.find((node) => node.id === id) ?? document2.features.find((node) => node.id === id) ?? null;
+    }
+    const MIN_PANEL_WIDTH = 220;
+    const MAX_PANEL_WIDTH = 420;
+    const PANEL_RESIZE_STEP = 16;
+    const defaultPanelDefinitions = [
+      { id: "objects", label: "对象", icon: Layers, render: () => /* @__PURE__ */ jsxRuntime.jsx(ObjectList, {}) },
+      { id: "properties", label: "属性", icon: SlidersHorizontal, render: () => /* @__PURE__ */ jsxRuntime.jsx(PropertyInspector, {}) }
+    ];
+    function WorkspaceActivityBar({
+      activePanel,
+      panelWidth,
+      onActivePanelChange,
+      onPanelWidthChange,
+      panels,
+      overlay = false
+    }) {
+      const resizeStart = react.useRef(null);
+      const latestWidth = react.useRef(panelWidth);
+      latestWidth.current = panelWidth;
+      const definitions = panels ?? defaultPanelDefinitions;
+      const activeDefinition = definitions.find(({ id }) => id === activePanel);
+      function commitWidth(width) {
+        const nextWidth = clampPanelWidth(width);
+        latestWidth.current = nextWidth;
+        onPanelWidthChange(nextWidth);
+      }
+      function handlePointerDown(event) {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        resizeStart.current = {
+          pointerId: event.pointerId,
+          clientX: event.clientX,
+          width: latestWidth.current
+        };
+      }
+      function handlePointerMove(event) {
+        const start = resizeStart.current;
+        if (start === null || start.pointerId !== event.pointerId) return;
+        commitWidth(start.width + event.clientX - start.clientX);
+      }
+      function finishPointerResize(event) {
+        var _a2;
+        if (((_a2 = resizeStart.current) == null ? void 0 : _a2.pointerId) === event.pointerId) resizeStart.current = null;
+      }
+      function handleResizeKeyDown(event) {
+        const delta = event.key === "ArrowLeft" ? -PANEL_RESIZE_STEP : event.key === "ArrowRight" ? PANEL_RESIZE_STEP : 0;
+        if (delta !== 0) {
+          event.preventDefault();
+          commitWidth(latestWidth.current + delta);
+        } else if (event.key === "Home" || event.key === "End") {
+          event.preventDefault();
+          commitWidth(event.key === "Home" ? MIN_PANEL_WIDTH : MAX_PANEL_WIDTH);
+        }
+      }
+      return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntime.jsx("nav", { className: `vai-activity-bar${overlay ? " vai-activity-bar--overlay" : ""}`, "aria-label": "信息面板工具栏", children: definitions.map(({ id, label, icon: Icon2 }) => {
+          const active = activePanel === id;
+          return /* @__PURE__ */ jsxRuntime.jsx(
+            "button",
+            {
+              type: "button",
+              className: "vai-activity-bar__button",
+              "aria-label": `${label}面板`,
+              "aria-pressed": active,
+              title: label,
+              onClick: () => onActivePanelChange(active ? null : id),
+              children: /* @__PURE__ */ jsxRuntime.jsx(Icon2, { size: 19, strokeWidth: 1.75, "aria-hidden": "true" })
+            },
+            id
+          );
+        }) }),
+        activeDefinition === void 0 ? null : /* @__PURE__ */ jsxRuntime.jsxs(
+          "aside",
+          {
+            className: `vai-inspector-stack vai-inspector-stack--activity${overlay ? " vai-inspector-stack--overlay" : ""}`,
+            "data-panel": activeDefinition.id,
+            "aria-label": `${activeDefinition.label}信息面板`,
+            style: { width: panelWidth, backgroundColor: "var(--vai-panel, #12161b)" },
+            children: [
+              /* @__PURE__ */ jsxRuntime.jsx(
+                "button",
+                {
+                  type: "button",
+                  className: "vai-panel-close",
+                  "aria-label": "关闭信息面板",
+                  title: "关闭",
+                  onClick: () => onActivePanelChange(null),
+                  children: /* @__PURE__ */ jsxRuntime.jsx(X, { size: 16, "aria-hidden": "true" })
+                }
+              ),
+              activeDefinition.render(),
+              /* @__PURE__ */ jsxRuntime.jsx(
+                "div",
+                {
+                  className: "vai-panel-resizer",
+                  role: "separator",
+                  "aria-label": "调整信息面板宽度",
+                  "aria-orientation": "vertical",
+                  "aria-valuemin": MIN_PANEL_WIDTH,
+                  "aria-valuemax": MAX_PANEL_WIDTH,
+                  "aria-valuenow": panelWidth,
+                  tabIndex: 0,
+                  onPointerDown: handlePointerDown,
+                  onPointerMove: handlePointerMove,
+                  onPointerUp: finishPointerResize,
+                  onPointerCancel: finishPointerResize,
+                  onKeyDown: handleResizeKeyDown
+                }
+              )
+            ]
+          }
+        )
+      ] });
+    }
+    function clampPanelWidth(width) {
+      return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, width));
+    }
     function SourceLayer({
-      document,
+      document: document2,
       source,
       sourceUrl
     }) {
@@ -690,7 +5277,7 @@ window.__ModuleLoader__.load({
           source,
           resource: { url: sourceUrl, dispose() {
           } },
-          document
+          document: document2
         }
       );
     }
@@ -733,10 +5320,10 @@ window.__ModuleLoader__.load({
       )) });
     }
     function RelationLayer({
-      document,
+      document: document2,
       viewport
     }) {
-      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-relations", "data-layer": "relations", children: document.relations.filter((relation) => relation.visible && relation.plane !== "topology").flatMap((relation) => relationSegments(document, relation, viewport)) });
+      return /* @__PURE__ */ jsxRuntime.jsx("g", { className: "vai-relations", "data-layer": "relations", children: document2.relations.filter((relation) => relation.visible && relation.plane !== "topology").flatMap((relation) => relationSegments(document2, relation, viewport)) });
     }
     function SelectionLayer({
       box
@@ -756,9 +5343,9 @@ window.__ModuleLoader__.load({
         }
       );
     }
-    function relationSegments(document, relation, viewport) {
+    function relationSegments(document2, relation, viewport) {
       const centers = relationNodeIds(relation).flatMap((id) => {
-        const node = [...document.geometry, ...document.annotations].find((candidate) => candidate.id === id);
+        const node = [...document2.geometry, ...document2.annotations].find((candidate) => candidate.id === id);
         const bounds = node === void 0 ? null : nodeBounds(node);
         return bounds === null ? [] : [[(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2]];
       });
@@ -800,6 +5387,7 @@ window.__ModuleLoader__.load({
       worldLayers,
       screenLayers,
       className = "vai-canvas",
+      fitToDrawingOnResize = false,
       onViewportChange,
       onSelectionChange,
       onMouseWorldChange
@@ -815,58 +5403,76 @@ window.__ModuleLoader__.load({
         element.addEventListener("wheel", preventConversationScroll, { passive: false });
         return () => element.removeEventListener("wheel", preventConversationScroll);
       }, []);
+      react.useEffect(() => {
+        const element = containerRef.current;
+        if (element === null || typeof ResizeObserver === "undefined") return;
+        const resize = () => {
+          const { width, height } = element.getBoundingClientRect();
+          if (!(width > 0 && height > 0) || viewport.width === width && viewport.height === height) return;
+          onViewportChange(
+            fitToDrawingOnResize || viewport.width === 0 || viewport.height === 0 ? fitViewportToDrawing(
+              fitToDrawingOnResize === "geometry" ? { ...snapshot.document, annotations: [] } : snapshot.document,
+              { width, height }
+            ) : { ...viewport, width, height }
+          );
+        };
+        resize();
+        const observer = new ResizeObserver(resize);
+        observer.observe(element);
+        return () => observer.disconnect();
+      }, [fitToDrawingOnResize, onViewportChange, snapshot.document, viewport]);
       const handleWheel = (event) => {
         event.preventDefault();
         event.stopPropagation();
         onViewportChange(zoomViewportAt(viewport, eventScreenPoint(event), event.deltaY < 0 ? 1.1 : 1 / 1.1));
       };
       const handleMouseDown = (event) => {
-        const point = eventScreenPoint(event);
+        const point3 = eventScreenPoint(event);
         const boxSelect = event.button === 0 && (event.metaKey || event.ctrlKey);
         if (event.button === 1 || event.button === 0 && !boxSelect) {
           event.preventDefault();
           dragRef.current = {
             kind: "pan",
-            start: point,
+            start: point3,
             viewport,
             clearSelectionOnClick: event.button === 0 && isBlankCanvasTarget(event)
           };
           return;
         }
         if (!boxSelect) return;
-        dragRef.current = { kind: "box", start: point, current: point, additive: true };
-        setSelectionBox({ start: point, current: point });
+        dragRef.current = { kind: "box", start: point3, current: point3, additive: true };
+        setSelectionBox({ start: point3, current: point3 });
       };
       const handleMouseMove = (event) => {
-        const point = eventScreenPoint(event);
-        onMouseWorldChange == null ? void 0 : onMouseWorldChange(screenToWorld(point, viewport));
+        const point3 = eventScreenPoint(event);
+        onMouseWorldChange == null ? void 0 : onMouseWorldChange(screenToWorld(point3, viewport));
         const drag = dragRef.current;
         if ((drag == null ? void 0 : drag.kind) === "pan") {
           onViewportChange({
             ...drag.viewport,
-            x: drag.viewport.x + point[0] - drag.start[0],
-            y: drag.viewport.y + point[1] - drag.start[1]
+            x: drag.viewport.x + point3[0] - drag.start[0],
+            y: drag.viewport.y + point3[1] - drag.start[1]
           });
         } else if ((drag == null ? void 0 : drag.kind) === "box") {
-          drag.current = point;
-          setSelectionBox({ start: drag.start, current: point });
+          drag.current = point3;
+          setSelectionBox({ start: drag.start, current: point3 });
         }
       };
       const handleMouseUp = (event) => {
         const drag = dragRef.current;
         dragRef.current = null;
         if ((drag == null ? void 0 : drag.kind) === "pan") {
-          const point = eventScreenPoint(event);
-          if (drag.clearSelectionOnClick && Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]) < 3) {
+          const point3 = eventScreenPoint(event);
+          if (drag.clearSelectionOnClick && Math.hypot(point3[0] - drag.start[0], point3[1] - drag.start[1]) < 3) {
             onSelectionChange([]);
           }
           return;
         }
         if ((drag == null ? void 0 : drag.kind) === "box") {
-          const point = eventScreenPoint(event);
-          if (Math.hypot(point[0] - drag.start[0], point[1] - drag.start[1]) >= 3) {
+          const point3 = eventScreenPoint(event);
+          if (Math.hypot(point3[0] - drag.start[0], point3[1] - drag.start[1]) >= 3) {
             const first = screenToWorld(drag.start, viewport);
-            const second = screenToWorld(point, viewport);
+            const second = screenToWorld(point3, viewport);
             const ids = nodesInWorldBox(snapshot.document, normalizeBounds(first, second));
             onSelectionChange(drag.additive ? [.../* @__PURE__ */ new Set([...selectedIds, ...ids])] : ids);
           }
@@ -972,61 +5578,143 @@ window.__ModuleLoader__.load({
     function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
       const [drag, setDrag] = react.useState(null);
       const current = react.useRef(null);
-      const point = (z, r) => [
+      const point3 = (z, r) => [
         draft.axis.origin[0] + draft.axis.direction[0] * z + draft.axis.normal[0] * r,
         draft.axis.origin[1] + draft.axis.direction[1] * z + draft.axis.normal[1] * r
       ];
       const pointerMove = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         if (!current.current) return;
-        const delta = (event.movementX * draft.axis.direction[0] - event.movementY * draft.axis.direction[1]) / Math.max(scale, 1e-6);
-        current.current = { ...current.current, z: current.current.z + delta };
+        const screenX = event.clientX - current.current.lastClientX;
+        const screenY = event.clientY - current.current.lastClientY;
+        const delta = (screenX * draft.axis.direction[0] - screenY * draft.axis.direction[1]) / Math.max(scale, 1e-6);
+        current.current = {
+          ...current.current,
+          z: current.current.z + delta,
+          lastClientX: event.clientX,
+          lastClientY: event.clientY
+        };
         setDrag(current.current);
       };
-      const pointerUp = (event) => {
-        event.currentTarget.releasePointerCapture(event.pointerId);
+      const finishPointer = async (event, releaseCapture) => {
+        event.preventDefault();
+        event.stopPropagation();
         const value = current.current;
         current.current = null;
-        setDrag(null);
-        if (value) onMoveBoundary(value.index, value.z);
+        if (releaseCapture) {
+          try {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          } catch {
+          }
+        }
+        if (!value) return;
+        try {
+          await onMoveBoundary(value.index, value.z);
+          setDrag(null);
+        } catch {
+          setDrag(value);
+        }
       };
+      const bands = functionalBands(draft);
+      const boundaryZ = bands.slice(0, -1).map((band) => draft.segments[band.endSegmentIndex].zEnd);
+      const boundaryLanes = boundaryZ.map((z, index) => {
+        const previousIsClose = index > 0 && Math.abs(z - boundaryZ[index - 1]) * scale < 18;
+        const nextIsClose = index < boundaryZ.length - 1 && Math.abs(boundaryZ[index + 1] - z) * scale < 18;
+        return previousIsClose ? 1 : nextIsClose ? -1 : 0;
+      });
       return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-partition-overlay": "true", children: [
-        draft.segments.map((segment, index) => {
-          const radius = Math.max(segment.profile.maxRadius, 0.1) * 1.04;
-          const polygon = [point(segment.zStart, -radius), point(segment.zEnd, -radius), point(segment.zEnd, radius), point(segment.zStart, radius)];
-          const origin = segment.semanticEvidenceIds.map((id) => {
-            var _a2;
-            return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
-          }).find(Boolean) ?? "geometry";
-          return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-partition-origin": origin, "data-segment-id": segment.id, children: [
-            /* @__PURE__ */ jsxRuntime.jsx("polygon", { points: polygon.map((value) => value.join(",")).join(" "), className: `vai-partition-band vai-partition-band--${origin}`, "data-line-style": origin === "document" ? "solid" : origin === "ai" ? "dotted" : "dashed" }),
-            /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${point((segment.zStart + segment.zEnd) / 2, 0).join(" ")}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntime.jsx("text", { className: "vai-partition-label", textAnchor: "middle", children: segment.name ?? `S${index + 1}` }) })
-          ] }, segment.id);
-        }),
-        !previewHeld && draft.segments.slice(0, -1).map((segment, offset) => {
-          const index = offset + 1;
-          const z = (drag == null ? void 0 : drag.index) === index ? drag.z : segment.zEnd;
-          const position = point(z, 0);
-          return /* @__PURE__ */ jsxRuntime.jsx(
-            "circle",
+        bands.map((band, bandIndex) => {
+          const radius = Math.max(...band.segments.map(({ profile }) => profile.maxRadius), 0.1) * 1.04;
+          const zStart = (drag == null ? void 0 : drag.index) === band.startSegmentIndex ? drag.z : band.segments[0].zStart;
+          const zEnd = (drag == null ? void 0 : drag.index) === band.endSegmentIndex + 1 ? drag.z : band.segments.at(-1).zEnd;
+          const polygon = [point3(zStart, -radius), point3(zEnd, -radius), point3(zEnd, radius), point3(zStart, radius)];
+          const label = bandLabel(band, bandIndex);
+          const labelAnchor = point3((zStart + zEnd) / 2, radius);
+          const labelWidth = Math.max(44, visualLength(label) * 7 + 18);
+          const labelY = -18 - bandIndex % 3 * 22;
+          return /* @__PURE__ */ jsxRuntime.jsxs(
+            "g",
             {
-              "aria-label": `移动分区边界 ${index}`,
-              className: "vai-partition-handle",
-              cx: position[0],
-              cy: position[1],
-              r: 7 / Math.max(scale, 0.01),
-              onPointerDown: (event) => {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                current.current = { index, z };
-                setDrag(current.current);
-              },
-              onPointerMove: pointerMove,
-              onPointerUp: pointerUp,
-              onPointerCancel: pointerUp
+              "data-partition-origin": band.origin,
+              "data-segment-ids": band.segmentIds.join(" "),
+              "aria-label": `分区 ${label}`,
+              children: [
+                /* @__PURE__ */ jsxRuntime.jsx(
+                  "polygon",
+                  {
+                    "data-partition-band": "true",
+                    points: polygon.map((value) => value.join(",")).join(" "),
+                    className: `vai-partition-band vai-partition-band--${band.origin}`,
+                    "data-line-style": band.origin === "document" ? "solid" : band.origin === "ai" ? "dotted" : "dashed"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntime.jsxs("g", { className: "vai-partition-label-anchor", transform: `translate(${labelAnchor[0]} ${labelAnchor[1]}) scale(${1 / Math.max(scale, 0.01)} ${-1 / Math.max(scale, 0.01)})`, pointerEvents: "none", children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("rect", { className: "vai-partition-label-bg", x: -labelWidth / 2, y: labelY - 10, width: labelWidth, height: 20, rx: 7 }),
+                  /* @__PURE__ */ jsxRuntime.jsx("text", { className: "vai-partition-label", x: 0, y: labelY, textAnchor: "middle", dominantBaseline: "middle", children: label })
+                ] })
+              ]
             },
-            `boundary:${index}`
+            band.segmentIds.join("+")
           );
+        }),
+        !previewHeld && bands.slice(0, -1).map((band, offset) => {
+          const index = band.endSegmentIndex + 1;
+          const z = (drag == null ? void 0 : drag.index) === index ? drag.z : draft.segments[index - 1].zEnd;
+          const anchor = point3(z, 0);
+          const lane = boundaryLanes[offset];
+          const position = point3(z, lane * 12 / Math.max(scale, 0.01));
+          return /* @__PURE__ */ jsxRuntime.jsxs("g", { children: [
+            lane !== 0 && /* @__PURE__ */ jsxRuntime.jsx("line", { className: "vai-partition-handle-leader", x1: anchor[0], y1: anchor[1], x2: position[0], y2: position[1], pointerEvents: "none" }),
+            /* @__PURE__ */ jsxRuntime.jsx(
+              "circle",
+              {
+                "aria-label": `移动分区边界 ${index}`,
+                "data-handle-lane": lane,
+                className: "vai-partition-handle",
+                cx: position[0],
+                cy: position[1],
+                r: 7 / Math.max(scale, 0.01),
+                onMouseDown: (event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                },
+                onPointerDown: (event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  current.current = { index, z, lastClientX: event.clientX, lastClientY: event.clientY };
+                  setDrag(current.current);
+                },
+                onPointerMove: pointerMove,
+                onPointerUp: (event) => finishPointer(event, true),
+                onPointerCancel: (event) => finishPointer(event, true),
+                onLostPointerCapture: (event) => void finishPointer(event, false)
+              }
+            )
+          ] }, `boundary:${index}`);
         })
       ] });
+    }
+    function bandLabel(band, index) {
+      const names = [...new Set(band.segments.map(({ name, semanticType }) => (name == null ? void 0 : name.trim()) || (semanticType == null ? void 0 : semanticType.trim())).filter(Boolean))];
+      const label = names.length > 0 ? names.join(" · ") : `分区 ${index + 1}`;
+      return label.length > 18 ? `${label.slice(0, 17)}…` : label;
+    }
+    function visualLength(value) {
+      return [...value].reduce((total, character) => total + (/[^\u0000-\u00ff]/.test(character) ? 2 : 1), 0);
+    }
+    function functionalBands(draft) {
+      return draft.segments.map((segment, index) => ({
+        segments: [segment],
+        segmentIds: [segment.id],
+        origin: segment.semanticEvidenceIds.map((id) => {
+          var _a2;
+          return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
+        }).find(Boolean) ?? "geometry",
+        startSegmentIndex: index,
+        endSegmentIndex: index
+      }));
     }
     function PartitionActionToolbar({ controller, previewHeld }) {
       return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": "分区确认工具栏", children: [
@@ -1078,7 +5766,409 @@ window.__ModuleLoader__.load({
         draft.diagnostics.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-partition-diagnostics", children: draft.diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntime.jsx("p", { children: diagnostic.code }, diagnostic.id)) })
       ] });
     }
-    function AnnotationWorkspace({ namespace, runtime, state, partition }) {
+    function DimensionPlanInspector({ draft, generationOrder }) {
+      const intentsById = new Map(draft.intents.map((intent) => [intent.id, intent]));
+      const tolerancesByIntentId = new Map(draft.tolerances.map((tolerance) => [tolerance.dimensionIntentId, tolerance]));
+      const datumsById = new Map(draft.datums.map((datum) => [datum.id, datum]));
+      const orderedIntents = generationOrder.flatMap((id) => {
+        const intent = intentsById.get(id);
+        return intent === void 0 ? [] : [intent];
+      });
+      return /* @__PURE__ */ jsxRuntime.jsxs("section", { className: "vai-dimension-plan", "aria-label": "尺寸计划检查", children: [
+        /* @__PURE__ */ jsxRuntime.jsxs("header", { children: [
+          /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "尺寸标注计划" }),
+          /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+            orderedIntents.length,
+            " 项"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsx("ol", { "aria-label": "尺寸标注顺序", children: orderedIntents.map((intent, index) => {
+          const tolerance = tolerancesByIntentId.get(intent.id);
+          const datumNames = intent.datumIds.flatMap((id) => {
+            const datum = datumsById.get(id);
+            return datum === void 0 ? [] : [datum.name];
+          });
+          const chainRoles = draft.chains.flatMap((chain) => chain.members.filter((member) => member.dimensionIntentId === intent.id).map((member) => `${chain.name ?? chain.id} · ${chainRoleLabel(member.role)}`));
+          const diagnostics = [
+            ...draft.diagnostics.filter(({ entityIds }) => entityIds == null ? void 0 : entityIds.includes(intent.id)),
+            ...(tolerance == null ? void 0 : tolerance.diagnostics) ?? []
+          ];
+          return /* @__PURE__ */ jsxRuntime.jsxs(
+            "li",
+            {
+              "data-dimension-intent-id": intent.id,
+              "aria-label": `标注 ${index + 1}: ${intent.id}`,
+              children: [
+                /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-dimension-plan__row-title", children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-dimension-plan__order", children: index + 1 }),
+                  /* @__PURE__ */ jsxRuntime.jsx("strong", { children: roleLabel(intent.functionalRole) }),
+                  /* @__PURE__ */ jsxRuntime.jsx("span", { className: `vai-dimension-badge vai-dimension-badge--${intent.status}`, children: stateLabel(intent.status) })
+                ] }),
+                /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-dimension-plan__nominal", children: [
+                  intent.nominalValue,
+                  " ",
+                  intent.unit
+                ] }),
+                /* @__PURE__ */ jsxRuntime.jsxs("dl", { children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "意图" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("dd", { children: intent.id }),
+                  /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "基准" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("dd", { children: datumNames.length === 0 ? "无" : datumNames.map((name) => `基准 ${name}`).join("、") }),
+                  /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "尺寸链" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("dd", { children: chainRoles.length === 0 ? "无" : chainRoles.join("；") }),
+                  /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "公差" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("dd", { children: tolerance === void 0 ? "未设置" : /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+                    /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+                      toleranceSourceLabel(tolerance.source),
+                      " · ",
+                      toleranceStateLabel(tolerance.status)
+                    ] }),
+                    tolerance.ruleRef && /* @__PURE__ */ jsxRuntime.jsxs("code", { children: [
+                      tolerance.ruleRef.id,
+                      "@",
+                      tolerance.ruleRef.version
+                    ] })
+                  ] }) })
+                ] }),
+                diagnostics.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-dimension-plan__diagnostics", "aria-label": `${intent.id} 诊断`, children: diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntime.jsx("span", { children: diagnostic.code }, diagnostic.id)) })
+              ]
+            },
+            intent.id
+          );
+        }) })
+      ] });
+    }
+    function roleLabel(role) {
+      return {
+        datum: "基准建立",
+        overall: "总体尺寸",
+        functional: "功能尺寸",
+        assembly: "装配尺寸",
+        process: "组成尺寸",
+        inspection: "检验尺寸",
+        auxiliary: "辅助尺寸",
+        closure: "闭环尺寸"
+      }[role];
+    }
+    function stateLabel(status) {
+      return {
+        candidate: "候选",
+        resolved: "已解析",
+        confirmed: "已确认",
+        conflict: "冲突",
+        stale: "已过期"
+      }[status];
+    }
+    function toleranceStateLabel(status) {
+      return status === "candidate" ? "待解析" : stateLabel(status);
+    }
+    function toleranceSourceLabel(source) {
+      return {
+        document: "文档",
+        standard: "标准",
+        "enterprise-rule": "企业规则",
+        manual: "手动",
+        "ai-candidate": "AI 候选"
+      }[source];
+    }
+    function chainRoleLabel(role) {
+      return { functional: "功能环", component: "组成环", closure: "封闭环" }[role];
+    }
+    function ConfirmedPartitionInspector({
+      revision,
+      busy,
+      onReopen
+    }) {
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-inspector vai-confirmed-partition", children: [
+        /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-confirmed-partition__heading", children: [
+          /* @__PURE__ */ jsxRuntime.jsxs("div", { children: [
+            /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "轴段分区" }),
+            /* @__PURE__ */ jsxRuntime.jsx("span", { children: "已确认" })
+          ] }),
+          /* @__PURE__ */ jsxRuntime.jsxs("button", { type: "button", "aria-label": "重新编辑分区", disabled: busy, onClick: () => void onReopen().catch(() => void 0), children: [
+            /* @__PURE__ */ jsxRuntime.jsx(PencilLine, { size: 14, "aria-hidden": "true" }),
+            "重新编辑"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("dl", { className: "vai-confirmed-partition__meta", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "版本" }),
+          /* @__PURE__ */ jsxRuntime.jsx("dd", { children: revision.id }),
+          /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "确认时间" }),
+          /* @__PURE__ */ jsxRuntime.jsx("dd", { children: formatConfirmedAt(revision.confirmedAt) })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsx("ol", { children: revision.segments.map((segment, index) => /* @__PURE__ */ jsxRuntime.jsxs("li", { children: [
+          /* @__PURE__ */ jsxRuntime.jsx("span", { children: segment.name ?? `轴段 S${index + 1}` }),
+          /* @__PURE__ */ jsxRuntime.jsxs("small", { children: [
+            segment.zStart.toFixed(2),
+            " – ",
+            segment.zEnd.toFixed(2),
+            " · ⌀",
+            (segment.profile.maxRadius * 2).toFixed(2)
+          ] }),
+          segment.semanticType && /* @__PURE__ */ jsxRuntime.jsx("em", { children: segment.semanticType })
+        ] }, segment.id)) })
+      ] });
+    }
+    function formatConfirmedAt(value) {
+      return new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(new Date(value));
+    }
+    const ENGINEERING_IMPORT_LIMITS = Object.freeze({
+      maxDxfBytes: 20 * 1024 * 1024,
+      maxDocumentBytes: 20 * 1024 * 1024,
+      maxDocumentTotalBytes: 50 * 1024 * 1024,
+      maxDocuments: 16
+    });
+    const SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS = Object.freeze([
+      "txt",
+      "md",
+      "csv",
+      "tsv",
+      "json",
+      "yaml",
+      "yml",
+      "ini",
+      "xml",
+      "html",
+      "htm",
+      "log",
+      "pdf",
+      "docx",
+      "xlsx",
+      "pptx",
+      "odt",
+      "ods",
+      "odp",
+      "rtf",
+      "epub"
+    ]);
+    const LEGACY_ENGINEERING_DOCUMENT_EXTENSIONS = Object.freeze(["doc", "xls", "ppt"]);
+    function extensionOf(name) {
+      const dot2 = name.lastIndexOf(".");
+      return dot2 < 0 ? "" : name.slice(dot2 + 1).toLowerCase();
+    }
+    function validateEngineeringDocumentFiles(files) {
+      if (files.length > ENGINEERING_IMPORT_LIMITS.maxDocuments) {
+        throw new Error("ENGINEERING_DOCUMENT_COUNT_LIMIT");
+      }
+      if (files.some((file) => file.size > ENGINEERING_IMPORT_LIMITS.maxDocumentBytes)) {
+        throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+      }
+      if (files.reduce((total, file) => total + file.size, 0) > ENGINEERING_IMPORT_LIMITS.maxDocumentTotalBytes) {
+        throw new Error("ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT");
+      }
+    }
+    const supported = new Set(SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS);
+    const legacy = new Set(LEGACY_ENGINEERING_DOCUMENT_EXTENSIONS);
+    function classifyEngineeringDrop(files) {
+      const dxfs = files.filter((file) => extensionOf(file.name) === "dxf");
+      if (dxfs.length > 1) {
+        return { kind: "reject", code: "ENGINEERING_DROP_MULTIPLE_DXF", filenames: dxfs.map(({ name }) => name) };
+      }
+      const rest = files.filter((file) => extensionOf(file.name) !== "dxf");
+      const supportedDocuments = rest.filter((file) => supported.has(extensionOf(file.name)));
+      const legacyDocuments = rest.filter((file) => legacy.has(extensionOf(file.name)));
+      const engineeringIntent = dxfs.length === 1 || supportedDocuments.length > 0 || legacyDocuments.length > 0;
+      if (!engineeringIntent) return { kind: "pass" };
+      if (legacyDocuments.length > 0) {
+        return { kind: "reject", code: "DOCUMENT_LEGACY_FORMAT_UNSUPPORTED", filenames: legacyDocuments.map(({ name }) => name) };
+      }
+      const unsupported = rest.filter((file) => !supported.has(extensionOf(file.name)));
+      if (unsupported.length > 0) {
+        return { kind: "reject", code: "ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED", filenames: unsupported.map(({ name }) => name) };
+      }
+      if (dxfs[0] && dxfs[0].size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) {
+        return { kind: "reject", code: "DXF_SIZE_LIMIT", filenames: [dxfs[0].name] };
+      }
+      if (supportedDocuments.length > ENGINEERING_IMPORT_LIMITS.maxDocuments) {
+        return { kind: "reject", code: "ENGINEERING_DOCUMENT_COUNT_LIMIT", filenames: supportedDocuments.map(({ name }) => name) };
+      }
+      const oversized = supportedDocuments.filter((file) => file.size > ENGINEERING_IMPORT_LIMITS.maxDocumentBytes);
+      if (oversized.length > 0) {
+        return { kind: "reject", code: "ENGINEERING_DOCUMENT_SIZE_LIMIT", filenames: oversized.map(({ name }) => name) };
+      }
+      if (supportedDocuments.reduce((total, file) => total + file.size, 0) > ENGINEERING_IMPORT_LIMITS.maxDocumentTotalBytes) {
+        return { kind: "reject", code: "ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT", filenames: supportedDocuments.map(({ name }) => name) };
+      }
+      const byName = /* @__PURE__ */ new Map();
+      for (const file of supportedDocuments) {
+        const key = file.name.toLocaleLowerCase();
+        byName.set(key, [...byName.get(key) ?? [], file]);
+      }
+      const duplicates = [...byName.values()].filter((group) => group.length > 1).flat();
+      if (duplicates.length > 0) {
+        return { kind: "reject", code: "ENGINEERING_DOCUMENT_DUPLICATE_NAME", filenames: duplicates.map(({ name }) => name) };
+      }
+      if (dxfs[0]) return { kind: "import", dxf: dxfs[0], documents: supportedDocuments };
+      return { kind: "pending", documents: supportedDocuments };
+    }
+    function createEngineeringDropBridgeController(input) {
+      let current = { phase: "idle", pendingDocuments: [], filenames: [] };
+      const listeners = /* @__PURE__ */ new Set();
+      const update = (next) => {
+        current = next;
+        for (const listener of listeners) listener();
+      };
+      const own = (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      };
+      const inspect = (event) => classifyEngineeringDrop(filesFromTransfer(event.dataTransfer));
+      const handleDrop = async (event) => {
+        var _a2, _b;
+        const decision = inspect(event);
+        if (decision.kind === "pass") return;
+        own(event);
+        (_a2 = input.releaseNativeDragState) == null ? void 0 : _a2.call(input);
+        if (decision.kind === "reject") {
+          update({ phase: "error", pendingDocuments: [], code: decision.code, filenames: decision.filenames });
+          return;
+        }
+        if (decision.kind === "pending") {
+          const combined2 = classifyEngineeringDrop([...current.pendingDocuments, ...decision.documents]);
+          if (combined2.kind === "reject") {
+            update({ phase: "error", pendingDocuments: [], code: combined2.code, filenames: combined2.filenames });
+            return;
+          }
+          const documents = combined2.kind === "pending" ? combined2.documents : decision.documents;
+          if (((_b = input.hasDrawing) == null ? void 0 : _b.call(input)) === true && input.supplementDocuments !== void 0) {
+            update({ phase: "importing", pendingDocuments: [], filenames: documents.map(({ name }) => name) });
+            try {
+              await input.supplementDocuments(documents);
+              await input.refreshClaim();
+              update({ phase: "success", pendingDocuments: [], filenames: documents.map(({ name }) => name) });
+            } catch (error) {
+              update({
+                phase: "error",
+                pendingDocuments: [],
+                code: error instanceof Error ? error.message : String(error),
+                filenames: []
+              });
+            }
+            return;
+          }
+          update({ phase: "pending", pendingDocuments: [...documents], filenames: documents.map(({ name }) => name) });
+          return;
+        }
+        const combined = classifyEngineeringDrop([decision.dxf, ...current.pendingDocuments, ...decision.documents]);
+        if (combined.kind !== "import") {
+          const rejected = combined.kind === "reject" ? combined : {
+            code: "ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED",
+            filenames: []
+          };
+          update({ phase: "error", pendingDocuments: [], code: rejected.code, filenames: rejected.filenames });
+          return;
+        }
+        update({ phase: "importing", pendingDocuments: [], filenames: [combined.dxf.name, ...combined.documents.map(({ name }) => name)] });
+        try {
+          await input.importFiles(combined.dxf, combined.documents);
+          await input.refreshClaim();
+          update({
+            phase: "success",
+            pendingDocuments: [],
+            filenames: [combined.dxf.name, ...combined.documents.map(({ name }) => name)]
+          });
+        } catch (error) {
+          update({
+            phase: "error",
+            pendingDocuments: [],
+            code: error instanceof Error ? error.message : String(error),
+            filenames: []
+          });
+        }
+      };
+      const preview = (event) => {
+        if (inspect(event).kind !== "pass") own(event);
+      };
+      return {
+        state: {
+          getSnapshot: () => current,
+          subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          }
+        },
+        actions: {
+          handleDrop,
+          attach(target) {
+            const drop = (event) => {
+              void handleDrop(event);
+            };
+            target.addEventListener("dragenter", preview, true);
+            target.addEventListener("dragover", preview, true);
+            target.addEventListener("drop", drop, true);
+            return () => {
+              target.removeEventListener("dragenter", preview, true);
+              target.removeEventListener("dragover", preview, true);
+              target.removeEventListener("drop", drop, true);
+              update({ phase: "idle", pendingDocuments: [], filenames: [] });
+            };
+          },
+          clear: () => update({ phase: "idle", pendingDocuments: [], filenames: [] })
+        }
+      };
+    }
+    function filesFromTransfer(dataTransfer) {
+      if (dataTransfer === null) return [];
+      const droppedFiles = Array.from(dataTransfer.files);
+      if (droppedFiles.length > 0 || dataTransfer.items === void 0) return droppedFiles;
+      const previewFiles = [];
+      for (const item of Array.from(dataTransfer.items)) {
+        if (item.kind !== "file") continue;
+        try {
+          const file = item.getAsFile();
+          if (file !== null) previewFiles.push(file);
+        } catch {
+        }
+      }
+      return previewFiles;
+    }
+    function EngineeringDropBridge({ partition, refreshClaim }) {
+      const bridge = react.useMemo(() => createEngineeringDropBridgeController({
+        importFiles: partition.actions.importFiles,
+        supplementDocuments: partition.actions.supplementDocuments,
+        hasDrawing: () => partition.state.getSnapshot().partition.drawingRef !== void 0,
+        refreshClaim,
+        releaseNativeDragState: releaseDshNativeDragState
+      }), [partition, refreshClaim]);
+      const state = react.useSyncExternalStore(bridge.state.subscribe, bridge.state.getSnapshot, bridge.state.getSnapshot);
+      react.useEffect(() => bridge.actions.attach(document), [bridge]);
+      if (state.phase === "idle") return null;
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: `vai-engineering-drop vai-engineering-drop--${state.phase}`, role: state.phase === "error" ? "alert" : "status", children: [
+        /* @__PURE__ */ jsxRuntime.jsx("span", { children: dropStatusText(state) }),
+        (state.phase === "pending" || state.phase === "error") && /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", onClick: bridge.actions.clear, children: "清除" })
+      ] });
+    }
+    function releaseDshNativeDragState() {
+      window.dispatchEvent(new Event("dragend"));
+    }
+    function dropStatusText(state) {
+      if (state.phase === "pending") return `已暂存 ${state.pendingDocuments.length} 份工程资料，拖入 DXF 后开始智能分区`;
+      if (state.phase === "importing") return `正在本地读取并分析：${state.filenames.join("、")}`;
+      if (state.phase === "success") return `导入完成，正在打开分区界面：${state.filenames.join("、")}`;
+      return engineeringImportErrorText(state.code, state.filenames);
+    }
+    function engineeringImportErrorText(code, filenames = []) {
+      const names = filenames.length === 0 ? "" : `（${filenames.join("、")}）`;
+      if (code == null ? void 0 : code.startsWith("DOCUMENT_PARSE_TIMEOUT")) return `文档本地解析超时${names}`;
+      if (code == null ? void 0 : code.startsWith("DOCUMENT_PARSE_FAILED")) return `文档解析失败${names}`;
+      if (code == null ? void 0 : code.startsWith("DOCUMENT_TEXT_EMPTY")) return `文档中没有可提取的文字；扫描件暂不支持 OCR${names}`;
+      if (code == null ? void 0 : code.startsWith("DOCUMENT_LEGACY_FORMAT_UNSUPPORTED")) return `旧版 DOC/XLS/PPT 暂不支持，请另存为新版 Office、PDF 或文本格式${names}`;
+      if (code === "ENGINEERING_DROP_MULTIPLE_DXF") return `一次只能导入一张 DXF 图纸${names}`;
+      if (code == null ? void 0 : code.startsWith("ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED")) return `包含暂不支持的工程资料格式${names}`;
+      if (code === "ENGINEERING_DOCUMENT_DUPLICATE_NAME") return `工程资料存在重名文件${names}`;
+      if ((code == null ? void 0 : code.includes("SIZE_LIMIT")) || (code == null ? void 0 : code.includes("COUNT_LIMIT"))) return `工程文件超过本地导入限制${names}`;
+      return `工程文件导入失败：${code ?? "UNKNOWN"}`;
+    }
+    const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(",");
+    const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
+    function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPlan }) {
       var _a2;
       const snapshot = useObservable(runtime.snapshot);
       const viewport = useObservable(runtime.viewport);
@@ -1086,11 +6176,21 @@ window.__ModuleLoader__.load({
       const presentation = useObservable(runtime.presentation);
       const annotationState = useObservable(state);
       const partitionState = useObservable(partition.state);
-      const [dxf, setDxf] = react.useState(null);
-      const [engineering, setEngineering] = react.useState(null);
-      const [showImport, setShowImport] = react.useState(false);
       const displaySnapshot = presentation.displaySnapshot ?? snapshot;
+      const [importError, setImportError] = react.useState(null);
+      const [activePanel, setActivePanel] = react.useState(null);
+      const [panelWidth, setPanelWidth] = react.useState(260);
+      const fitAfterAnalysis = react.useRef(partitionState.busy);
+      const surfaceSnapshot = react.useMemo(() => displaySnapshot === null ? null : {
+        ...displaySnapshot,
+        document: {
+          ...displaySnapshot.document,
+          annotations: displaySnapshot.document.annotations.filter(({ type }) => type === "section-hatch"),
+          relations: []
+        }
+      }, [displaySnapshot]);
       const draft = partitionState.partition.draft;
+      const confirmed = partitionState.partition.confirmed;
       react.useEffect(() => {
         const release = () => partition.actions.setPreviewHeld(false);
         window.addEventListener("blur", release);
@@ -1099,6 +6199,61 @@ window.__ModuleLoader__.load({
           release();
         };
       }, [partition]);
+      react.useEffect(() => {
+        if (!partitionState.busy) {
+          void runtime.actions.refresh().then(() => {
+            if (!fitAfterAnalysis.current) return;
+            fitAfterAnalysis.current = false;
+            fitRuntimeToDrawing(runtime);
+          });
+          return;
+        }
+        fitAfterAnalysis.current = true;
+        void runtime.actions.refresh();
+        const timer = window.setInterval(() => {
+          void runtime.actions.refresh();
+        }, 500);
+        return () => window.clearInterval(timer);
+      }, [partitionState.busy, runtime]);
+      react.useEffect(() => {
+        if (displaySnapshot === null) return;
+        fitRuntimeToDrawing(runtime, displaySnapshot);
+      }, [displaySnapshot == null ? void 0 : displaySnapshot.ref.drawingId, displaySnapshot == null ? void 0 : displaySnapshot.ref.revision, runtime]);
+      const beginImport = (drawing, documents) => {
+        setImportError(null);
+        void partition.actions.importFiles(drawing, documents).then(() => setActivePanel(null)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+      };
+      const handleToolbarUpload = (files) => {
+        const decision = classifyEngineeringDrop(files);
+        if (decision.kind === "import") {
+          beginImport(decision.dxf, decision.documents);
+          return;
+        }
+        if (decision.kind === "pending") {
+          if (partitionState.partition.drawingRef) {
+            setImportError(null);
+            void partition.actions.supplementDocuments(decision.documents).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+          } else {
+            setImportError("请同时选择 DXF 图纸；工程文档不能单独创建图纸");
+          }
+          return;
+        }
+        setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
+      };
+      const structurePanel = /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-annotation-panel", children: dimensionPlan ? /* @__PURE__ */ jsxRuntime.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }) : draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntime.jsx(PartitionInspector, { draft, controller: partition }, partitionState.partition.updatedAt) : confirmed && partitionState.partition.phase === "confirmed" ? /* @__PURE__ */ jsxRuntime.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, onReopen: partition.actions.reopen }) : /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "标注检查" }),
+        /* @__PURE__ */ jsxRuntime.jsxs("dl", { children: [
+          /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "流程" }),
+          /* @__PURE__ */ jsxRuntime.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
+          /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "候选" }),
+          /* @__PURE__ */ jsxRuntime.jsx("dd", { children: ((_a2 = presentation.preview) == null ? void 0 : _a2.diff.createdNodeIds.length) ?? 0 }),
+          /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "选中" }),
+          /* @__PURE__ */ jsxRuntime.jsx("dd", { children: selectedIds.length })
+        ] })
+      ] }) });
+      const panels = [
+        { id: "structure", label: "图纸结构", icon: ListTree, render: () => structurePanel }
+      ];
       return /* @__PURE__ */ jsxRuntime.jsxs(
         "section",
         {
@@ -1112,25 +6267,35 @@ window.__ModuleLoader__.load({
                 /* @__PURE__ */ jsxRuntime.jsx("span", { children: displaySnapshot === null ? "等待图纸" : `${displaySnapshot.ref.drawingId} · R${displaySnapshot.ref.revision}` }),
                 (displaySnapshot == null ? void 0 : displaySnapshot.provisional) && /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-annotation-provisional", children: "候选图纸" })
               ] }),
-              /* @__PURE__ */ jsxRuntime.jsx("span", { "data-annotation-workflow": annotationState.workflow.status, children: workflowLabel(annotationState.workflow.status) })
+              /* @__PURE__ */ jsxRuntime.jsx("span", { "data-annotation-workflow": annotationState.workflow.status, children: partitionProgressLabel(partitionState.partition.phase, partitionState.busy, annotationState.workflow.status) })
             ] }),
             /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-annotation-workspace__body", children: [
-              /* @__PURE__ */ jsxRuntime.jsxs("nav", { className: "vai-annotation-workspace__rail", "aria-label": "标注流程", children: [
-                /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "导入 DXF", title: "导入 DXF", onClick: () => setShowImport(true), children: "↥" }),
-                /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "图纸结构", title: "图纸结构", children: "⌗" }),
-                /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "标注候选", title: "标注候选", children: "⌖" }),
-                /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "冲突检查", title: "冲突检查", children: "△" })
-              ] }),
+              /* @__PURE__ */ jsxRuntime.jsx(
+                WorkspaceActivityBar,
+                {
+                  overlay: true,
+                  activePanel,
+                  panelWidth,
+                  onActivePanelChange: setActivePanel,
+                  onPanelWidthChange: setPanelWidth,
+                  panels
+                }
+              ),
               /* @__PURE__ */ jsxRuntime.jsxs("main", { className: "vai-annotation-workspace__canvas", children: [
-                displaySnapshot !== null && /* @__PURE__ */ jsxRuntime.jsx(
+                partitionState.busy && /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-progress", "data-partition-progress": partitionState.partition.phase, role: "status", children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-partition-progress__pulse", "aria-hidden": "true" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("span", { children: partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status) })
+                ] }),
+                surfaceSnapshot !== null && /* @__PURE__ */ jsxRuntime.jsx(
                   DrawingSurface,
                   {
-                    snapshot: displaySnapshot,
+                    snapshot: surfaceSnapshot,
                     viewport,
                     selectedIds,
                     display: presentation.display,
                     sourceUrl: presentation.sourceUrl,
                     className: "vai-canvas vai-annotation-workspace__surface",
+                    fitToDrawingOnResize: "geometry",
                     onViewportChange: runtime.actions.setViewport,
                     onSelectionChange: runtime.actions.setSelection,
                     worldLayers: /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
@@ -1141,57 +6306,41 @@ window.__ModuleLoader__.load({
                           draft,
                           previewHeld: partitionState.previewHeld,
                           scale: viewport.scale,
-                          onMoveBoundary: (index, z) => void partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05)).catch(() => void 0)
+                          onMoveBoundary: (index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05))
                         }
                       )
                     ] })
                   }
                 ),
-                (displaySnapshot === null || showImport) && /* @__PURE__ */ jsxRuntime.jsxs("form", { className: "vai-annotation-import", onSubmit: (event) => {
-                  event.preventDefault();
-                  if (dxf) void partition.actions.importFiles(dxf, engineering ?? void 0).then(() => setShowImport(false)).catch(() => void 0);
-                }, children: [
-                  /* @__PURE__ */ jsxRuntime.jsx("strong", { children: "导入轴类工程图" }),
-                  /* @__PURE__ */ jsxRuntime.jsx("p", { children: "DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。" }),
-                  /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
-                    "DXF 图纸",
-                    /* @__PURE__ */ jsxRuntime.jsx("input", { type: "file", accept: ".dxf,application/dxf", onChange: (event) => {
-                      var _a3;
-                      return setDxf(((_a3 = event.currentTarget.files) == null ? void 0 : _a3[0]) ?? null);
-                    } })
-                  ] }),
-                  /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
-                    "工程数据文档（可选）",
-                    /* @__PURE__ */ jsxRuntime.jsx("input", { type: "file", accept: ".txt,.ini,text/plain", onChange: (event) => {
-                      var _a3;
-                      return setEngineering(((_a3 = event.currentTarget.files) == null ? void 0 : _a3[0]) ?? null);
-                    } })
-                  ] }),
-                  /* @__PURE__ */ jsxRuntime.jsx("button", { type: "submit", disabled: !dxf || partitionState.busy, children: partitionState.busy ? "正在分析…" : "导入并智能分区" }),
-                  displaySnapshot !== null && /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-annotation-import__close", onClick: () => setShowImport(false), children: "关闭" }),
-                  partitionState.error && /* @__PURE__ */ jsxRuntime.jsx("p", { role: "alert", children: partitionState.error })
-                ] }),
+                (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntime.jsx("p", { className: "vai-partition-error", role: "alert", children: importError ?? `边界未保存：${partitionState.error}` }),
                 partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
-                (partitionState.partition.canUndo || partitionState.partition.canRedo) && /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-history", role: "toolbar", "aria-label": "分区历史", children: [
-                  /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "撤销分区", disabled: !partitionState.partition.canUndo, onClick: () => void partition.actions.undo().catch(() => void 0), children: "↶" }),
-                  /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", "aria-label": "重做分区", disabled: !partitionState.partition.canRedo, onClick: () => void partition.actions.redo().catch(() => void 0), children: "↷" })
-                ] })
-              ] }),
-              /* @__PURE__ */ jsxRuntime.jsx("aside", { className: "vai-annotation-workspace__inspector", children: draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntime.jsx(PartitionInspector, { draft, controller: partition }, partitionState.partition.updatedAt) : /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
-                /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "标注检查" }),
-                /* @__PURE__ */ jsxRuntime.jsxs("dl", { children: [
-                  /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "流程" }),
-                  /* @__PURE__ */ jsxRuntime.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
-                  /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "候选" }),
-                  /* @__PURE__ */ jsxRuntime.jsx("dd", { children: ((_a2 = presentation.preview) == null ? void 0 : _a2.diff.createdNodeIds.length) ?? 0 }),
-                  /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "选中" }),
-                  /* @__PURE__ */ jsxRuntime.jsx("dd", { children: selectedIds.length })
-                ] })
-              ] }) })
+                displaySnapshot && /* @__PURE__ */ jsxRuntime.jsx(
+                  WorkspaceToolbarView,
+                  {
+                    snapshot: displaySnapshot,
+                    viewport,
+                    unavailable: partitionState.busy,
+                    canUndo: partitionState.partition.canUndo,
+                    canRedo: partitionState.partition.canRedo,
+                    onFit: runtime.actions.setViewport,
+                    onUndo: () => partition.actions.undo(),
+                    onRedo: () => partition.actions.redo(),
+                    onUploadFiles: handleToolbarUpload,
+                    uploadAccept: ANNOTATION_UPLOAD_ACCEPT,
+                    uploadMultiple: true
+                  }
+                )
+              ] })
             ] })
           ]
         }
       );
+    }
+    function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot()) {
+      if (snapshot === null) return;
+      const viewport = runtime.viewport.getSnapshot();
+      if (viewport.width <= 0 || viewport.height <= 0) return;
+      runtime.actions.setViewport(fitViewportToDrawing({ ...snapshot.document, annotations: [] }, viewport));
     }
     function useObservable(observable) {
       return react.useSyncExternalStore(observable.subscribe, observable.getSnapshot, observable.getSnapshot);
@@ -1206,6 +6355,14 @@ window.__ModuleLoader__.load({
         failed: "需要处理",
         "needs-rebase": "图纸已变化"
       }[status];
+    }
+    function partitionProgressLabel(phase, busy, workflowStatus) {
+      if (busy || phase === "analyzing") return "正在识别轴段并进行 AI 语义复核";
+      if (phase === "editing") return "分区草稿待确认";
+      if (phase === "confirmed") return "分区已确认";
+      if (phase === "needs-rebase") return "图纸已变化";
+      if (phase === "failed") return "分区需要处理";
+      return workflowLabel(workflowStatus);
     }
     function createAnnotationRemoteStateSource(remote, options = {}) {
       const entries = /* @__PURE__ */ new Map();
@@ -4925,9 +10082,9 @@ window.__ModuleLoader__.load({
         json.type = "number";
       const exMin = typeof exclusiveMinimum === "number" && exclusiveMinimum >= (minimum ?? Number.NEGATIVE_INFINITY);
       const exMax = typeof exclusiveMaximum === "number" && exclusiveMaximum <= (maximum ?? Number.POSITIVE_INFINITY);
-      const legacy = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
+      const legacy2 = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
       if (exMin) {
-        if (legacy) {
+        if (legacy2) {
           json.minimum = exclusiveMinimum;
           json.exclusiveMinimum = true;
         } else {
@@ -4937,7 +10094,7 @@ window.__ModuleLoader__.load({
         json.minimum = minimum;
       }
       if (exMax) {
-        if (legacy) {
+        if (legacy2) {
           json.maximum = exclusiveMaximum;
           json.exclusiveMaximum = true;
         } else {
@@ -6170,6 +11327,9 @@ window.__ModuleLoader__.load({
       };
       return inst;
     }
+    const ZodIssueCode = {
+      custom: "custom"
+    };
     const protocolIdSchema = string().trim().min(1).max(256);
     const contentDigestSchema = string().trim().min(1).max(512);
     const idSchema$3 = protocolIdSchema;
@@ -6614,6 +11774,95 @@ window.__ModuleLoader__.load({
       score: number(),
       reasons: array(string())
     }).strict();
+    const toleranceProjectionSchema = object({
+      mode: _enum(["none", "bilateral", "unilateral", "limits", "fit"]),
+      upperDeviation: number().finite().optional(),
+      lowerDeviation: number().finite().optional(),
+      upperLimit: number().finite().optional(),
+      lowerLimit: number().finite().optional(),
+      fitDesignation: string().min(1).max(32).optional(),
+      unit: _enum(["mm", "cm", "m", "deg"]),
+      status: _enum(["candidate", "resolved", "confirmed", "conflict"]),
+      source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+      ruleRef: object({
+        id: idSchema,
+        version: idSchema,
+        inputDigest: idSchema
+      }).strict().optional(),
+      evidenceRefs: array(idSchema)
+    }).strict().superRefine((value, context) => {
+      if (value.mode === "limits" && (value.lowerLimit === void 0 || value.upperLimit === void 0 || value.lowerLimit > value.upperLimit)) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_LIMIT_ORDER" });
+      }
+      if (value.mode === "bilateral" && (value.upperDeviation === void 0 || value.lowerDeviation === void 0)) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATIONS_REQUIRED" });
+      }
+      if (value.mode === "unilateral" && value.upperDeviation === void 0 && value.lowerDeviation === void 0) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_DEVIATION_REQUIRED" });
+      }
+      if (value.mode === "fit" && value.fitDesignation === void 0) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_FIT_REQUIRED" });
+      }
+      if (value.status === "confirmed" && value.evidenceRefs.length === 0) {
+        context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
+      }
+    });
+    const datumReferenceSchema = object({
+      datumId: idSchema,
+      role: _enum(["primary", "secondary", "tertiary", "origin"]),
+      geometryId: idSchema,
+      anchor: entityAnchorSchema
+    }).strict();
+    const hatchBoundaryEdgeSchema = discriminatedUnion("type", [
+      object({ type: literal("line"), start: vec2Schema, end: vec2Schema }).strict(),
+      object({
+        type: literal("arc"),
+        center: vec2Schema,
+        radius: number().positive(),
+        startAngle: number(),
+        endAngle: number(),
+        counterClockwise: boolean()
+      }).strict(),
+      object({
+        type: literal("ellipse"),
+        center: vec2Schema,
+        majorAxis: vec2Schema,
+        axisRatio: number().positive(),
+        startParameter: number(),
+        endParameter: number(),
+        counterClockwise: boolean()
+      }).strict(),
+      object({
+        type: literal("spline"),
+        degree: number().int().positive(),
+        rational: boolean(),
+        periodic: boolean(),
+        knots: array(number()),
+        controlPoints: array(vec2Schema),
+        weights: array(number()).optional(),
+        fitPoints: array(vec2Schema).optional()
+      }).strict()
+    ]);
+    const parametricHatchSchema = object({
+      version: literal(1),
+      style: _enum(["normal", "outer", "ignore"]),
+      elevation: number(),
+      extrusion: tuple([number(), number(), number()]),
+      boundaryPaths: array(object({
+        flags: number().int().nonnegative(),
+        closed: boolean(),
+        edges: array(hatchBoundaryEdgeSchema).min(1)
+      }).strict()).min(1),
+      patternLines: array(object({
+        angle: number(),
+        base: vec2Schema,
+        offset: vec2Schema,
+        dashLengths: array(number())
+      }).strict()),
+      patternAngle: number(),
+      patternScale: number().positive(),
+      double: boolean()
+    }).strict();
     const annotationSchema = discriminatedUnion("type", [
       object({
         ...baseNodeShape,
@@ -6638,6 +11887,11 @@ window.__ModuleLoader__.load({
         displayText: string().optional(),
         unit: _enum(["mm", "cm", "m", "deg"]).optional(),
         tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
+        toleranceProjection: toleranceProjectionSchema.optional(),
+        datumReferences: array(datumReferenceSchema).optional(),
+        engineeringIntentId: idSchema.optional(),
+        engineeringChainIds: array(idSchema).optional(),
+        generationOrder: number().int().nonnegative().optional(),
         prefix: string().optional(),
         suffix: string().optional(),
         textPosition: vec2Schema,
@@ -6665,8 +11919,11 @@ window.__ModuleLoader__.load({
         pattern: string(),
         angle: number(),
         spacing: number(),
-        segments: array(object({ start: vec2Schema, end: vec2Schema }).strict())
-      }).strict()
+        hatch: parametricHatchSchema.optional(),
+        segments: array(object({ start: vec2Schema, end: vec2Schema }).strict()).optional()
+      }).strict().refine((value) => value.hatch !== void 0 || value.segments !== void 0, {
+        message: "SECTION_HATCH_REPRESENTATION_REQUIRED"
+      })
     ]);
     const relationSchema = discriminatedUnion("plane", [
       object({
@@ -7228,9 +12485,135 @@ window.__ModuleLoader__.load({
       message: string().optional(),
       updatedAt: number()
     }).strict();
+    const sha256DigestSchema = string().regex(/^sha256:[a-f0-9]{64}$/u);
+    const engineeringDocumentInputSchema = object({
+      name: string().trim().min(1).max(255),
+      digest: sha256DigestSchema,
+      mediaType: string().trim().min(1).max(127).optional(),
+      base64: string().min(1).max(27962028)
+    }).strict();
     const partitionImportRequestSchema = object({
       dxf: object({ name: string().min(1).max(255), digest: idSchema, base64: string().min(1).max(27962028) }).strict(),
+      engineeringDocuments: array(engineeringDocumentInputSchema).max(16).optional(),
       engineeringDocument: object({ name: string().min(1).max(255), text: string() }).strict().optional()
+    }).strict().superRefine((request, context) => {
+      if (request.engineeringDocuments !== void 0 && request.engineeringDocument !== void 0) {
+        context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
+      }
+    });
+    const partitionDocumentSupplementRequestSchema = object({
+      expectedDrawingRef: drawingRefSchema,
+      engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
+    }).strict();
+    const engineeringDiagnosticSchema = object({
+      id: idSchema,
+      severity: _enum(["info", "warning", "error"]),
+      code: idSchema,
+      message: string(),
+      entityIds: array(idSchema).optional(),
+      evidenceIds: array(idSchema).optional()
+    }).strict();
+    const engineeringStateSchema = _enum(["candidate", "resolved", "confirmed", "conflict", "stale"]);
+    const engineeringDatumSchema = object({
+      id: idSchema,
+      drawingRef: drawingRefSchema,
+      name: string().min(1).max(120),
+      geometryId: idSchema,
+      anchor: entityAnchorSchema,
+      role: _enum(["primary", "secondary", "tertiary", "origin"]),
+      source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+      status: _enum(["candidate", "confirmed", "conflict", "stale"]),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const dimensionIntentSchema = object({
+      id: idSchema,
+      drawingRef: drawingRefSchema,
+      kind: _enum(["linear", "aligned", "angular", "radius", "diameter", "ordinate", "arc-length"]),
+      targets: array(dimensionTargetSchema),
+      datumIds: array(idSchema),
+      nominalValue: number().finite(),
+      unit: _enum(["mm", "cm", "m", "deg"]),
+      functionalRole: _enum(["datum", "overall", "functional", "assembly", "process", "inspection", "auxiliary", "closure"]),
+      source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+      status: engineeringStateSchema,
+      evidenceIds: array(idSchema)
+    }).strict();
+    const resolvedToleranceSchema = object({
+      upperDeviation: number().finite().optional(),
+      lowerDeviation: number().finite().optional(),
+      upperLimit: number().finite().optional(),
+      lowerLimit: number().finite().optional(),
+      fitDesignation: string().min(1).max(32).optional(),
+      inputDigest: idSchema,
+      evaluatedAt: number().finite()
+    }).strict();
+    const toleranceSpecSchema = object({
+      id: idSchema,
+      dimensionIntentId: idSchema,
+      mode: _enum(["bilateral", "unilateral", "limits", "fit", "formula"]),
+      source: _enum(["document", "standard", "enterprise-rule", "manual", "ai-candidate"]),
+      ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+      inputs: record(string(), union([number().finite(), string(), boolean()])),
+      resolved: resolvedToleranceSchema.optional(),
+      status: engineeringStateSchema,
+      evidenceIds: array(idSchema),
+      diagnostics: array(engineeringDiagnosticSchema)
+    }).strict();
+    const dimensionChainSchema = object({
+      id: idSchema,
+      drawingRef: drawingRefSchema,
+      name: string().max(120).optional(),
+      datumIds: array(idSchema),
+      members: array(object({
+        dimensionIntentId: idSchema,
+        coefficient: union([literal(1), literal(-1)]),
+        role: _enum(["functional", "component", "closure"]),
+        sequenceHint: number().int().optional()
+      }).strict()),
+      equation: object({
+        closureIntentId: idSchema,
+        targetValue: number().finite().optional()
+      }).strict(),
+      analysisMode: _enum(["worst-case", "statistical", "reference-only"]),
+      status: engineeringStateSchema,
+      evidenceIds: array(idSchema),
+      diagnostics: array(engineeringDiagnosticSchema)
+    }).strict();
+    const annotationDependencySchema = object({
+      beforeIntentId: idSchema,
+      afterIntentId: idSchema,
+      reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const engineeringAnnotationDraftSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      datums: array(engineeringDatumSchema),
+      intents: array(dimensionIntentSchema),
+      tolerances: array(toleranceSpecSchema),
+      chains: array(dimensionChainSchema),
+      dependencies: array(annotationDependencySchema),
+      diagnostics: array(engineeringDiagnosticSchema),
+      baseRevisionId: idSchema.optional()
+    }).strict();
+    const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+      baseRevisionId: true
+    }).extend({
+      id: idSchema,
+      parentRevisionId: idSchema.optional(),
+      generationOrder: array(idSchema),
+      confirmedAt: number().finite()
+    }).strict();
+    object({
+      version: literal(1),
+      phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
+      drawingRef: drawingRefSchema.optional(),
+      draft: engineeringAnnotationDraftSchema.optional(),
+      confirmed: engineeringAnnotationRevisionSchema.optional(),
+      canUndo: boolean(),
+      canRedo: boolean(),
+      message: string().optional(),
+      updatedAt: number().finite()
     }).strict();
     const agentParameter = {
       name: "agent",
@@ -7263,10 +12646,12 @@ window.__ModuleLoader__.load({
     function partitionDescriptors() {
       return [
         descriptor("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
+        descriptor("supplementDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest", partitionDocumentSupplementRequestSchema)]),
         descriptor("getPartitionState", []),
         descriptor("editPartition", [jsonParameter("command", "@vectorai/plugin-space-contracts#PartitionEditCommand", partitionEditCommandSchema)]),
         descriptor("confirmPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
         descriptor("cancelPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+        descriptor("reopenPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
         descriptor("undoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
         descriptor("redoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
       ];
@@ -7296,9 +12681,13 @@ window.__ModuleLoader__.load({
         current = { ...current, ...changes };
         for (const listener of listeners) listener();
       };
-      const run = (operation) => {
+      const run = (operation, pendingPartition) => {
         const task = queue.then(async () => {
-          update({ busy: true, error: null });
+          update({
+            busy: true,
+            error: null,
+            ...pendingPartition === void 0 ? {} : { partition: pendingPartition }
+          });
           try {
             update({ partition: unwrap(await operation()) });
           } catch (error) {
@@ -7326,16 +12715,30 @@ window.__ModuleLoader__.load({
         },
         actions: {
           refresh: () => run(() => remote.getPartitionState(sessionId)),
-          async importFiles(dxf, engineeringDocument) {
-            if (dxf.size > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
-            if (engineeringDocument && engineeringDocument.size > 2 * 1024 * 1024) throw new Error("ENGINEERING_DOCUMENT_SIZE_LIMIT");
+          async importFiles(dxf, engineeringDocuments = []) {
+            if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error("DXF_SIZE_LIMIT");
             const bytes = new Uint8Array(await dxf.arrayBuffer());
             const digest = `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`;
+            const documents = await serializeEngineeringDocuments(engineeringDocuments);
             const request = {
               dxf: { name: dxf.name, digest, base64: base64(bytes) },
-              ...engineeringDocument === void 0 ? {} : { engineeringDocument: { name: engineeringDocument.name, text: await engineeringDocument.text() } }
+              engineeringDocuments: documents
             };
-            await run(() => remote.importAndAnalyze(sessionId, request));
+            await run(() => remote.importAndAnalyze(sessionId, request), {
+              version: 1,
+              phase: "analyzing",
+              canUndo: false,
+              canRedo: false,
+              updatedAt: Date.now()
+            });
+          },
+          async supplementDocuments(engineeringDocuments) {
+            if (engineeringDocuments.length === 0) throw new Error("ENGINEERING_DOCUMENT_REQUIRED");
+            const request = {
+              expectedDrawingRef: ref(),
+              engineeringDocuments: await serializeEngineeringDocuments(engineeringDocuments)
+            };
+            await run(() => remote.supplementDocuments(sessionId, request));
           },
           moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: "boundary.move", boundaryIndex, requestedZ, snapTolerance }),
           splitSegment: (segmentId, z, snapTolerance) => edit({ type: "segment.split", segmentId, z, snapTolerance }),
@@ -7343,6 +12746,7 @@ window.__ModuleLoader__.load({
           updateSegment: (segmentId, value) => edit({ type: "segment.metadata", segmentId, ...value }),
           confirm: () => run(() => remote.confirmPartition(sessionId, ref())),
           cancel: () => run(() => remote.cancelPartition(sessionId, ref())),
+          reopen: () => run(() => remote.reopenPartition(sessionId, ref())),
           undo: () => run(() => remote.undoPartition(sessionId, ref())),
           redo: () => run(() => remote.redoPartition(sessionId, ref())),
           setPreviewHeld: (previewHeld) => update({ previewHeld })
@@ -7354,7 +12758,7 @@ window.__ModuleLoader__.load({
       };
     }
     function unwrap(result) {
-      if (result.ok !== true) throw new Error("PARTITION_REMOTE_FAILED");
+      if (result.ok !== true) throw new Error(result.error.message);
       return structuredClone(result.value);
     }
     function hex(value) {
@@ -7366,15 +12770,28 @@ window.__ModuleLoader__.load({
       for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
       return btoa(binary);
     }
-    const inject = ["remote", "drawingSurfaceRegistry"];
+    async function serializeEngineeringDocuments(files) {
+      validateEngineeringDocumentFiles(files);
+      return Promise.all(files.map(async (file) => {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        return {
+          name: file.name,
+          digest: `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`,
+          ...file.type === "" ? {} : { mediaType: file.type },
+          base64: base64(bytes)
+        };
+      }));
+    }
+    const inject = ["remote", "drawingSurfaceRegistry", "slots"];
     async function apply(ctx) {
       const remote = ctx.get("remote");
       const disposeRemote = await remote.$mount(ANNOTATION_REMOTE);
       const fiber = ctx.inject(
-        ["remote.drawingAnnotation", "drawingSurfaceRegistry"],
+        ["remote.drawingAnnotation", "drawingSurfaceRegistry", "slots"],
         (scope) => {
           const annotationRemote = scope.get("remote").drawingAnnotation;
           const registry2 = scope.get("drawingSurfaceRegistry");
+          const slots = scope.get("slots");
           const stateSource = createAnnotationRemoteStateSource(annotationRemote);
           const partitionControllers = /* @__PURE__ */ new Map();
           const partitionFor = (sessionId) => {
@@ -7399,7 +12816,20 @@ window.__ModuleLoader__.load({
               }
             )
           });
-          return () => {
+          const dropFiber = slots.inject("conversation.input.dock", () => slots.register({
+            name: "conversation.input.dock",
+            id: "vectorai-engineering-import-drop",
+            order: -200,
+            inject: (sessionId) => {
+              const id = String(sessionId);
+              return {
+                partition: partitionFor(id),
+                refreshClaim: () => stateSource.refresh(id)
+              };
+            }
+          }, EngineeringDropBridge));
+          return async () => {
+            await dropFiber.dispose();
             registration.dispose();
             stateSource.dispose();
             for (const controller of partitionControllers.values()) controller.dispose();
@@ -7418,7 +12848,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset["vectoraiDshAnnotation"] = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border);\n  background: var(--vai-panel-deep);\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  min-height: 0;\n  height: 100%;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }\n.vai-annotation-workspace__body { display: grid; min-height: 0; flex: 1; grid-template-columns: 48px minmax(0, 1fr) 248px; }\n.vai-annotation-workspace__rail { display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid rgba(148, 163, 184, .18); }\n.vai-annotation-workspace__rail button { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #8fa1b5; background: transparent; }\n.vai-annotation-workspace__rail button:hover { color: #e2e8f0; background: rgba(96, 165, 250, .12); }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-workspace__inspector { padding: 14px; border-left: 1px solid rgba(148, 163, 184, .18); background: rgba(15, 23, 32, .72); }\n.vai-annotation-workspace__inspector h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-workspace__inspector dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-workspace__inspector dt { color: #8fa1b5; }\n.vai-annotation-workspace__inspector dd { margin: 0; }\n\n.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }\n.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }\n.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }\n.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }\n.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }\n\n.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }\n.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }\n.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }\n.vai-partition-band--geometry { stroke-dasharray: 8 5; }\n.vai-partition-label { fill: #dff6ff; font: 600 11px ui-monospace, monospace; paint-order: stroke; stroke: #0d151d; stroke-width: 3px; vector-effect: non-scaling-stroke; }\n.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }\n\n.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }\n.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }\n.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }\n.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }\n.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }\n.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }\n.vai-partition-inspector small { color: #8295aa; }\n.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }\n.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }\n.vai-partition-inspector__commands { display: flex; gap: 5px; }\n.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }\n.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }\n.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }\n.vai-partition-history { position: absolute; z-index: 8; left: 50%; bottom: 28px; display: flex; gap: 6px; transform: translateX(-50%); }\n.vai-partition-history button { width: 36px; height: 32px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 9px; color: #aebdce; background: rgba(14, 21, 29, .92); font-size: 18px; }\n.vai-partition-history button:disabled { opacity: .3; }\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel, #12161b);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel-deep, #0d1014);\n}\n\n.vai-activity-bar--overlay {\n  position: absolute;\n  inset: 0 auto 0 0;\n  box-sizing: border-box;\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n  border: 1px solid transparent;\n  color: var(--vai-muted);\n  background: transparent;\n  cursor: pointer;\n}\n\n.vai-activity-bar__button:hover,\n.vai-activity-bar__button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--overlay {\n  position: absolute;\n  z-index: 5;\n  inset: 0 auto 0 42px;\n  box-sizing: border-box;\n  box-shadow: 14px 0 30px rgba(0, 0, 0, 0.28);\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  flex: 1 1 auto;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }\n.vai-annotation-workspace__body { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-partition-progress { position: absolute; z-index: 9; top: 14px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 7px 12px; transform: translateX(-50%); border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; pointer-events: none; }\n.vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }\n.vai-partition-error { position: absolute; z-index: 10; top: 14px; left: 50%; margin: 0; padding: 7px 12px; transform: translateX(-50%); border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; pointer-events: none; }\n@keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-panel { min-height: 0; padding: 14px; overflow: auto; }\n.vai-annotation-panel h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-panel dt { color: #8fa1b5; }\n.vai-annotation-panel dd { margin: 0; }\n\n.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }\n.vai-annotation-import--panel { box-sizing: border-box; width: 100%; margin: 0; padding: 16px 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }\n.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }\n.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }\n.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }\n.vai-annotation-import__files { display: grid; max-height: 112px; gap: 4px; margin: -4px 0 0; padding: 8px 10px 8px 28px; overflow: auto; border-radius: 8px; color: #9fb2c7; background: rgba(5, 12, 19, .55); font-size: 11px; }\n.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }\n\n.vai-engineering-drop { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; padding: 6px 10px; border: 1px solid rgba(72, 187, 238, .28); border-radius: 9px; color: #b8dff2; background: rgba(9, 50, 70, .58); font-size: 12px; }\n.vai-engineering-drop--pending { border-color: rgba(96, 165, 250, .3); background: rgba(30, 64, 175, .12); }\n.vai-engineering-drop--importing { border-color: rgba(52, 211, 153, .3); color: #9ce8c5; background: rgba(6, 95, 70, .15); }\n.vai-engineering-drop--success { border-color: rgba(52, 211, 153, .38); color: #a7f3d0; background: rgba(6, 95, 70, .2); }\n.vai-engineering-drop--error { border-color: rgba(248, 113, 113, .35); color: #ffabb1; background: rgba(127, 29, 29, .18); }\n.vai-engineering-drop button { flex: none; padding: 3px 8px; border: 1px solid currentColor; border-radius: 7px; color: inherit; background: transparent; font-size: 11px; }\n\n.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }\n.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }\n.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }\n.vai-partition-band--geometry { stroke-dasharray: 8 5; }\n.vai-partition-label-anchor { pointer-events: none; }\n.vai-partition-label-bg { fill: rgba(10, 18, 26, .9); stroke: rgba(125, 211, 252, .35); stroke-width: 1px; }\n.vai-partition-label { fill: #e6f7ff; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; letter-spacing: .2px; }\n.vai-partition-handle-leader { stroke: rgba(84, 200, 247, .72); stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }\n\n.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }\n.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }\n.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }\n.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }\n.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }\n.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }\n.vai-partition-inspector small { color: #8295aa; }\n.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }\n.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }\n.vai-partition-inspector__commands { display: flex; gap: 5px; }\n.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }\n.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }\n.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }\n.vai-confirmed-partition__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }\n.vai-confirmed-partition__heading > div { display: flex; align-items: center; gap: 7px; }\n.vai-confirmed-partition__heading h2 { margin: 0; }\n.vai-confirmed-partition__heading span { padding: 2px 6px; border: 1px solid rgba(52, 211, 153, .26); border-radius: 999px; color: #6ee7b7; background: rgba(6, 78, 59, .28); font-size: 9px; }\n.vai-confirmed-partition__heading button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, .28); border-radius: 7px; color: #bae6fd; background: rgba(14, 116, 144, .16); font-size: 10px; }\n.vai-confirmed-partition__heading button:disabled { opacity: .45; }\n.vai-confirmed-partition__meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0 0 12px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .045); font-size: 10px; }\n.vai-confirmed-partition__meta dt { color: #8295aa; }\n.vai-confirmed-partition__meta dd { min-width: 0; margin: 0; overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }\n.vai-confirmed-partition em { color: #7dd3fc; font-size: 10px; font-style: normal; }\n\n.vai-dimension-plan { min-width: 0; }\n.vai-dimension-plan > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }\n.vai-dimension-plan > header h2 { margin: 0; }\n.vai-dimension-plan > header span { color: #8295aa; font-size: 11px; }\n.vai-dimension-plan ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-plan li { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(148, 163, 184, .055); }\n.vai-dimension-plan__row-title { display: flex; align-items: center; gap: 7px; font-size: 12px; }\n.vai-dimension-plan__order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #8fdcff; background: rgba(14, 165, 233, .14); font: 600 10px ui-monospace, monospace; }\n.vai-dimension-plan__row-title strong { flex: 1; }\n.vai-dimension-plan__nominal { color: #e2e8f0; font: 600 13px ui-monospace, monospace; }\n.vai-dimension-plan dl { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 7px; margin: 0; font-size: 10px; line-height: 1.45; }\n.vai-dimension-plan dt { color: #71859a; }\n.vai-dimension-plan dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #aebdce; }\n.vai-dimension-plan dd code { display: block; margin-top: 2px; color: #7dd3fc; font-size: 10px; }\n.vai-dimension-badge { padding: 2px 6px; border-radius: 999px; color: #9fb0c2; background: rgba(148, 163, 184, .1); font-size: 9px; }\n.vai-dimension-badge--confirmed, .vai-dimension-badge--resolved { color: #64dca2; background: rgba(34, 197, 94, .13); }\n.vai-dimension-badge--candidate { color: #f7c86c; background: rgba(245, 158, 11, .13); }\n.vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }\n.vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }\n.vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }\n";
       document.head.append(style);
       var dispose;
       try {

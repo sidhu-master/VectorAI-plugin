@@ -17,10 +17,13 @@ import { fileURLToPath } from 'node:url';
 const SUPPORTED_VERSION = '0.1.0-rc.8';
 const PATCH_MARKER = 'data-vectorai-dsh-workspace-patch';
 const LEGACY_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8"`;
-const PREVIOUS_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
-const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
+const V2_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
+const PREVIOUS_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
+const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v4"`;
 const LEGACY_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane]:not(:empty)';
 const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
+const LEGACY_WORKSPACE_GATE = 'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;';
+const CURRENT_WORKSPACE_GATE = 'const workspacePane = renderSlot("conversation.workspace", {});';
 const AGENT_LOOP_ARGUMENT_REPAIR_MARKER = 'function repairToolArgumentsJson(raw)';
 const AGENT_LOOP_PARSE_ARGUMENTS_PATTERN = /function parseArguments\(raw\) \{\s*try \{\s*return raw \? JSON\.parse\(raw\) : \{\};\s*\} catch \{\s*return raw;\s*\}\s*\}/g;
 const AGENT_LOOP_PARSE_ARGUMENTS_REPLACEMENT = `function parseArguments(raw) {
@@ -239,13 +242,13 @@ ${ROBUST_RESIZE_HANDLER}
 \t\t\tconst workspaceLayoutStyles = ${JSON.stringify(WORKSPACE_CSS)};`;
 
 const ROOT_RETURN_REPLACEMENT = `
-\t\t\tconst workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;
+\t\t\t${CURRENT_WORKSPACE_GATE}
 \t\t\treturn (0, react_jsx_runtime.jsxs)("div", {
 \t\t\t\tclassName: ConversationRoot_module_css_default.root,
 \t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t"data-phase": phase,
 \t\t\t\t"data-conversation-workspace-layout": "",
-\t\t\t\t"${PATCH_MARKER}": "rc.8-v3",
+\t\t\t\t"${PATCH_MARKER}": "rc.8-v4",
 \t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("style", { children: workspaceLayoutStyles }), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-pane": "",
 \t\t\t\t\tchildren: workspacePane
@@ -288,21 +291,37 @@ export function patchConversationClient(source) {
       source.includes(CURRENT_PATCH_MARKER)
       && source.includes(ROBUST_RESIZE_HANDLER)
       && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && source.includes(CURRENT_WORKSPACE_GATE)
     ) {
       return { status: 'already-patched', source };
     }
     if (
       source.includes(PREVIOUS_PATCH_MARKER)
       && source.includes(ROBUST_RESIZE_HANDLER)
+      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && source.includes(LEGACY_WORKSPACE_GATE)
+    ) {
+      let upgraded = replaceExactlyOnce(source, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
+      upgraded = replaceExactlyOnce(upgraded, PREVIOUS_PATCH_MARKER, CURRENT_PATCH_MARKER);
+      return { status: 'upgraded', source: upgraded };
+    }
+    if (
+      source.includes(V2_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
       && source.includes(LEGACY_WORKSPACE_SELECTOR)
+      && source.includes(LEGACY_WORKSPACE_GATE)
     ) {
       let upgraded = source.replaceAll(LEGACY_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
-      upgraded = replaceExactlyOnce(upgraded, PREVIOUS_PATCH_MARKER, CURRENT_PATCH_MARKER);
+      upgraded = replaceExactlyOnce(upgraded, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
+      upgraded = replaceExactlyOnce(upgraded, V2_PATCH_MARKER, CURRENT_PATCH_MARKER);
       return { status: 'upgraded', source: upgraded };
     }
     if (source.includes(LEGACY_PATCH_MARKER) && source.includes(LEGACY_RESIZE_HANDLER)) {
       let upgraded = replaceExactlyOnce(source, LEGACY_RESIZE_HANDLER, ROBUST_RESIZE_HANDLER);
       upgraded = upgraded.replaceAll(LEGACY_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
+      if (upgraded.includes(LEGACY_WORKSPACE_GATE)) {
+        upgraded = replaceExactlyOnce(upgraded, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
+      }
       upgraded = replaceExactlyOnce(upgraded, LEGACY_PATCH_MARKER, CURRENT_PATCH_MARKER);
       return { status: 'upgraded', source: upgraded };
     }

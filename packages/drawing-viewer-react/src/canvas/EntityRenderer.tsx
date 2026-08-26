@@ -4,6 +4,7 @@ import { sampleSpline, type AnnotationNode, type GeometryNode, type Vec2 } from 
 import type { MouseEvent } from 'react';
 
 import { nodeBounds, worldBoundsForViewport } from './geometry';
+import { HatchRenderer } from './HatchRenderer';
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 
 export interface EntityRendererProps {
@@ -120,20 +121,7 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
       );
     }
     case 'section-hatch':
-      return (
-        <g data-section-hatch={node.pattern}>
-          {node.segments.map((segment, index) => (
-            <line
-              key={index}
-              x1={segment.start[0]}
-              y1={segment.start[1]}
-              x2={segment.end[0]}
-              y2={segment.end[1]}
-              {...vectorStroke}
-            />
-          ))}
-        </g>
-      );
+      return <HatchRenderer node={node} viewportScale={viewport.scale} />;
   }
 }
 

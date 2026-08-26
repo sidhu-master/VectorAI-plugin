@@ -6,6 +6,7 @@ import type {
   GeometryNode,
   Vec2,
 } from '@vectorai/drawing-core';
+import { transformParametricHatch } from '@vectorai/drawing-hatch';
 import type {
   Diagnostic,
   DrawingTransactionCommand,
@@ -300,7 +301,19 @@ function transformedAnnotationFields(
   if (node.type === 'dimension') return pair({ textPosition: node.textPosition, definitionPoints: node.definitionPoints }, { textPosition: transformPoint(node.textPosition, transform), definitionPoints: node.definitionPoints.map((point) => transformPoint(point, transform)) });
   if (node.type === 'leader') return pair({ points: node.points }, { points: node.points.map((point) => transformPoint(point, transform)) });
   if (node.type === 'centerline') return pair({ start: node.start, end: node.end }, { start: transformPoint(node.start, transform), end: transformPoint(node.end, transform) });
-  return pair({ segments: node.segments }, { segments: node.segments.map((segment) => ({ start: transformPoint(segment.start, transform), end: transformPoint(segment.end, transform) })) });
+  const before: Record<string, unknown> = {};
+  const after: Record<string, unknown> = {};
+  if (node.hatch !== undefined) {
+    before.hatch = node.hatch;
+    after.hatch = transformParametricHatch(node.hatch, transform);
+  }
+  if (node.segments !== undefined) {
+    before.segments = node.segments;
+    after.segments = node.segments.map((segment) => ({
+      start: transformPoint(segment.start, transform), end: transformPoint(segment.end, transform),
+    }));
+  }
+  return pair(before, after);
 }
 
 function pair(before: Record<string, unknown>, after: Record<string, unknown>) {

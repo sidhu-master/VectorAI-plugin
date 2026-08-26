@@ -1,7 +1,10 @@
 .vai-annotation-workspace {
   display: flex;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   height: 100%;
+  flex: 1 1 auto;
   flex-direction: column;
   overflow: hidden;
   color: var(--vai-text, #d8e0eb);
@@ -20,31 +23,44 @@
 .vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }
 .vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }
 .vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }
-.vai-annotation-workspace__body { display: grid; min-height: 0; flex: 1; grid-template-columns: 48px minmax(0, 1fr) 248px; }
-.vai-annotation-workspace__rail { display: flex; flex-direction: column; gap: 8px; padding: 10px 6px; border-right: 1px solid rgba(148, 163, 184, .18); }
-.vai-annotation-workspace__rail button { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #8fa1b5; background: transparent; }
-.vai-annotation-workspace__rail button:hover { color: #e2e8f0; background: rgba(96, 165, 250, .12); }
-.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; }
+.vai-annotation-workspace__body { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; }
+.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }
 .vai-annotation-workspace__surface { position: absolute; inset: 0; }
+.vai-partition-progress { position: absolute; z-index: 9; top: 14px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 7px 12px; transform: translateX(-50%); border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; pointer-events: none; }
+.vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }
+.vai-partition-error { position: absolute; z-index: 10; top: 14px; left: 50%; margin: 0; padding: 7px 12px; transform: translateX(-50%); border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; pointer-events: none; }
+@keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }
 .vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }
-.vai-annotation-workspace__inspector { padding: 14px; border-left: 1px solid rgba(148, 163, 184, .18); background: rgba(15, 23, 32, .72); }
-.vai-annotation-workspace__inspector h2 { margin: 0 0 16px; font-size: 13px; }
-.vai-annotation-workspace__inspector dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }
-.vai-annotation-workspace__inspector dt { color: #8fa1b5; }
-.vai-annotation-workspace__inspector dd { margin: 0; }
+.vai-annotation-panel { min-height: 0; padding: 14px; overflow: auto; }
+.vai-annotation-panel h2 { margin: 0 0 16px; font-size: 13px; }
+.vai-annotation-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }
+.vai-annotation-panel dt { color: #8fa1b5; }
+.vai-annotation-panel dd { margin: 0; }
 
 .vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }
+.vai-annotation-import--panel { box-sizing: border-box; width: 100%; margin: 0; padding: 16px 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }
 .vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }
 .vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }
+.vai-annotation-import__files { display: grid; max-height: 112px; gap: 4px; margin: -4px 0 0; padding: 8px 10px 8px 28px; overflow: auto; border-radius: 8px; color: #9fb2c7; background: rgba(5, 12, 19, .55); font-size: 11px; }
 .vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }
+
+.vai-engineering-drop { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; padding: 6px 10px; border: 1px solid rgba(72, 187, 238, .28); border-radius: 9px; color: #b8dff2; background: rgba(9, 50, 70, .58); font-size: 12px; }
+.vai-engineering-drop--pending { border-color: rgba(96, 165, 250, .3); background: rgba(30, 64, 175, .12); }
+.vai-engineering-drop--importing { border-color: rgba(52, 211, 153, .3); color: #9ce8c5; background: rgba(6, 95, 70, .15); }
+.vai-engineering-drop--success { border-color: rgba(52, 211, 153, .38); color: #a7f3d0; background: rgba(6, 95, 70, .2); }
+.vai-engineering-drop--error { border-color: rgba(248, 113, 113, .35); color: #ffabb1; background: rgba(127, 29, 29, .18); }
+.vai-engineering-drop button { flex: none; padding: 3px 8px; border: 1px solid currentColor; border-radius: 7px; color: inherit; background: transparent; font-size: 11px; }
 
 .vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }
 .vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }
 .vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }
 .vai-partition-band--geometry { stroke-dasharray: 8 5; }
-.vai-partition-label { fill: #dff6ff; font: 600 11px ui-monospace, monospace; paint-order: stroke; stroke: #0d151d; stroke-width: 3px; vector-effect: non-scaling-stroke; }
+.vai-partition-label-anchor { pointer-events: none; }
+.vai-partition-label-bg { fill: rgba(10, 18, 26, .9); stroke: rgba(125, 211, 252, .35); stroke-width: 1px; }
+.vai-partition-label { fill: #e6f7ff; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .2px; }
+.vai-partition-handle-leader { stroke: rgba(84, 200, 247, .72); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }
 
 .vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }
@@ -61,6 +77,34 @@
 .vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }
 .vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }
 .vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }
-.vai-partition-history { position: absolute; z-index: 8; left: 50%; bottom: 28px; display: flex; gap: 6px; transform: translateX(-50%); }
-.vai-partition-history button { width: 36px; height: 32px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 9px; color: #aebdce; background: rgba(14, 21, 29, .92); font-size: 18px; }
-.vai-partition-history button:disabled { opacity: .3; }
+.vai-confirmed-partition__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.vai-confirmed-partition__heading > div { display: flex; align-items: center; gap: 7px; }
+.vai-confirmed-partition__heading h2 { margin: 0; }
+.vai-confirmed-partition__heading span { padding: 2px 6px; border: 1px solid rgba(52, 211, 153, .26); border-radius: 999px; color: #6ee7b7; background: rgba(6, 78, 59, .28); font-size: 9px; }
+.vai-confirmed-partition__heading button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, .28); border-radius: 7px; color: #bae6fd; background: rgba(14, 116, 144, .16); font-size: 10px; }
+.vai-confirmed-partition__heading button:disabled { opacity: .45; }
+.vai-confirmed-partition__meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0 0 12px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .045); font-size: 10px; }
+.vai-confirmed-partition__meta dt { color: #8295aa; }
+.vai-confirmed-partition__meta dd { min-width: 0; margin: 0; overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }
+.vai-confirmed-partition em { color: #7dd3fc; font-size: 10px; font-style: normal; }
+
+.vai-dimension-plan { min-width: 0; }
+.vai-dimension-plan > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.vai-dimension-plan > header h2 { margin: 0; }
+.vai-dimension-plan > header span { color: #8295aa; font-size: 11px; }
+.vai-dimension-plan ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.vai-dimension-plan li { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(148, 163, 184, .055); }
+.vai-dimension-plan__row-title { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.vai-dimension-plan__order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #8fdcff; background: rgba(14, 165, 233, .14); font: 600 10px ui-monospace, monospace; }
+.vai-dimension-plan__row-title strong { flex: 1; }
+.vai-dimension-plan__nominal { color: #e2e8f0; font: 600 13px ui-monospace, monospace; }
+.vai-dimension-plan dl { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 7px; margin: 0; font-size: 10px; line-height: 1.45; }
+.vai-dimension-plan dt { color: #71859a; }
+.vai-dimension-plan dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #aebdce; }
+.vai-dimension-plan dd code { display: block; margin-top: 2px; color: #7dd3fc; font-size: 10px; }
+.vai-dimension-badge { padding: 2px 6px; border-radius: 999px; color: #9fb0c2; background: rgba(148, 163, 184, .1); font-size: 9px; }
+.vai-dimension-badge--confirmed, .vai-dimension-badge--resolved { color: #64dca2; background: rgba(34, 197, 94, .13); }
+.vai-dimension-badge--candidate { color: #f7c86c; background: rgba(245, 158, 11, .13); }
+.vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }
+.vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }
+.vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }

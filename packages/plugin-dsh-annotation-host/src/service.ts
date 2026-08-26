@@ -7,6 +7,7 @@ import type {
   AnnotationSessionState,
   DrawingSpaceExtensionHost,
   DrawingRef,
+  PartitionDocumentSupplementRequest,
   PartitionEditCommand,
   PartitionImportRequest,
   PartitionSessionSnapshot,
@@ -18,10 +19,11 @@ import {
   AnnotationSessionStateStore,
   FileAnnotationSessionStorage,
 } from './session-state';
-import { createEngineeringAnnotationTool } from './tools';
+import { createEngineeringAnnotationTool, createPartitionStatusTool } from './tools';
 import { FilePartitionStorage, PartitionSessionStore } from './partition-store';
 import { PartitionWorkflowService } from './partition-service';
 import { createPartitionSemanticReviewer } from './semantic-reviewer';
+import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -36,6 +38,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   readonly sessions: AnnotationSessionStateStore;
   readonly partitions: PartitionSessionStore;
   readonly partitionWorkflow: PartitionWorkflowService;
+  readonly dimensionPlans: DimensionPlanStore;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingAnnotation');
@@ -45,13 +48,17 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     this.partitions = new PartitionSessionStore(new FilePartitionStorage(
       resolve(homedir(), '.dsh/vectorai/annotation-partitions'),
     ));
+    this.dimensionPlans = new DimensionPlanStore(new FileDimensionPlanStorage(
+      resolve(homedir(), '.dsh/vectorai/dimension-plans'),
+    ));
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,
       this.partitions,
       this.sessions,
       createPartitionSemanticReviewer(ctx, ctx.drawingSpace),
     );
-    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions)));
+    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions, this.partitions)));
+    ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.on('session/disposed', (session) => this.sessions.disposeSession(String(session.id)));
   }
 
@@ -63,6 +70,11 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   importAndAnalyze(agent: Agent, request: PartitionImportRequest): Promise<PartitionSessionSnapshot> {
     return this.partitionWorkflow.importAndAnalyze(agent, request);
+  }
+
+  @Remote
+  supplementDocuments(agent: Agent, request: PartitionDocumentSupplementRequest): Promise<PartitionSessionSnapshot> {
+    return this.partitionWorkflow.supplementDocuments(agent, request);
   }
 
   @Remote
@@ -83,6 +95,11 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   cancelPartition(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
     return this.partitionWorkflow.cancel(agent, expected);
+  }
+
+  @Remote
+  reopenPartition(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
+    return this.partitionWorkflow.reopen(agent, expected);
   }
 
   @Remote

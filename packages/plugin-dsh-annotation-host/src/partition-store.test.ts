@@ -58,4 +58,37 @@ describe('PartitionSessionStore', () => {
     expect(() => store.setDraft('s', draft())).toThrow('disk-full');
     expect(store.get('s')).toEqual(before);
   });
+
+  it('reopens the exact confirmed draft and cancel restores the confirmed revision', () => {
+    const store = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition-r1' });
+    const ref = { drawingId: 'd', revision: 1 };
+    store.beginAnalysis('s', ref);
+    store.setDraft('s', draft());
+    const confirmed = store.confirm('s', ref);
+
+    const reopened = store.reopen('s', ref);
+    expect(reopened).toMatchObject({
+      phase: 'editing',
+      confirmed: { id: 'partition-r1' },
+      draft: { basePartitionRevisionId: 'partition-r1', stepCandidates: [{ id: 'step:1' }] },
+    });
+    store.edit('s', { type: 'segment.metadata', expectedDrawingRef: ref, segmentId: 's0', name: 'changed' });
+    expect(store.cancel('s', ref)).toMatchObject({ phase: 'confirmed', confirmed: { id: confirmed.confirmed?.id } });
+  });
+
+  it('persists enough confirmed draft state to reopen after process reload', () => {
+    let saved: unknown = null;
+    const storage = { load: () => saved, save: (_sessionId: string, value: unknown) => { saved = structuredClone(value); } };
+    const ref = { drawingId: 'd', revision: 1 };
+    const first = new PartitionSessionStore(storage, { now: () => 7, id: () => 'partition-r1' });
+    first.beginAnalysis('s', ref);
+    first.setDraft('s', draft());
+    first.confirm('s', ref);
+
+    const reloaded = new PartitionSessionStore(storage, { now: () => 8, id: () => 'partition-r2' });
+    expect(reloaded.reopen('s', ref)).toMatchObject({
+      phase: 'editing', draft: { basePartitionRevisionId: 'partition-r1', stepCandidates: [{ z: 1 }] },
+    });
+    expect(reloaded.confirm('s', ref)).toMatchObject({ confirmed: { id: 'partition-r2', parentRevisionId: 'partition-r1' } });
+  });
 });

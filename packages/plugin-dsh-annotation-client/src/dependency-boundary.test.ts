@@ -19,4 +19,13 @@ describe('@vectorai/plugin-dsh-annotation-client boundary', () => {
     expect(source).not.toContain('createDrawingWorkspaceStore');
     expect(source).not.toContain("conversation.workspace");
   });
+
+  it('keeps graph ordering and tolerance evaluation out of the read-only client', () => {
+    const root = dirname(fileURLToPath(import.meta.url));
+    const source = ['AnnotationWorkspace.tsx', 'DimensionPlanInspector.tsx']
+      .map((file) => readFileSync(join(root, file), 'utf8'))
+      .join('\n');
+    expect(source).not.toMatch(/tolerance\/evaluate|dimension\/(?:chain|order)|resolveToleranceSpec|analyzeDimensionChain|orderDimensionIntents/);
+    expect(source).not.toContain('@vectorai/engineering-annotation');
+  });
 });

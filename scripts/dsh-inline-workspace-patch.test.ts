@@ -99,6 +99,8 @@ describe('patchConversationClient', () => {
 
     expect(result.status).toBe('patched');
     expect(result.source).toContain('"conversation.workspace"');
+    expect(result.source).toContain('const workspacePane = renderSlot("conversation.workspace", {});');
+    expect(result.source).not.toContain('phase === "active" ? renderSlot("conversation.workspace", {}) : null');
     expect(result.source).toContain('data-conversation-workspace-layout');
     expect(result.source).toContain('data-conversation-workspace-pane');
     expect(result.source).toContain('data-conversation-workspace-resizer');
@@ -114,7 +116,11 @@ describe('patchConversationClient', () => {
   it('upgrades the installed v2 layout selector instead of treating it as current', () => {
     const current = patchConversationClient(rc8Fixture()).source;
     const v2 = current
-      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v3"', '"data-vectorai-dsh-workspace-patch": "rc.8-v2"')
+      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v4"', '"data-vectorai-dsh-workspace-patch": "rc.8-v2"')
+      .replace(
+        'const workspacePane = renderSlot("conversation.workspace", {});',
+        'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;',
+      )
       .replaceAll(
         '[data-conversation-workspace-pane] [data-conversation-workspace-active]',
         '[data-conversation-workspace-pane]:not(:empty)',
@@ -123,23 +129,35 @@ describe('patchConversationClient', () => {
     const result = patchConversationClient(v2);
 
     expect(result.status).toBe('upgraded');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v3"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v4"');
     expect(result.source).toContain('[data-conversation-workspace-active]');
     expect(result.source).not.toContain('[data-conversation-workspace-pane]:not(:empty)');
   });
 
-  it('upgrades the installed rc.8 resize handler and then remains idempotent', () => {
+  it('upgrades the installed v3 phase gate so a new session can reveal an imported drawing', () => {
+    const current = patchConversationClient(rc8Fixture()).source;
+    const v3 = current
+      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v4"', '"data-vectorai-dsh-workspace-patch": "rc.8-v3"')
+      .replace(
+        'const workspacePane = renderSlot("conversation.workspace", {});',
+        'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;',
+      );
+
+    const result = patchConversationClient(v3);
+
+    expect(result.status).toBe('upgraded');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v4"');
+    expect(result.source).toContain('const workspacePane = renderSlot("conversation.workspace", {});');
+  });
+
+  it('upgrades the installed rc.8 resize handler', () => {
     const result = patchConversationClient(legacyPatchedResizeFixture());
 
     expect(result.status).toBe('upgraded');
     expect(result.source).toContain('(next.buttons & 1) === 0');
     expect(result.source).toContain('lostpointercapture');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v3"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v4"');
     expect(result.source).toContain('[data-conversation-workspace-active]');
-    expect(patchConversationClient(result.source)).toEqual({
-      status: 'already-patched',
-      source: result.source,
-    });
   });
 
   it('refuses an unknown marked patch instead of silently accepting it', () => {

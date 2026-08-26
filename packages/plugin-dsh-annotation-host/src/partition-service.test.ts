@@ -40,4 +40,97 @@ describe('PartitionWorkflowService', () => {
     await expect(service.importAndAnalyze({ id: 's' } as Agent, { dxf: { name: 'x.dxf', digest: 'sha256:wrong', base64: Buffer.from('x').toString('base64') } })).rejects.toThrow('DXF_DIGEST_MISMATCH');
     expect(importDxf).not.toHaveBeenCalled();
   });
+
+  it('extracts all document evidence before mutating the first-layer drawing', async () => {
+    const order: string[] = [];
+    const bytes = new TextEncoder().encode('DXF bytes');
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const documentBytes = new TextEncoder().encode('document');
+    const extract = vi.fn(async () => {
+      order.push('extract');
+      return { documents: [], combinedText: '第一轴段 0~10' };
+    });
+    const space = {
+      importDxf: vi.fn(async () => { order.push('import'); return { status: 'imported' }; }),
+      getSnapshot: () => ({ version: 1 as const, ref: { drawingId: 'd', revision: 1 }, document: drawing(), capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    };
+    const service = new PartitionWorkflowService(
+      space as never,
+      new PartitionSessionStore(),
+      new AnnotationSessionStateStore(),
+      undefined,
+      extract,
+    );
+
+    await service.importAndAnalyze({ id: 's' } as Agent, {
+      dxf: { name: 'shaft.dxf', digest, base64: Buffer.from(bytes).toString('base64') },
+      engineeringDocuments: [{
+        name: 'notes.txt',
+        digest: `sha256:${createHash('sha256').update(documentBytes).digest('hex')}`,
+        base64: Buffer.from(documentBytes).toString('base64'),
+      }],
+    });
+
+    expect(order).toEqual(['extract', 'import']);
+    expect(extract).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ signal: undefined }));
+  });
+
+  it('does not import the DXF when document admission fails', async () => {
+    const bytes = new TextEncoder().encode('DXF bytes');
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const importDxf = vi.fn();
+    const service = new PartitionWorkflowService(
+      { importDxf } as never,
+      new PartitionSessionStore(),
+      new AnnotationSessionStateStore(),
+      undefined,
+      vi.fn(async () => { throw new Error('DOCUMENT_PARSE_FAILED:broken.pdf'); }),
+    );
+
+    await expect(service.importAndAnalyze({ id: 's' } as Agent, {
+      dxf: { name: 'shaft.dxf', digest, base64: Buffer.from(bytes).toString('base64') },
+      engineeringDocuments: [],
+    })).rejects.toThrow('DOCUMENT_PARSE_FAILED:broken.pdf');
+    expect(importDxf).not.toHaveBeenCalled();
+  });
+
+  it('reanalyzes the current drawing when engineering documents arrive after the DXF', async () => {
+    const document = drawing();
+    document.sources = [{
+      id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf',
+      digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf',
+    }];
+    const importDxf = vi.fn();
+    const extract = vi.fn(async () => ({ documents: [], combinedText: '第一轴段 0~10' }));
+    const space = {
+      importDxf,
+      getSnapshot: () => ({
+        version: 1 as const,
+        ref: { drawingId: 'd', revision: 1 },
+        document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false },
+      }),
+    };
+    const service = new PartitionWorkflowService(
+      space as never,
+      new PartitionSessionStore(),
+      new AnnotationSessionStateStore(),
+      undefined,
+      extract,
+    );
+    const bytes = new TextEncoder().encode('document');
+
+    const result = await service.supplementDocuments({ id: 's' } as Agent, {
+      expectedDrawingRef: { drawingId: 'd', revision: 1 },
+      engineeringDocuments: [{
+        name: 'notes.txt',
+        digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        base64: Buffer.from(bytes).toString('base64'),
+      }],
+    });
+
+    expect(result.phase).toBe('editing');
+    expect(importDxf).not.toHaveBeenCalled();
+    expect(extract).toHaveBeenCalledOnce();
+  });
 });

@@ -3,7 +3,8 @@
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import type { DrawingSurfaceRuntime } from '@vectorai/drawing-workspace';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import TestRenderer, { act } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AnnotationWorkspace } from './AnnotationWorkspace';
 import type { PartitionController } from './partition-controller';
@@ -13,8 +14,150 @@ function observable<T>(value: T) {
 }
 
 describe('AnnotationWorkspace', () => {
-  it('renders its own controlled professional layout without a shared Provider', () => {
+  it('fits the drawing when the specialized workspace first takes over', async () => {
+    const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
+    testWindow.setInterval = globalThis.setInterval;
+    testWindow.clearInterval = globalThis.clearInterval;
+    vi.stubGlobal('window', testWindow);
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const snapshot = {
+      version: 1 as const, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+      capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+    };
+    const setViewport = vi.fn();
+    const runtime = {
+      snapshot: observable(snapshot),
+      viewport: observable({ x: -999, y: -999, scale: 9, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: snapshot, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport, setSelection() {}, refresh: async () => undefined },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({
+      version: 1 as const, workspaceClaimed: true, activationEpoch: 1,
+      workflow: { status: 'running' as const, workflowId: 'partition-1' },
+    });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'editing', drawingRef: snapshot.ref, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
+      actions: { setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+      />);
+    });
+    expect(setViewport).toHaveBeenCalledWith(expect.objectContaining({ width: 800, height: 600 }));
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps refreshing the shared drawing while an imported partition is being analyzed', async () => {
+    vi.useFakeTimers();
+    const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
+    testWindow.setInterval = globalThis.setInterval;
+    testWindow.clearInterval = globalThis.clearInterval;
+    vi.stubGlobal('window', testWindow);
+    const refresh = vi.fn(async () => undefined);
+    const runtime = {
+      snapshot: observable(null),
+      viewport: observable({ x: 0, y: 0, scale: 1, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: null, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport() {}, setSelection() {}, refresh },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({
+      version: 1 as const, workspaceClaimed: true, activationEpoch: 1,
+      workflow: { status: 'running' as const, workflowId: 'partition-1' },
+    });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'analyzing', canUndo: false, canRedo: false, updatedAt: 1 }, busy: true, previewHeld: false, error: null }),
+      actions: { setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+    let renderer: TestRenderer.ReactTestRenderer;
+
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+      />);
+    });
+    const progress = renderer!.root.findByProps({ 'data-partition-progress': 'analyzing' });
+    expect(progress.findAll((node) => node.children.includes('正在识别轴段并进行 AI 语义复核'))).toHaveLength(1);
+    expect(refresh).toHaveBeenCalledOnce();
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(refresh.mock.calls.length).toBeGreaterThanOrEqual(2);
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('offers the complete engineering file matrix only through the bottom upload control', () => {
+    vi.stubGlobal('window', new EventTarget());
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const snapshot = {
+      version: 1 as const, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+      capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+    };
+    const runtime = {
+      snapshot: observable(snapshot),
+      viewport: observable({ x: 0, y: 0, scale: 1, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: snapshot, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport() {}, setSelection() {}, refresh: async () => undefined },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({
+      version: 1 as const, workspaceClaimed: false, activationEpoch: 0, workflow: { status: 'idle' as const },
+    });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
+      actions: { setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+
+    const renderer = TestRenderer.create(<AnnotationWorkspace
+      sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+    />);
+    expect(renderer.root.findAllByProps({ 'aria-label': '导入工程文件面板' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ 'data-panel': 'import' })).toHaveLength(0);
+    const accepts = renderer.root.findAllByType('input').map((input) => input.props.accept as string);
+    expect(accepts).toHaveLength(1);
+    expect(accepts[0]).toContain('.dxf,application/dxf');
+    expect(renderer.root.findAllByType('input').some((input) => input.props.multiple === true)).toBe(true);
+    for (const extension of ['.txt', '.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf', '.epub']) {
+      expect(accepts.some((accept) => accept.includes(extension))).toBe(true);
+    }
+    act(() => renderer.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it('reuses the base left panel shell and drawing toolbar for the annotation workflow', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    document.geometry = [0, 1].map((index) => ({
+      id: `line-${index}` as never, type: 'line' as const,
+      start: [index * 10, 0] as [number, number], end: [index * 10 + 5, 0] as [number, number],
+      visible: true, quality: { status: 'confirmed' as const, evidenceRefs: [] },
+    }));
+    document.relations = [{
+      id: 'relation-1' as never, type: 'constraint', plane: 'constraint', kind: 'parallel',
+      geometryIds: ['line-0', 'line-1'] as never, status: 'satisfied',
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    document.annotations = [{
+      id: 'source-text' as never, type: 'text', position: [5, 5], content: 'SHOULD_HIDE',
+      height: 2, rotation: 0, alignment: 'left', verticalAlignment: 'baseline',
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
     const snapshot = {
       version: 1 as const,
       ref: { drawingId: 'drawing-1', revision: 1 },
@@ -56,12 +199,29 @@ describe('AnnotationWorkspace', () => {
       partition={partition}
     />);
     expect(markup).toContain('data-annotation-workspace="true"');
+    expect(markup).toContain('aria-label="信息面板工具栏"');
+    expect(markup).toContain('vai-activity-bar--overlay');
+    expect(markup).not.toContain('aria-label="导入工程文件面板"');
+    expect(markup).toContain('aria-label="图纸结构面板"');
+    expect(markup).not.toContain('aria-label="标注候选"');
+    expect(markup).not.toContain('aria-label="冲突检查"');
     expect(markup).toContain('data-controlled-drawing-surface="true"');
     expect(markup).toContain('data-annotation-candidate-layer="true"');
-    expect(markup).toContain('已完成');
+    expect(markup).not.toContain('data-relation-id="relation-1"');
+    expect(markup).not.toContain('SHOULD_HIDE');
+    expect(markup).toContain('分区草稿待确认');
     expect(markup).toContain('aria-label="取消分区"');
     expect(markup).toContain('aria-label="按住预览分区结果"');
     expect(markup).toContain('aria-label="确认分区"');
+    expect(markup).toContain('aria-label="图纸操作工具"');
+    expect(markup).toContain('aria-label="适配图纸"');
+    expect(markup).toContain('aria-label="撤销"');
+    expect(markup).toContain('aria-label="反撤销"');
+    expect(markup).toContain('aria-label="上传图纸"');
+    expect(markup).toContain('aria-label="导出 DXF"');
+    expect(markup).toContain('accept=".dxf');
+    expect(markup).toContain('multiple=""');
+    expect(markup).not.toContain('aria-label="分区历史"');
     expect(markup).toContain('data-partition-origin="geometry"');
   });
 });

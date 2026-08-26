@@ -7,6 +7,7 @@ import type {
   Vec2,
 } from '@vectorai/drawing-core';
 import { splineBounds } from '@vectorai/drawing-core';
+import { normalizeHatchRegion } from '@vectorai/drawing-hatch';
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 
 export interface Bounds2D {
@@ -107,7 +108,13 @@ export function nodeBounds(node: DrawingRenderable): Bounds2D | null {
     case 'dimension': return boundsFromPoints([...node.definitionPoints, node.textPosition]);
     case 'leader': return boundsFromPoints(node.points);
     case 'centerline': return extendedLineBounds(node.start, node.end, node.extension);
-    case 'section-hatch': return boundsFromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+    case 'section-hatch': {
+      if (node.hatch !== undefined) {
+        const normalized = normalizeHatchRegion(node.hatch, 0.001);
+        return normalized.status === 'ok' ? normalized.region.bounds : null;
+      }
+      return boundsFromPoints((node.segments ?? []).flatMap(({ start, end }) => [start, end]));
+    }
   }
 }
 

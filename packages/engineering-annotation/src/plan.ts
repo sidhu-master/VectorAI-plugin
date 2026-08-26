@@ -12,6 +12,9 @@ import {
   type Vec2,
 } from '@vectorai/drawing-core';
 import type { DrawingRef, SpatialEditProgram } from '@vectorai/drawing-edit-protocol';
+import { orderDimensionIntents } from './dimension/order';
+import { projectEngineeringAnnotations } from './dimension/project';
+import type { EngineeringAnnotationDraft } from './dimension/types';
 
 export interface PendingEngineeringAnnotation {
   nodeId: string;
@@ -32,7 +35,7 @@ export function planEngineeringAnnotations(input: {
   ref: DrawingRef;
   objective: string;
 }): EngineeringAnnotationPlan {
-  const annotations: AnnotationNode[] = [];
+  const annotationTemplates: AnnotationNode[] = [];
   const associations: AssociationRelation[] = [];
   const pending: PendingEngineeringAnnotation[] = [];
   const suppressed: Array<{ nodeId: string; reason: string }> = [];
@@ -53,7 +56,7 @@ export function planEngineeringAnnotations(input: {
       suppressed.push({ nodeId: node.id, reason: 'No deterministic engineering dimension rule applies.' });
       continue;
     }
-    annotations.push(annotation);
+    annotationTemplates.push(annotation);
     associations.push({
       id: `relation_${stableKey(`${input.document.id}:${annotation.id}`)}` as RelationId,
       type: 'association', plane: 'association', kind: 'annotation-target',
@@ -63,6 +66,38 @@ export function planEngineeringAnnotations(input: {
       quality: { status: 'confirmed', confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] },
     });
   }
+  const dimensionTemplates = annotationTemplates.filter(
+    (annotation): annotation is Extract<AnnotationNode, { type: 'dimension' }> => annotation.type === 'dimension',
+  );
+  const draft: EngineeringAnnotationDraft = {
+    version: 1,
+    drawingRef: structuredClone(input.ref),
+    datums: [],
+    intents: dimensionTemplates.map((annotation) => ({
+      id: annotation.engineeringIntentId!,
+      drawingRef: structuredClone(input.ref),
+      kind: annotation.dimensionKind,
+      targets: structuredClone(annotation.targets),
+      datumIds: [],
+      nominalValue: annotation.computedValue ?? annotation.observedValue ?? 0,
+      unit: annotation.unit ?? input.document.unitSystem.length,
+      functionalRole: 'inspection',
+      source: 'geometry',
+      status: 'confirmed',
+      evidenceIds: annotation.quality.evidenceRefs.map(String),
+    })),
+    tolerances: [],
+    chains: [],
+    dependencies: [],
+    diagnostics: [],
+  };
+  const order = orderDimensionIntents({ intents: draft.intents, dependencies: draft.dependencies });
+  const projection = projectEngineeringAnnotations({
+    draft,
+    orderedIntentIds: order.orderedIntentIds,
+    existingAnnotations: annotationTemplates,
+  });
+  const annotations: AnnotationNode[] = projection.annotations;
   const targetNodeIds = [...new Set(associations.flatMap(({ geometryIds }) => geometryIds))].sort();
   const evidenceRefs = [...new Set(targetNodeIds.flatMap((id) => {
     const node = geometry.find((candidate) => candidate.id === id);
@@ -104,6 +139,7 @@ function annotationFor(
     associationStatus: 'resolved' as const,
     targets: [{ geometryId: node.id, anchor: { kind: 'center' as const } }],
     unit,
+    engineeringIntentId: `intent_auto_${stableKey(String(node.id))}`,
   };
   if (node.type === 'circle') {
     const first: Vec2 = [node.center[0] - node.radius, node.center[1]];

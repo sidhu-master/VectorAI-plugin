@@ -5,20 +5,48 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createEngineeringAnnotationTool } from './tools';
+import { createEngineeringAnnotationTool, createPartitionStatusTool } from './tools';
 import { AnnotationSessionStateStore } from './session-state';
+import { PartitionSessionStore } from './partition-store';
 
 describe('drawing_auto_annotate', () => {
+  it('does not replace an active partition workflow with automatic dimensioning', async () => {
+    const sessions = new AnnotationSessionStateStore(undefined, { now: () => 12 });
+    sessions.start('session-1', 'partition-1');
+    const partitions = new PartitionSessionStore(undefined, { now: () => 1, id: () => 'partition-1' });
+    partitions.beginAnalysis('session-1', { drawingId: 'drawing-1', revision: 1 });
+    const runExtensionProgram = vi.fn();
+    const tool = createEngineeringAnnotationTool({
+      getSnapshot: () => ({
+        version: 1, ref: { drawingId: 'drawing-1', revision: 1 },
+        document: createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 }),
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+      runExtensionProgram: runExtensionProgram as never,
+    }, sessions, partitions);
+
+    await expect(tool.execute({}, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).rejects.toThrow('PARTITION_WORKFLOW_ACTIVE');
+    expect(runExtensionProgram).not.toHaveBeenCalled();
+    expect(sessions.get('session-1').workflow).toEqual({ status: 'running', workflowId: 'partition-1' });
+  });
+
   it('uses the first-layer extension seam and never commits directly', async () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     document.geometry = [{
       id: 'circle-1' as never, type: 'circle', center: [0, 0], radius: 5, visible: true,
       quality: { status: 'confirmed', evidenceRefs: [] },
     }];
-    const runExtensionProgram = vi.fn(async () => ({ result: {
-      status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
-      ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
-    } }));
+    const runExtensionProgram = vi.fn(async (agent: Agent, request: unknown) => {
+      void agent;
+      void request;
+      return { result: {
+        status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
+        ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
+      } };
+    });
     const tool = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 }, document,
@@ -68,6 +96,23 @@ describe('drawing_auto_annotate', () => {
       workspaceClaimed: true,
       activationEpoch: 12,
       workflow: { status: 'failed' },
+    });
+  });
+});
+
+describe('drawing_partition_status', () => {
+  it('routes partition follow-ups to the existing editable draft without geometry editing', async () => {
+    const partitions = new PartitionSessionStore(undefined, { now: () => 1, id: () => 'partition-1' });
+    partitions.beginAnalysis('session-1', { drawingId: 'drawing-1', revision: 1 });
+    const tool = createPartitionStatusTool(partitions);
+
+    await expect(tool.execute({}, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({
+      phase: 'analyzing',
+      nextAction: 'wait-for-analysis',
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
     });
   });
 });

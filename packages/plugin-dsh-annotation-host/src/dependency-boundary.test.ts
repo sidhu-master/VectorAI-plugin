@@ -17,4 +17,12 @@ describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
   it('attaches Cordis service dependencies to the loader-visible default plugin', () => {
     expect(plugin.inject).toEqual(['tools', 'drawingSpace', 'attachments', 'agents', 'subagents']);
   });
+
+  it('persists dimension plans without embedding tolerance formulas in the DSH adapter', () => {
+    const directory = dirname(fileURLToPath(import.meta.url));
+    const service = readFileSync(join(directory, 'service.ts'), 'utf8');
+    const store = readFileSync(join(directory, 'dimension-plan-store.ts'), 'utf8');
+    expect(service).toContain('DimensionPlanStore');
+    expect(store).not.toMatch(/ToleranceRuleProvider|resolveToleranceSpec|formulaSource|eval\s*\(|new Function/);
+  });
 });

@@ -7,6 +7,7 @@ import {
 } from '@vectorai/engineering-annotation';
 import {
   partitionSessionSnapshotSchema,
+  partitionDraftSchema,
   type DrawingRef,
   type PartitionEditCommand,
   type PartitionSessionSnapshot,
@@ -16,7 +17,13 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path';
 
 export interface PartitionStorage { load(sessionId: string): unknown | null; save(sessionId: string, value: unknown): void }
-interface Envelope { snapshot: PartitionSessionSnapshot; undo: PartitionSessionSnapshot[]; redo: PartitionSessionSnapshot[]; lastConfirmed?: PartitionSessionSnapshot['confirmed'] }
+interface Envelope {
+  snapshot: PartitionSessionSnapshot;
+  undo: PartitionSessionSnapshot[];
+  redo: PartitionSessionSnapshot[];
+  lastConfirmed?: PartitionSessionSnapshot['confirmed'];
+  lastConfirmedDraft?: DomainPartitionDraft;
+}
 
 export class PartitionSessionStore {
   readonly #states = new Map<string, Envelope>();
@@ -76,7 +83,35 @@ export class PartitionSessionStore {
       semanticGroups: draft.semanticGroups, evidence: draft.evidence, diagnostics: draft.diagnostics,
       id: this.ports.id(), ...(previous === undefined ? {} : { parentRevisionId: previous.id }), confirmedAt: this.ports.now(),
     };
-    return this.#push(sessionId, { ...state.snapshot, phase: 'confirmed', draft: undefined, confirmed: revision as never, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
+    return this.#push(
+      sessionId,
+      { ...state.snapshot, phase: 'confirmed', draft: undefined, confirmed: revision as never, canUndo: true, canRedo: false, updatedAt: this.ports.now() },
+      draft,
+    );
+  }
+
+  reopen(sessionId: string, expected: DrawingRef): PartitionSessionSnapshot {
+    const state = this.#envelope(sessionId);
+    requireRef(state.snapshot, expected);
+    const confirmed = latestConfirmed(state);
+    if (confirmed === undefined) throw new Error('PARTITION_CONFIRMED_REQUIRED');
+    if (state.snapshot.phase === 'editing' && state.snapshot.draft?.basePartitionRevisionId === confirmed.id) {
+      return structuredClone(state.snapshot);
+    }
+    const draft = state.lastConfirmedDraft === undefined
+      ? reconstructDraft(confirmed as unknown as DomainPartitionRevision)
+      : structuredClone(state.lastConfirmedDraft);
+    draft.basePartitionRevisionId = confirmed.id;
+    return this.#push(sessionId, {
+      version: 1,
+      phase: 'editing',
+      drawingRef: expected,
+      draft: draft as never,
+      confirmed,
+      canUndo: true,
+      canRedo: false,
+      updatedAt: this.ports.now(),
+    });
   }
 
   cancel(sessionId: string, expected: DrawingRef): PartitionSessionSnapshot {
@@ -110,18 +145,28 @@ export class PartitionSessionStore {
     return this.#replace(sessionId, { ...state.snapshot, phase: 'needs-rebase', drawingRef: currentRef, message: 'Drawing revision changed', updatedAt: this.ports.now() }, state.undo, state.redo);
   }
 
-  #push(sessionId: string, snapshot: PartitionSessionSnapshot): PartitionSessionSnapshot {
+  #push(sessionId: string, snapshot: PartitionSessionSnapshot, lastConfirmedDraft?: DomainPartitionDraft): PartitionSessionSnapshot {
     const state = this.#envelope(sessionId);
-    return this.#replace(sessionId, snapshot, [...state.undo, state.snapshot], []);
+    return this.#replace(sessionId, snapshot, [...state.undo, state.snapshot], [], lastConfirmedDraft);
   }
 
-  #replace(sessionId: string, snapshot: PartitionSessionSnapshot, undo: PartitionSessionSnapshot[], redo: PartitionSessionSnapshot[]): PartitionSessionSnapshot {
-    const previousConfirmed = this.#states.get(sessionId)?.lastConfirmed;
+  #replace(
+    sessionId: string,
+    snapshot: PartitionSessionSnapshot,
+    undo: PartitionSessionSnapshot[],
+    redo: PartitionSessionSnapshot[],
+    confirmedDraft?: DomainPartitionDraft,
+  ): PartitionSessionSnapshot {
+    const previous = this.#states.get(sessionId);
+    const previousConfirmed = previous?.lastConfirmed;
     const envelope: Envelope = {
       snapshot: partitionSessionSnapshotSchema.parse(compact(snapshot)),
       undo: undo.map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
       redo: redo.map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
       ...(snapshot.confirmed === undefined && previousConfirmed === undefined ? {} : { lastConfirmed: snapshot.confirmed ?? previousConfirmed }),
+      ...(confirmedDraft === undefined && previous?.lastConfirmedDraft === undefined
+        ? {}
+        : { lastConfirmedDraft: structuredClone(confirmedDraft ?? previous!.lastConfirmedDraft!) }),
     };
     this.storage?.save(sessionId, envelope);
     this.#states.set(sessionId, envelope);
@@ -168,7 +213,7 @@ function latestConfirmed(envelope: Envelope): PartitionSessionSnapshot['confirme
 }
 function parseEnvelope(value: unknown): Envelope | null {
   if (!value || typeof value !== 'object') return null;
-  const item = value as { snapshot?: unknown; undo?: unknown; redo?: unknown; lastConfirmed?: unknown };
+  const item = value as { snapshot?: unknown; undo?: unknown; redo?: unknown; lastConfirmed?: unknown; lastConfirmedDraft?: unknown };
   const snapshot = partitionSessionSnapshotSchema.safeParse(item.snapshot);
   if (!snapshot.success || !Array.isArray(item.undo) || !Array.isArray(item.redo)) return null;
   const undo = item.undo.map((entry) => partitionSessionSnapshotSchema.safeParse(entry));
@@ -178,8 +223,40 @@ function parseEnvelope(value: unknown): Envelope | null {
     ? undefined
     : partitionSessionSnapshotSchema.shape.confirmed.safeParse(item.lastConfirmed);
   if (confirmed !== undefined && !confirmed.success) return null;
+  const confirmedDraft = item.lastConfirmedDraft === undefined ? undefined : partitionDraftSchema.safeParse(item.lastConfirmedDraft);
+  if (confirmedDraft !== undefined && !confirmedDraft.success) return null;
   return {
     snapshot: snapshot.data, undo: undo.map((entry) => entry.data!), redo: redo.map((entry) => entry.data!),
     ...(confirmed?.data === undefined ? {} : { lastConfirmed: confirmed.data }),
+    ...(confirmedDraft?.data === undefined ? {} : { lastConfirmedDraft: confirmedDraft.data as unknown as DomainPartitionDraft }),
+  };
+}
+
+function reconstructDraft(revision: DomainPartitionRevision): DomainPartitionDraft {
+  const boundaries = revision.segments.slice(0, -1).map((segment) => segment.zEnd);
+  return {
+    version: 1,
+    drawingRef: revision.drawingRef,
+    axis: structuredClone(revision.axis),
+    segments: structuredClone(revision.segments),
+    semanticGroups: structuredClone(revision.semanticGroups),
+    stepCandidates: boundaries.map((z, index) => ({
+      id: `step:reopen:${index + 1}`,
+      z,
+      score: 1,
+      evidenceIds: [],
+      accepted: true,
+    })),
+    evidence: structuredClone(revision.evidence),
+    diagnostics: [
+      ...structuredClone(revision.diagnostics),
+      {
+        id: `diagnostic:reopen:${revision.id}`,
+        severity: 'warning',
+        code: 'PARTITION_REOPEN_DRAFT_RECONSTRUCTED',
+        message: 'Editable partition state was reconstructed from a legacy confirmed revision.',
+      },
+    ],
+    basePartitionRevisionId: revision.id,
   };
 }

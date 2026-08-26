@@ -9,13 +9,30 @@ describe('annotation client contribution', () => {
   it('registers independently without claiming or registering the DSH workspace slot', async () => {
     const disposeContribution = vi.fn();
     const disposeRemote = vi.fn();
-    let disposeInjected: (() => void) | undefined;
-    const disposeFiber = vi.fn(async () => disposeInjected?.());
+    let disposeInjected: (() => void | Promise<void>) | undefined;
+    const disposeFiber = vi.fn(async () => { await disposeInjected?.(); });
     let registered: { id: string; claimSource: { observe(sessionId: string): { getSnapshot(): unknown } } } | undefined;
     const registry = {
       registerWorkspace: vi.fn((contribution) => {
         registered = contribution;
         return { dispose: disposeContribution };
+      }),
+    };
+    let dropEntry: {
+      options: { name: string; id: string; inject(sessionId: string): unknown };
+      component: unknown;
+    } | undefined;
+    const disposeDropEntry = vi.fn();
+    const disposeDropFiber = vi.fn(async () => disposeDropEntry());
+    const slots = {
+      register: vi.fn((options, component) => {
+        dropEntry = { options, component };
+        return disposeDropEntry;
+      }),
+      inject: vi.fn((name: string, callback: () => unknown) => {
+        expect(name).toBe('conversation.input.dock');
+        callback();
+        return { dispose: disposeDropFiber };
       }),
     };
     const remote = {
@@ -34,10 +51,11 @@ describe('annotation client contribution', () => {
       get(name: string) {
         if (name === 'remote') return remote;
         if (name === 'drawingSurfaceRegistry') return registry;
+        if (name === 'slots') return slots;
         throw new Error(`unexpected service ${name}`);
       },
       inject(deps: string[], callback: (scope: Context) => unknown) {
-        expect(deps).toEqual(['remote.drawingAnnotation', 'drawingSurfaceRegistry']);
+        expect(deps).toEqual(['remote.drawingAnnotation', 'drawingSurfaceRegistry', 'slots']);
         disposeInjected = callback(ctx as unknown as Context) as (() => void) | undefined;
         return { dispose: disposeFiber };
       },
@@ -47,10 +65,19 @@ describe('annotation client contribution', () => {
     expect(registered?.id).toBe('engineering-annotation');
     expect(registered?.claimSource.observe('session-1').getSnapshot())
       .toEqual({ active: false, activationEpoch: 0 });
-    expect(ctx).not.toHaveProperty('slots');
+    expect(dropEntry?.options).toMatchObject({
+      name: 'conversation.input.dock',
+      id: 'vectorai-engineering-import-drop',
+    });
+    expect(dropEntry?.component).toEqual(expect.any(Function));
+    expect(dropEntry?.options.inject('session-1')).toMatchObject({
+      partition: expect.any(Object),
+      refreshClaim: expect.any(Function),
+    });
 
     await dispose();
     expect(disposeFiber).toHaveBeenCalledOnce();
+    expect(disposeDropFiber).toHaveBeenCalledOnce();
     expect(disposeContribution).toHaveBeenCalledOnce();
     expect(disposeRemote).toHaveBeenCalledOnce();
   });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
+import { createEmptyDrawing, type AnnotationId, type GeometryId } from '@vectorai/drawing-core';
 import type { DrawingWorkspaceSnapshot } from '@vectorai/drawing-workspace';
 import TestRenderer, { act } from 'react-test-renderer';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -96,6 +96,62 @@ describe('controlled DrawingSurface', () => {
     expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({ scale: 2.2 }));
     expect(onSelectionChange).toHaveBeenCalledWith([]);
     act(() => renderer.unmount());
+  });
+
+  it('fits the drawing to the measured controlled surface when requested', () => {
+    const onViewportChange = vi.fn();
+    const value = snapshot();
+    value.document.annotations = [{
+      id: 'far-label' as AnnotationId,
+      type: 'text',
+      position: [10_000, 10_000],
+      content: 'remote annotation',
+      height: 10,
+      rotation: 0,
+      alignment: 'left',
+      verticalAlignment: 'baseline',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    class ResizeObserverStub {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe() { this.callback([], this as unknown as ResizeObserver); }
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = TestRenderer.create(
+        <DrawingSurface
+          snapshot={value}
+          viewport={viewport}
+          selectedIds={[]}
+          fitToDrawingOnResize="geometry"
+          onViewportChange={onViewportChange}
+          onSelectionChange={() => undefined}
+        />,
+        {
+          createNodeMock: (element) => element.props['data-canvas-root'] === 'true' ? {
+            getBoundingClientRect: () => ({ width: 240, height: 600 }),
+            addEventListener() {},
+            removeEventListener() {},
+          } : {},
+        },
+      );
+    });
+
+    expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({
+      width: 240,
+      height: 600,
+      x: expect.any(Number),
+      y: expect.any(Number),
+    }));
+    expect(onViewportChange.mock.calls.at(-1)?.[0].x).not.toBe(viewport.x);
+    expect(onViewportChange.mock.calls.at(-1)?.[0].scale).toBeGreaterThan(1);
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
   });
 
   it('exports independently composable geometry layers', () => {

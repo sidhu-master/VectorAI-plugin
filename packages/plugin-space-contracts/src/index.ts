@@ -116,6 +116,81 @@ const dimensionCandidateSchema = z.object({
   score: z.number(),
   reasons: z.array(z.string()),
 }).strict();
+const toleranceProjectionSchema = z.object({
+  mode: z.enum(['none', 'bilateral', 'unilateral', 'limits', 'fit']),
+  upperDeviation: z.number().finite().optional(),
+  lowerDeviation: z.number().finite().optional(),
+  upperLimit: z.number().finite().optional(),
+  lowerLimit: z.number().finite().optional(),
+  fitDesignation: z.string().min(1).max(32).optional(),
+  unit: z.enum(['mm', 'cm', 'm', 'deg']),
+  status: z.enum(['candidate', 'resolved', 'confirmed', 'conflict']),
+  source: z.enum(['document', 'standard', 'enterprise-rule', 'manual', 'ai-candidate']),
+  ruleRef: z.object({
+    id: idSchema,
+    version: idSchema,
+    inputDigest: idSchema,
+  }).strict().optional(),
+  evidenceRefs: z.array(idSchema),
+}).strict().superRefine((value, context) => {
+  if (value.mode === 'limits' && (value.lowerLimit === undefined || value.upperLimit === undefined || value.lowerLimit > value.upperLimit)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_LIMIT_ORDER' });
+  }
+  if (value.mode === 'bilateral' && (value.upperDeviation === undefined || value.lowerDeviation === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATIONS_REQUIRED' });
+  }
+  if (value.mode === 'unilateral' && value.upperDeviation === undefined && value.lowerDeviation === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_REQUIRED' });
+  }
+  if (value.mode === 'fit' && value.fitDesignation === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_FIT_REQUIRED' });
+  }
+  if (value.status === 'confirmed' && value.evidenceRefs.length === 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_EVIDENCE_REQUIRED' });
+  }
+});
+const datumReferenceSchema = z.object({
+  datumId: idSchema,
+  role: z.enum(['primary', 'secondary', 'tertiary', 'origin']),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+}).strict();
+
+const hatchBoundaryEdgeSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('line'), start: vec2Schema, end: vec2Schema }).strict(),
+  z.object({
+    type: z.literal('arc'), center: vec2Schema, radius: z.number().positive(),
+    startAngle: z.number(), endAngle: z.number(), counterClockwise: z.boolean(),
+  }).strict(),
+  z.object({
+    type: z.literal('ellipse'), center: vec2Schema, majorAxis: vec2Schema,
+    axisRatio: z.number().positive(), startParameter: z.number(), endParameter: z.number(),
+    counterClockwise: z.boolean(),
+  }).strict(),
+  z.object({
+    type: z.literal('spline'), degree: z.number().int().positive(), rational: z.boolean(),
+    periodic: z.boolean(), knots: z.array(z.number()), controlPoints: z.array(vec2Schema),
+    weights: z.array(z.number()).optional(), fitPoints: z.array(vec2Schema).optional(),
+  }).strict(),
+]);
+
+const parametricHatchSchema = z.object({
+  version: z.literal(1),
+  style: z.enum(['normal', 'outer', 'ignore']),
+  elevation: z.number(),
+  extrusion: z.tuple([z.number(), z.number(), z.number()]),
+  boundaryPaths: z.array(z.object({
+    flags: z.number().int().nonnegative(),
+    closed: z.boolean(),
+    edges: z.array(hatchBoundaryEdgeSchema).min(1),
+  }).strict()).min(1),
+  patternLines: z.array(z.object({
+    angle: z.number(), base: vec2Schema, offset: vec2Schema, dashLengths: z.array(z.number()),
+  }).strict()),
+  patternAngle: z.number(),
+  patternScale: z.number().positive(),
+  double: z.boolean(),
+}).strict();
 
 const annotationSchema = z.discriminatedUnion('type', [
   z.object({
@@ -141,6 +216,11 @@ const annotationSchema = z.discriminatedUnion('type', [
     displayText: z.string().optional(),
     unit: z.enum(['mm', 'cm', 'm', 'deg']).optional(),
     tolerance: z.object({ upper: z.number().optional(), lower: z.number().optional() }).strict().optional(),
+    toleranceProjection: toleranceProjectionSchema.optional(),
+    datumReferences: z.array(datumReferenceSchema).optional(),
+    engineeringIntentId: idSchema.optional(),
+    engineeringChainIds: z.array(idSchema).optional(),
+    generationOrder: z.number().int().nonnegative().optional(),
     prefix: z.string().optional(),
     suffix: z.string().optional(),
     textPosition: vec2Schema,
@@ -168,8 +248,11 @@ const annotationSchema = z.discriminatedUnion('type', [
     pattern: z.string(),
     angle: z.number(),
     spacing: z.number(),
-    segments: z.array(z.object({ start: vec2Schema, end: vec2Schema }).strict()),
-  }).strict(),
+    hatch: parametricHatchSchema.optional(),
+    segments: z.array(z.object({ start: vec2Schema, end: vec2Schema }).strict()).optional(),
+  }).strict().refine((value) => value.hatch !== undefined || value.segments !== undefined, {
+    message: 'SECTION_HATCH_REPRESENTATION_REQUIRED',
+  }),
 ]);
 
 const relationSchema = z.discriminatedUnion('plane', [
@@ -826,13 +909,147 @@ export const partitionSessionSnapshotSchema = z.object({
   canUndo: z.boolean(), canRedo: z.boolean(), message: z.string().optional(), updatedAt: z.number(),
 }).strict();
 
+export const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+export const engineeringDocumentInputSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  digest: sha256DigestSchema,
+  mediaType: z.string().trim().min(1).max(127).optional(),
+  base64: z.string().min(1).max(27_962_028),
+}).strict();
 export const partitionImportRequestSchema = z.object({
   dxf: z.object({ name: z.string().min(1).max(255), digest: idSchema, base64: z.string().min(1).max(27_962_028) }).strict(),
+  engineeringDocuments: z.array(engineeringDocumentInputSchema).max(16).optional(),
   engineeringDocument: z.object({ name: z.string().min(1).max(255), text: z.string() }).strict().optional(),
+}).strict().superRefine((request, context) => {
+  if (request.engineeringDocuments !== undefined && request.engineeringDocument !== undefined) {
+    context.addIssue({ code: 'custom', path: ['engineeringDocuments'], message: 'ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS' });
+  }
+});
+export const partitionDocumentSupplementRequestSchema = z.object({
+  expectedDrawingRef: drawingRefSchema,
+  engineeringDocuments: z.array(engineeringDocumentInputSchema).min(1).max(16),
 }).strict();
 
 export type PartitionDraft = z.infer<typeof partitionDraftSchema>;
 export type PartitionRevision = z.infer<typeof partitionRevisionSchema>;
 export type PartitionEditCommand = z.infer<typeof partitionEditCommandSchema>;
 export type PartitionSessionSnapshot = z.infer<typeof partitionSessionSnapshotSchema>;
+export type EngineeringDocumentInput = z.infer<typeof engineeringDocumentInputSchema>;
 export type PartitionImportRequest = z.infer<typeof partitionImportRequestSchema>;
+export type PartitionDocumentSupplementRequest = z.infer<typeof partitionDocumentSupplementRequestSchema>;
+
+const engineeringDiagnosticSchema = z.object({
+  id: idSchema,
+  severity: z.enum(['info', 'warning', 'error']),
+  code: idSchema,
+  message: z.string(),
+  entityIds: z.array(idSchema).optional(),
+  evidenceIds: z.array(idSchema).optional(),
+}).strict();
+const engineeringStateSchema = z.enum(['candidate', 'resolved', 'confirmed', 'conflict', 'stale']);
+const engineeringDatumSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: z.string().min(1).max(120),
+  geometryId: idSchema,
+  anchor: entityAnchorSchema,
+  role: z.enum(['primary', 'secondary', 'tertiary', 'origin']),
+  source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
+  status: z.enum(['candidate', 'confirmed', 'conflict', 'stale']),
+  evidenceIds: z.array(idSchema),
+}).strict();
+const dimensionIntentSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  kind: z.enum(['linear', 'aligned', 'angular', 'radius', 'diameter', 'ordinate', 'arc-length']),
+  targets: z.array(dimensionTargetSchema),
+  datumIds: z.array(idSchema),
+  nominalValue: z.number().finite(),
+  unit: z.enum(['mm', 'cm', 'm', 'deg']),
+  functionalRole: z.enum(['datum', 'overall', 'functional', 'assembly', 'process', 'inspection', 'auxiliary', 'closure']),
+  source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
+  status: engineeringStateSchema,
+  evidenceIds: z.array(idSchema),
+}).strict();
+const resolvedToleranceSchema = z.object({
+  upperDeviation: z.number().finite().optional(),
+  lowerDeviation: z.number().finite().optional(),
+  upperLimit: z.number().finite().optional(),
+  lowerLimit: z.number().finite().optional(),
+  fitDesignation: z.string().min(1).max(32).optional(),
+  inputDigest: idSchema,
+  evaluatedAt: z.number().finite(),
+}).strict();
+const toleranceSpecSchema = z.object({
+  id: idSchema,
+  dimensionIntentId: idSchema,
+  mode: z.enum(['bilateral', 'unilateral', 'limits', 'fit', 'formula']),
+  source: z.enum(['document', 'standard', 'enterprise-rule', 'manual', 'ai-candidate']),
+  ruleRef: z.object({ id: idSchema, version: idSchema }).strict().optional(),
+  inputs: z.record(z.string(), z.union([z.number().finite(), z.string(), z.boolean()])),
+  resolved: resolvedToleranceSchema.optional(),
+  status: engineeringStateSchema,
+  evidenceIds: z.array(idSchema),
+  diagnostics: z.array(engineeringDiagnosticSchema),
+}).strict();
+const dimensionChainSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  name: z.string().max(120).optional(),
+  datumIds: z.array(idSchema),
+  members: z.array(z.object({
+    dimensionIntentId: idSchema,
+    coefficient: z.union([z.literal(1), z.literal(-1)]),
+    role: z.enum(['functional', 'component', 'closure']),
+    sequenceHint: z.number().int().optional(),
+  }).strict()),
+  equation: z.object({
+    closureIntentId: idSchema,
+    targetValue: z.number().finite().optional(),
+  }).strict(),
+  analysisMode: z.enum(['worst-case', 'statistical', 'reference-only']),
+  status: engineeringStateSchema,
+  evidenceIds: z.array(idSchema),
+  diagnostics: z.array(engineeringDiagnosticSchema),
+}).strict();
+const annotationDependencySchema = z.object({
+  beforeIntentId: idSchema,
+  afterIntentId: idSchema,
+  reason: z.enum(['datum-before-dependent', 'overall-before-functional', 'functional-before-component', 'component-before-closure', 'explicit-document-order']),
+  evidenceIds: z.array(idSchema),
+}).strict();
+export const engineeringAnnotationDraftSchema = z.object({
+  version: z.literal(1),
+  drawingRef: drawingRefSchema,
+  datums: z.array(engineeringDatumSchema),
+  intents: z.array(dimensionIntentSchema),
+  tolerances: z.array(toleranceSpecSchema),
+  chains: z.array(dimensionChainSchema),
+  dependencies: z.array(annotationDependencySchema),
+  diagnostics: z.array(engineeringDiagnosticSchema),
+  baseRevisionId: idSchema.optional(),
+}).strict();
+export const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
+  baseRevisionId: true,
+}).extend({
+  id: idSchema,
+  parentRevisionId: idSchema.optional(),
+  generationOrder: z.array(idSchema),
+  confirmedAt: z.number().finite(),
+}).strict();
+
+export const dimensionPlanSessionSnapshotSchema = z.object({
+  version: z.literal(1),
+  phase: z.enum(['idle', 'editing', 'confirmed', 'needs-rebase', 'failed']),
+  drawingRef: drawingRefSchema.optional(),
+  draft: engineeringAnnotationDraftSchema.optional(),
+  confirmed: engineeringAnnotationRevisionSchema.optional(),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+  message: z.string().optional(),
+  updatedAt: z.number().finite(),
+}).strict();
+
+export type EngineeringAnnotationDraft = z.infer<typeof engineeringAnnotationDraftSchema>;
+export type EngineeringAnnotationRevision = z.infer<typeof engineeringAnnotationRevisionSchema>;
+export type DimensionPlanSessionSnapshot = z.infer<typeof dimensionPlanSessionSnapshotSchema>;

@@ -1,48 +1,52 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Layers3, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
-import { useRef, type ComponentType, type KeyboardEvent, type PointerEvent } from 'react';
+import { useRef, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 
 import { ObjectList } from './ObjectList';
 import { PropertyInspector } from './PropertyInspector';
 
 export type WorkspacePanelId = 'objects' | 'properties';
 
-interface PanelDefinition {
-  readonly id: WorkspacePanelId;
+export interface WorkspacePanelDefinition<PanelId extends string = string> {
+  readonly id: PanelId;
   readonly label: string;
   readonly icon: LucideIcon;
-  readonly component: ComponentType;
+  render(): ReactNode;
 }
 
-export interface WorkspaceActivityBarProps {
-  activePanel: WorkspacePanelId | null;
+export interface WorkspaceActivityBarProps<PanelId extends string = WorkspacePanelId> {
+  activePanel: PanelId | null;
   panelWidth: number;
-  onActivePanelChange(panel: WorkspacePanelId | null): void;
+  onActivePanelChange(panel: PanelId | null): void;
   onPanelWidthChange(width: number): void;
+  panels?: readonly WorkspacePanelDefinition<PanelId>[];
+  overlay?: boolean;
 }
 
 const MIN_PANEL_WIDTH = 220;
 const MAX_PANEL_WIDTH = 420;
 const PANEL_RESIZE_STEP = 16;
 
-const panelDefinitions: readonly PanelDefinition[] = [
-  { id: 'objects', label: '对象', icon: Layers3, component: ObjectList },
-  { id: 'properties', label: '属性', icon: SlidersHorizontal, component: PropertyInspector },
+const defaultPanelDefinitions: readonly WorkspacePanelDefinition<WorkspacePanelId>[] = [
+  { id: 'objects', label: '对象', icon: Layers3, render: () => <ObjectList /> },
+  { id: 'properties', label: '属性', icon: SlidersHorizontal, render: () => <PropertyInspector /> },
 ];
 
-export function WorkspaceActivityBar({
+export function WorkspaceActivityBar<PanelId extends string = WorkspacePanelId>({
   activePanel,
   panelWidth,
   onActivePanelChange,
   onPanelWidthChange,
-}: WorkspaceActivityBarProps) {
+  panels,
+  overlay = false,
+}: WorkspaceActivityBarProps<PanelId>) {
   const resizeStart = useRef<{ pointerId: number; clientX: number; width: number } | null>(null);
   const latestWidth = useRef(panelWidth);
   latestWidth.current = panelWidth;
 
-  const activeDefinition = panelDefinitions.find(({ id }) => id === activePanel);
-  const ActivePanel = activeDefinition?.component;
+  const definitions = (panels ?? defaultPanelDefinitions) as readonly WorkspacePanelDefinition<PanelId>[];
+  const activeDefinition = definitions.find(({ id }) => id === activePanel);
 
   function commitWidth(width: number) {
     const nextWidth = clampPanelWidth(width);
@@ -88,8 +92,8 @@ export function WorkspaceActivityBar({
 
   return (
     <>
-      <nav className="vai-activity-bar" aria-label="信息面板工具栏">
-        {panelDefinitions.map(({ id, label, icon: Icon }) => {
+      <nav className={`vai-activity-bar${overlay ? ' vai-activity-bar--overlay' : ''}`} aria-label="信息面板工具栏">
+        {definitions.map(({ id, label, icon: Icon }) => {
           const active = activePanel === id;
           return (
             <button
@@ -106,12 +110,12 @@ export function WorkspaceActivityBar({
           );
         })}
       </nav>
-      {activeDefinition === undefined || ActivePanel === undefined ? null : (
+      {activeDefinition === undefined ? null : (
         <aside
-          className="vai-inspector-stack vai-inspector-stack--activity"
+          className={`vai-inspector-stack vai-inspector-stack--activity${overlay ? ' vai-inspector-stack--overlay' : ''}`}
           data-panel={activeDefinition.id}
           aria-label={`${activeDefinition.label}信息面板`}
-          style={{ width: panelWidth }}
+          style={{ width: panelWidth, backgroundColor: 'var(--vai-panel, #12161b)' }}
         >
           <button
             type="button"
@@ -122,7 +126,7 @@ export function WorkspaceActivityBar({
           >
             <X size={16} aria-hidden="true" />
           </button>
-          <ActivePanel />
+          {activeDefinition.render()}
           <div
             className="vai-panel-resizer"
             role="separator"

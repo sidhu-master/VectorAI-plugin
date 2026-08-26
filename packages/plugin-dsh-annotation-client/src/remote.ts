@@ -6,11 +6,13 @@ import {
   drawingRefSchema,
   drawingSessionIdSchema,
   partitionEditCommandSchema,
+  partitionDocumentSupplementRequestSchema,
   partitionImportRequestSchema,
   partitionSessionSnapshotSchema,
   type AnnotationSessionState,
   type DrawingRef,
   type PartitionEditCommand,
+  type PartitionDocumentSupplementRequest,
   type PartitionImportRequest,
   type PartitionSessionSnapshot,
 } from '@vectorai/plugin-space-contracts';
@@ -20,10 +22,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     drawingAnnotation: {
       getSessionState(sessionId: string): Promise<RemoteResult<AnnotationSessionState>>;
       importAndAnalyze(sessionId: string, request: PartitionImportRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      supplementDocuments(sessionId: string, request: PartitionDocumentSupplementRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
       getPartitionState(sessionId: string): Promise<RemoteResult<PartitionSessionSnapshot>>;
       editPartition(sessionId: string, command: PartitionEditCommand): Promise<RemoteResult<PartitionSessionSnapshot>>;
       confirmPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
       cancelPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      reopenPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
       undoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
       redoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
     };
@@ -33,10 +37,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       sessionId: string,
     ) => Promise<RemoteResult<AnnotationSessionState>>;
     'drawingAnnotation/importAndAnalyze': (sessionId: string, request: PartitionImportRequest) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/supplementDocuments': (sessionId: string, request: PartitionDocumentSupplementRequest) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/getPartitionState': (sessionId: string) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/editPartition': (sessionId: string, command: PartitionEditCommand) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/confirmPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/cancelPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/reopenPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/undoPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/redoPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
   }
@@ -72,10 +78,12 @@ export const ANNOTATION_REMOTE: TypertRemoteContribution = {
 function partitionDescriptors() {
   return [
     descriptor('importAndAnalyze', [jsonParameter('request', '@vectorai/plugin-space-contracts#PartitionImportRequest', partitionImportRequestSchema)]),
+    descriptor('supplementDocuments', [jsonParameter('request', '@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest', partitionDocumentSupplementRequestSchema)]),
     descriptor('getPartitionState', []),
     descriptor('editPartition', [jsonParameter('command', '@vectorai/plugin-space-contracts#PartitionEditCommand', partitionEditCommandSchema)]),
     descriptor('confirmPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     descriptor('cancelPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    descriptor('reopenPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     descriptor('undoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     descriptor('redoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
   ];

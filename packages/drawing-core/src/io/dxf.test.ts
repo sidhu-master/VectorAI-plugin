@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { createEmptyDrawing } from '../document';
+import { createEmptyDrawing, type DimensionAnnotation } from '../document';
 import { exportDrawingDxf } from './dxf';
 
 const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -60,5 +60,94 @@ describe('exportDrawingDxf', () => {
     }];
 
     expect(exportDrawingDxf(document)).toContain('1\r\nA\\PB\\PC');
+  });
+
+  it('exports a parametric section hatch as a real DXF HATCH entity', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-hatch' }, now: () => 1 });
+    document.annotations = [{
+      id: 'hatch-1' as never, type: 'section-hatch', pattern: 'ANSI31', angle: 60, spacing: 6.35,
+      hatch: {
+        version: 1, style: 'outer', elevation: 2, extrusion: [0, 0, 1], patternAngle: 15,
+        patternScale: 2, double: false,
+        boundaryPaths: [{ flags: 1, closed: true, edges: [
+          { type: 'line', start: [0, 0], end: [10, 0] },
+          { type: 'arc', center: [10, 5], radius: 5, startAngle: -90, endAngle: 90, counterClockwise: true },
+          { type: 'line', start: [10, 10], end: [0, 10] },
+          { type: 'line', start: [0, 10], end: [0, 0] },
+        ] }],
+        patternLines: [{ angle: 45, base: [0, 0], offset: [-2.2450640303, 2.2450640303], dashLengths: [4, -2] }],
+      },
+      visible: true, quality,
+    }];
+
+    const dxf = exportDrawingDxf(document);
+    expect(dxf).toContain('0\r\nHATCH\r\n8\r\nANNOTATIONS\r\n100\r\nAcDbHatch');
+    expect(dxf).toContain('2\r\nANSI31\r\n70\r\n0\r\n71\r\n0\r\n91\r\n1');
+    expect(dxf).toContain('75\r\n1\r\n76\r\n0\r\n52\r\n15\r\n41\r\n2\r\n77\r\n0\r\n78\r\n1');
+    expect(dxf).toContain('79\r\n2\r\n49\r\n4\r\n49\r\n-2');
+  });
+
+  it('renders resolved portable and legacy tolerance labels without evaluating formulas', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-tolerance' }, now: () => 1 });
+    const dimension = (id: string, displayText: string): DimensionAnnotation => ({
+      id: id as never, type: 'dimension', dimensionKind: 'linear',
+      associationStatus: 'resolved', targets: [], computedValue: 10, displayText,
+      unit: 'mm', textPosition: [0, 0], definitionPoints: [[0, 0], [10, 0]],
+      visible: true, quality,
+    });
+    document.annotations = [
+      {
+        ...dimension('bilateral', '10'),
+        toleranceProjection: {
+          mode: 'bilateral', upperDeviation: 0.02, lowerDeviation: -0.01, unit: 'mm',
+          source: 'enterprise-rule', status: 'resolved', evidenceRefs: ['rule:1'],
+        },
+      },
+      {
+        ...dimension('unilateral', '10'),
+        toleranceProjection: {
+          mode: 'unilateral', upperDeviation: 0.02, unit: 'mm',
+          source: 'manual', status: 'confirmed', evidenceRefs: ['manual:1'],
+        },
+      },
+      {
+        ...dimension('limits', '10'),
+        toleranceProjection: {
+          mode: 'limits', upperLimit: 10.02, lowerLimit: 9.98, unit: 'mm',
+          source: 'document', status: 'confirmed', evidenceRefs: ['document:1'],
+        },
+      },
+      {
+        ...dimension('fit', '10'),
+        toleranceProjection: {
+          mode: 'fit', fitDesignation: 'H7', unit: 'mm', source: 'standard',
+          status: 'confirmed', evidenceRefs: ['standard:1'],
+        },
+      },
+      { ...dimension('legacy', '10'), tolerance: { upper: 0.03, lower: -0.02 } },
+    ];
+
+    const dxf = exportDrawingDxf(document);
+    expect(dxf).toContain('1\r\n10 +0.02/-0.01');
+    expect(dxf).toContain('1\r\n10 +0.02/0');
+    expect(dxf).toContain('1\r\n10 [10.02/9.98]');
+    expect(dxf).toContain('1\r\n10 H7');
+    expect(dxf).toContain('1\r\n10 +0.03/-0.02');
+  });
+
+  it('sanitizes tolerance designation text before writing a DXF group value', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-fit' }, now: () => 1 });
+    document.annotations = [{
+      id: 'fit' as never, type: 'dimension', dimensionKind: 'linear', associationStatus: 'resolved',
+      targets: [], computedValue: 10, displayText: '10', unit: 'mm', textPosition: [0, 0],
+      definitionPoints: [[0, 0], [10, 0]], visible: true, quality,
+      toleranceProjection: {
+        mode: 'fit', fitDesignation: 'H7\n0\nLINE', unit: 'mm', source: 'manual',
+        status: 'resolved', evidenceRefs: ['manual:fit'],
+      },
+    }];
+    const dxf = exportDrawingDxf(document);
+    expect(dxf).toContain('1\r\n10 H7\\P0\\PLINE\r\n50\r\n0');
+    expect(dxf).not.toContain('1\r\n10 H7\r\n0\r\nLINE');
   });
 });

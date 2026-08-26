@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 interface PackageManifest {
   name: string;
   dependencies?: Record<string, string>;
+  exports?: Record<string, unknown>;
   dsh?: { bundle?: { patch?: string } };
 }
 
@@ -44,6 +45,8 @@ describe('DSH plugin bundle boundaries', () => {
     ]);
     expect(host.name).toBe('@vectorai/plugin-dsh-annotation-host');
     expect(client.name).toBe('@vectorai/plugin-dsh-annotation-client');
+    expect(host.exports?.['./package.json']).toBe('./package.json');
+    expect(client.exports?.['./package.json']).toBe('./package.json');
     expect(readPatchServices('packages/plugin-dsh-annotation/cordis.patch.yml')).toEqual([
       '@vectorai/plugin-dsh-annotation-host',
       '@vectorai/plugin-dsh-annotation-client',
@@ -60,6 +63,14 @@ describe('DSH plugin bundle boundaries', () => {
     expect(`${result.stdout}${result.stderr}`).toBe('');
     expect(result.status).toBe(0);
   }, 30_000);
+
+  it('keeps the local Office parser on the Host dependency path instead of bundling its browser CDN defaults', () => {
+    const buildScript = readFileSync(resolve(root, 'scripts/build-dsh-space.mjs'), 'utf8');
+
+    expect(buildScript).toContain("id === 'officeparser'");
+    expect(readManifest('packages/plugin-dsh-annotation-host/package.json').dependencies)
+      .toMatchObject({ officeparser: '7.8.0' });
+  });
 });
 
 function readManifest(relativePath: string): PackageManifest {

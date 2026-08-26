@@ -110,6 +110,51 @@ describe('InMemoryDrawingRepository', () => {
     expect(drawings.getSnapshot('session-dxf')).toEqual(snapshot);
   });
 
+  it('reimports a cached DXF created by an older projection instead of returning stale hatch segments', async () => {
+    const bytes = await readFile(resolve(import.meta.dirname, '../../dxf-import/test/fixtures/initial-shaft.dxf'));
+    const digest = 'sha256:57f79b850e95e852e6ea427711e2534effeecf0f90257340504efcc3f498c1b2';
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing_legacy_dxf' }, now: () => 1 });
+    document.annotations = [{
+      id: 'legacy-hatch' as never,
+      type: 'section-hatch',
+      pattern: 'ANSI31',
+      angle: 45,
+      spacing: 3.175,
+      segments: [{ start: [0, 0], end: [10, 10] }],
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const legacy: DrawingEntry = {
+      attachmentId: digest,
+      document,
+      drawingId: document.id,
+      bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10 },
+      revision: 1,
+      source: { id: digest, mediaType: 'application/dxf', bytes: bytes.byteLength },
+      provisional: false,
+    };
+    let saved: DrawingEntry | undefined;
+    const storage: DrawingRepositoryStorage = {
+      load: () => structuredClone(legacy),
+      save: (_sessionId, entry) => { saved = structuredClone(entry); },
+    };
+    const drawings = new InMemoryDrawingRepository({ vectorizer: vectorizer(), storage });
+
+    const result = await drawings.importDxf('legacy-session', {
+      bytes,
+      name: 'initial-shaft.dxf',
+      digest,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.status).toBe('imported');
+    expect(saved?.dxfProjectionVersion).toBe(2);
+    const hatches = saved?.document.annotations.filter(({ type }) => type === 'section-hatch') ?? [];
+    expect(hatches).toHaveLength(2);
+    expect(hatches.every((hatch) => hatch.type === 'section-hatch' && hatch.hatch !== undefined)).toBe(true);
+    expect(hatches.every((hatch) => hatch.type === 'section-hatch' && hatch.segments === undefined)).toBe(true);
+  });
+
   it('promotes a legacy version-1 drawing into durable history on first semantic commit', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing_legacy' }, now: () => 1 });
     document.geometry = [{

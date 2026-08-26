@@ -77,6 +77,15 @@ describe('DrawingSurfaceHost', () => {
       'data-namespace': 'annotation',
       'data-restricted': 'true',
     })).toBeDefined();
+    expect(renderer.root.findByProps({
+      'data-drawing-surface-contribution': 'annotation',
+      'data-conversation-workspace-active': '',
+    }).props.style).toEqual({
+      display: 'flex',
+      flex: '1 1 auto',
+      minWidth: 0,
+      minHeight: 0,
+    });
   });
 
   it('contains contribution render failures without yielding ownership to the fallback', () => {

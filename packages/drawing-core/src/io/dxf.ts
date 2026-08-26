@@ -160,10 +160,81 @@ function writeAnnotation(writer: DxfWriter, node: AnnotationNode): void {
       return;
     }
     case 'section-hatch':
-      for (const segment of node.segments) {
+      if (node.hatch !== undefined) {
+        writeHatch(writer, node);
+        return;
+      }
+      for (const segment of node.segments ?? []) {
         writeLine(writer, segment.start, segment.end, ANNOTATION_LAYER);
       }
   }
+}
+
+function writeHatch(writer: DxfWriter, node: Extract<AnnotationNode, { type: 'section-hatch' }>): void {
+  const hatch = node.hatch!;
+  entity(writer, 'HATCH', ANNOTATION_LAYER);
+  writer.pair(100, 'AcDbHatch');
+  writer.pair(10, 0); writer.pair(20, 0); writer.pair(30, hatch.elevation);
+  writer.pair(210, hatch.extrusion[0]); writer.pair(220, hatch.extrusion[1]); writer.pair(230, hatch.extrusion[2]);
+  writer.pair(2, node.pattern);
+  writer.pair(70, 0);
+  writer.pair(71, 0);
+  writer.pair(91, hatch.boundaryPaths.length);
+  for (const path of hatch.boundaryPaths) {
+    writer.pair(92, path.flags & ~2);
+    writer.pair(93, path.edges.length);
+    for (const edge of path.edges) {
+      if (edge.type === 'line') {
+        writer.pair(72, 1);
+        point2(writer, 10, edge.start);
+        point2(writer, 11, edge.end);
+      } else if (edge.type === 'arc') {
+        writer.pair(72, 2);
+        point2(writer, 10, edge.center);
+        writer.pair(40, edge.radius);
+        writer.pair(50, edge.startAngle);
+        writer.pair(51, edge.endAngle);
+        writer.pair(73, edge.counterClockwise ? 1 : 0);
+      } else if (edge.type === 'ellipse') {
+        writer.pair(72, 3);
+        point2(writer, 10, edge.center);
+        point2(writer, 11, edge.majorAxis);
+        writer.pair(40, edge.axisRatio);
+        writer.pair(50, edge.startParameter);
+        writer.pair(51, edge.endParameter);
+        writer.pair(73, edge.counterClockwise ? 1 : 0);
+      } else {
+        writer.pair(72, 4);
+        writer.pair(94, edge.degree);
+        writer.pair(73, edge.rational ? 1 : 0);
+        writer.pair(74, edge.periodic ? 1 : 0);
+        writer.pair(95, edge.knots.length);
+        writer.pair(96, edge.controlPoints.length);
+        for (const knot of edge.knots) writer.pair(40, knot);
+        edge.controlPoints.forEach((controlPoint, index) => {
+          point2(writer, 10, controlPoint);
+          if (edge.rational) writer.pair(42, edge.weights?.[index] ?? 1);
+        });
+        writer.pair(97, edge.fitPoints?.length ?? 0);
+        for (const fitPoint of edge.fitPoints ?? []) point2(writer, 11, fitPoint);
+      }
+    }
+    writer.pair(97, 0);
+  }
+  writer.pair(75, { normal: 0, outer: 1, ignore: 2 }[hatch.style]);
+  writer.pair(76, 0);
+  writer.pair(52, hatch.patternAngle);
+  writer.pair(41, hatch.patternScale);
+  writer.pair(77, hatch.double ? 1 : 0);
+  writer.pair(78, hatch.patternLines.length);
+  for (const line of hatch.patternLines) {
+    writer.pair(53, line.angle);
+    writer.pair(43, line.base[0]); writer.pair(44, line.base[1]);
+    writer.pair(45, line.offset[0]); writer.pair(46, line.offset[1]);
+    writer.pair(79, line.dashLengths.length);
+    for (const dash of line.dashLengths) writer.pair(49, dash);
+  }
+  writer.pair(98, 0);
 }
 
 function entity(writer: DxfWriter, type: string, layer: string): void {
@@ -175,6 +246,11 @@ function point(writer: DxfWriter, xCode: 10 | 11, value: Vec2): void {
   writer.pair(xCode, value[0]);
   writer.pair(xCode + 10, value[1]);
   writer.pair(xCode + 20, 0);
+}
+
+function point2(writer: DxfWriter, xCode: 10 | 11, value: Vec2): void {
+  writer.pair(xCode, value[0]);
+  writer.pair(xCode + 10, value[1]);
 }
 
 function writeLine(
@@ -240,10 +316,61 @@ function annotationTextHeight(node: Extract<AnnotationNode, { type: 'dimension' 
 }
 
 function dimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
+  const base = baseDimensionLabel(node);
+  const tolerance = toleranceLabel(node);
+  return tolerance === undefined ? base : `${base} ${tolerance}`;
+}
+
+function baseDimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
   if (node.displayText !== undefined) return node.displayText;
   const value = node.observedValue ?? node.computedValue;
   if (value === undefined) return '—';
   return `${node.prefix ?? ''}${value}${node.unit ? ` ${node.unit}` : ''}${node.suffix ?? ''}`;
+}
+
+function toleranceLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string | undefined {
+  const projection = node.toleranceProjection;
+  if (projection && (projection.status === 'resolved' || projection.status === 'confirmed')) {
+    switch (projection.mode) {
+      case 'bilateral':
+        if (finite(projection.upperDeviation) && finite(projection.lowerDeviation)) {
+          return `${signed(projection.upperDeviation)}/${signed(projection.lowerDeviation)}`;
+        }
+        return undefined;
+      case 'unilateral':
+        if (finite(projection.upperDeviation) || finite(projection.lowerDeviation)) {
+          return `${signed(projection.upperDeviation ?? 0)}/${signed(projection.lowerDeviation ?? 0)}`;
+        }
+        return undefined;
+      case 'limits':
+        if (finite(projection.upperLimit) && finite(projection.lowerLimit) && projection.lowerLimit <= projection.upperLimit) {
+          return `[${textNumber(projection.upperLimit)}/${textNumber(projection.lowerLimit)}]`;
+        }
+        return undefined;
+      case 'fit':
+        return projection.fitDesignation?.trim() || undefined;
+      case 'none':
+        return undefined;
+    }
+  }
+  const legacy = node.tolerance;
+  if (legacy && (finite(legacy.upper) || finite(legacy.lower))) {
+    return `${signed(legacy.upper ?? 0)}/${signed(legacy.lower ?? 0)}`;
+  }
+  return undefined;
+}
+
+function finite(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function signed(value: number): string {
+  if (Object.is(value, -0) || value === 0) return '0';
+  return value > 0 ? `+${textNumber(value)}` : textNumber(value);
+}
+
+function textNumber(value: number): string {
+  return Object.is(value, -0) ? '0' : String(value);
 }
 
 function dxfText(value: string): string {

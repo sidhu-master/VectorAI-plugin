@@ -44,6 +44,7 @@ export interface DrawingSurfacePresentationSnapshot {
 export interface DrawingSurfaceActions {
   setViewport(viewport: DrawingWorkspaceViewport): void;
   setSelection(ids: readonly string[]): void;
+  refresh(): Promise<void>;
   query(request: DrawingSpatialQuery, signal?: AbortSignal): Promise<DrawingSpatialQueryResult>;
   stage(request: DrawingWorkspaceCommitRequest, signal?: AbortSignal): Promise<boolean>;
   undo(signal?: AbortSignal): Promise<boolean>;
@@ -99,6 +100,9 @@ export function createDrawingSurfaceRuntime(store: DrawingWorkspaceStore): Drawi
       },
       setSelection(ids) {
         store.getState().setSelection([...ids]);
+      },
+      async refresh() {
+        await store.getState().refresh();
       },
       async query(request, signal) {
         signal?.throwIfAborted();

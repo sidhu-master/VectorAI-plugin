@@ -34,6 +34,13 @@ export function createPartitionSemanticReviewer(
     if (!parent || !providerName) throw new Error('AI_SEMANTIC_REVIEW_UNAVAILABLE');
     const provider = ctx.subagents.getProvider(providerName);
     if (!provider?.capabilities.outputSchema || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) throw new Error('AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED');
+    // `structured_output` is injected by the subagent runtime for outputSchema.
+    // It is not a registered global tool, so passing it to tools.restrict()
+    // makes DSH reject the child before the model is started.
+    const ambientToolNames = ctx.tools.schemas()
+      .map(({ name }) => name)
+      .filter((name) => name !== 'structured_output');
+    if (ambientToolNames.length === 0) throw new Error('AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED');
     const catalog = segments.map((segment, index) => ({
       id: segment.id,
       visualLabel: `S${index + 1}`,
@@ -46,14 +53,14 @@ export function createPartitionSemanticReviewer(
       nextSegmentId: index === segments.length - 1 ? null : segments[index + 1]!.id,
     }));
     const payload = JSON.stringify({
-      instruction: 'Classify only listed shaft segments from the numbered image. Return semantic labels and reasons only. Never return coordinates, boundaries, dimensions, or geometry commands.',
+      instruction: '只根据编号图像对列出的轴段做语义分类。仅返回语义名称、类型和理由，名称、语义类型和理由必须使用简短中文。不要返回坐标、边界、尺寸或几何编辑命令。',
       segments: catalog,
       observationDigest: rendered.contentDigest,
     });
     if (payload.length > 64 * 1024) throw new Error('AI_SEMANTIC_PROMPT_LIMIT');
     const run = await abortable(ctx.subagents.start(providerName, {
       label: 'shaft-partition-semantic-reviewer', parent, signal: reviewSignal,
-      maxDepth: 1, toolFilter: { allow: [] },
+      maxDepth: 1, toolFilter: { deny: ambientToolNames },
       prompt: [{ type: 'text', text: payload }, { type: 'image', attachment }],
       outputSchema: proposalSchema as never,
     }), reviewSignal);
@@ -76,13 +83,13 @@ export function createPartitionSemanticReviewer(
 
 const proposalSchema = {
   type: 'object', additionalProperties: false, required: ['proposals'],
-  properties: { proposals: { type: 'array', maxItems: 64, items: {
+  properties: { proposals: { type: 'array', items: {
     type: 'object', additionalProperties: false,
     required: ['segmentIds', 'semanticType', 'confidence', 'reason', 'visualEvidenceIds'],
     properties: {
-      segmentIds: { type: 'array', items: { type: 'string' }, minItems: 1 },
+      segmentIds: { type: 'array', items: { type: 'string' } },
       semanticType: { type: 'string' }, name: { type: 'string' },
-      confidence: { type: 'number', minimum: 0, maximum: 1 }, reason: { type: 'string', maxLength: 500 },
+      confidence: { type: 'number' }, reason: { type: 'string' },
       visualEvidenceIds: { type: 'array', items: { type: 'string' } },
     },
   } } },
