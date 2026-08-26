@@ -28,6 +28,7 @@ export interface PartitionController {
     importFiles(dxf: File, engineeringDocuments?: readonly File[]): Promise<void>;
     supplementDocuments(engineeringDocuments: readonly File[]): Promise<void>;
     moveBoundary(boundaryIndex: number, requestedZ: number, snapTolerance: number): Promise<void>;
+    moveSemanticRange(groupId: string, edge: 'start' | 'end', requestedZ: number, snapTolerance: number): Promise<void>;
     splitSegment(segmentId: string, z: number, snapTolerance: number): Promise<void>;
     mergeBoundary(boundaryIndex: number): Promise<void>;
     updateSegment(segmentId: string, value: { name?: string; semanticType?: string }): Promise<void>;
@@ -102,6 +103,7 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
         await run(() => remote.supplementDocuments(sessionId, request));
       },
       moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: 'boundary.move', boundaryIndex, requestedZ, snapTolerance }),
+      moveSemanticRange: (groupId, edge, requestedZ, snapTolerance) => edit({ type: 'semantic-range.move', groupId, edge, requestedZ, snapTolerance }),
       splitSegment: (segmentId, z, snapTolerance) => edit({ type: 'segment.split', segmentId, z, snapTolerance }),
       mergeBoundary: (boundaryIndex) => edit({ type: 'boundary.merge', boundaryIndex }),
       updateSegment: (segmentId, value) => edit({ type: 'segment.metadata', segmentId, ...value }),

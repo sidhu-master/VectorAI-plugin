@@ -35,7 +35,7 @@ describe('PartitionOverlay', () => {
     const value = draft();
     value.semanticGroups = [
       { id: 'left-bearing', segmentIds: ['segment:1'], semanticType: 'bearing-seat', name: '左轴承位', evidenceIds: ['evidence:1'] },
-      { id: 'gear', segmentIds: ['segment:3'], semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'] },
+      { id: 'gear', segmentIds: ['segment:3'], range: { zStart: 63.5, zEnd: 88.5 }, semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'] },
     ];
     const markup = renderToStaticMarkup(<svg><PartitionOverlay
       draft={value} mode="functional" previewHeld={false} scale={2} onMoveBoundary={() => undefined}
@@ -45,6 +45,25 @@ describe('PartitionOverlay', () => {
     expect(markup).toContain('data-partition-id="left-bearing"');
     expect(markup).toContain('data-partition-id="gear"');
     expect(markup).not.toContain('data-segment-ids="segment:2"');
+  });
+
+  it('commits a functional handle as a semantic range edit', async () => {
+    const value = draft();
+    value.semanticGroups = [{
+      id: 'gear', segmentIds: ['segment:3'], range: { zStart: 63.5, zEnd: 88.5 },
+      semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'],
+    }];
+    const onMoveSemanticRange = vi.fn(async () => undefined);
+    const renderer = TestRenderer.create(<svg><PartitionOverlay
+      draft={value} mode="functional" previewHeld={false} scale={2}
+      onMoveBoundary={() => undefined} onMoveSemanticRange={onMoveSemanticRange}
+    /></svg>);
+    const handle = renderer.root.findByProps({ 'aria-label': '移动一级齿轮起点' });
+    const event = { pointerId: 10, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    act(() => handle.props.onPointerDown({ ...event, clientX: 100, clientY: 40, currentTarget: { setPointerCapture: vi.fn() } }));
+    act(() => handle.props.onPointerMove({ ...event, clientX: 110, clientY: 40 }));
+    await act(async () => handle.props.onPointerUp({ ...event, currentTarget: { releasePointerCapture: vi.fn() } }));
+    expect(onMoveSemanticRange).toHaveBeenCalledWith('gear', 'start', 68.5);
   });
 
   it('keeps every detected step as an independent draggable partition', () => {

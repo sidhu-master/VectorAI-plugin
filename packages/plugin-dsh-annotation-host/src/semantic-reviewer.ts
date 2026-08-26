@@ -53,7 +53,7 @@ export function createPartitionSemanticReviewer(
       nextSegmentId: index === segments.length - 1 ? null : segments[index + 1]!.id,
     }));
     const payload = JSON.stringify({
-      instruction: '只根据编号图像识别明确的主要功能区域。允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段不要为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。仅返回语义名称、类型和理由，名称、语义类型和理由必须使用简短中文。不要返回坐标、边界、尺寸或几何编辑命令。',
+      instruction: '只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。',
       segments: catalog,
       observationDigest: rendered.contentDigest,
     });

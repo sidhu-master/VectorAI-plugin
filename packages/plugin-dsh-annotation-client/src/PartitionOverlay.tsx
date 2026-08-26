@@ -6,15 +6,22 @@ import { useRef, useState } from 'react';
 import { partitionBands, type PartitionBand, type PartitionViewMode } from './partition-view-model';
 
 interface BoundaryDrag {
-  index: number;
+  target: BoundaryTarget;
   z: number;
   lastClientX: number;
   lastClientY: number;
 }
 
-export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary }: {
+type BoundaryTarget =
+  | { kind: 'segment'; index: number }
+  | { kind: 'semantic'; groupId: string; edge: 'start' | 'end'; label: string };
+
+interface BoundaryHandle { key: string; z: number; target: BoundaryTarget }
+
+export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary, onMoveSemanticRange }: {
   draft: PartitionDraft; mode: PartitionViewMode; previewHeld: boolean; scale: number;
   onMoveBoundary(index: number, z: number): void | Promise<void>;
+  onMoveSemanticRange?(groupId: string, edge: 'start' | 'end', z: number): void | Promise<void>;
 }) {
   const [drag, setDrag] = useState<BoundaryDrag | null>(null);
   const current = useRef<BoundaryDrag | null>(null);
@@ -47,7 +54,11 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
     }
     if (!value) return;
     try {
-      await onMoveBoundary(value.index, value.z);
+      if (value.target.kind === 'segment') await onMoveBoundary(value.target.index, value.z);
+      else {
+        if (!onMoveSemanticRange) throw new Error('PARTITION_SEMANTIC_RANGE_HANDLER_REQUIRED');
+        await onMoveSemanticRange(value.target.groupId, value.target.edge, value.z);
+      }
       setDrag(null);
     } catch {
       // Keep the local result visible. The controller exposes the persistence error and
@@ -56,20 +67,30 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
     }
   };
   const bands = partitionBands(draft, mode);
-  const boundaryIndices = [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))]
-    .filter((index) => index > 0 && index < draft.segments.length)
-    .sort((a, b) => a - b);
-  const boundaryZ = boundaryIndices.map((index) => draft.segments[index]!.zStart);
-  const boundaryLanes = boundaryZ.map((z, offset) => {
-    const previousIsClose = offset > 0 && Math.abs(z - boundaryZ[offset - 1]!) * scale < 18;
-    const nextIsClose = offset < boundaryZ.length - 1 && Math.abs(boundaryZ[offset + 1]! - z) * scale < 18;
+  const handles: BoundaryHandle[] = mode === 'segments'
+    ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))]
+      .filter((index) => index > 0 && index < draft.segments.length)
+      .sort((a, b) => a - b)
+      .map((index) => ({ key: `boundary:${index}`, z: draft.segments[index]!.zStart, target: { kind: 'segment', index } }))
+    : bands.flatMap((band, index) => {
+      const label = bandLabel(band, index);
+      return [
+        { key: `semantic:${band.id}:start`, z: band.zStart, target: { kind: 'semantic' as const, groupId: band.id, edge: 'start' as const, label } },
+        { key: `semantic:${band.id}:end`, z: band.zEnd, target: { kind: 'semantic' as const, groupId: band.id, edge: 'end' as const, label } },
+      ];
+    }).sort((a, b) => a.z - b.z || a.key.localeCompare(b.key));
+  const boundaryLanes = handles.map(({ z }, offset) => {
+    const previousIsClose = offset > 0 && Math.abs(z - handles[offset - 1]!.z) * scale < 18;
+    const nextIsClose = offset < handles.length - 1 && Math.abs(handles[offset + 1]!.z - z) * scale < 18;
     return previousIsClose ? 1 : nextIsClose ? -1 : 0;
   });
   return <g data-partition-overlay="true">
     {bands.map((band, bandIndex) => {
       const radius = Math.max(...band.segments.map(({ profile }) => profile.maxRadius), 0.1) * 1.04;
-      const zStart = drag?.index === band.startBoundaryIndex ? drag.z : band.zStart;
-      const zEnd = drag?.index === band.endBoundaryIndex ? drag.z : band.zEnd;
+      const zStart = drag?.target.kind === 'segment' && drag.target.index === band.startBoundaryIndex
+        || drag?.target.kind === 'semantic' && drag.target.groupId === band.id && drag.target.edge === 'start' ? drag.z : band.zStart;
+      const zEnd = drag?.target.kind === 'segment' && drag.target.index === band.endBoundaryIndex
+        || drag?.target.kind === 'semantic' && drag.target.groupId === band.id && drag.target.edge === 'end' ? drag.z : band.zEnd;
       const polygon = [point(zStart, -radius), point(zEnd, -radius), point(zEnd, radius), point(zStart, radius)];
       const label = bandLabel(band, bandIndex);
       const labelAnchor = point((zStart + zEnd) / 2, radius);
@@ -86,20 +107,23 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
         </g>
       </g>;
     })}
-    {!previewHeld && boundaryIndices.map((index, offset) => {
-      const z = drag?.index === index ? drag.z : draft.segments[index]!.zStart;
+    {!previewHeld && handles.map((handle, offset) => {
+      const z = drag?.target.kind === handle.target.kind && targetKey(drag.target) === targetKey(handle.target) ? drag.z : handle.z;
       const anchor = point(z, 0);
       const lane = boundaryLanes[offset]!;
       const position = point(z, lane * 12 / Math.max(scale, 0.01));
-      return <g key={`boundary:${index}`}>
+      const ariaLabel = handle.target.kind === 'segment'
+        ? `移动分区边界 ${handle.target.index}`
+        : `移动${handle.target.label}${handle.target.edge === 'start' ? '起点' : '终点'}`;
+      return <g key={handle.key}>
         {lane !== 0 && <line className="vai-partition-handle-leader" x1={anchor[0]} y1={anchor[1]} x2={position[0]} y2={position[1]} pointerEvents="none" />}
-        <circle aria-label={`移动分区边界 ${index}`} data-handle-lane={lane} className="vai-partition-handle" cx={position[0]} cy={position[1]} r={7 / Math.max(scale, 0.01)}
+        <circle aria-label={ariaLabel} data-handle-lane={lane} className="vai-partition-handle" cx={position[0]} cy={position[1]} r={7 / Math.max(scale, 0.01)}
         onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
         onPointerDown={(event) => {
           event.preventDefault();
           event.stopPropagation();
           event.currentTarget.setPointerCapture(event.pointerId);
-          current.current = { index, z, lastClientX: event.clientX, lastClientY: event.clientY };
+          current.current = { target: handle.target, z, lastClientX: event.clientX, lastClientY: event.clientY };
           setDrag(current.current);
         }}
         onPointerMove={pointerMove}
@@ -109,6 +133,10 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
       </g>;
     })}
   </g>;
+}
+
+function targetKey(target: BoundaryTarget): string {
+  return target.kind === 'segment' ? `segment:${target.index}` : `semantic:${target.groupId}:${target.edge}`;
 }
 
 function bandLabel(band: PartitionBand, index: number): string {

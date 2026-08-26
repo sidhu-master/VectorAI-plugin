@@ -55,9 +55,24 @@ assert.equal(state.phase, 'editing');
 assert(state.draft);
 const reviewed = state.draft as unknown as PartitionDraft;
 assert.equal(validatePartition(reviewed).length, 0);
+const functionalRanges = reviewed.semanticGroups
+  .filter((group) => group.evidenceIds.some((id) => id.startsWith('document:')))
+  .map(({ name, range }) => [name, range?.zStart, range?.zEnd] as const)
+  .sort((a, b) => Number(a[1]) - Number(b[1]));
+assert.deepEqual(functionalRanges, [
+  ['左轴承位', 0, 17],
+  ['外花键', 17, 41.5],
+  ['一级齿轮', 63.5, 118.5],
+  ['右轴承位', 150, 173],
+]);
+assert(functionalRanges.some((range, index) => index > 0 && Number(range[1]) > Number(functionalRanges[index - 1]![2])));
 assert.equal(annotations.get('e2e').workspaceClaimed, true);
 const lifecycle: string[] = [state.phase];
 const boundary = reviewed.segments[0]!.zEnd;
+const gear = reviewed.semanticGroups.find(({ name }) => name === '一级齿轮')!;
+state = service.edit(agent, { type: 'semantic-range.move', expectedDrawingRef: snapshot.ref, groupId: gear.id, edge: 'start', requestedZ: 64, snapTolerance: 0 });
+assert.equal(state.draft?.semanticGroups.find(({ id }) => id === gear.id)?.range?.zStart, 64);
+assert.equal(state.draft?.segments[0]?.zEnd, boundary);
 state = service.edit(agent, { type: 'boundary.move', expectedDrawingRef: snapshot.ref, boundaryIndex: 1, requestedZ: boundary + 0.1, snapTolerance: 0.5 });
 state = service.confirm(agent, snapshot.ref); lifecycle.push(state.phase);
 const confirmedRevisionId = state.confirmed!.id;
@@ -87,6 +102,7 @@ const manifest = {
   segmentCount: reviewed.segments.length,
   coveredLength: reviewed.segments.reduce((sum, segment) => sum + segment.zEnd - segment.zStart, 0),
   documentedGroups: reviewed.semanticGroups.filter((group) => group.evidenceIds.some((id) => id.startsWith('document:'))).map(({ name }) => name),
+  functionalRanges,
   origins,
   diagnosticCodes: reviewed.diagnostics.map(({ code }) => code),
   lifecycle,

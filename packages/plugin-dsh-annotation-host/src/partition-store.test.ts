@@ -25,6 +25,20 @@ describe('PartitionSessionStore', () => {
     expect(store.redo('s', { drawingId: 'd', revision: 1 }).phase).toBe('confirmed');
   });
 
+  it('persists an independent functional range edit without moving a physical step', () => {
+    const store = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition-r1' });
+    const source = draft();
+    source.semanticGroups = [{ id: 'group:seat', segmentIds: ['s0', 's1'], range: { zStart: 0.2, zEnd: 1.8 }, semanticType: 'seat', evidenceIds: [] }];
+    store.beginAnalysis('s', source.drawingRef);
+    store.setDraft('s', source);
+    const edited = store.edit('s', {
+      type: 'semantic-range.move', expectedDrawingRef: source.drawingRef,
+      groupId: 'group:seat', edge: 'end', requestedZ: 1.7, snapTolerance: 0,
+    });
+    expect(edited.draft?.semanticGroups[0]?.range).toEqual({ zStart: 0.2, zEnd: 1.7 });
+    expect(edited.draft?.segments).toEqual(source.segments);
+  });
+
   it('cancels a draft without releasing the annotation workspace claim', () => {
     const store = new PartitionSessionStore();
     store.beginAnalysis('s', { drawingId: 'd', revision: 1 });

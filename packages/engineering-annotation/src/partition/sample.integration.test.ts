@@ -50,6 +50,12 @@ describe('real DXF smart partition', () => {
     expect(result.draft.segments[0]?.zStart).toBeCloseTo(result.draft.axis.zMin, 6);
     expect(result.draft.segments.at(-1)?.zEnd).toBeCloseTo(result.draft.axis.zMax, 6);
     expect(result.draft.semanticGroups.map(({ name }) => name)).toEqual(expect.arrayContaining(['一级齿轮', '外花键', '左轴承位', '右轴承位']));
+    expect(result.draft.semanticGroups.map(({ name, range }) => [name, range?.zStart, range?.zEnd])).toEqual(expect.arrayContaining([
+      ['左轴承位', 0, 17],
+      ['外花键', 17, 41.5],
+      ['一级齿轮', 63.5, 118.5],
+      ['右轴承位', 150, 173],
+    ]));
     expect(result.unclassifiedSegmentIds.length).toBeGreaterThan(0);
     expect(result.draft.diagnostics).toContainEqual(expect.objectContaining({ code: 'DOCUMENT_DRAWING_NAME_MISMATCH', severity: 'warning' }));
     expect(validatePartition(result.draft)).toEqual([]);

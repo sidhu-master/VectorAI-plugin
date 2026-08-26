@@ -50,8 +50,10 @@ describe('partition controller', () => {
     const file = new File([new TextEncoder().encode('DXF')], 'shaft.dxf');
     await controller.actions.importFiles(file);
     await controller.actions.moveBoundary(1, 12, 0.5);
+    await controller.actions.moveSemanticRange('group:G01', 'start', 63.5, 0.5);
     expect(importAndAnalyze).toHaveBeenCalledOnce();
     expect(editPartition).toHaveBeenCalledWith('s', expect.objectContaining({ type: 'boundary.move', expectedDrawingRef: partition.drawingRef }));
+    expect(editPartition).toHaveBeenCalledWith('s', expect.objectContaining({ type: 'semantic-range.move', groupId: 'group:G01', edge: 'start' }));
     expect(controller.state.getSnapshot()).toMatchObject({ partition: { updatedAt: 2 }, busy: false });
   });
 

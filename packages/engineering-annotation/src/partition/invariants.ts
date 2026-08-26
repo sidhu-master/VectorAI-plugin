@@ -32,6 +32,14 @@ export function validatePartition(draft: PartitionDraft): PartitionDiagnostic[] 
     if (group.segmentIds.some((id) => !ids.has(id)) || group.evidenceIds.some((id) => !evidence.has(id))) {
       diagnostics.push({ id: `diagnostic:group:${group.id}`, severity: 'error', code: 'PARTITION_GROUP_REFERENCE_INVALID', message: `Invalid references in group ${group.id}` });
     }
+    if (group.range !== undefined && (
+      !Number.isFinite(group.range.zStart) || !Number.isFinite(group.range.zEnd)
+      || group.range.zEnd - group.range.zStart <= tolerance
+      || group.range.zStart < draft.axis.zMin - tolerance
+      || group.range.zEnd > draft.axis.zMax + tolerance
+    )) {
+      diagnostics.push({ id: `diagnostic:group-range:${group.id}`, severity: 'error', code: 'PARTITION_GROUP_RANGE_INVALID', message: `Invalid functional range in group ${group.id}` });
+    }
   }
   return diagnostics;
 }

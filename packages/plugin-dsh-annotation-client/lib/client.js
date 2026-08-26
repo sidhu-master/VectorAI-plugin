@@ -5590,24 +5590,32 @@ window.__ModuleLoader__.load({
       }));
       const indexById = new Map(draft.segments.map((segment, index) => [segment.id, index]));
       return draft.semanticGroups.flatMap((group) => {
+        var _a2, _b;
+        const origin = evidenceOrigin(draft, group.evidenceIds) ?? "geometry";
+        if (origin === "ai" && isGenericFunctionalGroup(group.semanticType, group.name)) return [];
         const indices = group.segmentIds.map((id) => indexById.get(id)).filter((index) => index !== void 0).sort((a, b) => a - b);
         if (indices.length === 0) return [];
         const startBoundaryIndex = indices[0];
         const endBoundaryIndex = indices.at(-1) + 1;
         const segments = indices.map((index) => draft.segments[index]);
+        const zStart = ((_a2 = group.range) == null ? void 0 : _a2.zStart) ?? segments[0].zStart;
+        const zEnd = ((_b = group.range) == null ? void 0 : _b.zEnd) ?? segments.at(-1).zEnd;
         return [{
           id: group.id,
           segmentIds: segments.map(({ id }) => id),
           segments,
-          zStart: segments[0].zStart,
-          zEnd: segments.at(-1).zEnd,
+          zStart,
+          zEnd,
           startBoundaryIndex,
           endBoundaryIndex,
           ...group.name === void 0 ? {} : { name: group.name },
           semanticType: group.semanticType,
-          origin: evidenceOrigin(draft, group.evidenceIds) ?? "geometry"
+          origin
         }];
       }).sort((a, b) => a.zStart - b.zStart || a.zEnd - b.zEnd);
+    }
+    function isGenericFunctionalGroup(semanticType, name) {
+      return /(?:work[-_ ]?area|working[-_ ]?area|工作区域|工作区|普通轴段|常规区域|shaft[-_ ]?region)/u.test(`${semanticType} ${name ?? ""}`.toLowerCase());
     }
     function evidenceOrigin(draft, evidenceIds) {
       return evidenceIds.map((id) => {
@@ -5615,7 +5623,7 @@ window.__ModuleLoader__.load({
         return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
       }).find(Boolean);
     }
-    function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMoveBoundary }) {
+    function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMoveBoundary, onMoveSemanticRange }) {
       const [drag, setDrag] = react.useState(null);
       const current = react.useRef(null);
       const point3 = (z, r) => [
@@ -5650,25 +5658,34 @@ window.__ModuleLoader__.load({
         }
         if (!value) return;
         try {
-          await onMoveBoundary(value.index, value.z);
+          if (value.target.kind === "segment") await onMoveBoundary(value.target.index, value.z);
+          else {
+            if (!onMoveSemanticRange) throw new Error("PARTITION_SEMANTIC_RANGE_HANDLER_REQUIRED");
+            await onMoveSemanticRange(value.target.groupId, value.target.edge, value.z);
+          }
           setDrag(null);
         } catch {
           setDrag(value);
         }
       };
       const bands = partitionBands(draft, mode);
-      const boundaryIndices = [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))].filter((index) => index > 0 && index < draft.segments.length).sort((a, b) => a - b);
-      const boundaryZ = boundaryIndices.map((index) => draft.segments[index].zStart);
-      const boundaryLanes = boundaryZ.map((z, offset) => {
-        const previousIsClose = offset > 0 && Math.abs(z - boundaryZ[offset - 1]) * scale < 18;
-        const nextIsClose = offset < boundaryZ.length - 1 && Math.abs(boundaryZ[offset + 1] - z) * scale < 18;
+      const handles = mode === "segments" ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))].filter((index) => index > 0 && index < draft.segments.length).sort((a, b) => a - b).map((index) => ({ key: `boundary:${index}`, z: draft.segments[index].zStart, target: { kind: "segment", index } })) : bands.flatMap((band, index) => {
+        const label = bandLabel(band, index);
+        return [
+          { key: `semantic:${band.id}:start`, z: band.zStart, target: { kind: "semantic", groupId: band.id, edge: "start", label } },
+          { key: `semantic:${band.id}:end`, z: band.zEnd, target: { kind: "semantic", groupId: band.id, edge: "end", label } }
+        ];
+      }).sort((a, b) => a.z - b.z || a.key.localeCompare(b.key));
+      const boundaryLanes = handles.map(({ z }, offset) => {
+        const previousIsClose = offset > 0 && Math.abs(z - handles[offset - 1].z) * scale < 18;
+        const nextIsClose = offset < handles.length - 1 && Math.abs(handles[offset + 1].z - z) * scale < 18;
         return previousIsClose ? 1 : nextIsClose ? -1 : 0;
       });
       return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-partition-overlay": "true", children: [
         bands.map((band, bandIndex) => {
           const radius = Math.max(...band.segments.map(({ profile }) => profile.maxRadius), 0.1) * 1.04;
-          const zStart = (drag == null ? void 0 : drag.index) === band.startBoundaryIndex ? drag.z : band.zStart;
-          const zEnd = (drag == null ? void 0 : drag.index) === band.endBoundaryIndex ? drag.z : band.zEnd;
+          const zStart = (drag == null ? void 0 : drag.target.kind) === "segment" && drag.target.index === band.startBoundaryIndex || (drag == null ? void 0 : drag.target.kind) === "semantic" && drag.target.groupId === band.id && drag.target.edge === "start" ? drag.z : band.zStart;
+          const zEnd = (drag == null ? void 0 : drag.target.kind) === "segment" && drag.target.index === band.endBoundaryIndex || (drag == null ? void 0 : drag.target.kind) === "semantic" && drag.target.groupId === band.id && drag.target.edge === "end" ? drag.z : band.zEnd;
           const polygon = [point3(zStart, -radius), point3(zEnd, -radius), point3(zEnd, radius), point3(zStart, radius)];
           const label = bandLabel(band, bandIndex);
           const labelAnchor = point3((zStart + zEnd) / 2, radius);
@@ -5700,17 +5717,18 @@ window.__ModuleLoader__.load({
             band.id
           );
         }),
-        !previewHeld && boundaryIndices.map((index, offset) => {
-          const z = (drag == null ? void 0 : drag.index) === index ? drag.z : draft.segments[index].zStart;
+        !previewHeld && handles.map((handle, offset) => {
+          const z = (drag == null ? void 0 : drag.target.kind) === handle.target.kind && targetKey(drag.target) === targetKey(handle.target) ? drag.z : handle.z;
           const anchor = point3(z, 0);
           const lane = boundaryLanes[offset];
           const position = point3(z, lane * 12 / Math.max(scale, 0.01));
+          const ariaLabel = handle.target.kind === "segment" ? `移动分区边界 ${handle.target.index}` : `移动${handle.target.label}${handle.target.edge === "start" ? "起点" : "终点"}`;
           return /* @__PURE__ */ jsxRuntime.jsxs("g", { children: [
             lane !== 0 && /* @__PURE__ */ jsxRuntime.jsx("line", { className: "vai-partition-handle-leader", x1: anchor[0], y1: anchor[1], x2: position[0], y2: position[1], pointerEvents: "none" }),
             /* @__PURE__ */ jsxRuntime.jsx(
               "circle",
               {
-                "aria-label": `移动分区边界 ${index}`,
+                "aria-label": ariaLabel,
                 "data-handle-lane": lane,
                 className: "vai-partition-handle",
                 cx: position[0],
@@ -5724,7 +5742,7 @@ window.__ModuleLoader__.load({
                   event.preventDefault();
                   event.stopPropagation();
                   event.currentTarget.setPointerCapture(event.pointerId);
-                  current.current = { index, z, lastClientX: event.clientX, lastClientY: event.clientY };
+                  current.current = { target: handle.target, z, lastClientX: event.clientX, lastClientY: event.clientY };
                   setDrag(current.current);
                 },
                 onPointerMove: pointerMove,
@@ -5733,9 +5751,12 @@ window.__ModuleLoader__.load({
                 onLostPointerCapture: (event) => void finishPointer(event, false)
               }
             )
-          ] }, `boundary:${index}`);
+          ] }, handle.key);
         })
       ] });
+    }
+    function targetKey(target) {
+      return target.kind === "segment" ? `segment:${target.index}` : `semantic:${target.groupId}:${target.edge}`;
     }
     function bandLabel(band, index) {
       var _a2, _b;
@@ -6363,7 +6384,7 @@ window.__ModuleLoader__.load({
                   overlay: true,
                   activePanel,
                   panelWidth,
-                  onActivePanelChange: setActivePanel,
+                  onActivePanelChange: (panel) => setActivePanel(panel),
                   onPanelWidthChange: setPanelWidth,
                   panels
                 }
@@ -6394,7 +6415,8 @@ window.__ModuleLoader__.load({
                           mode: partitionView,
                           previewHeld: partitionState.previewHeld,
                           scale: viewport.scale,
-                          onMoveBoundary: (index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05))
+                          onMoveBoundary: (index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05)),
+                          onMoveSemanticRange: (groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(draft.axis.zMax * 3e-3, 0.05))
                         }
                       )
                     ] })
@@ -12529,6 +12551,7 @@ window.__ModuleLoader__.load({
     const partitionGroupSchema = object({
       id: idSchema,
       segmentIds: array(idSchema),
+      range: object({ zStart: number(), zEnd: number() }).strict().optional(),
       semanticType: string(),
       name: string().optional(),
       evidenceIds: array(idSchema)
@@ -12558,6 +12581,7 @@ window.__ModuleLoader__.load({
     }).strict();
     const partitionEditCommandSchema = discriminatedUnion("type", [
       object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+      object({ type: literal("semantic-range.move"), expectedDrawingRef: drawingRefSchema, groupId: idSchema, edge: _enum(["start", "end"]), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
       object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
       object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
       object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
@@ -12829,6 +12853,7 @@ window.__ModuleLoader__.load({
             await run(() => remote.supplementDocuments(sessionId, request));
           },
           moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: "boundary.move", boundaryIndex, requestedZ, snapTolerance }),
+          moveSemanticRange: (groupId, edge, requestedZ, snapTolerance) => edit({ type: "semantic-range.move", groupId, edge, requestedZ, snapTolerance }),
           splitSegment: (segmentId, z, snapTolerance) => edit({ type: "segment.split", segmentId, z, snapTolerance }),
           mergeBoundary: (boundaryIndex) => edit({ type: "boundary.merge", boundaryIndex }),
           updateSegment: (segmentId, value) => edit({ type: "segment.metadata", segmentId, ...value }),

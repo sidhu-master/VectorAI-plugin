@@ -35,6 +35,8 @@ export function partitionBands(draft: PartitionViewSource, mode: PartitionViewMo
 
   const indexById = new Map(draft.segments.map((segment, index) => [segment.id, index]));
   return draft.semanticGroups.flatMap((group) => {
+    const origin = evidenceOrigin(draft, group.evidenceIds) ?? 'geometry';
+    if (origin === 'ai' && isGenericFunctionalGroup(group.semanticType, group.name)) return [];
     const indices = group.segmentIds
       .map((id) => indexById.get(id))
       .filter((index): index is number => index !== undefined)
@@ -43,19 +45,26 @@ export function partitionBands(draft: PartitionViewSource, mode: PartitionViewMo
     const startBoundaryIndex = indices[0]!;
     const endBoundaryIndex = indices.at(-1)! + 1;
     const segments = indices.map((index) => draft.segments[index]!);
+    const zStart = group.range?.zStart ?? segments[0]!.zStart;
+    const zEnd = group.range?.zEnd ?? segments.at(-1)!.zEnd;
     return [{
       id: group.id,
       segmentIds: segments.map(({ id }) => id),
       segments,
-      zStart: segments[0]!.zStart,
-      zEnd: segments.at(-1)!.zEnd,
+      zStart,
+      zEnd,
       startBoundaryIndex,
       endBoundaryIndex,
       ...(group.name === undefined ? {} : { name: group.name }),
       semanticType: group.semanticType,
-      origin: evidenceOrigin(draft, group.evidenceIds) ?? 'geometry',
+      origin,
     }];
   }).sort((a, b) => a.zStart - b.zStart || a.zEnd - b.zEnd);
+}
+
+function isGenericFunctionalGroup(semanticType: string, name?: string): boolean {
+  return /(?:work[-_ ]?area|working[-_ ]?area|工作区域|工作区|普通轴段|常规区域|shaft[-_ ]?region)/u
+    .test(`${semanticType} ${name ?? ''}`.toLowerCase());
 }
 
 function evidenceOrigin(draft: PartitionViewSource, evidenceIds: readonly string[]): string | undefined {

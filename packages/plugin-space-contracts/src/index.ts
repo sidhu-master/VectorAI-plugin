@@ -880,7 +880,9 @@ const partitionSegmentSchema = z.object({
   profileSamples: z.array(z.object({ z: z.number(), radius: z.number().nonnegative(), geometryNodeId: idSchema }).strict()).optional(),
 }).strict();
 const partitionGroupSchema = z.object({
-  id: idSchema, segmentIds: z.array(idSchema), semanticType: z.string(), name: z.string().optional(), evidenceIds: z.array(idSchema),
+  id: idSchema, segmentIds: z.array(idSchema),
+  range: z.object({ zStart: z.number(), zEnd: z.number() }).strict().optional(),
+  semanticType: z.string(), name: z.string().optional(), evidenceIds: z.array(idSchema),
 }).strict();
 export const partitionDraftSchema = z.object({
   version: z.literal(1), drawingRef: drawingRefSchema, axis: shaftAxisSchema,
@@ -897,6 +899,7 @@ export const partitionRevisionSchema = z.object({
 
 export const partitionEditCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('boundary.move'), expectedDrawingRef: drawingRefSchema, boundaryIndex: z.number().int().positive(), requestedZ: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
+  z.object({ type: z.literal('semantic-range.move'), expectedDrawingRef: drawingRefSchema, groupId: idSchema, edge: z.enum(['start', 'end']), requestedZ: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
   z.object({ type: z.literal('segment.split'), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
   z.object({ type: z.literal('boundary.merge'), expectedDrawingRef: drawingRefSchema, boundaryIndex: z.number().int().positive() }).strict(),
   z.object({ type: z.literal('segment.metadata'), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: z.string().max(120).optional(), semanticType: z.string().max(80).optional() }).strict(),
