@@ -44,6 +44,8 @@ export interface EngineeringDropBridgeController {
 
 export function createEngineeringDropBridgeController(input: {
   importFiles(dxf: File, documents: readonly File[]): Promise<void>;
+  supplementDocuments?(documents: readonly File[]): Promise<void>;
+  hasDrawing?(): boolean;
   refreshClaim(): Promise<void>;
   releaseNativeDragState?(): void;
 }): EngineeringDropBridgeController {
@@ -75,6 +77,20 @@ export function createEngineeringDropBridgeController(input: {
         return;
       }
       const documents = combined.kind === 'pending' ? combined.documents : decision.documents;
+      if (input.hasDrawing?.() === true && input.supplementDocuments !== undefined) {
+        update({ phase: 'importing', pendingDocuments: [], filenames: documents.map(({ name }) => name) });
+        try {
+          await input.supplementDocuments(documents);
+          await input.refreshClaim();
+          update({ phase: 'success', pendingDocuments: [], filenames: documents.map(({ name }) => name) });
+        } catch (error) {
+          update({
+            phase: 'error', pendingDocuments: [],
+            code: error instanceof Error ? error.message : String(error), filenames: [],
+          });
+        }
+        return;
+      }
       update({ phase: 'pending', pendingDocuments: [...documents], filenames: documents.map(({ name }) => name) });
       return;
     }
@@ -154,6 +170,8 @@ export function EngineeringDropBridge({ partition, refreshClaim }: {
 }) {
   const bridge = useMemo(() => createEngineeringDropBridgeController({
     importFiles: partition.actions.importFiles,
+    supplementDocuments: partition.actions.supplementDocuments,
+    hasDrawing: () => partition.state.getSnapshot().partition.drawingRef !== undefined,
     refreshClaim,
     releaseNativeDragState: releaseDshNativeDragState,
   }), [partition, refreshClaim]);

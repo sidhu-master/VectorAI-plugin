@@ -31,6 +31,7 @@ import {
   drawingObservationResultSchema,
   partitionSessionSnapshotSchema,
   partitionEditCommandSchema,
+  partitionDocumentSupplementRequestSchema,
   partitionImportRequestSchema,
   engineeringAnnotationDraftSchema,
   dimensionPlanSessionSnapshotSchema,
@@ -72,6 +73,16 @@ describe('DSH drawing workspace wire schemas', () => {
       engineeringDocument: { name: 'notes.txt', text: '轴段' },
     };
     expect(partitionImportRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it('accepts revision-bound documents that supplement an existing partition drawing', () => {
+    const request = {
+      expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+      engineeringDocuments: [
+        { name: 'limits.pdf', digest: `sha256:${'b'.repeat(64)}`, mediaType: 'application/pdf', base64: 'WA==' },
+      ],
+    };
+    expect(partitionDocumentSupplementRequestSchema.parse(request)).toEqual(request);
   });
 
   it('strictly carries revision-bound engineering annotation drafts', () => {

@@ -87,6 +87,26 @@ describe('engineering drop bridge', () => {
     ]);
   });
 
+  it('supplements the current DXF when documents are dropped after the drawing', async () => {
+    let drawingReady = false;
+    const supplementDocuments = vi.fn(async () => undefined);
+    const bridge = createEngineeringDropBridgeController({
+      importFiles: vi.fn(async () => { drawingReady = true; }),
+      supplementDocuments,
+      hasDrawing: () => drawingReady,
+      refreshClaim: vi.fn(async () => undefined),
+    });
+
+    await bridge.actions.handleDrop(drop([file('shaft.dxf')]));
+    const document = file('notes.txt', 'text/plain');
+    await bridge.actions.handleDrop(drop([document]));
+
+    expect(supplementDocuments).toHaveBeenCalledWith([document]);
+    expect(bridge.state.getSnapshot()).toMatchObject({
+      phase: 'success', filenames: ['notes.txt'], pendingDocuments: [],
+    });
+  });
+
   it('surfaces rejection and import errors without leaving hidden pending files', async () => {
     const importFiles = vi.fn(async () => { throw new Error('DOCUMENT_PARSE_FAILED:broken.pdf'); });
     const bridge = createEngineeringDropBridgeController({ importFiles, refreshClaim: vi.fn() });

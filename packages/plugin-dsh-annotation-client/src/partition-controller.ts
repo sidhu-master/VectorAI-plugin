@@ -2,11 +2,12 @@
 
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
-import type { DrawingRef, PartitionEditCommand, PartitionImportRequest, PartitionSessionSnapshot } from '@vectorai/plugin-space-contracts';
+import type { DrawingRef, EngineeringDocumentInput, PartitionDocumentSupplementRequest, PartitionEditCommand, PartitionImportRequest, PartitionSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import { ENGINEERING_IMPORT_LIMITS, validateEngineeringDocumentFiles } from './engineering-file-policy';
 
 export interface PartitionRemote {
   importAndAnalyze(sessionId: string, request: PartitionImportRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
+  supplementDocuments(sessionId: string, request: PartitionDocumentSupplementRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
   getPartitionState(sessionId: string): Promise<RemoteResult<PartitionSessionSnapshot>>;
   editPartition(sessionId: string, command: PartitionEditCommand): Promise<RemoteResult<PartitionSessionSnapshot>>;
   confirmPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
@@ -24,6 +25,7 @@ export interface PartitionController {
   actions: {
     refresh(): Promise<void>;
     importFiles(dxf: File, engineeringDocuments?: readonly File[]): Promise<void>;
+    supplementDocuments(engineeringDocuments: readonly File[]): Promise<void>;
     moveBoundary(boundaryIndex: number, requestedZ: number, snapTolerance: number): Promise<void>;
     splitSegment(segmentId: string, z: number, snapTolerance: number): Promise<void>;
     mergeBoundary(boundaryIndex: number): Promise<void>;
@@ -68,23 +70,22 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
       refresh: () => run(() => remote.getPartitionState(sessionId)),
       async importFiles(dxf, engineeringDocuments = []) {
         if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error('DXF_SIZE_LIMIT');
-        validateEngineeringDocumentFiles(engineeringDocuments);
         const bytes = new Uint8Array(await dxf.arrayBuffer());
         const digest = `sha256:${hex(await crypto.subtle.digest('SHA-256', bytes))}`;
-        const documents = await Promise.all(engineeringDocuments.map(async (file) => {
-          const documentBytes = new Uint8Array(await file.arrayBuffer());
-          return {
-            name: file.name,
-            digest: `sha256:${hex(await crypto.subtle.digest('SHA-256', documentBytes))}`,
-            ...(file.type === '' ? {} : { mediaType: file.type }),
-            base64: base64(documentBytes),
-          };
-        }));
+        const documents = await serializeEngineeringDocuments(engineeringDocuments);
         const request: PartitionImportRequest = {
           dxf: { name: dxf.name, digest, base64: base64(bytes) },
           engineeringDocuments: documents,
         };
         await run(() => remote.importAndAnalyze(sessionId, request));
+      },
+      async supplementDocuments(engineeringDocuments) {
+        if (engineeringDocuments.length === 0) throw new Error('ENGINEERING_DOCUMENT_REQUIRED');
+        const request: PartitionDocumentSupplementRequest = {
+          expectedDrawingRef: ref(),
+          engineeringDocuments: await serializeEngineeringDocuments(engineeringDocuments),
+        };
+        await run(() => remote.supplementDocuments(sessionId, request));
       },
       moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: 'boundary.move', boundaryIndex, requestedZ, snapTolerance }),
       splitSegment: (segmentId, z, snapTolerance) => edit({ type: 'segment.split', segmentId, z, snapTolerance }),
@@ -110,4 +111,17 @@ function base64(bytes: Uint8Array): string {
   const size = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
   return btoa(binary);
+}
+
+async function serializeEngineeringDocuments(files: readonly File[]): Promise<EngineeringDocumentInput[]> {
+  validateEngineeringDocumentFiles(files);
+  return Promise.all(files.map(async (file) => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return {
+      name: file.name,
+      digest: `sha256:${hex(await crypto.subtle.digest('SHA-256', bytes))}`,
+      ...(file.type === '' ? {} : { mediaType: file.type }),
+      base64: base64(bytes),
+    };
+  }));
 }

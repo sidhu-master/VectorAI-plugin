@@ -45,6 +45,27 @@ describe('partition controller', () => {
     }));
   });
 
+  it('supplements the current drawing with documents without requiring the DXF again', async () => {
+    const supplementDocuments = vi.fn(async () => ({ ok: true as const, value: partition }));
+    const controller = createPartitionController('s', {
+      supplementDocuments,
+      getPartitionState: async () => ({ ok: true, value: partition }),
+      importAndAnalyze: vi.fn(), editPartition: vi.fn(), confirmPartition: vi.fn(),
+      cancelPartition: vi.fn(), undoPartition: vi.fn(), redoPartition: vi.fn(),
+    } as never);
+    await controller.actions.refresh();
+    const document = new File(['diameter,20'], 'limits.csv', { type: 'text/csv' });
+
+    await controller.actions.supplementDocuments([document]);
+
+    expect(supplementDocuments).toHaveBeenCalledWith('s', {
+      expectedDrawingRef: partition.drawingRef,
+      engineeringDocuments: [expect.objectContaining({
+        name: 'limits.csv', mediaType: 'text/csv', base64: 'ZGlhbWV0ZXIsMjA=',
+      })],
+    });
+  });
+
   it('rejects aggregate engineering document bytes before reading or calling the Host', async () => {
     const importAndAnalyze = vi.fn();
     const controller = createPartitionController('s', {

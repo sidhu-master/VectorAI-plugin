@@ -93,4 +93,44 @@ describe('PartitionWorkflowService', () => {
     })).rejects.toThrow('DOCUMENT_PARSE_FAILED:broken.pdf');
     expect(importDxf).not.toHaveBeenCalled();
   });
+
+  it('reanalyzes the current drawing when engineering documents arrive after the DXF', async () => {
+    const document = drawing();
+    document.sources = [{
+      id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf',
+      digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf',
+    }];
+    const importDxf = vi.fn();
+    const extract = vi.fn(async () => ({ documents: [], combinedText: '第一轴段 0~10' }));
+    const space = {
+      importDxf,
+      getSnapshot: () => ({
+        version: 1 as const,
+        ref: { drawingId: 'd', revision: 1 },
+        document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false },
+      }),
+    };
+    const service = new PartitionWorkflowService(
+      space as never,
+      new PartitionSessionStore(),
+      new AnnotationSessionStateStore(),
+      undefined,
+      extract,
+    );
+    const bytes = new TextEncoder().encode('document');
+
+    const result = await service.supplementDocuments({ id: 's' } as Agent, {
+      expectedDrawingRef: { drawingId: 'd', revision: 1 },
+      engineeringDocuments: [{
+        name: 'notes.txt',
+        digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        base64: Buffer.from(bytes).toString('base64'),
+      }],
+    });
+
+    expect(result.phase).toBe('editing');
+    expect(importDxf).not.toHaveBeenCalled();
+    expect(extract).toHaveBeenCalledOnce();
+  });
 });

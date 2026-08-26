@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
+var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, analyze_fn, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _supplementDocuments_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
@@ -7619,6 +7619,10 @@ object({
     context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
   }
 });
+object({
+  expectedDrawingRef: drawingRefSchema,
+  engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
+}).strict();
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),
@@ -8191,35 +8195,20 @@ class PartitionWorkflowService {
     await this.space.importDxf(agent, { bytes, digest, name: request.dxf.name }, signal);
     const snapshot = this.space.getSnapshot(agent);
     if (!snapshot) throw new Error("DRAWING_REQUIRED");
-    const sessionId = String(agent.id);
-    this.annotations.start(sessionId, `partition_${randomUUID()}`);
-    this.partitions.beginAnalysis(sessionId, snapshot.ref);
-    const analyzed = analyzeShaftPartition({
-      document: snapshot.document,
-      drawingRef: snapshot.ref,
-      ...engineeringText === void 0 ? {} : { engineeringText },
-      drawingSourceName: request.dxf.name
-    });
-    if (analyzed.status === "rejected") {
-      this.annotations.finish(sessionId, "failed", analyzed.diagnostics.map(({ code }) => code).join(", "));
-      throw new Error(`PARTITION_ANALYSIS_REJECTED:${analyzed.diagnostics.map(({ code }) => code).join(",")}`);
+    return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, engineeringText, request.dxf.name, signal);
+  }
+  async supplementDocuments(agent, request, signal) {
+    var _a3, _b;
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error("DRAWING_REQUIRED");
+    if (snapshot.ref.drawingId !== request.expectedDrawingRef.drawingId || snapshot.ref.revision !== request.expectedDrawingRef.revision) {
+      this.partitions.markNeedsRebase(String(agent.id), snapshot.ref);
+      throw new Error("PARTITION_DRAWING_STALE");
     }
-    let draft = analyzed.draft;
-    if (analyzed.unclassifiedSegmentIds.length > 0 && this.reviewer) {
-      try {
-        draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.unclassifiedSegmentIds, signal })).draft;
-      } catch (error) {
-        draft = structuredClone(draft);
-        draft.diagnostics.push({
-          id: "diagnostic:ai-semantic-unavailable",
-          severity: "warning",
-          code: "AI_SEMANTIC_REVIEW_UNAVAILABLE",
-          message: error instanceof Error ? error.message : String(error),
-          segmentIds: analyzed.unclassifiedSegmentIds
-        });
-      }
-    }
-    return this.partitions.setDraft(sessionId, draft);
+    const extracted = await this.extractDocuments(request.engineeringDocuments, { signal });
+    signal == null ? void 0 : signal.throwIfAborted();
+    const drawingSourceName = ((_b = (_a3 = snapshot.document.sources) == null ? void 0 : _a3.find(({ kind }) => kind === "dxf")) == null ? void 0 : _b.name) ?? "drawing.dxf";
+    return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, extracted.combinedText, drawingSourceName, signal);
   }
   getState(agent) {
     return this.partitions.get(String(agent.id));
@@ -8255,6 +8244,37 @@ class PartitionWorkflowService {
   }
 }
 _PartitionWorkflowService_instances = new WeakSet();
+analyze_fn = async function(agent, snapshot, engineeringText, drawingSourceName, signal) {
+  const sessionId = String(agent.id);
+  this.annotations.start(sessionId, `partition_${randomUUID()}`);
+  this.partitions.beginAnalysis(sessionId, snapshot.ref);
+  const analyzed = analyzeShaftPartition({
+    document: snapshot.document,
+    drawingRef: snapshot.ref,
+    ...engineeringText === void 0 ? {} : { engineeringText },
+    drawingSourceName
+  });
+  if (analyzed.status === "rejected") {
+    this.annotations.finish(sessionId, "failed", analyzed.diagnostics.map(({ code }) => code).join(", "));
+    throw new Error(`PARTITION_ANALYSIS_REJECTED:${analyzed.diagnostics.map(({ code }) => code).join(",")}`);
+  }
+  let draft = analyzed.draft;
+  if (analyzed.unclassifiedSegmentIds.length > 0 && this.reviewer) {
+    try {
+      draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.unclassifiedSegmentIds, signal })).draft;
+    } catch (error) {
+      draft = structuredClone(draft);
+      draft.diagnostics.push({
+        id: "diagnostic:ai-semantic-unavailable",
+        severity: "warning",
+        code: "AI_SEMANTIC_REVIEW_UNAVAILABLE",
+        message: error instanceof Error ? error.message : String(error),
+        segmentIds: analyzed.unclassifiedSegmentIds
+      });
+    }
+  }
+  return this.partitions.setDraft(sessionId, draft);
+};
 current_fn = function(agent, expected) {
   var _a3;
   const current = (_a3 = this.space.getSnapshot(agent)) == null ? void 0 : _a3.ref;
@@ -8646,7 +8666,7 @@ function parseEnvelope(value) {
 function compact(value) {
   return JSON.parse(JSON.stringify(value));
 }
-class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importAndAnalyze_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
+class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingAnnotation");
     __runInitializers(_init, 5, this);
@@ -8678,6 +8698,9 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
   importAndAnalyze(agent, request) {
     return this.partitionWorkflow.importAndAnalyze(agent, request);
   }
+  supplementDocuments(agent, request) {
+    return this.partitionWorkflow.supplementDocuments(agent, request);
+  }
   getPartitionState(agent) {
     return this.partitionWorkflow.getState(agent);
   }
@@ -8700,6 +8723,7 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
 _init = __decoratorStart(_a2);
 __decorateElement(_init, 1, "getSessionState", _getSessionState_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "importAndAnalyze", _importAndAnalyze_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "supplementDocuments", _supplementDocuments_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "getPartitionState", _getPartitionState_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "editPartition", _editPartition_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "confirmPartition", _confirmPartition_dec, DrawingAnnotationHostService);

@@ -10588,6 +10588,10 @@ const partitionImportRequestSchema = object({
     context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
   }
 });
+const partitionDocumentSupplementRequestSchema = object({
+  expectedDrawingRef: drawingRefSchema,
+  engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
+}).strict();
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),
@@ -10729,6 +10733,7 @@ const ANNOTATION_REMOTE = {
 function partitionDescriptors() {
   return [
     descriptor("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
+    descriptor("supplementDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest", partitionDocumentSupplementRequestSchema)]),
     descriptor("getPartitionState", []),
     descriptor("editPartition", [jsonParameter("command", "@vectorai/plugin-space-contracts#PartitionEditCommand", partitionEditCommandSchema)]),
     descriptor("confirmPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
@@ -10794,23 +10799,22 @@ function createPartitionController(sessionId, remote) {
       refresh: () => run(() => remote.getPartitionState(sessionId)),
       async importFiles(dxf, engineeringDocuments = []) {
         if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error("DXF_SIZE_LIMIT");
-        validateEngineeringDocumentFiles(engineeringDocuments);
         const bytes = new Uint8Array(await dxf.arrayBuffer());
         const digest = `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`;
-        const documents = await Promise.all(engineeringDocuments.map(async (file) => {
-          const documentBytes = new Uint8Array(await file.arrayBuffer());
-          return {
-            name: file.name,
-            digest: `sha256:${hex(await crypto.subtle.digest("SHA-256", documentBytes))}`,
-            ...file.type === "" ? {} : { mediaType: file.type },
-            base64: base64(documentBytes)
-          };
-        }));
+        const documents = await serializeEngineeringDocuments(engineeringDocuments);
         const request = {
           dxf: { name: dxf.name, digest, base64: base64(bytes) },
           engineeringDocuments: documents
         };
         await run(() => remote.importAndAnalyze(sessionId, request));
+      },
+      async supplementDocuments(engineeringDocuments) {
+        if (engineeringDocuments.length === 0) throw new Error("ENGINEERING_DOCUMENT_REQUIRED");
+        const request = {
+          expectedDrawingRef: ref(),
+          engineeringDocuments: await serializeEngineeringDocuments(engineeringDocuments)
+        };
+        await run(() => remote.supplementDocuments(sessionId, request));
       },
       moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: "boundary.move", boundaryIndex, requestedZ, snapTolerance }),
       splitSegment: (segmentId, z, snapTolerance) => edit({ type: "segment.split", segmentId, z, snapTolerance }),
@@ -10840,6 +10844,18 @@ function base64(bytes) {
   const size = 32768;
   for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
   return btoa(binary);
+}
+async function serializeEngineeringDocuments(files) {
+  validateEngineeringDocumentFiles(files);
+  return Promise.all(files.map(async (file) => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return {
+      name: file.name,
+      digest: `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`,
+      ...file.type === "" ? {} : { mediaType: file.type },
+      base64: base64(bytes)
+    };
+  }));
 }
 function apply() {
 }

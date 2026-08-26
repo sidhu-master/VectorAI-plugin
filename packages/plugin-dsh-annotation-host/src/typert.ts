@@ -5,6 +5,7 @@ import {
   drawingRefSchema,
   drawingSessionIdSchema,
   partitionEditCommandSchema,
+  partitionDocumentSupplementRequestSchema,
   partitionImportRequestSchema,
   partitionSessionSnapshotSchema,
 } from '@vectorai/plugin-space-contracts';
@@ -45,6 +46,7 @@ export const TYPERT = {
 function partitionInvocations() {
   return [
     invocation('importAndAnalyze', [jsonParameter('request', '@vectorai/plugin-space-contracts#PartitionImportRequest', partitionImportRequestSchema)]),
+    invocation('supplementDocuments', [jsonParameter('request', '@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest', partitionDocumentSupplementRequestSchema)]),
     invocation('getPartitionState', []),
     invocation('editPartition', [jsonParameter('command', '@vectorai/plugin-space-contracts#PartitionEditCommand', partitionEditCommandSchema)]),
     invocation('confirmPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),

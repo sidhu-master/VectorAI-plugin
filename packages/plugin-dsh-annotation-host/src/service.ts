@@ -7,6 +7,7 @@ import type {
   AnnotationSessionState,
   DrawingSpaceExtensionHost,
   DrawingRef,
+  PartitionDocumentSupplementRequest,
   PartitionEditCommand,
   PartitionImportRequest,
   PartitionSessionSnapshot,
@@ -68,6 +69,11 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   importAndAnalyze(agent: Agent, request: PartitionImportRequest): Promise<PartitionSessionSnapshot> {
     return this.partitionWorkflow.importAndAnalyze(agent, request);
+  }
+
+  @Remote
+  supplementDocuments(agent: Agent, request: PartitionDocumentSupplementRequest): Promise<PartitionSessionSnapshot> {
+    return this.partitionWorkflow.supplementDocuments(agent, request);
   }
 
   @Remote

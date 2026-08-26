@@ -5,6 +5,7 @@ import { analyzeShaftPartition, type PartitionDraft } from '@vectorai/engineerin
 import {
   type DrawingRef,
   type DrawingSpaceExtensionHost,
+  type PartitionDocumentSupplementRequest,
   type PartitionEditCommand,
   type PartitionImportRequest,
   type PartitionSessionSnapshot,
@@ -23,6 +24,7 @@ export interface PartitionSemanticReviewInput {
 export type PartitionSemanticReviewer = (input: PartitionSemanticReviewInput) => Promise<{ draft: PartitionDraft }>;
 
 type SpacePort = Pick<DrawingSpaceExtensionHost<Agent>, 'importDxf' | 'getSnapshot' | 'renderObservation'>;
+type SpaceSnapshot = NonNullable<ReturnType<SpacePort['getSnapshot']>>;
 
 export class PartitionWorkflowService {
   constructor(
@@ -49,6 +51,23 @@ export class PartitionWorkflowService {
     await this.space.importDxf(agent, { bytes, digest, name: request.dxf.name }, signal);
     const snapshot = this.space.getSnapshot(agent);
     if (!snapshot) throw new Error('DRAWING_REQUIRED');
+    return this.#analyze(agent, snapshot, engineeringText, request.dxf.name, signal);
+  }
+
+  async supplementDocuments(agent: Agent, request: PartitionDocumentSupplementRequest, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error('DRAWING_REQUIRED');
+    if (snapshot.ref.drawingId !== request.expectedDrawingRef.drawingId || snapshot.ref.revision !== request.expectedDrawingRef.revision) {
+      this.partitions.markNeedsRebase(String(agent.id), snapshot.ref);
+      throw new Error('PARTITION_DRAWING_STALE');
+    }
+    const extracted = await this.extractDocuments(request.engineeringDocuments, { signal });
+    signal?.throwIfAborted();
+    const drawingSourceName = snapshot.document.sources?.find(({ kind }) => kind === 'dxf')?.name ?? 'drawing.dxf';
+    return this.#analyze(agent, snapshot, extracted.combinedText, drawingSourceName, signal);
+  }
+
+  async #analyze(agent: Agent, snapshot: SpaceSnapshot, engineeringText: string | undefined, drawingSourceName: string, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
     const sessionId = String(agent.id);
     this.annotations.start(sessionId, `partition_${randomUUID()}`);
     this.partitions.beginAnalysis(sessionId, snapshot.ref);
@@ -56,7 +75,7 @@ export class PartitionWorkflowService {
       document: snapshot.document,
       drawingRef: snapshot.ref,
       ...(engineeringText === undefined ? {} : { engineeringText }),
-      drawingSourceName: request.dxf.name,
+      drawingSourceName,
     });
     if (analyzed.status === 'rejected') {
       this.annotations.finish(sessionId, 'failed', analyzed.diagnostics.map(({ code }) => code).join(', '));
