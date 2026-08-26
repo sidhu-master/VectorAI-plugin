@@ -2,32 +2,40 @@
 
 import type { PartitionRevision } from '@vectorai/plugin-space-contracts';
 import { PencilLine } from 'lucide-react';
+import { partitionBands, type PartitionViewMode } from './partition-view-model';
+import { PartitionViewSwitch } from './PartitionViewSwitch';
 
 export function ConfirmedPartitionInspector({
   revision,
   busy,
+  mode,
+  onModeChange,
   onReopen,
 }: {
   revision: PartitionRevision;
   busy: boolean;
+  mode: PartitionViewMode;
+  onModeChange(mode: PartitionViewMode): void;
   onReopen(): Promise<void>;
 }) {
+  const bands = partitionBands(revision, mode);
   return <div className="vai-partition-inspector vai-confirmed-partition">
     <div className="vai-confirmed-partition__heading">
-      <div><h2>轴段分区</h2><span>已确认</span></div>
+      <div><h2>{mode === 'functional' ? '功能分区' : '连续轴段'}</h2><span>已确认</span></div>
       <button type="button" aria-label="重新编辑分区" disabled={busy} onClick={() => void onReopen().catch(() => undefined)}>
         <PencilLine size={14} aria-hidden="true" />
         重新编辑
       </button>
     </div>
+    <PartitionViewSwitch mode={mode} onChange={onModeChange} />
     <dl className="vai-confirmed-partition__meta">
       <dt>版本</dt><dd>{revision.id}</dd>
       <dt>确认时间</dt><dd>{formatConfirmedAt(revision.confirmedAt)}</dd>
     </dl>
-    <ol>{revision.segments.map((segment, index) => <li key={segment.id}>
-      <span>{segment.name ?? `轴段 S${index + 1}`}</span>
-      <small>{segment.zStart.toFixed(2)} – {segment.zEnd.toFixed(2)} · ⌀{(segment.profile.maxRadius * 2).toFixed(2)}</small>
-      {segment.semanticType && <em>{segment.semanticType}</em>}
+    <ol>{bands.map((band, index) => <li key={band.id}>
+      <span>{band.name ?? band.semanticType ?? `轴段 S${index + 1}`}</span>
+      <small>{band.zStart.toFixed(2)} – {band.zEnd.toFixed(2)} · ⌀{(Math.max(...band.segments.map(({ profile }) => profile.maxRadius)) * 2).toFixed(2)}</small>
+      {band.semanticType && <em>{band.semanticType}</em>}
     </li>)}</ol>
   </div>;
 }
