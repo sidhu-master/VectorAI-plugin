@@ -51,6 +51,7 @@ function partitionInvocations() {
     invocation('editPartition', [jsonParameter('command', '@vectorai/plugin-space-contracts#PartitionEditCommand', partitionEditCommandSchema)]),
     invocation('confirmPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     invocation('cancelPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    invocation('reopenPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     invocation('undoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     invocation('redoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
   ] as const;

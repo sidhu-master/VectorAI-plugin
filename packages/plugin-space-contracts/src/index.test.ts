@@ -166,6 +166,63 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(() => drawingDocumentSchema.parse(invalid)).toThrow();
   });
 
+  it('round-trips a parametric DXF hatch without flattening it into display segments', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-hatch' }, now: () => 1 });
+    document.annotations = [{
+      id: 'hatch-1' as AnnotationId,
+      type: 'section-hatch',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      pattern: 'ANSI31',
+      angle: 45,
+      spacing: 3.175,
+      hatch: {
+        version: 1,
+        style: 'normal',
+        elevation: 0,
+        extrusion: [0, 0, 1],
+        boundaryPaths: [{
+          flags: 3,
+          closed: true,
+          edges: [
+            { type: 'line', start: [0, 0], end: [20, 0] },
+            { type: 'arc', center: [20, 5], radius: 5, startAngle: -90, endAngle: 90, counterClockwise: true },
+            { type: 'line', start: [20, 10], end: [0, 10] },
+            { type: 'line', start: [0, 10], end: [0, 0] },
+          ],
+        }],
+        patternLines: [{
+          angle: 45,
+          base: [0, 0],
+          offset: [-2.245064, 2.245064],
+          dashLengths: [],
+        }],
+        patternAngle: 0,
+        patternScale: 1,
+        double: false,
+      },
+    }];
+
+    const parsed = drawingDocumentSchema.parse(document);
+    expect(parsed.annotations[0]).toEqual(document.annotations[0]);
+    expect(parsed.annotations[0]).not.toHaveProperty('segments');
+  });
+
+  it('rejects a section hatch that has neither original semantics nor legacy segments', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-hatch' }, now: () => 1 });
+    document.annotations = [{
+      id: 'hatch-1' as AnnotationId,
+      type: 'section-hatch',
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      pattern: 'ANSI31',
+      angle: 45,
+      spacing: 3.175,
+    } as never];
+
+    expect(() => drawingDocumentSchema.parse(document)).toThrow();
+  });
+
   it('strictly carries revision-bound partition state and edits', () => {
     const ref = { drawingId: 'drawing-1', revision: 1 };
     const command = { type: 'boundary.move', expectedDrawingRef: ref, boundaryIndex: 1, requestedZ: 12, snapTolerance: 0.5 };

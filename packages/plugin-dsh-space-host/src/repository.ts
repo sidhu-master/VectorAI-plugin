@@ -45,8 +45,11 @@ import type { ImageVectorizer } from './vectorizer';
 
 export type { ImageVectorizer } from './vectorizer';
 
+const CURRENT_DXF_PROJECTION_VERSION = 2;
+
 export interface DrawingEntry {
   attachmentId: string;
+  dxfProjectionVersion?: number;
   document: DrawingDocument;
   drawingId: string;
   bounds: Bounds2D;
@@ -187,7 +190,10 @@ export class InMemoryDrawingRepository {
     input: { bytes: Uint8Array; name?: string; digest: string; signal?: AbortSignal },
   ): Promise<DrawingImportResult> {
     const current = this.#getDrawing(sessionId);
-    if (current?.attachmentId === input.digest) {
+    if (
+      current?.attachmentId === input.digest
+      && current.dxfProjectionVersion === CURRENT_DXF_PROJECTION_VERSION
+    ) {
       return {
         status: 'already-imported',
         ref: { drawingId: current.drawingId, revision: current.revision },
@@ -221,6 +227,7 @@ export class InMemoryDrawingRepository {
     const provisional = imported.diagnostics.some(({ severity }) => severity === 'warning');
     const entry: DrawingEntry = {
       attachmentId: actualDigest,
+      dxfProjectionVersion: CURRENT_DXF_PROJECTION_VERSION,
       document: structuredClone(imported.document),
       drawingId,
       bounds: structuredClone(imported.bounds),

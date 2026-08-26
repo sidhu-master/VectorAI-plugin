@@ -117,6 +117,13 @@ export class PartitionWorkflowService {
     this.annotations.finish(sessionId, 'canceled');
     return result;
   }
+  reopen(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
+    if (!this.#current(agent, expected)) return this.partitions.get(String(agent.id));
+    const sessionId = String(agent.id);
+    const result = this.partitions.reopen(sessionId, expected);
+    this.annotations.start(sessionId, `partition_${randomUUID()}`);
+    return result;
+  }
   undo(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
     if (!this.#current(agent, expected)) return this.partitions.get(String(agent.id));
     const sessionId = String(agent.id);

@@ -21,6 +21,7 @@ import type { DrawingDurableState, DurableDrawingRepositoryStorage } from './dur
 interface StoredDrawing {
   version: 1;
   attachmentId: string;
+  dxfProjectionVersion?: number;
   bounds: DrawingEntry['bounds'];
   snapshot: ReturnType<typeof snapshotForStorage>;
 }
@@ -29,6 +30,7 @@ interface StoredDurableDrawing {
   version: 2;
   entry: {
     attachmentId: string;
+    dxfProjectionVersion?: number;
     bounds: DrawingEntry['bounds'];
     snapshot: ReturnType<typeof snapshotForStorage>;
   };
@@ -58,6 +60,9 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, D
       if (snapshot === null || snapshot.source === undefined) return null;
       return {
         attachmentId: value.attachmentId,
+        ...(typeof value.dxfProjectionVersion === 'number'
+          ? { dxfProjectionVersion: value.dxfProjectionVersion }
+          : {}),
         document: snapshot.document as unknown as DrawingEntry['document'],
         drawingId: snapshot.ref.drawingId,
         bounds: value.bounds,
@@ -76,6 +81,9 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, D
     const value: StoredDrawing = {
       version: 1,
       attachmentId: entry.attachmentId,
+      ...(entry.dxfProjectionVersion === undefined
+        ? {}
+        : { dxfProjectionVersion: entry.dxfProjectionVersion }),
       bounds: structuredClone(entry.bounds),
       snapshot: snapshotForStorage(entry),
     };
@@ -114,6 +122,9 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, D
       version: 2,
       entry: {
         attachmentId: state.entry.attachmentId,
+        ...(state.entry.dxfProjectionVersion === undefined
+          ? {}
+          : { dxfProjectionVersion: state.entry.dxfProjectionVersion }),
         bounds: structuredClone(state.entry.bounds),
         snapshot: snapshotForStorage(state.entry),
       },
@@ -152,6 +163,7 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, D
 
 function entryFromStored(value: {
   attachmentId?: unknown;
+  dxfProjectionVersion?: unknown;
   bounds?: unknown;
   snapshot?: unknown;
 }): DrawingEntry | null {
@@ -160,6 +172,9 @@ function entryFromStored(value: {
   if (!snapshot.success || snapshot.data.source === undefined) return null;
   return {
     attachmentId: value.attachmentId,
+    ...(typeof value.dxfProjectionVersion === 'number'
+      ? { dxfProjectionVersion: value.dxfProjectionVersion }
+      : {}),
     document: snapshot.data.document as unknown as DrawingEntry['document'],
     drawingId: snapshot.data.ref.drawingId,
     bounds: value.bounds,

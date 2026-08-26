@@ -88,6 +88,9 @@ importers:
       '@vectorai/drawing-edit-protocol':
         specifier: workspace:*
         version: link:../drawing-edit-protocol
+      '@vectorai/drawing-hatch':
+        specifier: workspace:*
+        version: link:../drawing-hatch
 
   packages/drawing-edit-protocol:
     dependencies:
@@ -95,11 +98,23 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/drawing-hatch:
+    dependencies:
+      '@vectorai/drawing-core':
+        specifier: workspace:*
+        version: link:../drawing-core
+      clipper2-ts:
+        specifier: 2.0.1-18
+        version: 2.0.1-18
+
   packages/drawing-spatial:
     dependencies:
       '@vectorai/drawing-core':
         specifier: workspace:*
         version: link:../drawing-core
+      '@vectorai/drawing-hatch':
+        specifier: workspace:*
+        version: link:../drawing-hatch
 
   packages/drawing-surface-api:
     dependencies:
@@ -112,6 +127,9 @@ importers:
       '@vectorai/drawing-core':
         specifier: workspace:*
         version: link:../drawing-core
+      '@vectorai/drawing-hatch':
+        specifier: workspace:*
+        version: link:../drawing-hatch
       '@vectorai/drawing-surface-api':
         specifier: workspace:*
         version: link:../drawing-surface-api
@@ -161,6 +179,9 @@ importers:
       '@vectorai/drawing-core':
         specifier: workspace:*
         version: link:../drawing-core
+      '@vectorai/drawing-hatch':
+        specifier: workspace:*
+        version: link:../drawing-hatch
 
   packages/engineering-annotation:
     dependencies:
@@ -216,6 +237,9 @@ importers:
       '@vectorai/plugin-space-contracts':
         specifier: workspace:*
         version: link:../plugin-space-contracts
+      lucide-react:
+        specifier: 0.511.0
+        version: 0.511.0(react@18.3.1)
       react:
         specifier: 18.3.1
         version: 18.3.1
@@ -393,6 +417,9 @@ importers:
       '@vectorai/drawing-edit-protocol':
         specifier: workspace:*
         version: link:../drawing-edit-protocol
+      '@vectorai/drawing-hatch':
+        specifier: workspace:*
+        version: link:../drawing-hatch
       '@vectorai/drawing-spatial':
         specifier: workspace:*
         version: link:../drawing-spatial
@@ -3613,6 +3640,11 @@ packages:
     resolution: {integrity: sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==}
     engines: {node: '>= 16'}
     dev: true
+
+  /clipper2-ts@2.0.1-18:
+    resolution: {integrity: sha512-WuRO1ZHzyYTVHY78r4wVWVydvQ+1lx9qZ+DeZa/8zhvrxIgCVzElJ6lwSMGtUUKFPefhvfJsHZ5C9RNkgisCOQ==}
+    engines: {node: '>=14.0.0'}
+    dev: false
 
   /clsx@2.1.1:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}

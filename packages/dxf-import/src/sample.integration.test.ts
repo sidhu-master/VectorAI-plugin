@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { normalizeHatchRegion } from '@vectorai/drawing-hatch';
 
 import { importDxf } from './import';
 
@@ -25,7 +26,17 @@ describe('approved shaft DXF fixture', () => {
     expect(result.document.geometry.filter(({ type }) => type === 'line')).toHaveLength(89);
     expect(result.document.geometry.filter(({ type }) => type === 'spline')).toHaveLength(33);
     expect(result.document.geometry.filter(({ type }) => type === 'arc')).toHaveLength(12);
-    expect(result.document.annotations.filter(({ type }) => type === 'section-hatch')).toHaveLength(2);
+    const hatches = result.document.annotations.filter((annotation) => annotation.type === 'section-hatch');
+    expect(hatches).toHaveLength(2);
+    for (const annotation of hatches) {
+      expect(annotation.pattern).toBe('ANSI31');
+      expect(annotation.spacing).toBeCloseTo(3.175, 9);
+      expect(annotation.hatch).toBeDefined();
+      expect(annotation.segments).toBeUndefined();
+      const normalized = normalizeHatchRegion(annotation.hatch!, 0.0001);
+      expect(normalized.status).toBe('ok');
+    }
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'DXF_HATCH_BOUNDARY_OPEN' }));
     expect(new Set([
       ...result.document.geometry,
       ...result.document.annotations,

@@ -269,8 +269,8 @@
   flex: 0 0 240px;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid var(--vai-border);
-  background: var(--vai-panel);
+  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));
+  background: var(--vai-panel, #12161b);
 }
 
 .vai-activity-bar {
@@ -283,8 +283,14 @@
   align-items: center;
   gap: 4px;
   padding: 6px 4px;
-  border-right: 1px solid var(--vai-border);
-  background: var(--vai-panel-deep);
+  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));
+  background: var(--vai-panel-deep, #0d1014);
+}
+
+.vai-activity-bar--overlay {
+  position: absolute;
+  inset: 0 auto 0 0;
+  box-sizing: border-box;
 }
 
 .vai-activity-bar__button {
@@ -297,6 +303,17 @@
   justify-content: center;
   padding: 0 !important;
   border-radius: 7px !important;
+  border: 1px solid transparent;
+  color: var(--vai-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.vai-activity-bar__button:hover,
+.vai-activity-bar__button[aria-pressed="true"] {
+  border-color: rgba(109, 169, 210, 0.22);
+  color: var(--vai-accent);
+  background: rgba(109, 169, 210, 0.08);
 }
 
 .vai-activity-bar__button[aria-pressed="true"]::before {
@@ -316,6 +333,14 @@
   min-width: 220px;
   max-width: 420px;
   flex: 0 0 auto;
+}
+
+.vai-inspector-stack--overlay {
+  position: absolute;
+  z-index: 5;
+  inset: 0 auto 0 42px;
+  box-sizing: border-box;
+  box-shadow: 14px 0 30px rgba(0, 0, 0, 0.28);
 }
 
 .vai-inspector-stack--activity > .vai-panel {

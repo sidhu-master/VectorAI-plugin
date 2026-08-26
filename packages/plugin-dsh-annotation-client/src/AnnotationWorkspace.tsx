@@ -1,24 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
-import { DrawingSurface } from '@vectorai/drawing-viewer-react';
+import {
+  DrawingSurface,
+  WorkspaceActivityBar,
+  WorkspaceToolbarView,
+  fitViewportToDrawing,
+  type WorkspacePanelDefinition,
+} from '@vectorai/drawing-viewer-react';
 import type {
   DrawingSurfaceRuntime,
   DrawingWorkspaceSnapshot,
   DrawingWorkspaceViewport,
 } from '@vectorai/drawing-workspace';
 import type { AnnotationSessionState, EngineeringAnnotationDraft } from '@vectorai/plugin-space-contracts';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { ListTree } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { PartitionController } from './partition-controller';
 import { PartitionOverlay } from './PartitionOverlay';
 import { PartitionActionToolbar } from './PartitionActionToolbar';
 import { PartitionInspector } from './PartitionInspector';
 import { DimensionPlanInspector } from './DimensionPlanInspector';
+import { ConfirmedPartitionInspector } from './ConfirmedPartitionInspector';
 import { SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS } from './engineering-file-policy';
 import { classifyEngineeringDrop } from './engineering-drop';
 import { engineeringImportErrorText } from './EngineeringDropBridge';
 
 const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
+const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
+type AnnotationPanelId = 'structure';
 
 export interface AnnotationWorkspaceProps {
   sessionId: string;
@@ -36,17 +46,81 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   const presentation = useObservable(runtime.presentation);
   const annotationState = useObservable(state);
   const partitionState = useObservable(partition.state);
-  const [dxf, setDxf] = useState<File | null>(null);
-  const [engineering, setEngineering] = useState<File[]>([]);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [showImport, setShowImport] = useState(false);
   const displaySnapshot = (presentation.displaySnapshot ?? snapshot) as DrawingWorkspaceSnapshot | null;
+  const [importError, setImportError] = useState<string | null>(null);
+  const [activePanel, setActivePanel] = useState<AnnotationPanelId | null>(null);
+  const [panelWidth, setPanelWidth] = useState(260);
+  const fitAfterAnalysis = useRef(partitionState.busy);
+  const surfaceSnapshot = useMemo(() => displaySnapshot === null ? null : ({
+    ...displaySnapshot,
+    document: {
+      ...displaySnapshot.document,
+      annotations: displaySnapshot.document.annotations.filter(({ type }) => type === 'section-hatch'),
+      relations: [],
+    },
+  }), [displaySnapshot]);
   const draft = partitionState.partition.draft;
+  const confirmed = partitionState.partition.confirmed;
   useEffect(() => {
     const release = () => partition.actions.setPreviewHeld(false);
     window.addEventListener('blur', release);
     return () => { window.removeEventListener('blur', release); release(); };
   }, [partition]);
+  useEffect(() => {
+    if (!partitionState.busy) {
+      void runtime.actions.refresh().then(() => {
+        if (!fitAfterAnalysis.current) return;
+        fitAfterAnalysis.current = false;
+        fitRuntimeToDrawing(runtime);
+      });
+      return;
+    }
+    fitAfterAnalysis.current = true;
+    void runtime.actions.refresh();
+    const timer = window.setInterval(() => { void runtime.actions.refresh(); }, 500);
+    return () => window.clearInterval(timer);
+  }, [partitionState.busy, runtime]);
+  useEffect(() => {
+    if (displaySnapshot === null) return;
+    fitRuntimeToDrawing(runtime, displaySnapshot);
+  }, [displaySnapshot?.ref.drawingId, displaySnapshot?.ref.revision, runtime]);
+
+  const beginImport = (drawing: File, documents: readonly File[]) => {
+    setImportError(null);
+    void partition.actions.importFiles(drawing, documents)
+      .then(() => setActivePanel(null))
+      .catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+  };
+  const handleToolbarUpload = (files: readonly File[]) => {
+    const decision = classifyEngineeringDrop(files);
+    if (decision.kind === 'import') { beginImport(decision.dxf, decision.documents); return; }
+    if (decision.kind === 'pending') {
+      if (partitionState.partition.drawingRef) {
+        setImportError(null);
+        void partition.actions.supplementDocuments(decision.documents)
+          .catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+      } else {
+        setImportError('请同时选择 DXF 图纸；工程文档不能单独创建图纸');
+      }
+      return;
+    }
+    setImportError(decision.kind === 'reject'
+      ? engineeringImportErrorText(decision.code, decision.filenames)
+      : '请选择 DXF 图纸或受支持的工程文档');
+  };
+  const structurePanel = <div className="vai-annotation-panel">
+    {dimensionPlan ? <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />
+      : draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} />
+        : confirmed && partitionState.partition.phase === 'confirmed'
+          ? <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} onReopen={partition.actions.reopen} /> : <><h2>标注检查</h2><dl>
+      <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
+      <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
+      <dt>选中</dt><dd>{selectedIds.length}</dd>
+    </dl></>}
+  </div>;
+  const panels: readonly WorkspacePanelDefinition<AnnotationPanelId>[] = [
+    { id: 'structure', label: '图纸结构', icon: ListTree, render: () => structurePanel },
+  ];
 
   return <section
     className="vai-annotation-workspace"
@@ -60,74 +134,66 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
         {displaySnapshot?.provisional && <span className="vai-annotation-provisional">候选图纸</span>}
       </div>
       <span data-annotation-workflow={annotationState.workflow.status}>
-        {workflowLabel(annotationState.workflow.status)}
+        {partitionProgressLabel(partitionState.partition.phase, partitionState.busy, annotationState.workflow.status)}
       </span>
     </header>
     <div className="vai-annotation-workspace__body">
-      <nav className="vai-annotation-workspace__rail" aria-label="标注流程">
-        <button type="button" aria-label="导入 DXF" title="导入 DXF" onClick={() => setShowImport(true)}>↥</button>
-        <button type="button" aria-label="图纸结构" title="图纸结构">⌗</button>
-        <button type="button" aria-label="标注候选" title="标注候选">⌖</button>
-        <button type="button" aria-label="冲突检查" title="冲突检查">△</button>
-      </nav>
+      <WorkspaceActivityBar
+        overlay
+        activePanel={activePanel}
+        panelWidth={panelWidth}
+        onActivePanelChange={setActivePanel}
+        onPanelWidthChange={setPanelWidth}
+        panels={panels}
+      />
       <main className="vai-annotation-workspace__canvas">
-        {displaySnapshot !== null && <DrawingSurface
-          snapshot={displaySnapshot}
+        {partitionState.busy && <div className="vai-partition-progress" data-partition-progress={partitionState.partition.phase} role="status">
+          <span className="vai-partition-progress__pulse" aria-hidden="true" />
+          <span>{partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status)}</span>
+        </div>}
+        {surfaceSnapshot !== null && <DrawingSurface
+          snapshot={surfaceSnapshot}
           viewport={viewport}
           selectedIds={selectedIds}
           display={presentation.display}
           sourceUrl={presentation.sourceUrl}
           className="vai-canvas vai-annotation-workspace__surface"
+          fitToDrawingOnResize="geometry"
           onViewportChange={runtime.actions.setViewport}
           onSelectionChange={runtime.actions.setSelection}
           worldLayers={<>
             <g data-annotation-candidate-layer="true" data-preview-active={presentation.preview === null ? undefined : 'true'} pointerEvents="none" />
             {draft && <PartitionOverlay draft={draft} previewHeld={partitionState.previewHeld} scale={viewport.scale}
-              onMoveBoundary={(index, z) => void partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 0.003, 0.05)).catch(() => undefined)} />}
+              onMoveBoundary={(index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 0.003, 0.05))} />}
           </>}
         />}
-        {(displaySnapshot === null || showImport) && <form className="vai-annotation-import" onSubmit={(event) => {
-          event.preventDefault();
-          if (!dxf) return;
-          const decision = classifyEngineeringDrop([dxf, ...engineering]);
-          if (decision.kind !== 'import') {
-            setImportError(decision.kind === 'reject'
-              ? engineeringImportErrorText(decision.code, decision.filenames)
-              : '请选择一张 DXF 图纸');
-            return;
-          }
-          setImportError(null);
-          void partition.actions.importFiles(decision.dxf, decision.documents)
-            .then(() => setShowImport(false))
-            .catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
-        }}>
-          <strong>导入轴类工程图</strong>
-          <p>DXF 为必选；工程数据文档可选。普通聊天附件不会触发此流程。</p>
-          <label>DXF 图纸<input type="file" accept=".dxf,application/dxf" onChange={(event) => setDxf(event.currentTarget.files?.[0] ?? null)} /></label>
-          <label>工程数据文档（可多选）<input type="file" multiple accept={ENGINEERING_DOCUMENT_ACCEPT} onChange={(event) => setEngineering(Array.from(event.currentTarget.files ?? []))} /></label>
-          {engineering.length > 0 && <ul className="vai-annotation-import__files">
-            {engineering.map((file) => <li key={`${file.name}:${file.size}`}>{file.name}</li>)}
-          </ul>}
-          <button type="submit" disabled={!dxf || partitionState.busy}>{partitionState.busy ? '正在分析…' : '导入并智能分区'}</button>
-          {displaySnapshot !== null && <button type="button" className="vai-annotation-import__close" onClick={() => setShowImport(false)}>关闭</button>}
-          {(importError ?? partitionState.error) && <p role="alert">{importError ?? partitionState.error}</p>}
-        </form>}
+        {(importError ?? partitionState.error) && <p className="vai-partition-error" role="alert">
+          {importError ?? `边界未保存：${partitionState.error}`}
+        </p>}
         {partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
-        {(partitionState.partition.canUndo || partitionState.partition.canRedo) && <div className="vai-partition-history" role="toolbar" aria-label="分区历史">
-          <button type="button" aria-label="撤销分区" disabled={!partitionState.partition.canUndo} onClick={() => void partition.actions.undo().catch(() => undefined)}>↶</button>
-          <button type="button" aria-label="重做分区" disabled={!partitionState.partition.canRedo} onClick={() => void partition.actions.redo().catch(() => undefined)}>↷</button>
-        </div>}
+        {displaySnapshot && <WorkspaceToolbarView
+          snapshot={displaySnapshot}
+          viewport={viewport}
+          unavailable={partitionState.busy}
+          canUndo={partitionState.partition.canUndo}
+          canRedo={partitionState.partition.canRedo}
+          onFit={runtime.actions.setViewport}
+          onUndo={() => partition.actions.undo()}
+          onRedo={() => partition.actions.redo()}
+          onUploadFiles={handleToolbarUpload}
+          uploadAccept={ANNOTATION_UPLOAD_ACCEPT}
+          uploadMultiple
+        />}
       </main>
-      <aside className="vai-annotation-workspace__inspector">
-        {dimensionPlan ? <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />
-          : draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} /> : <><h2>标注检查</h2><dl>
-          <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
-          <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
-          <dt>选中</dt><dd>{selectedIds.length}</dd>
-        </dl></>}
-      </aside>
     </div>
   </section>;
+}
+
+function fitRuntimeToDrawing(runtime: DrawingSurfaceRuntime, snapshot = runtime.snapshot.getSnapshot()): void {
+  if (snapshot === null) return;
+  const viewport = runtime.viewport.getSnapshot();
+  if (viewport.width <= 0 || viewport.height <= 0) return;
+  runtime.actions.setViewport(fitViewportToDrawing({ ...snapshot.document, annotations: [] }, viewport));
 }
 
 function useObservable<T>(observable: DrawingSurfaceObservable<T>): T {
@@ -144,4 +210,19 @@ function workflowLabel(status: AnnotationSessionState['workflow']['status']): st
     failed: '需要处理',
     'needs-rebase': '图纸已变化',
   }[status];
+}
+
+function partitionProgressLabel(
+  phase: PartitionController['state']['getSnapshot'] extends () => infer State
+    ? State extends { partition: { phase: infer Phase } } ? Phase : never
+    : never,
+  busy: boolean,
+  workflowStatus: AnnotationSessionState['workflow']['status'],
+): string {
+  if (busy || phase === 'analyzing') return '正在识别轴段并进行 AI 语义复核';
+  if (phase === 'editing') return '分区草稿待确认';
+  if (phase === 'confirmed') return '分区已确认';
+  if (phase === 'needs-rebase') return '图纸已变化';
+  if (phase === 'failed') return '分区需要处理';
+  return workflowLabel(workflowStatus);
 }

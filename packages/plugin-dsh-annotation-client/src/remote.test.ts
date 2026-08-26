@@ -8,7 +8,7 @@ describe('ANNOTATION_REMOTE', () => {
   it('exposes the strict session projection and explicit partition lifecycle', () => {
     expect(ANNOTATION_REMOTE.descriptors.map(({ method }) => method)).toEqual([
       'getSessionState', 'importAndAnalyze', 'supplementDocuments', 'getPartitionState', 'editPartition',
-      'confirmPartition', 'cancelPartition', 'undoPartition', 'redoPartition',
+      'confirmPartition', 'cancelPartition', 'reopenPartition', 'undoPartition', 'redoPartition',
     ]);
     const [descriptor] = ANNOTATION_REMOTE.descriptors;
     expect(descriptor?.method).toBe('getSessionState');

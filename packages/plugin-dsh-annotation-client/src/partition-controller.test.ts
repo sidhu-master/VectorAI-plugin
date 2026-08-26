@@ -6,6 +6,39 @@ import { createPartitionController } from './partition-controller';
 const partition = { version: 1 as const, phase: 'editing' as const, drawingRef: { drawingId: 'd', revision: 1 }, canUndo: false, canRedo: false, updatedAt: 1 };
 
 describe('partition controller', () => {
+  it('reopens a confirmed partition through its explicit remote use case', async () => {
+    const confirmed = { ...partition, phase: 'confirmed' as const };
+    const reopenPartition = vi.fn(async () => ({ ok: true as const, value: partition }));
+    const controller = createPartitionController('s', {
+      getPartitionState: vi.fn(async () => ({ ok: true as const, value: confirmed })),
+      reopenPartition,
+      importAndAnalyze: vi.fn(), editPartition: vi.fn(), confirmPartition: vi.fn(),
+      cancelPartition: vi.fn(), undoPartition: vi.fn(), redoPartition: vi.fn(),
+    } as never);
+    await controller.actions.refresh();
+    await controller.actions.reopen();
+    expect(reopenPartition).toHaveBeenCalledWith('s', partition.drawingRef);
+    expect(controller.state.getSnapshot().partition.phase).toBe('editing');
+  });
+
+  it('publishes an analyzing phase before the remote import finishes', async () => {
+    let finish!: (value: { ok: true; value: typeof partition }) => void;
+    const pending = new Promise<{ ok: true; value: typeof partition }>((resolve) => { finish = resolve; });
+    const controller = createPartitionController('s', {
+      importAndAnalyze: vi.fn(() => pending),
+      getPartitionState: vi.fn(), editPartition: vi.fn(), confirmPartition: vi.fn(),
+      cancelPartition: vi.fn(), undoPartition: vi.fn(), redoPartition: vi.fn(),
+    } as never);
+
+    const importing = controller.actions.importFiles(new File(['DXF'], 'shaft.dxf'));
+    await vi.waitFor(() => expect(controller.state.getSnapshot()).toMatchObject({
+      busy: true,
+      partition: { phase: 'analyzing' },
+    }));
+    finish({ ok: true, value: partition });
+    await importing;
+  });
+
   it('imports explicitly and serializes revision-bound edits', async () => {
     const importAndAnalyze = vi.fn(async () => ({ ok: true as const, value: partition }));
     const editPartition = vi.fn(async () => ({ ok: true as const, value: { ...partition, updatedAt: 2 } }));

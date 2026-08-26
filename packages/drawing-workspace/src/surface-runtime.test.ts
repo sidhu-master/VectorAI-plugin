@@ -63,13 +63,25 @@ describe('drawing surface runtime', () => {
     const exposed = runtime.snapshot.getSnapshot();
     expect(exposed).not.toBe(store.getState().snapshot);
     expect(Object.keys(runtime.actions).sort()).toEqual([
-      'query', 'redo', 'setSelection', 'setViewport', 'stage', 'undo',
+      'query', 'redo', 'refresh', 'setSelection', 'setViewport', 'stage', 'undo',
     ]);
     expect(runtime).not.toHaveProperty('getState');
     if (exposed !== null) {
       (exposed.document.geometry as unknown as unknown[]).length = 0;
     }
     expect(store.getState().snapshot?.document.geometry).toHaveLength(1);
+  });
+
+  it('refreshes the readonly surface after another plugin mutates the host drawing', async () => {
+    const port = new RuntimePort();
+    const store = createDrawingWorkspaceStore({ port });
+    await store.getState().load();
+    const runtime = createDrawingSurfaceRuntime(store);
+    port.current.ref.revision = 2;
+
+    await runtime.actions.refresh();
+
+    expect(runtime.snapshot.getSnapshot()?.ref.revision).toBe(2);
   });
 
   it('publishes selection changes without repeating equal projections', async () => {

@@ -134,6 +134,27 @@ describe('shared workspace panel actions', () => {
     act(() => renderer.unmount());
   });
 
+  it('accepts workflow-owned history commands and engineering upload formats', async () => {
+    const undo = vi.fn(async () => undefined);
+    const redo = vi.fn(async () => undefined);
+    const onUploadFiles = vi.fn();
+    const { renderer } = await renderPanel(<WorkspaceToolbar
+      history={{ canUndo: true, canRedo: true, undo, redo }}
+      onUploadFiles={onUploadFiles}
+      uploadAccept=".dxf,.txt,.pdf"
+      uploadMultiple
+    />);
+
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '撤销' }).props.onClick(); await Promise.resolve(); });
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '反撤销' }).props.onClick(); await Promise.resolve(); });
+    const input = renderer.root.findByType('input');
+    expect(input.props.accept).toBe('.dxf,.txt,.pdf');
+    expect(input.props.multiple).toBe(true);
+    expect(undo).toHaveBeenCalledOnce();
+    expect(redo).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
+  });
+
   it('shows icon-only confirm and cancel actions for a motion-rig Preview', async () => {
     const { store, renderer } = await renderPanel(<WorkspaceToolbar />);
     const confirmMotionRig = vi.fn(async () => true);

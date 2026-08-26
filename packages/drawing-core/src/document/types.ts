@@ -210,12 +210,78 @@ export interface SectionHatchSegment {
   end: Vec2;
 }
 
-/** A grouped, display-only projection of a real DXF hatch boundary/pattern. */
+export interface HatchLineEdge {
+  type: 'line';
+  start: Vec2;
+  end: Vec2;
+}
+
+export interface HatchArcEdge {
+  type: 'arc';
+  center: Vec2;
+  radius: number;
+  startAngle: number;
+  endAngle: number;
+  counterClockwise: boolean;
+}
+
+export interface HatchEllipseEdge {
+  type: 'ellipse';
+  center: Vec2;
+  majorAxis: Vec2;
+  axisRatio: number;
+  startParameter: number;
+  endParameter: number;
+  counterClockwise: boolean;
+}
+
+export interface HatchSplineEdge {
+  type: 'spline';
+  degree: number;
+  rational: boolean;
+  periodic: boolean;
+  knots: number[];
+  controlPoints: Vec2[];
+  weights?: number[];
+  fitPoints?: Vec2[];
+}
+
+export type HatchBoundaryEdge = HatchLineEdge | HatchArcEdge | HatchEllipseEdge | HatchSplineEdge;
+
+export interface HatchBoundaryPath {
+  /** Original DXF boundary path flags (group code 92). */
+  flags: number;
+  closed: boolean;
+  edges: HatchBoundaryEdge[];
+}
+
+export interface HatchPatternLine {
+  angle: number;
+  base: Vec2;
+  offset: Vec2;
+  dashLengths: number[];
+}
+
+/** Lossless, versioned projection of the DXF HATCH boundary and pattern semantics. */
+export interface ParametricHatch {
+  version: 1;
+  style: 'normal' | 'outer' | 'ignore';
+  elevation: number;
+  extrusion: [number, number, number];
+  boundaryPaths: HatchBoundaryPath[];
+  patternLines: HatchPatternLine[];
+  patternAngle: number;
+  patternScale: number;
+  double: boolean;
+}
+
+/** A section hatch preserving DXF semantics, with legacy segments supported during migration. */
 export interface SectionHatchAnnotation extends BaseNode<AnnotationId, 'section-hatch'> {
   pattern: string;
   angle: number;
   spacing: number;
-  segments: SectionHatchSegment[];
+  hatch?: ParametricHatch;
+  segments?: SectionHatchSegment[];
 }
 
 export type AnnotationNode =

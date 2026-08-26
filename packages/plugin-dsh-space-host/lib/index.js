@@ -316,12 +316,12 @@ function compileConnectedTransform(input) {
       before: structuredClone(projected),
       after,
       fixedAnchor: structuredClone(endpoint.fixedAnchor),
-      originalAngle: clean$2(angleOf(carrier.center, projected) * 180 / Math.PI),
-      transportedAngle: clean$2(angleOf(input.targetCenter, after) * 180 / Math.PI),
-      beforeConnectorLength: clean$2(beforeLength),
-      afterConnectorLength: clean$2(afterLength),
-      stretchRatio: clean$2(safeRatio(afterLength, beforeLength)),
-      lengthChange: clean$2(afterLength - beforeLength)
+      originalAngle: clean$3(angleOf(carrier.center, projected) * 180 / Math.PI),
+      transportedAngle: clean$3(angleOf(input.targetCenter, after) * 180 / Math.PI),
+      beforeConnectorLength: clean$3(beforeLength),
+      afterConnectorLength: clean$3(afterLength),
+      stretchRatio: clean$3(safeRatio(afterLength, beforeLength)),
+      lengthChange: clean$3(afterLength - beforeLength)
     };
   }).sort((left, right) => left.originalAngle - right.originalAngle || left.connectorNodeId.localeCompare(right.connectorNodeId) || left.endpointRole.localeCompare(right.endpointRole));
   const commands = [{
@@ -363,7 +363,7 @@ function compileConnectedTransform(input) {
       carrierType: carrier.type,
       beforeCenter: structuredClone(carrier.center),
       targetCenter: structuredClone(input.targetCenter),
-      rotationDegrees: clean$2(rotationDegrees),
+      rotationDegrees: clean$3(rotationDegrees),
       orientationMode: explicitRotation !== void 0 ? "explicit-rotation" : ports.length > 0 ? "minimum-deformation" : "translated",
       contactTolerance: tolerance,
       connectorNodeIds: [...new Set(ports.map(({ connectorNodeId }) => connectorNodeId))],
@@ -400,8 +400,8 @@ function closestPointOnCarrier(carrier, point) {
   const minor = [-major[1], major[0]];
   const delta = [point[0] - carrier.center[0], point[1] - carrier.center[1]];
   const parameter = Math.atan2(
-    dot(delta, minor) / (majorLength * carrier.ratio),
-    dot(delta, major) / majorLength
+    dot$2(delta, minor) / (majorLength * carrier.ratio),
+    dot$2(delta, major) / majorLength
   );
   const minorAxis = [-carrier.majorAxis[1] * carrier.ratio, carrier.majorAxis[0] * carrier.ratio];
   return cleanPoint$3([
@@ -421,10 +421,10 @@ function inferMinimumDeformationRotation(input) {
       contact.fixedAnchor[0] - input.targetCenter[0],
       contact.fixedAnchor[1] - input.targetCenter[1]
     ];
-    dotSum += dot(local, target);
+    dotSum += dot$2(local, target);
     crossSum += local[0] * target[1] - local[1] * target[0];
   }
-  return Math.hypot(dotSum, crossSum) <= 1e-12 ? 0 : clean$2(Math.atan2(crossSum, dotSum) * 180 / Math.PI);
+  return Math.hypot(dotSum, crossSum) <= 1e-12 ? 0 : clean$3(Math.atan2(crossSum, dotSum) * 180 / Math.PI);
 }
 function interfaceMetrics(input) {
   const drawingDiagonal2 = drawingExtent(input.document);
@@ -437,16 +437,16 @@ function interfaceMetrics(input) {
     return sum + distance$3(reference, port.fixedAnchor) ** 2;
   }, 0);
   const result = {
-    drawingDiagonal: clean$2(drawingDiagonal2),
+    drawingDiagonal: clean$3(drawingDiagonal2),
     portCount: input.ports.length,
-    maximumStretchRatio: clean$2(maximumStretchRatio),
-    maximumLengthIncrease: clean$2(maximumLengthIncrease),
-    normalizedMaximumLengthIncrease: clean$2(maximumLengthIncrease / Math.max(drawingDiagonal2, 1e-12)),
-    selectedDeformationCost: clean$2(selectedDeformationCost),
-    minimumDeformationCost: clean$2(minimumDeformationCost),
-    deformationCostRatio: clean$2(safeRatio(selectedDeformationCost, minimumDeformationCost)),
-    selectedRotationDegrees: clean$2(input.selectedRotationDegrees),
-    minimumDeformationRotationDegrees: clean$2(input.minimumDeformationRotationDegrees)
+    maximumStretchRatio: clean$3(maximumStretchRatio),
+    maximumLengthIncrease: clean$3(maximumLengthIncrease),
+    normalizedMaximumLengthIncrease: clean$3(maximumLengthIncrease / Math.max(drawingDiagonal2, 1e-12)),
+    selectedDeformationCost: clean$3(selectedDeformationCost),
+    minimumDeformationCost: clean$3(minimumDeformationCost),
+    deformationCostRatio: clean$3(safeRatio(selectedDeformationCost, minimumDeformationCost)),
+    selectedRotationDegrees: clean$3(input.selectedRotationDegrees),
+    minimumDeformationRotationDegrees: clean$3(input.minimumDeformationRotationDegrees)
   };
   if (input.ports.length === 2) {
     const before = signedArea([
@@ -462,9 +462,9 @@ function interfaceMetrics(input) {
       input.ports[1].fixedAnchor
     ]);
     if (Math.abs(before) > Math.max(drawingDiagonal2 ** 2 * 1e-8, 1e-12)) {
-      result.beforeSignedArea = clean$2(before);
-      result.afterSignedArea = clean$2(after);
-      result.areaRetentionRatio = clean$2(Math.abs(after / before));
+      result.beforeSignedArea = clean$3(before);
+      result.afterSignedArea = clean$3(after);
+      result.areaRetentionRatio = clean$3(Math.abs(after / before));
       result.orientationInverted = Math.sign(after) !== Math.sign(before);
     }
   }
@@ -588,18 +588,3500 @@ function angleOf(center2, point) {
 function distance$3(left, right) {
   return Math.hypot(left[0] - right[0], left[1] - right[1]);
 }
-function dot(left, right) {
+function dot$2(left, right) {
   return left[0] * right[0] + left[1] * right[1];
 }
 function cleanPoint$3(point) {
-  return [clean$2(point[0]), clean$2(point[1])];
+  return [clean$3(point[0]), clean$3(point[1])];
 }
-function clean$2(value2) {
+function clean$3(value2) {
   const rounded = Number(value2.toFixed(9));
   return Object.is(rounded, -0) ? 0 : rounded;
 }
 function assertPoint(point, code) {
   if (!Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite)) throw new Error(code);
+}
+const TAU = Math.PI * 2;
+function flattenHatchEdge(edge, tolerance) {
+  if (edge.type === "line") return [edge.start, edge.end];
+  if (edge.type === "arc") {
+    const orientation = edge.counterClockwise ? 1 : -1;
+    return sampleAngularCurve(
+      degrees$1(edge.startAngle),
+      degrees$1(edge.endAngle),
+      Math.abs(edge.radius),
+      tolerance,
+      (angle) => [
+        edge.center[0] + Math.cos(angle) * edge.radius,
+        edge.center[1] + Math.sin(angle) * edge.radius * orientation
+      ]
+    );
+  }
+  if (edge.type === "ellipse") {
+    const majorLength = Math.hypot(...edge.majorAxis);
+    const minorLength = majorLength * edge.axisRatio;
+    const orientation = edge.counterClockwise ? 1 : -1;
+    const ux = majorLength > 0 ? edge.majorAxis[0] / majorLength : 1;
+    const uy = majorLength > 0 ? edge.majorAxis[1] / majorLength : 0;
+    return sampleAngularCurve(
+      edge.startParameter,
+      edge.endParameter,
+      Math.max(majorLength, minorLength),
+      tolerance,
+      (parameter) => [
+        edge.center[0] + ux * majorLength * Math.cos(parameter) - uy * minorLength * Math.sin(parameter) * orientation,
+        edge.center[1] + uy * majorLength * Math.cos(parameter) + ux * minorLength * Math.sin(parameter) * orientation
+      ]
+    );
+  }
+  return flattenSpline(edge, tolerance);
+}
+function sampleAngularCurve(start, end, radius, tolerance, pointAt2) {
+  const rawSweep = end - start;
+  const sweep = (rawSweep % TAU + TAU) % TAU || TAU;
+  const safeRadius = Math.max(radius, tolerance);
+  const maxStep = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - tolerance / safeRadius)));
+  const count = Math.max(2, Math.ceil(Math.abs(sweep) / Math.max(maxStep, Math.PI / 90)));
+  return Array.from({ length: count + 1 }, (_, index) => pointAt2(start + sweep * index / count));
+}
+function flattenSpline(edge, tolerance) {
+  const domainStart = edge.knots[edge.degree] ?? 0;
+  const domainEnd = edge.knots[edge.controlPoints.length] ?? 1;
+  const first = splinePoint(edge, domainStart);
+  const last = splinePoint(edge, domainEnd);
+  const output = [first];
+  subdivideSpline(edge, domainStart, domainEnd, first, last, tolerance, 0, output);
+  return output;
+}
+function subdivideSpline(edge, start, end, a, b, tolerance, depth, output) {
+  const middleParameter = (start + end) / 2;
+  const middle = splinePoint(edge, middleParameter);
+  const chordMiddle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  if (depth >= 16 || Math.hypot(middle[0] - chordMiddle[0], middle[1] - chordMiddle[1]) <= tolerance) {
+    output.push(b);
+    return;
+  }
+  subdivideSpline(edge, start, middleParameter, a, middle, tolerance, depth + 1, output);
+  subdivideSpline(edge, middleParameter, end, middle, b, tolerance, depth + 1, output);
+}
+function splinePoint(edge, parameter) {
+  var _a3, _b, _c;
+  const degree = edge.degree;
+  const count = edge.controlPoints.length;
+  const basis = Array.from({ length: count }, (_, index) => basisValue(index, degree, parameter, edge.knots, parameter === edge.knots[count]));
+  let x = 0;
+  let y = 0;
+  let denominator = 0;
+  for (let index = 0; index < count; index += 1) {
+    const weight = ((_a3 = edge.weights) == null ? void 0 : _a3[index]) ?? 1;
+    const weightedBasis = (basis[index] ?? 0) * weight;
+    x += (((_b = edge.controlPoints[index]) == null ? void 0 : _b[0]) ?? 0) * weightedBasis;
+    y += (((_c = edge.controlPoints[index]) == null ? void 0 : _c[1]) ?? 0) * weightedBasis;
+    denominator += weightedBasis;
+  }
+  return denominator === 0 ? edge.controlPoints[0] ?? [0, 0] : [x / denominator, y / denominator];
+}
+function basisValue(index, degree, parameter, knots, atEnd) {
+  if (degree === 0) {
+    if (atEnd && parameter === knots[index + 1] && parameter === knots[knots.length - 1]) return 1;
+    return knots[index] <= parameter && parameter < knots[index + 1] ? 1 : 0;
+  }
+  const leftDenominator = knots[index + degree] - knots[index];
+  const rightDenominator = knots[index + degree + 1] - knots[index + 1];
+  const left = leftDenominator === 0 ? 0 : (parameter - knots[index]) / leftDenominator * basisValue(index, degree - 1, parameter, knots, atEnd);
+  const right = rightDenominator === 0 ? 0 : (knots[index + degree + 1] - parameter) / rightDenominator * basisValue(index + 1, degree - 1, parameter, knots, atEnd);
+  return left + right;
+}
+function degrees$1(value2) {
+  return value2 * Math.PI / 180;
+}
+var ClipType;
+(function(ClipType2) {
+  ClipType2[ClipType2["NoClip"] = 0] = "NoClip";
+  ClipType2[ClipType2["Intersection"] = 1] = "Intersection";
+  ClipType2[ClipType2["Union"] = 2] = "Union";
+  ClipType2[ClipType2["Difference"] = 3] = "Difference";
+  ClipType2[ClipType2["Xor"] = 4] = "Xor";
+})(ClipType || (ClipType = {}));
+var PathType;
+(function(PathType2) {
+  PathType2[PathType2["Subject"] = 0] = "Subject";
+  PathType2[PathType2["Clip"] = 1] = "Clip";
+})(PathType || (PathType = {}));
+var FillRule;
+(function(FillRule2) {
+  FillRule2[FillRule2["EvenOdd"] = 0] = "EvenOdd";
+  FillRule2[FillRule2["NonZero"] = 1] = "NonZero";
+  FillRule2[FillRule2["Positive"] = 2] = "Positive";
+  FillRule2[FillRule2["Negative"] = 3] = "Negative";
+})(FillRule || (FillRule = {}));
+var PointInPolygonResult;
+(function(PointInPolygonResult2) {
+  PointInPolygonResult2[PointInPolygonResult2["IsOn"] = 0] = "IsOn";
+  PointInPolygonResult2[PointInPolygonResult2["IsInside"] = 1] = "IsInside";
+  PointInPolygonResult2[PointInPolygonResult2["IsOutside"] = 2] = "IsOutside";
+})(PointInPolygonResult || (PointInPolygonResult = {}));
+const maxSafeInteger = Number.MAX_SAFE_INTEGER;
+const maxDeltaForSafeProduct = Math.floor(Math.sqrt(maxSafeInteger));
+function isSafeProduct(a, b) {
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b))
+    return false;
+  if (a === 0 || b === 0)
+    return true;
+  return Math.abs(a) <= maxSafeInteger / Math.abs(b);
+}
+function isSafeSum(a, b) {
+  return Math.abs(a) + Math.abs(b) <= maxSafeInteger;
+}
+function safeMultiplyDifference(a, b, c, d) {
+  if (isSafeProduct(a, b) && isSafeProduct(c, d)) {
+    const prod1 = a * b;
+    const prod2 = c * d;
+    if (isSafeSum(prod1, prod2)) {
+      return prod1 - prod2;
+    }
+  }
+  if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Number.isSafeInteger(c) && Number.isSafeInteger(d)) {
+    return Number(BigInt(a) * BigInt(b) - BigInt(c) * BigInt(d));
+  }
+  return a * b - c * d;
+}
+function safeMultiplySum(a, b, c, d) {
+  if (isSafeProduct(a, b) && isSafeProduct(c, d)) {
+    const prod1 = a * b;
+    const prod2 = c * d;
+    if (isSafeSum(prod1, prod2)) {
+      return prod1 + prod2;
+    }
+  }
+  if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Number.isSafeInteger(c) && Number.isSafeInteger(d)) {
+    return Number(BigInt(a) * BigInt(b) + BigInt(c) * BigInt(d));
+  }
+  return a * b + c * d;
+}
+const B0$1 = BigInt(0);
+const B2$1 = BigInt(2);
+const B4$1 = BigInt(4);
+const B64 = BigInt(64);
+const UINT64_MASK = BigInt("0xFFFFFFFFFFFFFFFF");
+const IC_MaxInt64 = BigInt("9223372036854775807");
+const IC_MaxCoord = Number(IC_MaxInt64 / B4$1);
+const IC_Invalid64 = Number(IC_MaxInt64);
+const IC_floatingPointTolerance = 1e-12;
+const IC_defaultMinimumEdgeLength = 0.1;
+const IC_maxCoordForSafeAreaProduct = Math.floor(maxDeltaForSafeProduct / 2);
+const IC_maxCoordForSafeCrossSq = Math.floor(Math.sqrt(Math.sqrt(maxSafeInteger / 4)));
+function maxSafeCoordinateForScale(scale2) {
+  if (!Number.isFinite(scale2)) {
+    throw new RangeError("Scale must be a finite number");
+  }
+  const absScale = Math.abs(scale2);
+  if (absScale === 0)
+    return Number.POSITIVE_INFINITY;
+  return maxSafeInteger / absScale;
+}
+function checkSafeScaleValue(value2, maxAbs, context) {
+  if (!Number.isFinite(value2) || Math.abs(value2) > maxAbs) {
+    throw new RangeError(`Scaled coordinate exceeds Number.MAX_SAFE_INTEGER in ${context}`);
+  }
+}
+function ensureSafeInteger(value2, context) {
+  if (!Number.isFinite(value2) || Math.abs(value2) > maxSafeInteger) {
+    throw new RangeError(`Coordinate exceeds Number.MAX_SAFE_INTEGER in ${context}`);
+  }
+}
+function crossProduct(pt1, pt2, pt3) {
+  const a = pt2.x - pt1.x;
+  const b = pt3.y - pt2.y;
+  const c = pt2.y - pt1.y;
+  const d = pt3.x - pt2.x;
+  if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+    return a * b - c * d;
+  }
+  return safeMultiplyDifference(a, b, c, d);
+}
+function crossProductSign(pt1, pt2, pt3) {
+  const a = pt2.x - pt1.x;
+  const b = pt3.y - pt2.y;
+  const c = pt2.y - pt1.y;
+  const d = pt3.x - pt2.x;
+  if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+    const prod1 = a * b;
+    const prod2 = c * d;
+    return prod1 > prod2 ? 1 : prod1 < prod2 ? -1 : 0;
+  }
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || !Number.isSafeInteger(c) || !Number.isSafeInteger(d)) {
+    const prod1 = a * b;
+    const prod2 = c * d;
+    return prod1 > prod2 ? 1 : prod1 < prod2 ? -1 : 0;
+  }
+  const bigProd1 = BigInt(a) * BigInt(b);
+  const bigProd2 = BigInt(c) * BigInt(d);
+  if (bigProd1 === bigProd2)
+    return 0;
+  return bigProd1 > bigProd2 ? 1 : -1;
+}
+function checkPrecision(precision) {
+  if (precision < -8 || precision > 8) {
+    throw new Error("Error: Precision is out of range.");
+  }
+}
+function isAlmostZero(value2) {
+  return Math.abs(value2) <= IC_floatingPointTolerance;
+}
+function triSign(x) {
+  return x < 0 ? -1 : x > 0 ? 1 : 0;
+}
+function multiplyUInt64(a, b) {
+  const aBig = BigInt(a);
+  const bBig = BigInt(b);
+  const res = aBig * bBig;
+  return {
+    lo64: res & UINT64_MASK,
+    hi64: res >> B64
+  };
+}
+function productsAreEqual(a, b, c, d) {
+  const absA = Math.abs(a);
+  const absB = Math.abs(b);
+  const absC = Math.abs(c);
+  const absD = Math.abs(d);
+  if (absA < maxDeltaForSafeProduct && absB < maxDeltaForSafeProduct && absC < maxDeltaForSafeProduct && absD < maxDeltaForSafeProduct) {
+    return a * b === c * d;
+  }
+  const signAb = (a < 0 ? -1 : a > 0 ? 1 : 0) * (b < 0 ? -1 : b > 0 ? 1 : 0);
+  const signCd = (c < 0 ? -1 : c > 0 ? 1 : 0) * (d < 0 ? -1 : d > 0 ? 1 : 0);
+  if (signAb !== signCd)
+    return false;
+  if (signAb === 0)
+    return true;
+  if (!Number.isSafeInteger(absA) || !Number.isSafeInteger(absB) || !Number.isSafeInteger(absC) || !Number.isSafeInteger(absD)) {
+    return a * b === c * d;
+  }
+  const bigA = BigInt(absA);
+  const bigB = BigInt(absB);
+  const bigC = BigInt(absC);
+  const bigD = BigInt(absD);
+  return bigA * bigB === bigC * bigD;
+}
+function isCollinear(pt1, sharedPt, pt2) {
+  const a = sharedPt.x - pt1.x;
+  const b = pt2.y - sharedPt.y;
+  const c = sharedPt.y - pt1.y;
+  const d = pt2.x - sharedPt.x;
+  return productsAreEqual(a, b, c, d);
+}
+function dotProduct(pt1, pt2, pt3) {
+  const a = pt2.x - pt1.x;
+  const b = pt3.x - pt2.x;
+  const c = pt2.y - pt1.y;
+  const d = pt3.y - pt2.y;
+  if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+    return a * b + c * d;
+  }
+  return safeMultiplySum(a, b, c, d);
+}
+function dotProductSign(pt1, pt2, pt3) {
+  const a = pt2.x - pt1.x;
+  const b = pt3.x - pt2.x;
+  const c = pt2.y - pt1.y;
+  const d = pt3.y - pt2.y;
+  if (Math.abs(a) < maxDeltaForSafeProduct && Math.abs(b) < maxDeltaForSafeProduct && Math.abs(c) < maxDeltaForSafeProduct && Math.abs(d) < maxDeltaForSafeProduct) {
+    const sum = a * b + c * d;
+    return sum > 0 ? 1 : sum < 0 ? -1 : 0;
+  }
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || !Number.isSafeInteger(c) || !Number.isSafeInteger(d)) {
+    const sum = a * b + c * d;
+    return sum > 0 ? 1 : sum < 0 ? -1 : 0;
+  }
+  const bigSum = BigInt(a) * BigInt(b) + BigInt(c) * BigInt(d);
+  if (bigSum === B0$1)
+    return 0;
+  return bigSum > B0$1 ? 1 : -1;
+}
+function icArea(path) {
+  const cnt = path.length;
+  if (cnt < 3)
+    return 0;
+  let allSmall = true;
+  for (let i = 0; i < cnt && allSmall; i++) {
+    const pt = path[i];
+    if (Math.abs(pt.x) >= IC_maxCoordForSafeAreaProduct || Math.abs(pt.y) >= IC_maxCoordForSafeAreaProduct) {
+      allSmall = false;
+    }
+  }
+  let prevPt = path[cnt - 1];
+  if (allSmall) {
+    let total = 0;
+    for (const pt of path) {
+      total += (prevPt.y + pt.y) * (prevPt.x - pt.x);
+      prevPt = pt;
+    }
+    return total * 0.5;
+  }
+  let totalBig = B0$1;
+  for (const pt of path) {
+    const sum = prevPt.y + pt.y;
+    const diff = prevPt.x - pt.x;
+    if (Number.isSafeInteger(sum) && Number.isSafeInteger(diff)) {
+      totalBig += BigInt(sum) * BigInt(diff);
+    } else if (Number.isSafeInteger(prevPt.y) && Number.isSafeInteger(pt.y) && Number.isSafeInteger(prevPt.x) && Number.isSafeInteger(pt.x)) {
+      const sumBig = BigInt(prevPt.y) + BigInt(pt.y);
+      const diffBig = BigInt(prevPt.x) - BigInt(pt.x);
+      totalBig += sumBig * diffBig;
+    } else {
+      totalBig += BigInt(Math.round(sum * diff));
+    }
+    prevPt = pt;
+  }
+  return Number(totalBig) * 0.5;
+}
+function crossProductD(vec1, vec2) {
+  return vec1.y * vec2.x - vec2.y * vec1.x;
+}
+function dotProductD(vec1, vec2) {
+  return vec1.x * vec2.x + vec1.y * vec2.y;
+}
+function roundToEven(value2) {
+  const r = Math.round(value2);
+  if (value2 === r - 0.5 && (r & 1) !== 0)
+    return r - 1;
+  return r;
+}
+function checkCastInt64(val) {
+  if (val >= IC_MaxCoord || val <= -IC_MaxCoord)
+    return IC_Invalid64;
+  return Math.round(val);
+}
+function getLineIntersectPt(ln1a, ln1b, ln2a, ln2b) {
+  const dy1 = ln1b.y - ln1a.y;
+  const dx1 = ln1b.x - ln1a.x;
+  const dy2 = ln2b.y - ln2a.y;
+  const dx2 = ln2b.x - ln2a.x;
+  const det = safeMultiplyDifference(dy1, dx2, dy2, dx1);
+  if (det === 0) {
+    return null;
+  }
+  const t = safeMultiplyDifference(ln1a.x - ln2a.x, dy2, ln1a.y - ln2a.y, dx2) / det;
+  if (t <= 0) {
+    return { x: ln1a.x, y: ln1a.y, z: ln1a.z || 0 };
+  } else if (t >= 1) {
+    return { x: ln1b.x, y: ln1b.y, z: ln1b.z || 0 };
+  } else {
+    return {
+      x: Math.trunc(ln1a.x + t * dx1),
+      y: Math.trunc(ln1a.y + t * dy1),
+      z: 0
+    };
+  }
+}
+function getLineIntersectPtD(ln1a, ln1b, ln2a, ln2b) {
+  const dy1 = ln1b.y - ln1a.y;
+  const dx1 = ln1b.x - ln1a.x;
+  const dy2 = ln2b.y - ln2a.y;
+  const dx2 = ln2b.x - ln2a.x;
+  const det = dy1 * dx2 - dy2 * dx1;
+  if (det === 0) {
+    return { success: false, ip: { x: 0, y: 0, z: 0 } };
+  }
+  const t = ((ln1a.x - ln2a.x) * dy2 - (ln1a.y - ln2a.y) * dx2) / det;
+  let ip;
+  if (t <= 0) {
+    ip = { ...ln1a, z: 0 };
+  } else if (t >= 1) {
+    ip = { ...ln1b, z: 0 };
+  } else {
+    ip = {
+      x: ln1a.x + t * dx1,
+      y: ln1a.y + t * dy1,
+      z: 0
+    };
+  }
+  return { success: true, ip };
+}
+function segsIntersect(seg1a, seg1b, seg2a, seg2b, inclusive = false) {
+  if (!inclusive) {
+    const s1 = crossProductSign(seg1a, seg2a, seg2b);
+    const s2 = crossProductSign(seg1b, seg2a, seg2b);
+    const s3 = crossProductSign(seg2a, seg1a, seg1b);
+    const s4 = crossProductSign(seg2b, seg1a, seg1b);
+    return s1 !== 0 && s2 !== 0 && s1 !== s2 && (s3 !== 0 && s4 !== 0 && s3 !== s4);
+  }
+  const res1 = crossProductSign(seg1a, seg2a, seg2b);
+  const res2 = crossProductSign(seg1b, seg2a, seg2b);
+  if (res1 !== 0 && res1 === res2)
+    return false;
+  const res3 = crossProductSign(seg2a, seg1a, seg1b);
+  const res4 = crossProductSign(seg2b, seg1a, seg1b);
+  if (res3 !== 0 && res3 === res4)
+    return false;
+  return res1 !== 0 || res2 !== 0 || res3 !== 0 || res4 !== 0;
+}
+function icGetBounds(path) {
+  if (path.length === 0)
+    return { left: 0, top: 0, right: 0, bottom: 0 };
+  const result = {
+    left: Number.MAX_SAFE_INTEGER,
+    top: Number.MAX_SAFE_INTEGER,
+    right: Number.MIN_SAFE_INTEGER,
+    bottom: Number.MIN_SAFE_INTEGER
+  };
+  for (const pt of path) {
+    if (pt.x < result.left)
+      result.left = pt.x;
+    if (pt.x > result.right)
+      result.right = pt.x;
+    if (pt.y < result.top)
+      result.top = pt.y;
+    if (pt.y > result.bottom)
+      result.bottom = pt.y;
+  }
+  return result.left === Number.MAX_SAFE_INTEGER ? { left: 0, top: 0, right: 0, bottom: 0 } : result;
+}
+function getClosestPtOnSegment(offPt, seg1, seg2) {
+  if (seg1.x === seg2.x && seg1.y === seg2.y)
+    return { x: seg1.x, y: seg1.y, z: 0 };
+  const dx = seg2.x - seg1.x;
+  const dy = seg2.y - seg1.y;
+  const q = safeMultiplySum(offPt.x - seg1.x, dx, offPt.y - seg1.y, dy) / safeMultiplySum(dx, dx, dy, dy);
+  const qClamped = q < 0 ? 0 : q > 1 ? 1 : q;
+  return {
+    // use Math.round to match the C# MidpointRounding.ToEven behavior
+    x: Math.round(seg1.x + qClamped * dx),
+    y: Math.round(seg1.y + qClamped * dy),
+    z: 0
+  };
+}
+function icPointInPolygon(pt, polygon) {
+  const len = polygon.length;
+  let start = 0;
+  if (len < 3)
+    return PointInPolygonResult.IsOutside;
+  while (start < len && polygon[start].y === pt.y)
+    start++;
+  if (start === len)
+    return PointInPolygonResult.IsOutside;
+  let isAbove = polygon[start].y < pt.y;
+  const startingAbove = isAbove;
+  let val = 0;
+  let i = start + 1;
+  let end = len;
+  while (true) {
+    if (i === end) {
+      if (end === 0 || start === 0)
+        break;
+      end = start;
+      i = 0;
+    }
+    if (isAbove) {
+      while (i < end && polygon[i].y < pt.y)
+        i++;
+    } else {
+      while (i < end && polygon[i].y > pt.y)
+        i++;
+    }
+    if (i === end)
+      continue;
+    const curr = polygon[i];
+    const prev = i > 0 ? polygon[i - 1] : polygon[len - 1];
+    if (curr.y === pt.y) {
+      if (curr.x === pt.x || curr.y === prev.y && pt.x < prev.x !== pt.x < curr.x) {
+        return PointInPolygonResult.IsOn;
+      }
+      i++;
+      if (i === start)
+        break;
+      continue;
+    }
+    if (pt.x < curr.x && pt.x < prev.x) ;
+    else if (pt.x > prev.x && pt.x > curr.x) {
+      val = 1 - val;
+    } else {
+      const cps2 = crossProductSign(prev, curr, pt);
+      if (cps2 === 0)
+        return PointInPolygonResult.IsOn;
+      if (cps2 < 0 === isAbove)
+        val = 1 - val;
+    }
+    isAbove = !isAbove;
+    i++;
+  }
+  if (isAbove === startingAbove) {
+    return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+  }
+  if (i === len)
+    i = 0;
+  const cps = i === 0 ? crossProductSign(polygon[len - 1], polygon[0], pt) : crossProductSign(polygon[i - 1], polygon[i], pt);
+  if (cps === 0)
+    return PointInPolygonResult.IsOn;
+  if (cps < 0 === isAbove)
+    val = 1 - val;
+  return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+}
+function path2ContainsPath1(path1, path2) {
+  let pip = PointInPolygonResult.IsOn;
+  for (const pt of path1) {
+    switch (icPointInPolygon(pt, path2)) {
+      case PointInPolygonResult.IsOutside:
+        if (pip === PointInPolygonResult.IsOutside)
+          return false;
+        pip = PointInPolygonResult.IsOutside;
+        break;
+      case PointInPolygonResult.IsInside:
+        if (pip === PointInPolygonResult.IsInside)
+          return true;
+        pip = PointInPolygonResult.IsInside;
+        break;
+    }
+  }
+  const mp = icGetBounds(path1);
+  let midX, midY;
+  if (Number.isSafeInteger(mp.left) && Number.isSafeInteger(mp.right) && Math.abs(mp.left) + Math.abs(mp.right) > Number.MAX_SAFE_INTEGER) {
+    midX = Number((BigInt(mp.left) + BigInt(mp.right)) / B2$1);
+    midY = Number((BigInt(mp.top) + BigInt(mp.bottom)) / B2$1);
+  } else {
+    midX = Math.round((mp.left + mp.right) / 2);
+    midY = Math.round((mp.top + mp.bottom) / 2);
+  }
+  const midPt = { x: midX, y: midY };
+  return icPointInPolygon(midPt, path2) !== PointInPolygonResult.IsOutside;
+}
+const InternalClipper = {
+  MaxInt64: IC_MaxInt64,
+  MaxCoord: IC_MaxCoord,
+  max_coord: IC_MaxCoord,
+  min_coord: -IC_MaxCoord,
+  Invalid64: IC_Invalid64,
+  floatingPointTolerance: IC_floatingPointTolerance,
+  defaultMinimumEdgeLength: IC_defaultMinimumEdgeLength,
+  maxCoordForSafeAreaProduct: IC_maxCoordForSafeAreaProduct,
+  maxCoordForSafeCrossSq: IC_maxCoordForSafeCrossSq,
+  maxSafeCoordinateForScale,
+  checkSafeScaleValue,
+  ensureSafeInteger,
+  crossProduct,
+  crossProductSign,
+  checkPrecision,
+  isAlmostZero,
+  triSign,
+  multiplyUInt64,
+  productsAreEqual,
+  isCollinear,
+  dotProduct,
+  dotProductSign,
+  area: icArea,
+  crossProductD,
+  dotProductD,
+  roundToEven,
+  checkCastInt64,
+  getLineIntersectPt,
+  getLineIntersectPtD,
+  segsIntersect,
+  getBounds: icGetBounds,
+  getClosestPtOnSegment,
+  pointInPolygon: icPointInPolygon,
+  path2ContainsPath1
+};
+const Rect64Utils = {
+  create(l = 0, t = 0, r = 0, b = 0) {
+    return { left: l, top: t, right: r, bottom: b };
+  },
+  createInvalid() {
+    return {
+      left: Number.MAX_SAFE_INTEGER,
+      top: Number.MAX_SAFE_INTEGER,
+      right: Number.MIN_SAFE_INTEGER,
+      bottom: Number.MIN_SAFE_INTEGER
+    };
+  },
+  width(rect) {
+    return rect.right - rect.left;
+  },
+  height(rect) {
+    return rect.bottom - rect.top;
+  },
+  isEmpty(rect) {
+    return rect.bottom <= rect.top || rect.right <= rect.left;
+  },
+  isValid(rect) {
+    return rect.left < Number.MAX_SAFE_INTEGER;
+  },
+  midPoint(rect) {
+    if (Number.isSafeInteger(rect.left) && Number.isSafeInteger(rect.right) && Math.abs(rect.left) + Math.abs(rect.right) > Number.MAX_SAFE_INTEGER) {
+      const midX = Number((BigInt(rect.left) + BigInt(rect.right)) / B2$1);
+      const midY = Number((BigInt(rect.top) + BigInt(rect.bottom)) / B2$1);
+      return { x: midX, y: midY };
+    }
+    return {
+      x: Math.round((rect.left + rect.right) / 2),
+      y: Math.round((rect.top + rect.bottom) / 2)
+    };
+  },
+  contains(rect, pt) {
+    return pt.x > rect.left && pt.x < rect.right && pt.y > rect.top && pt.y < rect.bottom;
+  },
+  containsRect(rect, rec) {
+    return rec.left >= rect.left && rec.right <= rect.right && rec.top >= rect.top && rec.bottom <= rect.bottom;
+  },
+  intersects(rect, rec) {
+    return Math.max(rect.left, rec.left) <= Math.min(rect.right, rec.right) && Math.max(rect.top, rec.top) <= Math.min(rect.bottom, rec.bottom);
+  },
+  asPath(rect) {
+    return [
+      { x: rect.left, y: rect.top, z: 0 },
+      { x: rect.right, y: rect.top, z: 0 },
+      { x: rect.right, y: rect.bottom, z: 0 },
+      { x: rect.left, y: rect.bottom, z: 0 }
+    ];
+  }
+};
+const B0 = BigInt(0);
+const B2 = BigInt(2);
+const B4 = BigInt(4);
+var VertexFlags;
+(function(VertexFlags2) {
+  VertexFlags2[VertexFlags2["None"] = 0] = "None";
+  VertexFlags2[VertexFlags2["OpenStart"] = 1] = "OpenStart";
+  VertexFlags2[VertexFlags2["OpenEnd"] = 2] = "OpenEnd";
+  VertexFlags2[VertexFlags2["LocalMax"] = 4] = "LocalMax";
+  VertexFlags2[VertexFlags2["LocalMin"] = 8] = "LocalMin";
+})(VertexFlags || (VertexFlags = {}));
+class ScanlineHeap {
+  constructor() {
+    __publicField(this, "data", []);
+  }
+  push(value2) {
+    this.data.push(value2);
+    this.siftUp(this.data.length - 1);
+  }
+  pop() {
+    if (this.data.length === 0)
+      return null;
+    const max = this.data[0];
+    const last = this.data.pop();
+    if (this.data.length > 0) {
+      this.data[0] = last;
+      this.siftDown(0);
+    }
+    return max;
+  }
+  clear() {
+    this.data.length = 0;
+  }
+  // Hole-sift: lift the value once, shift parents/children, then place.
+  // Avoids temporary array allocation from destructuring swap on every step.
+  siftUp(index) {
+    const val = this.data[index];
+    while (index > 0) {
+      const parent = index - 1 >> 1;
+      if (this.data[parent] >= val)
+        break;
+      this.data[index] = this.data[parent];
+      index = parent;
+    }
+    this.data[index] = val;
+  }
+  siftDown(index) {
+    const length = this.data.length;
+    const val = this.data[index];
+    while (true) {
+      const left = (index << 1) + 1;
+      if (left >= length)
+        break;
+      const right = left + 1;
+      let child = left;
+      if (right < length && this.data[right] > this.data[left])
+        child = right;
+      if (this.data[child] <= val)
+        break;
+      this.data[index] = this.data[child];
+      index = child;
+    }
+    this.data[index] = val;
+  }
+}
+class Vertex {
+  constructor(pt, flags, prev) {
+    __publicField(this, "pt");
+    __publicField(this, "next", null);
+    __publicField(this, "prev", null);
+    __publicField(this, "flags");
+    this.pt = pt;
+    this.flags = flags;
+    this.prev = prev;
+  }
+}
+class LocalMinima {
+  constructor(vertex, polytype, isOpen = false) {
+    __publicField(this, "vertex");
+    __publicField(this, "polytype");
+    __publicField(this, "isOpen");
+    this.vertex = vertex;
+    this.polytype = polytype;
+    this.isOpen = isOpen;
+  }
+  equals(other) {
+    return other !== null && this.vertex === other.vertex;
+  }
+}
+function createIntersectNode(pt, edge1, edge2) {
+  return { pt, edge1, edge2 };
+}
+class OutPt {
+  constructor(pt, outrec) {
+    __publicField(this, "pt");
+    __publicField(this, "next");
+    __publicField(this, "prev");
+    __publicField(this, "outrec");
+    __publicField(this, "horz");
+    this.pt = pt;
+    this.outrec = outrec;
+    this.next = this;
+    this.prev = this;
+    this.horz = null;
+  }
+}
+var JoinWith;
+(function(JoinWith2) {
+  JoinWith2[JoinWith2["None"] = 0] = "None";
+  JoinWith2[JoinWith2["Left"] = 1] = "Left";
+  JoinWith2[JoinWith2["Right"] = 2] = "Right";
+})(JoinWith || (JoinWith = {}));
+var HorzPosition;
+(function(HorzPosition2) {
+  HorzPosition2[HorzPosition2["Bottom"] = 0] = "Bottom";
+  HorzPosition2[HorzPosition2["Middle"] = 1] = "Middle";
+  HorzPosition2[HorzPosition2["Top"] = 2] = "Top";
+})(HorzPosition || (HorzPosition = {}));
+class OutRec {
+  constructor() {
+    __publicField(this, "idx", 0);
+    __publicField(this, "owner", null);
+    __publicField(this, "frontEdge", null);
+    __publicField(this, "backEdge", null);
+    __publicField(this, "pts", null);
+    __publicField(this, "polypath", null);
+    __publicField(this, "bounds", { left: 0, top: 0, right: 0, bottom: 0 });
+    __publicField(this, "path", []);
+    __publicField(this, "isOpen", false);
+    __publicField(this, "splits", null);
+    __publicField(this, "recursiveSplit", null);
+  }
+}
+class HorzSegment {
+  constructor(op) {
+    __publicField(this, "leftOp");
+    __publicField(this, "rightOp");
+    __publicField(this, "leftToRight");
+    this.leftOp = op;
+    this.rightOp = null;
+    this.leftToRight = true;
+  }
+}
+class HorzJoin {
+  constructor(ltor, rtol) {
+    __publicField(this, "op1");
+    __publicField(this, "op2");
+    this.op1 = ltor;
+    this.op2 = rtol;
+  }
+}
+function compareHorzSegments(hs1, hs2) {
+  if (hs1.rightOp === null) {
+    return hs2.rightOp === null ? 0 : 1;
+  }
+  if (hs2.rightOp === null)
+    return -1;
+  return hs1.leftOp.pt.x - hs2.leftOp.pt.x;
+}
+function compareIntersectNodes(a, b) {
+  if (a.pt.y !== b.pt.y)
+    return a.pt.y > b.pt.y ? -1 : 1;
+  if (a.pt.x !== b.pt.x)
+    return a.pt.x < b.pt.x ? -1 : 1;
+  if (a.edge1.curX !== b.edge1.curX)
+    return a.edge1.curX < b.edge1.curX ? -1 : 1;
+  return a.edge2.curX < b.edge2.curX ? -1 : a.edge2.curX > b.edge2.curX ? 1 : 0;
+}
+class Active {
+  constructor() {
+    __publicField(this, "bot", { x: 0, y: 0 });
+    __publicField(this, "top", { x: 0, y: 0 });
+    __publicField(this, "curX", 0);
+    // current (updated at every new scanline) - keep as number but ensure integer precision
+    __publicField(this, "dx", 0);
+    __publicField(this, "windDx", 0);
+    // 1 or -1 depending on winding direction
+    __publicField(this, "windCount", 0);
+    __publicField(this, "windCount2", 0);
+    // winding count of the opposite polytype
+    __publicField(this, "outrec", null);
+    // AEL: 'active edge list' (Vatti's AET - active edge table)
+    //     a linked list of all edges (from left to right) that are present
+    //     (or 'active') within the current scanbeam (a horizontal 'beam' that
+    //     sweeps from bottom to top over the paths in the clipping operation).
+    __publicField(this, "prevInAEL", null);
+    __publicField(this, "nextInAEL", null);
+    // SEL: 'sorted edge list' (Vatti's ST - sorted table)
+    //     linked list used when sorting edges into their new positions at the
+    //     top of scanbeams, but also (re)used to process horizontals.
+    __publicField(this, "prevInSEL", null);
+    __publicField(this, "nextInSEL", null);
+    __publicField(this, "jump", null);
+    __publicField(this, "vertexTop", null);
+    __publicField(this, "localMin", null);
+    // the bottom of an edge 'bound' (also Vatti)
+    __publicField(this, "isLeftBound", false);
+    __publicField(this, "joinWith", JoinWith.None);
+  }
+}
+const ClipperEngine = {
+  addLocMin(vert, polytype, isOpen, minimaList) {
+    if ((vert.flags & VertexFlags.LocalMin) !== VertexFlags.None)
+      return;
+    vert.flags |= VertexFlags.LocalMin;
+    const lm = new LocalMinima(vert, polytype, isOpen);
+    minimaList.push(lm);
+  },
+  addPathsToVertexList(paths, polytype, isOpen, minimaList, vertexList) {
+    for (let i = 0, len = paths.length; i < len; i++) {
+      const path = paths[i];
+      let v0 = null;
+      let prevV = null;
+      let prevPt = null;
+      for (let j = 0, len2 = path.length; j < len2; j++) {
+        const pt = path[j];
+        if (v0 === null) {
+          v0 = new Vertex(pt, VertexFlags.None, null);
+          vertexList.push(v0);
+          prevV = v0;
+          prevPt = pt;
+        } else if (!(prevPt.x === pt.x && prevPt.y === pt.y)) {
+          const currV2 = new Vertex(pt, VertexFlags.None, prevV);
+          prevV.next = currV2;
+          prevV = currV2;
+          prevPt = pt;
+        }
+      }
+      if ((prevV == null ? void 0 : prevV.prev) == null)
+        continue;
+      if (!isOpen && prevV.pt.x === v0.pt.x && prevV.pt.y === v0.pt.y)
+        prevV = prevV.prev;
+      prevV.next = v0;
+      v0.prev = prevV;
+      if (!isOpen && prevV.next === prevV)
+        continue;
+      let goingUp;
+      if (isOpen) {
+        let currV2 = v0.next;
+        while (currV2 !== v0 && currV2.pt.y === v0.pt.y)
+          currV2 = currV2.next;
+        goingUp = currV2.pt.y <= v0.pt.y;
+        if (goingUp) {
+          v0.flags = VertexFlags.OpenStart;
+          ClipperEngine.addLocMin(v0, polytype, true, minimaList);
+        } else {
+          v0.flags = VertexFlags.OpenStart | VertexFlags.LocalMax;
+        }
+      } else {
+        prevV = v0.prev;
+        while (prevV !== v0 && prevV.pt.y === v0.pt.y)
+          prevV = prevV.prev;
+        if (prevV === v0)
+          continue;
+        goingUp = prevV.pt.y > v0.pt.y;
+      }
+      const goingUp0 = goingUp;
+      prevV = v0;
+      let currV = v0.next;
+      while (currV !== v0) {
+        if (currV.pt.y > prevV.pt.y && goingUp) {
+          prevV.flags |= VertexFlags.LocalMax;
+          goingUp = false;
+        } else if (currV.pt.y < prevV.pt.y && !goingUp) {
+          goingUp = true;
+          ClipperEngine.addLocMin(prevV, polytype, isOpen, minimaList);
+        }
+        prevV = currV;
+        currV = currV.next;
+      }
+      if (isOpen) {
+        prevV.flags |= VertexFlags.OpenEnd;
+        if (goingUp)
+          prevV.flags |= VertexFlags.LocalMax;
+        else
+          ClipperEngine.addLocMin(prevV, polytype, isOpen, minimaList);
+      } else if (goingUp !== goingUp0) {
+        if (goingUp0)
+          ClipperEngine.addLocMin(prevV, polytype, false, minimaList);
+        else
+          prevV.flags |= VertexFlags.LocalMax;
+      }
+    }
+  }
+};
+const _ClipperBase = class _ClipperBase {
+  constructor() {
+    __publicField(this, "cliptype", ClipType.NoClip);
+    __publicField(this, "fillrule", FillRule.EvenOdd);
+    __publicField(this, "actives", null);
+    __publicField(this, "sel", null);
+    __publicField(this, "minimaList", []);
+    __publicField(this, "intersectList", []);
+    __publicField(this, "vertexList", []);
+    __publicField(this, "outrecList", []);
+    __publicField(this, "scanlineHeap", new ScanlineHeap());
+    __publicField(this, "scanlineSet", /* @__PURE__ */ new Set());
+    // For very small inputs, a heap + set can cost more than it saves.
+    // Use an array-based scanline mode initially, and upgrade to heap+set
+    // automatically if the scanline list grows beyond a threshold.
+    __publicField(this, "scanlineArr", []);
+    __publicField(this, "useScanlineArray", false);
+    __publicField(this, "horzSegList", []);
+    __publicField(this, "horzJoinList", []);
+    __publicField(this, "currentLocMin", 0);
+    __publicField(this, "currentBotY", 0);
+    // True when every active edge's curX already equals topX(edge, topY) for the
+    // scanbeam top being processed (set by buildIntersectList when the SEL scan
+    // finds no inversions, i.e. no intersections; consumed by doTopOfScanbeam).
+    __publicField(this, "curXValidAtTop", false);
+    __publicField(this, "isSortedMinimaList", false);
+    __publicField(this, "hasOpenPaths", false);
+    __publicField(this, "usingPolytree", false);
+    __publicField(this, "succeeded", false);
+    // Cache Z callback for the duration of an execute to avoid repeated virtual calls
+    // to getZCallback() in hot paths.
+    __publicField(this, "zCallbackInternal");
+    __publicField(this, "preserveCollinear", true);
+    __publicField(this, "reverseSolution", false);
+  }
+  // Z-coordinate callback support
+  // Override in subclasses (Clipper64/ClipperD) to provide callback
+  getZCallback() {
+    return void 0;
+  }
+  xyEqual(pt1, pt2) {
+    return pt1.x === pt2.x && pt1.y === pt2.y;
+  }
+  setZ(ae1, ae2, intersectPt) {
+    const zCallback = this.zCallbackInternal;
+    if (!zCallback)
+      return;
+    if (_ClipperBase.getPolyType(ae1) === PathType.Subject) {
+      if (this.xyEqual(intersectPt, ae1.bot)) {
+        intersectPt.z = ae1.bot.z ?? 0;
+      } else if (this.xyEqual(intersectPt, ae1.top)) {
+        intersectPt.z = ae1.top.z ?? 0;
+      } else if (this.xyEqual(intersectPt, ae2.bot)) {
+        intersectPt.z = ae2.bot.z ?? 0;
+      } else if (this.xyEqual(intersectPt, ae2.top)) {
+        intersectPt.z = ae2.top.z ?? 0;
+      } else {
+        intersectPt.z = 0;
+      }
+      zCallback(ae1.bot, ae1.top, ae2.bot, ae2.top, intersectPt);
+    } else {
+      if (this.xyEqual(intersectPt, ae2.bot)) {
+        intersectPt.z = ae2.bot.z ?? 0;
+      } else if (this.xyEqual(intersectPt, ae2.top)) {
+        intersectPt.z = ae2.top.z ?? 0;
+      } else if (this.xyEqual(intersectPt, ae1.bot)) {
+        intersectPt.z = ae1.bot.z ?? 0;
+      } else if (this.xyEqual(intersectPt, ae1.top)) {
+        intersectPt.z = ae1.top.z ?? 0;
+      } else {
+        intersectPt.z = 0;
+      }
+      zCallback(ae2.bot, ae2.top, ae1.bot, ae1.top, intersectPt);
+    }
+  }
+  // Helper functions
+  static isOdd(val) {
+    return (val & 1) !== 0;
+  }
+  static isHotEdge(ae) {
+    return ae.outrec != null;
+  }
+  static isOpen(ae) {
+    return _ClipperBase.openPathsEnabled && ae.localMin.isOpen;
+  }
+  static isOpenEnd(ae) {
+    return _ClipperBase.openPathsEnabled && ae.localMin.isOpen && _ClipperBase.isOpenEndVertex(ae.vertexTop);
+  }
+  static isOpenEndVertex(v) {
+    return (v.flags & (VertexFlags.OpenStart | VertexFlags.OpenEnd)) !== VertexFlags.None;
+  }
+  static getPrevHotEdge(ae) {
+    let prev = ae.prevInAEL;
+    if (!_ClipperBase.openPathsEnabled) {
+      while (prev !== null && !_ClipperBase.isHotEdge(prev)) {
+        prev = prev.prevInAEL;
+      }
+      return prev;
+    }
+    while (prev !== null && (prev.localMin.isOpen || !_ClipperBase.isHotEdge(prev))) {
+      prev = prev.prevInAEL;
+    }
+    return prev;
+  }
+  static isFront(ae) {
+    return ae === ae.outrec.frontEdge;
+  }
+  /*******************************************************************************
+  *  Dx:                             0(90deg)                                    *
+  *                                  |                                           *
+  *               +inf (180deg) <--- o ---> -inf (0deg)                          *
+  *******************************************************************************/
+  static getDx(pt1, pt2) {
+    const dy = pt2.y - pt1.y;
+    if (dy !== 0) {
+      return (pt2.x - pt1.x) / dy;
+    }
+    return pt2.x > pt1.x ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+  }
+  static topX(ae, currentY) {
+    if (currentY === ae.top.y || ae.top.x === ae.bot.x)
+      return ae.top.x;
+    if (currentY === ae.bot.y)
+      return ae.bot.x;
+    return InternalClipper.roundToEven(ae.bot.x + ae.dx * (currentY - ae.bot.y));
+  }
+  static isHorizontal(ae) {
+    return ae.dx === Number.NEGATIVE_INFINITY || ae.dx === Number.POSITIVE_INFINITY;
+  }
+  static isHeadingRightHorz(ae) {
+    return ae.dx === Number.NEGATIVE_INFINITY;
+  }
+  static isHeadingLeftHorz(ae) {
+    return ae.dx === Number.POSITIVE_INFINITY;
+  }
+  static getPolyType(ae) {
+    return ae.localMin.polytype;
+  }
+  static isSamePolyType(ae1, ae2) {
+    return ae1.localMin.polytype === ae2.localMin.polytype;
+  }
+  static setDx(ae) {
+    ae.dx = _ClipperBase.getDx(ae.bot, ae.top);
+  }
+  static nextVertex(ae) {
+    return ae.windDx > 0 ? ae.vertexTop.next : ae.vertexTop.prev;
+  }
+  static prevPrevVertex(ae) {
+    return ae.windDx > 0 ? ae.vertexTop.prev.prev : ae.vertexTop.next.next;
+  }
+  static isMaximaVertex(v) {
+    return (v.flags & VertexFlags.LocalMax) !== VertexFlags.None;
+  }
+  static isMaximaEdge(ae) {
+    return (ae.vertexTop.flags & VertexFlags.LocalMax) !== VertexFlags.None;
+  }
+  static getMaximaPair(ae) {
+    let ae2 = ae.nextInAEL;
+    while (ae2 !== null) {
+      if (ae2.vertexTop === ae.vertexTop)
+        return ae2;
+      ae2 = ae2.nextInAEL;
+    }
+    return null;
+  }
+  // optimization (not in C# reference): fast bounding box overlap check for segment intersection
+  boundingBoxesOverlap(p1, p2, p3, p4) {
+    const min1x = p1.x < p2.x ? p1.x : p2.x;
+    const max2x = p3.x > p4.x ? p3.x : p4.x;
+    if (max2x < min1x)
+      return false;
+    const max1x = p1.x > p2.x ? p1.x : p2.x;
+    const min2x = p3.x < p4.x ? p3.x : p4.x;
+    if (max1x < min2x)
+      return false;
+    const min1y = p1.y < p2.y ? p1.y : p2.y;
+    const max2y = p3.y > p4.y ? p3.y : p4.y;
+    if (max2y < min1y)
+      return false;
+    const max1y = p1.y > p2.y ? p1.y : p2.y;
+    const min2y = p3.y < p4.y ? p3.y : p4.y;
+    return max1y >= min2y;
+  }
+  clearSolutionOnly() {
+    while (this.actives !== null)
+      this.deleteFromAEL(this.actives);
+    this.scanlineHeap.clear();
+    this.scanlineSet.clear();
+    this.scanlineArr.length = 0;
+    this.disposeIntersectNodes();
+    this.outrecList.length = 0;
+    this.horzSegList.length = 0;
+    this.horzJoinList.length = 0;
+  }
+  clear() {
+    this.clearSolutionOnly();
+    this.minimaList.length = 0;
+    this.vertexList.length = 0;
+    this.currentLocMin = 0;
+    this.isSortedMinimaList = false;
+    this.hasOpenPaths = false;
+  }
+  reset() {
+    if (!this.isSortedMinimaList) {
+      this.minimaList.sort((a, b) => b.vertex.pt.y - a.vertex.pt.y);
+      this.isSortedMinimaList = true;
+    }
+    this.scanlineHeap.clear();
+    this.scanlineSet.clear();
+    this.scanlineArr.length = 0;
+    this.useScanlineArray = this.minimaList.length <= 16;
+    for (let i = this.minimaList.length - 1; i >= 0; i--) {
+      this.insertScanline(this.minimaList[i].vertex.pt.y);
+    }
+    this.currentBotY = 0;
+    this.currentLocMin = 0;
+    this.actives = null;
+    this.sel = null;
+    this.curXValidAtTop = false;
+    this.succeeded = true;
+  }
+  upgradeScanlineStructureFromArray() {
+    const arr = this.scanlineArr;
+    for (let i = 0, len = arr.length; i < len; i++) {
+      const y = arr[i];
+      this.scanlineSet.add(y);
+      this.scanlineHeap.push(y);
+    }
+    arr.length = 0;
+    this.useScanlineArray = false;
+  }
+  insertScanline(y) {
+    if (this.useScanlineArray) {
+      const arr = this.scanlineArr;
+      for (let i = 0, len = arr.length; i < len; i++) {
+        if (arr[i] === y)
+          return;
+      }
+      arr.push(y);
+      if (arr.length > 64)
+        this.upgradeScanlineStructureFromArray();
+      return;
+    }
+    if (this.scanlineSet.has(y))
+      return;
+    this.scanlineSet.add(y);
+    this.scanlineHeap.push(y);
+  }
+  // Returns the next scanline Y value, or null if empty.
+  // Avoids allocating a wrapper object on every call in the main sweep loop.
+  popScanline() {
+    if (this.useScanlineArray) {
+      const arr = this.scanlineArr;
+      const len = arr.length;
+      if (len === 0)
+        return null;
+      let bestIdx = 0;
+      let bestY = arr[0];
+      for (let i = 1; i < len; i++) {
+        const v = arr[i];
+        if (v > bestY) {
+          bestY = v;
+          bestIdx = i;
+        }
+      }
+      arr[bestIdx] = arr[len - 1];
+      arr.pop();
+      return bestY;
+    }
+    const y = this.scanlineHeap.pop();
+    if (y === null)
+      return null;
+    this.scanlineSet.delete(y);
+    return y;
+  }
+  hasLocMinAtY(y) {
+    return this.currentLocMin < this.minimaList.length && this.minimaList[this.currentLocMin].vertex.pt.y === y;
+  }
+  popLocalMinima() {
+    return this.minimaList[this.currentLocMin++];
+  }
+  addPath(path, polytype, isOpen = false) {
+    const tmp = [path];
+    this.addPaths(tmp, polytype, isOpen);
+  }
+  addPaths(paths, polytype, isOpen = false) {
+    if (isOpen)
+      this.hasOpenPaths = true;
+    this.isSortedMinimaList = false;
+    ClipperEngine.addPathsToVertexList(paths, polytype, isOpen, this.minimaList, this.vertexList);
+  }
+  addReuseableData(reuseableData) {
+    if (reuseableData["minimaList"].length === 0)
+      return;
+    this.isSortedMinimaList = false;
+    for (const lm of reuseableData["minimaList"]) {
+      this.minimaList.push(new LocalMinima(lm.vertex, lm.polytype, lm.isOpen));
+      if (lm.isOpen)
+        this.hasOpenPaths = true;
+    }
+  }
+  deleteFromAEL(ae) {
+    const prev = ae.prevInAEL;
+    const next = ae.nextInAEL;
+    if (prev === null && next === null && ae !== this.actives)
+      return;
+    if (prev !== null) {
+      prev.nextInAEL = next;
+    } else {
+      this.actives = next;
+    }
+    if (next !== null)
+      next.prevInAEL = prev;
+  }
+  getBounds() {
+    const bounds2 = {
+      left: Number.MAX_SAFE_INTEGER,
+      top: Number.MAX_SAFE_INTEGER,
+      right: Number.MIN_SAFE_INTEGER,
+      bottom: Number.MIN_SAFE_INTEGER
+    };
+    for (const t of this.vertexList) {
+      let v = t;
+      do {
+        if (v.pt.x < bounds2.left)
+          bounds2.left = v.pt.x;
+        if (v.pt.x > bounds2.right)
+          bounds2.right = v.pt.x;
+        if (v.pt.y < bounds2.top)
+          bounds2.top = v.pt.y;
+        if (v.pt.y > bounds2.bottom)
+          bounds2.bottom = v.pt.y;
+        v = v.next;
+      } while (v !== t);
+    }
+    return Rect64Utils.isEmpty(bounds2) ? { left: 0, top: 0, right: 0, bottom: 0 } : bounds2;
+  }
+  executeInternal(ct, fillRule) {
+    if (ct === ClipType.NoClip)
+      return;
+    _ClipperBase.openPathsEnabled = this.hasOpenPaths;
+    this.zCallbackInternal = this.getZCallback();
+    this.fillrule = fillRule;
+    this.cliptype = ct;
+    this.reset();
+    let y = this.popScanline();
+    if (y === null)
+      return;
+    while (this.succeeded) {
+      this.insertLocalMinimaIntoAEL(y);
+      let ae;
+      while ((ae = this.popHorz()) !== null)
+        this.doHorizontal(ae);
+      if (this.horzSegList.length > 0) {
+        this.convertHorzSegsToJoins();
+        this.horzSegList.length = 0;
+      }
+      this.currentBotY = y;
+      const nextY = this.popScanline();
+      if (nextY === null)
+        break;
+      y = nextY;
+      this.doIntersections(y);
+      this.doTopOfScanbeam(y);
+      while ((ae = this.popHorz()) !== null)
+        this.doHorizontal(ae);
+    }
+    if (this.succeeded)
+      this.processHorzJoins();
+  }
+  insertLocalMinimaIntoAEL(botY) {
+    while (this.hasLocMinAtY(botY)) {
+      const localMinima = this.popLocalMinima();
+      let leftBound;
+      if ((localMinima.vertex.flags & VertexFlags.OpenStart) !== VertexFlags.None) {
+        leftBound = null;
+      } else {
+        leftBound = new Active();
+        leftBound.bot = localMinima.vertex.pt;
+        leftBound.curX = localMinima.vertex.pt.x;
+        leftBound.windDx = -1;
+        leftBound.vertexTop = localMinima.vertex.prev;
+        leftBound.top = localMinima.vertex.prev.pt;
+        leftBound.outrec = null;
+        leftBound.localMin = localMinima;
+        _ClipperBase.setDx(leftBound);
+      }
+      let rightBound;
+      if ((localMinima.vertex.flags & VertexFlags.OpenEnd) !== VertexFlags.None) {
+        rightBound = null;
+      } else {
+        rightBound = new Active();
+        rightBound.bot = localMinima.vertex.pt;
+        rightBound.curX = localMinima.vertex.pt.x;
+        rightBound.windDx = 1;
+        rightBound.vertexTop = localMinima.vertex.next;
+        rightBound.top = localMinima.vertex.next.pt;
+        rightBound.outrec = null;
+        rightBound.localMin = localMinima;
+        _ClipperBase.setDx(rightBound);
+      }
+      if (leftBound !== null && rightBound !== null) {
+        if (_ClipperBase.isHorizontal(leftBound)) {
+          if (_ClipperBase.isHeadingRightHorz(leftBound)) {
+            const tmp = leftBound;
+            leftBound = rightBound;
+            rightBound = tmp;
+          }
+        } else if (_ClipperBase.isHorizontal(rightBound)) {
+          if (_ClipperBase.isHeadingLeftHorz(rightBound)) {
+            const tmp = leftBound;
+            leftBound = rightBound;
+            rightBound = tmp;
+          }
+        } else if (leftBound.dx < rightBound.dx) {
+          const tmp = leftBound;
+          leftBound = rightBound;
+          rightBound = tmp;
+        }
+      } else if (leftBound === null) {
+        leftBound = rightBound;
+        rightBound = null;
+      }
+      let contributing;
+      leftBound.isLeftBound = true;
+      this.insertLeftEdge(leftBound);
+      if (!_ClipperBase.openPathsEnabled) {
+        this.setWindCountForClosedPathEdge(leftBound);
+        contributing = this.isContributingClosed(leftBound);
+      } else if (_ClipperBase.isOpen(leftBound)) {
+        this.setWindCountForOpenPathEdge(leftBound);
+        contributing = this.isContributingOpen(leftBound);
+      } else {
+        this.setWindCountForClosedPathEdge(leftBound);
+        contributing = this.isContributingClosed(leftBound);
+      }
+      if (rightBound !== null) {
+        rightBound.windCount = leftBound.windCount;
+        rightBound.windCount2 = leftBound.windCount2;
+        this.insertRightEdge(leftBound, rightBound);
+        if (contributing) {
+          this.addLocalMinPoly(leftBound, rightBound, leftBound.bot, true);
+          if (!_ClipperBase.isHorizontal(leftBound)) {
+            this.checkJoinLeft(leftBound, leftBound.bot);
+          }
+        }
+        while (rightBound.nextInAEL !== null && this.isValidAelOrder(rightBound.nextInAEL, rightBound)) {
+          this.intersectEdges(rightBound, rightBound.nextInAEL, rightBound.bot);
+          this.swapPositionsInAEL(rightBound, rightBound.nextInAEL);
+        }
+        if (_ClipperBase.isHorizontal(rightBound)) {
+          this.pushHorz(rightBound);
+        } else {
+          this.checkJoinRight(rightBound, rightBound.bot);
+          this.insertScanline(rightBound.top.y);
+        }
+      } else if (contributing && _ClipperBase.openPathsEnabled) {
+        this.startOpenPath(leftBound, leftBound.bot);
+      }
+      if (_ClipperBase.isHorizontal(leftBound)) {
+        this.pushHorz(leftBound);
+      } else {
+        this.insertScanline(leftBound.top.y);
+      }
+    }
+  }
+  pushHorz(ae) {
+    ae.nextInSEL = this.sel;
+    this.sel = ae;
+  }
+  popHorz() {
+    const ae = this.sel;
+    if (ae === null)
+      return null;
+    this.sel = this.sel.nextInSEL;
+    return ae;
+  }
+  doHorizontal(horz) {
+    if (!_ClipperBase.openPathsEnabled) {
+      this.doHorizontalClosed(horz);
+      return;
+    }
+    const horzIsOpen = _ClipperBase.isOpen(horz);
+    const y = horz.bot.y;
+    const vertexMax = horzIsOpen ? this.getCurrYMaximaVertexOpen(horz) : this.getCurrYMaximaVertex(horz);
+    const { isLeftToRight, leftX, rightX } = this.resetHorzDirection(horz, vertexMax);
+    let leftX2 = leftX;
+    let rightX2 = rightX;
+    if (_ClipperBase.isHotEdge(horz)) {
+      const op = this.addOutPt(horz, { x: horz.curX, y });
+      this.addToHorzSegList(op);
+    }
+    while (true) {
+      let ae = isLeftToRight ? horz.nextInAEL : horz.prevInAEL;
+      while (ae !== null) {
+        if (ae.vertexTop === vertexMax) {
+          if (_ClipperBase.isHotEdge(horz) && this.isJoined(ae))
+            this.split(ae, ae.top);
+          if (_ClipperBase.isHotEdge(horz)) {
+            while (horz.vertexTop !== vertexMax) {
+              this.addOutPt(horz, horz.top);
+              this.updateEdgeIntoAEL(horz);
+            }
+            if (isLeftToRight) {
+              this.addLocalMaxPoly(horz, ae, horz.top);
+            } else {
+              this.addLocalMaxPoly(ae, horz, horz.top);
+            }
+          }
+          this.deleteFromAEL(ae);
+          this.deleteFromAEL(horz);
+          return;
+        }
+        if (vertexMax !== horz.vertexTop || _ClipperBase.isOpenEnd(horz)) {
+          if (isLeftToRight && ae.curX > rightX2 || !isLeftToRight && ae.curX < leftX2)
+            break;
+          if (ae.curX === horz.top.x && !_ClipperBase.isHorizontal(ae)) {
+            const pt2 = _ClipperBase.nextVertex(horz).pt;
+            if (_ClipperBase.isOpen(ae) && !_ClipperBase.isSamePolyType(ae, horz) && !_ClipperBase.isHotEdge(ae)) {
+              if (isLeftToRight && _ClipperBase.topX(ae, pt2.y) > pt2.x || !isLeftToRight && _ClipperBase.topX(ae, pt2.y) < pt2.x)
+                break;
+            } else if (isLeftToRight && _ClipperBase.topX(ae, pt2.y) >= pt2.x || !isLeftToRight && _ClipperBase.topX(ae, pt2.y) <= pt2.x)
+              break;
+          }
+        }
+        const pt = { x: ae.curX, y };
+        if (isLeftToRight) {
+          this.intersectEdges(horz, ae, pt);
+          this.swapPositionsInAEL(horz, ae);
+          this.checkJoinLeft(ae, pt);
+          horz.curX = ae.curX;
+          ae = horz.nextInAEL;
+        } else {
+          this.intersectEdges(ae, horz, pt);
+          this.swapPositionsInAEL(ae, horz);
+          this.checkJoinRight(ae, pt);
+          horz.curX = ae.curX;
+          ae = horz.prevInAEL;
+        }
+        if (_ClipperBase.isHotEdge(horz)) {
+          this.addToHorzSegList(this.getLastOp(horz));
+        }
+      }
+      if (horzIsOpen && _ClipperBase.isOpenEnd(horz)) {
+        if (_ClipperBase.isHotEdge(horz)) {
+          this.addOutPt(horz, horz.top);
+          if (_ClipperBase.isFront(horz)) {
+            horz.outrec.frontEdge = null;
+          } else {
+            horz.outrec.backEdge = null;
+          }
+          horz.outrec = null;
+        }
+        this.deleteFromAEL(horz);
+        return;
+      }
+      if (_ClipperBase.nextVertex(horz).pt.y !== horz.top.y) {
+        break;
+      }
+      if (_ClipperBase.isHotEdge(horz)) {
+        this.addOutPt(horz, horz.top);
+      }
+      this.updateEdgeIntoAEL(horz);
+      const resetResult = this.resetHorzDirection(horz, vertexMax);
+      leftX2 = resetResult.leftX;
+      rightX2 = resetResult.rightX;
+    }
+    if (_ClipperBase.isHotEdge(horz)) {
+      const op = this.addOutPt(horz, horz.top);
+      this.addToHorzSegList(op);
+    }
+    this.updateEdgeIntoAEL(horz);
+  }
+  // Closed-path-only horizontal processing (no open-path branching).
+  doHorizontalClosed(horz) {
+    const y = horz.bot.y;
+    const vertexMax = this.getCurrYMaximaVertex(horz);
+    const { isLeftToRight, leftX, rightX } = this.resetHorzDirection(horz, vertexMax);
+    let leftX2 = leftX;
+    let rightX2 = rightX;
+    if (_ClipperBase.isHotEdge(horz)) {
+      const op = this.addOutPt(horz, { x: horz.curX, y });
+      this.addToHorzSegList(op);
+    }
+    while (true) {
+      let ae = isLeftToRight ? horz.nextInAEL : horz.prevInAEL;
+      while (ae !== null) {
+        if (ae.vertexTop === vertexMax) {
+          if (_ClipperBase.isHotEdge(horz) && this.isJoined(ae))
+            this.split(ae, ae.top);
+          if (_ClipperBase.isHotEdge(horz)) {
+            while (horz.vertexTop !== vertexMax) {
+              this.addOutPt(horz, horz.top);
+              this.updateEdgeIntoAEL(horz);
+            }
+            if (isLeftToRight) {
+              this.addLocalMaxPoly(horz, ae, horz.top);
+            } else {
+              this.addLocalMaxPoly(ae, horz, horz.top);
+            }
+          }
+          this.deleteFromAEL(ae);
+          this.deleteFromAEL(horz);
+          return;
+        }
+        if (vertexMax !== horz.vertexTop) {
+          if (isLeftToRight && ae.curX > rightX2 || !isLeftToRight && ae.curX < leftX2)
+            break;
+          if (ae.curX === horz.top.x && !_ClipperBase.isHorizontal(ae)) {
+            const nextPt = _ClipperBase.nextVertex(horz).pt;
+            const tx = _ClipperBase.topX(ae, nextPt.y);
+            if (isLeftToRight && tx >= nextPt.x || !isLeftToRight && tx <= nextPt.x)
+              break;
+          }
+        }
+        const pt = { x: ae.curX, y };
+        if (isLeftToRight) {
+          this.intersectEdges(horz, ae, pt);
+          this.swapPositionsInAEL(horz, ae);
+          this.checkJoinLeft(ae, pt);
+          horz.curX = ae.curX;
+          ae = horz.nextInAEL;
+        } else {
+          this.intersectEdges(ae, horz, pt);
+          this.swapPositionsInAEL(ae, horz);
+          this.checkJoinRight(ae, pt);
+          horz.curX = ae.curX;
+          ae = horz.prevInAEL;
+        }
+        if (_ClipperBase.isHotEdge(horz)) {
+          this.addToHorzSegList(this.getLastOp(horz));
+        }
+      }
+      if (_ClipperBase.nextVertex(horz).pt.y !== horz.top.y) {
+        break;
+      }
+      if (_ClipperBase.isHotEdge(horz)) {
+        this.addOutPt(horz, horz.top);
+      }
+      this.updateEdgeIntoAEL(horz);
+      const resetResult = this.resetHorzDirection(horz, vertexMax);
+      leftX2 = resetResult.leftX;
+      rightX2 = resetResult.rightX;
+    }
+    if (_ClipperBase.isHotEdge(horz)) {
+      const op = this.addOutPt(horz, horz.top);
+      this.addToHorzSegList(op);
+    }
+    this.updateEdgeIntoAEL(horz);
+  }
+  convertHorzSegsToJoins() {
+    const list = this.horzSegList;
+    let k = 0;
+    for (let i = 0, len = list.length; i < len; i++) {
+      const hs = list[i];
+      if (this.updateHorzSegment(hs))
+        list[k++] = hs;
+    }
+    if (k < 2)
+      return;
+    list.length = k;
+    this.horzSegList.sort(compareHorzSegments);
+    for (let i = 0; i < k - 1; i++) {
+      const hs1 = this.horzSegList[i];
+      for (let j = i + 1; j < k; j++) {
+        const hs2 = this.horzSegList[j];
+        if (hs2.leftOp.pt.x >= hs1.rightOp.pt.x || hs2.leftToRight === hs1.leftToRight || hs2.rightOp.pt.x <= hs1.leftOp.pt.x)
+          continue;
+        const currY = hs1.leftOp.pt.y;
+        if (hs1.leftToRight) {
+          while (hs1.leftOp.next.pt.y === currY && hs1.leftOp.next.pt.x <= hs2.leftOp.pt.x)
+            hs1.leftOp = hs1.leftOp.next;
+          while (hs2.leftOp.prev.pt.y === currY && hs2.leftOp.prev.pt.x <= hs1.leftOp.pt.x)
+            hs2.leftOp = hs2.leftOp.prev;
+          const join2 = new HorzJoin(this.duplicateOp(hs1.leftOp, true), this.duplicateOp(hs2.leftOp, false));
+          this.horzJoinList.push(join2);
+        } else {
+          while (hs1.leftOp.prev.pt.y === currY && hs1.leftOp.prev.pt.x <= hs2.leftOp.pt.x)
+            hs1.leftOp = hs1.leftOp.prev;
+          while (hs2.leftOp.next.pt.y === currY && hs2.leftOp.next.pt.x <= hs1.leftOp.pt.x)
+            hs2.leftOp = hs2.leftOp.next;
+          const join2 = new HorzJoin(this.duplicateOp(hs2.leftOp, true), this.duplicateOp(hs1.leftOp, false));
+          this.horzJoinList.push(join2);
+        }
+      }
+    }
+  }
+  updateHorzSegment(hs) {
+    const op = hs.leftOp;
+    const outrec = this.getRealOutRec(op.outrec);
+    const outrecHasEdges = outrec.frontEdge !== null;
+    const currY = op.pt.y;
+    let opP = op;
+    let opN = op;
+    if (outrecHasEdges) {
+      const opA = outrec.pts;
+      const opZ = opA.next;
+      while (opP !== opZ && opP.prev.pt.y === currY)
+        opP = opP.prev;
+      while (opN !== opA && opN.next.pt.y === currY)
+        opN = opN.next;
+    } else {
+      while (opP.prev !== opN && opP.prev.pt.y === currY)
+        opP = opP.prev;
+      while (opN.next !== opP && opN.next.pt.y === currY)
+        opN = opN.next;
+    }
+    const result = this.setHorzSegHeadingForward(hs, opP, opN) && hs.leftOp.horz === null;
+    if (result) {
+      hs.leftOp.horz = hs;
+    } else {
+      hs.rightOp = null;
+    }
+    return result;
+  }
+  setHorzSegHeadingForward(hs, opP, opN) {
+    if (opP.pt.x === opN.pt.x)
+      return false;
+    if (opP.pt.x < opN.pt.x) {
+      hs.leftOp = opP;
+      hs.rightOp = opN;
+      hs.leftToRight = true;
+    } else {
+      hs.leftOp = opN;
+      hs.rightOp = opP;
+      hs.leftToRight = false;
+    }
+    return true;
+  }
+  duplicateOp(op, insertAfter) {
+    const result = new OutPt(op.pt, op.outrec);
+    if (insertAfter) {
+      result.next = op.next;
+      result.next.prev = result;
+      result.prev = op;
+      op.next = result;
+    } else {
+      result.prev = op.prev;
+      result.prev.next = result;
+      result.next = op;
+      op.prev = result;
+    }
+    return result;
+  }
+  getRealOutRec(outRec) {
+    while (outRec !== null && outRec.pts === null) {
+      outRec = outRec.owner;
+    }
+    return outRec;
+  }
+  doIntersections(y) {
+    if (this.buildIntersectList(y)) {
+      this.processIntersectList();
+      this.disposeIntersectNodes();
+    }
+  }
+  doTopOfScanbeam(y) {
+    const curXValid = this.curXValidAtTop;
+    this.curXValidAtTop = false;
+    this.sel = null;
+    let ae = this.actives;
+    while (ae !== null) {
+      if (ae.top.y === y) {
+        ae.curX = ae.top.x;
+        if (_ClipperBase.isMaximaEdge(ae)) {
+          ae = this.doMaxima(ae);
+          continue;
+        } else {
+          if (_ClipperBase.isHotEdge(ae))
+            this.addOutPt(ae, ae.top);
+          this.updateEdgeIntoAEL(ae);
+          if (_ClipperBase.isHorizontal(ae)) {
+            this.pushHorz(ae);
+          }
+        }
+      } else if (!curXValid) {
+        ae.curX = _ClipperBase.topX(ae, y);
+      }
+      ae = ae.nextInAEL;
+    }
+  }
+  processHorzJoins() {
+    for (const j of this.horzJoinList) {
+      const or1 = this.getRealOutRec(j.op1.outrec);
+      const or2 = this.getRealOutRec(j.op2.outrec);
+      const op1b = j.op1.next;
+      const op2b = j.op2.prev;
+      j.op1.next = j.op2;
+      j.op2.prev = j.op1;
+      op1b.prev = op2b;
+      op2b.next = op1b;
+      if (or1 === or2) {
+        const or2New = this.newOutRec();
+        or2New.pts = op1b;
+        this.fixOutRecPts(or2New);
+        if (or1.pts.outrec === or2New) {
+          or1.pts = j.op1;
+          or1.pts.outrec = or1;
+        }
+        if (this.usingPolytree) {
+          if (this.path1InsidePath2(or1.pts, or2New.pts)) {
+            [or2New.pts, or1.pts] = [or1.pts, or2New.pts];
+            this.fixOutRecPts(or1);
+            this.fixOutRecPts(or2New);
+            or2New.owner = or1;
+          } else if (this.path1InsidePath2(or2New.pts, or1.pts)) {
+            or2New.owner = or1;
+          } else {
+            or2New.owner = or1.owner;
+          }
+          if (or1.splits === null)
+            or1.splits = [];
+          or1.splits.push(or2New.idx);
+        } else {
+          or2New.owner = or1;
+        }
+      } else {
+        or2.pts = null;
+        if (this.usingPolytree) {
+          this.setOwner(or2, or1);
+          this.moveSplits(or2, or1);
+        } else {
+          or2.owner = or1;
+        }
+      }
+    }
+  }
+  fixOutRecPts(outrec) {
+    let op = outrec.pts;
+    do {
+      op.outrec = outrec;
+      op = op.next;
+    } while (op !== outrec.pts);
+  }
+  path1InsidePath2(op1, op2) {
+    let pip = PointInPolygonResult.IsOn;
+    let op = op1;
+    do {
+      switch (this.pointInOpPolygon(op.pt, op2)) {
+        case PointInPolygonResult.IsOutside:
+          if (pip === PointInPolygonResult.IsOutside)
+            return false;
+          pip = PointInPolygonResult.IsOutside;
+          break;
+        case PointInPolygonResult.IsInside:
+          if (pip === PointInPolygonResult.IsInside)
+            return true;
+          pip = PointInPolygonResult.IsInside;
+          break;
+      }
+      op = op.next;
+    } while (op !== op1);
+    return InternalClipper.path2ContainsPath1(this.getCleanPath(op1), this.getCleanPath(op2));
+  }
+  pointInOpPolygon(pt, op) {
+    if (op === op.next || op.prev === op.next) {
+      return PointInPolygonResult.IsOutside;
+    }
+    let op2 = op;
+    do {
+      if (op.pt.y !== pt.y)
+        break;
+      op = op.next;
+    } while (op !== op2);
+    if (op.pt.y === pt.y)
+      return PointInPolygonResult.IsOutside;
+    let isAbove = op.pt.y < pt.y;
+    const startingAbove = isAbove;
+    let val = 0;
+    op2 = op.next;
+    while (op2 !== op) {
+      if (isAbove) {
+        while (op2 !== op && op2.pt.y < pt.y)
+          op2 = op2.next;
+      } else {
+        while (op2 !== op && op2.pt.y > pt.y)
+          op2 = op2.next;
+      }
+      if (op2 === op)
+        break;
+      if (op2.pt.y === pt.y) {
+        if (op2.pt.x === pt.x || op2.pt.y === op2.prev.pt.y && pt.x < op2.prev.pt.x !== pt.x < op2.pt.x)
+          return PointInPolygonResult.IsOn;
+        op2 = op2.next;
+        if (op2 === op)
+          break;
+        continue;
+      }
+      if (op2.pt.x <= pt.x || op2.prev.pt.x <= pt.x) {
+        if (op2.prev.pt.x < pt.x && op2.pt.x < pt.x) {
+          val = 1 - val;
+        } else {
+          const d = InternalClipper.crossProductSign(op2.prev.pt, op2.pt, pt);
+          if (d === 0)
+            return PointInPolygonResult.IsOn;
+          if (d < 0 === isAbove)
+            val = 1 - val;
+        }
+      }
+      isAbove = !isAbove;
+      op2 = op2.next;
+    }
+    if (isAbove === startingAbove)
+      return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+    {
+      const d = InternalClipper.crossProductSign(op2.prev.pt, op2.pt, pt);
+      if (d === 0)
+        return PointInPolygonResult.IsOn;
+      if (d < 0 === isAbove)
+        val = 1 - val;
+    }
+    return val === 0 ? PointInPolygonResult.IsOutside : PointInPolygonResult.IsInside;
+  }
+  getCleanPath(op) {
+    const result = [];
+    let op2 = op;
+    while (op2.next !== op && (op2.pt.x === op2.next.pt.x && op2.pt.x === op2.prev.pt.x || op2.pt.y === op2.next.pt.y && op2.pt.y === op2.prev.pt.y))
+      op2 = op2.next;
+    result.push(op2.pt);
+    let prevOp = op2;
+    op2 = op2.next;
+    while (op2 !== op) {
+      if ((op2.pt.x !== op2.next.pt.x || op2.pt.x !== prevOp.pt.x) && (op2.pt.y !== op2.next.pt.y || op2.pt.y !== prevOp.pt.y)) {
+        result.push(op2.pt);
+        prevOp = op2;
+      }
+      op2 = op2.next;
+    }
+    return result;
+  }
+  moveSplits(fromOr, toOr) {
+    if (fromOr.splits === null)
+      return;
+    if (toOr.splits === null)
+      toOr.splits = [];
+    for (const i of fromOr.splits) {
+      if (i !== toOr.idx) {
+        toOr.splits.push(i);
+      }
+    }
+    fromOr.splits = null;
+  }
+  buildIntersectList(topY) {
+    var _a3;
+    if (((_a3 = this.actives) == null ? void 0 : _a3.nextInAEL) === null)
+      return false;
+    if (!this.adjustCurrXAndCopyToSEL(topY)) {
+      this.curXValidAtTop = true;
+      return false;
+    }
+    let left = this.sel;
+    while (left !== null && left.jump !== null) {
+      let prevBase = null;
+      while (left !== null && left.jump !== null) {
+        let currBase = left;
+        let right = left.jump;
+        let lEnd = right;
+        const rEnd = (right == null ? void 0 : right.jump) || null;
+        left.jump = rEnd;
+        while (left !== lEnd && right !== rEnd) {
+          if (right.curX < left.curX) {
+            let tmp = right.prevInSEL;
+            while (true) {
+              this.addNewIntersectNode(tmp, right, topY);
+              if (tmp === left)
+                break;
+              tmp = tmp.prevInSEL;
+            }
+            tmp = right;
+            right = this.extractFromSEL(tmp);
+            lEnd = right;
+            if (left !== null)
+              this.insert1Before2InSEL(tmp, left);
+            if (left !== currBase)
+              continue;
+            currBase = tmp;
+            currBase.jump = rEnd;
+            if (prevBase === null) {
+              this.sel = currBase;
+            } else {
+              prevBase.jump = currBase;
+            }
+          } else {
+            left = left.nextInSEL;
+          }
+        }
+        prevBase = currBase;
+        left = rEnd;
+      }
+      left = this.sel;
+    }
+    return this.intersectList.length > 0;
+  }
+  processIntersectList() {
+    this.intersectList.sort(compareIntersectNodes);
+    for (let i = 0; i < this.intersectList.length; ++i) {
+      if (!this.edgesAdjacentInAEL(this.intersectList[i])) {
+        let j = i + 1;
+        while (!this.edgesAdjacentInAEL(this.intersectList[j]))
+          j++;
+        [this.intersectList[j], this.intersectList[i]] = [this.intersectList[i], this.intersectList[j]];
+      }
+      const node = this.intersectList[i];
+      this.intersectEdges(node.edge1, node.edge2, node.pt);
+      this.swapPositionsInAEL(node.edge1, node.edge2);
+      node.edge1.curX = node.pt.x;
+      node.edge2.curX = node.pt.x;
+      this.checkJoinLeft(node.edge2, node.pt, true);
+      this.checkJoinRight(node.edge1, node.pt, true);
+    }
+  }
+  edgesAdjacentInAEL(inode) {
+    return inode.edge1.nextInAEL === inode.edge2 || inode.edge1.prevInAEL === inode.edge2;
+  }
+  // Returns true if any adjacent pair is inverted at topY (i.e. at least one
+  // intersection exists within this scanbeam).
+  adjustCurrXAndCopyToSEL(topY) {
+    let ae = this.actives;
+    this.sel = ae;
+    let prevX = Number.NEGATIVE_INFINITY;
+    let inverted = false;
+    while (ae !== null) {
+      ae.prevInSEL = ae.prevInAEL;
+      ae.nextInSEL = ae.nextInAEL;
+      ae.jump = ae.nextInSEL;
+      const x = _ClipperBase.topX(ae, topY);
+      ae.curX = x;
+      if (x < prevX)
+        inverted = true;
+      prevX = x;
+      ae = ae.nextInAEL;
+    }
+    return inverted;
+  }
+  doMaxima(ae) {
+    const prevE = ae.prevInAEL;
+    let nextE = ae.nextInAEL;
+    if (_ClipperBase.isOpenEnd(ae)) {
+      if (_ClipperBase.isHotEdge(ae))
+        this.addOutPt(ae, ae.top);
+      if (_ClipperBase.isHorizontal(ae))
+        return nextE;
+      if (_ClipperBase.isHotEdge(ae)) {
+        if (_ClipperBase.isFront(ae)) {
+          ae.outrec.frontEdge = null;
+        } else {
+          ae.outrec.backEdge = null;
+        }
+        ae.outrec = null;
+      }
+      this.deleteFromAEL(ae);
+      return nextE;
+    }
+    const maxPair = _ClipperBase.getMaximaPair(ae);
+    if (maxPair === null)
+      return nextE;
+    if (this.isJoined(ae))
+      this.split(ae, ae.top);
+    if (this.isJoined(maxPair))
+      this.split(maxPair, maxPair.top);
+    while (nextE !== maxPair) {
+      this.intersectEdges(ae, nextE, ae.top);
+      this.swapPositionsInAEL(ae, nextE);
+      nextE = ae.nextInAEL;
+    }
+    if (_ClipperBase.isOpen(ae)) {
+      if (_ClipperBase.isHotEdge(ae)) {
+        this.addLocalMaxPoly(ae, maxPair, ae.top);
+      }
+      this.deleteFromAEL(maxPair);
+      this.deleteFromAEL(ae);
+      return prevE !== null ? prevE.nextInAEL : this.actives;
+    }
+    if (_ClipperBase.isHotEdge(ae)) {
+      this.addLocalMaxPoly(ae, maxPair, ae.top);
+    }
+    this.deleteFromAEL(ae);
+    this.deleteFromAEL(maxPair);
+    return prevE !== null ? prevE.nextInAEL : this.actives;
+  }
+  updateEdgeIntoAEL(ae) {
+    ae.bot = ae.top;
+    ae.vertexTop = _ClipperBase.nextVertex(ae);
+    ae.top = ae.vertexTop.pt;
+    ae.curX = ae.bot.x;
+    _ClipperBase.setDx(ae);
+    if (this.isJoined(ae))
+      this.split(ae, ae.bot);
+    if (_ClipperBase.isHorizontal(ae)) {
+      if (!_ClipperBase.openPathsEnabled) {
+        this.trimHorz(ae, this.preserveCollinear);
+      } else if (!_ClipperBase.isOpen(ae)) {
+        this.trimHorz(ae, this.preserveCollinear);
+      }
+      return;
+    }
+    this.insertScanline(ae.top.y);
+    this.checkJoinLeft(ae, ae.bot);
+    this.checkJoinRight(ae, ae.bot, true);
+  }
+  trimHorz(horzEdge, preserveCollinear) {
+    let wasTrimmed = false;
+    let pt = _ClipperBase.nextVertex(horzEdge).pt;
+    while (pt.y === horzEdge.top.y) {
+      if (preserveCollinear && pt.x < horzEdge.top.x !== horzEdge.bot.x < horzEdge.top.x) {
+        break;
+      }
+      horzEdge.vertexTop = _ClipperBase.nextVertex(horzEdge);
+      horzEdge.top = pt;
+      wasTrimmed = true;
+      if (_ClipperBase.isMaximaVertex(horzEdge.vertexTop))
+        break;
+      pt = _ClipperBase.nextVertex(horzEdge).pt;
+    }
+    if (wasTrimmed)
+      _ClipperBase.setDx(horzEdge);
+  }
+  addToHorzSegList(op) {
+    if (op.outrec.isOpen)
+      return;
+    this.horzSegList.push(new HorzSegment(op));
+  }
+  addNewIntersectNode(ae1, ae2, topY) {
+    let ip = InternalClipper.getLineIntersectPt(ae1.bot, ae1.top, ae2.bot, ae2.top);
+    if (ip === null) {
+      ip = { x: ae1.curX, y: topY };
+    }
+    if (ip.y > this.currentBotY || ip.y < topY) {
+      const absDx1 = Math.abs(ae1.dx);
+      const absDx2 = Math.abs(ae2.dx);
+      if (absDx1 > 100 && absDx2 > 100) {
+        if (absDx1 > absDx2) {
+          ip = InternalClipper.getClosestPtOnSegment(ip, ae1.bot, ae1.top);
+        } else {
+          ip = InternalClipper.getClosestPtOnSegment(ip, ae2.bot, ae2.top);
+        }
+      } else if (absDx1 > 100) {
+        ip = InternalClipper.getClosestPtOnSegment(ip, ae1.bot, ae1.top);
+      } else if (absDx2 > 100) {
+        ip = InternalClipper.getClosestPtOnSegment(ip, ae2.bot, ae2.top);
+      } else {
+        if (ip.y < topY)
+          ip.y = topY;
+        else
+          ip.y = this.currentBotY;
+        if (absDx1 < absDx2)
+          ip.x = _ClipperBase.topX(ae1, ip.y);
+        else
+          ip.x = _ClipperBase.topX(ae2, ip.y);
+      }
+    }
+    const node = createIntersectNode(ip, ae1, ae2);
+    this.intersectList.push(node);
+  }
+  extractFromSEL(ae) {
+    const res = ae.nextInSEL;
+    if (res !== null) {
+      res.prevInSEL = ae.prevInSEL;
+    }
+    ae.prevInSEL.nextInSEL = res;
+    return res;
+  }
+  insert1Before2InSEL(ae1, ae2) {
+    ae1.prevInSEL = ae2.prevInSEL;
+    if (ae1.prevInSEL !== null) {
+      ae1.prevInSEL.nextInSEL = ae1;
+    }
+    ae1.nextInSEL = ae2;
+    ae2.prevInSEL = ae1;
+  }
+  getCurrYMaximaVertexOpen(ae) {
+    let result = ae.vertexTop;
+    if (ae.windDx > 0) {
+      while (result.next.pt.y === result.pt.y && (result.flags & (VertexFlags.OpenEnd | VertexFlags.LocalMax)) === VertexFlags.None)
+        result = result.next;
+    } else {
+      while (result.prev.pt.y === result.pt.y && (result.flags & (VertexFlags.OpenEnd | VertexFlags.LocalMax)) === VertexFlags.None)
+        result = result.prev;
+    }
+    if (!_ClipperBase.isMaximaVertex(result))
+      result = null;
+    return result;
+  }
+  getCurrYMaximaVertex(ae) {
+    let result = ae.vertexTop;
+    if (ae.windDx > 0) {
+      while (result.next.pt.y === result.pt.y)
+        result = result.next;
+    } else {
+      while (result.prev.pt.y === result.pt.y)
+        result = result.prev;
+    }
+    if (!_ClipperBase.isMaximaVertex(result))
+      result = null;
+    return result;
+  }
+  resetHorzDirection(horz, vertexMax) {
+    if (horz.bot.x === horz.top.x) {
+      const leftX = horz.curX;
+      const rightX = horz.curX;
+      let ae = horz.nextInAEL;
+      while (ae !== null && ae.vertexTop !== vertexMax)
+        ae = ae.nextInAEL;
+      return { isLeftToRight: ae !== null, leftX, rightX };
+    }
+    if (horz.curX < horz.top.x) {
+      return { isLeftToRight: true, leftX: horz.curX, rightX: horz.top.x };
+    } else {
+      return { isLeftToRight: false, leftX: horz.top.x, rightX: horz.curX };
+    }
+  }
+  getLastOp(hotEdge) {
+    const outrec = hotEdge.outrec;
+    return hotEdge === outrec.frontEdge ? outrec.pts : outrec.pts.next;
+  }
+  insertLeftEdge(ae) {
+    if (this.actives === null) {
+      ae.prevInAEL = null;
+      ae.nextInAEL = null;
+      this.actives = ae;
+    } else if (!this.isValidAelOrder(this.actives, ae)) {
+      ae.prevInAEL = null;
+      ae.nextInAEL = this.actives;
+      this.actives.prevInAEL = ae;
+      this.actives = ae;
+    } else {
+      let ae2 = this.actives;
+      while (ae2.nextInAEL !== null && this.isValidAelOrder(ae2.nextInAEL, ae)) {
+        ae2 = ae2.nextInAEL;
+      }
+      if (ae2.joinWith === JoinWith.Right)
+        ae2 = ae2.nextInAEL;
+      ae.nextInAEL = ae2.nextInAEL;
+      if (ae2.nextInAEL !== null)
+        ae2.nextInAEL.prevInAEL = ae;
+      ae.prevInAEL = ae2;
+      ae2.nextInAEL = ae;
+    }
+  }
+  insertRightEdge(ae1, ae2) {
+    ae2.nextInAEL = ae1.nextInAEL;
+    if (ae1.nextInAEL !== null)
+      ae1.nextInAEL.prevInAEL = ae2;
+    ae2.prevInAEL = ae1;
+    ae1.nextInAEL = ae2;
+  }
+  setWindCountForOpenPathEdge(ae) {
+    let ae2 = this.actives;
+    if (this.fillrule === FillRule.EvenOdd) {
+      let cnt1 = 0, cnt2 = 0;
+      while (ae2 !== ae) {
+        if (_ClipperBase.getPolyType(ae2) === PathType.Clip) {
+          cnt2++;
+        } else if (!_ClipperBase.isOpen(ae2)) {
+          cnt1++;
+        }
+        ae2 = ae2.nextInAEL;
+      }
+      ae.windCount = _ClipperBase.isOdd(cnt1) ? 1 : 0;
+      ae.windCount2 = _ClipperBase.isOdd(cnt2) ? 1 : 0;
+    } else {
+      while (ae2 !== ae) {
+        if (_ClipperBase.getPolyType(ae2) === PathType.Clip) {
+          ae.windCount2 += ae2.windDx;
+        } else if (!_ClipperBase.isOpen(ae2)) {
+          ae.windCount += ae2.windDx;
+        }
+        ae2 = ae2.nextInAEL;
+      }
+    }
+  }
+  setWindCountForClosedPathEdge(ae) {
+    let ae2 = ae.prevInAEL;
+    const pt = _ClipperBase.getPolyType(ae);
+    if (!_ClipperBase.openPathsEnabled) {
+      while (ae2 !== null && _ClipperBase.getPolyType(ae2) !== pt)
+        ae2 = ae2.prevInAEL;
+      if (ae2 === null) {
+        ae.windCount = ae.windDx;
+        ae2 = this.actives;
+      } else if (this.fillrule === FillRule.EvenOdd) {
+        ae.windCount = ae.windDx;
+        ae.windCount2 = ae2.windCount2;
+        ae2 = ae2.nextInAEL;
+      } else {
+        if (ae2.windCount * ae2.windDx < 0) {
+          if (Math.abs(ae2.windCount) > 1) {
+            if (ae2.windDx * ae.windDx < 0) {
+              ae.windCount = ae2.windCount;
+            } else {
+              ae.windCount = ae2.windCount + ae.windDx;
+            }
+          } else {
+            ae.windCount = ae.windDx;
+          }
+        } else {
+          if (ae2.windDx * ae.windDx < 0) {
+            ae.windCount = ae2.windCount;
+          } else {
+            ae.windCount = ae2.windCount + ae.windDx;
+          }
+        }
+        ae.windCount2 = ae2.windCount2;
+        ae2 = ae2.nextInAEL;
+      }
+      if (this.fillrule === FillRule.EvenOdd) {
+        while (ae2 !== ae) {
+          if (_ClipperBase.getPolyType(ae2) !== pt) {
+            ae.windCount2 = ae.windCount2 === 0 ? 1 : 0;
+          }
+          ae2 = ae2.nextInAEL;
+        }
+      } else {
+        while (ae2 !== ae) {
+          if (_ClipperBase.getPolyType(ae2) !== pt) {
+            ae.windCount2 += ae2.windDx;
+          }
+          ae2 = ae2.nextInAEL;
+        }
+      }
+      return;
+    }
+    while (ae2 !== null && (_ClipperBase.getPolyType(ae2) !== pt || _ClipperBase.isOpen(ae2)))
+      ae2 = ae2.prevInAEL;
+    if (ae2 === null) {
+      ae.windCount = ae.windDx;
+      ae2 = this.actives;
+    } else if (this.fillrule === FillRule.EvenOdd) {
+      ae.windCount = ae.windDx;
+      ae.windCount2 = ae2.windCount2;
+      ae2 = ae2.nextInAEL;
+    } else {
+      if (ae2.windCount * ae2.windDx < 0) {
+        if (Math.abs(ae2.windCount) > 1) {
+          if (ae2.windDx * ae.windDx < 0) {
+            ae.windCount = ae2.windCount;
+          } else {
+            ae.windCount = ae2.windCount + ae.windDx;
+          }
+        } else {
+          ae.windCount = _ClipperBase.isOpen(ae) ? 1 : ae.windDx;
+        }
+      } else {
+        if (ae2.windDx * ae.windDx < 0) {
+          ae.windCount = ae2.windCount;
+        } else {
+          ae.windCount = ae2.windCount + ae.windDx;
+        }
+      }
+      ae.windCount2 = ae2.windCount2;
+      ae2 = ae2.nextInAEL;
+    }
+    if (this.fillrule === FillRule.EvenOdd) {
+      while (ae2 !== ae) {
+        if (_ClipperBase.getPolyType(ae2) !== pt && !_ClipperBase.isOpen(ae2)) {
+          ae.windCount2 = ae.windCount2 === 0 ? 1 : 0;
+        }
+        ae2 = ae2.nextInAEL;
+      }
+    } else {
+      while (ae2 !== ae) {
+        if (_ClipperBase.getPolyType(ae2) !== pt && !_ClipperBase.isOpen(ae2)) {
+          ae.windCount2 += ae2.windDx;
+        }
+        ae2 = ae2.nextInAEL;
+      }
+    }
+  }
+  isContributingOpen(ae) {
+    let isInClip, isInSubj;
+    switch (this.fillrule) {
+      case FillRule.Positive:
+        isInSubj = ae.windCount > 0;
+        isInClip = ae.windCount2 > 0;
+        break;
+      case FillRule.Negative:
+        isInSubj = ae.windCount < 0;
+        isInClip = ae.windCount2 < 0;
+        break;
+      default:
+        isInSubj = ae.windCount !== 0;
+        isInClip = ae.windCount2 !== 0;
+        break;
+    }
+    switch (this.cliptype) {
+      case ClipType.Intersection:
+        return isInClip;
+      case ClipType.Union:
+        return !isInSubj && !isInClip;
+      default:
+        return !isInClip;
+    }
+  }
+  isContributingClosed(ae) {
+    switch (this.fillrule) {
+      case FillRule.Positive:
+        if (ae.windCount !== 1)
+          return false;
+        break;
+      case FillRule.Negative:
+        if (ae.windCount !== -1)
+          return false;
+        break;
+      case FillRule.NonZero:
+        if (Math.abs(ae.windCount) !== 1)
+          return false;
+        break;
+    }
+    switch (this.cliptype) {
+      case ClipType.Intersection:
+        return this.fillrule === FillRule.Positive ? ae.windCount2 > 0 : this.fillrule === FillRule.Negative ? ae.windCount2 < 0 : ae.windCount2 !== 0;
+      case ClipType.Union:
+        return this.fillrule === FillRule.Positive ? ae.windCount2 <= 0 : this.fillrule === FillRule.Negative ? ae.windCount2 >= 0 : ae.windCount2 === 0;
+      case ClipType.Difference: {
+        const result = this.fillrule === FillRule.Positive ? ae.windCount2 <= 0 : this.fillrule === FillRule.Negative ? ae.windCount2 >= 0 : ae.windCount2 === 0;
+        return _ClipperBase.getPolyType(ae) === PathType.Subject ? result : !result;
+      }
+      case ClipType.Xor:
+        return true;
+      // XOr is always contributing unless open
+      default:
+        return false;
+    }
+  }
+  addLocalMinPoly(ae1, ae2, pt, isNew = false) {
+    const outrec = this.newOutRec();
+    ae1.outrec = outrec;
+    ae2.outrec = outrec;
+    if (_ClipperBase.isOpen(ae1)) {
+      outrec.owner = null;
+      outrec.isOpen = true;
+      if (ae1.windDx > 0) {
+        this.setSides(outrec, ae1, ae2);
+      } else {
+        this.setSides(outrec, ae2, ae1);
+      }
+    } else {
+      outrec.isOpen = false;
+      const prevHotEdge = _ClipperBase.getPrevHotEdge(ae1);
+      if (prevHotEdge !== null) {
+        if (this.usingPolytree) {
+          this.setOwner(outrec, prevHotEdge.outrec);
+        }
+        outrec.owner = prevHotEdge.outrec;
+        if (this.outrecIsAscending(prevHotEdge) === isNew) {
+          this.setSides(outrec, ae2, ae1);
+        } else {
+          this.setSides(outrec, ae1, ae2);
+        }
+      } else {
+        outrec.owner = null;
+        if (isNew) {
+          this.setSides(outrec, ae1, ae2);
+        } else {
+          this.setSides(outrec, ae2, ae1);
+        }
+      }
+    }
+    const op = new OutPt(pt, outrec);
+    outrec.pts = op;
+    return op;
+  }
+  outrecIsAscending(hotEdge) {
+    return hotEdge === hotEdge.outrec.frontEdge;
+  }
+  newOutRec() {
+    const result = new OutRec();
+    result.idx = this.outrecList.length;
+    this.outrecList.push(result);
+    return result;
+  }
+  startOpenPath(ae, pt) {
+    const outrec = this.newOutRec();
+    outrec.isOpen = true;
+    if (ae.windDx > 0) {
+      outrec.frontEdge = ae;
+      outrec.backEdge = null;
+    } else {
+      outrec.frontEdge = null;
+      outrec.backEdge = ae;
+    }
+    ae.outrec = outrec;
+    const op = new OutPt(pt, outrec);
+    outrec.pts = op;
+    return op;
+  }
+  checkJoinLeft(ae, pt, checkCurrX = false) {
+    const prev = ae.prevInAEL;
+    if (prev === null)
+      return;
+    if (!checkCurrX && ae.curX !== prev.curX)
+      return;
+    if (!_ClipperBase.isHotEdge(ae) || !_ClipperBase.isHotEdge(prev) || _ClipperBase.isHorizontal(ae) || _ClipperBase.isHorizontal(prev) || _ClipperBase.isOpen(ae) || _ClipperBase.isOpen(prev))
+      return;
+    if ((pt.y < ae.top.y + 2 || pt.y < prev.top.y + 2) && // avoid trivial joins
+    (ae.bot.y > pt.y || prev.bot.y > pt.y))
+      return;
+    if (checkCurrX) {
+      if (this.perpendicDistFromLineSqrdGreaterThanQuarter(pt, prev.bot, prev.top))
+        return;
+    }
+    if (!InternalClipper.isCollinear(ae.top, pt, prev.top))
+      return;
+    if (ae.outrec.idx === prev.outrec.idx) {
+      this.addLocalMaxPoly(prev, ae, pt);
+    } else if (ae.outrec.idx < prev.outrec.idx) {
+      this.joinOutrecPaths(ae, prev);
+    } else {
+      this.joinOutrecPaths(prev, ae);
+    }
+    prev.joinWith = JoinWith.Right;
+    ae.joinWith = JoinWith.Left;
+  }
+  checkJoinRight(ae, pt, checkCurrX = false) {
+    const next = ae.nextInAEL;
+    if (next === null)
+      return;
+    if (!checkCurrX && ae.curX !== next.curX)
+      return;
+    if (!_ClipperBase.isHotEdge(ae) || !_ClipperBase.isHotEdge(next) || _ClipperBase.isHorizontal(ae) || _ClipperBase.isHorizontal(next) || _ClipperBase.isOpen(ae) || _ClipperBase.isOpen(next))
+      return;
+    if ((pt.y < ae.top.y + 2 || pt.y < next.top.y + 2) && // avoid trivial joins
+    (ae.bot.y > pt.y || next.bot.y > pt.y))
+      return;
+    if (checkCurrX) {
+      if (this.perpendicDistFromLineSqrdGreaterThanQuarter(pt, next.bot, next.top))
+        return;
+    }
+    if (!InternalClipper.isCollinear(ae.top, pt, next.top))
+      return;
+    if (ae.outrec.idx === next.outrec.idx) {
+      this.addLocalMaxPoly(ae, next, pt);
+    } else if (ae.outrec.idx < next.outrec.idx) {
+      this.joinOutrecPaths(ae, next);
+    } else {
+      this.joinOutrecPaths(next, ae);
+    }
+    ae.joinWith = JoinWith.Right;
+    next.joinWith = JoinWith.Left;
+  }
+  perpendicDistFromLineSqrdGreaterThanQuarter(pt, line1, line2) {
+    const a = pt.x - line1.x;
+    const b = pt.y - line1.y;
+    const c = line2.x - line1.x;
+    const d = line2.y - line1.y;
+    if (c === 0 && d === 0)
+      return false;
+    const maxCoord = InternalClipper.maxCoordForSafeCrossSq;
+    if (Math.abs(a) < maxCoord && Math.abs(b) < maxCoord && Math.abs(c) < maxCoord && Math.abs(d) < maxCoord) {
+      const cross3 = a * d - c * b;
+      return cross3 * cross3 / (c * c + d * d) > 0.25;
+    }
+    if (Number.isSafeInteger(a) && Number.isSafeInteger(b) && Number.isSafeInteger(c) && Number.isSafeInteger(d)) {
+      const cross3 = BigInt(a) * BigInt(d) - BigInt(c) * BigInt(b);
+      const crossSq = cross3 * cross3;
+      const denom = BigInt(c) * BigInt(c) + BigInt(d) * BigInt(d);
+      return B4 * crossSq > denom;
+    }
+    const cross2 = a * d - c * b;
+    return cross2 * cross2 / (c * c + d * d) > 0.25;
+  }
+  intersectEdges(ae1, ae2, pt) {
+    let resultOp;
+    if (this.hasOpenPaths && (_ClipperBase.isOpen(ae1) || _ClipperBase.isOpen(ae2))) {
+      if (_ClipperBase.isOpen(ae1) && _ClipperBase.isOpen(ae2))
+        return;
+      if (_ClipperBase.isOpen(ae2)) {
+        const tmp = ae1;
+        ae1 = ae2;
+        ae2 = tmp;
+      }
+      if (this.isJoined(ae2))
+        this.split(ae2, pt);
+      if (this.cliptype === ClipType.Union) {
+        if (!_ClipperBase.isHotEdge(ae2))
+          return;
+      } else if (ae2.localMin.polytype === PathType.Subject)
+        return;
+      switch (this.fillrule) {
+        case FillRule.Positive:
+          if (ae2.windCount !== 1)
+            return;
+          break;
+        case FillRule.Negative:
+          if (ae2.windCount !== -1)
+            return;
+          break;
+        default:
+          if (Math.abs(ae2.windCount) !== 1)
+            return;
+          break;
+      }
+      if (_ClipperBase.isHotEdge(ae1)) {
+        resultOp = this.addOutPt(ae1, pt);
+        this.setZ(ae1, ae2, resultOp.pt);
+        if (_ClipperBase.isFront(ae1)) {
+          ae1.outrec.frontEdge = null;
+        } else {
+          ae1.outrec.backEdge = null;
+        }
+        ae1.outrec = null;
+      } else if (pt.x === ae1.localMin.vertex.pt.x && pt.y === ae1.localMin.vertex.pt.y && !_ClipperBase.isOpenEndVertex(ae1.localMin.vertex)) {
+        const ae3 = this.findEdgeWithMatchingLocMin(ae1);
+        if (ae3 !== null && _ClipperBase.isHotEdge(ae3)) {
+          ae1.outrec = ae3.outrec;
+          if (ae1.windDx > 0) {
+            this.setSides(ae3.outrec, ae1, ae3);
+          } else {
+            this.setSides(ae3.outrec, ae3, ae1);
+          }
+          return;
+        }
+        resultOp = this.startOpenPath(ae1, pt);
+      } else {
+        resultOp = this.startOpenPath(ae1, pt);
+      }
+      this.setZ(ae1, ae2, resultOp.pt);
+      return;
+    }
+    if (this.isJoined(ae1))
+      this.split(ae1, pt);
+    if (this.isJoined(ae2))
+      this.split(ae2, pt);
+    let oldE1WindCount, oldE2WindCount;
+    if (ae1.localMin.polytype === ae2.localMin.polytype) {
+      if (this.fillrule === FillRule.EvenOdd) {
+        oldE1WindCount = ae1.windCount;
+        ae1.windCount = ae2.windCount;
+        ae2.windCount = oldE1WindCount;
+      } else {
+        if (ae1.windCount + ae2.windDx === 0) {
+          ae1.windCount = -ae1.windCount;
+        } else {
+          ae1.windCount += ae2.windDx;
+        }
+        if (ae2.windCount - ae1.windDx === 0) {
+          ae2.windCount = -ae2.windCount;
+        } else {
+          ae2.windCount -= ae1.windDx;
+        }
+      }
+    } else {
+      if (this.fillrule !== FillRule.EvenOdd) {
+        ae1.windCount2 += ae2.windDx;
+      } else {
+        ae1.windCount2 = ae1.windCount2 === 0 ? 1 : 0;
+      }
+      if (this.fillrule !== FillRule.EvenOdd) {
+        ae2.windCount2 -= ae1.windDx;
+      } else {
+        ae2.windCount2 = ae2.windCount2 === 0 ? 1 : 0;
+      }
+    }
+    switch (this.fillrule) {
+      case FillRule.Positive:
+        oldE1WindCount = ae1.windCount;
+        oldE2WindCount = ae2.windCount;
+        break;
+      case FillRule.Negative:
+        oldE1WindCount = -ae1.windCount;
+        oldE2WindCount = -ae2.windCount;
+        break;
+      default:
+        oldE1WindCount = Math.abs(ae1.windCount);
+        oldE2WindCount = Math.abs(ae2.windCount);
+        break;
+    }
+    const e1WindCountIs0or1 = oldE1WindCount === 0 || oldE1WindCount === 1;
+    const e2WindCountIs0or1 = oldE2WindCount === 0 || oldE2WindCount === 1;
+    if (!_ClipperBase.isHotEdge(ae1) && !e1WindCountIs0or1 || !_ClipperBase.isHotEdge(ae2) && !e2WindCountIs0or1)
+      return;
+    if (_ClipperBase.isHotEdge(ae1) && _ClipperBase.isHotEdge(ae2)) {
+      if (oldE1WindCount !== 0 && oldE1WindCount !== 1 || oldE2WindCount !== 0 && oldE2WindCount !== 1 || ae1.localMin.polytype !== ae2.localMin.polytype && this.cliptype !== ClipType.Xor) {
+        resultOp = this.addLocalMaxPoly(ae1, ae2, pt);
+        if (resultOp)
+          this.setZ(ae1, ae2, resultOp.pt);
+      } else if (_ClipperBase.isFront(ae1) || ae1.outrec === ae2.outrec) {
+        resultOp = this.addLocalMaxPoly(ae1, ae2, pt);
+        if (resultOp)
+          this.setZ(ae1, ae2, resultOp.pt);
+        const op2 = this.addLocalMinPoly(ae1, ae2, pt);
+        this.setZ(ae1, ae2, op2.pt);
+      } else {
+        resultOp = this.addOutPt(ae1, pt);
+        this.setZ(ae1, ae2, resultOp.pt);
+        const op2 = this.addOutPt(ae2, pt);
+        this.setZ(ae1, ae2, op2.pt);
+        this.swapOutrecs(ae1, ae2);
+      }
+    } else if (_ClipperBase.isHotEdge(ae1)) {
+      resultOp = this.addOutPt(ae1, pt);
+      this.setZ(ae1, ae2, resultOp.pt);
+      this.swapOutrecs(ae1, ae2);
+    } else if (_ClipperBase.isHotEdge(ae2)) {
+      resultOp = this.addOutPt(ae2, pt);
+      this.setZ(ae1, ae2, resultOp.pt);
+      this.swapOutrecs(ae1, ae2);
+    } else {
+      let e1Wc2, e2Wc2;
+      switch (this.fillrule) {
+        case FillRule.Positive:
+          e1Wc2 = ae1.windCount2;
+          e2Wc2 = ae2.windCount2;
+          break;
+        case FillRule.Negative:
+          e1Wc2 = -ae1.windCount2;
+          e2Wc2 = -ae2.windCount2;
+          break;
+        default:
+          e1Wc2 = Math.abs(ae1.windCount2);
+          e2Wc2 = Math.abs(ae2.windCount2);
+          break;
+      }
+      if (!_ClipperBase.isSamePolyType(ae1, ae2)) {
+        resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+        this.setZ(ae1, ae2, resultOp.pt);
+      } else if (oldE1WindCount === 1 && oldE2WindCount === 1) {
+        resultOp = null;
+        switch (this.cliptype) {
+          case ClipType.Union:
+            if (e1Wc2 > 0 && e2Wc2 > 0)
+              return;
+            resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+            break;
+          case ClipType.Difference:
+            if (_ClipperBase.getPolyType(ae1) === PathType.Clip && e1Wc2 > 0 && e2Wc2 > 0 || _ClipperBase.getPolyType(ae1) === PathType.Subject && e1Wc2 <= 0 && e2Wc2 <= 0) {
+              resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+            }
+            break;
+          case ClipType.Xor:
+            resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+            break;
+          default:
+            if (e1Wc2 <= 0 || e2Wc2 <= 0)
+              return;
+            resultOp = this.addLocalMinPoly(ae1, ae2, pt);
+            break;
+        }
+        if (resultOp)
+          this.setZ(ae1, ae2, resultOp.pt);
+      }
+    }
+  }
+  swapPositionsInAEL(ae1, ae2) {
+    const next = ae2.nextInAEL;
+    if (next !== null)
+      next.prevInAEL = ae1;
+    const prev = ae1.prevInAEL;
+    if (prev !== null)
+      prev.nextInAEL = ae2;
+    ae2.prevInAEL = prev;
+    ae2.nextInAEL = ae1;
+    ae1.prevInAEL = ae2;
+    ae1.nextInAEL = next;
+    if (ae2.prevInAEL === null)
+      this.actives = ae2;
+  }
+  isValidAelOrder(resident, newcomer) {
+    if (newcomer.curX !== resident.curX) {
+      return newcomer.curX > resident.curX;
+    }
+    const d = InternalClipper.crossProductSign(resident.top, newcomer.bot, newcomer.top);
+    if (d !== 0)
+      return d < 0;
+    if (!_ClipperBase.isMaximaEdge(resident) && resident.top.y > newcomer.top.y) {
+      return InternalClipper.crossProductSign(newcomer.bot, resident.top, _ClipperBase.nextVertex(resident).pt) <= 0;
+    }
+    if (!_ClipperBase.isMaximaEdge(newcomer) && newcomer.top.y > resident.top.y) {
+      return InternalClipper.crossProductSign(newcomer.bot, newcomer.top, _ClipperBase.nextVertex(newcomer).pt) >= 0;
+    }
+    const y = newcomer.bot.y;
+    const newcomerIsLeft = newcomer.isLeftBound;
+    if (resident.bot.y !== y || resident.localMin.vertex.pt.y !== y) {
+      return newcomer.isLeftBound;
+    }
+    if (resident.isLeftBound !== newcomerIsLeft) {
+      return newcomerIsLeft;
+    }
+    if (InternalClipper.isCollinear(_ClipperBase.prevPrevVertex(resident).pt, resident.bot, resident.top))
+      return true;
+    return InternalClipper.crossProductSign(_ClipperBase.prevPrevVertex(resident).pt, newcomer.bot, _ClipperBase.prevPrevVertex(newcomer).pt) > 0 === newcomerIsLeft;
+  }
+  isJoined(e) {
+    return e.joinWith !== JoinWith.None;
+  }
+  split(e, currPt) {
+    if (e.joinWith === JoinWith.Right) {
+      e.joinWith = JoinWith.None;
+      e.nextInAEL.joinWith = JoinWith.None;
+      this.addLocalMinPoly(e, e.nextInAEL, currPt, true);
+    } else {
+      e.joinWith = JoinWith.None;
+      e.prevInAEL.joinWith = JoinWith.None;
+      this.addLocalMinPoly(e.prevInAEL, e, currPt, true);
+    }
+  }
+  setSides(outrec, startEdge, endEdge) {
+    outrec.frontEdge = startEdge;
+    outrec.backEdge = endEdge;
+  }
+  findEdgeWithMatchingLocMin(e) {
+    var _a3, _b;
+    let result = e.nextInAEL;
+    while (result !== null) {
+      if ((_a3 = result.localMin) == null ? void 0 : _a3.equals(e.localMin))
+        return result;
+      if (!_ClipperBase.isHorizontal(result) && !(e.bot.x === result.bot.x && e.bot.y === result.bot.y))
+        result = null;
+      else
+        result = result.nextInAEL;
+    }
+    result = e.prevInAEL;
+    while (result !== null) {
+      if ((_b = result.localMin) == null ? void 0 : _b.equals(e.localMin))
+        return result;
+      if (!_ClipperBase.isHorizontal(result) && !(e.bot.x === result.bot.x && e.bot.y === result.bot.y))
+        return null;
+      result = result.prevInAEL;
+    }
+    return result;
+  }
+  addOutPt(ae, pt) {
+    const outrec = ae.outrec;
+    const toFront = _ClipperBase.isFront(ae);
+    const opFront = outrec.pts;
+    const opBack = opFront.next;
+    if (toFront && pt.x === opFront.pt.x && pt.y === opFront.pt.y) {
+      return opFront;
+    } else if (!toFront && pt.x === opBack.pt.x && pt.y === opBack.pt.y) {
+      return opBack;
+    }
+    const newOp = new OutPt(pt, outrec);
+    opBack.prev = newOp;
+    newOp.prev = opFront;
+    newOp.next = opBack;
+    opFront.next = newOp;
+    if (toFront)
+      outrec.pts = newOp;
+    return newOp;
+  }
+  addLocalMaxPoly(ae1, ae2, pt) {
+    if (this.isJoined(ae1))
+      this.split(ae1, pt);
+    if (this.isJoined(ae2))
+      this.split(ae2, pt);
+    if (_ClipperBase.isFront(ae1) === _ClipperBase.isFront(ae2)) {
+      if (_ClipperBase.isOpenEnd(ae1)) {
+        this.swapFrontBackSides(ae1.outrec);
+      } else if (_ClipperBase.isOpenEnd(ae2)) {
+        this.swapFrontBackSides(ae2.outrec);
+      } else {
+        this.succeeded = false;
+        return null;
+      }
+    }
+    const result = this.addOutPt(ae1, pt);
+    if (ae1.outrec === ae2.outrec) {
+      const outrec = ae1.outrec;
+      outrec.pts = result;
+      if (this.usingPolytree) {
+        const e = _ClipperBase.getPrevHotEdge(ae1);
+        if (e === null) {
+          outrec.owner = null;
+        } else {
+          this.setOwner(outrec, e.outrec);
+        }
+      }
+      this.uncoupleOutRec(ae1);
+    } else if (_ClipperBase.isOpen(ae1)) {
+      if (ae1.windDx < 0) {
+        this.joinOutrecPaths(ae1, ae2);
+      } else {
+        this.joinOutrecPaths(ae2, ae1);
+      }
+    } else if (ae1.outrec.idx < ae2.outrec.idx) {
+      this.joinOutrecPaths(ae1, ae2);
+    } else {
+      this.joinOutrecPaths(ae2, ae1);
+    }
+    return result;
+  }
+  swapFrontBackSides(outrec) {
+    const ae2 = outrec.frontEdge;
+    outrec.frontEdge = outrec.backEdge;
+    outrec.backEdge = ae2;
+    outrec.pts = outrec.pts.next;
+  }
+  setOwner(outrec, newOwner) {
+    while (newOwner.owner !== null && newOwner.owner.pts === null) {
+      newOwner.owner = newOwner.owner.owner;
+    }
+    let tmp = newOwner;
+    while (tmp !== null && tmp !== outrec) {
+      tmp = tmp.owner;
+    }
+    if (tmp !== null) {
+      newOwner.owner = outrec.owner;
+    }
+    outrec.owner = newOwner;
+  }
+  uncoupleOutRec(ae) {
+    const outrec = ae.outrec;
+    if (outrec === null)
+      return;
+    outrec.frontEdge.outrec = null;
+    outrec.backEdge.outrec = null;
+    outrec.frontEdge = null;
+    outrec.backEdge = null;
+  }
+  joinOutrecPaths(ae1, ae2) {
+    const p1Start = ae1.outrec.pts;
+    const p2Start = ae2.outrec.pts;
+    const p1End = p1Start.next;
+    const p2End = p2Start.next;
+    if (_ClipperBase.isFront(ae1)) {
+      p2End.prev = p1Start;
+      p1Start.next = p2End;
+      p2Start.next = p1End;
+      p1End.prev = p2Start;
+      ae1.outrec.pts = p2Start;
+      ae1.outrec.frontEdge = ae2.outrec.frontEdge;
+      if (ae1.outrec.frontEdge !== null) {
+        ae1.outrec.frontEdge.outrec = ae1.outrec;
+      }
+    } else {
+      p1End.prev = p2Start;
+      p2Start.next = p1End;
+      p1Start.next = p2End;
+      p2End.prev = p1Start;
+      ae1.outrec.backEdge = ae2.outrec.backEdge;
+      if (ae1.outrec.backEdge !== null) {
+        ae1.outrec.backEdge.outrec = ae1.outrec;
+      }
+    }
+    ae2.outrec.frontEdge = null;
+    ae2.outrec.backEdge = null;
+    ae2.outrec.pts = null;
+    this.setOwner(ae2.outrec, ae1.outrec);
+    if (_ClipperBase.isOpenEnd(ae1)) {
+      ae2.outrec.pts = ae1.outrec.pts;
+      ae1.outrec.pts = null;
+    }
+    ae1.outrec = null;
+    ae2.outrec = null;
+  }
+  swapOutrecs(ae1, ae2) {
+    const or1 = ae1.outrec;
+    const or2 = ae2.outrec;
+    if (or1 === or2) {
+      const ae = or1.frontEdge;
+      or1.frontEdge = or1.backEdge;
+      or1.backEdge = ae;
+      return;
+    }
+    if (or1 !== null) {
+      if (ae1 === or1.frontEdge) {
+        or1.frontEdge = ae2;
+      } else {
+        or1.backEdge = ae2;
+      }
+    }
+    if (or2 !== null) {
+      if (ae2 === or2.frontEdge) {
+        or2.frontEdge = ae1;
+      } else {
+        or2.backEdge = ae1;
+      }
+    }
+    ae1.outrec = or2;
+    ae2.outrec = or1;
+  }
+  disposeIntersectNodes() {
+    this.intersectList.length = 0;
+  }
+  static ptsReallyClose(pt1, pt2) {
+    return Math.abs(pt1.x - pt2.x) < 2 && Math.abs(pt1.y - pt2.y) < 2;
+  }
+  static isVerySmallTriangle(op) {
+    return op.next.next === op.prev && (_ClipperBase.ptsReallyClose(op.prev.pt, op.next.pt) || _ClipperBase.ptsReallyClose(op.pt, op.next.pt) || _ClipperBase.ptsReallyClose(op.pt, op.prev.pt));
+  }
+  static buildPath(op, reverse, isOpen, path) {
+    if (op === null || op.next === op || !isOpen && op.next === op.prev)
+      return false;
+    path.length = 0;
+    let lastPt;
+    let op2;
+    if (reverse) {
+      lastPt = op.pt;
+      op2 = op.prev;
+    } else {
+      op = op.next;
+      lastPt = op.pt;
+      op2 = op.next;
+    }
+    path.push(lastPt);
+    while (op2 !== op) {
+      if (!(op2.pt.x === lastPt.x && op2.pt.y === lastPt.y)) {
+        lastPt = op2.pt;
+        path.push(lastPt);
+      }
+      if (reverse) {
+        op2 = op2.prev;
+      } else {
+        op2 = op2.next;
+      }
+    }
+    return path.length !== 3 || isOpen || !_ClipperBase.isVerySmallTriangle(op2);
+  }
+  buildPaths(solutionClosed, solutionOpen) {
+    solutionClosed.length = 0;
+    solutionOpen.length = 0;
+    let i = 0;
+    while (i < this.outrecList.length) {
+      const outrec = this.outrecList[i++];
+      if (outrec.pts === null)
+        continue;
+      const path = [];
+      if (outrec.isOpen) {
+        if (_ClipperBase.buildPath(outrec.pts, this.reverseSolution, true, path)) {
+          solutionOpen.push(path);
+        }
+      } else {
+        this.cleanCollinear(outrec);
+        if (_ClipperBase.buildPath(outrec.pts, this.reverseSolution, false, path)) {
+          solutionClosed.push(path);
+        }
+      }
+    }
+    return true;
+  }
+  buildTree(polytree, solutionOpen) {
+    polytree.clear();
+    solutionOpen.length = 0;
+    let i = 0;
+    while (i < this.outrecList.length) {
+      const outrec = this.outrecList[i++];
+      if (outrec.pts === null)
+        continue;
+      if (outrec.isOpen) {
+        const openPath = [];
+        if (_ClipperBase.buildPath(outrec.pts, this.reverseSolution, true, openPath)) {
+          solutionOpen.push(openPath);
+        }
+        continue;
+      }
+      if (this.checkBounds(outrec)) {
+        this.recursiveCheckOwners(outrec, polytree);
+      }
+    }
+  }
+  checkBounds(outrec) {
+    if (outrec.pts === null)
+      return false;
+    if (!Rect64Utils.isEmpty(outrec.bounds))
+      return true;
+    this.cleanCollinear(outrec);
+    if (outrec.pts === null || !_ClipperBase.buildPath(outrec.pts, this.reverseSolution, false, outrec.path)) {
+      return false;
+    }
+    outrec.bounds = InternalClipper.getBounds(outrec.path);
+    return true;
+  }
+  recursiveCheckOwners(outrec, polypath) {
+    if (outrec.polypath !== null || Rect64Utils.isEmpty(outrec.bounds))
+      return;
+    while (outrec.owner !== null) {
+      if (outrec.owner.splits !== null && this.checkSplitOwner(outrec, outrec.owner.splits))
+        break;
+      if (outrec.owner.pts !== null && this.checkBounds(outrec.owner) && // Fast reject: a container must contain the child's bounds.
+      this.containsRect(outrec.owner.bounds, outrec.bounds) && this.path1InsidePath2(outrec.pts, outrec.owner.pts))
+        break;
+      outrec.owner = outrec.owner.owner;
+    }
+    if (outrec.owner !== null) {
+      if (outrec.owner.polypath === null) {
+        this.recursiveCheckOwners(outrec.owner, polypath);
+      }
+      outrec.polypath = outrec.owner.polypath.addChild(outrec.path);
+    } else {
+      outrec.polypath = polypath.addChild(outrec.path);
+    }
+  }
+  cleanCollinear(outrec) {
+    outrec = this.getRealOutRec(outrec);
+    if (outrec === null || outrec.isOpen)
+      return;
+    if (!this.isValidClosedPath(outrec.pts)) {
+      outrec.pts = null;
+      return;
+    }
+    let startOp = outrec.pts;
+    let op2 = startOp;
+    while (true) {
+      if (op2 !== null && InternalClipper.isCollinear(op2.prev.pt, op2.pt, op2.next.pt) && (op2.pt.x === op2.prev.pt.x && op2.pt.y === op2.prev.pt.y || op2.pt.x === op2.next.pt.x && op2.pt.y === op2.next.pt.y || !this.preserveCollinear || InternalClipper.dotProductSign(op2.prev.pt, op2.pt, op2.next.pt) < 0)) {
+        if (op2 === outrec.pts) {
+          outrec.pts = op2.prev;
+        }
+        op2 = this.disposeOutPt(op2);
+        if (!this.isValidClosedPath(op2)) {
+          outrec.pts = null;
+          return;
+        }
+        startOp = op2;
+        continue;
+      }
+      if (op2 === null)
+        break;
+      op2 = op2.next;
+      if (op2 === startOp)
+        break;
+    }
+    this.fixSelfIntersects(outrec);
+  }
+  isValidClosedPath(op) {
+    return op !== null && op.next !== op && (op.next !== op.prev || !_ClipperBase.isVerySmallTriangle(op));
+  }
+  disposeOutPt(op) {
+    const result = op.next === op ? null : op.next;
+    op.prev.next = op.next;
+    op.next.prev = op.prev;
+    return result;
+  }
+  fixSelfIntersects(outrec) {
+    let op2 = outrec.pts;
+    if (op2.prev === op2.next.next) {
+      return;
+    }
+    while (true) {
+      if (op2.next && op2.next.next && this.boundingBoxesOverlap(op2.prev.pt, op2.pt, op2.next.pt, op2.next.next.pt) && InternalClipper.segsIntersect(op2.prev.pt, op2.pt, op2.next.pt, op2.next.next.pt)) {
+        if (op2 === outrec.pts || op2.next === outrec.pts) {
+          outrec.pts = outrec.pts.prev;
+        }
+        this.doSplitOp(outrec, op2);
+        if (outrec.pts === null)
+          return;
+        op2 = outrec.pts;
+        if (op2.prev === op2.next.next)
+          break;
+        continue;
+      }
+      op2 = op2.next;
+      if (op2 === outrec.pts)
+        break;
+    }
+  }
+  doSplitOp(outrec, splitOp) {
+    const prevOp = splitOp.prev;
+    const nextNextOp = splitOp.next.next;
+    outrec.pts = prevOp;
+    const ip = InternalClipper.getLineIntersectPt(prevOp.pt, splitOp.pt, splitOp.next.pt, nextNextOp.pt);
+    if (this.zCallbackInternal) {
+      this.zCallbackInternal(prevOp.pt, splitOp.pt, splitOp.next.pt, nextNextOp.pt, ip);
+    }
+    const doubleArea1 = _ClipperBase.areaOutPt(prevOp);
+    const absDoubleArea1 = doubleArea1 < B0 ? -doubleArea1 : doubleArea1;
+    if (absDoubleArea1 < B4) {
+      outrec.pts = null;
+      return;
+    }
+    const doubleArea2 = this.areaTriangle(ip, splitOp.pt, splitOp.next.pt);
+    const absDoubleArea2 = doubleArea2 < B0 ? -doubleArea2 : doubleArea2;
+    if (ip.x === prevOp.pt.x && ip.y === prevOp.pt.y || ip.x === nextNextOp.pt.x && ip.y === nextNextOp.pt.y) {
+      nextNextOp.prev = prevOp;
+      prevOp.next = nextNextOp;
+    } else {
+      const newOp2 = new OutPt(ip, outrec);
+      newOp2.prev = prevOp;
+      newOp2.next = nextNextOp;
+      nextNextOp.prev = newOp2;
+      prevOp.next = newOp2;
+    }
+    if (!(absDoubleArea2 > B2) || // area > 1
+    !(absDoubleArea2 > absDoubleArea1) && doubleArea2 > B0 !== doubleArea1 > B0)
+      return;
+    const newOutRec = this.newOutRec();
+    newOutRec.owner = outrec.owner;
+    splitOp.outrec = newOutRec;
+    splitOp.next.outrec = newOutRec;
+    const newOp = new OutPt(ip, newOutRec);
+    newOp.prev = splitOp.next;
+    newOp.next = splitOp;
+    newOutRec.pts = newOp;
+    splitOp.prev = newOp;
+    splitOp.next.next = newOp;
+    if (!this.usingPolytree)
+      return;
+    if (this.path1InsidePath2(prevOp, newOp)) {
+      if (newOutRec.splits === null)
+        newOutRec.splits = [];
+      newOutRec.splits.push(outrec.idx);
+    } else {
+      if (outrec.splits === null)
+        outrec.splits = [];
+      outrec.splits.push(newOutRec.idx);
+    }
+  }
+  static areaOutPt(op) {
+    const maxCoord = InternalClipper.maxCoordForSafeAreaProduct;
+    let area = 0;
+    let allSmall = true;
+    let op2 = op;
+    do {
+      const prev = op2.prev;
+      const pt = op2.pt;
+      if (Math.abs(prev.pt.x) >= maxCoord || Math.abs(prev.pt.y) >= maxCoord || Math.abs(pt.x) >= maxCoord || Math.abs(pt.y) >= maxCoord) {
+        allSmall = false;
+        break;
+      }
+      area += (prev.pt.y + pt.y) * (prev.pt.x - pt.x);
+      op2 = op2.next;
+    } while (op2 !== op);
+    if (allSmall) {
+      return BigInt(Math.round(area));
+    }
+    let areaBig = B0;
+    op2 = op;
+    do {
+      const prev = op2.prev;
+      if (Number.isSafeInteger(prev.pt.y) && Number.isSafeInteger(op2.pt.y) && Number.isSafeInteger(prev.pt.x) && Number.isSafeInteger(op2.pt.x)) {
+        const sumBig = BigInt(prev.pt.y) + BigInt(op2.pt.y);
+        const diffBig = BigInt(prev.pt.x) - BigInt(op2.pt.x);
+        areaBig += sumBig * diffBig;
+      } else {
+        const sum = prev.pt.y + op2.pt.y;
+        const diff = prev.pt.x - op2.pt.x;
+        areaBig += BigInt(Math.round(sum * diff));
+      }
+      op2 = op2.next;
+    } while (op2 !== op);
+    return areaBig;
+  }
+  areaTriangle(pt1, pt2, pt3) {
+    const maxCoord = InternalClipper.maxCoordForSafeAreaProduct;
+    if (Math.abs(pt1.x) < maxCoord && Math.abs(pt1.y) < maxCoord && Math.abs(pt2.x) < maxCoord && Math.abs(pt2.y) < maxCoord && Math.abs(pt3.x) < maxCoord && Math.abs(pt3.y) < maxCoord) {
+      const area2 = (pt3.y + pt1.y) * (pt3.x - pt1.x) + (pt1.y + pt2.y) * (pt1.x - pt2.x) + (pt2.y + pt3.y) * (pt2.x - pt3.x);
+      return BigInt(Math.round(area2));
+    }
+    if (Number.isSafeInteger(pt1.x) && Number.isSafeInteger(pt1.y) && Number.isSafeInteger(pt2.x) && Number.isSafeInteger(pt2.y) && Number.isSafeInteger(pt3.x) && Number.isSafeInteger(pt3.y)) {
+      const term1 = (BigInt(pt3.y) + BigInt(pt1.y)) * (BigInt(pt3.x) - BigInt(pt1.x));
+      const term2 = (BigInt(pt1.y) + BigInt(pt2.y)) * (BigInt(pt1.x) - BigInt(pt2.x));
+      const term3 = (BigInt(pt2.y) + BigInt(pt3.y)) * (BigInt(pt2.x) - BigInt(pt3.x));
+      return term1 + term2 + term3;
+    }
+    const area = (pt3.y + pt1.y) * (pt3.x - pt1.x) + (pt1.y + pt2.y) * (pt1.x - pt2.x) + (pt2.y + pt3.y) * (pt2.x - pt3.x);
+    return BigInt(Math.round(area));
+  }
+  isValidOwner(outRec, testOwner) {
+    while (testOwner !== null && testOwner !== outRec) {
+      testOwner = testOwner.owner;
+    }
+    return testOwner === null;
+  }
+  containsRect(rect, rec) {
+    return rec.left >= rect.left && rec.right <= rect.right && rec.top >= rect.top && rec.bottom <= rect.bottom;
+  }
+  checkSplitOwner(outrec, splits) {
+    for (let i = 0; i < splits.length; i++) {
+      let split = this.outrecList[splits[i]];
+      if (split.pts === null && split.splits !== null && this.checkSplitOwner(outrec, split.splits))
+        return true;
+      split = this.getRealOutRec(split);
+      if (split === null || split === outrec || split.recursiveSplit === outrec)
+        continue;
+      split.recursiveSplit = outrec;
+      if (split.splits !== null && this.checkSplitOwner(outrec, split.splits))
+        return true;
+      if (!this.checkBounds(split) || !this.containsRect(split.bounds, outrec.bounds) || !this.path1InsidePath2(outrec.pts, split.pts))
+        continue;
+      if (!this.isValidOwner(outrec, split)) {
+        split.owner = outrec.owner;
+      }
+      outrec.owner = split;
+      return true;
+    }
+    return false;
+  }
+};
+// When there are no open paths, a lot of open-path branching becomes dead code.
+// We set this per execute to allow fast short-circuiting in hot helpers.
+__publicField(_ClipperBase, "openPathsEnabled", true);
+let ClipperBase = _ClipperBase;
+class Clipper64 extends ClipperBase {
+  constructor() {
+    super(...arguments);
+    __publicField(this, "zCallback");
+  }
+  getZCallback() {
+    return this.zCallback;
+  }
+  addPath(path, polytype, isOpen = false) {
+    super.addPath(path, polytype, isOpen);
+  }
+  addReuseableData(reuseableData) {
+    super.addReuseableData(reuseableData);
+  }
+  addPaths(paths, polytype, isOpen = false) {
+    super.addPaths(paths, polytype, isOpen);
+  }
+  addSubject(paths) {
+    this.addPaths(paths, PathType.Subject);
+  }
+  addOpenSubject(paths) {
+    this.addPaths(paths, PathType.Subject, true);
+  }
+  addClip(paths) {
+    this.addPaths(paths, PathType.Clip);
+  }
+  execute(clipType, fillRule, solutionOrTree, openPathsOrSolutionOpen) {
+    if (Array.isArray(solutionOrTree)) {
+      const solutionClosed = solutionOrTree;
+      const solutionOpen = openPathsOrSolutionOpen;
+      solutionClosed.length = 0;
+      if (solutionOpen)
+        solutionOpen.length = 0;
+      try {
+        this.executeInternal(clipType, fillRule);
+        this.buildPaths(solutionClosed, solutionOpen || []);
+      } catch {
+        this.succeeded = false;
+      }
+      this.clearSolutionOnly();
+      return this.succeeded;
+    } else {
+      const polytree = solutionOrTree;
+      const openPaths = openPathsOrSolutionOpen;
+      polytree.clear();
+      if (openPaths)
+        openPaths.length = 0;
+      this.usingPolytree = true;
+      try {
+        this.executeInternal(clipType, fillRule);
+        this.buildTree(polytree, openPaths || []);
+      } catch {
+        this.succeeded = false;
+      }
+      this.clearSolutionOnly();
+      return this.succeeded;
+    }
+  }
+}
+BigInt(2);
+function union$2(subject, clipOrFillRule, fillRule) {
+  if (typeof clipOrFillRule === "number") {
+    return booleanOp(ClipType.Union, subject, null, clipOrFillRule);
+  } else {
+    return booleanOp(ClipType.Union, subject, clipOrFillRule, fillRule);
+  }
+}
+function booleanOp(clipType, subject, clip, fillRule) {
+  const solution = [];
+  if (subject === null)
+    return solution;
+  const c = new Clipper64();
+  c.addPaths(subject, PathType.Subject);
+  if (clip !== null) {
+    c.addPaths(clip, PathType.Clip);
+  }
+  c.execute(clipType, fillRule, solution);
+  return solution;
+}
+function normalizeHatchRegion(hatch, tolerance) {
+  const safeTolerance = Math.max(1e-9, tolerance);
+  const contours = [];
+  for (const path of hatch.boundaryPaths) {
+    const segments = [];
+    for (const edge of path.edges) {
+      const points = flattenHatchEdge(edge, safeTolerance);
+      for (let index = 1; index < points.length; index += 1) {
+        const start = points[index - 1];
+        const end = points[index];
+        if (Math.hypot(end[0] - start[0], end[1] - start[1]) > safeTolerance) segments.push({ start, end });
+      }
+    }
+    const assembled = assembleContours(segments, safeTolerance);
+    if (!assembled) return { status: "invalid", code: "HATCH_BOUNDARY_OPEN" };
+    contours.push(...assembled);
+  }
+  if (contours.length === 0) return { status: "invalid", code: "HATCH_BOUNDARY_EMPTY" };
+  const largest = Math.max(...contours.flatMap((contour) => contour.flatMap(([x, y]) => [Math.abs(x), Math.abs(y)])), 1);
+  const requestedScale = Math.max(1, Math.ceil(1 / safeTolerance));
+  const maxScale = Math.floor(Number.MAX_SAFE_INTEGER / 1024 / largest);
+  const scale2 = Math.min(requestedScale, maxScale);
+  if (!(scale2 >= 1)) return { status: "invalid", code: "HATCH_COORDINATE_OVERFLOW" };
+  try {
+    const paths = contours.map((contour) => contour.map(([x, y]) => ({ x: Math.round(x * scale2), y: Math.round(y * scale2) })));
+    const normalized = union$2(paths, FillRule.EvenOdd).map((path) => path.map(({ x, y }) => [x / scale2, y / scale2])).filter((path) => path.length >= 3);
+    if (normalized.length === 0) return { status: "invalid", code: "HATCH_BOUNDARY_EMPTY" };
+    const selected = selectByStyle(normalized, hatch.style);
+    return {
+      status: "ok",
+      region: { contours: selected, fillRule: hatch.style === "normal" ? "evenodd" : "nonzero", bounds: boundsOf$1(selected) }
+    };
+  } catch {
+    return { status: "invalid", code: "HATCH_COORDINATE_OVERFLOW" };
+  }
+}
+function assembleContours(segments, tolerance) {
+  if (segments.length < 3) return null;
+  const key = ([x, y]) => `${Math.round(x / tolerance)},${Math.round(y / tolerance)}`;
+  const incidence = /* @__PURE__ */ new Map();
+  segments.forEach((segment, index) => {
+    for (const point of [segment.start, segment.end]) {
+      const bucket = incidence.get(key(point)) ?? [];
+      bucket.push(index);
+      incidence.set(key(point), bucket);
+    }
+  });
+  if ([...incidence.values()].some((indices) => indices.length !== 2)) return null;
+  const unused = new Set(segments.map((_, index) => index));
+  const contours = [];
+  while (unused.size > 0) {
+    const firstIndex = unused.values().next().value;
+    const first = segments[firstIndex];
+    unused.delete(firstIndex);
+    const contour = [first.start, first.end];
+    const startKey = key(first.start);
+    let currentKey = key(first.end);
+    while (currentKey !== startKey) {
+      const nextIndex = (incidence.get(currentKey) ?? []).find((index) => unused.has(index));
+      if (nextIndex === void 0) return null;
+      const next = segments[nextIndex];
+      unused.delete(nextIndex);
+      const nextPoint = key(next.start) === currentKey ? next.end : next.start;
+      contour.push(nextPoint);
+      currentKey = key(nextPoint);
+      if (contour.length > segments.length + 1) return null;
+    }
+    contour.pop();
+    if (contour.length < 3) return null;
+    contours.push(contour);
+  }
+  return contours;
+}
+function selectByStyle(contours, style) {
+  if (style === "normal") return contours;
+  const depths = contours.map((contour, index) => contours.reduce((depth, candidate, candidateIndex) => candidateIndex !== index && pointInPolygon$1(contour[0], candidate) ? depth + 1 : depth, 0));
+  if (style === "outer") return contours.filter((_, index) => (depths[index] ?? 0) <= 1);
+  return contours.filter((_, index) => (depths[index] ?? 0) === 0);
+}
+function pointInPolygon$1(point, polygon) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const a = polygon[index];
+    const b = polygon[previous];
+    if (a[1] > point[1] !== b[1] > point[1] && point[0] < (b[0] - a[0]) * (point[1] - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
+}
+function boundsOf$1(contours) {
+  const points = contours.flat();
+  return {
+    minX: Math.min(...points.map(([x]) => x)),
+    minY: Math.min(...points.map(([, y]) => y)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    maxY: Math.max(...points.map(([, y]) => y))
+  };
+}
+const MAX_HATCH_RENDER_LINES = 2e4;
+function createHatchRenderPlan(hatch, tolerance) {
+  const normalized = normalizeHatchRegion(hatch, tolerance);
+  if (normalized.status !== "ok") return normalized;
+  const lines = [];
+  for (const family of hatch.patternLines) {
+    const generated = generateFamily(transformPatternFamily(family, hatch.patternAngle, hatch.patternScale), normalized.region);
+    if (lines.length + generated.length > MAX_HATCH_RENDER_LINES) {
+      return { status: "invalid", code: "HATCH_PATTERN_DENSITY_LIMIT" };
+    }
+    lines.push(...generated);
+  }
+  return { status: "ok", plan: { region: normalized.region, lines } };
+}
+function transformPatternFamily(family, angleDegrees, scale2) {
+  const angle = angleDegrees * Math.PI / 180;
+  const rotateScale = ([x, y]) => [
+    scale2 * (x * Math.cos(angle) - y * Math.sin(angle)),
+    scale2 * (x * Math.sin(angle) + y * Math.cos(angle))
+  ];
+  return {
+    angle: family.angle + angleDegrees,
+    base: rotateScale(family.base),
+    offset: rotateScale(family.offset),
+    dashLengths: family.dashLengths.map((value2) => value2 * scale2)
+  };
+}
+function generateFamily(family, region) {
+  const angle = family.angle * Math.PI / 180;
+  const direction = [Math.cos(angle), Math.sin(angle)];
+  const normal = [-direction[1], direction[0]];
+  const spacing = dot$1(family.offset, normal);
+  if (Math.abs(spacing) <= 1e-12) return [];
+  const corners = [
+    [region.bounds.minX, region.bounds.minY],
+    [region.bounds.maxX, region.bounds.minY],
+    [region.bounds.maxX, region.bounds.maxY],
+    [region.bounds.minX, region.bounds.maxY]
+  ];
+  const cornerProjections = corners.map((point) => dot$1(point, normal));
+  const baseProjection = dot$1(family.base, normal);
+  const minIndex = Math.floor((Math.min(...cornerProjections) - baseProjection) / spacing) - 1;
+  const maxIndex = Math.ceil((Math.max(...cornerProjections) - baseProjection) / spacing) + 1;
+  const first = Math.min(minIndex, maxIndex);
+  const last = Math.max(minIndex, maxIndex);
+  const diagonal = Math.hypot(region.bounds.maxX - region.bounds.minX, region.bounds.maxY - region.bounds.minY);
+  const alongProjections = corners.map((point) => dot$1(point, direction));
+  const minimumAlong = Math.min(...alongProjections) - Math.max(1, diagonal * 0.01);
+  const maximumAlong = Math.max(...alongProjections) + Math.max(1, diagonal * 0.01);
+  const result = [];
+  for (let index = first; index <= last; index += 1) {
+    const origin = [family.base[0] + family.offset[0] * index, family.base[1] + family.offset[1] * index];
+    const originAlong = dot$1(origin, direction);
+    const startDistance = minimumAlong - originAlong;
+    const endDistance = maximumAlong - originAlong;
+    result.push({
+      start: [origin[0] + direction[0] * startDistance, origin[1] + direction[1] * startDistance],
+      end: [origin[0] + direction[0] * endDistance, origin[1] + direction[1] * endDistance],
+      dashArray: family.dashLengths.map(Math.abs),
+      dashOffset: startDistance
+    });
+  }
+  return result;
+}
+function dot$1(a, b) {
+  return a[0] * b[0] + a[1] * b[1];
+}
+function transformParametricHatch(hatch, transform2) {
+  const vector = (point2) => rotate$1(point2, transform2.rotationRadians);
+  const point = (value2) => {
+    const relative = [value2[0] - transform2.pivot[0], value2[1] - transform2.pivot[1]];
+    const rotated = vector(relative);
+    return [rotated[0] + transform2.pivot[0] + transform2.translation[0], rotated[1] + transform2.pivot[1] + transform2.translation[1]];
+  };
+  const edge = (value2) => {
+    var _a3;
+    if (value2.type === "line") return { ...value2, start: point(value2.start), end: point(value2.end) };
+    if (value2.type === "arc") return {
+      ...value2,
+      center: point(value2.center),
+      startAngle: value2.startAngle + radiansToDegrees(transform2.rotationRadians),
+      endAngle: value2.endAngle + radiansToDegrees(transform2.rotationRadians)
+    };
+    if (value2.type === "ellipse") return { ...value2, center: point(value2.center), majorAxis: vector(value2.majorAxis) };
+    return { ...value2, controlPoints: value2.controlPoints.map(point), fitPoints: (_a3 = value2.fitPoints) == null ? void 0 : _a3.map(point) };
+  };
+  return {
+    ...hatch,
+    boundaryPaths: hatch.boundaryPaths.map((path) => ({ ...path, edges: path.edges.map(edge) })),
+    patternLines: hatch.patternLines.map((line2) => ({
+      ...line2,
+      angle: line2.angle + radiansToDegrees(transform2.rotationRadians),
+      base: point(line2.base),
+      offset: vector(line2.offset)
+    })),
+    patternAngle: hatch.patternAngle + radiansToDegrees(transform2.rotationRadians)
+  };
+}
+function rotate$1([x, y], radians) {
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  return [x * cosine - y * sine, x * sine + y * cosine];
+}
+function radiansToDegrees(value2) {
+  return value2 * 180 / Math.PI;
 }
 function applyDrawingTransaction(source, commands, now) {
   const document = structuredClone(source);
@@ -930,7 +4412,20 @@ function transformedAnnotationFields(node, transform2) {
   if (node.type === "dimension") return pair({ textPosition: node.textPosition, definitionPoints: node.definitionPoints }, { textPosition: transformPoint(node.textPosition, transform2), definitionPoints: node.definitionPoints.map((point) => transformPoint(point, transform2)) });
   if (node.type === "leader") return pair({ points: node.points }, { points: node.points.map((point) => transformPoint(point, transform2)) });
   if (node.type === "centerline") return pair({ start: node.start, end: node.end }, { start: transformPoint(node.start, transform2), end: transformPoint(node.end, transform2) });
-  return pair({ segments: node.segments }, { segments: node.segments.map((segment) => ({ start: transformPoint(segment.start, transform2), end: transformPoint(segment.end, transform2) })) });
+  const before = {};
+  const after = {};
+  if (node.hatch !== void 0) {
+    before.hatch = node.hatch;
+    after.hatch = transformParametricHatch(node.hatch, transform2);
+  }
+  if (node.segments !== void 0) {
+    before.segments = node.segments;
+    after.segments = node.segments.map((segment) => ({
+      start: transformPoint(segment.start, transform2),
+      end: transformPoint(segment.end, transform2)
+    }));
+  }
+  return pair(before, after);
 }
 function pair(before, after) {
   return { before: structuredClone(before), after };
@@ -949,9 +4444,9 @@ function rotate(vector, radians) {
   return cleanPoint$2([vector[0] * cosine - vector[1] * sine, vector[0] * sine + vector[1] * cosine]);
 }
 function cleanPoint$2(point) {
-  return [clean$1(point[0]), clean$1(point[1])];
+  return [clean$2(point[0]), clean$2(point[1])];
 }
-function clean$1(value2) {
+function clean$2(value2) {
   const result = Math.abs(value2) < 1e-12 ? 0 : Number(value2.toFixed(12));
   return Object.is(result, -0) ? 0 : result;
 }
@@ -1304,9 +4799,9 @@ function distance$2(left, right) {
   return Math.hypot(left[0] - right[0], left[1] - right[1]);
 }
 function cleanPoint$1(point) {
-  return [clean(point[0]), clean(point[1])];
+  return [clean$1(point[0]), clean$1(point[1])];
 }
-function clean(value2) {
+function clean$1(value2) {
   const rounded = Number(value2.toFixed(9));
   return Object.is(rounded, -0) ? 0 : rounded;
 }
@@ -1318,7 +4813,7 @@ const MAGNITUDE_RATIO = {
 };
 const SOLVER_VERSION = "spatial-intent-solver-0.1.0";
 const MAX_CANDIDATES = 256;
-const EPSILON = 1e-7;
+const EPSILON$1 = 1e-7;
 class SpatialIntentValidationError extends Error {
   constructor(code, details) {
     super(code);
@@ -1341,9 +4836,9 @@ function solveSpatialIntent(input) {
       const compilation = compileTransforms(input, transforms);
       const topologyPenalty = topologyPenaltyFor(input, compilation.candidate);
       const collisionPenalty = collisionPenaltyFor(input, compilation.candidate);
-      if (topologyPenalty > EPSILON) continue;
+      if (topologyPenalty > EPSILON$1) continue;
       assertProtectedScope(input, compilation.candidate);
-      const assessedCompilation = collisionPenalty > EPSILON ? {
+      const assessedCompilation = collisionPenalty > EPSILON$1 ? {
         ...compilation,
         diagnostics: [...compilation.diagnostics, {
           code: "SPATIAL_COLLISION_CANDIDATE",
@@ -1646,7 +5141,7 @@ function hasExactAxis(input, partKey, axis) {
 function compileTransforms(input, transforms) {
   const changed = Object.keys(transforms).sort().filter((partKey) => {
     const transform2 = transforms[partKey];
-    return Math.hypot(...transform2.translation) > EPSILON || Math.abs(transform2.rotationRadians ?? 0) > EPSILON;
+    return Math.hypot(...transform2.translation) > EPSILON$1 || Math.abs(transform2.rotationRadians ?? 0) > EPSILON$1;
   });
   if (changed.length === 0) throw new Error("EDIT_NO_EFFECT");
   if (changed.length === 1) {
@@ -1933,7 +5428,7 @@ function drawingBounds(document) {
 function drawingDiagonal(document) {
   const bounds2 = drawingBounds(document);
   const diagonal = Math.hypot(bounds2.maxX - bounds2.minX, bounds2.maxY - bounds2.minY);
-  if (!Number.isFinite(diagonal) || diagonal <= EPSILON) return 1;
+  if (!Number.isFinite(diagonal) || diagonal <= EPSILON$1) return 1;
   return diagonal;
 }
 function boundsOfGeometry(node) {
@@ -1976,7 +5471,7 @@ function shiftBounds(bounds2, dx, dy) {
   return { minX: bounds2.minX + dx, minY: bounds2.minY + dy, maxX: bounds2.maxX + dx, maxY: bounds2.maxY + dy };
 }
 function containsBounds(outer, inner) {
-  return inner.minX >= outer.minX - EPSILON && inner.maxX <= outer.maxX + EPSILON && inner.minY >= outer.minY - EPSILON && inner.maxY <= outer.maxY + EPSILON;
+  return inner.minX >= outer.minX - EPSILON$1 && inner.maxX <= outer.maxX + EPSILON$1 && inner.minY >= outer.minY - EPSILON$1 && inner.maxY <= outer.maxY + EPSILON$1;
 }
 function geometriesCross(left, right) {
   if (left.type === "line" && right.type === "line") return segmentsIntersect(left.start, left.end, right.start, right.end, true);
@@ -1990,14 +5485,14 @@ function geometriesTouch(left, right) {
 }
 function geometriesIntersect(left, right) {
   if (left.type === "circle" && right.type === "circle") {
-    return Math.hypot(left.center[0] - right.center[0], left.center[1] - right.center[1]) <= left.radius + right.radius + EPSILON;
+    return Math.hypot(left.center[0] - right.center[0], left.center[1] - right.center[1]) <= left.radius + right.radius + EPSILON$1;
   }
   if (left.type === "line" && right.type === "line") return segmentsIntersect(left.start, left.end, right.start, right.end, false);
-  if (left.type === "circle" && right.type === "line") return distanceToSegment$1(left.center, right.start, right.end) <= left.radius + EPSILON;
-  if (left.type === "line" && right.type === "circle") return distanceToSegment$1(right.center, left.start, left.end) <= right.radius + EPSILON;
+  if (left.type === "circle" && right.type === "line") return distanceToSegment$1(left.center, right.start, right.end) <= left.radius + EPSILON$1;
+  if (left.type === "line" && right.type === "circle") return distanceToSegment$1(right.center, left.start, left.end) <= right.radius + EPSILON$1;
   const a = boundsOfGeometry(left);
   const b = boundsOfGeometry(right);
-  return a.minX <= b.maxX + EPSILON && a.maxX + EPSILON >= b.minX && a.minY <= b.maxY + EPSILON && a.maxY + EPSILON >= b.minY;
+  return a.minX <= b.maxX + EPSILON$1 && a.maxX + EPSILON$1 >= b.minX && a.minY <= b.maxY + EPSILON$1 && a.maxY + EPSILON$1 >= b.minY;
 }
 function segmentsIntersect(a, b, c, d, proper) {
   const cross2 = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
@@ -2005,13 +5500,13 @@ function segmentsIntersect(a, b, c, d, proper) {
   const abD = cross2(a, b, d);
   const cdA = cross2(c, d, a);
   const cdB = cross2(c, d, b);
-  return proper ? abC * abD < -EPSILON && cdA * cdB < -EPSILON : abC * abD <= EPSILON && cdA * cdB <= EPSILON && Math.max(Math.min(a[0], b[0]), Math.min(c[0], d[0])) <= Math.min(Math.max(a[0], b[0]), Math.max(c[0], d[0])) + EPSILON && Math.max(Math.min(a[1], b[1]), Math.min(c[1], d[1])) <= Math.min(Math.max(a[1], b[1]), Math.max(c[1], d[1])) + EPSILON;
+  return proper ? abC * abD < -EPSILON$1 && cdA * cdB < -EPSILON$1 : abC * abD <= EPSILON$1 && cdA * cdB <= EPSILON$1 && Math.max(Math.min(a[0], b[0]), Math.min(c[0], d[0])) <= Math.min(Math.max(a[0], b[0]), Math.max(c[0], d[0])) + EPSILON$1 && Math.max(Math.min(a[1], b[1]), Math.min(c[1], d[1])) <= Math.min(Math.max(a[1], b[1]), Math.max(c[1], d[1])) + EPSILON$1;
 }
 function distanceToSegment$1(point, start, end) {
   const dx = end[0] - start[0];
   const dy = end[1] - start[1];
   const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared <= EPSILON) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  if (lengthSquared <= EPSILON$1) return Math.hypot(point[0] - start[0], point[1] - start[1]);
   const ratio = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
   return Math.hypot(point[0] - (start[0] + ratio * dx), point[1] - (start[1] + ratio * dy));
 }
@@ -2377,8 +5872,13 @@ function boundsOfNode(node) {
       return fromPoints(node.points);
     case "centerline":
       return fromPoints([node.start, node.end]);
-    case "section-hatch":
-      return fromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+    case "section-hatch": {
+      if (node.hatch !== void 0) {
+        const normalized = normalizeHatchRegion(node.hatch, 1e-3);
+        return normalized.status === "ok" ? normalized.region.bounds : null;
+      }
+      return fromPoints((node.segments ?? []).flatMap(({ start, end }) => [start, end]));
+    }
   }
 }
 function fromPoints(points) {
@@ -2446,8 +5946,8 @@ class WorldModelCompiler {
   compile(document, revision, request = {}) {
     var _a3, _b, _c;
     const tolerance = positive$2(request.tolerance, 1e-6);
-    const curveSamples = integer$1(request.curveSamples, 8, 512, 64);
-    const limit = integer$1(request.limit, 1, 2e3, 2e3);
+    const curveSamples = integer$2(request.curveSamples, 8, 512, 64);
+    const limit = integer$2(request.limit, 1, 2e3, 2e3);
     const requested = request.nodeIds ? new Set(request.nodeIds) : null;
     const allCandidates = document.geometry.filter((node) => (!requested || requested.has(String(node.id))) && (!request.bounds || boundsIntersect(geometryBounds$1(node), request.bounds)));
     const effectiveScopeBounds = request.bounds ? structuredClone(request.bounds) : unionSpatialBounds(allCandidates.map(geometryBounds$1));
@@ -2802,7 +6302,7 @@ function canonicalize$1(value2) {
   if (!value2 || typeof value2 !== "object") return value2;
   return Object.fromEntries(Object.entries(value2).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonicalize$1(child)]));
 }
-function integer$1(value2, minimum, maximum, fallback) {
+function integer$2(value2, minimum, maximum, fallback) {
   if (value2 === void 0) return fallback;
   if (!Number.isInteger(value2) || value2 < minimum || value2 > maximum) throw new Error("WORLD_MODEL_REQUEST_INVALID");
   return value2;
@@ -3431,30 +6931,319 @@ function rejected$2(code, message, line2) {
     diagnostics: [{ severity: "error", code, message, ...line2 === void 0 ? {} : { line: line2 } }]
   };
 }
+const EPSILON = 1e-8;
+function projectHatchPattern(pairs) {
+  var _a3, _b;
+  const subclassIndex = pairs.findIndex((pair2) => pair2.code === 100 && pair2.value.trim() === "AcDbHatch");
+  if (subclassIndex < 0) return null;
+  const header = pairs.slice(subclassIndex + 1);
+  const boundaryCountIndex = header.findIndex((pair2) => pair2.code === 91);
+  if (boundaryCountIndex < 0 || integerValue(header.slice(0, boundaryCountIndex), 70, 0) !== 0) return null;
+  const pattern = ((_a3 = value$1(header.slice(0, boundaryCountIndex), 2)) == null ? void 0 : _a3.trim()) || "USER";
+  const cursor = new PairCursor(header, boundaryCountIndex + 1);
+  const boundaryCount = integer$1((_b = header[boundaryCountIndex]) == null ? void 0 : _b.value, 0);
+  const boundaryPaths = [];
+  for (let index = 0; index < boundaryCount; index += 1) {
+    const flagsValue = cursor.number(92);
+    if (flagsValue === void 0) return null;
+    const flags = Math.trunc(flagsValue);
+    const parsed = (flags & 2) === 2 ? parsePolylineBoundary(cursor) : parseEdgeBoundary(cursor);
+    if (parsed === null) return null;
+    boundaryPaths.push({ flags, closed: parsed.closed, edges: parsed.edges.map(toHatchBoundaryEdge) });
+    if (!skipBoundaryReferences(cursor)) return null;
+  }
+  if (boundaryPaths.length === 0) return null;
+  const remaining = header.slice(cursor.index);
+  const patternAngle = numberValue(remaining, 52, 0);
+  const patternScale = numberValue(remaining, 41, 1);
+  if (!(patternScale > 0)) return null;
+  const patternLineCountOffset = remaining.findIndex((pair2) => pair2.code === 78);
+  if (patternLineCountOffset < 0) return null;
+  cursor.index += patternLineCountOffset;
+  const patternLineCount = Math.max(0, Math.trunc(cursor.number(78) ?? 0));
+  const patternLines = [];
+  for (let index = 0; index < patternLineCount; index += 1) {
+    const angle = cursor.number(53);
+    const base2 = cursor.point(43, 44, false);
+    const offset = cursor.point(45, 46, false);
+    const dashCount = Math.max(0, Math.trunc(cursor.number(79) ?? 0));
+    if (angle === void 0 || base2 === void 0 || offset === void 0) return null;
+    const dashLengths = [];
+    for (let dashIndex = 0; dashIndex < dashCount; dashIndex += 1) {
+      const dash = cursor.number(49);
+      if (dash === void 0) return null;
+      dashLengths.push(dash);
+    }
+    patternLines.push({ angle, base: base2, offset, dashLengths });
+  }
+  if (patternLines.length === 0) return null;
+  const hatch = {
+    version: 1,
+    style: hatchStyle(integerValue(remaining, 75, 0)),
+    elevation: numberValue(header.slice(0, boundaryCountIndex), 30, 0),
+    extrusion: [
+      numberValue(header.slice(0, boundaryCountIndex), 210, 0),
+      numberValue(header.slice(0, boundaryCountIndex), 220, 0),
+      numberValue(header.slice(0, boundaryCountIndex), 230, 1)
+    ],
+    boundaryPaths,
+    patternLines,
+    patternAngle,
+    patternScale,
+    double: integerValue(remaining, 77, 0) !== 0
+  };
+  const representative = transformPatternLine(patternLines[0], patternAngle, patternScale);
+  const radians = representative.angle * Math.PI / 180;
+  const spacing = Math.abs(dot(representative.offset, [-Math.sin(radians), Math.cos(radians)]));
+  if (!(spacing > EPSILON)) return null;
+  return { pattern, angle: clean(normalizeDegrees$1(representative.angle)), spacing: clean(spacing), hatch };
+}
+function parsePolylineBoundary(cursor) {
+  const hasBulge = Math.trunc(cursor.number(72) ?? 0) !== 0;
+  const closed = Math.trunc(cursor.number(73) ?? 0) !== 0;
+  const vertexCount = Math.max(0, Math.trunc(cursor.number(93) ?? 0));
+  const vertices = [];
+  for (let index = 0; index < vertexCount; index += 1) {
+    const point = cursor.point(10, 20);
+    const bulge = hasBulge && cursor.peekCode() === 42 ? cursor.number(42) ?? 0 : 0;
+    if (point === void 0) return null;
+    vertices.push({ point, bulge });
+  }
+  if (vertices.length < (closed ? 3 : 2)) return null;
+  const edges = [];
+  const edgeCount = closed ? vertices.length : vertices.length - 1;
+  for (let index = 0; index < edgeCount; index += 1) {
+    const current = vertices[index];
+    const next = vertices[(index + 1) % vertices.length];
+    edges.push(Math.abs(current.bulge) <= EPSILON ? { kind: "line", start: current.point, end: next.point } : bulgeArc(current.point, next.point, current.bulge));
+  }
+  return { edges, closed };
+}
+function parseEdgeBoundary(cursor) {
+  const edgeCount = Math.max(0, Math.trunc(cursor.number(93) ?? 0));
+  const edges = [];
+  for (let index = 0; index < edgeCount; index += 1) {
+    const type = Math.trunc(cursor.number(72) ?? 0);
+    if (type === 1) {
+      const start = cursor.point(10, 20);
+      const end = cursor.point(11, 21);
+      if (start === void 0 || end === void 0) return null;
+      edges.push({ kind: "line", start, end });
+    } else if (type === 2) {
+      const center2 = cursor.point(10, 20);
+      const radius = cursor.number(40);
+      const startAngle = cursor.number(50);
+      const endAngle = cursor.number(51);
+      const counterClockwise = Math.trunc(cursor.number(73) ?? 0) !== 0;
+      if (center2 === void 0 || !(radius && radius > 0) || startAngle === void 0 || endAngle === void 0) return null;
+      edges.push({ kind: "arc", center: center2, radius, startAngle, endAngle, counterClockwise });
+    } else if (type === 3) {
+      const center2 = cursor.point(10, 20);
+      const majorAxis = cursor.point(11, 21);
+      const ratio = cursor.number(40);
+      const startParam = cursor.number(50);
+      const endParam = cursor.number(51);
+      const counterClockwise = Math.trunc(cursor.number(73) ?? 0) !== 0;
+      if (center2 === void 0 || majorAxis === void 0 || !(ratio && ratio > 0) || startParam === void 0 || endParam === void 0) return null;
+      edges.push({ kind: "ellipse", center: center2, majorAxis, ratio, startParam, endParam, counterClockwise });
+    } else if (type === 4) {
+      const spline2 = parseSplineEdge(cursor);
+      if (spline2 === null) return null;
+      edges.push(spline2);
+    } else return null;
+  }
+  return edges.length === 0 ? null : { edges, closed: true };
+}
+function parseSplineEdge(cursor) {
+  const degree = Math.max(1, Math.trunc(cursor.number(94) ?? 0));
+  const rational = Math.trunc(cursor.number(73) ?? 0) !== 0;
+  const periodic = Math.trunc(cursor.number(74) ?? 0) !== 0;
+  const knotCount = Math.max(0, Math.trunc(cursor.number(95) ?? 0));
+  const controlCount = Math.max(0, Math.trunc(cursor.number(96) ?? 0));
+  const knots = [];
+  for (let index = 0; index < knotCount; index += 1) {
+    const knot = cursor.number(40);
+    if (knot === void 0) return null;
+    knots.push(knot);
+  }
+  const controlPoints = [];
+  const weights = [];
+  for (let index = 0; index < controlCount; index += 1) {
+    const point = cursor.point(10, 20);
+    if (point === void 0) return null;
+    controlPoints.push(point);
+    if (rational) {
+      const weight = cursor.number(42);
+      if (!(weight && weight > 0)) return null;
+      weights.push(weight);
+    } else if (cursor.peekCode() === 42) cursor.number(42);
+  }
+  const fitPoints = [];
+  if (cursor.peekCode() === 97) {
+    const count = Math.max(0, Math.trunc(cursor.number(97) ?? 0));
+    for (let index = 0; index < count; index += 1) {
+      const point = cursor.point(11, 21);
+      if (point === void 0) return null;
+      fitPoints.push(point);
+    }
+  }
+  if (controlPoints.length <= degree || knots.length !== controlPoints.length + degree + 1) return null;
+  return {
+    kind: "spline",
+    degree,
+    rational,
+    periodic,
+    controlPoints,
+    knots,
+    ...weights.length === controlPoints.length ? { weights } : {},
+    ...fitPoints.length > 0 ? { fitPoints } : {}
+  };
+}
+function toHatchBoundaryEdge(edge) {
+  if (edge.kind === "line") return { type: "line", start: edge.start, end: edge.end };
+  if (edge.kind === "arc") return { type: "arc", center: edge.center, radius: edge.radius, startAngle: edge.startAngle, endAngle: edge.endAngle, counterClockwise: edge.counterClockwise };
+  if (edge.kind === "ellipse") return { type: "ellipse", center: edge.center, majorAxis: edge.majorAxis, axisRatio: edge.ratio, startParameter: edge.startParam, endParameter: edge.endParam, counterClockwise: edge.counterClockwise };
+  return {
+    type: "spline",
+    degree: edge.degree,
+    rational: edge.rational,
+    periodic: edge.periodic,
+    knots: edge.knots,
+    controlPoints: edge.controlPoints,
+    ...edge.weights === void 0 ? {} : { weights: edge.weights },
+    ...edge.fitPoints === void 0 ? {} : { fitPoints: edge.fitPoints }
+  };
+}
+function skipBoundaryReferences(cursor) {
+  if (cursor.peekCode() !== 97) return true;
+  const count = Math.max(0, Math.trunc(cursor.number(97) ?? 0));
+  for (let index = 0; index < count; index += 1) if (cursor.number(330) === void 0) return false;
+  return true;
+}
+function transformPatternLine(line2, angle, scale2) {
+  const radians = angle * Math.PI / 180;
+  const rotateScale = ([x, y]) => [
+    scale2 * (x * Math.cos(radians) - y * Math.sin(radians)),
+    scale2 * (x * Math.sin(radians) + y * Math.cos(radians))
+  ];
+  return {
+    angle: line2.angle + angle,
+    base: rotateScale(line2.base),
+    offset: rotateScale(line2.offset),
+    dashLengths: line2.dashLengths.map((value2) => value2 * scale2)
+  };
+}
+function bulgeArc(start, end, bulge) {
+  const chord = Math.hypot(end[0] - start[0], end[1] - start[1]);
+  const sweep = 4 * Math.atan(bulge);
+  const radius = Math.abs(chord / (2 * Math.sin(sweep / 2)));
+  const midpoint = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
+  const chordAngle = Math.atan2(end[1] - start[1], end[0] - start[0]);
+  const offset = chord / (2 * Math.tan(sweep / 2));
+  const center2 = [midpoint[0] - Math.sin(chordAngle) * offset, midpoint[1] + Math.cos(chordAngle) * offset];
+  return {
+    kind: "arc",
+    center: center2,
+    radius,
+    startAngle: Math.atan2(start[1] - center2[1], start[0] - center2[0]) * 180 / Math.PI,
+    endAngle: Math.atan2(end[1] - center2[1], end[0] - center2[0]) * 180 / Math.PI,
+    counterClockwise: bulge > 0
+  };
+}
+class PairCursor {
+  constructor(pairs, index) {
+    this.pairs = pairs;
+    this.index = index;
+  }
+  peekCode() {
+    var _a3;
+    return (_a3 = this.pairs[this.index]) == null ? void 0 : _a3.code;
+  }
+  number(code) {
+    const pair2 = this.pairs[this.index];
+    if ((pair2 == null ? void 0 : pair2.code) !== code) return void 0;
+    this.index += 1;
+    const parsed = Number.parseFloat(pair2.value.trim());
+    return Number.isFinite(parsed) ? parsed : void 0;
+  }
+  point(xCode, yCode, consumeZ = true) {
+    const x = this.number(xCode);
+    const y = this.number(yCode);
+    if (x === void 0 || y === void 0) return void 0;
+    if (consumeZ && this.peekCode() === xCode + 20) this.number(xCode + 20);
+    return [x, y];
+  }
+}
+function hatchStyle(value2) {
+  return value2 === 1 ? "outer" : value2 === 2 ? "ignore" : "normal";
+}
+function value$1(pairs, code) {
+  var _a3;
+  return (_a3 = pairs.find((pair2) => pair2.code === code)) == null ? void 0 : _a3.value;
+}
+function numberValue(pairs, code, fallback) {
+  var _a3;
+  const parsed = Number.parseFloat(((_a3 = value$1(pairs, code)) == null ? void 0 : _a3.trim()) ?? "");
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function integerValue(pairs, code, fallback) {
+  return Math.trunc(numberValue(pairs, code, fallback));
+}
+function integer$1(input, fallback) {
+  const parsed = Number.parseInt((input == null ? void 0 : input.trim()) ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function dot(first, second) {
+  return first[0] * second[0] + first[1] * second[1];
+}
+function clean(input) {
+  const rounded = Math.round(input * 1e9) / 1e9;
+  return Math.abs(rounded) <= 1e-12 ? 0 : rounded;
+}
+function normalizeDegrees$1(input) {
+  return (input % 360 + 360) % 360;
+}
 function projectHatch(record2, context) {
-  const points = hatchBoundaryPoints(record2);
-  const segments = points.length < 2 ? [] : points.map((start, index) => ({
-    start,
-    end: points[(index + 1) % points.length]
-  }));
+  const projected = projectHatchPattern(record2.pairs);
+  if (projected === null) {
+    context.diagnostics.push({
+      severity: "warning",
+      code: "DXF_HATCH_UNSUPPORTED",
+      message: "HATCH semantics could not be parsed safely",
+      ...record2.pairs[0] === void 0 ? {} : { line: record2.pairs[0].line }
+    });
+    return void 0;
+  }
+  const validation = normalizeHatchRegion(projected.hatch, hatchTolerance(projected.hatch));
+  if (validation.status !== "ok") {
+    context.diagnostics.push({
+      severity: "warning",
+      code: validation.code === "HATCH_BOUNDARY_OPEN" ? "DXF_HATCH_BOUNDARY_OPEN" : `DXF_${validation.code}`,
+      message: `HATCH semantics retained but its boundary cannot be rendered: ${validation.code}`,
+      ...record2.pairs[0] === void 0 ? {} : { line: record2.pairs[0].line }
+    });
+  }
   return {
     id: context.nodeId(record2, "annotation"),
     type: "section-hatch",
     visible: true,
     quality: { status: "confirmed", evidenceRefs: [] },
     sourceRef: sourceRef(record2, context.sourceId),
-    pattern: value(record2, 2) ?? "SOLID",
-    angle: number$2(record2, 52, 0),
-    spacing: Math.abs(number$2(record2, 41, 1)),
-    segments
+    pattern: projected.pattern,
+    angle: projected.angle,
+    spacing: projected.spacing,
+    hatch: projected.hatch
   };
 }
-function hatchBoundaryPoints(record2) {
-  const points = coordinates(record2);
-  if (points.length <= 1) return points;
-  const first = points[0];
-  const rest = points.slice(1);
-  return rest.length >= 2 && first[0] === 0 && first[1] === 0 ? rest : points;
+function hatchTolerance(hatch) {
+  const coordinates2 = hatch.boundaryPaths.flatMap(({ edges }) => edges.flatMap((edge) => {
+    if (edge.type === "line") return [...edge.start, ...edge.end];
+    if (edge.type === "arc") return [...edge.center, edge.radius];
+    if (edge.type === "ellipse") return [...edge.center, ...edge.majorAxis];
+    return edge.controlPoints.flat();
+  }));
+  const extent = Math.max(...coordinates2.map(Math.abs), 1);
+  return Math.min(0.05, Math.max(1e-6, extent * 1e-6));
 }
 function readEntityRecords(pairs) {
   const records = [];
@@ -9378,6 +13167,56 @@ const datumReferenceSchema = object$1({
   geometryId: idSchema,
   anchor: entityAnchorSchema
 }).strict();
+const hatchBoundaryEdgeSchema = discriminatedUnion("type", [
+  object$1({ type: literal$1("line"), start: vec2Schema, end: vec2Schema }).strict(),
+  object$1({
+    type: literal$1("arc"),
+    center: vec2Schema,
+    radius: number().positive(),
+    startAngle: number(),
+    endAngle: number(),
+    counterClockwise: boolean()
+  }).strict(),
+  object$1({
+    type: literal$1("ellipse"),
+    center: vec2Schema,
+    majorAxis: vec2Schema,
+    axisRatio: number().positive(),
+    startParameter: number(),
+    endParameter: number(),
+    counterClockwise: boolean()
+  }).strict(),
+  object$1({
+    type: literal$1("spline"),
+    degree: number().int().positive(),
+    rational: boolean(),
+    periodic: boolean(),
+    knots: array$1(number()),
+    controlPoints: array$1(vec2Schema),
+    weights: array$1(number()).optional(),
+    fitPoints: array$1(vec2Schema).optional()
+  }).strict()
+]);
+const parametricHatchSchema = object$1({
+  version: literal$1(1),
+  style: _enum(["normal", "outer", "ignore"]),
+  elevation: number(),
+  extrusion: tuple([number(), number(), number()]),
+  boundaryPaths: array$1(object$1({
+    flags: number().int().nonnegative(),
+    closed: boolean(),
+    edges: array$1(hatchBoundaryEdgeSchema).min(1)
+  }).strict()).min(1),
+  patternLines: array$1(object$1({
+    angle: number(),
+    base: vec2Schema,
+    offset: vec2Schema,
+    dashLengths: array$1(number())
+  }).strict()),
+  patternAngle: number(),
+  patternScale: number().positive(),
+  double: boolean()
+}).strict();
 const annotationSchema = discriminatedUnion("type", [
   object$1({
     ...baseNodeShape,
@@ -9434,8 +13273,11 @@ const annotationSchema = discriminatedUnion("type", [
     pattern: string$1(),
     angle: number(),
     spacing: number(),
-    segments: array$1(object$1({ start: vec2Schema, end: vec2Schema }).strict())
-  }).strict()
+    hatch: parametricHatchSchema.optional(),
+    segments: array$1(object$1({ start: vec2Schema, end: vec2Schema }).strict()).optional()
+  }).strict().refine((value2) => value2.hatch !== void 0 || value2.segments !== void 0, {
+    message: "SECTION_HATCH_REPRESENTATION_REQUIRED"
+  })
 ]);
 const relationSchema = discriminatedUnion("plane", [
   object$1({
@@ -10013,6 +13855,10 @@ object$1({
     context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
   }
 });
+object$1({
+  expectedDrawingRef: drawingRefSchema$1,
+  engineeringDocuments: array$1(engineeringDocumentInputSchema).min(1).max(16)
+}).strict();
 const engineeringDiagnosticSchema = object$1({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),
@@ -10123,6 +13969,7 @@ object$1({
   message: string$1().optional(),
   updatedAt: number().finite()
 }).strict();
+const CURRENT_DXF_PROJECTION_VERSION = 2;
 class InMemoryDrawingRepository {
   constructor(input) {
     __privateAdd(this, _InMemoryDrawingRepository_instances);
@@ -10209,7 +14056,7 @@ class InMemoryDrawingRepository {
   async importDxf(sessionId, input) {
     var _a3, _b, _c, _d;
     const current = __privateMethod(this, _InMemoryDrawingRepository_instances, getDrawing_fn).call(this, sessionId);
-    if ((current == null ? void 0 : current.attachmentId) === input.digest) {
+    if ((current == null ? void 0 : current.attachmentId) === input.digest && current.dxfProjectionVersion === CURRENT_DXF_PROJECTION_VERSION) {
       return {
         status: "already-imported",
         ref: { drawingId: current.drawingId, revision: current.revision },
@@ -10239,6 +14086,7 @@ class InMemoryDrawingRepository {
     const provisional = imported.diagnostics.some(({ severity }) => severity === "warning");
     const entry = {
       attachmentId: actualDigest,
+      dxfProjectionVersion: CURRENT_DXF_PROJECTION_VERSION,
       document: structuredClone(imported.document),
       drawingId,
       bounds: structuredClone(imported.bounds),
@@ -10892,6 +14740,7 @@ class FileDrawingRepositoryStorage {
       if (snapshot === null || snapshot.source === void 0) return null;
       return {
         attachmentId: value2.attachmentId,
+        ...typeof value2.dxfProjectionVersion === "number" ? { dxfProjectionVersion: value2.dxfProjectionVersion } : {},
         document: snapshot.document,
         drawingId: snapshot.ref.drawingId,
         bounds: value2.bounds,
@@ -10909,6 +14758,7 @@ class FileDrawingRepositoryStorage {
     const value2 = {
       version: 1,
       attachmentId: entry.attachmentId,
+      ...entry.dxfProjectionVersion === void 0 ? {} : { dxfProjectionVersion: entry.dxfProjectionVersion },
       bounds: structuredClone(entry.bounds),
       snapshot: snapshotForStorage(entry)
     };
@@ -10945,6 +14795,7 @@ class FileDrawingRepositoryStorage {
       version: 2,
       entry: {
         attachmentId: state.entry.attachmentId,
+        ...state.entry.dxfProjectionVersion === void 0 ? {} : { dxfProjectionVersion: state.entry.dxfProjectionVersion },
         bounds: structuredClone(state.entry.bounds),
         snapshot: snapshotForStorage(state.entry)
       },
@@ -10987,6 +14838,7 @@ function entryFromStored(value2) {
   if (!snapshot.success || snapshot.data.source === void 0) return null;
   return {
     attachmentId: value2.attachmentId,
+    ...typeof value2.dxfProjectionVersion === "number" ? { dxfProjectionVersion: value2.dxfProjectionVersion } : {},
     document: snapshot.data.document,
     drawingId: snapshot.data.ref.drawingId,
     bounds: value2.bounds,
@@ -14601,8 +18453,14 @@ function renderNode(node, color) {
       return `<polyline points="${node.points.map((point) => point.join(",")).join(" ")}" ${style}/>${textBox(node.points.at(-1) ?? [0, 0], node.textHeight, node.content, color)}`;
     case "centerline":
       return `<line x1="${node.start[0]}" y1="${node.start[1]}" x2="${node.end[0]}" y2="${node.end[1]}" stroke-dasharray="8 4" ${style}/>`;
-    case "section-hatch":
-      return node.segments.map(({ start, end }) => `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" ${style}/>`).join("");
+    case "section-hatch": {
+      if (node.hatch === void 0) return (node.segments ?? []).map(({ start, end }) => `<line x1="${start[0]}" y1="${start[1]}" x2="${end[0]}" y2="${end[1]}" ${style}/>`).join("");
+      const result = createHatchRenderPlan(node.hatch, 0.01);
+      if (result.status !== "ok") return "";
+      const clipId = `hatch-${String(node.id).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+      const path = result.plan.region.contours.map((contour) => contour.length === 0 ? "" : `M ${contour[0][0]} ${contour[0][1]} ${contour.slice(1).map(([x, y]) => `L ${x} ${y}`).join(" ")} Z`).join(" ");
+      return `<defs><clipPath id="${clipId}"><path d="${path}" fill-rule="${result.plan.region.fillRule}" clip-rule="${result.plan.region.fillRule}"/></clipPath></defs>${result.plan.lines.map((line2) => `<line x1="${line2.start[0]}" y1="${line2.start[1]}" x2="${line2.end[0]}" y2="${line2.end[1]}" clip-path="url(#${clipId})" ${style}/>`).join("")}`;
+    }
   }
 }
 function validateWorldOverlays(overlays) {
@@ -14658,8 +18516,16 @@ function center(node) {
       return [...node.points.at(-1) ?? [0, 0]];
     case "centerline":
       return [(node.start[0] + node.end[0]) / 2, (node.start[1] + node.end[1]) / 2];
-    case "section-hatch":
-      return average(node.segments.flatMap(({ start, end }) => [start, end]));
+    case "section-hatch": {
+      if (node.hatch !== void 0) {
+        const normalized = normalizeHatchRegion(node.hatch, 0.01);
+        if (normalized.status === "ok") return [
+          (normalized.region.bounds.minX + normalized.region.bounds.maxX) / 2,
+          (normalized.region.bounds.minY + normalized.region.bounds.maxY) / 2
+        ];
+      }
+      return average((node.segments ?? []).flatMap(({ start, end }) => [start, end]));
+    }
   }
 }
 function average(points) {

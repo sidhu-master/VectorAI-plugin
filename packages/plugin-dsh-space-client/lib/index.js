@@ -3115,6 +3115,8 @@ function DrawingSurfaceHost({
       {
         "data-drawing-surface-contribution": contribution.id,
         "data-drawing-surface-namespace": contribution.id,
+        "data-conversation-workspace-active": "",
+        style: { display: "flex", flex: "1 1 auto", minWidth: 0, minHeight: 0 },
         children: /* @__PURE__ */ jsxRuntimeExports.jsx(
           SpecializedWorkspace,
           {

@@ -19,7 +19,7 @@ import {
   AnnotationSessionStateStore,
   FileAnnotationSessionStorage,
 } from './session-state';
-import { createEngineeringAnnotationTool } from './tools';
+import { createEngineeringAnnotationTool, createPartitionStatusTool } from './tools';
 import { FilePartitionStorage, PartitionSessionStore } from './partition-store';
 import { PartitionWorkflowService } from './partition-service';
 import { createPartitionSemanticReviewer } from './semantic-reviewer';
@@ -57,7 +57,8 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       this.sessions,
       createPartitionSemanticReviewer(ctx, ctx.drawingSpace),
     );
-    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions)));
+    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions, this.partitions)));
+    ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.on('session/disposed', (session) => this.sessions.disposeSession(String(session.id)));
   }
 
@@ -94,6 +95,11 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   cancelPartition(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
     return this.partitionWorkflow.cancel(agent, expected);
+  }
+
+  @Remote
+  reopenPartition(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
+    return this.partitionWorkflow.reopen(agent, expected);
   }
 
   @Remote

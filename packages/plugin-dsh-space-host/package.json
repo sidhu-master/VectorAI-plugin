@@ -42,6 +42,7 @@
     "@vectorai/drawing-core": "workspace:*",
     "@vectorai/drawing-edit-core": "workspace:*",
     "@vectorai/drawing-edit-protocol": "workspace:*",
+    "@vectorai/drawing-hatch": "workspace:*",
     "@vectorai/drawing-spatial": "workspace:*",
     "@vectorai/dxf-import": "workspace:*",
     "@vectorai/plugin-space-contracts": "workspace:*",

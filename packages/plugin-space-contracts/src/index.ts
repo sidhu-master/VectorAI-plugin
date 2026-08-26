@@ -156,6 +156,42 @@ const datumReferenceSchema = z.object({
   anchor: entityAnchorSchema,
 }).strict();
 
+const hatchBoundaryEdgeSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('line'), start: vec2Schema, end: vec2Schema }).strict(),
+  z.object({
+    type: z.literal('arc'), center: vec2Schema, radius: z.number().positive(),
+    startAngle: z.number(), endAngle: z.number(), counterClockwise: z.boolean(),
+  }).strict(),
+  z.object({
+    type: z.literal('ellipse'), center: vec2Schema, majorAxis: vec2Schema,
+    axisRatio: z.number().positive(), startParameter: z.number(), endParameter: z.number(),
+    counterClockwise: z.boolean(),
+  }).strict(),
+  z.object({
+    type: z.literal('spline'), degree: z.number().int().positive(), rational: z.boolean(),
+    periodic: z.boolean(), knots: z.array(z.number()), controlPoints: z.array(vec2Schema),
+    weights: z.array(z.number()).optional(), fitPoints: z.array(vec2Schema).optional(),
+  }).strict(),
+]);
+
+const parametricHatchSchema = z.object({
+  version: z.literal(1),
+  style: z.enum(['normal', 'outer', 'ignore']),
+  elevation: z.number(),
+  extrusion: z.tuple([z.number(), z.number(), z.number()]),
+  boundaryPaths: z.array(z.object({
+    flags: z.number().int().nonnegative(),
+    closed: z.boolean(),
+    edges: z.array(hatchBoundaryEdgeSchema).min(1),
+  }).strict()).min(1),
+  patternLines: z.array(z.object({
+    angle: z.number(), base: vec2Schema, offset: vec2Schema, dashLengths: z.array(z.number()),
+  }).strict()),
+  patternAngle: z.number(),
+  patternScale: z.number().positive(),
+  double: z.boolean(),
+}).strict();
+
 const annotationSchema = z.discriminatedUnion('type', [
   z.object({
     ...baseNodeShape,
@@ -212,8 +248,11 @@ const annotationSchema = z.discriminatedUnion('type', [
     pattern: z.string(),
     angle: z.number(),
     spacing: z.number(),
-    segments: z.array(z.object({ start: vec2Schema, end: vec2Schema }).strict()),
-  }).strict(),
+    hatch: parametricHatchSchema.optional(),
+    segments: z.array(z.object({ start: vec2Schema, end: vec2Schema }).strict()).optional(),
+  }).strict().refine((value) => value.hatch !== undefined || value.segments !== undefined, {
+    message: 'SECTION_HATCH_REPRESENTATION_REQUIRED',
+  }),
 ]);
 
 const relationSchema = z.discriminatedUnion('plane', [

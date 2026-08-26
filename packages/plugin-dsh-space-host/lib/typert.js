@@ -5475,6 +5475,56 @@ const datumReferenceSchema = object({
   geometryId: idSchema,
   anchor: entityAnchorSchema
 }).strict();
+const hatchBoundaryEdgeSchema = discriminatedUnion("type", [
+  object({ type: literal("line"), start: vec2Schema, end: vec2Schema }).strict(),
+  object({
+    type: literal("arc"),
+    center: vec2Schema,
+    radius: number().positive(),
+    startAngle: number(),
+    endAngle: number(),
+    counterClockwise: boolean()
+  }).strict(),
+  object({
+    type: literal("ellipse"),
+    center: vec2Schema,
+    majorAxis: vec2Schema,
+    axisRatio: number().positive(),
+    startParameter: number(),
+    endParameter: number(),
+    counterClockwise: boolean()
+  }).strict(),
+  object({
+    type: literal("spline"),
+    degree: number().int().positive(),
+    rational: boolean(),
+    periodic: boolean(),
+    knots: array(number()),
+    controlPoints: array(vec2Schema),
+    weights: array(number()).optional(),
+    fitPoints: array(vec2Schema).optional()
+  }).strict()
+]);
+const parametricHatchSchema = object({
+  version: literal(1),
+  style: _enum(["normal", "outer", "ignore"]),
+  elevation: number(),
+  extrusion: tuple([number(), number(), number()]),
+  boundaryPaths: array(object({
+    flags: number().int().nonnegative(),
+    closed: boolean(),
+    edges: array(hatchBoundaryEdgeSchema).min(1)
+  }).strict()).min(1),
+  patternLines: array(object({
+    angle: number(),
+    base: vec2Schema,
+    offset: vec2Schema,
+    dashLengths: array(number())
+  }).strict()),
+  patternAngle: number(),
+  patternScale: number().positive(),
+  double: boolean()
+}).strict();
 const annotationSchema = discriminatedUnion("type", [
   object({
     ...baseNodeShape,
@@ -5531,8 +5581,11 @@ const annotationSchema = discriminatedUnion("type", [
     pattern: string(),
     angle: number(),
     spacing: number(),
-    segments: array(object({ start: vec2Schema, end: vec2Schema }).strict())
-  }).strict()
+    hatch: parametricHatchSchema.optional(),
+    segments: array(object({ start: vec2Schema, end: vec2Schema }).strict()).optional()
+  }).strict().refine((value) => value.hatch !== void 0 || value.segments !== void 0, {
+    message: "SECTION_HATCH_REPRESENTATION_REQUIRED"
+  })
 ]);
 const relationSchema = discriminatedUnion("plane", [
   object({
@@ -6111,6 +6164,10 @@ object({
     context.addIssue({ code: "custom", path: ["engineeringDocuments"], message: "ENGINEERING_DOCUMENT_INPUT_AMBIGUOUS" });
   }
 });
+object({
+  expectedDrawingRef: drawingRefSchema,
+  engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
+}).strict();
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),

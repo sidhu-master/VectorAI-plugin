@@ -9,6 +9,7 @@ import {
   type SemanticFeature,
   type Vec2,
 } from '@vectorai/drawing-core';
+import { normalizeHatchRegion } from '@vectorai/drawing-hatch';
 
 export interface SpatialBounds2D {
   minX: number;
@@ -240,7 +241,13 @@ function boundsOfNode(node: Exclude<GeometryNode, { type: 'ray' | 'xline' }> | A
     case 'dimension': return fromPoints([...node.definitionPoints, node.textPosition]);
     case 'leader': return fromPoints(node.points);
     case 'centerline': return fromPoints([node.start, node.end]);
-    case 'section-hatch': return fromPoints(node.segments.flatMap(({ start, end }) => [start, end]));
+    case 'section-hatch': {
+      if (node.hatch !== undefined) {
+        const normalized = normalizeHatchRegion(node.hatch, 0.001);
+        return normalized.status === 'ok' ? normalized.region.bounds : null;
+      }
+      return fromPoints((node.segments ?? []).flatMap(({ start, end }) => [start, end]));
+    }
   }
 }
 

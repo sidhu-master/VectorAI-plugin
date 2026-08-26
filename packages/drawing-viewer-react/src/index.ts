@@ -49,4 +49,7 @@ export type { DrawingWorkspaceProviderProps } from './provider';
 export { ObjectList } from './panels/ObjectList';
 export { PropertyInspector } from './panels/PropertyInspector';
 export { WorkspaceStatus } from './panels/WorkspaceStatus';
-export { WorkspaceToolbar } from './panels/WorkspaceToolbar';
+export { WorkspaceToolbar, WorkspaceToolbarView } from './panels/WorkspaceToolbar';
+export type { WorkspaceToolbarHistory, WorkspaceToolbarProps, WorkspaceToolbarViewProps } from './panels/WorkspaceToolbar';
+export { WorkspaceActivityBar } from './panels/WorkspaceActivityBar';
+export type { WorkspaceActivityBarProps, WorkspacePanelDefinition, WorkspacePanelId } from './panels/WorkspaceActivityBar';

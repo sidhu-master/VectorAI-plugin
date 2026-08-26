@@ -12,6 +12,7 @@ export interface PartitionRemote {
   editPartition(sessionId: string, command: PartitionEditCommand): Promise<RemoteResult<PartitionSessionSnapshot>>;
   confirmPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
   cancelPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
+  reopenPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
   undoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
   redoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
 }
@@ -30,7 +31,7 @@ export interface PartitionController {
     splitSegment(segmentId: string, z: number, snapTolerance: number): Promise<void>;
     mergeBoundary(boundaryIndex: number): Promise<void>;
     updateSegment(segmentId: string, value: { name?: string; semanticType?: string }): Promise<void>;
-    confirm(): Promise<void>; cancel(): Promise<void>; undo(): Promise<void>; redo(): Promise<void>;
+    confirm(): Promise<void>; cancel(): Promise<void>; reopen(): Promise<void>; undo(): Promise<void>; redo(): Promise<void>;
     setPreviewHeld(value: boolean): void;
   };
   dispose(): void;
@@ -46,9 +47,16 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
     current = { ...current, ...changes };
     for (const listener of listeners) listener();
   };
-  const run = (operation: () => Promise<RemoteResult<PartitionSessionSnapshot>>) => {
+  const run = (
+    operation: () => Promise<RemoteResult<PartitionSessionSnapshot>>,
+    pendingPartition?: PartitionSessionSnapshot,
+  ) => {
     const task = queue.then(async () => {
-      update({ busy: true, error: null });
+      update({
+        busy: true,
+        error: null,
+        ...(pendingPartition === undefined ? {} : { partition: pendingPartition }),
+      });
       try { update({ partition: unwrap(await operation()) }); }
       catch (error) { update({ error: error instanceof Error ? error.message : String(error) }); throw error; }
       finally { update({ busy: false }); }
@@ -77,7 +85,13 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
           dxf: { name: dxf.name, digest, base64: base64(bytes) },
           engineeringDocuments: documents,
         };
-        await run(() => remote.importAndAnalyze(sessionId, request));
+        await run(() => remote.importAndAnalyze(sessionId, request), {
+          version: 1,
+          phase: 'analyzing',
+          canUndo: false,
+          canRedo: false,
+          updatedAt: Date.now(),
+        });
       },
       async supplementDocuments(engineeringDocuments) {
         if (engineeringDocuments.length === 0) throw new Error('ENGINEERING_DOCUMENT_REQUIRED');
@@ -93,6 +107,7 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
       updateSegment: (segmentId, value) => edit({ type: 'segment.metadata', segmentId, ...value }),
       confirm: () => run(() => remote.confirmPartition(sessionId, ref())),
       cancel: () => run(() => remote.cancelPartition(sessionId, ref())),
+      reopen: () => run(() => remote.reopenPartition(sessionId, ref())),
       undo: () => run(() => remote.undoPartition(sessionId, ref())),
       redo: () => run(() => remote.redoPartition(sessionId, ref())),
       setPreviewHeld: (previewHeld) => update({ previewHeld }),

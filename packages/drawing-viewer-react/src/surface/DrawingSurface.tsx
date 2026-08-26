@@ -46,6 +46,7 @@ export interface DrawingSurfaceProps {
   worldLayers?: ReactNode;
   screenLayers?: ReactNode;
   className?: string;
+  fitToDrawingOnResize?: boolean | 'geometry';
   onViewportChange(viewport: DrawingWorkspaceViewport): void;
   onSelectionChange(ids: readonly string[]): void;
   onMouseWorldChange?(point: Vec2 | null): void;
@@ -69,6 +70,7 @@ export function DrawingSurface({
   worldLayers,
   screenLayers,
   className = 'vai-canvas',
+  fitToDrawingOnResize = false,
   onViewportChange,
   onSelectionChange,
   onMouseWorldChange,
@@ -85,6 +87,29 @@ export function DrawingSurface({
     element.addEventListener('wheel', preventConversationScroll, { passive: false });
     return () => element.removeEventListener('wheel', preventConversationScroll);
   }, []);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (element === null || typeof ResizeObserver === 'undefined') return;
+    const resize = () => {
+      const { width, height } = element.getBoundingClientRect();
+      if (!(width > 0 && height > 0) || (viewport.width === width && viewport.height === height)) return;
+      onViewportChange(
+        fitToDrawingOnResize || viewport.width === 0 || viewport.height === 0
+          ? fitViewportToDrawing(
+            fitToDrawingOnResize === 'geometry'
+              ? { ...snapshot.document, annotations: [] }
+              : snapshot.document,
+            { width, height },
+          )
+          : { ...viewport, width, height },
+      );
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [fitToDrawingOnResize, onViewportChange, snapshot.document, viewport]);
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     event.preventDefault();

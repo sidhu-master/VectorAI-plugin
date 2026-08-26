@@ -103,7 +103,7 @@ export function DrawingWorkspace({
         <div className="vai-workspace__error" role="alert">{error.message}</div>
       )}
       <div className="vai-workspace__body" data-workspace-region="viewer">
-        <WorkspaceActivityBar
+        <WorkspaceActivityBar<WorkspacePanelId>
           activePanel={activePanel}
           panelWidth={panelWidth}
           onActivePanelChange={setActivePanel}

@@ -9,6 +9,7 @@ import { InMemoryDrawingRepository } from '../packages/plugin-dsh-space-host/src
 import { AnnotationSessionStateStore } from '../packages/plugin-dsh-annotation-host/src/session-state';
 import { PartitionWorkflowService } from '../packages/plugin-dsh-annotation-host/src/partition-service';
 import { PartitionSessionStore } from '../packages/plugin-dsh-annotation-host/src/partition-store';
+import { createHatchRenderPlan, normalizeHatchRegion } from '../packages/drawing-hatch/src/index';
 
 const dxfPath = resolve('packages/dxf-import/test/fixtures/initial-shaft.dxf');
 const documentPath = resolve('packages/dxf-import/test/fixtures/initial-shaft-engineering.ini');
@@ -36,6 +37,20 @@ let state = await service.importAndAnalyze(agent, {
 const snapshot = drawings.getSnapshot('e2e');
 assert(snapshot);
 const drawingDigestBefore = hash(snapshot.document.geometry);
+const hatches = snapshot.document.annotations.filter((annotation) => annotation.type === 'section-hatch');
+assert.equal(hatches.length, 2);
+for (const hatchNode of hatches) {
+  assert(hatchNode.hatch);
+  assert.equal(hatchNode.pattern, 'ANSI31');
+  assert(Math.abs(hatchNode.spacing - 3.175) < 1e-9);
+  assert.equal(normalizeHatchRegion(hatchNode.hatch, 0.0001).status, 'ok');
+  const plan = createHatchRenderPlan(hatchNode.hatch, 0.0001);
+  if (plan.status !== 'ok') throw new Error(plan.code);
+  const angle = (hatchNode.hatch.patternLines[0]!.angle + hatchNode.hatch.patternAngle) * Math.PI / 180;
+  const normal: [number, number] = [-Math.sin(angle), Math.cos(angle)];
+  const projections = plan.plan.lines.map(({ start }) => start[0] * normal[0] + start[1] * normal[1]).sort((a, b) => a - b);
+  assert(projections.slice(1).every((projection, index) => Math.abs(projection - projections[index]! - 3.175) < 1e-6));
+}
 assert.equal(state.phase, 'editing');
 assert(state.draft);
 const reviewed = state.draft as unknown as PartitionDraft;
@@ -45,10 +60,13 @@ const lifecycle: string[] = [state.phase];
 const boundary = reviewed.segments[0]!.zEnd;
 state = service.edit(agent, { type: 'boundary.move', expectedDrawingRef: snapshot.ref, boundaryIndex: 1, requestedZ: boundary + 0.1, snapTolerance: 0.5 });
 state = service.confirm(agent, snapshot.ref); lifecycle.push(state.phase);
-state = service.undo(agent, snapshot.ref); lifecycle.push(state.phase);
-state = service.redo(agent, snapshot.ref); lifecycle.push(state.phase);
-state = service.undo(agent, snapshot.ref); lifecycle.push(state.phase);
-assert.deepEqual(lifecycle, ['editing', 'confirmed', 'editing', 'confirmed', 'editing']);
+const confirmedRevisionId = state.confirmed!.id;
+state = service.reopen(agent, snapshot.ref); lifecycle.push(state.phase);
+assert.equal(state.draft?.basePartitionRevisionId, confirmedRevisionId);
+state = service.edit(agent, { type: 'boundary.move', expectedDrawingRef: snapshot.ref, boundaryIndex: 1, requestedZ: boundary + 0.2, snapTolerance: 0 });
+state = service.cancel(agent, snapshot.ref); lifecycle.push(state.phase);
+assert.equal(state.confirmed?.id, confirmedRevisionId);
+assert.deepEqual(lifecycle, ['editing', 'confirmed', 'editing', 'confirmed']);
 const noDocument = analyzeShaftPartition({ document: snapshot.document, drawingRef: snapshot.ref });
 assert.equal(noDocument.status, 'drafted');
 if (noDocument.status !== 'drafted') throw new Error('NO_DOCUMENT_ANALYSIS_FAILED');
@@ -63,6 +81,8 @@ const manifest = {
   entityCounts: [...snapshot.document.geometry, ...snapshot.document.annotations].reduce<Record<string, number>>((counts, node) => {
     const type = node.sourceRef?.objectType ?? node.type; counts[type] = (counts[type] ?? 0) + 1; return counts;
   }, {}),
+  parametricHatchCount: hatches.length,
+  hatchSpacing: hatches.map(({ spacing }) => spacing),
   axisLength: reviewed.axis.zMax - reviewed.axis.zMin,
   segmentCount: reviewed.segments.length,
   coveredLength: reviewed.segments.reduce((sum, segment) => sum + segment.zEnd - segment.zStart, 0),

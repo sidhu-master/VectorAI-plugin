@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, analyze_fn, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _supplementDocuments_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
+var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, analyze_fn, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _reopenPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _supplementDocuments_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
@@ -1559,15 +1559,20 @@ function issue$1(chain, code, message, entityId) {
     evidenceIds: [...chain.evidenceIds]
   };
 }
-function createEngineeringAnnotationTool(host, sessions) {
+function createEngineeringAnnotationTool(host, sessions, partitions) {
   return defineTool({
     name: "drawing_auto_annotate",
-    description: "Plan deterministic engineering dimensions from confirmed local geometry and run the plan through the first-layer Preview, evaluation, auto-safe commit, and Undo-capable history.",
+    description: "Create engineering dimensions only after smart shaft partitioning has been confirmed. This tool never creates or edits partition boundaries; use drawing_partition_status for partition requests.",
     parameters: {},
     output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
     async execute(_args, exec) {
       const agent = exec.agent;
       if (!agent) throw new Error("DRAWING_SESSION_REQUIRED");
+      const sessionId = String(agent.id);
+      const partition = partitions == null ? void 0 : partitions.get(sessionId);
+      if ((partition == null ? void 0 : partition.phase) === "analyzing" || (partition == null ? void 0 : partition.phase) === "editing") {
+        throw new Error("PARTITION_WORKFLOW_ACTIVE: finish the editable partition in the engineering workspace before automatic dimensioning");
+      }
       const snapshot = host.getSnapshot(agent);
       if (!snapshot) throw new Error("DRAWING_REQUIRED");
       const plan = planEngineeringAnnotations({
@@ -1575,7 +1580,6 @@ function createEngineeringAnnotationTool(host, sessions) {
         ref: snapshot.ref,
         objective: "工程图纸自动标注"
       });
-      const sessionId = String(agent.id);
       const workflowId = `annotation_${sessionId}_${Date.now()}`;
       sessions.start(sessionId, workflowId);
       if (!plan.program) {
@@ -1603,6 +1607,27 @@ function createEngineeringAnnotationTool(host, sessions) {
         sessions.finish(sessionId, "failed", error instanceof Error ? error.message : String(error));
         throw error;
       }
+    }
+  });
+}
+function createPartitionStatusTool(partitions) {
+  return defineTool({
+    name: "drawing_partition_status",
+    description: "Inspect the dedicated smart shaft-partition workflow after an explicit engineering DXF import. Use this for requests about partitioning or axis segments; do not create partition lines with generic drawing edit tools. Partition boundaries are calculated locally and edited in the engineering workspace.",
+    parameters: {},
+    output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
+    async execute(_args, exec) {
+      var _a3, _b, _c, _d;
+      const agent = exec.agent;
+      if (!agent) throw new Error("DRAWING_SESSION_REQUIRED");
+      const snapshot = partitions.get(String(agent.id));
+      return {
+        phase: snapshot.phase,
+        ...snapshot.drawingRef === void 0 ? {} : { drawingRef: snapshot.drawingRef },
+        segmentCount: ((_a3 = snapshot.draft) == null ? void 0 : _a3.segments.length) ?? ((_b = snapshot.confirmed) == null ? void 0 : _b.segments.length) ?? 0,
+        diagnostics: (((_c = snapshot.draft) == null ? void 0 : _c.diagnostics) ?? ((_d = snapshot.confirmed) == null ? void 0 : _d.diagnostics) ?? []).map(({ code }) => code),
+        nextAction: snapshot.phase === "analyzing" ? "wait-for-analysis" : snapshot.phase === "editing" ? "edit-or-confirm-in-engineering-workspace" : snapshot.phase === "confirmed" ? "ready-for-automatic-annotation" : "import-engineering-dxf"
+      };
     }
   });
 }
@@ -6984,6 +7009,56 @@ const datumReferenceSchema = object({
   geometryId: idSchema,
   anchor: entityAnchorSchema
 }).strict();
+const hatchBoundaryEdgeSchema = discriminatedUnion("type", [
+  object({ type: literal("line"), start: vec2Schema, end: vec2Schema }).strict(),
+  object({
+    type: literal("arc"),
+    center: vec2Schema,
+    radius: number().positive(),
+    startAngle: number(),
+    endAngle: number(),
+    counterClockwise: boolean()
+  }).strict(),
+  object({
+    type: literal("ellipse"),
+    center: vec2Schema,
+    majorAxis: vec2Schema,
+    axisRatio: number().positive(),
+    startParameter: number(),
+    endParameter: number(),
+    counterClockwise: boolean()
+  }).strict(),
+  object({
+    type: literal("spline"),
+    degree: number().int().positive(),
+    rational: boolean(),
+    periodic: boolean(),
+    knots: array(number()),
+    controlPoints: array(vec2Schema),
+    weights: array(number()).optional(),
+    fitPoints: array(vec2Schema).optional()
+  }).strict()
+]);
+const parametricHatchSchema = object({
+  version: literal(1),
+  style: _enum(["normal", "outer", "ignore"]),
+  elevation: number(),
+  extrusion: tuple([number(), number(), number()]),
+  boundaryPaths: array(object({
+    flags: number().int().nonnegative(),
+    closed: boolean(),
+    edges: array(hatchBoundaryEdgeSchema).min(1)
+  }).strict()).min(1),
+  patternLines: array(object({
+    angle: number(),
+    base: vec2Schema,
+    offset: vec2Schema,
+    dashLengths: array(number())
+  }).strict()),
+  patternAngle: number(),
+  patternScale: number().positive(),
+  double: boolean()
+}).strict();
 const annotationSchema = discriminatedUnion("type", [
   object({
     ...baseNodeShape,
@@ -7040,8 +7115,11 @@ const annotationSchema = discriminatedUnion("type", [
     pattern: string(),
     angle: number(),
     spacing: number(),
-    segments: array(object({ start: vec2Schema, end: vec2Schema }).strict())
-  }).strict()
+    hatch: parametricHatchSchema.optional(),
+    segments: array(object({ start: vec2Schema, end: vec2Schema }).strict()).optional()
+  }).strict().refine((value) => value.hatch !== void 0 || value.segments !== void 0, {
+    message: "SECTION_HATCH_REPRESENTATION_REQUIRED"
+  })
 ]);
 const relationSchema = discriminatedUnion("plane", [
   object({
@@ -7889,7 +7967,29 @@ class PartitionSessionStore {
       ...previous === void 0 ? {} : { parentRevisionId: previous.id },
       confirmedAt: this.ports.now()
     };
-    return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, { ...state.snapshot, phase: "confirmed", draft: void 0, confirmed: revision, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
+    return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, { ...state.snapshot, phase: "confirmed", draft: void 0, confirmed: revision, canUndo: true, canRedo: false, updatedAt: this.ports.now() }, draft);
+  }
+  reopen(sessionId, expected) {
+    var _a3;
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef$1(state.snapshot, expected);
+    const confirmed = latestConfirmed$1(state);
+    if (confirmed === void 0) throw new Error("PARTITION_CONFIRMED_REQUIRED");
+    if (state.snapshot.phase === "editing" && ((_a3 = state.snapshot.draft) == null ? void 0 : _a3.basePartitionRevisionId) === confirmed.id) {
+      return structuredClone(state.snapshot);
+    }
+    const draft = state.lastConfirmedDraft === void 0 ? reconstructDraft(confirmed) : structuredClone(state.lastConfirmedDraft);
+    draft.basePartitionRevisionId = confirmed.id;
+    return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, {
+      version: 1,
+      phase: "editing",
+      drawingRef: expected,
+      draft,
+      confirmed,
+      canUndo: true,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    });
   }
   cancel(sessionId, expected) {
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
@@ -7919,20 +8019,22 @@ class PartitionSessionStore {
 }
 _states = new WeakMap();
 _PartitionSessionStore_instances = new WeakSet();
-push_fn = function(sessionId, snapshot) {
+push_fn = function(sessionId, snapshot, lastConfirmedDraft) {
   const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
-  return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, snapshot, [...state.undo, state.snapshot], []);
+  return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, snapshot, [...state.undo, state.snapshot], [], lastConfirmedDraft);
 };
-replace_fn = function(sessionId, snapshot, undo, redo) {
-  var _a3, _b;
-  const previousConfirmed = (_a3 = __privateGet(this, _states).get(sessionId)) == null ? void 0 : _a3.lastConfirmed;
+replace_fn = function(sessionId, snapshot, undo, redo, confirmedDraft) {
+  var _a3;
+  const previous = __privateGet(this, _states).get(sessionId);
+  const previousConfirmed = previous == null ? void 0 : previous.lastConfirmed;
   const envelope = {
     snapshot: partitionSessionSnapshotSchema.parse(compact$1(snapshot)),
     undo: undo.map(compact$1).map((item) => partitionSessionSnapshotSchema.parse(item)),
     redo: redo.map(compact$1).map((item) => partitionSessionSnapshotSchema.parse(item)),
-    ...snapshot.confirmed === void 0 && previousConfirmed === void 0 ? {} : { lastConfirmed: snapshot.confirmed ?? previousConfirmed }
+    ...snapshot.confirmed === void 0 && previousConfirmed === void 0 ? {} : { lastConfirmed: snapshot.confirmed ?? previousConfirmed },
+    ...confirmedDraft === void 0 && (previous == null ? void 0 : previous.lastConfirmedDraft) === void 0 ? {} : { lastConfirmedDraft: structuredClone(confirmedDraft ?? previous.lastConfirmedDraft) }
   };
-  (_b = this.storage) == null ? void 0 : _b.save(sessionId, envelope);
+  (_a3 = this.storage) == null ? void 0 : _a3.save(sessionId, envelope);
   __privateGet(this, _states).set(sessionId, envelope);
   return structuredClone(envelope.snapshot);
 };
@@ -7991,11 +8093,42 @@ function parseEnvelope$1(value) {
   if (undo.some(({ success }) => !success) || redo.some(({ success }) => !success)) return null;
   const confirmed = item.lastConfirmed === void 0 ? void 0 : partitionSessionSnapshotSchema.shape.confirmed.safeParse(item.lastConfirmed);
   if (confirmed !== void 0 && !confirmed.success) return null;
+  const confirmedDraft = item.lastConfirmedDraft === void 0 ? void 0 : partitionDraftSchema.safeParse(item.lastConfirmedDraft);
+  if (confirmedDraft !== void 0 && !confirmedDraft.success) return null;
   return {
     snapshot: snapshot.data,
     undo: undo.map((entry) => entry.data),
     redo: redo.map((entry) => entry.data),
-    ...(confirmed == null ? void 0 : confirmed.data) === void 0 ? {} : { lastConfirmed: confirmed.data }
+    ...(confirmed == null ? void 0 : confirmed.data) === void 0 ? {} : { lastConfirmed: confirmed.data },
+    ...(confirmedDraft == null ? void 0 : confirmedDraft.data) === void 0 ? {} : { lastConfirmedDraft: confirmedDraft.data }
+  };
+}
+function reconstructDraft(revision) {
+  const boundaries = revision.segments.slice(0, -1).map((segment) => segment.zEnd);
+  return {
+    version: 1,
+    drawingRef: revision.drawingRef,
+    axis: structuredClone(revision.axis),
+    segments: structuredClone(revision.segments),
+    semanticGroups: structuredClone(revision.semanticGroups),
+    stepCandidates: boundaries.map((z, index) => ({
+      id: `step:reopen:${index + 1}`,
+      z,
+      score: 1,
+      evidenceIds: [],
+      accepted: true
+    })),
+    evidence: structuredClone(revision.evidence),
+    diagnostics: [
+      ...structuredClone(revision.diagnostics),
+      {
+        id: `diagnostic:reopen:${revision.id}`,
+        severity: "warning",
+        code: "PARTITION_REOPEN_DRAFT_RECONSTRUCTED",
+        message: "Editable partition state was reconstructed from a legacy confirmed revision."
+      }
+    ],
+    basePartitionRevisionId: revision.id
   };
 }
 const PLAIN_FORMATS = /* @__PURE__ */ new Set([
@@ -8231,6 +8364,13 @@ class PartitionWorkflowService {
     this.annotations.finish(sessionId, "canceled");
     return result;
   }
+  reopen(agent, expected) {
+    if (!__privateMethod(this, _PartitionWorkflowService_instances, current_fn).call(this, agent, expected)) return this.partitions.get(String(agent.id));
+    const sessionId = String(agent.id);
+    const result = this.partitions.reopen(sessionId, expected);
+    this.annotations.start(sessionId, `partition_${randomUUID()}`);
+    return result;
+  }
   undo(agent, expected) {
     if (!__privateMethod(this, _PartitionWorkflowService_instances, current_fn).call(this, agent, expected)) return this.partitions.get(String(agent.id));
     const sessionId = String(agent.id);
@@ -8307,6 +8447,8 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
       if (!parent || !providerName) throw new Error("AI_SEMANTIC_REVIEW_UNAVAILABLE");
       const provider = ctx.subagents.getProvider(providerName);
       if (!(provider == null ? void 0 : provider.capabilities.outputSchema) || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) throw new Error("AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED");
+      const ambientToolNames = ctx.tools.schemas().map(({ name }) => name).filter((name) => name !== "structured_output");
+      if (ambientToolNames.length === 0) throw new Error("AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED");
       const catalog = segments.map((segment, index) => ({
         id: segment.id,
         visualLabel: `S${index + 1}`,
@@ -8319,7 +8461,7 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         nextSegmentId: index === segments.length - 1 ? null : segments[index + 1].id
       }));
       const payload = JSON.stringify({
-        instruction: "Classify only listed shaft segments from the numbered image. Return semantic labels and reasons only. Never return coordinates, boundaries, dimensions, or geometry commands.",
+        instruction: "只根据编号图像对列出的轴段做语义分类。仅返回语义名称、类型和理由，名称、语义类型和理由必须使用简短中文。不要返回坐标、边界、尺寸或几何编辑命令。",
         segments: catalog,
         observationDigest: rendered.contentDigest
       });
@@ -8329,7 +8471,7 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         parent,
         signal: reviewSignal,
         maxDepth: 1,
-        toolFilter: { allow: [] },
+        toolFilter: { deny: ambientToolNames },
         prompt: [{ type: "text", text: payload }, { type: "image", attachment }],
         outputSchema: proposalSchema
       }), reviewSignal);
@@ -8353,16 +8495,16 @@ const proposalSchema = {
   type: "object",
   additionalProperties: false,
   required: ["proposals"],
-  properties: { proposals: { type: "array", maxItems: 64, items: {
+  properties: { proposals: { type: "array", items: {
     type: "object",
     additionalProperties: false,
     required: ["segmentIds", "semanticType", "confidence", "reason", "visualEvidenceIds"],
     properties: {
-      segmentIds: { type: "array", items: { type: "string" }, minItems: 1 },
+      segmentIds: { type: "array", items: { type: "string" } },
       semanticType: { type: "string" },
       name: { type: "string" },
-      confidence: { type: "number", minimum: 0, maximum: 1 },
-      reason: { type: "string", maxLength: 500 },
+      confidence: { type: "number" },
+      reason: { type: "string" },
       visualEvidenceIds: { type: "array", items: { type: "string" } }
     }
   } } }
@@ -8666,7 +8808,7 @@ function parseEnvelope(value) {
 function compact(value) {
   return JSON.parse(JSON.stringify(value));
 }
-class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
+class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _reopenPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingAnnotation");
     __runInitializers(_init, 5, this);
@@ -8689,7 +8831,8 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
       this.sessions,
       createPartitionSemanticReviewer(ctx, ctx.drawingSpace)
     );
-    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions)));
+    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions, this.partitions)));
+    ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.on("session/disposed", (session) => this.sessions.disposeSession(String(session.id)));
   }
   getSessionState(agent) {
@@ -8713,6 +8856,9 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
   cancelPartition(agent, expected) {
     return this.partitionWorkflow.cancel(agent, expected);
   }
+  reopenPartition(agent, expected) {
+    return this.partitionWorkflow.reopen(agent, expected);
+  }
   undoPartition(agent, expected) {
     return this.partitionWorkflow.undo(agent, expected);
   }
@@ -8728,6 +8874,7 @@ __decorateElement(_init, 1, "getPartitionState", _getPartitionState_dec, Drawing
 __decorateElement(_init, 1, "editPartition", _editPartition_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "confirmPartition", _confirmPartition_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "cancelPartition", _cancelPartition_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "reopenPartition", _reopenPartition_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "undoPartition", _undoPartition_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "redoPartition", _redoPartition_dec, DrawingAnnotationHostService);
 __decoratorMetadata(_init, DrawingAnnotationHostService);
