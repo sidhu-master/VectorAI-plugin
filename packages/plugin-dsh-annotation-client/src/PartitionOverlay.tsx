@@ -3,6 +3,7 @@
 import type { PartitionDraft } from '@vectorai/plugin-space-contracts';
 import type { PointerEvent } from 'react';
 import { useRef, useState } from 'react';
+import { partitionBands, type PartitionBand, type PartitionViewMode } from './partition-view-model';
 
 interface BoundaryDrag {
   index: number;
@@ -11,8 +12,8 @@ interface BoundaryDrag {
   lastClientY: number;
 }
 
-export function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }: {
-  draft: PartitionDraft; previewHeld: boolean; scale: number;
+export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary }: {
+  draft: PartitionDraft; mode: PartitionViewMode; previewHeld: boolean; scale: number;
   onMoveBoundary(index: number, z: number): void | Promise<void>;
 }) {
   const [drag, setDrag] = useState<BoundaryDrag | null>(null);
@@ -54,24 +55,27 @@ export function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }: 
       setDrag(value);
     }
   };
-  const bands = functionalBands(draft);
-  const boundaryZ = bands.slice(0, -1).map((band) => draft.segments[band.endSegmentIndex]!.zEnd);
-  const boundaryLanes = boundaryZ.map((z, index) => {
-    const previousIsClose = index > 0 && Math.abs(z - boundaryZ[index - 1]!) * scale < 18;
-    const nextIsClose = index < boundaryZ.length - 1 && Math.abs(boundaryZ[index + 1]! - z) * scale < 18;
+  const bands = partitionBands(draft, mode);
+  const boundaryIndices = [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))]
+    .filter((index) => index > 0 && index < draft.segments.length)
+    .sort((a, b) => a - b);
+  const boundaryZ = boundaryIndices.map((index) => draft.segments[index]!.zStart);
+  const boundaryLanes = boundaryZ.map((z, offset) => {
+    const previousIsClose = offset > 0 && Math.abs(z - boundaryZ[offset - 1]!) * scale < 18;
+    const nextIsClose = offset < boundaryZ.length - 1 && Math.abs(boundaryZ[offset + 1]! - z) * scale < 18;
     return previousIsClose ? 1 : nextIsClose ? -1 : 0;
   });
   return <g data-partition-overlay="true">
     {bands.map((band, bandIndex) => {
       const radius = Math.max(...band.segments.map(({ profile }) => profile.maxRadius), 0.1) * 1.04;
-      const zStart = drag?.index === band.startSegmentIndex ? drag.z : band.segments[0]!.zStart;
-      const zEnd = drag?.index === band.endSegmentIndex + 1 ? drag.z : band.segments.at(-1)!.zEnd;
+      const zStart = drag?.index === band.startBoundaryIndex ? drag.z : band.zStart;
+      const zEnd = drag?.index === band.endBoundaryIndex ? drag.z : band.zEnd;
       const polygon = [point(zStart, -radius), point(zEnd, -radius), point(zEnd, radius), point(zStart, radius)];
       const label = bandLabel(band, bandIndex);
       const labelAnchor = point((zStart + zEnd) / 2, radius);
       const labelWidth = Math.max(44, visualLength(label) * 7 + 18);
       const labelY = -18 - (bandIndex % 3) * 22;
-      return <g key={band.segmentIds.join('+')} data-partition-origin={band.origin} data-segment-ids={band.segmentIds.join(' ')}
+      return <g key={band.id} data-partition-id={band.id} data-partition-origin={band.origin} data-segment-ids={band.segmentIds.join(' ')}
         aria-label={`分区 ${label}`}>
         <polygon data-partition-band="true" points={polygon.map((value) => value.join(',')).join(' ')}
           className={`vai-partition-band vai-partition-band--${band.origin}`}
@@ -82,9 +86,8 @@ export function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }: 
         </g>
       </g>;
     })}
-    {!previewHeld && bands.slice(0, -1).map((band, offset) => {
-      const index = band.endSegmentIndex + 1;
-      const z = drag?.index === index ? drag.z : draft.segments[index - 1]!.zEnd;
+    {!previewHeld && boundaryIndices.map((index, offset) => {
+      const z = drag?.index === index ? drag.z : draft.segments[index]!.zStart;
       const anchor = point(z, 0);
       const lane = boundaryLanes[offset]!;
       const position = point(z, lane * 12 / Math.max(scale, 0.01));
@@ -108,22 +111,13 @@ export function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }: 
   </g>;
 }
 
-function bandLabel(band: ReturnType<typeof functionalBands>[number], index: number): string {
-  const names = [...new Set(band.segments.map(({ name, semanticType }) => name?.trim() || semanticType?.trim()).filter(Boolean))] as string[];
+function bandLabel(band: PartitionBand, index: number): string {
+  const groupLabel = band.name?.trim() || band.semanticType?.trim();
+  const names = groupLabel ? [groupLabel] : [...new Set(band.segments.map(({ name, semanticType }) => name?.trim() || semanticType?.trim()).filter(Boolean))] as string[];
   const label = names.length > 0 ? names.join(' · ') : `分区 ${index + 1}`;
   return label.length > 18 ? `${label.slice(0, 17)}…` : label;
 }
 
 function visualLength(value: string): number {
-  return [...value].reduce((total, character) => total + (/[^\u0000-\u00ff]/.test(character) ? 2 : 1), 0);
-}
-
-function functionalBands(draft: PartitionDraft) {
-  return draft.segments.map((segment, index) => ({
-    segments: [segment], segmentIds: [segment.id],
-    origin: segment.semanticEvidenceIds
-      .map((id) => draft.evidence.find((item) => item.id === id)?.origin)
-      .find(Boolean) ?? 'geometry',
-    startSegmentIndex: index, endSegmentIndex: index,
-  }));
+  return [...value].reduce((total, character) => total + ((character.codePointAt(0) ?? 0) > 0xff ? 2 : 1), 0);
 }

@@ -8476,7 +8476,7 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         nextSegmentId: index === segments.length - 1 ? null : segments[index + 1].id
       }));
       const payload = JSON.stringify({
-        instruction: "只根据编号图像对列出的轴段做语义分类。仅返回语义名称、类型和理由，名称、语义类型和理由必须使用简短中文。不要返回坐标、边界、尺寸或几何编辑命令。",
+        instruction: "只根据编号图像识别明确的主要功能区域。允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段不要为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。仅返回语义名称、类型和理由，名称、语义类型和理由必须使用简短中文。不要返回坐标、边界、尺寸或几何编辑命令。",
         segments: catalog,
         observationDigest: rendered.contentDigest
       });

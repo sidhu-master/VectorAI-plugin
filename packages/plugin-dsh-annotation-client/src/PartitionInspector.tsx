@@ -2,11 +2,29 @@
 
 import type { PartitionDraft } from '@vectorai/plugin-space-contracts';
 import type { PartitionController } from './partition-controller';
+import { partitionBands, type PartitionViewMode } from './partition-view-model';
+import { PartitionViewSwitch } from './PartitionViewSwitch';
 
-export function PartitionInspector({ draft, controller }: { draft: PartitionDraft; controller: PartitionController }) {
+export function PartitionInspector({ draft, controller, mode, onModeChange }: {
+  draft: PartitionDraft;
+  controller: PartitionController;
+  mode: PartitionViewMode;
+  onModeChange(mode: PartitionViewMode): void;
+}) {
+  const functional = partitionBands(draft, 'functional');
+  const classified = new Set(functional.flatMap(({ segmentIds }) => segmentIds));
   return <div className="vai-partition-inspector">
-    <h2>轴段分区</h2>
-    <ol>{draft.segments.map((segment, index) => <li key={segment.id}>
+    <div className="vai-partition-inspector__title"><h2>{mode === 'functional' ? '功能分区' : '连续轴段'}</h2>
+      <PartitionViewSwitch mode={mode} onChange={onModeChange} />
+    </div>
+    {mode === 'functional' ? <>
+      <ol>{functional.map((band) => <li key={band.id}>
+        <span>{band.name ?? band.semanticType ?? '未命名功能区'}</span>
+        <small>{band.zStart.toFixed(2)} – {band.zEnd.toFixed(2)} · {sourceLabel(band.origin)}</small>
+        {band.semanticType && <em>{band.semanticType}</em>}
+      </li>)}</ol>
+      <p className="vai-partition-inspector__unclassified">未归入功能区的过渡轴段：{draft.segments.length - classified.size} 段</p>
+    </> : <ol>{draft.segments.map((segment, index) => <li key={segment.id}>
       <span>{segment.name ?? `轴段 S${index + 1}`}</span>
       <small>{segment.zStart.toFixed(2)} – {segment.zEnd.toFixed(2)} · ⌀{(segment.profile.maxRadius * 2).toFixed(2)}</small>
       <div className="vai-partition-inspector__fields">
@@ -22,7 +40,11 @@ export function PartitionInspector({ draft, controller }: { draft: PartitionDraf
           if (event.key === 'Enter') void controller.actions.moveBoundary(index + 1, Number(event.currentTarget.value), 0).catch(() => undefined);
         }} />
       </label>}
-    </li>)}</ol>
+    </li>)}</ol>}
     {draft.diagnostics.length > 0 && <div className="vai-partition-diagnostics">{draft.diagnostics.map((diagnostic) => <p key={diagnostic.id}>{diagnostic.code}</p>)}</div>}
   </div>;
+}
+
+function sourceLabel(origin: string): string {
+  return { document: '文档', ai: 'AI 识别', manual: '人工', fused: '融合', geometry: '几何' }[origin] ?? origin;
 }

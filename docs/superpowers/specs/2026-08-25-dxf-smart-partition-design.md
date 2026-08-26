@@ -318,8 +318,10 @@ interface PartitionRevision {
 ```
 
 Physical segments cover the shaft domain exactly once. Semantic groups express a
-document region that spans multiple physical segments without introducing
-overlapping physical partitions. Boundary provenance and semantic provenance stay
+document or inferred functional region that spans one or more physical segments.
+Functional groups are sparse: transition, relief, runout, and unresolved segments
+may remain outside every group instead of being forced into a neighboring feature.
+This does not introduce gaps in the underlying physical partition. Boundary provenance and semantic provenance stay
 separate: an AI-proposed name never makes an algorithmically detected boundary an
 AI-generated coordinate. UI source badges are derived from the referenced evidence
 records rather than from one lossy segment-origin flag.
@@ -374,9 +376,11 @@ Visual treatment distinguishes:
 Color is not the sole carrier of meaning. Each state also has an icon, line style,
 label, or accessible description.
 
-The side inspector exposes the segment list, source evidence, exact bounds,
-diameter/profile summary, confidence, and diagnostics. Selecting a list item and
-selecting its canvas band remain synchronized.
+The canvas and side inspector default to sparse functional groups. The inspector
+provides an explicit Function regions / Continuous segments switch; continuous
+mode exposes the complete segment list, source evidence, exact bounds,
+diameter/profile summary, confidence, and diagnostics. Changing view mode does not
+mutate the draft. Selecting a list item and selecting its canvas band remain synchronized.
 
 ## 13. Cancel, preview, confirm, undo, and redo
 

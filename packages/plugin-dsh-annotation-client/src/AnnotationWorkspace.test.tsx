@@ -185,8 +185,9 @@ describe('AnnotationWorkspace', () => {
       state: observable({ partition: { version: 1, phase: 'editing', drawingRef: snapshot.ref, draft: {
         version: 1, drawingRef: snapshot.ref,
         axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 10, orientation: 'forward' },
-        segments: [{ id: 'segment:1', zStart: 0, zEnd: 10, profile: { minRadius: 4, maxRadius: 5, sampleCount: 2 }, boundaryConfidence: 1, geometryNodeIds: [], boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [] }],
-        semanticGroups: [], stepCandidates: [], evidence: [], diagnostics: [],
+        segments: [{ id: 'segment:1', zStart: 0, zEnd: 10, profile: { minRadius: 4, maxRadius: 5, sampleCount: 2 }, boundaryConfidence: 1, geometryNodeIds: [], boundaryEvidenceIds: [], semanticEvidenceIds: ['document:region:1'], diagnosticIds: [] }],
+        semanticGroups: [{ id: 'group:1', segmentIds: ['segment:1'], semanticType: 'bearing-seat', name: '轴承位', evidenceIds: ['document:region:1'] }],
+        stepCandidates: [], evidence: [{ id: 'document:region:1', origin: 'document', label: '轴承位' }], diagnostics: [],
       }, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
       actions: {}, dispose() {},
     } as unknown as PartitionController;
@@ -222,6 +223,6 @@ describe('AnnotationWorkspace', () => {
     expect(markup).toContain('accept=".dxf');
     expect(markup).toContain('multiple=""');
     expect(markup).not.toContain('aria-label="分区历史"');
-    expect(markup).toContain('data-partition-origin="geometry"');
+    expect(markup).toContain('data-partition-origin="document"');
   });
 });

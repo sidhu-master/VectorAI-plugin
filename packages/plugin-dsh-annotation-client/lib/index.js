@@ -8656,7 +8656,47 @@ function normalizeBounds(first, second) {
     maxY: Math.max(first[1], second[1])
   };
 }
-function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
+function partitionBands(draft, mode) {
+  if (mode === "segments") return draft.segments.map((segment, index) => ({
+    id: segment.id,
+    segmentIds: [segment.id],
+    segments: [segment],
+    zStart: segment.zStart,
+    zEnd: segment.zEnd,
+    startBoundaryIndex: index,
+    endBoundaryIndex: index + 1,
+    ...segment.name === void 0 ? {} : { name: segment.name },
+    ...segment.semanticType === void 0 ? {} : { semanticType: segment.semanticType },
+    origin: evidenceOrigin(draft, segment.semanticEvidenceIds) ?? "geometry"
+  }));
+  const indexById = new Map(draft.segments.map((segment, index) => [segment.id, index]));
+  return draft.semanticGroups.flatMap((group) => {
+    const indices = group.segmentIds.map((id) => indexById.get(id)).filter((index) => index !== void 0).sort((a, b) => a - b);
+    if (indices.length === 0) return [];
+    const startBoundaryIndex = indices[0];
+    const endBoundaryIndex = indices.at(-1) + 1;
+    const segments = indices.map((index) => draft.segments[index]);
+    return [{
+      id: group.id,
+      segmentIds: segments.map(({ id }) => id),
+      segments,
+      zStart: segments[0].zStart,
+      zEnd: segments.at(-1).zEnd,
+      startBoundaryIndex,
+      endBoundaryIndex,
+      ...group.name === void 0 ? {} : { name: group.name },
+      semanticType: group.semanticType,
+      origin: evidenceOrigin(draft, group.evidenceIds) ?? "geometry"
+    }];
+  }).sort((a, b) => a.zStart - b.zStart || a.zEnd - b.zEnd);
+}
+function evidenceOrigin(draft, evidenceIds) {
+  return evidenceIds.map((id) => {
+    var _a2;
+    return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
+  }).find(Boolean);
+}
+function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMoveBoundary }) {
   const [drag, setDrag] = reactExports.useState(null);
   const current = reactExports.useRef(null);
   const point3 = (z, r) => [
@@ -8697,18 +8737,19 @@ function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
       setDrag(value);
     }
   };
-  const bands = functionalBands(draft);
-  const boundaryZ = bands.slice(0, -1).map((band) => draft.segments[band.endSegmentIndex].zEnd);
-  const boundaryLanes = boundaryZ.map((z, index) => {
-    const previousIsClose = index > 0 && Math.abs(z - boundaryZ[index - 1]) * scale < 18;
-    const nextIsClose = index < boundaryZ.length - 1 && Math.abs(boundaryZ[index + 1] - z) * scale < 18;
+  const bands = partitionBands(draft, mode);
+  const boundaryIndices = [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))].filter((index) => index > 0 && index < draft.segments.length).sort((a, b) => a - b);
+  const boundaryZ = boundaryIndices.map((index) => draft.segments[index].zStart);
+  const boundaryLanes = boundaryZ.map((z, offset) => {
+    const previousIsClose = offset > 0 && Math.abs(z - boundaryZ[offset - 1]) * scale < 18;
+    const nextIsClose = offset < boundaryZ.length - 1 && Math.abs(boundaryZ[offset + 1] - z) * scale < 18;
     return previousIsClose ? 1 : nextIsClose ? -1 : 0;
   });
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-partition-overlay": "true", children: [
     bands.map((band, bandIndex) => {
       const radius = Math.max(...band.segments.map(({ profile }) => profile.maxRadius), 0.1) * 1.04;
-      const zStart = (drag == null ? void 0 : drag.index) === band.startSegmentIndex ? drag.z : band.segments[0].zStart;
-      const zEnd = (drag == null ? void 0 : drag.index) === band.endSegmentIndex + 1 ? drag.z : band.segments.at(-1).zEnd;
+      const zStart = (drag == null ? void 0 : drag.index) === band.startBoundaryIndex ? drag.z : band.zStart;
+      const zEnd = (drag == null ? void 0 : drag.index) === band.endBoundaryIndex ? drag.z : band.zEnd;
       const polygon = [point3(zStart, -radius), point3(zEnd, -radius), point3(zEnd, radius), point3(zStart, radius)];
       const label = bandLabel(band, bandIndex);
       const labelAnchor = point3((zStart + zEnd) / 2, radius);
@@ -8717,6 +8758,7 @@ function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
       return /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "g",
         {
+          "data-partition-id": band.id,
           "data-partition-origin": band.origin,
           "data-segment-ids": band.segmentIds.join(" "),
           "aria-label": `分区 ${label}`,
@@ -8736,12 +8778,11 @@ function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
             ] })
           ]
         },
-        band.segmentIds.join("+")
+        band.id
       );
     }),
-    !previewHeld && bands.slice(0, -1).map((band, offset) => {
-      const index = band.endSegmentIndex + 1;
-      const z = (drag == null ? void 0 : drag.index) === index ? drag.z : draft.segments[index - 1].zEnd;
+    !previewHeld && boundaryIndices.map((index, offset) => {
+      const z = (drag == null ? void 0 : drag.index) === index ? drag.z : draft.segments[index].zStart;
       const anchor = point3(z, 0);
       const lane = boundaryLanes[offset];
       const position = point3(z, lane * 12 / Math.max(scale, 0.01));
@@ -8778,24 +8819,14 @@ function PartitionOverlay({ draft, previewHeld, scale, onMoveBoundary }) {
   ] });
 }
 function bandLabel(band, index) {
-  const names = [...new Set(band.segments.map(({ name, semanticType }) => (name == null ? void 0 : name.trim()) || (semanticType == null ? void 0 : semanticType.trim())).filter(Boolean))];
+  var _a2, _b;
+  const groupLabel = ((_a2 = band.name) == null ? void 0 : _a2.trim()) || ((_b = band.semanticType) == null ? void 0 : _b.trim());
+  const names = groupLabel ? [groupLabel] : [...new Set(band.segments.map(({ name, semanticType }) => (name == null ? void 0 : name.trim()) || (semanticType == null ? void 0 : semanticType.trim())).filter(Boolean))];
   const label = names.length > 0 ? names.join(" · ") : `分区 ${index + 1}`;
   return label.length > 18 ? `${label.slice(0, 17)}…` : label;
 }
 function visualLength(value) {
-  return [...value].reduce((total, character) => total + (/[^\u0000-\u00ff]/.test(character) ? 2 : 1), 0);
-}
-function functionalBands(draft) {
-  return draft.segments.map((segment, index) => ({
-    segments: [segment],
-    segmentIds: [segment.id],
-    origin: segment.semanticEvidenceIds.map((id) => {
-      var _a2;
-      return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
-    }).find(Boolean) ?? "geometry",
-    startSegmentIndex: index,
-    endSegmentIndex: index
-  }));
+  return [...value].reduce((total, character) => total + ((character.codePointAt(0) ?? 0) > 255 ? 2 : 1), 0);
 }
 function PartitionActionToolbar({ controller, previewHeld }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": "分区确认工具栏", children: [
@@ -8817,10 +8848,58 @@ function PartitionActionToolbar({ controller, previewHeld }) {
     /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--confirm", "aria-label": "确认分区", title: "确认", onClick: () => void controller.actions.confirm().catch(() => void 0), children: "✓" })
   ] });
 }
-function PartitionInspector({ draft, controller }) {
+function PartitionViewSwitch({ mode, onChange }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-view-switch", role: "group", "aria-label": "分区显示方式", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        type: "button",
+        className: mode === "functional" ? "is-active" : void 0,
+        "aria-label": "显示功能分区",
+        "aria-pressed": mode === "functional",
+        onClick: () => onChange("functional"),
+        children: "功能分区"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        type: "button",
+        className: mode === "segments" ? "is-active" : void 0,
+        "aria-label": "显示连续轴段",
+        "aria-pressed": mode === "segments",
+        onClick: () => onChange("segments"),
+        children: "连续轴段"
+      }
+    )
+  ] });
+}
+function PartitionInspector({ draft, controller, mode, onModeChange }) {
+  const functional = partitionBands(draft, "functional");
+  const classified = new Set(functional.flatMap(({ segmentIds }) => segmentIds));
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "轴段分区" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { children: draft.segments.map((segment, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector__title", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionViewSwitch, { mode, onChange: onModeChange })
+    ] }),
+    mode === "functional" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { children: functional.map((band) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: band.name ?? band.semanticType ?? "未命名功能区" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("small", { children: [
+          band.zStart.toFixed(2),
+          " – ",
+          band.zEnd.toFixed(2),
+          " · ",
+          sourceLabel(band.origin)
+        ] }),
+        band.semanticType && /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: band.semanticType })
+      ] }, band.id)) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "vai-partition-inspector__unclassified", children: [
+        "未归入功能区的过渡轴段：",
+        draft.segments.length - classified.size,
+        " 段"
+      ] })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { children: draft.segments.map((segment, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: segment.name ?? `轴段 S${index + 1}` }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("small", { children: [
         segment.zStart.toFixed(2),
@@ -8846,6 +8925,9 @@ function PartitionInspector({ draft, controller }) {
     ] }, segment.id)) }),
     draft.diagnostics.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-partition-diagnostics", children: draft.diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: diagnostic.code }, diagnostic.id)) })
   ] });
+}
+function sourceLabel(origin) {
+  return { document: "文档", ai: "AI 识别", manual: "人工", fused: "融合", geometry: "几何" }[origin] ?? origin;
 }
 function DimensionPlanInspector({ draft, generationOrder }) {
   const intentsById = new Map(draft.intents.map((intent) => [intent.id, intent]));
@@ -8958,12 +9040,15 @@ function chainRoleLabel(role) {
 function ConfirmedPartitionInspector({
   revision,
   busy,
+  mode,
+  onModeChange,
   onReopen
 }) {
+  const bands = partitionBands(revision, mode);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector vai-confirmed-partition", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-confirmed-partition__heading", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "轴段分区" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "已确认" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", "aria-label": "重新编辑分区", disabled: busy, onClick: () => void onReopen().catch(() => void 0), children: [
@@ -8971,23 +9056,24 @@ function ConfirmedPartitionInspector({
         "重新编辑"
       ] })
     ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionViewSwitch, { mode, onChange: onModeChange }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { className: "vai-confirmed-partition__meta", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "版本" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: revision.id }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "确认时间" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: formatConfirmedAt(revision.confirmedAt) })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { children: revision.segments.map((segment, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: segment.name ?? `轴段 S${index + 1}` }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { children: bands.map((band, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: band.name ?? band.semanticType ?? `轴段 S${index + 1}` }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("small", { children: [
-        segment.zStart.toFixed(2),
+        band.zStart.toFixed(2),
         " – ",
-        segment.zEnd.toFixed(2),
+        band.zEnd.toFixed(2),
         " · ⌀",
-        (segment.profile.maxRadius * 2).toFixed(2)
+        (Math.max(...band.segments.map(({ profile }) => profile.maxRadius)) * 2).toFixed(2)
       ] }),
-      segment.semanticType && /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: segment.semanticType })
-    ] }, segment.id)) })
+      band.semanticType && /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: band.semanticType })
+    ] }, band.id)) })
   ] });
 }
 function formatConfirmedAt(value) {
@@ -9114,6 +9200,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
   const [importError, setImportError] = reactExports.useState(null);
   const [activePanel, setActivePanel] = reactExports.useState(null);
   const [panelWidth, setPanelWidth] = reactExports.useState(260);
+  const [partitionView, setPartitionView] = reactExports.useState("functional");
   const fitAfterAnalysis = reactExports.useRef(partitionState.busy);
   const surfaceSnapshot = reactExports.useMemo(() => displaySnapshot === null ? null : {
     ...displaySnapshot,
@@ -9152,7 +9239,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
   reactExports.useEffect(() => {
     if (displaySnapshot === null) return;
     fitRuntimeToDrawing(runtime, displaySnapshot);
-  }, [displaySnapshot == null ? void 0 : displaySnapshot.ref.drawingId, displaySnapshot == null ? void 0 : displaySnapshot.ref.revision, runtime]);
+  }, [displaySnapshot, runtime]);
   const beginImport = (drawing, documents) => {
     setImportError(null);
     void partition.actions.importFiles(drawing, documents).then(() => setActivePanel(null)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
@@ -9174,7 +9261,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
     }
     setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
   };
-  const structurePanel = /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-annotation-panel", children: dimensionPlan ? /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }) : draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition }, partitionState.partition.updatedAt) : confirmed && partitionState.partition.phase === "confirmed" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, onReopen: partition.actions.reopen }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+  const structurePanel = /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-annotation-panel", children: dimensionPlan ? /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }) : draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt) : confirmed && partitionState.partition.phase === "confirmed" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
@@ -9238,6 +9325,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                     PartitionOverlay,
                     {
                       draft,
+                      mode: partitionView,
                       previewHeld: partitionState.previewHeld,
                       scale: viewport.scale,
                       onMoveBoundary: (index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05))

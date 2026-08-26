@@ -31,10 +31,27 @@ function draft(): PartitionDraft {
 }
 
 describe('PartitionOverlay', () => {
+  it('defaults to semantic function groups and preserves gaps between them', () => {
+    const value = draft();
+    value.semanticGroups = [
+      { id: 'left-bearing', segmentIds: ['segment:1'], semanticType: 'bearing-seat', name: '左轴承位', evidenceIds: ['evidence:1'] },
+      { id: 'gear', segmentIds: ['segment:3'], semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'] },
+    ];
+    const markup = renderToStaticMarkup(<svg><PartitionOverlay
+      draft={value} mode="functional" previewHeld={false} scale={2} onMoveBoundary={() => undefined}
+    /></svg>);
+
+    expect((markup.match(/data-partition-band=/g) ?? [])).toHaveLength(2);
+    expect(markup).toContain('data-partition-id="left-bearing"');
+    expect(markup).toContain('data-partition-id="gear"');
+    expect(markup).not.toContain('data-segment-ids="segment:2"');
+  });
+
   it('keeps every detected step as an independent draggable partition', () => {
     const value = draft();
     const markup = renderToStaticMarkup(<svg><PartitionOverlay
       draft={value}
+      mode="segments"
       previewHeld={false}
       scale={2}
       onMoveBoundary={() => undefined}
@@ -58,6 +75,7 @@ describe('PartitionOverlay', () => {
     const onMoveBoundary = vi.fn(async () => undefined);
     const renderer = TestRenderer.create(<svg><PartitionOverlay
       draft={draft()} previewHeld={false} scale={2} onMoveBoundary={onMoveBoundary}
+      mode="segments"
     /></svg>);
     const handle = renderer.root.findByProps({ 'aria-label': '移动分区边界 1' });
     const preventDefault = vi.fn();
@@ -92,6 +110,7 @@ describe('PartitionOverlay', () => {
     const onMoveBoundary = vi.fn(async () => undefined);
     const renderer = TestRenderer.create(<svg><PartitionOverlay
       draft={draft()} previewHeld={false} scale={2} onMoveBoundary={onMoveBoundary}
+      mode="segments"
     /></svg>);
     const handle = renderer.root.findByProps({ 'aria-label': '移动分区边界 1' });
     const event = { pointerId: 8, preventDefault: vi.fn(), stopPropagation: vi.fn() };
@@ -104,6 +123,7 @@ describe('PartitionOverlay', () => {
   it('keeps the dragged boundary visible when persistence fails', async () => {
     const renderer = TestRenderer.create(<svg><PartitionOverlay
       draft={draft()} previewHeld={false} scale={2} onMoveBoundary={() => Promise.reject(new Error('transport'))}
+      mode="segments"
     /></svg>);
     const handle = renderer.root.findByProps({ 'aria-label': '移动分区边界 1' });
     const event = { pointerId: 9, preventDefault: vi.fn(), stopPropagation: vi.fn() };

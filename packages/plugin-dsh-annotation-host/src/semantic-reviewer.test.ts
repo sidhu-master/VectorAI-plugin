@@ -31,6 +31,7 @@ describe('partition semantic reviewer', () => {
       toolFilter: { deny: ['drawing_observe', 'drawing_select_parts'] },
     });
     expect(JSON.stringify(started?.prompt)).toContain('名称、语义类型和理由必须使用简短中文');
+    expect(JSON.stringify(started?.prompt)).toContain('允许不覆盖全部轴段');
     expect(JSON.stringify(started?.outputSchema)).not.toMatch(/maxItems|minItems|minimum|maximum|maxLength/);
     expect(result.draft.segments[0]).toMatchObject({ semanticType: 'shaft-seat' });
   });

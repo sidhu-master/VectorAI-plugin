@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
+import type { DrawingDocument } from '@vectorai/drawing-core';
 import {
   DrawingSurface,
   WorkspaceActivityBar,
@@ -25,6 +26,7 @@ import { ConfirmedPartitionInspector } from './ConfirmedPartitionInspector';
 import { SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS } from './engineering-file-policy';
 import { classifyEngineeringDrop } from './engineering-drop';
 import { engineeringImportErrorText } from './EngineeringDropBridge';
+import type { PartitionViewMode } from './partition-view-model';
 
 const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
@@ -50,6 +52,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   const [importError, setImportError] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<AnnotationPanelId | null>(null);
   const [panelWidth, setPanelWidth] = useState(260);
+  const [partitionView, setPartitionView] = useState<PartitionViewMode>('functional');
   const fitAfterAnalysis = useRef(partitionState.busy);
   const surfaceSnapshot = useMemo(() => displaySnapshot === null ? null : ({
     ...displaySnapshot,
@@ -83,7 +86,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   useEffect(() => {
     if (displaySnapshot === null) return;
     fitRuntimeToDrawing(runtime, displaySnapshot);
-  }, [displaySnapshot?.ref.drawingId, displaySnapshot?.ref.revision, runtime]);
+  }, [displaySnapshot, runtime]);
 
   const beginImport = (drawing: File, documents: readonly File[]) => {
     setImportError(null);
@@ -110,9 +113,9 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   };
   const structurePanel = <div className="vai-annotation-panel">
     {dimensionPlan ? <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />
-      : draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} />
+      : draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} mode={partitionView} onModeChange={setPartitionView} />
         : confirmed && partitionState.partition.phase === 'confirmed'
-          ? <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} onReopen={partition.actions.reopen} /> : <><h2>标注检查</h2><dl>
+          ? <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} mode={partitionView} onModeChange={setPartitionView} onReopen={partition.actions.reopen} /> : <><h2>标注检查</h2><dl>
       <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
       <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
       <dt>选中</dt><dd>{selectedIds.length}</dd>
@@ -142,7 +145,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
         overlay
         activePanel={activePanel}
         panelWidth={panelWidth}
-        onActivePanelChange={setActivePanel}
+        onActivePanelChange={(panel) => setActivePanel(panel as AnnotationPanelId | null)}
         onPanelWidthChange={setPanelWidth}
         panels={panels}
       />
@@ -163,7 +166,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
           onSelectionChange={runtime.actions.setSelection}
           worldLayers={<>
             <g data-annotation-candidate-layer="true" data-preview-active={presentation.preview === null ? undefined : 'true'} pointerEvents="none" />
-            {draft && <PartitionOverlay draft={draft} previewHeld={partitionState.previewHeld} scale={viewport.scale}
+            {draft && <PartitionOverlay draft={draft} mode={partitionView} previewHeld={partitionState.previewHeld} scale={viewport.scale}
               onMoveBoundary={(index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 0.003, 0.05))} />}
           </>}
         />}
@@ -193,7 +196,7 @@ function fitRuntimeToDrawing(runtime: DrawingSurfaceRuntime, snapshot = runtime.
   if (snapshot === null) return;
   const viewport = runtime.viewport.getSnapshot();
   if (viewport.width <= 0 || viewport.height <= 0) return;
-  runtime.actions.setViewport(fitViewportToDrawing({ ...snapshot.document, annotations: [] }, viewport));
+  runtime.actions.setViewport(fitViewportToDrawing({ ...snapshot.document, annotations: [] } as DrawingDocument, viewport));
 }
 
 function useObservable<T>(observable: DrawingSurfaceObservable<T>): T {

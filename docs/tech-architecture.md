@@ -124,9 +124,10 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 - 第一层提供宿主内 `importDxf` 和受限 `renderObservation` 扩展接口；它们不注册全局上传路由或提示词；
 - 第二层 Client 通过 `conversation.input.dock` 注册会话级工程文件桥，只截获 DXF/受支持资料组合；DSH 原有图片附件链路保持不变。资料可在浏览器内暂存，但不写入聊天历史；DXF 到达后才调用第二层 remote 并认领 Workspace；
 - 第二层 Host 在第一层 `importDxf` 之前完成文档格式、大小、摘要和本地文本抽取。文本类由自有解码器处理，PDF/新版 Office/OpenDocument/RTF/EPUB 由 Host-only `officeparser` 处理，OCR、CDN worker 和远端服务全部关闭；
-- 第二层依次执行文档解析、轴向坐标系、外轮廓、持久台阶、证据融合，几何始终负责完整覆盖；
-- 缺失语义只交给无工具、深度 1、严格输出 schema 的视觉 reviewer；输入是稳定轴段 ID 与本地编号图，输出不含坐标；
+- 第二层依次执行文档解析、轴向坐标系、外轮廓、持久台阶、证据融合；`segments` 是由几何负责的完整连续轴段，`semanticGroups` 是允许留空的功能分区，两者不再共用同一个显示含义；
+- 缺失语义只交给无工具、深度 1、严格输出 schema 的视觉 reviewer；输入是稳定轴段 ID 与本地编号图，输出不含坐标，也不要求覆盖全部轴段；
 - 分区状态机支持 analyzing/editing/confirmed/needs-rebase，确认、取消、重新编辑、Undo/Redo 不改变 Drawing revision。确认时会持久化完整草稿；侧栏中的已确认版本可以显式恢复为编辑态，取消后回到原确认版本，再确认则建立 `parentRevisionId` 修订链。
+- 第二层画布默认按 `semanticGroups` 渲染功能分区，未被引用的连续轴段自然留白；左侧“图纸结构”面板可切换到完整 `segments` 视图，切换只改变投影视图，不改写分区数据或 revision。
 
 第二层认领的是会话 Workspace，不是一次任务的 modal。completed、canceled、failed、idle 或 needs-rebase 均不释放 claim。插件暂时不可用时显示第一层 fallback，但保留 claim。
 
