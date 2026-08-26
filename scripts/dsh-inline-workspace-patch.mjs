@@ -18,13 +18,38 @@ const SUPPORTED_VERSION = '0.1.0-rc.8';
 const PATCH_MARKER = 'data-vectorai-dsh-workspace-patch';
 const LEGACY_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8"`;
 const V2_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
-const PREVIOUS_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
-const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v4"`;
+const V3_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
+const V4_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v4"`;
+const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v5"`;
 const LEGACY_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane]:not(:empty)';
 const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
 const LEGACY_WORKSPACE_GATE = 'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;';
-const CURRENT_WORKSPACE_GATE = 'const workspacePane = renderSlot("conversation.workspace", {});';
+const V4_WORKSPACE_GATE = 'const workspacePane = renderSlot("conversation.workspace", {});';
+const CURRENT_WORKSPACE_GATE = 'const workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});';
+const LEGACY_WORKSPACE_PANE = `\t\t\t\t\t"data-conversation-workspace-pane": "",
+\t\t\t\t\tchildren: workspacePane`;
+const CURRENT_WORKSPACE_PANE = `\t\t\t\t\t"data-conversation-workspace-pane": "",
+\t\t\t\t\tkey: sessionId ?? "new-session",
+\t\t\t\t\tchildren: workspacePane`;
 const AGENT_LOOP_ARGUMENT_REPAIR_MARKER = 'function repairToolArgumentsJson(raw)';
+const LEGACY_WORKSPACE_SESSION_BOUNDARY = `const occupiedBlankSession = current !== void 0
+  && this.sessions.list.getSnapshot().byId[current]?.blank === true
+  && typeof document !== "undefined"
+  && document.querySelector("[data-conversation-workspace-active]") !== null;`;
+const WORKSPACE_SESSION_BOUNDARY = `const occupiedWorkspaceSession = current !== void 0
+  && typeof document !== "undefined"
+  && document.querySelector("[data-conversation-workspace-active]") !== null;`;
+const CURRENT_WORKSPACE_SESSION_BOUNDARY = 'const createFreshSession = current !== void 0;';
+const WORKSPACE_START_SESSION_PATTERN = /this\.connectWorkspace\(target\)\.then\(\(sessionId\) => \{\s*this\.sessions\.open\(sessionId\);\s*\}, \(reason\) => \{\s*console\.warn\("new session failed:", reason\);\s*\}\);/g;
+const WORKSPACE_START_SESSION_REPLACEMENT = `${CURRENT_WORKSPACE_SESSION_BOUNDARY}
+const nextSession = createFreshSession
+  ? this.sessions.create({ workspaceId: target })
+  : this.connectWorkspace(target);
+nextSession.then((sessionId) => {
+  this.sessions.open(sessionId);
+}, (reason) => {
+  console.warn("new session failed:", reason);
+});`;
 const AGENT_LOOP_PARSE_ARGUMENTS_PATTERN = /function parseArguments\(raw\) \{\s*try \{\s*return raw \? JSON\.parse\(raw\) : \{\};\s*\} catch \{\s*return raw;\s*\}\s*\}/g;
 const AGENT_LOOP_PARSE_ARGUMENTS_REPLACEMENT = `function parseArguments(raw) {
   try {
@@ -248,9 +273,10 @@ const ROOT_RETURN_REPLACEMENT = `
 \t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t"data-phase": phase,
 \t\t\t\t"data-conversation-workspace-layout": "",
-\t\t\t\t"${PATCH_MARKER}": "rc.8-v4",
+\t\t\t\t"${PATCH_MARKER}": "rc.8-v5",
 \t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("style", { children: workspaceLayoutStyles }), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-pane": "",
+\t\t\t\t\tkey: sessionId ?? "new-session",
 \t\t\t\t\tchildren: workspacePane
 \t\t\t\t}), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-resizer": "",
@@ -292,17 +318,42 @@ export function patchConversationClient(source) {
       && source.includes(ROBUST_RESIZE_HANDLER)
       && source.includes(CURRENT_WORKSPACE_SELECTOR)
       && source.includes(CURRENT_WORKSPACE_GATE)
+      && source.includes(CURRENT_WORKSPACE_PANE)
     ) {
       return { status: 'already-patched', source };
     }
     if (
-      source.includes(PREVIOUS_PATCH_MARKER)
+      source.includes(CURRENT_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
+      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && source.includes(CURRENT_WORKSPACE_GATE)
+      && source.includes(LEGACY_WORKSPACE_PANE)
+    ) {
+      return {
+        status: 'upgraded',
+        source: replaceExactlyOnce(source, LEGACY_WORKSPACE_PANE, CURRENT_WORKSPACE_PANE),
+      };
+    }
+    if (
+      source.includes(V4_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
+      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && source.includes(V4_WORKSPACE_GATE)
+    ) {
+      let upgraded = replaceExactlyOnce(source, V4_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
+      upgraded = upgradeWorkspacePaneKey(upgraded);
+      upgraded = replaceExactlyOnce(upgraded, V4_PATCH_MARKER, CURRENT_PATCH_MARKER);
+      return { status: 'upgraded', source: upgraded };
+    }
+    if (
+      source.includes(V3_PATCH_MARKER)
       && source.includes(ROBUST_RESIZE_HANDLER)
       && source.includes(CURRENT_WORKSPACE_SELECTOR)
       && source.includes(LEGACY_WORKSPACE_GATE)
     ) {
       let upgraded = replaceExactlyOnce(source, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
-      upgraded = replaceExactlyOnce(upgraded, PREVIOUS_PATCH_MARKER, CURRENT_PATCH_MARKER);
+      upgraded = upgradeWorkspacePaneKey(upgraded);
+      upgraded = replaceExactlyOnce(upgraded, V3_PATCH_MARKER, CURRENT_PATCH_MARKER);
       return { status: 'upgraded', source: upgraded };
     }
     if (
@@ -313,6 +364,7 @@ export function patchConversationClient(source) {
     ) {
       let upgraded = source.replaceAll(LEGACY_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
       upgraded = replaceExactlyOnce(upgraded, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
+      upgraded = upgradeWorkspacePaneKey(upgraded);
       upgraded = replaceExactlyOnce(upgraded, V2_PATCH_MARKER, CURRENT_PATCH_MARKER);
       return { status: 'upgraded', source: upgraded };
     }
@@ -322,6 +374,7 @@ export function patchConversationClient(source) {
       if (upgraded.includes(LEGACY_WORKSPACE_GATE)) {
         upgraded = replaceExactlyOnce(upgraded, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
       }
+      upgraded = upgradeWorkspacePaneKey(upgraded);
       upgraded = replaceExactlyOnce(upgraded, LEGACY_PATCH_MARKER, CURRENT_PATCH_MARKER);
       return { status: 'upgraded', source: upgraded };
     }
@@ -345,6 +398,34 @@ export function patchAgentLoopToolArgumentsParser(source) {
   };
 }
 
+export function patchWorkspaceRuntimeNewSession(source) {
+  if (source.includes(CURRENT_WORKSPACE_SESSION_BOUNDARY)) {
+    return { status: 'already-patched', source };
+  }
+  if (source.includes(WORKSPACE_SESSION_BOUNDARY)) {
+    return {
+      status: 'upgraded',
+      source: source
+        .replace(WORKSPACE_SESSION_BOUNDARY, CURRENT_WORKSPACE_SESSION_BOUNDARY)
+        .replace('const nextSession = occupiedWorkspaceSession', 'const nextSession = createFreshSession'),
+    };
+  }
+  if (source.includes(LEGACY_WORKSPACE_SESSION_BOUNDARY)) {
+    return {
+      status: 'upgraded',
+      source: source
+        .replace(LEGACY_WORKSPACE_SESSION_BOUNDARY, CURRENT_WORKSPACE_SESSION_BOUNDARY)
+        .replace('const nextSession = occupiedBlankSession', 'const nextSession = createFreshSession'),
+    };
+  }
+  const matches = source.match(WORKSPACE_START_SESSION_PATTERN) ?? [];
+  if (matches.length !== 1) throw new Error('DSH_WORKSPACE_SESSION_PATCH_ANCHOR_MISMATCH');
+  return {
+    status: 'patched',
+    source: source.replace(WORKSPACE_START_SESSION_PATTERN, WORKSPACE_START_SESSION_REPLACEMENT),
+  };
+}
+
 export function resolveConversationPackageFromDshBin(dshBin) {
   return resolveDshPackageFromBin(
     dshBin,
@@ -358,6 +439,14 @@ export function resolveAgentLoopPackageFromDshBin(dshBin) {
     dshBin,
     'dsh-agent-loop',
     'DSH_AGENT_LOOP_PACKAGE_NOT_FOUND',
+  );
+}
+
+export function resolveClientRuntimePackageFromDshBin(dshBin) {
+  return resolveDshPackageFromBin(
+    dshBin,
+    'dsh-client-runtime',
+    'DSH_CLIENT_RUNTIME_PACKAGE_NOT_FOUND',
   );
 }
 
@@ -445,12 +534,50 @@ export async function applyAgentLoopToolArgumentsPatch(agentLoopDirectory) {
   return { status: result.status, loopPath, backupPath };
 }
 
+export async function applyWorkspaceRuntimeNewSessionPatch(runtimeDirectory) {
+  const manifestPath = join(runtimeDirectory, 'package.json');
+  const clientPath = join(runtimeDirectory, 'lib', 'client.js');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  if (manifest.version !== SUPPORTED_VERSION) {
+    throw new Error(
+      `DSH_CLIENT_RUNTIME_UNSUPPORTED_VERSION:${String(manifest.version)} (expected ${SUPPORTED_VERSION})`,
+    );
+  }
+
+  const source = await readFile(clientPath, 'utf8');
+  const result = patchWorkspaceRuntimeNewSession(source);
+  if (result.status === 'already-patched') {
+    return { status: result.status, clientPath };
+  }
+
+  const backupPath = `${clientPath}.vectorai-workspace-session.bak`;
+  try {
+    await copyFile(clientPath, backupPath, fsConstants.COPYFILE_EXCL);
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+  }
+
+  const temporaryPath = `${clientPath}.${process.pid}.${randomUUID()}.tmp`;
+  const current = await stat(clientPath);
+  try {
+    await writeFile(temporaryPath, result.source, { mode: current.mode });
+    await rename(temporaryPath, clientPath);
+  } finally {
+    await unlink(temporaryPath).catch((error) => {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    });
+  }
+  return { status: result.status, clientPath, backupPath };
+}
+
 export async function applyDshCompatibilityPatches(dshBin) {
   const conversationDirectory = resolveConversationPackageFromDshBin(dshBin);
   const agentLoopDirectory = resolveAgentLoopPackageFromDshBin(dshBin);
+  const runtimeDirectory = resolveClientRuntimePackageFromDshBin(dshBin);
   return {
     conversation: await applyConversationWorkspacePatch(conversationDirectory),
     agentLoop: await applyAgentLoopToolArgumentsPatch(agentLoopDirectory),
+    runtime: await applyWorkspaceRuntimeNewSessionPatch(runtimeDirectory),
   };
 }
 
@@ -460,6 +587,11 @@ function replaceExactlyOnce(source, anchor, replacement) {
     throw new Error('DSH_WORKSPACE_PATCH_ANCHOR_MISMATCH');
   }
   return `${source.slice(0, first)}${replacement}${source.slice(first + anchor.length)}`;
+}
+
+function upgradeWorkspacePaneKey(source) {
+  if (source.includes(CURRENT_WORKSPACE_PANE)) return source;
+  return replaceExactlyOnce(source, LEGACY_WORKSPACE_PANE, CURRENT_WORKSPACE_PANE);
 }
 
 async function main() {
