@@ -13,6 +13,22 @@ export interface ShaftProfile {
   sampleCount: number;
 }
 
+interface ShoulderEvent {
+  z: number;
+  radialSpan: number;
+  positive: boolean;
+  geometryNodeId: string;
+}
+
+interface ShoulderCluster {
+  minZ: number;
+  weightedZ: number;
+  weight: number;
+  positiveSpan: number;
+  negativeSpan: number;
+  geometryNodeIds: string[];
+}
+
 export function extractShaftProfile(document: DrawingDocument, axis: ShaftAxis): ShaftProfile {
   const pieces: ShaftProfilePiece[] = [];
   const selected = axis.geometryNodeIds === undefined ? undefined : new Set(axis.geometryNodeIds);
@@ -27,34 +43,50 @@ export function extractShaftProfile(document: DrawingDocument, axis: ShaftAxis):
   }
   const maxRadius = Math.max(0, ...pieces.flatMap(({ r1, r2 }) => [Math.abs(r1), Math.abs(r2)]));
   const axialTolerance = Math.max(axis.zMax * 1e-5, 1e-6);
-  const clusters = new Map<number, { z: number; positiveSpan: number; negativeSpan: number; geometryNodeIds: string[] }>();
+  const events: ShoulderEvent[] = [];
   for (const piece of pieces) {
     if (Math.abs(piece.z2 - piece.z1) > axialTolerance) continue;
     const radialSpan = Math.abs(piece.r2 - piece.r1);
     if (radialSpan <= Math.max(maxRadius * 0.025, 0.05)) continue;
     if (piece.r1 * piece.r2 <= 0) continue;
     const z = (piece.z1 + piece.z2) / 2;
-    const positive = (piece.r1 + piece.r2) / 2 > 0;
-    const key = Math.round(z / axialTolerance);
-    const current = clusters.get(key);
-    if (current) {
-      current.z = (current.z + z) / 2;
-      if (positive) current.positiveSpan += radialSpan;
-      else current.negativeSpan += radialSpan;
-      current.geometryNodeIds = [...new Set([...current.geometryNodeIds, piece.geometryNodeId])];
-    } else clusters.set(key, {
-      z,
-      positiveSpan: positive ? radialSpan : 0,
-      negativeSpan: positive ? 0 : radialSpan,
-      geometryNodeIds: [piece.geometryNodeId],
-    });
+    events.push({ z, radialSpan, positive: (piece.r1 + piece.r2) / 2 > 0, geometryNodeId: piece.geometryNodeId });
   }
+  const clusters = clusterShoulderEvents(events, axialTolerance);
   const minimumSideSpan = Math.max(maxRadius * 0.01, 0.05);
-  const shoulders = [...clusters.values()]
+  const shoulders = clusters
     .filter(({ positiveSpan, negativeSpan }) => positiveSpan > minimumSideSpan && negativeSpan > minimumSideSpan)
-    .map(({ positiveSpan, negativeSpan, ...shoulder }) => ({ ...shoulder, radialSpan: positiveSpan + negativeSpan }))
+    .map(({ weightedZ, weight, positiveSpan, negativeSpan, geometryNodeIds }) => ({
+      z: weightedZ / weight,
+      radialSpan: positiveSpan + negativeSpan,
+      geometryNodeIds,
+    }))
     .sort((first, second) => first.z - second.z);
   return { axis, pieces, shoulders, maxRadius, sampleCount: pieces.length + 1 };
+}
+
+function clusterShoulderEvents(events: ShoulderEvent[], tolerance: number): ShoulderCluster[] {
+  const clusters: ShoulderCluster[] = [];
+  for (const event of [...events].sort((first, second) => first.z - second.z)) {
+    const current = clusters.at(-1);
+    if (!current || event.z - current.minZ > tolerance) {
+      clusters.push({
+        minZ: event.z,
+        weightedZ: event.z * event.radialSpan,
+        weight: event.radialSpan,
+        positiveSpan: event.positive ? event.radialSpan : 0,
+        negativeSpan: event.positive ? 0 : event.radialSpan,
+        geometryNodeIds: [event.geometryNodeId],
+      });
+      continue;
+    }
+    current.weightedZ += event.z * event.radialSpan;
+    current.weight += event.radialSpan;
+    if (event.positive) current.positiveSpan += event.radialSpan;
+    else current.negativeSpan += event.radialSpan;
+    if (!current.geometryNodeIds.includes(event.geometryNodeId)) current.geometryNodeIds.push(event.geometryNodeId);
+  }
+  return clusters;
 }
 
 export function radiusSummary(profile: ShaftProfile, zStart: number, zEnd: number) {
