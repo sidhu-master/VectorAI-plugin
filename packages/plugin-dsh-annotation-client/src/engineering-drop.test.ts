@@ -21,8 +21,10 @@ describe('engineering drop classification', () => {
     });
   });
 
-  it('leaves document-only drops to DSH until the user describes an engineering task', () => {
-    expect(classifyEngineeringDrop([file('notes.txt'), file('table.csv')])).toEqual({ kind: 'pass' });
+  it('accepts document-only drops as staged context without starting an engineering task', () => {
+    expect(classifyEngineeringDrop([file('notes.txt'), file('table.csv')])).toMatchObject({
+      kind: 'documents', documents: [{ name: 'notes.txt' }, { name: 'table.csv' }],
+    });
   });
 
   it('passes ordinary DSH image drops through untouched', () => {

@@ -9155,7 +9155,11 @@ const supported = new Set(SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS);
 const legacy = new Set(LEGACY_ENGINEERING_DOCUMENT_EXTENSIONS);
 function classifyEngineeringDrop(files) {
   const dxfs = files.filter((file) => extensionOf(file.name) === "dxf");
-  if (dxfs.length === 0) return { kind: "pass" };
+  if (dxfs.length === 0) {
+    if (files.length === 0 || files.some((file) => !supported.has(extensionOf(file.name)) && !legacy.has(extensionOf(file.name)))) return { kind: "pass" };
+    const rejected2 = validateDocuments(files);
+    return rejected2 ?? { kind: "documents", documents: [...files] };
+  }
   if (dxfs.length > 1) {
     return { kind: "reject", code: "ENGINEERING_DROP_MULTIPLE_DXF", filenames: dxfs.map(({ name }) => name) };
   }
@@ -9172,26 +9176,25 @@ function classifyEngineeringDrop(files) {
   if (dxfs[0] && dxfs[0].size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) {
     return { kind: "reject", code: "DXF_SIZE_LIMIT", filenames: [dxfs[0].name] };
   }
-  if (supportedDocuments.length > ENGINEERING_IMPORT_LIMITS.maxDocuments) {
-    return { kind: "reject", code: "ENGINEERING_DOCUMENT_COUNT_LIMIT", filenames: supportedDocuments.map(({ name }) => name) };
-  }
-  const oversized = supportedDocuments.filter((file) => file.size > ENGINEERING_IMPORT_LIMITS.maxDocumentBytes);
-  if (oversized.length > 0) {
-    return { kind: "reject", code: "ENGINEERING_DOCUMENT_SIZE_LIMIT", filenames: oversized.map(({ name }) => name) };
-  }
-  if (supportedDocuments.reduce((total, file) => total + file.size, 0) > ENGINEERING_IMPORT_LIMITS.maxDocumentTotalBytes) {
-    return { kind: "reject", code: "ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT", filenames: supportedDocuments.map(({ name }) => name) };
-  }
+  const rejected = validateDocuments(supportedDocuments);
+  if (rejected) return rejected;
+  return { kind: "import", dxf: dxfs[0], documents: supportedDocuments };
+}
+function validateDocuments(documents) {
+  const legacyDocuments = documents.filter((file) => legacy.has(extensionOf(file.name)));
+  if (legacyDocuments.length > 0) return { kind: "reject", code: "DOCUMENT_LEGACY_FORMAT_UNSUPPORTED", filenames: legacyDocuments.map(({ name }) => name) };
+  if (documents.length > ENGINEERING_IMPORT_LIMITS.maxDocuments) return { kind: "reject", code: "ENGINEERING_DOCUMENT_COUNT_LIMIT", filenames: documents.map(({ name }) => name) };
+  const oversized = documents.filter((file) => file.size > ENGINEERING_IMPORT_LIMITS.maxDocumentBytes);
+  if (oversized.length > 0) return { kind: "reject", code: "ENGINEERING_DOCUMENT_SIZE_LIMIT", filenames: oversized.map(({ name }) => name) };
+  if (documents.reduce((total, file) => total + file.size, 0) > ENGINEERING_IMPORT_LIMITS.maxDocumentTotalBytes) return { kind: "reject", code: "ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT", filenames: documents.map(({ name }) => name) };
   const byName = /* @__PURE__ */ new Map();
-  for (const file of supportedDocuments) {
+  for (const file of documents) {
     const key = file.name.toLocaleLowerCase();
     byName.set(key, [...byName.get(key) ?? [], file]);
   }
   const duplicates = [...byName.values()].filter((group) => group.length > 1).flat();
-  if (duplicates.length > 0) {
-    return { kind: "reject", code: "ENGINEERING_DOCUMENT_DUPLICATE_NAME", filenames: duplicates.map(({ name }) => name) };
-  }
-  return { kind: "import", dxf: dxfs[0], documents: supportedDocuments };
+  if (duplicates.length > 0) return { kind: "reject", code: "ENGINEERING_DOCUMENT_DUPLICATE_NAME", filenames: duplicates.map(({ name }) => name) };
+  return null;
 }
 function engineeringImportErrorText(code, filenames = []) {
   const names = filenames.length === 0 ? "" : `（${filenames.join("、")}）`;
@@ -9199,7 +9202,6 @@ function engineeringImportErrorText(code, filenames = []) {
   if (code == null ? void 0 : code.startsWith("DOCUMENT_PARSE_FAILED")) return `文档解析失败${names}`;
   if (code == null ? void 0 : code.startsWith("DOCUMENT_TEXT_EMPTY")) return `文档中没有可提取的文字；扫描件暂不支持 OCR${names}`;
   if (code == null ? void 0 : code.startsWith("DOCUMENT_LEGACY_FORMAT_UNSUPPORTED")) return `旧版 DOC/XLS/PPT 暂不支持，请另存为新版 Office、PDF 或文本格式${names}`;
-  if (code === "ENGINEERING_MIXED_DROP_REQUIRES_SEPARATE_DOCUMENTS") return `请先单独拖入 DXF 打开图纸，再将文档作为会话附件拖入并描述任务${names}`;
   if (code === "ENGINEERING_DROP_MULTIPLE_DXF") return `一次只能导入一张 DXF 图纸${names}`;
   if (code == null ? void 0 : code.startsWith("ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED")) return `包含暂不支持的工程资料格式${names}`;
   if (code === "ENGINEERING_DOCUMENT_DUPLICATE_NAME") return `工程资料存在重名文件${names}`;
@@ -9218,6 +9220,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
   const partitionState = useObservable(partition.state);
   const displaySnapshot = presentation.displaySnapshot ?? snapshot;
   const [importError, setImportError] = reactExports.useState(null);
+  const [stagedDocumentNames, setStagedDocumentNames] = reactExports.useState([]);
   const [activePanel, setActivePanel] = reactExports.useState(null);
   const [panelWidth, setPanelWidth] = reactExports.useState(260);
   const [partitionView, setPartitionView] = reactExports.useState("functional");
@@ -9270,6 +9273,11 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
       beginImport(decision.dxf, decision.documents);
       return;
     }
+    if (decision.kind === "documents") {
+      setImportError(null);
+      void partition.actions.stageDocuments(decision.documents).then(() => setStagedDocumentNames((current) => [...current, ...decision.documents.map(({ name }) => name)])).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+      return;
+    }
     setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
   };
   const structurePanel = /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-annotation-panel", children: dimensionPlan ? /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }) : draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt) : confirmed && partitionState.partition.phase === "confirmed" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -9314,9 +9322,23 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
             }
           ),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "vai-annotation-workspace__canvas", children: [
-            partitionState.busy && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-progress", "data-partition-progress": partitionState.partition.phase, role: "status", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-partition-progress__pulse", "aria-hidden": "true" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status) })
+            (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
+              partitionState.busy && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-progress", "data-partition-progress": partitionState.partition.phase, role: "status", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-partition-progress__pulse", "aria-hidden": "true" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status) })
+              ] }),
+              stagedDocumentNames.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-engineering-documents-status", role: "status", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                  "已添加 ",
+                  stagedDocumentNames.length,
+                  " 份工程资料；请描述任务后再开始分区"
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", "aria-label": "清除已添加的工程资料", onClick: () => {
+                  setImportError(null);
+                  void partition.actions.clearDocuments().then(() => setStagedDocumentNames([])).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+                }, children: "清除" })
+              ] }),
+              (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: importError ?? `边界未保存：${partitionState.error}` })
             ] }),
             surfaceSnapshot !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
               DrawingSurface,
@@ -9346,7 +9368,6 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                 ] })
               }
             ),
-            (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: importError ?? `边界未保存：${partitionState.error}` }),
             partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
             displaySnapshot && /* @__PURE__ */ jsxRuntimeExports.jsx(
               WorkspaceToolbarView,
@@ -15541,6 +15562,9 @@ const partitionDocumentSupplementRequestSchema = object({
   expectedDrawingRef: drawingRefSchema,
   engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
 }).strict();
+const engineeringDocumentStageRequestSchema = object({
+  engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
+}).strict();
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),
@@ -15682,6 +15706,8 @@ const ANNOTATION_REMOTE = {
 function partitionDescriptors() {
   return [
     descriptor("importDrawing", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest.dxf", partitionImportRequestSchema.shape.dxf)]),
+    descriptor("stageDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#EngineeringDocumentStageRequest", engineeringDocumentStageRequestSchema)]),
+    descriptor("clearDocuments", []),
     descriptor("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
     descriptor("supplementDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest", partitionDocumentSupplementRequestSchema)]),
     descriptor("getPartitionState", []),
@@ -15761,6 +15787,14 @@ function createPartitionController(sessionId, remote) {
           { detail: { sessionId } }
         ));
       },
+      async stageDocuments(engineeringDocuments) {
+        if (engineeringDocuments.length === 0) throw new Error("ENGINEERING_DOCUMENT_REQUIRED");
+        const documents = await serializeEngineeringDocuments(engineeringDocuments);
+        await run(() => remote.stageDocuments(sessionId, {
+          engineeringDocuments: documents
+        }));
+      },
+      clearDocuments: () => run(() => remote.clearDocuments(sessionId)),
       async importFiles(dxf, engineeringDocuments = []) {
         const dxfRequest = await serializeDxf(dxf);
         const documents = await serializeEngineeringDocuments(engineeringDocuments);

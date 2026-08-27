@@ -932,12 +932,16 @@ export const partitionDocumentSupplementRequestSchema = z.object({
   expectedDrawingRef: drawingRefSchema,
   engineeringDocuments: z.array(engineeringDocumentInputSchema).min(1).max(16),
 }).strict();
+export const engineeringDocumentStageRequestSchema = z.object({
+  engineeringDocuments: z.array(engineeringDocumentInputSchema).min(1).max(16),
+}).strict();
 
 export type PartitionDraft = z.infer<typeof partitionDraftSchema>;
 export type PartitionRevision = z.infer<typeof partitionRevisionSchema>;
 export type PartitionEditCommand = z.infer<typeof partitionEditCommandSchema>;
 export type PartitionSessionSnapshot = z.infer<typeof partitionSessionSnapshotSchema>;
 export type EngineeringDocumentInput = z.infer<typeof engineeringDocumentInputSchema>;
+export type EngineeringDocumentStageRequest = z.infer<typeof engineeringDocumentStageRequestSchema>;
 export type PartitionImportRequest = z.infer<typeof partitionImportRequestSchema>;
 export type PartitionDocumentSupplementRequest = z.infer<typeof partitionDocumentSupplementRequestSchema>;
 

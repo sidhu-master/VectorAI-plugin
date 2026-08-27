@@ -13861,6 +13861,9 @@ object$1({
   expectedDrawingRef: drawingRefSchema$1,
   engineeringDocuments: array$1(engineeringDocumentInputSchema).min(1).max(16)
 }).strict();
+object$1({
+  engineeringDocuments: array$1(engineeringDocumentInputSchema).min(1).max(16)
+}).strict();
 const engineeringDiagnosticSchema = object$1({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),

@@ -5,6 +5,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type {
   AnnotationSessionState,
+  EngineeringDocumentStageRequest,
   DrawingSpaceExtensionHost,
   DrawingRef,
   PartitionDocumentSupplementRequest,
@@ -62,7 +63,11 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       start: (agent, engineeringContext, signal) => this.partitionWorkflow.analyzeCurrent(agent, engineeringContext, signal),
     })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
-    ctx.on('session/disposed', (session) => this.sessions.disposeSession(String(session.id)));
+    ctx.on('session/disposed', (session) => {
+      const sessionId = String(session.id);
+      this.partitionWorkflow.disposeSession(sessionId);
+      this.sessions.disposeSession(sessionId);
+    });
   }
 
   @Remote
@@ -73,6 +78,16 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   importDrawing(agent: Agent, request: PartitionImportRequest['dxf']): Promise<PartitionSessionSnapshot> {
     return this.partitionWorkflow.importDrawing(agent, request);
+  }
+
+  @Remote
+  stageDocuments(agent: Agent, request: EngineeringDocumentStageRequest): Promise<PartitionSessionSnapshot> {
+    return this.partitionWorkflow.stageDocuments(agent, request.engineeringDocuments);
+  }
+
+  @Remote
+  clearDocuments(agent: Agent): PartitionSessionSnapshot {
+    return this.partitionWorkflow.clearDocuments(agent);
   }
 
   @Remote

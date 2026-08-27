@@ -7,7 +7,7 @@ import { TYPERT } from './typert';
 describe('annotation TYPERT contribution', () => {
   it('publishes the readonly session projection and explicit partition workflow', () => {
     expect(TYPERT.invocations.map(({ method }) => method)).toEqual([
-      'getSessionState', 'importDrawing', 'importAndAnalyze', 'supplementDocuments', 'getPartitionState', 'editPartition',
+      'getSessionState', 'importDrawing', 'stageDocuments', 'clearDocuments', 'importAndAnalyze', 'supplementDocuments', 'getPartitionState', 'editPartition',
       'confirmPartition', 'cancelPartition', 'reopenPartition', 'undoPartition', 'redoPartition',
     ]);
     expect(TYPERT.invocations[0]?.result.schema).toHaveProperty('_zod');

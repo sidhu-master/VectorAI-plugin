@@ -50,6 +50,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   const partitionState = useObservable(partition.state);
   const displaySnapshot = (presentation.displaySnapshot ?? snapshot) as DrawingWorkspaceSnapshot | null;
   const [importError, setImportError] = useState<string | null>(null);
+  const [stagedDocumentNames, setStagedDocumentNames] = useState<string[]>([]);
   const [activePanel, setActivePanel] = useState<AnnotationPanelId | null>(null);
   const [panelWidth, setPanelWidth] = useState(260);
   const [partitionView, setPartitionView] = useState<PartitionViewMode>('functional');
@@ -97,6 +98,13 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   const handleToolbarUpload = (files: readonly File[]) => {
     const decision = classifyEngineeringDrop(files);
     if (decision.kind === 'import') { beginImport(decision.dxf, decision.documents); return; }
+    if (decision.kind === 'documents') {
+      setImportError(null);
+      void partition.actions.stageDocuments(decision.documents)
+        .then(() => setStagedDocumentNames((current) => [...current, ...decision.documents.map(({ name }) => name)]))
+        .catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+      return;
+    }
     setImportError(decision.kind === 'reject'
       ? engineeringImportErrorText(decision.code, decision.filenames)
       : '请选择 DXF 图纸或受支持的工程文档');
@@ -140,10 +148,25 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
         panels={panels}
       />
       <main className="vai-annotation-workspace__canvas">
-        {partitionState.busy && <div className="vai-partition-progress" data-partition-progress={partitionState.partition.phase} role="status">
-          <span className="vai-partition-progress__pulse" aria-hidden="true" />
-          <span>{partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status)}</span>
-        </div>}
+        {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null) &&
+          <div className="vai-annotation-status-stack" data-annotation-status-stack="true">
+            {partitionState.busy && <div className="vai-partition-progress" data-partition-progress={partitionState.partition.phase} role="status">
+              <span className="vai-partition-progress__pulse" aria-hidden="true" />
+              <span>{partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status)}</span>
+            </div>}
+            {stagedDocumentNames.length > 0 && <div className="vai-engineering-documents-status" role="status">
+              <span>已添加 {stagedDocumentNames.length} 份工程资料；请描述任务后再开始分区</span>
+              <button type="button" aria-label="清除已添加的工程资料" onClick={() => {
+                setImportError(null);
+                void partition.actions.clearDocuments()
+                  .then(() => setStagedDocumentNames([]))
+                  .catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
+              }}>清除</button>
+            </div>}
+            {(importError ?? partitionState.error) && <p className="vai-partition-error" role="alert">
+              {importError ?? `边界未保存：${partitionState.error}`}
+            </p>}
+          </div>}
         {surfaceSnapshot !== null && <DrawingSurface
           snapshot={surfaceSnapshot}
           viewport={viewport}
@@ -161,9 +184,6 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
               onMoveSemanticRange={(groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(draft.axis.zMax * 0.003, 0.05))} />}
           </>}
         />}
-        {(importError ?? partitionState.error) && <p className="vai-partition-error" role="alert">
-          {importError ?? `边界未保存：${partitionState.error}`}
-        </p>}
         {partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
         {displaySnapshot && <WorkspaceToolbarView
           snapshot={displaySnapshot}
