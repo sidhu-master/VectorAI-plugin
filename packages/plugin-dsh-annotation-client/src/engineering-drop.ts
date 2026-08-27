@@ -19,7 +19,6 @@ export type EngineeringImportErrorCode =
 
 export type EngineeringDropDecision =
   | { kind: 'pass' }
-  | { kind: 'pending'; documents: File[] }
   | { kind: 'import'; dxf: File; documents: File[] }
   | { kind: 'reject'; code: EngineeringImportErrorCode; filenames: string[] };
 

@@ -6126,7 +6126,7 @@ window.__ModuleLoader__.load({
       };
       const inspect = (event) => classifyEngineeringDrop(filesFromTransfer(event.dataTransfer));
       const handleDrop = async (event) => {
-        var _a2, _b;
+        var _a2;
         const decision = inspect(event);
         if (decision.kind === "pass") return;
         own(event);
@@ -6135,30 +6135,13 @@ window.__ModuleLoader__.load({
           update({ phase: "error", pendingDocuments: [], code: decision.code, filenames: decision.filenames });
           return;
         }
-        if (decision.kind === "pending") {
-          const combined2 = classifyEngineeringDrop([...current.pendingDocuments, ...decision.documents]);
-          if (combined2.kind === "reject") {
-            update({ phase: "error", pendingDocuments: [], code: combined2.code, filenames: combined2.filenames });
-            return;
-          }
-          const documents = combined2.kind === "pending" ? combined2.documents : decision.documents;
-          if (((_b = input.hasDrawing) == null ? void 0 : _b.call(input)) === true && input.supplementDocuments !== void 0) {
-            update({ phase: "importing", pendingDocuments: [], filenames: documents.map(({ name }) => name) });
-            try {
-              await input.supplementDocuments(documents);
-              await input.refreshClaim();
-              update({ phase: "success", pendingDocuments: [], filenames: documents.map(({ name }) => name) });
-            } catch (error) {
-              update({
-                phase: "error",
-                pendingDocuments: [],
-                code: error instanceof Error ? error.message : String(error),
-                filenames: []
-              });
-            }
-            return;
-          }
-          update({ phase: "pending", pendingDocuments: [...documents], filenames: documents.map(({ name }) => name) });
+        if (decision.documents.length > 0) {
+          update({
+            phase: "error",
+            pendingDocuments: [],
+            code: "ENGINEERING_MIXED_DROP_REQUIRES_SEPARATE_DOCUMENTS",
+            filenames: [decision.dxf.name, ...decision.documents.map(({ name }) => name)]
+          });
           return;
         }
         const combined = classifyEngineeringDrop([decision.dxf, ...current.pendingDocuments, ...decision.documents]);
@@ -6172,7 +6155,7 @@ window.__ModuleLoader__.load({
         }
         update({ phase: "importing", pendingDocuments: [], filenames: [combined.dxf.name, ...combined.documents.map(({ name }) => name)] });
         try {
-          await input.importFiles(combined.dxf, combined.documents);
+          await input.importFiles(combined.dxf);
           await input.refreshClaim();
           update({
             phase: "success",
@@ -6236,9 +6219,7 @@ window.__ModuleLoader__.load({
     }
     function EngineeringDropBridge({ partition, refreshClaim }) {
       const bridge = react.useMemo(() => createEngineeringDropBridgeController({
-        importFiles: partition.actions.importFiles,
-        supplementDocuments: partition.actions.supplementDocuments,
-        hasDrawing: () => partition.state.getSnapshot().partition.drawingRef !== void 0,
+        importFiles: partition.actions.importDrawing,
         refreshClaim,
         releaseNativeDragState: releaseDshNativeDragState
       }), [partition, refreshClaim]);
@@ -6254,9 +6235,8 @@ window.__ModuleLoader__.load({
       window.dispatchEvent(new Event("dragend"));
     }
     function dropStatusText(state) {
-      if (state.phase === "pending") return `已暂存 ${state.pendingDocuments.length} 份工程资料，拖入 DXF 后开始智能分区`;
-      if (state.phase === "importing") return `正在本地读取并分析：${state.filenames.join("、")}`;
-      if (state.phase === "success") return `导入完成，正在打开分区界面：${state.filenames.join("、")}`;
+      if (state.phase === "importing") return `正在本地读取图纸：${state.filenames.join("、")}`;
+      if (state.phase === "success") return `图纸已打开：${state.filenames.join("、")}；请描述任务后再开始分区`;
       return engineeringImportErrorText(state.code, state.filenames);
     }
     function engineeringImportErrorText(code, filenames = []) {
@@ -6265,6 +6245,7 @@ window.__ModuleLoader__.load({
       if (code == null ? void 0 : code.startsWith("DOCUMENT_PARSE_FAILED")) return `文档解析失败${names}`;
       if (code == null ? void 0 : code.startsWith("DOCUMENT_TEXT_EMPTY")) return `文档中没有可提取的文字；扫描件暂不支持 OCR${names}`;
       if (code == null ? void 0 : code.startsWith("DOCUMENT_LEGACY_FORMAT_UNSUPPORTED")) return `旧版 DOC/XLS/PPT 暂不支持，请另存为新版 Office、PDF 或文本格式${names}`;
+      if (code === "ENGINEERING_MIXED_DROP_REQUIRES_SEPARATE_DOCUMENTS") return `请先单独拖入 DXF 打开图纸，再将文档作为会话附件拖入并描述任务${names}`;
       if (code === "ENGINEERING_DROP_MULTIPLE_DXF") return `一次只能导入一张 DXF 图纸${names}`;
       if (code == null ? void 0 : code.startsWith("ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED")) return `包含暂不支持的工程资料格式${names}`;
       if (code === "ENGINEERING_DOCUMENT_DUPLICATE_NAME") return `工程资料存在重名文件${names}`;
@@ -6333,15 +6314,6 @@ window.__ModuleLoader__.load({
         const decision = classifyEngineeringDrop(files);
         if (decision.kind === "import") {
           beginImport(decision.dxf, decision.documents);
-          return;
-        }
-        if (decision.kind === "pending") {
-          if (partitionState.partition.drawingRef) {
-            setImportError(null);
-            void partition.actions.supplementDocuments(decision.documents).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
-          } else {
-            setImportError("请同时选择 DXF 图纸；工程文档不能单独创建图纸");
-          }
           return;
         }
         setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
@@ -12755,6 +12727,7 @@ window.__ModuleLoader__.load({
     };
     function partitionDescriptors() {
       return [
+        descriptor("importDrawing", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest.dxf", partitionImportRequestSchema.shape.dxf)]),
         descriptor("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
         descriptor("supplementDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest", partitionDocumentSupplementRequestSchema)]),
         descriptor("getPartitionState", []),
@@ -12781,6 +12754,7 @@ window.__ModuleLoader__.load({
     function jsonParameter(name, typeSymbol, schema) {
       return { name, wire: name, source: "json", codec: { mode: "strict", typeSymbol, schema } };
     }
+    const DRAWING_SURFACE_REFRESH_EVENT = "vectorai:drawing-surface-refresh";
     function createPartitionController(sessionId, remote) {
       let current = { partition: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null };
       const listeners = /* @__PURE__ */ new Set();
@@ -12825,13 +12799,19 @@ window.__ModuleLoader__.load({
         },
         actions: {
           refresh: () => run(() => remote.getPartitionState(sessionId)),
+          async importDrawing(dxf) {
+            const request = await serializeDxf(dxf);
+            await run(() => remote.importDrawing(sessionId, request));
+            if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(
+              DRAWING_SURFACE_REFRESH_EVENT,
+              { detail: { sessionId } }
+            ));
+          },
           async importFiles(dxf, engineeringDocuments = []) {
-            if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error("DXF_SIZE_LIMIT");
-            const bytes = new Uint8Array(await dxf.arrayBuffer());
-            const digest = `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`;
+            const dxfRequest = await serializeDxf(dxf);
             const documents = await serializeEngineeringDocuments(engineeringDocuments);
             const request = {
-              dxf: { name: dxf.name, digest, base64: base64(bytes) },
+              dxf: dxfRequest,
               engineeringDocuments: documents
             };
             await run(() => remote.importAndAnalyze(sessionId, request), {
@@ -12880,6 +12860,11 @@ window.__ModuleLoader__.load({
       const size = 32768;
       for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
       return btoa(binary);
+    }
+    async function serializeDxf(dxf) {
+      if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error("DXF_SIZE_LIMIT");
+      const bytes = new Uint8Array(await dxf.arrayBuffer());
+      return { name: dxf.name, digest: `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`, base64: base64(bytes) };
     }
     async function serializeEngineeringDocuments(files) {
       validateEngineeringDocumentFiles(files);

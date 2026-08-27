@@ -58,7 +58,7 @@ describe('engineering drop bridge', () => {
     const dxfDrop = drop([drawing]);
     await bridge.actions.handleDrop(dxfDrop);
 
-    expect(importFiles).toHaveBeenCalledWith(drawing, []);
+    expect(importFiles).toHaveBeenCalledWith(drawing);
     expect(refreshClaim).toHaveBeenCalledOnce();
     expect(bridge.state.getSnapshot()).toMatchObject({
       phase: 'success',
@@ -76,16 +76,13 @@ describe('engineering drop bridge', () => {
     const drawing = file('shaft.dxf');
     await bridge.actions.handleDrop(drop([drawing]));
 
-    expect(importFiles).toHaveBeenCalledWith(drawing, []);
+    expect(importFiles).toHaveBeenCalledWith(drawing);
   });
 
   it('does not supplement the current DXF merely because a document was dropped', async () => {
-    let drawingReady = false;
     const supplementDocuments = vi.fn(async () => undefined);
     const bridge = createEngineeringDropBridgeController({
-      importFiles: vi.fn(async () => { drawingReady = true; }),
-      supplementDocuments,
-      hasDrawing: () => drawingReady,
+      importFiles: vi.fn(async () => undefined),
       refreshClaim: vi.fn(async () => undefined),
     });
 
@@ -97,6 +94,30 @@ describe('engineering drop bridge', () => {
     expect(bridge.state.getSnapshot()).toMatchObject({ phase: 'success', filenames: ['shaft.dxf'], pendingDocuments: [] });
   });
 
+  it('rejects a mixed global drop instead of silently discarding its documents', async () => {
+    const importFiles = vi.fn(async () => undefined);
+    const bridge = createEngineeringDropBridgeController({ importFiles, refreshClaim: vi.fn(async () => undefined) });
+
+    await bridge.actions.handleDrop(drop([file('shaft.dxf'), file('notes.txt', 'text/plain')]));
+
+    expect(importFiles).not.toHaveBeenCalled();
+    expect(bridge.state.getSnapshot()).toMatchObject({
+      phase: 'error', code: 'ENGINEERING_MIXED_DROP_REQUIRES_SEPARATE_DOCUMENTS',
+      filenames: ['shaft.dxf', 'notes.txt'],
+    });
+  });
+
+  it('opens a dropped DXF without starting or claiming the partition workflow', async () => {
+    const importFiles = vi.fn(async () => undefined);
+    const refreshClaim = vi.fn(async () => undefined);
+    const bridge = createEngineeringDropBridgeController({ importFiles, refreshClaim });
+
+    await bridge.actions.handleDrop(drop([file('shaft.dxf')]));
+
+    expect(importFiles).toHaveBeenCalledWith(expect.objectContaining({ name: 'shaft.dxf' }));
+    expect(refreshClaim).toHaveBeenCalledOnce();
+  });
+
   it('surfaces rejection and import errors without leaving hidden pending files', async () => {
     const importFiles = vi.fn(async () => { throw new Error('DOCUMENT_PARSE_FAILED:broken.pdf'); });
     const bridge = createEngineeringDropBridgeController({ importFiles, refreshClaim: vi.fn() });
@@ -104,7 +125,7 @@ describe('engineering drop bridge', () => {
     await bridge.actions.handleDrop(drop([file('a.dxf'), file('b.dxf')]));
     expect(bridge.state.getSnapshot()).toMatchObject({ phase: 'error', code: 'ENGINEERING_DROP_MULTIPLE_DXF' });
 
-    await bridge.actions.handleDrop(drop([file('drawing.dxf'), file('broken.pdf')]));
+    await bridge.actions.handleDrop(drop([file('drawing.dxf')]));
     expect(bridge.state.getSnapshot()).toMatchObject({
       phase: 'error', code: 'DOCUMENT_PARSE_FAILED:broken.pdf', pendingDocuments: [],
     });

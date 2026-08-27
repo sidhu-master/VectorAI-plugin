@@ -90,7 +90,9 @@ export function createPartitionStatusTool(
             ? 'edit-or-confirm-in-engineering-workspace'
             : snapshot.phase === 'confirmed'
               ? 'ready-for-automatic-annotation'
-              : 'import-engineering-dxf',
+              : snapshot.drawingRef === undefined
+                ? 'import-engineering-dxf'
+                : 'wait-for-explicit-partition-request',
       } as unknown as JsonValue;
     },
   });

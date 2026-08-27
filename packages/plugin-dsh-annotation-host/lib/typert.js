@@ -6212,6 +6212,7 @@ const TYPERT = {
 };
 function partitionInvocations() {
   return [
+    invocation("importDrawing", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest.dxf", partitionImportRequestSchema.shape.dxf)]),
     invocation("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
     invocation("supplementDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest", partitionDocumentSupplementRequestSchema)]),
     invocation("getPartitionState", []),

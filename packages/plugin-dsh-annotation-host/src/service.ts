@@ -71,6 +71,11 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   }
 
   @Remote
+  importDrawing(agent: Agent, request: PartitionImportRequest['dxf']): Promise<PartitionSessionSnapshot> {
+    return this.partitionWorkflow.importDrawing(agent, request);
+  }
+
+  @Remote
   importAndAnalyze(agent: Agent, request: PartitionImportRequest): Promise<PartitionSessionSnapshot> {
     return this.partitionWorkflow.importAndAnalyze(agent, request);
   }

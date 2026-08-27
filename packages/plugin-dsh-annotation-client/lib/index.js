@@ -9199,6 +9199,7 @@ function engineeringImportErrorText(code, filenames = []) {
   if (code == null ? void 0 : code.startsWith("DOCUMENT_PARSE_FAILED")) return `文档解析失败${names}`;
   if (code == null ? void 0 : code.startsWith("DOCUMENT_TEXT_EMPTY")) return `文档中没有可提取的文字；扫描件暂不支持 OCR${names}`;
   if (code == null ? void 0 : code.startsWith("DOCUMENT_LEGACY_FORMAT_UNSUPPORTED")) return `旧版 DOC/XLS/PPT 暂不支持，请另存为新版 Office、PDF 或文本格式${names}`;
+  if (code === "ENGINEERING_MIXED_DROP_REQUIRES_SEPARATE_DOCUMENTS") return `请先单独拖入 DXF 打开图纸，再将文档作为会话附件拖入并描述任务${names}`;
   if (code === "ENGINEERING_DROP_MULTIPLE_DXF") return `一次只能导入一张 DXF 图纸${names}`;
   if (code == null ? void 0 : code.startsWith("ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED")) return `包含暂不支持的工程资料格式${names}`;
   if (code === "ENGINEERING_DOCUMENT_DUPLICATE_NAME") return `工程资料存在重名文件${names}`;
@@ -9267,15 +9268,6 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
     const decision = classifyEngineeringDrop(files);
     if (decision.kind === "import") {
       beginImport(decision.dxf, decision.documents);
-      return;
-    }
-    if (decision.kind === "pending") {
-      if (partitionState.partition.drawingRef) {
-        setImportError(null);
-        void partition.actions.supplementDocuments(decision.documents).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
-      } else {
-        setImportError("请同时选择 DXF 图纸；工程文档不能单独创建图纸");
-      }
       return;
     }
     setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
@@ -15689,6 +15681,7 @@ const ANNOTATION_REMOTE = {
 };
 function partitionDescriptors() {
   return [
+    descriptor("importDrawing", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest.dxf", partitionImportRequestSchema.shape.dxf)]),
     descriptor("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
     descriptor("supplementDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest", partitionDocumentSupplementRequestSchema)]),
     descriptor("getPartitionState", []),
@@ -15715,6 +15708,7 @@ function descriptor(method, parameters) {
 function jsonParameter(name, typeSymbol, schema) {
   return { name, wire: name, source: "json", codec: { mode: "strict", typeSymbol, schema } };
 }
+const DRAWING_SURFACE_REFRESH_EVENT = "vectorai:drawing-surface-refresh";
 function createPartitionController(sessionId, remote) {
   let current = { partition: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null };
   const listeners = /* @__PURE__ */ new Set();
@@ -15759,13 +15753,19 @@ function createPartitionController(sessionId, remote) {
     },
     actions: {
       refresh: () => run(() => remote.getPartitionState(sessionId)),
+      async importDrawing(dxf) {
+        const request = await serializeDxf(dxf);
+        await run(() => remote.importDrawing(sessionId, request));
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(
+          DRAWING_SURFACE_REFRESH_EVENT,
+          { detail: { sessionId } }
+        ));
+      },
       async importFiles(dxf, engineeringDocuments = []) {
-        if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error("DXF_SIZE_LIMIT");
-        const bytes = new Uint8Array(await dxf.arrayBuffer());
-        const digest = `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`;
+        const dxfRequest = await serializeDxf(dxf);
         const documents = await serializeEngineeringDocuments(engineeringDocuments);
         const request = {
-          dxf: { name: dxf.name, digest, base64: base64(bytes) },
+          dxf: dxfRequest,
           engineeringDocuments: documents
         };
         await run(() => remote.importAndAnalyze(sessionId, request), {
@@ -15814,6 +15814,11 @@ function base64(bytes) {
   const size = 32768;
   for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
   return btoa(binary);
+}
+async function serializeDxf(dxf) {
+  if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error("DXF_SIZE_LIMIT");
+  const bytes = new Uint8Array(await dxf.arrayBuffer());
+  return { name: dxf.name, digest: `sha256:${hex(await crypto.subtle.digest("SHA-256", bytes))}`, base64: base64(bytes) };
 }
 async function serializeEngineeringDocuments(files) {
   validateEngineeringDocumentFiles(files);
