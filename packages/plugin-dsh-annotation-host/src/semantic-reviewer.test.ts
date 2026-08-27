@@ -38,6 +38,44 @@ describe('partition semantic reviewer', () => {
     expect(result.draft.segments[0]).toMatchObject({ semanticType: 'shaft-seat' });
   });
 
+  it('shows already classified document regions as read-only visual context', async () => {
+    const source = structuredClone(draft);
+    source.axis.zMax = 2;
+    source.segments = [
+      { ...source.segments[0]!, id: 'segment:context', zStart: 0, zEnd: 1, semanticType: 'gear', name: '一级齿轮', semanticEvidenceIds: ['document:gear'] },
+      { ...source.segments[0]!, id: 'segment:target', zStart: 1, zEnd: 2 },
+    ];
+    source.evidence = [{ id: 'document:gear', origin: 'document', label: '一级齿轮' }];
+    source.semanticGroups = [{
+      id: 'group:gear', segmentIds: ['segment:context'], range: { zStart: 0, zEnd: 1 },
+      semanticType: 'gear', name: '一级齿轮', evidenceIds: ['document:gear'],
+    }];
+    const renderObservation = vi.fn(async () => ({ status: 'rendered' as const, png: new Uint8Array([1]), contentDigest: 'sha256:image', width: 960, height: 720 }));
+    let prompt: unknown;
+    const reviewer = createPartitionSemanticReviewer({
+      agents: { get: () => ({ id: 's' } as Agent) },
+      attachments: { saveImage: async () => ({ attachmentId: 'image', mediaType: 'image/png', bytes: 1, width: 960, height: 720 }) },
+      subagents: {
+        list: () => ['local'], getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true } }),
+        start: async (_name: string, input: Record<string, unknown>) => {
+          prompt = input.prompt;
+          return { result: Promise.resolve({ stopReason: 'completed', structured: { proposals: [] } }), dispose: async () => {} };
+        },
+      },
+    } as never, { renderObservation } as never);
+
+    await reviewer({ agent: { id: 's' } as Agent, draft: source, segmentIds: ['segment:target'] });
+
+    expect(renderObservation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      overlays: expect.arrayContaining([
+        expect.objectContaining({ id: 'context:group:gear', label: 'C1 一级齿轮' }),
+        expect.objectContaining({ id: 'observation:segment:target', label: 'S1' }),
+      ]),
+    }), expect.any(AbortSignal));
+    expect(JSON.stringify(prompt)).toContain('existingRegions');
+    expect(JSON.stringify(prompt)).toContain('C 标签只作为已分类上下文');
+  });
+
   it('rejects proposal constraints that are enforced outside the DSH schema subset', async () => {
     const reviewer = createPartitionSemanticReviewer({
       agents: { get: () => ({ id: 's' } as Agent) },
@@ -74,5 +112,57 @@ describe('partition semantic reviewer', () => {
       renderObservation: async () => ({ status: 'rendered', png: new Uint8Array([1]), contentDigest: 'sha256:image', width: 1, height: 1 }),
     } as never, { timeoutMs: 5 });
     await expect(reviewer({ agent: { id: 's' } as Agent, draft, segmentIds: ['segment:1'] })).rejects.toThrow('AI_SEMANTIC_REVIEW_TIMEOUT');
+  });
+
+  it('reviews every target by splitting large drawings into bounded batches', async () => {
+    const source = structuredClone(draft);
+    source.axis.zMax = 129;
+    source.segments = Array.from({ length: 129 }, (_, index) => ({
+      ...source.segments[0]!, id: `segment:${index}`, zStart: index, zEnd: index + 1,
+    }));
+    source.segments[0]!.semanticType = 'bearing-seat';
+    source.evidence = [{ id: 'document:context', origin: 'document', label: 'context' }];
+    source.semanticGroups = [{
+      id: 'group:context', segmentIds: ['segment:0'], range: { zStart: 0, zEnd: 1 },
+      semanticType: 'bearing-seat', name: '左轴承位', evidenceIds: ['document:context'],
+    }];
+    const renderObservation = vi.fn(async (_agent: unknown, request: { overlays: unknown[] }) => ({
+      status: 'rendered' as const, png: new Uint8Array([request.overlays.length]), contentDigest: 'sha256:image', width: 960, height: 720,
+    }));
+    let batch = 0;
+    const start = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      void name;
+      void input;
+      const segmentIds = batch++ === 0
+        ? Array.from({ length: 8 }, (_, index) => `segment:${index + 120}`)
+        : Array.from({ length: 9 }, (_, index) => `segment:${index + 120}`);
+      return {
+        result: Promise.resolve({ stopReason: 'completed', structured: { proposals: [{
+          segmentIds, semanticType: 'gear', name: '跨批齿轮', confidence: 0.9,
+          reason: '跨批次连续齿形', visualEvidenceIds: segmentIds.map((id) => `observation:${id}`),
+        }] } }),
+        dispose: async () => {},
+      };
+    });
+    const reviewer = createPartitionSemanticReviewer({
+      agents: { get: () => ({ id: 's' } as Agent) },
+      attachments: { saveImage: async () => ({ attachmentId: 'image', mediaType: 'image/png', bytes: 1, width: 960, height: 720 }) },
+      subagents: {
+        list: () => ['local'], getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true } }), start,
+      },
+    } as never, { renderObservation } as never);
+
+    const result = await reviewer({
+      agent: { id: 's' } as Agent, draft: source,
+      segmentIds: source.segments.slice(1).map(({ id }) => id),
+    });
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(renderObservation).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(start.mock.calls[1]?.[1])).toContain('segment:128');
+    expect(renderObservation.mock.calls.every(([, request]) => request.overlays.length <= 128)).toBe(true);
+    expect(result.draft.semanticGroups).toContainEqual(expect.objectContaining({
+      name: '跨批齿轮', segmentIds: Array.from({ length: 9 }, (_, index) => `segment:${index + 120}`),
+    }));
   });
 });

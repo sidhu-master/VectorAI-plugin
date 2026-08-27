@@ -20,11 +20,19 @@ const drawings = new InMemoryDrawingRepository({ vectorizer: { async vectorize()
 const agent = { id: 'e2e' } as Parameters<PartitionWorkflowService['importAndAnalyze']>[0];
 const partitions = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition:e2e' });
 const annotations = new AnnotationSessionStateStore(undefined, { now: () => 7 });
+let semanticReviewRanges: Array<[number, number]> = [];
 const service = new PartitionWorkflowService({
   importDxf: async (_agent, input, signal) => drawings.importDxf('e2e', { ...input, signal }),
   getSnapshot: () => drawings.getSnapshot('e2e'),
   renderObservation: async () => { throw new Error('OBSERVATION_MUST_NOT_RUN'); },
-}, partitions, annotations);
+}, partitions, annotations, async ({ draft, segmentIds }) => {
+  semanticReviewRanges = segmentIds.map((id) => {
+    const segment = draft.segments.find((candidate) => candidate.id === id);
+    assert(segment, `missing semantic review segment ${id}`);
+    return [rounded(segment.zStart)!, rounded(segment.zEnd)!];
+  });
+  return { draft };
+});
 let state = await service.importAndAnalyze(agent, {
   dxf: { name: 'initial-shaft.dxf', digest, base64: bytes.toString('base64') },
   engineeringDocuments: [{
@@ -56,16 +64,44 @@ assert(state.draft);
 const reviewed = state.draft as unknown as PartitionDraft;
 assert.equal(validatePartition(reviewed).length, 0);
 const functionalRanges = reviewed.semanticGroups
-  .filter((group) => group.evidenceIds.some((id) => id.startsWith('document:')))
-  .map(({ name, range }) => [name, range?.zStart, range?.zEnd] as const)
+  .map(({ name, range, evidenceIds }) => [
+    name,
+    rounded(range?.zStart),
+    rounded(range?.zEnd),
+    reviewed.evidence.find(({ id }) => evidenceIds.includes(id))?.origin,
+  ] as const)
   .sort((a, b) => Number(a[1]) - Number(b[1]));
 assert.deepEqual(functionalRanges, [
-  ['左轴承位', 0, 17],
-  ['外花键', 17, 41.5],
-  ['一级齿轮', 63.5, 118.5],
-  ['右轴承位', 150, 173],
+  ['左轴承位', 0, 17, 'document'],
+  ['外花键', 17, 41.5, 'document'],
+  ['常规区域', 41.5, 92, 'fused'],
+  ['一级齿轮', 92, 147, 'document'],
+  ['右轴承位', 150, 173, 'document'],
 ]);
 assert(functionalRanges.some((range, index) => index > 0 && Number(range[1]) > Number(functionalRanges[index - 1]![2])));
+assert(!reviewed.semanticGroups.some(({ name }) => name === '内花键'));
+const transition = reviewed.segments.filter(({ semanticType }) => semanticType === undefined);
+assert.equal(transition.length, 1);
+assert.equal(rounded(transition[0]!.zStart), 147);
+assert.equal(rounded(transition[0]!.zEnd), 150);
+assert.deepEqual(semanticReviewRanges, [[41.5, 45], [45, 53], [53, 92], [147, 150]]);
+const noReviewerState = await new PartitionWorkflowService({
+  getSnapshot: () => drawings.getSnapshot('e2e'),
+} as never, new PartitionSessionStore(), new AnnotationSessionStateStore()).analyzeCurrent(
+  { id: 'e2e-no-reviewer' } as Parameters<PartitionWorkflowService['analyzeCurrent']>[0],
+  documentBytes.toString('utf8'),
+);
+assert(!noReviewerState.draft?.semanticGroups.some(({ name }) => name === '常规区域'));
+const failedReviewerState = await new PartitionWorkflowService({
+  getSnapshot: () => drawings.getSnapshot('e2e'),
+} as never, new PartitionSessionStore(), new AnnotationSessionStateStore(), async () => {
+  throw new Error('review unavailable');
+}).analyzeCurrent(
+  { id: 'e2e-failed-reviewer' } as Parameters<PartitionWorkflowService['analyzeCurrent']>[0],
+  documentBytes.toString('utf8'),
+);
+assert(!failedReviewerState.draft?.semanticGroups.some(({ name }) => name === '常规区域'));
+assert(failedReviewerState.draft?.diagnostics.some(({ code }) => code === 'AI_SEMANTIC_REVIEW_UNAVAILABLE'));
 assert.equal(annotations.get('e2e').workspaceClaimed, true);
 const lifecycle: string[] = [state.phase];
 const boundary = reviewed.segments[0]!.zEnd;
@@ -126,6 +162,7 @@ const manifest = {
   functionalRanges,
   origins,
   diagnosticCodes: reviewed.diagnostics.map(({ code }) => code),
+  semanticReviewRanges,
   lifecycle,
   stagedIntentFlow: [opened.phase, staged.phase, explicitlyStarted.phase],
   drawingGeometryDigest: drawingDigestAfter,
@@ -136,3 +173,4 @@ assert(Math.abs(manifest.coveredLength - manifest.axisLength) < 1e-6);
 console.log(JSON.stringify(manifest, null, 2));
 
 function hash(value: unknown): string { return `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`; }
+function rounded(value: number | undefined): number | undefined { return value === undefined ? undefined : Number(value.toFixed(2)); }

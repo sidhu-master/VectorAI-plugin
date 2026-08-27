@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { analyzeShaftPartition, type PartitionDraft } from '@vectorai/engineering-annotation';
+import { analyzeShaftPartition, inferRegularShaftRegions, type PartitionDraft } from '@vectorai/engineering-annotation';
 import {
   type DrawingRef,
   type EngineeringDocumentInput,
@@ -155,9 +155,11 @@ export class PartitionWorkflowService {
       throw new Error(`PARTITION_ANALYSIS_REJECTED:${analyzed.diagnostics.map(({ code }) => code).join(',')}`);
     }
     let draft = analyzed.draft;
-    if (analyzed.unclassifiedSegmentIds.length > 0 && this.reviewer) {
+    let semanticReviewCompleted = analyzed.semanticReviewSegmentIds.length === 0;
+    if (analyzed.semanticReviewSegmentIds.length > 0 && this.reviewer) {
       try {
-        draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.unclassifiedSegmentIds, signal })).draft;
+        draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.semanticReviewSegmentIds, signal })).draft;
+        semanticReviewCompleted = true;
       } catch (error) {
         if (signal?.aborted) {
           this.partitions.cancel(sessionId, snapshot.ref);
@@ -168,10 +170,11 @@ export class PartitionWorkflowService {
         draft.diagnostics.push({
           id: 'diagnostic:ai-semantic-unavailable', severity: 'warning', code: 'AI_SEMANTIC_REVIEW_UNAVAILABLE',
           message: error instanceof Error ? error.message : String(error),
-          segmentIds: analyzed.unclassifiedSegmentIds,
+          segmentIds: analyzed.semanticReviewSegmentIds,
         });
       }
     }
+    if (semanticReviewCompleted) draft = inferRegularShaftRegions(draft);
     if (signal?.aborted) {
       this.partitions.cancel(sessionId, snapshot.ref);
       this.annotations.release(sessionId);

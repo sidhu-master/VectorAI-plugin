@@ -770,7 +770,7 @@ function moveBoundary(draft, input) {
   const before = draft.segments[input.boundaryIndex - 1];
   const after = draft.segments[input.boundaryIndex];
   if (!(z > before.zStart && z < after.zEnd)) throw new Error("PARTITION_BOUNDARY_ORDER");
-  const evidenceId = `manual:boundary:${input.boundaryIndex}:${canonical$2(z)}`;
+  const evidenceId = `manual:boundary:${input.boundaryIndex}:${canonical$3(z)}`;
   const profileSamples = uniqueSamples(draft.segments.flatMap((segment) => segment.profileSamples ?? []));
   const segments = draft.segments.map((segment, index) => index === input.boundaryIndex - 1 ? summarize({ ...segment, zEnd: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : index === input.boundaryIndex ? summarize({ ...segment, zStart: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : segment);
   return appendManual(draft, segments, evidenceId, `Boundary moved to ${z}`);
@@ -788,7 +788,7 @@ function moveSemanticRange(draft, input) {
   const nextRange = input.edge === "start" ? { ...current, zStart: z } : { ...current, zEnd: z };
   const tolerance = Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 1e-9, 1e-9);
   if (nextRange.zStart < draft.axis.zMin - tolerance || nextRange.zEnd > draft.axis.zMax + tolerance || nextRange.zEnd - nextRange.zStart <= tolerance) throw new Error("PARTITION_GROUP_RANGE_ORDER");
-  const evidenceId = `manual:semantic-range:${group.id}:${input.edge}:${canonical$2(z)}`;
+  const evidenceId = `manual:semantic-range:${group.id}:${input.edge}:${canonical$3(z)}`;
   const semanticGroups = draft.semanticGroups.map((candidate) => candidate.id === group.id ? { ...candidate, range: nextRange, evidenceIds: unique([...candidate.evidenceIds, evidenceId]) } : candidate);
   return {
     ...structuredClone(draft),
@@ -802,10 +802,10 @@ function splitSegment(draft, input) {
   const source = draft.segments[index];
   const z = snap(input.z, input.snapCandidates, input.snapTolerance);
   if (!(z > source.zStart && z < source.zEnd)) throw new Error("PARTITION_BOUNDARY_ORDER");
-  const evidenceId = `manual:split:${source.id}:${canonical$2(z)}`;
+  const evidenceId = `manual:split:${source.id}:${canonical$3(z)}`;
   const make = (side, zStart, zEnd) => ({
     ...source,
-    id: `${source.id}:${side}:${canonical$2(z)}`,
+    id: `${source.id}:${side}:${canonical$3(z)}`,
     zStart,
     zEnd,
     boundaryEvidenceIds: unique([...source.boundaryEvidenceIds, evidenceId])
@@ -826,7 +826,7 @@ function mergeBoundary(draft, input) {
   const evidenceId = `manual:merge:${left.id}:${right.id}`;
   const merged = {
     ...left,
-    id: `segment:${canonical$2(left.zStart)}-${canonical$2(right.zEnd)}`,
+    id: `segment:${canonical$3(left.zStart)}-${canonical$3(right.zEnd)}`,
     zEnd: right.zEnd,
     profile: {
       minRadius: Math.min(left.profile.minRadius, right.profile.minRadius),
@@ -883,12 +883,12 @@ function summarize(segment) {
   };
 }
 function uniqueSamples(samples) {
-  return [...new Map(samples.map((sample) => [`${sample.geometryNodeId}:${canonical$2(sample.z)}:${canonical$2(sample.radius)}`, sample])).values()];
+  return [...new Map(samples.map((sample) => [`${sample.geometryNodeId}:${canonical$3(sample.z)}:${canonical$3(sample.radius)}`, sample])).values()];
 }
 function unique(values) {
   return [...new Set(values)];
 }
-function canonical$2(value) {
+function canonical$3(value) {
   return Number(value.toFixed(9)).toString();
 }
 function parseEngineeringDocument(text) {
@@ -1259,15 +1259,15 @@ function detectShaftSteps(profile) {
   return clustered.map(({ z, score, geometryNodeIds }, index) => {
     const coordinate = index === 0 ? profile.axis.zMin : index === clustered.length - 1 ? profile.axis.zMax : z;
     return {
-      id: `step:${canonical$1(coordinate)}`,
-      z: Number(canonical$1(coordinate)),
+      id: `step:${canonical$2(coordinate)}`,
+      z: Number(canonical$2(coordinate)),
       score,
       evidenceIds: geometryNodeIds.map((id) => `geometry:${id}`),
       accepted: index === 0 || index === clustered.length - 1 || score >= 0.45
     };
   });
 }
-function canonical$1(value) {
+function canonical$2(value) {
   return Number(value.toFixed(6)).toString();
 }
 function fuseDocumentRegions(draft, regions) {
@@ -1284,7 +1284,10 @@ function fuseDocumentRegions(draft, regions) {
     output.evidence.push(evidence);
     const matches = contiguousMatches(output.segments, region);
     const best = matches[0];
-    if (!best || best.cost > 0.4) {
+    if (!best) continue;
+    const matched = best.cost <= 0.4;
+    const ambiguous = matches[1] !== void 0 && Math.abs(matches[1].cost - best.cost) < 0.01;
+    if (!matched) {
       output.diagnostics.push({
         id: `diagnostic:document-unmatched:${region.id}`,
         severity: "warning",
@@ -1292,9 +1295,8 @@ function fuseDocumentRegions(draft, regions) {
         message: `Document region ${region.id} could not be reconciled with geometric steps`,
         evidenceIds: [evidenceId]
       });
-      continue;
     }
-    if (matches[1] && Math.abs(matches[1].cost - best.cost) < 0.025) {
+    if (ambiguous) {
       output.diagnostics.push({
         id: `diagnostic:document-ambiguous:${region.id}`,
         severity: "warning",
@@ -1304,16 +1306,40 @@ function fuseDocumentRegions(draft, regions) {
       });
     }
     const confidence = Math.max(0.5, Math.min(0.99, 1 - best.cost));
+    const reliableMatch = matched && !ambiguous;
+    const relatedSegments = reliableMatch ? best.segments : overlappingSegments(output.segments, region.interval, output.axis.zMax - output.axis.zMin);
+    const matchedRange = {
+      zStart: best.segments[0].zStart,
+      zEnd: best.segments.at(-1).zEnd
+    };
+    const rangeTolerance = Math.max((output.axis.zMax - output.axis.zMin) * 1e-3, 1e-6);
+    const sourceAligned = Math.abs(matchedRange.zStart - region.interval.start) <= rangeTolerance && Math.abs(matchedRange.zEnd - region.interval.end) <= rangeTolerance;
+    const geometryReconciled = reliableMatch && !sourceAligned && best.widthError <= 0.03 && best.diameterError !== void 0 && best.diameterError <= 0.03;
+    const range = geometryReconciled ? matchedRange : {
+      zStart: region.interval.start,
+      zEnd: region.interval.end
+    };
+    if (geometryReconciled) {
+      output.diagnostics.push({
+        id: `diagnostic:document-reconciled:${region.id}`,
+        severity: "warning",
+        code: "DOCUMENT_REGION_RECONCILED",
+        message: `Document region ${region.id} was reconciled from ${formatRange(region.interval)} to geometric range ${formatRange(matchedRange)}`,
+        segmentIds: relatedSegments.map(({ id }) => id),
+        evidenceIds: [evidenceId]
+      });
+    }
     const group = {
       id: `group:${region.id}`,
-      segmentIds: best.segments.map(({ id }) => id),
-      range: { zStart: region.interval.start, zEnd: region.interval.end },
+      segmentIds: relatedSegments.map(({ id }) => id),
+      range,
       semanticType: region.type,
       ...region.name === void 0 ? {} : { name: region.name },
       evidenceIds: [evidenceId]
     };
     output.semanticGroups.push(group);
-    for (const segment of best.segments) {
+    if (!reliableMatch) continue;
+    for (const segment of relatedSegments) {
       if (segment.semanticType !== void 0 && segment.semanticType !== region.type) {
         output.diagnostics.push({
           id: `diagnostic:document-semantic-conflict:${region.id}:${segment.id}`,
@@ -1360,18 +1386,45 @@ function contiguousMatches(segments, region) {
       const actualStart = selected[0].zStart;
       const actualEnd = selected.at(-1).zEnd;
       const actualWidth = actualEnd - actualStart;
-      const endpointCost = (Math.abs(actualStart - interval.start) + Math.abs(actualEnd - interval.end)) / axisSpan;
-      const centerCost = Math.abs((actualStart + actualEnd) / 2 - targetCenter) / axisSpan;
-      const widthCost = Math.abs(actualWidth - targetWidth) / Math.max(targetWidth, axisSpan * 0.05);
-      let diameterCost = 0;
+      const endpointError = (Math.abs(actualStart - interval.start) + Math.abs(actualEnd - interval.end)) / axisSpan;
+      const centerError = Math.abs((actualStart + actualEnd) / 2 - targetCenter) / axisSpan;
+      const widthError = Math.abs(actualWidth - targetWidth) / Math.max(targetWidth, axisSpan * 0.05);
+      let diameterError;
       if (region.outerDiameter !== void 0) {
-        const radii = selected.filter(({ profile }) => profile.sampleCount > 0).map(({ profile }) => profile.maxRadius * 2);
-        if (radii.length > 0) diameterCost = Math.min(1, Math.abs(Math.max(...radii) - region.outerDiameter) / Math.max(region.outerDiameter, 1));
+        const profiled = selected.filter(({ profile }) => profile.sampleCount > 0);
+        const profiledWidth = profiled.reduce((sum, segment) => sum + segment.zEnd - segment.zStart, 0);
+        if (profiledWidth > 0) {
+          const measuredError = profiled.reduce((sum, segment) => sum + (segment.zEnd - segment.zStart) * Math.abs(segment.profile.maxRadius * 2 - region.outerDiameter), 0) / Math.max(region.outerDiameter, 1);
+          const unprofiledWidth = Math.max(0, actualWidth - profiledWidth);
+          diameterError = Math.min(1, (measuredError + unprofiledWidth * 0.25) / Math.max(actualWidth, 1e-9));
+        }
       }
-      output.push({ segments: selected, cost: endpointCost * 0.5 + centerCost * 0.15 + Math.min(widthCost, 2) * 0.2 + diameterCost * 0.15 });
+      const diameterCost = diameterError ?? 0.25;
+      output.push({
+        segments: selected,
+        widthError,
+        ...diameterError === void 0 ? {} : { diameterError },
+        cost: Math.min(widthError, 2) * 0.3 + diameterCost * 0.6 + centerError * 0.04 + endpointError * 0.06
+      });
     }
   }
   return output.sort((a, b) => a.cost - b.cost || a.segments.length - b.segments.length);
+}
+function overlappingSegments(segments, interval, axisSpan) {
+  const tolerance = Math.max(axisSpan * 1e-9, 1e-9);
+  const overlapping = segments.filter(({ zStart, zEnd }) => zEnd > interval.start + tolerance && zStart < interval.end - tolerance);
+  return overlapping.length > 0 ? overlapping : [nearestSegment(segments, (interval.start + interval.end) / 2)];
+}
+function nearestSegment(segments, z) {
+  return [...segments].sort((left, right) => distanceToSegment(left, z) - distanceToSegment(right, z))[0];
+}
+function distanceToSegment(segment, z) {
+  return z < segment.zStart ? segment.zStart - z : z > segment.zEnd ? z - segment.zEnd : 0;
+}
+function formatRange(range) {
+  const start = range.start ?? range.zStart;
+  const end = range.end ?? range.zEnd;
+  return `${Number(start == null ? void 0 : start.toFixed(6))}–${Number(end == null ? void 0 : end.toFixed(6))}`;
 }
 function analyzeShaftPartition(request) {
   const parsed = request.engineeringText === void 0 ? void 0 : parseEngineeringDocument(request.engineeringText);
@@ -1408,7 +1461,7 @@ function analyzeShaftPartition(request) {
       const left = stepCandidates.find(({ z }) => Math.abs(z - zStart) <= tolerance);
       const right = stepCandidates.find(({ z }) => Math.abs(z - zEnd) <= tolerance);
       return {
-        id: `segment:${canonical(zStart)}-${canonical(zEnd)}`,
+        id: `segment:${canonical$1(zStart)}-${canonical$1(zEnd)}`,
         zStart,
         zEnd,
         profile: radiusSummary(profile, zStart, zEnd),
@@ -1436,16 +1489,19 @@ function analyzeShaftPartition(request) {
       message: `Selected ${request.drawingSourceName}; document describes ${parsed.drawing.drawingName}`
     });
   }
-  if (parsed) draft = fuseDocumentRegions(draft, documentRegions);
+  if (parsed) {
+    draft = fuseDocumentRegions(draft, documentRegions);
+  }
   const invalid = validatePartition(draft);
   if (invalid.length > 0) return { status: "rejected", diagnostics: [...draft.diagnostics, ...invalid] };
   return {
     status: "drafted",
     draft,
-    unclassifiedSegmentIds: draft.segments.filter(({ semanticType }) => semanticType === void 0).map(({ id }) => id)
+    unclassifiedSegmentIds: draft.segments.filter(({ semanticType }) => semanticType === void 0).map(({ id }) => id),
+    semanticReviewSegmentIds: draft.segments.filter(({ semanticType }) => semanticType === void 0).map(({ id }) => id)
   };
 }
-function canonical(value) {
+function canonical$1(value) {
   return Number(value.toFixed(6)).toString();
 }
 function unitScale(unit) {
@@ -1548,6 +1604,86 @@ function singleUncoveredRange(draft, proposed) {
     });
   }
   return available.length === 1 ? available[0] : void 0;
+}
+function inferRegularShaftRegions(draft) {
+  const output = structuredClone(draft);
+  const minimumSpan = substantialSpan(output);
+  for (const run of unclassifiedRuns(output)) {
+    if (!isBoundedByTrustedDocumentRegions(output, run) || !hasAcceptedBoundarySteps(output, run) || runSpan(run) < minimumSpan) continue;
+    const zStart = run.segments[0].zStart;
+    const zEnd = run.segments.at(-1).zEnd;
+    const evidenceId = `fused:regular:${canonical(zStart)}-${canonical(zEnd)}`;
+    output.evidence.push({
+      id: evidenceId,
+      origin: "fused",
+      label: `Post-review regular shaft span bounded by trusted document regions at ${canonical(zStart)}–${canonical(zEnd)}`,
+      geometryNodeIds: [...new Set(run.segments.flatMap(({ geometryNodeIds }) => geometryNodeIds))]
+    });
+    output.semanticGroups.push({
+      id: `group:${evidenceId}`,
+      segmentIds: run.segments.map(({ id }) => id),
+      range: { zStart, zEnd },
+      semanticType: "regular-shaft",
+      name: "常规区域",
+      evidenceIds: [evidenceId]
+    });
+    for (const segment of run.segments) {
+      segment.semanticType = "regular-shaft";
+      segment.name = "常规区域";
+      segment.semanticConfidence = Math.min(0.99, segment.boundaryConfidence);
+      segment.semanticEvidenceIds.push(evidenceId);
+    }
+  }
+  return output;
+}
+function unclassifiedRuns(draft) {
+  const runs = [];
+  for (const [index, segment] of draft.segments.entries()) {
+    if (segment.semanticType !== void 0) continue;
+    const previous = runs.at(-1);
+    if (previous && previous.endIndex === index - 1) {
+      previous.segments.push(segment);
+      previous.endIndex = index;
+    } else {
+      runs.push({ segments: [segment], startIndex: index, endIndex: index });
+    }
+  }
+  return runs;
+}
+function isBoundedByTrustedDocumentRegions(draft, run) {
+  const left = draft.segments[run.startIndex - 1];
+  const right = draft.segments[run.endIndex + 1];
+  if (!left || !right) return false;
+  const leftGroup = draft.semanticGroups.find(({ segmentIds }) => segmentIds.includes(left.id));
+  const rightGroup = draft.semanticGroups.find(({ segmentIds }) => segmentIds.includes(right.id));
+  const tolerance = Math.max((draft.axis.zMax - draft.axis.zMin) * 1e-6, 1e-6);
+  return leftGroup !== void 0 && rightGroup !== void 0 && leftGroup.range !== void 0 && rightGroup.range !== void 0 && Math.abs(leftGroup.range.zEnd - run.segments[0].zStart) <= tolerance && Math.abs(rightGroup.range.zStart - run.segments.at(-1).zEnd) <= tolerance && trustedDocumentGroup(draft, leftGroup.evidenceIds) && trustedDocumentGroup(draft, rightGroup.evidenceIds);
+}
+function trustedDocumentGroup(draft, evidenceIds) {
+  const hasDocumentEvidence = evidenceIds.some((id) => {
+    var _a3;
+    return ((_a3 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a3.origin) === "document";
+  });
+  if (!hasDocumentEvidence) return false;
+  return !draft.diagnostics.some((diagnostic2) => {
+    var _a3;
+    return (diagnostic2.code === "DOCUMENT_REGION_AMBIGUOUS" || diagnostic2.code === "DOCUMENT_REGION_UNMATCHED") && ((_a3 = diagnostic2.evidenceIds) == null ? void 0 : _a3.some((id) => evidenceIds.includes(id)));
+  });
+}
+function hasAcceptedBoundarySteps(draft, run) {
+  if (draft.stepCandidates.length === 0) return true;
+  const tolerance = Math.max((draft.axis.zMax - draft.axis.zMin) * 1e-6, 1e-6);
+  const accepted = (z) => draft.stepCandidates.some((candidate) => candidate.accepted && Math.abs(candidate.z - z) <= tolerance);
+  return accepted(run.segments[0].zStart) && accepted(run.segments.at(-1).zEnd);
+}
+function runSpan(run) {
+  return run.segments.at(-1).zEnd - run.segments[0].zStart;
+}
+function substantialSpan(draft) {
+  return Math.max((draft.axis.zMax - draft.axis.zMin) * 0.05, 1e-6);
+}
+function canonical(value) {
+  return Number(value.toFixed(6)).toString();
 }
 function analyzeDimensionChain(input) {
   const intentsById = new Map(input.intents.map((intent) => [intent.id, intent]));
@@ -8605,9 +8741,11 @@ analyze_fn = async function(agent, snapshot, engineeringText, drawingSourceName,
     throw new Error(`PARTITION_ANALYSIS_REJECTED:${analyzed.diagnostics.map(({ code }) => code).join(",")}`);
   }
   let draft = analyzed.draft;
-  if (analyzed.unclassifiedSegmentIds.length > 0 && this.reviewer) {
+  let semanticReviewCompleted = analyzed.semanticReviewSegmentIds.length === 0;
+  if (analyzed.semanticReviewSegmentIds.length > 0 && this.reviewer) {
     try {
-      draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.unclassifiedSegmentIds, signal })).draft;
+      draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.semanticReviewSegmentIds, signal })).draft;
+      semanticReviewCompleted = true;
     } catch (error) {
       if (signal == null ? void 0 : signal.aborted) {
         this.partitions.cancel(sessionId, snapshot.ref);
@@ -8620,10 +8758,11 @@ analyze_fn = async function(agent, snapshot, engineeringText, drawingSourceName,
         severity: "warning",
         code: "AI_SEMANTIC_REVIEW_UNAVAILABLE",
         message: error instanceof Error ? error.message : String(error),
-        segmentIds: analyzed.unclassifiedSegmentIds
+        segmentIds: analyzed.semanticReviewSegmentIds
       });
     }
   }
+  if (semanticReviewCompleted) draft = inferRegularShaftRegions(draft);
   if (signal == null ? void 0 : signal.aborted) {
     this.partitions.cancel(sessionId, snapshot.ref);
     this.annotations.release(sessionId);
@@ -8654,18 +8793,42 @@ function sameDrawing(left, right) {
   return left.drawingId === right.drawingId;
 }
 function createPartitionSemanticReviewer(ctx, space, options = {}) {
-  return async ({ agent, draft, segmentIds, signal }) => {
+  const reviewBatch = async ({ agent, draft, segmentIds, signal }) => {
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error("AI_SEMANTIC_REVIEW_TIMEOUT")), options.timeoutMs ?? 6e4);
     const reviewSignal = combineSignals(signal, timeout.signal);
     try {
       const targets = new Set(segmentIds);
-      const segments = draft.segments.filter(({ id }) => targets.has(id)).slice(0, 128);
-      const overlays = segments.map((segment, index) => ({
+      const segments = draft.segments.filter(({ id }) => targets.has(id));
+      const segmentById = new Map(draft.segments.map((segment) => [segment.id, segment]));
+      const contextGroups = draft.semanticGroups.slice(0, 64).flatMap((group, index) => {
+        var _a3, _b;
+        const related = group.segmentIds.map((id) => segmentById.get(id)).filter((segment) => segment !== void 0);
+        if (related.length === 0) return [];
+        const zStart = ((_a3 = group.range) == null ? void 0 : _a3.zStart) ?? Math.min(...related.map((segment) => segment.zStart));
+        const zEnd = ((_b = group.range) == null ? void 0 : _b.zEnd) ?? Math.max(...related.map((segment) => segment.zEnd));
+        const radius = Math.max(...related.map((segment) => segment.profile.maxRadius), 0.1) * 1.08;
+        const origin = group.evidenceIds.map((id) => {
+          var _a4;
+          return (_a4 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a4.origin;
+        }).find(Boolean) ?? "geometry";
+        return [{
+          group,
+          visualLabel: `C${index + 1}`,
+          origin,
+          overlay: {
+            id: `context:${group.id}`,
+            label: `C${index + 1} ${group.name ?? group.semanticType}`,
+            polygon: segmentPolygon(draft.axis, zStart, zEnd, radius)
+          }
+        }];
+      });
+      const targetOverlays = segments.map((segment, index) => ({
         id: `observation:${segment.id}`,
         label: `S${index + 1}`,
         polygon: segmentPolygon(draft.axis, segment.zStart, segment.zEnd, Math.max(segment.profile.maxRadius, 0.1) * 1.08)
       }));
+      const overlays = [...contextGroups.map(({ overlay }) => overlay), ...targetOverlays];
       const rendered = await abortable(space.renderObservation(agent, { ref: draft.drawingRef, overlays }, reviewSignal), reviewSignal);
       if (rendered.status !== "rendered") throw new Error(`AI_SEMANTIC_OBSERVATION_${rendered.status.toUpperCase()}`);
       const attachment = await abortable(ctx.attachments.saveImage({ data: rendered.png, mediaType: "image/png", name: "shaft-segment-observation.png" }), reviewSignal);
@@ -8684,8 +8847,14 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         boundaryConfidence: segment.boundaryConfidence
       }));
       const payload = JSON.stringify({
-        instruction: "不要展示分析过程，立即返回要求的结构化结果。只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。",
+        instruction: "不要展示分析过程，立即返回要求的结构化结果。C 标签只作为已分类上下文，不得重新分类或放入 proposal；只判断 S 标签对应的候选轴段。结合已有区域避免把齿轮后的窄退刀槽、过渡段或工艺收尾段误认成新的花键或齿轮。只识别有明确视觉证据的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段、常规轴段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。",
         segments: catalog,
+        existingRegions: contextGroups.map(({ group, visualLabel, origin }) => ({
+          visualLabel,
+          name: group.name ?? group.semanticType,
+          semanticType: group.semanticType,
+          origin
+        })),
         observationDigest: rendered.contentDigest
       });
       if (payload.length > 64 * 1024) throw new Error("AI_SEMANTIC_PROMPT_LIMIT");
@@ -8703,10 +8872,7 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         const result = await abortable(run.result, reviewSignal);
         const proposals = result.stopReason === "completed" ? validateOutput(result.structured) : null;
         if (!proposals) throw new Error("AI_SEMANTIC_REVIEW_INVALID");
-        return applySemanticProposals(draft, proposals, {
-          allowedSegmentIds: segments.map(({ id }) => id),
-          allowedVisualEvidenceIds: segments.map(({ id }) => `observation:${id}`)
-        });
+        return proposals;
       } finally {
         await abortable(run.dispose(), reviewSignal).catch(() => void 0);
       }
@@ -8714,6 +8880,63 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
       clearTimeout(timer);
     }
   };
+  return async (input) => {
+    const contextCount = countContextOverlays(input.draft);
+    const capacity = Math.max(1, 128 - contextCount);
+    const overlap = Math.min(8, capacity - 1);
+    const proposals = [];
+    let nextStart = 0;
+    while (nextStart < input.segmentIds.length) {
+      const batchStart = nextStart === 0 ? 0 : Math.max(0, nextStart - overlap);
+      const batchIds = input.segmentIds.slice(batchStart, batchStart + capacity);
+      proposals.push(...await reviewBatch({
+        ...input,
+        segmentIds: batchIds
+      }));
+      nextStart = batchStart + batchIds.length;
+      if (nextStart >= input.segmentIds.length) break;
+    }
+    let reviewed = input.draft;
+    const consolidated = consolidateProposals(reviewed, proposals);
+    for (let offset = 0; offset < consolidated.length; offset += 64) {
+      reviewed = applySemanticProposals(reviewed, consolidated.slice(offset, offset + 64), {
+        allowedSegmentIds: input.segmentIds,
+        allowedVisualEvidenceIds: input.segmentIds.map((id) => `observation:${id}`)
+      }).draft;
+    }
+    return { draft: reviewed };
+  };
+}
+function countContextOverlays(draft) {
+  const segmentIds = new Set(draft.segments.map(({ id }) => id));
+  return draft.semanticGroups.slice(0, 64).filter((group) => group.segmentIds.some((id) => segmentIds.has(id))).length;
+}
+function consolidateProposals(draft, proposals) {
+  const index = new Map(draft.segments.map((segment, position) => [segment.id, position]));
+  const merged = [];
+  for (const proposal of proposals) {
+    const matches = merged.filter((candidate) => candidate.semanticType === proposal.semanticType && candidate.segmentIds.some((id) => proposal.segmentIds.includes(id)));
+    if (matches.length === 0) {
+      merged.push(structuredClone(proposal));
+      continue;
+    }
+    const match = matches[0];
+    const candidates = [...matches, proposal];
+    const stronger = candidates.reduce((best, candidate) => candidate.confidence > best.confidence ? candidate : best);
+    match.segmentIds = [...new Set(candidates.flatMap(({ segmentIds }) => segmentIds))].sort((left, right) => (index.get(left) ?? 0) - (index.get(right) ?? 0));
+    match.visualEvidenceIds = [...new Set(candidates.flatMap(({ visualEvidenceIds }) => visualEvidenceIds))];
+    match.confidence = Math.min(...candidates.map(({ confidence }) => confidence));
+    match.reason = stronger.reason;
+    if (stronger.name === void 0) delete match.name;
+    else match.name = stronger.name;
+    for (const duplicate of matches.slice(1)) merged.splice(merged.indexOf(duplicate), 1);
+  }
+  const assigned = /* @__PURE__ */ new Set();
+  return merged.sort((left, right) => right.confidence - left.confidence).filter((proposal) => {
+    if (proposal.segmentIds.some((id) => assigned.has(id))) return false;
+    proposal.segmentIds.forEach((id) => assigned.add(id));
+    return true;
+  });
 }
 const proposalSchema = {
   type: "object",

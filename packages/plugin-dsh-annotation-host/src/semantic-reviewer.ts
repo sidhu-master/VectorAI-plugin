@@ -14,18 +14,40 @@ export function createPartitionSemanticReviewer(
   space: Pick<DrawingSpaceExtensionHost<Agent>, 'renderObservation'>,
   options: { timeoutMs?: number } = {},
 ): PartitionSemanticReviewer {
-  return async ({ agent, draft, segmentIds, signal }) => {
+  const reviewBatch = async ({ agent, draft, segmentIds, signal }: Parameters<PartitionSemanticReviewer>[0]): Promise<SegmentSemanticProposal[]> => {
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error('AI_SEMANTIC_REVIEW_TIMEOUT')), options.timeoutMs ?? 60_000);
     const reviewSignal = combineSignals(signal, timeout.signal);
     try {
     const targets = new Set(segmentIds);
-    const segments = draft.segments.filter(({ id }) => targets.has(id)).slice(0, 128);
-    const overlays = segments.map((segment, index) => ({
+    const segments = draft.segments.filter(({ id }) => targets.has(id));
+    const segmentById = new Map(draft.segments.map((segment) => [segment.id, segment]));
+    const contextGroups = draft.semanticGroups.slice(0, 64).flatMap((group, index) => {
+      const related = group.segmentIds.map((id) => segmentById.get(id)).filter((segment) => segment !== undefined);
+      if (related.length === 0) return [];
+      const zStart = group.range?.zStart ?? Math.min(...related.map((segment) => segment.zStart));
+      const zEnd = group.range?.zEnd ?? Math.max(...related.map((segment) => segment.zEnd));
+      const radius = Math.max(...related.map((segment) => segment.profile.maxRadius), 0.1) * 1.08;
+      const origin = group.evidenceIds
+        .map((id) => draft.evidence.find((item) => item.id === id)?.origin)
+        .find(Boolean) ?? 'geometry';
+      return [{
+        group,
+        visualLabel: `C${index + 1}`,
+        origin,
+        overlay: {
+          id: `context:${group.id}`,
+          label: `C${index + 1} ${group.name ?? group.semanticType}`,
+          polygon: segmentPolygon(draft.axis, zStart, zEnd, radius),
+        },
+      }];
+    });
+    const targetOverlays = segments.map((segment, index) => ({
       id: `observation:${segment.id}`,
       label: `S${index + 1}`,
       polygon: segmentPolygon(draft.axis, segment.zStart, segment.zEnd, Math.max(segment.profile.maxRadius, 0.1) * 1.08),
     }));
+    const overlays = [...contextGroups.map(({ overlay }) => overlay), ...targetOverlays];
     const rendered = await abortable(space.renderObservation(agent, { ref: draft.drawingRef, overlays }, reviewSignal), reviewSignal);
     if (rendered.status !== 'rendered') throw new Error(`AI_SEMANTIC_OBSERVATION_${rendered.status.toUpperCase()}`);
     const attachment = await abortable(ctx.attachments.saveImage({ data: rendered.png, mediaType: 'image/png', name: 'shaft-segment-observation.png' }), reviewSignal);
@@ -44,8 +66,14 @@ export function createPartitionSemanticReviewer(
       boundaryConfidence: segment.boundaryConfidence,
     }));
     const payload = JSON.stringify({
-      instruction: '不要展示分析过程，立即返回要求的结构化结果。只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。',
+      instruction: '不要展示分析过程，立即返回要求的结构化结果。C 标签只作为已分类上下文，不得重新分类或放入 proposal；只判断 S 标签对应的候选轴段。结合已有区域避免把齿轮后的窄退刀槽、过渡段或工艺收尾段误认成新的花键或齿轮。只识别有明确视觉证据的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段、常规轴段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。',
       segments: catalog,
+      existingRegions: contextGroups.map(({ group, visualLabel, origin }) => ({
+        visualLabel,
+        name: group.name ?? group.semanticType,
+        semanticType: group.semanticType,
+        origin,
+      })),
       observationDigest: rendered.contentDigest,
     });
     if (payload.length > 64 * 1024) throw new Error('AI_SEMANTIC_PROMPT_LIMIT');
@@ -62,10 +90,7 @@ export function createPartitionSemanticReviewer(
       const result = await abortable(run.result, reviewSignal);
       const proposals = result.stopReason === 'completed' ? validateOutput(result.structured) : null;
       if (!proposals) throw new Error('AI_SEMANTIC_REVIEW_INVALID');
-      return applySemanticProposals(draft, proposals, {
-        allowedSegmentIds: segments.map(({ id }) => id),
-        allowedVisualEvidenceIds: segments.map(({ id }) => `observation:${id}`),
-      });
+      return proposals;
     } finally {
       await abortable(run.dispose(), reviewSignal).catch(() => undefined);
     }
@@ -73,6 +98,70 @@ export function createPartitionSemanticReviewer(
       clearTimeout(timer);
     }
   };
+  return async (input) => {
+    const contextCount = countContextOverlays(input.draft);
+    const capacity = Math.max(1, 128 - contextCount);
+    const overlap = Math.min(8, capacity - 1);
+    const proposals: SegmentSemanticProposal[] = [];
+    let nextStart = 0;
+    while (nextStart < input.segmentIds.length) {
+      const batchStart = nextStart === 0 ? 0 : Math.max(0, nextStart - overlap);
+      const batchIds = input.segmentIds.slice(batchStart, batchStart + capacity);
+      proposals.push(...await reviewBatch({
+        ...input,
+        segmentIds: batchIds,
+      }));
+      nextStart = batchStart + batchIds.length;
+      if (nextStart >= input.segmentIds.length) break;
+    }
+    let reviewed = input.draft;
+    const consolidated = consolidateProposals(reviewed, proposals);
+    for (let offset = 0; offset < consolidated.length; offset += 64) {
+      reviewed = applySemanticProposals(reviewed, consolidated.slice(offset, offset + 64), {
+        allowedSegmentIds: input.segmentIds,
+        allowedVisualEvidenceIds: input.segmentIds.map((id) => `observation:${id}`),
+      }).draft;
+    }
+    return { draft: reviewed };
+  };
+}
+
+function countContextOverlays(draft: Parameters<PartitionSemanticReviewer>[0]['draft']): number {
+  const segmentIds = new Set(draft.segments.map(({ id }) => id));
+  return draft.semanticGroups.slice(0, 64).filter((group) => group.segmentIds.some((id) => segmentIds.has(id))).length;
+}
+
+function consolidateProposals(
+  draft: Parameters<PartitionSemanticReviewer>[0]['draft'],
+  proposals: SegmentSemanticProposal[],
+): SegmentSemanticProposal[] {
+  const index = new Map(draft.segments.map((segment, position) => [segment.id, position]));
+  const merged: SegmentSemanticProposal[] = [];
+  for (const proposal of proposals) {
+    const matches = merged.filter((candidate) => candidate.semanticType === proposal.semanticType
+      && candidate.segmentIds.some((id) => proposal.segmentIds.includes(id)));
+    if (matches.length === 0) {
+      merged.push(structuredClone(proposal));
+      continue;
+    }
+    const match = matches[0]!;
+    const candidates = [...matches, proposal];
+    const stronger = candidates.reduce((best, candidate) => candidate.confidence > best.confidence ? candidate : best);
+    match.segmentIds = [...new Set(candidates.flatMap(({ segmentIds }) => segmentIds))]
+      .sort((left, right) => (index.get(left) ?? 0) - (index.get(right) ?? 0));
+    match.visualEvidenceIds = [...new Set(candidates.flatMap(({ visualEvidenceIds }) => visualEvidenceIds))];
+    match.confidence = Math.min(...candidates.map(({ confidence }) => confidence));
+    match.reason = stronger.reason;
+    if (stronger.name === undefined) delete match.name;
+    else match.name = stronger.name;
+    for (const duplicate of matches.slice(1)) merged.splice(merged.indexOf(duplicate), 1);
+  }
+  const assigned = new Set<string>();
+  return merged.sort((left, right) => right.confidence - left.confidence).filter((proposal) => {
+    if (proposal.segmentIds.some((id) => assigned.has(id))) return false;
+    proposal.segmentIds.forEach((id) => assigned.add(id));
+    return true;
+  });
 }
 
 const proposalSchema = {

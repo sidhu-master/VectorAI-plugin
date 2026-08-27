@@ -50,14 +50,17 @@ migration can make the field mandatory after legacy sessions have aged out.
 
 ## Sample Acceptance Result
 
-For the current sample document, functional view must preserve these exact
-document regions:
+For the current sample, document coordinates are constraints and the functional
+view must reconcile them with accepted DXF shoulders. The gear's raw
+`63.5–118.5` interval conflicts with an exact 55 mm, diameter-matching tooth
+profile at `92–147`, so geometry owns the final coordinates:
 
 - 左轴承位: 0–17
 - 外花键: 17–41.5
-- 一级齿轮: 63.5–118.5
+- 常规区域: 41.5–92 (post-review fused evidence: AI may classify first; a bounded
+  deterministic fallback fills the substantial span only after abstention)
+- 一级齿轮: 92–147
 - 右轴承位: 150–173
 
-The intervals 41.5–63.5 and 118.5–150 remain visually empty unless independently
-validated functional evidence is available. Axial-segment view remains continuous
-from 0 through 173.
+The 147–150 transition remains visually empty. Axial-segment view remains
+continuous from 0 through 173.
