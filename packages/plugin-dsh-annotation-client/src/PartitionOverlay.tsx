@@ -18,12 +18,15 @@ type BoundaryTarget =
 
 interface BoundaryHandle { key: string; z: number; target: BoundaryTarget }
 
-export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary, onMoveSemanticRange }: {
+export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary, onMoveSemanticRange, onRenameBand }: {
   draft: PartitionDraft; mode: PartitionViewMode; previewHeld: boolean; scale: number;
   onMoveBoundary(index: number, z: number): void | Promise<void>;
   onMoveSemanticRange?(groupId: string, edge: 'start' | 'end', z: number): void | Promise<void>;
+  onRenameBand?(band: PartitionBand, name: string): void | Promise<void>;
 }) {
   const [drag, setDrag] = useState<BoundaryDrag | null>(null);
+  const [naming, setNaming] = useState<{ bandId: string; value: string } | null>(null);
+  const nameCommit = useRef<string | null>(null);
   const current = useRef<BoundaryDrag | null>(null);
   const point = (z: number, r: number): [number, number] => [
     draft.axis.origin[0]! + draft.axis.direction[0]! * z + draft.axis.normal[0]! * r,
@@ -67,6 +70,27 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
     }
   };
   const bands = partitionBands(draft, mode);
+  const commitName = async (band: PartitionBand) => {
+    if (naming?.bandId !== band.id) return;
+    const name = naming.value.trim();
+    if (!name || name === band.name?.trim()) {
+      setNaming(null);
+      return;
+    }
+    if (!onRenameBand) return;
+    const commitKey = `${band.id}\u0000${name}`;
+    if (nameCommit.current === commitKey) return;
+    nameCommit.current = commitKey;
+    try {
+      await onRenameBand(band, name);
+      setNaming(null);
+    } catch {
+      // The shared controller exposes the persistence failure; keep the editor
+      // open so the user can retry or cancel without losing the entered name.
+    } finally {
+      nameCommit.current = null;
+    }
+  };
   const handles: BoundaryHandle[] = mode === 'segments'
     ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))]
       .filter((index) => index > 0 && index < draft.segments.length)
@@ -101,9 +125,43 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
         <polygon data-partition-band="true" points={polygon.map((value) => value.join(',')).join(' ')}
           className={`vai-partition-band vai-partition-band--${band.origin}`}
           data-line-style={band.origin === 'document' ? 'solid' : band.origin === 'ai' ? 'dotted' : 'dashed'} />
-        <g className="vai-partition-label-anchor" transform={`translate(${labelAnchor[0]} ${labelAnchor[1]}) scale(${1 / Math.max(scale, 0.01)} ${-1 / Math.max(scale, 0.01)})`} pointerEvents="none">
+        <g className="vai-partition-label-anchor" transform={`translate(${labelAnchor[0]} ${labelAnchor[1]}) scale(${1 / Math.max(scale, 0.01)} ${-1 / Math.max(scale, 0.01)})`}
+          pointerEvents={previewHeld || !onRenameBand ? 'none' : 'all'}
+          role={previewHeld || !onRenameBand ? undefined : 'button'}
+          tabIndex={previewHeld || !onRenameBand ? undefined : 0}
+          aria-label={previewHeld || !onRenameBand ? undefined : `重命名分区 ${label}`}
+          onPointerDown={(event) => { if (onRenameBand && !previewHeld) event.stopPropagation(); }}
+          onClick={(event) => {
+            if (!onRenameBand || previewHeld) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setNaming({ bandId: band.id, value: band.name ?? '' });
+          }}
+          onKeyDown={(event) => {
+            if (!onRenameBand || previewHeld || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setNaming({ bandId: band.id, value: band.name ?? '' });
+          }}>
           <rect className="vai-partition-label-bg" x={-labelWidth / 2} y={labelY - 10} width={labelWidth} height={20} rx={7} />
-          <text className="vai-partition-label" x={0} y={labelY} textAnchor="middle" dominantBaseline="middle">{label}</text>
+          {naming?.bandId === band.id ? <foreignObject x={-labelWidth / 2 + 3} y={labelY - 9} width={labelWidth - 6} height={18}>
+            <input className="vai-partition-label-input" aria-label={`编辑分区名称 ${label}`} autoFocus maxLength={120}
+              value={naming.value}
+              onChange={(event) => setNaming({ bandId: band.id, value: event.currentTarget.value })}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onBlur={() => void commitName(band)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setNaming(null);
+                } else if (event.key === 'Enter') {
+                  event.preventDefault();
+                  return commitName(band);
+                }
+              }} />
+          </foreignObject> : <text className="vai-partition-label" x={0} y={labelY} textAnchor="middle" dominantBaseline="middle">{label}</text>}
         </g>
       </g>;
     })}

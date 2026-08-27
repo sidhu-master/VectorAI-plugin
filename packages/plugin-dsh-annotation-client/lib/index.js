@@ -8704,8 +8704,10 @@ function evidenceOrigin(draft, evidenceIds) {
     return (_a2 = draft.evidence.find((item) => item.id === id)) == null ? void 0 : _a2.origin;
   }).find(Boolean);
 }
-function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMoveBoundary, onMoveSemanticRange }) {
+function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMoveBoundary, onMoveSemanticRange, onRenameBand }) {
   const [drag, setDrag] = reactExports.useState(null);
+  const [naming, setNaming] = reactExports.useState(null);
+  const nameCommit = reactExports.useRef(null);
   const current = reactExports.useRef(null);
   const point3 = (z, r) => [
     draft.axis.origin[0] + draft.axis.direction[0] * z + draft.axis.normal[0] * r,
@@ -8750,6 +8752,26 @@ function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMo
     }
   };
   const bands = partitionBands(draft, mode);
+  const commitName = async (band) => {
+    var _a2;
+    if ((naming == null ? void 0 : naming.bandId) !== band.id) return;
+    const name = naming.value.trim();
+    if (!name || name === ((_a2 = band.name) == null ? void 0 : _a2.trim())) {
+      setNaming(null);
+      return;
+    }
+    if (!onRenameBand) return;
+    const commitKey = `${band.id}\0${name}`;
+    if (nameCommit.current === commitKey) return;
+    nameCommit.current = commitKey;
+    try {
+      await onRenameBand(band, name);
+      setNaming(null);
+    } catch {
+    } finally {
+      nameCommit.current = null;
+    }
+  };
   const handles = mode === "segments" ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))].filter((index) => index > 0 && index < draft.segments.length).sort((a, b) => a - b).map((index) => ({ key: `boundary:${index}`, z: draft.segments[index].zStart, target: { kind: "segment", index } })) : bands.flatMap((band, index) => {
     const label = bandLabel(band, index);
     return [
@@ -8789,10 +8811,59 @@ function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMo
                 "data-line-style": band.origin === "document" ? "solid" : band.origin === "ai" ? "dotted" : "dashed"
               }
             ),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { className: "vai-partition-label-anchor", transform: `translate(${labelAnchor[0]} ${labelAnchor[1]}) scale(${1 / Math.max(scale, 0.01)} ${-1 / Math.max(scale, 0.01)})`, pointerEvents: "none", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: "vai-partition-label-bg", x: -labelWidth / 2, y: labelY - 10, width: labelWidth, height: 20, rx: 7 }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "vai-partition-label", x: 0, y: labelY, textAnchor: "middle", dominantBaseline: "middle", children: label })
-            ] })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "g",
+              {
+                className: "vai-partition-label-anchor",
+                transform: `translate(${labelAnchor[0]} ${labelAnchor[1]}) scale(${1 / Math.max(scale, 0.01)} ${-1 / Math.max(scale, 0.01)})`,
+                pointerEvents: previewHeld || !onRenameBand ? "none" : "all",
+                role: previewHeld || !onRenameBand ? void 0 : "button",
+                tabIndex: previewHeld || !onRenameBand ? void 0 : 0,
+                "aria-label": previewHeld || !onRenameBand ? void 0 : `重命名分区 ${label}`,
+                onPointerDown: (event) => {
+                  if (onRenameBand && !previewHeld) event.stopPropagation();
+                },
+                onClick: (event) => {
+                  if (!onRenameBand || previewHeld) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setNaming({ bandId: band.id, value: band.name ?? "" });
+                },
+                onKeyDown: (event) => {
+                  if (!onRenameBand || previewHeld || event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setNaming({ bandId: band.id, value: band.name ?? "" });
+                },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: "vai-partition-label-bg", x: -labelWidth / 2, y: labelY - 10, width: labelWidth, height: 20, rx: 7 }),
+                  (naming == null ? void 0 : naming.bandId) === band.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("foreignObject", { x: -labelWidth / 2 + 3, y: labelY - 9, width: labelWidth - 6, height: 18, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      className: "vai-partition-label-input",
+                      "aria-label": `编辑分区名称 ${label}`,
+                      autoFocus: true,
+                      maxLength: 120,
+                      value: naming.value,
+                      onChange: (event) => setNaming({ bandId: band.id, value: event.currentTarget.value }),
+                      onClick: (event) => event.stopPropagation(),
+                      onPointerDown: (event) => event.stopPropagation(),
+                      onBlur: () => void commitName(band),
+                      onKeyDown: (event) => {
+                        event.stopPropagation();
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          setNaming(null);
+                        } else if (event.key === "Enter") {
+                          event.preventDefault();
+                          return commitName(band);
+                        }
+                      }
+                    }
+                  ) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("text", { className: "vai-partition-label", x: 0, y: labelY, textAnchor: "middle", dominantBaseline: "middle", children: label })
+                ]
+              }
+            )
           ]
         },
         band.id
@@ -9385,7 +9456,8 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                       previewHeld: partitionState.previewHeld,
                       scale: viewport.scale,
                       onMoveBoundary: (index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 3e-3, 0.05)),
-                      onMoveSemanticRange: (groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(draft.axis.zMax * 3e-3, 0.05))
+                      onMoveSemanticRange: (groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(draft.axis.zMax * 3e-3, 0.05)),
+                      onRenameBand: (band, name) => partitionView === "functional" ? partition.actions.renameSemanticGroup(band.id, name) : partition.actions.updateSegment(band.segmentIds[0], { name })
                     }
                   )
                 ] })
@@ -15550,6 +15622,7 @@ const partitionRevisionSchema = object({
 const partitionEditCommandSchema = discriminatedUnion("type", [
   object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
   object({ type: literal("semantic-range.move"), expectedDrawingRef: drawingRefSchema, groupId: idSchema, edge: _enum(["start", "end"]), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("semantic-group.rename"), expectedDrawingRef: drawingRefSchema, groupId: idSchema, name: string().trim().min(1).max(120) }).strict(),
   object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
   object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
   object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
@@ -15843,6 +15916,7 @@ function createPartitionController(sessionId, remote) {
       },
       moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: "boundary.move", boundaryIndex, requestedZ, snapTolerance }),
       moveSemanticRange: (groupId, edge, requestedZ, snapTolerance) => edit({ type: "semantic-range.move", groupId, edge, requestedZ, snapTolerance }),
+      renameSemanticGroup: (groupId, name) => edit({ type: "semantic-group.rename", groupId, name }),
       splitSegment: (segmentId, z, snapTolerance) => edit({ type: "segment.split", segmentId, z, snapTolerance }),
       mergeBoundary: (boundaryIndex) => edit({ type: "boundary.merge", boundaryIndex }),
       updateSegment: (segmentId, value) => edit({ type: "segment.metadata", segmentId, ...value }),

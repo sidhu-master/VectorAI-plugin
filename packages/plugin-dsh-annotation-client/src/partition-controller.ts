@@ -35,6 +35,7 @@ export interface PartitionController {
     supplementDocuments(engineeringDocuments: readonly File[]): Promise<void>;
     moveBoundary(boundaryIndex: number, requestedZ: number, snapTolerance: number): Promise<void>;
     moveSemanticRange(groupId: string, edge: 'start' | 'end', requestedZ: number, snapTolerance: number): Promise<void>;
+    renameSemanticGroup(groupId: string, name: string): Promise<void>;
     splitSegment(segmentId: string, z: number, snapTolerance: number): Promise<void>;
     mergeBoundary(boundaryIndex: number): Promise<void>;
     updateSegment(segmentId: string, value: { name?: string; semanticType?: string }): Promise<void>;
@@ -123,6 +124,7 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
       },
       moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: 'boundary.move', boundaryIndex, requestedZ, snapTolerance }),
       moveSemanticRange: (groupId, edge, requestedZ, snapTolerance) => edit({ type: 'semantic-range.move', groupId, edge, requestedZ, snapTolerance }),
+      renameSemanticGroup: (groupId, name) => edit({ type: 'semantic-group.rename', groupId, name }),
       splitSegment: (segmentId, z, snapTolerance) => edit({ type: 'segment.split', segmentId, z, snapTolerance }),
       mergeBoundary: (boundaryIndex) => edit({ type: 'boundary.merge', boundaryIndex }),
       updateSegment: (segmentId, value) => edit({ type: 'segment.metadata', segmentId, ...value }),

@@ -51,9 +51,13 @@ describe('partition controller', () => {
     await controller.actions.importFiles(file);
     await controller.actions.moveBoundary(1, 12, 0.5);
     await controller.actions.moveSemanticRange('group:G01', 'start', 63.5, 0.5);
+    await controller.actions.renameSemanticGroup('group:G01', '精加工齿轮段');
     expect(importAndAnalyze).toHaveBeenCalledOnce();
     expect(editPartition).toHaveBeenCalledWith('s', expect.objectContaining({ type: 'boundary.move', expectedDrawingRef: partition.drawingRef }));
     expect(editPartition).toHaveBeenCalledWith('s', expect.objectContaining({ type: 'semantic-range.move', groupId: 'group:G01', edge: 'start' }));
+    expect(editPartition).toHaveBeenCalledWith('s', expect.objectContaining({
+      type: 'semantic-group.rename', groupId: 'group:G01', name: '精加工齿轮段',
+    }));
     expect(controller.state.getSnapshot()).toMatchObject({ partition: { updatedAt: 2 }, busy: false });
   });
 

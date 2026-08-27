@@ -56,6 +56,17 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('accepts a revision-bound functional partition rename', () => {
+    const command = {
+      type: 'semantic-group.rename',
+      expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+      groupId: 'group:gear',
+      name: '精加工齿轮段',
+    };
+
+    expect(partitionEditCommandSchema.parse(command)).toEqual(command);
+  });
+
   it('accepts ordered immutable engineering document inputs', () => {
     const request = {
       dxf: { name: 'shaft.dxf', digest: `sha256:${'a'.repeat(64)}`, base64: 'WA==' },

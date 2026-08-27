@@ -60,9 +60,10 @@
 .vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }
 .vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }
 .vai-partition-band--geometry { stroke-dasharray: 8 5; }
-.vai-partition-label-anchor { pointer-events: none; }
+.vai-partition-label-anchor[role="button"] { cursor: text; }
 .vai-partition-label-bg { fill: rgba(10, 18, 26, .9); stroke: rgba(125, 211, 252, .35); stroke-width: 1px; }
 .vai-partition-label { fill: #e6f7ff; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: .2px; }
+.vai-partition-label-input { box-sizing: border-box; width: 100%; height: 18px; padding: 1px 5px; border: 1px solid rgba(125, 211, 252, .7); border-radius: 5px; outline: none; color: #e6f7ff; background: #0a121a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: center; }
 .vai-partition-handle-leader { stroke: rgba(84, 200, 247, .72); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }
 

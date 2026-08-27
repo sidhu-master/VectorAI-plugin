@@ -900,6 +900,7 @@ export const partitionRevisionSchema = z.object({
 export const partitionEditCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('boundary.move'), expectedDrawingRef: drawingRefSchema, boundaryIndex: z.number().int().positive(), requestedZ: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
   z.object({ type: z.literal('semantic-range.move'), expectedDrawingRef: drawingRefSchema, groupId: idSchema, edge: z.enum(['start', 'end']), requestedZ: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
+  z.object({ type: z.literal('semantic-group.rename'), expectedDrawingRef: drawingRefSchema, groupId: idSchema, name: z.string().trim().min(1).max(120) }).strict(),
   z.object({ type: z.literal('segment.split'), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: z.number(), snapTolerance: z.number().nonnegative() }).strict(),
   z.object({ type: z.literal('boundary.merge'), expectedDrawingRef: drawingRefSchema, boundaryIndex: z.number().int().positive() }).strict(),
   z.object({ type: z.literal('segment.metadata'), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: z.string().max(120).optional(), semanticType: z.string().max(80).optional() }).strict(),

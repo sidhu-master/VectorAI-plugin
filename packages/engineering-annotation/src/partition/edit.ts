@@ -51,6 +51,24 @@ export function moveSemanticRange(draft: PartitionDraft, input: SnapInput & {
   };
 }
 
+export function renameSemanticGroup(draft: PartitionDraft, input: { groupId: string; name: string }): PartitionDraft {
+  const group = draft.semanticGroups.find(({ id }) => id === input.groupId);
+  if (!group) throw new Error('PARTITION_GROUP_UNKNOWN');
+  const name = input.name.trim();
+  if (name.length === 0 || name.length > 120) throw new Error('PARTITION_GROUP_NAME_INVALID');
+  if (group.name === name) return structuredClone(draft);
+  const evidenceId = `manual:semantic-name:${group.id}:${draft.evidence.length}`;
+  return {
+    ...structuredClone(draft),
+    semanticGroups: draft.semanticGroups.map((candidate) => candidate.id === group.id
+      ? { ...structuredClone(candidate), name, evidenceIds: unique([...candidate.evidenceIds, evidenceId]) }
+      : structuredClone(candidate)),
+    evidence: [...structuredClone(draft.evidence), {
+      id: evidenceId, origin: 'manual', label: `Functional region renamed to ${name}`,
+    }],
+  };
+}
+
 export function splitSegment(draft: PartitionDraft, input: SnapInput & { segmentId: string; z: number }): PartitionDraft {
   const index = draft.segments.findIndex(({ id }) => id === input.segmentId);
   if (index < 0) throw new Error('PARTITION_SEGMENT_UNKNOWN');
