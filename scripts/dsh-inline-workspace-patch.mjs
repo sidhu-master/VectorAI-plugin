@@ -20,7 +20,8 @@ const LEGACY_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8"`;
 const V2_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
 const V3_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
 const V4_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v4"`;
-const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v5"`;
+const V5_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v5"`;
+const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v6"`;
 const LEGACY_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane]:not(:empty)';
 const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
 const LEGACY_WORKSPACE_GATE = 'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;';
@@ -148,7 +149,7 @@ const WORKSPACE_CSS = `
 [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) > [data-conversation-workspace-pane] {
   display: flex;
   flex: 1 1 auto;
-  min-width: 520px;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -178,7 +179,9 @@ const WORKSPACE_CSS = `
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-}
+}`;
+
+const V5_RESPONSIVE_WORKSPACE_CSS = `
 @media (max-width: 1100px) {
   [data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active]) {
     flex-direction: column;
@@ -273,7 +276,7 @@ const ROOT_RETURN_REPLACEMENT = `
 \t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t"data-phase": phase,
 \t\t\t\t"data-conversation-workspace-layout": "",
-\t\t\t\t"${PATCH_MARKER}": "rc.8-v5",
+\t\t\t\t"${PATCH_MARKER}": "rc.8-v6",
 \t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("style", { children: workspaceLayoutStyles }), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-pane": "",
 \t\t\t\t\tkey: sessionId ?? "new-session",
@@ -333,6 +336,22 @@ export function patchConversationClient(source) {
         status: 'upgraded',
         source: replaceExactlyOnce(source, LEGACY_WORKSPACE_PANE, CURRENT_WORKSPACE_PANE),
       };
+    }
+    if (
+      source.includes(V5_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
+      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && source.includes(CURRENT_WORKSPACE_GATE)
+      && source.includes(CURRENT_WORKSPACE_PANE)
+    ) {
+      let upgraded = replaceExactlyOnce(source, 'min-width: 520px;', 'min-width: 0;');
+      upgraded = replaceExactlyOnce(
+        upgraded,
+        JSON.stringify(V5_RESPONSIVE_WORKSPACE_CSS).slice(1, -1),
+        '',
+      );
+      upgraded = replaceExactlyOnce(upgraded, V5_PATCH_MARKER, CURRENT_PATCH_MARKER);
+      return { status: 'upgraded', source: upgraded };
     }
     if (
       source.includes(V4_PATCH_MARKER)
