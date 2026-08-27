@@ -145,6 +145,7 @@ function projectTolerance(
 
 function defaultAnnotation(intent: DimensionIntent): DimensionAnnotation {
   const prefix = intent.kind === 'diameter' ? 'Ø' : intent.kind === 'radius' ? 'R' : '';
+  const suffix = intent.kind === 'angular' ? '°' : '';
   return {
     id: `annotation_engineering_${stableKey(intent.id)}` as AnnotationId,
     type: 'dimension',
@@ -154,7 +155,7 @@ function defaultAnnotation(intent: DimensionIntent): DimensionAnnotation {
     associationStatus: 'resolved',
     targets: structuredClone(intent.targets),
     computedValue: intent.nominalValue,
-    displayText: `${prefix}${format(intent.nominalValue)}`,
+    displayText: `${prefix}${format(intent.nominalValue)}${suffix}`,
     unit: intent.unit,
     textPosition: [0, 0],
     definitionPoints: [],

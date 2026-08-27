@@ -66,6 +66,43 @@ describe('drawing_auto_annotate', () => {
     expect(runExtensionProgram.mock.calls[0]?.[1]).toMatchObject({ targetNodeIds: ['circle-1'] });
   });
 
+  it('sends deterministic axial-end opening annotations through the same preview seam', async () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const rise = 4 * Math.sqrt(3);
+    const journal = 12.9 - rise;
+    document.geometry = [
+      ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
+      ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
+    ].map(([id, start, end]) => ({
+      id: id as never, type: 'line' as const, start: start as never, end: end as never,
+      visible: true, quality,
+    }));
+    const runExtensionProgram = vi.fn(async () => ({ result: {
+      status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-angle',
+      ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-angle', operationBindingDigest: 'sha256:angle',
+    } }));
+    const tool = createEngineeringAnnotationTool({
+      getSnapshot: () => ({
+        version: 1, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+      runExtensionProgram: runExtensionProgram as never,
+    }, new AnnotationSessionStateStore());
+
+    await tool.execute({}, {
+      agent: { id: 'session-angle' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext);
+
+    const request = runExtensionProgram.mock.calls[0]?.[1] as {
+      program: { operations: Array<{ kind: string; annotations?: Array<{ dimensionKind?: string; displayText?: string }> }> };
+    };
+    expect(request.program.operations[0]?.annotations).toEqual([
+      expect.objectContaining({ dimensionKind: 'angular', displayText: '120°' }),
+    ]);
+  });
+
   it('claims only after a real Drawing route succeeds and retains the claim after failure', async () => {
     const sessions = new AnnotationSessionStateStore(undefined, { now: () => 12 });
     const noDrawing = createEngineeringAnnotationTool({

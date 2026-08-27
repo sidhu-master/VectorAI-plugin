@@ -88,6 +88,9 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
     case 'text':
       return <WorldText position={node.position} rotation={node.rotation} height={node.height} align={node.alignment}>{node.content}</WorldText>;
     case 'dimension':
+      if (node.dimensionKind === 'angular' && node.definitionPoints.length >= 5) {
+        return <AngularDimension node={node} viewport={viewport} />;
+      }
       return (
         <>
           {node.definitionPoints.length > 1 ? (
@@ -123,6 +126,43 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
     case 'section-hatch':
       return <HatchRenderer node={node} viewportScale={viewport.scale} />;
   }
+}
+
+function AngularDimension({
+  node,
+  viewport,
+}: {
+  node: Extract<AnnotationNode, { type: 'dimension' }>;
+  viewport: DrawingWorkspaceViewport;
+}) {
+  const [vertex, firstExtension, secondExtension, arcStart, arcEnd] = node.definitionPoints;
+  if (!vertex || !firstExtension || !secondExtension || !arcStart || !arcEnd) return null;
+  const firstRadius = Math.hypot(arcStart[0] - vertex[0], arcStart[1] - vertex[1]);
+  const secondRadius = Math.hypot(arcEnd[0] - vertex[0], arcEnd[1] - vertex[1]);
+  const radius = (firstRadius + secondRadius) / 2;
+  const startAngle = Math.atan2(arcStart[1] - vertex[1], arcStart[0] - vertex[0]);
+  const endAngle = Math.atan2(arcEnd[1] - vertex[1], arcEnd[0] - vertex[0]);
+  const sweep = selectAngularSweep(startAngle, endAngle, node.observedValue ?? node.computedValue);
+  const tangentStep = Math.min(Math.abs(sweep) * 0.08, 0.15);
+  const direction = sweep >= 0 ? 1 : -1;
+  const startToward = polarPoint(vertex, radius, startAngle + direction * tangentStep);
+  const endToward = polarPoint(vertex, radius, endAngle - direction * tangentStep);
+  const vectorStroke = { vectorEffect: 'non-scaling-stroke' as const };
+  return <>
+    <line data-angular-role="extension" x1={vertex[0]} y1={vertex[1]} x2={firstExtension[0]} y2={firstExtension[1]} {...vectorStroke} />
+    <line data-angular-role="extension" x1={vertex[0]} y1={vertex[1]} x2={secondExtension[0]} y2={secondExtension[1]} {...vectorStroke} />
+    <path
+      data-angular-role="arc"
+      d={`M ${arcStart[0]} ${arcStart[1]} A ${radius} ${radius} 0 ${Math.abs(sweep) > Math.PI ? 1 : 0} ${sweep >= 0 ? 1 : 0} ${arcEnd[0]} ${arcEnd[1]}`}
+      fill="none"
+      {...vectorStroke}
+    />
+    <path data-angular-role="arrow" d={arrowPath(arcStart, startToward, 7 / Math.max(viewport.scale, 1e-9))} {...vectorStroke} />
+    <path data-angular-role="arrow" d={arrowPath(arcEnd, endToward, 7 / Math.max(viewport.scale, 1e-9))} {...vectorStroke} />
+    <WorldText position={node.textPosition} height={Math.max(4, 10 / viewport.scale)} align="center">
+      {dimensionLabel(node)}
+    </WorldText>
+  </>;
 }
 
 function WorldText({
@@ -206,6 +246,32 @@ function arcPath(center: Vec2, radius: number, start: number, end: number, count
   const last = point(end);
   const span = counterClockwise ? modulo(end - start, 360) : modulo(start - end, 360);
   return `M ${first[0]} ${first[1]} A ${radius} ${radius} 0 ${span > 180 ? 1 : 0} ${counterClockwise ? 1 : 0} ${last[0]} ${last[1]}`;
+}
+
+function selectAngularSweep(start: number, end: number, valueDegrees: number | undefined): number {
+  const counterClockwise = modulo(end - start, Math.PI * 2);
+  const clockwise = counterClockwise - Math.PI * 2;
+  if (valueDegrees === undefined) return Math.abs(counterClockwise) <= Math.abs(clockwise) ? counterClockwise : clockwise;
+  const target = Math.abs(valueDegrees) * Math.PI / 180;
+  return Math.abs(Math.abs(counterClockwise) - target) <= Math.abs(Math.abs(clockwise) - target)
+    ? counterClockwise : clockwise;
+}
+
+function polarPoint(center: Vec2, radius: number, angle: number): Vec2 {
+  return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius];
+}
+
+function arrowPath(tip: Vec2, toward: Vec2, length: number): string {
+  const dx = toward[0] - tip[0];
+  const dy = toward[1] - tip[1];
+  const magnitude = Math.hypot(dx, dy) || 1;
+  const ux = dx / magnitude;
+  const uy = dy / magnitude;
+  const base: Vec2 = [tip[0] + ux * length, tip[1] + uy * length];
+  const halfWidth = length * 0.38;
+  const first: Vec2 = [base[0] - uy * halfWidth, base[1] + ux * halfWidth];
+  const second: Vec2 = [base[0] + uy * halfWidth, base[1] - ux * halfWidth];
+  return `M ${tip[0]} ${tip[1]} L ${first[0]} ${first[1]} L ${second[0]} ${second[1]} Z`;
 }
 
 function clipExtendedLine(
