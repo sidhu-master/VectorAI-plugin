@@ -1,11 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest';
-import { createPartitionController } from './partition-controller';
+import { createPartitionController, type PartitionRemote } from './partition-controller';
 
 const partition = { version: 1 as const, phase: 'editing' as const, drawingRef: { drawingId: 'd', revision: 1 }, canUndo: false, canRedo: false, updatedAt: 1 };
 
 describe('partition controller', () => {
+  it('resolves the current remote namespace for actions after a client remount', async () => {
+    const staleRemote = {
+      getPartitionState: vi.fn(async () => ({ ok: true as const, value: partition })),
+    };
+    const confirmPartition = vi.fn(async () => ({
+      ok: true as const,
+      value: { ...partition, phase: 'confirmed' as const },
+    }));
+    let currentRemote: Partial<PartitionRemote> = staleRemote;
+    const controller = createPartitionController('s', () => currentRemote as never);
+
+    await controller.actions.refresh();
+    currentRemote = { ...staleRemote, confirmPartition };
+    await controller.actions.confirm();
+
+    expect(confirmPartition).toHaveBeenCalledWith('s', partition.drawingRef);
+    expect(controller.state.getSnapshot().partition.phase).toBe('confirmed');
+  });
+
   it('reopens a confirmed partition through its explicit remote use case', async () => {
     const confirmed = { ...partition, phase: 'confirmed' as const };
     const reopenPartition = vi.fn(async () => ({ ok: true as const, value: partition }));
