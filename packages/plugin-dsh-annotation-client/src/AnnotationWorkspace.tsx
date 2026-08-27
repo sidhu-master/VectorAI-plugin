@@ -61,7 +61,11 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
     ...displaySnapshot,
     document: {
       ...displaySnapshot.document,
-      annotations: displaySnapshot.document.annotations.filter(({ type }) => type === 'section-hatch'),
+      // Keep imported hatches and generated engineering dimensions. Source DXF
+      // text remains hidden so the clean engineering canvas does not regress.
+      annotations: displaySnapshot.document.annotations.filter(({ type }) => (
+        type === 'section-hatch' || type === 'dimension'
+      )),
       relations: [],
     },
   }), [displaySnapshot]);
@@ -198,7 +202,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
           display={presentation.display}
           sourceUrl={presentation.sourceUrl}
           className="vai-canvas vai-annotation-workspace__surface"
-          fitToDrawingOnResize="geometry"
+          fitToDrawingOnResize
           onViewportChange={runtime.actions.setViewport}
           onSelectionChange={runtime.actions.setSelection}
           worldLayers={<>
@@ -234,7 +238,12 @@ function fitRuntimeToDrawing(runtime: DrawingSurfaceRuntime, snapshot = runtime.
   if (snapshot === null) return;
   const viewport = runtime.viewport.getSnapshot();
   if (viewport.width <= 0 || viewport.height <= 0) return;
-  runtime.actions.setViewport(fitViewportToDrawing({ ...snapshot.document, annotations: [] } as DrawingDocument, viewport));
+  runtime.actions.setViewport(fitViewportToDrawing({
+    ...snapshot.document,
+    annotations: snapshot.document.annotations.filter(({ type }) => (
+      type === 'section-hatch' || type === 'dimension'
+    )),
+  } as DrawingDocument, viewport));
 }
 
 function useObservable<T>(observable: DrawingSurfaceObservable<T>): T {

@@ -284,6 +284,11 @@ describe('AnnotationWorkspace', () => {
       id: 'source-text' as never, type: 'text', position: [5, 5], content: 'SHOULD_HIDE',
       height: 2, rotation: 0, alignment: 'left', verticalAlignment: 'baseline',
       visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    }, {
+      id: 'opening-angle' as never, type: 'dimension', dimensionKind: 'angular',
+      associationStatus: 'resolved', targets: [], computedValue: 60, displayText: '60°', unit: 'deg',
+      textPosition: [4, 0], definitionPoints: [[0, 0], [6, -3], [6, 3], [3, -1.5], [3, 1.5]],
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
     }];
     const snapshot = {
       version: 1 as const,
@@ -337,6 +342,8 @@ describe('AnnotationWorkspace', () => {
     expect(markup).toContain('data-annotation-candidate-layer="true"');
     expect(markup).not.toContain('data-relation-id="relation-1"');
     expect(markup).not.toContain('SHOULD_HIDE');
+    expect(markup).toContain('data-entity-id="opening-angle"');
+    expect(markup).toContain('60°');
     expect(markup).toContain('分区草稿待确认');
     expect(markup).toContain('aria-label="取消分区"');
     expect(markup).toContain('aria-label="按住预览分区结果"');

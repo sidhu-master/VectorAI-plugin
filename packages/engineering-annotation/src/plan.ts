@@ -15,6 +15,7 @@ import type { DrawingRef, SpatialEditProgram } from '@vectorai/drawing-edit-prot
 import { orderDimensionIntents } from './dimension/order';
 import { projectEngineeringAnnotations } from './dimension/project';
 import type { EngineeringAnnotationDraft } from './dimension/types';
+import { layoutOpeningAngles, measureOpeningAngles, selectAxialEndOpeningAngles } from './opening-angle';
 
 export interface PendingEngineeringAnnotation {
   nodeId: string;
@@ -66,6 +67,53 @@ export function planEngineeringAnnotations(input: {
       quality: { status: 'confirmed', confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] },
     });
   }
+  const measuredOpenings = measureOpeningAngles(geometry);
+  const openingSelection = selectAxialEndOpeningAngles({
+    facts: measuredOpenings.facts,
+    geometry,
+    axis: measuredOpenings.axis,
+  });
+  const openingLayouts = layoutOpeningAngles({ geometry, facts: openingSelection.selected });
+  for (const fact of openingSelection.selected) {
+    const layout = openingLayouts[fact.key];
+    if (!layout) continue;
+    const annotationId = `annotation_auto_${stableKey(fact.key)}` as AnnotationId;
+    const annotation: AnnotationNode = {
+      id: annotationId,
+      type: 'dimension',
+      visible: true,
+      quality: {
+        status: 'confirmed', confidence: 1,
+        evidenceRefs: fact.evidenceRefs.length > 0
+          ? [...fact.evidenceRefs]
+          : [`evidence:engineering:${stableKey(fact.sourceIds.join(':'))}` as EvidenceId],
+      },
+      dimensionKind: 'angular',
+      associationStatus: 'resolved',
+      targets: fact.sourceIds.map((geometryId, index) => ({
+        geometryId,
+        anchor: { kind: 'nearest' as const, point: fact.rays[index] ?? fact.vertex },
+      })),
+      computedValue: fact.value,
+      displayText: `${format(fact.value)}°`,
+      unit: 'deg',
+      textPosition: layout.textPosition,
+      definitionPoints: [...layout.definitionPoints],
+      engineeringIntentId: `intent_opening_${stableKey(fact.key)}`,
+    };
+    annotationTemplates.push(annotation);
+    associations.push({
+      id: `relation_${stableKey(`${input.document.id}:${annotationId}`)}` as RelationId,
+      type: 'association', plane: 'association', kind: 'annotation-target',
+      annotationId,
+      geometryIds: [...fact.sourceIds],
+      visible: true,
+      quality: { status: 'confirmed', confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] },
+    });
+  }
+  for (const [key, reason] of Object.entries(openingSelection.suppressionReasons)) {
+    suppressed.push({ nodeId: key, reason });
+  }
   const dimensionTemplates = annotationTemplates.filter(
     (annotation): annotation is Extract<AnnotationNode, { type: 'dimension' }> => annotation.type === 'dimension',
   );
@@ -98,7 +146,53 @@ export function planEngineeringAnnotations(input: {
     existingAnnotations: annotationTemplates,
   });
   const annotations: AnnotationNode[] = projection.annotations;
-  const targetNodeIds = [...new Set(associations.flatMap(({ geometryIds }) => geometryIds))].sort();
+  const existingAnnotations = new Map(input.document.annotations.map((node) => [node.id, node]));
+  const existingAssociations = new Map(input.document.relations
+    .filter((relation): relation is AssociationRelation => relation.type === 'association')
+    .map((relation) => [relation.id, relation]));
+  const plannedOpeningIds = new Set(annotations
+    .filter((node) => node.type === 'dimension' && node.engineeringIntentId?.startsWith('intent_opening_'))
+    .map(({ id }) => id));
+  const createAnnotations: AnnotationNode[] = [];
+  const createAssociations: AssociationRelation[] = [];
+  const deleteNodeIds = new Set<string>();
+  const staleTargetNodeIds = new Set<string>();
+  for (const annotation of annotations) {
+    const existing = existingAnnotations.get(annotation.id);
+    const opening = annotation.type === 'dimension' && annotation.engineeringIntentId?.startsWith('intent_opening_');
+    if (!existing) createAnnotations.push(annotation);
+    else if (opening && !sameOpeningAnnotation(existing, annotation)) {
+      deleteNodeIds.add(existing.id);
+      if (existing.type === 'dimension') existing.targets.forEach(({ geometryId }) => staleTargetNodeIds.add(geometryId));
+      createAnnotations.push(annotation);
+      for (const relation of existingAssociations.values()) {
+        if (relation.annotationId === existing.id) deleteNodeIds.add(relation.id);
+      }
+    }
+  }
+  for (const existing of input.document.annotations) {
+    if (existing.type !== 'dimension' || !existing.engineeringIntentId?.startsWith('intent_opening_')) continue;
+    if (plannedOpeningIds.has(existing.id)) continue;
+    deleteNodeIds.add(existing.id);
+    existing.targets.forEach(({ geometryId }) => staleTargetNodeIds.add(geometryId));
+    for (const relation of existingAssociations.values()) {
+      if (relation.annotationId === existing.id) deleteNodeIds.add(relation.id);
+    }
+  }
+  const createAnnotationIds = new Set(createAnnotations.map(({ id }) => id));
+  for (const association of associations) {
+    const existing = existingAssociations.get(association.id);
+    if (createAnnotationIds.has(association.annotationId) || !existing) createAssociations.push(association);
+    else if (association.annotationId.startsWith('annotation_auto_')
+      && JSON.stringify(existing) !== JSON.stringify(association)) {
+      deleteNodeIds.add(existing.id);
+      createAssociations.push(association);
+    }
+  }
+  const targetNodeIds = [...new Set([
+    ...associations.flatMap(({ geometryIds }) => geometryIds),
+    ...staleTargetNodeIds,
+  ])].sort();
   const evidenceRefs = [...new Set(targetNodeIds.flatMap((id) => {
     const node = geometry.find((candidate) => candidate.id === id);
     return node?.quality.evidenceRefs ?? [];
@@ -106,21 +200,35 @@ export function planEngineeringAnnotations(input: {
   if (targetNodeIds.length > 0 && evidenceRefs.length === 0) {
     evidenceRefs.push(`evidence:engineering:${stableKey(targetNodeIds.join(':'))}` as EvidenceId);
   }
-  const program: SpatialEditProgram | null = annotations.length === 0 ? null : {
+  const operations: SpatialEditProgram['operations'] = [];
+  if (deleteNodeIds.size > 0) operations.push({ kind: 'delete_nodes', nodeIds: [...deleteNodeIds].sort() });
+  if (createAnnotations.length > 0) operations.push({
+    kind: 'create_annotation_batch',
+    annotations: structuredClone(createAnnotations) as unknown as Array<Record<string, unknown> & { id: string; type: string }>,
+    associations: structuredClone(createAssociations) as unknown as Array<Record<string, unknown> & { id: string; type: 'association' }>,
+  });
+  const program: SpatialEditProgram | null = operations.length === 0 ? null : {
     baseRef: structuredClone(input.ref),
     targetHandle: '__GROUNDING_TARGET__',
-    summary: `Create ${annotations.length} deterministic engineering annotations`,
+    summary: `Create or refresh ${createAnnotations.length} deterministic engineering annotations`,
     objective: input.objective,
-    operations: [{
-      kind: 'create_annotation_batch',
-      annotations: structuredClone(annotations) as unknown as Array<Record<string, unknown> & { id: string; type: string }>,
-      associations: structuredClone(associations) as unknown as Array<Record<string, unknown> & { id: string; type: 'association' }>,
-    }],
+    operations,
     preserveScopes: geometry.map(({ id }) => ({ kind: 'node-field' as const, nodeId: id, fields: ['id', 'type'] })),
     postconditions: [],
     evidenceRefs: evidenceRefs as unknown as string[],
   };
   return { annotations, associations, targetNodeIds, pending, suppressed, program };
+}
+
+function sameOpeningAnnotation(left: AnnotationNode, right: AnnotationNode): boolean {
+  if (left.type !== 'dimension' || right.type !== 'dimension') return false;
+  return left.dimensionKind === right.dimensionKind
+    && left.computedValue === right.computedValue
+    && left.displayText === right.displayText
+    && left.unit === right.unit
+    && JSON.stringify(left.targets) === JSON.stringify(right.targets)
+    && JSON.stringify(left.textPosition) === JSON.stringify(right.textPosition)
+    && JSON.stringify(left.definitionPoints) === JSON.stringify(right.definitionPoints);
 }
 
 function annotationFor(

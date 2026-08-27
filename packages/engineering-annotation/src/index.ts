@@ -20,3 +20,4 @@ export * from './dimension/project';
 export * from './tolerance/rules';
 export * from './tolerance/digest';
 export * from './tolerance/evaluate';
+export * from './opening-angle/index';

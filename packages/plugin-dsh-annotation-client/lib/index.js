@@ -7464,6 +7464,9 @@ function renderNode(node, viewport) {
     case "text":
       return /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.position, rotation: node.rotation, height: node.height, align: node.alignment, children: node.content });
     case "dimension":
+      if (node.dimensionKind === "angular" && node.definitionPoints.length >= 5) {
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(AngularDimension, { node, viewport });
+      }
       return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         node.definitionPoints.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: pointsAttribute(node.definitionPoints), fill: "none", ...vectorStroke }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
@@ -7492,6 +7495,40 @@ function renderNode(node, viewport) {
     case "section-hatch":
       return /* @__PURE__ */ jsxRuntimeExports.jsx(HatchRenderer, { node, viewportScale: viewport.scale });
   }
+}
+function AngularDimension({
+  node,
+  viewport
+}) {
+  const [vertex, firstExtension, secondExtension, arcStart, arcEnd] = node.definitionPoints;
+  if (!vertex || !firstExtension || !secondExtension || !arcStart || !arcEnd) return null;
+  const firstRadius = Math.hypot(arcStart[0] - vertex[0], arcStart[1] - vertex[1]);
+  const secondRadius = Math.hypot(arcEnd[0] - vertex[0], arcEnd[1] - vertex[1]);
+  const radius = (firstRadius + secondRadius) / 2;
+  const startAngle = Math.atan2(arcStart[1] - vertex[1], arcStart[0] - vertex[0]);
+  const endAngle = Math.atan2(arcEnd[1] - vertex[1], arcEnd[0] - vertex[0]);
+  const sweep = selectAngularSweep(startAngle, endAngle, node.observedValue ?? node.computedValue);
+  const tangentStep = Math.min(Math.abs(sweep) * 0.08, 0.15);
+  const direction = sweep >= 0 ? 1 : -1;
+  const startToward = polarPoint(vertex, radius, startAngle + direction * tangentStep);
+  const endToward = polarPoint(vertex, radius, endAngle - direction * tangentStep);
+  const vectorStroke = { vectorEffect: "non-scaling-stroke" };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { "data-angular-role": "extension", x1: vertex[0], y1: vertex[1], x2: firstExtension[0], y2: firstExtension[1], ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { "data-angular-role": "extension", x1: vertex[0], y1: vertex[1], x2: secondExtension[0], y2: secondExtension[1], ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "path",
+      {
+        "data-angular-role": "arc",
+        d: `M ${arcStart[0]} ${arcStart[1]} A ${radius} ${radius} 0 ${Math.abs(sweep) > Math.PI ? 1 : 0} ${sweep >= 0 ? 1 : 0} ${arcEnd[0]} ${arcEnd[1]}`,
+        fill: "none",
+        ...vectorStroke
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { "data-angular-role": "arrow", d: arrowPath(arcStart, startToward, 7 / Math.max(viewport.scale, 1e-9)), ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { "data-angular-role": "arrow", d: arrowPath(arcEnd, endToward, 7 / Math.max(viewport.scale, 1e-9)), ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
+  ] });
 }
 function WorldText({
   position,
@@ -7558,6 +7595,28 @@ function arcPath(center, radius, start, end, counterClockwise) {
   const last = point3(end);
   const span = counterClockwise ? modulo(end - start, 360) : modulo(start - end, 360);
   return `M ${first[0]} ${first[1]} A ${radius} ${radius} 0 ${span > 180 ? 1 : 0} ${counterClockwise ? 1 : 0} ${last[0]} ${last[1]}`;
+}
+function selectAngularSweep(start, end, valueDegrees) {
+  const counterClockwise = modulo(end - start, Math.PI * 2);
+  const clockwise = counterClockwise - Math.PI * 2;
+  if (valueDegrees === void 0) return Math.abs(counterClockwise) <= Math.abs(clockwise) ? counterClockwise : clockwise;
+  const target = Math.abs(valueDegrees) * Math.PI / 180;
+  return Math.abs(Math.abs(counterClockwise) - target) <= Math.abs(Math.abs(clockwise) - target) ? counterClockwise : clockwise;
+}
+function polarPoint(center, radius, angle) {
+  return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius];
+}
+function arrowPath(tip, toward, length) {
+  const dx = toward[0] - tip[0];
+  const dy = toward[1] - tip[1];
+  const magnitude = Math.hypot(dx, dy) || 1;
+  const ux = dx / magnitude;
+  const uy = dy / magnitude;
+  const base = [tip[0] + ux * length, tip[1] + uy * length];
+  const halfWidth = length * 0.38;
+  const first = [base[0] - uy * halfWidth, base[1] + ux * halfWidth];
+  const second = [base[0] + uy * halfWidth, base[1] - ux * halfWidth];
+  return `M ${tip[0]} ${tip[1]} L ${first[0]} ${first[1]} L ${second[0]} ${second[1]} Z`;
 }
 function clipExtendedLine(origin, direction, bounds, ray) {
   if (Math.hypot(direction[0], direction[1]) <= 1e-9) return null;
@@ -9302,7 +9361,9 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
     ...displaySnapshot,
     document: {
       ...displaySnapshot.document,
-      annotations: displaySnapshot.document.annotations.filter(({ type }) => type === "section-hatch"),
+      // Keep imported hatches and generated engineering dimensions. Source DXF
+      // text remains hidden so the clean engineering canvas does not regress.
+      annotations: displaySnapshot.document.annotations.filter(({ type }) => type === "section-hatch" || type === "dimension"),
       relations: []
     }
   }, [displaySnapshot]);
@@ -9443,7 +9504,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                 display: presentation.display,
                 sourceUrl: presentation.sourceUrl,
                 className: "vai-canvas vai-annotation-workspace__surface",
-                fitToDrawingOnResize: "geometry",
+                fitToDrawingOnResize: true,
                 onViewportChange: runtime.actions.setViewport,
                 onSelectionChange: runtime.actions.setSelection,
                 worldLayers: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -9490,7 +9551,10 @@ function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot())
   if (snapshot === null) return;
   const viewport = runtime.viewport.getSnapshot();
   if (viewport.width <= 0 || viewport.height <= 0) return;
-  runtime.actions.setViewport(fitViewportToDrawing({ ...snapshot.document, annotations: [] }, viewport));
+  runtime.actions.setViewport(fitViewportToDrawing({
+    ...snapshot.document,
+    annotations: snapshot.document.annotations.filter(({ type }) => type === "section-hatch" || type === "dimension")
+  }, viewport));
 }
 function useObservable(observable) {
   return reactExports.useSyncExternalStore(observable.subscribe, observable.getSnapshot, observable.getSnapshot);

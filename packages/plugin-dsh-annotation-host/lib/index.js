@@ -509,6 +509,7 @@ function projectTolerance(spec, intent, diagnostics) {
 }
 function defaultAnnotation(intent) {
   const prefix = intent.kind === "diameter" ? "Ø" : intent.kind === "radius" ? "R" : "";
+  const suffix = intent.kind === "angular" ? "°" : "";
   return {
     id: `annotation_engineering_${stableKey$1(intent.id)}`,
     type: "dimension",
@@ -518,7 +519,7 @@ function defaultAnnotation(intent) {
     associationStatus: "resolved",
     targets: structuredClone(intent.targets),
     computedValue: intent.nominalValue,
-    displayText: `${prefix}${format$1(intent.nominalValue)}`,
+    displayText: `${prefix}${format$1(intent.nominalValue)}${suffix}`,
     unit: intent.unit,
     textPosition: [0, 0],
     definitionPoints: []
@@ -547,7 +548,269 @@ function stableKey$1(value) {
 function format$1(value) {
   return Number(value.toFixed(6)).toString();
 }
+const MINIMUM_TOLERANCE = 1e-5;
+function measureOpeningAngles(geometryInput) {
+  const geometry = geometryInput.filter(({ visible, quality }) => visible && quality.status === "confirmed");
+  const bounds2 = geometryBounds(geometry);
+  if (!bounds2) return { axis: { start: [0, 0], end: [0, 0], status: "conflict" }, facts: [] };
+  const diagonal = Math.hypot(bounds2.maxX - bounds2.minX, bounds2.maxY - bounds2.minY);
+  const tolerance = Math.max(diagonal * 1e-6, MINIMUM_TOLERANCE);
+  const segments = collectSegments(geometry);
+  const axisY = explicitAxisY(geometry, tolerance) ?? reflectedAxisY(segments, bounds2, tolerance);
+  const axis = axisY === null ? { start: [bounds2.minX, (bounds2.minY + bounds2.maxY) / 2], end: [bounds2.maxX, (bounds2.minY + bounds2.maxY) / 2], status: "conflict" } : { start: [clean$2(bounds2.minX), clean$2(axisY)], end: [clean$2(bounds2.maxX), clean$2(axisY)], status: "confirmed" };
+  if (axis.status === "conflict") return { axis, facts: [] };
+  return { axis, facts: openingAngleFacts(segments, axis.start[1], diagonal, tolerance) };
+}
+function collectSegments(geometry) {
+  const segments = [];
+  for (const node of geometry) {
+    if (node.type === "line") {
+      segments.push({ source: node, start: node.start, end: node.end });
+      continue;
+    }
+    if (node.type !== "polyline" || node.vertices.length < 2) continue;
+    const count = node.closed ? node.vertices.length : node.vertices.length - 1;
+    for (let index = 0; index < count; index += 1) {
+      const first = node.vertices[index];
+      const second = node.vertices[(index + 1) % node.vertices.length];
+      if (!first || !second || Math.abs(first.bulge ?? 0) > MINIMUM_TOLERANCE) continue;
+      segments.push({ source: node, start: first.point, end: second.point });
+    }
+  }
+  return segments;
+}
+function explicitAxisY(geometry, tolerance) {
+  var _a3;
+  const explicit = geometry.filter((node) => node.type === "xline" && Math.abs(node.direction[1]) <= tolerance && Math.abs(node.direction[0]) > tolerance);
+  return explicit.length === 1 && ((_a3 = explicit[0]) == null ? void 0 : _a3.type) === "xline" ? explicit[0].origin[1] : null;
+}
+function reflectedAxisY(segments, bounds2, tolerance) {
+  const axisY = (bounds2.minY + bounds2.maxY) / 2;
+  const horizontal = segments.filter(({ start, end }) => Math.abs(end[1] - start[1]) <= tolerance && Math.abs(end[0] - start[0]) > tolerance);
+  for (let firstIndex = 0; firstIndex < horizontal.length; firstIndex += 1) {
+    const first = horizontal[firstIndex];
+    const firstRadius = first.start[1] - axisY;
+    if (Math.abs(firstRadius) <= tolerance) continue;
+    for (let secondIndex = firstIndex + 1; secondIndex < horizontal.length; secondIndex += 1) {
+      const second = horizontal[secondIndex];
+      const secondRadius = second.start[1] - axisY;
+      if (firstRadius * secondRadius >= 0) continue;
+      if (Math.abs(firstRadius + secondRadius) > tolerance * 10) continue;
+      if (Math.min(Math.max(first.start[0], first.end[0]), Math.max(second.start[0], second.end[0])) < Math.max(Math.min(first.start[0], first.end[0]), Math.min(second.start[0], second.end[0])) - tolerance) continue;
+      return clean$2(axisY);
+    }
+  }
+  return null;
+}
+function openingAngleFacts(segments, axisY, diagonal, tolerance) {
+  const maximumLength = Math.max(diagonal * 0.12, tolerance * 100);
+  const mirrorTolerance = Math.max(diagonal * 2e-3, tolerance * 10);
+  const intersectionLimit = Math.max(diagonal * 0.15, tolerance * 100);
+  const candidates = segments.map(normalizedSlopedSegment).filter((segment) => segment !== null && segment.length <= maximumLength && Math.abs(segment.midpoint[1] - axisY) > mirrorTolerance);
+  const upper = candidates.filter(({ midpoint }) => midpoint[1] > axisY);
+  const lower = candidates.filter(({ midpoint }) => midpoint[1] < axisY);
+  const facts = [];
+  for (const first of upper) {
+    for (const second of lower) {
+      const endpointError = Math.max(
+        Math.abs(first.left[0] - second.left[0]),
+        Math.abs(first.right[0] - second.right[0]),
+        Math.abs(first.left[1] + second.left[1] - axisY * 2),
+        Math.abs(first.right[1] + second.right[1] - axisY * 2)
+      );
+      if (endpointError > mirrorTolerance) continue;
+      const vertex = lineIntersection(first.left, first.right, second.left, second.right, tolerance);
+      if (!vertex || Math.abs(vertex[1] - axisY) > mirrorTolerance) continue;
+      if (Math.max(
+        distanceToSegmentRange(vertex[0], first.left[0], first.right[0]),
+        distanceToSegmentRange(vertex[0], second.left[0], second.right[0])
+      ) > intersectionLimit) continue;
+      const paired = [
+        { source: first.segment.source, ray: cleanPoint(first.midpoint) },
+        { source: second.segment.source, ray: cleanPoint(second.midpoint) }
+      ].sort((left, right) => String(left.source.id).localeCompare(String(right.source.id)));
+      const value = normalizedAngleValue(includedAngle(vertex, paired[0].ray, paired[1].ray));
+      if (value <= 0.5 || value >= 179.5) continue;
+      const sourceIds = [paired[0].source.id, paired[1].source.id];
+      facts.push({
+        key: `opening-angle:${sourceIds.join(":")}:${numberKey(vertex[0])}:${numberKey(value)}`,
+        value,
+        vertex: [clean$2(vertex[0]), clean$2(axisY)],
+        rays: [paired[0].ray, paired[1].ray],
+        sourceIds,
+        evidenceRefs: uniqueEvidence([paired[0].source, paired[1].source]),
+        method: "mirrored-line-pair-opening",
+        error: clean$2(Math.max(endpointError, Math.abs(vertex[1] - axisY)))
+      });
+    }
+  }
+  return [...new Map(facts.map((fact) => [fact.key, fact])).values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+function normalizedSlopedSegment(segment) {
+  const dx = segment.end[0] - segment.start[0];
+  const dy = segment.end[1] - segment.start[1];
+  const length = Math.hypot(dx, dy);
+  if (length <= MINIMUM_TOLERANCE || Math.abs(dx) <= MINIMUM_TOLERANCE || Math.abs(dy) <= MINIMUM_TOLERANCE) return null;
+  const [left, right] = segment.start[0] <= segment.end[0] ? [segment.start, segment.end] : [segment.end, segment.start];
+  return { segment, left, right, midpoint: [(left[0] + right[0]) / 2, (left[1] + right[1]) / 2], length };
+}
+function geometryBounds(geometry) {
+  const points = geometry.flatMap(pointsOf$1);
+  if (points.length === 0) return null;
+  return {
+    minX: Math.min(...points.map(([x]) => x)),
+    minY: Math.min(...points.map(([, y]) => y)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    maxY: Math.max(...points.map(([, y]) => y))
+  };
+}
+function pointsOf$1(node) {
+  if (node.type === "point") return [[node.x, node.y]];
+  if (node.type === "line") return [node.start, node.end];
+  if (node.type === "polyline") return node.vertices.map(({ point }) => point);
+  if (node.type === "circle" || node.type === "arc") return [[node.center[0] - node.radius, node.center[1] - node.radius], [node.center[0] + node.radius, node.center[1] + node.radius]];
+  if (node.type === "ellipse") {
+    const radius = Math.hypot(...node.majorAxis);
+    return [[node.center[0] - radius, node.center[1] - radius], [node.center[0] + radius, node.center[1] + radius]];
+  }
+  if (node.type === "spline") return sampleSpline(node, { maxError: 0.02, maxDepth: 14 });
+  return [];
+}
+function lineIntersection(a, b, c, d, tolerance) {
+  const first = [b[0] - a[0], b[1] - a[1]];
+  const second = [d[0] - c[0], d[1] - c[1]];
+  const denominator = cross(first, second);
+  if (Math.abs(denominator) <= tolerance) return null;
+  const between = [c[0] - a[0], c[1] - a[1]];
+  const scale = cross(between, second) / denominator;
+  return [a[0] + first[0] * scale, a[1] + first[1] * scale];
+}
+function includedAngle(vertex, first, second) {
+  const a = [first[0] - vertex[0], first[1] - vertex[1]];
+  const b = [second[0] - vertex[0], second[1] - vertex[1]];
+  const denominator = Math.hypot(...a) * Math.hypot(...b);
+  if (denominator <= MINIMUM_TOLERANCE) return 0;
+  return Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1]) / denominator))) * 180 / Math.PI;
+}
+function uniqueEvidence(nodes) {
+  return [...new Set(nodes.flatMap(({ quality }) => quality.evidenceRefs))].sort();
+}
+function distanceToSegmentRange(x, first, second) {
+  const min = Math.min(first, second);
+  const max = Math.max(first, second);
+  return x < min ? min - x : x > max ? x - max : 0;
+}
+function normalizedAngleValue(value) {
+  const integer2 = Math.round(value);
+  return Math.abs(value - integer2) <= 0.01 ? integer2 : clean$2(value);
+}
+function cross(a, b) {
+  return a[0] * b[1] - a[1] * b[0];
+}
+function cleanPoint(point) {
+  return [clean$2(point[0]), clean$2(point[1])];
+}
+function numberKey(value) {
+  return clean$2(value).toFixed(6);
+}
+function clean$2(value) {
+  const rounded = Math.round(value * 1e6) / 1e6;
+  return Math.abs(rounded) <= 1e-12 ? 0 : rounded;
+}
+function selectAxialEndOpeningAngles(input) {
+  const points = input.geometry.flatMap((node) => node.type === "line" ? [node.start, node.end] : node.type === "polyline" ? node.vertices.map(({ point }) => point) : []);
+  const diagonal = points.length === 0 ? 1 : Math.hypot(
+    Math.max(...points.map(([x]) => x)) - Math.min(...points.map(([x]) => x)),
+    Math.max(...points.map(([, y]) => y)) - Math.min(...points.map(([, y]) => y))
+  );
+  const boundaryTolerance = Math.max(diagonal * 0.01, 0.05);
+  const geometryById = new Map(input.geometry.map((node) => [node.id, node]));
+  const selected = [];
+  const suppressionReasons = {};
+  for (const fact of input.facts) {
+    const atAxialEnd = input.axis.status === "confirmed" && fact.sourceIds.some((id) => {
+      const node = geometryById.get(id);
+      if (!node) return false;
+      const sourcePoints = node.type === "line" ? [node.start, node.end] : node.type === "polyline" ? node.vertices.map(({ point }) => point) : [];
+      return sourcePoints.some(([x]) => Math.abs(x - input.axis.start[0]) <= boundaryTolerance || Math.abs(x - input.axis.end[0]) <= boundaryTolerance);
+    });
+    const orthogonal = Math.abs(fact.value - 90) <= 0.5;
+    if (orthogonal || !atAxialEnd) {
+      suppressionReasons[fact.key] = orthogonal ? "正交开角由轮廓关系直接表达，不重复生成 90° 角度标注" : "该局部线段方向不是已确认的轴端角度，不升级为正式角度标注";
+    } else selected.push(fact);
+  }
+  return { selected, suppressionReasons };
+}
+function layoutOpeningAngles(input) {
+  const points = input.geometry.flatMap((node) => node.type === "line" ? [node.start, node.end] : node.type === "polyline" ? node.vertices.map(({ point }) => point) : []);
+  if (points.length === 0) return {};
+  const bounds2 = { minX: Math.min(...points.map(([x]) => x)), maxX: Math.max(...points.map(([x]) => x)), minY: Math.min(...points.map(([, y]) => y)), maxY: Math.max(...points.map(([, y]) => y)) };
+  const diagonal = Math.hypot(bounds2.maxX - bounds2.minX, bounds2.maxY - bounds2.minY);
+  const gap = Math.max(diagonal * 0.035, 1);
+  const result = {};
+  const laneBySide = /* @__PURE__ */ new Map();
+  const previousBySide = /* @__PURE__ */ new Map();
+  const facts = [...input.facts].sort((left, right) => {
+    const side = openingSide(left.vertex[0], bounds2) - openingSide(right.vertex[0], bounds2);
+    if (side !== 0) return side;
+    return (left.vertex[0] - right.vertex[0]) * openingSide(left.vertex[0], bounds2) || left.value - right.value || left.key.localeCompare(right.key);
+  });
+  for (const fact of facts) {
+    const side = openingSide(fact.vertex[0], bounds2);
+    const lane = laneBySide.get(side) ?? 0;
+    laneBySide.set(side, lane + 1);
+    const distToEdge = side === -1 ? fact.vertex[0] - bounds2.minX : bounds2.maxX - fact.vertex[0];
+    const firstAngle = Math.atan2(fact.rays[0][1] - fact.vertex[1], fact.rays[0][0] - fact.vertex[0]);
+    const secondAngle = Math.atan2(fact.rays[1][1] - fact.vertex[1], fact.rays[1][0] - fact.vertex[0]);
+    const sweep = angularSweep(firstAngle, secondAngle, fact.value);
+    const middleAngle = firstAngle + sweep / 2;
+    const halfSweep = Math.abs(sweep) / 2;
+    const clearance = halfSweep >= Math.PI / 2 - 1e-6 ? distToEdge + gap : distToEdge / Math.cos(halfSweep) + gap * 0.3;
+    const halfTextWidth = (String(Math.round(Math.abs(fact.value))).length + 1) * 11 * 0.55 / 2;
+    let radius = Math.max(gap * (2.3 + lane * 2.3), clearance, distToEdge + halfTextWidth);
+    const bisector = [Math.cos(middleAngle), Math.sin(middleAngle)];
+    const axisCoordinate = fact.vertex[0] * bisector[0] + fact.vertex[1] * bisector[1];
+    const previous = previousBySide.get(side);
+    if (previous) {
+      const separation = previous.halfTextWidth + halfTextWidth + gap * 0.3 - (axisCoordinate - previous.axisCoordinate);
+      if (separation > 0) radius = Math.max(radius, previous.textRadius + separation - gap * 0.5);
+    }
+    const firstExtensionRadius = Math.max(radius + gap * 0.15, distance(fact.vertex, fact.rays[0]) + gap * 0.08);
+    const secondExtensionRadius = Math.max(radius + gap * 0.15, distance(fact.vertex, fact.rays[1]) + gap * 0.08);
+    const textRadius = Math.max(radius, firstExtensionRadius, secondExtensionRadius) + gap * 0.35;
+    previousBySide.set(side, { textRadius, halfTextWidth, axisCoordinate });
+    result[fact.key] = {
+      textPosition: polar$1(fact.vertex, textRadius, middleAngle),
+      lane,
+      definitionPoints: [fact.vertex, polar$1(fact.vertex, firstExtensionRadius, firstAngle), polar$1(fact.vertex, secondExtensionRadius, secondAngle), polar$1(fact.vertex, radius, firstAngle), polar$1(fact.vertex, radius, secondAngle)]
+    };
+  }
+  return result;
+}
+function openingSide(x, bounds2) {
+  return x <= (bounds2.minX + bounds2.maxX) / 2 ? -1 : 1;
+}
+function angularSweep(start, end, degrees) {
+  const ccw = modulo(end - start, Math.PI * 2);
+  const cw = ccw - Math.PI * 2;
+  const target = Math.abs(degrees) * Math.PI / 180;
+  return Math.abs(Math.abs(ccw) - target) <= Math.abs(Math.abs(cw) - target) ? ccw : cw;
+}
+function polar$1(center, radius, angle) {
+  return [clean$1(center[0] + Math.cos(angle) * radius), clean$1(center[1] + Math.sin(angle) * radius)];
+}
+function distance(first, second) {
+  return Math.hypot(second[0] - first[0], second[1] - first[1]);
+}
+function modulo(value, divisor) {
+  return (value % divisor + divisor) % divisor;
+}
+function clean$1(value) {
+  const rounded = Math.round(value * 1e6) / 1e6;
+  return Math.abs(rounded) <= 1e-12 ? 0 : rounded;
+}
 function planEngineeringAnnotations(input) {
+  var _a3, _b;
   const annotationTemplates = [];
   const associations = [];
   const pending = [];
@@ -577,6 +840,54 @@ function planEngineeringAnnotations(input) {
       visible: true,
       quality: { status: "confirmed", confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] }
     });
+  }
+  const measuredOpenings = measureOpeningAngles(geometry);
+  const openingSelection = selectAxialEndOpeningAngles({
+    facts: measuredOpenings.facts,
+    geometry,
+    axis: measuredOpenings.axis
+  });
+  const openingLayouts = layoutOpeningAngles({ geometry, facts: openingSelection.selected });
+  for (const fact of openingSelection.selected) {
+    const layout = openingLayouts[fact.key];
+    if (!layout) continue;
+    const annotationId = `annotation_auto_${stableKey(fact.key)}`;
+    const annotation = {
+      id: annotationId,
+      type: "dimension",
+      visible: true,
+      quality: {
+        status: "confirmed",
+        confidence: 1,
+        evidenceRefs: fact.evidenceRefs.length > 0 ? [...fact.evidenceRefs] : [`evidence:engineering:${stableKey(fact.sourceIds.join(":"))}`]
+      },
+      dimensionKind: "angular",
+      associationStatus: "resolved",
+      targets: fact.sourceIds.map((geometryId, index) => ({
+        geometryId,
+        anchor: { kind: "nearest", point: fact.rays[index] ?? fact.vertex }
+      })),
+      computedValue: fact.value,
+      displayText: `${format(fact.value)}°`,
+      unit: "deg",
+      textPosition: layout.textPosition,
+      definitionPoints: [...layout.definitionPoints],
+      engineeringIntentId: `intent_opening_${stableKey(fact.key)}`
+    };
+    annotationTemplates.push(annotation);
+    associations.push({
+      id: `relation_${stableKey(`${input.document.id}:${annotationId}`)}`,
+      type: "association",
+      plane: "association",
+      kind: "annotation-target",
+      annotationId,
+      geometryIds: [...fact.sourceIds],
+      visible: true,
+      quality: { status: "confirmed", confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] }
+    });
+  }
+  for (const [key, reason] of Object.entries(openingSelection.suppressionReasons)) {
+    suppressed.push({ nodeId: key, reason });
   }
   const dimensionTemplates = annotationTemplates.filter(
     (annotation) => annotation.type === "dimension"
@@ -610,7 +921,51 @@ function planEngineeringAnnotations(input) {
     existingAnnotations: annotationTemplates
   });
   const annotations = projection.annotations;
-  const targetNodeIds = [...new Set(associations.flatMap(({ geometryIds }) => geometryIds))].sort();
+  const existingAnnotations = new Map(input.document.annotations.map((node) => [node.id, node]));
+  const existingAssociations = new Map(input.document.relations.filter((relation) => relation.type === "association").map((relation) => [relation.id, relation]));
+  const plannedOpeningIds = new Set(annotations.filter((node) => {
+    var _a4;
+    return node.type === "dimension" && ((_a4 = node.engineeringIntentId) == null ? void 0 : _a4.startsWith("intent_opening_"));
+  }).map(({ id }) => id));
+  const createAnnotations = [];
+  const createAssociations = [];
+  const deleteNodeIds = /* @__PURE__ */ new Set();
+  const staleTargetNodeIds = /* @__PURE__ */ new Set();
+  for (const annotation of annotations) {
+    const existing = existingAnnotations.get(annotation.id);
+    const opening = annotation.type === "dimension" && ((_a3 = annotation.engineeringIntentId) == null ? void 0 : _a3.startsWith("intent_opening_"));
+    if (!existing) createAnnotations.push(annotation);
+    else if (opening && !sameOpeningAnnotation(existing, annotation)) {
+      deleteNodeIds.add(existing.id);
+      if (existing.type === "dimension") existing.targets.forEach(({ geometryId }) => staleTargetNodeIds.add(geometryId));
+      createAnnotations.push(annotation);
+      for (const relation of existingAssociations.values()) {
+        if (relation.annotationId === existing.id) deleteNodeIds.add(relation.id);
+      }
+    }
+  }
+  for (const existing of input.document.annotations) {
+    if (existing.type !== "dimension" || !((_b = existing.engineeringIntentId) == null ? void 0 : _b.startsWith("intent_opening_"))) continue;
+    if (plannedOpeningIds.has(existing.id)) continue;
+    deleteNodeIds.add(existing.id);
+    existing.targets.forEach(({ geometryId }) => staleTargetNodeIds.add(geometryId));
+    for (const relation of existingAssociations.values()) {
+      if (relation.annotationId === existing.id) deleteNodeIds.add(relation.id);
+    }
+  }
+  const createAnnotationIds = new Set(createAnnotations.map(({ id }) => id));
+  for (const association of associations) {
+    const existing = existingAssociations.get(association.id);
+    if (createAnnotationIds.has(association.annotationId) || !existing) createAssociations.push(association);
+    else if (association.annotationId.startsWith("annotation_auto_") && JSON.stringify(existing) !== JSON.stringify(association)) {
+      deleteNodeIds.add(existing.id);
+      createAssociations.push(association);
+    }
+  }
+  const targetNodeIds = [.../* @__PURE__ */ new Set([
+    ...associations.flatMap(({ geometryIds }) => geometryIds),
+    ...staleTargetNodeIds
+  ])].sort();
   const evidenceRefs = [...new Set(targetNodeIds.flatMap((id) => {
     const node = geometry.find((candidate) => candidate.id === id);
     return (node == null ? void 0 : node.quality.evidenceRefs) ?? [];
@@ -618,21 +973,28 @@ function planEngineeringAnnotations(input) {
   if (targetNodeIds.length > 0 && evidenceRefs.length === 0) {
     evidenceRefs.push(`evidence:engineering:${stableKey(targetNodeIds.join(":"))}`);
   }
-  const program = annotations.length === 0 ? null : {
+  const operations = [];
+  if (deleteNodeIds.size > 0) operations.push({ kind: "delete_nodes", nodeIds: [...deleteNodeIds].sort() });
+  if (createAnnotations.length > 0) operations.push({
+    kind: "create_annotation_batch",
+    annotations: structuredClone(createAnnotations),
+    associations: structuredClone(createAssociations)
+  });
+  const program = operations.length === 0 ? null : {
     baseRef: structuredClone(input.ref),
     targetHandle: "__GROUNDING_TARGET__",
-    summary: `Create ${annotations.length} deterministic engineering annotations`,
+    summary: `Create or refresh ${createAnnotations.length} deterministic engineering annotations`,
     objective: input.objective,
-    operations: [{
-      kind: "create_annotation_batch",
-      annotations: structuredClone(annotations),
-      associations: structuredClone(associations)
-    }],
+    operations,
     preserveScopes: geometry.map(({ id }) => ({ kind: "node-field", nodeId: id, fields: ["id", "type"] })),
     postconditions: [],
     evidenceRefs
   };
   return { annotations, associations, targetNodeIds, pending, suppressed, program };
+}
+function sameOpeningAnnotation(left, right) {
+  if (left.type !== "dimension" || right.type !== "dimension") return false;
+  return left.dimensionKind === right.dimensionKind && left.computedValue === right.computedValue && left.displayText === right.displayText && left.unit === right.unit && JSON.stringify(left.targets) === JSON.stringify(right.targets) && JSON.stringify(left.textPosition) === JSON.stringify(right.textPosition) && JSON.stringify(left.definitionPoints) === JSON.stringify(right.definitionPoints);
 }
 function annotationFor(node, unit, offset) {
   const evidenceRefs = node.quality.evidenceRefs.length > 0 ? [...node.quality.evidenceRefs] : [`evidence:engineering:${node.id}`];
@@ -1118,8 +1480,8 @@ function dominantEdgeAngle(component) {
       if (length <= 1e-9) continue;
       const angle = (Math.atan2(second[1] - first[1], second[0] - first[0]) % Math.PI + Math.PI) % Math.PI;
       const bin = Math.min(binCount - 1, Math.floor(angle / Math.PI * binCount));
-      const distance = Math.min(Math.abs(bin - best), binCount - Math.abs(bin - best));
-      if (distance > 2) continue;
+      const distance2 = Math.min(Math.abs(bin - best), binCount - Math.abs(bin - best));
+      if (distance2 > 2) continue;
       x += Math.cos(angle * 2) * length;
       y += Math.sin(angle * 2) * length;
     }
