@@ -6,6 +6,13 @@ APP_SOURCE_DIR="${0:A:h}"
 BUILD_DIR="$APP_SOURCE_DIR/Build"
 mkdir -p "$BUILD_DIR"
 
+if grep -q '\.fullSizeContentView' "$APP_SOURCE_DIR/Sources/LauncherApp.swift"; then
+  print -u2 -- "FAIL: web content must start below the native draggable titlebar"
+  exit 1
+fi
+
+print -r -- "PASS: native titlebar remains a dedicated drag and content-safe area"
+
 swiftc \
   "$APP_SOURCE_DIR/Sources/LauncherCore.swift" \
   "$APP_SOURCE_DIR/Tests/LauncherCoreTests.swift" \
