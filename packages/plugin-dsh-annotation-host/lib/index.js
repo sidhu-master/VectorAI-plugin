@@ -1726,6 +1726,31 @@ function createPartitionStatusTool(partitions) {
     }
   });
 }
+function createPartitionStartTool(workflow) {
+  return defineTool({
+    name: "drawing_partition_start",
+    description: "Start or refresh smart shaft partitioning for the active DXF only when the user explicitly asks to partition, segment, or identify functional shaft regions. A document attachment alone is never intent. If the user supplied relevant engineering documentation, pass only its concise partition-related text in engineeringContext; local geometry computes and snaps every boundary.",
+    parameters: {
+      engineeringContext: { type: "string", description: "Optional concise, verbatim partition-related evidence from the user-provided document. Omit when none is relevant." }
+    },
+    output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      var _a3, _b, _c, _d, _e, _f;
+      const agent = exec.agent;
+      if (!agent) throw new Error("DRAWING_SESSION_REQUIRED");
+      const engineeringContext = typeof args.engineeringContext === "string" ? args.engineeringContext.trim() : void 0;
+      if (Buffer.byteLength(engineeringContext ?? "", "utf8") > 32 * 1024) throw new Error("PARTITION_CONTEXT_SIZE_LIMIT");
+      const snapshot = await workflow.start(agent, engineeringContext || void 0, exec.signal);
+      return {
+        status: snapshot.phase,
+        segmentCount: ((_a3 = snapshot.draft) == null ? void 0 : _a3.segments.length) ?? ((_b = snapshot.confirmed) == null ? void 0 : _b.segments.length) ?? 0,
+        semanticGroupCount: ((_c = snapshot.draft) == null ? void 0 : _c.semanticGroups.length) ?? ((_d = snapshot.confirmed) == null ? void 0 : _d.semanticGroups.length) ?? 0,
+        diagnostics: (((_e = snapshot.draft) == null ? void 0 : _e.diagnostics) ?? ((_f = snapshot.confirmed) == null ? void 0 : _f.diagnostics) ?? []).map(({ code }) => code),
+        nextAction: snapshot.phase === "editing" ? "review-and-confirm-in-engineering-workspace" : snapshot.phase
+      };
+    }
+  });
+}
 function terminalStatus(status) {
   if (status === "committed" || status === "already-satisfied") return "completed";
   if (status === "discarded") return "canceled";
@@ -8440,6 +8465,15 @@ class PartitionWorkflowService {
     const drawingSourceName = ((_b = (_a3 = snapshot.document.sources) == null ? void 0 : _a3.find(({ kind }) => kind === "dxf")) == null ? void 0 : _b.name) ?? "drawing.dxf";
     return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, extracted.combinedText, drawingSourceName, signal);
   }
+  async analyzeCurrent(agent, engineeringContext, signal) {
+    var _a3, _b;
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error("DRAWING_REQUIRED");
+    if (Buffer.byteLength(engineeringContext ?? "", "utf8") > 32 * 1024) throw new Error("PARTITION_CONTEXT_SIZE_LIMIT");
+    signal == null ? void 0 : signal.throwIfAborted();
+    const drawingSourceName = ((_b = (_a3 = snapshot.document.sources) == null ? void 0 : _a3.find(({ kind }) => kind === "dxf")) == null ? void 0 : _b.name) ?? "drawing.dxf";
+    return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, (engineeringContext == null ? void 0 : engineeringContext.trim()) || void 0, drawingSourceName, signal);
+  }
   getState(agent) {
     return this.partitions.get(String(agent.id));
   }
@@ -8526,7 +8560,7 @@ function decodeBase64(value) {
 function createPartitionSemanticReviewer(ctx, space, options = {}) {
   return async ({ agent, draft, segmentIds, signal }) => {
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(new Error("AI_SEMANTIC_REVIEW_TIMEOUT")), options.timeoutMs ?? 3e4);
+    const timer = setTimeout(() => timeout.abort(new Error("AI_SEMANTIC_REVIEW_TIMEOUT")), options.timeoutMs ?? 6e4);
     const reviewSignal = combineSignals(signal, timeout.signal);
     try {
       const targets = new Set(segmentIds);
@@ -8544,8 +8578,6 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
       if (!parent || !providerName) throw new Error("AI_SEMANTIC_REVIEW_UNAVAILABLE");
       const provider = ctx.subagents.getProvider(providerName);
       if (!(provider == null ? void 0 : provider.capabilities.outputSchema) || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) throw new Error("AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED");
-      const ambientToolNames = ctx.tools.schemas().map(({ name }) => name).filter((name) => name !== "structured_output");
-      if (ambientToolNames.length === 0) throw new Error("AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED");
       const catalog = segments.map((segment, index) => ({
         id: segment.id,
         visualLabel: `S${index + 1}`,
@@ -8553,9 +8585,7 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         ordinal: index + 1,
         width: segment.zEnd - segment.zStart,
         diameter: segment.profile.maxRadius * 2,
-        boundaryConfidence: segment.boundaryConfidence,
-        previousSegmentId: index === 0 ? null : segments[index - 1].id,
-        nextSegmentId: index === segments.length - 1 ? null : segments[index + 1].id
+        boundaryConfidence: segment.boundaryConfidence
       }));
       const payload = JSON.stringify({
         instruction: "只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。",
@@ -8568,7 +8598,8 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         parent,
         signal: reviewSignal,
         maxDepth: 1,
-        toolFilter: { deny: ambientToolNames },
+        toolFilter: { allow: [] },
+        persona: provider.capabilities.persona ? "You are a bounded shaft-region classifier. Do not narrate analysis. Immediately return the requested structured result from the supplied numbered image and segment catalog." : void 0,
         prompt: [{ type: "text", text: payload }, { type: "image", attachment }],
         outputSchema: proposalSchema
       }), reviewSignal);
@@ -8929,6 +8960,9 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
       createPartitionSemanticReviewer(ctx, ctx.drawingSpace)
     );
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions, this.partitions)));
+    ctx.effect(() => ctx.tools.register(createPartitionStartTool({
+      start: (agent, engineeringContext, signal) => this.partitionWorkflow.analyzeCurrent(agent, engineeringContext, signal)
+    })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.on("session/disposed", (session) => this.sessions.disposeSession(String(session.id)));
   }

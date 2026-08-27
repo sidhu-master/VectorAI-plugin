@@ -6074,14 +6074,13 @@ window.__ModuleLoader__.load({
     const legacy = new Set(LEGACY_ENGINEERING_DOCUMENT_EXTENSIONS);
     function classifyEngineeringDrop(files) {
       const dxfs = files.filter((file) => extensionOf(file.name) === "dxf");
+      if (dxfs.length === 0) return { kind: "pass" };
       if (dxfs.length > 1) {
         return { kind: "reject", code: "ENGINEERING_DROP_MULTIPLE_DXF", filenames: dxfs.map(({ name }) => name) };
       }
       const rest = files.filter((file) => extensionOf(file.name) !== "dxf");
       const supportedDocuments = rest.filter((file) => supported.has(extensionOf(file.name)));
       const legacyDocuments = rest.filter((file) => legacy.has(extensionOf(file.name)));
-      const engineeringIntent = dxfs.length === 1 || supportedDocuments.length > 0 || legacyDocuments.length > 0;
-      if (!engineeringIntent) return { kind: "pass" };
       if (legacyDocuments.length > 0) {
         return { kind: "reject", code: "DOCUMENT_LEGACY_FORMAT_UNSUPPORTED", filenames: legacyDocuments.map(({ name }) => name) };
       }
@@ -6111,8 +6110,7 @@ window.__ModuleLoader__.load({
       if (duplicates.length > 0) {
         return { kind: "reject", code: "ENGINEERING_DOCUMENT_DUPLICATE_NAME", filenames: duplicates.map(({ name }) => name) };
       }
-      if (dxfs[0]) return { kind: "import", dxf: dxfs[0], documents: supportedDocuments };
-      return { kind: "pending", documents: supportedDocuments };
+      return { kind: "import", dxf: dxfs[0], documents: supportedDocuments };
     }
     function createEngineeringDropBridgeController(input) {
       let current = { phase: "idle", pendingDocuments: [], filenames: [] };

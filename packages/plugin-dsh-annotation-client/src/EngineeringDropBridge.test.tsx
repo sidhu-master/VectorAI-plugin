@@ -42,7 +42,7 @@ describe('engineering drop bridge', () => {
     expect(bridge.state.getSnapshot()).toMatchObject({ phase: 'idle', pendingDocuments: [] });
   });
 
-  it('holds document-only drops and consumes them with the next DXF import', async () => {
+  it('does not claim document-only drops or silently bind them to a later DXF', async () => {
     const importFiles = vi.fn(async () => undefined);
     const refreshClaim = vi.fn(async () => undefined);
     const bridge = createEngineeringDropBridgeController({ importFiles, refreshClaim });
@@ -50,29 +50,24 @@ describe('engineering drop bridge', () => {
 
     await bridge.actions.handleDrop(documents);
 
-    expect(documents.preventDefault).toHaveBeenCalledOnce();
-    expect(documents.stopImmediatePropagation).toHaveBeenCalledOnce();
-    expect(bridge.state.getSnapshot()).toMatchObject({
-      phase: 'pending', pendingDocuments: [{ name: 'notes.txt' }, { name: 'limits.pdf' }],
-    });
+    expect(documents.preventDefault).not.toHaveBeenCalled();
+    expect(documents.stopImmediatePropagation).not.toHaveBeenCalled();
+    expect(bridge.state.getSnapshot()).toMatchObject({ phase: 'idle', pendingDocuments: [] });
 
     const drawing = file('shaft.dxf');
     const dxfDrop = drop([drawing]);
     await bridge.actions.handleDrop(dxfDrop);
 
-    expect(importFiles).toHaveBeenCalledWith(drawing, expect.arrayContaining([
-      expect.objectContaining({ name: 'notes.txt' }),
-      expect.objectContaining({ name: 'limits.pdf' }),
-    ]));
+    expect(importFiles).toHaveBeenCalledWith(drawing, []);
     expect(refreshClaim).toHaveBeenCalledOnce();
     expect(bridge.state.getSnapshot()).toMatchObject({
       phase: 'success',
       pendingDocuments: [],
-      filenames: ['shaft.dxf', 'notes.txt', 'limits.pdf'],
+      filenames: ['shaft.dxf'],
     });
   });
 
-  it('accumulates documents dropped in more than one batch before the DXF', async () => {
+  it('never accumulates unrelated document batches before the DXF', async () => {
     const importFiles = vi.fn(async () => undefined);
     const bridge = createEngineeringDropBridgeController({ importFiles, refreshClaim: vi.fn(async () => undefined) });
 
@@ -81,13 +76,10 @@ describe('engineering drop bridge', () => {
     const drawing = file('shaft.dxf');
     await bridge.actions.handleDrop(drop([drawing]));
 
-    expect(importFiles).toHaveBeenCalledWith(drawing, [
-      expect.objectContaining({ name: 'dimensions.pdf' }),
-      expect.objectContaining({ name: 'materials.xlsx' }),
-    ]);
+    expect(importFiles).toHaveBeenCalledWith(drawing, []);
   });
 
-  it('supplements the current DXF when documents are dropped after the drawing', async () => {
+  it('does not supplement the current DXF merely because a document was dropped', async () => {
     let drawingReady = false;
     const supplementDocuments = vi.fn(async () => undefined);
     const bridge = createEngineeringDropBridgeController({
@@ -101,10 +93,8 @@ describe('engineering drop bridge', () => {
     const document = file('notes.txt', 'text/plain');
     await bridge.actions.handleDrop(drop([document]));
 
-    expect(supplementDocuments).toHaveBeenCalledWith([document]);
-    expect(bridge.state.getSnapshot()).toMatchObject({
-      phase: 'success', filenames: ['notes.txt'], pendingDocuments: [],
-    });
+    expect(supplementDocuments).not.toHaveBeenCalled();
+    expect(bridge.state.getSnapshot()).toMatchObject({ phase: 'success', filenames: ['shaft.dxf'], pendingDocuments: [] });
   });
 
   it('surfaces rejection and import errors without leaving hidden pending files', async () => {

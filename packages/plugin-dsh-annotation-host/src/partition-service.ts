@@ -67,6 +67,15 @@ export class PartitionWorkflowService {
     return this.#analyze(agent, snapshot, extracted.combinedText, drawingSourceName, signal);
   }
 
+  async analyzeCurrent(agent: Agent, engineeringContext?: string, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error('DRAWING_REQUIRED');
+    if (Buffer.byteLength(engineeringContext ?? '', 'utf8') > 32 * 1024) throw new Error('PARTITION_CONTEXT_SIZE_LIMIT');
+    signal?.throwIfAborted();
+    const drawingSourceName = snapshot.document.sources?.find(({ kind }) => kind === 'dxf')?.name ?? 'drawing.dxf';
+    return this.#analyze(agent, snapshot, engineeringContext?.trim() || undefined, drawingSourceName, signal);
+  }
+
   async #analyze(agent: Agent, snapshot: SpaceSnapshot, engineeringText: string | undefined, drawingSourceName: string, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
     const sessionId = String(agent.id);
     this.annotations.start(sessionId, `partition_${randomUUID()}`);

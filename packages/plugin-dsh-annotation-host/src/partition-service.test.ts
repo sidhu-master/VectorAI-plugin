@@ -133,4 +133,33 @@ describe('PartitionWorkflowService', () => {
     expect(importDxf).not.toHaveBeenCalled();
     expect(extract).toHaveBeenCalledOnce();
   });
+
+  it('analyzes the active drawing from concise context only after an explicit start', async () => {
+    const document = drawing();
+    document.sources = [{
+      id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf',
+      digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf',
+    }];
+    const reviewer = vi.fn(async ({ draft }: { draft: unknown }) => ({ draft }));
+    const annotations = new AnnotationSessionStateStore(undefined, { now: () => 7 });
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(),
+      getSnapshot: () => ({
+        version: 1 as const,
+        ref: { drawingId: 'd', revision: 1 },
+        document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false },
+      }),
+    } as never, new PartitionSessionStore(), annotations, reviewer as never);
+
+    expect(service.getState({ id: 's' } as Agent).phase).toBe('idle');
+    const result = await service.analyzeCurrent(
+      { id: 's' } as Agent,
+      '[region:spline:S01]\nname=外花键\ncenter_z=5\nwidth=4',
+    );
+
+    expect(result.phase).toBe('editing');
+    expect(result.draft?.evidence.some(({ origin }) => origin === 'document')).toBe(true);
+    expect(annotations.get('s').workspaceClaimed).toBe(true);
+  });
 });
