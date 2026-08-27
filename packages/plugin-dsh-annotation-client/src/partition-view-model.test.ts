@@ -49,4 +49,16 @@ describe('partition view model', () => {
     legacy.evidence.push({ id: 'ai:legacy', origin: 'ai', label: '旧版泛化分类' });
     expect(partitionBands(legacy, 'functional').map(({ id }) => id)).not.toContain('legacy-ai-gap');
   });
+
+  it('shows a post-review fused regular shaft region', () => {
+    const source = structuredClone(draft);
+    source.semanticGroups.push({
+      id: 'regular', segmentIds: ['s2'], range: { zStart: 8, zEnd: 10 },
+      semanticType: 'regular-shaft', name: '常规区域', evidenceIds: ['fused:regular'],
+    });
+    source.evidence.push({ id: 'fused:regular', origin: 'fused', label: 'bounded regular shaft span' });
+    expect(partitionBands(source, 'functional')).toContainEqual(expect.objectContaining({
+      id: 'regular', name: '常规区域', origin: 'fused', zStart: 8, zEnd: 10,
+    }));
+  });
 });

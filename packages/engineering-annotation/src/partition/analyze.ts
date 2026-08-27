@@ -18,7 +18,7 @@ export interface AnalyzeShaftPartitionRequest {
 }
 
 export type AnalyzeShaftPartitionResult =
-  | { status: 'drafted'; draft: PartitionDraft; unclassifiedSegmentIds: string[] }
+  | { status: 'drafted'; draft: PartitionDraft; unclassifiedSegmentIds: string[]; semanticReviewSegmentIds: string[] }
   | { status: 'rejected'; diagnostics: PartitionDiagnostic[] };
 
 export function analyzeShaftPartition(request: AnalyzeShaftPartitionRequest): AnalyzeShaftPartitionResult {
@@ -79,12 +79,15 @@ export function analyzeShaftPartition(request: AnalyzeShaftPartitionRequest): An
       message: `Selected ${request.drawingSourceName}; document describes ${parsed.drawing.drawingName}`,
     });
   }
-  if (parsed) draft = fuseDocumentRegions(draft, documentRegions);
+  if (parsed) {
+    draft = fuseDocumentRegions(draft, documentRegions);
+  }
   const invalid = validatePartition(draft);
   if (invalid.length > 0) return { status: 'rejected', diagnostics: [...draft.diagnostics, ...invalid] };
   return {
     status: 'drafted', draft,
     unclassifiedSegmentIds: draft.segments.filter(({ semanticType }) => semanticType === undefined).map(({ id }) => id),
+    semanticReviewSegmentIds: draft.segments.filter(({ semanticType }) => semanticType === undefined).map(({ id }) => id),
   };
 }
 
