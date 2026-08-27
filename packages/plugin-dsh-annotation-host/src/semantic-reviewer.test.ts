@@ -20,7 +20,7 @@ describe('partition semantic reviewer', () => {
       attachments: { saveImage: async () => ({ attachmentId: 'image', mediaType: 'image/png', bytes: 1, width: 960, height: 720 }) },
       tools: { schemas: () => [{ name: 'drawing_observe' }, { name: 'structured_output' }, { name: 'drawing_select_parts' }] },
       subagents: {
-        list: () => ['local'], getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true } }),
+        list: () => ['local'], getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true, persona: true } }),
         start: async (_name: string, input: Record<string, unknown>) => { started = input; return { result: Promise.resolve({ stopReason: 'completed', structured: { proposals: [{ segmentIds: ['segment:1'], semanticType: 'shaft-seat', confidence: 0.8, reason: 'visible constant profile', visualEvidenceIds: ['observation:segment:1'] }] } }), dispose: async () => {} }; },
       },
     } as never, { renderObservation } as never);
@@ -28,8 +28,9 @@ describe('partition semantic reviewer', () => {
     expect(renderObservation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ overlays: [expect.objectContaining({ id: 'observation:segment:1', label: 'S1' })] }), expect.any(AbortSignal));
     expect(started).toMatchObject({
       maxDepth: 1,
-      toolFilter: { deny: ['drawing_observe', 'drawing_select_parts'] },
+      toolFilter: { allow: [] },
     });
+    expect(started?.persona).toMatch(/immediately|structured/i);
     expect(JSON.stringify(started?.prompt)).toContain('semanticType 必须从');
     expect(JSON.stringify(started?.prompt)).toContain('允许不覆盖全部轴段');
     expect(JSON.stringify(started?.prompt)).toContain('允许返回空 proposals');

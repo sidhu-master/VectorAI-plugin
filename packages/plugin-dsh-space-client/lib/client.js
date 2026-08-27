@@ -7239,6 +7239,8 @@ window.__ModuleLoader__.load({
         error: state.error
       };
     }
+    const DRAWING_SURFACE_API_VERSION = 1;
+    const DRAWING_SURFACE_REFRESH_EVENT = "vectorai:drawing-surface-refresh";
     function createDshDrawingWorkspacePort(input) {
       const { sessionId, remote, commands, resolveImage } = input;
       return {
@@ -7370,6 +7372,7 @@ window.__ModuleLoader__.load({
         },
         async loadSource(source, signal) {
           signal == null ? void 0 : signal.throwIfAborted();
+          if (!("width" in source)) throw new Error("DRAWING_IMAGE_SOURCE_REQUIRED");
           const attachment = {
             attachmentId: source.id,
             mediaType: source.mediaType,
@@ -13513,6 +13516,7 @@ window.__ModuleLoader__.load({
     const partitionGroupSchema = object({
       id: idSchema,
       segmentIds: array(idSchema),
+      range: object({ zStart: number(), zEnd: number() }).strict().optional(),
       semanticType: string(),
       name: string().optional(),
       evidenceIds: array(idSchema)
@@ -13542,6 +13546,7 @@ window.__ModuleLoader__.load({
     }).strict();
     discriminatedUnion("type", [
       object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+      object({ type: literal("semantic-range.move"), expectedDrawingRef: drawingRefSchema, groupId: idSchema, edge: _enum(["start", "end"]), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
       object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
       object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
       object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
@@ -13944,7 +13949,6 @@ window.__ModuleLoader__.load({
         );
       }
     }
-    const DRAWING_SURFACE_API_VERSION = 1;
     function createDrawingSurfaceRegistry() {
       const contributions = /* @__PURE__ */ new Map();
       const subscribers = /* @__PURE__ */ new Map();
@@ -14043,6 +14047,15 @@ window.__ModuleLoader__.load({
         if (didObserveInitialCallCount.current) void store.getState().refresh();
         else didObserveInitialCallCount.current = true;
       }, [runningCallCount, store]);
+      react.useEffect(() => {
+        if (typeof window === "undefined") return;
+        const refresh = (event) => {
+          const detail = event.detail;
+          if ((detail == null ? void 0 : detail.sessionId) === sessionId) void store.getState().refresh();
+        };
+        window.addEventListener(DRAWING_SURFACE_REFRESH_EVENT, refresh);
+        return () => window.removeEventListener(DRAWING_SURFACE_REFRESH_EVENT, refresh);
+      }, [sessionId, store]);
       react.useEffect(() => releaseSources, [releaseSources]);
       const uploadDrawing = (files) => {
         const attachments = createDraftImages(files);

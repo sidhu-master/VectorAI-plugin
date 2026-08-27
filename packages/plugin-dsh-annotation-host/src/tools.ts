@@ -6,6 +6,7 @@ import { planEngineeringAnnotations } from '@vectorai/engineering-annotation';
 import type {
   DrawingExtensionProgramWorkflow,
   DrawingSpaceExtensionHost,
+  PartitionSessionSnapshot,
 } from '@vectorai/plugin-space-contracts';
 import type { AnnotationSessionStateStore } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
@@ -89,7 +90,36 @@ export function createPartitionStatusTool(
             ? 'edit-or-confirm-in-engineering-workspace'
             : snapshot.phase === 'confirmed'
               ? 'ready-for-automatic-annotation'
-              : 'import-engineering-dxf',
+              : snapshot.drawingRef === undefined
+                ? 'import-engineering-dxf'
+                : 'wait-for-explicit-partition-request',
+      } as unknown as JsonValue;
+    },
+  });
+}
+
+export function createPartitionStartTool(workflow: {
+  start(agent: Agent, engineeringContext: string | undefined, signal?: AbortSignal): Promise<PartitionSessionSnapshot>;
+}) {
+  return defineTool({
+    name: 'drawing_partition_start',
+    description: 'Start or refresh smart shaft partitioning for the active DXF only when the user explicitly asks to partition, segment, or identify functional shaft regions. A document attachment alone is never intent. If the user supplied relevant engineering documentation, pass only its concise partition-related text in engineeringContext; local geometry computes and snaps every boundary.',
+    parameters: {
+      engineeringContext: { type: 'string', description: 'Optional concise, verbatim partition-related evidence from the user-provided document. Omit when none is relevant.' },
+    },
+    output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      const agent = exec.agent;
+      if (!agent) throw new Error('DRAWING_SESSION_REQUIRED');
+      const engineeringContext = typeof args.engineeringContext === 'string' ? args.engineeringContext.trim() : undefined;
+      if (Buffer.byteLength(engineeringContext ?? '', 'utf8') > 32 * 1024) throw new Error('PARTITION_CONTEXT_SIZE_LIMIT');
+      const snapshot = await workflow.start(agent, engineeringContext || undefined, exec.signal);
+      return {
+        status: snapshot.phase,
+        segmentCount: snapshot.draft?.segments.length ?? snapshot.confirmed?.segments.length ?? 0,
+        semanticGroupCount: snapshot.draft?.semanticGroups.length ?? snapshot.confirmed?.semanticGroups.length ?? 0,
+        diagnostics: (snapshot.draft?.diagnostics ?? snapshot.confirmed?.diagnostics ?? []).map(({ code }) => code),
+        nextAction: snapshot.phase === 'editing' ? 'review-and-confirm-in-engineering-workspace' : snapshot.phase,
       } as unknown as JsonValue;
     },
   });

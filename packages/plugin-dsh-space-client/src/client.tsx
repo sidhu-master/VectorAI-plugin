@@ -17,7 +17,7 @@ import {
   createDrawingWorkspaceStore,
   type DrawingWorkspacePort,
 } from '@vectorai/drawing-workspace';
-import type { DrawingSurfaceRegistry } from '@vectorai/drawing-surface-api';
+import { DRAWING_SURFACE_REFRESH_EVENT, type DrawingSurfaceRefreshDetail, type DrawingSurfaceRegistry } from '@vectorai/drawing-surface-api';
 import { useEffect, useMemo, useRef } from 'react';
 
 import { createDshDrawingWorkspacePort } from './dsh-workspace-port';
@@ -66,6 +66,16 @@ export function DrawingConversationView({
     if (didObserveInitialCallCount.current) void store.getState().refresh();
     else didObserveInitialCallCount.current = true;
   }, [runningCallCount, store]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<DrawingSurfaceRefreshDetail>).detail;
+      if (detail?.sessionId === sessionId) void store.getState().refresh();
+    };
+    window.addEventListener(DRAWING_SURFACE_REFRESH_EVENT, refresh);
+    return () => window.removeEventListener(DRAWING_SURFACE_REFRESH_EVENT, refresh);
+  }, [sessionId, store]);
 
   useEffect(() => releaseSources, [releaseSources]);
 

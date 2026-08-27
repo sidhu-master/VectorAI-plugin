@@ -13795,6 +13795,7 @@ const partitionSegmentSchema = object$1({
 const partitionGroupSchema = object$1({
   id: idSchema,
   segmentIds: array$1(idSchema),
+  range: object$1({ zStart: number(), zEnd: number() }).strict().optional(),
   semanticType: string$1(),
   name: string$1().optional(),
   evidenceIds: array$1(idSchema)
@@ -13824,6 +13825,7 @@ const partitionRevisionSchema = object$1({
 }).strict();
 discriminatedUnion("type", [
   object$1({ type: literal$1("boundary.move"), expectedDrawingRef: drawingRefSchema$1, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object$1({ type: literal$1("semantic-range.move"), expectedDrawingRef: drawingRefSchema$1, groupId: idSchema, edge: _enum(["start", "end"]), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
   object$1({ type: literal$1("segment.split"), expectedDrawingRef: drawingRefSchema$1, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
   object$1({ type: literal$1("boundary.merge"), expectedDrawingRef: drawingRefSchema$1, boundaryIndex: number().int().positive() }).strict(),
   object$1({ type: literal$1("segment.metadata"), expectedDrawingRef: drawingRefSchema$1, segmentId: idSchema, name: string$1().max(120).optional(), semanticType: string$1().max(80).optional() }).strict()

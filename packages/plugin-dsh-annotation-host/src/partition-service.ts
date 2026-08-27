@@ -35,20 +35,27 @@ export class PartitionWorkflowService {
     private readonly extractDocuments: typeof extractEngineeringDocuments = extractEngineeringDocuments,
   ) {}
 
+  async importDrawing(agent: Agent, dxf: PartitionImportRequest['dxf'], signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
+    const bytes = validateDxf(dxf);
+    signal?.throwIfAborted();
+    await this.space.importDxf(agent, { bytes, digest: dxf.digest, name: dxf.name }, signal);
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error('DRAWING_REQUIRED');
+    const sessionId = String(agent.id);
+    this.annotations.release(sessionId);
+    return this.partitions.bindDrawing(sessionId, snapshot.ref);
+  }
+
   async importAndAnalyze(agent: Agent, request: PartitionImportRequest, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
-    if (request.dxf.base64.length > 27_962_028) throw new Error('DXF_SIZE_LIMIT');
-    const bytes = decodeBase64(request.dxf.base64);
-    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error('DXF_SIZE_LIMIT');
+    const bytes = validateDxf(request.dxf);
     if (Buffer.byteLength(request.engineeringDocument?.text ?? '', 'utf8') > 8 * 1024 * 1024) throw new Error('DOCUMENT_TOTAL_TEXT_SIZE_LIMIT');
-    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-    if (digest !== request.dxf.digest) throw new Error('DXF_DIGEST_MISMATCH');
     signal?.throwIfAborted();
     const extracted = request.engineeringDocuments === undefined
       ? undefined
       : await this.extractDocuments(request.engineeringDocuments, { signal });
     const engineeringText = extracted?.combinedText ?? request.engineeringDocument?.text;
     signal?.throwIfAborted();
-    await this.space.importDxf(agent, { bytes, digest, name: request.dxf.name }, signal);
+    await this.space.importDxf(agent, { bytes, digest: request.dxf.digest, name: request.dxf.name }, signal);
     const snapshot = this.space.getSnapshot(agent);
     if (!snapshot) throw new Error('DRAWING_REQUIRED');
     return this.#analyze(agent, snapshot, engineeringText, request.dxf.name, signal);
@@ -65,6 +72,16 @@ export class PartitionWorkflowService {
     signal?.throwIfAborted();
     const drawingSourceName = snapshot.document.sources?.find(({ kind }) => kind === 'dxf')?.name ?? 'drawing.dxf';
     return this.#analyze(agent, snapshot, extracted.combinedText, drawingSourceName, signal);
+  }
+
+  async analyzeCurrent(agent: Agent, engineeringContext?: string, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error('DRAWING_REQUIRED');
+    if (Buffer.byteLength(engineeringContext ?? '', 'utf8') > 32 * 1024) throw new Error('PARTITION_CONTEXT_SIZE_LIMIT');
+    signal?.throwIfAborted();
+    const drawingSourceName = snapshot.document.sources?.find(({ kind }) => kind === 'dxf')?.name;
+    if (drawingSourceName === undefined) throw new Error('DXF_DRAWING_REQUIRED');
+    return this.#analyze(agent, snapshot, engineeringContext?.trim() || undefined, drawingSourceName, signal);
   }
 
   async #analyze(agent: Agent, snapshot: SpaceSnapshot, engineeringText: string | undefined, drawingSourceName: string, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
@@ -86,6 +103,11 @@ export class PartitionWorkflowService {
       try {
         draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.unclassifiedSegmentIds, signal })).draft;
       } catch (error) {
+        if (signal?.aborted) {
+          this.partitions.cancel(sessionId, snapshot.ref);
+          this.annotations.release(sessionId);
+          throw signal.reason ?? error;
+        }
         draft = structuredClone(draft);
         draft.diagnostics.push({
           id: 'diagnostic:ai-semantic-unavailable', severity: 'warning', code: 'AI_SEMANTIC_REVIEW_UNAVAILABLE',
@@ -93,6 +115,11 @@ export class PartitionWorkflowService {
           segmentIds: analyzed.unclassifiedSegmentIds,
         });
       }
+    }
+    if (signal?.aborted) {
+      this.partitions.cancel(sessionId, snapshot.ref);
+      this.annotations.release(sessionId);
+      throw signal.reason ?? new Error('PARTITION_ANALYSIS_CANCELED');
     }
     return this.partitions.setDraft(sessionId, draft);
   }
@@ -147,4 +174,13 @@ export class PartitionWorkflowService {
 function decodeBase64(value: string): Uint8Array {
   if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new Error('DXF_BASE64_INVALID');
   return new Uint8Array(Buffer.from(value, 'base64'));
+}
+
+function validateDxf(dxf: PartitionImportRequest['dxf']): Uint8Array {
+  if (dxf.base64.length > 27_962_028) throw new Error('DXF_SIZE_LIMIT');
+  const bytes = decodeBase64(dxf.base64);
+  if (bytes.byteLength > 20 * 1024 * 1024) throw new Error('DXF_SIZE_LIMIT');
+  const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  if (digest !== dxf.digest) throw new Error('DXF_DIGEST_MISMATCH');
+  return bytes;
 }

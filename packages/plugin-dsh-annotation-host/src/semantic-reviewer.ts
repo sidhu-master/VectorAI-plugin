@@ -16,7 +16,7 @@ export function createPartitionSemanticReviewer(
 ): PartitionSemanticReviewer {
   return async ({ agent, draft, segmentIds, signal }) => {
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(new Error('AI_SEMANTIC_REVIEW_TIMEOUT')), options.timeoutMs ?? 30_000);
+    const timer = setTimeout(() => timeout.abort(new Error('AI_SEMANTIC_REVIEW_TIMEOUT')), options.timeoutMs ?? 60_000);
     const reviewSignal = combineSignals(signal, timeout.signal);
     try {
     const targets = new Set(segmentIds);
@@ -34,13 +34,6 @@ export function createPartitionSemanticReviewer(
     if (!parent || !providerName) throw new Error('AI_SEMANTIC_REVIEW_UNAVAILABLE');
     const provider = ctx.subagents.getProvider(providerName);
     if (!provider?.capabilities.outputSchema || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) throw new Error('AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED');
-    // `structured_output` is injected by the subagent runtime for outputSchema.
-    // It is not a registered global tool, so passing it to tools.restrict()
-    // makes DSH reject the child before the model is started.
-    const ambientToolNames = ctx.tools.schemas()
-      .map(({ name }) => name)
-      .filter((name) => name !== 'structured_output');
-    if (ambientToolNames.length === 0) throw new Error('AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED');
     const catalog = segments.map((segment, index) => ({
       id: segment.id,
       visualLabel: `S${index + 1}`,
@@ -49,18 +42,19 @@ export function createPartitionSemanticReviewer(
       width: segment.zEnd - segment.zStart,
       diameter: segment.profile.maxRadius * 2,
       boundaryConfidence: segment.boundaryConfidence,
-      previousSegmentId: index === 0 ? null : segments[index - 1]!.id,
-      nextSegmentId: index === segments.length - 1 ? null : segments[index + 1]!.id,
     }));
     const payload = JSON.stringify({
-      instruction: '只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。',
+      instruction: '不要展示分析过程，立即返回要求的结构化结果。只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。',
       segments: catalog,
       observationDigest: rendered.contentDigest,
     });
     if (payload.length > 64 * 1024) throw new Error('AI_SEMANTIC_PROMPT_LIMIT');
     const run = await abortable(ctx.subagents.start(providerName, {
       label: 'shaft-partition-semantic-reviewer', parent, signal: reviewSignal,
-      maxDepth: 1, toolFilter: { deny: ambientToolNames },
+      maxDepth: 1, toolFilter: { allow: [] },
+      persona: provider.capabilities.persona
+        ? 'You are a bounded shaft-region classifier. Do not narrate analysis. Immediately return the requested structured result from the supplied numbered image and segment catalog.'
+        : undefined,
       prompt: [{ type: 'text', text: payload }, { type: 'image', attachment }],
       outputSchema: proposalSchema as never,
     }), reviewSignal);

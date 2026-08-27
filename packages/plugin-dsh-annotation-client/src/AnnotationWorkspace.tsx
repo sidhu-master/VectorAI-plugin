@@ -97,16 +97,6 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   const handleToolbarUpload = (files: readonly File[]) => {
     const decision = classifyEngineeringDrop(files);
     if (decision.kind === 'import') { beginImport(decision.dxf, decision.documents); return; }
-    if (decision.kind === 'pending') {
-      if (partitionState.partition.drawingRef) {
-        setImportError(null);
-        void partition.actions.supplementDocuments(decision.documents)
-          .catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
-      } else {
-        setImportError('请同时选择 DXF 图纸；工程文档不能单独创建图纸');
-      }
-      return;
-    }
     setImportError(decision.kind === 'reject'
       ? engineeringImportErrorText(decision.code, decision.filenames)
       : '请选择 DXF 图纸或受支持的工程文档');

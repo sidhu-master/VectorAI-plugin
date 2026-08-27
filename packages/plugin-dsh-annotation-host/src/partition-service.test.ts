@@ -16,6 +16,27 @@ function drawing() {
 }
 
 describe('PartitionWorkflowService', () => {
+  it('imports a DXF for viewing without claiming or starting partition analysis', async () => {
+    const document = drawing();
+    document.sources = [{ id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf', digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf' }];
+    const bytes = new TextEncoder().encode('DXF bytes');
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const annotations = new AnnotationSessionStateStore(undefined, { now: () => 4 });
+    annotations.start('s', 'old-partition');
+    const partitions = new PartitionSessionStore();
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(async () => ({ status: 'imported' as const, ref: { drawingId: 'd', revision: 1 }, provisional: false })),
+      getSnapshot: () => ({ version: 1 as const, ref: { drawingId: 'd', revision: 1 }, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    } as never, partitions, annotations);
+
+    const result = await service.importDrawing({ id: 's' } as Agent, {
+      name: 'shaft.dxf', digest, base64: Buffer.from(bytes).toString('base64'),
+    });
+
+    expect(result).toMatchObject({ phase: 'idle', drawingRef: { drawingId: 'd', revision: 1 } });
+    expect(annotations.get('s').workspaceClaimed).toBe(false);
+  });
+
   it('runs only through explicit DXF import and invokes bounded review for uncovered IDs', async () => {
     const bytes = new TextEncoder().encode('DXF bytes');
     const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -132,5 +153,68 @@ describe('PartitionWorkflowService', () => {
     expect(result.phase).toBe('editing');
     expect(importDxf).not.toHaveBeenCalled();
     expect(extract).toHaveBeenCalledOnce();
+  });
+
+  it('analyzes the active drawing from concise context only after an explicit start', async () => {
+    const document = drawing();
+    document.sources = [{
+      id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf',
+      digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf',
+    }];
+    const reviewer = vi.fn(async ({ draft }: { draft: unknown }) => ({ draft }));
+    const annotations = new AnnotationSessionStateStore(undefined, { now: () => 7 });
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(),
+      getSnapshot: () => ({
+        version: 1 as const,
+        ref: { drawingId: 'd', revision: 1 },
+        document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false },
+      }),
+    } as never, new PartitionSessionStore(), annotations, reviewer as never);
+
+    expect(service.getState({ id: 's' } as Agent).phase).toBe('idle');
+    const result = await service.analyzeCurrent(
+      { id: 's' } as Agent,
+      '[region:spline:S01]\nname=外花键\ncenter_z=5\nwidth=4',
+    );
+
+    expect(result.phase).toBe('editing');
+    expect(result.draft?.evidence.some(({ origin }) => origin === 'document')).toBe(true);
+    expect(annotations.get('s').workspaceClaimed).toBe(true);
+  });
+
+  it('rejects explicit partitioning when the active drawing is not a DXF', async () => {
+    const document = drawing();
+    document.sources = [{ id: 'source:image', kind: 'image', mediaType: 'image/png', digest: `sha256:${'a'.repeat(64)}`, name: 'photo.png' }];
+    const annotations = new AnnotationSessionStateStore();
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(),
+      getSnapshot: () => ({ version: 1 as const, ref: { drawingId: 'd', revision: 1 }, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true } }),
+    } as never, new PartitionSessionStore(), annotations);
+
+    await expect(service.analyzeCurrent({ id: 's' } as Agent)).rejects.toThrow('DXF_DRAWING_REQUIRED');
+    expect(annotations.get('s').workspaceClaimed).toBe(false);
+  });
+
+  it('does not commit a partition draft after external cancellation', async () => {
+    const document = drawing();
+    document.sources = [{ id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf', digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf' }];
+    const controller = new AbortController();
+    const reviewer = vi.fn(async () => {
+      controller.abort(new Error('USER_CANCELED'));
+      throw controller.signal.reason;
+    });
+    const annotations = new AnnotationSessionStateStore();
+    const partitions = new PartitionSessionStore();
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(),
+      getSnapshot: () => ({ version: 1 as const, ref: { drawingId: 'd', revision: 1 }, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    } as never, partitions, annotations, reviewer as never);
+
+    await expect(service.analyzeCurrent({ id: 's' } as Agent, undefined, controller.signal)).rejects.toThrow('USER_CANCELED');
+    expect(partitions.get('s').phase).toBe('idle');
+    expect(partitions.get('s').draft).toBeUndefined();
+    expect(annotations.get('s').workspaceClaimed).toBe(false);
   });
 });

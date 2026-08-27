@@ -172,6 +172,7 @@ export function createDshDrawingWorkspacePort(input: {
     },
     async loadSource(source, signal) {
       signal?.throwIfAborted();
+      if (!('width' in source)) throw new Error('DRAWING_IMAGE_SOURCE_REQUIRED');
       const attachment: ImageAttachmentRef = {
         attachmentId: source.id as ImageAttachmentRef['attachmentId'],
         mediaType: source.mediaType as ImageMediaType,

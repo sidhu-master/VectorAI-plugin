@@ -24,7 +24,8 @@ dsh plugin --profile web add --ignore-workspace-root-check \
   ./packages/plugin-dsh-annotation-client
 ```
 
-The current shell exposes `drawing_auto_annotate`, persists the session claim,
-and renders an independent controlled professional workspace. Production
-zoning, candidate generation, collision optimization, and review UI will be
-added behind these boundaries.
+The plugin exposes intent-routed `drawing_partition_start`, read-only
+`drawing_partition_status`, and post-confirmation `drawing_auto_annotate` tools.
+Document-only uploads remain ordinary DSH conversation attachments; they do not
+claim the engineering workspace or start partitioning without an explicit user
+request.

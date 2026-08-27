@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
-import type { DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
+import { DRAWING_SURFACE_REFRESH_EVENT, type DrawingSurfaceObservable, type DrawingSurfaceRefreshDetail } from '@vectorai/drawing-surface-api';
 import type { DrawingRef, EngineeringDocumentInput, PartitionDocumentSupplementRequest, PartitionEditCommand, PartitionImportRequest, PartitionSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import { ENGINEERING_IMPORT_LIMITS, validateEngineeringDocumentFiles } from './engineering-file-policy';
 
 export interface PartitionRemote {
+  importDrawing(sessionId: string, request: PartitionImportRequest['dxf']): Promise<RemoteResult<PartitionSessionSnapshot>>;
   importAndAnalyze(sessionId: string, request: PartitionImportRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
   supplementDocuments(sessionId: string, request: PartitionDocumentSupplementRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
   getPartitionState(sessionId: string): Promise<RemoteResult<PartitionSessionSnapshot>>;
@@ -25,6 +26,7 @@ export interface PartitionController {
   state: DrawingSurfaceObservable<PartitionControllerState>;
   actions: {
     refresh(): Promise<void>;
+    importDrawing(dxf: File): Promise<void>;
     importFiles(dxf: File, engineeringDocuments?: readonly File[]): Promise<void>;
     supplementDocuments(engineeringDocuments: readonly File[]): Promise<void>;
     moveBoundary(boundaryIndex: number, requestedZ: number, snapTolerance: number): Promise<void>;
@@ -77,13 +79,18 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
     },
     actions: {
       refresh: () => run(() => remote.getPartitionState(sessionId)),
+      async importDrawing(dxf) {
+        const request = await serializeDxf(dxf);
+        await run(() => remote.importDrawing(sessionId, request));
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent<DrawingSurfaceRefreshDetail>(
+          DRAWING_SURFACE_REFRESH_EVENT, { detail: { sessionId } },
+        ));
+      },
       async importFiles(dxf, engineeringDocuments = []) {
-        if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error('DXF_SIZE_LIMIT');
-        const bytes = new Uint8Array(await dxf.arrayBuffer());
-        const digest = `sha256:${hex(await crypto.subtle.digest('SHA-256', bytes))}`;
+        const dxfRequest = await serializeDxf(dxf);
         const documents = await serializeEngineeringDocuments(engineeringDocuments);
         const request: PartitionImportRequest = {
-          dxf: { name: dxf.name, digest, base64: base64(bytes) },
+          dxf: dxfRequest,
           engineeringDocuments: documents,
         };
         await run(() => remote.importAndAnalyze(sessionId, request), {
@@ -128,6 +135,12 @@ function base64(bytes: Uint8Array): string {
   const size = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += size) binary += String.fromCharCode(...bytes.subarray(offset, offset + size));
   return btoa(binary);
+}
+
+async function serializeDxf(dxf: File): Promise<PartitionImportRequest['dxf']> {
+  if (dxf.size > ENGINEERING_IMPORT_LIMITS.maxDxfBytes) throw new Error('DXF_SIZE_LIMIT');
+  const bytes = new Uint8Array(await dxf.arrayBuffer());
+  return { name: dxf.name, digest: `sha256:${hex(await crypto.subtle.digest('SHA-256', bytes))}`, base64: base64(bytes) };
 }
 
 async function serializeEngineeringDocuments(files: readonly File[]): Promise<EngineeringDocumentInput[]> {

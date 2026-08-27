@@ -5,7 +5,7 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createEngineeringAnnotationTool, createPartitionStatusTool } from './tools';
+import { createEngineeringAnnotationTool, createPartitionStartTool, createPartitionStatusTool } from './tools';
 import { AnnotationSessionStateStore } from './session-state';
 import { PartitionSessionStore } from './partition-store';
 
@@ -114,5 +114,37 @@ describe('drawing_partition_status', () => {
       nextAction: 'wait-for-analysis',
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
     });
+  });
+});
+
+describe('drawing_partition_start', () => {
+  it('starts partition analysis only after an explicit model tool call', async () => {
+    const start = vi.fn(async () => ({
+      version: 1 as const,
+      phase: 'editing' as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      canUndo: false,
+      canRedo: false,
+      updatedAt: 1,
+    }));
+    const tool = createPartitionStartTool({ start });
+
+    await expect(tool.execute({ engineeringContext: '外花键宽 24.5' }, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({ status: 'editing', segmentCount: 0 });
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-1' }),
+      '外花键宽 24.5',
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('rejects oversized model-transcribed document context', async () => {
+    const tool = createPartitionStartTool({ start: vi.fn() });
+    await expect(tool.execute({ engineeringContext: 'x'.repeat(32_769) }, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).rejects.toThrow('PARTITION_CONTEXT_SIZE_LIMIT');
   });
 });

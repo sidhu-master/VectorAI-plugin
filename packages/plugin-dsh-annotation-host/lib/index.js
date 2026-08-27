@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, analyze_fn, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _reopenPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _supplementDocuments_dec, _importAndAnalyze_dec, _getSessionState_dec, _a2, _init;
+var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _PartitionWorkflowService_instances, analyze_fn, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _reopenPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _supplementDocuments_dec, _importAndAnalyze_dec, _importDrawing_dec, _getSessionState_dec, _a2, _init;
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
@@ -1721,7 +1721,32 @@ function createPartitionStatusTool(partitions) {
         ...snapshot.drawingRef === void 0 ? {} : { drawingRef: snapshot.drawingRef },
         segmentCount: ((_a3 = snapshot.draft) == null ? void 0 : _a3.segments.length) ?? ((_b = snapshot.confirmed) == null ? void 0 : _b.segments.length) ?? 0,
         diagnostics: (((_c = snapshot.draft) == null ? void 0 : _c.diagnostics) ?? ((_d = snapshot.confirmed) == null ? void 0 : _d.diagnostics) ?? []).map(({ code }) => code),
-        nextAction: snapshot.phase === "analyzing" ? "wait-for-analysis" : snapshot.phase === "editing" ? "edit-or-confirm-in-engineering-workspace" : snapshot.phase === "confirmed" ? "ready-for-automatic-annotation" : "import-engineering-dxf"
+        nextAction: snapshot.phase === "analyzing" ? "wait-for-analysis" : snapshot.phase === "editing" ? "edit-or-confirm-in-engineering-workspace" : snapshot.phase === "confirmed" ? "ready-for-automatic-annotation" : snapshot.drawingRef === void 0 ? "import-engineering-dxf" : "wait-for-explicit-partition-request"
+      };
+    }
+  });
+}
+function createPartitionStartTool(workflow) {
+  return defineTool({
+    name: "drawing_partition_start",
+    description: "Start or refresh smart shaft partitioning for the active DXF only when the user explicitly asks to partition, segment, or identify functional shaft regions. A document attachment alone is never intent. If the user supplied relevant engineering documentation, pass only its concise partition-related text in engineeringContext; local geometry computes and snaps every boundary.",
+    parameters: {
+      engineeringContext: { type: "string", description: "Optional concise, verbatim partition-related evidence from the user-provided document. Omit when none is relevant." }
+    },
+    output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      var _a3, _b, _c, _d, _e, _f;
+      const agent = exec.agent;
+      if (!agent) throw new Error("DRAWING_SESSION_REQUIRED");
+      const engineeringContext = typeof args.engineeringContext === "string" ? args.engineeringContext.trim() : void 0;
+      if (Buffer.byteLength(engineeringContext ?? "", "utf8") > 32 * 1024) throw new Error("PARTITION_CONTEXT_SIZE_LIMIT");
+      const snapshot = await workflow.start(agent, engineeringContext || void 0, exec.signal);
+      return {
+        status: snapshot.phase,
+        segmentCount: ((_a3 = snapshot.draft) == null ? void 0 : _a3.segments.length) ?? ((_b = snapshot.confirmed) == null ? void 0 : _b.segments.length) ?? 0,
+        semanticGroupCount: ((_c = snapshot.draft) == null ? void 0 : _c.semanticGroups.length) ?? ((_d = snapshot.confirmed) == null ? void 0 : _d.semanticGroups.length) ?? 0,
+        diagnostics: (((_e = snapshot.draft) == null ? void 0 : _e.diagnostics) ?? ((_f = snapshot.confirmed) == null ? void 0 : _f.diagnostics) ?? []).map(({ code }) => code),
+        nextAction: snapshot.phase === "editing" ? "review-and-confirm-in-engineering-workspace" : snapshot.phase
       };
     }
   });
@@ -7945,6 +7970,9 @@ class AnnotationSessionStateStore {
       }
     });
   }
+  release(sessionId) {
+    return __privateMethod(this, _AnnotationSessionStateStore_instances, set_fn).call(this, sessionId, emptyState());
+  }
   disposeSession(sessionId) {
     var _a3;
     __privateGet(this, _memory).delete(sessionId);
@@ -8010,6 +8038,16 @@ class PartitionSessionStore {
   }
   get(sessionId) {
     return structuredClone(__privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId).snapshot);
+  }
+  bindDrawing(sessionId, drawingRef) {
+    return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, {
+      version: 1,
+      phase: "idle",
+      drawingRef,
+      canUndo: false,
+      canRedo: false,
+      updatedAt: this.ports.now()
+    }, [], []);
   }
   beginAnalysis(sessionId, drawingRef) {
     const confirmed = latestConfirmed$1(__privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId));
@@ -8410,19 +8448,25 @@ class PartitionWorkflowService {
     this.reviewer = reviewer;
     this.extractDocuments = extractDocuments;
   }
+  async importDrawing(agent, dxf, signal) {
+    const bytes = validateDxf(dxf);
+    signal == null ? void 0 : signal.throwIfAborted();
+    await this.space.importDxf(agent, { bytes, digest: dxf.digest, name: dxf.name }, signal);
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error("DRAWING_REQUIRED");
+    const sessionId = String(agent.id);
+    this.annotations.release(sessionId);
+    return this.partitions.bindDrawing(sessionId, snapshot.ref);
+  }
   async importAndAnalyze(agent, request, signal) {
     var _a3, _b;
-    if (request.dxf.base64.length > 27962028) throw new Error("DXF_SIZE_LIMIT");
-    const bytes = decodeBase64(request.dxf.base64);
-    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
+    const bytes = validateDxf(request.dxf);
     if (Buffer.byteLength(((_a3 = request.engineeringDocument) == null ? void 0 : _a3.text) ?? "", "utf8") > 8 * 1024 * 1024) throw new Error("DOCUMENT_TOTAL_TEXT_SIZE_LIMIT");
-    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    if (digest !== request.dxf.digest) throw new Error("DXF_DIGEST_MISMATCH");
     signal == null ? void 0 : signal.throwIfAborted();
     const extracted = request.engineeringDocuments === void 0 ? void 0 : await this.extractDocuments(request.engineeringDocuments, { signal });
     const engineeringText = (extracted == null ? void 0 : extracted.combinedText) ?? ((_b = request.engineeringDocument) == null ? void 0 : _b.text);
     signal == null ? void 0 : signal.throwIfAborted();
-    await this.space.importDxf(agent, { bytes, digest, name: request.dxf.name }, signal);
+    await this.space.importDxf(agent, { bytes, digest: request.dxf.digest, name: request.dxf.name }, signal);
     const snapshot = this.space.getSnapshot(agent);
     if (!snapshot) throw new Error("DRAWING_REQUIRED");
     return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, engineeringText, request.dxf.name, signal);
@@ -8439,6 +8483,16 @@ class PartitionWorkflowService {
     signal == null ? void 0 : signal.throwIfAborted();
     const drawingSourceName = ((_b = (_a3 = snapshot.document.sources) == null ? void 0 : _a3.find(({ kind }) => kind === "dxf")) == null ? void 0 : _b.name) ?? "drawing.dxf";
     return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, extracted.combinedText, drawingSourceName, signal);
+  }
+  async analyzeCurrent(agent, engineeringContext, signal) {
+    var _a3, _b;
+    const snapshot = this.space.getSnapshot(agent);
+    if (!snapshot) throw new Error("DRAWING_REQUIRED");
+    if (Buffer.byteLength(engineeringContext ?? "", "utf8") > 32 * 1024) throw new Error("PARTITION_CONTEXT_SIZE_LIMIT");
+    signal == null ? void 0 : signal.throwIfAborted();
+    const drawingSourceName = (_b = (_a3 = snapshot.document.sources) == null ? void 0 : _a3.find(({ kind }) => kind === "dxf")) == null ? void 0 : _b.name;
+    if (drawingSourceName === void 0) throw new Error("DXF_DRAWING_REQUIRED");
+    return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, (engineeringContext == null ? void 0 : engineeringContext.trim()) || void 0, drawingSourceName, signal);
   }
   getState(agent) {
     return this.partitions.get(String(agent.id));
@@ -8500,6 +8554,11 @@ analyze_fn = async function(agent, snapshot, engineeringText, drawingSourceName,
     try {
       draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.unclassifiedSegmentIds, signal })).draft;
     } catch (error) {
+      if (signal == null ? void 0 : signal.aborted) {
+        this.partitions.cancel(sessionId, snapshot.ref);
+        this.annotations.release(sessionId);
+        throw signal.reason ?? error;
+      }
       draft = structuredClone(draft);
       draft.diagnostics.push({
         id: "diagnostic:ai-semantic-unavailable",
@@ -8509,6 +8568,11 @@ analyze_fn = async function(agent, snapshot, engineeringText, drawingSourceName,
         segmentIds: analyzed.unclassifiedSegmentIds
       });
     }
+  }
+  if (signal == null ? void 0 : signal.aborted) {
+    this.partitions.cancel(sessionId, snapshot.ref);
+    this.annotations.release(sessionId);
+    throw signal.reason ?? new Error("PARTITION_ANALYSIS_CANCELED");
   }
   return this.partitions.setDraft(sessionId, draft);
 };
@@ -8523,10 +8587,18 @@ function decodeBase64(value) {
   if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new Error("DXF_BASE64_INVALID");
   return new Uint8Array(Buffer.from(value, "base64"));
 }
+function validateDxf(dxf) {
+  if (dxf.base64.length > 27962028) throw new Error("DXF_SIZE_LIMIT");
+  const bytes = decodeBase64(dxf.base64);
+  if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("DXF_SIZE_LIMIT");
+  const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  if (digest !== dxf.digest) throw new Error("DXF_DIGEST_MISMATCH");
+  return bytes;
+}
 function createPartitionSemanticReviewer(ctx, space, options = {}) {
   return async ({ agent, draft, segmentIds, signal }) => {
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(new Error("AI_SEMANTIC_REVIEW_TIMEOUT")), options.timeoutMs ?? 3e4);
+    const timer = setTimeout(() => timeout.abort(new Error("AI_SEMANTIC_REVIEW_TIMEOUT")), options.timeoutMs ?? 6e4);
     const reviewSignal = combineSignals(signal, timeout.signal);
     try {
       const targets = new Set(segmentIds);
@@ -8544,8 +8616,6 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
       if (!parent || !providerName) throw new Error("AI_SEMANTIC_REVIEW_UNAVAILABLE");
       const provider = ctx.subagents.getProvider(providerName);
       if (!(provider == null ? void 0 : provider.capabilities.outputSchema) || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) throw new Error("AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED");
-      const ambientToolNames = ctx.tools.schemas().map(({ name }) => name).filter((name) => name !== "structured_output");
-      if (ambientToolNames.length === 0) throw new Error("AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED");
       const catalog = segments.map((segment, index) => ({
         id: segment.id,
         visualLabel: `S${index + 1}`,
@@ -8553,12 +8623,10 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         ordinal: index + 1,
         width: segment.zEnd - segment.zStart,
         diameter: segment.profile.maxRadius * 2,
-        boundaryConfidence: segment.boundaryConfidence,
-        previousSegmentId: index === 0 ? null : segments[index - 1].id,
-        nextSegmentId: index === segments.length - 1 ? null : segments[index + 1].id
+        boundaryConfidence: segment.boundaryConfidence
       }));
       const payload = JSON.stringify({
-        instruction: "只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。",
+        instruction: "不要展示分析过程，立即返回要求的结构化结果。只根据编号图像识别明确的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。",
         segments: catalog,
         observationDigest: rendered.contentDigest
       });
@@ -8568,7 +8636,8 @@ function createPartitionSemanticReviewer(ctx, space, options = {}) {
         parent,
         signal: reviewSignal,
         maxDepth: 1,
-        toolFilter: { deny: ambientToolNames },
+        toolFilter: { allow: [] },
+        persona: provider.capabilities.persona ? "You are a bounded shaft-region classifier. Do not narrate analysis. Immediately return the requested structured result from the supplied numbered image and segment catalog." : void 0,
         prompt: [{ type: "text", text: payload }, { type: "image", attachment }],
         outputSchema: proposalSchema
       }), reviewSignal);
@@ -8905,7 +8974,7 @@ function parseEnvelope(value) {
 function compact(value) {
   return JSON.parse(JSON.stringify(value));
 }
-class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _reopenPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
+class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importDrawing_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _reopenPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingAnnotation");
     __runInitializers(_init, 5, this);
@@ -8929,11 +8998,17 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
       createPartitionSemanticReviewer(ctx, ctx.drawingSpace)
     );
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions, this.partitions)));
+    ctx.effect(() => ctx.tools.register(createPartitionStartTool({
+      start: (agent, engineeringContext, signal) => this.partitionWorkflow.analyzeCurrent(agent, engineeringContext, signal)
+    })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.on("session/disposed", (session) => this.sessions.disposeSession(String(session.id)));
   }
   getSessionState(agent) {
     return this.sessions.get(String(agent.id));
+  }
+  importDrawing(agent, request) {
+    return this.partitionWorkflow.importDrawing(agent, request);
   }
   importAndAnalyze(agent, request) {
     return this.partitionWorkflow.importAndAnalyze(agent, request);
@@ -8965,6 +9040,7 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
 }
 _init = __decoratorStart(_a2);
 __decorateElement(_init, 1, "getSessionState", _getSessionState_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "importDrawing", _importDrawing_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "importAndAnalyze", _importAndAnalyze_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "supplementDocuments", _supplementDocuments_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "getPartitionState", _getPartitionState_dec, DrawingAnnotationHostService);

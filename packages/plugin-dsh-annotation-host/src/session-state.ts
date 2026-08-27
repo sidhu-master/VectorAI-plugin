@@ -62,6 +62,10 @@ export class AnnotationSessionStateStore {
     });
   }
 
+  release(sessionId: string): AnnotationSessionState {
+    return this.#set(sessionId, emptyState());
+  }
+
   disposeSession(sessionId: string): void {
     this.#memory.delete(sessionId);
     this.storage?.delete(sessionId);

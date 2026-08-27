@@ -36,6 +36,13 @@ export class PartitionSessionStore {
     return structuredClone(this.#envelope(sessionId).snapshot);
   }
 
+  bindDrawing(sessionId: string, drawingRef: DrawingRef): PartitionSessionSnapshot {
+    return this.#replace(sessionId, {
+      version: 1, phase: 'idle', drawingRef,
+      canUndo: false, canRedo: false, updatedAt: this.ports.now(),
+    }, [], []);
+  }
+
   beginAnalysis(sessionId: string, drawingRef: DrawingRef): PartitionSessionSnapshot {
     const confirmed = latestConfirmed(this.#envelope(sessionId));
     return this.#replace(sessionId, {

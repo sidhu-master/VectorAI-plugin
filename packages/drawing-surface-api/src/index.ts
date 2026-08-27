@@ -17,6 +17,9 @@ export type {
 } from '@vectorai/drawing-workspace';
 
 export const DRAWING_SURFACE_API_VERSION = 1 as const;
+export const DRAWING_SURFACE_REFRESH_EVENT = 'vectorai:drawing-surface-refresh' as const;
+
+export interface DrawingSurfaceRefreshDetail { sessionId: string }
 
 export interface Disposable {
   dispose(): void;

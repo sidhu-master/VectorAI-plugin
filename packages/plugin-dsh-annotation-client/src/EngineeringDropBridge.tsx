@@ -43,9 +43,7 @@ export interface EngineeringDropBridgeController {
 }
 
 export function createEngineeringDropBridgeController(input: {
-  importFiles(dxf: File, documents: readonly File[]): Promise<void>;
-  supplementDocuments?(documents: readonly File[]): Promise<void>;
-  hasDrawing?(): boolean;
+  importFiles(dxf: File): Promise<void>;
   refreshClaim(): Promise<void>;
   releaseNativeDragState?(): void;
 }): EngineeringDropBridgeController {
@@ -70,28 +68,12 @@ export function createEngineeringDropBridgeController(input: {
       update({ phase: 'error', pendingDocuments: [], code: decision.code, filenames: decision.filenames });
       return;
     }
-    if (decision.kind === 'pending') {
-      const combined = classifyEngineeringDrop([...current.pendingDocuments, ...decision.documents]);
-      if (combined.kind === 'reject') {
-        update({ phase: 'error', pendingDocuments: [], code: combined.code, filenames: combined.filenames });
-        return;
-      }
-      const documents = combined.kind === 'pending' ? combined.documents : decision.documents;
-      if (input.hasDrawing?.() === true && input.supplementDocuments !== undefined) {
-        update({ phase: 'importing', pendingDocuments: [], filenames: documents.map(({ name }) => name) });
-        try {
-          await input.supplementDocuments(documents);
-          await input.refreshClaim();
-          update({ phase: 'success', pendingDocuments: [], filenames: documents.map(({ name }) => name) });
-        } catch (error) {
-          update({
-            phase: 'error', pendingDocuments: [],
-            code: error instanceof Error ? error.message : String(error), filenames: [],
-          });
-        }
-        return;
-      }
-      update({ phase: 'pending', pendingDocuments: [...documents], filenames: documents.map(({ name }) => name) });
+    if (decision.documents.length > 0) {
+      update({
+        phase: 'error', pendingDocuments: [],
+        code: 'ENGINEERING_MIXED_DROP_REQUIRES_SEPARATE_DOCUMENTS',
+        filenames: [decision.dxf.name, ...decision.documents.map(({ name }) => name)],
+      });
       return;
     }
     const combined = classifyEngineeringDrop([decision.dxf, ...current.pendingDocuments, ...decision.documents]);
@@ -104,7 +86,7 @@ export function createEngineeringDropBridgeController(input: {
     }
     update({ phase: 'importing', pendingDocuments: [], filenames: [combined.dxf.name, ...combined.documents.map(({ name }) => name)] });
     try {
-      await input.importFiles(combined.dxf, combined.documents);
+      await input.importFiles(combined.dxf);
       await input.refreshClaim();
       update({
         phase: 'success',
@@ -169,9 +151,7 @@ export function EngineeringDropBridge({ partition, refreshClaim }: {
   refreshClaim(): Promise<void>;
 }) {
   const bridge = useMemo(() => createEngineeringDropBridgeController({
-    importFiles: partition.actions.importFiles,
-    supplementDocuments: partition.actions.supplementDocuments,
-    hasDrawing: () => partition.state.getSnapshot().partition.drawingRef !== undefined,
+    importFiles: partition.actions.importDrawing,
     refreshClaim,
     releaseNativeDragState: releaseDshNativeDragState,
   }), [partition, refreshClaim]);
@@ -189,9 +169,8 @@ function releaseDshNativeDragState(): void {
 }
 
 function dropStatusText(state: EngineeringDropBridgeState): string {
-  if (state.phase === 'pending') return `已暂存 ${state.pendingDocuments.length} 份工程资料，拖入 DXF 后开始智能分区`;
-  if (state.phase === 'importing') return `正在本地读取并分析：${state.filenames.join('、')}`;
-  if (state.phase === 'success') return `导入完成，正在打开分区界面：${state.filenames.join('、')}`;
+  if (state.phase === 'importing') return `正在本地读取图纸：${state.filenames.join('、')}`;
+  if (state.phase === 'success') return `图纸已打开：${state.filenames.join('、')}；请描述任务后再开始分区`;
   return engineeringImportErrorText(state.code, state.filenames);
 }
 
@@ -201,6 +180,7 @@ export function engineeringImportErrorText(code: string | undefined, filenames: 
   if (code?.startsWith('DOCUMENT_PARSE_FAILED')) return `文档解析失败${names}`;
   if (code?.startsWith('DOCUMENT_TEXT_EMPTY')) return `文档中没有可提取的文字；扫描件暂不支持 OCR${names}`;
   if (code?.startsWith('DOCUMENT_LEGACY_FORMAT_UNSUPPORTED')) return `旧版 DOC/XLS/PPT 暂不支持，请另存为新版 Office、PDF 或文本格式${names}`;
+  if (code === 'ENGINEERING_MIXED_DROP_REQUIRES_SEPARATE_DOCUMENTS') return `请先单独拖入 DXF 打开图纸，再将文档作为会话附件拖入并描述任务${names}`;
   if (code === 'ENGINEERING_DROP_MULTIPLE_DXF') return `一次只能导入一张 DXF 图纸${names}`;
   if (code?.startsWith('ENGINEERING_DOCUMENT_FORMAT_UNSUPPORTED')) return `包含暂不支持的工程资料格式${names}`;
   if (code === 'ENGINEERING_DOCUMENT_DUPLICATE_NAME') return `工程资料存在重名文件${names}`;
