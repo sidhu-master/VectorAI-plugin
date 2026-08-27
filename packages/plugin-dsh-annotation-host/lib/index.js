@@ -796,6 +796,23 @@ function moveSemanticRange(draft, input) {
     evidence: [...structuredClone(draft.evidence), { id: evidenceId, origin: "manual", label: `Functional range ${input.edge} moved to ${z}` }]
   };
 }
+function renameSemanticGroup(draft, input) {
+  const group = draft.semanticGroups.find(({ id }) => id === input.groupId);
+  if (!group) throw new Error("PARTITION_GROUP_UNKNOWN");
+  const name = input.name.trim();
+  if (name.length === 0 || name.length > 120) throw new Error("PARTITION_GROUP_NAME_INVALID");
+  if (group.name === name) return structuredClone(draft);
+  const evidenceId = `manual:semantic-name:${group.id}:${draft.evidence.length}`;
+  return {
+    ...structuredClone(draft),
+    semanticGroups: draft.semanticGroups.map((candidate) => candidate.id === group.id ? { ...structuredClone(candidate), name, evidenceIds: unique([...candidate.evidenceIds, evidenceId]) } : structuredClone(candidate)),
+    evidence: [...structuredClone(draft.evidence), {
+      id: evidenceId,
+      origin: "manual",
+      label: `Functional region renamed to ${name}`
+    }]
+  };
+}
 function splitSegment(draft, input) {
   const index = draft.segments.findIndex(({ id }) => id === input.segmentId);
   if (index < 0) throw new Error("PARTITION_SEGMENT_UNKNOWN");
@@ -7924,6 +7941,7 @@ const partitionRevisionSchema = object({
 discriminatedUnion("type", [
   object({ type: literal("boundary.move"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
   object({ type: literal("semantic-range.move"), expectedDrawingRef: drawingRefSchema, groupId: idSchema, edge: _enum(["start", "end"]), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object({ type: literal("semantic-group.rename"), expectedDrawingRef: drawingRefSchema, groupId: idSchema, name: string().trim().min(1).max(120) }).strict(),
   object({ type: literal("segment.split"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
   object({ type: literal("boundary.merge"), expectedDrawingRef: drawingRefSchema, boundaryIndex: number().int().positive() }).strict(),
   object({ type: literal("segment.metadata"), expectedDrawingRef: drawingRefSchema, segmentId: idSchema, name: string().max(120).optional(), semanticType: string().max(80).optional() }).strict()
@@ -8219,7 +8237,7 @@ class PartitionSessionStore {
     requireRef$1(state.snapshot, command.expectedDrawingRef);
     if (state.snapshot.phase !== "editing" || !state.snapshot.draft) throw new Error("PARTITION_DRAFT_REQUIRED");
     const draft = structuredClone(state.snapshot.draft);
-    const next = command.type === "boundary.move" ? moveBoundary(draft, { boundaryIndex: command.boundaryIndex, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "semantic-range.move" ? moveSemanticRange(draft, { groupId: command.groupId, edge: command.edge, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "segment.split" ? splitSegment(draft, { segmentId: command.segmentId, z: command.z, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "boundary.merge" ? mergeBoundary(draft, { boundaryIndex: command.boundaryIndex }) : updateSegmentMetadata(draft, { segmentId: command.segmentId, ...command.name === void 0 ? {} : { name: command.name }, ...command.semanticType === void 0 ? {} : { semanticType: command.semanticType } });
+    const next = command.type === "boundary.move" ? moveBoundary(draft, { boundaryIndex: command.boundaryIndex, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "semantic-range.move" ? moveSemanticRange(draft, { groupId: command.groupId, edge: command.edge, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "semantic-group.rename" ? renameSemanticGroup(draft, { groupId: command.groupId, name: command.name }) : command.type === "segment.split" ? splitSegment(draft, { segmentId: command.segmentId, z: command.z, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance }) : command.type === "boundary.merge" ? mergeBoundary(draft, { boundaryIndex: command.boundaryIndex }) : updateSegmentMetadata(draft, { segmentId: command.segmentId, ...command.name === void 0 ? {} : { name: command.name }, ...command.semanticType === void 0 ? {} : { semanticType: command.semanticType } });
     return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, { ...state.snapshot, draft: next, canUndo: true, canRedo: false, updatedAt: this.ports.now() });
   }
   confirm(sessionId, expected) {

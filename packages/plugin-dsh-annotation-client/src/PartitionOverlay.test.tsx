@@ -66,6 +66,72 @@ describe('PartitionOverlay', () => {
     expect(onMoveSemanticRange).toHaveBeenCalledWith('gear', 'start', 68.5);
   });
 
+  it('edits a functional partition name inline when its label is clicked', async () => {
+    const value = draft();
+    value.semanticGroups = [{
+      id: 'gear', segmentIds: ['segment:3'], range: { zStart: 63.5, zEnd: 88.5 },
+      semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'],
+    }];
+    const onRenameBand = vi.fn(async () => undefined);
+    const renderer = TestRenderer.create(<svg><PartitionOverlay
+      draft={value} mode="functional" previewHeld={false} scale={2}
+      onMoveBoundary={() => undefined} onRenameBand={onRenameBand}
+    /></svg>);
+
+    act(() => renderer.root.findByProps({ 'aria-label': '重命名分区 一级齿轮' }).props.onClick({
+      preventDefault: vi.fn(), stopPropagation: vi.fn(),
+    }));
+    const input = renderer.root.findByProps({ 'aria-label': '编辑分区名称 一级齿轮' });
+    act(() => input.props.onChange({ currentTarget: { value: '精加工齿轮段' } }));
+    await act(async () => input.props.onKeyDown({
+      key: 'Enter', preventDefault: vi.fn(), stopPropagation: vi.fn(), currentTarget: { value: '精加工齿轮段' },
+    }));
+
+    expect(onRenameBand).toHaveBeenCalledWith(expect.objectContaining({ id: 'gear' }), '精加工齿轮段');
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('cancels inline partition naming with Escape', () => {
+    const value = draft();
+    value.semanticGroups = [{
+      id: 'gear', segmentIds: ['segment:3'], semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'],
+    }];
+    const onRenameBand = vi.fn();
+    const renderer = TestRenderer.create(<svg><PartitionOverlay
+      draft={value} mode="functional" previewHeld={false} scale={2}
+      onMoveBoundary={() => undefined} onRenameBand={onRenameBand}
+    /></svg>);
+    act(() => renderer.root.findByProps({ 'aria-label': '重命名分区 一级齿轮' }).props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() }));
+    const input = renderer.root.findByType('input');
+    act(() => input.props.onKeyDown({ key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() }));
+
+    expect(onRenameBand).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('input')).toHaveLength(0);
+  });
+
+  it('does not submit the same inline name twice when Enter is followed by blur', async () => {
+    const value = draft();
+    value.semanticGroups = [{
+      id: 'gear', segmentIds: ['segment:3'], semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'],
+    }];
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const onRenameBand = vi.fn(() => pending);
+    const renderer = TestRenderer.create(<svg><PartitionOverlay
+      draft={value} mode="functional" previewHeld={false} scale={2}
+      onMoveBoundary={() => undefined} onRenameBand={onRenameBand}
+    /></svg>);
+    act(() => renderer.root.findByProps({ 'aria-label': '重命名分区 一级齿轮' }).props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() }));
+    const input = renderer.root.findByType('input');
+    act(() => input.props.onChange({ currentTarget: { value: '精加工齿轮段' } }));
+    act(() => { void input.props.onKeyDown({ key: 'Enter', preventDefault: vi.fn(), stopPropagation: vi.fn() }); });
+    act(() => { void input.props.onBlur(); });
+
+    expect(onRenameBand).toHaveBeenCalledTimes(1);
+    finish();
+    await act(async () => pending);
+  });
+
   it('keeps every detected step as an independent draggable partition', () => {
     const value = draft();
     const markup = renderToStaticMarkup(<svg><PartitionOverlay

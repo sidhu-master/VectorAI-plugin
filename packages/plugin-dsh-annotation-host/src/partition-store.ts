@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  mergeBoundary, moveBoundary, moveSemanticRange, splitSegment, updateSegmentMetadata, validatePartition,
+  mergeBoundary, moveBoundary, moveSemanticRange, renameSemanticGroup, splitSegment, updateSegmentMetadata, validatePartition,
   type PartitionDraft as DomainPartitionDraft,
   type PartitionRevision as DomainPartitionRevision,
 } from '@vectorai/engineering-annotation';
@@ -72,6 +72,8 @@ export class PartitionSessionStore {
       ? moveBoundary(draft, { boundaryIndex: command.boundaryIndex, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance })
       : command.type === 'semantic-range.move'
         ? moveSemanticRange(draft, { groupId: command.groupId, edge: command.edge, requestedZ: command.requestedZ, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance })
+      : command.type === 'semantic-group.rename'
+        ? renameSemanticGroup(draft, { groupId: command.groupId, name: command.name })
       : command.type === 'segment.split'
         ? splitSegment(draft, { segmentId: command.segmentId, z: command.z, snapCandidates: draft.stepCandidates, snapTolerance: command.snapTolerance })
         : command.type === 'boundary.merge'

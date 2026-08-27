@@ -39,6 +39,26 @@ describe('PartitionSessionStore', () => {
     expect(edited.draft?.segments).toEqual(source.segments);
   });
 
+  it('renames a functional group as an undoable draft edit', () => {
+    const store = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition-r1' });
+    const source = draft();
+    source.semanticGroups = [{
+      id: 'group:seat', segmentIds: ['s0', 's1'], range: { zStart: 0.2, zEnd: 1.8 },
+      semanticType: 'seat', name: '原名称', evidenceIds: [],
+    }];
+    store.beginAnalysis('s', source.drawingRef);
+    store.setDraft('s', source);
+
+    const renamed = store.edit('s', {
+      type: 'semantic-group.rename', expectedDrawingRef: source.drawingRef,
+      groupId: 'group:seat', name: '  新轴段名称  ',
+    } as never);
+
+    expect(renamed.draft?.semanticGroups[0]).toMatchObject({ name: '新轴段名称' });
+    expect(renamed.draft?.evidence.at(-1)).toMatchObject({ origin: 'manual' });
+    expect(store.undo('s', source.drawingRef).draft?.semanticGroups[0]).toMatchObject({ name: '原名称' });
+  });
+
   it('cancels a draft without releasing the annotation workspace claim', () => {
     const store = new PartitionSessionStore();
     store.beginAnalysis('s', { drawingId: 'd', revision: 1 });
