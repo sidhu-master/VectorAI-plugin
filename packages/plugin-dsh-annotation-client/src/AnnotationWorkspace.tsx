@@ -30,6 +30,8 @@ import type { PartitionViewMode } from './partition-view-model';
 
 const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
+const PARTITION_HYDRATION_INTERVAL_MS = 500;
+const PARTITION_HYDRATION_MAX_ATTEMPTS = 1_200;
 type AnnotationPanelId = 'structure';
 
 export interface AnnotationWorkspaceProps {
@@ -65,6 +67,28 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   }), [displaySnapshot]);
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
+  useEffect(() => {
+    // The controller may have been created by the conversation drop bridge before
+    // an AI tool claimed this workspace. The claim is published before semantic
+    // review finishes, so continue hydrating while the Host reports `analyzing`.
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const hydrate = async () => {
+      attempts += 1;
+      await partition.actions.refresh().catch(() => undefined);
+      if (!active || attempts >= PARTITION_HYDRATION_MAX_ATTEMPTS) return;
+      if (partition.state.getSnapshot().partition.phase !== 'analyzing') return;
+      const workflowStatus = state.getSnapshot().workflow.status;
+      if (workflowStatus !== 'running' && workflowStatus !== 'reviewing') return;
+      timer = setTimeout(() => { void hydrate(); }, PARTITION_HYDRATION_INTERVAL_MS);
+    };
+    void hydrate();
+    return () => {
+      active = false;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [annotationState.activationEpoch, partition, state]);
   useEffect(() => {
     const release = () => partition.actions.setPreviewHeld(false);
     window.addEventListener('blur', release);
