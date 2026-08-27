@@ -14,6 +14,115 @@ function observable<T>(value: T) {
 }
 
 describe('AnnotationWorkspace', () => {
+  it('keeps hydrating a cached partition controller until the Host draft is ready', async () => {
+    vi.useFakeTimers();
+    const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
+    testWindow.setInterval = globalThis.setInterval;
+    testWindow.clearInterval = globalThis.clearInterval;
+    vi.stubGlobal('window', testWindow);
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const snapshot = {
+      version: 1 as const, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+      capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+    };
+    const runtime = {
+      snapshot: observable(snapshot),
+      viewport: observable({ x: 0, y: 0, scale: 1, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: snapshot, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport() {}, setSelection() {}, refresh: async () => undefined },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({
+      version: 1 as const, workspaceClaimed: true, activationEpoch: 12,
+      workflow: { status: 'running' as const, workflowId: 'partition-1' },
+    });
+    const partitionListeners = new Set<() => void>();
+    let partitionSnapshot = {
+      partition: { version: 1 as const, phase: 'idle' as const, canUndo: false, canRedo: false, updatedAt: 0 },
+      busy: false, previewHeld: false, error: null,
+    } as PartitionController['state'] extends { getSnapshot(): infer State } ? State : never;
+    const refreshPartition = vi.fn(async () => {
+      partitionSnapshot = refreshPartition.mock.calls.length === 1
+        ? { ...partitionSnapshot, partition: { ...partitionSnapshot.partition, phase: 'analyzing', updatedAt: 1 } }
+        : { ...partitionSnapshot, partition: { version: 1, phase: 'editing', drawingRef: snapshot.ref, draft: {
+          version: 1, drawingRef: snapshot.ref,
+          axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 10, orientation: 'forward' },
+          segments: [{ id: 'segment:1', zStart: 0, zEnd: 10, profile: { minRadius: 4, maxRadius: 5, sampleCount: 2 }, boundaryConfidence: 1, geometryNodeIds: [], boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [] }],
+          semanticGroups: [{ id: 'group:1', segmentIds: ['segment:1'], semanticType: 'bearing-seat', name: '轴承位', evidenceIds: [] }],
+          stepCandidates: [], evidence: [], diagnostics: [],
+        }, canUndo: false, canRedo: false, updatedAt: 2 } };
+      for (const listener of partitionListeners) listener();
+    });
+    const partition = {
+      state: {
+        getSnapshot: () => partitionSnapshot,
+        subscribe(listener: () => void) { partitionListeners.add(listener); return () => partitionListeners.delete(listener); },
+      },
+      actions: { refresh: refreshPartition, setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+      />);
+    });
+
+    expect(refreshPartition).toHaveBeenCalledOnce();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(refreshPartition).toHaveBeenCalledTimes(2);
+    expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(1);
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('stops hydrating when the annotation workflow has failed even if the partition phase is stale', async () => {
+    vi.useFakeTimers();
+    const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
+    testWindow.setInterval = globalThis.setInterval;
+    testWindow.clearInterval = globalThis.clearInterval;
+    vi.stubGlobal('window', testWindow);
+    const refreshPartition = vi.fn(async () => undefined);
+    const runtime = {
+      snapshot: observable(null),
+      viewport: observable({ x: 0, y: 0, scale: 1, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: null, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport() {}, setSelection() {}, refresh: async () => undefined },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({
+      version: 1 as const, workspaceClaimed: true, activationEpoch: 12,
+      workflow: { status: 'failed' as const, workflowId: 'partition-1', error: 'analysis rejected' },
+    });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'analyzing', canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh: refreshPartition, setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+      />);
+    });
+    expect(refreshPartition).toHaveBeenCalledOnce();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(refreshPartition).toHaveBeenCalledOnce();
+
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
   it('fits the drawing when the specialized workspace first takes over', async () => {
     const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
     testWindow.setInterval = globalThis.setInterval;
@@ -42,7 +151,7 @@ describe('AnnotationWorkspace', () => {
     });
     const partition = {
       state: observable({ partition: { version: 1, phase: 'editing', drawingRef: snapshot.ref, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
-      actions: { setPreviewHeld() {} }, dispose() {},
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
     } as unknown as PartitionController;
 
     let renderer: TestRenderer.ReactTestRenderer;
@@ -80,7 +189,7 @@ describe('AnnotationWorkspace', () => {
     });
     const partition = {
       state: observable({ partition: { version: 1, phase: 'analyzing', canUndo: false, canRedo: false, updatedAt: 1 }, busy: true, previewHeld: false, error: null }),
-      actions: { setPreviewHeld() {} }, dispose() {},
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
     } as unknown as PartitionController;
     let renderer: TestRenderer.ReactTestRenderer;
 
@@ -126,7 +235,7 @@ describe('AnnotationWorkspace', () => {
       .mockResolvedValueOnce(undefined);
     const partition = {
       state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
-      actions: { setPreviewHeld() {}, stageDocuments, clearDocuments }, dispose() {},
+      actions: { refresh: async () => undefined, setPreviewHeld() {}, stageDocuments, clearDocuments }, dispose() {},
     } as unknown as PartitionController;
 
     const renderer = TestRenderer.create(<AnnotationWorkspace

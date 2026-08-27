@@ -6303,6 +6303,8 @@ window.__ModuleLoader__.load({
     }
     const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(",");
     const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
+    const PARTITION_HYDRATION_INTERVAL_MS = 500;
+    const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
     function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPlan }) {
       var _a2;
       const snapshot = useObservable(runtime.snapshot);
@@ -6328,6 +6330,27 @@ window.__ModuleLoader__.load({
       }, [displaySnapshot]);
       const draft = partitionState.partition.draft;
       const confirmed = partitionState.partition.confirmed;
+      react.useEffect(() => {
+        let active = true;
+        let timer;
+        let attempts = 0;
+        const hydrate = async () => {
+          attempts += 1;
+          await partition.actions.refresh().catch(() => void 0);
+          if (!active || attempts >= PARTITION_HYDRATION_MAX_ATTEMPTS) return;
+          if (partition.state.getSnapshot().partition.phase !== "analyzing") return;
+          const workflowStatus = state.getSnapshot().workflow.status;
+          if (workflowStatus !== "running" && workflowStatus !== "reviewing") return;
+          timer = setTimeout(() => {
+            void hydrate();
+          }, PARTITION_HYDRATION_INTERVAL_MS);
+        };
+        void hydrate();
+        return () => {
+          active = false;
+          if (timer !== void 0) clearTimeout(timer);
+        };
+      }, [annotationState.activationEpoch, partition, state]);
       react.useEffect(() => {
         const release = () => partition.actions.setPreviewHeld(false);
         window.addEventListener("blur", release);
