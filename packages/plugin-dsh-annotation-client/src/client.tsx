@@ -33,7 +33,10 @@ export async function apply(ctx: Context) {
       const partitionFor = (sessionId: string) => {
         const current = partitionControllers.get(sessionId);
         if (current) return current;
-        const controller = createPartitionController(sessionId, annotationRemote);
+        const controller = createPartitionController(
+          sessionId,
+          () => scope.get('remote').drawingAnnotation,
+        );
         partitionControllers.set(sessionId, controller);
         void controller.actions.refresh();
         return controller;
