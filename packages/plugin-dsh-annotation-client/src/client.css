@@ -26,9 +26,10 @@
 .vai-annotation-workspace__body { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; }
 .vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }
 .vai-annotation-workspace__surface { position: absolute; inset: 0; }
-.vai-partition-progress { position: absolute; z-index: 9; top: 14px; left: 50%; display: flex; align-items: center; gap: 8px; padding: 7px 12px; transform: translateX(-50%); border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; pointer-events: none; }
+.vai-annotation-status-stack { position: absolute; z-index: 12; top: 14px; left: 50%; display: grid; justify-items: center; gap: 7px; width: max-content; max-width: calc(100% - 96px); transform: translateX(-50%); pointer-events: none; }
+.vai-partition-progress { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; }
 .vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }
-.vai-partition-error { position: absolute; z-index: 10; top: 14px; left: 50%; margin: 0; padding: 7px 12px; transform: translateX(-50%); border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; pointer-events: none; }
+.vai-partition-error { margin: 0; padding: 7px 12px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; }
 @keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }
 .vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }
 .vai-annotation-panel { min-height: 0; padding: 14px; overflow: auto; }
@@ -44,6 +45,8 @@
 .vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }
 .vai-annotation-import__files { display: grid; max-height: 112px; gap: 4px; margin: -4px 0 0; padding: 8px 10px 8px 28px; overflow: auto; border-radius: 8px; color: #9fb2c7; background: rgba(5, 12, 19, .55); font-size: 11px; }
 .vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }
+.vai-engineering-documents-status { display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 8px 10px 8px 14px; border: 1px solid rgba(52, 211, 153, .42); border-radius: 10px; color: #b7f7db; background: rgba(8, 32, 29, .94); box-shadow: 0 10px 28px rgba(0, 0, 0, .28); font-size: 12px; pointer-events: auto; }
+.vai-engineering-documents-status button { padding: 4px 8px; border: 1px solid rgba(148, 163, 184, .3); border-radius: 7px; color: #d7e1ec; background: rgba(30, 41, 59, .72); cursor: pointer; }
 
 .vai-engineering-drop { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; padding: 6px 10px; border: 1px solid rgba(72, 187, 238, .28); border-radius: 9px; color: #b8dff2; background: rgba(9, 50, 70, .58); font-size: 12px; }
 .vai-engineering-drop--pending { border-color: rgba(96, 165, 250, .3); background: rgba(30, 64, 175, .12); }

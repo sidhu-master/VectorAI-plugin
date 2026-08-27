@@ -10,7 +10,7 @@ VectorAI 是一个本地优先、可嵌入宿主的二维空间与工程图插�
 - 二维空间查询与确定性语义编辑求解
 - React 画布：网格/坐标轴、缩放拖动、框选、对象/属性面板、Preview、Undo/Redo、DXF 导出
 - DSH 会话内画布、附件导入、本地矢量化、Host-owned 语义编辑与临时运动铰链
-- DSH 输入区拖入 DXF 时只在本地打开图纸；工程资料保持普通会话附件，用户明确要求分区后才进入可编辑智能分区
+- DSH 输入区拖入 DXF 时只在本地打开图纸；插件可暂存工程资料但不自动分区，用户明确描述任务后才进入可编辑智能分区
 - 版本化 Drawing Surface API、受限 Runtime 和受控画布原语
 - DSH 会话级 Workspace registry、sticky claim 与永久第一层 fallback
 - 第一层 staged extension Preview 权限边界

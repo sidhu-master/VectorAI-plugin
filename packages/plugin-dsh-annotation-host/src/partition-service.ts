@@ -4,6 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { analyzeShaftPartition, type PartitionDraft } from '@vectorai/engineering-annotation';
 import {
   type DrawingRef,
+  type EngineeringDocumentInput,
   type DrawingSpaceExtensionHost,
   type PartitionDocumentSupplementRequest,
   type PartitionEditCommand,
@@ -14,6 +15,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AnnotationSessionStateStore } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
 import { extractEngineeringDocuments } from './engineering-document-extractor';
+import { ENGINEERING_DOCUMENT_LIMITS } from './engineering-document-extractor';
 
 export interface PartitionSemanticReviewInput {
   agent: Agent;
@@ -27,6 +29,10 @@ type SpacePort = Pick<DrawingSpaceExtensionHost<Agent>, 'importDxf' | 'getSnapsh
 type SpaceSnapshot = NonNullable<ReturnType<SpacePort['getSnapshot']>>;
 
 export class PartitionWorkflowService {
+  readonly #stagedDocuments = new Map<string, {
+    drawingRef?: DrawingRef;
+    entries: Array<{ name: string; digest: string; sourceBytes: number; text: string; textBytes: number }>;
+  }>();
   constructor(
     private readonly space: SpacePort,
     private readonly partitions: PartitionSessionStore,
@@ -35,6 +41,48 @@ export class PartitionWorkflowService {
     private readonly extractDocuments: typeof extractEngineeringDocuments = extractEngineeringDocuments,
   ) {}
 
+  async stageDocuments(agent: Agent, documents: readonly EngineeringDocumentInput[], signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
+    const sessionId = String(agent.id);
+    const drawingRef = this.space.getSnapshot(agent)?.ref;
+    const stored = this.#stagedDocuments.get(sessionId);
+    const previous = stored?.drawingRef && drawingRef && !sameDrawing(stored.drawingRef, drawingRef) ? undefined : stored;
+    const names = new Set<string>();
+    const duplicate = [...(previous?.entries ?? []), ...documents].find(({ name }) => {
+      const key = name.toLocaleLowerCase();
+      if (names.has(key)) return true;
+      names.add(key);
+      return false;
+    });
+    if (duplicate) throw new Error(`ENGINEERING_DOCUMENT_DUPLICATE_NAME:${duplicate.name}`);
+    const extracted = await this.extractDocuments(documents, { signal });
+    signal?.throwIfAborted();
+    if (!extracted.combinedText) throw new Error('ENGINEERING_DOCUMENT_REQUIRED');
+    const additions = extracted.documents.map((document, index) => ({
+      name: document.name,
+      digest: documents[index]!.digest,
+      sourceBytes: Buffer.from(documents[index]!.base64, 'base64').byteLength,
+      text: document.text,
+      textBytes: Buffer.byteLength(document.text, 'utf8'),
+    }));
+    const entries = [...(previous?.entries ?? []), ...additions];
+    if (entries.length > ENGINEERING_DOCUMENT_LIMITS.maxDocuments) throw new Error('ENGINEERING_DOCUMENT_COUNT_LIMIT');
+    if (entries.reduce((total, entry) => total + entry.sourceBytes, 0) > ENGINEERING_DOCUMENT_LIMITS.maxTotalDocumentBytes) throw new Error('ENGINEERING_DOCUMENT_TOTAL_SIZE_LIMIT');
+    if (entries.reduce((total, entry) => total + entry.textBytes, 0) > ENGINEERING_DOCUMENT_LIMITS.maxTotalTextBytes) throw new Error('DOCUMENT_TOTAL_TEXT_SIZE_LIMIT');
+    this.#stagedDocuments.set(sessionId, {
+      ...(drawingRef ?? previous?.drawingRef ? { drawingRef: drawingRef ?? previous!.drawingRef } : {}),
+      entries,
+    });
+    return this.partitions.get(sessionId);
+  }
+
+  clearDocuments(agent: Agent): PartitionSessionSnapshot {
+    const sessionId = String(agent.id);
+    this.#stagedDocuments.delete(sessionId);
+    return this.partitions.get(sessionId);
+  }
+
+  disposeSession(sessionId: string): void { this.#stagedDocuments.delete(sessionId); }
+
   async importDrawing(agent: Agent, dxf: PartitionImportRequest['dxf'], signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
     const bytes = validateDxf(dxf);
     signal?.throwIfAborted();
@@ -42,6 +90,9 @@ export class PartitionWorkflowService {
     const snapshot = this.space.getSnapshot(agent);
     if (!snapshot) throw new Error('DRAWING_REQUIRED');
     const sessionId = String(agent.id);
+    const staged = this.#stagedDocuments.get(sessionId);
+    if (staged?.drawingRef && !sameDrawing(staged.drawingRef, snapshot.ref)) this.#stagedDocuments.delete(sessionId);
+    else if (staged && !staged.drawingRef) this.#stagedDocuments.set(sessionId, { ...staged, drawingRef: snapshot.ref });
     this.annotations.release(sessionId);
     return this.partitions.bindDrawing(sessionId, snapshot.ref);
   }
@@ -81,7 +132,12 @@ export class PartitionWorkflowService {
     signal?.throwIfAborted();
     const drawingSourceName = snapshot.document.sources?.find(({ kind }) => kind === 'dxf')?.name;
     if (drawingSourceName === undefined) throw new Error('DXF_DRAWING_REQUIRED');
-    return this.#analyze(agent, snapshot, engineeringContext?.trim() || undefined, drawingSourceName, signal);
+    const staged = this.#stagedDocuments.get(String(agent.id));
+    const stagedText = staged && (!staged.drawingRef || sameDrawing(staged.drawingRef, snapshot.ref))
+      ? staged.entries.map(({ name, text }) => `===== ENGINEERING DOCUMENT: ${name} =====\n${text}\n===== END ENGINEERING DOCUMENT: ${name} =====`).join('\n')
+      : undefined;
+    const combinedContext = [stagedText, engineeringContext?.trim()].filter(Boolean).join('\n') || undefined;
+    return this.#analyze(agent, snapshot, combinedContext, drawingSourceName, signal);
   }
 
   async #analyze(agent: Agent, snapshot: SpaceSnapshot, engineeringText: string | undefined, drawingSourceName: string, signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
@@ -183,4 +239,8 @@ function validateDxf(dxf: PartitionImportRequest['dxf']): Uint8Array {
   const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
   if (digest !== dxf.digest) throw new Error('DXF_DIGEST_MISMATCH');
   return bytes;
+}
+
+function sameDrawing(left: DrawingRef, right: DrawingRef): boolean {
+  return left.drawingId === right.drawingId;
 }

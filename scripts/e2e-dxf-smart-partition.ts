@@ -91,6 +91,27 @@ assert.equal(drawingDigestAfter, drawingDigestBefore);
 const origins = reviewed.evidence.reduce<Record<EvidenceOrigin, number>>((counts, evidence) => {
   counts[evidence.origin] += 1; return counts;
 }, { document: 0, geometry: 0, fused: 0, ai: 0, manual: 0 });
+const stagedDrawings = new InMemoryDrawingRepository({ vectorizer: { async vectorize() { throw new Error('IMAGE_VECTORIZER_MUST_NOT_RUN'); } }, now: () => 2 });
+const stagedAnnotations = new AnnotationSessionStateStore(undefined, { now: () => 8 });
+const stagedService = new PartitionWorkflowService({
+  importDxf: async (_agent, input, signal) => stagedDrawings.importDxf('e2e-staged', { ...input, signal }),
+  getSnapshot: () => stagedDrawings.getSnapshot('e2e-staged'),
+  renderObservation: async () => { throw new Error('OBSERVATION_MUST_NOT_RUN'); },
+}, new PartitionSessionStore(), stagedAnnotations);
+const stagedAgent = { id: 'e2e-staged' } as Parameters<PartitionWorkflowService['importDrawing']>[0];
+const opened = await stagedService.importDrawing(stagedAgent, {
+  name: 'initial-shaft.dxf', digest, base64: bytes.toString('base64'),
+});
+assert.equal(opened.phase, 'idle');
+assert.equal(stagedAnnotations.get('e2e-staged').workspaceClaimed, false);
+const staged = await stagedService.stageDocuments(stagedAgent, [{
+  name: '样本图001# DXF工程数据文档.txt', mediaType: 'text/plain', digest: documentDigest, base64: documentBytes.toString('base64'),
+}]);
+assert.equal(staged.phase, 'idle');
+assert.equal(stagedAnnotations.get('e2e-staged').workspaceClaimed, false);
+const explicitlyStarted = await stagedService.analyzeCurrent(stagedAgent);
+assert.equal(explicitlyStarted.phase, 'editing');
+assert(explicitlyStarted.draft?.semanticGroups.some(({ name }) => name === '外花键'));
 const manifest = {
   drawingRef: snapshot.ref,
   entityCounts: [...snapshot.document.geometry, ...snapshot.document.annotations].reduce<Record<string, number>>((counts, node) => {
@@ -106,6 +127,7 @@ const manifest = {
   origins,
   diagnosticCodes: reviewed.diagnostics.map(({ code }) => code),
   lifecycle,
+  stagedIntentFlow: [opened.phase, staged.phase, explicitlyStarted.phase],
   drawingGeometryDigest: drawingDigestAfter,
 };
 assert(Math.abs(manifest.axisLength - 173) < 0.001);

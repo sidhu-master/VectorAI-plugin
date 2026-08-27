@@ -2,11 +2,13 @@
 
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import { DRAWING_SURFACE_REFRESH_EVENT, type DrawingSurfaceObservable, type DrawingSurfaceRefreshDetail } from '@vectorai/drawing-surface-api';
-import type { DrawingRef, EngineeringDocumentInput, PartitionDocumentSupplementRequest, PartitionEditCommand, PartitionImportRequest, PartitionSessionSnapshot } from '@vectorai/plugin-space-contracts';
+import type { DrawingRef, EngineeringDocumentInput, EngineeringDocumentStageRequest, PartitionDocumentSupplementRequest, PartitionEditCommand, PartitionImportRequest, PartitionSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import { ENGINEERING_IMPORT_LIMITS, validateEngineeringDocumentFiles } from './engineering-file-policy';
 
 export interface PartitionRemote {
   importDrawing(sessionId: string, request: PartitionImportRequest['dxf']): Promise<RemoteResult<PartitionSessionSnapshot>>;
+  stageDocuments(sessionId: string, request: EngineeringDocumentStageRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
+  clearDocuments(sessionId: string): Promise<RemoteResult<PartitionSessionSnapshot>>;
   importAndAnalyze(sessionId: string, request: PartitionImportRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
   supplementDocuments(sessionId: string, request: PartitionDocumentSupplementRequest): Promise<RemoteResult<PartitionSessionSnapshot>>;
   getPartitionState(sessionId: string): Promise<RemoteResult<PartitionSessionSnapshot>>;
@@ -27,6 +29,8 @@ export interface PartitionController {
   actions: {
     refresh(): Promise<void>;
     importDrawing(dxf: File): Promise<void>;
+    stageDocuments(engineeringDocuments: readonly File[]): Promise<void>;
+    clearDocuments(): Promise<void>;
     importFiles(dxf: File, engineeringDocuments?: readonly File[]): Promise<void>;
     supplementDocuments(engineeringDocuments: readonly File[]): Promise<void>;
     moveBoundary(boundaryIndex: number, requestedZ: number, snapTolerance: number): Promise<void>;
@@ -86,6 +90,14 @@ export function createPartitionController(sessionId: string, remote: PartitionRe
           DRAWING_SURFACE_REFRESH_EVENT, { detail: { sessionId } },
         ));
       },
+      async stageDocuments(engineeringDocuments) {
+        if (engineeringDocuments.length === 0) throw new Error('ENGINEERING_DOCUMENT_REQUIRED');
+        const documents = await serializeEngineeringDocuments(engineeringDocuments);
+        await run(() => remote.stageDocuments(sessionId, {
+          engineeringDocuments: documents,
+        }));
+      },
+      clearDocuments: () => run(() => remote.clearDocuments(sessionId)),
       async importFiles(dxf, engineeringDocuments = []) {
         const dxfRequest = await serializeDxf(dxf);
         const documents = await serializeEngineeringDocuments(engineeringDocuments);

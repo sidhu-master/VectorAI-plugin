@@ -7,7 +7,7 @@ import { ANNOTATION_REMOTE } from './remote';
 describe('ANNOTATION_REMOTE', () => {
   it('exposes the strict session projection and explicit partition lifecycle', () => {
     expect(ANNOTATION_REMOTE.descriptors.map(({ method }) => method)).toEqual([
-      'getSessionState', 'importDrawing', 'importAndAnalyze', 'supplementDocuments', 'getPartitionState', 'editPartition',
+      'getSessionState', 'importDrawing', 'stageDocuments', 'clearDocuments', 'importAndAnalyze', 'supplementDocuments', 'getPartitionState', 'editPartition',
       'confirmPartition', 'cancelPartition', 'reopenPartition', 'undoPartition', 'redoPartition',
     ]);
     const [descriptor] = ANNOTATION_REMOTE.descriptors;

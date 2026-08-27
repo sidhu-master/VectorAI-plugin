@@ -13582,6 +13582,9 @@ window.__ModuleLoader__.load({
       expectedDrawingRef: drawingRefSchema,
       engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
     }).strict();
+    object({
+      engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
+    }).strict();
     const engineeringDiagnosticSchema = object({
       id: idSchema,
       severity: _enum(["info", "warning", "error"]),

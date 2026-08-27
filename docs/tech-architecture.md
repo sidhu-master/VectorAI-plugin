@@ -122,7 +122,7 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 - create/replace/assess/finalize/discard extension Preview；
 - 独立 Client 通过只读 annotation session projection 驱动 claim，不检查消息文本或附件。
 - 第一层提供宿主内 `importDxf` 和受限 `renderObservation` 扩展接口；它们不注册全局上传路由或提示词；
-- 第二层 Client 通过 `conversation.input.dock` 注册会话级 DXF 桥；单独拖入 DXF 仅委托第一层原子导入并刷新画布，不认领第二层 Workspace。文档和图片附件由 DSH 原生链路处理；为避免吞掉资料，全局 DXF+文档混合拖入会提示用户分开操作，专业工作区仍支持显式组合导入。只有模型在用户明确任务下调用 `drawing_partition_start`，或用户在专业工作区显式执行组合导入，第二层才认领 Workspace；
+- 第二层 Client 通过 `conversation.input.dock` 注册会话级文件桥。DXF 仅委托第一层原子导入并刷新画布；受支持文档通过 `stageDocuments` 在本机解析并绑定当前会话，既不提交分区也不认领第二层 Workspace。用户随后明确提出分区任务时，`drawing_partition_start` 才消费已暂存文档上下文并接管 Workspace；普通图片继续走 DSH 原生链路；
 - 第二层 Host 在第一层 `importDxf` 之前完成文档格式、大小、摘要和本地文本抽取。文本类由自有解码器处理，PDF/新版 Office/OpenDocument/RTF/EPUB 由 Host-only `officeparser` 处理，OCR、CDN worker 和远端服务全部关闭；
 - 第二层依次执行文档解析、轴向坐标系、外轮廓、持久台阶、证据融合；`segments` 是由几何负责的完整连续轴段，`semanticGroups.range` 保存独立的精确功能范围，`segmentIds` 只保留关联几何证据。功能范围允许跨过轴段边界、互相留空，两者不再共用同一个显示或编辑含义；
 - 缺失语义只交给无工具、深度 1、严格输出 schema 的视觉 reviewer；输入是稳定轴段 ID 与本地编号图，输出不含坐标，也不要求覆盖全部轴段。Host 只接受受控类型、`confidence >= 0.8` 且逐段视觉证据完整的提议，并拒绝泛化工作区；

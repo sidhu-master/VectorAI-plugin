@@ -6064,6 +6064,9 @@ const partitionDocumentSupplementRequestSchema = object({
   expectedDrawingRef: drawingRefSchema,
   engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
 }).strict();
+const engineeringDocumentStageRequestSchema = object({
+  engineeringDocuments: array(engineeringDocumentInputSchema).min(1).max(16)
+}).strict();
 const engineeringDiagnosticSchema = object({
   id: idSchema,
   severity: _enum(["info", "warning", "error"]),
@@ -6213,6 +6216,8 @@ const TYPERT = {
 function partitionInvocations() {
   return [
     invocation("importDrawing", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest.dxf", partitionImportRequestSchema.shape.dxf)]),
+    invocation("stageDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#EngineeringDocumentStageRequest", engineeringDocumentStageRequestSchema)]),
+    invocation("clearDocuments", []),
     invocation("importAndAnalyze", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionImportRequest", partitionImportRequestSchema)]),
     invocation("supplementDocuments", [jsonParameter("request", "@vectorai/plugin-space-contracts#PartitionDocumentSupplementRequest", partitionDocumentSupplementRequestSchema)]),
     invocation("getPartitionState", []),

@@ -37,6 +37,86 @@ describe('PartitionWorkflowService', () => {
     expect(annotations.get('s').workspaceClaimed).toBe(false);
   });
 
+  it('stages extracted documents without claiming the workspace and consumes them only on explicit analysis', async () => {
+    const document = drawing();
+    document.sources = [{ id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf', digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf' }];
+    const bytes = new TextEncoder().encode('document');
+    const extract = vi.fn(async () => ({
+      documents: [{ name: 'notes.txt', format: 'txt', text: '[region:bearing:B01]\nname=轴承位\ncenter_z=5\nwidth=4', warnings: [] }],
+      combinedText: '[region:bearing:B01]\nname=轴承位\ncenter_z=5\nwidth=4',
+    }));
+    const annotations = new AnnotationSessionStateStore();
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(),
+      getSnapshot: () => ({ version: 1 as const, ref: { drawingId: 'd', revision: 1 }, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    } as never, new PartitionSessionStore(), annotations, undefined, extract);
+
+    const staged = await service.stageDocuments({ id: 's' } as Agent, [{
+      name: 'notes.txt', digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, base64: Buffer.from(bytes).toString('base64'),
+    }]);
+    expect(staged.phase).toBe('idle');
+    expect(annotations.get('s').workspaceClaimed).toBe(false);
+
+    const result = await service.analyzeCurrent({ id: 's' } as Agent);
+    expect(result.phase).toBe('editing');
+    expect(result.draft?.evidence.some(({ origin }) => origin === 'document')).toBe(true);
+  });
+
+  it('enforces cumulative document limits and duplicate names across staging calls', async () => {
+    const extract = vi.fn(async (inputs: Array<{ name: string }>) => ({
+      documents: inputs.map(({ name }) => ({ name, format: 'txt', text: 'x', warnings: [] })),
+      combinedText: 'x',
+    }));
+    const service = new PartitionWorkflowService({ getSnapshot: () => null } as never, new PartitionSessionStore(), new AnnotationSessionStateStore(), undefined, extract as never);
+    const input = (name: string) => ({ name, digest: `sha256:${'a'.repeat(64)}`, base64: 'eA==' });
+    await service.stageDocuments({ id: 's' } as Agent, Array.from({ length: 16 }, (_, index) => input(`part-${index}.txt`)));
+
+    await expect(service.stageDocuments({ id: 's' } as Agent, [input('part-16.txt')]))
+      .rejects.toThrow('ENGINEERING_DOCUMENT_COUNT_LIMIT');
+    await expect(service.stageDocuments({ id: 's' } as Agent, [input('part-0.txt')]))
+      .rejects.toThrow('ENGINEERING_DOCUMENT_DUPLICATE_NAME');
+    await expect(service.stageDocuments({ id: 'same-call' } as Agent, [input('notes.txt'), input('NOTES.TXT')]))
+      .rejects.toThrow('ENGINEERING_DOCUMENT_DUPLICATE_NAME');
+  });
+
+  it('clears context bound to an older drawing when a replacement DXF is opened', async () => {
+    const document = drawing();
+    document.sources = [{ id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf', digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf' }];
+    let ref = { drawingId: 'a', revision: 1 };
+    const bytes = new TextEncoder().encode('DXF bytes');
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const extract = vi.fn(async () => ({ documents: [{ name: 'notes.txt', format: 'txt', text: '[region:bearing:B01]\nname=旧轴承位\ncenter_z=5\nwidth=4', warnings: [] }], combinedText: '[region:bearing:B01]\nname=旧轴承位\ncenter_z=5\nwidth=4' }));
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(async () => { ref = { drawingId: 'b', revision: 1 }; return { status: 'imported', ref, provisional: false }; }),
+      getSnapshot: () => ({ version: 1 as const, ref, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    } as never, new PartitionSessionStore(), new AnnotationSessionStateStore(), undefined, extract);
+    await service.stageDocuments({ id: 's' } as Agent, [{ name: 'notes.txt', digest: `sha256:${'a'.repeat(64)}`, base64: 'eA==' }]);
+
+    await service.importDrawing({ id: 's' } as Agent, { name: 'replacement.dxf', digest, base64: Buffer.from(bytes).toString('base64') });
+    const result = await service.analyzeCurrent({ id: 's' } as Agent);
+
+    expect(result.draft?.semanticGroups.some(({ name }) => name === '旧轴承位')).toBe(false);
+  });
+
+  it('keeps staged document context across revisions of the same drawing', async () => {
+    const document = drawing();
+    document.sources = [{ id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf', digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf' }];
+    let ref = { drawingId: 'same-drawing', revision: 1 };
+    const extract = vi.fn(async () => ({
+      documents: [{ name: 'notes.txt', format: 'txt', text: '[region:bearing:B01]\nname=跨版本轴承位\ncenter_z=5\nwidth=4', warnings: [] }],
+      combinedText: '[region:bearing:B01]\nname=跨版本轴承位\ncenter_z=5\nwidth=4',
+    }));
+    const service = new PartitionWorkflowService({
+      getSnapshot: () => ({ version: 1 as const, ref, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    } as never, new PartitionSessionStore(), new AnnotationSessionStateStore(), undefined, extract);
+    await service.stageDocuments({ id: 's' } as Agent, [{ name: 'notes.txt', digest: `sha256:${'a'.repeat(64)}`, base64: 'eA==' }]);
+    ref = { drawingId: 'same-drawing', revision: 2 };
+
+    const result = await service.analyzeCurrent({ id: 's' } as Agent);
+
+    expect(result.draft?.evidence.some(({ origin }) => origin === 'document')).toBe(true);
+  });
+
   it('runs only through explicit DXF import and invokes bounded review for uncovered IDs', async () => {
     const bytes = new TextEncoder().encode('DXF bytes');
     const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;

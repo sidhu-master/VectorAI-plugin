@@ -103,7 +103,7 @@ export function createPartitionStartTool(workflow: {
 }) {
   return defineTool({
     name: 'drawing_partition_start',
-    description: 'Start or refresh smart shaft partitioning for the active DXF only when the user explicitly asks to partition, segment, or identify functional shaft regions. A document attachment alone is never intent. If the user supplied relevant engineering documentation, pass only its concise partition-related text in engineeringContext; local geometry computes and snaps every boundary.',
+    description: 'Start or refresh smart shaft partitioning for the active DXF only when the user explicitly asks to partition, segment, or identify functional shaft regions. Uploading a document alone is never intent. Documents staged by the VectorAI file bridge are consumed automatically; engineeringContext is only for concise partition evidence stated directly in the user message. Local geometry computes and snaps every boundary.',
     parameters: {
       engineeringContext: { type: 'string', description: 'Optional concise, verbatim partition-related evidence from the user-provided document. Omit when none is relevant.' },
     },

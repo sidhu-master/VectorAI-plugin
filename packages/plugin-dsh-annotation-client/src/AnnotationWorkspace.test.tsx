@@ -99,7 +99,7 @@ describe('AnnotationWorkspace', () => {
     vi.useRealTimers();
   });
 
-  it('offers the complete engineering file matrix only through the bottom upload control', () => {
+  it('offers the complete engineering file matrix through the bottom upload control and confirms staged documents', async () => {
     vi.stubGlobal('window', new EventTarget());
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     const snapshot = {
@@ -120,9 +120,13 @@ describe('AnnotationWorkspace', () => {
     const state = observable({
       version: 1 as const, workspaceClaimed: false, activationEpoch: 0, workflow: { status: 'idle' as const },
     });
+    const stageDocuments = vi.fn(async () => undefined);
+    const clearDocuments = vi.fn()
+      .mockRejectedValueOnce(new Error('DOCUMENT_CLEAR_FAILED'))
+      .mockResolvedValueOnce(undefined);
     const partition = {
       state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
-      actions: { setPreviewHeld() {} }, dispose() {},
+      actions: { setPreviewHeld() {}, stageDocuments, clearDocuments }, dispose() {},
     } as unknown as PartitionController;
 
     const renderer = TestRenderer.create(<AnnotationWorkspace
@@ -137,6 +141,20 @@ describe('AnnotationWorkspace', () => {
     for (const extension of ['.txt', '.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf', '.epub']) {
       expect(accepts.some((accept) => accept.includes(extension))).toBe(true);
     }
+    const engineeringDocument = new File(['dimensions'], 'dimensions.txt', { type: 'text/plain' });
+    await act(async () => {
+      renderer.root.findByType('input').props.onChange({ currentTarget: { files: [engineeringDocument], value: 'dimensions.txt' } });
+    });
+    expect(stageDocuments).toHaveBeenCalledWith([engineeringDocument]);
+    expect(renderer.root.findByProps({ role: 'status' }).findByType('span').children.join('')).toContain('已添加 1 份工程资料');
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '清除已添加的工程资料' }).props.onClick(); });
+    expect(clearDocuments).toHaveBeenCalledOnce();
+    const statusStack = renderer.root.findByProps({ 'data-annotation-status-stack': 'true' });
+    expect(statusStack.findAllByProps({ role: 'status' })).toHaveLength(1);
+    expect(statusStack.findAllByProps({ role: 'alert' })).toHaveLength(1);
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '清除已添加的工程资料' }).props.onClick(); });
+    expect(clearDocuments).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findAllByProps({ role: 'status' })).toHaveLength(0);
     act(() => renderer.unmount());
     vi.unstubAllGlobals();
   });
