@@ -25,6 +25,24 @@ export interface Disposable {
   dispose(): void;
 }
 
+export type DrawingLayerCategory = 'engineering' | 'cad' | 'assistant' | 'interaction';
+export type DrawingLayerIcon = 'partition' | 'angle' | 'dimension' | 'tolerance' | 'cad' | 'assistant';
+
+export interface DrawingLayerDefinition {
+  id: string;
+  label: string;
+  category: DrawingLayerCategory;
+  icon?: DrawingLayerIcon;
+  order: number;
+  defaultVisible: boolean;
+}
+
+export interface DrawingLayerRegistry {
+  registerLayer(definition: DrawingLayerDefinition): Disposable;
+  getLayers(): readonly DrawingLayerDefinition[];
+  subscribeLayers(listener: () => void): () => void;
+}
+
 export interface DrawingWorkspaceClaim {
   active: boolean;
   activationEpoch: number;
@@ -38,6 +56,7 @@ export interface DrawingSurfaceComponentProps {
   sessionId: string;
   namespace: string;
   runtime: DrawingSurfaceRuntime;
+  layerRegistry?: DrawingLayerRegistry;
 }
 
 export type DrawingSurfaceComponent<Props = DrawingSurfaceComponentProps> = (
@@ -62,7 +81,7 @@ export interface DrawingWorkspaceRegistrySnapshot {
   contributionIds: readonly string[];
 }
 
-export interface DrawingSurfaceRegistry {
+export interface DrawingSurfaceRegistry extends DrawingLayerRegistry {
   registerWorkspace(contribution: DrawingWorkspaceContribution): Disposable;
   getWorkspaceSnapshot(sessionId: string): DrawingWorkspaceRegistrySnapshot;
   getWorkspaceContribution(id: string): DrawingWorkspaceContribution | null;
