@@ -16,7 +16,13 @@ export interface ProjectAxialSchemeInput {
 }
 
 export function projectAxialDimensionScheme(input: ProjectAxialSchemeInput): EngineeringAnnotationDraft {
-  const candidateIds = unique([...input.scheme.displayedCandidateIds, ...input.scheme.closureCandidateIds]);
+  const candidateIds = unique([
+    ...input.scheme.displayedCandidateIds,
+    ...input.scheme.closureCandidateIds,
+    ...input.scheme.chains.flatMap(({ parentCandidateId, childCandidateIds, closureCandidateId }) => (
+      [parentCandidateId, ...childCandidateIds, closureCandidateId]
+    )),
+  ]);
   const candidates = new Map(input.scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const intents = candidateIds.map((id) => projectIntent(requireCandidate(candidates, id), input.scheme));
   const intentByCandidate = new Map(candidateIds.map((id) => [id, intentId(id)]));

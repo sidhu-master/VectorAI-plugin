@@ -2,8 +2,11 @@
 
 import {
   analyzeDimensionChain,
+  applyDimensionSchemeEdit,
   orderDimensionIntents,
+  projectAxialDimensionScheme,
   validateEngineeringDraft,
+  type AxialDimensionScheme,
   type EngineeringAnnotationDraft,
   type EngineeringDiagnostic,
 } from '@vectorai/engineering-annotation';
@@ -12,6 +15,7 @@ import {
   engineeringAnnotationDraftSchema,
   engineeringAnnotationRevisionSchema,
   type DimensionPlanSessionSnapshot,
+  type DimensionSchemeEditCommand,
   type DrawingRef,
 } from '@vectorai/plugin-space-contracts';
 import { createHash } from 'node:crypto';
@@ -74,6 +78,19 @@ export class DimensionPlanStore {
     });
   }
 
+  editScheme(sessionId: string, command: DimensionSchemeEditCommand): DimensionPlanSessionSnapshot {
+    const state = this.#envelope(sessionId);
+    requireRef(state.snapshot, command.expectedDrawingRef);
+    const draft = state.snapshot.draft;
+    if (!draft?.axialScheme) throw new Error('DIMENSION_SCHEME_DRAFT_REQUIRED');
+    const { expectedDrawingRef: _expectedDrawingRef, ...edit } = command;
+    const scheme = applyDimensionSchemeEdit(draft.axialScheme as unknown as AxialDimensionScheme, edit);
+    return this.setDraft(sessionId, projectAxialDimensionScheme({
+      scheme,
+      ...(draft.baseRevisionId === undefined ? {} : { baseRevisionId: draft.baseRevisionId }),
+    }));
+  }
+
   confirm(sessionId: string, expected: DrawingRef): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, expected);
@@ -98,6 +115,7 @@ export class DimensionPlanStore {
       chains: draft.chains,
       dependencies: draft.dependencies,
       diagnostics: [...draft.diagnostics, ...diagnostics],
+      ...(draft.axialScheme === undefined ? {} : { axialScheme: draft.axialScheme }),
       id: this.ports.id(),
       ...(previous === undefined ? {} : { parentRevisionId: previous.id }),
       generationOrder: order.orderedIntentIds,
@@ -234,6 +252,9 @@ function confirmationDiagnostics(
   orderDiagnostics: EngineeringDiagnostic[],
 ): EngineeringDiagnostic[] {
   const diagnostics = [...validateEngineeringDraft(draft), ...orderDiagnostics];
+  if (draft.axialScheme && draft.axialScheme.status !== 'resolved') {
+    diagnostics.push(problem('DIMENSION_SCHEME_UNRESOLVED', draft.axialScheme.inputDigest));
+  }
   diagnostics.push(...draft.diagnostics.filter(({ severity }) => severity === 'error'));
   for (const datum of draft.datums) {
     if (datum.status === 'conflict' || datum.status === 'stale') {

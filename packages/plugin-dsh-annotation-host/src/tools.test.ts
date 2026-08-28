@@ -14,7 +14,11 @@ describe('drawing_auto_annotate', () => {
     const sessions = new AnnotationSessionStateStore(undefined, { now: () => 12 });
     sessions.start('session-1', 'partition-1');
     const partitions = {
-      get: vi.fn(() => ({ phase: 'editing' as const, drawingRef: { drawingId: 'drawing-1', revision: 1 } })),
+      get: vi.fn(() => ({
+        version: 1 as const, phase: 'editing' as const,
+        drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        canUndo: false, canRedo: false, updatedAt: 0,
+      })),
       advanceDrawingRevision: vi.fn(),
     };
     const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -25,7 +29,7 @@ describe('drawing_auto_annotate', () => {
       ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
       ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
     ].map(([id, start, end]) => ({ id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality }));
-    const runExtensionProgram = vi.fn(async () => ({ result: {
+    const runExtensionProgram = vi.fn(async (_agent: Agent, _request: unknown) => ({ result: {
       status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
       ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
     } }));
@@ -103,7 +107,7 @@ describe('drawing_auto_annotate', () => {
       id: id as never, type: 'line' as const, start: start as never, end: end as never,
       visible: true, quality,
     }));
-    const runExtensionProgram = vi.fn(async () => ({ result: {
+    const runExtensionProgram = vi.fn(async (_agent: Agent, _request: unknown) => ({ result: {
       status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-angle',
       ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-angle', operationBindingDigest: 'sha256:angle',
     } }));

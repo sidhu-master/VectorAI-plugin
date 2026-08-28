@@ -1026,6 +1026,97 @@ const annotationDependencySchema = z.object({
   reason: z.enum(['datum-before-dependent', 'overall-before-functional', 'functional-before-component', 'component-before-closure', 'explicit-document-order']),
   evidenceIds: z.array(idSchema),
 }).strict();
+
+const axialStationSchema = z.object({
+  id: idSchema,
+  coordinate: z.number().finite(),
+  sourceCoordinate: z.number().finite(),
+  unit: z.enum(['mm', 'cm', 'm']),
+  kinds: z.array(z.enum(['drawing-end', 'shoulder', 'partition-boundary', 'datum'])),
+  geometryNodeIds: z.array(idSchema),
+  evidenceIds: z.array(idSchema),
+}).strict();
+const axialElementarySpanSchema = z.object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: z.number().finite().nonnegative(),
+  segmentIds: z.array(idSchema),
+  evidenceIds: z.array(idSchema),
+}).strict();
+const dimensionEvidenceSchema = z.object({
+  id: idSchema,
+  origin: z.enum(['geometry', 'partition', 'document', 'manual', 'ai']),
+  kind: z.enum(['drawing-end', 'elementary-span', 'functional-region', 'document-interval', 'process-envelope', 'manual-requirement']),
+  label: z.string(),
+  required: z.boolean(),
+  sourceIds: z.array(idSchema),
+}).strict();
+const axialDimensionCandidateSchema = z.object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: z.number().finite().nonnegative(),
+  roles: z.array(z.enum(['overall', 'composite', 'functional', 'process', 'local', 'reference', 'closure'])),
+  evidenceIds: z.array(idSchema),
+  required: z.boolean(),
+}).strict();
+const dimensionDecisionTraceSchema = z.object({
+  candidateId: idSchema,
+  decision: z.enum(['displayed', 'closure', 'rejected', 'alternative']),
+  score: z.number().finite(),
+  features: z.array(z.object({
+    feature: z.enum(['manual-required', 'document-exact', 'functional-region', 'process-envelope', 'composite-block', 'overall-root', 'elementary-span', 'ordinary-residual', 'terminal-residual']),
+    contribution: z.number().finite(),
+    evidenceIds: z.array(idSchema),
+  }).strict()),
+  reasonCodes: z.array(idSchema),
+}).strict();
+const axialChainNodeSchema = z.object({
+  id: idSchema,
+  parentCandidateId: idSchema,
+  childCandidateIds: z.array(idSchema),
+  closureCandidateId: idSchema,
+  alternativeClosureCandidateIds: z.array(idSchema),
+  status: z.enum(['resolved', 'needs-review', 'conflict']),
+}).strict();
+export const axialDimensionSchemeSchema = z.object({
+  version: z.literal(1),
+  drawingRef: drawingRefSchema,
+  partitionRevisionId: idSchema.optional(),
+  policy: z.object({
+    id: z.enum(['shaft-hierarchical-dimensioning-v1', 'shaft-reference-terminal-closure-v1']),
+    version: z.literal('1'),
+  }).strict(),
+  inputDigest: idSchema,
+  topology: z.object({
+    drawingRef: drawingRefSchema,
+    axis: shaftAxisSchema,
+    unit: z.enum(['mm', 'cm', 'm']),
+    stations: z.array(axialStationSchema),
+    elementarySpans: z.array(axialElementarySpanSchema),
+  }).strict(),
+  evidence: z.array(dimensionEvidenceSchema),
+  candidates: z.array(axialDimensionCandidateSchema),
+  displayedCandidateIds: z.array(idSchema),
+  closureCandidateIds: z.array(idSchema),
+  chains: z.array(axialChainNodeSchema),
+  decisions: z.array(dimensionDecisionTraceSchema),
+  diagnostics: z.array(engineeringDiagnosticSchema),
+  status: z.enum(['resolved', 'needs-review', 'conflict', 'stale']),
+}).strict();
+
+export const dimensionSchemeEditCommandSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('candidate.display'), candidateId: idSchema, displayed: z.boolean(),
+    expectedDrawingRef: drawingRefSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('closure.choose'), chainId: idSchema, candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema,
+  }).strict(),
+]);
+
 export const engineeringAnnotationDraftSchema = z.object({
   version: z.literal(1),
   drawingRef: drawingRefSchema,
@@ -1035,6 +1126,7 @@ export const engineeringAnnotationDraftSchema = z.object({
   chains: z.array(dimensionChainSchema),
   dependencies: z.array(annotationDependencySchema),
   diagnostics: z.array(engineeringDiagnosticSchema),
+  axialScheme: axialDimensionSchemeSchema.optional(),
   baseRevisionId: idSchema.optional(),
 }).strict();
 export const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
@@ -1061,3 +1153,5 @@ export const dimensionPlanSessionSnapshotSchema = z.object({
 export type EngineeringAnnotationDraft = z.infer<typeof engineeringAnnotationDraftSchema>;
 export type EngineeringAnnotationRevision = z.infer<typeof engineeringAnnotationRevisionSchema>;
 export type DimensionPlanSessionSnapshot = z.infer<typeof dimensionPlanSessionSnapshotSchema>;
+export type AxialDimensionScheme = z.infer<typeof axialDimensionSchemeSchema>;
+export type DimensionSchemeEditCommand = z.infer<typeof dimensionSchemeEditCommandSchema>;

@@ -35,7 +35,41 @@ import {
   partitionImportRequestSchema,
   engineeringAnnotationDraftSchema,
   dimensionPlanSessionSnapshotSchema,
+  dimensionSchemeEditCommandSchema,
 } from './index';
+
+function axialScheme() {
+  const drawingRef = { drawingId: 'drawing-1', revision: 1 };
+  const station = (id: string, coordinate: number) => ({
+    id, coordinate, sourceCoordinate: coordinate, unit: 'mm' as const,
+    kinds: ['shoulder' as const], geometryNodeIds: [`geometry:${id}`], evidenceIds: [],
+  });
+  return {
+    version: 1 as const,
+    drawingRef,
+    policy: { id: 'shaft-hierarchical-dimensioning-v1' as const, version: '1' as const },
+    inputDigest: 'sha256:scheme',
+    topology: {
+      drawingRef,
+      axis: { origin: [0, 0] as [number, number], direction: [1, 0] as [number, number], normal: [0, 1] as [number, number], zMin: 0, zMax: 20, orientation: 'forward' as const },
+      unit: 'mm' as const,
+      stations: [station('s0', 0), station('s1', 10), station('s2', 20)],
+      elementarySpans: [
+        { id: 'span:a', startStationId: 's0', endStationId: 's1', nominalValue: 10, segmentIds: [], evidenceIds: [] },
+        { id: 'span:b', startStationId: 's1', endStationId: 's2', nominalValue: 10, segmentIds: [], evidenceIds: [] },
+      ],
+    },
+    evidence: [],
+    candidates: [
+      { id: 'candidate:overall', startStationId: 's0', endStationId: 's2', nominalValue: 20, roles: ['overall' as const], evidenceIds: [], required: true },
+      { id: 'candidate:a', startStationId: 's0', endStationId: 's1', nominalValue: 10, roles: ['local' as const], evidenceIds: [], required: false },
+      { id: 'candidate:b', startStationId: 's1', endStationId: 's2', nominalValue: 10, roles: ['closure' as const], evidenceIds: [], required: false },
+    ],
+    displayedCandidateIds: ['candidate:overall', 'candidate:a'], closureCandidateIds: ['candidate:b'],
+    chains: [{ id: 'chain:overall', parentCandidateId: 'candidate:overall', childCandidateIds: ['candidate:a'], closureCandidateId: 'candidate:b', alternativeClosureCandidateIds: [], status: 'resolved' as const }],
+    decisions: [], diagnostics: [], status: 'resolved' as const,
+  };
+}
 
 function snapshot() {
   return {
@@ -137,6 +171,28 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(dimensionPlanSessionSnapshotSchema.parse(snapshot)).toEqual(snapshot);
     expect(() => dimensionPlanSessionSnapshotSchema.parse({ ...snapshot, formulaSource: 'return 0.1' })).toThrow();
     expect(() => dimensionPlanSessionSnapshotSchema.parse({ ...snapshot, updatedAt: Number.NaN })).toThrow();
+  });
+
+  it('round-trips a dimension plan with an axial inference scheme', () => {
+    const value = {
+      version: 1 as const, phase: 'editing' as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      draft: {
+        version: 1 as const, drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
+        axialScheme: axialScheme(),
+      },
+      canUndo: true, canRedo: false, updatedAt: 7,
+    };
+    expect(dimensionPlanSessionSnapshotSchema.parse(value)).toEqual(value);
+  });
+
+  it('rejects model-supplied coordinates in a scheme edit', () => {
+    const command = {
+      type: 'candidate.display', candidateId: 'candidate:a', displayed: true, coordinate: 10,
+      expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+    };
+    expect(() => dimensionSchemeEditCommandSchema.parse(command)).toThrow();
   });
 
   it('round-trips portable tolerance and datum projections strictly', () => {
