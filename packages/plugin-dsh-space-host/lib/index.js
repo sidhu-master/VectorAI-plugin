@@ -13826,6 +13826,7 @@ const partitionRevisionSchema = object$1({
 discriminatedUnion("type", [
   object$1({ type: literal$1("boundary.move"), expectedDrawingRef: drawingRefSchema$1, boundaryIndex: number().int().positive(), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
   object$1({ type: literal$1("semantic-range.move"), expectedDrawingRef: drawingRefSchema$1, groupId: idSchema, edge: _enum(["start", "end"]), requestedZ: number(), snapTolerance: number().nonnegative() }).strict(),
+  object$1({ type: literal$1("semantic-group.rename"), expectedDrawingRef: drawingRefSchema$1, groupId: idSchema, name: string$1().trim().min(1).max(120) }).strict(),
   object$1({ type: literal$1("segment.split"), expectedDrawingRef: drawingRefSchema$1, segmentId: idSchema, z: number(), snapTolerance: number().nonnegative() }).strict(),
   object$1({ type: literal$1("boundary.merge"), expectedDrawingRef: drawingRefSchema$1, boundaryIndex: number().int().positive() }).strict(),
   object$1({ type: literal$1("segment.metadata"), expectedDrawingRef: drawingRefSchema$1, segmentId: idSchema, name: string$1().max(120).optional(), semanticType: string$1().max(80).optional() }).strict()

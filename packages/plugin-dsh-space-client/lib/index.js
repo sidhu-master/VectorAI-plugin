@@ -3122,7 +3122,8 @@ function DrawingSurfaceHost({
           {
             sessionId,
             namespace: contribution.id,
-            runtime
+            runtime,
+            layerRegistry: registry
           }
         )
       }
@@ -3163,6 +3164,13 @@ const DRAWING_SURFACE_API_VERSION = 1;
 function createDrawingSurfaceRegistry() {
   const contributions = /* @__PURE__ */ new Map();
   const subscribers = /* @__PURE__ */ new Map();
+  const layers = /* @__PURE__ */ new Map();
+  const layerSubscribers = /* @__PURE__ */ new Set();
+  let layerSnapshot = [];
+  const publishLayers = () => {
+    layerSnapshot = [...layers.values()].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+    for (const listener of layerSubscribers) listener();
+  };
   const releaseClaims = (subscriber) => {
     for (const dispose of subscriber.claimDisposers.splice(0)) dispose();
   };
@@ -3183,6 +3191,30 @@ function createDrawingSurfaceRegistry() {
     }
   };
   return {
+    registerLayer(definition) {
+      if (layers.has(definition.id)) {
+        throw new Error(`DUPLICATE_DRAWING_LAYER:${definition.id}`);
+      }
+      layers.set(definition.id, definition);
+      publishLayers();
+      let disposed = false;
+      return {
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          if (layers.get(definition.id) !== definition) return;
+          layers.delete(definition.id);
+          publishLayers();
+        }
+      };
+    },
+    getLayers() {
+      return layerSnapshot;
+    },
+    subscribeLayers(listener) {
+      layerSubscribers.add(listener);
+      return () => layerSubscribers.delete(listener);
+    },
     registerWorkspace(contribution) {
       if (contributions.has(contribution.id)) {
         throw new Error(`DUPLICATE_DRAWING_WORKSPACE_CONTRIBUTION:${contribution.id}`);
