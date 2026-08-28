@@ -57,11 +57,12 @@ describe('DrawingSurfaceHost', () => {
 
   it('renders the elected contribution with a restricted runtime', () => {
     const registry = createDrawingSurfaceRegistry();
-    registry.registerWorkspace(specialized(({ sessionId, namespace, runtime: received }) => (
+    registry.registerWorkspace(specialized(({ sessionId, namespace, runtime: received, layerRegistry }) => (
       <span
         data-specialized={sessionId}
         data-namespace={namespace}
         data-restricted={String(received === runtimeValue)}
+        data-layer-registry={String(layerRegistry === registry)}
       />
     )));
     const runtimeValue = runtime(false);
@@ -76,6 +77,7 @@ describe('DrawingSurfaceHost', () => {
       'data-specialized': 'session-a',
       'data-namespace': 'annotation',
       'data-restricted': 'true',
+      'data-layer-registry': 'true',
     })).toBeDefined();
     expect(renderer.root.findByProps({
       'data-drawing-surface-contribution': 'annotation',

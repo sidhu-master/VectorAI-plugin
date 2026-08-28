@@ -2,6 +2,7 @@
 
 import type {
   DrawingSurfaceObservable,
+  DrawingSurfaceComponentProps,
   DrawingSurfaceRegistry,
   DrawingWorkspaceContribution,
 } from '@vectorai/drawing-surface-api';
@@ -40,11 +41,7 @@ export function DrawingSurfaceHost({
   const contribution = electedId === null ? null : registry.getWorkspaceContribution(electedId);
 
   if (contribution !== null) {
-    const SpecializedWorkspace = contribution.Component as ComponentType<{
-      sessionId: string;
-      namespace: string;
-      runtime: DrawingSurfaceRuntime;
-    }>;
+    const SpecializedWorkspace = contribution.Component as ComponentType<DrawingSurfaceComponentProps>;
     return <ContributionErrorBoundary key={contribution.id} contribution={contribution}>
       <div
         data-drawing-surface-contribution={contribution.id}
@@ -56,6 +53,7 @@ export function DrawingSurfaceHost({
           sessionId={sessionId}
           namespace={contribution.id}
           runtime={runtime}
+          layerRegistry={registry}
         />
       </div>
     </ContributionErrorBoundary>;
