@@ -2,6 +2,7 @@
 
 import {
   DRAWING_SURFACE_API_VERSION,
+  type DrawingLayerDefinition,
   type Disposable,
   type DrawingSurfaceRegistry,
   type DrawingWorkspaceContribution,
@@ -16,6 +17,15 @@ interface SessionSubscriber {
 export function createDrawingSurfaceRegistry(): DrawingSurfaceRegistry {
   const contributions = new Map<string, DrawingWorkspaceContribution>();
   const subscribers = new Map<string, Set<SessionSubscriber>>();
+  const layers = new Map<string, DrawingLayerDefinition>();
+  const layerSubscribers = new Set<() => void>();
+  let layerSnapshot: readonly DrawingLayerDefinition[] = [];
+  const publishLayers = () => {
+    layerSnapshot = [...layers.values()].sort((left, right) => (
+      left.order - right.order || left.id.localeCompare(right.id)
+    ));
+    for (const listener of layerSubscribers) listener();
+  };
 
   const releaseClaims = (subscriber: SessionSubscriber) => {
     for (const dispose of subscriber.claimDisposers.splice(0)) dispose();
@@ -40,6 +50,33 @@ export function createDrawingSurfaceRegistry(): DrawingSurfaceRegistry {
   };
 
   return {
+    registerLayer(definition): Disposable {
+      if (layers.has(definition.id)) {
+        throw new Error(`DUPLICATE_DRAWING_LAYER:${definition.id}`);
+      }
+      layers.set(definition.id, definition);
+      publishLayers();
+      let disposed = false;
+      return {
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          if (layers.get(definition.id) !== definition) return;
+          layers.delete(definition.id);
+          publishLayers();
+        },
+      };
+    },
+
+    getLayers() {
+      return layerSnapshot;
+    },
+
+    subscribeLayers(listener) {
+      layerSubscribers.add(listener);
+      return () => layerSubscribers.delete(listener);
+    },
+
     registerWorkspace(contribution): Disposable {
       if (contributions.has(contribution.id)) {
         throw new Error(`DUPLICATE_DRAWING_WORKSPACE_CONTRIBUTION:${contribution.id}`);

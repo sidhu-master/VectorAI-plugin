@@ -8,11 +8,17 @@ import { apply } from './client';
 describe('annotation client contribution', () => {
   it('registers independently without claiming or registering the DSH workspace slot', async () => {
     const disposeContribution = vi.fn();
+    const disposeLayer = vi.fn();
     const disposeRemote = vi.fn();
     let disposeInjected: (() => void | Promise<void>) | undefined;
     const disposeFiber = vi.fn(async () => { await disposeInjected?.(); });
     let registered: { id: string; claimSource: { observe(sessionId: string): { getSnapshot(): unknown } } } | undefined;
+    let registeredLayer: unknown;
     const registry = {
+      registerLayer: vi.fn((definition) => {
+        registeredLayer = definition;
+        return { dispose: disposeLayer };
+      }),
       registerWorkspace: vi.fn((contribution) => {
         registered = contribution;
         return { dispose: disposeContribution };
@@ -63,6 +69,14 @@ describe('annotation client contribution', () => {
 
     const dispose = await apply(ctx);
     expect(registered?.id).toBe('engineering-annotation');
+    expect(registeredLayer).toEqual({
+      id: 'vectorai.annotation.partition',
+      label: '智能分区',
+      category: 'engineering',
+      icon: 'partition',
+      order: 100,
+      defaultVisible: true,
+    });
     expect(registered?.claimSource.observe('session-1').getSnapshot())
       .toEqual({ active: false, activationEpoch: 0 });
     expect(dropEntry?.options).toMatchObject({
@@ -79,6 +93,7 @@ describe('annotation client contribution', () => {
     expect(disposeFiber).toHaveBeenCalledOnce();
     expect(disposeDropFiber).toHaveBeenCalledOnce();
     expect(disposeContribution).toHaveBeenCalledOnce();
+    expect(disposeLayer).toHaveBeenCalledOnce();
     expect(disposeRemote).toHaveBeenCalledOnce();
   });
 });

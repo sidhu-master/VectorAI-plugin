@@ -7774,19 +7774,72 @@ const createLucideIcon = (iconName, iconNode) => {
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$b = [
-  ["path", { d: "M12 15V3", key: "m9g1x1" }],
-  ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
-  ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
+const __iconNode$g = [
+  [
+    "path",
+    {
+      d: "M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z",
+      key: "lc1i9w"
+    }
+  ],
+  ["path", { d: "m7 16.5-4.74-2.85", key: "1o9zyk" }],
+  ["path", { d: "m7 16.5 5-3", key: "va8pkn" }],
+  ["path", { d: "M7 16.5v5.17", key: "jnp8gn" }],
+  [
+    "path",
+    {
+      d: "M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z",
+      key: "8zsnat"
+    }
+  ],
+  ["path", { d: "m17 16.5-5-3", key: "8arw3v" }],
+  ["path", { d: "m17 16.5 4.74-2.85", key: "8rfmw" }],
+  ["path", { d: "M17 16.5v5.17", key: "k6z78m" }],
+  [
+    "path",
+    {
+      d: "M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z",
+      key: "1xygjf"
+    }
+  ],
+  ["path", { d: "M12 8 7.26 5.15", key: "1vbdud" }],
+  ["path", { d: "m12 8 4.74-2.85", key: "3rx089" }],
+  ["path", { d: "M12 13.5V8", key: "1io7kd" }]
 ];
-const Download = createLucideIcon("download", __iconNode$b);
+const Boxes = createLucideIcon("boxes", __iconNode$g);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$a = [
+const __iconNode$f = [
+  ["path", { d: "M12 15V3", key: "m9g1x1" }],
+  ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
+  ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
+];
+const Download = createLucideIcon("download", __iconNode$f);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$e = [
+  ["path", { d: "m12.99 6.74 1.93 3.44", key: "iwagvd" }],
+  ["path", { d: "M19.136 12a10 10 0 0 1-14.271 0", key: "ppmlo4" }],
+  ["path", { d: "m21 21-2.16-3.84", key: "vylbct" }],
+  ["path", { d: "m3 21 8.02-14.26", key: "1ssaw4" }],
+  ["circle", { cx: "12", cy: "5", r: "2", key: "f1ur92" }]
+];
+const DraftingCompass = createLucideIcon("drafting-compass", __iconNode$e);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$d = [
   [
     "path",
     {
@@ -7804,14 +7857,14 @@ const __iconNode$a = [
   ],
   ["path", { d: "m2 2 20 20", key: "1ooewy" }]
 ];
-const EyeOff = createLucideIcon("eye-off", __iconNode$a);
+const EyeOff = createLucideIcon("eye-off", __iconNode$d);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$9 = [
+const __iconNode$c = [
   [
     "path",
     {
@@ -7821,14 +7874,25 @@ const __iconNode$9 = [
   ],
   ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
 ];
-const Eye = createLucideIcon("eye", __iconNode$9);
+const Eye = createLucideIcon("eye", __iconNode$c);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$8 = [
+const __iconNode$b = [
+  ["path", { d: "m12 14 4-4", key: "9kzdfg" }],
+  ["path", { d: "M3.34 19a10 10 0 1 1 17.32 0", key: "19p75a" }]
+];
+const Gauge = createLucideIcon("gauge", __iconNode$b);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$a = [
   [
     "path",
     {
@@ -7851,28 +7915,28 @@ const __iconNode$8 = [
     }
   ]
 ];
-const Layers = createLucideIcon("layers", __iconNode$8);
+const Layers = createLucideIcon("layers", __iconNode$a);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$7 = [
+const __iconNode$9 = [
   ["path", { d: "M21 12h-8", key: "1bmf0i" }],
   ["path", { d: "M21 6H8", key: "1pqkrb" }],
   ["path", { d: "M21 18h-8", key: "1tm79t" }],
   ["path", { d: "M3 6v4c0 1.1.9 2 2 2h3", key: "1ywdgy" }],
   ["path", { d: "M3 10v6c0 1.1.9 2 2 2h3", key: "2wc746" }]
 ];
-const ListTree = createLucideIcon("list-tree", __iconNode$7);
+const ListTree = createLucideIcon("list-tree", __iconNode$9);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$6 = [
+const __iconNode$8 = [
   ["path", { d: "M12 20h9", key: "t2du7b" }],
   [
     "path",
@@ -7883,7 +7947,38 @@ const __iconNode$6 = [
   ],
   ["path", { d: "m15 5 3 3", key: "1w25hb" }]
 ];
-const PencilLine = createLucideIcon("pencil-line", __iconNode$6);
+const PencilLine = createLucideIcon("pencil-line", __iconNode$8);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$7 = [
+  ["path", { d: "m15 14 5-5-5-5", key: "12vg1m" }],
+  ["path", { d: "M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13", key: "6uklza" }]
+];
+const Redo2 = createLucideIcon("redo-2", __iconNode$7);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$6 = [
+  [
+    "path",
+    {
+      d: "M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z",
+      key: "icamh8"
+    }
+  ],
+  ["path", { d: "m14.5 12.5 2-2", key: "inckbg" }],
+  ["path", { d: "m11.5 9.5 2-2", key: "fmmyf7" }],
+  ["path", { d: "m8.5 6.5 2-2", key: "vc6u1g" }],
+  ["path", { d: "m17.5 15.5 2-2", key: "wo5hmg" }]
+];
+const Ruler = createLucideIcon("ruler", __iconNode$6);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
@@ -7891,10 +7986,12 @@ const PencilLine = createLucideIcon("pencil-line", __iconNode$6);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$5 = [
-  ["path", { d: "m15 14 5-5-5-5", key: "12vg1m" }],
-  ["path", { d: "M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13", key: "6uklza" }]
+  ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
+  ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
+  ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
+  ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
 ];
-const Redo2 = createLucideIcon("redo-2", __iconNode$5);
+const Scan = createLucideIcon("scan", __iconNode$5);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
@@ -7902,19 +7999,6 @@ const Redo2 = createLucideIcon("redo-2", __iconNode$5);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$4 = [
-  ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
-  ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
-  ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
-  ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
-];
-const Scan = createLucideIcon("scan", __iconNode$4);
-/**
- * @license lucide-react v0.511.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */
-const __iconNode$3 = [
   ["line", { x1: "21", x2: "14", y1: "4", y2: "4", key: "obuewd" }],
   ["line", { x1: "10", x2: "3", y1: "4", y2: "4", key: "1q6298" }],
   ["line", { x1: "21", x2: "12", y1: "12", y2: "12", key: "1iu8h1" }],
@@ -7925,7 +8009,27 @@ const __iconNode$3 = [
   ["line", { x1: "8", x2: "8", y1: "10", y2: "14", key: "1i6ji0" }],
   ["line", { x1: "16", x2: "16", y1: "18", y2: "22", key: "1lctlv" }]
 ];
-const SlidersHorizontal = createLucideIcon("sliders-horizontal", __iconNode$3);
+const SlidersHorizontal = createLucideIcon("sliders-horizontal", __iconNode$4);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$3 = [
+  [
+    "path",
+    {
+      d: "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z",
+      key: "4pj2yx"
+    }
+  ],
+  ["path", { d: "M20 3v4", key: "1olli1" }],
+  ["path", { d: "M22 5h-4", key: "1gvqau" }],
+  ["path", { d: "M4 17v2", key: "vumght" }],
+  ["path", { d: "M5 18H3", key: "zchphs" }]
+];
+const Sparkles = createLucideIcon("sparkles", __iconNode$3);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
@@ -8757,6 +8861,97 @@ function normalizeBounds(first, second) {
     maxY: Math.max(first[1], second[1])
   };
 }
+const CATEGORY_LABELS = {
+  engineering: "工程信息",
+  cad: "原始 CAD 图层",
+  assistant: "AI 信息",
+  interaction: "编辑辅助"
+};
+const CATEGORY_ORDER = [
+  "engineering",
+  "cad",
+  "assistant",
+  "interaction"
+];
+const LAYER_ICONS = {
+  partition: Boxes,
+  angle: DraftingCompass,
+  dimension: Ruler,
+  tolerance: Gauge,
+  cad: Layers,
+  assistant: Sparkles
+};
+function DrawingLayerManager({ layers, onVisibilityChange }) {
+  const [open, setOpen] = reactExports.useState(false);
+  const rootRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (!open || typeof document === "undefined") return;
+    const closeOutside = (event) => {
+      var _a2;
+      if (!((_a2 = rootRef.current) == null ? void 0 : _a2.contains(event.target))) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+  if (layers.length === 0) return null;
+  const groups = CATEGORY_ORDER.flatMap((category) => {
+    const items = layers.filter(({ definition }) => definition.category === category);
+    return items.length === 0 ? [] : [{ category, items }];
+  });
+  const stopPointer = (event) => event.stopPropagation();
+  const handleKeyDown = (event) => {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    setOpen(false);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      ref: rootRef,
+      className: "vai-layer-manager",
+      "data-layer-manager": "true",
+      onMouseDown: stopPointer,
+      onClick: stopPointer,
+      onKeyDown: handleKeyDown,
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            className: "vai-layer-manager__trigger",
+            "aria-label": "管理图层",
+            "aria-expanded": open,
+            title: "图层显示",
+            onClick: () => setOpen((current) => !current),
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx(Layers, { size: 17, "aria-hidden": "true" })
+          }
+        ),
+        open && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-layer-manager__menu", role: "dialog", "aria-label": "图层显示", children: groups.map(({ category, items }) => /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "vai-layer-manager__group", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { "data-layer-category": category, children: CATEGORY_LABELS[category] }),
+          items.map(({ definition, visible }) => {
+            const LayerIcon = definition.icon === void 0 ? Layers : LAYER_ICONS[definition.icon];
+            return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
+              {
+                type: "button",
+                className: "vai-layer-manager__item",
+                "aria-label": `${visible ? "隐藏" : "显示"}${definition.label}`,
+                "aria-pressed": visible,
+                onClick: () => onVisibilityChange(definition.id, !visible),
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(LayerIcon, { size: 15, "aria-hidden": "true" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: definition.label }),
+                  visible ? /* @__PURE__ */ jsxRuntimeExports.jsx(Eye, { size: 15, "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EyeOff, { size: 15, "aria-hidden": "true" })
+                ]
+              },
+              definition.id
+            );
+          })
+        ] }, category)) })
+      ]
+    }
+  );
+}
 function partitionBands(draft, mode) {
   if (mode === "segments") return draft.segments.map((segment, index) => ({
     id: segment.id,
@@ -9070,26 +9265,12 @@ function PartitionViewSwitch({ mode, onChange }) {
     )
   ] });
 }
-function PartitionInspector({ draft, controller, mode, onModeChange, overlayVisible, onOverlayVisibleChange }) {
+function PartitionInspector({ draft, controller, mode, onModeChange }) {
   const functional = partitionBands(draft, "functional");
   const classified = new Set(functional.flatMap(({ segmentIds }) => segmentIds));
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector__title", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector__title-row", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            className: "vai-partition-visibility-toggle",
-            "aria-label": overlayVisible ? "隐藏分区框" : "显示分区框",
-            "aria-pressed": overlayVisible,
-            title: overlayVisible ? "隐藏分区框" : "显示分区框",
-            onClick: () => onOverlayVisibleChange(!overlayVisible),
-            children: overlayVisible ? /* @__PURE__ */ jsxRuntimeExports.jsx(Eye, { size: 14, "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EyeOff, { size: 14, "aria-hidden": "true" })
-          }
-        )
-      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionViewSwitch, { mode, onChange: onModeChange })
     ] }),
     mode === "functional" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -9252,8 +9433,6 @@ function ConfirmedPartitionInspector({
   busy,
   mode,
   onModeChange,
-  overlayVisible,
-  onOverlayVisibleChange,
   onReopen
 }) {
   const bands = partitionBands(revision, mode);
@@ -9263,24 +9442,10 @@ function ConfirmedPartitionInspector({
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "已确认" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-confirmed-partition__actions", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            className: "vai-partition-visibility-toggle",
-            "aria-label": overlayVisible ? "隐藏分区框" : "显示分区框",
-            "aria-pressed": overlayVisible,
-            title: overlayVisible ? "隐藏分区框" : "显示分区框",
-            onClick: () => onOverlayVisibleChange(!overlayVisible),
-            children: overlayVisible ? /* @__PURE__ */ jsxRuntimeExports.jsx(Eye, { size: 14, "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EyeOff, { size: 14, "aria-hidden": "true" })
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", "aria-label": "重新编辑分区", disabled: busy, onClick: () => void onReopen().catch(() => void 0), children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(PencilLine, { size: 14, "aria-hidden": "true" }),
-          "重新编辑"
-        ] })
-      ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-confirmed-partition__actions", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", "aria-label": "重新编辑分区", disabled: busy, onClick: () => void onReopen().catch(() => void 0), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(PencilLine, { size: 14, "aria-hidden": "true" }),
+        "重新编辑"
+      ] }) })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionViewSwitch, { mode, onChange: onModeChange }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { className: "vai-confirmed-partition__meta", children: [
@@ -9413,11 +9578,78 @@ function engineeringImportErrorText(code, filenames = []) {
   if ((code == null ? void 0 : code.includes("SIZE_LIMIT")) || (code == null ? void 0 : code.includes("COUNT_LIMIT"))) return `工程文件超过本地导入限制${names}`;
   return `工程文件导入失败：${code ?? "UNKNOWN"}`;
 }
+const ANNOTATION_PARTITION_LAYER_ID = "vectorai.annotation.partition";
+const ANNOTATION_PARTITION_LAYER = {
+  id: ANNOTATION_PARTITION_LAYER_ID,
+  label: "智能分区",
+  category: "engineering",
+  icon: "partition",
+  order: 100,
+  defaultVisible: true
+};
+function layerVisibilityStorageKey(sessionId) {
+  return `vectorai:annotation:layer-visibility:${sessionId}`;
+}
+function legacyPartitionVisibilityKey(sessionId) {
+  return `vectorai:annotation:partition-overlay:${sessionId}`;
+}
+function readLayerVisibility(sessionId, definitions, storage) {
+  const saved = readSavedMap(sessionId, storage);
+  const result = {};
+  for (const definition of definitions) {
+    const savedValue = saved[definition.id];
+    if (typeof savedValue === "boolean") {
+      result[definition.id] = savedValue;
+      continue;
+    }
+    if (definition.id === ANNOTATION_PARTITION_LAYER_ID) {
+      const legacy2 = readLegacyPartitionVisibility(sessionId, storage);
+      if (legacy2 !== null) {
+        result[definition.id] = legacy2;
+        continue;
+      }
+    }
+    result[definition.id] = definition.defaultVisible;
+  }
+  return result;
+}
+function writeLayerVisibility(sessionId, values, storage) {
+  if (storage === null || storage === void 0) return;
+  try {
+    storage.setItem(layerVisibilityStorageKey(sessionId), JSON.stringify(values));
+  } catch {
+  }
+}
+function readSavedMap(sessionId, storage) {
+  if (storage === null || storage === void 0) return {};
+  try {
+    const raw = storage.getItem(layerVisibilityStorageKey(sessionId));
+    if (raw === null) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function readLegacyPartitionVisibility(sessionId, storage) {
+  if (storage === null || storage === void 0) return null;
+  try {
+    const value = storage.getItem(legacyPartitionVisibilityKey(sessionId));
+    if (value === "hidden") return false;
+    if (value === "visible") return true;
+    return null;
+  } catch {
+    return null;
+  }
+}
 const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(",");
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
-function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan }) {
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER];
+const subscribeToNoLayers = () => () => void 0;
+const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
+function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan, layerRegistry }) {
   var _a2;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport);
@@ -9431,7 +9663,16 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   const [activePanel, setActivePanel] = reactExports.useState(null);
   const [panelWidth, setPanelWidth] = reactExports.useState(260);
   const [partitionView, setPartitionView] = reactExports.useState("functional");
-  const [partitionOverlayVisible, setPartitionOverlayVisible] = reactExports.useState(() => readPartitionOverlayVisibility(sessionId));
+  const registeredLayers = reactExports.useSyncExternalStore(
+    (layerRegistry == null ? void 0 : layerRegistry.subscribeLayers) ?? subscribeToNoLayers,
+    (layerRegistry == null ? void 0 : layerRegistry.getLayers) ?? readFallbackLayers,
+    (layerRegistry == null ? void 0 : layerRegistry.getLayers) ?? readFallbackLayers
+  );
+  const [layerVisibility, setLayerVisibility] = reactExports.useState(() => readLayerVisibility(
+    sessionId,
+    registeredLayers,
+    typeof sessionStorage === "undefined" ? null : sessionStorage
+  ));
   const fitAfterAnalysis = reactExports.useRef(partitionState.busy);
   const displayedDrawingRef = reactExports.useRef(null);
   const surfaceSnapshot = reactExports.useMemo(() => displaySnapshot === null ? null : {
@@ -9447,12 +9688,20 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
   reactExports.useEffect(() => {
-    setPartitionOverlayVisible(readPartitionOverlayVisibility(sessionId));
-  }, [sessionId]);
-  const updatePartitionOverlayVisibility = (visible) => {
-    setPartitionOverlayVisible(visible);
-    writePartitionOverlayVisibility(sessionId, visible);
+    setLayerVisibility(readLayerVisibility(
+      sessionId,
+      registeredLayers,
+      typeof sessionStorage === "undefined" ? null : sessionStorage
+    ));
+  }, [registeredLayers, sessionId]);
+  const updateLayerVisibility = (id, visible) => {
+    setLayerVisibility((current) => {
+      const next = { ...current, [id]: visible };
+      writeLayerVisibility(sessionId, next, typeof sessionStorage === "undefined" ? null : sessionStorage);
+      return next;
+    });
   };
+  const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
   reactExports.useEffect(() => {
     let active = true;
     let timer;
@@ -9527,8 +9776,8 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
   };
   const structurePanel = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-panel", children: [
-    draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView, overlayVisible: partitionOverlayVisible, onOverlayVisibleChange: updatePartitionOverlayVisibility }, partitionState.partition.updatedAt),
-    !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, overlayVisible: partitionOverlayVisible, onOverlayVisibleChange: updatePartitionOverlayVisibility, onReopen: partition.actions.reopen }),
+    draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt),
+    !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }),
     dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }),
     !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
@@ -9573,6 +9822,16 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
             }
           ),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "vai-annotation-workspace__canvas", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              DrawingLayerManager,
+              {
+                layers: draft || confirmed ? registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID).map((definition) => ({
+                  definition,
+                  visible: layerVisibility[definition.id] ?? definition.defaultVisible
+                })) : [],
+                onVisibilityChange: updateLayerVisibility
+              }
+            ),
             (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
               partitionState.busy && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-progress", "data-partition-progress": partitionState.partition.phase, role: "status", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-partition-progress__pulse", "aria-hidden": "true" }),
@@ -9643,24 +9902,6 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
       ]
     }
   );
-}
-function partitionOverlayVisibilityKey(sessionId) {
-  return `vectorai:annotation:partition-overlay:${sessionId}`;
-}
-function readPartitionOverlayVisibility(sessionId) {
-  if (typeof sessionStorage === "undefined") return true;
-  try {
-    return sessionStorage.getItem(partitionOverlayVisibilityKey(sessionId)) !== "hidden";
-  } catch {
-    return true;
-  }
-}
-function writePartitionOverlayVisibility(sessionId, visible) {
-  if (typeof sessionStorage === "undefined") return;
-  try {
-    sessionStorage.setItem(partitionOverlayVisibilityKey(sessionId), visible ? "visible" : "hidden");
-  } catch {
-  }
 }
 function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot()) {
   if (snapshot === null) return;

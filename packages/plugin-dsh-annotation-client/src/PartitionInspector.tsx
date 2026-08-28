@@ -2,26 +2,19 @@
 
 import type { PartitionDraft } from '@vectorai/plugin-space-contracts';
 import type { PartitionController } from './partition-controller';
-import { Eye, EyeOff } from 'lucide-react';
 import { partitionBands, type PartitionViewMode } from './partition-view-model';
 import { PartitionViewSwitch } from './PartitionViewSwitch';
 
-export function PartitionInspector({ draft, controller, mode, onModeChange, overlayVisible, onOverlayVisibleChange }: {
+export function PartitionInspector({ draft, controller, mode, onModeChange }: {
   draft: PartitionDraft;
   controller: PartitionController;
   mode: PartitionViewMode;
   onModeChange(mode: PartitionViewMode): void;
-  overlayVisible: boolean;
-  onOverlayVisibleChange(visible: boolean): void;
 }) {
   const functional = partitionBands(draft, 'functional');
   const classified = new Set(functional.flatMap(({ segmentIds }) => segmentIds));
   return <div className="vai-partition-inspector">
-    <div className="vai-partition-inspector__title"><div className="vai-partition-inspector__title-row"><h2>{mode === 'functional' ? '功能分区' : '连续轴段'}</h2>
-      <button type="button" className="vai-partition-visibility-toggle" aria-label={overlayVisible ? '隐藏分区框' : '显示分区框'} aria-pressed={overlayVisible}
-        title={overlayVisible ? '隐藏分区框' : '显示分区框'} onClick={() => onOverlayVisibleChange(!overlayVisible)}>
-        {overlayVisible ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
-      </button></div>
+    <div className="vai-partition-inspector__title"><h2>{mode === 'functional' ? '功能分区' : '连续轴段'}</h2>
       <PartitionViewSwitch mode={mode} onChange={onModeChange} />
     </div>
     {mode === 'functional' ? <>

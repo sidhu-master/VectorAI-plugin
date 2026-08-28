@@ -10,6 +10,7 @@ import { createAnnotationRemoteStateSource } from './annotation-state-source';
 import { ANNOTATION_REMOTE } from './remote';
 import { createPartitionController } from './partition-controller';
 import { EngineeringDropBridge } from './EngineeringDropBridge';
+import { ANNOTATION_PARTITION_LAYER } from './drawing-layers';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -41,6 +42,7 @@ export async function apply(ctx: Context) {
         void controller.actions.refresh();
         return controller;
       };
+      const layerRegistration = registry.registerLayer(ANNOTATION_PARTITION_LAYER);
       const registration = registry.registerWorkspace({
         id: 'engineering-annotation',
         apiVersion: 1,
@@ -67,6 +69,7 @@ export async function apply(ctx: Context) {
       return async () => {
         await dropFiber.dispose();
         registration.dispose();
+        layerRegistration.dispose();
         stateSource.dispose();
         for (const controller of partitionControllers.values()) controller.dispose();
         partitionControllers.clear();

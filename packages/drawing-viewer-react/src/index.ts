@@ -53,3 +53,5 @@ export { WorkspaceToolbar, WorkspaceToolbarView } from './panels/WorkspaceToolba
 export type { WorkspaceToolbarHistory, WorkspaceToolbarProps, WorkspaceToolbarViewProps } from './panels/WorkspaceToolbar';
 export { WorkspaceActivityBar } from './panels/WorkspaceActivityBar';
 export type { WorkspaceActivityBarProps, WorkspacePanelDefinition, WorkspacePanelId } from './panels/WorkspaceActivityBar';
+export { DrawingLayerManager } from './panels/DrawingLayerManager';
+export type { DrawingLayerManagerItem, DrawingLayerManagerProps } from './panels/DrawingLayerManager';

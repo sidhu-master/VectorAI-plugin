@@ -2,12 +2,14 @@
 
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import type { DrawingSurfaceRuntime } from '@vectorai/drawing-workspace';
+import type { DrawingLayerRegistry } from '@vectorai/drawing-surface-api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TestRenderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AnnotationWorkspace } from './AnnotationWorkspace';
 import type { PartitionController } from './partition-controller';
+import { ANNOTATION_PARTITION_LAYER } from './drawing-layers';
 
 function observable<T>(value: T) {
   return { getSnapshot: () => value, subscribe: () => () => undefined };
@@ -323,7 +325,7 @@ describe('AnnotationWorkspace', () => {
     vi.unstubAllGlobals();
   });
 
-  it('hides only the partition overlay from the partition panel visibility switch', async () => {
+  it('hides only the partition overlay from the upper-right layer manager', async () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     document.geometry = [0, 1].map((index) => ({
       id: `line-${index}` as never, type: 'line' as const,
@@ -378,6 +380,11 @@ describe('AnnotationWorkspace', () => {
       }, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
       actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
     } as unknown as PartitionController;
+    const registeredLayerDefinitions = [ANNOTATION_PARTITION_LAYER] as const;
+    const layerRegistry = {
+      getLayers: () => registeredLayerDefinitions,
+      subscribeLayers: () => () => undefined,
+    } as unknown as DrawingLayerRegistry;
 
     const createWorkspace = (sessionId: string) => <AnnotationWorkspace
       sessionId={sessionId}
@@ -385,6 +392,7 @@ describe('AnnotationWorkspace', () => {
       runtime={runtime}
       state={state}
       partition={partition}
+      layerRegistry={layerRegistry}
       dimensionPlan={{
         draft: {
           version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
@@ -421,6 +429,8 @@ describe('AnnotationWorkspace', () => {
     expect(markup).toContain('multiple=""');
     expect(markup).not.toContain('aria-label="分区历史"');
     expect(markup).toContain('data-partition-origin="document"');
+    expect(markup).toContain('aria-label="管理图层"');
+    expect(markup).not.toContain('aria-label="隐藏分区框"');
 
     const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
     testWindow.setInterval = globalThis.setInterval;
@@ -434,11 +444,13 @@ describe('AnnotationWorkspace', () => {
     let renderer: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(workspace); });
     expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(1);
-    act(() => renderer!.root.findByProps({ 'aria-label': '图纸结构面板' }).props.onClick());
-    act(() => renderer!.root.findByProps({ 'aria-label': '隐藏分区框' }).props.onClick());
+    act(() => renderer!.root.findByProps({ 'aria-label': '管理图层' }).props.onClick());
+    act(() => renderer!.root.findByProps({ 'aria-label': '隐藏智能分区' }).props.onClick());
     expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(0);
-    expect(renderer!.root.findAllByProps({ 'aria-label': '显示分区框' })).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ 'aria-label': '显示智能分区' })).toHaveLength(1);
     expect(renderer!.root.findAllByProps({ 'aria-label': '确认分区' })).toHaveLength(1);
+    act(() => renderer!.root.findByProps({ 'aria-label': '图纸结构面板' }).props.onClick());
+    expect(renderer!.root.findAllByProps({ 'aria-label': '隐藏分区框' })).toHaveLength(0);
     act(() => renderer!.unmount());
 
     await act(async () => { renderer = TestRenderer.create(createWorkspace('session-1')); });

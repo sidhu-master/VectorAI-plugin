@@ -2,6 +2,7 @@
 
 import {
   DRAWING_SURFACE_API_VERSION,
+  type DrawingLayerDefinition,
   type DrawingSurfaceObservable,
   type DrawingWorkspaceClaim,
   type DrawingWorkspaceContribution,
@@ -45,6 +46,43 @@ function contribution(
 }
 
 describe('drawing surface registry', () => {
+  it('registers drawing layers in stable order and releases them idempotently', () => {
+    const registry = createDrawingSurfaceRegistry();
+    const listener = vi.fn();
+    const unsubscribe = registry.subscribeLayers(listener);
+    const partition: DrawingLayerDefinition = {
+      id: 'vectorai.annotation.partition',
+      label: '智能分区',
+      category: 'engineering',
+      icon: 'partition',
+      order: 100,
+      defaultVisible: true,
+    };
+    const angle: DrawingLayerDefinition = {
+      id: 'vectorai.annotation.angle',
+      label: '开角标注',
+      category: 'engineering',
+      icon: 'angle',
+      order: 50,
+      defaultVisible: true,
+    };
+    const angleRegistration = registry.registerLayer(angle);
+    const partitionRegistration = registry.registerLayer(partition);
+
+    expect(registry.getLayers()).toEqual([angle, partition]);
+    expect(registry.getLayers()).toBe(registry.getLayers());
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(() => registry.registerLayer(partition))
+      .toThrow('DUPLICATE_DRAWING_LAYER:vectorai.annotation.partition');
+
+    angleRegistration.dispose();
+    angleRegistration.dispose();
+    expect(registry.getLayers()).toEqual([partition]);
+    expect(listener).toHaveBeenCalledTimes(3);
+    partitionRegistration.dispose();
+    unsubscribe();
+  });
+
   it('rejects duplicate IDs and removes a registration idempotently', () => {
     const registry = createDrawingSurfaceRegistry();
     const claim = claims({});
