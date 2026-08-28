@@ -69,3 +69,63 @@ export interface AxialCandidateSet {
   evidence: DimensionEvidence[];
   diagnostics: EngineeringDiagnostic[];
 }
+
+export type DimensionScoreFeature =
+  | 'manual-required'
+  | 'document-exact'
+  | 'functional-region'
+  | 'process-envelope'
+  | 'composite-block'
+  | 'overall-root'
+  | 'elementary-span'
+  | 'ordinary-residual'
+  | 'terminal-residual';
+
+export interface AxialInferencePolicy {
+  id: 'shaft-hierarchical-dimensioning-v1' | 'shaft-reference-terminal-closure-v1';
+  version: '1';
+  weights: Readonly<Record<DimensionScoreFeature, number>>;
+  ambiguityMargin: number;
+  preferTerminalRootClosure: boolean;
+}
+
+export interface DimensionDecisionTrace {
+  candidateId: string;
+  decision: 'displayed' | 'closure' | 'rejected' | 'alternative';
+  score: number;
+  features: Array<{ feature: DimensionScoreFeature; contribution: number; evidenceIds: string[] }>;
+  reasonCodes: string[];
+}
+
+export interface AxialChainNode {
+  id: string;
+  parentCandidateId: string;
+  childCandidateIds: string[];
+  closureCandidateId: string;
+  alternativeClosureCandidateIds: string[];
+  status: 'resolved' | 'needs-review' | 'conflict';
+}
+
+export interface AxialDimensionScheme {
+  version: 1;
+  drawingRef: DrawingRef;
+  partitionRevisionId?: string;
+  policy: { id: AxialInferencePolicy['id']; version: '1' };
+  inputDigest: string;
+  topology: AxialTopology;
+  evidence: DimensionEvidence[];
+  candidates: AxialDimensionCandidate[];
+  displayedCandidateIds: string[];
+  closureCandidateIds: string[];
+  chains: AxialChainNode[];
+  decisions: DimensionDecisionTrace[];
+  diagnostics: EngineeringDiagnostic[];
+  status: 'resolved' | 'needs-review' | 'conflict' | 'stale';
+}
+
+export interface InferAxialDimensionSchemeInput {
+  topology: AxialTopology;
+  candidateSet: AxialCandidateSet;
+  policy: AxialInferencePolicy;
+  partitionRevisionId?: string;
+}

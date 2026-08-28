@@ -19,7 +19,7 @@ interface BoundaryEvidence {
 export function buildAxialTopology(input: BuildAxialTopologyInput): AxialTopology {
   const { partition } = input;
   const length = partition.axis.zMax - partition.axis.zMin;
-  const tolerance = input.coordinateTolerance ?? Math.max(Math.abs(length) * 1e-7, 1e-6);
+  const tolerance = input.coordinateTolerance ?? Math.max(Math.abs(length) * 1e-5, 1e-6);
   const boundaries = collectBoundaryEvidence(partition);
   if (boundaries.some(({ z }) => !Number.isFinite(z))) throw new Error('DIMENSION_STATION_UNRESOLVED');
   const stations = mergeBoundaries(boundaries, partition.axis.zMin, input.unit ?? 'mm', tolerance);
@@ -86,11 +86,11 @@ function mergeBoundaries(
   }
   return groups.map((group) => {
     const sourceCoordinate = average(group.map(({ z }) => z));
-    const coordinate = canonical(sourceCoordinate - zMin);
+    const coordinate = canonicalEngineeringCoordinate(sourceCoordinate - zMin);
     return {
       id: `station:${formatCoordinate(coordinate)}`,
       coordinate,
-      sourceCoordinate: canonical(sourceCoordinate),
+      sourceCoordinate: canonicalSourceCoordinate(sourceCoordinate),
       unit,
       kinds: unique(group.flatMap(({ kinds }) => kinds)).sort(kindOrder),
       geometryNodeIds: unique(group.flatMap(({ geometryNodeIds }) => geometryNodeIds)).sort(),
@@ -106,7 +106,7 @@ function consecutiveSpans(
 ): AxialElementarySpan[] {
   return stations.slice(0, -1).map((start, index) => {
     const end = stations[index + 1]!;
-    const nominalValue = canonical(end.coordinate - start.coordinate);
+    const nominalValue = canonicalEngineeringCoordinate(end.coordinate - start.coordinate);
     if (nominalValue <= tolerance) throw new Error('DIMENSION_STATION_CONFLICT');
     const midpoint = (start.sourceCoordinate + end.sourceCoordinate) / 2;
     const segments = partition.segments.filter(({ zStart, zEnd }) => (
@@ -140,10 +140,14 @@ function average(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function canonical(value: number): number {
+function canonicalSourceCoordinate(value: number): number {
   return Number(value.toFixed(6));
 }
 
+function canonicalEngineeringCoordinate(value: number): number {
+  return Number(value.toFixed(3));
+}
+
 function formatCoordinate(value: number): string {
-  return canonical(value).toString();
+  return canonicalEngineeringCoordinate(value).toString();
 }

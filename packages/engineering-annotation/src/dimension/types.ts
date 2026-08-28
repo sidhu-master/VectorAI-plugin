@@ -2,6 +2,7 @@
 
 import type { DimensionAnnotation, DimensionTarget, EntityAnchor, GeometryId } from '@vectorai/drawing-core';
 import type { DrawingRef } from '@vectorai/drawing-edit-protocol';
+import type { AxialDimensionScheme } from '../dimension-inference/types';
 
 export type EngineeringState = 'candidate' | 'resolved' | 'confirmed' | 'conflict' | 'stale';
 export type DimensionFunctionalRole = 'datum' | 'overall' | 'functional' | 'assembly' | 'process' | 'inspection' | 'auxiliary' | 'closure';
@@ -102,6 +103,7 @@ export interface EngineeringAnnotationDraft {
   chains: DimensionChain[];
   dependencies: AnnotationDependency[];
   diagnostics: EngineeringDiagnostic[];
+  axialScheme?: AxialDimensionScheme;
   baseRevisionId?: string;
 }
 

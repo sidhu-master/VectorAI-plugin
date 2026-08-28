@@ -149,13 +149,15 @@ function deriveProcessEnvelopes(
   partition: PartitionDraft | PartitionRevision,
   topology: AxialTopology,
 ): ProcessEnvelope[] {
-  const semanticSegmentIds = new Set(partition.semanticGroups.flatMap(({ segmentIds }) => segmentIds));
+  const functionalSegmentIds = new Set(partition.semanticGroups
+    .filter(({ semanticType }) => semanticType !== 'regular-shaft')
+    .flatMap(({ segmentIds }) => segmentIds));
   const output: ProcessEnvelope[] = [];
   for (const group of partition.semanticGroups) {
-    if (!group.range || group.semanticType === 'bearing') continue;
+    if (!group.range || group.semanticType === 'bearing' || group.semanticType === 'regular-shaft') continue;
     const width = Math.abs(group.range.zEnd - group.range.zStart);
     const next = partition.segments.find(({ zStart, id }) => (
-      Math.abs(zStart - group.range!.zEnd) <= coordinateTolerance(topology) && !semanticSegmentIds.has(id)
+      Math.abs(zStart - group.range!.zEnd) <= coordinateTolerance(topology) && !functionalSegmentIds.has(id)
     ));
     if (!next || Math.abs(next.zEnd - next.zStart) > width * 0.25) continue;
     const resolved = resolveCoordinates(topology, group.range.zStart, next.zEnd);
@@ -189,7 +191,7 @@ function resolveCoordinates(topology: AxialTopology, start: number, end: number)
 
 function coordinateTolerance(topology: AxialTopology): number {
   const length = topology.stations.at(-1)?.coordinate ?? 1;
-  return Math.max(Math.abs(length) * 1e-7, 1e-6);
+  return Math.max(Math.abs(length) * 1e-5, 1e-6);
 }
 
 function stationCoordinate(topology: AxialTopology, id: string): number {
