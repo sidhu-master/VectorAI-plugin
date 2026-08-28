@@ -56,6 +56,8 @@ describe('PartitionWorkflowService', () => {
     }]);
     expect(staged.phase).toBe('idle');
     expect(annotations.get('s').workspaceClaimed).toBe(false);
+    expect(service.getStagedEngineeringText({ id: 's' } as Agent)).toContain('name=轴承位');
+    expect(service.getStagedEngineeringText({ id: 'other-session' } as Agent)).toBeUndefined();
 
     const result = await service.analyzeCurrent({ id: 's' } as Agent);
     expect(result.phase).toBe('editing');

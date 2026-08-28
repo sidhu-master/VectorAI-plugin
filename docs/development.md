@@ -76,6 +76,7 @@ Launcher 使用独立应用窗口启动 DSH，不显示终端黑窗。它在启�
 - 自动标注 Workspace claim 位于 `~/.dsh/vectorai/annotation-sessions/`；任务完成、取消或失败不会清除，session 销毁时删除。
 - 分区草稿、确认版本及 Undo/Redo 历史位于 `~/.dsh/vectorai/annotation-partitions/`，使用散列 session 文件名和临时文件 rename 原子写入。
 - 尺寸意图、公差规格、尺寸链及其 Undo/Redo 历史位于 `~/.dsh/vectorai/dimension-plans/`；它与第一层 Drawing 分离，并保留独立的最后确认基线。
+- 名义尺寸链不会因 DXF 或资料上传自动启动。用户明确提出尺寸链任务后，模型调用无坐标参数的 `drawing_dimension_chain_start`；本地 Host 使用当前分区和已暂存资料生成方案。方案待复核、冲突或过期时不能确认。
 - 单独拖入工程资料时，插件会接收、校验并在当前本机会话暂存解析文本，但不会自动分区或接管画布。只有用户文字明确要求轴段分区后，模型才可调用 `drawing_partition_start`；Host 自动合并已暂存资料与模型传入的精简任务上下文，本地算法负责台阶识别、边界计算和吸附。DXF 与资料同时拖入也只会打开图纸并暂存资料。
 - 资料格式：`txt/md/csv/tsv/json/yaml/yml/ini/xml/html/htm/log`、`pdf/docx/xlsx/pptx/odt/ods/odp/rtf/epub`。旧 `doc/xls/ppt` 会提示另存为新版 Office、PDF 或文本；扫描 PDF 本阶段不做 OCR。
 - 全部解析在本机 Host 完成。DXF 上限 20 MiB；最多 16 份资料，单份 20 MiB、合计 50 MiB，提取文本单份 4 MiB、合计 8 MiB；结构化文档解析限时 30 秒。Client 和 Host 都校验限制与 SHA-256，任何资料失败都发生在第一层导入 DXF 之前。
@@ -103,6 +104,7 @@ pnpm e2e:motion-rig
 pnpm e2e:drawing-surface
 pnpm e2e:dxf-smart-partition
 pnpm e2e:tolerance-data-foundation
+pnpm e2e:golden-dimension-chain
 ```
 
 包级调试示例：

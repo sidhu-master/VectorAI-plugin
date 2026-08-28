@@ -19,6 +19,9 @@ import type { AnnotationSessionState, EngineeringAnnotationDraft } from '@vector
 import { ListTree } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { PartitionController } from './partition-controller';
+import type { DimensionChainController } from './dimension-chain-controller';
+import { DimensionChainOverlay } from './DimensionChainOverlay';
+import { DimensionChainInspector } from './DimensionChainInspector';
 import { PartitionOverlay } from './PartitionOverlay';
 import { PartitionActionToolbar } from './PartitionActionToolbar';
 import { PartitionInspector } from './PartitionInspector';
@@ -31,6 +34,8 @@ import type { PartitionViewMode } from './partition-view-model';
 import {
   ANNOTATION_OPENING_ANGLE_LAYER,
   ANNOTATION_OPENING_ANGLE_LAYER_ID,
+  ANNOTATION_DIMENSION_CHAIN_LAYER,
+  ANNOTATION_DIMENSION_CHAIN_LAYER_ID,
   ANNOTATION_PARTITION_LAYER,
   ANNOTATION_PARTITION_LAYER_ID,
 } from './drawing-layers';
@@ -41,9 +46,30 @@ const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_AC
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1_200;
 type AnnotationPanelId = 'structure';
-const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER] as const;
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER] as const;
 const subscribeToNoLayers = () => () => undefined;
 const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
+const EMPTY_DIMENSION_STATE = {
+  plan: { version: 1 as const, phase: 'idle' as const, canUndo: false, canRedo: false, updatedAt: 0 },
+  busy: false, previewHeld: false, error: null,
+};
+const EMPTY_DIMENSION_CONTROLLER: DimensionChainController = {
+  state: {
+    getSnapshot: () => EMPTY_DIMENSION_STATE,
+    subscribe: () => () => undefined,
+  },
+  actions: {
+    refresh: async () => undefined,
+    setDisplayed: async () => undefined,
+    chooseClosure: async () => undefined,
+    confirm: async () => undefined,
+    cancel: async () => undefined,
+    undo: async () => undefined,
+    redo: async () => undefined,
+    setPreviewHeld: () => undefined,
+  },
+  dispose: () => undefined,
+};
 
 export interface AnnotationWorkspaceProps {
   sessionId: string;
@@ -52,16 +78,19 @@ export interface AnnotationWorkspaceProps {
   layerRegistry?: DrawingLayerRegistry;
   state: DrawingSurfaceObservable<AnnotationSessionState>;
   partition: PartitionController;
+  dimensionChain?: DimensionChainController;
   dimensionPlan?: { draft: EngineeringAnnotationDraft; generationOrder: string[] };
 }
 
-export function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan, layerRegistry }: AnnotationWorkspaceProps) {
+export function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, dimensionPlan, layerRegistry }: AnnotationWorkspaceProps) {
+  const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport) as DrawingWorkspaceViewport;
   const selectedIds = useObservable(runtime.selection);
   const presentation = useObservable(runtime.presentation);
   const annotationState = useObservable(state);
   const partitionState = useObservable(partition.state);
+  const dimensionState = useObservable(dimensionChain.state);
   const displaySnapshot = (presentation.displaySnapshot ?? snapshot) as DrawingWorkspaceSnapshot | null;
   const [importError, setImportError] = useState<string | null>(null);
   const [stagedDocumentNames, setStagedDocumentNames] = useState<string[]>([]);
@@ -118,6 +147,12 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   };
   const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID]
     ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
+  const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID]
+    ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
+  const dimensionScheme = dimensionState.plan.draft?.axialScheme ?? dimensionState.plan.confirmed?.axialScheme;
+  const dimensionHistoryActive = dimensionState.plan.drawingRef !== undefined && (
+    dimensionState.plan.phase !== 'idle' || dimensionState.plan.canUndo || dimensionState.plan.canRedo
+  );
   useEffect(() => {
     // The controller may have been created by the conversation drop bridge before
     // an AI tool claimed this workspace. The claim is published before semantic
@@ -141,10 +176,13 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     };
   }, [annotationState.activationEpoch, partition, state]);
   useEffect(() => {
-    const release = () => partition.actions.setPreviewHeld(false);
+    const release = () => {
+      partition.actions.setPreviewHeld(false);
+      dimensionChain.actions.setPreviewHeld(false);
+    };
     window.addEventListener('blur', release);
     return () => { window.removeEventListener('blur', release); release(); };
-  }, [partition]);
+  }, [dimensionChain, partition]);
   useEffect(() => {
     if (!partitionState.busy) {
       void runtime.actions.refresh().then(() => {
@@ -169,7 +207,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     const previous = displayedDrawingRef.current;
     displayedDrawingRef.current = key;
     if (previous !== null && previous !== key) void partition.actions.refresh().catch(() => undefined);
-  }, [displaySnapshot, partition]);
+    if (previous !== null && previous !== key) void dimensionChain.actions.refresh().catch(() => undefined);
+  }, [dimensionChain, displaySnapshot, partition]);
+  useEffect(() => {
+    void dimensionChain.actions.refresh().catch(() => undefined);
+  }, [annotationState.activationEpoch, dimensionChain]);
 
   const beginImport = (drawing: File, documents: readonly File[]) => {
     setImportError(null);
@@ -195,6 +237,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     {draft && !partitionState.previewHeld && <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} mode={partitionView} onModeChange={setPartitionView} />}
     {!draft && confirmed && <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} mode={partitionView} onModeChange={setPartitionView} onReopen={partition.actions.reopen} />}
     {dimensionPlan && <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />}
+    {dimensionScheme && <DimensionChainInspector
+      scheme={dimensionScheme}
+      controller={dimensionChain}
+      editable={dimensionState.plan.phase === 'editing'}
+    />}
     {!draft && !confirmed && !dimensionPlan && <><h2>标注检查</h2><dl>
       <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
       <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
@@ -235,6 +282,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             .filter(({ id }) => (
               (id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed))
               || (id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle)
+              || (id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme))
             ))
             .map((definition) => ({
               definition,
@@ -280,18 +328,26 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
                 ? partition.actions.renameSemanticGroup(band.id, name)
                 : partition.actions.updateSegment(band.segmentIds[0]!, { name })} />}
             {partitionOverlayVisible && !draft && confirmed && <PartitionOverlay draft={confirmed} mode={partitionView} previewHeld scale={viewport.scale} />}
+            {dimensionScheme && <DimensionChainOverlay
+              scheme={dimensionScheme}
+              scale={viewport.scale}
+              visible={dimensionChainVisible}
+              previewHeld={dimensionState.previewHeld}
+            />}
           </>}
         />}
-        {partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
+        {dimensionState.plan.phase === 'editing'
+          ? <PartitionActionToolbar controller={dimensionChain} previewHeld={dimensionState.previewHeld} subject="尺寸链" />
+          : partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
         {displaySnapshot && <WorkspaceToolbarView
           snapshot={displaySnapshot}
           viewport={viewport}
           unavailable={partitionState.busy}
-          canUndo={partitionState.partition.canUndo}
-          canRedo={partitionState.partition.canRedo}
+          canUndo={dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo}
+          canRedo={dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo}
           onFit={runtime.actions.setViewport}
-          onUndo={() => partition.actions.undo()}
-          onRedo={() => partition.actions.redo()}
+          onUndo={() => dimensionHistoryActive ? dimensionChain.actions.undo() : partition.actions.undo()}
+          onRedo={() => dimensionHistoryActive ? dimensionChain.actions.redo() : partition.actions.redo()}
           onUploadFiles={handleToolbarUpload}
           uploadAccept={ANNOTATION_UPLOAD_ACCEPT}
           uploadMultiple

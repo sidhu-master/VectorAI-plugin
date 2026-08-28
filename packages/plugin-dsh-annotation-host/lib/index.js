@@ -47,7 +47,7 @@ var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read fr
 var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
-var _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _stagedDocuments, _PartitionWorkflowService_instances, analyze_fn, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoPartition_dec, _undoPartition_dec, _reopenPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _supplementDocuments_dec, _importAndAnalyze_dec, _clearDocuments_dec, _stageDocuments_dec, _importDrawing_dec, _getSessionState_dec, _a2, _init;
+var _candidates, _evidence, _diagnostics, _stations, _CandidateAccumulator_instances, ordered_fn, _memory, _AnnotationSessionStateStore_instances, set_fn, _FileAnnotationSessionStorage_instances, path_fn, _states, _PartitionSessionStore_instances, push_fn, replace_fn, envelope_fn, _FilePartitionStorage_instances, path_fn2, _stagedDocuments, _PartitionWorkflowService_instances, analyze_fn, current_fn, _states2, _DimensionPlanStore_instances, push_fn2, replace_fn2, envelope_fn2, _FileDimensionPlanStorage_instances, path_fn3, _redoDimensionPlan_dec, _undoDimensionPlan_dec, _cancelDimensionPlan_dec, _confirmDimensionPlan_dec, _editDimensionScheme_dec, _getDimensionPlan_dec, _redoPartition_dec, _undoPartition_dec, _reopenPartition_dec, _cancelPartition_dec, _confirmPartition_dec, _editPartition_dec, _getPartitionState_dec, _supplementDocuments_dec, _importAndAnalyze_dec, _clearDocuments_dec, _stageDocuments_dec, _importDrawing_dec, _getSessionState_dec, _a2, _init;
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
@@ -168,42 +168,42 @@ function validateEngineeringDraft(draft) {
   const diagnostics = [];
   const intentIds = /* @__PURE__ */ new Set();
   for (const intent of draft.intents) {
-    if (intentIds.has(intent.id)) diagnostics.push(problem$2("DIMENSION_ID_DUPLICATE", intent.id, "Duplicate dimension intent ID"));
+    if (intentIds.has(intent.id)) diagnostics.push(problem$3("DIMENSION_ID_DUPLICATE", intent.id, "Duplicate dimension intent ID"));
     intentIds.add(intent.id);
   }
   const datumIds = new Set(draft.datums.map(({ id }) => id));
   for (const datum of draft.datums) {
-    if (datum.status === "stale") diagnostics.push(problem$2("DIMENSION_DATUM_STALE", datum.id, "Datum references stale geometry"));
+    if (datum.status === "stale") diagnostics.push(problem$3("DIMENSION_DATUM_STALE", datum.id, "Datum references stale geometry"));
   }
   for (const intent of draft.intents) {
-    if (intent.targets.length === 0) diagnostics.push(problem$2("DIMENSION_TARGET_REQUIRED", intent.id, "Dimension intent has no target"));
-    if (!Number.isFinite(intent.nominalValue)) diagnostics.push(problem$2("DIMENSION_NOMINAL_INVALID", intent.id, "Nominal value must be finite"));
+    if (intent.targets.length === 0) diagnostics.push(problem$3("DIMENSION_TARGET_REQUIRED", intent.id, "Dimension intent has no target"));
+    if (!Number.isFinite(intent.nominalValue)) diagnostics.push(problem$3("DIMENSION_NOMINAL_INVALID", intent.id, "Nominal value must be finite"));
     for (const datumId of intent.datumIds) {
-      if (!datumIds.has(datumId)) diagnostics.push(problem$2("DIMENSION_DATUM_UNKNOWN", intent.id, `Unknown datum ${datumId}`));
+      if (!datumIds.has(datumId)) diagnostics.push(problem$3("DIMENSION_DATUM_UNKNOWN", intent.id, `Unknown datum ${datumId}`));
     }
   }
   for (const tolerance of draft.tolerances) {
-    if (!intentIds.has(tolerance.dimensionIntentId)) diagnostics.push(problem$2("TOLERANCE_INTENT_UNKNOWN", tolerance.id, "Tolerance references an unknown intent"));
+    if (!intentIds.has(tolerance.dimensionIntentId)) diagnostics.push(problem$3("TOLERANCE_INTENT_UNKNOWN", tolerance.id, "Tolerance references an unknown intent"));
     if ((tolerance.status === "resolved" || tolerance.status === "confirmed") && tolerance.resolved === void 0) {
-      diagnostics.push(problem$2("TOLERANCE_RESULT_REQUIRED", tolerance.id, "Confirmed tolerance requires a resolved result"));
+      diagnostics.push(problem$3("TOLERANCE_RESULT_REQUIRED", tolerance.id, "Confirmed tolerance requires a resolved result"));
     } else if (tolerance.resolved !== void 0 && !isResolvedToleranceValid(tolerance)) {
-      diagnostics.push(problem$2("TOLERANCE_RESULT_INVALID", tolerance.id, "Resolved tolerance does not match its declared mode"));
+      diagnostics.push(problem$3("TOLERANCE_RESULT_INVALID", tolerance.id, "Resolved tolerance does not match its declared mode"));
     }
   }
   for (const chain of draft.chains) {
     for (const member of chain.members) {
       if (member.coefficient !== 1 && member.coefficient !== -1) {
-        diagnostics.push(problem$2("DIMENSION_CHAIN_COEFFICIENT_INVALID", chain.id, "Chain coefficient must be 1 or -1"));
+        diagnostics.push(problem$3("DIMENSION_CHAIN_COEFFICIENT_INVALID", chain.id, "Chain coefficient must be 1 or -1"));
       }
-      if (!intentIds.has(member.dimensionIntentId)) diagnostics.push(problem$2("DIMENSION_CHAIN_MEMBER_UNKNOWN", chain.id, `Unknown chain member ${member.dimensionIntentId}`));
+      if (!intentIds.has(member.dimensionIntentId)) diagnostics.push(problem$3("DIMENSION_CHAIN_MEMBER_UNKNOWN", chain.id, `Unknown chain member ${member.dimensionIntentId}`));
     }
     if (!intentIds.has(chain.equation.closureIntentId) || !chain.members.some(({ dimensionIntentId }) => dimensionIntentId === chain.equation.closureIntentId)) {
-      diagnostics.push(problem$2("DIMENSION_CHAIN_CLOSURE_UNKNOWN", chain.id, "Closure intent must be a known chain member"));
+      diagnostics.push(problem$3("DIMENSION_CHAIN_CLOSURE_UNKNOWN", chain.id, "Closure intent must be a known chain member"));
     }
   }
   for (const dependency of draft.dependencies) {
     if (!intentIds.has(dependency.beforeIntentId) || !intentIds.has(dependency.afterIntentId)) {
-      diagnostics.push(problem$2("DIMENSION_DEPENDENCY_UNKNOWN", `${dependency.beforeIntentId}->${dependency.afterIntentId}`, "Dependency references an unknown intent"));
+      diagnostics.push(problem$3("DIMENSION_DEPENDENCY_UNKNOWN", `${dependency.beforeIntentId}->${dependency.afterIntentId}`, "Dependency references an unknown intent"));
     }
   }
   return diagnostics;
@@ -231,7 +231,7 @@ function isResolvedToleranceValid(tolerance) {
 function finite(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
-function problem$2(code, id, message) {
+function problem$3(code, id, message) {
   return { id: `diagnostic:${code}:${id}`, severity: "error", code, message, entityIds: [id] };
 }
 function projectEngineeringAnnotations(input) {
@@ -243,10 +243,10 @@ function projectEngineeringAnnotations(input) {
   const existingByIntentId = new Map(
     input.existingAnnotations.filter((node) => node.type === "dimension" && node.engineeringIntentId !== void 0).map((node) => [node.engineeringIntentId, node])
   );
-  for (const [generationOrder, intentId] of input.orderedIntentIds.entries()) {
-    const intent = intentsById.get(intentId);
+  for (const [generationOrder, intentId2] of input.orderedIntentIds.entries()) {
+    const intent = intentsById.get(intentId2);
     if (!intent) {
-      diagnostics.push(issue$2("ANNOTATION_INTENT_UNKNOWN", "标注顺序引用了不存在的尺寸意图。", [intentId]));
+      diagnostics.push(issue$2("ANNOTATION_INTENT_UNKNOWN", "标注顺序引用了不存在的尺寸意图。", [intentId2]));
       continue;
     }
     const intentDiagnostics = [];
@@ -271,7 +271,7 @@ function projectEngineeringAnnotations(input) {
     diagnostics.push(...intentDiagnostics);
     if (intentDiagnostics.some(({ severity }) => severity === "error")) continue;
     const chainIds = input.draft.chains.filter((chain) => chain.members.some((member) => member.dimensionIntentId === intent.id)).map(({ id }) => id).sort();
-    const evidenceRefs = unique$1([
+    const evidenceRefs = unique$6([
       ...intent.evidenceIds,
       ...intent.datumIds.flatMap((datumId) => {
         var _a3;
@@ -351,13 +351,13 @@ function defaultAnnotation(intent) {
     associationStatus: "resolved",
     targets: structuredClone(intent.targets),
     computedValue: intent.nominalValue,
-    displayText: `${prefix}${format$1(intent.nominalValue)}${suffix}`,
+    displayText: `${prefix}${format$2(intent.nominalValue)}${suffix}`,
     unit: intent.unit,
     textPosition: [0, 0],
     definitionPoints: []
   };
 }
-function unique$1(values) {
+function unique$6(values) {
   return [...new Set(values)].sort();
 }
 function issue$2(code, message, entityIds) {
@@ -377,7 +377,7 @@ function stableKey$1(value) {
   }
   return (hash >>> 0).toString(36);
 }
-function format$1(value) {
+function format$2(value) {
   return Number(value.toFixed(6)).toString();
 }
 function evaluateHomogeneous(node, normalized) {
@@ -424,9 +424,9 @@ function sampleSpline(node, { maxError, maxDepth = 12 }) {
   return output;
 }
 function normalizedKnotSpans(node) {
-  const start = node.knots[node.degree];
-  const end = node.knots[node.controlPoints.length];
-  return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start) / (end - start)).filter((value, index, values) => index === 0 || value > values[index - 1]);
+  const start2 = node.knots[node.degree];
+  const end2 = node.knots[node.controlPoints.length];
+  return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start2) / (end2 - start2)).filter((value, index, values) => index === 0 || value > values[index - 1]);
 }
 function validateSpline(node) {
   if (!Number.isInteger(node.degree) || node.degree < 1) {
@@ -472,23 +472,23 @@ function mixHomogeneous(first, second, alpha) {
 }
 function subdivideBezier(controls, depth, maxDepth, maxError, output) {
   const points = controls.map(project);
-  const start = points[0];
-  const end = points.at(-1);
-  const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
+  const start2 = points[0];
+  const end2 = points.at(-1);
+  const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start2, end2)));
   if (depth >= maxDepth || flatness <= maxError) {
-    output.push(end);
+    output.push(end2);
     return;
   }
   const [left, right] = splitBezier(controls);
   subdivideBezier(left, depth + 1, maxDepth, maxError, output);
   subdivideBezier(right, depth + 1, maxDepth, maxError, output);
 }
-function extractBezierControls(node, start, end) {
+function extractBezierControls(node, start2, end2) {
   const degree = node.degree;
-  if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
+  if (degree === 1) return [evaluateHomogeneous(node, start2), evaluateHomogeneous(node, end2)];
   const samples = Array.from({ length: degree + 1 }, (_, row) => {
     const local2 = row / degree;
-    return evaluateHomogeneous(node, start + (end - start) * local2);
+    return evaluateHomogeneous(node, start2 + (end2 - start2) * local2);
   });
   const matrix = Array.from({ length: degree + 1 }, (_, row) => {
     const parameter = row / degree;
@@ -534,15 +534,15 @@ function binomial(n, k) {
   for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
   return result;
 }
-function pointSegmentDistance(point, start, end) {
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
+function pointSegmentDistance(point, start2, end2) {
+  const dx = end2[0] - start2[0];
+  const dy = end2[1] - start2[1];
   const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
-  const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+  if (lengthSquared === 0) return Math.hypot(point[0] - start2[0], point[1] - start2[1]);
+  const projection = Math.min(1, Math.max(0, ((point[0] - start2[0]) * dx + (point[1] - start2[1]) * dy) / lengthSquared));
   return Math.hypot(
-    point[0] - (start[0] + projection * dx),
-    point[1] - (start[1] + projection * dy)
+    point[0] - (start2[0] + projection * dx),
+    point[1] - (start2[1] + projection * dy)
   );
 }
 function samePoint(first, second) {
@@ -586,7 +586,7 @@ function explicitAxisY(geometry, tolerance) {
 }
 function reflectedAxisY(segments, bounds2, tolerance) {
   const axisY = (bounds2.minY + bounds2.maxY) / 2;
-  const horizontal = segments.filter(({ start, end }) => Math.abs(end[1] - start[1]) <= tolerance && Math.abs(end[0] - start[0]) > tolerance);
+  const horizontal = segments.filter(({ start: start2, end: end2 }) => Math.abs(end2[1] - start2[1]) <= tolerance && Math.abs(end2[0] - start2[0]) > tolerance);
   for (let firstIndex = 0; firstIndex < horizontal.length; firstIndex += 1) {
     const first = horizontal[firstIndex];
     const firstRadius = first.start[1] - axisY;
@@ -790,8 +790,8 @@ function layoutOpeningAngles(input) {
 function openingSide(x, bounds2) {
   return x <= (bounds2.minX + bounds2.maxX) / 2 ? -1 : 1;
 }
-function angularSweep(start, end, degrees) {
-  const ccw = modulo(end - start, Math.PI * 2);
+function angularSweep(start2, end2, degrees) {
+  const ccw = modulo(end2 - start2, Math.PI * 2);
   const cw = ccw - Math.PI * 2;
   const target = Math.abs(degrees) * Math.PI / 180;
   return Math.abs(Math.abs(ccw) - target) <= Math.abs(Math.abs(cw) - target) ? ccw : cw;
@@ -848,7 +848,7 @@ function planEngineeringAnnotations(input) {
         anchor: { kind: "nearest", point: fact.rays[index] ?? fact.vertex }
       })),
       computedValue: fact.value,
-      displayText: `${format(fact.value)}°`,
+      displayText: `${format$1(fact.value)}°`,
       unit: "deg",
       textPosition: layout.textPosition,
       definitionPoints: [...layout.definitionPoints],
@@ -989,7 +989,7 @@ function stableKey(value) {
 function clean(value) {
   return Number(value.toFixed(6));
 }
-function format(value) {
+function format$1(value) {
   return clean(value).toString();
 }
 function validatePartition(draft) {
@@ -998,19 +998,19 @@ function validatePartition(draft) {
   const ids = /* @__PURE__ */ new Set();
   const evidence = new Set(draft.evidence.map(({ id }) => id));
   for (const [index, segment] of draft.segments.entries()) {
-    if (ids.has(segment.id)) diagnostics.push(problem$1("PARTITION_ID_DUPLICATE", `Duplicate segment ${segment.id}`, segment.id));
+    if (ids.has(segment.id)) diagnostics.push(problem$2("PARTITION_ID_DUPLICATE", `Duplicate segment ${segment.id}`, segment.id));
     ids.add(segment.id);
     if (![segment.zStart, segment.zEnd].every(Number.isFinite) || segment.zEnd - segment.zStart <= tolerance) {
-      diagnostics.push(problem$1("PARTITION_SEGMENT_INVALID", `Invalid segment ${segment.id}`, segment.id));
+      diagnostics.push(problem$2("PARTITION_SEGMENT_INVALID", `Invalid segment ${segment.id}`, segment.id));
     }
     if (index > 0) {
       const previous = draft.segments[index - 1];
       const delta = segment.zStart - previous.zEnd;
-      if (delta > tolerance) diagnostics.push(problem$1("PARTITION_GAP", `Gap before ${segment.id}`, segment.id));
-      if (delta < -tolerance) diagnostics.push(problem$1("PARTITION_OVERLAP", `Overlap before ${segment.id}`, segment.id));
+      if (delta > tolerance) diagnostics.push(problem$2("PARTITION_GAP", `Gap before ${segment.id}`, segment.id));
+      if (delta < -tolerance) diagnostics.push(problem$2("PARTITION_OVERLAP", `Overlap before ${segment.id}`, segment.id));
     }
     for (const id of [...segment.boundaryEvidenceIds, ...segment.semanticEvidenceIds]) {
-      if (!evidence.has(id)) diagnostics.push(problem$1("PARTITION_EVIDENCE_MISSING", `Missing evidence ${id}`, segment.id));
+      if (!evidence.has(id)) diagnostics.push(problem$2("PARTITION_EVIDENCE_MISSING", `Missing evidence ${id}`, segment.id));
     }
   }
   if (draft.segments.length === 0 || Math.abs(draft.segments[0].zStart - draft.axis.zMin) > tolerance || Math.abs(draft.segments.at(-1).zEnd - draft.axis.zMax) > tolerance) {
@@ -1026,7 +1026,7 @@ function validatePartition(draft) {
   }
   return diagnostics;
 }
-function problem$1(code, message, segmentId) {
+function problem$2(code, message, segmentId) {
   return { id: `diagnostic:${code}:${segmentId}`, severity: "error", code, message, segmentIds: [segmentId] };
 }
 function moveBoundary(draft, input) {
@@ -1035,9 +1035,9 @@ function moveBoundary(draft, input) {
   const before = draft.segments[input.boundaryIndex - 1];
   const after = draft.segments[input.boundaryIndex];
   if (!(z > before.zStart && z < after.zEnd)) throw new Error("PARTITION_BOUNDARY_ORDER");
-  const evidenceId = `manual:boundary:${input.boundaryIndex}:${canonical$3(z)}`;
+  const evidenceId = `manual:boundary:${input.boundaryIndex}:${canonical$4(z)}`;
   const profileSamples = uniqueSamples(draft.segments.flatMap((segment) => segment.profileSamples ?? []));
-  const segments = draft.segments.map((segment, index) => index === input.boundaryIndex - 1 ? summarize({ ...segment, zEnd: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : index === input.boundaryIndex ? summarize({ ...segment, zStart: z, profileSamples, boundaryEvidenceIds: unique([...segment.boundaryEvidenceIds, evidenceId]) }) : segment);
+  const segments = draft.segments.map((segment, index) => index === input.boundaryIndex - 1 ? summarize({ ...segment, zEnd: z, profileSamples, boundaryEvidenceIds: unique$5([...segment.boundaryEvidenceIds, evidenceId]) }) : index === input.boundaryIndex ? summarize({ ...segment, zStart: z, profileSamples, boundaryEvidenceIds: unique$5([...segment.boundaryEvidenceIds, evidenceId]) }) : segment);
   return appendManual(draft, segments, evidenceId, `Boundary moved to ${z}`);
 }
 function moveSemanticRange(draft, input) {
@@ -1053,8 +1053,8 @@ function moveSemanticRange(draft, input) {
   const nextRange = input.edge === "start" ? { ...current, zStart: z } : { ...current, zEnd: z };
   const tolerance = Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 1e-9, 1e-9);
   if (nextRange.zStart < draft.axis.zMin - tolerance || nextRange.zEnd > draft.axis.zMax + tolerance || nextRange.zEnd - nextRange.zStart <= tolerance) throw new Error("PARTITION_GROUP_RANGE_ORDER");
-  const evidenceId = `manual:semantic-range:${group.id}:${input.edge}:${canonical$3(z)}`;
-  const semanticGroups = draft.semanticGroups.map((candidate) => candidate.id === group.id ? { ...candidate, range: nextRange, evidenceIds: unique([...candidate.evidenceIds, evidenceId]) } : candidate);
+  const evidenceId = `manual:semantic-range:${group.id}:${input.edge}:${canonical$4(z)}`;
+  const semanticGroups = draft.semanticGroups.map((candidate) => candidate.id === group.id ? { ...candidate, range: nextRange, evidenceIds: unique$5([...candidate.evidenceIds, evidenceId]) } : candidate);
   return {
     ...structuredClone(draft),
     semanticGroups: structuredClone(semanticGroups),
@@ -1070,7 +1070,7 @@ function renameSemanticGroup(draft, input) {
   const evidenceId = `manual:semantic-name:${group.id}:${draft.evidence.length}`;
   return {
     ...structuredClone(draft),
-    semanticGroups: draft.semanticGroups.map((candidate) => candidate.id === group.id ? { ...structuredClone(candidate), name, evidenceIds: unique([...candidate.evidenceIds, evidenceId]) } : structuredClone(candidate)),
+    semanticGroups: draft.semanticGroups.map((candidate) => candidate.id === group.id ? { ...structuredClone(candidate), name, evidenceIds: unique$5([...candidate.evidenceIds, evidenceId]) } : structuredClone(candidate)),
     evidence: [...structuredClone(draft.evidence), {
       id: evidenceId,
       origin: "manual",
@@ -1084,13 +1084,13 @@ function splitSegment(draft, input) {
   const source = draft.segments[index];
   const z = snap(input.z, input.snapCandidates, input.snapTolerance);
   if (!(z > source.zStart && z < source.zEnd)) throw new Error("PARTITION_BOUNDARY_ORDER");
-  const evidenceId = `manual:split:${source.id}:${canonical$3(z)}`;
+  const evidenceId = `manual:split:${source.id}:${canonical$4(z)}`;
   const make = (side, zStart, zEnd) => ({
     ...source,
-    id: `${source.id}:${side}:${canonical$3(z)}`,
+    id: `${source.id}:${side}:${canonical$4(z)}`,
     zStart,
     zEnd,
-    boundaryEvidenceIds: unique([...source.boundaryEvidenceIds, evidenceId])
+    boundaryEvidenceIds: unique$5([...source.boundaryEvidenceIds, evidenceId])
   });
   const left = summarize(make("left", source.zStart, z));
   const right = summarize(make("right", z, source.zEnd));
@@ -1108,24 +1108,24 @@ function mergeBoundary(draft, input) {
   const evidenceId = `manual:merge:${left.id}:${right.id}`;
   const merged = {
     ...left,
-    id: `segment:${canonical$3(left.zStart)}-${canonical$3(right.zEnd)}`,
+    id: `segment:${canonical$4(left.zStart)}-${canonical$4(right.zEnd)}`,
     zEnd: right.zEnd,
     profile: {
       minRadius: Math.min(left.profile.minRadius, right.profile.minRadius),
       maxRadius: Math.max(left.profile.maxRadius, right.profile.maxRadius),
       sampleCount: left.profile.sampleCount + right.profile.sampleCount
     },
-    geometryNodeIds: unique([...left.geometryNodeIds, ...right.geometryNodeIds]),
-    boundaryEvidenceIds: unique([...left.boundaryEvidenceIds, ...right.boundaryEvidenceIds, evidenceId]),
-    semanticEvidenceIds: unique([...left.semanticEvidenceIds, ...right.semanticEvidenceIds]),
-    diagnosticIds: unique([...left.diagnosticIds, ...right.diagnosticIds]),
+    geometryNodeIds: unique$5([...left.geometryNodeIds, ...right.geometryNodeIds]),
+    boundaryEvidenceIds: unique$5([...left.boundaryEvidenceIds, ...right.boundaryEvidenceIds, evidenceId]),
+    semanticEvidenceIds: unique$5([...left.semanticEvidenceIds, ...right.semanticEvidenceIds]),
+    diagnosticIds: unique$5([...left.diagnosticIds, ...right.diagnosticIds]),
     profileSamples: [...left.profileSamples ?? [], ...right.profileSamples ?? []]
   };
   const segments = [...draft.segments.slice(0, input.boundaryIndex - 1), merged, ...draft.segments.slice(input.boundaryIndex + 1)];
   const removed = /* @__PURE__ */ new Set([left.id, right.id]);
   const semanticGroups = draft.semanticGroups.map((group) => ({
     ...group,
-    segmentIds: unique(group.segmentIds.flatMap((id) => removed.has(id) ? [merged.id] : [id]))
+    segmentIds: unique$5(group.segmentIds.flatMap((id) => removed.has(id) ? [merged.id] : [id]))
   }));
   return appendManual({ ...draft, semanticGroups }, segments, evidenceId, "Boundary merged");
 }
@@ -1136,7 +1136,7 @@ function updateSegmentMetadata(draft, input) {
     ...segment,
     ...input.name === void 0 ? {} : { name: input.name },
     ...input.semanticType === void 0 ? {} : { semanticType: input.semanticType },
-    semanticEvidenceIds: unique([...segment.semanticEvidenceIds, evidenceId])
+    semanticEvidenceIds: unique$5([...segment.semanticEvidenceIds, evidenceId])
   } : segment);
   return appendManual(draft, segments, evidenceId, `Metadata updated for ${input.segmentId}`);
 }
@@ -1161,16 +1161,16 @@ function summarize(segment) {
       maxRadius: radii.length === 0 ? 0 : Math.max(...radii),
       sampleCount: radii.length
     },
-    geometryNodeIds: unique(samples.map(({ geometryNodeId }) => geometryNodeId))
+    geometryNodeIds: unique$5(samples.map(({ geometryNodeId }) => geometryNodeId))
   };
 }
 function uniqueSamples(samples) {
-  return [...new Map(samples.map((sample) => [`${sample.geometryNodeId}:${canonical$3(sample.z)}:${canonical$3(sample.radius)}`, sample])).values()];
+  return [...new Map(samples.map((sample) => [`${sample.geometryNodeId}:${canonical$4(sample.z)}:${canonical$4(sample.radius)}`, sample])).values()];
 }
-function unique(values) {
+function unique$5(values) {
   return [...new Set(values)];
 }
-function canonical$3(value) {
+function canonical$4(value) {
   return Number(value.toFixed(9)).toString();
 }
 function parseEngineeringDocument(text) {
@@ -1336,10 +1336,10 @@ function connectedComponents(nodes, tolerance) {
 function principalCandidate(component, hints) {
   const points = component.flatMap(({ points: points2 }) => points2);
   if (points.length < 2) return null;
-  const mean = [average(points.map(([x]) => x)), average(points.map(([, y]) => y))];
-  const xx = average(points.map(([x]) => (x - mean[0]) ** 2));
-  const yy = average(points.map(([, y]) => (y - mean[1]) ** 2));
-  const xy = average(points.map(([x, y]) => (x - mean[0]) * (y - mean[1])));
+  const mean = [average$1(points.map(([x]) => x)), average$1(points.map(([, y]) => y))];
+  const xx = average$1(points.map(([x]) => (x - mean[0]) ** 2));
+  const yy = average$1(points.map(([, y]) => (y - mean[1]) ** 2));
+  const xy = average$1(points.map(([x, y]) => (x - mean[0]) * (y - mean[1])));
   const angle = dominantEdgeAngle(component) ?? Math.atan2(2 * xy, xx - yy) / 2;
   let direction = [Math.cos(angle), Math.sin(angle)];
   if (Math.abs(direction[0]) >= Math.abs(direction[1]) ? direction[0] < 0 : direction[1] < 0) direction = [-direction[0], -direction[1]];
@@ -1354,8 +1354,8 @@ function principalCandidate(component, hints) {
   const diameterFit = expectedDiameters.length === 0 ? 1 : 1 / (1 + Math.min(...expectedDiameters.map((expected) => Math.abs(diameter - expected) / Math.max(expected, 1e-9))) * 12);
   const intervalEnds = hints.regions.flatMap(({ interval }) => interval === void 0 ? [] : [interval.end]);
   const lengthFit = intervalEnds.length === 0 ? 1 : 1 / (1 + Math.max(0, Math.max(...intervalEnds) - length) / Math.max(length, 1e-9) * 4);
-  const score = Math.log1p(elongation) * Math.sqrt(component.length) * length * diameterFit * lengthFit;
-  return { score, direction, points, nodeIds: component.map(({ id }) => id) };
+  const score2 = Math.log1p(elongation) * Math.sqrt(component.length) * length * diameterFit * lengthFit;
+  return { score: score2, direction, points, nodeIds: component.map(({ id }) => id) };
 }
 function dominantEdgeAngle(component) {
   const binCount = 1800;
@@ -1430,7 +1430,7 @@ function overlaps(a, b, t) {
 function dot(point, direction) {
   return point[0] * direction[0] + point[1] * direction[1];
 }
-function average(values) {
+function average$1(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 function sampleAngles(count) {
@@ -1443,8 +1443,8 @@ function polar(center, radius, degrees) {
   const angle = degrees * Math.PI / 180;
   return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius];
 }
-function positiveSpan(start, end) {
-  const span = ((end - start) % 360 + 360) % 360;
+function positiveSpan(start2, end2) {
+  const span = ((end2 - start2) % 360 + 360) % 360;
   return span === 0 ? 360 : span;
 }
 function extractShaftProfile(document, axis) {
@@ -1538,18 +1538,18 @@ function detectShaftSteps(profile) {
       previous.geometryNodeIds = [.../* @__PURE__ */ new Set([...previous.geometryNodeIds, ...candidate.geometryNodeIds])];
     } else clustered.push({ ...candidate });
   }
-  return clustered.map(({ z, score, geometryNodeIds }, index) => {
+  return clustered.map(({ z, score: score2, geometryNodeIds }, index) => {
     const coordinate = index === 0 ? profile.axis.zMin : index === clustered.length - 1 ? profile.axis.zMax : z;
     return {
-      id: `step:${canonical$2(coordinate)}`,
-      z: Number(canonical$2(coordinate)),
-      score,
+      id: `step:${canonical$3(coordinate)}`,
+      z: Number(canonical$3(coordinate)),
+      score: score2,
       evidenceIds: geometryNodeIds.map((id) => `geometry:${id}`),
-      accepted: index === 0 || index === clustered.length - 1 || score >= 0.45
+      accepted: index === 0 || index === clustered.length - 1 || score2 >= 0.45
     };
   });
 }
-function canonical$2(value) {
+function canonical$3(value) {
   return Number(value.toFixed(6)).toString();
 }
 function fuseDocumentRegions(draft, regions) {
@@ -1662,9 +1662,9 @@ function contiguousMatches(segments, region) {
   const targetWidth = Math.max(interval.end - interval.start, axisSpan * 1e-6);
   const targetCenter = (interval.start + interval.end) / 2;
   const output = [];
-  for (let start = 0; start < segments.length; start += 1) {
-    for (let end = start; end < segments.length; end += 1) {
-      const selected = segments.slice(start, end + 1);
+  for (let start2 = 0; start2 < segments.length; start2 += 1) {
+    for (let end2 = start2; end2 < segments.length; end2 += 1) {
+      const selected = segments.slice(start2, end2 + 1);
       const actualStart = selected[0].zStart;
       const actualEnd = selected.at(-1).zEnd;
       const actualWidth = actualEnd - actualStart;
@@ -1704,9 +1704,9 @@ function distanceToSegment(segment, z) {
   return z < segment.zStart ? segment.zStart - z : z > segment.zEnd ? z - segment.zEnd : 0;
 }
 function formatRange(range) {
-  const start = range.start ?? range.zStart;
-  const end = range.end ?? range.zEnd;
-  return `${Number(start == null ? void 0 : start.toFixed(6))}–${Number(end == null ? void 0 : end.toFixed(6))}`;
+  const start2 = range.start ?? range.zStart;
+  const end2 = range.end ?? range.zEnd;
+  return `${Number(start2 == null ? void 0 : start2.toFixed(6))}–${Number(end2 == null ? void 0 : end2.toFixed(6))}`;
 }
 function analyzeShaftPartition(request) {
   const parsed = request.engineeringText === void 0 ? void 0 : parseEngineeringDocument(request.engineeringText);
@@ -1743,7 +1743,7 @@ function analyzeShaftPartition(request) {
       const left = stepCandidates.find(({ z }) => Math.abs(z - zStart) <= tolerance);
       const right = stepCandidates.find(({ z }) => Math.abs(z - zEnd) <= tolerance);
       return {
-        id: `segment:${canonical$1(zStart)}-${canonical$1(zEnd)}`,
+        id: `segment:${canonical$2(zStart)}-${canonical$2(zEnd)}`,
         zStart,
         zEnd,
         profile: radiusSummary(profile, zStart, zEnd),
@@ -1783,7 +1783,7 @@ function analyzeShaftPartition(request) {
     semanticReviewSegmentIds: draft.segments.filter(({ semanticType }) => semanticType === void 0).map(({ id }) => id)
   };
 }
-function canonical$1(value) {
+function canonical$2(value) {
   return Number(value.toFixed(6)).toString();
 }
 function unitScale(unit) {
@@ -1894,11 +1894,11 @@ function inferRegularShaftRegions(draft) {
     if (!isBoundedByTrustedDocumentRegions(output, run) || !hasAcceptedBoundarySteps(output, run) || runSpan(run) < minimumSpan) continue;
     const zStart = run.segments[0].zStart;
     const zEnd = run.segments.at(-1).zEnd;
-    const evidenceId = `fused:regular:${canonical(zStart)}-${canonical(zEnd)}`;
+    const evidenceId = `fused:regular:${canonical$1(zStart)}-${canonical$1(zEnd)}`;
     output.evidence.push({
       id: evidenceId,
       origin: "fused",
-      label: `Post-review regular shaft span bounded by trusted document regions at ${canonical(zStart)}–${canonical(zEnd)}`,
+      label: `Post-review regular shaft span bounded by trusted document regions at ${canonical$1(zStart)}–${canonical$1(zEnd)}`,
       geometryNodeIds: [...new Set(run.segments.flatMap(({ geometryNodeIds }) => geometryNodeIds))]
     });
     output.semanticGroups.push({
@@ -1964,7 +1964,7 @@ function runSpan(run) {
 function substantialSpan(draft) {
   return Math.max((draft.axis.zMax - draft.axis.zMin) * 0.05, 1e-6);
 }
-function canonical(value) {
+function canonical$1(value) {
   return Number(value.toFixed(6)).toString();
 }
 function analyzeDimensionChain(input) {
@@ -2072,14 +2072,893 @@ function issue$1(chain, code, message, entityId) {
     evidenceIds: [...chain.evidenceIds]
   };
 }
-function createEngineeringAnnotationTool(host, sessions, partitions) {
+function buildAxialTopology(input) {
+  const { partition } = input;
+  const length = partition.axis.zMax - partition.axis.zMin;
+  const tolerance = input.coordinateTolerance ?? Math.max(Math.abs(length) * 1e-5, 1e-6);
+  const boundaries = collectBoundaryEvidence(partition);
+  if (boundaries.some(({ z }) => !Number.isFinite(z))) throw new Error("DIMENSION_STATION_UNRESOLVED");
+  const stations = mergeBoundaries(boundaries, partition.axis.zMin, input.unit ?? "mm", tolerance);
+  const elementarySpans = consecutiveSpans(stations, partition, tolerance);
+  return {
+    drawingRef: partition.drawingRef,
+    axis: structuredClone(partition.axis),
+    unit: input.unit ?? "mm",
+    stations,
+    elementarySpans
+  };
+}
+function collectBoundaryEvidence(partition) {
+  const output = [
+    { z: partition.axis.zMin, kinds: ["drawing-end"], geometryNodeIds: [], evidenceIds: ["axis:start"] },
+    { z: partition.axis.zMax, kinds: ["drawing-end"], geometryNodeIds: [], evidenceIds: ["axis:end"] }
+  ];
+  for (const segment of partition.segments) {
+    output.push({
+      z: segment.zStart,
+      kinds: ["partition-boundary"],
+      geometryNodeIds: segment.geometryNodeIds,
+      evidenceIds: segment.boundaryEvidenceIds
+    }, {
+      z: segment.zEnd,
+      kinds: ["partition-boundary"],
+      geometryNodeIds: segment.geometryNodeIds,
+      evidenceIds: segment.boundaryEvidenceIds
+    });
+  }
+  for (const group of partition.semanticGroups) {
+    if (!group.range) continue;
+    for (const z of [group.range.zStart, group.range.zEnd]) {
+      output.push({
+        z,
+        kinds: ["partition-boundary"],
+        geometryNodeIds: partition.segments.filter(({ id }) => group.segmentIds.includes(id)).flatMap(({ geometryNodeIds }) => geometryNodeIds),
+        evidenceIds: [group.id, ...group.evidenceIds]
+      });
+    }
+  }
+  if ("stepCandidates" in partition) {
+    for (const step of partition.stepCandidates.filter(({ accepted }) => accepted)) {
+      output.push({ z: step.z, kinds: ["shoulder"], geometryNodeIds: [], evidenceIds: [step.id, ...step.evidenceIds] });
+    }
+  }
+  return output;
+}
+function mergeBoundaries(values, zMin, unit, tolerance) {
+  const groups = [];
+  for (const value of [...values].sort((left, right) => left.z - right.z)) {
+    const group = groups.at(-1);
+    if (group && Math.abs(value.z - average(group.map(({ z }) => z))) <= tolerance) group.push(value);
+    else groups.push([value]);
+  }
+  return groups.map((group) => {
+    const sourceCoordinate = average(group.map(({ z }) => z));
+    const coordinate = canonicalEngineeringCoordinate(sourceCoordinate - zMin);
+    return {
+      id: `station:${formatCoordinate(coordinate)}`,
+      coordinate,
+      sourceCoordinate: canonicalSourceCoordinate(sourceCoordinate),
+      unit,
+      kinds: unique$4(group.flatMap(({ kinds }) => kinds)).sort(kindOrder),
+      geometryNodeIds: unique$4(group.flatMap(({ geometryNodeIds }) => geometryNodeIds)).sort(),
+      evidenceIds: unique$4(group.flatMap(({ evidenceIds }) => evidenceIds)).sort()
+    };
+  });
+}
+function consecutiveSpans(stations, partition, tolerance) {
+  return stations.slice(0, -1).map((start2, index) => {
+    const end2 = stations[index + 1];
+    const nominalValue = canonicalEngineeringCoordinate(end2.coordinate - start2.coordinate);
+    if (nominalValue <= tolerance) throw new Error("DIMENSION_STATION_CONFLICT");
+    const midpoint = (start2.sourceCoordinate + end2.sourceCoordinate) / 2;
+    const segments = partition.segments.filter(({ zStart, zEnd }) => midpoint >= Math.min(zStart, zEnd) - tolerance && midpoint <= Math.max(zStart, zEnd) + tolerance);
+    return {
+      id: `span:${start2.id}:${end2.id}`,
+      startStationId: start2.id,
+      endStationId: end2.id,
+      nominalValue,
+      segmentIds: segments.map(({ id }) => id).sort(),
+      evidenceIds: unique$4([
+        ...start2.evidenceIds,
+        ...end2.evidenceIds,
+        ...segments.flatMap(({ boundaryEvidenceIds }) => boundaryEvidenceIds)
+      ]).sort()
+    };
+  });
+}
+function kindOrder(left, right) {
+  const order = ["drawing-end", "shoulder", "partition-boundary", "datum"];
+  return order.indexOf(left) - order.indexOf(right);
+}
+function unique$4(values) {
+  return [...new Set(values)];
+}
+function average(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+function canonicalSourceCoordinate(value) {
+  return Number(value.toFixed(6));
+}
+function canonicalEngineeringCoordinate(value) {
+  return Number(value.toFixed(3));
+}
+function formatCoordinate(value) {
+  return canonicalEngineeringCoordinate(value).toString();
+}
+function generateAxialDimensionCandidates(input) {
+  var _a3;
+  const accumulator = new CandidateAccumulator(input.topology);
+  for (const span of input.topology.elementarySpans) {
+    accumulator.add(span.startStationId, span.endStationId, "local", elementaryEvidence(span));
+  }
+  for (const group of input.partition.semanticGroups) addFunctionalInterval(accumulator, group);
+  for (const region of ((_a3 = input.document) == null ? void 0 : _a3.regions) ?? []) addDocumentInterval(accumulator, region, input.partition);
+  const envelopes = deriveProcessEnvelopes(input.partition, input.topology);
+  for (const envelope of envelopes) {
+    accumulator.add(envelope.startStationId, envelope.endStationId, "process", envelope.evidence);
+  }
+  for (let index = 1; index < envelopes.length; index += 1) {
+    const previous = envelopes[index - 1];
+    const current = envelopes[index];
+    if (previous.endStationId === current.endStationId) continue;
+    accumulator.add(previous.endStationId, current.endStationId, "composite", {
+      id: `partition:hierarchy:${previous.groupId}:${current.groupId}`,
+      origin: "partition",
+      kind: "process-envelope",
+      label: "相邻关键功能包络",
+      required: false,
+      sourceIds: [previous.groupId, current.groupId]
+    });
+  }
+  const first = input.topology.stations[0];
+  const last = input.topology.stations.at(-1);
+  if (first && last) {
+    accumulator.add(first.id, last.id, "overall", {
+      id: "geometry:drawing-overall",
+      origin: "geometry",
+      kind: "drawing-end",
+      label: "零件轴向总长",
+      required: true,
+      sourceIds: [first.id, last.id]
+    });
+  }
+  for (const [index, interval] of (input.manualIntervals ?? []).entries()) {
+    const resolved = resolveCoordinates(input.topology, interval.start, interval.end);
+    const evidenceId = `manual:interval:${index}`;
+    if (!resolved) {
+      accumulator.problem("DIMENSION_STATION_UNRESOLVED", evidenceId);
+      continue;
+    }
+    accumulator.add(resolved.startStationId, resolved.endStationId, "reference", {
+      id: evidenceId,
+      origin: "manual",
+      kind: "manual-requirement",
+      label: interval.label,
+      required: true,
+      sourceIds: []
+    });
+  }
+  return accumulator.result();
+}
+class CandidateAccumulator {
+  constructor(topology) {
+    __privateAdd(this, _CandidateAccumulator_instances);
+    __privateAdd(this, _candidates, /* @__PURE__ */ new Map());
+    __privateAdd(this, _evidence, /* @__PURE__ */ new Map());
+    __privateAdd(this, _diagnostics, []);
+    __privateAdd(this, _stations);
+    this.topology = topology;
+    __privateSet(this, _stations, new Map(topology.stations.map(({ id, coordinate }) => [id, coordinate])));
+  }
+  add(startStationId, endStationId, role, evidence) {
+    const ordered = __privateMethod(this, _CandidateAccumulator_instances, ordered_fn).call(this, startStationId, endStationId);
+    if (!ordered) {
+      this.problem("DIMENSION_STATION_UNRESOLVED", evidence.id);
+      return;
+    }
+    __privateGet(this, _evidence).set(evidence.id, structuredClone(evidence));
+    const key = `${ordered.startStationId}:${ordered.endStationId}`;
+    const existing = __privateGet(this, _candidates).get(key);
+    if (existing) {
+      existing.roles = unique$3([...existing.roles, role]).sort();
+      existing.evidenceIds = unique$3([...existing.evidenceIds, evidence.id]).sort();
+      existing.required || (existing.required = evidence.required);
+      return;
+    }
+    __privateGet(this, _candidates).set(key, {
+      id: `candidate:${key}`,
+      ...ordered,
+      nominalValue: canonical(__privateGet(this, _stations).get(ordered.endStationId) - __privateGet(this, _stations).get(ordered.startStationId)),
+      roles: [role],
+      evidenceIds: [evidence.id],
+      required: evidence.required
+    });
+  }
+  problem(code, evidenceId) {
+    __privateGet(this, _diagnostics).push({
+      id: `dimension-candidate:${code}:${evidenceId}`,
+      severity: "warning",
+      code,
+      message: `Unable to resolve dimension evidence ${evidenceId}`,
+      evidenceIds: [evidenceId]
+    });
+  }
+  result() {
+    return {
+      candidates: [...__privateGet(this, _candidates).values()].sort(candidateOrder),
+      evidence: [...__privateGet(this, _evidence).values()].sort((left, right) => left.id.localeCompare(right.id)),
+      diagnostics: [...__privateGet(this, _diagnostics)].sort((left, right) => left.id.localeCompare(right.id))
+    };
+  }
+}
+_candidates = new WeakMap();
+_evidence = new WeakMap();
+_diagnostics = new WeakMap();
+_stations = new WeakMap();
+_CandidateAccumulator_instances = new WeakSet();
+ordered_fn = function(startStationId, endStationId) {
+  const start2 = __privateGet(this, _stations).get(startStationId);
+  const end2 = __privateGet(this, _stations).get(endStationId);
+  if (start2 === void 0 || end2 === void 0 || start2 === end2) return void 0;
+  return start2 < end2 ? { startStationId, endStationId } : { startStationId: endStationId, endStationId: startStationId };
+};
+function addFunctionalInterval(accumulator, group) {
+  if (!group.range) return;
+  const resolved = resolveCoordinates(accumulator.topology, group.range.zStart, group.range.zEnd);
+  const evidence = {
+    id: `partition:group:${group.id}`,
+    origin: "partition",
+    kind: "functional-region",
+    label: group.name ?? group.semanticType,
+    required: false,
+    sourceIds: [group.id, ...group.evidenceIds]
+  };
+  if (!resolved) {
+    accumulator.problem("DIMENSION_STATION_UNRESOLVED", evidence.id);
+    return;
+  }
+  accumulator.add(resolved.startStationId, resolved.endStationId, "functional", evidence);
+}
+function addDocumentInterval(accumulator, region, partition) {
+  if (!region.interval) return;
+  const evidence = {
+    id: `document:region:${region.id}`,
+    origin: "document",
+    kind: "document-interval",
+    label: region.name ?? region.type,
+    required: true,
+    sourceIds: region.sourceLines.map((line) => `document:line:${line}`)
+  };
+  const resolved = resolveCoordinates(accumulator.topology, region.interval.start, region.interval.end) ?? resolveFusedSemanticInterval(accumulator.topology, partition, region);
+  if (!resolved) {
+    accumulator.problem("DIMENSION_STATION_UNRESOLVED", evidence.id);
+    return;
+  }
+  accumulator.add(resolved.startStationId, resolved.endStationId, "functional", evidence);
+}
+function resolveFusedSemanticInterval(topology, partition, region) {
+  if (!region.interval) return void 0;
+  const documentWidth = Math.abs(region.interval.end - region.interval.start);
+  const match = partition.semanticGroups.find((group) => {
+    if (!group.range || group.name !== region.name && group.semanticType !== region.type) return false;
+    const groupWidth = Math.abs(group.range.zEnd - group.range.zStart);
+    return Math.abs(groupWidth - documentWidth) <= Math.max(documentWidth * 1e-5, 1e-6);
+  });
+  return (match == null ? void 0 : match.range) ? resolveCoordinates(topology, match.range.zStart, match.range.zEnd) : void 0;
+}
+function deriveProcessEnvelopes(partition, topology) {
+  const functionalSegmentIds = new Set(partition.semanticGroups.filter(({ semanticType }) => semanticType !== "regular-shaft").flatMap(({ segmentIds }) => segmentIds));
+  const output = [];
+  for (const group of partition.semanticGroups) {
+    if (!group.range || group.semanticType === "bearing" || group.semanticType === "regular-shaft") continue;
+    const width = Math.abs(group.range.zEnd - group.range.zStart);
+    const next = partition.segments.find(({ zStart, id }) => Math.abs(zStart - group.range.zEnd) <= coordinateTolerance(topology) && !functionalSegmentIds.has(id));
+    if (!next || Math.abs(next.zEnd - next.zStart) > width * 0.25) continue;
+    const resolved = resolveCoordinates(topology, group.range.zStart, next.zEnd);
+    if (!resolved) continue;
+    output.push({
+      ...resolved,
+      groupId: group.id,
+      evidence: {
+        id: `partition:process-envelope:${group.id}`,
+        origin: "partition",
+        kind: "process-envelope",
+        label: `${group.name ?? group.semanticType}工艺包络`,
+        required: false,
+        sourceIds: [group.id, next.id, ...next.boundaryEvidenceIds]
+      }
+    });
+  }
+  return output.sort((left, right) => stationCoordinate(topology, left.startStationId) - stationCoordinate(topology, right.startStationId));
+}
+function elementaryEvidence(span) {
+  return {
+    id: `geometry:${span.id}`,
+    origin: "geometry",
+    kind: "elementary-span",
+    label: "相邻轴向台阶",
+    required: false,
+    sourceIds: [span.id, ...span.evidenceIds]
+  };
+}
+function resolveCoordinates(topology, start2, end2) {
+  const tolerance = coordinateTolerance(topology);
+  const first = topology.stations.find(({ coordinate }) => Math.abs(coordinate - Math.min(start2, end2)) <= tolerance);
+  const second = topology.stations.find(({ coordinate }) => Math.abs(coordinate - Math.max(start2, end2)) <= tolerance);
+  return first && second && first.id !== second.id ? { startStationId: first.id, endStationId: second.id } : void 0;
+}
+function coordinateTolerance(topology) {
+  var _a3;
+  const length = ((_a3 = topology.stations.at(-1)) == null ? void 0 : _a3.coordinate) ?? 1;
+  return Math.max(Math.abs(length) * 1e-5, 1e-6);
+}
+function stationCoordinate(topology, id) {
+  var _a3;
+  return ((_a3 = topology.stations.find((station) => station.id === id)) == null ? void 0 : _a3.coordinate) ?? Number.POSITIVE_INFINITY;
+}
+function candidateOrder(left, right) {
+  return left.startStationId.localeCompare(right.startStationId) || left.endStationId.localeCompare(right.endStationId);
+}
+function unique$3(values) {
+  return [...new Set(values)];
+}
+function canonical(value) {
+  return Number(value.toFixed(6));
+}
+const COMMON_WEIGHTS = {
+  "manual-required": 120,
+  "document-exact": 100,
+  "functional-region": 70,
+  "process-envelope": 55,
+  "composite-block": 60,
+  "overall-root": 90,
+  "elementary-span": 20,
+  "ordinary-residual": 15,
+  "terminal-residual": 5
+};
+const SHAFT_HIERARCHICAL_DIMENSIONING_V1 = {
+  id: "shaft-hierarchical-dimensioning-v1",
+  version: "1",
+  weights: COMMON_WEIGHTS,
+  ambiguityMargin: 12,
+  preferTerminalRootClosure: false
+};
+const SHAFT_REFERENCE_TERMINAL_CLOSURE_V1 = {
+  id: "shaft-reference-terminal-closure-v1",
+  version: "1",
+  weights: COMMON_WEIGHTS,
+  ambiguityMargin: 0,
+  preferTerminalRootClosure: true
+};
+function policyById(id) {
+  return id === SHAFT_REFERENCE_TERMINAL_CLOSURE_V1.id ? SHAFT_REFERENCE_TERMINAL_CLOSURE_V1 : SHAFT_HIERARCHICAL_DIMENSIONING_V1;
+}
+function validateAxialDimensionScheme(scheme) {
+  const diagnostics = [];
+  const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
+  const displayed = new Set(scheme.displayedCandidateIds);
+  const closures = new Set(scheme.closureCandidateIds);
+  const selected = scheme.displayedCandidateIds.flatMap((id) => candidates.get(id) ?? []);
+  for (const [index, left] of selected.entries()) {
+    for (const right of selected.slice(index + 1)) {
+      if (crosses(left, right, scheme)) diagnostics.push(problem$1("DIMENSION_CANDIDATE_CROSSES_SELECTED", [left.id, right.id]));
+    }
+  }
+  for (const chain of scheme.chains) {
+    const parent = candidates.get(chain.parentCandidateId);
+    const closure = candidates.get(chain.closureCandidateId);
+    const children = chain.childCandidateIds.map((id) => candidates.get(id));
+    if (!parent || !closure || children.some((candidate) => !candidate)) {
+      diagnostics.push(problem$1("DIMENSION_CLOSURE_MISSING", [chain.id]));
+      continue;
+    }
+    if (!displayed.has(parent.id) || chain.childCandidateIds.some((id) => !displayed.has(id)) || displayed.has(closure.id) || !closures.has(closure.id)) {
+      diagnostics.push(problem$1("DIMENSION_CHAIN_INCOMPLETE", [chain.id]));
+    }
+    const childTotal = children.reduce((sum, candidate) => sum + candidate.nominalValue, 0);
+    const difference = Math.abs(parent.nominalValue - childTotal - closure.nominalValue);
+    if (difference > Math.max(parent.nominalValue * 1e-8, 1e-6)) {
+      diagnostics.push(problem$1("DIMENSION_CHAIN_ARITHMETIC_MISMATCH", [chain.id]));
+    }
+  }
+  return dedupe$2(diagnostics);
+}
+function crosses(left, right, scheme) {
+  const coordinate = new Map(scheme.topology.stations.map(({ id, coordinate: coordinate2 }) => [id, coordinate2]));
+  const [a, b] = [coordinate.get(left.startStationId), coordinate.get(left.endStationId)];
+  const [c, d] = [coordinate.get(right.startStationId), coordinate.get(right.endStationId)];
+  return a < c && c < b && b < d || c < a && a < d && d < b;
+}
+function problem$1(code, entityIds) {
+  return { id: `dimension-scheme:${code}:${entityIds.join(":")}`, severity: "error", code, message: code, entityIds };
+}
+function dedupe$2(diagnostics) {
+  return [...new Map(diagnostics.map((item) => [item.id, item])).values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+function inferAxialDimensionScheme(input) {
+  const index = coordinateIndex(input);
+  const root = requireOverall(input.candidateSet.candidates);
+  const decisions = input.candidateSet.candidates.map((candidate) => scoreCandidate(candidate, input.candidateSet.evidence, input.policy.weights));
+  const terminal = terminalCandidates(root, input.candidateSet.candidates, index);
+  if (terminal.length === 0) throw new Error("DIMENSION_CLOSURE_MISSING");
+  const rootClosure = terminal.at(-1);
+  const leftChildren = solveCoverage(root.startStationId, rootClosure.startStationId, root, input.candidateSet.candidates, decisions, index);
+  const rightChildren = solveCoverage(rootClosure.endStationId, root.endStationId, root, input.candidateSet.candidates, decisions, index);
+  const rootChildren = [...leftChildren, ...rightChildren];
+  const chains = [{
+    id: `chain:${root.id}`,
+    parentCandidateId: root.id,
+    childCandidateIds: rootChildren.map(({ id }) => id),
+    closureCandidateId: rootClosure.id,
+    alternativeClosureCandidateIds: input.policy.preferTerminalRootClosure ? [] : viableRootClosureAlternatives(root, rootClosure, input.candidateSet.candidates, decisions, index).map(({ id }) => id),
+    status: input.policy.preferTerminalRootClosure ? "resolved" : "needs-review"
+  }];
+  for (const parent of rootChildren.filter((candidate) => candidate.roles.some((role) => role === "process" || role === "composite"))) {
+    const chain = materializeInnerChain(parent, input.candidateSet.candidates, input.candidateSet.evidence, index);
+    if (chain) chains.push(chain);
+  }
+  const displayedCandidateIds = unique$2([
+    root.id,
+    ...chains.flatMap(({ childCandidateIds }) => childCandidateIds),
+    ...chains.slice(1).map(({ parentCandidateId }) => parentCandidateId)
+  ]);
+  const closureCandidateIds = unique$2(chains.map(({ closureCandidateId }) => closureCandidateId));
+  const diagnostics = [...input.candidateSet.diagnostics];
+  if (!input.policy.preferTerminalRootClosure) {
+    diagnostics.push({
+      id: `dimension-scheme:DIMENSION_CLOSURE_AMBIGUOUS:${root.id}`,
+      severity: "warning",
+      code: "DIMENSION_CLOSURE_AMBIGUOUS",
+      message: "The root closure follows a drafting convention that requires review.",
+      entityIds: [root.id]
+    });
+  }
+  for (const closureId of closureCandidateIds) {
+    const closure = index.candidate.get(closureId);
+    const documentEvidence = closure.evidenceIds.filter((id) => {
+      var _a3;
+      return ((_a3 = input.candidateSet.evidence.find((item) => item.id === id)) == null ? void 0 : _a3.origin) === "document";
+    });
+    if (documentEvidence.length > 0) diagnostics.push({
+      id: `dimension-scheme:DIMENSION_DOCUMENT_DISPLAY_CONFLICT:${closure.id}`,
+      severity: "warning",
+      code: "DIMENSION_DOCUMENT_DISPLAY_CONFLICT",
+      message: "A document-backed interval is used as an unmarked closure by the selected drafting policy.",
+      entityIds: [closure.id],
+      evidenceIds: documentEvidence
+    });
+  }
+  const initial = {
+    version: 1,
+    drawingRef: input.topology.drawingRef,
+    ...input.partitionRevisionId === void 0 ? {} : { partitionRevisionId: input.partitionRevisionId },
+    policy: { id: input.policy.id, version: input.policy.version },
+    inputDigest: digestInput(input),
+    topology: structuredClone(input.topology),
+    evidence: structuredClone(input.candidateSet.evidence),
+    candidates: structuredClone(input.candidateSet.candidates),
+    displayedCandidateIds,
+    closureCandidateIds,
+    chains,
+    decisions: decisions.map((decision) => ({
+      ...decision,
+      decision: displayedCandidateIds.includes(decision.candidateId) ? "displayed" : closureCandidateIds.includes(decision.candidateId) ? "closure" : chains.some(({ alternativeClosureCandidateIds }) => alternativeClosureCandidateIds.includes(decision.candidateId)) ? "alternative" : "rejected"
+    })),
+    diagnostics: [],
+    status: input.policy.preferTerminalRootClosure ? "resolved" : "needs-review"
+  };
+  const validation = validateAxialDimensionScheme(initial);
+  return {
+    ...initial,
+    diagnostics: dedupe$1([...diagnostics, ...validation]),
+    status: validation.length > 0 ? "conflict" : initial.status
+  };
+}
+function materializeInnerChain(parent, candidates, evidence, index) {
+  const inside = candidates.filter((candidate) => candidate.id !== parent.id && contains(parent, candidate, index));
+  const protectedCandidates = inside.filter((candidate) => candidate.roles.includes("functional") || candidate.evidenceIds.some((id) => {
+    var _a3;
+    return ((_a3 = evidence.find((item) => item.id === id)) == null ? void 0 : _a3.origin) === "document";
+  })).sort((left, right) => start(left, index) - start(right, index));
+  const elementary = inside.filter((candidate) => candidate.roles.includes("local")).sort((left, right) => start(left, index) - start(right, index));
+  const uncovered = elementary.filter((candidate) => !protectedCandidates.some((protectedCandidate) => contains(protectedCandidate, candidate, index)));
+  if (uncovered.length === 0) return void 0;
+  const closure = [...uncovered].sort((left, right) => right.nominalValue - left.nominalValue || start(left, index) - start(right, index))[0];
+  const children = uniqueCandidates([
+    ...protectedCandidates,
+    ...uncovered.filter(({ id }) => id !== closure.id)
+  ]).sort((left, right) => start(left, index) - start(right, index));
+  if (!coversParent(parent, children, closure, index)) return void 0;
+  return {
+    id: `chain:${parent.id}`,
+    parentCandidateId: parent.id,
+    childCandidateIds: children.map(({ id }) => id),
+    closureCandidateId: closure.id,
+    alternativeClosureCandidateIds: [],
+    status: "resolved"
+  };
+}
+function solveCoverage(startStationId, endStationId, root, candidates, decisions, index) {
+  if (startStationId === endStationId) return [];
+  const targetEnd = index.station.get(endStationId);
+  const score2 = new Map(decisions.map((decision) => [decision.candidateId, decision.score]));
+  const memo = /* @__PURE__ */ new Map();
+  const visit = (stationId) => {
+    if (stationId === endStationId) return [];
+    if (memo.has(stationId)) return memo.get(stationId);
+    const options = candidates.filter((candidate) => candidate.id !== root.id && candidate.startStationId === stationId && index.station.get(candidate.endStationId) <= targetEnd);
+    let best = null;
+    for (const candidate of options) {
+      const rest = visit(candidate.endStationId);
+      if (!rest) continue;
+      const proposal = [candidate, ...rest];
+      if (!best || proposal.length < best.length || proposal.length === best.length && totalScore(proposal, score2) > totalScore(best, score2)) best = proposal;
+    }
+    memo.set(stationId, best);
+    return best;
+  };
+  const result = visit(startStationId);
+  if (!result) throw new Error("DIMENSION_CHAIN_INCOMPLETE");
+  return result;
+}
+function viableRootClosureAlternatives(root, selected, candidates, decisions, index) {
+  return candidates.filter((candidate) => {
+    if (candidate.id === root.id || candidate.id === selected.id || !contains(root, candidate, index)) return false;
+    try {
+      solveCoverage(root.startStationId, candidate.startStationId, root, candidates, decisions, index);
+      solveCoverage(candidate.endStationId, root.endStationId, root, candidates, decisions, index);
+      return true;
+    } catch {
+      return false;
+    }
+  }).sort((left, right) => scoreOf(right, decisions) - scoreOf(left, decisions)).slice(0, 3);
+}
+function terminalCandidates(root, candidates, index) {
+  return candidates.filter((candidate) => candidate.id !== root.id && candidate.endStationId === root.endStationId && contains(root, candidate, index)).sort((left, right) => start(left, index) - start(right, index));
+}
+function scoreCandidate(candidate, evidence, weights) {
+  const features = candidate.evidenceIds.flatMap((id) => {
+    const item = evidence.find((entry) => entry.id === id);
+    if (!item) return [];
+    const feature = featureFor(item, candidate);
+    return [{ feature, contribution: weights[feature], evidenceIds: [id] }];
+  });
+  return {
+    candidateId: candidate.id,
+    decision: "rejected",
+    score: features.reduce((sum, item) => sum + item.contribution, 0),
+    features,
+    reasonCodes: unique$2(features.map(({ feature }) => `DIMENSION_SCORE_${feature.toUpperCase().replace(/-/g, "_")}`))
+  };
+}
+function featureFor(evidence, candidate) {
+  if (evidence.origin === "manual") return "manual-required";
+  if (evidence.origin === "document") return "document-exact";
+  if (candidate.roles.includes("overall")) return "overall-root";
+  if (candidate.roles.includes("composite")) return "composite-block";
+  if (candidate.roles.includes("process")) return "process-envelope";
+  if (candidate.roles.includes("functional")) return "functional-region";
+  return "elementary-span";
+}
+function requireOverall(candidates) {
+  const root = candidates.find(({ roles }) => roles.includes("overall"));
+  if (!root) throw new Error("DIMENSION_CHAIN_INCOMPLETE");
+  return root;
+}
+function coordinateIndex(input) {
+  return {
+    station: new Map(input.topology.stations.map(({ id, coordinate }) => [id, coordinate])),
+    candidate: new Map(input.candidateSet.candidates.map((candidate) => [candidate.id, candidate]))
+  };
+}
+function contains(parent, child, index) {
+  return start(parent, index) <= start(child, index) && end(child, index) <= end(parent, index);
+}
+function coversParent(parent, children, closure, index) {
+  var _a3, _b;
+  const intervals = [...children, closure].sort((left, right) => start(left, index) - start(right, index));
+  return ((_a3 = intervals[0]) == null ? void 0 : _a3.startStationId) === parent.startStationId && ((_b = intervals.at(-1)) == null ? void 0 : _b.endStationId) === parent.endStationId && intervals.every((item, itemIndex) => itemIndex === 0 || intervals[itemIndex - 1].endStationId === item.startStationId);
+}
+function start(candidate, index) {
+  return index.station.get(candidate.startStationId);
+}
+function end(candidate, index) {
+  return index.station.get(candidate.endStationId);
+}
+function totalScore(candidates, scores) {
+  return candidates.reduce((sum, candidate) => sum + (scores.get(candidate.id) ?? 0), 0);
+}
+function scoreOf(candidate, decisions) {
+  var _a3;
+  return ((_a3 = decisions.find(({ candidateId }) => candidateId === candidate.id)) == null ? void 0 : _a3.score) ?? 0;
+}
+function unique$2(values) {
+  return [...new Set(values)];
+}
+function uniqueCandidates(values) {
+  return [...new Map(values.map((value) => [value.id, value])).values()];
+}
+function dedupe$1(values) {
+  return [...new Map(values.map((value) => [value.id, value])).values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+function digestInput(input) {
+  const value = JSON.stringify({
+    drawingRef: input.topology.drawingRef,
+    stations: input.topology.stations.map(({ id, coordinate }) => [id, coordinate]),
+    candidates: input.candidateSet.candidates.map(({ id, evidenceIds }) => [id, evidenceIds]),
+    policy: [input.policy.id, input.policy.version]
+  });
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return `fnv1a:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+function projectAxialDimensionScheme(input) {
+  const candidateIds = unique$1([
+    ...input.scheme.displayedCandidateIds,
+    ...input.scheme.closureCandidateIds,
+    ...input.scheme.chains.flatMap(({ parentCandidateId, childCandidateIds, closureCandidateId }) => [parentCandidateId, ...childCandidateIds, closureCandidateId])
+  ]);
+  const candidates = new Map(input.scheme.candidates.map((candidate) => [candidate.id, candidate]));
+  const intents = candidateIds.map((id) => projectIntent(requireCandidate$1(candidates, id), input.scheme));
+  const intentByCandidate = new Map(candidateIds.map((id) => [id, intentId(id)]));
+  const chains = input.scheme.chains.map((chain) => projectChain(chain, input.scheme, intentByCandidate));
+  const dependencies = projectDependencies(input.scheme, intentByCandidate);
+  return {
+    version: 1,
+    drawingRef: input.scheme.drawingRef,
+    datums: [],
+    intents,
+    tolerances: [],
+    chains,
+    dependencies,
+    diagnostics: structuredClone(input.scheme.diagnostics),
+    axialScheme: structuredClone(input.scheme),
+    ...input.baseRevisionId === void 0 ? {} : { baseRevisionId: input.baseRevisionId }
+  };
+}
+function projectIntent(candidate, scheme) {
+  var _a3;
+  const start2 = scheme.topology.stations.find(({ id }) => id === candidate.startStationId);
+  const end2 = scheme.topology.stations.find(({ id }) => id === candidate.endStationId);
+  if (!start2 || !end2) throw new Error("DIMENSION_STATION_UNRESOLVED");
+  const fallback = (_a3 = scheme.topology.axis.geometryNodeIds) == null ? void 0 : _a3[0];
+  const startGeometryId = start2.geometryNodeIds[0] ?? fallback;
+  const endGeometryId = end2.geometryNodeIds[0] ?? fallback;
+  if (!startGeometryId || !endGeometryId) throw new Error("DIMENSION_TARGET_STALE");
+  const closure = scheme.closureCandidateIds.includes(candidate.id);
+  return {
+    id: intentId(candidate.id),
+    drawingRef: scheme.drawingRef,
+    kind: "linear",
+    targets: [
+      { geometryId: startGeometryId, anchor: { kind: "nearest", point: worldPoint(scheme, start2.sourceCoordinate) } },
+      { geometryId: endGeometryId, anchor: { kind: "nearest", point: worldPoint(scheme, end2.sourceCoordinate) } }
+    ],
+    datumIds: [],
+    nominalValue: candidate.nominalValue,
+    unit: scheme.topology.unit,
+    functionalRole: closure ? "closure" : functionalRole(candidate),
+    source: "geometry",
+    status: scheme.status === "conflict" || scheme.status === "stale" ? scheme.status : "resolved",
+    evidenceIds: [...candidate.evidenceIds]
+  };
+}
+function projectChain(chain, scheme, intentByCandidate) {
+  const parentIntentId = requireIntent(intentByCandidate, chain.parentCandidateId);
+  const closureIntentId = requireIntent(intentByCandidate, chain.closureCandidateId);
+  return {
+    id: chain.id,
+    drawingRef: scheme.drawingRef,
+    name: axialChainName(chain, scheme),
+    datumIds: [],
+    members: [
+      { dimensionIntentId: parentIntentId, coefficient: 1, role: "functional", sequenceHint: 0 },
+      ...chain.childCandidateIds.map((candidateId, index) => ({
+        dimensionIntentId: requireIntent(intentByCandidate, candidateId),
+        coefficient: -1,
+        role: "component",
+        sequenceHint: index + 1
+      })),
+      { dimensionIntentId: closureIntentId, coefficient: -1, role: "closure", sequenceHint: chain.childCandidateIds.length + 1 }
+    ],
+    equation: { closureIntentId, targetValue: 0 },
+    analysisMode: "reference-only",
+    status: chain.status === "conflict" ? "conflict" : chain.status === "needs-review" ? "candidate" : "resolved",
+    evidenceIds: unique$1([
+      ...requireCandidate$1(new Map(scheme.candidates.map((candidate) => [candidate.id, candidate])), chain.parentCandidateId).evidenceIds,
+      ...chain.childCandidateIds.flatMap((id) => requireCandidate$1(new Map(scheme.candidates.map((candidate) => [candidate.id, candidate])), id).evidenceIds)
+    ]),
+    diagnostics: scheme.diagnostics.filter(({ entityIds }) => entityIds == null ? void 0 : entityIds.includes(chain.id))
+  };
+}
+function projectDependencies(scheme, intentByCandidate) {
+  const dependencies = [];
+  for (const chain of scheme.chains) {
+    const parentIntentId = requireIntent(intentByCandidate, chain.parentCandidateId);
+    const closureIntentId = requireIntent(intentByCandidate, chain.closureCandidateId);
+    for (const childCandidateId of chain.childCandidateIds) {
+      const childIntentId = requireIntent(intentByCandidate, childCandidateId);
+      dependencies.push({
+        beforeIntentId: parentIntentId,
+        afterIntentId: childIntentId,
+        reason: "functional-before-component",
+        evidenceIds: [chain.id]
+      }, {
+        beforeIntentId: childIntentId,
+        afterIntentId: closureIntentId,
+        reason: "component-before-closure",
+        evidenceIds: [chain.id]
+      });
+    }
+  }
+  return [...new Map(dependencies.map((item) => [`${item.beforeIntentId}:${item.afterIntentId}`, item])).values()];
+}
+function functionalRole(candidate) {
+  if (candidate.roles.includes("overall")) return "overall";
+  if (candidate.roles.includes("functional")) return "functional";
+  if (candidate.roles.includes("composite")) return "assembly";
+  return "process";
+}
+function worldPoint(scheme, sourceCoordinate) {
+  const { origin, direction } = scheme.topology.axis;
+  return [origin[0] + direction[0] * sourceCoordinate, origin[1] + direction[1] * sourceCoordinate];
+}
+function axialChainName(chain, scheme) {
+  const parent = scheme.candidates.find(({ id }) => id === chain.parentCandidateId);
+  return `轴向尺寸链 ${format(parent.nominalValue)} ${scheme.topology.unit}`;
+}
+function intentId(candidateId) {
+  return `dimension-intent:${candidateId}`;
+}
+function requireIntent(values, candidateId) {
+  const value = values.get(candidateId);
+  if (!value) throw new Error("DIMENSION_CHAIN_MEMBER_UNKNOWN");
+  return value;
+}
+function requireCandidate$1(values, id) {
+  const value = values.get(id);
+  if (!value) throw new Error("DIMENSION_CHAIN_MEMBER_UNKNOWN");
+  return value;
+}
+function unique$1(values) {
+  return [...new Set(values)].sort();
+}
+function format(value) {
+  return Number(value.toFixed(6)).toString();
+}
+function applyDimensionSchemeEdit(scheme, command) {
+  const candidate = scheme.candidates.find(({ id }) => id === command.candidateId);
+  if (!candidate) throw new Error("DIMENSION_CANDIDATE_UNKNOWN");
+  const edited = command.type === "candidate.display" ? setCandidateDisplayed(scheme, candidate.id, command.displayed) : chooseChainClosure(scheme, command.chainId, candidate);
+  const validation = validateAxialDimensionScheme(edited);
+  const diagnostics = dedupe([
+    ...edited.diagnostics.filter(({ code }) => !isDerivedValidationCode(code)),
+    ...validation
+  ]);
+  return {
+    ...edited,
+    diagnostics,
+    status: validation.some(({ severity }) => severity === "error") ? "conflict" : edited.status
+  };
+}
+function setCandidateDisplayed(scheme, candidateId, displayed) {
+  const displayedCandidateIds = displayed ? unique([...scheme.displayedCandidateIds, candidateId]) : scheme.displayedCandidateIds.filter((id) => id !== candidateId);
+  return {
+    ...structuredClone(scheme),
+    displayedCandidateIds,
+    decisions: updateDecisions(scheme.decisions, displayedCandidateIds, scheme.closureCandidateIds, scheme.chains)
+  };
+}
+function chooseChainClosure(scheme, chainId, chosen) {
+  const chainIndex = scheme.chains.findIndex(({ id }) => id === chainId);
+  if (chainIndex < 0) throw new Error("DIMENSION_CHAIN_UNKNOWN");
+  const chain = scheme.chains[chainIndex];
+  if (chain.closureCandidateId !== chosen.id && !chain.alternativeClosureCandidateIds.includes(chosen.id)) {
+    throw new Error("DIMENSION_CLOSURE_ALTERNATIVE_REQUIRED");
+  }
+  const parent = requireCandidate(scheme, chain.parentCandidateId);
+  const leftChildren = coverRange(scheme, parent.startStationId, chosen.startStationId, parent.id, chosen.id);
+  const rightChildren = coverRange(scheme, chosen.endStationId, parent.endStationId, parent.id, chosen.id);
+  const childCandidateIds = [...leftChildren, ...rightChildren].map(({ id }) => id);
+  const nextChain = {
+    ...chain,
+    childCandidateIds,
+    closureCandidateId: chosen.id,
+    alternativeClosureCandidateIds: unique([
+      chain.closureCandidateId,
+      ...chain.alternativeClosureCandidateIds.filter((id) => id !== chosen.id)
+    ]),
+    status: "resolved"
+  };
+  const chains = [...scheme.chains];
+  chains[chainIndex] = nextChain;
+  const displayedCandidateIds = unique([
+    ...scheme.displayedCandidateIds.filter((id) => !chain.childCandidateIds.includes(id) && id !== chosen.id),
+    ...childCandidateIds
+  ]);
+  const closureCandidateIds = unique([
+    ...scheme.closureCandidateIds.filter((id) => id !== chain.closureCandidateId),
+    chosen.id
+  ]);
+  const diagnostics = scheme.diagnostics.filter(({ code }) => code !== "DIMENSION_CLOSURE_AMBIGUOUS" && code !== "DIMENSION_DOCUMENT_DISPLAY_CONFLICT");
+  const documentEvidence = chosen.evidenceIds.filter((id) => {
+    var _a3;
+    return ((_a3 = scheme.evidence.find((item) => item.id === id)) == null ? void 0 : _a3.origin) === "document";
+  });
+  if (documentEvidence.length > 0) diagnostics.push({
+    id: `dimension-scheme:DIMENSION_DOCUMENT_DISPLAY_CONFLICT:${chosen.id}`,
+    severity: "warning",
+    code: "DIMENSION_DOCUMENT_DISPLAY_CONFLICT",
+    message: "A document-backed interval is used as an unmarked closure by the selected drafting policy.",
+    entityIds: [chosen.id],
+    evidenceIds: documentEvidence
+  });
+  return {
+    ...structuredClone(scheme),
+    chains,
+    displayedCandidateIds,
+    closureCandidateIds,
+    diagnostics,
+    status: "resolved",
+    decisions: updateDecisions(scheme.decisions, displayedCandidateIds, closureCandidateIds, chains)
+  };
+}
+function coverRange(scheme, startStationId, endStationId, parentCandidateId, excludedCandidateId) {
+  if (startStationId === endStationId) return [];
+  const coordinates = new Map(scheme.topology.stations.map(({ id, coordinate }) => [id, coordinate]));
+  const targetEnd = coordinates.get(endStationId);
+  if (targetEnd === void 0) throw new Error("DIMENSION_STATION_UNRESOLVED");
+  const scores = new Map(scheme.decisions.map(({ candidateId, score: score2 }) => [candidateId, score2]));
+  const memo = /* @__PURE__ */ new Map();
+  const visit = (stationId) => {
+    if (stationId === endStationId) return [];
+    if (memo.has(stationId)) return memo.get(stationId);
+    const options = scheme.candidates.filter((candidate) => candidate.id !== parentCandidateId && candidate.id !== excludedCandidateId && candidate.startStationId === stationId && (coordinates.get(candidate.endStationId) ?? Number.POSITIVE_INFINITY) <= targetEnd);
+    let best = null;
+    for (const option of options) {
+      const remainder = visit(option.endStationId);
+      if (!remainder) continue;
+      const proposal = [option, ...remainder];
+      if (!best || proposal.length < best.length || proposal.length === best.length && score(proposal, scores) > score(best, scores)) best = proposal;
+    }
+    memo.set(stationId, best);
+    return best;
+  };
+  const result = visit(startStationId);
+  if (!result) throw new Error("DIMENSION_CHAIN_INCOMPLETE");
+  return result;
+}
+function updateDecisions(decisions, displayed, closures, chains) {
+  return decisions.map((decision) => ({
+    ...decision,
+    decision: displayed.includes(decision.candidateId) ? "displayed" : closures.includes(decision.candidateId) ? "closure" : chains.some(({ alternativeClosureCandidateIds }) => alternativeClosureCandidateIds.includes(decision.candidateId)) ? "alternative" : "rejected"
+  }));
+}
+function requireCandidate(scheme, id) {
+  const candidate = scheme.candidates.find((item) => item.id === id);
+  if (!candidate) throw new Error("DIMENSION_CANDIDATE_UNKNOWN");
+  return candidate;
+}
+function score(candidates, scores) {
+  return candidates.reduce((sum, candidate) => sum + (scores.get(candidate.id) ?? 0), 0);
+}
+function isDerivedValidationCode(code) {
+  return code === "DIMENSION_CHAIN_INCOMPLETE" || code === "DIMENSION_CLOSURE_MISSING" || code === "DIMENSION_CHAIN_ARITHMETIC_MISMATCH" || code === "DIMENSION_CANDIDATE_CROSSES_SELECTED";
+}
+function unique(values) {
+  return [...new Set(values)];
+}
+function dedupe(values) {
+  return [...new Map(values.map((value) => [value.id, value])).values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+function createEngineeringAnnotationTool(host, sessions, partitions, dimensionPlans) {
   return defineTool({
     name: "drawing_auto_annotate",
     description: "Create only deterministic axial opening-angle dimensions. An editable shaft partition may remain unconfirmed and is preserved independently. This tool never creates diameter, radius, or other dimensions and never edits partition boundaries.",
     parameters: {},
     output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
     async execute(_args, exec) {
-      var _a3;
+      var _a3, _b;
       const agent = exec.agent;
       if (!agent) throw new Error("DRAWING_SESSION_REQUIRED");
       const sessionId = String(agent.id);
@@ -2111,6 +2990,9 @@ function createEngineeringAnnotationTool(host, sessions, partitions) {
         }, exec.signal);
         if (workflow.result.status === "committed" && ((_a3 = partition == null ? void 0 : partition.drawingRef) == null ? void 0 : _a3.drawingId) === snapshot.ref.drawingId && partition.drawingRef.revision === snapshot.ref.revision) {
           partitions == null ? void 0 : partitions.advanceDrawingRevision(sessionId, snapshot.ref, workflow.result.ref);
+          if ((_b = dimensionPlans == null ? void 0 : dimensionPlans.get(sessionId).draft) == null ? void 0 : _b.axialScheme) {
+            dimensionPlans.markNeedsRebase(sessionId, workflow.result.ref);
+          }
         }
         sessions.finish(sessionId, terminalStatus(workflow.result.status));
         return {
@@ -2169,6 +3051,34 @@ function createPartitionStartTool(workflow) {
         semanticGroupCount: ((_c = snapshot.draft) == null ? void 0 : _c.semanticGroups.length) ?? ((_d = snapshot.confirmed) == null ? void 0 : _d.semanticGroups.length) ?? 0,
         diagnostics: (((_e = snapshot.draft) == null ? void 0 : _e.diagnostics) ?? ((_f = snapshot.confirmed) == null ? void 0 : _f.diagnostics) ?? []).map(({ code }) => code),
         nextAction: snapshot.phase === "editing" ? "review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming" : snapshot.phase
+      };
+    }
+  });
+}
+function createDimensionChainStartTool(workflow) {
+  return defineTool({
+    name: "drawing_dimension_chain_start",
+    description: "Start axial nominal dimension-chain inference only when the user explicitly asks for a dimension chain or a dimensioning workflow that requires one. Never call this merely because a DXF or engineering document was uploaded. Local geometry owns all coordinates, nominal values, and arithmetic.",
+    parameters: {
+      policy: {
+        type: "string",
+        enum: ["shaft-hierarchical-dimensioning-v1", "shaft-reference-terminal-closure-v1"],
+        description: "Optional drafting policy. Use the hierarchical policy unless the user explicitly asks to match the reference terminal-closure convention."
+      }
+    },
+    output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      var _a3, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+      if (!exec.agent) throw new Error("DRAWING_SESSION_REQUIRED");
+      const policy = args.policy === "shaft-reference-terminal-closure-v1" ? args.policy : "shaft-hierarchical-dimensioning-v1";
+      const snapshot = workflow.start(exec.agent, policy);
+      return {
+        status: snapshot.phase,
+        schemeStatus: (_b = (_a3 = snapshot.draft) == null ? void 0 : _a3.axialScheme) == null ? void 0 : _b.status,
+        displayedDimensionCount: ((_d = (_c = snapshot.draft) == null ? void 0 : _c.axialScheme) == null ? void 0 : _d.displayedCandidateIds.length) ?? 0,
+        closureCount: ((_f = (_e = snapshot.draft) == null ? void 0 : _e.axialScheme) == null ? void 0 : _f.closureCandidateIds.length) ?? 0,
+        diagnostics: ((_h = (_g = snapshot.draft) == null ? void 0 : _g.axialScheme) == null ? void 0 : _h.diagnostics.map(({ code }) => code)) ?? [],
+        nextAction: ((_j = (_i = snapshot.draft) == null ? void 0 : _i.axialScheme) == null ? void 0 : _j.status) === "resolved" ? "preview-or-confirm" : "review-dimension-chain"
       };
     }
   });
@@ -2273,9 +3183,9 @@ function nullish(input) {
   return input === null || input === void 0;
 }
 function cleanRegex(source) {
-  const start = source.startsWith("^") ? 1 : 0;
-  const end = source.endsWith("$") ? source.length - 1 : source.length;
-  return source.slice(start, end);
+  const start2 = source.startsWith("^") ? 1 : 0;
+  const end2 = source.endsWith("$") ? source.length - 1 : source.length;
+  return source.slice(start2, end2);
 }
 function floatSafeRemainder(val, step) {
   const ratio = val / step;
@@ -7348,7 +8258,7 @@ const effectScopeRefSchema = discriminatedUnion("kind", [
     nodeId: idSchema$1,
     start: number().int().nonnegative(),
     end: number().int().positive()
-  }).strict().refine(({ start, end }) => start < end, { message: "INVALID_SOURCE_SPAN" }),
+  }).strict().refine(({ start: start2, end: end2 }) => start2 < end2, { message: "INVALID_SOURCE_SPAN" }),
   object({
     kind: literal("half-edge"),
     nodeId: idSchema$1,
@@ -8329,6 +9239,98 @@ const annotationDependencySchema = object({
   reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
   evidenceIds: array(idSchema)
 }).strict();
+const axialStationSchema = object({
+  id: idSchema,
+  coordinate: number().finite(),
+  sourceCoordinate: number().finite(),
+  unit: _enum(["mm", "cm", "m"]),
+  kinds: array(_enum(["drawing-end", "shoulder", "partition-boundary", "datum"])),
+  geometryNodeIds: array(idSchema),
+  evidenceIds: array(idSchema)
+}).strict();
+const axialElementarySpanSchema = object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  segmentIds: array(idSchema),
+  evidenceIds: array(idSchema)
+}).strict();
+const dimensionEvidenceSchema = object({
+  id: idSchema,
+  origin: _enum(["geometry", "partition", "document", "manual", "ai"]),
+  kind: _enum(["drawing-end", "elementary-span", "functional-region", "document-interval", "process-envelope", "manual-requirement"]),
+  label: string(),
+  required: boolean(),
+  sourceIds: array(idSchema)
+}).strict();
+const axialDimensionCandidateSchema = object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  roles: array(_enum(["overall", "composite", "functional", "process", "local", "reference", "closure"])),
+  evidenceIds: array(idSchema),
+  required: boolean()
+}).strict();
+const dimensionDecisionTraceSchema = object({
+  candidateId: idSchema,
+  decision: _enum(["displayed", "closure", "rejected", "alternative"]),
+  score: number().finite(),
+  features: array(object({
+    feature: _enum(["manual-required", "document-exact", "functional-region", "process-envelope", "composite-block", "overall-root", "elementary-span", "ordinary-residual", "terminal-residual"]),
+    contribution: number().finite(),
+    evidenceIds: array(idSchema)
+  }).strict()),
+  reasonCodes: array(idSchema)
+}).strict();
+const axialChainNodeSchema = object({
+  id: idSchema,
+  parentCandidateId: idSchema,
+  childCandidateIds: array(idSchema),
+  closureCandidateId: idSchema,
+  alternativeClosureCandidateIds: array(idSchema),
+  status: _enum(["resolved", "needs-review", "conflict"])
+}).strict();
+const axialDimensionSchemeSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  partitionRevisionId: idSchema.optional(),
+  policy: object({
+    id: _enum(["shaft-hierarchical-dimensioning-v1", "shaft-reference-terminal-closure-v1"]),
+    version: literal("1")
+  }).strict(),
+  inputDigest: idSchema,
+  topology: object({
+    drawingRef: drawingRefSchema,
+    axis: shaftAxisSchema,
+    unit: _enum(["mm", "cm", "m"]),
+    stations: array(axialStationSchema),
+    elementarySpans: array(axialElementarySpanSchema)
+  }).strict(),
+  evidence: array(dimensionEvidenceSchema),
+  candidates: array(axialDimensionCandidateSchema),
+  displayedCandidateIds: array(idSchema),
+  closureCandidateIds: array(idSchema),
+  chains: array(axialChainNodeSchema),
+  decisions: array(dimensionDecisionTraceSchema),
+  diagnostics: array(engineeringDiagnosticSchema),
+  status: _enum(["resolved", "needs-review", "conflict", "stale"])
+}).strict();
+discriminatedUnion("type", [
+  object({
+    type: literal("candidate.display"),
+    candidateId: idSchema,
+    displayed: boolean(),
+    expectedDrawingRef: drawingRefSchema
+  }).strict(),
+  object({
+    type: literal("closure.choose"),
+    chainId: idSchema,
+    candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema
+  }).strict()
+]);
 const engineeringAnnotationDraftSchema = object({
   version: literal(1),
   drawingRef: drawingRefSchema,
@@ -8338,6 +9340,7 @@ const engineeringAnnotationDraftSchema = object({
   chains: array(dimensionChainSchema),
   dependencies: array(annotationDependencySchema),
   diagnostics: array(engineeringDiagnosticSchema),
+  axialScheme: axialDimensionSchemeSchema.optional(),
   baseRevisionId: idSchema.optional()
 }).strict();
 const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
@@ -8949,6 +9952,14 @@ class PartitionWorkflowService {
     __privateGet(this, _stagedDocuments).delete(sessionId);
     return this.partitions.get(sessionId);
   }
+  getStagedEngineeringText(agent) {
+    const snapshot = this.space.getSnapshot(agent);
+    const staged = __privateGet(this, _stagedDocuments).get(String(agent.id));
+    if (!snapshot || !staged || staged.drawingRef && !sameDrawing(staged.drawingRef, snapshot.ref)) return void 0;
+    return staged.entries.map(({ name, text }) => `===== ENGINEERING DOCUMENT: ${name} =====
+${text}
+===== END ENGINEERING DOCUMENT: ${name} =====`).join("\n");
+  }
   disposeSession(sessionId) {
     __privateGet(this, _stagedDocuments).delete(sessionId);
   }
@@ -8999,10 +10010,7 @@ class PartitionWorkflowService {
     signal == null ? void 0 : signal.throwIfAborted();
     const drawingSourceName = (_b = (_a3 = snapshot.document.sources) == null ? void 0 : _a3.find(({ kind }) => kind === "dxf")) == null ? void 0 : _b.name;
     if (drawingSourceName === void 0) throw new Error("DXF_DRAWING_REQUIRED");
-    const staged = __privateGet(this, _stagedDocuments).get(String(agent.id));
-    const stagedText = staged && (!staged.drawingRef || sameDrawing(staged.drawingRef, snapshot.ref)) ? staged.entries.map(({ name, text }) => `===== ENGINEERING DOCUMENT: ${name} =====
-${text}
-===== END ENGINEERING DOCUMENT: ${name} =====`).join("\n") : void 0;
+    const stagedText = this.getStagedEngineeringText(agent);
     const combinedContext = [stagedText, engineeringContext == null ? void 0 : engineeringContext.trim()].filter(Boolean).join("\n") || void 0;
     return __privateMethod(this, _PartitionWorkflowService_instances, analyze_fn).call(this, agent, snapshot, combinedContext, drawingSourceName, signal);
   }
@@ -9353,6 +10361,18 @@ class DimensionPlanStore {
       updatedAt: this.ports.now()
     });
   }
+  editScheme(sessionId, command) {
+    const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    requireRef(state.snapshot, command.expectedDrawingRef);
+    const draft = state.snapshot.draft;
+    if (!(draft == null ? void 0 : draft.axialScheme)) throw new Error("DIMENSION_SCHEME_DRAFT_REQUIRED");
+    const edit = command.type === "candidate.display" ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } : { type: command.type, chainId: command.chainId, candidateId: command.candidateId };
+    const scheme = applyDimensionSchemeEdit(draft.axialScheme, edit);
+    return this.setDraft(sessionId, projectAxialDimensionScheme({
+      scheme,
+      ...draft.baseRevisionId === void 0 ? {} : { baseRevisionId: draft.baseRevisionId }
+    }));
+  }
   confirm(sessionId, expected) {
     const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
     requireRef(state.snapshot, expected);
@@ -9376,6 +10396,7 @@ class DimensionPlanStore {
       chains: draft.chains,
       dependencies: draft.dependencies,
       diagnostics: [...draft.diagnostics, ...diagnostics],
+      ...draft.axialScheme === void 0 ? {} : { axialScheme: draft.axialScheme },
       id: this.ports.id(),
       ...previous === void 0 ? {} : { parentRevisionId: previous.id },
       generationOrder: order.orderedIntentIds,
@@ -9438,10 +10459,17 @@ class DimensionPlanStore {
   }
   markNeedsRebase(sessionId, currentRef) {
     const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
+    const draft = state.snapshot.draft === void 0 ? void 0 : {
+      ...state.snapshot.draft,
+      ...state.snapshot.draft.axialScheme === void 0 ? {} : {
+        axialScheme: { ...state.snapshot.draft.axialScheme, status: "stale" }
+      }
+    };
     return __privateMethod(this, _DimensionPlanStore_instances, replace_fn2).call(this, sessionId, {
       ...state.snapshot,
       phase: "needs-rebase",
       drawingRef: currentRef,
+      ...draft === void 0 ? {} : { draft },
       message: "Drawing revision changed",
       updatedAt: this.ports.now()
     }, state.undo, state.redo);
@@ -9509,6 +10537,9 @@ path_fn3 = function(sessionId) {
 };
 function confirmationDiagnostics(draft, orderDiagnostics) {
   const diagnostics = [...validateEngineeringDraft(draft), ...orderDiagnostics];
+  if (draft.axialScheme && draft.axialScheme.status !== "resolved") {
+    diagnostics.push(problem("DIMENSION_SCHEME_UNRESOLVED", draft.axialScheme.inputDigest));
+  }
   diagnostics.push(...draft.diagnostics.filter(({ severity }) => severity === "error"));
   for (const datum of draft.datums) {
     if (datum.status === "conflict" || datum.status === "stale") {
@@ -9577,7 +10608,69 @@ function parseEnvelope(value) {
 function compact(value) {
   return JSON.parse(JSON.stringify(value));
 }
-class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importDrawing_dec = [Remote], _stageDocuments_dec = [Remote], _clearDocuments_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _reopenPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _a2) {
+class DimensionInferenceService {
+  constructor(space, partitions, documents, plans) {
+    this.space = space;
+    this.partitions = partitions;
+    this.documents = documents;
+    this.plans = plans;
+  }
+  start(agent, policyId = "shaft-hierarchical-dimensioning-v1") {
+    var _a3;
+    const sessionId = String(agent.id);
+    const drawing = this.space.getSnapshot(agent);
+    if (!drawing) throw new Error("DRAWING_REQUIRED");
+    const partition = this.partitions.get(sessionId);
+    const partitionValue = partition.draft ?? partition.confirmed;
+    if (!partitionValue) throw new Error("DIMENSION_PARTITION_REQUIRED");
+    assertSameRef(drawing.ref, partitionValue.drawingRef);
+    const document = parseEngineeringDocument(this.documents.getStagedEngineeringText(agent) ?? "");
+    const domainPartition = partitionValue;
+    const topology = buildAxialTopology({
+      partition: domainPartition,
+      unit: document.drawing.unit ?? drawing.document.unitSystem.length
+    });
+    const candidateSet = generateAxialDimensionCandidates({ topology, partition: domainPartition, document });
+    const scheme = inferAxialDimensionScheme({
+      topology,
+      candidateSet,
+      policy: policyById(policyId),
+      ...((_a3 = partition.confirmed) == null ? void 0 : _a3.id) === void 0 ? {} : { partitionRevisionId: partition.confirmed.id }
+    });
+    this.plans.begin(sessionId, drawing.ref);
+    return this.plans.setDraft(sessionId, projectAxialDimensionScheme({ scheme }));
+  }
+  getState(agent) {
+    return this.plans.get(String(agent.id));
+  }
+  edit(agent, command) {
+    return this.plans.editScheme(String(agent.id), command);
+  }
+  confirm(agent, expected) {
+    return this.plans.confirm(String(agent.id), expected);
+  }
+  cancel(agent, expected) {
+    return this.plans.cancel(String(agent.id), expected);
+  }
+  undo(agent, expected) {
+    return this.plans.undo(String(agent.id), expected);
+  }
+  redo(agent, expected) {
+    return this.plans.redo(String(agent.id), expected);
+  }
+  markStale(agent, currentRef) {
+    var _a3;
+    const sessionId = String(agent.id);
+    const current = this.plans.get(sessionId);
+    return ((_a3 = current.draft) == null ? void 0 : _a3.axialScheme) ? this.plans.markNeedsRebase(sessionId, currentRef) : current;
+  }
+}
+function assertSameRef(left, right) {
+  if (left.drawingId !== right.drawingId || left.revision !== right.revision) {
+    throw new Error("DIMENSION_PARTITION_STALE");
+  }
+}
+class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importDrawing_dec = [Remote], _stageDocuments_dec = [Remote], _clearDocuments_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _reopenPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _getDimensionPlan_dec = [Remote], _editDimensionScheme_dec = [Remote], _confirmDimensionPlan_dec = [Remote], _cancelDimensionPlan_dec = [Remote], _undoDimensionPlan_dec = [Remote], _redoDimensionPlan_dec = [Remote], _a2) {
   constructor(ctx) {
     super(ctx, "drawingAnnotation");
     __runInitializers(_init, 5, this);
@@ -9585,6 +10678,7 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
     __publicField(this, "partitions");
     __publicField(this, "partitionWorkflow");
     __publicField(this, "dimensionPlans");
+    __publicField(this, "dimensionInference");
     this.sessions = new AnnotationSessionStateStore(new FileAnnotationSessionStorage(
       resolve(homedir(), ".dsh/vectorai/annotation-sessions")
     ));
@@ -9600,11 +10694,23 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
       this.sessions,
       createPartitionSemanticReviewer(ctx, ctx.drawingSpace)
     );
-    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions, this.partitions)));
+    this.dimensionInference = new DimensionInferenceService(
+      ctx.drawingSpace,
+      this.partitions,
+      this.partitionWorkflow,
+      this.dimensionPlans
+    );
+    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(
+      ctx.drawingSpace,
+      this.sessions,
+      this.partitions,
+      this.dimensionPlans
+    )));
     ctx.effect(() => ctx.tools.register(createPartitionStartTool({
       start: (agent, engineeringContext, signal) => this.partitionWorkflow.analyzeCurrent(agent, engineeringContext, signal)
     })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
+    ctx.effect(() => ctx.tools.register(createDimensionChainStartTool(this.dimensionInference)));
     ctx.on("session/disposed", (session) => {
       const sessionId = String(session.id);
       this.partitionWorkflow.disposeSession(sessionId);
@@ -9633,10 +10739,14 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
     return this.partitionWorkflow.getState(agent);
   }
   editPartition(agent, command) {
-    return this.partitionWorkflow.edit(agent, command);
+    const result = this.partitionWorkflow.edit(agent, command);
+    this.dimensionInference.markStale(agent, result.drawingRef ?? command.expectedDrawingRef);
+    return result;
   }
   confirmPartition(agent, expected) {
-    return this.partitionWorkflow.confirm(agent, expected);
+    const result = this.partitionWorkflow.confirm(agent, expected);
+    this.dimensionInference.markStale(agent, result.drawingRef ?? expected);
+    return result;
   }
   cancelPartition(agent, expected) {
     return this.partitionWorkflow.cancel(agent, expected);
@@ -9649,6 +10759,24 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
   }
   redoPartition(agent, expected) {
     return this.partitionWorkflow.redo(agent, expected);
+  }
+  getDimensionPlan(agent) {
+    return this.dimensionInference.getState(agent);
+  }
+  editDimensionScheme(agent, command) {
+    return this.dimensionInference.edit(agent, command);
+  }
+  confirmDimensionPlan(agent, expected) {
+    return this.dimensionInference.confirm(agent, expected);
+  }
+  cancelDimensionPlan(agent, expected) {
+    return this.dimensionInference.cancel(agent, expected);
+  }
+  undoDimensionPlan(agent, expected) {
+    return this.dimensionInference.undo(agent, expected);
+  }
+  redoDimensionPlan(agent, expected) {
+    return this.dimensionInference.redo(agent, expected);
   }
 }
 _init = __decoratorStart(_a2);
@@ -9665,14 +10793,22 @@ __decorateElement(_init, 1, "cancelPartition", _cancelPartition_dec, DrawingAnno
 __decorateElement(_init, 1, "reopenPartition", _reopenPartition_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "undoPartition", _undoPartition_dec, DrawingAnnotationHostService);
 __decorateElement(_init, 1, "redoPartition", _redoPartition_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "getDimensionPlan", _getDimensionPlan_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "editDimensionScheme", _editDimensionScheme_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "confirmDimensionPlan", _confirmDimensionPlan_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "cancelDimensionPlan", _cancelDimensionPlan_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "undoDimensionPlan", _undoDimensionPlan_dec, DrawingAnnotationHostService);
+__decorateElement(_init, 1, "redoDimensionPlan", _redoDimensionPlan_dec, DrawingAnnotationHostService);
 __decoratorMetadata(_init, DrawingAnnotationHostService);
 __publicField(DrawingAnnotationHostService, "inject", ["tools", "drawingSpace", "attachments", "agents", "subagents"]);
 export {
   AnnotationSessionStateStore,
+  DimensionInferenceService,
   DimensionPlanStore,
   DrawingAnnotationHostService,
   FileAnnotationSessionStorage,
   FileDimensionPlanStorage,
+  createDimensionChainStartTool,
   createEngineeringAnnotationTool,
   DrawingAnnotationHostService as default,
   planEngineeringAnnotations

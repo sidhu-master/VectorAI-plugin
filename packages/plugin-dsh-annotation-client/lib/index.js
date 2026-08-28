@@ -8953,6 +8953,153 @@ function DrawingLayerManager({ layers, onVisibilityChange }) {
     }
   );
 }
+function DimensionChainOverlay({
+  scheme,
+  scale,
+  visible,
+  previewHeld = false
+}) {
+  if (!visible) return null;
+  const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
+  const displayed = scheme.displayedCandidateIds.flatMap((id) => candidates.get(id) ?? []);
+  const closures = previewHeld ? [] : scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
+  const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-dimension-chain-overlay": "true", pointerEvents: "none", children: [
+    displayed.map((candidate, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      IntervalGraphic,
+      {
+        scheme,
+        candidate,
+        scale,
+        level: index,
+        kind: "displayed",
+        conflict: !previewHeld && conflicts.has(candidate.id)
+      },
+      candidate.id
+    )),
+    closures.map((candidate, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      IntervalGraphic,
+      {
+        scheme,
+        candidate,
+        scale,
+        level: index,
+        kind: "closure",
+        conflict: conflicts.has(candidate.id)
+      },
+      candidate.id
+    ))
+  ] });
+}
+function IntervalGraphic({ scheme, candidate, scale, level, kind, conflict }) {
+  const start = scheme.topology.stations.find(({ id }) => id === candidate.startStationId);
+  const end = scheme.topology.stations.find(({ id }) => id === candidate.endStationId);
+  if (!start || !end) return null;
+  const { origin, direction, normal } = scheme.topology.axis;
+  const offset = (24 + level % 4 * 14) / Math.max(scale, 1e-6);
+  const point3 = (coordinate) => [
+    origin[0] + direction[0] * coordinate + normal[0] * offset,
+    origin[1] + direction[1] * coordinate + normal[1] * offset
+  ];
+  const a = point3(start.sourceCoordinate);
+  const b = point3(end.sourceCoordinate);
+  const middle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "g",
+    {
+      className: `vai-dimension-chain-interval vai-dimension-chain-interval--${kind}`,
+      "data-dimension-displayed": kind === "displayed" || void 0,
+      "data-dimension-closure": kind === "closure" || void 0,
+      "data-dimension-conflict": conflict || void 0,
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0], y1: a[1] - 4 / scale, x2: a[0], y2: a[1] + 4 / scale, vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: b[0], y1: b[1] - 4 / scale, x2: b[0], y2: b[1] + 4 / scale, vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("text", { x: middle[0], y: middle[1] - 5 / scale, textAnchor: "middle", fontSize: 11 / scale, children: [
+          candidate.nominalValue,
+          " ",
+          scheme.topology.unit
+        ] })
+      ]
+    }
+  );
+}
+function DimensionChainInspector({ scheme, controller, editable = true }) {
+  const candidates = new Map(scheme.candidates.map((candidate2) => [candidate2.id, candidate2]));
+  const candidate = (id) => candidates.get(id);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "vai-dimension-chain-inspector", "aria-label": "尺寸链推断检查", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "轴向尺寸链" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "data-dimension-scheme-status": scheme.status, children: statusLabel(scheme.status) })
+    ] }),
+    scheme.diagnostics.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "vai-dimension-chain-inspector__diagnostics", children: scheme.diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: diagnosticLabel(diagnostic.code) }, diagnostic.id)) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { children: scheme.chains.map((chain) => {
+      const parent = candidate(chain.parentCandidateId);
+      const closure = candidate(chain.closureCandidateId);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { "data-dimension-chain-id": chain.id, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("strong", { children: [
+          (parent == null ? void 0 : parent.nominalValue) ?? "?",
+          " ",
+          scheme.topology.unit
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          chain.childCandidateIds.map((id) => {
+            var _a2;
+            return ((_a2 = candidate(id)) == null ? void 0 : _a2.nominalValue) ?? "?";
+          }).join(" + "),
+          " + ",
+          (closure == null ? void 0 : closure.nominalValue) ?? "?"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("small", { children: [
+          "闭环：",
+          (closure == null ? void 0 : closure.nominalValue) ?? "?",
+          " ",
+          scheme.topology.unit
+        ] }),
+        editable && chain.alternativeClosureCandidateIds.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-dimension-chain-inspector__alternatives", children: chain.alternativeClosureCandidateIds.map((id) => {
+          const item = candidate(id);
+          if (!item) return null;
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              type: "button",
+              "aria-label": `选择候选闭环 ${item.nominalValue} ${scheme.topology.unit}`,
+              onClick: () => void controller.actions.chooseClosure(chain.id, id).catch(() => void 0),
+              children: [
+                "改用 ",
+                item.nominalValue,
+                " ",
+                scheme.topology.unit
+              ]
+            },
+            id
+          );
+        }) })
+      ] }, chain.id);
+    }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "显示尺寸" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "vai-dimension-chain-inspector__candidates", children: scheme.candidates.filter(({ id }) => !scheme.closureCandidateIds.includes(id)).map((item) => {
+      const displayed = scheme.displayedCandidateIds.includes(item.id);
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", checked: displayed, disabled: !editable, onChange: (event) => {
+          void controller.actions.setDisplayed(item.id, event.currentTarget.checked).catch(() => void 0);
+        } }),
+        item.nominalValue,
+        " ",
+        scheme.topology.unit
+      ] }) }, item.id);
+    }) })
+  ] });
+}
+function statusLabel(status) {
+  return { resolved: "可确认", "needs-review": "待复核", conflict: "有冲突", stale: "已过期" }[status];
+}
+function diagnosticLabel(code) {
+  if (code === "DIMENSION_DOCUMENT_DISPLAY_CONFLICT") return "文档与目标标注冲突";
+  if (code === "DIMENSION_CLOSURE_AMBIGUOUS") return "闭环选择需要确认";
+  if (code === "DIMENSION_CHAIN_INCOMPLETE") return "尺寸链不完整";
+  return code;
+}
 function partitionBands(draft, mode) {
   if (mode === "segments") return draft.segments.map((segment, index) => ({
     id: segment.id,
@@ -9220,15 +9367,15 @@ function bandLabel(band, index) {
 function visualLength(value) {
   return [...value].reduce((total, character) => total + ((character.codePointAt(0) ?? 0) > 255 ? 2 : 1), 0);
 }
-function PartitionActionToolbar({ controller, previewHeld }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": "分区确认工具栏", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--cancel", "aria-label": "取消分区", title: "取消", onClick: () => void controller.actions.cancel().catch(() => void 0), children: "×" }),
+function PartitionActionToolbar({ controller, previewHeld, subject = "分区" }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": `${subject}确认工具栏`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--cancel", "aria-label": `取消${subject}`, title: "取消", onClick: () => void controller.actions.cancel().catch(() => void 0), children: "×" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       "button",
       {
         type: "button",
         className: `vai-partition-action vai-partition-action--preview${previewHeld ? " is-held" : ""}`,
-        "aria-label": "按住预览分区结果",
+        "aria-label": `按住预览${subject}结果`,
         title: "按住预览",
         onPointerDown: () => controller.actions.setPreviewHeld(true),
         onPointerUp: () => controller.actions.setPreviewHeld(false),
@@ -9237,7 +9384,7 @@ function PartitionActionToolbar({ controller, previewHeld }) {
         children: "◉"
       }
     ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--confirm", "aria-label": "确认分区", title: "确认", onClick: () => void controller.actions.confirm().catch(() => void 0), children: "✓" })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--confirm", "aria-label": `确认${subject}`, title: "确认", onClick: () => void controller.actions.confirm().catch(() => void 0), children: "✓" })
   ] });
 }
 function PartitionViewSwitch({ mode, onChange }) {
@@ -9581,6 +9728,7 @@ function engineeringImportErrorText(code, filenames = []) {
 }
 const ANNOTATION_PARTITION_LAYER_ID = "vectorai.annotation.partition";
 const ANNOTATION_OPENING_ANGLE_LAYER_ID = "vectorai.annotation.opening-angle";
+const ANNOTATION_DIMENSION_CHAIN_LAYER_ID = "vectorai.annotation.dimension-chain";
 const ANNOTATION_PARTITION_LAYER = {
   id: ANNOTATION_PARTITION_LAYER_ID,
   label: "智能分区",
@@ -9595,6 +9743,14 @@ const ANNOTATION_OPENING_ANGLE_LAYER = {
   category: "engineering",
   icon: "angle",
   order: 110,
+  defaultVisible: true
+};
+const ANNOTATION_DIMENSION_CHAIN_LAYER = {
+  id: ANNOTATION_DIMENSION_CHAIN_LAYER_ID,
+  label: "尺寸链",
+  category: "engineering",
+  icon: "dimension",
+  order: 120,
   defaultVisible: true
 };
 function layerVisibilityStorageKey(sessionId) {
@@ -9656,17 +9812,42 @@ const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.ma
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
-const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER];
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER];
 const subscribeToNoLayers = () => () => void 0;
 const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
-function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan, layerRegistry }) {
-  var _a2;
+const EMPTY_DIMENSION_STATE = {
+  plan: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 },
+  busy: false,
+  previewHeld: false,
+  error: null
+};
+const EMPTY_DIMENSION_CONTROLLER = {
+  state: {
+    getSnapshot: () => EMPTY_DIMENSION_STATE,
+    subscribe: () => () => void 0
+  },
+  actions: {
+    refresh: async () => void 0,
+    setDisplayed: async () => void 0,
+    chooseClosure: async () => void 0,
+    confirm: async () => void 0,
+    cancel: async () => void 0,
+    undo: async () => void 0,
+    redo: async () => void 0,
+    setPreviewHeld: () => void 0
+  },
+  dispose: () => void 0
+};
+function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, dimensionPlan, layerRegistry }) {
+  var _a2, _b, _c;
+  const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport);
   const selectedIds = useObservable(runtime.selection);
   const presentation = useObservable(runtime.presentation);
   const annotationState = useObservable(state);
   const partitionState = useObservable(partition.state);
+  const dimensionState = useObservable(dimensionChain.state);
   const displaySnapshot = presentation.displaySnapshot ?? snapshot;
   const [importError, setImportError] = reactExports.useState(null);
   const [stagedDocumentNames, setStagedDocumentNames] = reactExports.useState([]);
@@ -9714,6 +9895,9 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     });
   };
   const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
+  const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID] ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
+  const dimensionScheme = ((_a2 = dimensionState.plan.draft) == null ? void 0 : _a2.axialScheme) ?? ((_b = dimensionState.plan.confirmed) == null ? void 0 : _b.axialScheme);
+  const dimensionHistoryActive = dimensionState.plan.drawingRef !== void 0 && (dimensionState.plan.phase !== "idle" || dimensionState.plan.canUndo || dimensionState.plan.canRedo);
   reactExports.useEffect(() => {
     let active = true;
     let timer;
@@ -9736,13 +9920,16 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     };
   }, [annotationState.activationEpoch, partition, state]);
   reactExports.useEffect(() => {
-    const release = () => partition.actions.setPreviewHeld(false);
+    const release = () => {
+      partition.actions.setPreviewHeld(false);
+      dimensionChain.actions.setPreviewHeld(false);
+    };
     window.addEventListener("blur", release);
     return () => {
       window.removeEventListener("blur", release);
       release();
     };
-  }, [partition]);
+  }, [dimensionChain, partition]);
   reactExports.useEffect(() => {
     if (!partitionState.busy) {
       void runtime.actions.refresh().then(() => {
@@ -9769,7 +9956,11 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     const previous = displayedDrawingRef.current;
     displayedDrawingRef.current = key;
     if (previous !== null && previous !== key) void partition.actions.refresh().catch(() => void 0);
-  }, [displaySnapshot, partition]);
+    if (previous !== null && previous !== key) void dimensionChain.actions.refresh().catch(() => void 0);
+  }, [dimensionChain, displaySnapshot, partition]);
+  reactExports.useEffect(() => {
+    void dimensionChain.actions.refresh().catch(() => void 0);
+  }, [annotationState.activationEpoch, dimensionChain]);
   const beginImport = (drawing, documents) => {
     setImportError(null);
     void partition.actions.importFiles(drawing, documents).then(() => setActivePanel(null)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
@@ -9791,13 +9982,21 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt),
     !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }),
     dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }),
+    dimensionScheme && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      DimensionChainInspector,
+      {
+        scheme: dimensionScheme,
+        controller: dimensionChain,
+        editable: dimensionState.plan.phase === "editing"
+      }
+    ),
     !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "候选" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: ((_a2 = presentation.preview) == null ? void 0 : _a2.diff.createdNodeIds.length) ?? 0 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: ((_c = presentation.preview) == null ? void 0 : _c.diff.createdNodeIds.length) ?? 0 }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "选中" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: selectedIds.length })
       ] })
@@ -9837,7 +10036,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               DrawingLayerManager,
               {
-                layers: registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle).map((definition) => ({
+                layers: registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme)).map((definition) => ({
                   definition,
                   visible: layerVisibility[definition.id] ?? definition.defaultVisible
                 })),
@@ -9888,22 +10087,31 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                       onRenameBand: (band, name) => partitionView === "functional" ? partition.actions.renameSemanticGroup(band.id, name) : partition.actions.updateSegment(band.segmentIds[0], { name })
                     }
                   ),
-                  partitionOverlayVisible && !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionOverlay, { draft: confirmed, mode: partitionView, previewHeld: true, scale: viewport.scale })
+                  partitionOverlayVisible && !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionOverlay, { draft: confirmed, mode: partitionView, previewHeld: true, scale: viewport.scale }),
+                  dimensionScheme && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    DimensionChainOverlay,
+                    {
+                      scheme: dimensionScheme,
+                      scale: viewport.scale,
+                      visible: dimensionChainVisible,
+                      previewHeld: dimensionState.previewHeld
+                    }
+                  )
                 ] })
               }
             ),
-            partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
+            dimensionState.plan.phase === "editing" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: dimensionChain, previewHeld: dimensionState.previewHeld, subject: "尺寸链" }) : partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
             displaySnapshot && /* @__PURE__ */ jsxRuntimeExports.jsx(
               WorkspaceToolbarView,
               {
                 snapshot: displaySnapshot,
                 viewport,
                 unavailable: partitionState.busy,
-                canUndo: partitionState.partition.canUndo,
-                canRedo: partitionState.partition.canRedo,
+                canUndo: dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
+                canRedo: dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
                 onFit: runtime.actions.setViewport,
-                onUndo: () => partition.actions.undo(),
-                onRedo: () => partition.actions.redo(),
+                onUndo: () => dimensionHistoryActive ? dimensionChain.actions.undo() : partition.actions.undo(),
+                onRedo: () => dimensionHistoryActive ? dimensionChain.actions.redo() : partition.actions.redo(),
                 onUploadFiles: handleToolbarUpload,
                 uploadAccept: ANNOTATION_UPLOAD_ACCEPT,
                 uploadMultiple: true
@@ -16173,6 +16381,98 @@ const annotationDependencySchema = object({
   reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
   evidenceIds: array(idSchema)
 }).strict();
+const axialStationSchema = object({
+  id: idSchema,
+  coordinate: number().finite(),
+  sourceCoordinate: number().finite(),
+  unit: _enum(["mm", "cm", "m"]),
+  kinds: array(_enum(["drawing-end", "shoulder", "partition-boundary", "datum"])),
+  geometryNodeIds: array(idSchema),
+  evidenceIds: array(idSchema)
+}).strict();
+const axialElementarySpanSchema = object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  segmentIds: array(idSchema),
+  evidenceIds: array(idSchema)
+}).strict();
+const dimensionEvidenceSchema = object({
+  id: idSchema,
+  origin: _enum(["geometry", "partition", "document", "manual", "ai"]),
+  kind: _enum(["drawing-end", "elementary-span", "functional-region", "document-interval", "process-envelope", "manual-requirement"]),
+  label: string(),
+  required: boolean(),
+  sourceIds: array(idSchema)
+}).strict();
+const axialDimensionCandidateSchema = object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  roles: array(_enum(["overall", "composite", "functional", "process", "local", "reference", "closure"])),
+  evidenceIds: array(idSchema),
+  required: boolean()
+}).strict();
+const dimensionDecisionTraceSchema = object({
+  candidateId: idSchema,
+  decision: _enum(["displayed", "closure", "rejected", "alternative"]),
+  score: number().finite(),
+  features: array(object({
+    feature: _enum(["manual-required", "document-exact", "functional-region", "process-envelope", "composite-block", "overall-root", "elementary-span", "ordinary-residual", "terminal-residual"]),
+    contribution: number().finite(),
+    evidenceIds: array(idSchema)
+  }).strict()),
+  reasonCodes: array(idSchema)
+}).strict();
+const axialChainNodeSchema = object({
+  id: idSchema,
+  parentCandidateId: idSchema,
+  childCandidateIds: array(idSchema),
+  closureCandidateId: idSchema,
+  alternativeClosureCandidateIds: array(idSchema),
+  status: _enum(["resolved", "needs-review", "conflict"])
+}).strict();
+const axialDimensionSchemeSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  partitionRevisionId: idSchema.optional(),
+  policy: object({
+    id: _enum(["shaft-hierarchical-dimensioning-v1", "shaft-reference-terminal-closure-v1"]),
+    version: literal("1")
+  }).strict(),
+  inputDigest: idSchema,
+  topology: object({
+    drawingRef: drawingRefSchema,
+    axis: shaftAxisSchema,
+    unit: _enum(["mm", "cm", "m"]),
+    stations: array(axialStationSchema),
+    elementarySpans: array(axialElementarySpanSchema)
+  }).strict(),
+  evidence: array(dimensionEvidenceSchema),
+  candidates: array(axialDimensionCandidateSchema),
+  displayedCandidateIds: array(idSchema),
+  closureCandidateIds: array(idSchema),
+  chains: array(axialChainNodeSchema),
+  decisions: array(dimensionDecisionTraceSchema),
+  diagnostics: array(engineeringDiagnosticSchema),
+  status: _enum(["resolved", "needs-review", "conflict", "stale"])
+}).strict();
+const dimensionSchemeEditCommandSchema = discriminatedUnion("type", [
+  object({
+    type: literal("candidate.display"),
+    candidateId: idSchema,
+    displayed: boolean(),
+    expectedDrawingRef: drawingRefSchema
+  }).strict(),
+  object({
+    type: literal("closure.choose"),
+    chainId: idSchema,
+    candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema
+  }).strict()
+]);
 const engineeringAnnotationDraftSchema = object({
   version: literal(1),
   drawingRef: drawingRefSchema,
@@ -16182,6 +16482,7 @@ const engineeringAnnotationDraftSchema = object({
   chains: array(dimensionChainSchema),
   dependencies: array(annotationDependencySchema),
   diagnostics: array(engineeringDiagnosticSchema),
+  axialScheme: axialDimensionSchemeSchema.optional(),
   baseRevisionId: idSchema.optional()
 }).strict();
 const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
@@ -16192,7 +16493,7 @@ const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omi
   generationOrder: array(idSchema),
   confirmedAt: number().finite()
 }).strict();
-object({
+const dimensionPlanSessionSnapshotSchema = object({
   version: literal(1),
   phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
   drawingRef: drawingRefSchema.optional(),
@@ -16229,7 +16530,7 @@ const ANNOTATION_REMOTE = {
       typeSymbol: "@vectorai/plugin-space-contracts#AnnotationSessionState",
       schema: annotationSessionStateSchema
     }
-  }, ...partitionDescriptors()]
+  }, ...partitionDescriptors(), ...dimensionDescriptors()]
 };
 function partitionDescriptors() {
   return [
@@ -16246,6 +16547,32 @@ function partitionDescriptors() {
     descriptor("undoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
     descriptor("redoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
   ];
+}
+function dimensionDescriptors() {
+  return [
+    dimensionDescriptor("getDimensionPlan", []),
+    dimensionDescriptor("editDimensionScheme", [jsonParameter("command", "@vectorai/plugin-space-contracts#DimensionSchemeEditCommand", dimensionSchemeEditCommandSchema)]),
+    dimensionDescriptor("confirmDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    dimensionDescriptor("cancelDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    dimensionDescriptor("undoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    dimensionDescriptor("redoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
+  ];
+}
+function dimensionDescriptor(method, parameters) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: "drawingAnnotation",
+    namespace: "drawingAnnotation",
+    method,
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, ...parameters],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DimensionPlanSessionSnapshot",
+      schema: dimensionPlanSessionSnapshotSchema
+    }
+  };
 }
 function descriptor(method, parameters) {
   return {

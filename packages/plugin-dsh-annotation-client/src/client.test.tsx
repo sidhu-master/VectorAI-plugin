@@ -86,6 +86,14 @@ describe('annotation client contribution', () => {
         order: 110,
         defaultVisible: true,
       },
+      {
+        id: 'vectorai.annotation.dimension-chain',
+        label: '尺寸链',
+        category: 'engineering',
+        icon: 'dimension',
+        order: 120,
+        defaultVisible: true,
+      },
     ]);
     expect(registered?.claimSource.observe('session-1').getSnapshot())
       .toEqual({ active: false, activationEpoch: 0 });
@@ -103,7 +111,7 @@ describe('annotation client contribution', () => {
     expect(disposeFiber).toHaveBeenCalledOnce();
     expect(disposeDropFiber).toHaveBeenCalledOnce();
     expect(disposeContribution).toHaveBeenCalledOnce();
-    expect(disposeLayer).toHaveBeenCalledTimes(2);
+    expect(disposeLayer).toHaveBeenCalledTimes(3);
     expect(disposeRemote).toHaveBeenCalledOnce();
   });
 });

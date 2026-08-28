@@ -9,6 +9,8 @@ import {
   partitionDocumentSupplementRequestSchema,
   partitionImportRequestSchema,
   partitionSessionSnapshotSchema,
+  dimensionPlanSessionSnapshotSchema,
+  dimensionSchemeEditCommandSchema,
 } from '@vectorai/plugin-space-contracts';
 
 const agentParameter = {
@@ -40,7 +42,7 @@ export const TYPERT = {
     sourceLocation: {
       file: 'packages/plugin-dsh-annotation-host/src/service.ts', line: 41, column: 3,
     },
-  }, ...partitionInvocations()],
+  }, ...partitionInvocations(), ...dimensionInvocations()],
   model: { services: [], events: [], objects: [] },
 } as const;
 
@@ -59,6 +61,31 @@ function partitionInvocations() {
     invocation('undoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     invocation('redoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
   ] as const;
+}
+
+function dimensionInvocations() {
+  return [
+    dimensionInvocation('getDimensionPlan', []),
+    dimensionInvocation('editDimensionScheme', [jsonParameter('command', '@vectorai/plugin-space-contracts#DimensionSchemeEditCommand', dimensionSchemeEditCommandSchema)]),
+    dimensionInvocation('confirmDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    dimensionInvocation('cancelDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    dimensionInvocation('undoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    dimensionInvocation('redoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+  ] as const;
+}
+
+function dimensionInvocation(method: string, parameters: readonly unknown[]) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: 'drawingAnnotation', namespace: 'drawingAnnotation', method,
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, ...parameters],
+    result: {
+      mode: 'strict', typeSymbol: '@vectorai/plugin-space-contracts#DimensionPlanSessionSnapshot',
+      schema: dimensionPlanSessionSnapshotSchema,
+    },
+    sourceLocation: { file: 'packages/plugin-dsh-annotation-host/src/service.ts', line: 120, column: 3 },
+  } as const;
 }
 
 function invocation(method: string, parameters: readonly unknown[]) {

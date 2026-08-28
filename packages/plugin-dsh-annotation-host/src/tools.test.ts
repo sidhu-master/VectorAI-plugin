@@ -5,7 +5,12 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createEngineeringAnnotationTool, createPartitionStartTool, createPartitionStatusTool } from './tools';
+import {
+  createDimensionChainStartTool,
+  createEngineeringAnnotationTool,
+  createPartitionStartTool,
+  createPartitionStatusTool,
+} from './tools';
 import { AnnotationSessionStateStore } from './session-state';
 import { PartitionSessionStore } from './partition-store';
 
@@ -14,7 +19,11 @@ describe('drawing_auto_annotate', () => {
     const sessions = new AnnotationSessionStateStore(undefined, { now: () => 12 });
     sessions.start('session-1', 'partition-1');
     const partitions = {
-      get: vi.fn(() => ({ phase: 'editing' as const, drawingRef: { drawingId: 'drawing-1', revision: 1 } })),
+      get: vi.fn(() => ({
+        version: 1 as const, phase: 'editing' as const,
+        drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        canUndo: false, canRedo: false, updatedAt: 0,
+      })),
       advanceDrawingRevision: vi.fn(),
     };
     const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -25,10 +34,10 @@ describe('drawing_auto_annotate', () => {
       ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
       ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
     ].map(([id, start, end]) => ({ id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality }));
-    const runExtensionProgram = vi.fn(async () => ({ result: {
+    const runExtensionProgram = vi.fn(async (agent: Agent, request: unknown) => { void agent; void request; return { result: {
       status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
       ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
-    } }));
+    } }; });
     const tool = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 },
@@ -103,10 +112,10 @@ describe('drawing_auto_annotate', () => {
       id: id as never, type: 'line' as const, start: start as never, end: end as never,
       visible: true, quality,
     }));
-    const runExtensionProgram = vi.fn(async () => ({ result: {
+    const runExtensionProgram = vi.fn(async (agent: Agent, request: unknown) => { void agent; void request; return { result: {
       status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-angle',
       ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-angle', operationBindingDigest: 'sha256:angle',
-    } }));
+    } }; });
     const tool = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 }, document,
@@ -229,5 +238,26 @@ describe('drawing_partition_start', () => {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
     } as ToolRunContext)).rejects.toThrow('PARTITION_CONTEXT_SIZE_LIMIT');
+  });
+});
+
+describe('drawing_dimension_chain_start', () => {
+  it('starts nominal axial chain inference only through an explicit tool call', async () => {
+    const start = vi.fn(() => ({
+      version: 1 as const, phase: 'editing' as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      canUndo: false, canRedo: false, updatedAt: 1,
+    }));
+    const tool = createDimensionChainStartTool({ start });
+
+    expect(tool.name).toBe('drawing_dimension_chain_start');
+    await expect(tool.execute({ policy: 'shaft-reference-terminal-closure-v1' }, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({ status: 'editing' });
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-1' }),
+      'shaft-reference-terminal-closure-v1',
+    );
   });
 });

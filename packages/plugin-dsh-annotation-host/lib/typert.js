@@ -6148,6 +6148,98 @@ const annotationDependencySchema = object({
   reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
   evidenceIds: array(idSchema)
 }).strict();
+const axialStationSchema = object({
+  id: idSchema,
+  coordinate: number().finite(),
+  sourceCoordinate: number().finite(),
+  unit: _enum(["mm", "cm", "m"]),
+  kinds: array(_enum(["drawing-end", "shoulder", "partition-boundary", "datum"])),
+  geometryNodeIds: array(idSchema),
+  evidenceIds: array(idSchema)
+}).strict();
+const axialElementarySpanSchema = object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  segmentIds: array(idSchema),
+  evidenceIds: array(idSchema)
+}).strict();
+const dimensionEvidenceSchema = object({
+  id: idSchema,
+  origin: _enum(["geometry", "partition", "document", "manual", "ai"]),
+  kind: _enum(["drawing-end", "elementary-span", "functional-region", "document-interval", "process-envelope", "manual-requirement"]),
+  label: string(),
+  required: boolean(),
+  sourceIds: array(idSchema)
+}).strict();
+const axialDimensionCandidateSchema = object({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  roles: array(_enum(["overall", "composite", "functional", "process", "local", "reference", "closure"])),
+  evidenceIds: array(idSchema),
+  required: boolean()
+}).strict();
+const dimensionDecisionTraceSchema = object({
+  candidateId: idSchema,
+  decision: _enum(["displayed", "closure", "rejected", "alternative"]),
+  score: number().finite(),
+  features: array(object({
+    feature: _enum(["manual-required", "document-exact", "functional-region", "process-envelope", "composite-block", "overall-root", "elementary-span", "ordinary-residual", "terminal-residual"]),
+    contribution: number().finite(),
+    evidenceIds: array(idSchema)
+  }).strict()),
+  reasonCodes: array(idSchema)
+}).strict();
+const axialChainNodeSchema = object({
+  id: idSchema,
+  parentCandidateId: idSchema,
+  childCandidateIds: array(idSchema),
+  closureCandidateId: idSchema,
+  alternativeClosureCandidateIds: array(idSchema),
+  status: _enum(["resolved", "needs-review", "conflict"])
+}).strict();
+const axialDimensionSchemeSchema = object({
+  version: literal(1),
+  drawingRef: drawingRefSchema,
+  partitionRevisionId: idSchema.optional(),
+  policy: object({
+    id: _enum(["shaft-hierarchical-dimensioning-v1", "shaft-reference-terminal-closure-v1"]),
+    version: literal("1")
+  }).strict(),
+  inputDigest: idSchema,
+  topology: object({
+    drawingRef: drawingRefSchema,
+    axis: shaftAxisSchema,
+    unit: _enum(["mm", "cm", "m"]),
+    stations: array(axialStationSchema),
+    elementarySpans: array(axialElementarySpanSchema)
+  }).strict(),
+  evidence: array(dimensionEvidenceSchema),
+  candidates: array(axialDimensionCandidateSchema),
+  displayedCandidateIds: array(idSchema),
+  closureCandidateIds: array(idSchema),
+  chains: array(axialChainNodeSchema),
+  decisions: array(dimensionDecisionTraceSchema),
+  diagnostics: array(engineeringDiagnosticSchema),
+  status: _enum(["resolved", "needs-review", "conflict", "stale"])
+}).strict();
+const dimensionSchemeEditCommandSchema = discriminatedUnion("type", [
+  object({
+    type: literal("candidate.display"),
+    candidateId: idSchema,
+    displayed: boolean(),
+    expectedDrawingRef: drawingRefSchema
+  }).strict(),
+  object({
+    type: literal("closure.choose"),
+    chainId: idSchema,
+    candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema
+  }).strict()
+]);
 const engineeringAnnotationDraftSchema = object({
   version: literal(1),
   drawingRef: drawingRefSchema,
@@ -6157,6 +6249,7 @@ const engineeringAnnotationDraftSchema = object({
   chains: array(dimensionChainSchema),
   dependencies: array(annotationDependencySchema),
   diagnostics: array(engineeringDiagnosticSchema),
+  axialScheme: axialDimensionSchemeSchema.optional(),
   baseRevisionId: idSchema.optional()
 }).strict();
 const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
@@ -6167,7 +6260,7 @@ const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omi
   generationOrder: array(idSchema),
   confirmedAt: number().finite()
 }).strict();
-object({
+const dimensionPlanSessionSnapshotSchema = object({
   version: literal(1),
   phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
   drawingRef: drawingRefSchema.optional(),
@@ -6211,7 +6304,7 @@ const TYPERT = {
       line: 41,
       column: 3
     }
-  }, ...partitionInvocations()],
+  }, ...partitionInvocations(), ...dimensionInvocations()],
   model: { services: [], events: [], objects: [] }
 };
 function partitionInvocations() {
@@ -6229,6 +6322,33 @@ function partitionInvocations() {
     invocation("undoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
     invocation("redoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
   ];
+}
+function dimensionInvocations() {
+  return [
+    dimensionInvocation("getDimensionPlan", []),
+    dimensionInvocation("editDimensionScheme", [jsonParameter("command", "@vectorai/plugin-space-contracts#DimensionSchemeEditCommand", dimensionSchemeEditCommandSchema)]),
+    dimensionInvocation("confirmDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    dimensionInvocation("cancelDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    dimensionInvocation("undoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+    dimensionInvocation("redoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
+  ];
+}
+function dimensionInvocation(method, parameters) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: "drawingAnnotation",
+    namespace: "drawingAnnotation",
+    method,
+    invocation: { kind: "direct" },
+    scope: { context: "agent", wire: "agentId" },
+    parameters: [agentParameter, ...parameters],
+    result: {
+      mode: "strict",
+      typeSymbol: "@vectorai/plugin-space-contracts#DimensionPlanSessionSnapshot",
+      schema: dimensionPlanSessionSnapshotSchema
+    },
+    sourceLocation: { file: "packages/plugin-dsh-annotation-host/src/service.ts", line: 120, column: 3 }
+  };
 }
 function invocation(method, parameters) {
   return {

@@ -12,6 +12,8 @@ import type {
   PartitionEditCommand,
   PartitionImportRequest,
   PartitionSessionSnapshot,
+  DimensionPlanSessionSnapshot,
+  DimensionSchemeEditCommand,
 } from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -20,11 +22,17 @@ import {
   AnnotationSessionStateStore,
   FileAnnotationSessionStorage,
 } from './session-state';
-import { createEngineeringAnnotationTool, createPartitionStartTool, createPartitionStatusTool } from './tools';
+import {
+  createDimensionChainStartTool,
+  createEngineeringAnnotationTool,
+  createPartitionStartTool,
+  createPartitionStatusTool,
+} from './tools';
 import { FilePartitionStorage, PartitionSessionStore } from './partition-store';
 import { PartitionWorkflowService } from './partition-service';
 import { createPartitionSemanticReviewer } from './semantic-reviewer';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
+import { DimensionInferenceService } from './dimension-inference-service';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -40,6 +48,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   readonly partitions: PartitionSessionStore;
   readonly partitionWorkflow: PartitionWorkflowService;
   readonly dimensionPlans: DimensionPlanStore;
+  readonly dimensionInference: DimensionInferenceService;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingAnnotation');
@@ -58,11 +67,20 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       this.sessions,
       createPartitionSemanticReviewer(ctx, ctx.drawingSpace),
     );
-    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(ctx.drawingSpace, this.sessions, this.partitions)));
+    this.dimensionInference = new DimensionInferenceService(
+      ctx.drawingSpace,
+      this.partitions,
+      this.partitionWorkflow,
+      this.dimensionPlans,
+    );
+    ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(
+      ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans,
+    )));
     ctx.effect(() => ctx.tools.register(createPartitionStartTool({
       start: (agent, engineeringContext, signal) => this.partitionWorkflow.analyzeCurrent(agent, engineeringContext, signal),
     })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
+    ctx.effect(() => ctx.tools.register(createDimensionChainStartTool(this.dimensionInference)));
     ctx.on('session/disposed', (session) => {
       const sessionId = String(session.id);
       this.partitionWorkflow.disposeSession(sessionId);
@@ -107,12 +125,16 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
 
   @Remote
   editPartition(agent: Agent, command: PartitionEditCommand): PartitionSessionSnapshot {
-    return this.partitionWorkflow.edit(agent, command);
+    const result = this.partitionWorkflow.edit(agent, command);
+    this.dimensionInference.markStale(agent, result.drawingRef ?? command.expectedDrawingRef);
+    return result;
   }
 
   @Remote
   confirmPartition(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
-    return this.partitionWorkflow.confirm(agent, expected);
+    const result = this.partitionWorkflow.confirm(agent, expected);
+    this.dimensionInference.markStale(agent, result.drawingRef ?? expected);
+    return result;
   }
 
   @Remote
@@ -133,6 +155,36 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   redoPartition(agent: Agent, expected: DrawingRef): PartitionSessionSnapshot {
     return this.partitionWorkflow.redo(agent, expected);
+  }
+
+  @Remote
+  getDimensionPlan(agent: Agent): DimensionPlanSessionSnapshot {
+    return this.dimensionInference.getState(agent);
+  }
+
+  @Remote
+  editDimensionScheme(agent: Agent, command: DimensionSchemeEditCommand): DimensionPlanSessionSnapshot {
+    return this.dimensionInference.edit(agent, command);
+  }
+
+  @Remote
+  confirmDimensionPlan(agent: Agent, expected: DrawingRef): DimensionPlanSessionSnapshot {
+    return this.dimensionInference.confirm(agent, expected);
+  }
+
+  @Remote
+  cancelDimensionPlan(agent: Agent, expected: DrawingRef): DimensionPlanSessionSnapshot {
+    return this.dimensionInference.cancel(agent, expected);
+  }
+
+  @Remote
+  undoDimensionPlan(agent: Agent, expected: DrawingRef): DimensionPlanSessionSnapshot {
+    return this.dimensionInference.undo(agent, expected);
+  }
+
+  @Remote
+  redoDimensionPlan(agent: Agent, expected: DrawingRef): DimensionPlanSessionSnapshot {
+    return this.dimensionInference.redo(agent, expected);
   }
 }
 

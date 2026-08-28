@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { GeometryId } from '@vectorai/drawing-core';
-import type { EngineeringAnnotationDraft } from '@vectorai/engineering-annotation';
+import {
+  projectAxialDimensionScheme,
+  type AxialDimensionScheme,
+  type EngineeringAnnotationDraft,
+} from '@vectorai/engineering-annotation';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +45,42 @@ function draft(nominalValue = 20): EngineeringAnnotationDraft {
 }
 
 const drawingRef = { drawingId: 'drawing-1', revision: 1 };
+
+function inferredDraft(status: AxialDimensionScheme['status'] = 'resolved'): EngineeringAnnotationDraft {
+  const station = (id: string, coordinate: number) => ({
+    id, coordinate, sourceCoordinate: coordinate, unit: 'mm' as const,
+    kinds: ['shoulder' as const], geometryNodeIds: [`geometry:${id}`], evidenceIds: [],
+  });
+  const scheme: AxialDimensionScheme = {
+    version: 1, drawingRef,
+    policy: { id: 'shaft-reference-terminal-closure-v1', version: '1' },
+    inputDigest: 'sha256:test-scheme',
+    topology: {
+      drawingRef,
+      axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 20, orientation: 'forward' },
+      unit: 'mm',
+      stations: [station('station:0', 0), station('station:10', 10), station('station:20', 20)],
+      elementarySpans: [
+        { id: 'span:a', startStationId: 'station:0', endStationId: 'station:10', nominalValue: 10, segmentIds: [], evidenceIds: [] },
+        { id: 'span:b', startStationId: 'station:10', endStationId: 'station:20', nominalValue: 10, segmentIds: [], evidenceIds: [] },
+      ],
+    },
+    evidence: [],
+    candidates: [
+      { id: 'candidate:overall', startStationId: 'station:0', endStationId: 'station:20', nominalValue: 20, roles: ['overall'], evidenceIds: [], required: true },
+      { id: 'candidate:local', startStationId: 'station:0', endStationId: 'station:10', nominalValue: 10, roles: ['local'], evidenceIds: [], required: false },
+      { id: 'candidate:closure', startStationId: 'station:10', endStationId: 'station:20', nominalValue: 10, roles: ['closure'], evidenceIds: [], required: false },
+    ],
+    displayedCandidateIds: ['candidate:overall', 'candidate:local'],
+    closureCandidateIds: ['candidate:closure'],
+    chains: [{
+      id: 'chain:overall', parentCandidateId: 'candidate:overall', childCandidateIds: ['candidate:local'],
+      closureCandidateId: 'candidate:closure', alternativeClosureCandidateIds: [], status: status === 'resolved' ? 'resolved' : 'needs-review',
+    }],
+    decisions: [], diagnostics: [], status,
+  };
+  return projectAxialDimensionScheme({ scheme });
+}
 
 describe('DimensionPlanStore', () => {
   it('tracks draft edits, confirms atomically, then undoes and redoes confirmation', () => {
@@ -126,5 +166,24 @@ describe('DimensionPlanStore', () => {
     fail = true;
     expect(() => store.setDraft('session', draft())).toThrow('disk-full');
     expect(store.get('session')).toEqual(before);
+  });
+
+  it('edits an inferred candidate and restores it through undo and redo', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    store.begin('session', drawingRef);
+    store.setDraft('session', inferredDraft());
+    store.editScheme('session', {
+      type: 'candidate.display', candidateId: 'candidate:local', displayed: false, expectedDrawingRef: drawingRef,
+    });
+    expect(store.get('session').draft?.axialScheme?.displayedCandidateIds).not.toContain('candidate:local');
+    expect(store.undo('session', drawingRef).draft?.axialScheme?.displayedCandidateIds).toContain('candidate:local');
+    expect(store.redo('session', drawingRef).draft?.axialScheme?.displayedCandidateIds).not.toContain('candidate:local');
+  });
+
+  it.each(['needs-review', 'conflict', 'stale'] as const)('blocks confirmation for a %s inferred scheme', (status) => {
+    const store = new DimensionPlanStore();
+    store.begin('session', drawingRef);
+    store.setDraft('session', inferredDraft(status));
+    expect(() => store.confirm('session', drawingRef)).toThrow('ANNOTATION_PLAN_INVALID');
   });
 });

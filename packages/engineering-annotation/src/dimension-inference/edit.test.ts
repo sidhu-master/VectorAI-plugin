@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from 'vitest';
+import { applyDimensionSchemeEdit } from './edit';
+import { analyzeGoldenInferenceInput } from './golden-input-test-support';
+import { inferAxialDimensionScheme } from './infer';
+import { SHAFT_HIERARCHICAL_DIMENSIONING_V1, SHAFT_REFERENCE_TERMINAL_CLOSURE_V1 } from './policy';
+
+describe('applyDimensionSchemeEdit', () => {
+  it('chooses a closure alternative immutably and resolves the review decision', async () => {
+    const input = await analyzeGoldenInferenceInput();
+    const scheme = inferAxialDimensionScheme({
+      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
+    });
+    const original = structuredClone(scheme);
+    const root = scheme.chains[0]!;
+    const alternative = root.alternativeClosureCandidateIds[0]!;
+
+    const edited = applyDimensionSchemeEdit(scheme, {
+      type: 'closure.choose', chainId: root.id, candidateId: alternative,
+    });
+
+    expect(scheme).toEqual(original);
+    expect(edited.chains[0]?.closureCandidateId).toBe(alternative);
+    expect(edited.status).toBe('resolved');
+    expect(edited.diagnostics.map(({ code }) => code)).not.toContain('DIMENSION_CLOSURE_AMBIGUOUS');
+  });
+
+  it('marks a plan conflicting when a displayed chain member is hidden', async () => {
+    const input = await analyzeGoldenInferenceInput();
+    const scheme = inferAxialDimensionScheme({
+      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+    });
+    const childId = scheme.chains[0]!.childCandidateIds[0]!;
+
+    const edited = applyDimensionSchemeEdit(scheme, {
+      type: 'candidate.display', candidateId: childId, displayed: false,
+    });
+
+    expect(edited.status).toBe('conflict');
+    expect(edited.diagnostics).toContainEqual(expect.objectContaining({ code: 'DIMENSION_CHAIN_INCOMPLETE' }));
+  });
+
+  it('rejects unknown candidate IDs', async () => {
+    const input = await analyzeGoldenInferenceInput();
+    const scheme = inferAxialDimensionScheme({
+      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+    });
+
+    expect(() => applyDimensionSchemeEdit(scheme, {
+      type: 'candidate.display', candidateId: 'candidate:missing', displayed: true,
+    })).toThrow('DIMENSION_CANDIDATE_UNKNOWN');
+  });
+});

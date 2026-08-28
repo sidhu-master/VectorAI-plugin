@@ -81,6 +81,15 @@ export class PartitionWorkflowService {
     return this.partitions.get(sessionId);
   }
 
+  getStagedEngineeringText(agent: Agent): string | undefined {
+    const snapshot = this.space.getSnapshot(agent);
+    const staged = this.#stagedDocuments.get(String(agent.id));
+    if (!snapshot || !staged || staged.drawingRef && !sameDrawing(staged.drawingRef, snapshot.ref)) return undefined;
+    return staged.entries.map(({ name, text }) => (
+      `===== ENGINEERING DOCUMENT: ${name} =====\n${text}\n===== END ENGINEERING DOCUMENT: ${name} =====`
+    )).join('\n');
+  }
+
   disposeSession(sessionId: string): void { this.#stagedDocuments.delete(sessionId); }
 
   async importDrawing(agent: Agent, dxf: PartitionImportRequest['dxf'], signal?: AbortSignal): Promise<PartitionSessionSnapshot> {
@@ -132,10 +141,7 @@ export class PartitionWorkflowService {
     signal?.throwIfAborted();
     const drawingSourceName = snapshot.document.sources?.find(({ kind }) => kind === 'dxf')?.name;
     if (drawingSourceName === undefined) throw new Error('DXF_DRAWING_REQUIRED');
-    const staged = this.#stagedDocuments.get(String(agent.id));
-    const stagedText = staged && (!staged.drawingRef || sameDrawing(staged.drawingRef, snapshot.ref))
-      ? staged.entries.map(({ name, text }) => `===== ENGINEERING DOCUMENT: ${name} =====\n${text}\n===== END ENGINEERING DOCUMENT: ${name} =====`).join('\n')
-      : undefined;
+    const stagedText = this.getStagedEngineeringText(agent);
     const combinedContext = [stagedText, engineeringContext?.trim()].filter(Boolean).join('\n') || undefined;
     return this.#analyze(agent, snapshot, combinedContext, drawingSourceName, signal);
   }

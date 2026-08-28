@@ -119,3 +119,22 @@
 .vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }
 .vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }
 .vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }
+
+.vai-dimension-chain-interval { color: #22d3ee; }
+.vai-dimension-chain-interval line { stroke: currentColor; stroke-width: 1.5; }
+.vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; paint-order: stroke; stroke: #0b1118; stroke-width: 3px; }
+.vai-dimension-chain-interval--closure { color: #f59e0b; }
+.vai-dimension-chain-interval--closure line:first-child { stroke-dasharray: 5 4; }
+.vai-dimension-chain-interval[data-dimension-conflict="true"] { color: #fb7185; }
+.vai-dimension-chain-inspector { display: grid; gap: 10px; }
+.vai-dimension-chain-inspector > header { display: flex; align-items: center; justify-content: space-between; }
+.vai-dimension-chain-inspector h2, .vai-dimension-chain-inspector h3 { margin: 0; }
+.vai-dimension-chain-inspector h3 { color: #b8c5d5; font-size: 11px; }
+.vai-dimension-chain-inspector > header span { padding: 2px 6px; border-radius: 999px; color: #7dd3fc; background: rgba(14, 165, 233, .14); font-size: 9px; }
+.vai-dimension-chain-inspector ol, .vai-dimension-chain-inspector ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.vai-dimension-chain-inspector ol > li { display: grid; gap: 5px; padding: 9px; border: 1px solid rgba(56, 189, 248, .16); border-radius: 9px; background: rgba(14, 165, 233, .055); font-size: 11px; }
+.vai-dimension-chain-inspector small { color: #8295aa; }
+.vai-dimension-chain-inspector__alternatives { display: flex; flex-wrap: wrap; gap: 5px; }
+.vai-dimension-chain-inspector button { padding: 5px 7px; border: 1px solid rgba(245, 158, 11, .3); border-radius: 6px; color: #fbc56d; background: rgba(146, 64, 14, .16); font-size: 10px; }
+.vai-dimension-chain-inspector__candidates label { display: flex; align-items: center; gap: 7px; color: #c7d2df; font-size: 11px; }
+.vai-dimension-chain-inspector__diagnostics li { color: #f6bf73; font-size: 10px; }
