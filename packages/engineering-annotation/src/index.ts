@@ -17,6 +17,8 @@ export * from './dimension/validate';
 export * from './dimension/order';
 export * from './dimension/chain';
 export * from './dimension/project';
+export * from './dimension-inference/types';
+export * from './dimension-inference/topology';
 export * from './tolerance/rules';
 export * from './tolerance/digest';
 export * from './tolerance/evaluate';
