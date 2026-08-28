@@ -7774,12 +7774,54 @@ const createLucideIcon = (iconName, iconNode) => {
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$9 = [
+const __iconNode$b = [
   ["path", { d: "M12 15V3", key: "m9g1x1" }],
   ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
   ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
 ];
-const Download = createLucideIcon("download", __iconNode$9);
+const Download = createLucideIcon("download", __iconNode$b);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$a = [
+  [
+    "path",
+    {
+      d: "M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49",
+      key: "ct8e1f"
+    }
+  ],
+  ["path", { d: "M14.084 14.158a3 3 0 0 1-4.242-4.242", key: "151rxh" }],
+  [
+    "path",
+    {
+      d: "M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143",
+      key: "13bj9a"
+    }
+  ],
+  ["path", { d: "m2 2 20 20", key: "1ooewy" }]
+];
+const EyeOff = createLucideIcon("eye-off", __iconNode$a);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$9 = [
+  [
+    "path",
+    {
+      d: "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",
+      key: "1nclc0"
+    }
+  ],
+  ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
+];
+const Eye = createLucideIcon("eye", __iconNode$9);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
@@ -9028,12 +9070,26 @@ function PartitionViewSwitch({ mode, onChange }) {
     )
   ] });
 }
-function PartitionInspector({ draft, controller, mode, onModeChange }) {
+function PartitionInspector({ draft, controller, mode, onModeChange, overlayVisible, onOverlayVisibleChange }) {
   const functional = partitionBands(draft, "functional");
   const classified = new Set(functional.flatMap(({ segmentIds }) => segmentIds));
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector__title", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-inspector__title-row", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            className: "vai-partition-visibility-toggle",
+            "aria-label": overlayVisible ? "隐藏分区框" : "显示分区框",
+            "aria-pressed": overlayVisible,
+            title: overlayVisible ? "隐藏分区框" : "显示分区框",
+            onClick: () => onOverlayVisibleChange(!overlayVisible),
+            children: overlayVisible ? /* @__PURE__ */ jsxRuntimeExports.jsx(Eye, { size: 14, "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EyeOff, { size: 14, "aria-hidden": "true" })
+          }
+        )
+      ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionViewSwitch, { mode, onChange: onModeChange })
     ] }),
     mode === "functional" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -9196,6 +9252,8 @@ function ConfirmedPartitionInspector({
   busy,
   mode,
   onModeChange,
+  overlayVisible,
+  onOverlayVisibleChange,
   onReopen
 }) {
   const bands = partitionBands(revision, mode);
@@ -9205,9 +9263,23 @@ function ConfirmedPartitionInspector({
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: mode === "functional" ? "功能分区" : "连续轴段" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "已确认" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", "aria-label": "重新编辑分区", disabled: busy, onClick: () => void onReopen().catch(() => void 0), children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(PencilLine, { size: 14, "aria-hidden": "true" }),
-        "重新编辑"
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-confirmed-partition__actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            className: "vai-partition-visibility-toggle",
+            "aria-label": overlayVisible ? "隐藏分区框" : "显示分区框",
+            "aria-pressed": overlayVisible,
+            title: overlayVisible ? "隐藏分区框" : "显示分区框",
+            onClick: () => onOverlayVisibleChange(!overlayVisible),
+            children: overlayVisible ? /* @__PURE__ */ jsxRuntimeExports.jsx(Eye, { size: 14, "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EyeOff, { size: 14, "aria-hidden": "true" })
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", "aria-label": "重新编辑分区", disabled: busy, onClick: () => void onReopen().catch(() => void 0), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(PencilLine, { size: 14, "aria-hidden": "true" }),
+          "重新编辑"
+        ] })
       ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionViewSwitch, { mode, onChange: onModeChange }),
@@ -9345,7 +9417,7 @@ const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.ma
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
-function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPlan }) {
+function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan }) {
   var _a2;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport);
@@ -9359,6 +9431,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
   const [activePanel, setActivePanel] = reactExports.useState(null);
   const [panelWidth, setPanelWidth] = reactExports.useState(260);
   const [partitionView, setPartitionView] = reactExports.useState("functional");
+  const [partitionOverlayVisible, setPartitionOverlayVisible] = reactExports.useState(() => readPartitionOverlayVisibility(sessionId));
   const fitAfterAnalysis = reactExports.useRef(partitionState.busy);
   const displayedDrawingRef = reactExports.useRef(null);
   const surfaceSnapshot = reactExports.useMemo(() => displaySnapshot === null ? null : {
@@ -9373,6 +9446,13 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
   }, [displaySnapshot]);
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
+  reactExports.useEffect(() => {
+    setPartitionOverlayVisible(readPartitionOverlayVisibility(sessionId));
+  }, [sessionId]);
+  const updatePartitionOverlayVisibility = (visible) => {
+    setPartitionOverlayVisible(visible);
+    writePartitionOverlayVisibility(sessionId, visible);
+  };
   reactExports.useEffect(() => {
     let active = true;
     let timer;
@@ -9447,8 +9527,8 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
     setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
   };
   const structurePanel = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-panel", children: [
-    draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt),
-    !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }),
+    draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView, overlayVisible: partitionOverlayVisible, onOverlayVisibleChange: updatePartitionOverlayVisibility }, partitionState.partition.updatedAt),
+    !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, overlayVisible: partitionOverlayVisible, onOverlayVisibleChange: updatePartitionOverlayVisibility, onReopen: partition.actions.reopen }),
     dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }),
     !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
@@ -9525,7 +9605,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                 onSelectionChange: runtime.actions.setSelection,
                 worldLayers: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-annotation-candidate-layer": "true", "data-preview-active": presentation.preview === null ? void 0 : "true", pointerEvents: "none" }),
-                  draft && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  partitionOverlayVisible && draft && /* @__PURE__ */ jsxRuntimeExports.jsx(
                     PartitionOverlay,
                     {
                       draft,
@@ -9537,7 +9617,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                       onRenameBand: (band, name) => partitionView === "functional" ? partition.actions.renameSemanticGroup(band.id, name) : partition.actions.updateSegment(band.segmentIds[0], { name })
                     }
                   ),
-                  !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionOverlay, { draft: confirmed, mode: partitionView, previewHeld: true, scale: viewport.scale })
+                  partitionOverlayVisible && !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionOverlay, { draft: confirmed, mode: partitionView, previewHeld: true, scale: viewport.scale })
                 ] })
               }
             ),
@@ -9563,6 +9643,24 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
       ]
     }
   );
+}
+function partitionOverlayVisibilityKey(sessionId) {
+  return `vectorai:annotation:partition-overlay:${sessionId}`;
+}
+function readPartitionOverlayVisibility(sessionId) {
+  if (typeof sessionStorage === "undefined") return true;
+  try {
+    return sessionStorage.getItem(partitionOverlayVisibilityKey(sessionId)) !== "hidden";
+  } catch {
+    return true;
+  }
+}
+function writePartitionOverlayVisibility(sessionId, visible) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(partitionOverlayVisibilityKey(sessionId), visible ? "visible" : "hidden");
+  } catch {
+  }
 }
 function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot()) {
   if (snapshot === null) return;
