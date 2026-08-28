@@ -88,6 +88,10 @@ function legacyPatchedResizeFixture(): string {
 \t\t\t\thandle.addEventListener("pointercancel", finish, { once: true });
 \t\t\t}, [workspaceChatWidth]);
 \t\t\tconst workspaceLayoutStyles = "[data-conversation-workspace-pane]:not(:empty)";
+\t\t\tconst workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});
+\t\t\treturn (0, react_jsx_runtime.jsxs)("div", {
+\t\t\t\tclassName: ConversationRoot_module_css_default.root,
+\t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t\t"data-conversation-workspace-pane": "",
 \t\t\t\t\tchildren: workspacePane
 \t\t\t"data-vectorai-dsh-workspace-patch": "rc.8"`;
@@ -139,7 +143,7 @@ describe('patchConversationClient', () => {
     expect(result.source).toContain('data-conversation-workspace-resizer');
     expect(result.source).toContain('data-conversation-chat-pane');
     expect(result.source).toContain('[data-conversation-workspace-active]');
-    expect(result.source).not.toContain('[data-conversation-workspace-pane]:not(:empty)');
+    expect(result.source).toContain('data-conversation-workspace-visible');
     expect(result.source).toContain('Math.min(640, Math.max(360');
     expect(result.source).toContain('(next.buttons & 1) === 0');
     expect(result.source).toContain('lostpointercapture');
@@ -150,6 +154,10 @@ describe('patchConversationClient', () => {
     const result = patchConversationClient(rc8Fixture());
 
     expect(result.source).not.toContain('@media (max-width: 1100px)');
+    expect(result.source).not.toContain(':has(');
+    expect(result.source).toContain(
+      '[data-conversation-workspace-layout][data-conversation-workspace-visible]',
+    );
     expect(result.source).toContain('flex: 1 1 auto;\\n  min-width: 0;');
   });
 
@@ -184,41 +192,41 @@ describe('patchConversationClient', () => {
       .replace('flex: 1 1 auto;\n  min-width: 0;', 'flex: 1 1 auto;\n  min-width: 520px;') + responsive;
     const v5 = current
       .replace(cssMatch[1]!, JSON.stringify(v5Css))
-      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v6"', '"data-vectorai-dsh-workspace-patch": "rc.8-v5"');
+      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v7"', '"data-vectorai-dsh-workspace-patch": "rc.8-v5"');
 
     const result = patchConversationClient(v5);
 
     expect(result.status).toBe('upgraded');
     expect(result.source).not.toContain('@media (max-width: 1100px)');
     expect(result.source).toContain('flex: 1 1 auto;\\n  min-width: 0;');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v6"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v7"');
   });
 
   it('upgrades the installed v2 layout selector instead of treating it as current', () => {
     const current = patchConversationClient(rc8Fixture()).source;
     const v2 = current
-      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v6"', '"data-vectorai-dsh-workspace-patch": "rc.8-v2"')
+      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v7"', '"data-vectorai-dsh-workspace-patch": "rc.8-v2"')
       .replace(
         'const workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});',
         'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;',
       )
       .replaceAll(
-        '[data-conversation-workspace-pane] [data-conversation-workspace-active]',
+        '[data-conversation-workspace-layout][data-conversation-workspace-visible]',
         '[data-conversation-workspace-pane]:not(:empty)',
       );
 
     const result = patchConversationClient(v2);
 
     expect(result.status).toBe('upgraded');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v6"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v7"');
     expect(result.source).toContain('[data-conversation-workspace-active]');
-    expect(result.source).not.toContain('[data-conversation-workspace-pane]:not(:empty)');
+    expect(result.source).toContain('data-conversation-workspace-visible');
   });
 
   it('upgrades the installed v3 phase gate so a new session can reveal an imported drawing', () => {
     const current = patchConversationClient(rc8Fixture()).source;
     const v3 = current
-      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v6"', '"data-vectorai-dsh-workspace-patch": "rc.8-v3"')
+      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v7"', '"data-vectorai-dsh-workspace-patch": "rc.8-v3"')
       .replace(
         'const workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});',
         'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;',
@@ -227,7 +235,7 @@ describe('patchConversationClient', () => {
     const result = patchConversationClient(v3);
 
     expect(result.status).toBe('upgraded');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v6"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v7"');
     expect(result.source).toContain(
       'const workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});',
     );
@@ -236,7 +244,7 @@ describe('patchConversationClient', () => {
   it('upgrades the installed v4 unconditional gate to hide stale drawings in a new session', () => {
     const current = patchConversationClient(rc8Fixture()).source;
     const v4 = current
-      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v6"', '"data-vectorai-dsh-workspace-patch": "rc.8-v4"')
+      .replace('"data-vectorai-dsh-workspace-patch": "rc.8-v7"', '"data-vectorai-dsh-workspace-patch": "rc.8-v4"')
       .replace(
         'const workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});',
         'const workspacePane = renderSlot("conversation.workspace", {});',
@@ -245,7 +253,7 @@ describe('patchConversationClient', () => {
     const result = patchConversationClient(v4);
 
     expect(result.status).toBe('upgraded');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v6"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v7"');
     expect(result.source).toContain(
       'const workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});',
     );
@@ -257,7 +265,7 @@ describe('patchConversationClient', () => {
     expect(result.status).toBe('upgraded');
     expect(result.source).toContain('(next.buttons & 1) === 0');
     expect(result.source).toContain('lostpointercapture');
-    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v6"');
+    expect(result.source).toContain('"data-vectorai-dsh-workspace-patch": "rc.8-v7"');
     expect(result.source).toContain('[data-conversation-workspace-active]');
   });
 

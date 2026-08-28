@@ -21,9 +21,11 @@ const V2_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v2"`;
 const V3_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
 const V4_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v4"`;
 const V5_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v5"`;
-const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v6"`;
+const V6_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v6"`;
+const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v7"`;
 const LEGACY_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane]:not(:empty)';
-const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
+const V6_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
+const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-layout][data-conversation-workspace-visible]';
 const LEGACY_WORKSPACE_GATE = 'const workspacePane = phase === "active" ? renderSlot("conversation.workspace", {}) : null;';
 const V4_WORKSPACE_GATE = 'const workspacePane = renderSlot("conversation.workspace", {});';
 const CURRENT_WORKSPACE_GATE = 'const workspacePane = sessionId === void 0 ? null : renderSlot("conversation.workspace", {});';
@@ -128,7 +130,7 @@ const ROOT_CHILD_ANCHOR = `
 \t\t\t\t\t},
 \t\t\t\t\t"conversation.session.header": {`;
 
-const WORKSPACE_CSS = `
+const V6_WORKSPACE_CSS = `
 [data-conversation-workspace-layout] {
   min-width: 0;
   height: 100%;
@@ -180,6 +182,27 @@ const WORKSPACE_CSS = `
   flex-direction: column;
   overflow: hidden;
 }`;
+
+const WORKSPACE_CSS = V6_WORKSPACE_CSS
+  .replaceAll(
+    '[data-conversation-workspace-layout]:has(> [data-conversation-workspace-pane] [data-conversation-workspace-active])',
+    '[data-conversation-workspace-layout][data-conversation-workspace-visible]',
+  );
+
+const WORKSPACE_VISIBILITY_EFFECT_MARKER = 'const workspaceLayoutRef = (0, react.useRef)(null);';
+const WORKSPACE_VISIBILITY_EFFECT = `
+\t\t\tconst workspaceLayoutRef = (0, react.useRef)(null);
+\t\t\t(0, react.useEffect)(() => {
+\t\t\t\tconst layout = workspaceLayoutRef.current;
+\t\t\t\tif (layout === null) return;
+\t\t\t\tconst syncWorkspaceVisibility = () => {
+\t\t\t\t\tlayout.toggleAttribute("data-conversation-workspace-visible", layout.querySelector("[data-conversation-workspace-active]") !== null);
+\t\t\t\t};
+\t\t\t\tconst observer = new MutationObserver(syncWorkspaceVisibility);
+\t\t\t\tsyncWorkspaceVisibility();
+\t\t\t\tobserver.observe(layout, { childList: true, subtree: true });
+\t\t\t\treturn () => observer.disconnect();
+\t\t\t}, [sessionId]);`;
 
 const V5_RESPONSIVE_WORKSPACE_CSS = `
 @media (max-width: 1100px) {
@@ -271,12 +294,14 @@ ${ROBUST_RESIZE_HANDLER}
 
 const ROOT_RETURN_REPLACEMENT = `
 \t\t\t${CURRENT_WORKSPACE_GATE}
+${WORKSPACE_VISIBILITY_EFFECT}
 \t\t\treturn (0, react_jsx_runtime.jsxs)("div", {
 \t\t\t\tclassName: ConversationRoot_module_css_default.root,
+\t\t\t\tref: workspaceLayoutRef,
 \t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t"data-phase": phase,
 \t\t\t\t"data-conversation-workspace-layout": "",
-\t\t\t\t"${PATCH_MARKER}": "rc.8-v6",
+\t\t\t\t"${PATCH_MARKER}": "rc.8-v7",
 \t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("style", { children: workspaceLayoutStyles }), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-pane": "",
 \t\t\t\t\tkey: sessionId ?? "new-session",
@@ -314,6 +339,34 @@ const ROOT_CHILD_REPLACEMENT = `
 \t\t\t\t\t},
 \t\t\t\t\t"conversation.session.header": {`;
 
+function upgradeWorkspaceLayoutToV7(source, previousMarker) {
+  let upgraded = source;
+  const v6Css = JSON.stringify(V6_WORKSPACE_CSS);
+  const currentCss = JSON.stringify(WORKSPACE_CSS);
+  if (upgraded.includes(v6Css)) {
+    upgraded = replaceExactlyOnce(upgraded, v6Css, currentCss);
+  } else if (upgraded.includes(V6_WORKSPACE_SELECTOR)) {
+    upgraded = upgraded.replaceAll(V6_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
+  } else if (!upgraded.includes(currentCss)) {
+    throw new Error('DSH_WORKSPACE_PATCH_UPGRADE_MISMATCH');
+  }
+  if (!upgraded.includes(WORKSPACE_VISIBILITY_EFFECT_MARKER)) {
+    upgraded = replaceExactlyOnce(
+      upgraded,
+      `${CURRENT_WORKSPACE_GATE}\n\t\t\treturn (0, react_jsx_runtime.jsxs)("div", {`,
+      `${CURRENT_WORKSPACE_GATE}\n${WORKSPACE_VISIBILITY_EFFECT}\n\t\t\treturn (0, react_jsx_runtime.jsxs)("div", {`,
+    );
+  }
+  if (!upgraded.includes('ref: workspaceLayoutRef,')) {
+    upgraded = replaceExactlyOnce(
+      upgraded,
+      '\t\t\t\tclassName: ConversationRoot_module_css_default.root,\n\t\t\t\tstyle:',
+      '\t\t\t\tclassName: ConversationRoot_module_css_default.root,\n\t\t\t\tref: workspaceLayoutRef,\n\t\t\t\tstyle:',
+    );
+  }
+  return replaceExactlyOnce(upgraded, previousMarker, CURRENT_PATCH_MARKER);
+}
+
 export function patchConversationClient(source) {
   if (source.includes(PATCH_MARKER)) {
     if (
@@ -322,13 +375,26 @@ export function patchConversationClient(source) {
       && source.includes(CURRENT_WORKSPACE_SELECTOR)
       && source.includes(CURRENT_WORKSPACE_GATE)
       && source.includes(CURRENT_WORKSPACE_PANE)
+      && source.includes(WORKSPACE_VISIBILITY_EFFECT_MARKER)
     ) {
       return { status: 'already-patched', source };
     }
     if (
+      source.includes(V6_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
+      && (source.includes(V6_WORKSPACE_SELECTOR) || source.includes(CURRENT_WORKSPACE_SELECTOR))
+      && source.includes(CURRENT_WORKSPACE_GATE)
+      && source.includes(CURRENT_WORKSPACE_PANE)
+    ) {
+      return {
+        status: 'upgraded',
+        source: upgradeWorkspaceLayoutToV7(source, V6_PATCH_MARKER),
+      };
+    }
+    if (
       source.includes(CURRENT_PATCH_MARKER)
       && source.includes(ROBUST_RESIZE_HANDLER)
-      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && (source.includes(V6_WORKSPACE_SELECTOR) || source.includes(CURRENT_WORKSPACE_SELECTOR))
       && source.includes(CURRENT_WORKSPACE_GATE)
       && source.includes(LEGACY_WORKSPACE_PANE)
     ) {
@@ -340,7 +406,7 @@ export function patchConversationClient(source) {
     if (
       source.includes(V5_PATCH_MARKER)
       && source.includes(ROBUST_RESIZE_HANDLER)
-      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && (source.includes(V6_WORKSPACE_SELECTOR) || source.includes(CURRENT_WORKSPACE_SELECTOR))
       && source.includes(CURRENT_WORKSPACE_GATE)
       && source.includes(CURRENT_WORKSPACE_PANE)
     ) {
@@ -350,30 +416,36 @@ export function patchConversationClient(source) {
         JSON.stringify(V5_RESPONSIVE_WORKSPACE_CSS).slice(1, -1),
         '',
       );
-      upgraded = replaceExactlyOnce(upgraded, V5_PATCH_MARKER, CURRENT_PATCH_MARKER);
-      return { status: 'upgraded', source: upgraded };
+      return {
+        status: 'upgraded',
+        source: upgradeWorkspaceLayoutToV7(upgraded, V5_PATCH_MARKER),
+      };
     }
     if (
       source.includes(V4_PATCH_MARKER)
       && source.includes(ROBUST_RESIZE_HANDLER)
-      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && (source.includes(V6_WORKSPACE_SELECTOR) || source.includes(CURRENT_WORKSPACE_SELECTOR))
       && source.includes(V4_WORKSPACE_GATE)
     ) {
       let upgraded = replaceExactlyOnce(source, V4_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
       upgraded = upgradeWorkspacePaneKey(upgraded);
-      upgraded = replaceExactlyOnce(upgraded, V4_PATCH_MARKER, CURRENT_PATCH_MARKER);
-      return { status: 'upgraded', source: upgraded };
+      return {
+        status: 'upgraded',
+        source: upgradeWorkspaceLayoutToV7(upgraded, V4_PATCH_MARKER),
+      };
     }
     if (
       source.includes(V3_PATCH_MARKER)
       && source.includes(ROBUST_RESIZE_HANDLER)
-      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && (source.includes(V6_WORKSPACE_SELECTOR) || source.includes(CURRENT_WORKSPACE_SELECTOR))
       && source.includes(LEGACY_WORKSPACE_GATE)
     ) {
       let upgraded = replaceExactlyOnce(source, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
       upgraded = upgradeWorkspacePaneKey(upgraded);
-      upgraded = replaceExactlyOnce(upgraded, V3_PATCH_MARKER, CURRENT_PATCH_MARKER);
-      return { status: 'upgraded', source: upgraded };
+      return {
+        status: 'upgraded',
+        source: upgradeWorkspaceLayoutToV7(upgraded, V3_PATCH_MARKER),
+      };
     }
     if (
       source.includes(V2_PATCH_MARKER)
@@ -381,21 +453,25 @@ export function patchConversationClient(source) {
       && source.includes(LEGACY_WORKSPACE_SELECTOR)
       && source.includes(LEGACY_WORKSPACE_GATE)
     ) {
-      let upgraded = source.replaceAll(LEGACY_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
+      let upgraded = source.replaceAll(LEGACY_WORKSPACE_SELECTOR, V6_WORKSPACE_SELECTOR);
       upgraded = replaceExactlyOnce(upgraded, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
       upgraded = upgradeWorkspacePaneKey(upgraded);
-      upgraded = replaceExactlyOnce(upgraded, V2_PATCH_MARKER, CURRENT_PATCH_MARKER);
-      return { status: 'upgraded', source: upgraded };
+      return {
+        status: 'upgraded',
+        source: upgradeWorkspaceLayoutToV7(upgraded, V2_PATCH_MARKER),
+      };
     }
     if (source.includes(LEGACY_PATCH_MARKER) && source.includes(LEGACY_RESIZE_HANDLER)) {
       let upgraded = replaceExactlyOnce(source, LEGACY_RESIZE_HANDLER, ROBUST_RESIZE_HANDLER);
-      upgraded = upgraded.replaceAll(LEGACY_WORKSPACE_SELECTOR, CURRENT_WORKSPACE_SELECTOR);
+      upgraded = upgraded.replaceAll(LEGACY_WORKSPACE_SELECTOR, V6_WORKSPACE_SELECTOR);
       if (upgraded.includes(LEGACY_WORKSPACE_GATE)) {
         upgraded = replaceExactlyOnce(upgraded, LEGACY_WORKSPACE_GATE, CURRENT_WORKSPACE_GATE);
       }
       upgraded = upgradeWorkspacePaneKey(upgraded);
-      upgraded = replaceExactlyOnce(upgraded, LEGACY_PATCH_MARKER, CURRENT_PATCH_MARKER);
-      return { status: 'upgraded', source: upgraded };
+      return {
+        status: 'upgraded',
+        source: upgradeWorkspaceLayoutToV7(upgraded, LEGACY_PATCH_MARKER),
+      };
     }
     throw new Error('DSH_WORKSPACE_PATCH_UPGRADE_MISMATCH');
   }
