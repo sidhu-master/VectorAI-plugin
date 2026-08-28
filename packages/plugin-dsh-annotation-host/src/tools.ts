@@ -14,11 +14,11 @@ import type { PartitionSessionStore } from './partition-store';
 export function createEngineeringAnnotationTool(
   host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
   sessions: AnnotationSessionStateStore,
-  partitions?: Pick<PartitionSessionStore, 'get'>,
+  partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
 ) {
   return defineTool({
     name: 'drawing_auto_annotate',
-    description: 'Create engineering dimensions only after smart shaft partitioning has been confirmed. This tool never creates or edits partition boundaries; use drawing_partition_status for partition requests.',
+    description: 'Create only deterministic axial opening-angle dimensions. An editable shaft partition may remain unconfirmed and is preserved independently. This tool never creates diameter, radius, or other dimensions and never edits partition boundaries.',
     parameters: {},
     output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(_args, exec) {
@@ -26,8 +26,8 @@ export function createEngineeringAnnotationTool(
       if (!agent) throw new Error('DRAWING_SESSION_REQUIRED');
       const sessionId = String(agent.id);
       const partition = partitions?.get(sessionId);
-      if (partition?.phase === 'analyzing' || partition?.phase === 'editing') {
-        throw new Error('PARTITION_WORKFLOW_ACTIVE: finish the editable partition in the engineering workspace before automatic dimensioning');
+      if (partition?.phase === 'analyzing') {
+        throw new Error('PARTITION_ANALYSIS_ACTIVE: wait until the editable partition draft is ready before opening-angle annotation');
       }
       const snapshot = host.getSnapshot(agent);
       if (!snapshot) throw new Error('DRAWING_REQUIRED');
@@ -51,6 +51,11 @@ export function createEngineeringAnnotationTool(
           targetNodeIds: plan.targetNodeIds,
           program: plan.program,
         }, exec.signal);
+        if (workflow.result.status === 'committed'
+          && partition?.drawingRef?.drawingId === snapshot.ref.drawingId
+          && partition.drawingRef.revision === snapshot.ref.revision) {
+          partitions?.advanceDrawingRevision(sessionId, snapshot.ref, workflow.result.ref);
+        }
         sessions.finish(sessionId, terminalStatus(workflow.result.status));
         return {
           status: workflow.result.status,
@@ -87,9 +92,9 @@ export function createPartitionStatusTool(
         nextAction: snapshot.phase === 'analyzing'
           ? 'wait-for-analysis'
           : snapshot.phase === 'editing'
-            ? 'edit-or-confirm-in-engineering-workspace'
+            ? 'review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming'
             : snapshot.phase === 'confirmed'
-              ? 'ready-for-automatic-annotation'
+              ? 'ready-for-opening-angle-annotation'
               : snapshot.drawingRef === undefined
                 ? 'import-engineering-dxf'
                 : 'wait-for-explicit-partition-request',
@@ -119,7 +124,9 @@ export function createPartitionStartTool(workflow: {
         segmentCount: snapshot.draft?.segments.length ?? snapshot.confirmed?.segments.length ?? 0,
         semanticGroupCount: snapshot.draft?.semanticGroups.length ?? snapshot.confirmed?.semanticGroups.length ?? 0,
         diagnostics: (snapshot.draft?.diagnostics ?? snapshot.confirmed?.diagnostics ?? []).map(({ code }) => code),
-        nextAction: snapshot.phase === 'editing' ? 'review-and-confirm-in-engineering-workspace' : snapshot.phase,
+        nextAction: snapshot.phase === 'editing'
+          ? 'review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming'
+          : snapshot.phase,
       } as unknown as JsonValue;
     },
   });

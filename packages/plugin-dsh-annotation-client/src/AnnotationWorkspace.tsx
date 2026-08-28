@@ -57,6 +57,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
   const [panelWidth, setPanelWidth] = useState(260);
   const [partitionView, setPartitionView] = useState<PartitionViewMode>('functional');
   const fitAfterAnalysis = useRef(partitionState.busy);
+  const displayedDrawingRef = useRef<string | null>(null);
   const surfaceSnapshot = useMemo(() => displaySnapshot === null ? null : ({
     ...displaySnapshot,
     document: {
@@ -116,6 +117,13 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
     if (displaySnapshot === null) return;
     fitRuntimeToDrawing(runtime, displaySnapshot);
   }, [displaySnapshot, runtime]);
+  useEffect(() => {
+    if (displaySnapshot === null) return;
+    const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
+    const previous = displayedDrawingRef.current;
+    displayedDrawingRef.current = key;
+    if (previous !== null && previous !== key) void partition.actions.refresh().catch(() => undefined);
+  }, [displaySnapshot, partition]);
 
   const beginImport = (drawing: File, documents: readonly File[]) => {
     setImportError(null);
@@ -138,10 +146,10 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
       : '请选择 DXF 图纸或受支持的工程文档');
   };
   const structurePanel = <div className="vai-annotation-panel">
-    {dimensionPlan ? <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />
-      : draft && !partitionState.previewHeld ? <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} mode={partitionView} onModeChange={setPartitionView} />
-        : confirmed && partitionState.partition.phase === 'confirmed'
-          ? <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} mode={partitionView} onModeChange={setPartitionView} onReopen={partition.actions.reopen} /> : <><h2>标注检查</h2><dl>
+    {draft && !partitionState.previewHeld && <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} mode={partitionView} onModeChange={setPartitionView} />}
+    {!draft && confirmed && <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} mode={partitionView} onModeChange={setPartitionView} onReopen={partition.actions.reopen} />}
+    {dimensionPlan && <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />}
+    {!draft && !confirmed && !dimensionPlan && <><h2>标注检查</h2><dl>
       <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
       <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
       <dt>选中</dt><dd>{selectedIds.length}</dd>
@@ -213,6 +221,7 @@ export function AnnotationWorkspace({ namespace, runtime, state, partition, dime
               onRenameBand={(band, name) => partitionView === 'functional'
                 ? partition.actions.renameSemanticGroup(band.id, name)
                 : partition.actions.updateSegment(band.segmentIds[0]!, { name })} />}
+            {!draft && confirmed && <PartitionOverlay draft={confirmed} mode={partitionView} previewHeld scale={viewport.scale} />}
           </>}
         />}
         {partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}

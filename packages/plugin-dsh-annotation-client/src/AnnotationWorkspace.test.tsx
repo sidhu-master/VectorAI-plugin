@@ -13,6 +13,16 @@ function observable<T>(value: T) {
   return { getSnapshot: () => value, subscribe: () => () => undefined };
 }
 
+function mutableObservable<T>(initial: T) {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => value,
+    subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener); },
+    set(next: T) { value = next; for (const listener of listeners) listener(); },
+  };
+}
+
 describe('AnnotationWorkspace', () => {
   it('keeps hydrating a cached partition controller until the Host draft is ready', async () => {
     vi.useFakeTimers();
@@ -161,6 +171,51 @@ describe('AnnotationWorkspace', () => {
       />);
     });
     expect(setViewport).toHaveBeenCalledWith(expect.objectContaining({ width: 800, height: 600 }));
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it('refreshes the partition binding after annotation advances the drawing revision', async () => {
+    vi.stubGlobal('window', new EventTarget());
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const first = {
+      version: 1 as const, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+      capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+    };
+    const second = { ...first, ref: { drawingId: 'drawing-1', revision: 2 } };
+    const snapshot = mutableObservable(first);
+    const presentation = mutableObservable({
+      displaySnapshot: first, preview: null, groundingOverlay: null, motionRig: null,
+      sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+      busy: false, error: null,
+    });
+    const runtime = {
+      snapshot,
+      viewport: observable({ x: 0, y: 0, scale: 1, width: 800, height: 600 }),
+      selection: observable([]), presentation,
+      actions: { setViewport() {}, setSelection() {}, refresh: async () => undefined },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({
+      version: 1 as const, workspaceClaimed: true, activationEpoch: 1,
+      workflow: { status: 'completed' as const, workflowId: 'annotation-1' },
+    });
+    const refresh = vi.fn(async () => undefined);
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'editing', drawingRef: first.ref, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh, setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+      />);
+    });
+    expect(refresh).toHaveBeenCalledOnce();
+    await act(async () => {
+      snapshot.set(second);
+      presentation.set({ ...presentation.getSnapshot(), displaySnapshot: second });
+    });
+    expect(refresh).toHaveBeenCalledTimes(2);
     act(() => renderer!.unmount());
     vi.unstubAllGlobals();
   });
@@ -330,6 +385,12 @@ describe('AnnotationWorkspace', () => {
       runtime={runtime}
       state={state}
       partition={partition}
+      dimensionPlan={{
+        draft: {
+          version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
+        },
+        generationOrder: [],
+      }}
     />);
     expect(markup).toContain('data-annotation-workspace="true"');
     expect(markup).toContain('aria-label="信息面板工具栏"');

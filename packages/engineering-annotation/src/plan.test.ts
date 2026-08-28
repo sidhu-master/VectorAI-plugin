@@ -6,11 +6,19 @@ import { describe, expect, it } from 'vitest';
 import { planEngineeringAnnotations } from './index';
 
 describe('planEngineeringAnnotations', () => {
-  it('creates confirmed resolved diameter annotations and associations from confirmed geometry', () => {
+  it('does not infer dimensions directly from circle, arc, or ellipse primitives', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     document.geometry = [{
       id: 'hole-1' as GeometryId, type: 'circle', center: [20, 20], radius: 5,
       visible: true, quality: { status: 'confirmed', evidenceRefs: ['evidence-1' as never] },
+    }, {
+      id: 'arc-1' as GeometryId, type: 'arc', center: [0, 0], radius: 4,
+      startAngle: 0, endAngle: 90, counterClockwise: true,
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    }, {
+      id: 'ellipse-1' as GeometryId, type: 'ellipse', center: [0, 0], majorAxis: [5, 0], ratio: 0.5,
+      startParameter: 0, endParameter: Math.PI * 2,
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
     }];
 
     const plan = planEngineeringAnnotations({
@@ -20,16 +28,10 @@ describe('planEngineeringAnnotations', () => {
     });
 
     expect(plan.pending).toEqual([]);
-    expect(plan.annotations).toHaveLength(1);
-    expect(plan.annotations[0]).toMatchObject({
-      type: 'dimension', dimensionKind: 'diameter', associationStatus: 'resolved',
-      computedValue: 10, quality: { status: 'confirmed' }, generationOrder: 0,
-      engineeringIntentId: expect.stringMatching(/^intent_auto_/),
-    });
-    expect(plan.associations[0]).toMatchObject({
-      type: 'association', kind: 'annotation-target', geometryIds: ['hole-1'],
-    });
-    expect(plan.program.operations[0]).toMatchObject({ kind: 'create_annotation_batch' });
+    expect(plan.annotations).toEqual([]);
+    expect(plan.associations).toEqual([]);
+    expect(plan.targetNodeIds).toEqual([]);
+    expect(plan.program).toBeNull();
   });
 
   it('keeps candidate geometry pending and out of the materialized program', () => {
@@ -57,6 +59,33 @@ describe('planEngineeringAnnotations', () => {
     }];
     const input = { document, ref: { drawingId: 'drawing-1', revision: 1 }, objective: '标注半径' };
     expect(planEngineeringAnnotations(input)).toEqual(planEngineeringAnnotations(input));
+  });
+
+  it('removes legacy primitive-driven dimensions without touching manual dimensions', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    document.geometry = [{
+      id: 'arc-1' as GeometryId, type: 'arc', center: [0, 0], radius: 4,
+      startAngle: 0, endAngle: 90, counterClockwise: true,
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const legacy = {
+      id: 'legacy-radius' as never, type: 'dimension' as const, dimensionKind: 'radius' as const,
+      associationStatus: 'resolved' as const, targets: [{ geometryId: 'arc-1' as GeometryId, anchor: { kind: 'center' as const } }],
+      computedValue: 4, displayText: 'R4', unit: 'mm' as const, textPosition: [5, 5] as [number, number],
+      definitionPoints: [[0, 0], [4, 0]] as [number, number][], visible: true,
+      quality: { status: 'confirmed' as const, confidence: 1, evidenceRefs: [] },
+      engineeringIntentId: 'intent_auto_legacy',
+    };
+    document.annotations = [legacy, {
+      ...structuredClone(legacy), id: 'manual-radius' as never, engineeringIntentId: 'manual-radius-intent',
+    }];
+
+    const plan = planEngineeringAnnotations({
+      document, ref: { drawingId: 'drawing-1', revision: 2 }, objective: '标注开角',
+    });
+
+    expect(plan.program?.operations).toEqual([{ kind: 'delete_nodes', nodeIds: ['legacy-radius'] }]);
+    expect(plan.targetNodeIds).toEqual(['arc-1']);
   });
 
   it('adds only deterministic axial-end opening angles to the automatic annotation plan', () => {

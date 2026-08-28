@@ -125,4 +125,25 @@ describe('PartitionSessionStore', () => {
     });
     expect(reloaded.confirm('s', ref)).toMatchObject({ confirmed: { id: 'partition-r2', parentRevisionId: 'partition-r1' } });
   });
+
+  it('carries an editable partition forward when annotation-only changes create a new drawing revision', () => {
+    const store = new PartitionSessionStore(undefined, { now: () => 9, id: () => 'partition-r1' });
+    store.beginAnalysis('s', { drawingId: 'd', revision: 1 });
+    store.setDraft('s', draft());
+
+    const advanced = store.advanceDrawingRevision(
+      's',
+      { drawingId: 'd', revision: 1 },
+      { drawingId: 'd', revision: 2 },
+    );
+
+    expect(advanced).toMatchObject({
+      phase: 'editing',
+      drawingRef: { drawingId: 'd', revision: 2 },
+      draft: { drawingRef: { drawingId: 'd', revision: 2 } },
+    });
+    expect(() => store.edit('s', {
+      type: 'segment.metadata', expectedDrawingRef: { drawingId: 'd', revision: 2 }, segmentId: 's0', name: 'still editable',
+    })).not.toThrow();
+  });
 });
