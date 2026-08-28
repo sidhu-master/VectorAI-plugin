@@ -323,7 +323,7 @@ describe('AnnotationWorkspace', () => {
     vi.unstubAllGlobals();
   });
 
-  it('reuses the base left panel shell and drawing toolbar for the annotation workflow', () => {
+  it('hides only the partition overlay from the partition panel visibility switch', async () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     document.geometry = [0, 1].map((index) => ({
       id: `line-${index}` as never, type: 'line' as const,
@@ -360,7 +360,7 @@ describe('AnnotationWorkspace', () => {
         sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
         busy: false, error: null,
       }),
-      actions: { setViewport() {}, setSelection() {} },
+      actions: { setViewport() {}, setSelection() {}, refresh: async () => undefined },
     } as unknown as DrawingSurfaceRuntime;
     const state = observable({
       version: 1 as const,
@@ -376,11 +376,11 @@ describe('AnnotationWorkspace', () => {
         semanticGroups: [{ id: 'group:1', segmentIds: ['segment:1'], semanticType: 'bearing-seat', name: '轴承位', evidenceIds: ['document:region:1'] }],
         stepCandidates: [], evidence: [{ id: 'document:region:1', origin: 'document', label: '轴承位' }], diagnostics: [],
       }, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
-      actions: {}, dispose() {},
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
     } as unknown as PartitionController;
 
-    const markup = renderToStaticMarkup(<AnnotationWorkspace
-      sessionId="session-1"
+    const createWorkspace = (sessionId: string) => <AnnotationWorkspace
+      sessionId={sessionId}
       namespace="engineering-annotation"
       runtime={runtime}
       state={state}
@@ -391,7 +391,9 @@ describe('AnnotationWorkspace', () => {
         },
         generationOrder: [],
       }}
-    />);
+    />;
+    const workspace = createWorkspace('session-1');
+    const markup = renderToStaticMarkup(workspace);
     expect(markup).toContain('data-annotation-workspace="true"');
     expect(markup).toContain('aria-label="信息面板工具栏"');
     expect(markup).toContain('vai-activity-bar--overlay');
@@ -419,5 +421,32 @@ describe('AnnotationWorkspace', () => {
     expect(markup).toContain('multiple=""');
     expect(markup).not.toContain('aria-label="分区历史"');
     expect(markup).toContain('data-partition-origin="document"');
+
+    const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
+    testWindow.setInterval = globalThis.setInterval;
+    testWindow.clearInterval = globalThis.clearInterval;
+    vi.stubGlobal('window', testWindow);
+    const storedVisibility = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (key: string) => storedVisibility.get(key) ?? null,
+      setItem: (key: string, value: string) => { storedVisibility.set(key, value); },
+    });
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(workspace); });
+    expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(1);
+    act(() => renderer!.root.findByProps({ 'aria-label': '图纸结构面板' }).props.onClick());
+    act(() => renderer!.root.findByProps({ 'aria-label': '隐藏分区框' }).props.onClick());
+    expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ 'aria-label': '显示分区框' })).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ 'aria-label': '确认分区' })).toHaveLength(1);
+    act(() => renderer!.unmount());
+
+    await act(async () => { renderer = TestRenderer.create(createWorkspace('session-1')); });
+    expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(0);
+    act(() => renderer!.unmount());
+    await act(async () => { renderer = TestRenderer.create(createWorkspace('session-2')); });
+    expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(1);
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
   });
 });

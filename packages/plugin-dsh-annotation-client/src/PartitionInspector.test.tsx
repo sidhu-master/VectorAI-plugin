@@ -28,7 +28,7 @@ const draft: PartitionDraft = {
 
 describe('PartitionInspector', () => {
   it('shows sparse function regions by default without presenting transition segments as functions', () => {
-    const markup = renderToStaticMarkup(<PartitionInspector draft={draft} controller={{} as PartitionController} mode="functional" onModeChange={() => undefined} />);
+    const markup = renderToStaticMarkup(<PartitionInspector draft={draft} controller={{} as PartitionController} mode="functional" onModeChange={() => undefined} overlayVisible onOverlayVisibleChange={() => undefined} />);
     expect(markup).toContain('功能分区');
     expect(markup).toContain('左轴承位');
     expect(markup).toContain('齿轮区域');
@@ -38,7 +38,7 @@ describe('PartitionInspector', () => {
 
   it('switches to the complete axial segment list explicitly', () => {
     const change = vi.fn();
-    const renderer = TestRenderer.create(<PartitionInspector draft={draft} controller={{} as PartitionController} mode="functional" onModeChange={change} />);
+    const renderer = TestRenderer.create(<PartitionInspector draft={draft} controller={{} as PartitionController} mode="functional" onModeChange={change} overlayVisible onOverlayVisibleChange={() => undefined} />);
     act(() => renderer.root.findByProps({ 'aria-label': '显示连续轴段' }).props.onClick());
     expect(change).toHaveBeenCalledWith('segments');
   });
