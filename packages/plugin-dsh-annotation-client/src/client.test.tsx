@@ -13,10 +13,10 @@ describe('annotation client contribution', () => {
     let disposeInjected: (() => void | Promise<void>) | undefined;
     const disposeFiber = vi.fn(async () => { await disposeInjected?.(); });
     let registered: { id: string; claimSource: { observe(sessionId: string): { getSnapshot(): unknown } } } | undefined;
-    let registeredLayer: unknown;
+    const registeredLayers: unknown[] = [];
     const registry = {
       registerLayer: vi.fn((definition) => {
-        registeredLayer = definition;
+        registeredLayers.push(definition);
         return { dispose: disposeLayer };
       }),
       registerWorkspace: vi.fn((contribution) => {
@@ -69,14 +69,24 @@ describe('annotation client contribution', () => {
 
     const dispose = await apply(ctx);
     expect(registered?.id).toBe('engineering-annotation');
-    expect(registeredLayer).toEqual({
-      id: 'vectorai.annotation.partition',
-      label: '智能分区',
-      category: 'engineering',
-      icon: 'partition',
-      order: 100,
-      defaultVisible: true,
-    });
+    expect(registeredLayers).toEqual([
+      {
+        id: 'vectorai.annotation.partition',
+        label: '智能分区',
+        category: 'engineering',
+        icon: 'partition',
+        order: 100,
+        defaultVisible: true,
+      },
+      {
+        id: 'vectorai.annotation.opening-angle',
+        label: '开角标注',
+        category: 'engineering',
+        icon: 'angle',
+        order: 110,
+        defaultVisible: true,
+      },
+    ]);
     expect(registered?.claimSource.observe('session-1').getSnapshot())
       .toEqual({ active: false, activationEpoch: 0 });
     expect(dropEntry?.options).toMatchObject({
@@ -93,7 +103,7 @@ describe('annotation client contribution', () => {
     expect(disposeFiber).toHaveBeenCalledOnce();
     expect(disposeDropFiber).toHaveBeenCalledOnce();
     expect(disposeContribution).toHaveBeenCalledOnce();
-    expect(disposeLayer).toHaveBeenCalledOnce();
+    expect(disposeLayer).toHaveBeenCalledTimes(2);
     expect(disposeRemote).toHaveBeenCalledOnce();
   });
 });

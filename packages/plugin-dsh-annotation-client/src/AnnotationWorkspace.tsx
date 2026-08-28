@@ -28,7 +28,12 @@ import { SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS } from './engineering-file-po
 import { classifyEngineeringDrop } from './engineering-drop';
 import { engineeringImportErrorText } from './EngineeringDropBridge';
 import type { PartitionViewMode } from './partition-view-model';
-import { ANNOTATION_PARTITION_LAYER, ANNOTATION_PARTITION_LAYER_ID } from './drawing-layers';
+import {
+  ANNOTATION_OPENING_ANGLE_LAYER,
+  ANNOTATION_OPENING_ANGLE_LAYER_ID,
+  ANNOTATION_PARTITION_LAYER,
+  ANNOTATION_PARTITION_LAYER_ID,
+} from './drawing-layers';
 import { readLayerVisibility, writeLayerVisibility } from './layer-visibility';
 
 const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
@@ -36,7 +41,7 @@ const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_AC
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1_200;
 type AnnotationPanelId = 'structure';
-const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER] as const;
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER] as const;
 const subscribeToNoLayers = () => () => undefined;
 const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
 
@@ -75,18 +80,26 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   ));
   const fitAfterAnalysis = useRef(partitionState.busy);
   const displayedDrawingRef = useRef<string | null>(null);
+  const openingAngleVisible = layerVisibility[ANNOTATION_OPENING_ANGLE_LAYER_ID]
+    ?? ANNOTATION_OPENING_ANGLE_LAYER.defaultVisible;
+  const hasOpeningAngle = displaySnapshot?.document.annotations.some((annotation) => (
+    annotation.type === 'dimension' && annotation.dimensionKind === 'angular'
+  )) ?? false;
   const surfaceSnapshot = useMemo(() => displaySnapshot === null ? null : ({
     ...displaySnapshot,
     document: {
       ...displaySnapshot.document,
       // Keep imported hatches and generated engineering dimensions. Source DXF
       // text remains hidden so the clean engineering canvas does not regress.
-      annotations: displaySnapshot.document.annotations.filter(({ type }) => (
-        type === 'section-hatch' || type === 'dimension'
+      annotations: displaySnapshot.document.annotations.filter((annotation) => (
+        annotation.type === 'section-hatch'
+        || (annotation.type === 'dimension' && (
+          annotation.dimensionKind !== 'angular' || openingAngleVisible
+        ))
       )),
       relations: [],
     },
-  }), [displaySnapshot]);
+  }), [displaySnapshot, openingAngleVisible]);
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
   useEffect(() => {
@@ -218,12 +231,15 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       />
       <main className="vai-annotation-workspace__canvas">
         <DrawingLayerManager
-          layers={(draft || confirmed) ? registeredLayers
-            .filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID)
+          layers={registeredLayers
+            .filter(({ id }) => (
+              (id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed))
+              || (id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle)
+            ))
             .map((definition) => ({
               definition,
               visible: layerVisibility[definition.id] ?? definition.defaultVisible,
-            })) : []}
+            }))}
           onVisibilityChange={updateLayerVisibility}
         />
         {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null) &&

@@ -22,7 +22,8 @@ const V3_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v3"`;
 const V4_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v4"`;
 const V5_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v5"`;
 const V6_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v6"`;
-const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v7"`;
+const V7_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v7"`;
+const CURRENT_PATCH_MARKER = `"${PATCH_MARKER}": "rc.8-v8"`;
 const LEGACY_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane]:not(:empty)';
 const V6_WORKSPACE_SELECTOR = '[data-conversation-workspace-pane] [data-conversation-workspace-active]';
 const CURRENT_WORKSPACE_SELECTOR = '[data-conversation-workspace-layout][data-conversation-workspace-visible]';
@@ -190,6 +191,8 @@ const WORKSPACE_CSS = V6_WORKSPACE_CSS
   );
 
 const WORKSPACE_VISIBILITY_EFFECT_MARKER = 'const workspaceLayoutRef = (0, react.useRef)(null);';
+const V7_WORKSPACE_VISIBILITY_OBSERVER = 'observer.observe(layout, { childList: true, subtree: true });';
+const CURRENT_WORKSPACE_VISIBILITY_OBSERVER = 'observer.observe(layout, { attributes: true, attributeFilter: ["data-conversation-workspace-active"], childList: true, subtree: true });';
 const WORKSPACE_VISIBILITY_EFFECT = `
 \t\t\tconst workspaceLayoutRef = (0, react.useRef)(null);
 \t\t\t(0, react.useEffect)(() => {
@@ -200,7 +203,7 @@ const WORKSPACE_VISIBILITY_EFFECT = `
 \t\t\t\t};
 \t\t\t\tconst observer = new MutationObserver(syncWorkspaceVisibility);
 \t\t\t\tsyncWorkspaceVisibility();
-\t\t\t\tobserver.observe(layout, { childList: true, subtree: true });
+\t\t\t\t${CURRENT_WORKSPACE_VISIBILITY_OBSERVER}
 \t\t\t\treturn () => observer.disconnect();
 \t\t\t}, [sessionId]);`;
 
@@ -301,7 +304,7 @@ ${WORKSPACE_VISIBILITY_EFFECT}
 \t\t\t\tstyle: { "--dsh-conversation-chat-width": String(workspaceChatWidth) + "px" },
 \t\t\t\t"data-phase": phase,
 \t\t\t\t"data-conversation-workspace-layout": "",
-\t\t\t\t"${PATCH_MARKER}": "rc.8-v7",
+\t\t\t\t"${PATCH_MARKER}": "rc.8-v8",
 \t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("style", { children: workspaceLayoutStyles }), (0, react_jsx_runtime.jsx)("div", {
 \t\t\t\t\t"data-conversation-workspace-pane": "",
 \t\t\t\t\tkey: sessionId ?? "new-session",
@@ -376,8 +379,26 @@ export function patchConversationClient(source) {
       && source.includes(CURRENT_WORKSPACE_GATE)
       && source.includes(CURRENT_WORKSPACE_PANE)
       && source.includes(WORKSPACE_VISIBILITY_EFFECT_MARKER)
+      && source.includes(CURRENT_WORKSPACE_VISIBILITY_OBSERVER)
     ) {
       return { status: 'already-patched', source };
+    }
+    if (
+      source.includes(V7_PATCH_MARKER)
+      && source.includes(ROBUST_RESIZE_HANDLER)
+      && source.includes(CURRENT_WORKSPACE_SELECTOR)
+      && source.includes(CURRENT_WORKSPACE_GATE)
+      && source.includes(CURRENT_WORKSPACE_PANE)
+      && source.includes(V7_WORKSPACE_VISIBILITY_OBSERVER)
+    ) {
+      return {
+        status: 'upgraded',
+        source: replaceExactlyOnce(
+          replaceExactlyOnce(source, V7_WORKSPACE_VISIBILITY_OBSERVER, CURRENT_WORKSPACE_VISIBILITY_OBSERVER),
+          V7_PATCH_MARKER,
+          CURRENT_PATCH_MARKER,
+        ),
+      };
     }
     if (
       source.includes(V6_PATCH_MARKER)

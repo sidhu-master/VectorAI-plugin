@@ -719,6 +719,19 @@
   stroke-width: 1.35;
 }
 
+/* CAD semantic palette: geometry stays neutral, dimensions read in cyan and
+   section hatches in yellow without changing the source drawing data. */
+.vai-entity--angular-dimension {
+  color: #22d3ee;
+  fill: #22d3ee;
+  stroke: #22d3ee;
+}
+
+.vai-entity--section-hatch {
+  color: #facc15;
+  stroke: #facc15;
+}
+
 .vai-entity--candidate {
   stroke: #e6a15d;
   stroke-dasharray: 6 4;

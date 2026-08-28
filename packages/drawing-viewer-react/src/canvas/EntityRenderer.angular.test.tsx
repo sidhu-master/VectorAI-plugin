@@ -24,7 +24,7 @@ describe('angular dimension rendering', () => {
     expect(markup).toContain('data-angular-role="arc"');
     expect(markup.match(/data-angular-role="arrow"/g)).toHaveLength(2);
     expect(markup).toContain('60°');
+    expect(markup).toContain('vai-entity--angular-dimension');
     expect(markup).not.toContain('<polyline points="0,0 20,-11.547 20,11.547');
   });
 });
-
