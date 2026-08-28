@@ -5878,10 +5878,10 @@ window.__ModuleLoader__.load({
       visible,
       previewHeld = false
     }) {
-      if (!visible || previewHeld) return null;
+      if (!visible) return null;
       const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
       const displayed = scheme.displayedCandidateIds.flatMap((id) => candidates.get(id) ?? []);
-      const closures = scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
+      const closures = previewHeld ? [] : scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
       const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
       return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-dimension-chain-overlay": "true", pointerEvents: "none", children: [
         displayed.map((candidate, index) => /* @__PURE__ */ jsxRuntime.jsx(
@@ -5892,7 +5892,7 @@ window.__ModuleLoader__.load({
             scale,
             level: index,
             kind: "displayed",
-            conflict: conflicts.has(candidate.id)
+            conflict: !previewHeld && conflicts.has(candidate.id)
           },
           candidate.id
         )),
@@ -5943,7 +5943,7 @@ window.__ModuleLoader__.load({
         }
       );
     }
-    function DimensionChainInspector({ scheme, controller }) {
+    function DimensionChainInspector({ scheme, controller, editable = true }) {
       const candidates = new Map(scheme.candidates.map((candidate2) => [candidate2.id, candidate2]));
       const candidate = (id) => candidates.get(id);
       return /* @__PURE__ */ jsxRuntime.jsxs("section", { className: "vai-dimension-chain-inspector", "aria-label": "尺寸链推断检查", children: [
@@ -5975,7 +5975,7 @@ window.__ModuleLoader__.load({
               " ",
               scheme.topology.unit
             ] }),
-            chain.alternativeClosureCandidateIds.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-dimension-chain-inspector__alternatives", children: chain.alternativeClosureCandidateIds.map((id) => {
+            editable && chain.alternativeClosureCandidateIds.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-dimension-chain-inspector__alternatives", children: chain.alternativeClosureCandidateIds.map((id) => {
               const item = candidate(id);
               if (!item) return null;
               return /* @__PURE__ */ jsxRuntime.jsxs(
@@ -6000,7 +6000,7 @@ window.__ModuleLoader__.load({
         /* @__PURE__ */ jsxRuntime.jsx("ul", { className: "vai-dimension-chain-inspector__candidates", children: scheme.candidates.filter(({ id }) => !scheme.closureCandidateIds.includes(id)).map((item) => {
           const displayed = scheme.displayedCandidateIds.includes(item.id);
           return /* @__PURE__ */ jsxRuntime.jsx("li", { children: /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
-            /* @__PURE__ */ jsxRuntime.jsx("input", { type: "checkbox", checked: displayed, onChange: (event) => {
+            /* @__PURE__ */ jsxRuntime.jsx("input", { type: "checkbox", checked: displayed, disabled: !editable, onChange: (event) => {
               void controller.actions.setDisplayed(item.id, event.currentTarget.checked).catch(() => void 0);
             } }),
             item.nominalValue,
@@ -6932,7 +6932,7 @@ window.__ModuleLoader__.load({
       dispose: () => void 0
     };
     function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, dimensionPlan, layerRegistry }) {
-      var _a2, _b;
+      var _a2, _b, _c;
       const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
       const snapshot = useObservable(runtime.snapshot);
       const viewport = useObservable(runtime.viewport);
@@ -6989,7 +6989,8 @@ window.__ModuleLoader__.load({
       };
       const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
       const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID] ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
-      const dimensionScheme = (_a2 = dimensionState.plan.draft) == null ? void 0 : _a2.axialScheme;
+      const dimensionScheme = ((_a2 = dimensionState.plan.draft) == null ? void 0 : _a2.axialScheme) ?? ((_b = dimensionState.plan.confirmed) == null ? void 0 : _b.axialScheme);
+      const dimensionHistoryActive = dimensionState.plan.drawingRef !== void 0 && (dimensionState.plan.phase !== "idle" || dimensionState.plan.canUndo || dimensionState.plan.canRedo);
       react.useEffect(() => {
         let active = true;
         let timer;
@@ -7074,14 +7075,21 @@ window.__ModuleLoader__.load({
         draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntime.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt),
         !draft && confirmed && /* @__PURE__ */ jsxRuntime.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }),
         dimensionPlan && /* @__PURE__ */ jsxRuntime.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }),
-        dimensionScheme && /* @__PURE__ */ jsxRuntime.jsx(DimensionChainInspector, { scheme: dimensionScheme, controller: dimensionChain }),
+        dimensionScheme && /* @__PURE__ */ jsxRuntime.jsx(
+          DimensionChainInspector,
+          {
+            scheme: dimensionScheme,
+            controller: dimensionChain,
+            editable: dimensionState.plan.phase === "editing"
+          }
+        ),
         !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
           /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "标注检查" }),
           /* @__PURE__ */ jsxRuntime.jsxs("dl", { children: [
             /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "流程" }),
             /* @__PURE__ */ jsxRuntime.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
             /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "候选" }),
-            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: ((_b = presentation.preview) == null ? void 0 : _b.diff.createdNodeIds.length) ?? 0 }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: ((_c = presentation.preview) == null ? void 0 : _c.diff.createdNodeIds.length) ?? 0 }),
             /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "选中" }),
             /* @__PURE__ */ jsxRuntime.jsx("dd", { children: selectedIds.length })
           ] })
@@ -7192,11 +7200,11 @@ window.__ModuleLoader__.load({
                     snapshot: displaySnapshot,
                     viewport,
                     unavailable: partitionState.busy,
-                    canUndo: dimensionState.plan.phase === "editing" ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
-                    canRedo: dimensionState.plan.phase === "editing" ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
+                    canUndo: dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
+                    canRedo: dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
                     onFit: runtime.actions.setViewport,
-                    onUndo: () => dimensionState.plan.phase === "editing" ? dimensionChain.actions.undo() : partition.actions.undo(),
-                    onRedo: () => dimensionState.plan.phase === "editing" ? dimensionChain.actions.redo() : partition.actions.redo(),
+                    onUndo: () => dimensionHistoryActive ? dimensionChain.actions.undo() : partition.actions.undo(),
+                    onRedo: () => dimensionHistoryActive ? dimensionChain.actions.redo() : partition.actions.redo(),
                     onUploadFiles: handleToolbarUpload,
                     uploadAccept: ANNOTATION_UPLOAD_ACCEPT,
                     uploadMultiple: true

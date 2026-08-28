@@ -31,4 +31,11 @@ describe('DimensionChainOverlay', () => {
   it('renders nothing while hidden', () => {
     expect(renderer.create(<DimensionChainOverlay scheme={scheme} scale={1} visible={false} />).toJSON()).toBeNull();
   });
+
+  it('keeps clean displayed dimensions while long-press preview hides closures and conflict styling', () => {
+    const root = renderer.create(<DimensionChainOverlay scheme={scheme} scale={1} visible previewHeld />).root;
+    expect(root.findAllByProps({ 'data-dimension-displayed': true })).toHaveLength(2);
+    expect(root.findAllByProps({ 'data-dimension-closure': true })).toHaveLength(0);
+    expect(root.findAllByProps({ 'data-dimension-conflict': true })).toHaveLength(0);
+  });
 });

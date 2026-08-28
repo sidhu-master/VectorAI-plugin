@@ -13,15 +13,15 @@ export function DimensionChainOverlay({
   visible: boolean;
   previewHeld?: boolean;
 }) {
-  if (!visible || previewHeld) return null;
+  if (!visible) return null;
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const displayed = scheme.displayedCandidateIds.flatMap((id) => candidates.get(id) ?? []);
-  const closures = scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
+  const closures = previewHeld ? [] : scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : []));
   return <g data-dimension-chain-overlay="true" pointerEvents="none">
     {displayed.map((candidate, index) => <IntervalGraphic
       key={candidate.id} scheme={scheme} candidate={candidate} scale={scale} level={index}
-      kind="displayed" conflict={conflicts.has(candidate.id)}
+      kind="displayed" conflict={!previewHeld && conflicts.has(candidate.id)}
     />)}
     {closures.map((candidate, index) => <IntervalGraphic
       key={candidate.id} scheme={scheme} candidate={candidate} scale={scale} level={index}

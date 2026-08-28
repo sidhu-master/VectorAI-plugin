@@ -3,9 +3,10 @@
 import type { AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
 import type { DimensionChainController } from './dimension-chain-controller';
 
-export function DimensionChainInspector({ scheme, controller }: {
+export function DimensionChainInspector({ scheme, controller, editable = true }: {
   scheme: AxialDimensionScheme;
   controller: DimensionChainController;
+  editable?: boolean;
 }) {
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const candidate = (id: string) => candidates.get(id);
@@ -22,7 +23,7 @@ export function DimensionChainInspector({ scheme, controller }: {
           <strong>{parent?.nominalValue ?? '?'} {scheme.topology.unit}</strong>
           <span>{chain.childCandidateIds.map((id) => candidate(id)?.nominalValue ?? '?').join(' + ')} + {closure?.nominalValue ?? '?'}</span>
           <small>闭环：{closure?.nominalValue ?? '?'} {scheme.topology.unit}</small>
-          {chain.alternativeClosureCandidateIds.length > 0 && <div className="vai-dimension-chain-inspector__alternatives">
+          {editable && chain.alternativeClosureCandidateIds.length > 0 && <div className="vai-dimension-chain-inspector__alternatives">
             {chain.alternativeClosureCandidateIds.map((id) => {
               const item = candidate(id);
               if (!item) return null;
@@ -40,7 +41,7 @@ export function DimensionChainInspector({ scheme, controller }: {
       {scheme.candidates.filter(({ id }) => !scheme.closureCandidateIds.includes(id)).map((item) => {
         const displayed = scheme.displayedCandidateIds.includes(item.id);
         return <li key={item.id}>
-          <label><input type="checkbox" checked={displayed} onChange={(event) => {
+          <label><input type="checkbox" checked={displayed} disabled={!editable} onChange={(event) => {
             void controller.actions.setDisplayed(item.id, event.currentTarget.checked).catch(() => undefined);
           }} />{item.nominalValue} {scheme.topology.unit}</label>
         </li>;

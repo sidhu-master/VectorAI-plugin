@@ -149,7 +149,10 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
   const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID]
     ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
-  const dimensionScheme = dimensionState.plan.draft?.axialScheme;
+  const dimensionScheme = dimensionState.plan.draft?.axialScheme ?? dimensionState.plan.confirmed?.axialScheme;
+  const dimensionHistoryActive = dimensionState.plan.drawingRef !== undefined && (
+    dimensionState.plan.phase !== 'idle' || dimensionState.plan.canUndo || dimensionState.plan.canRedo
+  );
   useEffect(() => {
     // The controller may have been created by the conversation drop bridge before
     // an AI tool claimed this workspace. The claim is published before semantic
@@ -234,7 +237,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     {draft && !partitionState.previewHeld && <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} mode={partitionView} onModeChange={setPartitionView} />}
     {!draft && confirmed && <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} mode={partitionView} onModeChange={setPartitionView} onReopen={partition.actions.reopen} />}
     {dimensionPlan && <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />}
-    {dimensionScheme && <DimensionChainInspector scheme={dimensionScheme} controller={dimensionChain} />}
+    {dimensionScheme && <DimensionChainInspector
+      scheme={dimensionScheme}
+      controller={dimensionChain}
+      editable={dimensionState.plan.phase === 'editing'}
+    />}
     {!draft && !confirmed && !dimensionPlan && <><h2>标注检查</h2><dl>
       <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
       <dt>候选</dt><dd>{presentation.preview?.diff.createdNodeIds.length ?? 0}</dd>
@@ -336,11 +343,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           snapshot={displaySnapshot}
           viewport={viewport}
           unavailable={partitionState.busy}
-          canUndo={dimensionState.plan.phase === 'editing' ? dimensionState.plan.canUndo : partitionState.partition.canUndo}
-          canRedo={dimensionState.plan.phase === 'editing' ? dimensionState.plan.canRedo : partitionState.partition.canRedo}
+          canUndo={dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo}
+          canRedo={dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo}
           onFit={runtime.actions.setViewport}
-          onUndo={() => dimensionState.plan.phase === 'editing' ? dimensionChain.actions.undo() : partition.actions.undo()}
-          onRedo={() => dimensionState.plan.phase === 'editing' ? dimensionChain.actions.redo() : partition.actions.redo()}
+          onUndo={() => dimensionHistoryActive ? dimensionChain.actions.undo() : partition.actions.undo()}
+          onRedo={() => dimensionHistoryActive ? dimensionChain.actions.redo() : partition.actions.redo()}
           onUploadFiles={handleToolbarUpload}
           uploadAccept={ANNOTATION_UPLOAD_ACCEPT}
           uploadMultiple
