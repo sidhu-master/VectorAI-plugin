@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
+import type { DrawingLayerRegistry, DrawingSurfaceObservable } from '@vectorai/drawing-surface-api';
 import type { DrawingDocument } from '@vectorai/drawing-core';
 import {
   DrawingSurface,
@@ -38,6 +38,7 @@ export interface AnnotationWorkspaceProps {
   sessionId: string;
   namespace: string;
   runtime: DrawingSurfaceRuntime;
+  layerRegistry?: DrawingLayerRegistry;
   state: DrawingSurfaceObservable<AnnotationSessionState>;
   partition: PartitionController;
   dimensionPlan?: { draft: EngineeringAnnotationDraft; generationOrder: string[] };
