@@ -20,9 +20,11 @@ export async function loadGoldenDrawing(name: 'initial.dxf' | 'target.dxf'): Pro
 }
 
 export function coreGeometrySignatures(document: DrawingDocument): string[] {
-  return document.geometry.map(({ id: _id, visible: _visible, quality: _quality, sourceRef: _sourceRef, ...geometry }) => (
-    JSON.stringify(roundFiniteNumbers(geometry, 1e-6))
-  )).sort();
+  return document.geometry.map((node) => {
+    const geometry = { ...node } as Record<string, unknown>;
+    for (const key of ['id', 'visible', 'quality', 'sourceRef']) delete geometry[key];
+    return JSON.stringify(roundFiniteNumbers(geometry, 1e-6));
+  }).sort();
 }
 
 export async function readGoldenAxialLinearIntervals(

@@ -34,10 +34,10 @@ describe('drawing_auto_annotate', () => {
       ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
       ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
     ].map(([id, start, end]) => ({ id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality }));
-    const runExtensionProgram = vi.fn(async (_agent: Agent, _request: unknown) => ({ result: {
+    const runExtensionProgram = vi.fn(async (agent: Agent, request: unknown) => { void agent; void request; return { result: {
       status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
       ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
-    } }));
+    } }; });
     const tool = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 },
@@ -112,10 +112,10 @@ describe('drawing_auto_annotate', () => {
       id: id as never, type: 'line' as const, start: start as never, end: end as never,
       visible: true, quality,
     }));
-    const runExtensionProgram = vi.fn(async (_agent: Agent, _request: unknown) => ({ result: {
+    const runExtensionProgram = vi.fn(async (agent: Agent, request: unknown) => { void agent; void request; return { result: {
       status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-angle',
       ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-angle', operationBindingDigest: 'sha256:angle',
-    } }));
+    } }; });
     const tool = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 }, document,

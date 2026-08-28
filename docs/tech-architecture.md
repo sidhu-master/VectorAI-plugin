@@ -144,6 +144,12 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 - worst-case 尺寸链上下界分析；`statistical` 当前返回明确 unsupported 诊断；
 - 投影前的状态、证据、规则结果与 Drawing revision 校验。
 
+名义尺寸链推断位于现有 `DimensionIntent` / `DimensionChain` 之前，流程为：分区轴线与台阶边界规范化为 `AxialTopology`；候选生成器只建立相邻跨度、功能范围、文档范围、工艺包络、有限组合与总长；策略层按具名语义证据评分；层级区间求解器选择非交叉显示集合并为每个父尺寸保留一个闭环。所有名义值、正负系数和等式校验均由本地算法产生。`shaft-hierarchical-dimensioning-v1` 保留惯例歧义供用户复核，`shaft-reference-terminal-closure-v1` 用于显式匹配已确认参考惯例。
+
+方案随 dimension-plan durable envelope 保存，包含候选、决策依据、显示/闭环集合和诊断。Client 通过严格 Typert remote 只能按候选 ID 切换显示或闭环，不能提交坐标。确认前会重新投影和验证；`needs-review`、`conflict`、`stale` 均阻止确认。上传文件不会调用推断，唯一模型入口是显式 `drawing_dimension_chain_start`。
+
+`golden-shaft-001/target.dxf` 是测试 Oracle，不是运行时模板。`pnpm e2e:golden-dimension-chain` 从初始 DXF、工程资料和公共 API 完整重建方案，比较 8 个显示区间、3 个闭环区间和 3 条链，并由源码守卫防止样本文件名或闭环常数进入生产决策。
+
 `ToleranceRuleProvider` 是同步、确定性、宿主无关的扩展口。同一规则 ID、不可变版本、名义值、单位和规范化输入必须产生相同输出。输入用 UTF-8 canonical JSON 的 SHA-256 摘要记录。规则模块不能访问 DSH、模型、网络、React、Node 文件系统或可变 Drawing；AI candidate 不具有最终数值权限。当前仅测试和 E2E 使用 Fixture provider，尚未包含生产公差公式。
 
 确认后的第二层 revision 通过 `projectEngineeringAnnotations` 生成第一层 `DimensionAnnotation`，DXF 只格式化 portable projection，绝不回调规则提供器。第二层标注计划使用独立 durable envelope 保存 snapshot、undo、redo 和 `lastConfirmed`，先成功落盘再发布内存状态；Drawing revision 变化进入 `needs-rebase`。
@@ -169,6 +175,6 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 - 单元/契约：Core、Spatial、Edit、Workspace、Viewer、Remote codec、依赖边界；
 - 集成：仓库持久化、幂等 receipt、Preview/Finalize/Undo、Client 生命周期；
 - E2E：Host-owned semantic edit、Motion Rig、Launcher；
-- 工程数据 E2E：真实 DXF + 二进制工程资料经统一 Host admission 进入智能分区；公差规则解析、DAG 顺序、尺寸链、第一层投影、DXF 与持久恢复；
+- 工程数据 E2E：真实 DXF + 二进制工程资料经统一 Host admission 进入智能分区；黄金轴向尺寸链语义推断；公差规则解析、DAG 顺序、第一层投影、DXF 与持久恢复；
 - 构建：静态网站、DSH Host Typert 与 Client bundle；
 - packaged cross-bundle E2E 覆盖 sticky routing、卸载 fallback、重装恢复、一笔正式提交和 Undo。

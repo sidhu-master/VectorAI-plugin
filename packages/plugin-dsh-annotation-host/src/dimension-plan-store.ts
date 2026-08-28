@@ -83,7 +83,9 @@ export class DimensionPlanStore {
     requireRef(state.snapshot, command.expectedDrawingRef);
     const draft = state.snapshot.draft;
     if (!draft?.axialScheme) throw new Error('DIMENSION_SCHEME_DRAFT_REQUIRED');
-    const { expectedDrawingRef: _expectedDrawingRef, ...edit } = command;
+    const edit = command.type === 'candidate.display'
+      ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } as const
+      : { type: command.type, chainId: command.chainId, candidateId: command.candidateId } as const;
     const scheme = applyDimensionSchemeEdit(draft.axialScheme as unknown as AxialDimensionScheme, edit);
     return this.setDraft(sessionId, projectAxialDimensionScheme({
       scheme,

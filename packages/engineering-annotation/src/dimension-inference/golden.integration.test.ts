@@ -43,6 +43,7 @@ describe('golden axial dimension-chain inference', () => {
     expect(scheme.diagnostics).toContainEqual(expect.objectContaining({
       code: 'DIMENSION_DOCUMENT_DISPLAY_CONFLICT', severity: 'warning',
     }));
+    expect(scheme.diagnostics.map(({ code }) => code)).not.toContain('DIMENSION_STATION_UNRESOLVED');
   });
 });
 

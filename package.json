@@ -21,6 +21,7 @@
     "e2e:drawing-surface": "tsx scripts/e2e-drawing-surface-contribution.ts",
     "e2e:dxf-smart-partition": "tsx scripts/e2e-dxf-smart-partition.ts",
     "e2e:tolerance-data-foundation": "tsx scripts/e2e-tolerance-data-foundation.ts",
+    "e2e:golden-dimension-chain": "tsx scripts/e2e-golden-dimension-chain.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

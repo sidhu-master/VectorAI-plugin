@@ -22,7 +22,7 @@ export function generateAxialDimensionCandidates(input: GenerateCandidateInput):
     accumulator.add(span.startStationId, span.endStationId, 'local', elementaryEvidence(span));
   }
   for (const group of input.partition.semanticGroups) addFunctionalInterval(accumulator, group);
-  for (const region of input.document?.regions ?? []) addDocumentInterval(accumulator, region);
+  for (const region of input.document?.regions ?? []) addDocumentInterval(accumulator, region, input.partition);
   const envelopes = deriveProcessEnvelopes(input.partition, input.topology);
   for (const envelope of envelopes) {
     accumulator.add(envelope.startStationId, envelope.endStationId, 'process', envelope.evidence);
@@ -131,18 +131,40 @@ function addFunctionalInterval(accumulator: CandidateAccumulator, group: ShaftSe
   accumulator.add(resolved.startStationId, resolved.endStationId, 'functional', evidence);
 }
 
-function addDocumentInterval(accumulator: CandidateAccumulator, region: EngineeringRegionEvidence): void {
+function addDocumentInterval(
+  accumulator: CandidateAccumulator,
+  region: EngineeringRegionEvidence,
+  partition: PartitionDraft | PartitionRevision,
+): void {
   if (!region.interval) return;
   const evidence: DimensionEvidence = {
     id: `document:region:${region.id}`, origin: 'document', kind: 'document-interval',
     label: region.name ?? region.type, required: true, sourceIds: region.sourceLines.map((line) => `document:line:${line}`),
   };
-  const resolved = resolveCoordinates(accumulator.topology, region.interval.start, region.interval.end);
+  const resolved = resolveCoordinates(accumulator.topology, region.interval.start, region.interval.end)
+    ?? resolveFusedSemanticInterval(accumulator.topology, partition, region);
   if (!resolved) {
     accumulator.problem('DIMENSION_STATION_UNRESOLVED', evidence.id);
     return;
   }
   accumulator.add(resolved.startStationId, resolved.endStationId, 'functional', evidence);
+}
+
+function resolveFusedSemanticInterval(
+  topology: AxialTopology,
+  partition: PartitionDraft | PartitionRevision,
+  region: EngineeringRegionEvidence,
+): ResolvedInterval | undefined {
+  if (!region.interval) return undefined;
+  const documentWidth = Math.abs(region.interval.end - region.interval.start);
+  const match = partition.semanticGroups.find((group) => {
+    if (!group.range || group.name !== region.name && group.semanticType !== region.type) return false;
+    const groupWidth = Math.abs(group.range.zEnd - group.range.zStart);
+    return Math.abs(groupWidth - documentWidth) <= Math.max(documentWidth * 1e-5, 1e-6);
+  });
+  return match?.range
+    ? resolveCoordinates(topology, match.range.zStart, match.range.zEnd)
+    : undefined;
 }
 
 function deriveProcessEnvelopes(
