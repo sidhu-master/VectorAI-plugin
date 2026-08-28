@@ -8,8 +8,8 @@ import { analyzeShaftPartition, inferRegularShaftRegions, validatePartition } fr
 
 describe('real DXF smart partition', () => {
   it('retains bilateral shoulders that straddle a tolerance bucket boundary', async () => {
-    const bytes = await readFile(resolve(import.meta.dirname, '../../../dxf-import/test/fixtures/initial-shaft.dxf'));
-    const engineeringText = await readFile(resolve(import.meta.dirname, '../../../dxf-import/test/fixtures/initial-shaft-engineering.ini'), 'utf8');
+    const bytes = await readFile(resolve(import.meta.dirname, '../../test/fixtures/golden-shaft-001/initial.dxf'));
+    const engineeringText = await readFile(resolve(import.meta.dirname, '../../test/fixtures/golden-shaft-001/engineering-data.ini'), 'utf8');
     const imported = importDxf({ bytes, source: { digest: 'sha256:fixture', name: 'initial-shaft.dxf' }, drawingId: 'drawing-real', now: () => 1 });
     expect(imported.status).toBe('imported');
     if (imported.status !== 'imported') return;
@@ -32,8 +32,8 @@ describe('real DXF smart partition', () => {
   });
 
   it('covers every geometric shaft segment and overlays the partial document', async () => {
-    const bytes = await readFile(resolve(import.meta.dirname, '../../../dxf-import/test/fixtures/initial-shaft.dxf'));
-    const engineeringText = await readFile(resolve(import.meta.dirname, '../../../dxf-import/test/fixtures/initial-shaft-engineering.ini'), 'utf8');
+    const bytes = await readFile(resolve(import.meta.dirname, '../../test/fixtures/golden-shaft-001/initial.dxf'));
+    const engineeringText = await readFile(resolve(import.meta.dirname, '../../test/fixtures/golden-shaft-001/engineering-data.ini'), 'utf8');
     const imported = importDxf({ bytes, source: { digest: 'sha256:fixture', name: 'initial-shaft.dxf' }, drawingId: 'drawing-real', now: () => 1 });
     expect(imported.status).toBe('imported');
     if (imported.status !== 'imported') return;
@@ -83,7 +83,7 @@ describe('real DXF smart partition', () => {
   });
 
   it('keeps a no-document run editable and fully geometry partitioned', async () => {
-    const bytes = await readFile(resolve(import.meta.dirname, '../../../dxf-import/test/fixtures/initial-shaft.dxf'));
+    const bytes = await readFile(resolve(import.meta.dirname, '../../test/fixtures/golden-shaft-001/initial.dxf'));
     const imported = importDxf({ bytes, source: { digest: 'sha256:fixture' }, drawingId: 'drawing-real', now: () => 1 });
     if (imported.status !== 'imported') throw new Error('fixture rejected');
     const result = analyzeShaftPartition({ document: imported.document, drawingRef: { drawingId: 'drawing-real', revision: 1 } });

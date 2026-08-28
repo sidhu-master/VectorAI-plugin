@@ -17,7 +17,7 @@ describe('planEngineeringAnnotations', () => {
       visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
     }, {
       id: 'ellipse-1' as GeometryId, type: 'ellipse', center: [0, 0], majorAxis: [5, 0], ratio: 0.5,
-      startParameter: 0, endParameter: Math.PI * 2,
+      startParam: 0, endParam: Math.PI * 2,
       visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
     }];
 

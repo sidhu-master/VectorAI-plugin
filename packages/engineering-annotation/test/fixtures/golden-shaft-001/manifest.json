@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "unit": "mm",
+  "stations": [0, 17, 41.5, 45, 53, 92, 147, 150, 173],
+  "displayedIntervals": [[0, 17], [17, 41.5], [17, 45], [45, 53], [45, 150], [92, 147], [147, 150], [0, 173]],
+  "closureIntervals": [[41.5, 45], [53, 92], [150, 173]],
+  "chains": [
+    { "parent": [17, 45], "children": [[17, 41.5]], "closure": [41.5, 45] },
+    { "parent": [45, 150], "children": [[45, 53], [92, 147], [147, 150]], "closure": [53, 92] },
+    { "parent": [0, 173], "children": [[0, 17], [17, 45], [45, 150]], "closure": [150, 173] }
+  ],
+  "expectedDiagnostics": ["DIMENSION_DOCUMENT_DISPLAY_CONFLICT"]
+}
