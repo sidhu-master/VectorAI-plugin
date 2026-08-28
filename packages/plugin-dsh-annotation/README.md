@@ -25,7 +25,7 @@ dsh plugin --profile web add --ignore-workspace-root-check \
 ```
 
 The plugin exposes intent-routed `drawing_partition_start`, read-only
-`drawing_partition_status`, and post-confirmation `drawing_auto_annotate` tools.
+`drawing_partition_status`, and opening-angle-only `drawing_auto_annotate` tools. Opening-angle preview can run while a partition draft remains editable; both review states are preserved independently.
 Document-only uploads remain ordinary DSH conversation attachments; they do not
 claim the engineering workspace or start partitioning without an explicit user
 request.

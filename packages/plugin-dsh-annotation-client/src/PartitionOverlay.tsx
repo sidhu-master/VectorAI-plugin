@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PartitionDraft } from '@vectorai/plugin-space-contracts';
+import type { PartitionDraft, PartitionRevision } from '@vectorai/plugin-space-contracts';
 import type { PointerEvent } from 'react';
 import { useRef, useState } from 'react';
 import { partitionBands, type PartitionBand, type PartitionViewMode } from './partition-view-model';
@@ -19,8 +19,8 @@ type BoundaryTarget =
 interface BoundaryHandle { key: string; z: number; target: BoundaryTarget }
 
 export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary, onMoveSemanticRange, onRenameBand }: {
-  draft: PartitionDraft; mode: PartitionViewMode; previewHeld: boolean; scale: number;
-  onMoveBoundary(index: number, z: number): void | Promise<void>;
+  draft: PartitionDraft | PartitionRevision; mode: PartitionViewMode; previewHeld: boolean; scale: number;
+  onMoveBoundary?(index: number, z: number): void | Promise<void>;
   onMoveSemanticRange?(groupId: string, edge: 'start' | 'end', z: number): void | Promise<void>;
   onRenameBand?(band: PartitionBand, name: string): void | Promise<void>;
 }) {
@@ -57,7 +57,10 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
     }
     if (!value) return;
     try {
-      if (value.target.kind === 'segment') await onMoveBoundary(value.target.index, value.z);
+      if (value.target.kind === 'segment') {
+        if (!onMoveBoundary) throw new Error('PARTITION_BOUNDARY_HANDLER_REQUIRED');
+        await onMoveBoundary(value.target.index, value.z);
+      }
       else {
         if (!onMoveSemanticRange) throw new Error('PARTITION_SEMANTIC_RANGE_HANDLER_REQUIRED');
         await onMoveSemanticRange(value.target.groupId, value.target.edge, value.z);
@@ -91,7 +94,8 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
       nameCommit.current = null;
     }
   };
-  const handles: BoundaryHandle[] = mode === 'segments'
+  const editable = onMoveBoundary !== undefined || onMoveSemanticRange !== undefined;
+  const handles: BoundaryHandle[] = !editable ? [] : mode === 'segments'
     ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))]
       .filter((index) => index > 0 && index < draft.segments.length)
       .sort((a, b) => a - b)

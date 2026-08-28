@@ -10,16 +10,29 @@ import { AnnotationSessionStateStore } from './session-state';
 import { PartitionSessionStore } from './partition-store';
 
 describe('drawing_auto_annotate', () => {
-  it('does not replace an active partition workflow with automatic dimensioning', async () => {
+  it('allows opening-angle preview while a partition draft is still being edited', async () => {
     const sessions = new AnnotationSessionStateStore(undefined, { now: () => 12 });
     sessions.start('session-1', 'partition-1');
-    const partitions = new PartitionSessionStore(undefined, { now: () => 1, id: () => 'partition-1' });
-    partitions.beginAnalysis('session-1', { drawingId: 'drawing-1', revision: 1 });
-    const runExtensionProgram = vi.fn();
+    const partitions = {
+      get: vi.fn(() => ({ phase: 'editing' as const, drawingRef: { drawingId: 'drawing-1', revision: 1 } })),
+      advanceDrawingRevision: vi.fn(),
+    };
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const rise = 4 * Math.sqrt(3);
+    const journal = 12.9 - rise;
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    document.geometry = [
+      ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
+      ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
+    ].map(([id, start, end]) => ({ id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality }));
+    const runExtensionProgram = vi.fn(async () => ({ result: {
+      status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
+      ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
+    } }));
     const tool = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 },
-        document: createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 }),
+        document,
         capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
       }),
       runExtensionProgram: runExtensionProgram as never,
@@ -28,17 +41,24 @@ describe('drawing_auto_annotate', () => {
     await expect(tool.execute({}, {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
-    } as ToolRunContext)).rejects.toThrow('PARTITION_WORKFLOW_ACTIVE');
-    expect(runExtensionProgram).not.toHaveBeenCalled();
-    expect(sessions.get('session-1').workflow).toEqual({ status: 'running', workflowId: 'partition-1' });
+    } as ToolRunContext)).resolves.toMatchObject({ status: 'committed' });
+    expect(runExtensionProgram).toHaveBeenCalledOnce();
+    expect(partitions.advanceDrawingRevision).toHaveBeenCalledWith(
+      'session-1',
+      { drawingId: 'drawing-1', revision: 1 },
+      { drawingId: 'drawing-1', revision: 2 },
+    );
   });
 
   it('uses the first-layer extension seam and never commits directly', async () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
-    document.geometry = [{
-      id: 'circle-1' as never, type: 'circle', center: [0, 0], radius: 5, visible: true,
-      quality: { status: 'confirmed', evidenceRefs: [] },
-    }];
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const rise = 4 * Math.sqrt(3);
+    const journal = 12.9 - rise;
+    document.geometry = [
+      ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
+      ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
+    ].map(([id, start, end]) => ({ id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality }));
     const runExtensionProgram = vi.fn(async (agent: Agent, request: unknown) => {
       void agent;
       void request;
@@ -47,13 +67,17 @@ describe('drawing_auto_annotate', () => {
         ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
       } };
     });
+    const partitions = {
+      get: vi.fn(() => ({ version: 1 as const, phase: 'idle' as const, canUndo: false, canRedo: false, updatedAt: 0 })),
+      advanceDrawingRevision: vi.fn(),
+    };
     const tool = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 }, document,
         capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
       }),
       runExtensionProgram: runExtensionProgram as never,
-    }, new AnnotationSessionStateStore(undefined, { now: () => 10 }));
+    }, new AnnotationSessionStateStore(undefined, { now: () => 10 }), partitions);
     const exec = {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
@@ -63,7 +87,8 @@ describe('drawing_auto_annotate', () => {
 
     expect(result).toMatchObject({ status: 'committed', annotations: [expect.stringMatching(/^annotation_auto_/)] });
     expect(runExtensionProgram).toHaveBeenCalledOnce();
-    expect(runExtensionProgram.mock.calls[0]?.[1]).toMatchObject({ targetNodeIds: ['circle-1'] });
+    expect(runExtensionProgram.mock.calls[0]?.[1]).toMatchObject({ targetNodeIds: ['left-lower', 'left-upper'] });
+    expect(partitions.advanceDrawingRevision).not.toHaveBeenCalled();
   });
 
   it('sends deterministic axial-end opening annotations through the same preview seam', async () => {
@@ -117,10 +142,13 @@ describe('drawing_auto_annotate', () => {
     expect(sessions.get('session-1').workspaceClaimed).toBe(false);
 
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
-    document.geometry = [{
-      id: 'circle-1' as never, type: 'circle', center: [0, 0], radius: 5, visible: true,
-      quality: { status: 'confirmed', evidenceRefs: [] },
-    }];
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const rise = 4 * Math.sqrt(3);
+    const journal = 12.9 - rise;
+    document.geometry = [
+      ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
+      ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
+    ].map(([id, start, end]) => ({ id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality }));
     const failing = createEngineeringAnnotationTool({
       getSnapshot: () => ({
         version: 1, ref: { drawingId: 'drawing-1', revision: 1 }, document,
@@ -152,6 +180,21 @@ describe('drawing_partition_status', () => {
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
     });
   });
+
+  it('tells the model that opening-angle annotation may continue before confirmation', async () => {
+    const tool = createPartitionStatusTool({ get: () => ({
+      version: 1, phase: 'editing', drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      canUndo: false, canRedo: false, updatedAt: 1,
+    }) } as never);
+
+    await expect(tool.execute({}, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({
+      phase: 'editing',
+      nextAction: 'review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming',
+    });
+  });
 });
 
 describe('drawing_partition_start', () => {
@@ -169,7 +212,10 @@ describe('drawing_partition_start', () => {
     await expect(tool.execute({ engineeringContext: '外花键宽 24.5' }, {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
-    } as ToolRunContext)).resolves.toMatchObject({ status: 'editing', segmentCount: 0 });
+    } as ToolRunContext)).resolves.toMatchObject({
+      status: 'editing', segmentCount: 0,
+      nextAction: 'review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming',
+    });
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1' }),
       '外花键宽 24.5',

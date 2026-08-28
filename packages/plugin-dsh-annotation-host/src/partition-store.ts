@@ -156,6 +156,33 @@ export class PartitionSessionStore {
     return this.#replace(sessionId, { ...state.snapshot, phase: 'needs-rebase', drawingRef: currentRef, message: 'Drawing revision changed', updatedAt: this.ports.now() }, state.undo, state.redo);
   }
 
+  advanceDrawingRevision(sessionId: string, previousRef: DrawingRef, currentRef: DrawingRef): PartitionSessionSnapshot {
+    const state = this.#envelope(sessionId);
+    requireRef(state.snapshot, previousRef);
+    if (previousRef.drawingId !== currentRef.drawingId || currentRef.revision < previousRef.revision) {
+      throw new Error('PARTITION_DRAWING_STALE');
+    }
+    if (previousRef.revision === currentRef.revision) return structuredClone(state.snapshot);
+    const rebase = (snapshot: PartitionSessionSnapshot): PartitionSessionSnapshot => rebaseSnapshot(snapshot, currentRef);
+    const envelope: Envelope = {
+      snapshot: partitionSessionSnapshotSchema.parse(compact(rebase(state.snapshot))),
+      undo: state.undo.map(rebase).map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
+      redo: state.redo.map(rebase).map(compact).map((item) => partitionSessionSnapshotSchema.parse(item)),
+      ...(state.lastConfirmed === undefined ? {} : {
+        lastConfirmed: partitionSessionSnapshotSchema.shape.confirmed.parse({
+          ...state.lastConfirmed,
+          drawingRef: currentRef,
+        }),
+      }),
+      ...(state.lastConfirmedDraft === undefined ? {} : {
+        lastConfirmedDraft: { ...structuredClone(state.lastConfirmedDraft), drawingRef: currentRef },
+      }),
+    };
+    this.storage?.save(sessionId, envelope);
+    this.#states.set(sessionId, envelope);
+    return structuredClone(envelope.snapshot);
+  }
+
   #push(sessionId: string, snapshot: PartitionSessionSnapshot, lastConfirmedDraft?: DomainPartitionDraft): PartitionSessionSnapshot {
     const state = this.#envelope(sessionId);
     return this.#replace(sessionId, snapshot, [...state.undo, state.snapshot], [], lastConfirmedDraft);
@@ -269,5 +296,14 @@ function reconstructDraft(revision: DomainPartitionRevision): DomainPartitionDra
       },
     ],
     basePartitionRevisionId: revision.id,
+  };
+}
+
+function rebaseSnapshot(snapshot: PartitionSessionSnapshot, drawingRef: DrawingRef): PartitionSessionSnapshot {
+  return {
+    ...structuredClone(snapshot),
+    drawingRef,
+    ...(snapshot.draft === undefined ? {} : { draft: { ...structuredClone(snapshot.draft), drawingRef } }),
+    ...(snapshot.confirmed === undefined ? {} : { confirmed: { ...structuredClone(snapshot.confirmed), drawingRef } }),
   };
 }

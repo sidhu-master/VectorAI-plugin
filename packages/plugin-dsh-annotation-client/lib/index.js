@@ -8800,8 +8800,10 @@ function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMo
     }
     if (!value) return;
     try {
-      if (value.target.kind === "segment") await onMoveBoundary(value.target.index, value.z);
-      else {
+      if (value.target.kind === "segment") {
+        if (!onMoveBoundary) throw new Error("PARTITION_BOUNDARY_HANDLER_REQUIRED");
+        await onMoveBoundary(value.target.index, value.z);
+      } else {
         if (!onMoveSemanticRange) throw new Error("PARTITION_SEMANTIC_RANGE_HANDLER_REQUIRED");
         await onMoveSemanticRange(value.target.groupId, value.target.edge, value.z);
       }
@@ -8831,7 +8833,8 @@ function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMo
       nameCommit.current = null;
     }
   };
-  const handles = mode === "segments" ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))].filter((index) => index > 0 && index < draft.segments.length).sort((a, b) => a - b).map((index) => ({ key: `boundary:${index}`, z: draft.segments[index].zStart, target: { kind: "segment", index } })) : bands.flatMap((band, index) => {
+  const editable = onMoveBoundary !== void 0 || onMoveSemanticRange !== void 0;
+  const handles = !editable ? [] : mode === "segments" ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))].filter((index) => index > 0 && index < draft.segments.length).sort((a, b) => a - b).map((index) => ({ key: `boundary:${index}`, z: draft.segments[index].zStart, target: { kind: "segment", index } })) : bands.flatMap((band, index) => {
     const label = bandLabel(band, index);
     return [
       { key: `semantic:${band.id}:start`, z: band.zStart, target: { kind: "semantic", groupId: band.id, edge: "start", label } },
@@ -9357,6 +9360,7 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
   const [panelWidth, setPanelWidth] = reactExports.useState(260);
   const [partitionView, setPartitionView] = reactExports.useState("functional");
   const fitAfterAnalysis = reactExports.useRef(partitionState.busy);
+  const displayedDrawingRef = reactExports.useRef(null);
   const surfaceSnapshot = reactExports.useMemo(() => displaySnapshot === null ? null : {
     ...displaySnapshot,
     document: {
@@ -9418,6 +9422,13 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
     if (displaySnapshot === null) return;
     fitRuntimeToDrawing(runtime, displaySnapshot);
   }, [displaySnapshot, runtime]);
+  reactExports.useEffect(() => {
+    if (displaySnapshot === null) return;
+    const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
+    const previous = displayedDrawingRef.current;
+    displayedDrawingRef.current = key;
+    if (previous !== null && previous !== key) void partition.actions.refresh().catch(() => void 0);
+  }, [displaySnapshot, partition]);
   const beginImport = (drawing, documents) => {
     setImportError(null);
     void partition.actions.importFiles(drawing, documents).then(() => setActivePanel(null)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
@@ -9435,17 +9446,22 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
     }
     setImportError(decision.kind === "reject" ? engineeringImportErrorText(decision.code, decision.filenames) : "请选择 DXF 图纸或受支持的工程文档");
   };
-  const structurePanel = /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-annotation-panel", children: dimensionPlan ? /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }) : draft && !partitionState.previewHeld ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt) : confirmed && partitionState.partition.phase === "confirmed" ? /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "候选" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: ((_a2 = presentation.preview) == null ? void 0 : _a2.diff.createdNodeIds.length) ?? 0 }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "选中" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: selectedIds.length })
+  const structurePanel = /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-panel", children: [
+    draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt),
+    !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }),
+    dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }),
+    !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "标注检查" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "候选" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: ((_a2 = presentation.preview) == null ? void 0 : _a2.diff.createdNodeIds.length) ?? 0 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "选中" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: selectedIds.length })
+      ] })
     ] })
-  ] }) });
+  ] });
   const panels = [
     { id: "structure", label: "图纸结构", icon: ListTree, render: () => structurePanel }
   ];
@@ -9520,7 +9536,8 @@ function AnnotationWorkspace({ namespace, runtime, state, partition, dimensionPl
                       onMoveSemanticRange: (groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(draft.axis.zMax * 3e-3, 0.05)),
                       onRenameBand: (band, name) => partitionView === "functional" ? partition.actions.renameSemanticGroup(band.id, name) : partition.actions.updateSegment(band.segmentIds[0], { name })
                     }
-                  )
+                  ),
+                  !draft && confirmed && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionOverlay, { draft: confirmed, mode: partitionView, previewHeld: true, scale: viewport.scale })
                 ] })
               }
             ),

@@ -54,174 +54,6 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, renameS
 import { join, resolve } from "node:path";
 import { TypertRemoteService, Remote } from "@deepseek-ai/dsh-typert-protocol";
 import { homedir } from "node:os";
-function evaluateHomogeneous(node, normalized) {
-  const pointCount = node.controlPoints.length;
-  const lastControlIndex = pointCount - 1;
-  const domainStart = node.knots[node.degree];
-  const domainEnd = node.knots[lastControlIndex + 1];
-  const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
-  const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
-  const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
-  const work = [];
-  for (let index = 0; index <= node.degree; index += 1) {
-    const sourceIndex = span - node.degree + index;
-    const weight = weights[sourceIndex];
-    const point = node.controlPoints[sourceIndex];
-    work.push([point[0] * weight, point[1] * weight, weight]);
-  }
-  for (let level = 1; level <= node.degree; level += 1) {
-    for (let index = node.degree; index >= level; index -= 1) {
-      const knotIndex = span - node.degree + index;
-      const denominator = node.knots[knotIndex + node.degree - level + 1] - node.knots[knotIndex];
-      const alpha = denominator === 0 ? 0 : (knotParameter - node.knots[knotIndex]) / denominator;
-      work[index] = mixHomogeneous(work[index - 1], work[index], alpha);
-    }
-  }
-  return work[node.degree];
-}
-function sampleSpline(node, { maxError, maxDepth = 12 }) {
-  if (!(Number.isFinite(maxError) && maxError > 0)) {
-    throw new TypeError("SPLINE_MAX_ERROR_INVALID");
-  }
-  if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 24) {
-    throw new TypeError("SPLINE_MAX_DEPTH_INVALID");
-  }
-  validateSpline(node);
-  const first = project(evaluateHomogeneous(node, 0));
-  const output = [first];
-  const spans = normalizedKnotSpans(node);
-  for (let index = 1; index < spans.length; index += 1) {
-    const controls = extractBezierControls(node, spans[index - 1], spans[index]);
-    subdivideBezier(controls, 0, maxDepth, maxError, output);
-  }
-  if (node.closed && !samePoint(output[0], output.at(-1))) output.push(output[0]);
-  return output;
-}
-function normalizedKnotSpans(node) {
-  const start = node.knots[node.degree];
-  const end = node.knots[node.controlPoints.length];
-  return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start) / (end - start)).filter((value, index, values) => index === 0 || value > values[index - 1]);
-}
-function validateSpline(node) {
-  if (!Number.isInteger(node.degree) || node.degree < 1) {
-    throw new TypeError("SPLINE_DEGREE_INVALID");
-  }
-  if (node.controlPoints.length <= node.degree) {
-    throw new TypeError("SPLINE_CONTROL_POINT_COUNT_INVALID");
-  }
-  if (node.controlPoints.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
-    throw new TypeError("SPLINE_CONTROL_POINT_INVALID");
-  }
-  const expectedKnots = node.controlPoints.length + node.degree + 1;
-  if (node.knots.length !== expectedKnots) {
-    throw new TypeError("SPLINE_KNOT_COUNT_INVALID");
-  }
-  if (node.knots.some((value, index) => !Number.isFinite(value) || index > 0 && value < node.knots[index - 1])) {
-    throw new TypeError("SPLINE_KNOT_SEQUENCE_INVALID");
-  }
-  const domainStart = node.knots[node.degree];
-  const domainEnd = node.knots[node.controlPoints.length];
-  if (!(domainEnd > domainStart)) throw new TypeError("SPLINE_KNOT_DOMAIN_INVALID");
-  if (node.weights !== void 0 && (node.weights.length !== node.controlPoints.length || node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0))) {
-    throw new TypeError("SPLINE_WEIGHTS_INVALID");
-  }
-}
-function findSpan(knots, degree, lastControlIndex, value) {
-  let low = degree;
-  let high = lastControlIndex + 1;
-  let middle = Math.floor((low + high) / 2);
-  while (value < knots[middle] || value >= knots[middle + 1]) {
-    if (value < knots[middle]) high = middle;
-    else low = middle;
-    middle = Math.floor((low + high) / 2);
-  }
-  return middle;
-}
-function mixHomogeneous(first, second, alpha) {
-  return [
-    first[0] * (1 - alpha) + second[0] * alpha,
-    first[1] * (1 - alpha) + second[1] * alpha,
-    first[2] * (1 - alpha) + second[2] * alpha
-  ];
-}
-function subdivideBezier(controls, depth, maxDepth, maxError, output) {
-  const points = controls.map(project);
-  const start = points[0];
-  const end = points.at(-1);
-  const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
-  if (depth >= maxDepth || flatness <= maxError) {
-    output.push(end);
-    return;
-  }
-  const [left, right] = splitBezier(controls);
-  subdivideBezier(left, depth + 1, maxDepth, maxError, output);
-  subdivideBezier(right, depth + 1, maxDepth, maxError, output);
-}
-function extractBezierControls(node, start, end) {
-  const degree = node.degree;
-  if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
-  const samples = Array.from({ length: degree + 1 }, (_, row) => {
-    const local2 = row / degree;
-    return evaluateHomogeneous(node, start + (end - start) * local2);
-  });
-  const matrix = Array.from({ length: degree + 1 }, (_, row) => {
-    const parameter = row / degree;
-    return Array.from({ length: degree + 1 }, (_2, column) => bernstein(degree, column, parameter));
-  });
-  return solve(matrix, samples);
-}
-function solve(matrix, values) {
-  const size = matrix.length;
-  const augmented = matrix.map((row, index) => [...row, ...values[index]]);
-  for (let column = 0; column < size; column += 1) {
-    let pivot = column;
-    for (let row = column + 1; row < size; row += 1) if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
-    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
-    const divisor = augmented[column][column];
-    if (Math.abs(divisor) <= 1e-14) throw new TypeError("SPLINE_BEZIER_EXTRACTION_FAILED");
-    for (let index = column; index < size + 3; index += 1) augmented[column][index] = augmented[column][index] / divisor;
-    for (let row = 0; row < size; row += 1) {
-      if (row === column) continue;
-      const factor = augmented[row][column];
-      for (let index = column; index < size + 3; index += 1) augmented[row][index] = augmented[row][index] - factor * augmented[column][index];
-    }
-  }
-  return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
-}
-function splitBezier(controls) {
-  const levels = [controls.map((point) => [...point])];
-  while (levels.at(-1).length > 1) {
-    const previous = levels.at(-1);
-    levels.push(previous.slice(1).map((point, index) => mixHomogeneous(previous[index], point, 0.5)));
-  }
-  return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
-}
-function project(point) {
-  if (!(Math.abs(point[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
-  return [point[0] / point[2], point[1] / point[2]];
-}
-function bernstein(degree, index, parameter) {
-  return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
-}
-function binomial(n, k) {
-  let result = 1;
-  for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
-  return result;
-}
-function pointSegmentDistance(point, start, end) {
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
-  const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
-  const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
-  return Math.hypot(
-    point[0] - (start[0] + projection * dx),
-    point[1] - (start[1] + projection * dy)
-  );
-}
-function samePoint(first, second) {
-  return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
-}
 const ROLE_RANK = {
   datum: 0,
   overall: 1,
@@ -548,6 +380,174 @@ function stableKey$1(value) {
 function format$1(value) {
   return Number(value.toFixed(6)).toString();
 }
+function evaluateHomogeneous(node, normalized) {
+  const pointCount = node.controlPoints.length;
+  const lastControlIndex = pointCount - 1;
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[lastControlIndex + 1];
+  const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
+  const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
+  const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
+  const work = [];
+  for (let index = 0; index <= node.degree; index += 1) {
+    const sourceIndex = span - node.degree + index;
+    const weight = weights[sourceIndex];
+    const point = node.controlPoints[sourceIndex];
+    work.push([point[0] * weight, point[1] * weight, weight]);
+  }
+  for (let level = 1; level <= node.degree; level += 1) {
+    for (let index = node.degree; index >= level; index -= 1) {
+      const knotIndex = span - node.degree + index;
+      const denominator = node.knots[knotIndex + node.degree - level + 1] - node.knots[knotIndex];
+      const alpha = denominator === 0 ? 0 : (knotParameter - node.knots[knotIndex]) / denominator;
+      work[index] = mixHomogeneous(work[index - 1], work[index], alpha);
+    }
+  }
+  return work[node.degree];
+}
+function sampleSpline(node, { maxError, maxDepth = 12 }) {
+  if (!(Number.isFinite(maxError) && maxError > 0)) {
+    throw new TypeError("SPLINE_MAX_ERROR_INVALID");
+  }
+  if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 24) {
+    throw new TypeError("SPLINE_MAX_DEPTH_INVALID");
+  }
+  validateSpline(node);
+  const first = project(evaluateHomogeneous(node, 0));
+  const output = [first];
+  const spans = normalizedKnotSpans(node);
+  for (let index = 1; index < spans.length; index += 1) {
+    const controls = extractBezierControls(node, spans[index - 1], spans[index]);
+    subdivideBezier(controls, 0, maxDepth, maxError, output);
+  }
+  if (node.closed && !samePoint(output[0], output.at(-1))) output.push(output[0]);
+  return output;
+}
+function normalizedKnotSpans(node) {
+  const start = node.knots[node.degree];
+  const end = node.knots[node.controlPoints.length];
+  return node.knots.slice(node.degree, node.controlPoints.length + 1).map((value) => (value - start) / (end - start)).filter((value, index, values) => index === 0 || value > values[index - 1]);
+}
+function validateSpline(node) {
+  if (!Number.isInteger(node.degree) || node.degree < 1) {
+    throw new TypeError("SPLINE_DEGREE_INVALID");
+  }
+  if (node.controlPoints.length <= node.degree) {
+    throw new TypeError("SPLINE_CONTROL_POINT_COUNT_INVALID");
+  }
+  if (node.controlPoints.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
+    throw new TypeError("SPLINE_CONTROL_POINT_INVALID");
+  }
+  const expectedKnots = node.controlPoints.length + node.degree + 1;
+  if (node.knots.length !== expectedKnots) {
+    throw new TypeError("SPLINE_KNOT_COUNT_INVALID");
+  }
+  if (node.knots.some((value, index) => !Number.isFinite(value) || index > 0 && value < node.knots[index - 1])) {
+    throw new TypeError("SPLINE_KNOT_SEQUENCE_INVALID");
+  }
+  const domainStart = node.knots[node.degree];
+  const domainEnd = node.knots[node.controlPoints.length];
+  if (!(domainEnd > domainStart)) throw new TypeError("SPLINE_KNOT_DOMAIN_INVALID");
+  if (node.weights !== void 0 && (node.weights.length !== node.controlPoints.length || node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0))) {
+    throw new TypeError("SPLINE_WEIGHTS_INVALID");
+  }
+}
+function findSpan(knots, degree, lastControlIndex, value) {
+  let low = degree;
+  let high = lastControlIndex + 1;
+  let middle = Math.floor((low + high) / 2);
+  while (value < knots[middle] || value >= knots[middle + 1]) {
+    if (value < knots[middle]) high = middle;
+    else low = middle;
+    middle = Math.floor((low + high) / 2);
+  }
+  return middle;
+}
+function mixHomogeneous(first, second, alpha) {
+  return [
+    first[0] * (1 - alpha) + second[0] * alpha,
+    first[1] * (1 - alpha) + second[1] * alpha,
+    first[2] * (1 - alpha) + second[2] * alpha
+  ];
+}
+function subdivideBezier(controls, depth, maxDepth, maxError, output) {
+  const points = controls.map(project);
+  const start = points[0];
+  const end = points.at(-1);
+  const flatness = Math.max(0, ...points.slice(1, -1).map((point) => pointSegmentDistance(point, start, end)));
+  if (depth >= maxDepth || flatness <= maxError) {
+    output.push(end);
+    return;
+  }
+  const [left, right] = splitBezier(controls);
+  subdivideBezier(left, depth + 1, maxDepth, maxError, output);
+  subdivideBezier(right, depth + 1, maxDepth, maxError, output);
+}
+function extractBezierControls(node, start, end) {
+  const degree = node.degree;
+  if (degree === 1) return [evaluateHomogeneous(node, start), evaluateHomogeneous(node, end)];
+  const samples = Array.from({ length: degree + 1 }, (_, row) => {
+    const local2 = row / degree;
+    return evaluateHomogeneous(node, start + (end - start) * local2);
+  });
+  const matrix = Array.from({ length: degree + 1 }, (_, row) => {
+    const parameter = row / degree;
+    return Array.from({ length: degree + 1 }, (_2, column) => bernstein(degree, column, parameter));
+  });
+  return solve(matrix, samples);
+}
+function solve(matrix, values) {
+  const size = matrix.length;
+  const augmented = matrix.map((row, index) => [...row, ...values[index]]);
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+    const divisor = augmented[column][column];
+    if (Math.abs(divisor) <= 1e-14) throw new TypeError("SPLINE_BEZIER_EXTRACTION_FAILED");
+    for (let index = column; index < size + 3; index += 1) augmented[column][index] = augmented[column][index] / divisor;
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = augmented[row][column];
+      for (let index = column; index < size + 3; index += 1) augmented[row][index] = augmented[row][index] - factor * augmented[column][index];
+    }
+  }
+  return augmented.map((row) => [row[size], row[size + 1], row[size + 2]]);
+}
+function splitBezier(controls) {
+  const levels = [controls.map((point) => [...point])];
+  while (levels.at(-1).length > 1) {
+    const previous = levels.at(-1);
+    levels.push(previous.slice(1).map((point, index) => mixHomogeneous(previous[index], point, 0.5)));
+  }
+  return [levels.map((level) => level[0]), levels.map((level) => level.at(-1)).reverse()];
+}
+function project(point) {
+  if (!(Math.abs(point[2]) > Number.EPSILON)) throw new TypeError("SPLINE_WEIGHT_SUM_INVALID");
+  return [point[0] / point[2], point[1] / point[2]];
+}
+function bernstein(degree, index, parameter) {
+  return binomial(degree, index) * parameter ** index * (1 - parameter) ** (degree - index);
+}
+function binomial(n, k) {
+  let result = 1;
+  for (let index = 1; index <= Math.min(k, n - k); index += 1) result = result * (n - index + 1) / index;
+  return result;
+}
+function pointSegmentDistance(point, start, end) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  const projection = Math.min(1, Math.max(0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared));
+  return Math.hypot(
+    point[0] - (start[0] + projection * dx),
+    point[1] - (start[1] + projection * dy)
+  );
+}
+function samePoint(first, second) {
+  return Math.abs(first[0] - second[0]) <= 1e-12 && Math.abs(first[1] - second[1]) <= 1e-12;
+}
 const MINIMUM_TOLERANCE = 1e-5;
 function measureOpeningAngles(geometryInput) {
   const geometry = geometryInput.filter(({ visible, quality }) => visible && quality.status === "confirmed");
@@ -655,7 +655,7 @@ function normalizedSlopedSegment(segment) {
   return { segment, left, right, midpoint: [(left[0] + right[0]) / 2, (left[1] + right[1]) / 2], length };
 }
 function geometryBounds(geometry) {
-  const points = geometry.flatMap(pointsOf$1);
+  const points = geometry.flatMap(pointsOf);
   if (points.length === 0) return null;
   return {
     minX: Math.min(...points.map(([x]) => x)),
@@ -664,7 +664,7 @@ function geometryBounds(geometry) {
     maxY: Math.max(...points.map(([, y]) => y))
   };
 }
-function pointsOf$1(node) {
+function pointsOf(node) {
   if (node.type === "point") return [[node.x, node.y]];
   if (node.type === "line") return [node.start, node.end];
   if (node.type === "polyline") return node.vertices.map(({ point }) => point);
@@ -810,36 +810,16 @@ function clean$1(value) {
   return Math.abs(rounded) <= 1e-12 ? 0 : rounded;
 }
 function planEngineeringAnnotations(input) {
-  var _a3, _b;
+  var _a3, _b, _c;
   const annotationTemplates = [];
   const associations = [];
   const pending = [];
   const suppressed = [];
   const geometry = input.document.geometry.filter(({ visible }) => visible);
-  const drawingBounds = boundsOf(geometry);
-  const diagonal = drawingBounds ? Math.hypot(drawingBounds.maxX - drawingBounds.minX, drawingBounds.maxY - drawingBounds.minY) : 1;
-  const offset = Math.max(diagonal * 0.04, 2);
   for (const node of geometry) {
     if (node.quality.status !== "confirmed") {
       pending.push({ nodeId: node.id, reason: "SOURCE_NOT_CONFIRMED" });
-      continue;
     }
-    const annotation = annotationFor(node, input.document.unitSystem.length, offset);
-    if (!annotation) {
-      suppressed.push({ nodeId: node.id, reason: "No deterministic engineering dimension rule applies." });
-      continue;
-    }
-    annotationTemplates.push(annotation);
-    associations.push({
-      id: `relation_${stableKey(`${input.document.id}:${annotation.id}`)}`,
-      type: "association",
-      plane: "association",
-      kind: "annotation-target",
-      annotationId: annotation.id,
-      geometryIds: [node.id],
-      visible: true,
-      quality: { status: "confirmed", confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] }
-    });
   }
   const measuredOpenings = measureOpeningAngles(geometry);
   const openingSelection = selectAxialEndOpeningAngles({
@@ -945,8 +925,10 @@ function planEngineeringAnnotations(input) {
     }
   }
   for (const existing of input.document.annotations) {
-    if (existing.type !== "dimension" || !((_b = existing.engineeringIntentId) == null ? void 0 : _b.startsWith("intent_opening_"))) continue;
-    if (plannedOpeningIds.has(existing.id)) continue;
+    if (existing.type !== "dimension") continue;
+    const legacyPrimitiveDimension = ((_b = existing.engineeringIntentId) == null ? void 0 : _b.startsWith("intent_auto_")) === true;
+    const staleOpeningDimension = ((_c = existing.engineeringIntentId) == null ? void 0 : _c.startsWith("intent_opening_")) === true && !plannedOpeningIds.has(existing.id);
+    if (!legacyPrimitiveDimension && !staleOpeningDimension) continue;
     deleteNodeIds.add(existing.id);
     existing.targets.forEach(({ geometryId }) => staleTargetNodeIds.add(geometryId));
     for (const relation of existingAssociations.values()) {
@@ -995,85 +977,6 @@ function planEngineeringAnnotations(input) {
 function sameOpeningAnnotation(left, right) {
   if (left.type !== "dimension" || right.type !== "dimension") return false;
   return left.dimensionKind === right.dimensionKind && left.computedValue === right.computedValue && left.displayText === right.displayText && left.unit === right.unit && JSON.stringify(left.targets) === JSON.stringify(right.targets) && JSON.stringify(left.textPosition) === JSON.stringify(right.textPosition) && JSON.stringify(left.definitionPoints) === JSON.stringify(right.definitionPoints);
-}
-function annotationFor(node, unit, offset) {
-  const evidenceRefs = node.quality.evidenceRefs.length > 0 ? [...node.quality.evidenceRefs] : [`evidence:engineering:${node.id}`];
-  const base = {
-    id: `annotation_auto_${stableKey(String(node.id))}`,
-    type: "dimension",
-    visible: true,
-    quality: { status: "confirmed", confidence: 1, evidenceRefs },
-    associationStatus: "resolved",
-    targets: [{ geometryId: node.id, anchor: { kind: "center" } }],
-    unit,
-    engineeringIntentId: `intent_auto_${stableKey(String(node.id))}`
-  };
-  if (node.type === "circle") {
-    const first = [node.center[0] - node.radius, node.center[1]];
-    const second = [node.center[0] + node.radius, node.center[1]];
-    return {
-      ...base,
-      dimensionKind: "diameter",
-      computedValue: clean(node.radius * 2),
-      displayText: `Ø${format(node.radius * 2)}`,
-      textPosition: [node.center[0], node.center[1] + node.radius + offset],
-      definitionPoints: [first, second]
-    };
-  }
-  if (node.type === "arc") {
-    const middle = (node.startAngle + node.endAngle) / 2 * Math.PI / 180;
-    const edge = [node.center[0] + Math.cos(middle) * node.radius, node.center[1] + Math.sin(middle) * node.radius];
-    return {
-      ...base,
-      dimensionKind: "radius",
-      computedValue: clean(node.radius),
-      displayText: `R${format(node.radius)}`,
-      textPosition: [edge[0] + Math.cos(middle) * offset, edge[1] + Math.sin(middle) * offset],
-      definitionPoints: [node.center, edge]
-    };
-  }
-  if (node.type === "ellipse") {
-    const radius = Math.hypot(node.majorAxis[0], node.majorAxis[1]);
-    if (radius <= 0) return null;
-    const axis = [node.majorAxis[0] / radius, node.majorAxis[1] / radius];
-    return {
-      ...base,
-      dimensionKind: "aligned",
-      computedValue: clean(radius * 2),
-      displayText: format(radius * 2),
-      textPosition: [node.center[0] - axis[1] * offset, node.center[1] + axis[0] * offset],
-      definitionPoints: [
-        [node.center[0] - axis[0] * radius, node.center[1] - axis[1] * radius],
-        [node.center[0] + axis[0] * radius, node.center[1] + axis[1] * radius]
-      ]
-    };
-  }
-  return null;
-}
-function boundsOf(nodes) {
-  const points = nodes.flatMap(pointsOf);
-  if (points.length === 0) return null;
-  return {
-    minX: Math.min(...points.map(([x]) => x)),
-    minY: Math.min(...points.map(([, y]) => y)),
-    maxX: Math.max(...points.map(([x]) => x)),
-    maxY: Math.max(...points.map(([, y]) => y))
-  };
-}
-function pointsOf(node) {
-  if (node.type === "point") return [[node.x, node.y]];
-  if (node.type === "line") return [node.start, node.end];
-  if (node.type === "ray" || node.type === "xline") return [node.origin];
-  if (node.type === "circle" || node.type === "arc") return [
-    [node.center[0] - node.radius, node.center[1] - node.radius],
-    [node.center[0] + node.radius, node.center[1] + node.radius]
-  ];
-  if (node.type === "ellipse") {
-    const radius = Math.hypot(...node.majorAxis);
-    return [[node.center[0] - radius, node.center[1] - radius], [node.center[0] + radius, node.center[1] + radius]];
-  }
-  if (node.type === "polyline") return node.vertices.map(({ point }) => point);
-  return sampleSpline(node, { maxError: 0.02, maxDepth: 14 });
 }
 function stableKey(value) {
   let hash = 2166136261;
@@ -2172,16 +2075,17 @@ function issue$1(chain, code, message, entityId) {
 function createEngineeringAnnotationTool(host, sessions, partitions) {
   return defineTool({
     name: "drawing_auto_annotate",
-    description: "Create engineering dimensions only after smart shaft partitioning has been confirmed. This tool never creates or edits partition boundaries; use drawing_partition_status for partition requests.",
+    description: "Create only deterministic axial opening-angle dimensions. An editable shaft partition may remain unconfirmed and is preserved independently. This tool never creates diameter, radius, or other dimensions and never edits partition boundaries.",
     parameters: {},
     output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
     async execute(_args, exec) {
+      var _a3;
       const agent = exec.agent;
       if (!agent) throw new Error("DRAWING_SESSION_REQUIRED");
       const sessionId = String(agent.id);
       const partition = partitions == null ? void 0 : partitions.get(sessionId);
-      if ((partition == null ? void 0 : partition.phase) === "analyzing" || (partition == null ? void 0 : partition.phase) === "editing") {
-        throw new Error("PARTITION_WORKFLOW_ACTIVE: finish the editable partition in the engineering workspace before automatic dimensioning");
+      if ((partition == null ? void 0 : partition.phase) === "analyzing") {
+        throw new Error("PARTITION_ANALYSIS_ACTIVE: wait until the editable partition draft is ready before opening-angle annotation");
       }
       const snapshot = host.getSnapshot(agent);
       if (!snapshot) throw new Error("DRAWING_REQUIRED");
@@ -2205,6 +2109,9 @@ function createEngineeringAnnotationTool(host, sessions, partitions) {
           targetNodeIds: plan.targetNodeIds,
           program: plan.program
         }, exec.signal);
+        if (workflow.result.status === "committed" && ((_a3 = partition == null ? void 0 : partition.drawingRef) == null ? void 0 : _a3.drawingId) === snapshot.ref.drawingId && partition.drawingRef.revision === snapshot.ref.revision) {
+          partitions == null ? void 0 : partitions.advanceDrawingRevision(sessionId, snapshot.ref, workflow.result.ref);
+        }
         sessions.finish(sessionId, terminalStatus(workflow.result.status));
         return {
           status: workflow.result.status,
@@ -2236,7 +2143,7 @@ function createPartitionStatusTool(partitions) {
         ...snapshot.drawingRef === void 0 ? {} : { drawingRef: snapshot.drawingRef },
         segmentCount: ((_a3 = snapshot.draft) == null ? void 0 : _a3.segments.length) ?? ((_b = snapshot.confirmed) == null ? void 0 : _b.segments.length) ?? 0,
         diagnostics: (((_c = snapshot.draft) == null ? void 0 : _c.diagnostics) ?? ((_d = snapshot.confirmed) == null ? void 0 : _d.diagnostics) ?? []).map(({ code }) => code),
-        nextAction: snapshot.phase === "analyzing" ? "wait-for-analysis" : snapshot.phase === "editing" ? "edit-or-confirm-in-engineering-workspace" : snapshot.phase === "confirmed" ? "ready-for-automatic-annotation" : snapshot.drawingRef === void 0 ? "import-engineering-dxf" : "wait-for-explicit-partition-request"
+        nextAction: snapshot.phase === "analyzing" ? "wait-for-analysis" : snapshot.phase === "editing" ? "review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming" : snapshot.phase === "confirmed" ? "ready-for-opening-angle-annotation" : snapshot.drawingRef === void 0 ? "import-engineering-dxf" : "wait-for-explicit-partition-request"
       };
     }
   });
@@ -2261,7 +2168,7 @@ function createPartitionStartTool(workflow) {
         segmentCount: ((_a3 = snapshot.draft) == null ? void 0 : _a3.segments.length) ?? ((_b = snapshot.confirmed) == null ? void 0 : _b.segments.length) ?? 0,
         semanticGroupCount: ((_c = snapshot.draft) == null ? void 0 : _c.semanticGroups.length) ?? ((_d = snapshot.confirmed) == null ? void 0 : _d.semanticGroups.length) ?? 0,
         diagnostics: (((_e = snapshot.draft) == null ? void 0 : _e.diagnostics) ?? ((_f = snapshot.confirmed) == null ? void 0 : _f.diagnostics) ?? []).map(({ code }) => code),
-        nextAction: snapshot.phase === "editing" ? "review-and-confirm-in-engineering-workspace" : snapshot.phase
+        nextAction: snapshot.phase === "editing" ? "review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming" : snapshot.phase
       };
     }
   });
@@ -8670,6 +8577,33 @@ class PartitionSessionStore {
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
     return __privateMethod(this, _PartitionSessionStore_instances, replace_fn).call(this, sessionId, { ...state.snapshot, phase: "needs-rebase", drawingRef: currentRef, message: "Drawing revision changed", updatedAt: this.ports.now() }, state.undo, state.redo);
   }
+  advanceDrawingRevision(sessionId, previousRef, currentRef) {
+    var _a3;
+    const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
+    requireRef$1(state.snapshot, previousRef);
+    if (previousRef.drawingId !== currentRef.drawingId || currentRef.revision < previousRef.revision) {
+      throw new Error("PARTITION_DRAWING_STALE");
+    }
+    if (previousRef.revision === currentRef.revision) return structuredClone(state.snapshot);
+    const rebase = (snapshot) => rebaseSnapshot(snapshot, currentRef);
+    const envelope = {
+      snapshot: partitionSessionSnapshotSchema.parse(compact$1(rebase(state.snapshot))),
+      undo: state.undo.map(rebase).map(compact$1).map((item) => partitionSessionSnapshotSchema.parse(item)),
+      redo: state.redo.map(rebase).map(compact$1).map((item) => partitionSessionSnapshotSchema.parse(item)),
+      ...state.lastConfirmed === void 0 ? {} : {
+        lastConfirmed: partitionSessionSnapshotSchema.shape.confirmed.parse({
+          ...state.lastConfirmed,
+          drawingRef: currentRef
+        })
+      },
+      ...state.lastConfirmedDraft === void 0 ? {} : {
+        lastConfirmedDraft: { ...structuredClone(state.lastConfirmedDraft), drawingRef: currentRef }
+      }
+    };
+    (_a3 = this.storage) == null ? void 0 : _a3.save(sessionId, envelope);
+    __privateGet(this, _states).set(sessionId, envelope);
+    return structuredClone(envelope.snapshot);
+  }
 }
 _states = new WeakMap();
 _PartitionSessionStore_instances = new WeakSet();
@@ -8783,6 +8717,14 @@ function reconstructDraft(revision) {
       }
     ],
     basePartitionRevisionId: revision.id
+  };
+}
+function rebaseSnapshot(snapshot, drawingRef) {
+  return {
+    ...structuredClone(snapshot),
+    drawingRef,
+    ...snapshot.draft === void 0 ? {} : { draft: { ...structuredClone(snapshot.draft), drawingRef } },
+    ...snapshot.confirmed === void 0 ? {} : { confirmed: { ...structuredClone(snapshot.confirmed), drawingRef } }
   };
 }
 const PLAIN_FORMATS = /* @__PURE__ */ new Set([

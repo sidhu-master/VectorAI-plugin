@@ -156,6 +156,34 @@ describe('PartitionOverlay', () => {
     expect((markup.match(/class="vai-partition-handle-leader"/g) ?? [])).toHaveLength(2);
   });
 
+  it('renders a confirmed partition as a persistent read-only overlay', () => {
+    const value = draft();
+    value.semanticGroups = [{
+      id: 'gear', segmentIds: ['segment:3'], range: { zStart: 63.5, zEnd: 88.5 },
+      semanticType: 'gear', name: '一级齿轮', evidenceIds: ['evidence:3'],
+    }];
+    const revision = {
+      version: value.version,
+      drawingRef: value.drawingRef,
+      axis: value.axis,
+      segments: value.segments,
+      semanticGroups: value.semanticGroups,
+      evidence: value.evidence,
+      diagnostics: value.diagnostics,
+      id: 'partition-r1',
+      confirmedAt: 1,
+    };
+
+    const markup = renderToStaticMarkup(<svg><PartitionOverlay
+      draft={revision} mode="functional" previewHeld scale={2}
+    /></svg>);
+
+    expect(markup).toContain('data-partition-id="gear"');
+    expect(markup).toContain('>一级齿轮</text>');
+    expect(markup).not.toContain('aria-label="移动一级齿轮起点"');
+    expect(markup).not.toContain('aria-label="重命名分区 一级齿轮"');
+  });
+
   it('owns the pointer and previews both adjacent bands before committing the boundary', async () => {
     const onMoveBoundary = vi.fn(async () => undefined);
     const renderer = TestRenderer.create(<svg><PartitionOverlay
