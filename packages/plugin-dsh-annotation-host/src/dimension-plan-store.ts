@@ -173,10 +173,17 @@ export class DimensionPlanStore {
 
   markNeedsRebase(sessionId: string, currentRef: DrawingRef): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
+    const draft = state.snapshot.draft === undefined ? undefined : {
+      ...state.snapshot.draft,
+      ...(state.snapshot.draft.axialScheme === undefined ? {} : {
+        axialScheme: { ...state.snapshot.draft.axialScheme, status: 'stale' as const },
+      }),
+    };
     return this.#replace(sessionId, {
       ...state.snapshot,
       phase: 'needs-rebase',
       drawingRef: currentRef,
+      ...(draft === undefined ? {} : { draft }),
       message: 'Drawing revision changed',
       updatedAt: this.ports.now(),
     }, state.undo, state.redo);

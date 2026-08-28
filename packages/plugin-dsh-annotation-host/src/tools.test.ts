@@ -5,7 +5,12 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createEngineeringAnnotationTool, createPartitionStartTool, createPartitionStatusTool } from './tools';
+import {
+  createDimensionChainStartTool,
+  createEngineeringAnnotationTool,
+  createPartitionStartTool,
+  createPartitionStatusTool,
+} from './tools';
 import { AnnotationSessionStateStore } from './session-state';
 import { PartitionSessionStore } from './partition-store';
 
@@ -233,5 +238,26 @@ describe('drawing_partition_start', () => {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
     } as ToolRunContext)).rejects.toThrow('PARTITION_CONTEXT_SIZE_LIMIT');
+  });
+});
+
+describe('drawing_dimension_chain_start', () => {
+  it('starts nominal axial chain inference only through an explicit tool call', async () => {
+    const start = vi.fn(() => ({
+      version: 1 as const, phase: 'editing' as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      canUndo: false, canRedo: false, updatedAt: 1,
+    }));
+    const tool = createDimensionChainStartTool({ start });
+
+    expect(tool.name).toBe('drawing_dimension_chain_start');
+    await expect(tool.execute({ policy: 'shaft-reference-terminal-closure-v1' }, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({ status: 'editing' });
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-1' }),
+      'shaft-reference-terminal-closure-v1',
+    );
   });
 });

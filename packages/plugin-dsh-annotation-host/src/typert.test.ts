@@ -9,6 +9,7 @@ describe('annotation TYPERT contribution', () => {
     expect(TYPERT.invocations.map(({ method }) => method)).toEqual([
       'getSessionState', 'importDrawing', 'stageDocuments', 'clearDocuments', 'importAndAnalyze', 'supplementDocuments', 'getPartitionState', 'editPartition',
       'confirmPartition', 'cancelPartition', 'reopenPartition', 'undoPartition', 'redoPartition',
+      'getDimensionPlan', 'editDimensionScheme', 'confirmDimensionPlan', 'cancelDimensionPlan', 'undoDimensionPlan', 'redoDimensionPlan',
     ]);
     expect(TYPERT.invocations[0]?.result.schema).toHaveProperty('_zod');
   });

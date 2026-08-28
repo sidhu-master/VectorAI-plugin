@@ -2,11 +2,12 @@
 
 import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { planEngineeringAnnotations } from '@vectorai/engineering-annotation';
+import { planEngineeringAnnotations, type AxialInferencePolicy } from '@vectorai/engineering-annotation';
 import type {
   DrawingExtensionProgramWorkflow,
   DrawingSpaceExtensionHost,
   PartitionSessionSnapshot,
+  DimensionPlanSessionSnapshot,
 } from '@vectorai/plugin-space-contracts';
 import type { AnnotationSessionStateStore } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
@@ -15,6 +16,7 @@ export function createEngineeringAnnotationTool(
   host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
   sessions: AnnotationSessionStateStore,
   partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
+  dimensionPlans?: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'>,
 ) {
   return defineTool({
     name: 'drawing_auto_annotate',
@@ -55,6 +57,9 @@ export function createEngineeringAnnotationTool(
           && partition?.drawingRef?.drawingId === snapshot.ref.drawingId
           && partition.drawingRef.revision === snapshot.ref.revision) {
           partitions?.advanceDrawingRevision(sessionId, snapshot.ref, workflow.result.ref);
+          if (dimensionPlans?.get(sessionId).draft?.axialScheme) {
+            dimensionPlans.markNeedsRebase(sessionId, workflow.result.ref);
+          }
         }
         sessions.finish(sessionId, terminalStatus(workflow.result.status));
         return {
@@ -127,6 +132,38 @@ export function createPartitionStartTool(workflow: {
         nextAction: snapshot.phase === 'editing'
           ? 'review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming'
           : snapshot.phase,
+      } as unknown as JsonValue;
+    },
+  });
+}
+
+export function createDimensionChainStartTool(workflow: {
+  start(agent: Agent, policyId?: AxialInferencePolicy['id']): DimensionPlanSessionSnapshot;
+}) {
+  return defineTool({
+    name: 'drawing_dimension_chain_start',
+    description: 'Start axial nominal dimension-chain inference only when the user explicitly asks for a dimension chain or a dimensioning workflow that requires one. Never call this merely because a DXF or engineering document was uploaded. Local geometry owns all coordinates, nominal values, and arithmetic.',
+    parameters: {
+      policy: {
+        type: 'string',
+        enum: ['shaft-hierarchical-dimensioning-v1', 'shaft-reference-terminal-closure-v1'],
+        description: 'Optional drafting policy. Use the hierarchical policy unless the user explicitly asks to match the reference terminal-closure convention.',
+      },
+    },
+    output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      if (!exec.agent) throw new Error('DRAWING_SESSION_REQUIRED');
+      const policy = args.policy === 'shaft-reference-terminal-closure-v1'
+        ? args.policy
+        : 'shaft-hierarchical-dimensioning-v1';
+      const snapshot = workflow.start(exec.agent, policy);
+      return {
+        status: snapshot.phase,
+        schemeStatus: snapshot.draft?.axialScheme?.status,
+        displayedDimensionCount: snapshot.draft?.axialScheme?.displayedCandidateIds.length ?? 0,
+        closureCount: snapshot.draft?.axialScheme?.closureCandidateIds.length ?? 0,
+        diagnostics: snapshot.draft?.axialScheme?.diagnostics.map(({ code }) => code) ?? [],
+        nextAction: snapshot.draft?.axialScheme?.status === 'resolved' ? 'preview-or-confirm' : 'review-dimension-chain',
       } as unknown as JsonValue;
     },
   });

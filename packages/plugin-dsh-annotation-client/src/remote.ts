@@ -10,6 +10,8 @@ import {
   partitionDocumentSupplementRequestSchema,
   partitionImportRequestSchema,
   partitionSessionSnapshotSchema,
+  dimensionPlanSessionSnapshotSchema,
+  dimensionSchemeEditCommandSchema,
   type AnnotationSessionState,
   type EngineeringDocumentStageRequest,
   type DrawingRef,
@@ -17,6 +19,8 @@ import {
   type PartitionDocumentSupplementRequest,
   type PartitionImportRequest,
   type PartitionSessionSnapshot,
+  type DimensionPlanSessionSnapshot,
+  type DimensionSchemeEditCommand,
 } from '@vectorai/plugin-space-contracts';
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -35,6 +39,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       reopenPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
       undoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
       redoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
+      getDimensionPlan(sessionId: string): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+      editDimensionScheme(sessionId: string, command: DimensionSchemeEditCommand): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+      confirmDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+      cancelDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+      undoDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+      redoDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     };
   }
   interface TypertRemoteMap {
@@ -53,6 +63,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'drawingAnnotation/reopenPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/undoPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/redoPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
+    'drawingAnnotation/getDimensionPlan': (sessionId: string) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+    'drawingAnnotation/editDimensionScheme': (sessionId: string, command: DimensionSchemeEditCommand) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+    'drawingAnnotation/confirmDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+    'drawingAnnotation/cancelDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+    'drawingAnnotation/undoDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+    'drawingAnnotation/redoDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
   }
 }
 
@@ -80,7 +96,7 @@ export const ANNOTATION_REMOTE: TypertRemoteContribution = {
       typeSymbol: '@vectorai/plugin-space-contracts#AnnotationSessionState',
       schema: annotationSessionStateSchema,
     },
-  }, ...partitionDescriptors()],
+  }, ...partitionDescriptors(), ...dimensionDescriptors()],
 };
 
 function partitionDescriptors() {
@@ -98,6 +114,30 @@ function partitionDescriptors() {
     descriptor('undoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     descriptor('redoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
   ];
+}
+
+function dimensionDescriptors() {
+  return [
+    dimensionDescriptor('getDimensionPlan', []),
+    dimensionDescriptor('editDimensionScheme', [jsonParameter('command', '@vectorai/plugin-space-contracts#DimensionSchemeEditCommand', dimensionSchemeEditCommandSchema)]),
+    dimensionDescriptor('confirmDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    dimensionDescriptor('cancelDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    dimensionDescriptor('undoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+    dimensionDescriptor('redoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
+  ];
+}
+
+function dimensionDescriptor(method: string, parameters: Array<ReturnType<typeof jsonParameter>>) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: 'drawingAnnotation', namespace: 'drawingAnnotation', method,
+    invocation: { kind: 'direct' as const }, scope: { context: 'agent' as const, wire: 'agentId' },
+    parameters: [agentParameter, ...parameters],
+    result: {
+      mode: 'strict' as const, typeSymbol: '@vectorai/plugin-space-contracts#DimensionPlanSessionSnapshot',
+      schema: dimensionPlanSessionSnapshotSchema,
+    },
+  };
 }
 
 function descriptor(method: string, parameters: Array<ReturnType<typeof jsonParameter>>) {
