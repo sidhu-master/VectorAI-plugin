@@ -9,8 +9,13 @@ import { AnnotationWorkspace } from './AnnotationWorkspace';
 import { createAnnotationRemoteStateSource } from './annotation-state-source';
 import { ANNOTATION_REMOTE } from './remote';
 import { createPartitionController } from './partition-controller';
+import { createDimensionChainController } from './dimension-chain-controller';
 import { EngineeringDropBridge } from './EngineeringDropBridge';
-import { ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_PARTITION_LAYER } from './drawing-layers';
+import {
+  ANNOTATION_DIMENSION_CHAIN_LAYER,
+  ANNOTATION_OPENING_ANGLE_LAYER,
+  ANNOTATION_PARTITION_LAYER,
+} from './drawing-layers';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -31,6 +36,7 @@ export async function apply(ctx: Context) {
       const slots = scope.get('slots');
       const stateSource = createAnnotationRemoteStateSource(annotationRemote);
       const partitionControllers = new Map<string, ReturnType<typeof createPartitionController>>();
+      const dimensionControllers = new Map<string, ReturnType<typeof createDimensionChainController>>();
       const partitionFor = (sessionId: string) => {
         const current = partitionControllers.get(sessionId);
         if (current) return current;
@@ -42,8 +48,20 @@ export async function apply(ctx: Context) {
         void controller.actions.refresh();
         return controller;
       };
+      const dimensionsFor = (sessionId: string) => {
+        const current = dimensionControllers.get(sessionId);
+        if (current) return current;
+        const controller = createDimensionChainController(
+          sessionId,
+          () => scope.get('remote').drawingAnnotation,
+        );
+        dimensionControllers.set(sessionId, controller);
+        void controller.actions.refresh();
+        return controller;
+      };
       const layerRegistration = registry.registerLayer(ANNOTATION_PARTITION_LAYER);
       const openingAngleLayerRegistration = registry.registerLayer(ANNOTATION_OPENING_ANGLE_LAYER);
+      const dimensionChainLayerRegistration = registry.registerLayer(ANNOTATION_DIMENSION_CHAIN_LAYER);
       const registration = registry.registerWorkspace({
         id: 'engineering-annotation',
         apiVersion: 1,
@@ -53,6 +71,7 @@ export async function apply(ctx: Context) {
           {...props}
           state={stateSource.observeState(props.sessionId)}
           partition={partitionFor(props.sessionId)}
+          dimensionChain={dimensionsFor(props.sessionId)}
         />,
       });
       const dropFiber = slots.inject('conversation.input.dock', () => slots.register({
@@ -71,10 +90,13 @@ export async function apply(ctx: Context) {
         await dropFiber.dispose();
         registration.dispose();
         openingAngleLayerRegistration.dispose();
+        dimensionChainLayerRegistration.dispose();
         layerRegistration.dispose();
         stateSource.dispose();
         for (const controller of partitionControllers.values()) controller.dispose();
         partitionControllers.clear();
+        for (const controller of dimensionControllers.values()) controller.dispose();
+        dimensionControllers.clear();
       };
     },
   );

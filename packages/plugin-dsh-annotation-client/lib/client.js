@@ -5872,6 +5872,153 @@ window.__ModuleLoader__.load({
         }
       );
     }
+    function DimensionChainOverlay({
+      scheme,
+      scale,
+      visible,
+      previewHeld = false
+    }) {
+      if (!visible || previewHeld) return null;
+      const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
+      const displayed = scheme.displayedCandidateIds.flatMap((id) => candidates.get(id) ?? []);
+      const closures = scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
+      const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
+      return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-dimension-chain-overlay": "true", pointerEvents: "none", children: [
+        displayed.map((candidate, index) => /* @__PURE__ */ jsxRuntime.jsx(
+          IntervalGraphic,
+          {
+            scheme,
+            candidate,
+            scale,
+            level: index,
+            kind: "displayed",
+            conflict: conflicts.has(candidate.id)
+          },
+          candidate.id
+        )),
+        closures.map((candidate, index) => /* @__PURE__ */ jsxRuntime.jsx(
+          IntervalGraphic,
+          {
+            scheme,
+            candidate,
+            scale,
+            level: index,
+            kind: "closure",
+            conflict: conflicts.has(candidate.id)
+          },
+          candidate.id
+        ))
+      ] });
+    }
+    function IntervalGraphic({ scheme, candidate, scale, level, kind, conflict }) {
+      const start = scheme.topology.stations.find(({ id }) => id === candidate.startStationId);
+      const end = scheme.topology.stations.find(({ id }) => id === candidate.endStationId);
+      if (!start || !end) return null;
+      const { origin, direction, normal } = scheme.topology.axis;
+      const offset = (24 + level % 4 * 14) / Math.max(scale, 1e-6);
+      const point3 = (coordinate) => [
+        origin[0] + direction[0] * coordinate + normal[0] * offset,
+        origin[1] + direction[1] * coordinate + normal[1] * offset
+      ];
+      const a = point3(start.sourceCoordinate);
+      const b = point3(end.sourceCoordinate);
+      const middle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      return /* @__PURE__ */ jsxRuntime.jsxs(
+        "g",
+        {
+          className: `vai-dimension-chain-interval vai-dimension-chain-interval--${kind}`,
+          "data-dimension-displayed": kind === "displayed" || void 0,
+          "data-dimension-closure": kind === "closure" || void 0,
+          "data-dimension-conflict": conflict || void 0,
+          children: [
+            /* @__PURE__ */ jsxRuntime.jsx("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
+            /* @__PURE__ */ jsxRuntime.jsx("line", { x1: a[0], y1: a[1] - 4 / scale, x2: a[0], y2: a[1] + 4 / scale, vectorEffect: "non-scaling-stroke" }),
+            /* @__PURE__ */ jsxRuntime.jsx("line", { x1: b[0], y1: b[1] - 4 / scale, x2: b[0], y2: b[1] + 4 / scale, vectorEffect: "non-scaling-stroke" }),
+            /* @__PURE__ */ jsxRuntime.jsxs("text", { x: middle[0], y: middle[1] - 5 / scale, textAnchor: "middle", fontSize: 11 / scale, children: [
+              candidate.nominalValue,
+              " ",
+              scheme.topology.unit
+            ] })
+          ]
+        }
+      );
+    }
+    function DimensionChainInspector({ scheme, controller }) {
+      const candidates = new Map(scheme.candidates.map((candidate2) => [candidate2.id, candidate2]));
+      const candidate = (id) => candidates.get(id);
+      return /* @__PURE__ */ jsxRuntime.jsxs("section", { className: "vai-dimension-chain-inspector", "aria-label": "尺寸链推断检查", children: [
+        /* @__PURE__ */ jsxRuntime.jsxs("header", { children: [
+          /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "轴向尺寸链" }),
+          /* @__PURE__ */ jsxRuntime.jsx("span", { "data-dimension-scheme-status": scheme.status, children: statusLabel(scheme.status) })
+        ] }),
+        scheme.diagnostics.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("ul", { className: "vai-dimension-chain-inspector__diagnostics", children: scheme.diagnostics.map((diagnostic) => /* @__PURE__ */ jsxRuntime.jsx("li", { children: diagnosticLabel(diagnostic.code) }, diagnostic.id)) }),
+        /* @__PURE__ */ jsxRuntime.jsx("ol", { children: scheme.chains.map((chain) => {
+          const parent = candidate(chain.parentCandidateId);
+          const closure = candidate(chain.closureCandidateId);
+          return /* @__PURE__ */ jsxRuntime.jsxs("li", { "data-dimension-chain-id": chain.id, children: [
+            /* @__PURE__ */ jsxRuntime.jsxs("strong", { children: [
+              (parent == null ? void 0 : parent.nominalValue) ?? "?",
+              " ",
+              scheme.topology.unit
+            ] }),
+            /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+              chain.childCandidateIds.map((id) => {
+                var _a2;
+                return ((_a2 = candidate(id)) == null ? void 0 : _a2.nominalValue) ?? "?";
+              }).join(" + "),
+              " + ",
+              (closure == null ? void 0 : closure.nominalValue) ?? "?"
+            ] }),
+            /* @__PURE__ */ jsxRuntime.jsxs("small", { children: [
+              "闭环：",
+              (closure == null ? void 0 : closure.nominalValue) ?? "?",
+              " ",
+              scheme.topology.unit
+            ] }),
+            chain.alternativeClosureCandidateIds.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("div", { className: "vai-dimension-chain-inspector__alternatives", children: chain.alternativeClosureCandidateIds.map((id) => {
+              const item = candidate(id);
+              if (!item) return null;
+              return /* @__PURE__ */ jsxRuntime.jsxs(
+                "button",
+                {
+                  type: "button",
+                  "aria-label": `选择候选闭环 ${item.nominalValue} ${scheme.topology.unit}`,
+                  onClick: () => void controller.actions.chooseClosure(chain.id, id).catch(() => void 0),
+                  children: [
+                    "改用 ",
+                    item.nominalValue,
+                    " ",
+                    scheme.topology.unit
+                  ]
+                },
+                id
+              );
+            }) })
+          ] }, chain.id);
+        }) }),
+        /* @__PURE__ */ jsxRuntime.jsx("h3", { children: "显示尺寸" }),
+        /* @__PURE__ */ jsxRuntime.jsx("ul", { className: "vai-dimension-chain-inspector__candidates", children: scheme.candidates.filter(({ id }) => !scheme.closureCandidateIds.includes(id)).map((item) => {
+          const displayed = scheme.displayedCandidateIds.includes(item.id);
+          return /* @__PURE__ */ jsxRuntime.jsx("li", { children: /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
+            /* @__PURE__ */ jsxRuntime.jsx("input", { type: "checkbox", checked: displayed, onChange: (event) => {
+              void controller.actions.setDisplayed(item.id, event.currentTarget.checked).catch(() => void 0);
+            } }),
+            item.nominalValue,
+            " ",
+            scheme.topology.unit
+          ] }) }, item.id);
+        }) })
+      ] });
+    }
+    function statusLabel(status) {
+      return { resolved: "可确认", "needs-review": "待复核", conflict: "有冲突", stale: "已过期" }[status];
+    }
+    function diagnosticLabel(code) {
+      if (code === "DIMENSION_DOCUMENT_DISPLAY_CONFLICT") return "文档与目标标注冲突";
+      if (code === "DIMENSION_CLOSURE_AMBIGUOUS") return "闭环选择需要确认";
+      if (code === "DIMENSION_CHAIN_INCOMPLETE") return "尺寸链不完整";
+      return code;
+    }
     function partitionBands(draft, mode) {
       if (mode === "segments") return draft.segments.map((segment, index) => ({
         id: segment.id,
@@ -6139,15 +6286,15 @@ window.__ModuleLoader__.load({
     function visualLength(value) {
       return [...value].reduce((total, character) => total + ((character.codePointAt(0) ?? 0) > 255 ? 2 : 1), 0);
     }
-    function PartitionActionToolbar({ controller, previewHeld }) {
-      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": "分区确认工具栏", children: [
-        /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--cancel", "aria-label": "取消分区", title: "取消", onClick: () => void controller.actions.cancel().catch(() => void 0), children: "×" }),
+    function PartitionActionToolbar({ controller, previewHeld, subject = "分区" }) {
+      return /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-actions", role: "toolbar", "aria-label": `${subject}确认工具栏`, children: [
+        /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--cancel", "aria-label": `取消${subject}`, title: "取消", onClick: () => void controller.actions.cancel().catch(() => void 0), children: "×" }),
         /* @__PURE__ */ jsxRuntime.jsx(
           "button",
           {
             type: "button",
             className: `vai-partition-action vai-partition-action--preview${previewHeld ? " is-held" : ""}`,
-            "aria-label": "按住预览分区结果",
+            "aria-label": `按住预览${subject}结果`,
             title: "按住预览",
             onPointerDown: () => controller.actions.setPreviewHeld(true),
             onPointerUp: () => controller.actions.setPreviewHeld(false),
@@ -6156,7 +6303,7 @@ window.__ModuleLoader__.load({
             children: "◉"
           }
         ),
-        /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--confirm", "aria-label": "确认分区", title: "确认", onClick: () => void controller.actions.confirm().catch(() => void 0), children: "✓" })
+        /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", className: "vai-partition-action vai-partition-action--confirm", "aria-label": `确认${subject}`, title: "确认", onClick: () => void controller.actions.confirm().catch(() => void 0), children: "✓" })
       ] });
     }
     function PartitionViewSwitch({ mode, onChange }) {
@@ -6674,6 +6821,7 @@ window.__ModuleLoader__.load({
     }
     const ANNOTATION_PARTITION_LAYER_ID = "vectorai.annotation.partition";
     const ANNOTATION_OPENING_ANGLE_LAYER_ID = "vectorai.annotation.opening-angle";
+    const ANNOTATION_DIMENSION_CHAIN_LAYER_ID = "vectorai.annotation.dimension-chain";
     const ANNOTATION_PARTITION_LAYER = {
       id: ANNOTATION_PARTITION_LAYER_ID,
       label: "智能分区",
@@ -6688,6 +6836,14 @@ window.__ModuleLoader__.load({
       category: "engineering",
       icon: "angle",
       order: 110,
+      defaultVisible: true
+    };
+    const ANNOTATION_DIMENSION_CHAIN_LAYER = {
+      id: ANNOTATION_DIMENSION_CHAIN_LAYER_ID,
+      label: "尺寸链",
+      category: "engineering",
+      icon: "dimension",
+      order: 120,
       defaultVisible: true
     };
     function layerVisibilityStorageKey(sessionId) {
@@ -6749,17 +6905,42 @@ window.__ModuleLoader__.load({
     const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
     const PARTITION_HYDRATION_INTERVAL_MS = 500;
     const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
-    const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER];
+    const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER];
     const subscribeToNoLayers = () => () => void 0;
     const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
-    function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan, layerRegistry }) {
-      var _a2;
+    const EMPTY_DIMENSION_STATE = {
+      plan: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 },
+      busy: false,
+      previewHeld: false,
+      error: null
+    };
+    const EMPTY_DIMENSION_CONTROLLER = {
+      state: {
+        getSnapshot: () => EMPTY_DIMENSION_STATE,
+        subscribe: () => () => void 0
+      },
+      actions: {
+        refresh: async () => void 0,
+        setDisplayed: async () => void 0,
+        chooseClosure: async () => void 0,
+        confirm: async () => void 0,
+        cancel: async () => void 0,
+        undo: async () => void 0,
+        redo: async () => void 0,
+        setPreviewHeld: () => void 0
+      },
+      dispose: () => void 0
+    };
+    function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, dimensionPlan, layerRegistry }) {
+      var _a2, _b;
+      const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
       const snapshot = useObservable(runtime.snapshot);
       const viewport = useObservable(runtime.viewport);
       const selectedIds = useObservable(runtime.selection);
       const presentation = useObservable(runtime.presentation);
       const annotationState = useObservable(state);
       const partitionState = useObservable(partition.state);
+      const dimensionState = useObservable(dimensionChain.state);
       const displaySnapshot = presentation.displaySnapshot ?? snapshot;
       const [importError, setImportError] = react.useState(null);
       const [stagedDocumentNames, setStagedDocumentNames] = react.useState([]);
@@ -6807,6 +6988,8 @@ window.__ModuleLoader__.load({
         });
       };
       const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
+      const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID] ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
+      const dimensionScheme = (_a2 = dimensionState.plan.draft) == null ? void 0 : _a2.axialScheme;
       react.useEffect(() => {
         let active = true;
         let timer;
@@ -6829,13 +7012,16 @@ window.__ModuleLoader__.load({
         };
       }, [annotationState.activationEpoch, partition, state]);
       react.useEffect(() => {
-        const release = () => partition.actions.setPreviewHeld(false);
+        const release = () => {
+          partition.actions.setPreviewHeld(false);
+          dimensionChain.actions.setPreviewHeld(false);
+        };
         window.addEventListener("blur", release);
         return () => {
           window.removeEventListener("blur", release);
           release();
         };
-      }, [partition]);
+      }, [dimensionChain, partition]);
       react.useEffect(() => {
         if (!partitionState.busy) {
           void runtime.actions.refresh().then(() => {
@@ -6862,7 +7048,11 @@ window.__ModuleLoader__.load({
         const previous = displayedDrawingRef.current;
         displayedDrawingRef.current = key;
         if (previous !== null && previous !== key) void partition.actions.refresh().catch(() => void 0);
-      }, [displaySnapshot, partition]);
+        if (previous !== null && previous !== key) void dimensionChain.actions.refresh().catch(() => void 0);
+      }, [dimensionChain, displaySnapshot, partition]);
+      react.useEffect(() => {
+        void dimensionChain.actions.refresh().catch(() => void 0);
+      }, [annotationState.activationEpoch, dimensionChain]);
       const beginImport = (drawing, documents) => {
         setImportError(null);
         void partition.actions.importFiles(drawing, documents).then(() => setActivePanel(null)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
@@ -6884,13 +7074,14 @@ window.__ModuleLoader__.load({
         draft && !partitionState.previewHeld && /* @__PURE__ */ jsxRuntime.jsx(PartitionInspector, { draft, controller: partition, mode: partitionView, onModeChange: setPartitionView }, partitionState.partition.updatedAt),
         !draft && confirmed && /* @__PURE__ */ jsxRuntime.jsx(ConfirmedPartitionInspector, { revision: confirmed, busy: partitionState.busy, mode: partitionView, onModeChange: setPartitionView, onReopen: partition.actions.reopen }),
         dimensionPlan && /* @__PURE__ */ jsxRuntime.jsx(DimensionPlanInspector, { draft: dimensionPlan.draft, generationOrder: dimensionPlan.generationOrder }),
+        dimensionScheme && /* @__PURE__ */ jsxRuntime.jsx(DimensionChainInspector, { scheme: dimensionScheme, controller: dimensionChain }),
         !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
           /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "标注检查" }),
           /* @__PURE__ */ jsxRuntime.jsxs("dl", { children: [
             /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "流程" }),
             /* @__PURE__ */ jsxRuntime.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
             /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "候选" }),
-            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: ((_a2 = presentation.preview) == null ? void 0 : _a2.diff.createdNodeIds.length) ?? 0 }),
+            /* @__PURE__ */ jsxRuntime.jsx("dd", { children: ((_b = presentation.preview) == null ? void 0 : _b.diff.createdNodeIds.length) ?? 0 }),
             /* @__PURE__ */ jsxRuntime.jsx("dt", { children: "选中" }),
             /* @__PURE__ */ jsxRuntime.jsx("dd", { children: selectedIds.length })
           ] })
@@ -6930,7 +7121,7 @@ window.__ModuleLoader__.load({
                 /* @__PURE__ */ jsxRuntime.jsx(
                   DrawingLayerManager,
                   {
-                    layers: registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle).map((definition) => ({
+                    layers: registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme)).map((definition) => ({
                       definition,
                       visible: layerVisibility[definition.id] ?? definition.defaultVisible
                     })),
@@ -6981,22 +7172,31 @@ window.__ModuleLoader__.load({
                           onRenameBand: (band, name) => partitionView === "functional" ? partition.actions.renameSemanticGroup(band.id, name) : partition.actions.updateSegment(band.segmentIds[0], { name })
                         }
                       ),
-                      partitionOverlayVisible && !draft && confirmed && /* @__PURE__ */ jsxRuntime.jsx(PartitionOverlay, { draft: confirmed, mode: partitionView, previewHeld: true, scale: viewport.scale })
+                      partitionOverlayVisible && !draft && confirmed && /* @__PURE__ */ jsxRuntime.jsx(PartitionOverlay, { draft: confirmed, mode: partitionView, previewHeld: true, scale: viewport.scale }),
+                      dimensionScheme && /* @__PURE__ */ jsxRuntime.jsx(
+                        DimensionChainOverlay,
+                        {
+                          scheme: dimensionScheme,
+                          scale: viewport.scale,
+                          visible: dimensionChainVisible,
+                          previewHeld: dimensionState.previewHeld
+                        }
+                      )
                     ] })
                   }
                 ),
-                partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
+                dimensionState.plan.phase === "editing" ? /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: dimensionChain, previewHeld: dimensionState.previewHeld, subject: "尺寸链" }) : partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
                 displaySnapshot && /* @__PURE__ */ jsxRuntime.jsx(
                   WorkspaceToolbarView,
                   {
                     snapshot: displaySnapshot,
                     viewport,
                     unavailable: partitionState.busy,
-                    canUndo: partitionState.partition.canUndo,
-                    canRedo: partitionState.partition.canRedo,
+                    canUndo: dimensionState.plan.phase === "editing" ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
+                    canRedo: dimensionState.plan.phase === "editing" ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
                     onFit: runtime.actions.setViewport,
-                    onUndo: () => partition.actions.undo(),
-                    onRedo: () => partition.actions.redo(),
+                    onUndo: () => dimensionState.plan.phase === "editing" ? dimensionChain.actions.undo() : partition.actions.undo(),
+                    onRedo: () => dimensionState.plan.phase === "editing" ? dimensionChain.actions.redo() : partition.actions.redo(),
                     onUploadFiles: handleToolbarUpload,
                     uploadAccept: ANNOTATION_UPLOAD_ACCEPT,
                     uploadMultiple: true
@@ -13266,6 +13466,98 @@ window.__ModuleLoader__.load({
       reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
       evidenceIds: array(idSchema)
     }).strict();
+    const axialStationSchema = object({
+      id: idSchema,
+      coordinate: number().finite(),
+      sourceCoordinate: number().finite(),
+      unit: _enum(["mm", "cm", "m"]),
+      kinds: array(_enum(["drawing-end", "shoulder", "partition-boundary", "datum"])),
+      geometryNodeIds: array(idSchema),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const axialElementarySpanSchema = object({
+      id: idSchema,
+      startStationId: idSchema,
+      endStationId: idSchema,
+      nominalValue: number().finite().nonnegative(),
+      segmentIds: array(idSchema),
+      evidenceIds: array(idSchema)
+    }).strict();
+    const dimensionEvidenceSchema = object({
+      id: idSchema,
+      origin: _enum(["geometry", "partition", "document", "manual", "ai"]),
+      kind: _enum(["drawing-end", "elementary-span", "functional-region", "document-interval", "process-envelope", "manual-requirement"]),
+      label: string(),
+      required: boolean(),
+      sourceIds: array(idSchema)
+    }).strict();
+    const axialDimensionCandidateSchema = object({
+      id: idSchema,
+      startStationId: idSchema,
+      endStationId: idSchema,
+      nominalValue: number().finite().nonnegative(),
+      roles: array(_enum(["overall", "composite", "functional", "process", "local", "reference", "closure"])),
+      evidenceIds: array(idSchema),
+      required: boolean()
+    }).strict();
+    const dimensionDecisionTraceSchema = object({
+      candidateId: idSchema,
+      decision: _enum(["displayed", "closure", "rejected", "alternative"]),
+      score: number().finite(),
+      features: array(object({
+        feature: _enum(["manual-required", "document-exact", "functional-region", "process-envelope", "composite-block", "overall-root", "elementary-span", "ordinary-residual", "terminal-residual"]),
+        contribution: number().finite(),
+        evidenceIds: array(idSchema)
+      }).strict()),
+      reasonCodes: array(idSchema)
+    }).strict();
+    const axialChainNodeSchema = object({
+      id: idSchema,
+      parentCandidateId: idSchema,
+      childCandidateIds: array(idSchema),
+      closureCandidateId: idSchema,
+      alternativeClosureCandidateIds: array(idSchema),
+      status: _enum(["resolved", "needs-review", "conflict"])
+    }).strict();
+    const axialDimensionSchemeSchema = object({
+      version: literal(1),
+      drawingRef: drawingRefSchema,
+      partitionRevisionId: idSchema.optional(),
+      policy: object({
+        id: _enum(["shaft-hierarchical-dimensioning-v1", "shaft-reference-terminal-closure-v1"]),
+        version: literal("1")
+      }).strict(),
+      inputDigest: idSchema,
+      topology: object({
+        drawingRef: drawingRefSchema,
+        axis: shaftAxisSchema,
+        unit: _enum(["mm", "cm", "m"]),
+        stations: array(axialStationSchema),
+        elementarySpans: array(axialElementarySpanSchema)
+      }).strict(),
+      evidence: array(dimensionEvidenceSchema),
+      candidates: array(axialDimensionCandidateSchema),
+      displayedCandidateIds: array(idSchema),
+      closureCandidateIds: array(idSchema),
+      chains: array(axialChainNodeSchema),
+      decisions: array(dimensionDecisionTraceSchema),
+      diagnostics: array(engineeringDiagnosticSchema),
+      status: _enum(["resolved", "needs-review", "conflict", "stale"])
+    }).strict();
+    const dimensionSchemeEditCommandSchema = discriminatedUnion("type", [
+      object({
+        type: literal("candidate.display"),
+        candidateId: idSchema,
+        displayed: boolean(),
+        expectedDrawingRef: drawingRefSchema
+      }).strict(),
+      object({
+        type: literal("closure.choose"),
+        chainId: idSchema,
+        candidateId: idSchema,
+        expectedDrawingRef: drawingRefSchema
+      }).strict()
+    ]);
     const engineeringAnnotationDraftSchema = object({
       version: literal(1),
       drawingRef: drawingRefSchema,
@@ -13275,6 +13567,7 @@ window.__ModuleLoader__.load({
       chains: array(dimensionChainSchema),
       dependencies: array(annotationDependencySchema),
       diagnostics: array(engineeringDiagnosticSchema),
+      axialScheme: axialDimensionSchemeSchema.optional(),
       baseRevisionId: idSchema.optional()
     }).strict();
     const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
@@ -13285,7 +13578,7 @@ window.__ModuleLoader__.load({
       generationOrder: array(idSchema),
       confirmedAt: number().finite()
     }).strict();
-    object({
+    const dimensionPlanSessionSnapshotSchema = object({
       version: literal(1),
       phase: _enum(["idle", "editing", "confirmed", "needs-rebase", "failed"]),
       drawingRef: drawingRefSchema.optional(),
@@ -13322,7 +13615,7 @@ window.__ModuleLoader__.load({
           typeSymbol: "@vectorai/plugin-space-contracts#AnnotationSessionState",
           schema: annotationSessionStateSchema
         }
-      }, ...partitionDescriptors()]
+      }, ...partitionDescriptors(), ...dimensionDescriptors()]
     };
     function partitionDescriptors() {
       return [
@@ -13339,6 +13632,32 @@ window.__ModuleLoader__.load({
         descriptor("undoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
         descriptor("redoPartition", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
       ];
+    }
+    function dimensionDescriptors() {
+      return [
+        dimensionDescriptor("getDimensionPlan", []),
+        dimensionDescriptor("editDimensionScheme", [jsonParameter("command", "@vectorai/plugin-space-contracts#DimensionSchemeEditCommand", dimensionSchemeEditCommandSchema)]),
+        dimensionDescriptor("confirmDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+        dimensionDescriptor("cancelDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+        dimensionDescriptor("undoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
+        dimensionDescriptor("redoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)])
+      ];
+    }
+    function dimensionDescriptor(method, parameters) {
+      return {
+        id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+        service: "drawingAnnotation",
+        namespace: "drawingAnnotation",
+        method,
+        invocation: { kind: "direct" },
+        scope: { context: "agent", wire: "agentId" },
+        parameters: [agentParameter, ...parameters],
+        result: {
+          mode: "strict",
+          typeSymbol: "@vectorai/plugin-space-contracts#DimensionPlanSessionSnapshot",
+          schema: dimensionPlanSessionSnapshotSchema
+        }
+      };
     }
     function descriptor(method, parameters) {
       return {
@@ -13374,7 +13693,7 @@ window.__ModuleLoader__.load({
             ...pendingPartition === void 0 ? {} : { partition: pendingPartition }
           });
           try {
-            update({ partition: unwrap(await operation()) });
+            update({ partition: unwrap$1(await operation()) });
           } catch (error) {
             update({ error: error instanceof Error ? error.message : String(error) });
             throw error;
@@ -13459,7 +13778,7 @@ window.__ModuleLoader__.load({
         }
       };
     }
-    function unwrap(result) {
+    function unwrap$1(result) {
       if (result.ok !== true) throw new Error(result.error.message);
       return structuredClone(result.value);
     }
@@ -13489,6 +13808,70 @@ window.__ModuleLoader__.load({
         };
       }));
     }
+    function createDimensionChainController(sessionId, remoteSource) {
+      let current = {
+        plan: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 },
+        busy: false,
+        previewHeld: false,
+        error: null
+      };
+      const listeners = /* @__PURE__ */ new Set();
+      let queue = Promise.resolve();
+      let disposed = false;
+      const update = (changes) => {
+        if (disposed) return;
+        current = { ...current, ...changes };
+        for (const listener of listeners) listener();
+      };
+      const remote = () => typeof remoteSource === "function" ? remoteSource() : remoteSource;
+      const run = (operation) => {
+        const task = queue.then(async () => {
+          update({ busy: true, error: null });
+          try {
+            update({ plan: unwrap(await operation()) });
+          } catch (error) {
+            update({ error: error instanceof Error ? error.message : String(error) });
+            throw error;
+          } finally {
+            update({ busy: false });
+          }
+        });
+        queue = task.catch(() => void 0);
+        return task;
+      };
+      const ref = () => {
+        if (!current.plan.drawingRef) throw new Error("DIMENSION_DRAWING_REQUIRED");
+        return current.plan.drawingRef;
+      };
+      const edit = (command) => run(() => remote().editDimensionScheme(sessionId, { ...command, expectedDrawingRef: ref() }));
+      return {
+        state: {
+          getSnapshot: () => current,
+          subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          }
+        },
+        actions: {
+          refresh: () => run(() => remote().getDimensionPlan(sessionId)),
+          setDisplayed: (candidateId, displayed) => edit({ type: "candidate.display", candidateId, displayed }),
+          chooseClosure: (chainId, candidateId) => edit({ type: "closure.choose", chainId, candidateId }),
+          confirm: () => run(() => remote().confirmDimensionPlan(sessionId, ref())),
+          cancel: () => run(() => remote().cancelDimensionPlan(sessionId, ref())),
+          undo: () => run(() => remote().undoDimensionPlan(sessionId, ref())),
+          redo: () => run(() => remote().redoDimensionPlan(sessionId, ref())),
+          setPreviewHeld: (previewHeld) => update({ previewHeld })
+        },
+        dispose() {
+          disposed = true;
+          listeners.clear();
+        }
+      };
+    }
+    function unwrap(result) {
+      if (result.ok !== true) throw new Error(result.error.message);
+      return structuredClone(result.value);
+    }
     const inject = ["remote", "drawingSurfaceRegistry", "slots"];
     async function apply(ctx) {
       const remote = ctx.get("remote");
@@ -13501,6 +13884,7 @@ window.__ModuleLoader__.load({
           const slots = scope.get("slots");
           const stateSource = createAnnotationRemoteStateSource(annotationRemote);
           const partitionControllers = /* @__PURE__ */ new Map();
+          const dimensionControllers = /* @__PURE__ */ new Map();
           const partitionFor = (sessionId) => {
             const current = partitionControllers.get(sessionId);
             if (current) return current;
@@ -13512,8 +13896,20 @@ window.__ModuleLoader__.load({
             void controller.actions.refresh();
             return controller;
           };
+          const dimensionsFor = (sessionId) => {
+            const current = dimensionControllers.get(sessionId);
+            if (current) return current;
+            const controller = createDimensionChainController(
+              sessionId,
+              () => scope.get("remote").drawingAnnotation
+            );
+            dimensionControllers.set(sessionId, controller);
+            void controller.actions.refresh();
+            return controller;
+          };
           const layerRegistration = registry2.registerLayer(ANNOTATION_PARTITION_LAYER);
           const openingAngleLayerRegistration = registry2.registerLayer(ANNOTATION_OPENING_ANGLE_LAYER);
+          const dimensionChainLayerRegistration = registry2.registerLayer(ANNOTATION_DIMENSION_CHAIN_LAYER);
           const registration = registry2.registerWorkspace({
             id: "engineering-annotation",
             apiVersion: 1,
@@ -13524,7 +13920,8 @@ window.__ModuleLoader__.load({
               {
                 ...props,
                 state: stateSource.observeState(props.sessionId),
-                partition: partitionFor(props.sessionId)
+                partition: partitionFor(props.sessionId),
+                dimensionChain: dimensionsFor(props.sessionId)
               }
             )
           });
@@ -13544,10 +13941,13 @@ window.__ModuleLoader__.load({
             await dropFiber.dispose();
             registration.dispose();
             openingAngleLayerRegistration.dispose();
+            dimensionChainLayerRegistration.dispose();
             layerRegistration.dispose();
             stateSource.dispose();
             for (const controller of partitionControllers.values()) controller.dispose();
             partitionControllers.clear();
+            for (const controller of dimensionControllers.values()) controller.dispose();
+            dimensionControllers.clear();
           };
         }
       );
@@ -13562,7 +13962,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset["vectoraiDshAnnotation"] = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-layer-manager {\n  position: absolute;\n  z-index: 11;\n  top: 14px;\n  right: 16px;\n  color: #d8e0eb;\n  font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-layer-manager__trigger {\n  display: grid;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  place-items: center;\n  border: 1px solid rgba(148, 163, 184, .22);\n  border-radius: 9px;\n  color: #aebdce;\n  background: rgba(14, 21, 29, .9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, .28);\n  backdrop-filter: blur(12px);\n}\n\n.vai-layer-manager__trigger[aria-expanded=\"true\"] {\n  border-color: rgba(56, 189, 248, .42);\n  color: #7dd3fc;\n  background: rgba(14, 116, 144, .2);\n}\n\n.vai-layer-manager__menu {\n  position: absolute;\n  top: 38px;\n  right: 0;\n  display: grid;\n  min-width: 190px;\n  gap: 8px;\n  padding: 9px;\n  border: 1px solid rgba(148, 163, 184, .2);\n  border-radius: 12px;\n  background: rgba(12, 19, 27, .96);\n  box-shadow: 0 16px 36px rgba(0, 0, 0, .38);\n  backdrop-filter: blur(14px);\n}\n\n.vai-layer-manager__group { display: grid; gap: 4px; }\n.vai-layer-manager__group h3 { margin: 0; padding: 3px 7px; color: #71859a; font-size: 9px; font-weight: 600; letter-spacing: .08em; }\n.vai-layer-manager__item { display: grid; grid-template-columns: 18px minmax(0, 1fr) 18px; align-items: center; gap: 7px; min-height: 32px; padding: 5px 7px; border: 1px solid transparent; border-radius: 8px; color: #8295aa; background: transparent; font-size: 11px; text-align: left; }\n.vai-layer-manager__item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.vai-layer-manager__item[aria-pressed=\"true\"] { border-color: rgba(56, 189, 248, .2); color: #c9effd; background: rgba(14, 116, 144, .13); }\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel, #12161b);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel-deep, #0d1014);\n}\n\n.vai-activity-bar--overlay {\n  position: absolute;\n  inset: 0 auto 0 0;\n  box-sizing: border-box;\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n  border: 1px solid transparent;\n  color: var(--vai-muted);\n  background: transparent;\n  cursor: pointer;\n}\n\n.vai-activity-bar__button:hover,\n.vai-activity-bar__button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--overlay {\n  position: absolute;\n  z-index: 5;\n  inset: 0 auto 0 42px;\n  box-sizing: border-box;\n  box-shadow: 14px 0 30px rgba(0, 0, 0, 0.28);\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n/* CAD semantic palette: geometry stays neutral, dimensions read in cyan and\n   section hatches in yellow without changing the source drawing data. */\n.vai-entity--angular-dimension {\n  color: #22d3ee;\n  fill: #22d3ee;\n  stroke: #22d3ee;\n}\n\n.vai-entity--section-hatch {\n  color: #facc15;\n  stroke: #facc15;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  flex: 1 1 auto;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }\n.vai-annotation-workspace__body { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-annotation-status-stack { position: absolute; z-index: 12; top: 14px; left: 50%; display: grid; justify-items: center; gap: 7px; width: max-content; max-width: calc(100% - 96px); transform: translateX(-50%); pointer-events: none; }\n.vai-partition-progress { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; }\n.vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }\n.vai-partition-error { margin: 0; padding: 7px 12px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; }\n@keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-panel { min-height: 0; padding: 14px; overflow: auto; }\n.vai-annotation-panel h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-panel dt { color: #8fa1b5; }\n.vai-annotation-panel dd { margin: 0; }\n\n.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }\n.vai-annotation-import--panel { box-sizing: border-box; width: 100%; margin: 0; padding: 16px 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }\n.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }\n.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }\n.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }\n.vai-annotation-import__files { display: grid; max-height: 112px; gap: 4px; margin: -4px 0 0; padding: 8px 10px 8px 28px; overflow: auto; border-radius: 8px; color: #9fb2c7; background: rgba(5, 12, 19, .55); font-size: 11px; }\n.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }\n.vai-engineering-documents-status { display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 8px 10px 8px 14px; border: 1px solid rgba(52, 211, 153, .42); border-radius: 10px; color: #b7f7db; background: rgba(8, 32, 29, .94); box-shadow: 0 10px 28px rgba(0, 0, 0, .28); font-size: 12px; pointer-events: auto; }\n.vai-engineering-documents-status button { padding: 4px 8px; border: 1px solid rgba(148, 163, 184, .3); border-radius: 7px; color: #d7e1ec; background: rgba(30, 41, 59, .72); cursor: pointer; }\n\n.vai-engineering-drop { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; padding: 6px 10px; border: 1px solid rgba(72, 187, 238, .28); border-radius: 9px; color: #b8dff2; background: rgba(9, 50, 70, .58); font-size: 12px; }\n.vai-engineering-drop--pending { border-color: rgba(96, 165, 250, .3); background: rgba(30, 64, 175, .12); }\n.vai-engineering-drop--importing { border-color: rgba(52, 211, 153, .3); color: #9ce8c5; background: rgba(6, 95, 70, .15); }\n.vai-engineering-drop--success { border-color: rgba(52, 211, 153, .38); color: #a7f3d0; background: rgba(6, 95, 70, .2); }\n.vai-engineering-drop--error { border-color: rgba(248, 113, 113, .35); color: #ffabb1; background: rgba(127, 29, 29, .18); }\n.vai-engineering-drop button { flex: none; padding: 3px 8px; border: 1px solid currentColor; border-radius: 7px; color: inherit; background: transparent; font-size: 11px; }\n\n.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }\n.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }\n.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }\n.vai-partition-band--geometry { stroke-dasharray: 8 5; }\n.vai-partition-label-anchor[role=\"button\"] { cursor: text; }\n.vai-partition-label-bg { fill: rgba(10, 18, 26, .9); stroke: rgba(125, 211, 252, .35); stroke-width: 1px; }\n.vai-partition-label { fill: #e6f7ff; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; letter-spacing: .2px; }\n.vai-partition-label-input { box-sizing: border-box; width: 100%; height: 18px; padding: 1px 5px; border: 1px solid rgba(125, 211, 252, .7); border-radius: 5px; outline: none; color: #e6f7ff; background: #0a121a; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; text-align: center; }\n.vai-partition-handle-leader { stroke: rgba(84, 200, 247, .72); stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }\n\n.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }\n.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }\n.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }\n.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }\n.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }\n.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-partition-inspector__title { display: grid; gap: 9px; margin-bottom: 12px; }\n.vai-partition-inspector__title h2 { margin: 0; }\n.vai-partition-view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 9px; background: rgba(5, 12, 19, .5); }\n.vai-partition-view-switch button { min-width: 0; padding: 6px 8px; border: 0; border-radius: 6px; color: #8295aa; background: transparent; font-size: 10px; }\n.vai-partition-view-switch button.is-active { color: #dff6ff; background: rgba(14, 165, 233, .2); box-shadow: inset 0 0 0 1px rgba(56, 189, 248, .22); }\n.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }\n.vai-partition-inspector small { color: #8295aa; }\n.vai-partition-inspector__unclassified { margin: 10px 0 0; color: #8295aa; font-size: 10px; line-height: 1.5; }\n.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }\n.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }\n.vai-partition-inspector__commands { display: flex; gap: 5px; }\n.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }\n.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }\n.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }\n.vai-confirmed-partition__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }\n.vai-confirmed-partition__heading > div { display: flex; align-items: center; gap: 7px; }\n.vai-confirmed-partition__heading h2 { margin: 0; }\n.vai-confirmed-partition__heading span { padding: 2px 6px; border: 1px solid rgba(52, 211, 153, .26); border-radius: 999px; color: #6ee7b7; background: rgba(6, 78, 59, .28); font-size: 9px; }\n.vai-confirmed-partition__heading button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, .28); border-radius: 7px; color: #bae6fd; background: rgba(14, 116, 144, .16); font-size: 10px; }\n.vai-confirmed-partition__heading button:disabled { opacity: .45; }\n.vai-confirmed-partition__actions { display: flex; align-items: center; gap: 6px; }\n.vai-confirmed-partition__meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0 0 12px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .045); font-size: 10px; }\n.vai-confirmed-partition__meta dt { color: #8295aa; }\n.vai-confirmed-partition__meta dd { min-width: 0; margin: 0; overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }\n.vai-confirmed-partition em { color: #7dd3fc; font-size: 10px; font-style: normal; }\n\n.vai-dimension-plan { min-width: 0; }\n.vai-dimension-plan > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }\n.vai-dimension-plan > header h2 { margin: 0; }\n.vai-dimension-plan > header span { color: #8295aa; font-size: 11px; }\n.vai-dimension-plan ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-plan li { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(148, 163, 184, .055); }\n.vai-dimension-plan__row-title { display: flex; align-items: center; gap: 7px; font-size: 12px; }\n.vai-dimension-plan__order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #8fdcff; background: rgba(14, 165, 233, .14); font: 600 10px ui-monospace, monospace; }\n.vai-dimension-plan__row-title strong { flex: 1; }\n.vai-dimension-plan__nominal { color: #e2e8f0; font: 600 13px ui-monospace, monospace; }\n.vai-dimension-plan dl { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 7px; margin: 0; font-size: 10px; line-height: 1.45; }\n.vai-dimension-plan dt { color: #71859a; }\n.vai-dimension-plan dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #aebdce; }\n.vai-dimension-plan dd code { display: block; margin-top: 2px; color: #7dd3fc; font-size: 10px; }\n.vai-dimension-badge { padding: 2px 6px; border-radius: 999px; color: #9fb0c2; background: rgba(148, 163, 184, .1); font-size: 9px; }\n.vai-dimension-badge--confirmed, .vai-dimension-badge--resolved { color: #64dca2; background: rgba(34, 197, 94, .13); }\n.vai-dimension-badge--candidate { color: #f7c86c; background: rgba(245, 158, 11, .13); }\n.vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }\n.vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }\n.vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-layer-manager {\n  position: absolute;\n  z-index: 11;\n  top: 14px;\n  right: 16px;\n  color: #d8e0eb;\n  font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-layer-manager__trigger {\n  display: grid;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  place-items: center;\n  border: 1px solid rgba(148, 163, 184, .22);\n  border-radius: 9px;\n  color: #aebdce;\n  background: rgba(14, 21, 29, .9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, .28);\n  backdrop-filter: blur(12px);\n}\n\n.vai-layer-manager__trigger[aria-expanded=\"true\"] {\n  border-color: rgba(56, 189, 248, .42);\n  color: #7dd3fc;\n  background: rgba(14, 116, 144, .2);\n}\n\n.vai-layer-manager__menu {\n  position: absolute;\n  top: 38px;\n  right: 0;\n  display: grid;\n  min-width: 190px;\n  gap: 8px;\n  padding: 9px;\n  border: 1px solid rgba(148, 163, 184, .2);\n  border-radius: 12px;\n  background: rgba(12, 19, 27, .96);\n  box-shadow: 0 16px 36px rgba(0, 0, 0, .38);\n  backdrop-filter: blur(14px);\n}\n\n.vai-layer-manager__group { display: grid; gap: 4px; }\n.vai-layer-manager__group h3 { margin: 0; padding: 3px 7px; color: #71859a; font-size: 9px; font-weight: 600; letter-spacing: .08em; }\n.vai-layer-manager__item { display: grid; grid-template-columns: 18px minmax(0, 1fr) 18px; align-items: center; gap: 7px; min-height: 32px; padding: 5px 7px; border: 1px solid transparent; border-radius: 8px; color: #8295aa; background: transparent; font-size: 11px; text-align: left; }\n.vai-layer-manager__item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.vai-layer-manager__item[aria-pressed=\"true\"] { border-color: rgba(56, 189, 248, .2); color: #c9effd; background: rgba(14, 116, 144, .13); }\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel, #12161b);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel-deep, #0d1014);\n}\n\n.vai-activity-bar--overlay {\n  position: absolute;\n  inset: 0 auto 0 0;\n  box-sizing: border-box;\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n  border: 1px solid transparent;\n  color: var(--vai-muted);\n  background: transparent;\n  cursor: pointer;\n}\n\n.vai-activity-bar__button:hover,\n.vai-activity-bar__button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--overlay {\n  position: absolute;\n  z-index: 5;\n  inset: 0 auto 0 42px;\n  box-sizing: border-box;\n  box-shadow: 14px 0 30px rgba(0, 0, 0, 0.28);\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n/* CAD semantic palette: geometry stays neutral, dimensions read in cyan and\n   section hatches in yellow without changing the source drawing data. */\n.vai-entity--angular-dimension {\n  color: #22d3ee;\n  fill: #22d3ee;\n  stroke: #22d3ee;\n}\n\n.vai-entity--section-hatch {\n  color: #facc15;\n  stroke: #facc15;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  flex: 1 1 auto;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }\n.vai-annotation-workspace__body { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-annotation-status-stack { position: absolute; z-index: 12; top: 14px; left: 50%; display: grid; justify-items: center; gap: 7px; width: max-content; max-width: calc(100% - 96px); transform: translateX(-50%); pointer-events: none; }\n.vai-partition-progress { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; }\n.vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }\n.vai-partition-error { margin: 0; padding: 7px 12px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; }\n@keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-panel { min-height: 0; padding: 14px; overflow: auto; }\n.vai-annotation-panel h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-panel dt { color: #8fa1b5; }\n.vai-annotation-panel dd { margin: 0; }\n\n.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }\n.vai-annotation-import--panel { box-sizing: border-box; width: 100%; margin: 0; padding: 16px 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }\n.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }\n.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }\n.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }\n.vai-annotation-import__files { display: grid; max-height: 112px; gap: 4px; margin: -4px 0 0; padding: 8px 10px 8px 28px; overflow: auto; border-radius: 8px; color: #9fb2c7; background: rgba(5, 12, 19, .55); font-size: 11px; }\n.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }\n.vai-engineering-documents-status { display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 8px 10px 8px 14px; border: 1px solid rgba(52, 211, 153, .42); border-radius: 10px; color: #b7f7db; background: rgba(8, 32, 29, .94); box-shadow: 0 10px 28px rgba(0, 0, 0, .28); font-size: 12px; pointer-events: auto; }\n.vai-engineering-documents-status button { padding: 4px 8px; border: 1px solid rgba(148, 163, 184, .3); border-radius: 7px; color: #d7e1ec; background: rgba(30, 41, 59, .72); cursor: pointer; }\n\n.vai-engineering-drop { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; padding: 6px 10px; border: 1px solid rgba(72, 187, 238, .28); border-radius: 9px; color: #b8dff2; background: rgba(9, 50, 70, .58); font-size: 12px; }\n.vai-engineering-drop--pending { border-color: rgba(96, 165, 250, .3); background: rgba(30, 64, 175, .12); }\n.vai-engineering-drop--importing { border-color: rgba(52, 211, 153, .3); color: #9ce8c5; background: rgba(6, 95, 70, .15); }\n.vai-engineering-drop--success { border-color: rgba(52, 211, 153, .38); color: #a7f3d0; background: rgba(6, 95, 70, .2); }\n.vai-engineering-drop--error { border-color: rgba(248, 113, 113, .35); color: #ffabb1; background: rgba(127, 29, 29, .18); }\n.vai-engineering-drop button { flex: none; padding: 3px 8px; border: 1px solid currentColor; border-radius: 7px; color: inherit; background: transparent; font-size: 11px; }\n\n.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }\n.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }\n.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }\n.vai-partition-band--geometry { stroke-dasharray: 8 5; }\n.vai-partition-label-anchor[role=\"button\"] { cursor: text; }\n.vai-partition-label-bg { fill: rgba(10, 18, 26, .9); stroke: rgba(125, 211, 252, .35); stroke-width: 1px; }\n.vai-partition-label { fill: #e6f7ff; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; letter-spacing: .2px; }\n.vai-partition-label-input { box-sizing: border-box; width: 100%; height: 18px; padding: 1px 5px; border: 1px solid rgba(125, 211, 252, .7); border-radius: 5px; outline: none; color: #e6f7ff; background: #0a121a; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; text-align: center; }\n.vai-partition-handle-leader { stroke: rgba(84, 200, 247, .72); stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }\n\n.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }\n.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }\n.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }\n.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }\n.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }\n.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-partition-inspector__title { display: grid; gap: 9px; margin-bottom: 12px; }\n.vai-partition-inspector__title h2 { margin: 0; }\n.vai-partition-view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 9px; background: rgba(5, 12, 19, .5); }\n.vai-partition-view-switch button { min-width: 0; padding: 6px 8px; border: 0; border-radius: 6px; color: #8295aa; background: transparent; font-size: 10px; }\n.vai-partition-view-switch button.is-active { color: #dff6ff; background: rgba(14, 165, 233, .2); box-shadow: inset 0 0 0 1px rgba(56, 189, 248, .22); }\n.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }\n.vai-partition-inspector small { color: #8295aa; }\n.vai-partition-inspector__unclassified { margin: 10px 0 0; color: #8295aa; font-size: 10px; line-height: 1.5; }\n.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }\n.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }\n.vai-partition-inspector__commands { display: flex; gap: 5px; }\n.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }\n.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }\n.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }\n.vai-confirmed-partition__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }\n.vai-confirmed-partition__heading > div { display: flex; align-items: center; gap: 7px; }\n.vai-confirmed-partition__heading h2 { margin: 0; }\n.vai-confirmed-partition__heading span { padding: 2px 6px; border: 1px solid rgba(52, 211, 153, .26); border-radius: 999px; color: #6ee7b7; background: rgba(6, 78, 59, .28); font-size: 9px; }\n.vai-confirmed-partition__heading button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, .28); border-radius: 7px; color: #bae6fd; background: rgba(14, 116, 144, .16); font-size: 10px; }\n.vai-confirmed-partition__heading button:disabled { opacity: .45; }\n.vai-confirmed-partition__actions { display: flex; align-items: center; gap: 6px; }\n.vai-confirmed-partition__meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0 0 12px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .045); font-size: 10px; }\n.vai-confirmed-partition__meta dt { color: #8295aa; }\n.vai-confirmed-partition__meta dd { min-width: 0; margin: 0; overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }\n.vai-confirmed-partition em { color: #7dd3fc; font-size: 10px; font-style: normal; }\n\n.vai-dimension-plan { min-width: 0; }\n.vai-dimension-plan > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }\n.vai-dimension-plan > header h2 { margin: 0; }\n.vai-dimension-plan > header span { color: #8295aa; font-size: 11px; }\n.vai-dimension-plan ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-plan li { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(148, 163, 184, .055); }\n.vai-dimension-plan__row-title { display: flex; align-items: center; gap: 7px; font-size: 12px; }\n.vai-dimension-plan__order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #8fdcff; background: rgba(14, 165, 233, .14); font: 600 10px ui-monospace, monospace; }\n.vai-dimension-plan__row-title strong { flex: 1; }\n.vai-dimension-plan__nominal { color: #e2e8f0; font: 600 13px ui-monospace, monospace; }\n.vai-dimension-plan dl { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 7px; margin: 0; font-size: 10px; line-height: 1.45; }\n.vai-dimension-plan dt { color: #71859a; }\n.vai-dimension-plan dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #aebdce; }\n.vai-dimension-plan dd code { display: block; margin-top: 2px; color: #7dd3fc; font-size: 10px; }\n.vai-dimension-badge { padding: 2px 6px; border-radius: 999px; color: #9fb0c2; background: rgba(148, 163, 184, .1); font-size: 9px; }\n.vai-dimension-badge--confirmed, .vai-dimension-badge--resolved { color: #64dca2; background: rgba(34, 197, 94, .13); }\n.vai-dimension-badge--candidate { color: #f7c86c; background: rgba(245, 158, 11, .13); }\n.vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }\n.vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }\n.vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }\n\n.vai-dimension-chain-interval { color: #22d3ee; }\n.vai-dimension-chain-interval line { stroke: currentColor; stroke-width: 1.5; }\n.vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; paint-order: stroke; stroke: #0b1118; stroke-width: 3px; }\n.vai-dimension-chain-interval--closure { color: #f59e0b; }\n.vai-dimension-chain-interval--closure line:first-child { stroke-dasharray: 5 4; }\n.vai-dimension-chain-interval[data-dimension-conflict=\"true\"] { color: #fb7185; }\n.vai-dimension-chain-inspector { display: grid; gap: 10px; }\n.vai-dimension-chain-inspector > header { display: flex; align-items: center; justify-content: space-between; }\n.vai-dimension-chain-inspector h2, .vai-dimension-chain-inspector h3 { margin: 0; }\n.vai-dimension-chain-inspector h3 { color: #b8c5d5; font-size: 11px; }\n.vai-dimension-chain-inspector > header span { padding: 2px 6px; border-radius: 999px; color: #7dd3fc; background: rgba(14, 165, 233, .14); font-size: 9px; }\n.vai-dimension-chain-inspector ol, .vai-dimension-chain-inspector ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-chain-inspector ol > li { display: grid; gap: 5px; padding: 9px; border: 1px solid rgba(56, 189, 248, .16); border-radius: 9px; background: rgba(14, 165, 233, .055); font-size: 11px; }\n.vai-dimension-chain-inspector small { color: #8295aa; }\n.vai-dimension-chain-inspector__alternatives { display: flex; flex-wrap: wrap; gap: 5px; }\n.vai-dimension-chain-inspector button { padding: 5px 7px; border: 1px solid rgba(245, 158, 11, .3); border-radius: 6px; color: #fbc56d; background: rgba(146, 64, 14, .16); font-size: 10px; }\n.vai-dimension-chain-inspector__candidates label { display: flex; align-items: center; gap: 7px; color: #c7d2df; font-size: 11px; }\n.vai-dimension-chain-inspector__diagnostics li { color: #f6bf73; font-size: 10px; }\n";
       document.head.append(style);
       var dispose;
       try {
