@@ -3,6 +3,7 @@
 import type { DrawingLayerDefinition } from '@vectorai/drawing-surface-api';
 
 export const ANNOTATION_PARTITION_LAYER_ID = 'vectorai.annotation.partition';
+export const ANNOTATION_OPENING_ANGLE_LAYER_ID = 'vectorai.annotation.opening-angle';
 
 export const ANNOTATION_PARTITION_LAYER: DrawingLayerDefinition = {
   id: ANNOTATION_PARTITION_LAYER_ID,
@@ -13,3 +14,11 @@ export const ANNOTATION_PARTITION_LAYER: DrawingLayerDefinition = {
   defaultVisible: true,
 };
 
+export const ANNOTATION_OPENING_ANGLE_LAYER: DrawingLayerDefinition = {
+  id: ANNOTATION_OPENING_ANGLE_LAYER_ID,
+  label: '开角标注',
+  category: 'engineering',
+  icon: 'angle',
+  order: 110,
+  defaultVisible: true,
+};

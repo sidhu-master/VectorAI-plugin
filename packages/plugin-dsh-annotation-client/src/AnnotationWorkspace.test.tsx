@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AnnotationWorkspace } from './AnnotationWorkspace';
 import type { PartitionController } from './partition-controller';
-import { ANNOTATION_PARTITION_LAYER } from './drawing-layers';
+import { ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_PARTITION_LAYER } from './drawing-layers';
 
 function observable<T>(value: T) {
   return { getSnapshot: () => value, subscribe: () => () => undefined };
@@ -380,7 +380,7 @@ describe('AnnotationWorkspace', () => {
       }, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
       actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
     } as unknown as PartitionController;
-    const registeredLayerDefinitions = [ANNOTATION_PARTITION_LAYER] as const;
+    const registeredLayerDefinitions = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER] as const;
     const layerRegistry = {
       getLayers: () => registeredLayerDefinitions,
       subscribeLayers: () => () => undefined,
@@ -445,6 +445,10 @@ describe('AnnotationWorkspace', () => {
     await act(async () => { renderer = TestRenderer.create(workspace); });
     expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(1);
     act(() => renderer!.root.findByProps({ 'aria-label': '管理图层' }).props.onClick());
+    expect(renderer!.root.findAllByProps({ 'aria-label': '隐藏开角标注' })).toHaveLength(1);
+    act(() => renderer!.root.findByProps({ 'aria-label': '隐藏开角标注' }).props.onClick());
+    expect(renderer!.root.findAllByProps({ 'data-entity-id': 'opening-angle' })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(1);
     act(() => renderer!.root.findByProps({ 'aria-label': '隐藏智能分区' }).props.onClick());
     expect(renderer!.root.findAllByProps({ 'data-partition-overlay': 'true' })).toHaveLength(0);
     expect(renderer!.root.findAllByProps({ 'aria-label': '显示智能分区' })).toHaveLength(1);

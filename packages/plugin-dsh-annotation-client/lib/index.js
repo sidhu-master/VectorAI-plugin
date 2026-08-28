@@ -7407,7 +7407,8 @@ function EntityRenderer({
   previewDiff
 }) {
   if (!node.visible) return null;
-  const className = `vai-entity vai-entity--${node.quality.status}${selected ? " vai-entity--selected" : ""}${aiGrounded ? " vai-entity--ai-grounded" : ""}${motionRigActive ? " vai-entity--motion-rig" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
+  const semanticClassName = node.type === "dimension" && node.dimensionKind === "angular" ? " vai-entity--angular-dimension" : node.type === "section-hatch" ? " vai-entity--section-hatch" : "";
+  const className = `vai-entity vai-entity--${node.quality.status}${semanticClassName}${selected ? " vai-entity--selected" : ""}${aiGrounded ? " vai-entity--ai-grounded" : ""}${motionRigActive ? " vai-entity--motion-rig" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
   const interactiveText = (node.type === "text" || node.type === "dimension") && onTextPointerDown !== void 0;
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     "g",
@@ -9579,12 +9580,21 @@ function engineeringImportErrorText(code, filenames = []) {
   return `工程文件导入失败：${code ?? "UNKNOWN"}`;
 }
 const ANNOTATION_PARTITION_LAYER_ID = "vectorai.annotation.partition";
+const ANNOTATION_OPENING_ANGLE_LAYER_ID = "vectorai.annotation.opening-angle";
 const ANNOTATION_PARTITION_LAYER = {
   id: ANNOTATION_PARTITION_LAYER_ID,
   label: "智能分区",
   category: "engineering",
   icon: "partition",
   order: 100,
+  defaultVisible: true
+};
+const ANNOTATION_OPENING_ANGLE_LAYER = {
+  id: ANNOTATION_OPENING_ANGLE_LAYER_ID,
+  label: "开角标注",
+  category: "engineering",
+  icon: "angle",
+  order: 110,
   defaultVisible: true
 };
 function layerVisibilityStorageKey(sessionId) {
@@ -9646,7 +9656,7 @@ const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.ma
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
-const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER];
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER];
 const subscribeToNoLayers = () => () => void 0;
 const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
 function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan, layerRegistry }) {
@@ -9675,16 +9685,18 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   ));
   const fitAfterAnalysis = reactExports.useRef(partitionState.busy);
   const displayedDrawingRef = reactExports.useRef(null);
+  const openingAngleVisible = layerVisibility[ANNOTATION_OPENING_ANGLE_LAYER_ID] ?? ANNOTATION_OPENING_ANGLE_LAYER.defaultVisible;
+  const hasOpeningAngle = (displaySnapshot == null ? void 0 : displaySnapshot.document.annotations.some((annotation) => annotation.type === "dimension" && annotation.dimensionKind === "angular")) ?? false;
   const surfaceSnapshot = reactExports.useMemo(() => displaySnapshot === null ? null : {
     ...displaySnapshot,
     document: {
       ...displaySnapshot.document,
       // Keep imported hatches and generated engineering dimensions. Source DXF
       // text remains hidden so the clean engineering canvas does not regress.
-      annotations: displaySnapshot.document.annotations.filter(({ type }) => type === "section-hatch" || type === "dimension"),
+      annotations: displaySnapshot.document.annotations.filter((annotation) => annotation.type === "section-hatch" || annotation.type === "dimension" && (annotation.dimensionKind !== "angular" || openingAngleVisible)),
       relations: []
     }
-  }, [displaySnapshot]);
+  }, [displaySnapshot, openingAngleVisible]);
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
   reactExports.useEffect(() => {
@@ -9825,10 +9837,10 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               DrawingLayerManager,
               {
-                layers: draft || confirmed ? registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID).map((definition) => ({
+                layers: registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle).map((definition) => ({
                   definition,
                   visible: layerVisibility[definition.id] ?? definition.defaultVisible
-                })) : [],
+                })),
                 onVisibilityChange: updateLayerVisibility
               }
             ),

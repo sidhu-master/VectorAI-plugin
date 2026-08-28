@@ -29,7 +29,12 @@ export function EntityRenderer({
   previewDiff,
 }: EntityRendererProps) {
   if (!node.visible) return null;
-  const className = `vai-entity vai-entity--${node.quality.status}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${motionRigActive ? ' vai-entity--motion-rig' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
+  const semanticClassName = node.type === 'dimension' && node.dimensionKind === 'angular'
+    ? ' vai-entity--angular-dimension'
+    : node.type === 'section-hatch'
+      ? ' vai-entity--section-hatch'
+      : '';
+  const className = `vai-entity vai-entity--${node.quality.status}${semanticClassName}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${motionRigActive ? ' vai-entity--motion-rig' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
   const interactiveText = (node.type === 'text' || node.type === 'dimension') && onTextPointerDown !== undefined;
   return (
     <g
