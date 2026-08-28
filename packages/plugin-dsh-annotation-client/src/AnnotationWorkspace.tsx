@@ -4,6 +4,7 @@ import type { DrawingLayerRegistry, DrawingSurfaceObservable } from '@vectorai/d
 import type { DrawingDocument } from '@vectorai/drawing-core';
 import {
   DrawingSurface,
+  DrawingLayerManager,
   WorkspaceActivityBar,
   WorkspaceToolbarView,
   fitViewportToDrawing,
@@ -27,12 +28,17 @@ import { SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS } from './engineering-file-po
 import { classifyEngineeringDrop } from './engineering-drop';
 import { engineeringImportErrorText } from './EngineeringDropBridge';
 import type { PartitionViewMode } from './partition-view-model';
+import { ANNOTATION_PARTITION_LAYER, ANNOTATION_PARTITION_LAYER_ID } from './drawing-layers';
+import { readLayerVisibility, writeLayerVisibility } from './layer-visibility';
 
 const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1_200;
 type AnnotationPanelId = 'structure';
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER] as const;
+const subscribeToNoLayers = () => () => undefined;
+const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
 
 export interface AnnotationWorkspaceProps {
   sessionId: string;
@@ -44,7 +50,7 @@ export interface AnnotationWorkspaceProps {
   dimensionPlan?: { draft: EngineeringAnnotationDraft; generationOrder: string[] };
 }
 
-export function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan }: AnnotationWorkspaceProps) {
+export function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionPlan, layerRegistry }: AnnotationWorkspaceProps) {
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport) as DrawingWorkspaceViewport;
   const selectedIds = useObservable(runtime.selection);
@@ -57,7 +63,16 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const [activePanel, setActivePanel] = useState<AnnotationPanelId | null>(null);
   const [panelWidth, setPanelWidth] = useState(260);
   const [partitionView, setPartitionView] = useState<PartitionViewMode>('functional');
-  const [partitionOverlayVisible, setPartitionOverlayVisible] = useState(() => readPartitionOverlayVisibility(sessionId));
+  const registeredLayers = useSyncExternalStore(
+    layerRegistry?.subscribeLayers ?? subscribeToNoLayers,
+    layerRegistry?.getLayers ?? readFallbackLayers,
+    layerRegistry?.getLayers ?? readFallbackLayers,
+  );
+  const [layerVisibility, setLayerVisibility] = useState(() => readLayerVisibility(
+    sessionId,
+    registeredLayers,
+    typeof sessionStorage === 'undefined' ? null : sessionStorage,
+  ));
   const fitAfterAnalysis = useRef(partitionState.busy);
   const displayedDrawingRef = useRef<string | null>(null);
   const surfaceSnapshot = useMemo(() => displaySnapshot === null ? null : ({
@@ -75,12 +90,21 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
   useEffect(() => {
-    setPartitionOverlayVisible(readPartitionOverlayVisibility(sessionId));
-  }, [sessionId]);
-  const updatePartitionOverlayVisibility = (visible: boolean) => {
-    setPartitionOverlayVisible(visible);
-    writePartitionOverlayVisibility(sessionId, visible);
+    setLayerVisibility(readLayerVisibility(
+      sessionId,
+      registeredLayers,
+      typeof sessionStorage === 'undefined' ? null : sessionStorage,
+    ));
+  }, [registeredLayers, sessionId]);
+  const updateLayerVisibility = (id: string, visible: boolean) => {
+    setLayerVisibility((current) => {
+      const next = { ...current, [id]: visible };
+      writeLayerVisibility(sessionId, next, typeof sessionStorage === 'undefined' ? null : sessionStorage);
+      return next;
+    });
   };
+  const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID]
+    ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
   useEffect(() => {
     // The controller may have been created by the conversation drop bridge before
     // an AI tool claimed this workspace. The claim is published before semantic
@@ -155,8 +179,8 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       : '请选择 DXF 图纸或受支持的工程文档');
   };
   const structurePanel = <div className="vai-annotation-panel">
-    {draft && !partitionState.previewHeld && <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} mode={partitionView} onModeChange={setPartitionView} overlayVisible={partitionOverlayVisible} onOverlayVisibleChange={updatePartitionOverlayVisibility} />}
-    {!draft && confirmed && <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} mode={partitionView} onModeChange={setPartitionView} overlayVisible={partitionOverlayVisible} onOverlayVisibleChange={updatePartitionOverlayVisibility} onReopen={partition.actions.reopen} />}
+    {draft && !partitionState.previewHeld && <PartitionInspector key={partitionState.partition.updatedAt} draft={draft} controller={partition} mode={partitionView} onModeChange={setPartitionView} />}
+    {!draft && confirmed && <ConfirmedPartitionInspector revision={confirmed} busy={partitionState.busy} mode={partitionView} onModeChange={setPartitionView} onReopen={partition.actions.reopen} />}
     {dimensionPlan && <DimensionPlanInspector draft={dimensionPlan.draft} generationOrder={dimensionPlan.generationOrder} />}
     {!draft && !confirmed && !dimensionPlan && <><h2>标注检查</h2><dl>
       <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
@@ -193,6 +217,15 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
         panels={panels}
       />
       <main className="vai-annotation-workspace__canvas">
+        <DrawingLayerManager
+          layers={(draft || confirmed) ? registeredLayers
+            .filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID)
+            .map((definition) => ({
+              definition,
+              visible: layerVisibility[definition.id] ?? definition.defaultVisible,
+            })) : []}
+          onVisibilityChange={updateLayerVisibility}
+        />
         {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null) &&
           <div className="vai-annotation-status-stack" data-annotation-status-stack="true">
             {partitionState.busy && <div className="vai-partition-progress" data-partition-progress={partitionState.partition.phase} role="status">
@@ -250,28 +283,6 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       </main>
     </div>
   </section>;
-}
-
-function partitionOverlayVisibilityKey(sessionId: string): string {
-  return `vectorai:annotation:partition-overlay:${sessionId}`;
-}
-
-function readPartitionOverlayVisibility(sessionId: string): boolean {
-  if (typeof sessionStorage === 'undefined') return true;
-  try {
-    return sessionStorage.getItem(partitionOverlayVisibilityKey(sessionId)) !== 'hidden';
-  } catch {
-    return true;
-  }
-}
-
-function writePartitionOverlayVisibility(sessionId: string, visible: boolean): void {
-  if (typeof sessionStorage === 'undefined') return;
-  try {
-    sessionStorage.setItem(partitionOverlayVisibilityKey(sessionId), visible ? 'visible' : 'hidden');
-  } catch {
-    // The UI preference is non-critical when WebView storage is unavailable.
-  }
 }
 
 function fitRuntimeToDrawing(runtime: DrawingSurfaceRuntime, snapshot = runtime.snapshot.getSnapshot()): void {

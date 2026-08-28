@@ -19,6 +19,13 @@ export function createDrawingSurfaceRegistry(): DrawingSurfaceRegistry {
   const subscribers = new Map<string, Set<SessionSubscriber>>();
   const layers = new Map<string, DrawingLayerDefinition>();
   const layerSubscribers = new Set<() => void>();
+  let layerSnapshot: readonly DrawingLayerDefinition[] = [];
+  const publishLayers = () => {
+    layerSnapshot = [...layers.values()].sort((left, right) => (
+      left.order - right.order || left.id.localeCompare(right.id)
+    ));
+    for (const listener of layerSubscribers) listener();
+  };
 
   const releaseClaims = (subscriber: SessionSubscriber) => {
     for (const dispose of subscriber.claimDisposers.splice(0)) dispose();
@@ -48,7 +55,7 @@ export function createDrawingSurfaceRegistry(): DrawingSurfaceRegistry {
         throw new Error(`DUPLICATE_DRAWING_LAYER:${definition.id}`);
       }
       layers.set(definition.id, definition);
-      for (const listener of layerSubscribers) listener();
+      publishLayers();
       let disposed = false;
       return {
         dispose() {
@@ -56,15 +63,13 @@ export function createDrawingSurfaceRegistry(): DrawingSurfaceRegistry {
           disposed = true;
           if (layers.get(definition.id) !== definition) return;
           layers.delete(definition.id);
-          for (const listener of layerSubscribers) listener();
+          publishLayers();
         },
       };
     },
 
     getLayers() {
-      return [...layers.values()].sort((left, right) => (
-        left.order - right.order || left.id.localeCompare(right.id)
-      ));
+      return layerSnapshot;
     },
 
     subscribeLayers(listener) {

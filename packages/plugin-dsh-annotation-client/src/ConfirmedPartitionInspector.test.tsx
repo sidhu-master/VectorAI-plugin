@@ -22,15 +22,13 @@ const revision: PartitionRevision = {
 describe('ConfirmedPartitionInspector', () => {
   it('shows the confirmed structure and explicitly reopens it for editing', async () => {
     const reopen = vi.fn(async () => undefined);
-    const setOverlayVisible = vi.fn();
-    const renderer = TestRenderer.create(<ConfirmedPartitionInspector revision={revision} busy={false} mode="functional" onModeChange={() => undefined} overlayVisible={false} onOverlayVisibleChange={setOverlayVisible} onReopen={reopen} />);
-    const markup = renderToStaticMarkup(<ConfirmedPartitionInspector revision={revision} busy={false} mode="functional" onModeChange={() => undefined} overlayVisible={false} onOverlayVisibleChange={setOverlayVisible} onReopen={reopen} />);
+    const renderer = TestRenderer.create(<ConfirmedPartitionInspector revision={revision} busy={false} mode="functional" onModeChange={() => undefined} onReopen={reopen} />);
+    const markup = renderToStaticMarkup(<ConfirmedPartitionInspector revision={revision} busy={false} mode="functional" onModeChange={() => undefined} onReopen={reopen} />);
     expect(markup).toContain('partition-r1');
     expect(markup).toContain('左轴承位');
     expect(markup).not.toContain('主轮齿轴段');
     expect(markup).toContain('⌀10.00');
-    await act(async () => { renderer.root.findByProps({ 'aria-label': '显示分区框' }).props.onClick(); });
-    expect(setOverlayVisible).toHaveBeenCalledWith(true);
+    expect(markup).not.toContain('显示分区框');
     await act(async () => { await renderer.root.findByProps({ 'aria-label': '重新编辑分区' }).props.onClick(); });
     expect(reopen).toHaveBeenCalledOnce();
   });

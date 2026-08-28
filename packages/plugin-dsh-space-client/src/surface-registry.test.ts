@@ -70,6 +70,7 @@ describe('drawing surface registry', () => {
     const partitionRegistration = registry.registerLayer(partition);
 
     expect(registry.getLayers()).toEqual([angle, partition]);
+    expect(registry.getLayers()).toBe(registry.getLayers());
     expect(listener).toHaveBeenCalledTimes(2);
     expect(() => registry.registerLayer(partition))
       .toThrow('DUPLICATE_DRAWING_LAYER:vectorai.annotation.partition');
