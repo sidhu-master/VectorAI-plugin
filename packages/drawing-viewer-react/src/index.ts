@@ -24,6 +24,9 @@ export type {
 } from './surface/controllers';
 export { Canvas } from './canvas/Canvas';
 export { EntityRenderer } from './canvas/EntityRenderer';
+export { ScreenSpaceLabel } from './canvas/ScreenSpaceLabel';
+export { estimateScreenTextWidth, screenSpaceTransform } from './canvas/screen-space';
+export type { ScreenSpaceLabelProps } from './canvas/ScreenSpaceLabel';
 export {
   drawingBounds,
   fitViewportToDrawing,

@@ -101,6 +101,12 @@ export class PartitionSessionStore {
     );
   }
 
+  confirmPending(sessionId: string): PartitionSessionSnapshot {
+    const snapshot = this.get(sessionId);
+    if (snapshot.phase !== 'editing' || snapshot.draft === undefined || snapshot.drawingRef === undefined) return snapshot;
+    return this.confirm(sessionId, snapshot.drawingRef);
+  }
+
   reopen(sessionId: string, expected: DrawingRef): PartitionSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, expected);

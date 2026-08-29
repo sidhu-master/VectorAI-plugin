@@ -86,7 +86,10 @@ export class DimensionInferenceService {
   }
 
   markStale(agent: Agent, currentRef: DrawingRef): DimensionPlanSessionSnapshot {
-    const sessionId = String(agent.id);
+    return this.markStaleSession(String(agent.id), currentRef);
+  }
+
+  markStaleSession(sessionId: string, currentRef: DrawingRef): DimensionPlanSessionSnapshot {
     const current = this.plans.get(sessionId);
     return current.draft?.axialScheme
       ? this.plans.markNeedsRebase(sessionId, currentRef)

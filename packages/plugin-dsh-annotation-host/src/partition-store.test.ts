@@ -14,6 +14,21 @@ function draft(): PartitionDraft {
 }
 
 describe('PartitionSessionStore', () => {
+  it('accepts the current editable draft when the user advances to another task', () => {
+    const store = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition-r1' });
+    store.beginAnalysis('s', { drawingId: 'd', revision: 1 });
+    store.setDraft('s', draft());
+
+    expect(typeof (store as unknown as { confirmPending?: unknown }).confirmPending).toBe('function');
+    const accepted = (store as unknown as { confirmPending(sessionId: string): ReturnType<PartitionSessionStore['get']> })
+      .confirmPending('s');
+
+    expect(accepted).toMatchObject({
+      phase: 'confirmed',
+      confirmed: { id: 'partition-r1', drawingRef: { drawingId: 'd', revision: 1 } },
+    });
+  });
+
   it('edits, confirms, undoes back to editing, and redoes confirmation', () => {
     const store = new PartitionSessionStore(undefined, { now: () => 7, id: () => 'partition-r1' });
     store.beginAnalysis('s', { drawingId: 'd', revision: 1 });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { PartitionDraft, PartitionRevision } from '@vectorai/plugin-space-contracts';
+import { screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import type { PointerEvent } from 'react';
 import { useRef, useState } from 'react';
 import { partitionBands, type PartitionBand, type PartitionViewMode } from './partition-view-model';
@@ -129,7 +130,7 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
         <polygon data-partition-band="true" points={polygon.map((value) => value.join(',')).join(' ')}
           className={`vai-partition-band vai-partition-band--${band.origin}`}
           data-line-style={band.origin === 'document' ? 'solid' : band.origin === 'ai' ? 'dotted' : 'dashed'} />
-        <g className="vai-partition-label-anchor" transform={`translate(${labelAnchor[0]} ${labelAnchor[1]}) scale(${1 / Math.max(scale, 0.01)} ${-1 / Math.max(scale, 0.01)})`}
+        <g className="vai-partition-label-anchor" data-screen-space-label={true} transform={screenSpaceTransform(labelAnchor, scale)}
           pointerEvents={previewHeld || !onRenameBand ? 'none' : 'all'}
           role={previewHeld || !onRenameBand ? undefined : 'button'}
           tabIndex={previewHeld || !onRenameBand ? undefined : 0}

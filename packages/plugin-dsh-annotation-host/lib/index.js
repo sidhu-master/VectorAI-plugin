@@ -9533,6 +9533,11 @@ class PartitionSessionStore {
     };
     return __privateMethod(this, _PartitionSessionStore_instances, push_fn).call(this, sessionId, { ...state.snapshot, phase: "confirmed", draft: void 0, confirmed: revision, canUndo: true, canRedo: false, updatedAt: this.ports.now() }, draft);
   }
+  confirmPending(sessionId) {
+    const snapshot = this.get(sessionId);
+    if (snapshot.phase !== "editing" || snapshot.draft === void 0 || snapshot.drawingRef === void 0) return snapshot;
+    return this.confirm(sessionId, snapshot.drawingRef);
+  }
   reopen(sessionId, expected) {
     var _a3;
     const state = __privateMethod(this, _PartitionSessionStore_instances, envelope_fn).call(this, sessionId);
@@ -10659,8 +10664,10 @@ class DimensionInferenceService {
     return this.plans.redo(String(agent.id), expected);
   }
   markStale(agent, currentRef) {
+    return this.markStaleSession(String(agent.id), currentRef);
+  }
+  markStaleSession(sessionId, currentRef) {
     var _a3;
-    const sessionId = String(agent.id);
     const current = this.plans.get(sessionId);
     return ((_a3 = current.draft) == null ? void 0 : _a3.axialScheme) ? this.plans.markNeedsRebase(sessionId, currentRef) : current;
   }
@@ -10669,6 +10676,19 @@ function assertSameRef(left, right) {
   if (left.drawingId !== right.drawingId || left.revision !== right.revision) {
     throw new Error("DIMENSION_PARTITION_STALE");
   }
+}
+function acceptPendingPartitionForEvent(sessionId, event, partitions, sessions, onConfirmed) {
+  if (event.type !== "user/message" || event.data.source.kind !== "user") return false;
+  const before = partitions.get(sessionId);
+  if (before.phase !== "editing" || before.draft === void 0) return false;
+  const after = partitions.confirmPending(sessionId);
+  if (after.phase !== "confirmed") return false;
+  if (after.drawingRef !== void 0) onConfirmed == null ? void 0 : onConfirmed(after.drawingRef);
+  const annotation = sessions.get(sessionId);
+  if (annotation.workspaceClaimed && (annotation.workflow.status === "running" || annotation.workflow.status === "reviewing")) {
+    sessions.finish(sessionId, "completed");
+  }
+  return true;
 }
 class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessionState_dec = [Remote], _importDrawing_dec = [Remote], _stageDocuments_dec = [Remote], _clearDocuments_dec = [Remote], _importAndAnalyze_dec = [Remote], _supplementDocuments_dec = [Remote], _getPartitionState_dec = [Remote], _editPartition_dec = [Remote], _confirmPartition_dec = [Remote], _cancelPartition_dec = [Remote], _reopenPartition_dec = [Remote], _undoPartition_dec = [Remote], _redoPartition_dec = [Remote], _getDimensionPlan_dec = [Remote], _editDimensionScheme_dec = [Remote], _confirmDimensionPlan_dec = [Remote], _cancelDimensionPlan_dec = [Remote], _undoDimensionPlan_dec = [Remote], _redoDimensionPlan_dec = [Remote], _a2) {
   constructor(ctx) {
@@ -10711,6 +10731,12 @@ class DrawingAnnotationHostService extends (_a2 = TypertRemoteService, _getSessi
     })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.effect(() => ctx.tools.register(createDimensionChainStartTool(this.dimensionInference)));
+    ctx.on("session/event", (session, event) => {
+      const sessionId = String(session.id);
+      acceptPendingPartitionForEvent(sessionId, event, this.partitions, this.sessions, (drawingRef) => {
+        this.dimensionInference.markStaleSession(sessionId, drawingRef);
+      });
+    });
     ctx.on("session/disposed", (session) => {
       const sessionId = String(session.id);
       this.partitionWorkflow.disposeSession(sessionId);
