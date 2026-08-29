@@ -12,8 +12,8 @@ import { vi } from 'vitest';
 import { DrawingConversationView } from './client';
 import { createDrawingSurfaceRegistry } from './surface-registry';
 
-const useIdleSession = ((selector: (state: { runningCalls: unknown[] }) => unknown) => (
-  selector({ runningCalls: [] })
+const useIdleSession = ((selector: (state: { running: boolean }) => unknown) => (
+  selector({ running: false })
 )) as never;
 const inputActions = {
   setDraft: vi.fn(), addImages: vi.fn(() => true), removeImage: vi.fn(),

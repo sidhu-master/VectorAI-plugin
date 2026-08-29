@@ -70,7 +70,7 @@ DSH 持久化使用版本化 durable envelope，包含当前 Drawing、追加式
 
 ### Client 与布局
 
-第一层 Client 是 `conversation.workspace` 的唯一注册者，并在内部维护 `DrawingSurfaceRegistry`。专业插件注册 contribution，但注册本身不激活 UI；只有当前 session 的成功能力 claim 才参与确定性选举。第一层默认工作区是不可移除的 fallback。DSH rc.8 尚无完整的可组合同页布局 API，因此仓库保留一个受版本/锚点保护的兼容补丁；该补丁只属于 DSH Adapter，不改变 Drawing 或 AI 协议。正式布局 API 可用后应删除兼容层。
+第一层 Client 通过 DSH `0.1.2-alpha.1` 的正式 `shell.overlay` 扩展位声明 session-scoped Drawing 子槽，并按官方 Conversation 区域的真实尺寸为画布预留左侧空间。它在内部维护 `DrawingSurfaceRegistry`；专业插件注册 contribution，但注册本身不激活 UI，只有当前 session 的成功能力 claim 才参与确定性选举。没有 Drawing 时不产生 Overlay、Conversation 恢复全宽；存在 Drawing 时固定使用“图纸在中间、聊天在右侧”的横向布局。仓库不再包含或运行 DSH 编译产物补丁，也不覆盖官方 root/sidebar/details 的所有权。
 
 macOS Launcher 在无终端窗口下启动 DSH，处理 3080 端口占用、独立窗口和关闭窗口后终止所属进程组。
 
@@ -144,7 +144,7 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 - worst-case 尺寸链上下界分析；`statistical` 当前返回明确 unsupported 诊断；
 - 投影前的状态、证据、规则结果与 Drawing revision 校验。
 
-名义尺寸链推断位于现有 `DimensionIntent` / `DimensionChain` 之前，流程为：分区轴线与台阶边界规范化为 `AxialTopology`；候选生成器只建立相邻跨度、功能范围、文档范围、工艺包络、有限组合与总长；策略层按具名语义证据评分；层级区间求解器选择非交叉显示集合并为每个父尺寸保留一个闭环。所有名义值、正负系数和等式校验均由本地算法产生。`shaft-hierarchical-dimensioning-v1` 保留惯例歧义供用户复核，`shaft-reference-terminal-closure-v1` 用于显式匹配已确认参考惯例。
+名义尺寸链推断位于现有 `DimensionIntent` / `DimensionChain` 之前，流程为：分区轴线与台阶边界规范化为 `AxialTopology`；候选生成器只建立相邻跨度、功能范围、文档范围、工艺包络、有限组合与总长；策略层按具名语义证据评分；层级区间求解器选择非交叉显示集合并为每个父尺寸保留一个闭环。所有名义值、正负系数和等式校验均由本地算法产生。默认策略是 `shaft-reference-terminal-closure-v1`，直接采用黄金样本归纳出的参考端闭合惯例；只有用户明确要求保留惯例歧义时才使用 `shaft-hierarchical-dimensioning-v1`。
 
 方案随 dimension-plan durable envelope 保存，包含候选、决策依据、显示/闭环集合和诊断。Client 通过严格 Typert remote 只能按候选 ID 切换显示或闭环，不能提交坐标。确认前会重新投影和验证；`needs-review`、`conflict`、`stale` 均阻止确认。上传文件不会调用推断，唯一模型入口是显式 `drawing_dimension_chain_start`。
 

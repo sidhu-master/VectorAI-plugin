@@ -141,10 +141,18 @@ async function runFirstLayerAnnotationTransaction() {
     vectorizer: {
       async vectorize({ drawingId }: { drawingId: string }) {
         const document = createEmptyDrawing({ idFactory: { next: () => drawingId }, now: () => 1 });
-        document.geometry = [{
-          id: 'circle-1' as never, type: 'circle', center: [0, 0], radius: 5, visible: true,
-          quality: { status: 'confirmed', evidenceRefs: ['evidence:circle-1' as never] },
-        }];
+        const rise = 4 * Math.sqrt(3);
+        const journal = 12.9 - rise;
+        const quality = (id: string) => ({
+          status: 'confirmed' as const,
+          evidenceRefs: [`evidence:${id}` as never],
+        });
+        document.geometry = [
+          { id: 'profile-top' as never, type: 'line', start: [14, journal], end: [90, journal], visible: true, quality: quality('profile-top') },
+          { id: 'profile-bottom' as never, type: 'line', start: [14, -journal], end: [90, -journal], visible: true, quality: quality('profile-bottom') },
+          { id: 'left-upper' as never, type: 'line', start: [10, 12.9], end: [14, journal], visible: true, quality: quality('left-upper') },
+          { id: 'left-lower' as never, type: 'line', start: [10, -12.9], end: [14, -journal], visible: true, quality: quality('left-lower') },
+        ];
         return {
           document,
           bounds: { minX: -10, minY: -10, maxX: 10, maxY: 10 },

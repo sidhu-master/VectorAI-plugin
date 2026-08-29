@@ -147,15 +147,15 @@ export function createDimensionChainStartTool(workflow: {
       policy: {
         type: 'string',
         enum: ['shaft-hierarchical-dimensioning-v1', 'shaft-reference-terminal-closure-v1'],
-        description: 'Optional drafting policy. Use the hierarchical policy unless the user explicitly asks to match the reference terminal-closure convention.',
+        description: 'Optional drafting policy. Omit it for the default reference terminal-closure convention; use the hierarchical policy only when the user explicitly requests it.',
       },
     },
     output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args, exec) {
       if (!exec.agent) throw new Error('DRAWING_SESSION_REQUIRED');
-      const policy = args.policy === 'shaft-reference-terminal-closure-v1'
+      const policy = args.policy === 'shaft-hierarchical-dimensioning-v1'
         ? args.policy
-        : 'shaft-hierarchical-dimensioning-v1';
+        : 'shaft-reference-terminal-closure-v1';
       const snapshot = workflow.start(exec.agent, policy);
       return {
         status: snapshot.phase,

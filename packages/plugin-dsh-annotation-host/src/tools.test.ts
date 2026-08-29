@@ -260,4 +260,23 @@ describe('drawing_dimension_chain_start', () => {
       'shaft-reference-terminal-closure-v1',
     );
   });
+
+  it('uses the reference terminal-closure policy when the model omits policy', async () => {
+    const start = vi.fn(() => ({
+      version: 1 as const, phase: 'editing' as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      canUndo: false, canRedo: false, updatedAt: 1,
+    }));
+    const tool = createDimensionChainStartTool({ start });
+
+    await tool.execute({}, {
+      agent: { id: 'session-1' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext);
+
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-1' }),
+      'shaft-reference-terminal-closure-v1',
+    );
+  });
 });

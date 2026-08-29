@@ -24,6 +24,7 @@ import { createDshDrawingWorkspacePort } from './dsh-workspace-port';
 import { DRAWING_SPACE_REMOTE } from './remote';
 import { DrawingSurfaceHost } from './DrawingSurfaceHost';
 import { createDrawingSurfaceRegistry } from './surface-registry';
+import { VectorAIWorkspaceOverlay, type DrawingPresence } from './VectorAIWorkspaceOverlay';
 import type { DrawingWorkspaceSlotProps } from './workspace-slot';
 
 declare module '@deepseek-ai/cordis' {
@@ -34,7 +35,7 @@ declare module '@deepseek-ai/cordis' {
 
 // DSH discovers entry metadata and lifecycle exports from this client module.
 // eslint-disable-next-line react-refresh/only-export-components
-export const inject = ['slots', 'remote', 'conversation'];
+export const inject = ['slots', 'remote', 'conversation', 'uiConversation'];
 
 interface DrawingConversationViewProps extends Pick<DrawingWorkspaceSlotProps, 'useSession'> {
   sessionId: string;
@@ -43,6 +44,14 @@ interface DrawingConversationViewProps extends Pick<DrawingWorkspaceSlotProps, '
   inputActions: DrawingWorkspaceSlotProps['inputActions'];
   createDraftImages(files: readonly File[]): readonly { id: string }[];
   releaseSources(): void;
+}
+
+function sessionIsRunning(snapshot: unknown): boolean {
+  if (typeof snapshot !== 'object' || snapshot === null) return false;
+  if ('running' in snapshot) return snapshot.running === true;
+  return 'runningCalls' in snapshot
+    && Array.isArray(snapshot.runningCalls)
+    && snapshot.runningCalls.length > 0;
 }
 
 export function DrawingConversationView({
@@ -54,7 +63,7 @@ export function DrawingConversationView({
   createDraftImages,
   releaseSources,
 }: DrawingConversationViewProps) {
-  const runningCallCount = useSession((snapshot) => snapshot.runningCalls.length);
+  const running = useSession(sessionIsRunning);
   const store = useMemo(
     () => createDrawingWorkspaceStore({ port: workspacePort }),
     [workspacePort],
@@ -65,7 +74,7 @@ export function DrawingConversationView({
   useEffect(() => {
     if (didObserveInitialCallCount.current) void store.getState().refresh();
     else didObserveInitialCallCount.current = true;
-  }, [runningCallCount, store]);
+  }, [running, store]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -110,15 +119,45 @@ export async function apply(ctx: Context) {
   const remote = ctx.get('remote');
   const slots = ctx.get('slots');
   const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
-  const viewFiber = ctx.inject(['remote.drawingSpace', 'remote.commands', 'conversation'], (scope) => {
+  const overlayFiber = ctx.inject(['remote.drawingSpace'], (scope) => {
+    const drawingSpace = scope.get('remote').drawingSpace;
+    const presence: DrawingPresence = {
+      async hasDrawing(sessionId) {
+        const result = await drawingSpace.getSnapshot(sessionId);
+        return result.ok === true && result.value !== null;
+      },
+      subscribe(sessionId, listener) {
+        if (typeof window === 'undefined') return () => undefined;
+        const refresh = (event: Event) => {
+          const detail = (event as CustomEvent<DrawingSurfaceRefreshDetail>).detail;
+          if (detail?.sessionId === sessionId) listener();
+        };
+        window.addEventListener(DRAWING_SURFACE_REFRESH_EVENT, refresh);
+        return () => window.removeEventListener(DRAWING_SURFACE_REFRESH_EVENT, refresh);
+      },
+    };
+    return slots.inject('shell.overlay', () => slots.register({
+      name: 'shell.overlay',
+      id: 'vectorai-drawing-workspace',
+      order: -100,
+      children: {
+        'vectorai.drawing.workspace': { kind: 'single', scope: 'session' },
+      },
+      inject: () => ({ drawingPresence: presence }),
+    } as never, VectorAIWorkspaceOverlay as never));
+  });
+  const viewFiber = ctx.inject(['remote.drawingSpace', 'remote.commands', 'conversation', 'uiConversation'], (scope) => {
     const drawingSpace = scope.get('remote').drawingSpace;
     const commands = scope.get('remote').commands;
     const conversation = scope.get('conversation') as unknown as Pick<
       ConversationController,
-      'createDraftImages' | 'resolveImage' | 'releaseSessionImages'
+      'createDraftImages'
     >;
-    return slots.inject('conversation.workspace', () => slots.register({
-      name: 'conversation.workspace',
+    const uiConversation = scope.get('uiConversation') as unknown as {
+      imageUrl(sessionId: SessionId, attachment: ImageAttachmentRef): Promise<string>;
+    };
+    return slots.inject('vectorai.drawing.workspace', () => slots.register({
+      name: 'vectorai.drawing.workspace',
       inject: (sessionId) => {
         const id = String(sessionId);
         return {
@@ -128,17 +167,18 @@ export async function apply(ctx: Context) {
             remote: drawingSpace,
             commands,
             resolveImage: (ownerId: string, attachment: ImageAttachmentRef) => (
-              conversation.resolveImage(ownerId as SessionId, attachment)
+              uiConversation.imageUrl(ownerId as SessionId, attachment)
             ),
           }),
           createDraftImages: (files: readonly File[]) => conversation.createDraftImages(files),
-          releaseSources: () => conversation.releaseSessionImages(id as SessionId),
+          releaseSources: () => undefined,
         };
       },
-    }, DrawingConversationView));
+    } as never, DrawingConversationView as never));
   });
   return async () => {
     await viewFiber.dispose();
+    await overlayFiber.dispose();
     await disposeRegistry();
     await disposeRemote();
   };

@@ -6,66 +6,16 @@ import WebKit
 
 private enum LauncherConstants {
     static let port: UInt16 = 3080
-    static let serverURL = URL(string: "http://127.0.0.1:3080/")!
     static let startupTimeout: TimeInterval = 90
-    static let workspacePatchScript = Bundle.main.resourceURL!
-        .appendingPathComponent("dsh-inline-workspace-patch.mjs")
+    static let runtimeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/VectorAI/dsh-runtime/0.1.2-alpha.1", isDirectory: true)
 }
 
 private enum ExecutableResolver {
-    static func nodeURL() -> URL? {
-        resolveExecutable(
-            environmentKey: "DSH_NODE_PATH",
-            candidates: [
-                "/opt/homebrew/bin/node",
-                "/opt/homebrew/opt/node/bin/node",
-                "/opt/homebrew/opt/node@22/bin/node",
-                "/usr/local/bin/node",
-                "/usr/bin/node",
-            ],
-            executableName: "node"
-        )
-    }
-
-    static func npxURL() -> URL? {
-        resolveExecutable(
-            environmentKey: "DSH_NPX_PATH",
-            candidates: [
-                "/opt/homebrew/bin/npx",
-                "/opt/homebrew/opt/node/bin/npx",
-                "/opt/homebrew/opt/node@22/bin/npx",
-                "/usr/local/bin/npx",
-                "/usr/bin/npx",
-            ],
-            executableName: "npx"
-        )
-    }
-
-    private static func resolveExecutable(
-        environmentKey: String,
-        candidates baseCandidates: [String],
-        executableName: String
-    ) -> URL? {
-        let fileManager = FileManager.default
-        var candidates: [String] = []
-        if let explicitPath = ProcessInfo.processInfo.environment[environmentKey], !explicitPath.isEmpty {
-            candidates.append(explicitPath)
-        }
-        candidates.append(contentsOf: baseCandidates)
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            candidates.append(contentsOf: path.split(separator: ":").map { "\($0)/\(executableName)" })
-        }
-
-        for path in candidates where fileManager.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        return nil
-    }
-
-    static func pathEnvironment(for npxURL: URL) -> String {
+    static func pathEnvironment(for executableURL: URL) -> String {
         let inherited = ProcessInfo.processInfo.environment["PATH"] ?? ""
         let entries = [
-            npxURL.deletingLastPathComponent().path,
+            executableURL.deletingLastPathComponent().path,
             "/opt/homebrew/bin",
             "/usr/local/bin",
             "/usr/bin",
@@ -84,7 +34,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var server: ManagedProcess?
     private var startupTimer: Timer?
     private var startupDeadline = Date.distantPast
-    private var healthRequestInFlight = false
+    private var startupLogOffset: UInt64 = 0
     private var isShuttingDown = false
     private var titlebarMouseMonitor: Any?
 
@@ -128,7 +78,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         webView.setValue(false, forKey: "drawsBackground")
 
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
+            contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -136,7 +86,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         window.title = "DeepSeek Harness"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.minSize = NSSize(width: 900, height: 620)
+        window.minSize = NSSize(width: 1100, height: 700)
         window.center()
         window.contentView = webView
         window.delegate = self
@@ -180,30 +130,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             )
             return
         }
-        let npxCacheDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".npm/_npx", isDirectory: true)
-        let command: DSHServerCommand
-        let pathAnchor: URL
-        if let cachedDSH = CachedDSHResolver.find(in: npxCacheDirectory) {
-            guard applyWorkspacePatch(to: cachedDSH) else { return }
-            command = DSHServerCommand.makeDirect(port: LauncherConstants.port, dshURL: cachedDSH)
-            pathAnchor = cachedDSH
-        } else if let npxURL = ExecutableResolver.npxURL() {
-            command = DSHServerCommand.make(port: LauncherConstants.port, npxURL: npxURL)
-            pathAnchor = npxURL
-        } else {
+        guard let sourceDSH = SourceDSHResolver.find(in: LauncherConstants.runtimeDirectory) else {
             showErrorPage(
-                title: "找不到 DSH 或 npx",
-                detail: "请先安装 Node.js 22；启动器会用 npx 获取固定版本 DSH 0.1.0-rc.8。"
+                title: "找不到 DSH 0.1.2-alpha.1",
+                detail: "缺少已构建的官方源码运行时：\(LauncherConstants.runtimeDirectory.path)\n\n请重新运行 VectorAI 的 DSH Launcher 构建脚本。"
             )
             return
         }
+        let command = DSHServerCommand.makeDirect(port: LauncherConstants.port, dshURL: sourceDSH)
+        startupLogOffset = ((try? FileManager.default.attributesOfItem(atPath: logURL.path)[.size]) as? NSNumber)?.uint64Value ?? 0
 
         let managedServer = ManagedProcess(
             executableURL: command.executableURL,
             arguments: command.arguments,
             logURL: logURL,
-            environmentOverrides: ["PATH": ExecutableResolver.pathEnvironment(for: pathAnchor)]
+            environmentOverrides: ["PATH": ExecutableResolver.pathEnvironment(for: sourceDSH)]
         )
         do {
             try managedServer.start()
@@ -218,46 +159,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             self?.pollServer()
         }
         pollServer()
-    }
-
-    private func applyWorkspacePatch(to dshURL: URL) -> Bool {
-        guard FileManager.default.fileExists(atPath: LauncherConstants.workspacePatchScript.path) else {
-            showErrorPage(
-                title: "找不到 VectorAI 布局补丁",
-                detail: "缺少：\(LauncherConstants.workspacePatchScript.path)"
-            )
-            return false
-        }
-        guard let nodeURL = ExecutableResolver.nodeURL() else {
-            showErrorPage(title: "找不到 Node.js", detail: "无法在启动 DSH 前校验 VectorAI 会话工作区补丁。")
-            return false
-        }
-
-        let command = WorkspacePatchCommand.make(
-            nodeURL: nodeURL,
-            scriptURL: LauncherConstants.workspacePatchScript,
-            dshURL: dshURL
-        )
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = command.executableURL
-        process.arguments = command.arguments
-        process.standardOutput = output
-        process.standardError = output
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            showErrorPage(title: "VectorAI 布局校验失败", detail: error.localizedDescription)
-            return false
-        }
-        guard process.terminationStatus == 0 else {
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            let detail = String(data: data, encoding: .utf8) ?? "补丁器退出码：\(process.terminationStatus)"
-            showErrorPage(title: "DSH 版本与 VectorAI 布局不兼容", detail: detail)
-            return false
-        }
-        return true
     }
 
     private func pollServer() {
@@ -278,22 +179,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             )
             return
         }
-        guard !healthRequestInFlight else { return }
-        healthRequestInFlight = true
-
-        var request = URLRequest(url: LauncherConstants.serverURL)
-        request.timeoutInterval = 1
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.healthRequestInFlight = false
-                guard let response = response as? HTTPURLResponse, (200..<500).contains(response.statusCode) else {
-                    return
-                }
-                self.stopStartupTimer()
-                self.webView.load(URLRequest(url: LauncherConstants.serverURL))
-            }
-        }.resume()
+        guard
+            let data = try? Data(contentsOf: logURL),
+            UInt64(data.count) >= startupLogOffset,
+            let output = String(data: data.dropFirst(Int(startupLogOffset)), encoding: .utf8),
+            let readyURL = DSHReadyURL.find(in: output, port: LauncherConstants.port)
+        else {
+            return
+        }
+        stopStartupTimer()
+        webView.load(URLRequest(url: readyURL))
     }
 
     private func stopStartupTimer() {

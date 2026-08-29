@@ -1,6 +1,6 @@
 # @vectorai/plugin-dsh-space
 
-Apache-2.0 licensed VectorAI 2D Space and Canvas bundle for DeepSeek Harness `0.1.0-rc.8`.
+Apache-2.0 licensed VectorAI 2D Space and Canvas bundle for DeepSeek Harness `0.1.2-alpha.1`.
 
 From the VectorAI repository root, build and install the local development bundle:
 
@@ -19,8 +19,10 @@ Published packages will resolve those dependencies normally.
 The bundle adds `drawing_import`, `drawing_summarize`, revision-bound
 `drawing_query`, the Host-authoritative
 `observe → select_parts → preview_spatial_intent/revise → evaluate → finalize` chain,
-operation lookup and compensating Undo. The canvas is mounted in the session-scoped
-`conversation.workspace`, beside the native chat. `drawing_query` supports
+operation lookup and compensating Undo. The Client registers in alpha's public
+`shell.overlay` extension point and declares one session-scoped VectorAI drawing
+child. When a Drawing exists it reserves the left side of the native Conversation
+column for the canvas; the chat remains on the right. `drawing_query` supports
 bounded world slices, exact node lookup, and direct relation/feature neighbors.
 
 The chain is activated lazily. Ordinary DSH turns receive no mandatory drawing

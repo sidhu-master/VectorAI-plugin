@@ -8,6 +8,8 @@ OUTPUT_APP="${1:-$APP_SOURCE_DIR/Build/DSH.app}"
 TEMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEMP_ROOT"' EXIT
 
+"$VECTORAI_ROOT/scripts/install-dsh-alpha-runtime.sh"
+
 BUNDLE="$TEMP_ROOT/DSH.app"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
@@ -20,8 +22,6 @@ swiftc -O \
 
 cp "$APP_SOURCE_DIR/Info.plist" "$BUNDLE/Contents/Info.plist"
 cp "$APP_SOURCE_DIR/Resources/AppIcon.icns" "$BUNDLE/Contents/Resources/AppIcon.icns"
-cp "$VECTORAI_ROOT/scripts/dsh-inline-workspace-patch.mjs" \
-  "$BUNDLE/Contents/Resources/dsh-inline-workspace-patch.mjs"
 codesign --force --deep --sign - "$BUNDLE"
 
 mkdir -p "${OUTPUT_APP:h}"
