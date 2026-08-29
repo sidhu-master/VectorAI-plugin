@@ -27,6 +27,82 @@ function mutableObservable<T>(initial: T) {
 }
 
 describe('AnnotationWorkspace', () => {
+  it('does not refit for dimension layout changes but still refits after a viewport resize', async () => {
+    vi.stubGlobal('window', new EventTarget());
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    document.geometry = [{
+      id: 'axis-line' as never, type: 'line' as const, start: [0, 0], end: [100, 0], visible: true,
+      quality: { status: 'confirmed' as const, evidenceRefs: [] },
+    }];
+    const snapshot = {
+      version: 1 as const, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+      capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+    };
+    const setViewport = vi.fn();
+    const viewport = mutableObservable({ x: 10, y: 20, scale: 3, width: 800, height: 600 });
+    const runtime = {
+      snapshot: observable(snapshot),
+      viewport,
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: snapshot, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport, setSelection() {}, refresh: async () => undefined },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({ version: 1 as const, workspaceClaimed: true, activationEpoch: 1, workflow: { status: 'completed' as const } });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+    const axialScheme = {
+      topology: {
+        axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 100 }, unit: 'mm',
+        stations: [{ id: 's0', sourceCoordinate: 0 }, { id: 's1', sourceCoordinate: 100 }], elementarySpans: [],
+      },
+      candidates: [{ id: 'overall', startStationId: 's0', endStationId: 's1', nominalValue: 100 }],
+      displayedCandidateIds: ['overall'], closureCandidateIds: [], chains: [], diagnostics: [],
+    };
+    const dimensionState = mutableObservable({
+      plan: {
+        version: 1 as const, phase: 'editing' as const, drawingRef: snapshot.ref,
+        draft: { version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [], axialScheme },
+        canUndo: false, canRedo: false, updatedAt: 1,
+      },
+      busy: false, previewHeld: false, error: null,
+    });
+    const dimensionChain = {
+      state: dimensionState,
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
+    } as unknown as DimensionChainController;
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state}
+        partition={partition} dimensionChain={dimensionChain}
+      />);
+    });
+    setViewport.mockClear();
+    await act(async () => {
+      dimensionState.set({
+        ...dimensionState.getSnapshot(),
+        plan: {
+          ...dimensionState.getSnapshot().plan,
+          draft: { ...dimensionState.getSnapshot().plan.draft, axialScheme: { ...axialScheme, layout: { chainNormalOffsets: [], candidateNormalOffsets: [{ candidateId: 'overall', normalOffset: 20 }] } } },
+          updatedAt: 2,
+        },
+      } as never);
+    });
+    expect(setViewport).not.toHaveBeenCalled();
+    await act(async () => {
+      viewport.set({ ...viewport.getSnapshot(), width: 1_000 });
+    });
+    expect(setViewport).toHaveBeenCalledWith(expect.objectContaining({ width: 1_000, height: 600 }));
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
+  });
+
   it('surfaces a failed dimension layout save with retry guidance', async () => {
     vi.stubGlobal('window', new EventTarget());
     const runtime = {

@@ -17,13 +17,15 @@ interface IntervalLayout {
   end: number;
   automaticOffset: number;
   manualOffset: number;
+  groupOffset: number;
+  minimumGroupOffset: number;
 }
 interface DragState {
-  candidateId: string;
+  target: { type: 'chain' | 'candidate'; id: string };
   pointerId: number;
   startClient: readonly [number, number];
-  startManualOffset: number;
-  automaticOffset: number;
+  startGroupOffset: number;
+  minimumGroupOffset: number;
 }
 
 export function DimensionChainOverlay({
@@ -32,6 +34,7 @@ export function DimensionChainOverlay({
   radialExtent = 0,
   visible,
   previewHeld = false,
+  onMoveChain,
   onMoveCandidate,
 }: {
   scheme: AxialDimensionScheme;
@@ -39,13 +42,14 @@ export function DimensionChainOverlay({
   radialExtent?: number;
   visible: boolean;
   previewHeld?: boolean;
+  onMoveChain?(chainId: string, normalOffset: number): void | Promise<void>;
   onMoveCandidate?(candidateId: string, normalOffset: number): void | Promise<void>;
 }) {
-  const [dragPreview, setDragPreview] = useState<{ candidateId: string; manualOffset: number } | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ targetKey: string; normalOffset: number } | null>(null);
   const dragRef = useRef<DragState | null>(null);
   if (!visible) return null;
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : []));
-  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld);
+  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview);
   const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
   const grouped = scheme.chains.map((chain, chainIndex) => ({
     chain,
@@ -57,16 +61,20 @@ export function DimensionChainOverlay({
   const safeScale = Math.max(scale, 1e-6);
 
   const beginDrag = (layout: IntervalLayout, event: PointerEvent<SVGGElement>) => {
-    if (event.button !== 0 || !onMoveCandidate || previewHeld) return;
+    const target = layout.chainId === undefined
+      ? { type: 'candidate' as const, id: layout.candidate.id }
+      : { type: 'chain' as const, id: layout.chainId };
+    const enabled = target.type === 'chain' ? Boolean(onMoveChain) : Boolean(onMoveCandidate);
+    if (event.button !== 0 || !enabled || previewHeld) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
-      candidateId: layout.candidate.id,
+      target,
       pointerId: event.pointerId,
       startClient: [event.clientX, event.clientY],
-      startManualOffset: layout.manualOffset,
-      automaticOffset: layout.automaticOffset,
+      startGroupOffset: layout.groupOffset,
+      minimumGroupOffset: layout.minimumGroupOffset,
     };
   };
   const updateDrag = (event: PointerEvent<SVGGElement>) => {
@@ -76,9 +84,10 @@ export function DimensionChainOverlay({
     event.stopPropagation();
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0]
       + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
-    const minimum = radialExtent + 14 / safeScale;
-    const manualOffset = Math.max(drag.startManualOffset + projected, minimum - drag.automaticOffset);
-    setDragPreview({ candidateId: drag.candidateId, manualOffset });
+    setDragPreview({
+      targetKey: `${drag.target.type}:${drag.target.id}`,
+      normalOffset: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset),
+    });
   };
   const finishDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = dragRef.current;
@@ -86,12 +95,14 @@ export function DimensionChainOverlay({
     updateDrag(event);
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0]
       + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
-    const minimum = radialExtent + 14 / safeScale;
-    const manualOffset = Math.max(drag.startManualOffset + projected, minimum - drag.automaticOffset);
+    const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
     dragRef.current = null;
     setDragPreview(null);
     event.currentTarget.releasePointerCapture(event.pointerId);
-    void Promise.resolve(onMoveCandidate?.(drag.candidateId, roundOffset(manualOffset))).catch(() => undefined);
+    const save = drag.target.type === 'chain'
+      ? onMoveChain?.(drag.target.id, roundOffset(groupOffset))
+      : onMoveCandidate?.(drag.target.id, roundOffset(groupOffset));
+    void Promise.resolve(save).catch(() => undefined);
   };
   const cancelDrag = (event: PointerEvent<SVGGElement>, releaseCapture: boolean) => {
     const drag = dragRef.current;
@@ -103,42 +114,58 @@ export function DimensionChainOverlay({
     if (releaseCapture) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
-  const renderInterval = (layout: IntervalLayout) => {
-    const manualOffset = dragPreview?.candidateId === layout.candidate.id ? dragPreview.manualOffset : layout.manualOffset;
+  const renderInterval = (layout: IntervalLayout, standaloneDraggable = false, groupedDraggable = false) => {
+    const ownsPointerHandlers = standaloneDraggable && Boolean(onMoveCandidate) && !previewHeld;
+    const draggable = groupedDraggable || ownsPointerHandlers;
     return <IntervalGraphic
       key={layout.candidate.id}
       scheme={scheme}
-      layout={{ ...layout, manualOffset }}
+      layout={layout}
       scale={scale}
       radialExtent={radialExtent}
       dragAxis={Math.abs(screenNormal[0]) > Math.abs(screenNormal[1]) ? 'x' : 'y'}
       conflict={!previewHeld && conflicts.has(layout.candidate.id)}
-      draggable={Boolean(onMoveCandidate) && !previewHeld}
-      onPointerDown={(event) => beginDrag(layout, event)}
-      onPointerMove={updateDrag}
-      onPointerUp={finishDrag}
-      onPointerCancel={(event) => cancelDrag(event, true)}
-      onLostPointerCapture={(event) => cancelDrag(event, false)}
+      draggable={draggable}
+      onPointerDown={ownsPointerHandlers ? (event) => beginDrag(layout, event) : undefined}
+      onPointerMove={ownsPointerHandlers ? updateDrag : undefined}
+      onPointerUp={ownsPointerHandlers ? finishDrag : undefined}
+      onPointerCancel={ownsPointerHandlers ? (event) => cancelDrag(event, true) : undefined}
+      onLostPointerCapture={ownsPointerHandlers ? (event) => cancelDrag(event, false) : undefined}
     />;
   };
 
-  return <g data-dimension-chain-overlay="true">
-    {grouped.map(({ chain, chainIndex, layouts: owned }) => <g
-      key={chain.id}
-      className={`vai-dimension-chain-group vai-dimension-chain-group--tone-${chainIndex % 3}`}
-      data-dimension-chain-group={chain.id}
-    >
-      {owned.map(renderInterval)}
+  const dragAxis = Math.abs(screenNormal[0]) > Math.abs(screenNormal[1]) ? 'x' : 'y';
+  return <g
+    className="vai-dimension-chain-overlay"
+    data-dimension-chain-overlay="true"
+  >
+    {grouped.map(({ chain, chainIndex, layouts: owned }) => {
+      const draggable = Boolean(onMoveChain) && !previewHeld && owned.length > 0;
+      return <g
+        key={chain.id}
+        className={`vai-dimension-chain-group vai-dimension-chain-group--tone-${chainIndex % 3}`}
+        data-dimension-chain-group={chain.id}
+        data-dimension-draggable={draggable || undefined}
+        data-dimension-drag-axis={dragAxis}
+        pointerEvents={draggable ? 'all' : 'none'}
+        onPointerDown={draggable ? (event) => beginDrag(owned[0]!, event) : undefined}
+        onPointerMove={draggable ? updateDrag : undefined}
+        onPointerUp={draggable ? finishDrag : undefined}
+        onPointerCancel={draggable ? (event) => cancelDrag(event, true) : undefined}
+        onLostPointerCapture={draggable ? (event) => cancelDrag(event, false) : undefined}
+      >
+      {owned.map((layout) => renderInterval(layout, false, draggable))}
       {!previewHeld && <ChainBracket
         scheme={scheme}
         chain={chain}
         chainIndex={chainIndex}
         layoutByCandidate={layoutByCandidate}
-        dragPreview={dragPreview}
         scale={scale}
+        draggable={draggable}
       />}
-    </g>)}
-    {standalone.map(renderInterval)}
+    </g>;
+    })}
+    {standalone.map((layout) => renderInterval(layout, true))}
   </g>;
 }
 
@@ -177,6 +204,7 @@ function layoutIntervals(
   scale: number,
   radialExtent: number,
   previewHeld: boolean,
+  dragPreview?: { targetKey: string; normalOffset: number } | null,
 ): IntervalLayout[] {
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
@@ -188,8 +216,9 @@ function layoutIntervals(
   const safeScale = Math.max(scale, 1e-6);
   const base = radialExtent + 28 / safeScale;
   const manual = new Map(scheme.layout?.candidateNormalOffsets.map(({ candidateId, normalOffset }) => [candidateId, normalOffset]) ?? []);
+  const chainOffsets = new Map(scheme.layout?.chainNormalOffsets.map(({ chainId, normalOffset }) => [chainId, normalOffset]) ?? []);
   const occupiedByRow = new Map<number, Array<{ start: number; end: number; lane: number }>>();
-  return [...new Set(visibleIds)].flatMap((candidateId): IntervalLayout[] => {
+  const layouts = [...new Set(visibleIds)].flatMap((candidateId): IntervalLayout[] => {
     const candidate = candidates.get(candidateId);
     if (!candidate) return [];
     const first = coordinates.get(candidate.startStationId);
@@ -211,6 +240,11 @@ function layoutIntervals(
     occupiedByRow.set(row, occupied);
     const automaticOffset = base + (row * 18 + lane * 14) / safeScale;
     const minimumOffset = radialExtent + 14 / safeScale;
+    const candidateOffset = manual.get(candidateId) ?? 0;
+    const targetKey = owner === undefined ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
+    const requestedGroupOffset = dragPreview?.targetKey === targetKey
+      ? dragPreview.normalOffset
+      : owner === undefined ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0;
     return [{
       candidate,
       ...(owner === undefined ? {} : { chainId: owner.chainId }),
@@ -221,9 +255,30 @@ function layoutIntervals(
       start: first,
       end: second,
       automaticOffset,
-      manualOffset: Math.max(manual.get(candidateId) ?? 0, minimumOffset - automaticOffset),
+      manualOffset: owner === undefined ? 0 : candidateOffset,
+      groupOffset: requestedGroupOffset,
+      minimumGroupOffset: minimumOffset - automaticOffset - (owner === undefined ? 0 : candidateOffset),
     }];
   });
+  const minimumByTarget = new Map<string, number>();
+  for (const layout of layouts) {
+    const targetKey = layout.chainId === undefined ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`;
+    minimumByTarget.set(targetKey, Math.max(minimumByTarget.get(targetKey) ?? Number.NEGATIVE_INFINITY, layout.minimumGroupOffset));
+  }
+  return layouts.map((layout) => ({
+    ...layout,
+    groupOffset: Math.max(
+      layout.groupOffset,
+      minimumByTarget.get(layout.chainId === undefined ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`) ?? Number.NEGATIVE_INFINITY,
+    ),
+    minimumGroupOffset: minimumByTarget.get(
+      layout.chainId === undefined ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`,
+    ) ?? layout.minimumGroupOffset,
+    manualOffset: layout.manualOffset + Math.max(
+      layout.groupOffset,
+      minimumByTarget.get(layout.chainId === undefined ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`) ?? Number.NEGATIVE_INFINITY,
+    ),
+  }));
 }
 
 function candidateMemberships(scheme: AxialDimensionScheme): Map<string, Array<{
@@ -277,11 +332,11 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   dragAxis: 'x' | 'y';
   conflict: boolean;
   draggable: boolean;
-  onPointerDown(event: PointerEvent<SVGGElement>): void;
-  onPointerMove(event: PointerEvent<SVGGElement>): void;
-  onPointerUp(event: PointerEvent<SVGGElement>): void;
-  onPointerCancel(event: PointerEvent<SVGGElement>): void;
-  onLostPointerCapture(event: PointerEvent<SVGGElement>): void;
+  onPointerDown?(event: PointerEvent<SVGGElement>): void;
+  onPointerMove?(event: PointerEvent<SVGGElement>): void;
+  onPointerUp?(event: PointerEvent<SVGGElement>): void;
+  onPointerCancel?(event: PointerEvent<SVGGElement>): void;
+  onLostPointerCapture?(event: PointerEvent<SVGGElement>): void;
 }) {
   const { candidate, lane, role } = layout;
   const { origin, direction, normal } = scheme.topology.axis;
@@ -327,21 +382,20 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   </g>;
 }
 
-function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, dragPreview, scale }: {
+function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, scale, draggable }: {
   scheme: AxialDimensionScheme;
   chain: AxialDimensionScheme['chains'][number];
   chainIndex: number;
   layoutByCandidate: ReadonlyMap<string, IntervalLayout>;
-  dragPreview: { candidateId: string; manualOffset: number } | null;
   scale: number;
+  draggable: boolean;
 }) {
   const layouts = [chain.parentCandidateId, ...chain.childCandidateIds, chain.closureCandidateId]
     .flatMap((id) => layoutByCandidate.get(id) ?? []);
   if (layouts.length < 2) return null;
   const safeScale = Math.max(scale, 1e-6);
   const { origin, direction, normal } = scheme.topology.axis;
-  const offsetOf = (layout: IntervalLayout) => layout.automaticOffset
-    + (dragPreview?.candidateId === layout.candidate.id ? dragPreview.manualOffset : layout.manualOffset);
+  const offsetOf = (layout: IntervalLayout) => layout.automaticOffset + layout.manualOffset;
   const offsets = layouts.map(offsetOf);
   const coordinate = Math.min(...layouts.map(({ start, end }) => Math.min(start, end))) - 12 / safeScale;
   const near = Math.min(...offsets);
@@ -354,7 +408,7 @@ function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, dragPrevie
   const b = point(far);
   const cap = 6 / safeScale;
   const title = point(far + 12 / safeScale);
-  return <g className="vai-dimension-chain-bracket" data-dimension-chain-bracket={chain.id} pointerEvents="none">
+  return <g className="vai-dimension-chain-bracket" data-dimension-chain-bracket={chain.id} pointerEvents={draggable ? 'all' : 'none'}>
     <path d={`M ${a[0] + direction[0] * cap} ${a[1] + direction[1] * cap} L ${a[0]} ${a[1]} L ${b[0]} ${b[1]} L ${b[0] + direction[0] * cap} ${b[1] + direction[1] * cap}`} fill="none" vectorEffect="non-scaling-stroke" />
     {layouts.map((layout) => {
       const member = point(offsetOf(layout));

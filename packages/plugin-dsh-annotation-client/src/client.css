@@ -123,6 +123,8 @@
 .vai-dimension-chain-group { color: #22d3ee; }
 .vai-dimension-chain-group--tone-1 { color: #34d399; }
 .vai-dimension-chain-group--tone-2 { color: #a78bfa; }
+.vai-dimension-chain-group[data-dimension-drag-axis="y"] { cursor: ns-resize; }
+.vai-dimension-chain-group[data-dimension-drag-axis="x"] { cursor: ew-resize; }
 .vai-dimension-chain-interval { color: #22d3ee; }
 .vai-dimension-chain-group > .vai-dimension-chain-interval { color: inherit; }
 .vai-dimension-chain-interval[data-dimension-drag-axis="y"] { cursor: ns-resize; }

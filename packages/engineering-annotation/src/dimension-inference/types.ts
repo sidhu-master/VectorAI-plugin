@@ -118,7 +118,10 @@ export interface AxialDimensionScheme {
   displayedCandidateIds: string[];
   closureCandidateIds: string[];
   chains: AxialChainNode[];
-  layout?: { candidateNormalOffsets: Array<{ candidateId: string; normalOffset: number }> };
+  layout?: {
+    chainNormalOffsets: Array<{ chainId: string; normalOffset: number }>;
+    candidateNormalOffsets: Array<{ candidateId: string; normalOffset: number }>;
+  };
   decisions: DimensionDecisionTrace[];
   diagnostics: EngineeringDiagnostic[];
   status: 'resolved' | 'needs-review' | 'conflict' | 'stale';

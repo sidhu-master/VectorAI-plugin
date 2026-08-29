@@ -9007,13 +9007,14 @@ function DimensionChainOverlay({
   radialExtent = 0,
   visible,
   previewHeld = false,
+  onMoveChain,
   onMoveCandidate
 }) {
   const [dragPreview, setDragPreview] = reactExports.useState(null);
   const dragRef = reactExports.useRef(null);
   if (!visible) return null;
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
-  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld);
+  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview);
   const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
   const grouped = scheme.chains.map((chain, chainIndex) => ({
     chain,
@@ -9024,16 +9025,18 @@ function DimensionChainOverlay({
   const screenNormal = normalized([scheme.topology.axis.normal[0], -scheme.topology.axis.normal[1]]);
   const safeScale = Math.max(scale, 1e-6);
   const beginDrag = (layout, event) => {
-    if (event.button !== 0 || !onMoveCandidate || previewHeld) return;
+    const target = layout.chainId === void 0 ? { type: "candidate", id: layout.candidate.id } : { type: "chain", id: layout.chainId };
+    const enabled = target.type === "chain" ? Boolean(onMoveChain) : Boolean(onMoveCandidate);
+    if (event.button !== 0 || !enabled || previewHeld) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
-      candidateId: layout.candidate.id,
+      target,
       pointerId: event.pointerId,
       startClient: [event.clientX, event.clientY],
-      startManualOffset: layout.manualOffset,
-      automaticOffset: layout.automaticOffset
+      startGroupOffset: layout.groupOffset,
+      minimumGroupOffset: layout.minimumGroupOffset
     };
   };
   const updateDrag = (event) => {
@@ -9042,21 +9045,22 @@ function DimensionChainOverlay({
     event.preventDefault();
     event.stopPropagation();
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0] + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
-    const minimum = radialExtent + 14 / safeScale;
-    const manualOffset = Math.max(drag.startManualOffset + projected, minimum - drag.automaticOffset);
-    setDragPreview({ candidateId: drag.candidateId, manualOffset });
+    setDragPreview({
+      targetKey: `${drag.target.type}:${drag.target.id}`,
+      normalOffset: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset)
+    });
   };
   const finishDrag = (event) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     updateDrag(event);
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0] + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
-    const minimum = radialExtent + 14 / safeScale;
-    const manualOffset = Math.max(drag.startManualOffset + projected, minimum - drag.automaticOffset);
+    const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
     dragRef.current = null;
     setDragPreview(null);
     event.currentTarget.releasePointerCapture(event.pointerId);
-    void Promise.resolve(onMoveCandidate == null ? void 0 : onMoveCandidate(drag.candidateId, roundOffset(manualOffset))).catch(() => void 0);
+    const save = drag.target.type === "chain" ? onMoveChain == null ? void 0 : onMoveChain(drag.target.id, roundOffset(groupOffset)) : onMoveCandidate == null ? void 0 : onMoveCandidate(drag.target.id, roundOffset(groupOffset));
+    void Promise.resolve(save).catch(() => void 0);
   };
   const cancelDrag = (event, releaseCapture) => {
     const drag = dragRef.current;
@@ -9067,52 +9071,72 @@ function DimensionChainOverlay({
     setDragPreview(null);
     if (releaseCapture) event.currentTarget.releasePointerCapture(event.pointerId);
   };
-  const renderInterval = (layout) => {
-    const manualOffset = (dragPreview == null ? void 0 : dragPreview.candidateId) === layout.candidate.id ? dragPreview.manualOffset : layout.manualOffset;
+  const renderInterval = (layout, standaloneDraggable = false, groupedDraggable = false) => {
+    const ownsPointerHandlers = standaloneDraggable && Boolean(onMoveCandidate) && !previewHeld;
+    const draggable = groupedDraggable || ownsPointerHandlers;
     return /* @__PURE__ */ jsxRuntimeExports.jsx(
       IntervalGraphic,
       {
         scheme,
-        layout: { ...layout, manualOffset },
+        layout,
         scale,
         radialExtent,
         dragAxis: Math.abs(screenNormal[0]) > Math.abs(screenNormal[1]) ? "x" : "y",
         conflict: !previewHeld && conflicts.has(layout.candidate.id),
-        draggable: Boolean(onMoveCandidate) && !previewHeld,
-        onPointerDown: (event) => beginDrag(layout, event),
-        onPointerMove: updateDrag,
-        onPointerUp: finishDrag,
-        onPointerCancel: (event) => cancelDrag(event, true),
-        onLostPointerCapture: (event) => cancelDrag(event, false)
+        draggable,
+        onPointerDown: ownsPointerHandlers ? (event) => beginDrag(layout, event) : void 0,
+        onPointerMove: ownsPointerHandlers ? updateDrag : void 0,
+        onPointerUp: ownsPointerHandlers ? finishDrag : void 0,
+        onPointerCancel: ownsPointerHandlers ? (event) => cancelDrag(event, true) : void 0,
+        onLostPointerCapture: ownsPointerHandlers ? (event) => cancelDrag(event, false) : void 0
       },
       layout.candidate.id
     );
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-dimension-chain-overlay": "true", children: [
-    grouped.map(({ chain, chainIndex, layouts: owned }) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-      "g",
-      {
-        className: `vai-dimension-chain-group vai-dimension-chain-group--tone-${chainIndex % 3}`,
-        "data-dimension-chain-group": chain.id,
-        children: [
-          owned.map(renderInterval),
-          !previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(
-            ChainBracket,
+  const dragAxis = Math.abs(screenNormal[0]) > Math.abs(screenNormal[1]) ? "x" : "y";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "g",
+    {
+      className: "vai-dimension-chain-overlay",
+      "data-dimension-chain-overlay": "true",
+      children: [
+        grouped.map(({ chain, chainIndex, layouts: owned }) => {
+          const draggable = Boolean(onMoveChain) && !previewHeld && owned.length > 0;
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "g",
             {
-              scheme,
-              chain,
-              chainIndex,
-              layoutByCandidate,
-              dragPreview,
-              scale
-            }
-          )
-        ]
-      },
-      chain.id
-    )),
-    standalone.map(renderInterval)
-  ] });
+              className: `vai-dimension-chain-group vai-dimension-chain-group--tone-${chainIndex % 3}`,
+              "data-dimension-chain-group": chain.id,
+              "data-dimension-draggable": draggable || void 0,
+              "data-dimension-drag-axis": dragAxis,
+              pointerEvents: draggable ? "all" : "none",
+              onPointerDown: draggable ? (event) => beginDrag(owned[0], event) : void 0,
+              onPointerMove: draggable ? updateDrag : void 0,
+              onPointerUp: draggable ? finishDrag : void 0,
+              onPointerCancel: draggable ? (event) => cancelDrag(event, true) : void 0,
+              onLostPointerCapture: draggable ? (event) => cancelDrag(event, false) : void 0,
+              children: [
+                owned.map((layout) => renderInterval(layout, false, draggable)),
+                !previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  ChainBracket,
+                  {
+                    scheme,
+                    chain,
+                    chainIndex,
+                    layoutByCandidate,
+                    scale,
+                    draggable
+                  }
+                )
+              ]
+            },
+            chain.id
+          );
+        }),
+        standalone.map((layout) => renderInterval(layout, true))
+      ]
+    }
+  );
 }
 function dimensionChainFitPadding({ scheme, radialExtent, scale, viewport }) {
   const safeScale = Math.max(scale, 1e-6);
@@ -9133,8 +9157,8 @@ function dimensionChainFitPadding({ scheme, radialExtent, scale, viewport }) {
   const freeFraction = Math.max(0.2, 1 - 2 * structuralPixels / Math.max(availablePixels, 1));
   return Math.max(1.2, (referenceRadius + maxManualOffset) / referenceRadius / freeFraction * 1.05);
 }
-function layoutIntervals(scheme, scale, radialExtent, previewHeld) {
-  var _a2;
+function layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview) {
+  var _a2, _b;
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
   const closures = previewHeld ? /* @__PURE__ */ new Set() : new Set(scheme.closureCandidateIds);
@@ -9145,8 +9169,9 @@ function layoutIntervals(scheme, scale, radialExtent, previewHeld) {
   const safeScale = Math.max(scale, 1e-6);
   const base = radialExtent + 28 / safeScale;
   const manual = new Map(((_a2 = scheme.layout) == null ? void 0 : _a2.candidateNormalOffsets.map(({ candidateId, normalOffset }) => [candidateId, normalOffset])) ?? []);
+  const chainOffsets = new Map(((_b = scheme.layout) == null ? void 0 : _b.chainNormalOffsets.map(({ chainId, normalOffset }) => [chainId, normalOffset])) ?? []);
   const occupiedByRow = /* @__PURE__ */ new Map();
-  return [...new Set(visibleIds)].flatMap((candidateId) => {
+  const layouts = [...new Set(visibleIds)].flatMap((candidateId) => {
     const candidate = candidates.get(candidateId);
     if (!candidate) return [];
     const first = coordinates.get(candidate.startStationId);
@@ -9168,6 +9193,9 @@ function layoutIntervals(scheme, scale, radialExtent, previewHeld) {
     occupiedByRow.set(row, occupied);
     const automaticOffset = base + (row * 18 + lane * 14) / safeScale;
     const minimumOffset = radialExtent + 14 / safeScale;
+    const candidateOffset = manual.get(candidateId) ?? 0;
+    const targetKey2 = owner === void 0 ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
+    const requestedGroupOffset = (dragPreview == null ? void 0 : dragPreview.targetKey) === targetKey2 ? dragPreview.normalOffset : owner === void 0 ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0;
     return [{
       candidate,
       ...owner === void 0 ? {} : { chainId: owner.chainId },
@@ -9178,9 +9206,30 @@ function layoutIntervals(scheme, scale, radialExtent, previewHeld) {
       start: first,
       end: second,
       automaticOffset,
-      manualOffset: Math.max(manual.get(candidateId) ?? 0, minimumOffset - automaticOffset)
+      manualOffset: owner === void 0 ? 0 : candidateOffset,
+      groupOffset: requestedGroupOffset,
+      minimumGroupOffset: minimumOffset - automaticOffset - (owner === void 0 ? 0 : candidateOffset)
     }];
   });
+  const minimumByTarget = /* @__PURE__ */ new Map();
+  for (const layout of layouts) {
+    const targetKey2 = layout.chainId === void 0 ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`;
+    minimumByTarget.set(targetKey2, Math.max(minimumByTarget.get(targetKey2) ?? Number.NEGATIVE_INFINITY, layout.minimumGroupOffset));
+  }
+  return layouts.map((layout) => ({
+    ...layout,
+    groupOffset: Math.max(
+      layout.groupOffset,
+      minimumByTarget.get(layout.chainId === void 0 ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`) ?? Number.NEGATIVE_INFINITY
+    ),
+    minimumGroupOffset: minimumByTarget.get(
+      layout.chainId === void 0 ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`
+    ) ?? layout.minimumGroupOffset,
+    manualOffset: layout.manualOffset + Math.max(
+      layout.groupOffset,
+      minimumByTarget.get(layout.chainId === void 0 ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`) ?? Number.NEGATIVE_INFINITY
+    )
+  }));
 }
 function candidateMemberships(scheme) {
   const result = /* @__PURE__ */ new Map();
@@ -9262,12 +9311,12 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
     }
   );
 }
-function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, dragPreview, scale }) {
+function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, scale, draggable }) {
   const layouts = [chain.parentCandidateId, ...chain.childCandidateIds, chain.closureCandidateId].flatMap((id) => layoutByCandidate.get(id) ?? []);
   if (layouts.length < 2) return null;
   const safeScale = Math.max(scale, 1e-6);
   const { origin, direction, normal } = scheme.topology.axis;
-  const offsetOf = (layout) => layout.automaticOffset + ((dragPreview == null ? void 0 : dragPreview.candidateId) === layout.candidate.id ? dragPreview.manualOffset : layout.manualOffset);
+  const offsetOf = (layout) => layout.automaticOffset + layout.manualOffset;
   const offsets = layouts.map(offsetOf);
   const coordinate = Math.min(...layouts.map(({ start, end }) => Math.min(start, end))) - 12 / safeScale;
   const near = Math.min(...offsets);
@@ -9280,7 +9329,7 @@ function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, dragPrevie
   const b = point3(far);
   const cap = 6 / safeScale;
   const title = point3(far + 12 / safeScale);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { className: "vai-dimension-chain-bracket", "data-dimension-chain-bracket": chain.id, pointerEvents: "none", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { className: "vai-dimension-chain-bracket", "data-dimension-chain-bracket": chain.id, pointerEvents: draggable ? "all" : "none", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: `M ${a[0] + direction[0] * cap} ${a[1] + direction[1] * cap} L ${a[0]} ${a[1]} L ${b[0]} ${b[1]} L ${b[0] + direction[0] * cap} ${b[1] + direction[1] * cap}`, fill: "none", vectorEffect: "non-scaling-stroke" }),
     layouts.map((layout) => {
       const member = point3(offsetOf(layout));
@@ -10117,6 +10166,7 @@ const EMPTY_DIMENSION_CONTROLLER = {
     refresh: async () => void 0,
     setDisplayed: async () => void 0,
     chooseClosure: async () => void 0,
+    moveChain: async () => void 0,
     moveCandidate: async () => void 0,
     confirm: async () => void 0,
     cancel: async () => void 0,
@@ -10203,6 +10253,9 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     }
     return padding;
   }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
+  const fitPaddingRef = reactExports.useRef(fitPadding);
+  fitPaddingRef.current = fitPadding;
+  const previousViewportSizeRef = reactExports.useRef({ width: viewport.width, height: viewport.height });
   const dimensionHistoryActive = dimensionState.plan.drawingRef !== void 0 && (dimensionState.plan.phase !== "idle" || dimensionState.plan.canUndo || dimensionState.plan.canRedo);
   reactExports.useEffect(() => {
     let active = true;
@@ -10241,7 +10294,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
       void runtime.actions.refresh().then(() => {
         if (!fitAfterAnalysis.current) return;
         fitAfterAnalysis.current = false;
-        fitRuntimeToDrawing(runtime, void 0, fitPadding);
+        fitRuntimeToDrawing(runtime, void 0, fitPaddingRef.current);
       });
       return;
     }
@@ -10251,11 +10304,17 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
       void runtime.actions.refresh();
     }, 500);
     return () => window.clearInterval(timer);
-  }, [fitPadding, partitionState.busy, runtime]);
+  }, [partitionState.busy, runtime]);
   reactExports.useEffect(() => {
     if (displaySnapshot === null) return;
-    fitRuntimeToDrawing(runtime, displaySnapshot, fitPadding);
-  }, [displaySnapshot, fitPadding, runtime]);
+    fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
+  }, [displaySnapshot, runtime]);
+  reactExports.useEffect(() => {
+    const previous = previousViewportSizeRef.current;
+    previousViewportSizeRef.current = { width: viewport.width, height: viewport.height };
+    if (displaySnapshot === null || previous.width === viewport.width && previous.height === viewport.height) return;
+    fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
+  }, [displaySnapshot, runtime, viewport.height, viewport.width]);
   reactExports.useEffect(() => {
     if (displaySnapshot === null) return;
     const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
@@ -10404,6 +10463,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                       radialExtent: dimensionRadialExtent,
                       visible: dimensionChainVisible,
                       previewHeld: dimensionState.previewHeld,
+                      onMoveChain: dimensionState.plan.phase === "editing" ? (chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset) : void 0,
                       onMoveCandidate: dimensionState.plan.phase === "editing" ? (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset) : void 0
                     }
                   )
@@ -16767,6 +16827,10 @@ const axialDimensionSchemeSchema = object({
   closureCandidateIds: array(idSchema),
   chains: array(axialChainNodeSchema),
   layout: object({
+    chainNormalOffsets: array(object({
+      chainId: idSchema,
+      normalOffset: number().finite()
+    }).strict()).default([]),
     candidateNormalOffsets: array(object({
       candidateId: idSchema,
       normalOffset: number().finite()
@@ -16792,6 +16856,12 @@ const dimensionSchemeEditCommandSchema = discriminatedUnion("type", [
   object({
     type: literal("candidate.layout"),
     candidateId: idSchema,
+    normalOffset: number().finite(),
+    expectedDrawingRef: drawingRefSchema
+  }).strict(),
+  object({
+    type: literal("chain.layout"),
+    chainId: idSchema,
     normalOffset: number().finite(),
     expectedDrawingRef: drawingRefSchema
   }).strict()

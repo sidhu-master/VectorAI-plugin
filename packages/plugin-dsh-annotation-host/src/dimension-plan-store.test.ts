@@ -197,6 +197,22 @@ describe('DimensionPlanStore', () => {
     ]);
   });
 
+  it('persists one chain-specific group offset and restores it through undo and redo', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    store.begin('session', drawingRef);
+    store.setDraft('session', inferredDraft());
+    store.editScheme('session', {
+      type: 'chain.layout', chainId: 'chain:overall', normalOffset: 18, expectedDrawingRef: drawingRef,
+    });
+    expect(store.get('session').draft?.axialScheme?.layout).toEqual({
+      chainNormalOffsets: [{ chainId: 'chain:overall', normalOffset: 18 }], candidateNormalOffsets: [],
+    });
+    expect(store.undo('session', drawingRef).draft?.axialScheme?.layout).toBeUndefined();
+    expect(store.redo('session', drawingRef).draft?.axialScheme?.layout?.chainNormalOffsets).toEqual([
+      { chainId: 'chain:overall', normalOffset: 18 },
+    ]);
+  });
+
   it.each(['needs-review', 'conflict', 'stale'] as const)('blocks confirmation for a %s inferred scheme', (status) => {
     const store = new DimensionPlanStore();
     store.begin('session', drawingRef);
