@@ -67,6 +67,7 @@ function axialScheme() {
     ],
     displayedCandidateIds: ['candidate:overall', 'candidate:a'], closureCandidateIds: ['candidate:b'],
     chains: [{ id: 'chain:overall', parentCandidateId: 'candidate:overall', childCandidateIds: ['candidate:a'], closureCandidateId: 'candidate:b', alternativeClosureCandidateIds: [], status: 'resolved' as const }],
+    layout: { candidateNormalOffsets: [{ candidateId: 'candidate:a', normalOffset: 12.5 }] },
     decisions: [], diagnostics: [], status: 'resolved' as const,
   };
 }
@@ -193,6 +194,15 @@ describe('DSH drawing workspace wire schemas', () => {
       expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
     };
     expect(() => dimensionSchemeEditCommandSchema.parse(command)).toThrow();
+  });
+
+  it('accepts a finite manual normal offset for a dimension candidate', () => {
+    const command = {
+      type: 'candidate.layout', candidateId: 'candidate:a', normalOffset: 12.5,
+      expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+    } as const;
+    expect(dimensionSchemeEditCommandSchema.parse(command)).toEqual(command);
+    expect(() => dimensionSchemeEditCommandSchema.parse({ ...command, normalOffset: Number.NaN })).toThrow();
   });
 
   it('round-trips portable tolerance and datum projections strictly', () => {

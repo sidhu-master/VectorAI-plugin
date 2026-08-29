@@ -17,6 +17,7 @@ describe('dimension chain controller', () => {
     await Promise.all([
       controller.actions.setDisplayed('candidate:1', false),
       controller.actions.chooseClosure('chain:1', 'candidate:2'),
+      controller.actions.moveCandidate('candidate:1', 12.5),
     ]);
 
     expect(editDimensionScheme).toHaveBeenNthCalledWith(1, 'session:1', {
@@ -24,6 +25,9 @@ describe('dimension chain controller', () => {
     });
     expect(editDimensionScheme).toHaveBeenNthCalledWith(2, 'session:1', {
       type: 'closure.choose', chainId: 'chain:1', candidateId: 'candidate:2', expectedDrawingRef: ref,
+    });
+    expect(editDimensionScheme).toHaveBeenNthCalledWith(3, 'session:1', {
+      type: 'candidate.layout', candidateId: 'candidate:1', normalOffset: 12.5, expectedDrawingRef: ref,
     });
   });
 });

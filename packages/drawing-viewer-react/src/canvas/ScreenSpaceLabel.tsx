@@ -17,6 +17,7 @@ export interface ScreenSpaceLabelProps {
   className?: string;
   pointerEvents?: SVGProps<SVGGElement>['pointerEvents'];
   'data-dimension-lane'?: number;
+  'data-dimension-chain-title'?: string;
 }
 
 export function ScreenSpaceLabel({

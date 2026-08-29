@@ -120,13 +120,24 @@
 .vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }
 .vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }
 
+.vai-dimension-chain-group { color: #22d3ee; }
+.vai-dimension-chain-group--tone-1 { color: #34d399; }
+.vai-dimension-chain-group--tone-2 { color: #a78bfa; }
 .vai-dimension-chain-interval { color: #22d3ee; }
-.vai-dimension-chain-interval line { stroke: currentColor; stroke-width: 1.5; }
+.vai-dimension-chain-group > .vai-dimension-chain-interval { color: inherit; }
+.vai-dimension-chain-interval[data-dimension-drag-axis="y"] { cursor: ns-resize; }
+.vai-dimension-chain-interval[data-dimension-drag-axis="x"] { cursor: ew-resize; }
+.vai-dimension-chain-interval line { stroke: currentColor; stroke-width: 1.35; }
+.vai-dimension-chain-interval[data-dimension-draggable="true"]:hover .vai-dimension-chain-line { stroke-width: 2.4; }
+.vai-dimension-chain-extension { opacity: .42; stroke-width: 1 !important; }
 .vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .vai-dimension-chain-label .vai-screen-space-label__background { fill: rgba(8, 16, 24, .94); stroke: currentColor; stroke-width: 1px; }
 .vai-dimension-chain-interval--closure { color: #f59e0b; }
-.vai-dimension-chain-interval--closure line:first-child { stroke-dasharray: 5 4; }
+.vai-dimension-chain-interval--closure .vai-dimension-chain-line { stroke-dasharray: 5 4; }
 .vai-dimension-chain-interval[data-dimension-conflict="true"] { color: #fb7185; }
+.vai-dimension-chain-bracket path, .vai-dimension-chain-bracket > line { stroke: currentColor; stroke-width: 1.5; opacity: .8; }
+.vai-dimension-chain-title text { fill: currentColor; font: 600 10px ui-sans-serif, system-ui, sans-serif; }
+.vai-dimension-chain-title .vai-screen-space-label__background { fill: rgba(8, 16, 24, .9); stroke: currentColor; stroke-width: 1px; }
 .vai-dimension-chain-inspector { display: grid; gap: 10px; }
 .vai-dimension-chain-inspector > header { display: flex; align-items: center; justify-content: space-between; }
 .vai-dimension-chain-inspector h2, .vai-dimension-chain-inspector h3 { margin: 0; }

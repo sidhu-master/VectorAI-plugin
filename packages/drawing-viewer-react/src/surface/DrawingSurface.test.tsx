@@ -129,6 +129,7 @@ describe('controlled DrawingSurface', () => {
           viewport={viewport}
           selectedIds={[]}
           fitToDrawingOnResize="geometry"
+          fitPadding={2}
           onViewportChange={onViewportChange}
           onSelectionChange={() => undefined}
         />,
@@ -149,7 +150,7 @@ describe('controlled DrawingSurface', () => {
       y: expect.any(Number),
     }));
     expect(onViewportChange.mock.calls.at(-1)?.[0].x).not.toBe(viewport.x);
-    expect(onViewportChange.mock.calls.at(-1)?.[0].scale).toBeGreaterThan(1);
+    expect(onViewportChange.mock.calls.at(-1)?.[0].scale).toBeCloseTo(1.2);
     act(() => renderer!.unmount());
     vi.unstubAllGlobals();
   });

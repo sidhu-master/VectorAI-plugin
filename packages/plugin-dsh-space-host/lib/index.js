@@ -14019,6 +14019,12 @@ const axialDimensionSchemeSchema = object$1({
   displayedCandidateIds: array$1(idSchema),
   closureCandidateIds: array$1(idSchema),
   chains: array$1(axialChainNodeSchema),
+  layout: object$1({
+    candidateNormalOffsets: array$1(object$1({
+      candidateId: idSchema,
+      normalOffset: number().finite()
+    }).strict())
+  }).strict().optional(),
   decisions: array$1(dimensionDecisionTraceSchema),
   diagnostics: array$1(engineeringDiagnosticSchema),
   status: _enum(["resolved", "needs-review", "conflict", "stale"])
@@ -14034,6 +14040,12 @@ discriminatedUnion("type", [
     type: literal$1("closure.choose"),
     chainId: idSchema,
     candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema$1
+  }).strict(),
+  object$1({
+    type: literal$1("candidate.layout"),
+    candidateId: idSchema,
+    normalOffset: number().finite(),
     expectedDrawingRef: drawingRefSchema$1
   }).strict()
 ]);

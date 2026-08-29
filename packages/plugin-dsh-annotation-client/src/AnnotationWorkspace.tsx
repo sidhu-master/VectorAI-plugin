@@ -20,7 +20,7 @@ import { ListTree } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { PartitionController } from './partition-controller';
 import type { DimensionChainController } from './dimension-chain-controller';
-import { DimensionChainOverlay } from './DimensionChainOverlay';
+import { DimensionChainOverlay, dimensionChainFitPadding } from './DimensionChainOverlay';
 import { DimensionChainInspector } from './DimensionChainInspector';
 import { PartitionOverlay } from './PartitionOverlay';
 import { PartitionActionToolbar } from './PartitionActionToolbar';
@@ -62,6 +62,7 @@ const EMPTY_DIMENSION_CONTROLLER: DimensionChainController = {
     refresh: async () => undefined,
     setDisplayed: async () => undefined,
     chooseClosure: async () => undefined,
+    moveCandidate: async () => undefined,
     confirm: async () => undefined,
     cancel: async () => undefined,
     undo: async () => undefined,
@@ -131,6 +132,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   }), [displaySnapshot, openingAngleVisible]);
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
+  const dimensionRadialExtent = Math.max(0, ...((draft ?? confirmed)?.segments.map(({ profile }) => profile.maxRadius) ?? []));
   useEffect(() => {
     setLayerVisibility(readLayerVisibility(
       sessionId,
@@ -150,6 +152,23 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID]
     ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
   const dimensionScheme = dimensionState.plan.draft?.axialScheme ?? dimensionState.plan.confirmed?.axialScheme;
+  const fitPadding = useMemo(() => {
+    if (!dimensionScheme || !dimensionChainVisible || !surfaceSnapshot) return 1.2;
+    const fitSize = { width: viewport.width, height: viewport.height };
+    let padding = 1.2;
+    for (let iteration = 0; iteration < 8; iteration += 1) {
+      const fitted = fitViewportToDrawing(surfaceSnapshot.document, fitSize, padding);
+      const next = dimensionChainFitPadding({
+        scheme: dimensionScheme,
+        radialExtent: dimensionRadialExtent,
+        scale: fitted.scale,
+        viewport: fitSize,
+      });
+      if (Math.abs(next - padding) < 0.001) return next;
+      padding = next;
+    }
+    return padding;
+  }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
   const dimensionHistoryActive = dimensionState.plan.drawingRef !== undefined && (
     dimensionState.plan.phase !== 'idle' || dimensionState.plan.canUndo || dimensionState.plan.canRedo
   );
@@ -188,7 +207,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       void runtime.actions.refresh().then(() => {
         if (!fitAfterAnalysis.current) return;
         fitAfterAnalysis.current = false;
-        fitRuntimeToDrawing(runtime);
+        fitRuntimeToDrawing(runtime, undefined, fitPadding);
       });
       return;
     }
@@ -196,11 +215,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     void runtime.actions.refresh();
     const timer = window.setInterval(() => { void runtime.actions.refresh(); }, 500);
     return () => window.clearInterval(timer);
-  }, [partitionState.busy, runtime]);
+  }, [fitPadding, partitionState.busy, runtime]);
   useEffect(() => {
     if (displaySnapshot === null) return;
-    fitRuntimeToDrawing(runtime, displaySnapshot);
-  }, [displaySnapshot, runtime]);
+    fitRuntimeToDrawing(runtime, displaySnapshot, fitPadding);
+  }, [displaySnapshot, fitPadding, runtime]);
   useEffect(() => {
     if (displaySnapshot === null) return;
     const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
@@ -290,7 +309,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             }))}
           onVisibilityChange={updateLayerVisibility}
         />
-        {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null) &&
+        {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null) &&
           <div className="vai-annotation-status-stack" data-annotation-status-stack="true">
             {partitionState.busy && <div className="vai-partition-progress" data-partition-progress={partitionState.partition.phase} role="status">
               <span className="vai-partition-progress__pulse" aria-hidden="true" />
@@ -308,6 +327,9 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             {(importError ?? partitionState.error) && <p className="vai-partition-error" role="alert">
               {importError ?? `边界未保存：${partitionState.error}`}
             </p>}
+            {dimensionState.error && <p className="vai-partition-error" role="alert">
+              {`尺寸位置未保存：${dimensionState.error}；请重新拖动后再试`}
+            </p>}
           </div>}
         {surfaceSnapshot !== null && <DrawingSurface
           snapshot={surfaceSnapshot}
@@ -317,6 +339,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           sourceUrl={presentation.sourceUrl}
           className="vai-canvas vai-annotation-workspace__surface"
           fitToDrawingOnResize
+          fitPadding={fitPadding}
           onViewportChange={runtime.actions.setViewport}
           onSelectionChange={runtime.actions.setSelection}
           worldLayers={<>
@@ -331,8 +354,12 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             {dimensionScheme && <DimensionChainOverlay
               scheme={dimensionScheme}
               scale={viewport.scale}
+              radialExtent={dimensionRadialExtent}
               visible={dimensionChainVisible}
               previewHeld={dimensionState.previewHeld}
+              onMoveCandidate={dimensionState.plan.phase === 'editing'
+                ? (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)
+                : undefined}
             />}
           </>}
         />}
@@ -343,6 +370,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           snapshot={displaySnapshot}
           viewport={viewport}
           unavailable={partitionState.busy}
+          fitPadding={fitPadding}
           canUndo={dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo}
           canRedo={dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo}
           onFit={runtime.actions.setViewport}
@@ -357,7 +385,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   </section>;
 }
 
-function fitRuntimeToDrawing(runtime: DrawingSurfaceRuntime, snapshot = runtime.snapshot.getSnapshot()): void {
+function fitRuntimeToDrawing(
+  runtime: DrawingSurfaceRuntime,
+  snapshot = runtime.snapshot.getSnapshot(),
+  padding = 1.2,
+): void {
   if (snapshot === null) return;
   const viewport = runtime.viewport.getSnapshot();
   if (viewport.width <= 0 || viewport.height <= 0) return;
@@ -366,7 +398,7 @@ function fitRuntimeToDrawing(runtime: DrawingSurfaceRuntime, snapshot = runtime.
     annotations: snapshot.document.annotations.filter(({ type }) => (
       type === 'section-hatch' || type === 'dimension'
     )),
-  } as DrawingDocument, viewport));
+  } as DrawingDocument, viewport, padding));
 }
 
 function useObservable<T>(observable: DrawingSurfaceObservable<T>): T {

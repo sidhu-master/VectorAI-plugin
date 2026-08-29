@@ -6,7 +6,8 @@ import type { AxialDimensionCandidate, AxialDimensionScheme, DimensionDecisionTr
 
 export type ApplyDimensionSchemeEditInput =
   | { type: 'candidate.display'; candidateId: string; displayed: boolean }
-  | { type: 'closure.choose'; chainId: string; candidateId: string };
+  | { type: 'closure.choose'; chainId: string; candidateId: string }
+  | { type: 'candidate.layout'; candidateId: string; normalOffset: number };
 
 export function applyDimensionSchemeEdit(
   scheme: AxialDimensionScheme,
@@ -16,7 +17,9 @@ export function applyDimensionSchemeEdit(
   if (!candidate) throw new Error('DIMENSION_CANDIDATE_UNKNOWN');
   const edited = command.type === 'candidate.display'
     ? setCandidateDisplayed(scheme, candidate.id, command.displayed)
-    : chooseChainClosure(scheme, command.chainId, candidate);
+    : command.type === 'closure.choose'
+      ? chooseChainClosure(scheme, command.chainId, candidate)
+      : setCandidateNormalOffset(scheme, candidate.id, command.normalOffset);
   const validation = validateAxialDimensionScheme(edited);
   const diagnostics = dedupe([
     ...edited.diagnostics.filter(({ code }) => !isDerivedValidationCode(code)),
@@ -26,6 +29,24 @@ export function applyDimensionSchemeEdit(
     ...edited,
     diagnostics,
     status: validation.some(({ severity }) => severity === 'error') ? 'conflict' : edited.status,
+  };
+}
+
+function setCandidateNormalOffset(
+  scheme: AxialDimensionScheme,
+  candidateId: string,
+  normalOffset: number,
+): AxialDimensionScheme {
+  if (!Number.isFinite(normalOffset)) throw new Error('DIMENSION_LAYOUT_OFFSET_INVALID');
+  const current = scheme.layout?.candidateNormalOffsets ?? [];
+  return {
+    ...structuredClone(scheme),
+    layout: {
+      candidateNormalOffsets: [
+        ...current.filter((item) => item.candidateId !== candidateId),
+        { candidateId, normalOffset },
+      ],
+    },
   };
 }
 

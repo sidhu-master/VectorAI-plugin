@@ -47,6 +47,7 @@ export interface DrawingSurfaceProps {
   screenLayers?: ReactNode;
   className?: string;
   fitToDrawingOnResize?: boolean | 'geometry';
+  fitPadding?: number;
   onViewportChange(viewport: DrawingWorkspaceViewport): void;
   onSelectionChange(ids: readonly string[]): void;
   onMouseWorldChange?(point: Vec2 | null): void;
@@ -71,6 +72,7 @@ export function DrawingSurface({
   screenLayers,
   className = 'vai-canvas',
   fitToDrawingOnResize = false,
+  fitPadding = 1.2,
   onViewportChange,
   onSelectionChange,
   onMouseWorldChange,
@@ -101,6 +103,7 @@ export function DrawingSurface({
               ? { ...snapshot.document, annotations: [] }
               : snapshot.document,
             { width, height },
+            fitPadding,
           )
           : { ...viewport, width, height },
       );
@@ -109,7 +112,7 @@ export function DrawingSurface({
     const observer = new ResizeObserver(resize);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [fitToDrawingOnResize, onViewportChange, snapshot.document, viewport]);
+  }, [fitPadding, fitToDrawingOnResize, onViewportChange, snapshot.document, viewport]);
 
   const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
@@ -207,7 +210,7 @@ export function DrawingSurface({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => onMouseWorldChange?.(null)}
-      onDoubleClick={() => onViewportChange(fitViewportToDrawing(snapshot.document, viewport))}
+      onDoubleClick={() => onViewportChange(fitViewportToDrawing(snapshot.document, viewport, fitPadding))}
     >
       <CadGrid viewport={viewport} showGrid={display.grid} showAxes={display.axes} />
       <rect data-canvas-background="true" width="100%" height="100%" fill="transparent" />

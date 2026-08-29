@@ -145,6 +145,7 @@ export interface WorkspaceToolbarViewProps {
   snapshot: DrawingWorkspaceSnapshot;
   viewport: DrawingWorkspaceViewport;
   unavailable?: boolean;
+  fitPadding?: number;
   canUndo: boolean;
   canRedo: boolean;
   onFit(viewport: ReturnType<typeof fitViewportToDrawing>): void;
@@ -160,6 +161,7 @@ export function WorkspaceToolbarView({
   snapshot,
   viewport,
   unavailable = false,
+  fitPadding = 1.2,
   canUndo,
   canRedo,
   onFit,
@@ -180,7 +182,7 @@ export function WorkspaceToolbarView({
         type="button"
         aria-label="适配图纸"
         title="缩放并居中显示整张图纸"
-        onClick={() => onFit(fitViewportToDrawing(snapshot.document, viewport))}
+        onClick={() => onFit(fitViewportToDrawing(snapshot.document, viewport, fitPadding))}
       >
         <Scan aria-hidden="true" size={17} />
       </button>
