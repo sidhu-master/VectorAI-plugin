@@ -180,6 +180,28 @@ describe('DimensionChainOverlay', () => {
       .findByProps({ 'data-dimension-chain-member': 'local' })).toBeDefined();
   });
 
+  it('keeps an outer chain title fixed when a nested chain moves a shared candidate', () => {
+    const nested = {
+      ...scheme,
+      chains: [
+        { id: 'chain:outer', parentCandidateId: 'overall', childCandidateIds: ['local'], closureCandidateId: 'closure', alternativeClosureCandidateIds: [], status: 'resolved' },
+        { id: 'chain:inner', parentCandidateId: 'local', childCandidateIds: [], closureCandidateId: 'closure', alternativeClosureCandidateIds: [], status: 'resolved' },
+      ],
+    } as AxialDimensionScheme;
+    const titlePosition = (current: AxialDimensionScheme, chainId: string) => renderer
+      .create(<DimensionChainOverlay scheme={current} scale={2} radialExtent={30} visible />).root
+      .findByProps({ 'data-dimension-chain-title': chainId }).props.position as readonly [number, number];
+    const outerBefore = titlePosition(nested, 'chain:outer');
+    const innerBefore = titlePosition(nested, 'chain:inner');
+    const moved = {
+      ...nested,
+      layout: { chainNormalOffsets: [{ chainId: 'chain:inner', normalOffset: 30 }], candidateNormalOffsets: [] },
+    };
+
+    expect(titlePosition(moved, 'chain:outer')).toEqual(outerBefore);
+    expect(titlePosition(moved, 'chain:inner')).not.toEqual(innerBefore);
+  });
+
   it('puts visually overlapping labels on separate lanes even when their dimension spans do not overlap', () => {
     const wideLabels = {
       ...scheme,
