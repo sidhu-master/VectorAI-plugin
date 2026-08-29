@@ -4330,6 +4330,9 @@ window.__ModuleLoader__.load({
       const inverse = 1 / Math.max(Math.abs(viewportScale), 1e-6);
       return `translate(${position[0]} ${position[1]}) scale(${inverse} ${-inverse})`;
     }
+    function estimateScreenTextWidth(text, fontSize) {
+      return [...text].reduce((width, character) => width + (character.codePointAt(0) > 255 ? 1 : 0.62) * fontSize, 0);
+    }
     function ScreenSpaceLabel({
       position,
       viewportScale,
@@ -4342,7 +4345,7 @@ window.__ModuleLoader__.load({
       textProps,
       ...groupProps
     }) {
-      const width = estimateTextWidth(children, fontSize) + paddingX * 2;
+      const width = estimateScreenTextWidth(children, fontSize) + paddingX * 2;
       const height = fontSize + paddingY * 2;
       const x = textAnchor === "middle" ? -width / 2 : textAnchor === "end" ? -width : 0;
       return /* @__PURE__ */ jsxRuntime.jsxs(
@@ -4367,9 +4370,6 @@ window.__ModuleLoader__.load({
           ]
         }
       );
-    }
-    function estimateTextWidth(text, fontSize) {
-      return [...text].reduce((width, character) => width + (character.codePointAt(0) > 255 ? 1 : 0.62) * fontSize, 0);
     }
     function EntityRenderer({
       node,
