@@ -162,7 +162,7 @@ describe('DimensionChainOverlay', () => {
     })).toBeGreaterThan(8);
   });
 
-  it('renders a shared nested candidate as the inner parent rather than the outer child', () => {
+  it('renders a shared nested candidate only in its owning inner chain', () => {
     const nested = {
       ...scheme,
       chains: [
@@ -177,10 +177,10 @@ describe('DimensionChainOverlay', () => {
     expect(local.props['data-dimension-chain-memberships']).toBe('chain:outer chain:inner');
     expect(local.props['data-dimension-membership-roles']).toBe('child parent');
     expect(root.findByProps({ 'data-dimension-chain-bracket': 'chain:outer' })
-      .findByProps({ 'data-dimension-chain-member': 'local' })).toBeDefined();
+      .findAllByProps({ 'data-dimension-chain-member': 'local' })).toHaveLength(0);
   });
 
-  it('keeps an outer chain title fixed when a nested chain moves a shared candidate', () => {
+  it('keeps an outer chain visual fixed when a nested chain moves a shared candidate', () => {
     const nested = {
       ...scheme,
       chains: [
@@ -188,18 +188,23 @@ describe('DimensionChainOverlay', () => {
         { id: 'chain:inner', parentCandidateId: 'local', childCandidateIds: [], closureCandidateId: 'closure', alternativeClosureCandidateIds: [], status: 'resolved' },
       ],
     } as AxialDimensionScheme;
-    const titlePosition = (current: AxialDimensionScheme, chainId: string) => renderer
-      .create(<DimensionChainOverlay scheme={current} scale={2} radialExtent={30} visible />).root
-      .findByProps({ 'data-dimension-chain-title': chainId }).props.position as readonly [number, number];
-    const outerBefore = titlePosition(nested, 'chain:outer');
-    const innerBefore = titlePosition(nested, 'chain:inner');
+    const chainVisual = (current: AxialDimensionScheme, chainId: string) => {
+      const bracket = renderer.create(<DimensionChainOverlay scheme={current} scale={2} radialExtent={30} visible />).root
+        .findByProps({ 'data-dimension-chain-bracket': chainId });
+      return {
+        path: bracket.findByType('path').props.d as string,
+        title: bracket.findByProps({ 'data-dimension-chain-title': chainId }).props.position as readonly [number, number],
+      };
+    };
+    const outerBefore = chainVisual(nested, 'chain:outer');
+    const innerBefore = chainVisual(nested, 'chain:inner');
     const moved = {
       ...nested,
       layout: { chainNormalOffsets: [{ chainId: 'chain:inner', normalOffset: 30 }], candidateNormalOffsets: [] },
     };
 
-    expect(titlePosition(moved, 'chain:outer')).toEqual(outerBefore);
-    expect(titlePosition(moved, 'chain:inner')).not.toEqual(innerBefore);
+    expect(chainVisual(moved, 'chain:outer')).toEqual(outerBefore);
+    expect(chainVisual(moved, 'chain:inner')).not.toEqual(innerBefore);
   });
 
   it('puts visually overlapping labels on separate lanes even when their dimension spans do not overlap', () => {
