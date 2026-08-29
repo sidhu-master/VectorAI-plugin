@@ -45,6 +45,7 @@ const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.ma
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1_200;
+const dimensionChainLayerId = (chainId: string) => `${ANNOTATION_DIMENSION_CHAIN_LAYER_ID}:${chainId}`;
 type AnnotationPanelId = 'structure';
 const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER] as const;
 const subscribeToNoLayers = () => () => undefined;
@@ -153,6 +154,19 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID]
     ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
   const dimensionScheme = dimensionState.plan.draft?.axialScheme ?? dimensionState.plan.confirmed?.axialScheme;
+  const dimensionChainLayers = useMemo(() => dimensionScheme?.chains.map((chain, index) => ({
+    id: dimensionChainLayerId(chain.id),
+    label: `尺寸链 ${index + 1}`,
+    category: 'engineering' as const,
+    icon: 'dimension' as const,
+    order: ANNOTATION_DIMENSION_CHAIN_LAYER.order + index + 1,
+    defaultVisible: true,
+  })) ?? [], [dimensionScheme]);
+  const visibleDimensionChainIds = useMemo(() => new Set(
+    dimensionScheme?.chains
+      .filter((chain) => layerVisibility[dimensionChainLayerId(chain.id)] ?? true)
+      .map(({ id }) => id) ?? [],
+  ), [dimensionScheme, layerVisibility]);
   const fitPadding = useMemo(() => {
     if (!dimensionScheme || !dimensionChainVisible || !surfaceSnapshot) return 1.2;
     const fitSize = { width: viewport.width, height: viewport.height };
@@ -307,7 +321,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       />
       <main className="vai-annotation-workspace__canvas">
         <DrawingLayerManager
-          layers={registeredLayers
+          layers={[...registeredLayers
             .filter(({ id }) => (
               (id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed))
               || (id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle)
@@ -316,7 +330,13 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             .map((definition) => ({
               definition,
               visible: layerVisibility[definition.id] ?? definition.defaultVisible,
-            }))}
+              ...(definition.id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && dimensionChainLayers.length > 0 ? {
+                children: dimensionChainLayers.map((childDefinition) => ({
+                  definition: childDefinition,
+                  visible: layerVisibility[childDefinition.id] ?? childDefinition.defaultVisible,
+                })),
+              } : {}),
+            }))]}
           onVisibilityChange={updateLayerVisibility}
         />
         {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null) &&
@@ -366,13 +386,10 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               scale={viewport.scale}
               radialExtent={dimensionRadialExtent}
               visible={dimensionChainVisible}
+              visibleChainIds={visibleDimensionChainIds}
               previewHeld={dimensionState.previewHeld}
-              onMoveChain={dimensionState.plan.phase === 'editing'
-                ? (chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset)
-                : undefined}
-              onMoveCandidate={dimensionState.plan.phase === 'editing'
-                ? (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)
-                : undefined}
+              onMoveChain={(chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset)}
+              onMoveCandidate={(candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)}
             />}
           </>}
         />}

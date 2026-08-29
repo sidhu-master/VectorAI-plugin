@@ -42,7 +42,7 @@ export async function apply(ctx: Context) {
         if (current) return current;
         const controller = createPartitionController(
           sessionId,
-          () => scope.get('remote').drawingAnnotation,
+          annotationRemote,
         );
         partitionControllers.set(sessionId, controller);
         void controller.actions.refresh();
@@ -53,7 +53,7 @@ export async function apply(ctx: Context) {
         if (current) return current;
         const controller = createDimensionChainController(
           sessionId,
-          () => scope.get('remote').drawingAnnotation,
+          annotationRemote,
         );
         dimensionControllers.set(sessionId, controller);
         void controller.actions.refresh();

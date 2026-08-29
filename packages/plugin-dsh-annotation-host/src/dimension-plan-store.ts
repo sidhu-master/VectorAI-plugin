@@ -81,7 +81,22 @@ export class DimensionPlanStore {
   editScheme(sessionId: string, command: DimensionSchemeEditCommand): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, command.expectedDrawingRef);
-    const draft = state.snapshot.draft;
+    if ((command.type === 'chain.layout' || command.type === 'candidate.layout')
+      && state.snapshot.phase === 'confirmed'
+      && state.snapshot.confirmed?.axialScheme) {
+      const scheme = applyDimensionSchemeEdit(state.snapshot.confirmed.axialScheme as unknown as AxialDimensionScheme, command.type === 'chain.layout'
+        ? { type: command.type, chainId: command.chainId, normalOffset: command.normalOffset }
+        : { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset });
+      return this.#push(sessionId, {
+        ...state.snapshot,
+        phase: 'confirmed',
+        confirmed: { ...state.snapshot.confirmed, axialScheme: scheme },
+        canUndo: true,
+        canRedo: false,
+        updatedAt: this.ports.now(),
+      });
+    }
+    const draft = state.snapshot.draft ?? editableDraftFrom(state.snapshot.confirmed);
     if (!draft?.axialScheme) throw new Error('DIMENSION_SCHEME_DRAFT_REQUIRED');
     const edit = command.type === 'candidate.display'
       ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } as const
@@ -232,6 +247,24 @@ export class DimensionPlanStore {
     this.#states.set(sessionId, initial);
     return initial;
   }
+}
+
+function editableDraftFrom(
+  revision: DimensionPlanSessionSnapshot['confirmed'],
+): EngineeringAnnotationDraft | undefined {
+  if (!revision) return undefined;
+  return {
+    version: revision.version,
+    drawingRef: revision.drawingRef,
+    datums: revision.datums,
+    intents: revision.intents,
+    tolerances: revision.tolerances,
+    chains: revision.chains,
+    dependencies: revision.dependencies,
+    diagnostics: revision.diagnostics,
+    ...(revision.axialScheme === undefined ? {} : { axialScheme: revision.axialScheme }),
+    baseRevisionId: revision.id,
+  };
 }
 
 export class FileDimensionPlanStorage implements DimensionPlanStorage {

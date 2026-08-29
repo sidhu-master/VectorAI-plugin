@@ -7,6 +7,8 @@ import type {
 } from '@vectorai/drawing-surface-api';
 import {
   Boxes,
+  ChevronDown,
+  ChevronRight,
   DraftingCompass,
   Eye,
   EyeOff,
@@ -22,6 +24,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from
 export interface DrawingLayerManagerItem {
   definition: DrawingLayerDefinition;
   visible: boolean;
+  children?: readonly DrawingLayerManagerItem[];
 }
 
 export interface DrawingLayerManagerProps {
@@ -54,6 +57,7 @@ const LAYER_ICONS: Record<DrawingLayerIcon, LucideIcon> = {
 
 export function DrawingLayerManager({ layers, onVisibilityChange }: DrawingLayerManagerProps) {
   const [open, setOpen] = useState(false);
+  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -78,6 +82,42 @@ export function DrawingLayerManager({ layers, onVisibilityChange }: DrawingLayer
     event.stopPropagation();
     setOpen(false);
   };
+  const renderItem = ({ definition, visible, children }: DrawingLayerManagerItem, depth = 0) => {
+    const LayerIcon = definition.icon === undefined ? Layers : LAYER_ICONS[definition.icon];
+    const expandable = Boolean(children?.length);
+    const collapsed = collapsedIds.has(definition.id);
+    return <div key={definition.id} className="vai-layer-manager__branch" data-layer-depth={depth}>
+      <div className="vai-layer-manager__row">
+        {expandable
+          ? <button
+            type="button"
+            className="vai-layer-manager__disclosure"
+            aria-label={`${collapsed ? '展开' : '收起'}${definition.label}`}
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsedIds((current) => {
+              const next = new Set(current);
+              if (collapsed) next.delete(definition.id); else next.add(definition.id);
+              return next;
+            })}
+          >{collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</button>
+          : <span className="vai-layer-manager__disclosure-spacer" />}
+        <button
+          type="button"
+          className="vai-layer-manager__item"
+          aria-label={`${visible ? '隐藏' : '显示'}${definition.label}`}
+          aria-pressed={visible}
+          onClick={() => onVisibilityChange(definition.id, !visible)}
+        >
+          <LayerIcon size={15} aria-hidden="true" />
+          <span>{definition.label}</span>
+          {visible ? <Eye size={15} aria-hidden="true" /> : <EyeOff size={15} aria-hidden="true" />}
+        </button>
+      </div>
+      {expandable && !collapsed && <div className="vai-layer-manager__children">
+        {children!.map((child) => renderItem(child, depth + 1))}
+      </div>}
+    </div>;
+  };
 
   return <div
     ref={rootRef}
@@ -100,25 +140,8 @@ export function DrawingLayerManager({ layers, onVisibilityChange }: DrawingLayer
     {open && <div className="vai-layer-manager__menu" role="dialog" aria-label="图层显示">
       {groups.map(({ category, items }) => <section key={category} className="vai-layer-manager__group">
         <h3 data-layer-category={category}>{CATEGORY_LABELS[category]}</h3>
-        {items.map(({ definition, visible }) => {
-          const LayerIcon = definition.icon === undefined ? Layers : LAYER_ICONS[definition.icon];
-          return <button
-            key={definition.id}
-            type="button"
-            className="vai-layer-manager__item"
-            aria-label={`${visible ? '隐藏' : '显示'}${definition.label}`}
-            aria-pressed={visible}
-            onClick={() => onVisibilityChange(definition.id, !visible)}
-          >
-            <LayerIcon size={15} aria-hidden="true" />
-            <span>{definition.label}</span>
-            {visible
-              ? <Eye size={15} aria-hidden="true" />
-              : <EyeOff size={15} aria-hidden="true" />}
-          </button>;
-        })}
+        {items.map((item) => renderItem(item))}
       </section>)}
     </div>}
   </div>;
 }
-

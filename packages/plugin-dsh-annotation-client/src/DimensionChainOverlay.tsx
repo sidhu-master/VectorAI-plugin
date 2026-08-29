@@ -34,6 +34,7 @@ export function DimensionChainOverlay({
   radialExtent = 0,
   visible,
   previewHeld = false,
+  visibleChainIds,
   onMoveChain,
   onMoveCandidate,
 }: {
@@ -42,6 +43,7 @@ export function DimensionChainOverlay({
   radialExtent?: number;
   visible: boolean;
   previewHeld?: boolean;
+  visibleChainIds?: ReadonlySet<string>;
   onMoveChain?(chainId: string, normalOffset: number): void | Promise<void>;
   onMoveCandidate?(candidateId: string, normalOffset: number): void | Promise<void>;
 }) {
@@ -51,11 +53,13 @@ export function DimensionChainOverlay({
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : []));
   const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview);
   const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
-  const grouped = scheme.chains.map((chain, chainIndex) => ({
-    chain,
-    chainIndex,
-    layouts: layouts.filter(({ chainId }) => chainId === chain.id),
-  }));
+  const grouped = scheme.chains
+    .map((chain, chainIndex) => ({
+      chain,
+      chainIndex,
+      layouts: layouts.filter(({ chainId }) => chainId === chain.id),
+    }))
+    .filter(({ chain }) => visibleChainIds === undefined || visibleChainIds.has(chain.id));
   const standalone = layouts.filter(({ chainId }) => chainId === undefined);
   const screenNormal = normalized([scheme.topology.axis.normal[0], -scheme.topology.axis.normal[1]]);
   const safeScale = Math.max(scale, 1e-6);
@@ -96,13 +100,18 @@ export function DimensionChainOverlay({
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0]
       + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
     const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
+    const targetKey = `${drag.target.type}:${drag.target.id}`;
     dragRef.current = null;
-    setDragPreview(null);
+    setDragPreview({ targetKey, normalOffset: groupOffset });
     event.currentTarget.releasePointerCapture(event.pointerId);
     const save = drag.target.type === 'chain'
       ? onMoveChain?.(drag.target.id, roundOffset(groupOffset))
       : onMoveCandidate?.(drag.target.id, roundOffset(groupOffset));
-    void Promise.resolve(save).catch(() => undefined);
+    void Promise.resolve(save)
+      .then(() => window.requestAnimationFrame(() => {
+        setDragPreview((current) => current?.targetKey === targetKey ? null : current);
+      }))
+      .catch(() => setDragPreview((current) => current?.targetKey === targetKey ? null : current));
   };
   const cancelDrag = (event: PointerEvent<SVGGElement>, releaseCapture: boolean) => {
     const drag = dragRef.current;
@@ -238,7 +247,7 @@ function layoutIntervals(
     while (occupied.some((item) => item.lane === lane && overlaps(visual, item, 8 / safeScale))) lane += 1;
     occupied.push({ start: visual.start, end: visual.end, lane });
     occupiedByRow.set(row, occupied);
-    const automaticOffset = base + (row * 18 + lane * 14) / safeScale;
+    const automaticOffset = base + (row * 26 + lane * 22) / safeScale;
     const minimumOffset = radialExtent + 14 / safeScale;
     const candidateOffset = manual.get(candidateId) ?? 0;
     const targetKey = owner === undefined ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
@@ -350,7 +359,13 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   const b = point(layout.end, offset);
   const witnessA = point(layout.start, radialExtent + 3 / safeScale);
   const witnessB = point(layout.end, radialExtent + 3 / safeScale);
-  const middle = [(a[0] + b[0]) / 2 + normal[0] * 7 / safeScale, (a[1] + b[1]) / 2 + normal[1] * 7 / safeScale] as const;
+  const lineMiddle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as const;
+  const labelOffset = (role === 'closure' ? 14 : 11) / safeScale;
+  const middle = [lineMiddle[0] + normal[0] * labelOffset, lineMiddle[1] + normal[1] * labelOffset] as const;
+  const screenLength = Math.abs(layout.end - layout.start) * safeScale;
+  const closureDash = screenLength < 24
+    ? `${Math.max(1, screenLength / 5) / safeScale} ${Math.max(.8, screenLength / 10) / safeScale}`
+    : `${5 / safeScale} ${4 / safeScale}`;
   const tick = 4 / safeScale;
   return <g
     className={`vai-dimension-chain-interval vai-dimension-chain-interval--${role}`}
@@ -373,7 +388,15 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   >
     <line className="vai-dimension-chain-extension" data-dimension-extension="start" x1={witnessA[0]} y1={witnessA[1]} x2={a[0]} y2={a[1]} vectorEffect="non-scaling-stroke" />
     <line className="vai-dimension-chain-extension" data-dimension-extension="end" x1={witnessB[0]} y1={witnessB[1]} x2={b[0]} y2={b[1]} vectorEffect="non-scaling-stroke" />
-    <line className="vai-dimension-chain-line" x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} vectorEffect="non-scaling-stroke" />
+    <line
+      className="vai-dimension-chain-line"
+      x1={a[0]}
+      y1={a[1]}
+      x2={b[0]}
+      y2={b[1]}
+      strokeDasharray={role === 'closure' ? closureDash : undefined}
+      vectorEffect="non-scaling-stroke"
+    />
     <line x1={a[0] - normal[0] * tick} y1={a[1] - normal[1] * tick} x2={a[0] + normal[0] * tick} y2={a[1] + normal[1] * tick} vectorEffect="non-scaling-stroke" />
     <line x1={b[0] - normal[0] * tick} y1={b[1] - normal[1] * tick} x2={b[0] + normal[0] * tick} y2={b[1] + normal[1] * tick} vectorEffect="non-scaling-stroke" />
     <ScreenSpaceLabel position={middle} viewportScale={scale} background className="vai-dimension-chain-label" data-dimension-lane={lane}>

@@ -21,7 +21,9 @@ export function readLayerVisibility(
   storage: LayerVisibilityStorage | null | undefined,
 ): Record<string, boolean> {
   const saved = readSavedMap(sessionId, storage);
-  const result: Record<string, boolean> = {};
+  const result: Record<string, boolean> = Object.fromEntries(
+    Object.entries(saved).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'),
+  );
   for (const definition of definitions) {
     const savedValue = saved[definition.id];
     if (typeof savedValue === 'boolean') {
@@ -84,4 +86,3 @@ function readLegacyPartitionVisibility(
     return null;
   }
 }
-

@@ -10426,9 +10426,21 @@ class DimensionPlanStore {
     });
   }
   editScheme(sessionId, command) {
+    var _a3;
     const state = __privateMethod(this, _DimensionPlanStore_instances, envelope_fn2).call(this, sessionId);
     requireRef(state.snapshot, command.expectedDrawingRef);
-    const draft = state.snapshot.draft;
+    if ((command.type === "chain.layout" || command.type === "candidate.layout") && state.snapshot.phase === "confirmed" && ((_a3 = state.snapshot.confirmed) == null ? void 0 : _a3.axialScheme)) {
+      const scheme2 = applyDimensionSchemeEdit(state.snapshot.confirmed.axialScheme, command.type === "chain.layout" ? { type: command.type, chainId: command.chainId, normalOffset: command.normalOffset } : { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset });
+      return __privateMethod(this, _DimensionPlanStore_instances, push_fn2).call(this, sessionId, {
+        ...state.snapshot,
+        phase: "confirmed",
+        confirmed: { ...state.snapshot.confirmed, axialScheme: scheme2 },
+        canUndo: true,
+        canRedo: false,
+        updatedAt: this.ports.now()
+      });
+    }
+    const draft = state.snapshot.draft ?? editableDraftFrom(state.snapshot.confirmed);
     if (!(draft == null ? void 0 : draft.axialScheme)) throw new Error("DIMENSION_SCHEME_DRAFT_REQUIRED");
     const edit = command.type === "candidate.display" ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } : command.type === "closure.choose" ? { type: command.type, chainId: command.chainId, candidateId: command.candidateId } : command.type === "candidate.layout" ? { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset } : { type: command.type, chainId: command.chainId, normalOffset: command.normalOffset };
     const scheme = applyDimensionSchemeEdit(draft.axialScheme, edit);
@@ -10572,6 +10584,21 @@ envelope_fn2 = function(sessionId) {
   __privateGet(this, _states2).set(sessionId, initial);
   return initial;
 };
+function editableDraftFrom(revision) {
+  if (!revision) return void 0;
+  return {
+    version: revision.version,
+    drawingRef: revision.drawingRef,
+    datums: revision.datums,
+    intents: revision.intents,
+    tolerances: revision.tolerances,
+    chains: revision.chains,
+    dependencies: revision.dependencies,
+    diagnostics: revision.diagnostics,
+    ...revision.axialScheme === void 0 ? {} : { axialScheme: revision.axialScheme },
+    baseRevisionId: revision.id
+  };
+}
 class FileDimensionPlanStorage {
   constructor(directory) {
     __privateAdd(this, _FileDimensionPlanStorage_instances);

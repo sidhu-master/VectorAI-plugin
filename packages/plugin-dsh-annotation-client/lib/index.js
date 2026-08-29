@@ -7820,7 +7820,7 @@ const createLucideIcon = (iconName, iconNode) => {
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$g = [
+const __iconNode$i = [
   [
     "path",
     {
@@ -7852,7 +7852,23 @@ const __iconNode$g = [
   ["path", { d: "m12 8 4.74-2.85", key: "3rx089" }],
   ["path", { d: "M12 13.5V8", key: "1io7kd" }]
 ];
-const Boxes = createLucideIcon("boxes", __iconNode$g);
+const Boxes = createLucideIcon("boxes", __iconNode$i);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$h = [["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]];
+const ChevronDown = createLucideIcon("chevron-down", __iconNode$h);
+/**
+ * @license lucide-react v0.511.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$g = [["path", { d: "m9 18 6-6-6-6", key: "mthhwq" }]];
+const ChevronRight = createLucideIcon("chevron-right", __iconNode$g);
 /**
  * @license lucide-react v0.511.0 - ISC
  *
@@ -8932,6 +8948,7 @@ const LAYER_ICONS = {
 };
 function DrawingLayerManager({ layers, onVisibilityChange }) {
   const [open, setOpen] = reactExports.useState(false);
+  const [collapsedIds, setCollapsedIds] = reactExports.useState(() => /* @__PURE__ */ new Set());
   const rootRef = reactExports.useRef(null);
   reactExports.useEffect(() => {
     if (!open || typeof document === "undefined") return;
@@ -8952,6 +8969,47 @@ function DrawingLayerManager({ layers, onVisibilityChange }) {
     if (event.key !== "Escape") return;
     event.stopPropagation();
     setOpen(false);
+  };
+  const renderItem = ({ definition, visible, children }, depth = 0) => {
+    const LayerIcon = definition.icon === void 0 ? Layers : LAYER_ICONS[definition.icon];
+    const expandable = Boolean(children == null ? void 0 : children.length);
+    const collapsed = collapsedIds.has(definition.id);
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-layer-manager__branch", "data-layer-depth": depth, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-layer-manager__row", children: [
+        expandable ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            className: "vai-layer-manager__disclosure",
+            "aria-label": `${collapsed ? "展开" : "收起"}${definition.label}`,
+            "aria-expanded": !collapsed,
+            onClick: () => setCollapsedIds((current) => {
+              const next = new Set(current);
+              if (collapsed) next.delete(definition.id);
+              else next.add(definition.id);
+              return next;
+            }),
+            children: collapsed ? /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronRight, { size: 14 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDown, { size: 14 })
+          }
+        ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-layer-manager__disclosure-spacer" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            type: "button",
+            className: "vai-layer-manager__item",
+            "aria-label": `${visible ? "隐藏" : "显示"}${definition.label}`,
+            "aria-pressed": visible,
+            onClick: () => onVisibilityChange(definition.id, !visible),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(LayerIcon, { size: 15, "aria-hidden": "true" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: definition.label }),
+              visible ? /* @__PURE__ */ jsxRuntimeExports.jsx(Eye, { size: 15, "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EyeOff, { size: 15, "aria-hidden": "true" })
+            ]
+          }
+        )
+      ] }),
+      expandable && !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-layer-manager__children", children: children.map((child) => renderItem(child, depth + 1)) })
+    ] }, definition.id);
   };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "div",
@@ -8977,25 +9035,7 @@ function DrawingLayerManager({ layers, onVisibilityChange }) {
         ),
         open && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "vai-layer-manager__menu", role: "dialog", "aria-label": "图层显示", children: groups.map(({ category, items }) => /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "vai-layer-manager__group", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { "data-layer-category": category, children: CATEGORY_LABELS[category] }),
-          items.map(({ definition, visible }) => {
-            const LayerIcon = definition.icon === void 0 ? Layers : LAYER_ICONS[definition.icon];
-            return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-              "button",
-              {
-                type: "button",
-                className: "vai-layer-manager__item",
-                "aria-label": `${visible ? "隐藏" : "显示"}${definition.label}`,
-                "aria-pressed": visible,
-                onClick: () => onVisibilityChange(definition.id, !visible),
-                children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(LayerIcon, { size: 15, "aria-hidden": "true" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: definition.label }),
-                  visible ? /* @__PURE__ */ jsxRuntimeExports.jsx(Eye, { size: 15, "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EyeOff, { size: 15, "aria-hidden": "true" })
-                ]
-              },
-              definition.id
-            );
-          })
+          items.map((item) => renderItem(item))
         ] }, category)) })
       ]
     }
@@ -9007,6 +9047,7 @@ function DimensionChainOverlay({
   radialExtent = 0,
   visible,
   previewHeld = false,
+  visibleChainIds,
   onMoveChain,
   onMoveCandidate
 }) {
@@ -9020,7 +9061,7 @@ function DimensionChainOverlay({
     chain,
     chainIndex,
     layouts: layouts.filter(({ chainId }) => chainId === chain.id)
-  }));
+  })).filter(({ chain }) => visibleChainIds === void 0 || visibleChainIds.has(chain.id));
   const standalone = layouts.filter(({ chainId }) => chainId === void 0);
   const screenNormal = normalized([scheme.topology.axis.normal[0], -scheme.topology.axis.normal[1]]);
   const safeScale = Math.max(scale, 1e-6);
@@ -9056,11 +9097,14 @@ function DimensionChainOverlay({
     updateDrag(event);
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0] + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
     const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
+    const targetKey2 = `${drag.target.type}:${drag.target.id}`;
     dragRef.current = null;
-    setDragPreview(null);
+    setDragPreview({ targetKey: targetKey2, normalOffset: groupOffset });
     event.currentTarget.releasePointerCapture(event.pointerId);
     const save = drag.target.type === "chain" ? onMoveChain == null ? void 0 : onMoveChain(drag.target.id, roundOffset(groupOffset)) : onMoveCandidate == null ? void 0 : onMoveCandidate(drag.target.id, roundOffset(groupOffset));
-    void Promise.resolve(save).catch(() => void 0);
+    void Promise.resolve(save).then(() => window.requestAnimationFrame(() => {
+      setDragPreview((current) => (current == null ? void 0 : current.targetKey) === targetKey2 ? null : current);
+    })).catch(() => setDragPreview((current) => (current == null ? void 0 : current.targetKey) === targetKey2 ? null : current));
   };
   const cancelDrag = (event, releaseCapture) => {
     const drag = dragRef.current;
@@ -9191,7 +9235,7 @@ function layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview) 
     while (occupied.some((item) => item.lane === lane && overlaps(visual, item, 8 / safeScale))) lane += 1;
     occupied.push({ start: visual.start, end: visual.end, lane });
     occupiedByRow.set(row, occupied);
-    const automaticOffset = base + (row * 18 + lane * 14) / safeScale;
+    const automaticOffset = base + (row * 26 + lane * 22) / safeScale;
     const minimumOffset = radialExtent + 14 / safeScale;
     const candidateOffset = manual.get(candidateId) ?? 0;
     const targetKey2 = owner === void 0 ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
@@ -9278,7 +9322,11 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   const b = point3(layout.end, offset);
   const witnessA = point3(layout.start, radialExtent + 3 / safeScale);
   const witnessB = point3(layout.end, radialExtent + 3 / safeScale);
-  const middle = [(a[0] + b[0]) / 2 + normal[0] * 7 / safeScale, (a[1] + b[1]) / 2 + normal[1] * 7 / safeScale];
+  const lineMiddle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const labelOffset = (role === "closure" ? 14 : 11) / safeScale;
+  const middle = [lineMiddle[0] + normal[0] * labelOffset, lineMiddle[1] + normal[1] * labelOffset];
+  const screenLength = Math.abs(layout.end - layout.start) * safeScale;
+  const closureDash = screenLength < 24 ? `${Math.max(1, screenLength / 5) / safeScale} ${Math.max(0.8, screenLength / 10) / safeScale}` : `${5 / safeScale} ${4 / safeScale}`;
   const tick = 4 / safeScale;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "g",
@@ -9303,7 +9351,18 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
       children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "start", x1: witnessA[0], y1: witnessA[1], x2: a[0], y2: a[1], vectorEffect: "non-scaling-stroke" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "end", x1: witnessB[0], y1: witnessB[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-line", x1: a[0], y1: a[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "line",
+          {
+            className: "vai-dimension-chain-line",
+            x1: a[0],
+            y1: a[1],
+            x2: b[0],
+            y2: b[1],
+            strokeDasharray: role === "closure" ? closureDash : void 0,
+            vectorEffect: "non-scaling-stroke"
+          }
+        ),
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0] - normal[0] * tick, y1: a[1] - normal[1] * tick, x2: a[0] + normal[0] * tick, y2: a[1] + normal[1] * tick, vectorEffect: "non-scaling-stroke" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: b[0] - normal[0] * tick, y1: b[1] - normal[1] * tick, x2: b[0] + normal[0] * tick, y2: b[1] + normal[1] * tick, vectorEffect: "non-scaling-stroke" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: middle, viewportScale: scale, background: true, className: "vai-dimension-chain-label", "data-dimension-lane": lane, children: `${candidate.nominalValue} ${scheme.topology.unit}` })
@@ -10098,7 +10157,9 @@ function legacyPartitionVisibilityKey(sessionId) {
 }
 function readLayerVisibility(sessionId, definitions, storage) {
   const saved = readSavedMap(sessionId, storage);
-  const result = {};
+  const result = Object.fromEntries(
+    Object.entries(saved).filter((entry) => typeof entry[1] === "boolean")
+  );
   for (const definition of definitions) {
     const savedValue = saved[definition.id];
     if (typeof savedValue === "boolean") {
@@ -10149,6 +10210,7 @@ const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.ma
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
+const dimensionChainLayerId = (chainId) => `${ANNOTATION_DIMENSION_CHAIN_LAYER_ID}:${chainId}`;
 const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER];
 const subscribeToNoLayers = () => () => void 0;
 const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
@@ -10237,6 +10299,17 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
   const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID] ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
   const dimensionScheme = ((_b = dimensionState.plan.draft) == null ? void 0 : _b.axialScheme) ?? ((_c = dimensionState.plan.confirmed) == null ? void 0 : _c.axialScheme);
+  const dimensionChainLayers = reactExports.useMemo(() => (dimensionScheme == null ? void 0 : dimensionScheme.chains.map((chain, index) => ({
+    id: dimensionChainLayerId(chain.id),
+    label: `尺寸链 ${index + 1}`,
+    category: "engineering",
+    icon: "dimension",
+    order: ANNOTATION_DIMENSION_CHAIN_LAYER.order + index + 1,
+    defaultVisible: true
+  }))) ?? [], [dimensionScheme]);
+  const visibleDimensionChainIds = reactExports.useMemo(() => new Set(
+    (dimensionScheme == null ? void 0 : dimensionScheme.chains.filter((chain) => layerVisibility[dimensionChainLayerId(chain.id)] ?? true).map(({ id }) => id)) ?? []
+  ), [dimensionScheme, layerVisibility]);
   const fitPadding = reactExports.useMemo(() => {
     if (!dimensionScheme || !dimensionChainVisible || !surfaceSnapshot) return 1.2;
     const fitSize = { width: viewport.width, height: viewport.height };
@@ -10402,10 +10475,16 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               DrawingLayerManager,
               {
-                layers: registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme)).map((definition) => ({
+                layers: [...registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme)).map((definition) => ({
                   definition,
-                  visible: layerVisibility[definition.id] ?? definition.defaultVisible
-                })),
+                  visible: layerVisibility[definition.id] ?? definition.defaultVisible,
+                  ...definition.id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && dimensionChainLayers.length > 0 ? {
+                    children: dimensionChainLayers.map((childDefinition) => ({
+                      definition: childDefinition,
+                      visible: layerVisibility[childDefinition.id] ?? childDefinition.defaultVisible
+                    }))
+                  } : {}
+                }))],
                 onVisibilityChange: updateLayerVisibility
               }
             ),
@@ -10463,9 +10542,10 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                       scale: viewport.scale,
                       radialExtent: dimensionRadialExtent,
                       visible: dimensionChainVisible,
+                      visibleChainIds: visibleDimensionChainIds,
                       previewHeld: dimensionState.previewHeld,
-                      onMoveChain: dimensionState.plan.phase === "editing" ? (chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset) : void 0,
-                      onMoveCandidate: dimensionState.plan.phase === "editing" ? (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset) : void 0
+                      onMoveChain: (chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset),
+                      onMoveCandidate: (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)
                     }
                   )
                 ] })

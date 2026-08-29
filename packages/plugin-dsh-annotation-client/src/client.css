@@ -135,7 +135,9 @@
 .vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .vai-dimension-chain-label .vai-screen-space-label__background { fill: rgba(8, 16, 24, .94); stroke: currentColor; stroke-width: 1px; }
 .vai-dimension-chain-interval--closure { color: #f59e0b; }
-.vai-dimension-chain-interval--closure .vai-dimension-chain-line { stroke-dasharray: 5 4; }
+.vai-dimension-chain-interval--closure .vai-dimension-chain-line { opacity: .45; stroke-linecap: round; }
+.vai-dimension-chain-interval--closure .vai-dimension-chain-label { opacity: .6; }
+.vai-dimension-chain-interval--closure .vai-dimension-chain-label .vai-screen-space-label__background { stroke-dasharray: 3 2; }
 .vai-dimension-chain-interval[data-dimension-conflict="true"] { color: #fb7185; }
 .vai-dimension-chain-bracket path, .vai-dimension-chain-bracket > line { stroke: currentColor; stroke-width: 1.5; opacity: .8; }
 .vai-dimension-chain-title text { fill: currentColor; font: 600 10px ui-sans-serif, system-ui, sans-serif; }
