@@ -14020,6 +14020,10 @@ const axialDimensionSchemeSchema = object$1({
   closureCandidateIds: array$1(idSchema),
   chains: array$1(axialChainNodeSchema),
   layout: object$1({
+    chainNormalOffsets: array$1(object$1({
+      chainId: idSchema,
+      normalOffset: number().finite()
+    }).strict()).default([]),
     candidateNormalOffsets: array$1(object$1({
       candidateId: idSchema,
       normalOffset: number().finite()
@@ -14045,6 +14049,12 @@ discriminatedUnion("type", [
   object$1({
     type: literal$1("candidate.layout"),
     candidateId: idSchema,
+    normalOffset: number().finite(),
+    expectedDrawingRef: drawingRefSchema$1
+  }).strict(),
+  object$1({
+    type: literal$1("chain.layout"),
+    chainId: idSchema,
     normalOffset: number().finite(),
     expectedDrawingRef: drawingRefSchema$1
   }).strict()

@@ -87,7 +87,9 @@ export class DimensionPlanStore {
       ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } as const
       : command.type === 'closure.choose'
         ? { type: command.type, chainId: command.chainId, candidateId: command.candidateId } as const
-        : { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset } as const;
+        : command.type === 'candidate.layout'
+          ? { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset } as const
+          : { type: command.type, chainId: command.chainId, normalOffset: command.normalOffset } as const;
     const scheme = applyDimensionSchemeEdit(draft.axialScheme as unknown as AxialDimensionScheme, edit);
     return this.setDraft(sessionId, projectAxialDimensionScheme({
       scheme,

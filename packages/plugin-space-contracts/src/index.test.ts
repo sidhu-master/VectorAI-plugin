@@ -67,7 +67,7 @@ function axialScheme() {
     ],
     displayedCandidateIds: ['candidate:overall', 'candidate:a'], closureCandidateIds: ['candidate:b'],
     chains: [{ id: 'chain:overall', parentCandidateId: 'candidate:overall', childCandidateIds: ['candidate:a'], closureCandidateId: 'candidate:b', alternativeClosureCandidateIds: [], status: 'resolved' as const }],
-    layout: { candidateNormalOffsets: [{ candidateId: 'candidate:a', normalOffset: 12.5 }] },
+    layout: { chainNormalOffsets: [], candidateNormalOffsets: [{ candidateId: 'candidate:a', normalOffset: 12.5 }] },
     decisions: [], diagnostics: [], status: 'resolved' as const,
   };
 }
@@ -196,9 +196,9 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(() => dimensionSchemeEditCommandSchema.parse(command)).toThrow();
   });
 
-  it('accepts a finite manual normal offset for a dimension candidate', () => {
+  it('accepts a finite manual normal offset for one dimension chain', () => {
     const command = {
-      type: 'candidate.layout', candidateId: 'candidate:a', normalOffset: 12.5,
+      type: 'chain.layout', chainId: 'chain:overall', normalOffset: 12.5,
       expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
     } as const;
     expect(dimensionSchemeEditCommandSchema.parse(command)).toEqual(command);

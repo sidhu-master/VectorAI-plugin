@@ -52,16 +52,15 @@ describe('applyDimensionSchemeEdit', () => {
     })).toThrow('DIMENSION_CANDIDATE_UNKNOWN');
   });
 
-  it('stores a candidate normal offset immutably for manual annotation layout', async () => {
+  it('stores an independent normal offset for one dimension chain', async () => {
     const input = await analyzeGoldenInferenceInput();
     const scheme = inferAxialDimensionScheme({
       topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
     });
-    const candidateId = scheme.displayedCandidateIds[0]!;
-
-    const edited = applyDimensionSchemeEdit(scheme, { type: 'candidate.layout', candidateId, normalOffset: 12.5 });
+    const chainId = scheme.chains[0]!.id;
+    const edited = applyDimensionSchemeEdit(scheme, { type: 'chain.layout', chainId, normalOffset: 12.5 });
 
     expect(scheme.layout).toBeUndefined();
-    expect(edited.layout?.candidateNormalOffsets).toEqual([{ candidateId, normalOffset: 12.5 }]);
+    expect(edited.layout).toEqual({ chainNormalOffsets: [{ chainId, normalOffset: 12.5 }], candidateNormalOffsets: [] });
   });
 });

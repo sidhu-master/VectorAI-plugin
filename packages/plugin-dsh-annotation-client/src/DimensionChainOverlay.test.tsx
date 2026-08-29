@@ -64,35 +64,80 @@ describe('DimensionChainOverlay', () => {
     expect(root.findByProps({ 'data-dimension-candidate-id': 'closure' }).props['data-dimension-role']).toBe('closure');
   });
 
-  it('drags one dimension only along the axis normal and commits a world-space offset', () => {
-    const onMoveCandidate = vi.fn();
-    const view = renderer.create(<DimensionChainOverlay scheme={scheme} scale={2} radialExtent={30} visible onMoveCandidate={onMoveCandidate} />);
-    const interval = view.root.findByProps({ 'data-dimension-candidate-id': 'local' });
+  it('drags only the selected dimension chain as one group from any member or its title', () => {
+    const multiChainScheme = {
+      ...scheme,
+      topology: {
+        ...scheme.topology,
+        stations: [...scheme.topology.stations, { id: 's3', sourceCoordinate: 30 }, { id: 's4', sourceCoordinate: 40 }],
+      },
+      candidates: [
+        ...scheme.candidates,
+        { id: 'overall-b', startStationId: 's2', endStationId: 's4', nominalValue: 20 },
+        { id: 'local-b', startStationId: 's2', endStationId: 's3', nominalValue: 10 },
+        { id: 'closure-b', startStationId: 's3', endStationId: 's4', nominalValue: 10 },
+      ],
+      displayedCandidateIds: [...scheme.displayedCandidateIds, 'overall-b', 'local-b'],
+      closureCandidateIds: [...scheme.closureCandidateIds, 'closure-b'],
+      chains: [...scheme.chains, {
+        id: 'chain:b', parentCandidateId: 'overall-b', childCandidateIds: ['local-b'],
+        closureCandidateId: 'closure-b', alternativeClosureCandidateIds: [], status: 'resolved',
+      }],
+      layout: { chainNormalOffsets: [{ chainId: 'chain:b', normalOffset: 30 }], candidateNormalOffsets: [] },
+    } as unknown as AxialDimensionScheme;
+    const onMoveChain = vi.fn();
+    const view = renderer.create(<DimensionChainOverlay scheme={multiChainScheme} scale={2} radialExtent={30} visible onMoveChain={onMoveChain} />);
+    const group = view.root.findByProps({ 'data-dimension-chain-group': 'chain:overall' });
+    const otherGroup = view.root.findByProps({ 'data-dimension-chain-group': 'chain:b' });
+    const before = group.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .map(({ props }) => props['data-normal-offset'] as number);
+    const otherBefore = otherGroup.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .map(({ props }) => props['data-normal-offset'] as number);
     const target = { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() };
-    act(() => interval.props.onPointerDown({ button: 0, pointerId: 7, clientX: 100, clientY: 100, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
-    act(() => interval.props.onPointerMove({ pointerId: 7, clientX: 160, clientY: 80, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
-    act(() => interval.props.onPointerUp({ pointerId: 7, clientX: 160, clientY: 80, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
+    expect(typeof group.props.onPointerDown).toBe('function');
+    act(() => group.props.onPointerDown({ button: 0, pointerId: 7, clientX: 100, clientY: 100, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
+    act(() => group.props.onPointerMove({ pointerId: 7, clientX: 160, clientY: 80, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
+    const after = group.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .map(({ props }) => props['data-normal-offset'] as number);
+    const otherAfter = otherGroup.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .map(({ props }) => props['data-normal-offset'] as number);
+    expect(after).toEqual(before.map((offset) => offset + 10));
+    expect(otherAfter).toEqual(otherBefore);
+    act(() => group.props.onPointerUp({ pointerId: 7, clientX: 160, clientY: 80, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
 
-    expect(onMoveCandidate).toHaveBeenCalledWith('local', 10);
+    expect(onMoveChain).toHaveBeenCalledWith('chain:overall', 10);
+    expect(group.findByProps({ 'data-dimension-chain-title': 'chain:overall' })).toBeDefined();
+    expect(group.findByProps({ 'data-dimension-chain-bracket': 'chain:overall' }).props.pointerEvents).toBe('all');
+    expect(group.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .every(({ props }) => props.pointerEvents === 'all')).toBe(true);
+
+    const firstAfterFirstDrag = group.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .map(({ props }) => props['data-normal-offset'] as number);
+    act(() => otherGroup.props.onPointerDown({ button: 0, pointerId: 8, clientX: 100, clientY: 100, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
+    act(() => otherGroup.props.onPointerMove({ pointerId: 8, clientX: 160, clientY: 80, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
+    expect(group.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .map(({ props }) => props['data-normal-offset'] as number)).toEqual(firstAfterFirstDrag);
+    act(() => otherGroup.props.onPointerUp({ pointerId: 8, clientX: 160, clientY: 80, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
+    expect(onMoveChain).toHaveBeenLastCalledWith('chain:b', 40);
   });
 
   it('does not commit a canceled or lost-capture drag', () => {
-    const onMoveCandidate = vi.fn();
-    const view = renderer.create(<DimensionChainOverlay scheme={scheme} scale={2} radialExtent={30} visible onMoveCandidate={onMoveCandidate} />);
-    const interval = view.root.findByProps({ 'data-dimension-candidate-id': 'local' });
+    const onMoveChain = vi.fn();
+    const view = renderer.create(<DimensionChainOverlay scheme={scheme} scale={2} radialExtent={30} visible onMoveChain={onMoveChain} />);
+    const interval = view.root.findByProps({ 'data-dimension-chain-group': 'chain:overall' });
     const target = { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() };
     act(() => interval.props.onPointerDown({ button: 0, pointerId: 7, clientX: 100, clientY: 100, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
     act(() => interval.props.onPointerMove({ pointerId: 7, clientX: 100, clientY: 60, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
     act(() => interval.props.onPointerCancel({ pointerId: 7, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
-    expect(onMoveCandidate).not.toHaveBeenCalled();
+    expect(onMoveChain).not.toHaveBeenCalled();
 
     act(() => interval.props.onPointerDown({ button: 0, pointerId: 8, clientX: 100, clientY: 100, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
     act(() => interval.props.onLostPointerCapture({ pointerId: 8, currentTarget: target, preventDefault() {}, stopPropagation() {} }));
-    expect(onMoveCandidate).not.toHaveBeenCalled();
+    expect(onMoveChain).not.toHaveBeenCalled();
   });
 
   it('clamps persisted negative offsets outside the part envelope', () => {
-    const unsafe = { ...scheme, layout: { candidateNormalOffsets: [{ candidateId: 'local', normalOffset: -1_000 }] } };
+    const unsafe = { ...scheme, layout: { chainNormalOffsets: [{ chainId: 'chain:overall', normalOffset: -1_000 }], candidateNormalOffsets: [] } };
     const interval = renderer.create(<DimensionChainOverlay scheme={unsafe as AxialDimensionScheme} scale={2} radialExtent={30} visible />).root
       .findByProps({ 'data-dimension-candidate-id': 'local' });
     expect(interval.props['data-normal-offset']).toBeGreaterThanOrEqual(37);
@@ -101,7 +146,7 @@ describe('DimensionChainOverlay', () => {
   it('derives fit padding from the actual layout extent and manual offsets', () => {
     const base = dimensionChainFitPadding({ scheme, radialExtent: 30, scale: 2, viewport: { width: 800, height: 600 } });
     const moved = dimensionChainFitPadding({
-      scheme: { ...scheme, layout: { candidateNormalOffsets: [{ candidateId: 'local', normalOffset: 100 }] } },
+      scheme: { ...scheme, layout: { chainNormalOffsets: [{ chainId: 'chain:overall', normalOffset: 100 }], candidateNormalOffsets: [] } },
       radialExtent: 30,
       scale: 2,
       viewport: { width: 800, height: 600 },
@@ -110,7 +155,7 @@ describe('DimensionChainOverlay', () => {
     expect(moved).toBeGreaterThan(base);
     expect(shorterCanvas).toBeGreaterThan(base);
     expect(dimensionChainFitPadding({
-      scheme: { ...scheme, layout: { candidateNormalOffsets: [{ candidateId: 'local', normalOffset: 1_000 }] } },
+      scheme: { ...scheme, layout: { chainNormalOffsets: [{ chainId: 'chain:overall', normalOffset: 1_000 }], candidateNormalOffsets: [] } },
       radialExtent: 30,
       scale: 2,
       viewport: { width: 800, height: 600 },

@@ -7,12 +7,17 @@ import type { AxialDimensionCandidate, AxialDimensionScheme, DimensionDecisionTr
 export type ApplyDimensionSchemeEditInput =
   | { type: 'candidate.display'; candidateId: string; displayed: boolean }
   | { type: 'closure.choose'; chainId: string; candidateId: string }
-  | { type: 'candidate.layout'; candidateId: string; normalOffset: number };
+  | { type: 'candidate.layout'; candidateId: string; normalOffset: number }
+  | { type: 'chain.layout'; chainId: string; normalOffset: number };
 
 export function applyDimensionSchemeEdit(
   scheme: AxialDimensionScheme,
   command: ApplyDimensionSchemeEditInput,
 ): AxialDimensionScheme {
+  if (command.type === 'chain.layout') {
+    if (!scheme.chains.some(({ id }) => id === command.chainId)) throw new Error('DIMENSION_CHAIN_UNKNOWN');
+    return validateEditedScheme(setChainNormalOffset(scheme, command.chainId, command.normalOffset));
+  }
   const candidate = scheme.candidates.find(({ id }) => id === command.candidateId);
   if (!candidate) throw new Error('DIMENSION_CANDIDATE_UNKNOWN');
   const edited = command.type === 'candidate.display'
@@ -20,6 +25,10 @@ export function applyDimensionSchemeEdit(
     : command.type === 'closure.choose'
       ? chooseChainClosure(scheme, command.chainId, candidate)
       : setCandidateNormalOffset(scheme, candidate.id, command.normalOffset);
+  return validateEditedScheme(edited);
+}
+
+function validateEditedScheme(edited: AxialDimensionScheme): AxialDimensionScheme {
   const validation = validateAxialDimensionScheme(edited);
   const diagnostics = dedupe([
     ...edited.diagnostics.filter(({ code }) => !isDerivedValidationCode(code)),
@@ -29,6 +38,21 @@ export function applyDimensionSchemeEdit(
     ...edited,
     diagnostics,
     status: validation.some(({ severity }) => severity === 'error') ? 'conflict' : edited.status,
+  };
+}
+
+function setChainNormalOffset(scheme: AxialDimensionScheme, chainId: string, normalOffset: number): AxialDimensionScheme {
+  if (!Number.isFinite(normalOffset)) throw new Error('DIMENSION_LAYOUT_OFFSET_INVALID');
+  const current = scheme.layout?.chainNormalOffsets ?? [];
+  return {
+    ...structuredClone(scheme),
+    layout: {
+      chainNormalOffsets: [
+        ...current.filter((item) => item.chainId !== chainId),
+        { chainId, normalOffset },
+      ],
+      candidateNormalOffsets: scheme.layout?.candidateNormalOffsets ?? [],
+    },
   };
 }
 
@@ -42,6 +66,7 @@ function setCandidateNormalOffset(
   return {
     ...structuredClone(scheme),
     layout: {
+      chainNormalOffsets: scheme.layout?.chainNormalOffsets ?? [],
       candidateNormalOffsets: [
         ...current.filter((item) => item.candidateId !== candidateId),
         { candidateId, normalOffset },

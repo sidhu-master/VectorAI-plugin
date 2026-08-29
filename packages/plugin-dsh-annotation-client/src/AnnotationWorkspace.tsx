@@ -62,6 +62,7 @@ const EMPTY_DIMENSION_CONTROLLER: DimensionChainController = {
     refresh: async () => undefined,
     setDisplayed: async () => undefined,
     chooseClosure: async () => undefined,
+    moveChain: async () => undefined,
     moveCandidate: async () => undefined,
     confirm: async () => undefined,
     cancel: async () => undefined,
@@ -169,6 +170,9 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     }
     return padding;
   }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
+  const fitPaddingRef = useRef(fitPadding);
+  fitPaddingRef.current = fitPadding;
+  const previousViewportSizeRef = useRef({ width: viewport.width, height: viewport.height });
   const dimensionHistoryActive = dimensionState.plan.drawingRef !== undefined && (
     dimensionState.plan.phase !== 'idle' || dimensionState.plan.canUndo || dimensionState.plan.canRedo
   );
@@ -207,7 +211,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       void runtime.actions.refresh().then(() => {
         if (!fitAfterAnalysis.current) return;
         fitAfterAnalysis.current = false;
-        fitRuntimeToDrawing(runtime, undefined, fitPadding);
+        fitRuntimeToDrawing(runtime, undefined, fitPaddingRef.current);
       });
       return;
     }
@@ -215,11 +219,17 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     void runtime.actions.refresh();
     const timer = window.setInterval(() => { void runtime.actions.refresh(); }, 500);
     return () => window.clearInterval(timer);
-  }, [fitPadding, partitionState.busy, runtime]);
+  }, [partitionState.busy, runtime]);
   useEffect(() => {
     if (displaySnapshot === null) return;
-    fitRuntimeToDrawing(runtime, displaySnapshot, fitPadding);
-  }, [displaySnapshot, fitPadding, runtime]);
+    fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
+  }, [displaySnapshot, runtime]);
+  useEffect(() => {
+    const previous = previousViewportSizeRef.current;
+    previousViewportSizeRef.current = { width: viewport.width, height: viewport.height };
+    if (displaySnapshot === null || (previous.width === viewport.width && previous.height === viewport.height)) return;
+    fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
+  }, [displaySnapshot, runtime, viewport.height, viewport.width]);
   useEffect(() => {
     if (displaySnapshot === null) return;
     const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
@@ -357,6 +367,9 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               radialExtent={dimensionRadialExtent}
               visible={dimensionChainVisible}
               previewHeld={dimensionState.previewHeld}
+              onMoveChain={dimensionState.plan.phase === 'editing'
+                ? (chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset)
+                : undefined}
               onMoveCandidate={dimensionState.plan.phase === 'editing'
                 ? (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)
                 : undefined}
