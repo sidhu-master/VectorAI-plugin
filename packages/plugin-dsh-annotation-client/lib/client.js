@@ -6231,13 +6231,12 @@ window.__ModuleLoader__.load({
       );
     }
     function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, scale, draggable }) {
-      const layouts = [chain.parentCandidateId, ...chain.childCandidateIds, chain.closureCandidateId].flatMap((id) => layoutByCandidate.get(id) ?? []);
-      if (layouts.length < 2) return null;
+      const layouts = [chain.parentCandidateId, ...chain.childCandidateIds, chain.closureCandidateId].flatMap((id) => layoutByCandidate.get(id) ?? []).filter((layout) => layout.chainId === chain.id);
+      if (layouts.length === 0) return null;
       const safeScale = Math.max(scale, 1e-6);
       const { origin, direction, normal } = scheme.topology.axis;
       const offsetOf = (layout) => layout.automaticOffset + layout.manualOffset;
       const offsets = layouts.map(offsetOf);
-      const ownedLayouts = layouts.filter((layout) => layout.chainId === chain.id);
       const coordinate = Math.min(...layouts.map(({ start, end }) => Math.min(start, end))) - 12 / safeScale;
       const near = Math.min(...offsets);
       const far = Math.max(...offsets);
@@ -6248,7 +6247,7 @@ window.__ModuleLoader__.load({
       const a = point3(near);
       const b = point3(far);
       const cap = 6 / safeScale;
-      const titleAnchor = Math.max(...(ownedLayouts.length > 0 ? ownedLayouts : layouts).map(offsetOf));
+      const titleAnchor = Math.max(...layouts.map(offsetOf));
       const title = point3(titleAnchor + 12 / safeScale);
       return /* @__PURE__ */ jsxRuntime.jsxs("g", { className: "vai-dimension-chain-bracket", "data-dimension-chain-bracket": chain.id, pointerEvents: draggable ? "all" : "none", children: [
         /* @__PURE__ */ jsxRuntime.jsx("path", { d: `M ${a[0] + direction[0] * cap} ${a[1] + direction[1] * cap} L ${a[0]} ${a[1]} L ${b[0]} ${b[1]} L ${b[0] + direction[0] * cap} ${b[1] + direction[1] * cap}`, fill: "none", vectorEffect: "non-scaling-stroke" }),
