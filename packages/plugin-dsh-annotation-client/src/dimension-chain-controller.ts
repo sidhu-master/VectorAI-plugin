@@ -33,6 +33,7 @@ export interface DimensionChainController {
     refresh(): Promise<void>;
     setDisplayed(candidateId: string, displayed: boolean): Promise<void>;
     chooseClosure(chainId: string, candidateId: string): Promise<void>;
+    moveCandidate(candidateId: string, normalOffset: number): Promise<void>;
     confirm(): Promise<void>; cancel(): Promise<void>; undo(): Promise<void>; redo(): Promise<void>;
     setPreviewHeld(value: boolean): void;
   };
@@ -82,6 +83,7 @@ export function createDimensionChainController(
       refresh: () => run(() => remote().getDimensionPlan(sessionId)),
       setDisplayed: (candidateId, displayed) => edit({ type: 'candidate.display', candidateId, displayed }),
       chooseClosure: (chainId, candidateId) => edit({ type: 'closure.choose', chainId, candidateId }),
+      moveCandidate: (candidateId, normalOffset) => edit({ type: 'candidate.layout', candidateId, normalOffset }),
       confirm: () => run(() => remote().confirmDimensionPlan(sessionId, ref())),
       cancel: () => run(() => remote().cancelDimensionPlan(sessionId, ref())),
       undo: () => run(() => remote().undoDimensionPlan(sessionId, ref())),

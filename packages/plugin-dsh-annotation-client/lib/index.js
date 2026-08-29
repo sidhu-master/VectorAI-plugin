@@ -3097,13 +3097,13 @@ function requireJsxRuntime() {
   return jsxRuntime.exports;
 }
 var jsxRuntimeExports = requireJsxRuntime();
-function evaluateHomogeneous(node, normalized) {
+function evaluateHomogeneous(node, normalized2) {
   const pointCount = node.controlPoints.length;
   const lastControlIndex = pointCount - 1;
   const domainStart = node.knots[node.degree];
   const domainEnd = node.knots[lastControlIndex + 1];
-  const knotParameter = normalized === 1 ? domainEnd : domainStart + normalized * (domainEnd - domainStart);
-  const span = normalized === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
+  const knotParameter = normalized2 === 1 ? domainEnd : domainStart + normalized2 * (domainEnd - domainStart);
+  const span = normalized2 === 1 ? lastControlIndex : findSpan(node.knots, node.degree, lastControlIndex, knotParameter);
   const weights = node.weights ?? Array.from({ length: pointCount }, () => 1);
   const work = [];
   for (let index = 0; index <= node.degree; index += 1) {
@@ -7021,9 +7021,9 @@ function normalizeHatchRegion(hatch, tolerance) {
   if (!(scale >= 1)) return { status: "invalid", code: "HATCH_COORDINATE_OVERFLOW" };
   try {
     const paths = contours.map((contour) => contour.map(([x, y]) => ({ x: Math.round(x * scale), y: Math.round(y * scale) })));
-    const normalized = union$1(paths, FillRule.EvenOdd).map((path) => path.map(({ x, y }) => [x / scale, y / scale])).filter((path) => path.length >= 3);
-    if (normalized.length === 0) return { status: "invalid", code: "HATCH_BOUNDARY_EMPTY" };
-    const selected = selectByStyle(normalized, hatch.style);
+    const normalized2 = union$1(paths, FillRule.EvenOdd).map((path) => path.map(({ x, y }) => [x / scale, y / scale])).filter((path) => path.length >= 3);
+    if (normalized2.length === 0) return { status: "invalid", code: "HATCH_BOUNDARY_EMPTY" };
+    const selected = selectByStyle(normalized2, hatch.style);
     return {
       status: "ok",
       region: { contours: selected, fillRule: hatch.style === "normal" ? "evenodd" : "nonzero", bounds: boundsOf(selected) }
@@ -7095,17 +7095,17 @@ function boundsOf(contours) {
 }
 const MAX_HATCH_RENDER_LINES = 2e4;
 function createHatchRenderPlan(hatch, tolerance) {
-  const normalized = normalizeHatchRegion(hatch, tolerance);
-  if (normalized.status !== "ok") return normalized;
+  const normalized2 = normalizeHatchRegion(hatch, tolerance);
+  if (normalized2.status !== "ok") return normalized2;
   const lines = [];
   for (const family of hatch.patternLines) {
-    const generated = generateFamily(transformPatternFamily(family, hatch.patternAngle, hatch.patternScale), normalized.region);
+    const generated = generateFamily(transformPatternFamily(family, hatch.patternAngle, hatch.patternScale), normalized2.region);
     if (lines.length + generated.length > MAX_HATCH_RENDER_LINES) {
       return { status: "invalid", code: "HATCH_PATTERN_DENSITY_LIMIT" };
     }
     lines.push(...generated);
   }
-  return { status: "ok", plan: { region: normalized.region, lines } };
+  return { status: "ok", plan: { region: normalized2.region, lines } };
 }
 function transformPatternFamily(family, angleDegrees, scale) {
   const angle = angleDegrees * Math.PI / 180;
@@ -7236,8 +7236,8 @@ function nodeBounds(node) {
       return extendedLineBounds(node.start, node.end, node.extension);
     case "section-hatch": {
       if (node.hatch !== void 0) {
-        const normalized = normalizeHatchRegion(node.hatch, 1e-3);
-        return normalized.status === "ok" ? normalized.region.bounds : null;
+        const normalized2 = normalizeHatchRegion(node.hatch, 1e-3);
+        return normalized2.status === "ok" ? normalized2.region.bounds : null;
       }
       return boundsFromPoints((node.segments ?? []).flatMap(({ start, end }) => [start, end]));
     }
@@ -8114,6 +8114,7 @@ function WorkspaceToolbarView({
   snapshot,
   viewport,
   unavailable = false,
+  fitPadding = 1.2,
   canUndo,
   canRedo,
   onFit,
@@ -8136,7 +8137,7 @@ function WorkspaceToolbarView({
         type: "button",
         "aria-label": "适配图纸",
         title: "缩放并居中显示整张图纸",
-        onClick: () => onFit(fitViewportToDrawing(snapshot.document, viewport)),
+        onClick: () => onFit(fitViewportToDrawing(snapshot.document, viewport, fitPadding)),
         children: /* @__PURE__ */ jsxRuntimeExports.jsx(Scan, { "aria-hidden": "true", size: 17 })
       }
     ),
@@ -8720,6 +8721,7 @@ function DrawingSurface({
   screenLayers,
   className = "vai-canvas",
   fitToDrawingOnResize = false,
+  fitPadding = 1.2,
   onViewportChange,
   onSelectionChange,
   onMouseWorldChange
@@ -8744,7 +8746,8 @@ function DrawingSurface({
       onViewportChange(
         fitToDrawingOnResize || viewport.width === 0 || viewport.height === 0 ? fitViewportToDrawing(
           fitToDrawingOnResize === "geometry" ? { ...snapshot.document, annotations: [] } : snapshot.document,
-          { width, height }
+          { width, height },
+          fitPadding
         ) : { ...viewport, width, height }
       );
     };
@@ -8752,7 +8755,7 @@ function DrawingSurface({
     const observer = new ResizeObserver(resize);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [fitToDrawingOnResize, onViewportChange, snapshot.document, viewport]);
+  }, [fitPadding, fitToDrawingOnResize, onViewportChange, snapshot.document, viewport]);
   const handleWheel = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -8844,7 +8847,7 @@ function DrawingSurface({
           onMouseMove: handleMouseMove,
           onMouseUp: handleMouseUp,
           onMouseLeave: () => onMouseWorldChange == null ? void 0 : onMouseWorldChange(null),
-          onDoubleClick: () => onViewportChange(fitViewportToDrawing(snapshot.document, viewport)),
+          onDoubleClick: () => onViewportChange(fitViewportToDrawing(snapshot.document, viewport, fitPadding)),
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(CadGrid, { viewport, showGrid: display.grid, showAxes: display.axes }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { "data-canvas-background": "true", width: "100%", height: "100%", fill: "transparent" }),
@@ -8998,78 +9001,314 @@ function DrawingLayerManager({ layers, onVisibilityChange }) {
     }
   );
 }
-function DimensionChainOverlay({ scheme, scale, visible, previewHeld = false }) {
+function DimensionChainOverlay({
+  scheme,
+  scale,
+  radialExtent = 0,
+  visible,
+  previewHeld = false,
+  onMoveCandidate
+}) {
+  const [dragPreview, setDragPreview] = reactExports.useState(null);
+  const dragRef = reactExports.useRef(null);
   if (!visible) return null;
-  const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
-  const displayed = scheme.displayedCandidateIds.flatMap((id) => candidates.get(id) ?? []);
-  const closures = previewHeld ? [] : scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
-  const layouts = allocateLanes(scheme, [...displayed, ...closures], scale);
-  const displayedIds = new Set(displayed.map(({ id }) => id));
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-dimension-chain-overlay": "true", pointerEvents: "none", children: layouts.map((layout) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-    IntervalGraphic,
-    {
-      scheme,
-      layout,
-      scale,
-      kind: displayedIds.has(layout.candidate.id) ? "displayed" : "closure",
-      conflict: !previewHeld && conflicts.has(layout.candidate.id)
-    },
-    layout.candidate.id
-  )) });
+  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld);
+  const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
+  const grouped = scheme.chains.map((chain, chainIndex) => ({
+    chain,
+    chainIndex,
+    layouts: layouts.filter(({ chainId }) => chainId === chain.id)
+  }));
+  const standalone = layouts.filter(({ chainId }) => chainId === void 0);
+  const screenNormal = normalized([scheme.topology.axis.normal[0], -scheme.topology.axis.normal[1]]);
+  const safeScale = Math.max(scale, 1e-6);
+  const beginDrag = (layout, event) => {
+    if (event.button !== 0 || !onMoveCandidate || previewHeld) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      candidateId: layout.candidate.id,
+      pointerId: event.pointerId,
+      startClient: [event.clientX, event.clientY],
+      startManualOffset: layout.manualOffset,
+      automaticOffset: layout.automaticOffset
+    };
+  };
+  const updateDrag = (event) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0] + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
+    const minimum = radialExtent + 14 / safeScale;
+    const manualOffset = Math.max(drag.startManualOffset + projected, minimum - drag.automaticOffset);
+    setDragPreview({ candidateId: drag.candidateId, manualOffset });
+  };
+  const finishDrag = (event) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    updateDrag(event);
+    const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0] + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
+    const minimum = radialExtent + 14 / safeScale;
+    const manualOffset = Math.max(drag.startManualOffset + projected, minimum - drag.automaticOffset);
+    dragRef.current = null;
+    setDragPreview(null);
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    void Promise.resolve(onMoveCandidate == null ? void 0 : onMoveCandidate(drag.candidateId, roundOffset(manualOffset))).catch(() => void 0);
+  };
+  const cancelDrag = (event, releaseCapture) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragRef.current = null;
+    setDragPreview(null);
+    if (releaseCapture) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const renderInterval = (layout) => {
+    const manualOffset = (dragPreview == null ? void 0 : dragPreview.candidateId) === layout.candidate.id ? dragPreview.manualOffset : layout.manualOffset;
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      IntervalGraphic,
+      {
+        scheme,
+        layout: { ...layout, manualOffset },
+        scale,
+        radialExtent,
+        dragAxis: Math.abs(screenNormal[0]) > Math.abs(screenNormal[1]) ? "x" : "y",
+        conflict: !previewHeld && conflicts.has(layout.candidate.id),
+        draggable: Boolean(onMoveCandidate) && !previewHeld,
+        onPointerDown: (event) => beginDrag(layout, event),
+        onPointerMove: updateDrag,
+        onPointerUp: finishDrag,
+        onPointerCancel: (event) => cancelDrag(event, true),
+        onLostPointerCapture: (event) => cancelDrag(event, false)
+      },
+      layout.candidate.id
+    );
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-dimension-chain-overlay": "true", children: [
+    grouped.map(({ chain, chainIndex, layouts: owned }) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "g",
+      {
+        className: `vai-dimension-chain-group vai-dimension-chain-group--tone-${chainIndex % 3}`,
+        "data-dimension-chain-group": chain.id,
+        children: [
+          owned.map(renderInterval),
+          !previewHeld && /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ChainBracket,
+            {
+              scheme,
+              chain,
+              chainIndex,
+              layoutByCandidate,
+              dragPreview,
+              scale
+            }
+          )
+        ]
+      },
+      chain.id
+    )),
+    standalone.map(renderInterval)
+  ] });
 }
-function allocateLanes(scheme, candidates, scale) {
+function dimensionChainFitPadding({ scheme, radialExtent, scale, viewport }) {
+  const safeScale = Math.max(scale, 1e-6);
+  const layouts = layoutIntervals(scheme, safeScale, radialExtent, false);
+  if (layouts.length === 0) return 1.2;
+  const normal = normalized(scheme.topology.axis.normal);
+  const availablePixels = Math.min(
+    Math.abs(normal[0]) > 1e-6 ? viewport.width / Math.abs(normal[0]) : Number.POSITIVE_INFINITY,
+    Math.abs(normal[1]) > 1e-6 ? viewport.height / Math.abs(normal[1]) : Number.POSITIVE_INFINITY
+  );
+  const structuralPixels = Math.max(...layouts.map(({ automaticOffset }) => (automaticOffset - radialExtent) * safeScale)) + 24;
+  const maxManualOffset = Math.max(0, ...layouts.map(({ manualOffset }) => manualOffset));
+  const stationCoordinates = scheme.topology.stations.map(({ sourceCoordinate }) => sourceCoordinate);
+  const axisMin = Number.isFinite(scheme.topology.axis.zMin) ? scheme.topology.axis.zMin : Math.min(...stationCoordinates);
+  const axisMax = Number.isFinite(scheme.topology.axis.zMax) ? scheme.topology.axis.zMax : Math.max(...stationCoordinates);
+  const axisSpan = Math.max(0, axisMax - axisMin);
+  const referenceRadius = Math.max(radialExtent, axisSpan * 0.05, 1);
+  const freeFraction = Math.max(0.2, 1 - 2 * structuralPixels / Math.max(availablePixels, 1));
+  return Math.max(1.2, (referenceRadius + maxManualOffset) / referenceRadius / freeFraction * 1.05);
+}
+function layoutIntervals(scheme, scale, radialExtent, previewHeld) {
+  var _a2;
+  const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
-  const lanes = [];
-  const padding = 8 / Math.max(scale, 1e-6);
-  return candidates.flatMap((candidate) => {
+  const closures = previewHeld ? /* @__PURE__ */ new Set() : new Set(scheme.closureCandidateIds);
+  const visibleIds = [...scheme.displayedCandidateIds, ...closures];
+  const membershipByCandidate = candidateMemberships(scheme);
+  const chainDepths = chainDepthIndex(scheme);
+  const maxDepth = Math.max(0, ...chainDepths.values());
+  const safeScale = Math.max(scale, 1e-6);
+  const base = radialExtent + 28 / safeScale;
+  const manual = new Map(((_a2 = scheme.layout) == null ? void 0 : _a2.candidateNormalOffsets.map(({ candidateId, normalOffset }) => [candidateId, normalOffset])) ?? []);
+  const occupiedByRow = /* @__PURE__ */ new Map();
+  return [...new Set(visibleIds)].flatMap((candidateId) => {
+    const candidate = candidates.get(candidateId);
+    if (!candidate) return [];
     const first = coordinates.get(candidate.startStationId);
     const second = coordinates.get(candidate.endStationId);
     if (first === void 0 || second === void 0) return [];
-    const intervalStart = Math.min(first, second);
-    const intervalEnd = Math.max(first, second);
+    const memberships = membershipByCandidate.get(candidateId) ?? [];
+    const owner = primaryMembership(memberships);
+    const role = closures.has(candidateId) ? "closure" : (owner == null ? void 0 : owner.role) ?? "standalone";
+    const depth = owner === void 0 ? 0 : chainDepths.get(owner.chainId) ?? 0;
+    const row = role === "parent" ? maxDepth + 1 : role === "standalone" ? maxDepth + 2 : maxDepth - depth;
     const label = `${candidate.nominalValue} ${scheme.topology.unit}`;
-    const halfLabelWidth = (estimateScreenTextWidth(label, 11) + 10) / (2 * Math.max(scale, 1e-6));
+    const halfLabelWidth = (estimateScreenTextWidth(label, 11) + 10) / (2 * safeScale);
     const center = (first + second) / 2;
-    const start = Math.min(intervalStart, center - halfLabelWidth);
-    const end = Math.max(intervalEnd, center + halfLabelWidth);
-    let lane = lanes.findIndex((occupied) => occupied.every((interval) => end + padding < interval.start || start - padding > interval.end));
-    if (lane < 0) {
-      lane = lanes.length;
-      lanes.push([]);
-    }
-    lanes[lane].push({ start, end });
-    return [{ candidate, lane, start: first, end: second }];
+    const visual = { start: Math.min(first, second, center - halfLabelWidth), end: Math.max(first, second, center + halfLabelWidth) };
+    const occupied = occupiedByRow.get(row) ?? [];
+    let lane = 0;
+    while (occupied.some((item) => item.lane === lane && overlaps(visual, item, 8 / safeScale))) lane += 1;
+    occupied.push({ start: visual.start, end: visual.end, lane });
+    occupiedByRow.set(row, occupied);
+    const automaticOffset = base + (row * 18 + lane * 14) / safeScale;
+    const minimumOffset = radialExtent + 14 / safeScale;
+    return [{
+      candidate,
+      ...owner === void 0 ? {} : { chainId: owner.chainId },
+      chainIndex: (owner == null ? void 0 : owner.chainIndex) ?? -1,
+      role,
+      memberships,
+      lane,
+      start: first,
+      end: second,
+      automaticOffset,
+      manualOffset: Math.max(manual.get(candidateId) ?? 0, minimumOffset - automaticOffset)
+    }];
   });
 }
-function IntervalGraphic({ scheme, layout, scale, kind, conflict }) {
-  const { candidate, lane } = layout;
+function candidateMemberships(scheme) {
+  const result = /* @__PURE__ */ new Map();
+  const add = (candidateId, membership) => {
+    result.set(candidateId, [...result.get(candidateId) ?? [], membership]);
+  };
+  scheme.chains.forEach((chain, chainIndex) => {
+    add(chain.parentCandidateId, { chainId: chain.id, chainIndex, role: "parent" });
+    for (const candidateId of chain.childCandidateIds) add(candidateId, { chainId: chain.id, chainIndex, role: "child" });
+    add(chain.closureCandidateId, { chainId: chain.id, chainIndex, role: "closure" });
+  });
+  return result;
+}
+function primaryMembership(memberships) {
+  return memberships.find(({ role }) => role === "closure") ?? memberships.find(({ role }) => role === "parent") ?? memberships[0];
+}
+function chainDepthIndex(scheme) {
+  const byParentCandidate = new Map(scheme.chains.map((chain) => [chain.parentCandidateId, chain]));
+  const parentByChain = /* @__PURE__ */ new Map();
+  for (const chain of scheme.chains) {
+    const parent = scheme.chains.find((candidate) => candidate.childCandidateIds.includes(chain.parentCandidateId));
+    if (parent) parentByChain.set(chain.id, parent.id);
+  }
+  const result = /* @__PURE__ */ new Map();
+  const depth = (chainId) => {
+    const cached2 = result.get(chainId);
+    if (cached2 !== void 0) return cached2;
+    const parent = parentByChain.get(chainId);
+    const value = parent === void 0 ? 0 : depth(parent) + 1;
+    result.set(chainId, value);
+    return value;
+  };
+  for (const chain of byParentCandidate.values()) depth(chain.id);
+  return result;
+}
+function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, conflict, draggable, ...pointerHandlers }) {
+  const { candidate, lane, role } = layout;
   const { origin, direction, normal } = scheme.topology.axis;
   const safeScale = Math.max(scale, 1e-6);
-  const offset = (24 + lane * 14) / safeScale;
-  const point3 = (coordinate) => [
-    origin[0] + direction[0] * coordinate + normal[0] * offset,
-    origin[1] + direction[1] * coordinate + normal[1] * offset
+  const offset = layout.automaticOffset + layout.manualOffset;
+  const point3 = (coordinate, normalOffset) => [
+    origin[0] + direction[0] * coordinate + normal[0] * normalOffset,
+    origin[1] + direction[1] * coordinate + normal[1] * normalOffset
   ];
-  const a = point3(layout.start);
-  const b = point3(layout.end);
+  const a = point3(layout.start, offset);
+  const b = point3(layout.end, offset);
+  const witnessA = point3(layout.start, radialExtent + 3 / safeScale);
+  const witnessB = point3(layout.end, radialExtent + 3 / safeScale);
   const middle = [(a[0] + b[0]) / 2 + normal[0] * 7 / safeScale, (a[1] + b[1]) / 2 + normal[1] * 7 / safeScale];
   const tick = 4 / safeScale;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "g",
     {
-      className: `vai-dimension-chain-interval vai-dimension-chain-interval--${kind}`,
-      "data-dimension-displayed": kind === "displayed" || void 0,
-      "data-dimension-closure": kind === "closure" || void 0,
+      className: `vai-dimension-chain-interval vai-dimension-chain-interval--${role}`,
+      "data-dimension-candidate-id": candidate.id,
+      "data-dimension-chain-id": layout.chainId,
+      "data-dimension-chain-index": layout.chainIndex,
+      "data-dimension-role": role,
+      "data-dimension-chain-memberships": layout.memberships.map(({ chainId }) => chainId).join(" "),
+      "data-dimension-membership-roles": layout.memberships.map(({ role: role2 }) => role2).join(" "),
+      "data-dimension-shared": layout.memberships.length > 1 || void 0,
+      "data-dimension-lane": lane,
+      "data-normal-offset": offset,
+      "data-dimension-displayed": role !== "closure" || void 0,
+      "data-dimension-closure": role === "closure" || void 0,
       "data-dimension-conflict": conflict || void 0,
+      "data-dimension-draggable": draggable || void 0,
+      "data-dimension-drag-axis": dragAxis,
+      pointerEvents: draggable ? "all" : "none",
+      ...pointerHandlers,
       children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "start", x1: witnessA[0], y1: witnessA[1], x2: a[0], y2: a[1], vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "end", x1: witnessB[0], y1: witnessB[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-line", x1: a[0], y1: a[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0] - normal[0] * tick, y1: a[1] - normal[1] * tick, x2: a[0] + normal[0] * tick, y2: a[1] + normal[1] * tick, vectorEffect: "non-scaling-stroke" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: b[0] - normal[0] * tick, y1: b[1] - normal[1] * tick, x2: b[0] + normal[0] * tick, y2: b[1] + normal[1] * tick, vectorEffect: "non-scaling-stroke" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: middle, viewportScale: scale, background: true, className: "vai-dimension-chain-label", "data-dimension-lane": lane, children: `${candidate.nominalValue} ${scheme.topology.unit}` })
       ]
     }
   );
+}
+function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, dragPreview, scale }) {
+  const layouts = [chain.parentCandidateId, ...chain.childCandidateIds, chain.closureCandidateId].flatMap((id) => layoutByCandidate.get(id) ?? []);
+  if (layouts.length < 2) return null;
+  const safeScale = Math.max(scale, 1e-6);
+  const { origin, direction, normal } = scheme.topology.axis;
+  const offsetOf = (layout) => layout.automaticOffset + ((dragPreview == null ? void 0 : dragPreview.candidateId) === layout.candidate.id ? dragPreview.manualOffset : layout.manualOffset);
+  const offsets = layouts.map(offsetOf);
+  const coordinate = Math.min(...layouts.map(({ start, end }) => Math.min(start, end))) - 12 / safeScale;
+  const near = Math.min(...offsets);
+  const far = Math.max(...offsets);
+  const point3 = (normalOffset) => [
+    origin[0] + direction[0] * coordinate + normal[0] * normalOffset,
+    origin[1] + direction[1] * coordinate + normal[1] * normalOffset
+  ];
+  const a = point3(near);
+  const b = point3(far);
+  const cap = 6 / safeScale;
+  const title = point3(far + 12 / safeScale);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { className: "vai-dimension-chain-bracket", "data-dimension-chain-bracket": chain.id, pointerEvents: "none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: `M ${a[0] + direction[0] * cap} ${a[1] + direction[1] * cap} L ${a[0]} ${a[1]} L ${b[0]} ${b[1]} L ${b[0] + direction[0] * cap} ${b[1] + direction[1] * cap}`, fill: "none", vectorEffect: "non-scaling-stroke" }),
+    layouts.map((layout) => {
+      const member = point3(offsetOf(layout));
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "line",
+        {
+          "data-dimension-chain-member": layout.candidate.id,
+          x1: member[0],
+          y1: member[1],
+          x2: member[0] + direction[0] * cap,
+          y2: member[1] + direction[1] * cap,
+          vectorEffect: "non-scaling-stroke"
+        },
+        layout.candidate.id
+      );
+    }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: title, viewportScale: scale, background: true, className: "vai-dimension-chain-title", "data-dimension-chain-title": chain.id, children: `尺寸链 ${chainIndex + 1}` })
+  ] });
+}
+function overlaps(left, right, padding) {
+  return !(left.end + padding < right.start || left.start - padding > right.end);
+}
+function normalized(value) {
+  const length = Math.hypot(value[0], value[1]) || 1;
+  return [value[0] / length, value[1] / length];
+}
+function roundOffset(value) {
+  return Math.round(value * 1e3) / 1e3;
 }
 function DimensionChainInspector({ scheme, controller, editable = true }) {
   const candidates = new Map(scheme.candidates.map((candidate2) => [candidate2.id, candidate2]));
@@ -9878,6 +10117,7 @@ const EMPTY_DIMENSION_CONTROLLER = {
     refresh: async () => void 0,
     setDisplayed: async () => void 0,
     chooseClosure: async () => void 0,
+    moveCandidate: async () => void 0,
     confirm: async () => void 0,
     cancel: async () => void 0,
     undo: async () => void 0,
@@ -9887,7 +10127,7 @@ const EMPTY_DIMENSION_CONTROLLER = {
   dispose: () => void 0
 };
 function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, dimensionPlan, layerRegistry }) {
-  var _a2, _b, _c;
+  var _a2, _b, _c, _d;
   const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport);
@@ -9928,6 +10168,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   }, [displaySnapshot, openingAngleVisible]);
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
+  const dimensionRadialExtent = Math.max(0, ...((_a2 = draft ?? confirmed) == null ? void 0 : _a2.segments.map(({ profile }) => profile.maxRadius)) ?? []);
   reactExports.useEffect(() => {
     setLayerVisibility(readLayerVisibility(
       sessionId,
@@ -9944,7 +10185,24 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   };
   const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
   const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID] ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
-  const dimensionScheme = ((_a2 = dimensionState.plan.draft) == null ? void 0 : _a2.axialScheme) ?? ((_b = dimensionState.plan.confirmed) == null ? void 0 : _b.axialScheme);
+  const dimensionScheme = ((_b = dimensionState.plan.draft) == null ? void 0 : _b.axialScheme) ?? ((_c = dimensionState.plan.confirmed) == null ? void 0 : _c.axialScheme);
+  const fitPadding = reactExports.useMemo(() => {
+    if (!dimensionScheme || !dimensionChainVisible || !surfaceSnapshot) return 1.2;
+    const fitSize = { width: viewport.width, height: viewport.height };
+    let padding = 1.2;
+    for (let iteration = 0; iteration < 8; iteration += 1) {
+      const fitted = fitViewportToDrawing(surfaceSnapshot.document, fitSize, padding);
+      const next = dimensionChainFitPadding({
+        scheme: dimensionScheme,
+        radialExtent: dimensionRadialExtent,
+        scale: fitted.scale,
+        viewport: fitSize
+      });
+      if (Math.abs(next - padding) < 1e-3) return next;
+      padding = next;
+    }
+    return padding;
+  }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
   const dimensionHistoryActive = dimensionState.plan.drawingRef !== void 0 && (dimensionState.plan.phase !== "idle" || dimensionState.plan.canUndo || dimensionState.plan.canRedo);
   reactExports.useEffect(() => {
     let active = true;
@@ -9983,7 +10241,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
       void runtime.actions.refresh().then(() => {
         if (!fitAfterAnalysis.current) return;
         fitAfterAnalysis.current = false;
-        fitRuntimeToDrawing(runtime);
+        fitRuntimeToDrawing(runtime, void 0, fitPadding);
       });
       return;
     }
@@ -9993,11 +10251,11 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
       void runtime.actions.refresh();
     }, 500);
     return () => window.clearInterval(timer);
-  }, [partitionState.busy, runtime]);
+  }, [fitPadding, partitionState.busy, runtime]);
   reactExports.useEffect(() => {
     if (displaySnapshot === null) return;
-    fitRuntimeToDrawing(runtime, displaySnapshot);
-  }, [displaySnapshot, runtime]);
+    fitRuntimeToDrawing(runtime, displaySnapshot, fitPadding);
+  }, [displaySnapshot, fitPadding, runtime]);
   reactExports.useEffect(() => {
     if (displaySnapshot === null) return;
     const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
@@ -10044,7 +10302,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
         /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "流程" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: workflowLabel(annotationState.workflow.status) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "候选" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: ((_c = presentation.preview) == null ? void 0 : _c.diff.createdNodeIds.length) ?? 0 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: ((_d = presentation.preview) == null ? void 0 : _d.diff.createdNodeIds.length) ?? 0 }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { children: "选中" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { children: selectedIds.length })
       ] })
@@ -10091,7 +10349,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                 onVisibilityChange: updateLayerVisibility
               }
             ),
-            (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
+            (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
               partitionState.busy && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-progress", "data-partition-progress": partitionState.partition.phase, role: "status", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-partition-progress__pulse", "aria-hidden": "true" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status) })
@@ -10107,7 +10365,8 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                   void partition.actions.clearDocuments().then(() => setStagedDocumentNames([])).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
                 }, children: "清除" })
               ] }),
-              (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: importError ?? `边界未保存：${partitionState.error}` })
+              (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: importError ?? `边界未保存：${partitionState.error}` }),
+              dimensionState.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: `尺寸位置未保存：${dimensionState.error}；请重新拖动后再试` })
             ] }),
             surfaceSnapshot !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
               DrawingSurface,
@@ -10119,6 +10378,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                 sourceUrl: presentation.sourceUrl,
                 className: "vai-canvas vai-annotation-workspace__surface",
                 fitToDrawingOnResize: true,
+                fitPadding,
                 onViewportChange: runtime.actions.setViewport,
                 onSelectionChange: runtime.actions.setSelection,
                 worldLayers: /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -10141,8 +10401,10 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                     {
                       scheme: dimensionScheme,
                       scale: viewport.scale,
+                      radialExtent: dimensionRadialExtent,
                       visible: dimensionChainVisible,
-                      previewHeld: dimensionState.previewHeld
+                      previewHeld: dimensionState.previewHeld,
+                      onMoveCandidate: dimensionState.plan.phase === "editing" ? (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset) : void 0
                     }
                   )
                 ] })
@@ -10155,6 +10417,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                 snapshot: displaySnapshot,
                 viewport,
                 unavailable: partitionState.busy,
+                fitPadding,
                 canUndo: dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
                 canRedo: dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
                 onFit: runtime.actions.setViewport,
@@ -10171,14 +10434,14 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     }
   );
 }
-function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot()) {
+function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot(), padding = 1.2) {
   if (snapshot === null) return;
   const viewport = runtime.viewport.getSnapshot();
   if (viewport.width <= 0 || viewport.height <= 0) return;
   runtime.actions.setViewport(fitViewportToDrawing({
     ...snapshot.document,
     annotations: snapshot.document.annotations.filter(({ type }) => type === "section-hatch" || type === "dimension")
-  }, viewport));
+  }, viewport, padding));
 }
 function useObservable(observable) {
   return reactExports.useSyncExternalStore(observable.subscribe, observable.getSnapshot, observable.getSnapshot);
@@ -12058,7 +12321,7 @@ const $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) 
   const generateFastpass = (shape) => {
     var _a2, _b;
     const doc = new Doc(["shape", "payload", "ctx"]);
-    const normalized = _normalized.value;
+    const normalized2 = _normalized.value;
     const parseStr = (key) => {
       const k = esc(key);
       return `shape[${k}]._zod.run({ value: input[${k}], issues: [] }, ctx)`;
@@ -12066,11 +12329,11 @@ const $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) 
     doc.write(`const input = payload.value;`);
     const ids = /* @__PURE__ */ Object.create(null);
     let counter = 0;
-    for (const key of normalized.keys) {
+    for (const key of normalized2.keys) {
       ids[key] = `key_${counter++}`;
     }
     doc.write(`const newResult = {};`);
-    for (const key of normalized.keys) {
+    for (const key of normalized2.keys) {
       const id = ids[key];
       const k = esc(key);
       const schema = shape[key];
@@ -16503,6 +16766,12 @@ const axialDimensionSchemeSchema = object({
   displayedCandidateIds: array(idSchema),
   closureCandidateIds: array(idSchema),
   chains: array(axialChainNodeSchema),
+  layout: object({
+    candidateNormalOffsets: array(object({
+      candidateId: idSchema,
+      normalOffset: number().finite()
+    }).strict())
+  }).strict().optional(),
   decisions: array(dimensionDecisionTraceSchema),
   diagnostics: array(engineeringDiagnosticSchema),
   status: _enum(["resolved", "needs-review", "conflict", "stale"])
@@ -16518,6 +16787,12 @@ const dimensionSchemeEditCommandSchema = discriminatedUnion("type", [
     type: literal("closure.choose"),
     chainId: idSchema,
     candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema
+  }).strict(),
+  object({
+    type: literal("candidate.layout"),
+    candidateId: idSchema,
+    normalOffset: number().finite(),
     expectedDrawingRef: drawingRefSchema
   }).strict()
 ]);

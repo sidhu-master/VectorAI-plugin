@@ -51,4 +51,17 @@ describe('applyDimensionSchemeEdit', () => {
       type: 'candidate.display', candidateId: 'candidate:missing', displayed: true,
     })).toThrow('DIMENSION_CANDIDATE_UNKNOWN');
   });
+
+  it('stores a candidate normal offset immutably for manual annotation layout', async () => {
+    const input = await analyzeGoldenInferenceInput();
+    const scheme = inferAxialDimensionScheme({
+      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+    });
+    const candidateId = scheme.displayedCandidateIds[0]!;
+
+    const edited = applyDimensionSchemeEdit(scheme, { type: 'candidate.layout', candidateId, normalOffset: 12.5 });
+
+    expect(scheme.layout).toBeUndefined();
+    expect(edited.layout?.candidateNormalOffsets).toEqual([{ candidateId, normalOffset: 12.5 }]);
+  });
 });

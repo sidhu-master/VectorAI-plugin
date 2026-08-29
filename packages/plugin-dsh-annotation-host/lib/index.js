@@ -2829,7 +2829,7 @@ function format(value) {
 function applyDimensionSchemeEdit(scheme, command) {
   const candidate = scheme.candidates.find(({ id }) => id === command.candidateId);
   if (!candidate) throw new Error("DIMENSION_CANDIDATE_UNKNOWN");
-  const edited = command.type === "candidate.display" ? setCandidateDisplayed(scheme, candidate.id, command.displayed) : chooseChainClosure(scheme, command.chainId, candidate);
+  const edited = command.type === "candidate.display" ? setCandidateDisplayed(scheme, candidate.id, command.displayed) : command.type === "closure.choose" ? chooseChainClosure(scheme, command.chainId, candidate) : setCandidateNormalOffset(scheme, candidate.id, command.normalOffset);
   const validation = validateAxialDimensionScheme(edited);
   const diagnostics = dedupe([
     ...edited.diagnostics.filter(({ code }) => !isDerivedValidationCode(code)),
@@ -2839,6 +2839,20 @@ function applyDimensionSchemeEdit(scheme, command) {
     ...edited,
     diagnostics,
     status: validation.some(({ severity }) => severity === "error") ? "conflict" : edited.status
+  };
+}
+function setCandidateNormalOffset(scheme, candidateId, normalOffset) {
+  var _a3;
+  if (!Number.isFinite(normalOffset)) throw new Error("DIMENSION_LAYOUT_OFFSET_INVALID");
+  const current = ((_a3 = scheme.layout) == null ? void 0 : _a3.candidateNormalOffsets) ?? [];
+  return {
+    ...structuredClone(scheme),
+    layout: {
+      candidateNormalOffsets: [
+        ...current.filter((item) => item.candidateId !== candidateId),
+        { candidateId, normalOffset }
+      ]
+    }
   };
 }
 function setCandidateDisplayed(scheme, candidateId, displayed) {
@@ -9313,6 +9327,12 @@ const axialDimensionSchemeSchema = object({
   displayedCandidateIds: array(idSchema),
   closureCandidateIds: array(idSchema),
   chains: array(axialChainNodeSchema),
+  layout: object({
+    candidateNormalOffsets: array(object({
+      candidateId: idSchema,
+      normalOffset: number().finite()
+    }).strict())
+  }).strict().optional(),
   decisions: array(dimensionDecisionTraceSchema),
   diagnostics: array(engineeringDiagnosticSchema),
   status: _enum(["resolved", "needs-review", "conflict", "stale"])
@@ -9328,6 +9348,12 @@ discriminatedUnion("type", [
     type: literal("closure.choose"),
     chainId: idSchema,
     candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema
+  }).strict(),
+  object({
+    type: literal("candidate.layout"),
+    candidateId: idSchema,
+    normalOffset: number().finite(),
     expectedDrawingRef: drawingRefSchema
   }).strict()
 ]);
@@ -10371,7 +10397,7 @@ class DimensionPlanStore {
     requireRef(state.snapshot, command.expectedDrawingRef);
     const draft = state.snapshot.draft;
     if (!(draft == null ? void 0 : draft.axialScheme)) throw new Error("DIMENSION_SCHEME_DRAFT_REQUIRED");
-    const edit = command.type === "candidate.display" ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } : { type: command.type, chainId: command.chainId, candidateId: command.candidateId };
+    const edit = command.type === "candidate.display" ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } : command.type === "closure.choose" ? { type: command.type, chainId: command.chainId, candidateId: command.candidateId } : { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset };
     const scheme = applyDimensionSchemeEdit(draft.axialScheme, edit);
     return this.setDraft(sessionId, projectAxialDimensionScheme({
       scheme,

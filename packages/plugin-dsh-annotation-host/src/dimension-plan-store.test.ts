@@ -180,6 +180,23 @@ describe('DimensionPlanStore', () => {
     expect(store.redo('session', drawingRef).draft?.axialScheme?.displayedCandidateIds).not.toContain('candidate:local');
   });
 
+  it('persists a candidate layout offset and restores it through undo and redo', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    store.begin('session', drawingRef);
+    store.setDraft('session', inferredDraft());
+    store.editScheme('session', {
+      type: 'candidate.layout', candidateId: 'candidate:local', normalOffset: 12,
+      expectedDrawingRef: drawingRef,
+    });
+    expect(store.get('session').draft?.axialScheme?.layout?.candidateNormalOffsets).toEqual([
+      { candidateId: 'candidate:local', normalOffset: 12 },
+    ]);
+    expect(store.undo('session', drawingRef).draft?.axialScheme?.layout).toBeUndefined();
+    expect(store.redo('session', drawingRef).draft?.axialScheme?.layout?.candidateNormalOffsets).toEqual([
+      { candidateId: 'candidate:local', normalOffset: 12 },
+    ]);
+  });
+
   it.each(['needs-review', 'conflict', 'stale'] as const)('blocks confirmation for a %s inferred scheme', (status) => {
     const store = new DimensionPlanStore();
     store.begin('session', drawingRef);

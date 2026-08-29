@@ -1101,6 +1101,12 @@ export const axialDimensionSchemeSchema = z.object({
   displayedCandidateIds: z.array(idSchema),
   closureCandidateIds: z.array(idSchema),
   chains: z.array(axialChainNodeSchema),
+  layout: z.object({
+    candidateNormalOffsets: z.array(z.object({
+      candidateId: idSchema,
+      normalOffset: z.number().finite(),
+    }).strict()),
+  }).strict().optional(),
   decisions: z.array(dimensionDecisionTraceSchema),
   diagnostics: z.array(engineeringDiagnosticSchema),
   status: z.enum(['resolved', 'needs-review', 'conflict', 'stale']),
@@ -1113,6 +1119,10 @@ export const dimensionSchemeEditCommandSchema = z.discriminatedUnion('type', [
   }).strict(),
   z.object({
     type: z.literal('closure.choose'), chainId: idSchema, candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('candidate.layout'), candidateId: idSchema, normalOffset: z.number().finite(),
     expectedDrawingRef: drawingRefSchema,
   }).strict(),
 ]);

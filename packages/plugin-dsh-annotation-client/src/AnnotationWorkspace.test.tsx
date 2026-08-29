@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AnnotationWorkspace } from './AnnotationWorkspace';
 import type { PartitionController } from './partition-controller';
+import type { DimensionChainController } from './dimension-chain-controller';
 import { ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_PARTITION_LAYER } from './drawing-layers';
 
 function observable<T>(value: T) {
@@ -26,6 +27,44 @@ function mutableObservable<T>(initial: T) {
 }
 
 describe('AnnotationWorkspace', () => {
+  it('surfaces a failed dimension layout save with retry guidance', async () => {
+    vi.stubGlobal('window', new EventTarget());
+    const runtime = {
+      snapshot: observable(null),
+      viewport: observable({ x: 0, y: 0, scale: 1, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: null, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport() {}, setSelection() {}, refresh: async () => undefined },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({ version: 1 as const, workspaceClaimed: true, activationEpoch: 1, workflow: { status: 'completed' as const } });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+    const dimensionChain = {
+      state: observable({
+        plan: { version: 1, phase: 'editing', canUndo: false, canRedo: false, updatedAt: 1 },
+        busy: false, previewHeld: false, error: 'transport failed',
+      }),
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
+    } as unknown as DimensionChainController;
+
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state}
+        partition={partition} dimensionChain={dimensionChain}
+      />);
+    });
+    expect(renderer!.root.findByProps({ role: 'alert' }).children.join('')).toContain('请重新拖动后再试');
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
+  });
+
   it('keeps hydrating a cached partition controller until the Host draft is ready', async () => {
     vi.useFakeTimers();
     const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;

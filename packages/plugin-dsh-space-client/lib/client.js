@@ -5593,6 +5593,7 @@ window.__ModuleLoader__.load({
       snapshot,
       viewport,
       unavailable = false,
+      fitPadding = 1.2,
       canUndo,
       canRedo,
       onFit,
@@ -5615,7 +5616,7 @@ window.__ModuleLoader__.load({
             type: "button",
             "aria-label": "适配图纸",
             title: "缩放并居中显示整张图纸",
-            onClick: () => onFit(fitViewportToDrawing(snapshot.document, viewport)),
+            onClick: () => onFit(fitViewportToDrawing(snapshot.document, viewport, fitPadding)),
             children: /* @__PURE__ */ jsxRuntime.jsx(Scan, { "aria-hidden": "true", size: 17 })
           }
         ),
@@ -13846,6 +13847,12 @@ window.__ModuleLoader__.load({
       displayedCandidateIds: array(idSchema),
       closureCandidateIds: array(idSchema),
       chains: array(axialChainNodeSchema),
+      layout: object({
+        candidateNormalOffsets: array(object({
+          candidateId: idSchema,
+          normalOffset: number().finite()
+        }).strict())
+      }).strict().optional(),
       decisions: array(dimensionDecisionTraceSchema),
       diagnostics: array(engineeringDiagnosticSchema),
       status: _enum(["resolved", "needs-review", "conflict", "stale"])
@@ -13861,6 +13868,12 @@ window.__ModuleLoader__.load({
         type: literal("closure.choose"),
         chainId: idSchema,
         candidateId: idSchema,
+        expectedDrawingRef: drawingRefSchema
+      }).strict(),
+      object({
+        type: literal("candidate.layout"),
+        candidateId: idSchema,
+        normalOffset: number().finite(),
         expectedDrawingRef: drawingRefSchema
       }).strict()
     ]);
