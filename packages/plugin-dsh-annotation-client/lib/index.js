@@ -7396,6 +7396,51 @@ function contourPath(points) {
   if (points.length === 0) return "";
   return `M ${points[0][0]} ${points[0][1]} ${points.slice(1).map(([x, y]) => `L ${x} ${y}`).join(" ")} Z`;
 }
+function screenSpaceTransform(position, viewportScale) {
+  const inverse = 1 / Math.max(Math.abs(viewportScale), 1e-6);
+  return `translate(${position[0]} ${position[1]}) scale(${inverse} ${-inverse})`;
+}
+function estimateScreenTextWidth(text, fontSize) {
+  return [...text].reduce((width, character) => width + (character.codePointAt(0) > 255 ? 1 : 0.62) * fontSize, 0);
+}
+function ScreenSpaceLabel({
+  position,
+  viewportScale,
+  children,
+  fontSize = 11,
+  textAnchor = "middle",
+  background = false,
+  paddingX = 5,
+  paddingY = 3,
+  textProps,
+  ...groupProps
+}) {
+  const width = estimateScreenTextWidth(children, fontSize) + paddingX * 2;
+  const height = fontSize + paddingY * 2;
+  const x = textAnchor === "middle" ? -width / 2 : textAnchor === "end" ? -width : 0;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "g",
+    {
+      ...groupProps,
+      "data-screen-space-label": true,
+      transform: screenSpaceTransform(position, viewportScale),
+      children: [
+        background && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "rect",
+          {
+            className: "vai-screen-space-label__background",
+            x,
+            y: -height / 2,
+            width,
+            height,
+            rx: 4
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("text", { ...textProps, fontSize, textAnchor, dominantBaseline: "middle", children })
+      ]
+    }
+  );
+}
 function EntityRenderer({
   node,
   viewport,
@@ -7470,7 +7515,7 @@ function renderNode(node, viewport) {
       }
       return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         node.definitionPoints.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: pointsAttribute(node.definitionPoints), fill: "none", ...vectorStroke }) : null,
-        /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
+        /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
       ] });
     case "leader": {
       const textPosition = node.points.at(-1) ?? [0, 0];
@@ -7528,7 +7573,7 @@ function AngularDimension({
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { "data-angular-role": "arrow", d: arrowPath(arcStart, startToward, 7 / Math.max(viewport.scale, 1e-9)), ...vectorStroke }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("path", { "data-angular-role": "arrow", d: arrowPath(arcEnd, endToward, 7 / Math.max(viewport.scale, 1e-9)), ...vectorStroke }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
   ] });
 }
 function WorldText({
@@ -8641,7 +8686,7 @@ function relationSegments(document2, relation, viewport) {
     const midpoint = [(start[0] + center[0]) / 2, (start[1] + center[1]) / 2];
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-relation-id": relation.id, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: start[0], y1: start[1], x2: center[0], y2: center[1], vectorEffect: "non-scaling-stroke" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("g", { transform: `translate(${midpoint[0]} ${midpoint[1]}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("text", { fontSize: 10 / Math.max(viewport.scale, 1e-3), textAnchor: "middle", children: relation.kind }) })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: midpoint, viewportScale: viewport.scale, fontSize: 10, children: relation.kind })
     ] }, `${relation.id}:${index}`);
   });
 }
@@ -8953,57 +8998,63 @@ function DrawingLayerManager({ layers, onVisibilityChange }) {
     }
   );
 }
-function DimensionChainOverlay({
-  scheme,
-  scale,
-  visible,
-  previewHeld = false
-}) {
+function DimensionChainOverlay({ scheme, scale, visible, previewHeld = false }) {
   if (!visible) return null;
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const displayed = scheme.displayedCandidateIds.flatMap((id) => candidates.get(id) ?? []);
   const closures = previewHeld ? [] : scheme.closureCandidateIds.flatMap((id) => candidates.get(id) ?? []);
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { "data-dimension-chain-overlay": "true", pointerEvents: "none", children: [
-    displayed.map((candidate, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-      IntervalGraphic,
-      {
-        scheme,
-        candidate,
-        scale,
-        level: index,
-        kind: "displayed",
-        conflict: !previewHeld && conflicts.has(candidate.id)
-      },
-      candidate.id
-    )),
-    closures.map((candidate, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-      IntervalGraphic,
-      {
-        scheme,
-        candidate,
-        scale,
-        level: index,
-        kind: "closure",
-        conflict: conflicts.has(candidate.id)
-      },
-      candidate.id
-    ))
-  ] });
+  const layouts = allocateLanes(scheme, [...displayed, ...closures], scale);
+  const displayedIds = new Set(displayed.map(({ id }) => id));
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("g", { "data-dimension-chain-overlay": "true", pointerEvents: "none", children: layouts.map((layout) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+    IntervalGraphic,
+    {
+      scheme,
+      layout,
+      scale,
+      kind: displayedIds.has(layout.candidate.id) ? "displayed" : "closure",
+      conflict: !previewHeld && conflicts.has(layout.candidate.id)
+    },
+    layout.candidate.id
+  )) });
 }
-function IntervalGraphic({ scheme, candidate, scale, level, kind, conflict }) {
-  const start = scheme.topology.stations.find(({ id }) => id === candidate.startStationId);
-  const end = scheme.topology.stations.find(({ id }) => id === candidate.endStationId);
-  if (!start || !end) return null;
+function allocateLanes(scheme, candidates, scale) {
+  const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
+  const lanes = [];
+  const padding = 8 / Math.max(scale, 1e-6);
+  return candidates.flatMap((candidate) => {
+    const first = coordinates.get(candidate.startStationId);
+    const second = coordinates.get(candidate.endStationId);
+    if (first === void 0 || second === void 0) return [];
+    const intervalStart = Math.min(first, second);
+    const intervalEnd = Math.max(first, second);
+    const label = `${candidate.nominalValue} ${scheme.topology.unit}`;
+    const halfLabelWidth = (estimateScreenTextWidth(label, 11) + 10) / (2 * Math.max(scale, 1e-6));
+    const center = (first + second) / 2;
+    const start = Math.min(intervalStart, center - halfLabelWidth);
+    const end = Math.max(intervalEnd, center + halfLabelWidth);
+    let lane = lanes.findIndex((occupied) => occupied.every((interval) => end + padding < interval.start || start - padding > interval.end));
+    if (lane < 0) {
+      lane = lanes.length;
+      lanes.push([]);
+    }
+    lanes[lane].push({ start, end });
+    return [{ candidate, lane, start: first, end: second }];
+  });
+}
+function IntervalGraphic({ scheme, layout, scale, kind, conflict }) {
+  const { candidate, lane } = layout;
   const { origin, direction, normal } = scheme.topology.axis;
-  const offset = (24 + level % 4 * 14) / Math.max(scale, 1e-6);
+  const safeScale = Math.max(scale, 1e-6);
+  const offset = (24 + lane * 14) / safeScale;
   const point3 = (coordinate) => [
     origin[0] + direction[0] * coordinate + normal[0] * offset,
     origin[1] + direction[1] * coordinate + normal[1] * offset
   ];
-  const a = point3(start.sourceCoordinate);
-  const b = point3(end.sourceCoordinate);
-  const middle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const a = point3(layout.start);
+  const b = point3(layout.end);
+  const middle = [(a[0] + b[0]) / 2 + normal[0] * 7 / safeScale, (a[1] + b[1]) / 2 + normal[1] * 7 / safeScale];
+  const tick = 4 / safeScale;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "g",
     {
@@ -9013,13 +9064,9 @@ function IntervalGraphic({ scheme, candidate, scale, level, kind, conflict }) {
       "data-dimension-conflict": conflict || void 0,
       children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0], y1: a[1] - 4 / scale, x2: a[0], y2: a[1] + 4 / scale, vectorEffect: "non-scaling-stroke" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: b[0], y1: b[1] - 4 / scale, x2: b[0], y2: b[1] + 4 / scale, vectorEffect: "non-scaling-stroke" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("text", { x: middle[0], y: middle[1] - 5 / scale, textAnchor: "middle", fontSize: 11 / scale, children: [
-          candidate.nominalValue,
-          " ",
-          scheme.topology.unit
-        ] })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: a[0] - normal[0] * tick, y1: a[1] - normal[1] * tick, x2: a[0] + normal[0] * tick, y2: a[1] + normal[1] * tick, vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: b[0] - normal[0] * tick, y1: b[1] - normal[1] * tick, x2: b[0] + normal[0] * tick, y2: b[1] + normal[1] * tick, vectorEffect: "non-scaling-stroke" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: middle, viewportScale: scale, background: true, className: "vai-dimension-chain-label", "data-dimension-lane": lane, children: `${candidate.nominalValue} ${scheme.topology.unit}` })
       ]
     }
   );
@@ -9262,7 +9309,8 @@ function PartitionOverlay({ draft, mode = "functional", previewHeld, scale, onMo
               "g",
               {
                 className: "vai-partition-label-anchor",
-                transform: `translate(${labelAnchor[0]} ${labelAnchor[1]}) scale(${1 / Math.max(scale, 0.01)} ${-1 / Math.max(scale, 0.01)})`,
+                "data-screen-space-label": true,
+                transform: screenSpaceTransform(labelAnchor, scale),
                 pointerEvents: previewHeld || !onRenameBand ? "none" : "all",
                 role: previewHeld || !onRenameBand ? void 0 : "button",
                 tabIndex: previewHeld || !onRenameBand ? void 0 : 0,

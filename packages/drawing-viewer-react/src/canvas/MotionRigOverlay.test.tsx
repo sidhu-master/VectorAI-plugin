@@ -50,6 +50,9 @@ describe('MotionRigOverlay', () => {
     });
 
     expect(renderer.root.findByProps({ 'data-motion-rig-status': 'preview' }).children).toEqual(['等待确认']);
+    const label = renderer.root.findByProps({ 'data-screen-space-label': true });
+    expect(label.props.transform).toContain('scale(1 -1)');
+    expect(label.findByType('text').props.fontSize).toBe(11);
     act(() => renderer.unmount());
   });
 

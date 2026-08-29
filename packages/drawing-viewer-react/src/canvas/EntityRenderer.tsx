@@ -5,6 +5,7 @@ import type { MouseEvent } from 'react';
 
 import { nodeBounds, worldBoundsForViewport } from './geometry';
 import { HatchRenderer } from './HatchRenderer';
+import { ScreenSpaceLabel } from './ScreenSpaceLabel';
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 
 export interface EntityRendererProps {
@@ -101,9 +102,9 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
           {node.definitionPoints.length > 1 ? (
             <polyline points={pointsAttribute(node.definitionPoints)} fill="none" {...vectorStroke} />
           ) : null}
-          <WorldText position={node.textPosition} height={Math.max(4, 10 / viewport.scale)} align="center">
+          <ScreenSpaceLabel position={node.textPosition} viewportScale={viewport.scale}>
             {dimensionLabel(node)}
-          </WorldText>
+          </ScreenSpaceLabel>
         </>
       );
     case 'leader': {
@@ -164,9 +165,9 @@ function AngularDimension({
     />
     <path data-angular-role="arrow" d={arrowPath(arcStart, startToward, 7 / Math.max(viewport.scale, 1e-9))} {...vectorStroke} />
     <path data-angular-role="arrow" d={arrowPath(arcEnd, endToward, 7 / Math.max(viewport.scale, 1e-9))} {...vectorStroke} />
-    <WorldText position={node.textPosition} height={Math.max(4, 10 / viewport.scale)} align="center">
+    <ScreenSpaceLabel position={node.textPosition} viewportScale={viewport.scale}>
       {dimensionLabel(node)}
-    </WorldText>
+    </ScreenSpaceLabel>
   </>;
 }
 

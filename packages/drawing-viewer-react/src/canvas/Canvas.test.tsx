@@ -114,6 +114,7 @@ describe('shared Canvas rendering', () => {
     expect(markup).not.toContain('data-relation-id="relation-1"');
     expect(markup).not.toContain('connected');
     expect(markup).toContain('data-relation-id="relation-2"');
+    expect(markup).toContain('data-screen-space-label="true"');
     expect(markup).toContain('vector-effect="non-scaling-stroke"');
   });
 

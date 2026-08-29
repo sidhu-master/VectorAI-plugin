@@ -3,6 +3,7 @@
 import type { Vec2 } from '@vectorai/drawing-core';
 import type { DrawingMotionRigWorkspaceState } from '@vectorai/drawing-workspace';
 import type { MouseEvent } from 'react';
+import { ScreenSpaceLabel } from './ScreenSpaceLabel';
 
 export interface MotionRigOverlayProps {
   rig: DrawingMotionRigWorkspaceState;
@@ -79,14 +80,13 @@ export function MotionRigOverlay({
           }}
         />
       ))}
-      <g transform={`translate(${handle[0]} ${handle[1] + 14 / scale}) scale(1 -1)`} pointerEvents="none">
-        <text
-          data-motion-rig-status={rig.phase}
-          className="vai-motion-rig__status"
-          fontSize={11 / scale}
-          textAnchor="middle"
-        >{status}</text>
-      </g>
+      <ScreenSpaceLabel
+        position={[handle[0], handle[1] + 14 / scale]}
+        viewportScale={scale}
+        pointerEvents="none"
+        className="vai-motion-rig__status"
+        textProps={{ 'data-motion-rig-status': rig.phase } as never}
+      >{status}</ScreenSpaceLabel>
     </g>
   );
 }

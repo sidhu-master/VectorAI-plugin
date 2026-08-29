@@ -15,6 +15,7 @@ import { useDrawingWorkspace } from '../hooks';
 import { CadGrid } from './Grid';
 import { EntityRenderer } from './EntityRenderer';
 import { MotionRigOverlay } from './MotionRigOverlay';
+import { ScreenSpaceLabel } from './ScreenSpaceLabel';
 import { SourceUnderlay } from './SourceUnderlay';
 import { isRasterDrawingSource } from './source-types';
 import {
@@ -467,9 +468,9 @@ function RelationLayer({
           return (
             <g key={`${relation.id}:${index}`} data-relation-id={relation.id}>
               <line x1={start[0]} y1={start[1]} x2={center[0]} y2={center[1]} vectorEffect="non-scaling-stroke" />
-              <g transform={`translate(${midpoint[0]} ${midpoint[1]}) scale(1 -1)`}>
-                <text fontSize={10 / Math.max(viewport.scale, 0.001)} textAnchor="middle">{relation.kind}</text>
-              </g>
+              <ScreenSpaceLabel position={midpoint} viewportScale={viewport.scale} fontSize={10}>
+                {relation.kind}
+              </ScreenSpaceLabel>
             </g>
           );
         });

@@ -13,6 +13,7 @@ import type { MouseEvent } from 'react';
 import { CadGrid } from '../canvas/Grid';
 import { EntityRenderer } from '../canvas/EntityRenderer';
 import { SourceUnderlay } from '../canvas/SourceUnderlay';
+import { ScreenSpaceLabel } from '../canvas/ScreenSpaceLabel';
 import { isRasterDrawingSource } from '../canvas/source-types';
 import { nodeBounds } from '../canvas/geometry';
 
@@ -154,9 +155,9 @@ function relationSegments(
     const midpoint: Vec2 = [(start[0] + center[0]) / 2, (start[1] + center[1]) / 2];
     return <g key={`${relation.id}:${index}`} data-relation-id={relation.id}>
       <line x1={start[0]} y1={start[1]} x2={center[0]} y2={center[1]} vectorEffect="non-scaling-stroke" />
-      <g transform={`translate(${midpoint[0]} ${midpoint[1]}) scale(1 -1)`}>
-        <text fontSize={10 / Math.max(viewport.scale, 0.001)} textAnchor="middle">{relation.kind}</text>
-      </g>
+      <ScreenSpaceLabel position={midpoint} viewportScale={viewport.scale} fontSize={10}>
+        {relation.kind}
+      </ScreenSpaceLabel>
     </g>;
   });
 }

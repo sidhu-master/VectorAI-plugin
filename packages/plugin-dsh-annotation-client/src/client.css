@@ -122,7 +122,8 @@
 
 .vai-dimension-chain-interval { color: #22d3ee; }
 .vai-dimension-chain-interval line { stroke: currentColor; stroke-width: 1.5; }
-.vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; paint-order: stroke; stroke: #0b1118; stroke-width: 3px; }
+.vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.vai-dimension-chain-label .vai-screen-space-label__background { fill: rgba(8, 16, 24, .94); stroke: currentColor; stroke-width: 1px; }
 .vai-dimension-chain-interval--closure { color: #f59e0b; }
 .vai-dimension-chain-interval--closure line:first-child { stroke-dasharray: 5 4; }
 .vai-dimension-chain-interval[data-dimension-conflict="true"] { color: #fb7185; }

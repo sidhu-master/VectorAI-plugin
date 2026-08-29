@@ -4326,6 +4326,51 @@ window.__ModuleLoader__.load({
       if (points.length === 0) return "";
       return `M ${points[0][0]} ${points[0][1]} ${points.slice(1).map(([x, y]) => `L ${x} ${y}`).join(" ")} Z`;
     }
+    function screenSpaceTransform(position, viewportScale) {
+      const inverse = 1 / Math.max(Math.abs(viewportScale), 1e-6);
+      return `translate(${position[0]} ${position[1]}) scale(${inverse} ${-inverse})`;
+    }
+    function ScreenSpaceLabel({
+      position,
+      viewportScale,
+      children,
+      fontSize = 11,
+      textAnchor = "middle",
+      background = false,
+      paddingX = 5,
+      paddingY = 3,
+      textProps,
+      ...groupProps
+    }) {
+      const width = estimateTextWidth(children, fontSize) + paddingX * 2;
+      const height = fontSize + paddingY * 2;
+      const x = textAnchor === "middle" ? -width / 2 : textAnchor === "end" ? -width : 0;
+      return /* @__PURE__ */ jsxRuntime.jsxs(
+        "g",
+        {
+          ...groupProps,
+          "data-screen-space-label": true,
+          transform: screenSpaceTransform(position, viewportScale),
+          children: [
+            background && /* @__PURE__ */ jsxRuntime.jsx(
+              "rect",
+              {
+                className: "vai-screen-space-label__background",
+                x,
+                y: -height / 2,
+                width,
+                height,
+                rx: 4
+              }
+            ),
+            /* @__PURE__ */ jsxRuntime.jsx("text", { ...textProps, fontSize, textAnchor, dominantBaseline: "middle", children })
+          ]
+        }
+      );
+    }
+    function estimateTextWidth(text, fontSize) {
+      return [...text].reduce((width, character) => width + (character.codePointAt(0) > 255 ? 1 : 0.62) * fontSize, 0);
+    }
     function EntityRenderer({
       node,
       viewport,
@@ -4400,7 +4445,7 @@ window.__ModuleLoader__.load({
           }
           return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
             node.definitionPoints.length > 1 ? /* @__PURE__ */ jsxRuntime.jsx("polyline", { points: pointsAttribute(node.definitionPoints), fill: "none", ...vectorStroke }) : null,
-            /* @__PURE__ */ jsxRuntime.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
+            /* @__PURE__ */ jsxRuntime.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
           ] });
         case "leader": {
           const textPosition = node.points.at(-1) ?? [0, 0];
@@ -4458,7 +4503,7 @@ window.__ModuleLoader__.load({
         ),
         /* @__PURE__ */ jsxRuntime.jsx("path", { "data-angular-role": "arrow", d: arrowPath(arcStart, startToward, 7 / Math.max(viewport.scale, 1e-9)), ...vectorStroke }),
         /* @__PURE__ */ jsxRuntime.jsx("path", { "data-angular-role": "arrow", d: arrowPath(arcEnd, endToward, 7 / Math.max(viewport.scale, 1e-9)), ...vectorStroke }),
-        /* @__PURE__ */ jsxRuntime.jsx(WorldText, { position: node.textPosition, height: Math.max(4, 10 / viewport.scale), align: "center", children: dimensionLabel(node) })
+        /* @__PURE__ */ jsxRuntime.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
       ] });
     }
     function WorldText({
@@ -4649,16 +4694,17 @@ window.__ModuleLoader__.load({
           },
           nodeId
         )),
-        /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${handle[0]} ${handle[1] + 14 / scale2}) scale(1 -1)`, pointerEvents: "none", children: /* @__PURE__ */ jsxRuntime.jsx(
-          "text",
+        /* @__PURE__ */ jsxRuntime.jsx(
+          ScreenSpaceLabel,
           {
-            "data-motion-rig-status": rig.phase,
+            position: [handle[0], handle[1] + 14 / scale2],
+            viewportScale: scale2,
+            pointerEvents: "none",
             className: "vai-motion-rig__status",
-            fontSize: 11 / scale2,
-            textAnchor: "middle",
+            textProps: { "data-motion-rig-status": rig.phase },
             children: status
           }
-        ) })
+        )
       ] });
     }
     function SourceUnderlay({
@@ -5080,7 +5126,7 @@ window.__ModuleLoader__.load({
           const midpoint = [(start[0] + center[0]) / 2, (start[1] + center[1]) / 2];
           return /* @__PURE__ */ jsxRuntime.jsxs("g", { "data-relation-id": relation.id, children: [
             /* @__PURE__ */ jsxRuntime.jsx("line", { x1: start[0], y1: start[1], x2: center[0], y2: center[1], vectorEffect: "non-scaling-stroke" }),
-            /* @__PURE__ */ jsxRuntime.jsx("g", { transform: `translate(${midpoint[0]} ${midpoint[1]}) scale(1 -1)`, children: /* @__PURE__ */ jsxRuntime.jsx("text", { fontSize: 10 / Math.max(viewport.scale, 1e-3), textAnchor: "middle", children: relation.kind }) })
+            /* @__PURE__ */ jsxRuntime.jsx(ScreenSpaceLabel, { position: midpoint, viewportScale: viewport.scale, fontSize: 10, children: relation.kind })
           ] }, `${relation.id}:${index}`);
         });
       }) });

@@ -24,7 +24,25 @@ describe('angular dimension rendering', () => {
     expect(markup).toContain('data-angular-role="arc"');
     expect(markup.match(/data-angular-role="arrow"/g)).toHaveLength(2);
     expect(markup).toContain('60°');
+    expect(markup).toContain('data-screen-space-label="true"');
+    expect(markup).toContain('scale(0.5 -0.5)');
     expect(markup).toContain('vai-entity--angular-dimension');
     expect(markup).not.toContain('<polyline points="0,0 20,-11.547 20,11.547');
+  });
+
+  it('keeps ordinary dimension text upright and at a stable screen size', () => {
+    const node: DimensionAnnotation = {
+      id: 'linear-1' as never, type: 'dimension', visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] }, dimensionKind: 'linear',
+      associationStatus: 'resolved', targets: [], computedValue: 24.5, displayText: '24.5 ±0.1', unit: 'mm',
+      textPosition: [12.25, 8], definitionPoints: [[0, 0], [0, 8], [24.5, 8], [24.5, 0]],
+    };
+    const markup = renderToStaticMarkup(<svg><EntityRenderer node={node} selected={false} onSelect={() => {}}
+      viewport={{ x: 0, y: 0, scale: 4, width: 800, height: 600 }} /></svg>);
+
+    expect(markup).toContain('24.5 ±0.1');
+    expect(markup).toContain('data-screen-space-label="true"');
+    expect(markup).toContain('scale(0.25 -0.25)');
+    expect(markup).toContain('font-size="11"');
   });
 });

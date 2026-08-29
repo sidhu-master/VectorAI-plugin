@@ -33,6 +33,7 @@ import { PartitionWorkflowService } from './partition-service';
 import { createPartitionSemanticReviewer } from './semantic-reviewer';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 import { DimensionInferenceService } from './dimension-inference-service';
+import { acceptPendingPartitionForEvent } from './partition-auto-confirm';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -81,6 +82,12 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.effect(() => ctx.tools.register(createDimensionChainStartTool(this.dimensionInference)));
+    ctx.on('session/event', (session, event) => {
+      const sessionId = String(session.id);
+      acceptPendingPartitionForEvent(sessionId, event, this.partitions, this.sessions, (drawingRef) => {
+        this.dimensionInference.markStaleSession(sessionId, drawingRef);
+      });
+    });
     ctx.on('session/disposed', (session) => {
       const sessionId = String(session.id);
       this.partitionWorkflow.disposeSession(sessionId);
