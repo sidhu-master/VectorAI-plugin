@@ -26,7 +26,8 @@ DSH 构建变化和 WKWebView 生命周期都能破坏布局。继续增加补�
 
 ## 版本选择
 
-- 固定使用 `@deepseek-ai/*@0.1.2-alpha.1`，不使用浮动 `latest` 或范围版本。
+- Launcher 固定使用官方 tag `dsh-v0.1.2-alpha.1` 与 commit `cd5ef8148158c3a752a658978873241fdf8e2bbc`，不使用浮动 `latest`。
+- alpha.1 的 package 尚未发布到 npm；插件的开发期类型依赖暂时保留已发布 SDK 基线，真实兼容性由精确源码运行时 smoke 验证。
 - `0.1.1-rc.2` 只包含图片处理相关改进，未提供本迁移需要的新 Web Client 架构。
 - `0.1.2-alpha.1` 提供公开 `root` slot、三栏 AppFrame 契约、`sidebar`、
   `conversation`、`details`、`shell.overlay` 子 slot 和 `ctx.layout` 服务。
@@ -36,40 +37,39 @@ DSH 构建变化和 WKWebView 生命周期都能破坏布局。继续增加补�
 
 ### 所有权
 
-第一层 `@vectorai/plugin-dsh-space-client` 增加一个独立的 `VectorAIAppFrame`。它通过
-公开的 `root` single slot 注册，声明并渲染官方子 slot，不修改 DSH 文件，不复制会话
-状态，也不拥有聊天数据。
+第一层 `@vectorai/plugin-dsh-space-client` 增加 `VectorAIWorkspaceOverlay`。它通过公开的
+`shell.overlay` list slot 注册，声明一个 session-scoped Drawing 子 slot，不修改 DSH 文件，
+不替换官方根壳，不复制会话状态，也不拥有聊天数据。
 
 第二层自动标注插件仍只向第一层 `DrawingSurfaceRegistry` 注册专业 Workspace
 contribution。第二层不得注册 `root`、`sidebar` 或 `conversation`。
 
 ### 布局状态
 
-`VectorAIAppFrame` 始终保留官方壳的四个区域：
+VectorAI 保留官方壳的四个区域：
 
 1. `sidebar`：DSH 导航及其折叠控制；
 2. VectorAI Drawing 区：仅当前 session 的 Drawing Surface claim 激活时出现；
 3. `conversation`：原生聊天、输入框、轨迹和会话头；
-4. `details` 与 `shell.overlay`：继续向其他插件开放，不被 VectorAI 截断。
+4. `details` 与 `shell.overlay`：继续向其他插件开放；VectorAI 只占用自己带 ID 的 list cell。
 
-没有激活 Drawing 时，不渲染 Drawing 列，Conversation 占满官方中间区域。存在 Drawing
-时，Drawing 使用剩余宽度，Conversation 使用可拖动的固定偏好宽度，默认 440px，范围
-360–640px。窗口缩小时优先折叠 sidebar 和 details，但 Drawing 与 Conversation 不切换
-为上下排列。低于可用最小宽度时允许整个工作区横向约束，不静默改变信息架构。
+没有激活 Drawing 时，不渲染 Drawing Overlay，Conversation 占满官方中间区域。存在 Drawing
+时，插件读取官方 Conversation 列的真实边界，在左侧预留约 56% 给 Drawing，并至少保留
+360px 聊天宽度；画布最小宽度为 420px。窗口变化由 ResizeObserver 重算，Drawing 与
+Conversation 不切换为上下排列。Launcher 最小宽度 1100px，默认 1440px。
 
 ### Session 与热替换
 
 布局可见性直接来自第一层 session-scoped Drawing Surface snapshot，不再观察 DOM
 属性。切换会话、创建新会话或插件热替换时，snapshot 决定 Drawing 列是否存在；旧
 session 的 claim 不得泄漏到新 session。Workspace contribution 更换只替换 Drawing
-列内部内容，不重新注册根壳。
+列内部内容，不重新注册官方根壳。
 
 ### 与其他 UI 插件的关系
 
-DSH 的 `root` 是 single slot。VectorAI 壳与另一个 root-shell 插件同时安装时必须按
-DSH 的显式优先级选举，不通过 CSS 抢占。VectorAI 提供一个可关闭的 shell 注册配置；
-普通功能插件继续使用官方子 slot，不受影响。启动检查会报告另一个 root owner 赢得选举，
-而不是显示错误布局。
+DSH 的 `root` 是 single slot，且 winning root 独占其 child-slot 声明。VectorAI 不参与
+root 选举，而是在官方根壳声明的 `shell.overlay` list 中使用稳定 ID 注册。普通功能插件
+继续使用官方子 slot，不受影响；其他 overlay entry 也不会与 VectorAI 的 cell 冲突。
 
 ## 兼容探针与 Launcher
 
@@ -80,8 +80,8 @@ Launcher 固定启动 DSH `0.1.2-alpha.1`。旧的
 
 - DSH 版本必须精确等于 `0.1.2-alpha.1`；
 - profile 必须装载第一层 Host/Client 与第二层 Host/Client；
--构建期契约测试必须证明官方 `root/sidebar/conversation/details/shell.overlay` 类型可用；
--运行时 smoke 必须证明 VectorAI root owner 已挂载且 Drawing session 呈左右布局。
+- 构建期契约测试必须证明 `shell.overlay` 与 session-scoped Drawing 子 slot 可用；
+- 运行时 smoke 必须证明 VectorAI Overlay 已挂载且 Drawing session 呈左右布局。
 
 检查失败时 Launcher 显示具体兼容错误并停止，不修改 npm cache，不回退到上下布局。
 
@@ -99,14 +99,14 @@ Launcher 固定启动 DSH `0.1.2-alpha.1`。旧的
 - Drawing、分区、尺寸链和会话 durable state 的本地路径不变。
 - 不迁移或重写用户数据。
 - Host Remote 继续使用 `@Remote`/Typert；不重新引入已被 alpha 删除的 APIProxy。
-- 插件所有 `@deepseek-ai/*` 依赖同步升级，禁止 rc.8 与 alpha 包混装。
+- alpha package 发布后再同步提升开发期类型依赖；发布前不得伪造不存在的 npm 版本。
 - build 脚本继续生成独立 Host/Client bundle，不增加 VectorAI 服务端。
 
 ## 验收
 
 自动测试必须覆盖：
 
-1. 所有 DSH package 精确锁定 alpha.1，且没有 rc.8 残留；
+1. 官方运行时精确锁定 alpha.1 tag/commit，Launcher 不回退 npm cache；
 2. 默认尺寸链策略生成黄金样本的 8 个显示区间、3 个闭合区间和 3 条链；
 3. 无 Drawing session 只显示普通 Conversation；
 4. Drawing session 始终为左导航／中图纸／右聊天；
@@ -118,4 +118,3 @@ Launcher 固定启动 DSH `0.1.2-alpha.1`。旧的
 
 最终必须在真实 `DSH.app` 中执行冷启动、会话切换、窗口缩放和重启验收，并保存日志与
 可重复的 smoke 输出。
-

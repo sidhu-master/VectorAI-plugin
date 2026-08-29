@@ -35,7 +35,7 @@ export class DimensionInferenceService {
 
   start(
     agent: Agent,
-    policyId: AxialInferencePolicy['id'] = 'shaft-hierarchical-dimensioning-v1',
+    policyId: AxialInferencePolicy['id'] = 'shaft-reference-terminal-closure-v1',
   ): DimensionPlanSessionSnapshot {
     const sessionId = String(agent.id);
     const drawing = this.space.getSnapshot(agent);

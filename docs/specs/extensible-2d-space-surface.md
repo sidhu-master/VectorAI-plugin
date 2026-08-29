@@ -15,7 +15,7 @@ The current React boundary is also too coarse for a professional second layer:
 - grid, geometry, annotations, selection, Grounding, Preview, and Motion Rig rendering are assembled inside one component;
 - pointer behavior is hard-coded in the same component;
 - the only public visual extension is a readonly Preview overlay;
-- DSH's `conversation.workspace` is a single slot, so two independently installed plugins must not compete for it directly.
+- DSH `0.1.2-alpha.1` exposes a public `shell.overlay` list slot, while VectorAI still needs one internal session-scoped outlet so independently installed drawing plugins do not compete for the shell itself.
 
 Engineering Annotation needs its own long-lived workflow and its own drawing UI while reusing the same Drawing document, coordinate system, renderer, selection semantics, transactions, and history. The first layer must therefore become a small 2D application platform rather than one fixed application screen.
 
@@ -40,10 +40,12 @@ It does not make rendered SVG authoritative, introduce a second Drawing reposito
 
 ## Architectural decision
 
-The first-layer DSH Client remains the sole registrant of `conversation.workspace`. Inside that entry it renders a `DrawingSurfaceHost`, which owns a VectorAI-specific Workspace Chain. The first-layer UI is the permanent fallback. A higher-layer Client registers a workspace contribution with a session-scoped claim source.
+The first-layer DSH Client contributes one entry to the public alpha `shell.overlay` list slot and declares one session-scoped VectorAI drawing child. The entry measures the official Conversation column, reserves its left side only while the current session has a Drawing, and renders `DrawingSurfaceHost` there. `DrawingSurfaceHost` owns a VectorAI-specific Workspace Chain. The first-layer UI is the permanent fallback. A higher-layer Client registers a workspace contribution with a session-scoped claim source.
 
 ```text
-DSH conversation.workspace
+DSH root: sidebar | conversation | details
+                        ^
+                        +-- shell.overlay: VectorAI drawing inset
           |
           v
 DrawingSurfaceHost                         first layer
@@ -53,7 +55,7 @@ DrawingSurfaceHost                         first layer
           +-- no available claim ----------------> DefaultDrawingWorkspace
 ```
 
-This avoids two plugins competing for DSH's current single workspace slot. It also confines DSH release-candidate layout details to the existing adapter.
+This avoids professional plugins competing for DSH's shell slots and keeps layout adaptation inside the first-layer adapter without replacing the official root.
 
 The design follows four useful DSH principles:
 
@@ -449,9 +451,9 @@ The platform is complete when:
 
 ## Rejected alternatives
 
-### Competing directly for the DSH workspace slot
+### Competing directly for the DSH root slot
 
-DSH currently declares `conversation.workspace` as a single slot. Priority shadowing would couple VectorAI routing to DSH layout implementation details and would not supply the required session claim semantics.
+DSH `0.1.2-alpha.1` permits priority shadowing of `root`, but the winning root exclusively owns its child-slot declarations. A replacement cannot safely reuse the official sidebar, conversation and details tree. Therefore VectorAI preserves the official root, contributes through `shell.overlay`, and lets professional plugins use the session claim registry behind the first-layer drawing outlet.
 
 ### Adding more fixed slots to the current DrawingWorkspace
 

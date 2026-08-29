@@ -3063,14 +3063,14 @@ function createDimensionChainStartTool(workflow) {
       policy: {
         type: "string",
         enum: ["shaft-hierarchical-dimensioning-v1", "shaft-reference-terminal-closure-v1"],
-        description: "Optional drafting policy. Use the hierarchical policy unless the user explicitly asks to match the reference terminal-closure convention."
+        description: "Optional drafting policy. Omit it for the default reference terminal-closure convention; use the hierarchical policy only when the user explicitly requests it."
       }
     },
     output: { schema: { type: "json" }, render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }] },
     async execute(args, exec) {
       var _a3, _b, _c, _d, _e, _f, _g, _h, _i, _j;
       if (!exec.agent) throw new Error("DRAWING_SESSION_REQUIRED");
-      const policy = args.policy === "shaft-reference-terminal-closure-v1" ? args.policy : "shaft-hierarchical-dimensioning-v1";
+      const policy = args.policy === "shaft-hierarchical-dimensioning-v1" ? args.policy : "shaft-reference-terminal-closure-v1";
       const snapshot = workflow.start(exec.agent, policy);
       return {
         status: snapshot.phase,
@@ -10615,7 +10615,7 @@ class DimensionInferenceService {
     this.documents = documents;
     this.plans = plans;
   }
-  start(agent, policyId = "shaft-hierarchical-dimensioning-v1") {
+  start(agent, policyId = "shaft-reference-terminal-closure-v1") {
     var _a3;
     const sessionId = String(agent.id);
     const drawing = this.space.getSnapshot(agent);

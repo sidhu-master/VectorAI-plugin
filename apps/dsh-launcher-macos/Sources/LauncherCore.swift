@@ -7,23 +7,6 @@ struct DSHServerCommand {
     let executableURL: URL
     let arguments: [String]
 
-    static func make(port: UInt16, npxURL: URL) -> DSHServerCommand {
-        DSHServerCommand(
-            executableURL: npxURL,
-            arguments: [
-                "--yes",
-                "--package=@deepseek-ai/dsh@0.1.0-rc.8",
-                "dsh",
-                "web",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                String(port),
-                "--no-open",
-            ]
-        )
-    }
-
     static func makeDirect(port: UInt16, dshURL: URL) -> DSHServerCommand {
         DSHServerCommand(
             executableURL: dshURL,
@@ -39,18 +22,6 @@ struct DSHServerCommand {
     }
 }
 
-struct WorkspacePatchCommand {
-    let executableURL: URL
-    let arguments: [String]
-
-    static func make(nodeURL: URL, scriptURL: URL, dshURL: URL) -> WorkspacePatchCommand {
-        WorkspacePatchCommand(
-            executableURL: nodeURL,
-            arguments: [scriptURL.path, "--dsh-bin", dshURL.path]
-        )
-    }
-}
-
 enum WindowChromeInteraction {
     static func shouldZoom(
         clickCount: Int,
@@ -61,31 +32,46 @@ enum WindowChromeInteraction {
     }
 }
 
-enum CachedDSHResolver {
-    private static let pinnedVersion = "0.1.0-rc.8"
+enum SourceDSHResolver {
+    private static let pinnedVersion = "0.1.2-alpha.1"
 
-    static func find(in npxCacheDirectory: URL, fileManager: FileManager = .default) -> URL? {
-        guard let cacheDirectories = try? fileManager.contentsOfDirectory(
-            at: npxCacheDirectory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
+    static func find(in sourceDirectory: URL, fileManager: FileManager = .default) -> URL? {
+        let packageJSON = sourceDirectory.appendingPathComponent("package.json")
+        let executable = sourceDirectory.appendingPathComponent("apps/cli/lib/bin.js")
+        guard
+            fileManager.isExecutableFile(atPath: executable.path),
+            let data = try? Data(contentsOf: packageJSON),
+            let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            manifest["version"] as? String == pinnedVersion
+        else {
             return nil
         }
+        return executable
+    }
+}
 
-        for cacheDirectory in cacheDirectories.sorted(by: { $0.path < $1.path }) {
-            let packageJSON = cacheDirectory
-                .appendingPathComponent("node_modules/@deepseek-ai/dsh/package.json")
-            let executable = cacheDirectory.appendingPathComponent("node_modules/.bin/dsh")
+enum DSHReadyURL {
+    static func find(in output: String, port: UInt16) -> URL? {
+        for line in output.split(whereSeparator: \Character.isNewline).reversed() {
+            let prefix = "dsh web: "
+            guard line.hasPrefix(prefix) else { continue }
+            let candidate = line.dropFirst(prefix.count).split(whereSeparator: \Character.isWhitespace).first
             guard
-                fileManager.isExecutableFile(atPath: executable.path),
-                let data = try? Data(contentsOf: packageJSON),
-                let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                manifest["version"] as? String == pinnedVersion
+                let candidate,
+                let url = URL(string: String(candidate)),
+                url.scheme == "http",
+                url.host == "127.0.0.1",
+                url.port == Int(port),
+                let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                let queryItems = components.queryItems,
+                queryItems.count == 1,
+                queryItems[0].name == "token",
+                let token = queryItems[0].value,
+                !token.isEmpty
             else {
                 continue
             }
-            return executable
+            return url
         }
         return nil
     }

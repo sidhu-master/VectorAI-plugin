@@ -1,7 +1,7 @@
 # @vectorai/plugin-dsh-annotation
 
 Apache-2.0 licensed Engineering Annotation plugin shell for DeepSeek Harness
-`0.1.0-rc.8`.
+`0.1.2-alpha.1`.
 
 This second-layer bundle depends on `@vectorai/plugin-dsh-space`. The first
 layer remains the only Drawing repository, canvas outlet, and commit authority.

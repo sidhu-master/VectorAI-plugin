@@ -10,7 +10,7 @@
     "build:dsh-space": "node scripts/build-dsh-space.mjs space",
     "build:dsh-annotation": "node scripts/build-dsh-space.mjs annotation",
     "build:dsh-launcher": "pnpm --filter @vectorai/dsh-launcher-macos build",
-    "patch:dsh-workspace": "node scripts/dsh-inline-workspace-patch.mjs",
+    "install:dsh-alpha": "./scripts/install-dsh-alpha-runtime.sh",
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc --noEmit",

@@ -40,6 +40,15 @@ function service(partitionValue: PartitionDraft | null = partition()) {
 }
 
 describe('DimensionInferenceService', () => {
+  it('defaults to the reference terminal-closure convention', () => {
+    const workflow = service();
+    const result = workflow.start(agent);
+    expect(result.draft?.axialScheme).toMatchObject({
+      status: 'resolved',
+      policy: { id: 'shaft-reference-terminal-closure-v1' },
+    });
+  });
+
   it('starts only when invoked and binds the current partition draft', () => {
     const workflow = service();
     expect(workflow.getState(agent).phase).toBe('idle');

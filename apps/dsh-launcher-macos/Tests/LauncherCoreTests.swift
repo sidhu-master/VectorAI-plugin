@@ -61,77 +61,52 @@ private func unusedLoopbackPort() throws -> UInt16 {
     return UInt16(bigEndian: address.sin_port)
 }
 
-private func testDSHCommandPinsVersionAndDisablesBrowser() throws {
-    let command = DSHServerCommand.make(
-        port: 43123,
-        npxURL: URL(fileURLWithPath: "/example/bin/npx")
-    )
-
-    try expect(command.executableURL.path == "/example/bin/npx", "must invoke the resolved npx executable")
-    try expect(
-        command.arguments == [
-            "--yes",
-            "--package=@deepseek-ai/dsh@0.1.0-rc.8",
-            "dsh",
-            "web",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "43123",
-            "--no-open",
-        ],
-        "must pin DSH rc.8, bind only to loopback, and suppress external browser launch"
-    )
-}
-
-private func testCachedDSHResolverSelectsOnlyPinnedExecutable() throws {
+private func testSourceDSHResolverSelectsOnlyPinnedExecutable() throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("dsh-cache-tests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
-    func createCachedDSH(cacheName: String, version: String) throws -> URL {
-        let cache = temporaryDirectory.appendingPathComponent(cacheName, isDirectory: true)
-        let packageDirectory = cache.appendingPathComponent("node_modules/@deepseek-ai/dsh", isDirectory: true)
-        let binDirectory = cache.appendingPathComponent("node_modules/.bin", isDirectory: true)
+    func createSourceDSH(version: String) throws -> URL {
+        let packageDirectory = temporaryDirectory
+        let binDirectory = temporaryDirectory.appendingPathComponent("apps/cli/lib", isDirectory: true)
         try FileManager.default.createDirectory(at: packageDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
         try Data("{\"version\":\"\(version)\"}".utf8)
             .write(to: packageDirectory.appendingPathComponent("package.json"))
-        let executable = binDirectory.appendingPathComponent("dsh")
+        let executable = binDirectory.appendingPathComponent("bin.js")
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
         return executable
     }
 
-    _ = try createCachedDSH(cacheName: "old-cache", version: "0.1.0-rc.7")
-    let pinnedExecutable = try createCachedDSH(cacheName: "pinned-cache", version: "0.1.0-rc.8")
+    let pinnedExecutable = try createSourceDSH(version: "0.1.2-alpha.1")
 
-    let resolved = CachedDSHResolver.find(in: temporaryDirectory)
-    try expect(resolved?.standardizedFileURL == pinnedExecutable.standardizedFileURL, "must reuse only the pinned rc.8 cache")
+    let resolved = SourceDSHResolver.find(in: temporaryDirectory)
+    try expect(resolved?.standardizedFileURL == pinnedExecutable.standardizedFileURL, "must resolve only the pinned alpha.1 source runtime")
 
     let command = DSHServerCommand.makeDirect(port: 43123, dshURL: pinnedExecutable)
     try expect(command.executableURL == pinnedExecutable, "direct launch must invoke the cached DSH executable")
     try expect(
         command.arguments == ["web", "--host", "127.0.0.1", "--port", "43123", "--no-open"],
-        "direct launch must avoid npm resolution while retaining loopback and no-browser flags"
+        "direct launch must use the built source executable and suppress external browser launch"
     )
 }
 
-private func testWorkspacePatchCommandUsesResolvedExecutables() throws {
-    let command = WorkspacePatchCommand.make(
-        nodeURL: URL(fileURLWithPath: "/example/bin/node"),
-        scriptURL: URL(fileURLWithPath: "/example/vectorai/patch.mjs"),
-        dshURL: URL(fileURLWithPath: "/example/cache/node_modules/.bin/dsh")
-    )
-
-    try expect(command.executableURL.path == "/example/bin/node", "workspace patch must use the resolved Node executable")
+private func testReadyURLRequiresCurrentLoopbackToken() throws {
+    let output = """
+    dsh web: http://127.0.0.1:3079/?token=old
+    dsh web: http://localhost:3080/?token=wrong-host
+    dsh web: http://127.0.0.1:3080/
+    dsh web: http://127.0.0.1:3080/?token=alpha-ready-token
+    """
     try expect(
-        command.arguments == [
-            "/example/vectorai/patch.mjs",
-            "--dsh-bin",
-            "/example/cache/node_modules/.bin/dsh",
-        ],
-        "workspace patch must target the exact DSH executable selected by the launcher"
+        DSHReadyURL.find(in: output, port: 3080)?.absoluteString
+            == "http://127.0.0.1:3080/?token=alpha-ready-token",
+        "launcher must load only the authenticated URL printed for its exact loopback port"
+    )
+    try expect(
+        DSHReadyURL.find(in: "dsh web: http://127.0.0.1:3080/", port: 3080) == nil,
+        "an unauthenticated alpha URL must never be treated as ready"
     )
 }
 
@@ -365,9 +340,8 @@ private func testManagedProcessPassesEnvironmentOverridesToChild() throws {
 private struct LauncherCoreTestRunner {
     static func main() {
         let tests: [(String, () throws -> Void)] = [
-            ("DSH command pins version and disables browser", testDSHCommandPinsVersionAndDisablesBrowser),
-            ("cached DSH resolver selects only pinned executable", testCachedDSHResolverSelectsOnlyPinnedExecutable),
-            ("workspace patch command uses resolved executables", testWorkspacePatchCommandUsesResolvedExecutables),
+            ("source DSH resolver selects only pinned executable", testSourceDSHResolverSelectsOnlyPinnedExecutable),
+            ("alpha ready URL requires current loopback token", testReadyURLRequiresCurrentLoopbackToken),
             ("titlebar double-click zooms only in native chrome", testTitlebarDoubleClickRequestsWindowZoomOnlyInChrome),
             ("port probe rejects occupied loopback port", testPortProbeRejectsAnOccupiedLoopbackPort),
             ("port probe allows immediate restart after close", testPortProbeAllowsImmediateRestartAfterServerCloses),

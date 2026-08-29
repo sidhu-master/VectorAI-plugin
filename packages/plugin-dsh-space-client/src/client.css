@@ -7,3 +7,14 @@
   min-height: 0;
   overflow: hidden;
 }
+.vai-dsh-workspace-overlay {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: auto;
+  background: var(--dsw-alias-bg-base, #10151b);
+  border-right: 1px solid var(--dsw-alias-border-l2, #27313c);
+}

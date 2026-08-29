@@ -4,7 +4,7 @@
 
 - Node.js 22（或仓库依赖支持的兼容版本）
 - pnpm 10
-- DeepSeek Harness `0.1.0-rc.8` 与 `web` profile（开发 DSH 插件时）
+- DeepSeek Harness `0.1.2-alpha.1` 与 `web` profile（开发 DSH 插件时）
 - macOS/Xcode Command Line Tools（构建原生 Launcher 时）
 - Python 3（DSH 本地清洁线稿矢量化；worker 随 Host 包发布）
 
@@ -51,13 +51,13 @@ dsh plugin --profile web add --ignore-workspace-root-check \
 
 本地 monorepo 开发需要列出 workspace 包；发布后的 bundle 由包管理器解析依赖。
 
-DSH rc.8 如未提供 VectorAI 需要的同页 Workspace 布局，运行受保护补丁：
+首次构建 Launcher 前安装精确版本的官方源码运行时：
 
 ```bash
-pnpm patch:dsh-workspace -- --dsh-bin "$(command -v dsh)"
+pnpm install:dsh-alpha
 ```
 
-补丁校验已知版本和代码锚点，首次修改前创建备份，重复运行幂等，未知布局时失败关闭。它只适配 DSH UI 插槽，不修改 AI 工具协议。DSH 提供正式布局 API 后应移除。
+安装器校验官方 tag、commit 和版本，重复运行会复用已构建运行时。VectorAI Client 通过 alpha 的正式 `shell.overlay` 扩展位加入图纸列，并按会话调整 Conversation 的可用宽度，不修改 DSH 源码或构建产物。alpha.1 的 npm 包尚未发布，仓库内类型检查暂时保留已发布 SDK 基线；真实启动与验收始终使用上述精确源码运行时。
 
 ## 4. macOS Launcher
 

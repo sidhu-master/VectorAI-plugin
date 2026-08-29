@@ -13945,6 +13945,98 @@ const annotationDependencySchema = object$1({
   reason: _enum(["datum-before-dependent", "overall-before-functional", "functional-before-component", "component-before-closure", "explicit-document-order"]),
   evidenceIds: array$1(idSchema)
 }).strict();
+const axialStationSchema = object$1({
+  id: idSchema,
+  coordinate: number().finite(),
+  sourceCoordinate: number().finite(),
+  unit: _enum(["mm", "cm", "m"]),
+  kinds: array$1(_enum(["drawing-end", "shoulder", "partition-boundary", "datum"])),
+  geometryNodeIds: array$1(idSchema),
+  evidenceIds: array$1(idSchema)
+}).strict();
+const axialElementarySpanSchema = object$1({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  segmentIds: array$1(idSchema),
+  evidenceIds: array$1(idSchema)
+}).strict();
+const dimensionEvidenceSchema = object$1({
+  id: idSchema,
+  origin: _enum(["geometry", "partition", "document", "manual", "ai"]),
+  kind: _enum(["drawing-end", "elementary-span", "functional-region", "document-interval", "process-envelope", "manual-requirement"]),
+  label: string$1(),
+  required: boolean(),
+  sourceIds: array$1(idSchema)
+}).strict();
+const axialDimensionCandidateSchema = object$1({
+  id: idSchema,
+  startStationId: idSchema,
+  endStationId: idSchema,
+  nominalValue: number().finite().nonnegative(),
+  roles: array$1(_enum(["overall", "composite", "functional", "process", "local", "reference", "closure"])),
+  evidenceIds: array$1(idSchema),
+  required: boolean()
+}).strict();
+const dimensionDecisionTraceSchema = object$1({
+  candidateId: idSchema,
+  decision: _enum(["displayed", "closure", "rejected", "alternative"]),
+  score: number().finite(),
+  features: array$1(object$1({
+    feature: _enum(["manual-required", "document-exact", "functional-region", "process-envelope", "composite-block", "overall-root", "elementary-span", "ordinary-residual", "terminal-residual"]),
+    contribution: number().finite(),
+    evidenceIds: array$1(idSchema)
+  }).strict()),
+  reasonCodes: array$1(idSchema)
+}).strict();
+const axialChainNodeSchema = object$1({
+  id: idSchema,
+  parentCandidateId: idSchema,
+  childCandidateIds: array$1(idSchema),
+  closureCandidateId: idSchema,
+  alternativeClosureCandidateIds: array$1(idSchema),
+  status: _enum(["resolved", "needs-review", "conflict"])
+}).strict();
+const axialDimensionSchemeSchema = object$1({
+  version: literal$1(1),
+  drawingRef: drawingRefSchema$1,
+  partitionRevisionId: idSchema.optional(),
+  policy: object$1({
+    id: _enum(["shaft-hierarchical-dimensioning-v1", "shaft-reference-terminal-closure-v1"]),
+    version: literal$1("1")
+  }).strict(),
+  inputDigest: idSchema,
+  topology: object$1({
+    drawingRef: drawingRefSchema$1,
+    axis: shaftAxisSchema,
+    unit: _enum(["mm", "cm", "m"]),
+    stations: array$1(axialStationSchema),
+    elementarySpans: array$1(axialElementarySpanSchema)
+  }).strict(),
+  evidence: array$1(dimensionEvidenceSchema),
+  candidates: array$1(axialDimensionCandidateSchema),
+  displayedCandidateIds: array$1(idSchema),
+  closureCandidateIds: array$1(idSchema),
+  chains: array$1(axialChainNodeSchema),
+  decisions: array$1(dimensionDecisionTraceSchema),
+  diagnostics: array$1(engineeringDiagnosticSchema),
+  status: _enum(["resolved", "needs-review", "conflict", "stale"])
+}).strict();
+discriminatedUnion("type", [
+  object$1({
+    type: literal$1("candidate.display"),
+    candidateId: idSchema,
+    displayed: boolean(),
+    expectedDrawingRef: drawingRefSchema$1
+  }).strict(),
+  object$1({
+    type: literal$1("closure.choose"),
+    chainId: idSchema,
+    candidateId: idSchema,
+    expectedDrawingRef: drawingRefSchema$1
+  }).strict()
+]);
 const engineeringAnnotationDraftSchema = object$1({
   version: literal$1(1),
   drawingRef: drawingRefSchema$1,
@@ -13954,6 +14046,7 @@ const engineeringAnnotationDraftSchema = object$1({
   chains: array$1(dimensionChainSchema),
   dependencies: array$1(annotationDependencySchema),
   diagnostics: array$1(engineeringDiagnosticSchema),
+  axialScheme: axialDimensionSchemeSchema.optional(),
   baseRevisionId: idSchema.optional()
 }).strict();
 const engineeringAnnotationRevisionSchema = engineeringAnnotationDraftSchema.omit({
