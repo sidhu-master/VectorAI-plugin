@@ -1,0 +1,10 @@
+{
+  "name": "@newwe/vectorai-vectorizer-PLATFORM-ARCH",
+  "version": "0.0.0",
+  "description": "Platform runtime for VectorAI image vectorization",
+  "license": "Apache-2.0",
+  "os": ["PLATFORM"],
+  "cpu": ["ARCH"],
+  "files": ["bin", "runtime.json", "LICENSE"],
+  "publishConfig": { "access": "public" }
+}

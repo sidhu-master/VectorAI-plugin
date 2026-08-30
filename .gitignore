@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist/npm/
+dist/vectorizer-runtime/
 packages/plugin-dsh-space/lib/
 packages/plugin-dsh-space/LICENSE
 packages/plugin-dsh-annotation/lib/
