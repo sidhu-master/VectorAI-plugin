@@ -1,14 +1,14 @@
-# @vectorai/plugin-dsh-space
+# @newwe/vectorai-plugin-dsh-space
 
 Apache-2.0 licensed VectorAI 2D Space and Canvas bundle for DeepSeek Harness `0.1.2-alpha.1`.
 
 After authenticating npm for the private `@vectorai` scope, install the prebuilt Bundle through DSH's official profile command:
 
 ```bash
-dsh plugin --profile web add --ignore-workspace-root-check @vectorai/plugin-dsh-space
+dsh plugin --profile web add --ignore-workspace-root-check @newwe/vectorai-plugin-dsh-space
 ```
 
-For offline installation, pass the packaged `.tgz` path to the same command. The package contains prebuilt Host and Client faces and requires no install-time build permission.
+For offline installation, pass the packaged `.tgz` path to the same command. The package contains prebuilt Host and Client faces and selects a self-contained vectorizer runtime for the current operating system and CPU. End users do not need Python, pip, a virtual environment, or install-time build permission.
 
 Repository development uses `pnpm build:dsh-space`; the private Host and Client source packages are build inputs and are not separately published.
 
@@ -63,5 +63,5 @@ relations, and compound-path features. PDF, DXF, and optional WASM compute
 backends remain separate adapters and do not require another Viewer migration.
 
 Engineering Annotation is installed separately through
-`@vectorai/plugin-dsh-annotation`; its absence does not affect this fallback
+`@newwe/vectorai-plugin-dsh-annotation`; its absence does not affect this fallback
 workspace.

@@ -25,15 +25,11 @@ if (target === 'space' || target === 'all') {
     hostDir: spaceHostDir,
     clientDir: spaceClientDir,
     outputDir: spaceBundleDir,
-    clientModuleId: '@vectorai/plugin-dsh-space',
+    clientModuleId: '@newwe/vectorai-plugin-dsh-space',
     clientStyleKey: 'vectoraiDshSpace',
     clientLabel: 'DSH client',
     temporaryPrefix: 'vectorai-dsh-client-',
   });
-  await copyFile(
-    join(root, 'python/vectorai_vectorizer.py'),
-    join(spaceBundleDir, 'lib/vectorai_vectorizer.py'),
-  );
   await copyFile(join(root, 'LICENSE'), join(spaceBundleDir, 'LICENSE'));
 }
 
@@ -42,7 +38,7 @@ if (target === 'annotation' || target === 'all') {
     hostDir: annotationHostDir,
     clientDir: annotationClientDir,
     outputDir: annotationBundleDir,
-    clientModuleId: '@vectorai/plugin-dsh-annotation',
+    clientModuleId: '@newwe/vectorai-plugin-dsh-annotation',
     clientStyleKey: 'vectoraiDshAnnotation',
     clientLabel: 'Annotation client',
     temporaryPrefix: 'vectorai-dsh-annotation-client-',

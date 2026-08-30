@@ -6,18 +6,19 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { auditPackageEntries, auditPackedManifest } from './dsh-package-audit.mjs';
+import { RUNTIME_TARGETS, RUNTIME_VERSION } from './vectorizer-runtime-config.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 
 const bundles = [
   {
     directory: 'plugin-dsh-space',
-    name: '@vectorai/plugin-dsh-space',
+    name: '@newwe/vectorai-plugin-dsh-space',
     rowId: 'vectorai-space',
   },
   {
     directory: 'plugin-dsh-annotation',
-    name: '@vectorai/plugin-dsh-annotation',
+    name: '@newwe/vectorai-plugin-dsh-annotation',
     rowId: 'vectorai-engineering-annotation',
   },
 ] as const;
@@ -29,7 +30,7 @@ describe('official DSH release manifests', () => {
       const manifest = JSON.parse(await readFile(resolve(directory, 'package.json'), 'utf8'));
       const patch = await readFile(resolve(directory, 'cordis.patch.yml'), 'utf8');
 
-      expect(manifest.publishConfig).toEqual({ access: 'restricted' });
+      expect(manifest.publishConfig).toEqual({ access: 'public' });
       expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml');
       expect(manifest.dsh.client.platform).toBe('web');
       expect(manifest.exports['.'].default).toBe('./lib/index.js');
@@ -37,6 +38,7 @@ describe('official DSH release manifests', () => {
       expect(manifest.exports['./typert'].default).toBe('./lib/typert.js');
       expect(manifest.files).not.toContain('src/**/*.ts');
       expect(manifest.files).not.toContain('src/**/*.tsx');
+      expect(manifest.files).not.toContain('lib/vectorai_vectorizer.py');
       expect(JSON.stringify(manifest)).not.toMatch(/workspace:\*|\blink:|\bfile:/);
 
       expect(patch.match(/\n\s+- id:/g)).toHaveLength(1);
@@ -57,7 +59,16 @@ describe('official DSH release manifests', () => {
       }
     }
     const spaceFiles = await readdir(resolve(root, 'packages/plugin-dsh-space/lib'));
-    expect(spaceFiles).toContain('vectorai_vectorizer.py');
+    expect(spaceFiles).not.toContain('vectorai_vectorizer.py');
+  });
+
+  it('pins all platform runtimes only on the space Bundle', async () => {
+    const space = JSON.parse(await readFile(resolve(root, 'packages/plugin-dsh-space/package.json'), 'utf8'));
+    const annotation = JSON.parse(await readFile(resolve(root, 'packages/plugin-dsh-annotation/package.json'), 'utf8'));
+    expect(space.optionalDependencies).toEqual(Object.fromEntries(
+      RUNTIME_TARGETS.map((target) => [target.packageName, RUNTIME_VERSION]),
+    ));
+    expect(annotation.optionalDependencies).toBeUndefined();
   });
 
   it('rejects source and local dependency data from release packages', () => {
@@ -66,12 +77,13 @@ describe('official DSH release manifests', () => {
       'package/lib/index.js.map',
       'package/test/plugin.test.js',
       'package/.git/config',
+      'package/lib/vectorai_vectorizer.py',
     ]) {
       expect(() => auditPackageEntries(['package/package.json', forbidden])).toThrow();
     }
     expect(() => auditPackedManifest({
-      name: '@vectorai/plugin-dsh-space',
-      publishConfig: { access: 'restricted' },
+      name: '@newwe/vectorai-plugin-dsh-space',
+      publishConfig: { access: 'public' },
       dependencies: { local: 'workspace:*' },
       dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web' } },
     })).toThrow(/forbidden local dependency/i);

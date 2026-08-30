@@ -4,10 +4,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { RUNTIME_TARGETS, RUNTIME_VERSION } from './vectorizer-runtime-config.mjs';
 
 interface PackageManifest {
   name: string;
   dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
   exports?: Record<string, unknown>;
   dsh?: { bundle?: { patch?: string } };
 }
@@ -18,14 +20,13 @@ describe('DSH plugin bundle boundaries', () => {
   it('keeps the first-layer install bundle independent from professional plugins', () => {
     const bundle = readManifest('packages/plugin-dsh-space/package.json');
 
-    expect(bundle.name).toBe('@vectorai/plugin-dsh-space');
-    expect(Object.keys(bundle.dependencies ?? {}).sort()).toEqual([
-      '@vectorai/plugin-dsh-space-client',
-      '@vectorai/plugin-dsh-space-host',
-    ]);
+    expect(bundle.name).toBe('@newwe/vectorai-plugin-dsh-space');
+    expect(bundle.dependencies).toEqual({ sharp: '^0.35.3', zod: '4.4.3' });
+    expect(bundle.optionalDependencies).toEqual(Object.fromEntries(
+      RUNTIME_TARGETS.map((target) => [target.packageName, RUNTIME_VERSION]),
+    ));
     expect(readPatchServices('packages/plugin-dsh-space/cordis.patch.yml')).toEqual([
-      '@vectorai/plugin-dsh-space-host',
-      '@vectorai/plugin-dsh-space-client',
+      '@newwe/vectorai-plugin-dsh-space',
     ]);
   });
 
@@ -35,21 +36,16 @@ describe('DSH plugin bundle boundaries', () => {
     const client = readManifest('packages/plugin-dsh-annotation-client/package.json');
 
     expect(bundle).toMatchObject({
-      name: '@vectorai/plugin-dsh-annotation',
+      name: '@newwe/vectorai-plugin-dsh-annotation',
       dsh: { bundle: { patch: './cordis.patch.yml' } },
     });
-    expect(Object.keys(bundle.dependencies ?? {}).sort()).toEqual([
-      '@vectorai/plugin-dsh-annotation-client',
-      '@vectorai/plugin-dsh-annotation-host',
-      '@vectorai/plugin-dsh-space',
-    ]);
+    expect(bundle.dependencies).toEqual({ officeparser: '7.8.0' });
     expect(host.name).toBe('@vectorai/plugin-dsh-annotation-host');
     expect(client.name).toBe('@vectorai/plugin-dsh-annotation-client');
     expect(host.exports?.['./package.json']).toBe('./package.json');
     expect(client.exports?.['./package.json']).toBe('./package.json');
     expect(readPatchServices('packages/plugin-dsh-annotation/cordis.patch.yml')).toEqual([
-      '@vectorai/plugin-dsh-annotation-host',
-      '@vectorai/plugin-dsh-annotation-client',
+      '@newwe/vectorai-plugin-dsh-annotation',
     ]);
   });
 

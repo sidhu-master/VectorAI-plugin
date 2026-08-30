@@ -1,5 +1,5 @@
 {
-  "name": "@vectorai/plugin-dsh-space",
+  "name": "@newwe/vectorai-plugin-dsh-space",
   "version": "0.1.0-alpha.0",
   "description": "Installable DeepSeek Harness bundle for VectorAI 2D Space and Canvas",
   "type": "module",
@@ -16,12 +16,11 @@
     "lib/index.js",
     "lib/client.js",
     "lib/typert.js",
-    "lib/vectorai_vectorizer.py",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
   ],
-  "publishConfig": { "access": "restricted" },
+  "publishConfig": { "access": "public" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
@@ -35,6 +34,13 @@
   "dependencies": {
     "sharp": "^0.35.3",
     "zod": "4.4.3"
+  },
+  "optionalDependencies": {
+    "@newwe/vectorai-vectorizer-darwin-arm64": "0.1.0-alpha.1",
+    "@newwe/vectorai-vectorizer-darwin-x64": "0.1.0-alpha.1",
+    "@newwe/vectorai-vectorizer-linux-arm64": "0.1.0-alpha.1",
+    "@newwe/vectorai-vectorizer-linux-x64": "0.1.0-alpha.1",
+    "@newwe/vectorai-vectorizer-win32-x64": "0.1.0-alpha.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",

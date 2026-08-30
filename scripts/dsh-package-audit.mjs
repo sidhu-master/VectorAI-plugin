@@ -2,7 +2,9 @@
 
 import { spawnSync } from 'node:child_process';
 
-const allowedEntry = /^package\/(?:package\.json|README\.md|LICENSE|cordis\.patch\.yml|lib\/(?:.*\.js|.*\.d\.ts|vectorai_vectorizer\.py))$/;
+import { RUNTIME_TARGETS, RUNTIME_VERSION } from './vectorizer-runtime-config.mjs';
+
+const allowedEntry = /^package\/(?:package\.json|README\.md|LICENSE|cordis\.patch\.yml|lib\/(?:.*\.js|.*\.d\.ts))$/;
 const forbiddenProtocol = /^(?:workspace:|link:|file:)/;
 
 export function auditPackageEntries(entries) {
@@ -18,17 +20,24 @@ export function auditPackageEntries(entries) {
 }
 
 export function auditPackedManifest(manifest) {
-  if (manifest?.publishConfig?.access !== 'restricted') {
-    throw new Error('Packed package must use restricted npm access');
+  if (manifest?.publishConfig?.access !== 'public') {
+    throw new Error('Packed package must use public npm access');
   }
   if (manifest?.dsh?.bundle?.patch !== './cordis.patch.yml' || manifest?.dsh?.client?.platform !== 'web') {
     throw new Error('Packed package is missing official DSH Bundle or Client metadata');
   }
+  if (manifest.scripts) throw new Error('Packed Bundle must not contain lifecycle scripts');
   for (const section of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
     for (const [name, specifier] of Object.entries(manifest?.[section] ?? {})) {
       if (typeof specifier !== 'string' || forbiddenProtocol.test(specifier) || specifier.includes('/Users/')) {
         throw new Error(`Forbidden local dependency ${name}: ${String(specifier)}`);
       }
+    }
+  }
+  if (manifest.name === '@newwe/vectorai-plugin-dsh-space') {
+    const expected = Object.fromEntries(RUNTIME_TARGETS.map((target) => [target.packageName, RUNTIME_VERSION]));
+    if (JSON.stringify(manifest.optionalDependencies ?? {}) !== JSON.stringify(expected)) {
+      throw new Error('Space Bundle platform runtime coverage or version mismatch');
     }
   }
 }
