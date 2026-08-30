@@ -1,4 +1,5 @@
 import unittest
+from importlib.metadata import version
 
 import cv2
 import numpy as np
@@ -9,11 +10,24 @@ from python.vectorai_vectorizer import (
     assemble_smooth_continuations,
     decompose_chain,
     fit_best_candidate,
+    health_metadata,
     vectorize_mask,
 )
 
 
 class VectorizerTests(unittest.TestCase):
+    def test_health_metadata_identifies_the_embedded_runtime(self):
+        health = health_metadata()
+
+        self.assertEqual(health["protocolVersion"], "vectorai-vectorizer-1")
+        self.assertEqual(health["pipelineVersion"], "clean-line-v5")
+        self.assertRegex(health["pythonVersion"], r"^\d+\.\d+\.\d+$")
+        self.assertEqual(health["dependencies"], {
+            "numpy": version("numpy"),
+            "opencv-python-headless": version("opencv-python-headless"),
+            "scikit-image": version("scikit-image"),
+        })
+
     def test_t_junction_rejoins_smooth_arc_while_preserving_branch(self):
         left_angles = np.linspace(np.pi, np.pi / 2, 80)
         right_angles = np.linspace(np.pi / 2, 0, 80)

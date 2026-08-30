@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.metadata
 import json
 import math
 import sys
@@ -21,7 +22,21 @@ from skimage.morphology import skeletonize
 
 
 PIPELINE_VERSION = "clean-line-v5"
+PROTOCOL_VERSION = "vectorai-vectorizer-1"
 Point = tuple[int, int]
+
+
+def health_metadata() -> dict:
+    return {
+        "protocolVersion": PROTOCOL_VERSION,
+        "pipelineVersion": PIPELINE_VERSION,
+        "pythonVersion": ".".join(map(str, sys.version_info[:3])),
+        "dependencies": {
+            "numpy": importlib.metadata.version("numpy"),
+            "opencv-python-headless": importlib.metadata.version("opencv-python-headless"),
+            "scikit-image": importlib.metadata.version("scikit-image"),
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -1210,7 +1225,7 @@ def serve() -> None:
             if not isinstance(request_id, str) or not request_id:
                 raise ValueError("REQUEST_ID_INVALID")
             if operation == "health":
-                value = {"pipelineVersion": PIPELINE_VERSION}
+                value = health_metadata()
             elif operation == "vectorize":
                 image_base64 = request.get("imageBase64")
                 source_id = request.get("sourceId")

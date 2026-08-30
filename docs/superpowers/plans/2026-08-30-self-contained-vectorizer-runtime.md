@@ -6,7 +6,7 @@
 
 **Architecture:** The space Host resolves one exact-version platform runtime npm package and spawns its bundled PyInstaller executable through the existing JSON-lines protocol. A release manifest and scripts own version synchronization, artifact auditing, publication order, npm scan waiting, clean-profile DSH installation, and packaged-vectorizer smoke verification.
 
-**Tech Stack:** TypeScript, Node.js, pnpm, Vitest, Python 3.12, PyInstaller, NumPy, OpenCV Headless, scikit-image, GitHub Actions, npm public scoped packages.
+**Tech Stack:** TypeScript, Node.js, pnpm, Vitest, Python 3.13.2, PyInstaller, NumPy, OpenCV Headless, scikit-image, GitHub Actions, npm public scoped packages.
 
 **Spec:** `docs/superpowers/specs/2026-08-30-self-contained-vectorizer-runtime-design.md`
 
@@ -143,7 +143,7 @@
   {
       "protocolVersion": "vectorai-vectorizer-1",
       "pipelineVersion": "clean-line-v5",
-      "pythonVersion": "3.12.x",
+      "pythonVersion": "3.13.2",
       "dependencies": {
           "numpy": "...",
           "opencv-python-headless": "...",
@@ -172,7 +172,7 @@
 
   Keep `requirements-vectorization.txt` as human-readable direct requirements
   and generate `requirements-vectorization.lock` with exact versions and hashes
-  for Python 3.12. The lock includes PyInstaller as a build-only dependency and
+  for Python 3.13.2. The lock includes PyInstaller as a build-only dependency and
   records all transitive wheels used by the five runners.
 
 - [ ] **Step 5: Run the complete Python vectorizer suite**
@@ -229,7 +229,7 @@
 
   `build-vectorizer-runtime.mjs` must:
 
-  1. require Python 3.12;
+  1. require Python 3.13.2;
   2. create a temporary virtual environment outside the repository;
   3. install only `requirements-vectorization.lock` with hashes;
   4. run Python tests;
@@ -520,4 +520,3 @@
   Report the locally verified tarballs, current-platform runtime size, test
   evidence, and remaining CI target status. Do not publish a new npm version
   until the user explicitly asks to “发布新版”.
-

@@ -88,7 +88,7 @@ platform and expected package.
 ## Reproducible runtime build
 
 Python dependencies move from version ranges to an exact lock file. The build
-uses a fixed Python 3.12 patch release and a fixed PyInstaller release. CI creates
+uses Python 3.13.2 and a fixed PyInstaller release. CI creates
 a clean virtual environment for each target, installs only the lock file, runs
 the Python vectorizer tests, builds the one-directory executable, and runs a
 protocol smoke test against a known image fixture.
@@ -165,4 +165,3 @@ temporary fallback.
   image-vectorization worker is not invoked.
 - The release receipt is sufficient to reproduce what was published and to
   diagnose a partially completed npm release.
-
