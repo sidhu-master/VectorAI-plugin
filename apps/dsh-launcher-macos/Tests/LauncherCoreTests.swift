@@ -336,6 +336,88 @@ private func testManagedProcessPassesEnvironmentOverridesToChild() throws {
     )
 }
 
+private func requireVersion(_ raw: String) throws -> DSHVersion {
+    guard let version = DSHVersion(raw) else {
+        throw TestFailure(description: "could not parse version \(raw)")
+    }
+    return version
+}
+
+private func testDSHVersionOrderingAndChannelPolicy() throws {
+    let alpha1 = try requireVersion("dsh-v0.1.2-alpha.1")
+    let alpha2 = try requireVersion("0.1.2-alpha.2")
+    let stable = try requireVersion("0.1.2")
+    try expect(alpha1 < alpha2, "later prerelease identifiers must sort higher")
+    try expect(alpha2 < stable, "stable must sort above prerelease")
+    try expect(alpha1.accepts(candidate: alpha2), "prerelease channel must accept newer prerelease")
+    try expect(alpha1.accepts(candidate: stable), "prerelease channel must accept newer stable")
+    let nextAlpha = try requireVersion("0.1.3-alpha.1")
+    try expect(!stable.accepts(candidate: nextAlpha), "stable channel must ignore prereleases")
+    try expect(DSHVersion("main") == nil, "non-version refs must be rejected")
+}
+
+private func testOfficialTagSelectionUsesCurrentChannel() throws {
+    let payload = Data("""
+    [
+      {"name":"dsh-v0.1.2-alpha.2","commit":{"sha":"alpha2"}},
+      {"name":"unrelated-v9.0.0","commit":{"sha":"bad"}},
+      {"name":"dsh-v0.1.2","commit":{"sha":"stable"}},
+      {"name":"dsh-v0.2.0-alpha.1","commit":{"sha":"next-alpha"}}
+    ]
+    """.utf8)
+    let prerelease = try GitHubUpdateChecker.selectLatest(
+        from: payload,
+        current: try requireVersion("0.1.2-alpha.1")
+    )
+    try expect(prerelease?.name == "dsh-v0.2.0-alpha.1", "prerelease channel must select latest official compatible tag")
+    let stable = try GitHubUpdateChecker.selectLatest(from: payload, current: try requireVersion("0.1.1"))
+    try expect(stable?.name == "dsh-v0.1.2", "stable channel must ignore alpha tags")
+}
+
+private func testRuntimeRegistryPersistsCandidateAndRollbackState() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("dsh-registry-tests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = RuntimeRegistry(rootDirectory: root)
+    try registry.bootstrap(version: "0.1.2-alpha.1")
+    try registry.stageCandidate(version: "0.1.2-alpha.2")
+    let staged = try registry.load()
+    try expect(staged.candidateVersion == "0.1.2-alpha.2", "candidate must persist")
+    try registry.beginCandidateSwitch()
+    let switched = try registry.load()
+    try expect(switched.activeVersion == "0.1.2-alpha.2", "candidate must become active")
+    try expect(switched.previousVersion == "0.1.2-alpha.1", "previous runtime must be retained")
+    try registry.rollbackCandidate()
+    let rolledBack = try registry.load()
+    try expect(rolledBack.activeVersion == "0.1.2-alpha.1", "rollback must restore previous runtime")
+    try expect(rolledBack.candidateVersion == nil, "rollback must clear candidate")
+}
+
+private func testRuntimeInstallerBuildPlanIsPinnedAndSideBySide() throws {
+    let tag = DSHTag(
+        version: try requireVersion("0.1.2-alpha.2"),
+        name: "dsh-v0.1.2-alpha.2",
+        commitSHA: "abc123",
+        tagURL: URL(string: "https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.2-alpha.2")!,
+        compareURL: URL(string: "https://github.com/deepseek-ai/deepseek-harness/compare/dsh-v0.1.2-alpha.1...dsh-v0.1.2-alpha.2")!
+    )
+    let root = URL(fileURLWithPath: "/tmp/dsh-runtime-tests", isDirectory: true)
+    let plan = RuntimeInstaller.commandPlan(for: tag, rootDirectory: root)
+    try expect(plan.destination.lastPathComponent == "0.1.2-alpha.2", "candidate must use a side-by-side version directory")
+    try expect(plan.steps.first?.arguments.contains(tag.name) == true, "clone must pin the exact official tag")
+    try expect(plan.steps.contains { $0.arguments.contains("--frozen-lockfile") }, "install must honor the lockfile")
+}
+
+private func testUpdateToolbarStateShowsDotOnlyForAvailableUpdate() throws {
+    let current = try requireVersion("0.1.2-alpha.1")
+    let idle = UpdateToolbarState(currentVersion: current)
+    try expect(!idle.showsUpdateDot, "idle toolbar must not show a dot")
+    var available = idle
+    available.status = .available(try requireVersion("0.1.2-alpha.2"))
+    try expect(available.showsUpdateDot, "available update must show a dot")
+    try expect(available.buttonTitle == "DSH 0.1.2-alpha.1", "toolbar must show the installed DSH version")
+}
+
 @main
 private struct LauncherCoreTestRunner {
     static func main() {
@@ -348,6 +430,11 @@ private struct LauncherCoreTestRunner {
             ("occupied port reclaim stops only its listener", testOccupiedPortReclaimStopsOnlyItsListenerAndMakesThePortReusable),
             ("managed process stops its group and leaves outsiders alive", testManagedProcessStopsItsWholeGroupAndLeavesOutsidersAlive),
             ("managed process passes environment overrides", testManagedProcessPassesEnvironmentOverridesToChild),
+            ("DSH version ordering and channel policy", testDSHVersionOrderingAndChannelPolicy),
+            ("official tag selection follows current channel", testOfficialTagSelectionUsesCurrentChannel),
+            ("runtime registry persists candidate and rollback", testRuntimeRegistryPersistsCandidateAndRollbackState),
+            ("runtime installer plan is pinned and side-by-side", testRuntimeInstallerBuildPlanIsPinnedAndSideBySide),
+            ("update toolbar dot reflects availability", testUpdateToolbarStateShowsDotOnlyForAvailableUpdate),
         ]
 
         var failures = 0

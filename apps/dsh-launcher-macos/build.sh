@@ -17,6 +17,12 @@ swiftc -O \
   -framework AppKit \
   -framework WebKit \
   "$APP_SOURCE_DIR/Sources/LauncherCore.swift" \
+  "$APP_SOURCE_DIR/Sources/DSHVersion.swift" \
+  "$APP_SOURCE_DIR/Sources/UpdateChecker.swift" \
+  "$APP_SOURCE_DIR/Sources/RuntimeRegistry.swift" \
+  "$APP_SOURCE_DIR/Sources/RuntimeInstaller.swift" \
+  "$APP_SOURCE_DIR/Sources/UpdateCoordinator.swift" \
+  "$APP_SOURCE_DIR/Sources/UpdateToolbarController.swift" \
   "$APP_SOURCE_DIR/Sources/LauncherApp.swift" \
   -o "$BUNDLE/Contents/MacOS/DSH"
 

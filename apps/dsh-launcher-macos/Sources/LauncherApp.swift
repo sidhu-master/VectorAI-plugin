@@ -7,8 +7,9 @@ import WebKit
 private enum LauncherConstants {
     static let port: UInt16 = 3080
     static let startupTimeout: TimeInterval = 90
-    static let runtimeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/VectorAI/dsh-runtime/0.1.2-alpha.1", isDirectory: true)
+    static let bootstrapVersion = "0.1.2-alpha.1"
+    static let runtimeRoot = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/VectorAI/dsh-runtime", isDirectory: true)
 }
 
 private enum ExecutableResolver {
@@ -37,6 +38,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     private var startupLogOffset: UInt64 = 0
     private var isShuttingDown = false
     private var titlebarMouseMonitor: Any?
+    private var didCheckForUpdates = false
+    private var switchingCandidate = false
+    private let registry = RuntimeRegistry(rootDirectory: LauncherConstants.runtimeRoot)
+    private let updateChecker = GitHubUpdateChecker()
+    private let runtimeInstaller = RuntimeInstaller()
+    private var updateToolbar: UpdateToolbarController!
 
     private lazy var logURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
@@ -45,6 +52,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        do {
+            try registry.bootstrap(version: LauncherConstants.bootstrapVersion)
+            switchingCandidate = try registry.load().switchPending
+        } catch {
+            NSAlert(error: error).runModal()
+        }
         installMainMenu()
         createWindow()
         showStartingPage(message: "正在启动本地 DSH…")
@@ -91,6 +104,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         window.contentView = webView
         window.delegate = self
         window.isReleasedWhenClosed = false
+        let current = (try? registry.load().activeVersion).flatMap(DSHVersion.init) ?? DSHVersion(LauncherConstants.bootstrapVersion)!
+        updateToolbar = UpdateToolbarController(currentVersion: current)
+        updateToolbar.onCheck = { [weak self] in self?.checkForUpdates() }
+        updateToolbar.onInstall = { [weak self] tag in self?.installUpdate(tag) }
+        updateToolbar.install(on: window)
         installTitlebarMouseMonitor()
     }
 
@@ -130,10 +148,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             )
             return
         }
-        guard let sourceDSH = SourceDSHResolver.find(in: LauncherConstants.runtimeDirectory) else {
+        guard let state = try? registry.load() else {
+            showErrorPage(title: "Runtime state is unavailable", detail: "The local DSH runtime manifest could not be read.")
+            return
+        }
+        let runtimeDirectory = LauncherConstants.runtimeRoot.appendingPathComponent(state.activeVersion, isDirectory: true)
+        guard let sourceDSH = SourceDSHResolver.find(in: runtimeDirectory, expectedVersion: state.activeVersion) else {
             showErrorPage(
-                title: "找不到 DSH 0.1.2-alpha.1",
-                detail: "缺少已构建的官方源码运行时：\(LauncherConstants.runtimeDirectory.path)\n\n请重新运行 VectorAI 的 DSH Launcher 构建脚本。"
+                title: "DSH runtime is unavailable",
+                detail: "Missing built runtime: \(runtimeDirectory.path)"
             )
             return
         }
@@ -165,6 +188,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         guard !isShuttingDown else { return }
         guard let server, server.isRunning else {
             stopStartupTimer()
+            if rollbackCandidateIfNeeded(reason: "The updated DSH process exited during startup.") { return }
             showErrorPage(
                 title: "DSH 进程已退出",
                 detail: "请查看启动日志：\(logURL.path)"
@@ -173,6 +197,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         guard Date() < startupDeadline else {
             stopStartupTimer()
+            if rollbackCandidateIfNeeded(reason: "The updated DSH runtime did not become ready in time.") { return }
             showErrorPage(
                 title: "DSH 启动超时",
                 detail: "90 秒内未能连接本地服务。关闭窗口会停止后台进程。\n\n日志：\(logURL.path)"
@@ -203,6 +228,62 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         webView?.stopLoading()
         _ = server?.stop(gracePeriod: 1.5)
         server = nil
+    }
+
+    private func stopServerForRestart() {
+        stopStartupTimer()
+        webView?.stopLoading()
+        _ = server?.stop(gracePeriod: 1.5)
+        server = nil
+    }
+
+    private func checkForUpdates() {
+        guard let state = try? registry.load(), let current = DSHVersion(state.activeVersion) else { return }
+        updateToolbar.setChecking()
+        updateChecker.check(current: current) { [weak self] result in self?.updateToolbar.apply(result) }
+    }
+
+    private func installUpdate(_ tag: DSHTag) {
+        let updateLog = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/DSH/update.log")
+        updateToolbar.setInstalling("Preparing DSH \(tag.version)…")
+        runtimeInstaller.install(
+            tag: tag,
+            rootDirectory: LauncherConstants.runtimeRoot,
+            logURL: updateLog,
+            progress: { [weak self] text in self?.updateToolbar.setInstalling(text) }
+        ) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                do {
+                    try self.registry.stageCandidate(version: tag.version.description)
+                    try self.registry.beginCandidateSwitch()
+                    self.switchingCandidate = true
+                    self.updateToolbar.setInstalling("Starting DSH \(tag.version)…")
+                    self.stopServerForRestart()
+                    self.startServer()
+                } catch {
+                    self.updateToolbar.setFailure(error.localizedDescription)
+                }
+            case let .failure(error):
+                self.updateToolbar.setFailure(error.localizedDescription)
+            }
+        }
+    }
+
+    private func rollbackCandidateIfNeeded(reason: String) -> Bool {
+        guard switchingCandidate else { return false }
+        switchingCandidate = false
+        do {
+            try registry.rollbackCandidate()
+            updateToolbar.setFailure("Update rolled back: \(reason)")
+            stopServerForRestart()
+            startServer()
+        } catch {
+            updateToolbar.setFailure("Rollback failed: \(error.localizedDescription)")
+        }
+        return true
     }
 
     private func showStartingPage(message: String) {
@@ -314,6 +395,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             NSWorkspace.shared.open(url)
         }
         return nil
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView.url?.host == "127.0.0.1" || webView.url?.host == "localhost" else { return }
+        if switchingCandidate {
+            switchingCandidate = false
+            if let state = try? registry.load(), let version = DSHVersion(state.activeVersion) {
+                try? registry.confirmCandidate()
+                updateToolbar.setCurrentVersion(version)
+            }
+        }
+        guard !didCheckForUpdates else { return }
+        didCheckForUpdates = true
+        checkForUpdates()
     }
 }
 

@@ -35,14 +35,14 @@ enum WindowChromeInteraction {
 enum SourceDSHResolver {
     private static let pinnedVersion = "0.1.2-alpha.1"
 
-    static func find(in sourceDirectory: URL, fileManager: FileManager = .default) -> URL? {
+    static func find(in sourceDirectory: URL, expectedVersion: String = pinnedVersion, fileManager: FileManager = .default) -> URL? {
         let packageJSON = sourceDirectory.appendingPathComponent("package.json")
         let executable = sourceDirectory.appendingPathComponent("apps/cli/lib/bin.js")
         guard
             fileManager.isExecutableFile(atPath: executable.path),
             let data = try? Data(contentsOf: packageJSON),
             let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            manifest["version"] as? String == pinnedVersion
+            manifest["version"] as? String == expectedVersion
         else {
             return nil
         }
