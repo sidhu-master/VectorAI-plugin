@@ -32,6 +32,7 @@ function run(command, args, options = {}) {
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
     env: options.env ?? process.env,
+    shell: process.platform === 'win32' && command === 'npm',
   });
   if (result.error || result.status !== 0) {
     throw new Error(result.error?.message || result.stderr || `${command} exited ${result.status}`);
