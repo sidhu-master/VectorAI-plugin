@@ -3,10 +3,10 @@
 ## 1. 前置环境
 
 - Node.js 22（或仓库依赖支持的兼容版本）
-- pnpm 10
+- pnpm 11.7.0
 - DeepSeek Harness `0.1.2-alpha.1` 与 `web` profile（开发 DSH 插件时）
 - macOS/Xcode Command Line Tools（构建原生 Launcher 时）
-- Python 3（DSH 本地清洁线稿矢量化；worker 随 Host 包发布）
+- Python 3.13.2（仅用于贡献者构建自包含矢量化运行时）
 
 VectorAI 不需要自己的 Express 服务、云端账号或 API 网关。
 
@@ -40,18 +40,17 @@ dsh plugin --profile web add --ignore-workspace-root-check ./packages/plugin-dsh
 ```bash
 pnpm build:dsh-annotation
 
-dsh plugin --profile web add --ignore-workspace-root-check \
-  ./packages/plugin-dsh-space \
-  ./packages/plugin-dsh-annotation
+dsh plugin --profile web add --ignore-workspace-root-check ./packages/plugin-dsh-space
+dsh plugin --profile web add --ignore-workspace-root-check ./packages/plugin-dsh-annotation
 ```
 
 Host 与 Client 源码包只是私有构建输入。构建结果会合并到两个 Bundle 的 `lib/` 中，不再分别安装或发布。
 
-私有 npm 正式安装遵循 DSH 官方 Bundle 命令：
+npm 正式安装遵循 DSH 官方 Bundle 命令，并保持两条命令的安装顺序：
 
 ```bash
-dsh plugin --profile web add --ignore-workspace-root-check @vectorai/plugin-dsh-space
-dsh plugin --profile web add --ignore-workspace-root-check @vectorai/plugin-dsh-space @vectorai/plugin-dsh-annotation
+dsh plugin --profile web add --ignore-workspace-root-check @newwe/vectorai-plugin-dsh-space
+dsh plugin --profile web add --ignore-workspace-root-check @newwe/vectorai-plugin-dsh-annotation
 ```
 
 发布准备不会写入 npm 或当前 DSH profile：
@@ -60,13 +59,13 @@ dsh plugin --profile web add --ignore-workspace-root-check @vectorai/plugin-dsh-
 pnpm pack:dsh-plugins
 ```
 
-它在 `dist/npm/` 生成并审计恰好两个预编译 `.tgz`。确认 npm 已登录私有 `@vectorai` scope 后，再显式发布同一版本的第一层和第二层：
+它在 `dist/npm/` 生成并审计恰好两个预编译 `.tgz`。平台运行时和完整发布步骤见 [DSH 插件打包与发布手册](releasing-dsh-plugins.md)。只有明确要求发布新版时才执行：
 
 ```bash
-pnpm publish:dsh-plugins -- --tag alpha
+pnpm release:dsh-plugins -- --version 0.1.0-alpha.N --tag alpha
 ```
 
-发布脚本先发布第一层，失败即停止，不读取或保存 npm token。离线用户可把两个 `.tgz` 按同样顺序传给 `dsh plugin --profile web add`。
+发布脚本先发布五个平台运行时，再发布第一层和第二层，并等待 npm 扫描、记录可续跑 receipt、执行全新 DSH profile 验证。离线用户可把两个 Bundle `.tgz` 按同样顺序传给 `dsh plugin --profile web add`；平台运行时仍需一并镜像到离线 registry。
 
 首次构建 Launcher 前安装精确版本的官方源码运行时：
 
@@ -88,7 +87,7 @@ Launcher 使用独立应用窗口启动 DSH，不显示终端黑窗。它在启�
 ## 5. 运行行为
 
 - 普通上传/粘贴图片只作为 DSH 对话附件，不会自动矢量化或打开画布。
-- 用户明确调用图纸导入时，`drawing_import` 读取 DSH attachment 并运行随 Host 打包的本地 Python worker。
+- 用户明确调用图纸导入时，`drawing_import` 读取 DSH attachment，并运行 npm 自动选择的自包含平台矢量化程序；不读取用户系统 Python。
 - 正式状态位于 `~/.dsh/vectorai/drawings/`；源图片仍由 DSH attachment store 管理。
 - 自动标注 Workspace claim 位于 `~/.dsh/vectorai/annotation-sessions/`；任务完成、取消或失败不会清除，session 销毁时删除。
 - 分区草稿、确认版本及 Undo/Redo 历史位于 `~/.dsh/vectorai/annotation-partitions/`，使用散列 session 文件名和临时文件 rename 原子写入。

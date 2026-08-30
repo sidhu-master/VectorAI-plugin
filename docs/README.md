@@ -7,6 +7,7 @@
 - [产品需求](prd.md)：产品目标、两层插件模型、用户流程、范围和验收标准。
 - [技术架构](tech-architecture.md)：当前实现边界、依赖方向、数据与事务权威、DSH 集成，以及明确标注的目标架构。
 - [开发指南](development.md)：环境准备、网站与 DSH 开发、Launcher、测试和发布检查。
+- [DSH 插件打包与发布](releasing-dsh-plugins.md)：自包含平台运行时、两 Bundle 打包、五平台 CI 和唯一发布流程。
 
 ## 活跃规范
 
@@ -14,4 +15,3 @@
 - [仓库基线清理](specs/repository-baseline-cleanup.md)：本次从旧服务端产品线收缩到插件优先仓库的批准范围；清理完成后由 Git 保存历史。
 
 `docs/specs/` 只放未完成或仍需验收的变更。实现稳定后，将长期有效的决策合并进 PRD 或技术架构，再删除完成的规范。
-
