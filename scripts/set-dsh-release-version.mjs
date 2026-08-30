@@ -20,7 +20,10 @@ const release = readJson(releasePath);
 const names = [...release.runtimes.map((runtime) => runtime.name), ...release.bundles];
 const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 for (const name of names) {
-  const result = spawnSync(npmExecutable, ['view', `${name}@${version}`, 'version'], { encoding: 'utf8' });
+  const result = spawnSync(npmExecutable, ['view', `${name}@${version}`, 'version'], {
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  });
   if (result.status === 0 && result.stdout.trim()) throw new Error(`npm version already exists: ${name}@${version}`);
   const failure = result.stderr ?? result.error?.message ?? '';
   if (result.status !== 0 && !/E404|404 Not Found/i.test(failure)) {
