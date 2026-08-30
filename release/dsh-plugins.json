@@ -1,0 +1,31 @@
+{
+  "version": "0.1.0-alpha.1",
+  "npmTag": "alpha",
+  "dsh": {
+    "version": "0.1.2-alpha.1",
+    "profile": "web"
+  },
+  "vectorizer": {
+    "protocolVersion": "vectorai-vectorizer-1",
+    "pipelineVersion": "clean-line-v5",
+    "pythonVersion": "3.13.2",
+    "buildDependencies": {
+      "numpy": "2.5.1",
+      "opencv-python-headless": "4.14.0.94",
+      "scikit-image": "0.26.0",
+      "scipy": "1.18.1",
+      "pyinstaller": "6.22.2"
+    }
+  },
+  "bundles": [
+    "@newwe/vectorai-plugin-dsh-space",
+    "@newwe/vectorai-plugin-dsh-annotation"
+  ],
+  "runtimes": [
+    { "platform": "darwin", "arch": "arm64", "name": "@newwe/vectorai-vectorizer-darwin-arm64" },
+    { "platform": "darwin", "arch": "x64", "name": "@newwe/vectorai-vectorizer-darwin-x64" },
+    { "platform": "linux", "arch": "arm64", "name": "@newwe/vectorai-vectorizer-linux-arm64" },
+    { "platform": "linux", "arch": "x64", "name": "@newwe/vectorai-vectorizer-linux-x64" },
+    { "platform": "win32", "arch": "x64", "name": "@newwe/vectorai-vectorizer-win32-x64" }
+  ]
+}

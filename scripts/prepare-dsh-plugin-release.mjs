@@ -5,10 +5,17 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { auditTarball } from './dsh-package-audit.mjs';
+import { auditRuntimePackage } from './vectorizer-runtime-audit.mjs';
+import { RUNTIME_VERSION, targetFor } from './vectorizer-runtime-config.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const output = resolve(root, 'dist/npm');
 const packages = ['plugin-dsh-space', 'plugin-dsh-annotation'];
+const currentTarget = targetFor();
+auditRuntimePackage(resolve(root, 'dist/vectorizer-runtime', currentTarget.id, 'package'), {
+  ...currentTarget,
+  version: RUNTIME_VERSION,
+});
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });

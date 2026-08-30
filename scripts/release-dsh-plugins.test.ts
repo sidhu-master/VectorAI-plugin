@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from 'vitest';
+import {
+  assertCleanWorktree, installCommands, parseReleaseArgs, pendingPublications,
+  publicationOrder,
+} from './release-dsh-plugins.mjs';
+import { waitForNpmPackage } from './wait-for-npm-package.mjs';
+
+const manifest = {
+  runtimes: [{ name: 'runtime-a' }, { name: 'runtime-b' }],
+  bundles: ['space', 'annotation'],
+  dsh: { profile: 'web' },
+};
+
+describe('guarded DSH release workflow', () => {
+  it('validates semver and npm tag arguments', () => {
+    expect(parseReleaseArgs(['--version', '1.2.3-alpha.1', '--tag', 'alpha']))
+      .toEqual({ version: '1.2.3-alpha.1', tag: 'alpha' });
+    expect(() => parseReleaseArgs(['--version', 'next', '--tag', 'alpha'])).toThrow(/semver/i);
+  });
+
+  it('requires a clean worktree', () => {
+    expect(() => assertCleanWorktree('')).not.toThrow();
+    expect(() => assertCleanWorktree(' M package.json')).toThrow(/clean worktree/i);
+  });
+
+  it('publishes runtimes, then space, then annotation', () => {
+    expect(publicationOrder(manifest)).toEqual(['runtime-a', 'runtime-b', 'space', 'annotation']);
+  });
+
+  it('resumes after packages already recorded in the receipt', () => {
+    expect(pendingPublications(['a', 'b', 'c'], { published: [
+      { name: 'a', integrity: 'sha512-a' },
+      { name: 'b', publishedAt: 'awaiting scan' },
+    ] })).toEqual(['b', 'c']);
+  });
+
+  it('installs the two bundles in separate ordered DSH commands', () => {
+    expect(installCommands(manifest)).toEqual([
+      ['plugin', '--profile', 'web', 'add', 'space'],
+      ['plugin', '--profile', 'web', 'add', 'annotation'],
+    ]);
+  });
+
+  it('polls npm scanning and times out deterministically', async () => {
+    const lookup = vi.fn().mockRejectedValue(new Error('not ready'));
+    await expect(waitForNpmPackage('pkg', '1.0.0', {
+      lookup, delay: async () => {}, attempts: 2,
+    })).rejects.toThrow(/timed out/i);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+});

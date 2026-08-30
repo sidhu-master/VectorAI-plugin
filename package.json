@@ -11,6 +11,7 @@
     "build:dsh-annotation": "node scripts/build-dsh-space.mjs annotation",
     "pack:dsh-plugins": "node scripts/prepare-dsh-plugin-release.mjs",
     "publish:dsh-plugins": "node scripts/publish-dsh-plugins.mjs",
+    "release:dsh-plugins": "node scripts/release-dsh-plugins.mjs",
     "runtime:pack": "node scripts/build-vectorizer-runtime.mjs",
     "build:dsh-launcher": "pnpm --filter @vectorai/dsh-launcher-macos build",
     "install:dsh-alpha": "./scripts/install-dsh-alpha-runtime.sh",
