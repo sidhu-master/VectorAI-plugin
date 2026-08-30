@@ -1,4 +1,4 @@
 # VectorAI Engineering Annotation dual-face Bundle for the DSH Web profile.
 - insert:
     - id: vectorai-engineering-annotation
-      name: '@vectorai/plugin-dsh-annotation'
+      name: '@newwe/vectorai-plugin-dsh-annotation'

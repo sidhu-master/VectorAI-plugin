@@ -1,4 +1,4 @@
 # VectorAI 2D Space dual-face Bundle for the DSH Web profile.
 - insert:
     - id: vectorai-space
-      name: '@vectorai/plugin-dsh-space'
+      name: '@newwe/vectorai-plugin-dsh-space'
