@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { RUNTIME_TARGETS, RUNTIME_VERSION } from './vectorizer-runtime-config.mjs';
 
 interface PackageManifest {
   name: string;
@@ -22,9 +21,7 @@ describe('DSH plugin bundle boundaries', () => {
 
     expect(bundle.name).toBe('@newwe/vectorai-plugin-dsh-space');
     expect(bundle.dependencies).toEqual({ sharp: '^0.35.3', zod: '4.4.3' });
-    expect(bundle.optionalDependencies).toEqual(Object.fromEntries(
-      RUNTIME_TARGETS.map((target) => [target.packageName, RUNTIME_VERSION]),
-    ));
+    expect(bundle.optionalDependencies).toBeUndefined();
     expect(readPatchServices('packages/plugin-dsh-space/cordis.patch.yml')).toEqual([
       '@newwe/vectorai-plugin-dsh-space',
     ]);

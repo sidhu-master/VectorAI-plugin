@@ -35,13 +35,6 @@
     "sharp": "^0.35.3",
     "zod": "4.4.3"
   },
-  "optionalDependencies": {
-    "@newwe/vectorai-vectorizer-darwin-arm64": "0.1.0-alpha.1",
-    "@newwe/vectorai-vectorizer-darwin-x64": "0.1.0-alpha.1",
-    "@newwe/vectorai-vectorizer-linux-arm64": "0.1.0-alpha.1",
-    "@newwe/vectorai-vectorizer-linux-x64": "0.1.0-alpha.1",
-    "@newwe/vectorai-vectorizer-win32-x64": "0.1.0-alpha.1"
-  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.8",

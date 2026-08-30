@@ -6,7 +6,6 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { auditPackageEntries, auditPackedManifest } from './dsh-package-audit.mjs';
-import { RUNTIME_TARGETS, RUNTIME_VERSION } from './vectorizer-runtime-config.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -62,12 +61,10 @@ describe('official DSH release manifests', () => {
     expect(spaceFiles).not.toContain('vectorai_vectorizer.py');
   });
 
-  it('pins all platform runtimes only on the space Bundle', async () => {
+  it('leaves platform runtime versions for the release preparation step', async () => {
     const space = JSON.parse(await readFile(resolve(root, 'packages/plugin-dsh-space/package.json'), 'utf8'));
     const annotation = JSON.parse(await readFile(resolve(root, 'packages/plugin-dsh-annotation/package.json'), 'utf8'));
-    expect(space.optionalDependencies).toEqual(Object.fromEntries(
-      RUNTIME_TARGETS.map((target) => [target.packageName, RUNTIME_VERSION]),
-    ));
+    expect(space.optionalDependencies).toBeUndefined();
     expect(annotation.optionalDependencies).toBeUndefined();
   });
 
