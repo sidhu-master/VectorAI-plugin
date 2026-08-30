@@ -8,6 +8,11 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+dist/npm/
+packages/plugin-dsh-space/lib/
+packages/plugin-dsh-space/LICENSE
+packages/plugin-dsh-annotation/lib/
+packages/plugin-dsh-annotation/LICENSE
 dist
 dist-ssr
 *.local

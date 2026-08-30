@@ -32,10 +32,7 @@ pnpm preview
 ```bash
 pnpm build:dsh-space
 
-dsh plugin --profile web add --ignore-workspace-root-check \
-  ./packages/plugin-dsh-space \
-  ./packages/plugin-dsh-space-host \
-  ./packages/plugin-dsh-space-client
+dsh plugin --profile web add --ignore-workspace-root-check ./packages/plugin-dsh-space
 ```
 
 第二层自动标注插件独立构建、独立安装；本地开发时先安装第一层：
@@ -44,12 +41,32 @@ dsh plugin --profile web add --ignore-workspace-root-check \
 pnpm build:dsh-annotation
 
 dsh plugin --profile web add --ignore-workspace-root-check \
-  ./packages/plugin-dsh-annotation \
-  ./packages/plugin-dsh-annotation-host \
-  ./packages/plugin-dsh-annotation-client
+  ./packages/plugin-dsh-space \
+  ./packages/plugin-dsh-annotation
 ```
 
-本地 monorepo 开发需要列出 workspace 包；发布后的 bundle 由包管理器解析依赖。
+Host 与 Client 源码包只是私有构建输入。构建结果会合并到两个 Bundle 的 `lib/` 中，不再分别安装或发布。
+
+私有 npm 正式安装遵循 DSH 官方 Bundle 命令：
+
+```bash
+dsh plugin --profile web add --ignore-workspace-root-check @vectorai/plugin-dsh-space
+dsh plugin --profile web add --ignore-workspace-root-check @vectorai/plugin-dsh-space @vectorai/plugin-dsh-annotation
+```
+
+发布准备不会写入 npm 或当前 DSH profile：
+
+```bash
+pnpm pack:dsh-plugins
+```
+
+它在 `dist/npm/` 生成并审计恰好两个预编译 `.tgz`。确认 npm 已登录私有 `@vectorai` scope 后，再显式发布同一版本的第一层和第二层：
+
+```bash
+pnpm publish:dsh-plugins -- --tag alpha
+```
+
+发布脚本先发布第一层，失败即停止，不读取或保存 npm token。离线用户可把两个 `.tgz` 按同样顺序传给 `dsh plugin --profile web add`。
 
 首次构建 Launcher 前安装精确版本的官方源码运行时：
 

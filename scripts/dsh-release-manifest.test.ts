@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { readdir, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { auditPackageEntries, auditPackedManifest } from './dsh-package-audit.mjs';
+
+const root = resolve(import.meta.dirname, '..');
+
+const bundles = [
+  {
+    directory: 'plugin-dsh-space',
+    name: '@vectorai/plugin-dsh-space',
+    rowId: 'vectorai-space',
+  },
+  {
+    directory: 'plugin-dsh-annotation',
+    name: '@vectorai/plugin-dsh-annotation',
+    rowId: 'vectorai-engineering-annotation',
+  },
+] as const;
+
+describe('official DSH release manifests', () => {
+  for (const bundle of bundles) {
+    it(`${bundle.name} is one prebuilt dual-face Bundle`, async () => {
+      const directory = resolve(root, 'packages', bundle.directory);
+      const manifest = JSON.parse(await readFile(resolve(directory, 'package.json'), 'utf8'));
+      const patch = await readFile(resolve(directory, 'cordis.patch.yml'), 'utf8');
+
+      expect(manifest.publishConfig).toEqual({ access: 'restricted' });
+      expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml');
+      expect(manifest.dsh.client.platform).toBe('web');
+      expect(manifest.exports['.'].default).toBe('./lib/index.js');
+      expect(manifest.exports['./client'].default).toBe('./lib/client.js');
+      expect(manifest.exports['./typert'].default).toBe('./lib/typert.js');
+      expect(manifest.files).not.toContain('src/**/*.ts');
+      expect(manifest.files).not.toContain('src/**/*.tsx');
+      expect(JSON.stringify(manifest)).not.toMatch(/workspace:\*|\blink:|\bfile:/);
+
+      expect(patch.match(/\n\s+- id:/g)).toHaveLength(1);
+      expect(patch).toContain(`- id: ${bundle.rowId}`);
+      expect(patch).toContain(`name: '${bundle.name}'`);
+    });
+  }
+
+  it('emits both runtime faces only into the two Bundle directories', async () => {
+    for (const bundle of bundles) {
+      const lib = resolve(root, 'packages', bundle.directory, 'lib');
+      const files = await readdir(lib);
+      expect(files).toEqual(expect.arrayContaining(['index.js', 'client.js', 'typert.js']));
+      expect(files.some((file) => file.endsWith('.map'))).toBe(false);
+      for (const file of files.filter((entry) => entry.endsWith('.js'))) {
+        const source = await readFile(resolve(lib, file), 'utf8');
+        expect(source).not.toMatch(/(?:from\s*|import\(|require\()\s*['"]@vectorai\//);
+      }
+    }
+    const spaceFiles = await readdir(resolve(root, 'packages/plugin-dsh-space/lib'));
+    expect(spaceFiles).toContain('vectorai_vectorizer.py');
+  });
+
+  it('rejects source and local dependency data from release packages', () => {
+    for (const forbidden of [
+      'package/src/index.ts',
+      'package/lib/index.js.map',
+      'package/test/plugin.test.js',
+      'package/.git/config',
+    ]) {
+      expect(() => auditPackageEntries(['package/package.json', forbidden])).toThrow();
+    }
+    expect(() => auditPackedManifest({
+      name: '@vectorai/plugin-dsh-space',
+      publishConfig: { access: 'restricted' },
+      dependencies: { local: 'workspace:*' },
+      dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web' } },
+    })).toThrow(/forbidden local dependency/i);
+  });
+});

@@ -9,23 +9,18 @@ The annotation Host owns the professional workflow projection, while the
 annotation Client contributes a sticky session-scoped workspace through the
 public Drawing Surface registry.
 
-From the VectorAI repository root, build and install both layers for local
-development:
+Install both Bundles as direct profile dependencies so DSH preserves first-layer then second-layer order:
 
 ```bash
-pnpm build:dsh-space
-pnpm build:dsh-annotation
 dsh plugin --profile web add --ignore-workspace-root-check \
-  ./packages/plugin-dsh-space \
-  ./packages/plugin-dsh-space-host \
-  ./packages/plugin-dsh-space-client \
-  ./packages/plugin-dsh-annotation \
-  ./packages/plugin-dsh-annotation-host \
-  ./packages/plugin-dsh-annotation-client
+  @vectorai/plugin-dsh-space \
+  @vectorai/plugin-dsh-annotation
 ```
 
+For offline installation, replace both package names with their `.tgz` paths in the same order. Both packages are prebuilt and require no install-time build permission.
+
 The plugin exposes intent-routed `drawing_partition_start`, read-only
-`drawing_partition_status`, and opening-angle-only `drawing_auto_annotate` tools. Opening-angle preview can run while a partition draft remains editable; both review states are preserved independently.
+`drawing_partition_status`, full-set `drawing_auto_annotate`, and single-purpose annotation tools. The automatic set currently runs opening-angle and diameter annotation before starting the editable axial dimension-chain preview. Single-purpose tools remain available when the user explicitly requests only one annotation type.
 Document-only uploads remain ordinary DSH conversation attachments; they do not
 claim the engineering workspace or start partitioning without an explicit user
 request.

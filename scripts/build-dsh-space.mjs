@@ -11,6 +11,8 @@ const spaceHostDir = join(root, 'packages/plugin-dsh-space-host');
 const spaceClientDir = join(root, 'packages/plugin-dsh-space-client');
 const annotationHostDir = join(root, 'packages/plugin-dsh-annotation-host');
 const annotationClientDir = join(root, 'packages/plugin-dsh-annotation-client');
+const spaceBundleDir = join(root, 'packages/plugin-dsh-space');
+const annotationBundleDir = join(root, 'packages/plugin-dsh-annotation');
 const deepseekExternal = (id) => id.startsWith('@deepseek-ai/') || id === '@deepseek-ai/cordis';
 const target = process.argv[2] ?? 'all';
 
@@ -22,64 +24,61 @@ if (target === 'space' || target === 'all') {
   await buildPluginPair({
     hostDir: spaceHostDir,
     clientDir: spaceClientDir,
-    clientModuleId: '@vectorai/plugin-dsh-space-client',
+    outputDir: spaceBundleDir,
+    clientModuleId: '@vectorai/plugin-dsh-space',
     clientStyleKey: 'vectoraiDshSpace',
     clientLabel: 'DSH client',
     temporaryPrefix: 'vectorai-dsh-client-',
   });
   await copyFile(
     join(root, 'python/vectorai_vectorizer.py'),
-    join(spaceHostDir, 'lib/vectorai_vectorizer.py'),
+    join(spaceBundleDir, 'lib/vectorai_vectorizer.py'),
   );
+  await copyFile(join(root, 'LICENSE'), join(spaceBundleDir, 'LICENSE'));
 }
 
 if (target === 'annotation' || target === 'all') {
   await buildPluginPair({
     hostDir: annotationHostDir,
     clientDir: annotationClientDir,
-    clientModuleId: '@vectorai/plugin-dsh-annotation-client',
+    outputDir: annotationBundleDir,
+    clientModuleId: '@vectorai/plugin-dsh-annotation',
     clientStyleKey: 'vectoraiDshAnnotation',
     clientLabel: 'Annotation client',
     temporaryPrefix: 'vectorai-dsh-annotation-client-',
   });
+  await copyFile(join(root, 'LICENSE'), join(annotationBundleDir, 'LICENSE'));
 }
 
 async function buildPluginPair({
   hostDir,
   clientDir,
+  outputDir,
   clientModuleId,
   clientStyleKey,
   clientLabel,
   temporaryPrefix,
 }) {
-  await Promise.all([
-    buildLibrary({
-      entry: join(hostDir, 'src/index.ts'),
-      outDir: join(hostDir, 'lib'),
-      fileName: 'index.js',
-      format: 'es',
-      external: serverExternal,
-    }),
-    buildLibrary({
-      entry: join(clientDir, 'src/index.ts'),
-      outDir: join(clientDir, 'lib'),
-      fileName: 'index.js',
-      format: 'es',
-      external: deepseekExternal,
-    }),
-  ]);
-  await stripTrailingWhitespace(join(hostDir, 'lib/index.js'));
+  await buildLibrary({
+    entry: join(hostDir, 'src/index.ts'),
+    outDir: join(outputDir, 'lib'),
+    fileName: 'index.js',
+    format: 'es',
+    external: serverExternal,
+  });
+  await stripTrailingWhitespace(join(outputDir, 'lib/index.js'));
   await buildLibrary({
     entry: join(hostDir, 'src/typert.ts'),
-    outDir: join(hostDir, 'lib'),
+    outDir: join(outputDir, 'lib'),
     fileName: 'typert.js',
     format: 'es',
     emptyOutDir: false,
     external: serverExternal,
   });
-  await stripTrailingWhitespace(join(hostDir, 'lib/typert.js'));
+  await stripTrailingWhitespace(join(outputDir, 'lib/typert.js'));
   await buildClient({
-    directory: clientDir,
+    sourceDirectory: clientDir,
+    outputDirectory: outputDir,
     temporaryPrefix,
     moduleId: clientModuleId,
     styleKey: clientStyleKey,
@@ -87,11 +86,11 @@ async function buildPluginPair({
   });
 }
 
-async function buildClient({ directory, temporaryPrefix, moduleId, styleKey, label }) {
+async function buildClient({ sourceDirectory, outputDirectory, temporaryPrefix, moduleId, styleKey, label }) {
   const temporary = await mkdtemp(join(tmpdir(), temporaryPrefix));
   try {
     await buildLibrary({
-      entry: join(directory, 'src/client.tsx'),
+      entry: join(sourceDirectory, 'src/client.tsx'),
       outDir: temporary,
       fileName: 'client.cjs',
       format: 'cjs',
@@ -111,8 +110,8 @@ async function buildClient({ directory, temporaryPrefix, moduleId, styleKey, lab
     if (!wrapped.startsWith('window.__ModuleLoader__.load({')) {
       throw new Error(`${label} bundle lacks the ModuleLoader wrapper`);
     }
-    await writeFile(join(directory, 'lib/client.js'), wrapped);
-    await stripTrailingWhitespace(join(directory, 'lib/client.js'));
+    await writeFile(join(outputDirectory, 'lib/client.js'), wrapped);
+    await stripTrailingWhitespace(join(outputDirectory, 'lib/client.js'));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

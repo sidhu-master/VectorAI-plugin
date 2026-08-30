@@ -32,13 +32,13 @@ This is the official DSH dual-face package pattern: one package owns both the Lo
 The first layer installs independently:
 
 ```bash
-dsh plugin --profile web add @vectorai/plugin-dsh-space
+dsh plugin --profile web add --ignore-workspace-root-check @vectorai/plugin-dsh-space
 ```
 
 The complete product installs both Bundles as direct profile dependencies in the required order:
 
 ```bash
-dsh plugin --profile web add \
+dsh plugin --profile web add --ignore-workspace-root-check \
   @vectorai/plugin-dsh-space \
   @vectorai/plugin-dsh-annotation
 ```
