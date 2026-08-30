@@ -12,19 +12,20 @@ The official distribution preference for a prebuilt plugin is npm or a `pnpm pac
 
 ## Published Packages
 
-The public installation surface contains two DSH Bundles:
+The complete registry surface contains exactly two DSH dual-face Bundle packages:
 
-- `@vectorai/plugin-dsh-space`: first-layer 2D Drawing workspace Bundle.
-- `@vectorai/plugin-dsh-annotation`: second-layer Engineering Annotation Bundle.
+- `@vectorai/plugin-dsh-space`: first-layer Bundle, Host entry, Client entry, and local vectorization worker.
+- `@vectorai/plugin-dsh-annotation`: second-layer Bundle, Host entry, and Client entry.
 
-The existing Host and Client packages remain ordinary npm dependencies and do not declare `dsh.bundle`:
+The existing Host and Client source directories remain private development units, but are not published. The release build combines each layer into its Bundle directory:
 
-- `@vectorai/plugin-dsh-space-host`
-- `@vectorai/plugin-dsh-space-client`
-- `@vectorai/plugin-dsh-annotation-host`
-- `@vectorai/plugin-dsh-annotation-client`
+- the package root export is the Host module;
+- the `./typert` export is the Host protocol module;
+- the `./client` export is the browser Client bundle;
+- `dsh.client` on the same manifest declares the Client injection graph;
+- `dsh.bundle.patch` on the same manifest declares the profile layer.
 
-Internal VectorAI drawing and annotation modules are bundled into those four runtime packages by the existing Vite/Rollup build. They are not separately published. This keeps the registry surface small while preserving the Host/Client package manifests DSH uses for module discovery and injection.
+This is the official DSH dual-face package pattern: one package owns both the Loader-mounted Host face and the discovered `./client` browser face. Internal VectorAI drawing and annotation modules are bundled into the two artifacts by Vite/Rollup and are not separately published.
 
 ## Installation and Layer Order
 
@@ -46,7 +47,7 @@ The annotation Bundle declares the space Bundle as a peer compatibility requirem
 
 ## Package Contents
 
-All six published packages use an explicit `files` allowlist. Runtime packages contain only:
+Both published packages use an explicit `files` allowlist and contain only:
 
 - prebuilt `lib/*.js`;
 - generated `lib/types/**/*.d.ts` when a public type surface is required;
@@ -54,7 +55,7 @@ All six published packages use an explicit `files` allowlist. Runtime packages c
 - `lib/vectorai_vectorizer.py` in the first-layer Host;
 - package metadata, license, and required notices.
 
-Bundle entry packages contain only `cordis.patch.yml`, their concise install README, license, and package metadata.
+Each package also contains `cordis.patch.yml`, its concise install README, license, and package metadata.
 
 Packages must not contain `src/`, test files, snapshots, source maps, repository documentation, local fixtures, Git metadata, or absolute machine paths. Type declarations point to generated `lib/types`, never `src`.
 
@@ -64,14 +65,13 @@ Compiled JavaScript and the packaged Python worker remain inspectable by authori
 
 Published manifests contain no `workspace:*`, `link:`, `file:`, or absolute path specifiers.
 
-- The two Bundle packages depend on their prebuilt Host and Client packages using the same exact VectorAI release version.
 - The annotation Bundle declares a compatible peer on the first-layer Bundle and its install documentation requires the first layer.
-- Host and Client bundles externalize only DSH-owned runtime APIs, React, Node built-ins, and intentionally native/runtime dependencies such as `sharp` and `officeparser`.
+- The two dual-face bundles externalize only DSH-owned runtime APIs, React, Node built-ins, and intentionally native/runtime dependencies such as `sharp` and `officeparser`.
 - Externalized DSH APIs use peer dependencies compatible with the supported DSH release line so the profile reuses DSH's runtime instances instead of installing conflicting copies.
 - `sharp`, `officeparser`, and other package-owned runtime libraries remain normal dependencies of the package that imports them.
 - Every other `@vectorai/*` import must be eliminated from emitted runtime JavaScript by bundling.
 
-The initial release version remains `0.1.0-alpha.0`. All six published packages share one version and are released atomically.
+The initial release version remains `0.1.0-alpha.0`. Both published packages share one version and are released atomically.
 
 ## Registry and Access
 
@@ -100,7 +100,7 @@ A release preparation command performs the following without publishing:
 7. installs the two Bundle tarballs into an isolated temporary DSH home through `dsh plugin --profile web add`;
 8. verifies `dsh --profile web --dump-config` contains the first-layer rows before the second-layer rows.
 
-Publishing is a separate explicit command. It publishes dependency packages before Bundle entries and stops on the first failure. It never rewrites a user's active DSH profile.
+Publishing is a separate explicit command. It publishes the first layer before the second layer and stops on the first failure. It never rewrites a user's active DSH profile.
 
 ## Compatibility
 
