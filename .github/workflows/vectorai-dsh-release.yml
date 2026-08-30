@@ -85,6 +85,15 @@ jobs:
           path: dist/releases/${{ inputs.version }}/runtimes
           merge-multiple: true
       - run: node scripts/verify-runtime-artifact-set.mjs --directory "dist/releases/${{ inputs.version }}/runtimes" --commit "${{ github.sha }}" --version "${{ inputs.version }}"
+      - if: ${{ inputs.publish }}
+        name: Build the supported official DSH CLI
+        run: |
+          git clone --depth 1 --branch dsh-v0.1.2-alpha.1 https://github.com/deepseek-ai/deepseek-harness.git "$RUNNER_TEMP/deepseek-harness"
+          test "$(git -C "$RUNNER_TEMP/deepseek-harness" rev-parse HEAD)" = "cd5ef8148158c3a752a658978873241fdf8e2bbc"
+          corepack pnpm@11.7.0 --dir "$RUNNER_TEMP/deepseek-harness" install --frozen-lockfile
+          corepack pnpm@11.7.0 --dir "$RUNNER_TEMP/deepseek-harness" run build
+          chmod +x "$RUNNER_TEMP/deepseek-harness/apps/cli/lib/bin.js"
+          echo "DSH_BIN=$RUNNER_TEMP/deepseek-harness/apps/cli/lib/bin.js" >> "$GITHUB_ENV"
       - if: ${{ !inputs.publish }}
         run: |
           node scripts/set-dsh-release-version.mjs --version "${{ inputs.version }}" --tag "${{ inputs.tag }}"
