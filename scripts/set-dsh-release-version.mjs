@@ -18,11 +18,13 @@ if (!/^[a-z0-9][a-z0-9._-]*$/i.test(tag ?? '')) throw new Error('A valid npm --t
 const releasePath = resolve(root, 'release/dsh-plugins.json');
 const release = readJson(releasePath);
 const names = [...release.runtimes.map((runtime) => runtime.name), ...release.bundles];
+const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 for (const name of names) {
-  const result = spawnSync('npm', ['view', `${name}@${version}`, 'version'], { encoding: 'utf8' });
+  const result = spawnSync(npmExecutable, ['view', `${name}@${version}`, 'version'], { encoding: 'utf8' });
   if (result.status === 0 && result.stdout.trim()) throw new Error(`npm version already exists: ${name}@${version}`);
-  if (result.status !== 0 && !/E404|404 Not Found/i.test(result.stderr)) {
-    throw new Error(`Unable to verify unused npm version ${name}@${version}: ${result.stderr.trim()}`);
+  const failure = result.stderr ?? result.error?.message ?? '';
+  if (result.status !== 0 && !/E404|404 Not Found/i.test(failure)) {
+    throw new Error(`Unable to verify unused npm version ${name}@${version}: ${failure.trim()}`);
   }
 }
 
