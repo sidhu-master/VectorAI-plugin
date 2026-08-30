@@ -8,9 +8,13 @@ import {
 import { waitForNpmPackage } from './wait-for-npm-package.mjs';
 
 const manifest = {
+  version: '1.2.3-alpha.1',
   runtimes: [{ name: 'runtime-a' }, { name: 'runtime-b' }],
   bundles: ['space', 'annotation'],
-  dsh: { profile: 'web' },
+  dsh: {
+    profile: 'web',
+    installArgs: { annotation: ['--allow-build=tesseract.js'] },
+  },
 };
 
 describe('guarded DSH release workflow', () => {
@@ -38,8 +42,8 @@ describe('guarded DSH release workflow', () => {
 
   it('installs the two bundles in separate ordered DSH commands', () => {
     expect(installCommands(manifest)).toEqual([
-      ['plugin', '--profile', 'web', 'add', 'space'],
-      ['plugin', '--profile', 'web', 'add', 'annotation'],
+      ['plugin', '--profile', 'web', 'add', 'space@1.2.3-alpha.1'],
+      ['plugin', '--profile', 'web', 'add', '--allow-build=tesseract.js', 'annotation@1.2.3-alpha.1'],
     ]);
   });
 

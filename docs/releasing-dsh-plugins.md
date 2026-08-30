@@ -7,11 +7,11 @@
 用户始终只安装两个 Bundle：
 
 ```bash
-dsh plugin --profile web add @newwe/vectorai-plugin-dsh-space
-dsh plugin --profile web add @newwe/vectorai-plugin-dsh-annotation
+dsh plugin --profile web add @newwe/vectorai-plugin-dsh-space@alpha
+dsh plugin --profile web add --allow-build=tesseract.js @newwe/vectorai-plugin-dsh-annotation@alpha
 ```
 
-必须分成两条命令，以稳定保留第一层先安装、第二层再接管专业 UI 的顺序。第一层通过 npm `optionalDependencies` 自动选择当前系统的矢量化运行时；用户不需要安装 Python、pip、OpenCV 或虚拟环境。
+必须分成两条命令，以稳定保留第一层先安装、第二层再接管专业 UI 的顺序。第二条命令只允许 `tesseract.js` 的无功能性募捐提示脚本通过 DSH 的 pnpm 供应链门禁；不放宽其他依赖。第一层通过 npm `optionalDependencies` 自动选择当前系统的矢量化运行时；用户不需要安装 Python、pip、OpenCV 或虚拟环境。
 
 内部发布物还包括五个平台包：macOS arm64/x64、Linux arm64/x64、Windows x64。它们不是 DSH Bundle，用户也不需要手工安装。
 
@@ -22,10 +22,11 @@ dsh plugin --profile web add @newwe/vectorai-plugin-dsh-annotation
 ```bash
 pnpm install
 pnpm runtime:pack
-pnpm pack:dsh-plugins
+pnpm build:dsh-space
+pnpm build:dsh-annotation
 ```
 
-`runtime:pack` 在系统临时目录创建隔离 venv，按带哈希的锁文件安装依赖，运行 Python 测试，生成 PyInstaller onedir 产物，然后在看不到 `python`/`python3` 的 PATH 下执行健康检查和真实图片矢量化。产物位于：
+`runtime:pack` 在系统临时目录创建隔离 venv，按带哈希的锁文件安装依赖，运行 Python 测试，生成 PyInstaller onedir 产物，然后在看不到 `python`/`python3` 的 PATH 下执行健康检查和真实图片矢量化。`pack:dsh-plugins` 是版本准备完成后的发布内部步骤，不应在未同步发布版本的源码工作区单独执行。产物位于：
 
 - `dist/vectorizer-runtime/<platform>-<arch>/package/`
 - `dist/vectorizer-runtime/<platform>-<arch>/tarballs/`
@@ -46,9 +47,9 @@ pnpm pack:dsh-plugins
 pnpm release:dsh-plugins -- --version 0.1.0-alpha.N --tag alpha
 ```
 
-该命令会一次性同步版本，拒绝 npm 上已存在的版本，要求五个平台 tarball 全部到齐，然后依次发布：五个运行时、第一层 Bundle、第二层 Bundle。每个包发布后都会等待 npm 安全扫描完成并出现 `dist.integrity`，最后在全新 `DSH_HOME` 中按两条安装命令验证。
+该命令会一次性同步版本，拒绝 npm 上已存在的版本，要求五个平台 tarball 全部到齐，然后依次发布：五个运行时、第一层 Bundle、第二层 Bundle。每个包发布后都会等待 npm 安全扫描完成并出现 `dist.integrity`，最后使用 DSH 所支持的 pnpm 11.7.0，在全新 `DSH_HOME` 中按精确版本的两条安装命令验证。
 
-npm 扫描可能持续数分钟，不要绕过等待或重复发布。可续跑记录位于 `dist/releases/<version>/release-receipt.json`；中断后使用完全相同的 version/tag 重跑，脚本会跳过已有 integrity 的步骤，并继续等待已上传但尚未可见的包。
+npm 扫描可能持续数分钟，不要绕过等待或重复发布。发布记录位于 `dist/releases/<version>/release-receipt.json`，并作为 workflow artifact 保存；它用于审计本次发布的顺序、integrity 与安装验证结果。npm 版本不可覆盖，失败恢复前必须先核对 registry 与该 receipt，不能盲目重跑发布。
 
 ## npm 授权
 

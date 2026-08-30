@@ -37,7 +37,10 @@ export function pendingPublications(order, receipt) {
 }
 
 export function installCommands(manifest) {
-  return manifest.bundles.map((name) => ['plugin', '--profile', manifest.dsh.profile, 'add', name]);
+  return manifest.bundles.map((name) => [
+    'plugin', '--profile', manifest.dsh.profile, 'add',
+    ...(manifest.dsh.installArgs?.[name] ?? []), `${name}@${manifest.version}`,
+  ]);
 }
 
 function run(command, args, options = {}) {

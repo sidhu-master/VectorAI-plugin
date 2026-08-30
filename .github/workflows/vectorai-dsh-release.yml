@@ -93,6 +93,11 @@ jobs:
           corepack pnpm@11.7.0 --dir "$RUNNER_TEMP/deepseek-harness" install --frozen-lockfile
           corepack pnpm@11.7.0 --dir "$RUNNER_TEMP/deepseek-harness" run build
           chmod +x "$RUNNER_TEMP/deepseek-harness/apps/cli/lib/bin.js"
+          mkdir -p "$RUNNER_TEMP/dsh-corepack-home" "$RUNNER_TEMP/dsh-package-manager-bin"
+          COREPACK_HOME="$RUNNER_TEMP/dsh-corepack-home" corepack install --global pnpm@11.7.0
+          COREPACK_HOME="$RUNNER_TEMP/dsh-corepack-home" corepack enable --install-directory "$RUNNER_TEMP/dsh-package-manager-bin"
+          echo "COREPACK_HOME=$RUNNER_TEMP/dsh-corepack-home" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/dsh-package-manager-bin" >> "$GITHUB_PATH"
           echo "DSH_BIN=$RUNNER_TEMP/deepseek-harness/apps/cli/lib/bin.js" >> "$GITHUB_ENV"
       - if: ${{ !inputs.publish }}
         run: |
