@@ -5,6 +5,8 @@ export { InMemoryDrawingRepository } from './repository';
 export { FileDrawingRepositoryStorage } from './repository-storage';
 export type { ImageVectorizer } from './vectorizer';
 export { LocalCleanLineVectorizer } from './vectorizer';
+export { resolveVectorizerRuntime, runtimePackageName } from './vectorizer-runtime';
+export type { ResolvedVectorizerRuntime, VectorizerRuntimeManifest } from './vectorizer-runtime';
 export { SemanticEditService } from './semantic-edit-service';
 export { ExtensionPreviewService } from './extension-preview-service';
 export type { ExtensionPreviewServicePorts } from './extension-preview-service';

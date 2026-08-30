@@ -22,16 +22,19 @@ import type {
   Bounds2D,
 } from '@vectorai/plugin-space-contracts';
 import { createHash } from 'node:crypto';
-import { access } from 'node:fs/promises';
-import { resolve } from 'node:path';
 
 import {
-  LocalPythonVectorizerProcess,
+  LocalVectorizerProcess,
   type CleanLinePrimitiveCandidate,
   type CleanLineStrokeChain,
   type CleanLineStrokePiece,
   type CleanLineVectorizationResult,
 } from './local-python-vectorizer';
+import {
+  resolveVectorizerRuntime,
+  VECTORIZER_PIPELINE_VERSION,
+  VECTORIZER_PROTOCOL_VERSION,
+} from './vectorizer-runtime';
 
 export interface VectorizedImage {
   document: DrawingDocument;
@@ -65,15 +68,14 @@ export class LocalCleanLineVectorizer implements ImageVectorizer {
     signal: AbortSignal;
   }): Promise<VectorizedImage> {
     input.signal.throwIfAborted();
-    const root = resolve(import.meta.dirname, '../../..');
-    const localPython = resolve(root, '.local/vectorai/cv-venv/bin/python');
-    const packagedScript = resolve(import.meta.dirname, 'vectorai_vectorizer.py');
-    const provider = await LocalPythonVectorizerProcess.create({
-      pythonPath: await accessible(localPython) ? localPython : 'python3',
-      scriptPath: await accessible(packagedScript)
-        ? packagedScript
-        : resolve(root, 'python/vectorai_vectorizer.py'),
+    const runtime = await resolveVectorizerRuntime();
+    const provider = await LocalVectorizerProcess.create({
+      executablePath: runtime.executablePath,
       timeoutMs: this.#timeoutMs,
+      expected: {
+        protocolVersion: VECTORIZER_PROTOCOL_VERSION,
+        pipelineVersion: VECTORIZER_PIPELINE_VERSION,
+      },
     });
     try {
       const result = await provider.vectorize({
@@ -90,15 +92,6 @@ export class LocalCleanLineVectorizer implements ImageVectorizer {
     } finally {
       await provider.close();
     }
-  }
-}
-
-async function accessible(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 

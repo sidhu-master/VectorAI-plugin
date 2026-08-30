@@ -47,6 +47,17 @@ export interface CleanLineVectorizationResult {
   chains: CleanLineStrokeChain[];
 }
 
+export interface VectorizerHealth {
+  protocolVersion: string;
+  pipelineVersion: string;
+  pythonVersion: string;
+  dependencies: {
+    numpy: string;
+    'opencv-python-headless': string;
+    'scikit-image': string;
+  };
+}
+
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: unknown): void;
@@ -54,10 +65,11 @@ interface PendingRequest {
   removeAbort(): void;
 }
 
-export class LocalPythonVectorizerProcess {
+export class LocalVectorizerProcess {
   readonly #pending = new Map<string, PendingRequest>();
   #closed = false;
   #stderr = '';
+  health!: VectorizerHealth;
 
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -73,17 +85,27 @@ export class LocalPythonVectorizerProcess {
   }
 
   static async create(input: {
-    pythonPath: string;
-    scriptPath: string;
+    executablePath: string;
+    args?: string[];
     timeoutMs: number;
-  }): Promise<LocalPythonVectorizerProcess> {
-    const child = spawn(input.pythonPath, ['-u', input.scriptPath], {
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    expected: { protocolVersion: string; pipelineVersion: string };
+  }): Promise<LocalVectorizerProcess> {
+    const child = spawn(input.executablePath, input.args ?? [], {
+      env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const provider = new LocalPythonVectorizerProcess(child, input.timeoutMs);
+    const provider = new LocalVectorizerProcess(child, input.timeoutMs);
     try {
-      await provider.#invoke({ operation: 'health' }, new AbortController().signal);
+      provider.health = parseHealth(await provider.#invoke(
+        { operation: 'health' },
+        new AbortController().signal,
+      ));
+      if (provider.health.protocolVersion !== input.expected.protocolVersion) {
+        throw new Error('VECTORAI_VECTORIZER_PROTOCOL_MISMATCH');
+      }
+      if (provider.health.pipelineVersion !== input.expected.pipelineVersion) {
+        throw new Error('VECTORAI_VECTORIZER_PIPELINE_MISMATCH');
+      }
       return provider;
     } catch (error) {
       await provider.close();
@@ -167,6 +189,30 @@ export class LocalPythonVectorizerProcess {
   #failAll(error: unknown): void {
     for (const id of [...this.#pending.keys()]) this.#reject(id, error);
   }
+}
+
+/** @deprecated Use LocalVectorizerProcess. */
+export const LocalPythonVectorizerProcess = LocalVectorizerProcess;
+
+function parseHealth(value: unknown): VectorizerHealth {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('VECTORAI_VECTORIZER_HEALTH_INVALID');
+  }
+  const health = value as Record<string, unknown>;
+  const dependencies = health.dependencies;
+  if (
+    typeof health.protocolVersion !== 'string'
+    || typeof health.pipelineVersion !== 'string'
+    || typeof health.pythonVersion !== 'string'
+    || !dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)
+  ) throw new Error('VECTORAI_VECTORIZER_HEALTH_INVALID');
+  const versions = dependencies as Record<string, unknown>;
+  for (const name of ['numpy', 'opencv-python-headless', 'scikit-image']) {
+    if (typeof versions[name] !== 'string' || versions[name] === '') {
+      throw new Error('VECTORAI_VECTORIZER_HEALTH_INVALID');
+    }
+  }
+  return structuredClone(value) as VectorizerHealth;
 }
 
 function parseResult(value: unknown, sourceId: string): CleanLineVectorizationResult {
