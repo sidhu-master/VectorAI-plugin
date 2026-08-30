@@ -1,0 +1,104 @@
+name: VectorAI DSH release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact semver for all runtime and Bundle packages
+        required: true
+        type: string
+      tag:
+        description: npm dist-tag
+        required: true
+        default: alpha
+        type: string
+      publish:
+        description: Publish after building and auditing every platform
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    name: Runtime ${{ matrix.platform }}-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - runner: windows-2025
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.13.2
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node scripts/set-dsh-release-version.mjs --version "${{ inputs.version }}" --tag "${{ inputs.tag }}"
+      - run: pnpm runtime:pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vectorizer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/vectorizer-runtime/${{ matrix.platform }}-${{ matrix.arch }}/tarballs/*.tgz
+          if-no-files-found: error
+
+  assemble:
+    needs: runtime
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vectorizer-*
+          path: dist/releases/${{ inputs.version }}/runtimes
+          merge-multiple: true
+      - run: node scripts/verify-runtime-artifact-set.mjs --directory "dist/releases/${{ inputs.version }}/runtimes" --commit "${{ github.sha }}" --version "${{ inputs.version }}"
+      - if: ${{ !inputs.publish }}
+        run: |
+          node scripts/set-dsh-release-version.mjs --version "${{ inputs.version }}" --tag "${{ inputs.tag }}"
+          pnpm pack:dsh-plugins
+      - if: ${{ inputs.publish }}
+        run: pnpm release:dsh-plugins -- --version "${{ inputs.version }}" --tag "${{ inputs.tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vectorai-dsh-release-${{ inputs.version }}
+          path: |
+            dist/npm/*.tgz
+            dist/releases/${{ inputs.version }}/release-receipt.json
+            dist/releases/${{ inputs.version }}/runtimes/runtime-artifacts.json
+          if-no-files-found: warn

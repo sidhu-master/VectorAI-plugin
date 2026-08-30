@@ -89,7 +89,7 @@ function smoke(executable, imagePath) {
   }
 }
 
-function writeManifest() {
+function writeManifest(sourceCommit) {
   const template = JSON.parse(readFileSync(join(root, 'packages/vectorizer-runtime-template/package.json'), 'utf8'));
   const manifest = {
     ...template,
@@ -110,6 +110,7 @@ function writeManifest() {
     runtimeVersion: RUNTIME_VERSION,
     platform: target.platform,
     arch: target.arch,
+    sourceCommit,
     executable: runtimeExecutable(target),
     files: runtimeFiles,
   }, null, 2)}\n`);
@@ -151,7 +152,7 @@ async function main() {
     'assert cv2.imwrite(sys.argv[1],image)',
   ].join(';'), fixture]);
   smoke(executable, fixture);
-  writeManifest();
+  writeManifest(run('git', ['rev-parse', 'HEAD'], { capture: true }).trim());
   auditRuntimePackage(packageRoot, { ...target, version: RUNTIME_VERSION });
 
   mkdirSync(join(outputRoot, 'tarballs'), { recursive: true });

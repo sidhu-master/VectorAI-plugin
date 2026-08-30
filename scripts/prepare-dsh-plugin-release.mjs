@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdir, readdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -12,10 +13,17 @@ const root = resolve(import.meta.dirname, '..');
 const output = resolve(root, 'dist/npm');
 const packages = ['plugin-dsh-space', 'plugin-dsh-annotation'];
 const currentTarget = targetFor();
-auditRuntimePackage(resolve(root, 'dist/vectorizer-runtime', currentTarget.id, 'package'), {
-  ...currentTarget,
-  version: RUNTIME_VERSION,
-});
+const localRuntime = resolve(root, 'dist/vectorizer-runtime', currentTarget.id, 'package');
+if (existsSync(localRuntime)) {
+  auditRuntimePackage(localRuntime, { ...currentTarget, version: RUNTIME_VERSION });
+} else {
+  const inventoryPath = resolve(root, 'dist/releases', RUNTIME_VERSION, 'runtimes/runtime-artifacts.json');
+  if (!existsSync(inventoryPath)) throw new Error(`Missing audited runtime package or artifact inventory for ${currentTarget.id}`);
+  const inventory = JSON.parse(await readFile(inventoryPath, 'utf8'));
+  if (!inventory.some((entry) => entry.platform === currentTarget.platform && entry.arch === currentTarget.arch)) {
+    throw new Error(`Runtime artifact inventory does not cover ${currentTarget.id}`);
+  }
+}
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
