@@ -6,6 +6,7 @@ import {
   type AssociationRelation,
   type DrawingDocument,
   type EvidenceId,
+  type GeometryId,
   type RelationId,
 } from '@vectorai/drawing-core';
 import type { DrawingRef, SpatialEditProgram } from '@vectorai/drawing-edit-protocol';
@@ -13,6 +14,7 @@ import { orderDimensionIntents } from './dimension/order';
 import { projectEngineeringAnnotations } from './dimension/project';
 import type { EngineeringAnnotationDraft } from './dimension/types';
 import { layoutOpeningAngles, measureOpeningAngles, selectAxialEndOpeningAngles } from './opening-angle';
+import { measureShaftDiameters } from './diameter';
 
 export interface PendingEngineeringAnnotation {
   nodeId: string;
@@ -28,10 +30,20 @@ export interface EngineeringAnnotationPlan {
   program: SpatialEditProgram | null;
 }
 
+export type DeterministicAnnotationKind = 'opening-angle' | 'diameter';
+
+// Single source of truth for the deterministic members of automatic annotation.
+// New annotation generators join the default collection by registering here.
+export const DEFAULT_AUTOMATIC_ANNOTATION_KINDS = [
+  'opening-angle',
+  'diameter',
+] as const satisfies readonly DeterministicAnnotationKind[];
+
 export function planEngineeringAnnotations(input: {
   document: DrawingDocument;
   ref: DrawingRef;
   objective: string;
+  annotationKinds?: readonly DeterministicAnnotationKind[];
 }): EngineeringAnnotationPlan {
   const annotationTemplates: AnnotationNode[] = [];
   const associations: AssociationRelation[] = [];
@@ -44,11 +56,9 @@ export function planEngineeringAnnotations(input: {
     }
   }
   const measuredOpenings = measureOpeningAngles(geometry);
-  const openingSelection = selectAxialEndOpeningAngles({
-    facts: measuredOpenings.facts,
-    geometry,
-    axis: measuredOpenings.axis,
-  });
+  const openingSelection = (input.annotationKinds ?? ['opening-angle']).includes('opening-angle')
+    ? selectAxialEndOpeningAngles({ facts: measuredOpenings.facts, geometry, axis: measuredOpenings.axis })
+    : { selected: [], suppressionReasons: {} };
   const openingLayouts = layoutOpeningAngles({ geometry, facts: openingSelection.selected });
   for (const fact of openingSelection.selected) {
     const layout = openingLayouts[fact.key];
@@ -90,6 +100,44 @@ export function planEngineeringAnnotations(input: {
   for (const [key, reason] of Object.entries(openingSelection.suppressionReasons)) {
     suppressed.push({ nodeId: key, reason });
   }
+  for (const fact of (input.annotationKinds ?? ['opening-angle']).includes('diameter') ? measureShaftDiameters(input.document) : []) {
+    const annotationId = `annotation_diameter_${stableKey(fact.key)}` as AnnotationId;
+    const factEvidenceRefs = fact.sourceIds.flatMap((geometryId) => (
+      geometry.find(({ id }) => id === geometryId)?.quality.evidenceRefs ?? []
+    ));
+    const annotation: AnnotationNode = {
+      id: annotationId,
+      type: 'dimension',
+      visible: true,
+      quality: {
+        status: 'confirmed', confidence: 1,
+        evidenceRefs: factEvidenceRefs.length > 0
+          ? [...new Set(factEvidenceRefs)]
+          : [`evidence:engineering:${stableKey(fact.sourceIds.join(':'))}` as EvidenceId],
+      },
+      dimensionKind: 'diameter',
+      associationStatus: 'resolved',
+      targets: fact.sourceIds.map((geometryId) => ({
+        geometryId: geometryId as GeometryId,
+        anchor: { kind: 'nearest' as const, point: fact.definitionPoints[0] },
+      })),
+      computedValue: fact.diameter,
+      displayText: `⌀${format(fact.diameter)}`,
+      unit: input.document.unitSystem.length,
+      textPosition: fact.textPosition,
+      definitionPoints: [...fact.definitionPoints],
+      engineeringIntentId: `intent_diameter_${stableKey(fact.key)}`,
+    };
+    annotationTemplates.push(annotation);
+    associations.push({
+      id: `relation_${stableKey(`${input.document.id}:${annotationId}`)}` as RelationId,
+      type: 'association', plane: 'association', kind: 'annotation-target',
+      annotationId,
+      geometryIds: fact.sourceIds.map((id) => id as GeometryId),
+      visible: true,
+      quality: { status: 'confirmed', confidence: 1, evidenceRefs: [...annotation.quality.evidenceRefs] },
+    });
+  }
   const dimensionTemplates = annotationTemplates.filter(
     (annotation): annotation is Extract<AnnotationNode, { type: 'dimension' }> => annotation.type === 'dimension',
   );
@@ -111,6 +159,7 @@ export function planEngineeringAnnotations(input: {
       evidenceIds: annotation.quality.evidenceRefs.map(String),
     })),
     tolerances: [],
+    geometricTolerances: [],
     chains: [],
     dependencies: [],
     diagnostics: [],
@@ -126,8 +175,9 @@ export function planEngineeringAnnotations(input: {
   const existingAssociations = new Map(input.document.relations
     .filter((relation): relation is AssociationRelation => relation.type === 'association')
     .map((relation) => [relation.id, relation]));
-  const plannedOpeningIds = new Set(annotations
-    .filter((node) => node.type === 'dimension' && node.engineeringIntentId?.startsWith('intent_opening_'))
+  const requestedKinds = new Set<DeterministicAnnotationKind>(input.annotationKinds ?? ['opening-angle']);
+  const plannedEngineeringIds = new Set(annotations
+    .filter((node) => node.type === 'dimension' && isRequestedEngineeringIntent(node.engineeringIntentId, requestedKinds))
     .map(({ id }) => id));
   const createAnnotations: AnnotationNode[] = [];
   const createAssociations: AssociationRelation[] = [];
@@ -135,35 +185,35 @@ export function planEngineeringAnnotations(input: {
   const staleTargetNodeIds = new Set<string>();
   for (const annotation of annotations) {
     const existing = existingAnnotations.get(annotation.id);
-    const opening = annotation.type === 'dimension' && annotation.engineeringIntentId?.startsWith('intent_opening_');
+    const managed = annotation.type === 'dimension' && isRequestedEngineeringIntent(annotation.engineeringIntentId, requestedKinds);
     if (!existing) createAnnotations.push(annotation);
-    else if (opening && !sameOpeningAnnotation(existing, annotation)) {
+    else if (managed && !sameEngineeringAnnotation(existing, annotation)) {
       deleteNodeIds.add(existing.id);
       if (existing.type === 'dimension') existing.targets.forEach(({ geometryId }) => staleTargetNodeIds.add(geometryId));
       createAnnotations.push(annotation);
-      for (const relation of existingAssociations.values()) {
-        if (relation.annotationId === existing.id) deleteNodeIds.add(relation.id);
-      }
     }
   }
   for (const existing of input.document.annotations) {
     if (existing.type !== 'dimension') continue;
     const legacyPrimitiveDimension = existing.engineeringIntentId?.startsWith('intent_auto_') === true;
-    const staleOpeningDimension = existing.engineeringIntentId?.startsWith('intent_opening_') === true
-      && !plannedOpeningIds.has(existing.id);
-    if (!legacyPrimitiveDimension && !staleOpeningDimension) continue;
+    const staleEngineeringDimension = isRequestedEngineeringIntent(existing.engineeringIntentId, requestedKinds)
+      && !plannedEngineeringIds.has(existing.id);
+    if (!legacyPrimitiveDimension && !staleEngineeringDimension) continue;
     deleteNodeIds.add(existing.id);
     existing.targets.forEach(({ geometryId }) => staleTargetNodeIds.add(geometryId));
-    for (const relation of existingAssociations.values()) {
-      if (relation.annotationId === existing.id) deleteNodeIds.add(relation.id);
-    }
   }
   const createAnnotationIds = new Set(createAnnotations.map(({ id }) => id));
   for (const association of associations) {
     const existing = existingAssociations.get(association.id);
     if (createAnnotationIds.has(association.annotationId) || !existing) createAssociations.push(association);
     else if (association.annotationId.startsWith('annotation_auto_')
-      && JSON.stringify(existing) !== JSON.stringify(association)) {
+      && !sameEngineeringAssociation(existing, association)) {
+      const annotation = annotations.find(({ id }) => id === association.annotationId);
+      if (annotation && !createAnnotationIds.has(annotation.id)) {
+        deleteNodeIds.add(annotation.id);
+        createAnnotations.push(annotation);
+        createAnnotationIds.add(annotation.id);
+      }
       deleteNodeIds.add(existing.id);
       createAssociations.push(association);
     }
@@ -171,6 +221,7 @@ export function planEngineeringAnnotations(input: {
   const targetNodeIds = [...new Set([
     ...associations.flatMap(({ geometryIds }) => geometryIds),
     ...staleTargetNodeIds,
+    ...deleteNodeIds,
   ])].sort();
   const evidenceRefs = [...new Set(targetNodeIds.flatMap((id) => {
     const node = geometry.find((candidate) => candidate.id === id);
@@ -180,7 +231,19 @@ export function planEngineeringAnnotations(input: {
     evidenceRefs.push(`evidence:engineering:${stableKey(targetNodeIds.join(':'))}` as EvidenceId);
   }
   const operations: SpatialEditProgram['operations'] = [];
-  if (deleteNodeIds.size > 0) operations.push({ kind: 'delete_nodes', nodeIds: [...deleteNodeIds].sort() });
+  if (deleteNodeIds.size > 0) {
+    // Deleting an annotation implicitly removes its association relations. Delete
+    // those relations explicitly first so the transaction inverse can restore the
+    // complete graph instead of recreating only the annotation node.
+    const dependentRelationIds = input.document.relations
+      .filter((relation) => relation.type === 'association' && deleteNodeIds.has(String(relation.annotationId)))
+      .map(({ id }) => String(id))
+      .sort();
+    operations.push({
+      kind: 'delete_nodes',
+      nodeIds: [...dependentRelationIds, ...[...deleteNodeIds].filter((id) => !dependentRelationIds.includes(id)).sort()],
+    });
+  }
   if (createAnnotations.length > 0) operations.push({
     kind: 'create_annotation_batch',
     annotations: structuredClone(createAnnotations) as unknown as Array<Record<string, unknown> & { id: string; type: string }>,
@@ -199,7 +262,7 @@ export function planEngineeringAnnotations(input: {
   return { annotations, associations, targetNodeIds, pending, suppressed, program };
 }
 
-function sameOpeningAnnotation(left: AnnotationNode, right: AnnotationNode): boolean {
+function sameEngineeringAnnotation(left: AnnotationNode, right: AnnotationNode): boolean {
   if (left.type !== 'dimension' || right.type !== 'dimension') return false;
   return left.dimensionKind === right.dimensionKind
     && left.computedValue === right.computedValue
@@ -208,6 +271,25 @@ function sameOpeningAnnotation(left: AnnotationNode, right: AnnotationNode): boo
     && JSON.stringify(left.targets) === JSON.stringify(right.targets)
     && JSON.stringify(left.textPosition) === JSON.stringify(right.textPosition)
     && JSON.stringify(left.definitionPoints) === JSON.stringify(right.definitionPoints);
+}
+
+function sameEngineeringAssociation(left: AssociationRelation, right: AssociationRelation): boolean {
+  return left.annotationId === right.annotationId
+    && left.kind === right.kind
+    && left.visible === right.visible
+    && left.quality.status === right.quality.status
+    && left.quality.confidence === right.quality.confidence
+    && JSON.stringify([...left.geometryIds].map(String).sort()) === JSON.stringify([...right.geometryIds].map(String).sort())
+    && JSON.stringify([...left.quality.evidenceRefs].map(String).sort())
+      === JSON.stringify([...right.quality.evidenceRefs].map(String).sort());
+}
+
+function isRequestedEngineeringIntent(
+  value: string | undefined,
+  requestedKinds: ReadonlySet<DeterministicAnnotationKind>,
+): boolean {
+  return requestedKinds.has('opening-angle') && value?.startsWith('intent_opening_') === true
+    || requestedKinds.has('diameter') && value?.startsWith('intent_diameter_') === true;
 }
 
 function stableKey(value: string): string {

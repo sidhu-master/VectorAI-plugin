@@ -156,6 +156,18 @@ describe('@vectorai/drawing-edit-core compiler', () => {
     expect(canonicalSemanticString(second)).toBe(canonicalSemanticString(first));
   });
 
+  it('treats document-plane collection order as non-semantic while preserving nested geometry order', () => {
+    const first = wavingFixture();
+    const reordered = structuredClone(first);
+    reordered.geometry.reverse();
+    expect(canonicalSemanticString(reordered)).toBe(canonicalSemanticString(first));
+
+    const changed = structuredClone(first);
+    const line = changed.geometry.find((node) => node.type === 'line');
+    if (line?.type === 'line') [line.start, line.end] = [line.end, line.start];
+    expect(canonicalSemanticString(changed)).not.toBe(canonicalSemanticString(first));
+  });
+
   it('fails closed when a preserve scope is modified', () => {
     expect(() => compileSpatialEditProgram({
       document: wavingFixture(),

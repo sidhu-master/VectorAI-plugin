@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { estimateScreenTextWidth, ScreenSpaceLabel } from '@vectorai/drawing-viewer-react';
+import { estimateScreenTextWidth, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import type { AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
-import { useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
 
 type Candidate = AxialDimensionScheme['candidates'][number];
 type Role = 'parent' | 'child' | 'closure' | 'standalone';
@@ -27,6 +27,11 @@ interface DragState {
   startGroupOffset: number;
   minimumGroupOffset: number;
 }
+interface ClosureMenuState {
+  candidateId: string;
+  chainId: string;
+  position: readonly [number, number];
+}
 
 export function DimensionChainOverlay({
   scheme,
@@ -37,6 +42,7 @@ export function DimensionChainOverlay({
   visibleChainIds,
   onMoveChain,
   onMoveCandidate,
+  onChooseClosure,
 }: {
   scheme: AxialDimensionScheme;
   scale: number;
@@ -46,12 +52,22 @@ export function DimensionChainOverlay({
   visibleChainIds?: ReadonlySet<string>;
   onMoveChain?(chainId: string, normalOffset: number): void | Promise<void>;
   onMoveCandidate?(candidateId: string, normalOffset: number): void | Promise<void>;
+  onChooseClosure?(chainId: string, candidateId: string): void | Promise<void>;
 }) {
-  const [dragPreview, setDragPreview] = useState<{ targetKey: string; normalOffset: number } | null>(null);
+  const [dragPreviews, setDragPreviews] = useState<Record<string, number>>({});
+  const [closureMenu, setClosureMenu] = useState<ClosureMenuState | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || closureMenu === null) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setClosureMenu(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [closureMenu]);
   if (!visible) return null;
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : []));
-  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview);
+  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews);
   const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
   const grouped = scheme.chains
     .map((chain, chainIndex) => ({
@@ -88,10 +104,11 @@ export function DimensionChainOverlay({
     event.stopPropagation();
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0]
       + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
-    setDragPreview({
-      targetKey: `${drag.target.type}:${drag.target.id}`,
-      normalOffset: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset),
-    });
+    const targetKey = `${drag.target.type}:${drag.target.id}`;
+    setDragPreviews((current) => ({
+      ...current,
+      [targetKey]: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset),
+    }));
   };
   const finishDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = dragRef.current;
@@ -102,16 +119,25 @@ export function DimensionChainOverlay({
     const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
     const targetKey = `${drag.target.type}:${drag.target.id}`;
     dragRef.current = null;
-    setDragPreview({ targetKey, normalOffset: groupOffset });
+    setDragPreviews((current) => ({ ...current, [targetKey]: groupOffset }));
     event.currentTarget.releasePointerCapture(event.pointerId);
     const save = drag.target.type === 'chain'
       ? onMoveChain?.(drag.target.id, roundOffset(groupOffset))
       : onMoveCandidate?.(drag.target.id, roundOffset(groupOffset));
     void Promise.resolve(save)
       .then(() => window.requestAnimationFrame(() => {
-        setDragPreview((current) => current?.targetKey === targetKey ? null : current);
+        setDragPreviews((current) => {
+          if (!(targetKey in current)) return current;
+          const next = { ...current };
+          delete next[targetKey];
+          return next;
+        });
       }))
-      .catch(() => setDragPreview((current) => current?.targetKey === targetKey ? null : current));
+      .catch(() => setDragPreviews((current) => {
+        const next = { ...current };
+        delete next[targetKey];
+        return next;
+      }));
   };
   const cancelDrag = (event: PointerEvent<SVGGElement>, releaseCapture: boolean) => {
     const drag = dragRef.current;
@@ -119,7 +145,12 @@ export function DimensionChainOverlay({
     event.preventDefault();
     event.stopPropagation();
     dragRef.current = null;
-    setDragPreview(null);
+    const targetKey = `${drag.target.type}:${drag.target.id}`;
+    setDragPreviews((current) => {
+      const next = { ...current };
+      delete next[targetKey];
+      return next;
+    });
     if (releaseCapture) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
@@ -140,6 +171,14 @@ export function DimensionChainOverlay({
       onPointerUp={ownsPointerHandlers ? finishDrag : undefined}
       onPointerCancel={ownsPointerHandlers ? (event) => cancelDrag(event, true) : undefined}
       onLostPointerCapture={ownsPointerHandlers ? (event) => cancelDrag(event, false) : undefined}
+      onContextMenu={onChooseClosure && layout.chainId !== undefined
+        && closureOptionsForCandidate(scheme, layout.candidate.id, layout.chainId).length > 0
+        ? (event, position) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setClosureMenu({ candidateId: layout.candidate.id, chainId: layout.chainId!, position });
+        }
+        : undefined}
     />;
   };
 
@@ -147,6 +186,7 @@ export function DimensionChainOverlay({
   return <g
     className="vai-dimension-chain-overlay"
     data-dimension-chain-overlay="true"
+    onPointerDown={() => setClosureMenu(null)}
   >
     {grouped.map(({ chain, chainIndex, layouts: owned }) => {
       const draggable = Boolean(onMoveChain) && !previewHeld && owned.length > 0;
@@ -156,7 +196,7 @@ export function DimensionChainOverlay({
         data-dimension-chain-group={chain.id}
         data-dimension-draggable={draggable || undefined}
         data-dimension-drag-axis={dragAxis}
-        pointerEvents={draggable ? 'all' : 'none'}
+        pointerEvents={draggable || Boolean(onChooseClosure) ? 'all' : 'none'}
         onPointerDown={draggable ? (event) => beginDrag(owned[0]!, event) : undefined}
         onPointerMove={draggable ? updateDrag : undefined}
         onPointerUp={draggable ? finishDrag : undefined}
@@ -175,6 +215,17 @@ export function DimensionChainOverlay({
     </g>;
     })}
     {standalone.map((layout) => renderInterval(layout, true))}
+    {closureMenu && <ClosureContextMenu
+      scheme={scheme}
+      candidateId={closureMenu.candidateId}
+      chainId={closureMenu.chainId}
+      position={closureMenu.position}
+      scale={safeScale}
+      onChoose={(chainId) => {
+        setClosureMenu(null);
+        void Promise.resolve(onChooseClosure?.(chainId, closureMenu.candidateId)).catch(() => undefined);
+      }}
+    />}
   </g>;
 }
 
@@ -213,7 +264,7 @@ function layoutIntervals(
   scale: number,
   radialExtent: number,
   previewHeld: boolean,
-  dragPreview?: { targetKey: string; normalOffset: number } | null,
+  dragPreviews: Readonly<Record<string, number>> = {},
 ): IntervalLayout[] {
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
@@ -251,9 +302,8 @@ function layoutIntervals(
     const minimumOffset = radialExtent + 14 / safeScale;
     const candidateOffset = manual.get(candidateId) ?? 0;
     const targetKey = owner === undefined ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
-    const requestedGroupOffset = dragPreview?.targetKey === targetKey
-      ? dragPreview.normalOffset
-      : owner === undefined ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0;
+    const requestedGroupOffset = dragPreviews[targetKey]
+      ?? (owner === undefined ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0);
     return [{
       candidate,
       ...(owner === undefined ? {} : { chainId: owner.chainId }),
@@ -346,6 +396,7 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   onPointerUp?(event: PointerEvent<SVGGElement>): void;
   onPointerCancel?(event: PointerEvent<SVGGElement>): void;
   onLostPointerCapture?(event: PointerEvent<SVGGElement>): void;
+  onContextMenu?(event: ReactMouseEvent<SVGGElement>, position: readonly [number, number]): void;
 }) {
   const { candidate, lane, role } = layout;
   const { origin, direction, normal } = scheme.topology.axis;
@@ -383,8 +434,11 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
     data-dimension-conflict={conflict || undefined}
     data-dimension-draggable={draggable || undefined}
     data-dimension-drag-axis={dragAxis}
-    pointerEvents={draggable ? 'all' : 'none'}
+    pointerEvents={draggable || pointerHandlers.onContextMenu ? 'all' : 'none'}
     {...pointerHandlers}
+    onContextMenu={pointerHandlers.onContextMenu
+      ? (event) => pointerHandlers.onContextMenu?.(event, middle)
+      : undefined}
   >
     <line className="vai-dimension-chain-extension" data-dimension-extension="start" x1={witnessA[0]} y1={witnessA[1]} x2={a[0]} y2={a[1]} vectorEffect="non-scaling-stroke" />
     <line className="vai-dimension-chain-extension" data-dimension-extension="end" x1={witnessB[0]} y1={witnessB[1]} x2={b[0]} y2={b[1]} vectorEffect="non-scaling-stroke" />
@@ -403,6 +457,58 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
       {`${candidate.nominalValue} ${scheme.topology.unit}`}
     </ScreenSpaceLabel>
   </g>;
+}
+
+function ClosureContextMenu({ scheme, candidateId, chainId, position, scale, onChoose }: {
+  scheme: AxialDimensionScheme;
+  candidateId: string;
+  chainId: string;
+  position: readonly [number, number];
+  scale: number;
+  onChoose(chainId: string): void;
+}) {
+  const options = closureOptionsForCandidate(scheme, candidateId, chainId);
+  const width = options.length > 1 ? 188 : 148;
+  const rowHeight = 30;
+  return <g
+    className="vai-dimension-closure-menu"
+    data-dimension-closure-menu={candidateId}
+    role="menu"
+    transform={screenSpaceTransform(position, scale)}
+    pointerEvents="all"
+    onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+    onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
+  >
+    <rect className="vai-dimension-closure-menu__surface" x={0} y={0} width={width} height={options.length * rowHeight} rx={8} />
+    {options.map(({ chain, chainIndex, current }, optionIndex) => {
+      const label = current
+        ? options.length > 1 ? `尺寸链 ${chainIndex + 1} · 当前缺省段` : '当前缺省段'
+        : options.length > 1 ? `尺寸链 ${chainIndex + 1} · 切换为缺省段` : '切换为缺省段';
+      return <g
+        key={chain.id}
+        className="vai-dimension-closure-menu__item"
+        data-closure-chain-id={chain.id}
+        data-closure-current={current || undefined}
+        role="menuitem"
+        aria-disabled={current || undefined}
+        transform={`translate(0 ${optionIndex * rowHeight})`}
+        onClick={current ? undefined : (event) => { event.stopPropagation(); onChoose(chain.id); }}
+      >
+        <rect x={3} y={3} width={width - 6} height={rowHeight - 6} rx={6} />
+        <text x={12} y={rowHeight / 2} dominantBaseline="middle" fontSize={11}>{label}</text>
+      </g>;
+    })}
+  </g>;
+}
+
+function closureOptionsForCandidate(scheme: AxialDimensionScheme, candidateId: string, chainId: string) {
+  return scheme.chains.flatMap((chain, chainIndex) => chain.id !== chainId ? [] : (
+    chain.closureCandidateId === candidateId
+      ? [{ chain, chainIndex, current: true }]
+      : chain.alternativeClosureCandidateIds.includes(candidateId)
+        ? [{ chain, chainIndex, current: false }]
+        : []
+  ));
 }
 
 function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, scale, draggable }: {
@@ -457,9 +563,11 @@ function overlaps(left: { start: number; end: number }, right: { start: number; 
   return !(left.end + padding < right.start || left.start - padding > right.end);
 }
 
-function normalized(value: readonly [number, number]): readonly [number, number] {
-  const length = Math.hypot(value[0], value[1]) || 1;
-  return [value[0] / length, value[1] / length];
+function normalized(value: readonly unknown[]): readonly [number, number] {
+  const x = typeof value[0] === 'number' ? value[0] : 0;
+  const y = typeof value[1] === 'number' ? value[1] : 0;
+  const length = Math.hypot(x, y) || 1;
+  return [x / length, y / length];
 }
 
 function roundOffset(value: number): number { return Math.round(value * 1_000) / 1_000; }

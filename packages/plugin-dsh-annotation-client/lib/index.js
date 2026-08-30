@@ -7452,7 +7452,7 @@ function EntityRenderer({
   previewDiff
 }) {
   if (!node.visible) return null;
-  const semanticClassName = node.type === "dimension" && node.dimensionKind === "angular" ? " vai-entity--angular-dimension" : node.type === "section-hatch" ? " vai-entity--section-hatch" : "";
+  const semanticClassName = node.type === "dimension" && (node.dimensionKind === "angular" || node.dimensionKind === "diameter") ? ` vai-entity--${node.dimensionKind}-dimension` : node.type === "section-hatch" ? " vai-entity--section-hatch" : "";
   const className = `vai-entity vai-entity--${node.quality.status}${semanticClassName}${selected ? " vai-entity--selected" : ""}${aiGrounded ? " vai-entity--ai-grounded" : ""}${motionRigActive ? " vai-entity--motion-rig" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
   const interactiveText = (node.type === "text" || node.type === "dimension") && onTextPointerDown !== void 0;
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -7513,6 +7513,9 @@ function renderNode(node, viewport) {
       if (node.dimensionKind === "angular" && node.definitionPoints.length >= 5) {
         return /* @__PURE__ */ jsxRuntimeExports.jsx(AngularDimension, { node, viewport });
       }
+      if (node.dimensionKind === "diameter" && node.definitionPoints.length >= 2) {
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(DiameterDimension, { node, viewport });
+      }
       return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         node.definitionPoints.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: pointsAttribute(node.definitionPoints), fill: "none", ...vectorStroke }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
@@ -7541,6 +7544,23 @@ function renderNode(node, viewport) {
     case "section-hatch":
       return /* @__PURE__ */ jsxRuntimeExports.jsx(HatchRenderer, { node, viewportScale: viewport.scale });
   }
+}
+function DiameterDimension({
+  node,
+  viewport
+}) {
+  const [first, second, sourceFirst = first, sourceSecond = second] = node.definitionPoints;
+  if (!first || !second) return null;
+  const vectorStroke = { vectorEffect: "non-scaling-stroke" };
+  const arrowSize = 7 / Math.max(viewport.scale, 1e-9);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { "data-diameter-role": "extension", x1: sourceFirst[0], y1: sourceFirst[1], x2: first[0], y2: first[1], ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { "data-diameter-role": "extension", x1: sourceSecond[0], y1: sourceSecond[1], x2: second[0], y2: second[1], ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("line", { "data-diameter-role": "dimension", x1: first[0], y1: first[1], x2: second[0], y2: second[1], ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { "data-diameter-role": "arrow", d: arrowPath(first, second, arrowSize), ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { "data-diameter-role": "arrow", d: arrowPath(second, first, arrowSize), ...vectorStroke }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
+  ] });
 }
 function AngularDimension({
   node,
@@ -9041,6 +9061,10 @@ function DrawingLayerManager({ layers, onVisibilityChange }) {
     }
   );
 }
+async function runSharedAnnotationHistory(operation, refreshPeers) {
+  await operation();
+  await Promise.all(refreshPeers.map((refresh) => refresh()));
+}
 function DimensionChainOverlay({
   scheme,
   scale,
@@ -9049,13 +9073,23 @@ function DimensionChainOverlay({
   previewHeld = false,
   visibleChainIds,
   onMoveChain,
-  onMoveCandidate
+  onMoveCandidate,
+  onChooseClosure
 }) {
-  const [dragPreview, setDragPreview] = reactExports.useState(null);
+  const [dragPreviews, setDragPreviews] = reactExports.useState({});
+  const [closureMenu, setClosureMenu] = reactExports.useState(null);
   const dragRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (typeof window === "undefined" || closureMenu === null) return void 0;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setClosureMenu(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [closureMenu]);
   if (!visible) return null;
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
-  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview);
+  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews);
   const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
   const grouped = scheme.chains.map((chain, chainIndex) => ({
     chain,
@@ -9086,10 +9120,11 @@ function DimensionChainOverlay({
     event.preventDefault();
     event.stopPropagation();
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0] + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
-    setDragPreview({
-      targetKey: `${drag.target.type}:${drag.target.id}`,
-      normalOffset: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset)
-    });
+    const targetKey2 = `${drag.target.type}:${drag.target.id}`;
+    setDragPreviews((current) => ({
+      ...current,
+      [targetKey2]: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset)
+    }));
   };
   const finishDrag = (event) => {
     const drag = dragRef.current;
@@ -9099,12 +9134,21 @@ function DimensionChainOverlay({
     const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
     const targetKey2 = `${drag.target.type}:${drag.target.id}`;
     dragRef.current = null;
-    setDragPreview({ targetKey: targetKey2, normalOffset: groupOffset });
+    setDragPreviews((current) => ({ ...current, [targetKey2]: groupOffset }));
     event.currentTarget.releasePointerCapture(event.pointerId);
     const save = drag.target.type === "chain" ? onMoveChain == null ? void 0 : onMoveChain(drag.target.id, roundOffset(groupOffset)) : onMoveCandidate == null ? void 0 : onMoveCandidate(drag.target.id, roundOffset(groupOffset));
     void Promise.resolve(save).then(() => window.requestAnimationFrame(() => {
-      setDragPreview((current) => (current == null ? void 0 : current.targetKey) === targetKey2 ? null : current);
-    })).catch(() => setDragPreview((current) => (current == null ? void 0 : current.targetKey) === targetKey2 ? null : current));
+      setDragPreviews((current) => {
+        if (!(targetKey2 in current)) return current;
+        const next = { ...current };
+        delete next[targetKey2];
+        return next;
+      });
+    })).catch(() => setDragPreviews((current) => {
+      const next = { ...current };
+      delete next[targetKey2];
+      return next;
+    }));
   };
   const cancelDrag = (event, releaseCapture) => {
     const drag = dragRef.current;
@@ -9112,7 +9156,12 @@ function DimensionChainOverlay({
     event.preventDefault();
     event.stopPropagation();
     dragRef.current = null;
-    setDragPreview(null);
+    const targetKey2 = `${drag.target.type}:${drag.target.id}`;
+    setDragPreviews((current) => {
+      const next = { ...current };
+      delete next[targetKey2];
+      return next;
+    });
     if (releaseCapture) event.currentTarget.releasePointerCapture(event.pointerId);
   };
   const renderInterval = (layout, standaloneDraggable = false, groupedDraggable = false) => {
@@ -9132,7 +9181,12 @@ function DimensionChainOverlay({
         onPointerMove: ownsPointerHandlers ? updateDrag : void 0,
         onPointerUp: ownsPointerHandlers ? finishDrag : void 0,
         onPointerCancel: ownsPointerHandlers ? (event) => cancelDrag(event, true) : void 0,
-        onLostPointerCapture: ownsPointerHandlers ? (event) => cancelDrag(event, false) : void 0
+        onLostPointerCapture: ownsPointerHandlers ? (event) => cancelDrag(event, false) : void 0,
+        onContextMenu: onChooseClosure && layout.chainId !== void 0 && closureOptionsForCandidate(scheme, layout.candidate.id, layout.chainId).length > 0 ? (event, position) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setClosureMenu({ candidateId: layout.candidate.id, chainId: layout.chainId, position });
+        } : void 0
       },
       layout.candidate.id
     );
@@ -9143,6 +9197,7 @@ function DimensionChainOverlay({
     {
       className: "vai-dimension-chain-overlay",
       "data-dimension-chain-overlay": "true",
+      onPointerDown: () => setClosureMenu(null),
       children: [
         grouped.map(({ chain, chainIndex, layouts: owned }) => {
           const draggable = Boolean(onMoveChain) && !previewHeld && owned.length > 0;
@@ -9153,7 +9208,7 @@ function DimensionChainOverlay({
               "data-dimension-chain-group": chain.id,
               "data-dimension-draggable": draggable || void 0,
               "data-dimension-drag-axis": dragAxis,
-              pointerEvents: draggable ? "all" : "none",
+              pointerEvents: draggable || Boolean(onChooseClosure) ? "all" : "none",
               onPointerDown: draggable ? (event) => beginDrag(owned[0], event) : void 0,
               onPointerMove: draggable ? updateDrag : void 0,
               onPointerUp: draggable ? finishDrag : void 0,
@@ -9177,7 +9232,21 @@ function DimensionChainOverlay({
             chain.id
           );
         }),
-        standalone.map((layout) => renderInterval(layout, true))
+        standalone.map((layout) => renderInterval(layout, true)),
+        closureMenu && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          ClosureContextMenu,
+          {
+            scheme,
+            candidateId: closureMenu.candidateId,
+            chainId: closureMenu.chainId,
+            position: closureMenu.position,
+            scale: safeScale,
+            onChoose: (chainId) => {
+              setClosureMenu(null);
+              void Promise.resolve(onChooseClosure == null ? void 0 : onChooseClosure(chainId, closureMenu.candidateId)).catch(() => void 0);
+            }
+          }
+        )
       ]
     }
   );
@@ -9201,7 +9270,7 @@ function dimensionChainFitPadding({ scheme, radialExtent, scale, viewport }) {
   const freeFraction = Math.max(0.2, 1 - 2 * structuralPixels / Math.max(availablePixels, 1));
   return Math.max(1.2, (referenceRadius + maxManualOffset) / referenceRadius / freeFraction * 1.05);
 }
-function layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview) {
+function layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews = {}) {
   var _a2, _b;
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
@@ -9239,7 +9308,7 @@ function layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview) 
     const minimumOffset = radialExtent + 14 / safeScale;
     const candidateOffset = manual.get(candidateId) ?? 0;
     const targetKey2 = owner === void 0 ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
-    const requestedGroupOffset = (dragPreview == null ? void 0 : dragPreview.targetKey) === targetKey2 ? dragPreview.normalOffset : owner === void 0 ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0;
+    const requestedGroupOffset = dragPreviews[targetKey2] ?? (owner === void 0 ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0);
     return [{
       candidate,
       ...owner === void 0 ? {} : { chainId: owner.chainId },
@@ -9346,8 +9415,12 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
       "data-dimension-conflict": conflict || void 0,
       "data-dimension-draggable": draggable || void 0,
       "data-dimension-drag-axis": dragAxis,
-      pointerEvents: draggable ? "all" : "none",
+      pointerEvents: draggable || pointerHandlers.onContextMenu ? "all" : "none",
       ...pointerHandlers,
+      onContextMenu: pointerHandlers.onContextMenu ? (event) => {
+        var _a2;
+        return (_a2 = pointerHandlers.onContextMenu) == null ? void 0 : _a2.call(pointerHandlers, event, middle);
+      } : void 0,
       children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "start", x1: witnessA[0], y1: witnessA[1], x2: a[0], y2: a[1], vectorEffect: "non-scaling-stroke" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "end", x1: witnessB[0], y1: witnessB[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
@@ -9369,6 +9442,58 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
       ]
     }
   );
+}
+function ClosureContextMenu({ scheme, candidateId, chainId, position, scale, onChoose }) {
+  const options = closureOptionsForCandidate(scheme, candidateId, chainId);
+  const width = options.length > 1 ? 188 : 148;
+  const rowHeight = 30;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "g",
+    {
+      className: "vai-dimension-closure-menu",
+      "data-dimension-closure-menu": candidateId,
+      role: "menu",
+      transform: screenSpaceTransform(position, scale),
+      pointerEvents: "all",
+      onPointerDown: (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      },
+      onContextMenu: (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      },
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: "vai-dimension-closure-menu__surface", x: 0, y: 0, width, height: options.length * rowHeight, rx: 8 }),
+        options.map(({ chain, chainIndex, current }, optionIndex) => {
+          const label = current ? options.length > 1 ? `尺寸链 ${chainIndex + 1} · 当前缺省段` : "当前缺省段" : options.length > 1 ? `尺寸链 ${chainIndex + 1} · 切换为缺省段` : "切换为缺省段";
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "g",
+            {
+              className: "vai-dimension-closure-menu__item",
+              "data-closure-chain-id": chain.id,
+              "data-closure-current": current || void 0,
+              role: "menuitem",
+              "aria-disabled": current || void 0,
+              transform: `translate(0 ${optionIndex * rowHeight})`,
+              onClick: current ? void 0 : (event) => {
+                event.stopPropagation();
+                onChoose(chain.id);
+              },
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: 3, y: 3, width: width - 6, height: rowHeight - 6, rx: 6 }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: 12, y: rowHeight / 2, dominantBaseline: "middle", fontSize: 11, children: label })
+              ]
+            },
+            chain.id
+          );
+        })
+      ]
+    }
+  );
+}
+function closureOptionsForCandidate(scheme, candidateId, chainId) {
+  return scheme.chains.flatMap((chain, chainIndex) => chain.id !== chainId ? [] : chain.closureCandidateId === candidateId ? [{ chain, chainIndex, current: true }] : chain.alternativeClosureCandidateIds.includes(candidateId) ? [{ chain, chainIndex, current: false }] : []);
 }
 function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, scale, draggable }) {
   const layouts = [chain.parentCandidateId, ...chain.childCandidateIds, chain.closureCandidateId].flatMap((id) => layoutByCandidate.get(id) ?? []).filter((layout) => layout.chainId === chain.id);
@@ -9413,8 +9538,10 @@ function overlaps(left, right, padding) {
   return !(left.end + padding < right.start || left.start - padding > right.end);
 }
 function normalized(value) {
-  const length = Math.hypot(value[0], value[1]) || 1;
-  return [value[0] / length, value[1] / length];
+  const x = typeof value[0] === "number" ? value[0] : 0;
+  const y = typeof value[1] === "number" ? value[1] : 0;
+  const length = Math.hypot(x, y) || 1;
+  return [x / length, y / length];
 }
 function roundOffset(value) {
   return Math.round(value * 1e3) / 1e3;
@@ -9972,6 +10099,526 @@ function toleranceSourceLabel(source) {
 function chainRoleLabel(role) {
   return { functional: "功能环", component: "组成环", closure: "封闭环" }[role];
 }
+const ROW_HEIGHT = 24;
+const DRAWING_GAP = 28;
+function GdtOverlay({
+  draft,
+  document: document2,
+  scale,
+  viewport,
+  datumVisible,
+  gdtVisible,
+  previewHeld,
+  selectedIntentId,
+  onSelectIntent,
+  onMoveDatum,
+  onMoveGdtGroup
+}) {
+  const safeScale = Math.max(scale, 1e-6);
+  const [datumDragPositions, setDatumDragPositions] = reactExports.useState({});
+  const datumDragRef = reactExports.useRef(null);
+  const datumPersistTimerRef = reactExports.useRef(null);
+  const [gdtDragPositions, setGdtDragPositions] = reactExports.useState({});
+  const gdtDragRef = reactExports.useRef(null);
+  const gdtPersistTimerRef = reactExports.useRef(null);
+  const gdtMouseCleanupRef = reactExports.useRef(null);
+  const suppressGdtClickRef = reactExports.useRef(false);
+  const geometry = new Map(document2.geometry.map((node) => [String(node.id), node]));
+  const datums = new Map(draft.datums.map((datum) => [datum.id, datum]));
+  const bounds = drawingBounds({ ...document2, annotations: [] }) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  const groups = layoutGroups(draft, geometry, datums, bounds, viewport, safeScale);
+  const updateDatumDrag = (event) => {
+    const drag = datumDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return null;
+    event.preventDefault();
+    event.stopPropagation();
+    const next = [
+      drag.startPosition[0] + (event.clientX - drag.startClient[0]) / safeScale,
+      drag.startPosition[1] - (event.clientY - drag.startClient[1]) / safeScale
+    ];
+    drag.currentPosition = next;
+    setDatumDragPositions((current) => ({ ...current, [drag.datumId]: next }));
+    if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
+    datumPersistTimerRef.current = setTimeout(() => {
+      datumPersistTimerRef.current = null;
+      void Promise.resolve(onMoveDatum(drag.datumId, drag.currentPosition)).catch(() => void 0);
+    }, 120);
+    return next;
+  };
+  const commitDatumDrag = (drag, next) => {
+    if (datumPersistTimerRef.current !== null) {
+      clearTimeout(datumPersistTimerRef.current);
+      datumPersistTimerRef.current = null;
+    }
+    datumDragRef.current = null;
+    void Promise.resolve(onMoveDatum(drag.datumId, next)).then(() => {
+      setDatumDragPositions((current) => {
+        if (!(drag.datumId in current)) return current;
+        const updated = { ...current };
+        delete updated[drag.datumId];
+        return updated;
+      });
+    }).catch(() => setDatumDragPositions((current) => {
+      const updated = { ...current };
+      delete updated[drag.datumId];
+      return updated;
+    }));
+  };
+  reactExports.useEffect(() => () => {
+    var _a2;
+    if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
+    if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+    (_a2 = gdtMouseCleanupRef.current) == null ? void 0 : _a2.call(gdtMouseCleanupRef);
+  }, []);
+  const finishDatumDrag = (event) => {
+    const drag = datumDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const next = updateDatumDrag(event) ?? drag.currentPosition;
+    commitDatumDrag(drag, next);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+  const updateGdtDragAt = (clientX, clientY) => {
+    const drag = gdtDragRef.current;
+    if (!drag) return null;
+    const dx = clientX - drag.startClient[0];
+    const dy = clientY - drag.startClient[1];
+    const next = [drag.startPosition[0] + dx / safeScale, drag.startPosition[1] - dy / safeScale];
+    drag.currentPosition = next;
+    if (Math.hypot(dx, dy) > 3) suppressGdtClickRef.current = true;
+    setGdtDragPositions((current) => ({ ...current, [drag.groupId]: next }));
+    if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+    gdtPersistTimerRef.current = setTimeout(() => {
+      gdtPersistTimerRef.current = null;
+      void Promise.resolve(onMoveGdtGroup(drag.intentIds, drag.currentPosition)).catch(() => void 0);
+    }, 120);
+    return next;
+  };
+  const updateGdtDrag = (event) => {
+    const drag = gdtDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return null;
+    event.preventDefault();
+    event.stopPropagation();
+    return updateGdtDragAt(event.clientX, event.clientY);
+  };
+  const commitGdtDrag = (drag, next) => {
+    if (gdtPersistTimerRef.current !== null) {
+      clearTimeout(gdtPersistTimerRef.current);
+      gdtPersistTimerRef.current = null;
+    }
+    gdtDragRef.current = null;
+    void Promise.resolve(onMoveGdtGroup(drag.intentIds, next)).then(() => {
+      setGdtDragPositions((current) => {
+        const updated = { ...current };
+        delete updated[drag.groupId];
+        return updated;
+      });
+    }).catch(() => setGdtDragPositions((current) => {
+      const updated = { ...current };
+      delete updated[drag.groupId];
+      return updated;
+    }));
+  };
+  const finishGdtDrag = (event) => {
+    const drag = gdtDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const next = updateGdtDrag(event) ?? drag.currentPosition;
+    commitGdtDrag(drag, next);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { className: "vai-gdt-overlay", "data-preview-held": previewHeld ? "true" : void 0, children: [
+    datumVisible && draft.datums.map((datum) => {
+      const target = resolveAnchor(geometry.get(String(datum.geometryId)), datum.anchor);
+      if (!target) return null;
+      const marker = datumDragPositions[datum.id] ?? datum.labelPosition ?? [target[0], bounds.minY - defaultDatumGap(bounds)];
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "g",
+        {
+          className: `vai-datum-marker vai-datum-marker--${datum.status}`,
+          "data-datum-id": datum.id,
+          pointerEvents: "all",
+          onMouseDown: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          },
+          onClick: (event) => event.stopPropagation(),
+          onDoubleClick: (event) => event.stopPropagation(),
+          onPointerDown: (event) => {
+            if (event.button !== 0 || previewHeld) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            datumDragRef.current = {
+              datumId: datum.id,
+              pointerId: event.pointerId,
+              startClient: [event.clientX, event.clientY],
+              startPosition: marker,
+              currentPosition: marker
+            };
+          },
+          onPointerMove: updateDatumDrag,
+          onPointerUp: finishDatumDrag,
+          onLostPointerCapture: (event) => {
+            const drag = datumDragRef.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            commitDatumDrag(drag, drag.currentPosition);
+          },
+          onPointerCancel: (event) => {
+            const drag = datumDragRef.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            if (datumPersistTimerRef.current !== null) {
+              clearTimeout(datumPersistTimerRef.current);
+              datumPersistTimerRef.current = null;
+            }
+            datumDragRef.current = null;
+            setDatumDragPositions((current) => {
+              const updated = { ...current };
+              delete updated[drag.datumId];
+              return updated;
+            });
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { className: "vai-datum-leader", pointerEvents: "none", d: datumLeaderPath(target, marker) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { transform: screenSpaceTransform(marker, safeScale), children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: "vai-datum-marker__hit", x: -14, y: -10, width: 28, height: 40, rx: 4 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M -5 0 L 5 0 L 0 -8 Z" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M 0 0 L 0 8" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: -10, y: 8, width: 20, height: 20, rx: 2 }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: 0, y: 18, dominantBaseline: "middle", textAnchor: "middle", fontSize: 11, children: datum.name })
+            ] })
+          ]
+        },
+        datum.id
+      );
+    }),
+    gdtVisible && groups.map((sourceGroup) => {
+      const group = gdtDragPositions[sourceGroup.id] ? { ...sourceGroup, origin: gdtDragPositions[sourceGroup.id] } : sourceGroup;
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "g",
+        {
+          className: "vai-gdt-frame-group",
+          "data-gdt-group": group.id,
+          pointerEvents: "all",
+          onMouseDown: (event) => {
+            var _a2;
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.button !== 0 || previewHeld) return;
+            if (!gdtDragRef.current) {
+              gdtDragRef.current = {
+                groupId: group.id,
+                intentIds: group.intentIds,
+                pointerId: -1,
+                startClient: [event.clientX, event.clientY],
+                startPosition: group.origin,
+                currentPosition: group.origin
+              };
+            }
+            (_a2 = gdtMouseCleanupRef.current) == null ? void 0 : _a2.call(gdtMouseCleanupRef);
+            const handleMouseMove = (moveEvent) => {
+              moveEvent.preventDefault();
+              moveEvent.stopPropagation();
+              updateGdtDragAt(moveEvent.clientX, moveEvent.clientY);
+            };
+            const handleMouseUp = (upEvent) => {
+              var _a3;
+              upEvent.preventDefault();
+              upEvent.stopPropagation();
+              const drag = gdtDragRef.current;
+              if (drag) commitGdtDrag(drag, updateGdtDragAt(upEvent.clientX, upEvent.clientY) ?? drag.currentPosition);
+              (_a3 = gdtMouseCleanupRef.current) == null ? void 0 : _a3.call(gdtMouseCleanupRef);
+            };
+            const cleanup = () => {
+              window.removeEventListener("mousemove", handleMouseMove, true);
+              window.removeEventListener("mouseup", handleMouseUp, true);
+              if (gdtMouseCleanupRef.current === cleanup) gdtMouseCleanupRef.current = null;
+            };
+            gdtMouseCleanupRef.current = cleanup;
+            window.addEventListener("mousemove", handleMouseMove, true);
+            window.addEventListener("mouseup", handleMouseUp, true);
+          },
+          onPointerDown: (event) => {
+            if (event.button !== 0 || previewHeld) return;
+            event.preventDefault();
+            event.stopPropagation();
+            suppressGdtClickRef.current = false;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            gdtDragRef.current = {
+              groupId: group.id,
+              intentIds: group.intentIds,
+              pointerId: event.pointerId,
+              startClient: [event.clientX, event.clientY],
+              startPosition: group.origin,
+              currentPosition: group.origin
+            };
+          },
+          onPointerMove: updateGdtDrag,
+          onPointerUp: finishGdtDrag,
+          onLostPointerCapture: (event) => {
+            const drag = gdtDragRef.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            commitGdtDrag(drag, drag.currentPosition);
+          },
+          onPointerCancel: (event) => {
+            const drag = gdtDragRef.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+            gdtPersistTimerRef.current = null;
+            gdtDragRef.current = null;
+            setGdtDragPositions((current) => {
+              const updated = { ...current };
+              delete updated[drag.groupId];
+              return updated;
+            });
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { className: "vai-gdt-leader", pointerEvents: "none", d: orthogonalLeaderPath(group) }),
+            group.rows.map(({ intent, cells, widths }, rowIndex) => {
+              const totalWidth = widths.reduce((sum, width) => sum + width, 0);
+              const rowOrigin = [group.origin[0], group.origin[1] - rowIndex * ROW_HEIGHT * group.frameScale];
+              let cursor = 0;
+              return /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "g",
+                {
+                  className: `vai-gdt-frame${selectedIntentId === intent.id ? " is-selected" : ""}${intent.override ? " is-overridden" : ""}`,
+                  "data-gdt-id": intent.id,
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    if (suppressGdtClickRef.current) {
+                      suppressGdtClickRef.current = false;
+                      return;
+                    }
+                    if (!previewHeld) onSelectIntent(intent.id);
+                  },
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { transform: `translate(${rowOrigin[0]} ${rowOrigin[1]}) scale(${group.frameScale} ${-group.frameScale})`, children: [
+                    cells.map((cell, cellIndex) => {
+                      const width = widths[cellIndex];
+                      const cellX = cursor;
+                      cursor += width;
+                      return /* @__PURE__ */ jsxRuntimeExports.jsxs("g", { children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: cellX, y: 0, width, height: ROW_HEIGHT }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("text", { x: cellX + width / 2, y: ROW_HEIGHT / 2, dominantBaseline: "middle", textAnchor: "middle", fontSize: 11, children: cell })
+                      ] }, `${intent.id}:${cellIndex}`);
+                    }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { className: "vai-gdt-frame__hit", x: 0, y: 0, width: totalWidth, height: ROW_HEIGHT })
+                  ] })
+                },
+                intent.id
+              );
+            })
+          ]
+        },
+        group.id
+      );
+    })
+  ] });
+}
+function defaultDatumGap(bounds) {
+  return Math.max(4, Math.min(12, Math.abs(bounds.maxY - bounds.minY) * 0.12));
+}
+function datumLeaderPath(target, marker) {
+  return `M ${target[0]} ${target[1]} L ${target[0]} ${marker[1]} L ${marker[0]} ${marker[1]}`;
+}
+function layoutGroups(draft, geometry, datums, bounds, _viewport, scale) {
+  var _a2;
+  const grouped = /* @__PURE__ */ new Map();
+  for (const intent of draft.geometricTolerances) {
+    const target = intent.controlledTargets[0];
+    const point3 = target ? resolveAnchor(geometry.get(String(target.geometryId)), target.anchor) : null;
+    if (!target || !point3) continue;
+    const value = ((_a2 = intent.override) == null ? void 0 : _a2.value) ?? intent.computed.value;
+    const cells = [
+      characteristicSymbol(intent.characteristic),
+      value === void 0 ? "—" : `${intent.toleranceZone.shape === "diametrical" ? "⌀" : ""}${value} mm`,
+      ...intent.datumReferenceFrame.map((reference) => {
+        var _a3;
+        const name = ((_a3 = datums.get(reference.datumId)) == null ? void 0 : _a3.name) ?? "?";
+        return `${name}${reference.materialCondition ? `(${reference.materialCondition.toUpperCase()})` : ""}`;
+      })
+    ];
+    const widths = cells.map((cell, index) => Math.max(index === 0 ? 26 : 44, estimateScreenTextWidth(cell, 11) + 16));
+    const key = String(target.geometryId);
+    const existing = grouped.get(key) ?? { id: key, target: point3, rows: [] };
+    existing.rows.push({ intent, cells, widths });
+    grouped.set(key, existing);
+  }
+  const ordered = [...grouped.values()].sort((left, right) => left.target[0] - right.target[0]);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const drawingWidth = Math.max(1, Math.abs(bounds.maxX - bounds.minX));
+  const drawingHeight = Math.max(1, Math.abs(bounds.maxY - bounds.minY));
+  const frameScale = Math.min(1, 1 / scale);
+  return ordered.map(({ id, target, rows }, groupIndex) => {
+    var _a3;
+    const width = Math.max(...rows.map(({ widths }) => widths.reduce((sum, value) => sum + value, 0)));
+    const bearingStack = rows.length >= 3;
+    const stored = (_a3 = rows.find(({ intent }) => intent.framePosition !== void 0)) == null ? void 0 : _a3.intent.framePosition;
+    const automaticSide = !bearingStack && target[0] >= centerX ? "bottom" : "top";
+    const side = stored ? stored[1] >= target[1] ? "top" : "bottom" : automaticSide;
+    const laneDistance = Math.max(6, drawingHeight * (0.22 + groupIndex * 0.12));
+    const x = (stored == null ? void 0 : stored[0]) ?? (bearingStack ? target[0] < centerX ? bounds.minX - drawingWidth * 0.18 : bounds.maxX + drawingWidth * 0.04 : target[0] - drawingWidth * 0.06);
+    const y = (stored == null ? void 0 : stored[1]) ?? (side === "top" ? bounds.maxY + laneDistance : bounds.minY - laneDistance);
+    return {
+      id,
+      intentIds: rows.map(({ intent }) => intent.id),
+      target,
+      rows,
+      width,
+      side,
+      lane: groupIndex,
+      frameScale,
+      origin: [x, y]
+    };
+  });
+}
+function orthogonalLeaderPath(group) {
+  const frameLeft = group.origin[0];
+  const frameRight = frameLeft + group.width * group.frameScale;
+  const frameTop = group.origin[1];
+  const frameBottom = frameTop - group.rows.length * ROW_HEIGHT * group.frameScale;
+  const attachX = Math.max(frameLeft, Math.min(group.target[0], frameRight));
+  const laneGap = Math.min(DRAWING_GAP - 4, 10 + group.lane * 4) * group.frameScale;
+  const laneY = group.side === "top" ? frameBottom - laneGap : frameTop + laneGap;
+  const attachY = group.side === "top" ? frameBottom : frameTop;
+  return `M ${group.target[0]} ${group.target[1]} L ${group.target[0]} ${laneY} L ${attachX} ${laneY} L ${attachX} ${attachY}`;
+}
+function characteristicSymbol(value) {
+  return {
+    straightness: "—",
+    flatness: "▱",
+    circularity: "○",
+    cylindricity: "⌭",
+    "profile-line": "⌒",
+    "profile-surface": "⌓",
+    parallelism: "∥",
+    perpendicularity: "⊥",
+    angularity: "∠",
+    position: "⌖",
+    coaxiality: "◎",
+    symmetry: "⌯",
+    "circular-runout": "↗",
+    "total-runout": "↗↗"
+  }[value];
+}
+function resolveAnchor(node, anchor) {
+  var _a2, _b, _c;
+  if (anchor.kind === "nearest") {
+    const [x, y] = anchor.point;
+    return typeof x === "number" && typeof y === "number" ? [x, y] : null;
+  }
+  if (!node) return null;
+  if (anchor.kind === "center") return "center" in node ? node.center : node.type === "point" ? [node.x, node.y] : null;
+  if (anchor.kind === "start") return node.type === "line" ? node.start : node.type === "polyline" ? ((_a2 = node.vertices[0]) == null ? void 0 : _a2.point) ?? null : null;
+  if (anchor.kind === "end") return node.type === "line" ? node.end : node.type === "polyline" ? ((_b = node.vertices.at(-1)) == null ? void 0 : _b.point) ?? null : null;
+  if (anchor.kind === "vertex" && node.type === "polyline") return ((_c = node.vertices[anchor.index]) == null ? void 0 : _c.point) ?? null;
+  return null;
+}
+const CHARACTERISTICS = [
+  "straightness",
+  "flatness",
+  "circularity",
+  "cylindricity",
+  "profile-line",
+  "profile-surface",
+  "parallelism",
+  "perpendicularity",
+  "angularity",
+  "position",
+  "coaxiality",
+  "symmetry",
+  "circular-runout",
+  "total-runout"
+];
+function GdtInspector({ draft, selectedIntentId, selectedGeometryIds, controller, onSelectIntent }) {
+  var _a2, _b, _c;
+  const intent = draft.geometricTolerances.find(({ id }) => id === selectedIntentId) ?? draft.geometricTolerances[0];
+  if (!intent) return null;
+  const effective = ((_a2 = intent.override) == null ? void 0 : _a2.value) ?? intent.computed.value;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "vai-gdt-inspector", "aria-label": "形位公差编辑", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "基准与形位公差" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        draft.geometricTolerances.length,
+        " 项"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+      "标注",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("select", { value: intent.id, onChange: (event) => onSelectIntent(event.target.value), children: draft.geometricTolerances.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: item.id, children: item.id }, item.id)) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+      "公差类型",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("select", { value: intent.characteristic, onChange: (event) => void controller.actions.edit({ type: "characteristic.set", intentId: intent.id, characteristic: event.target.value }), children: CHARACTERISTICS.map((value) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value, children: characteristicLabel(value) }, value)) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+      "公差带",
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { value: intent.toleranceZone.shape, onChange: (event) => void controller.actions.edit({ type: "zone.set", intentId: intent.id, zone: { ...intent.toleranceZone, shape: event.target.value } }), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "linear", children: "线性" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "diametrical", children: "直径" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "spherical", children: "球形" })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { children: [
+      "人工修订值（mm）",
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "input",
+        {
+          type: "number",
+          min: "0",
+          step: "0.001",
+          value: ((_b = intent.override) == null ? void 0 : _b.value) ?? "",
+          placeholder: ((_c = intent.computed.value) == null ? void 0 : _c.toString()) ?? "等待算法计算",
+          onChange: (event) => {
+            const value = Number(event.target.value);
+            if (value > 0) void controller.actions.setOverride(intent.id, value);
+          }
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-gdt-inspector__value", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "算法值" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: intent.computed.value ?? "待计算" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-gdt-inspector__value", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "当前值" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: effective ?? "待计算" })
+    ] }),
+    intent.override && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => void controller.actions.clearOverride(intent.id), children: "恢复算法值" }),
+    selectedGeometryIds.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => void controller.actions.edit({
+      type: "controlled-targets.set",
+      intentId: intent.id,
+      targets: selectedGeometryIds.map((geometryId) => {
+        var _a3;
+        return { geometryId, anchor: { kind: "nearest", point: ((_a3 = intent.controlledTargets[0]) == null ? void 0 : _a3.anchor.kind) === "nearest" ? intent.controlledTargets[0].anchor.point : [0, 0] } };
+      })
+    }), children: "使用画布当前选中图元" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-gdt-inspector__datums", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "基准顺序" }),
+      intent.datumReferenceFrame.map((reference, index) => /* @__PURE__ */ jsxRuntimeExports.jsx("select", { value: reference.datumId, onChange: (event) => {
+        const references = intent.datumReferenceFrame.map((item, itemIndex) => itemIndex === index ? { ...item, datumId: event.target.value } : item);
+        void controller.actions.edit({ type: "datum-frame.set", intentId: intent.id, references });
+      }, children: draft.datums.map((datum) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: datum.id, children: datum.name }, datum.id)) }, `${intent.id}:${index}`))
+    ] })
+  ] });
+}
+function characteristicLabel(value) {
+  return {
+    straightness: "直线度",
+    flatness: "平面度",
+    circularity: "圆度",
+    cylindricity: "圆柱度",
+    "profile-line": "线轮廓度",
+    "profile-surface": "面轮廓度",
+    parallelism: "平行度",
+    perpendicularity: "垂直度",
+    angularity: "倾斜度",
+    position: "位置度",
+    coaxiality: "同轴度",
+    symmetry: "对称度",
+    "circular-runout": "圆跳动",
+    "total-runout": "全跳动"
+  }[value];
+}
 function ConfirmedPartitionInspector({
   revision,
   busy,
@@ -10124,7 +10771,10 @@ function engineeringImportErrorText(code, filenames = []) {
 }
 const ANNOTATION_PARTITION_LAYER_ID = "vectorai.annotation.partition";
 const ANNOTATION_OPENING_ANGLE_LAYER_ID = "vectorai.annotation.opening-angle";
+const ANNOTATION_DIAMETER_LAYER_ID = "vectorai.annotation.diameter";
 const ANNOTATION_DIMENSION_CHAIN_LAYER_ID = "vectorai.annotation.dimension-chain";
+const ANNOTATION_DATUM_LAYER_ID = "vectorai.annotation.datum";
+const ANNOTATION_GDT_LAYER_ID = "vectorai.annotation.gdt";
 const ANNOTATION_PARTITION_LAYER = {
   id: ANNOTATION_PARTITION_LAYER_ID,
   label: "智能分区",
@@ -10141,12 +10791,36 @@ const ANNOTATION_OPENING_ANGLE_LAYER = {
   order: 110,
   defaultVisible: true
 };
+const ANNOTATION_DIAMETER_LAYER = {
+  id: ANNOTATION_DIAMETER_LAYER_ID,
+  label: "直径标注",
+  category: "engineering",
+  icon: "dimension",
+  order: 115,
+  defaultVisible: true
+};
 const ANNOTATION_DIMENSION_CHAIN_LAYER = {
   id: ANNOTATION_DIMENSION_CHAIN_LAYER_ID,
   label: "尺寸链",
   category: "engineering",
   icon: "dimension",
   order: 120,
+  defaultVisible: true
+};
+const ANNOTATION_DATUM_LAYER = {
+  id: ANNOTATION_DATUM_LAYER_ID,
+  label: "基准",
+  category: "engineering",
+  icon: "dimension",
+  order: 125,
+  defaultVisible: true
+};
+const ANNOTATION_GDT_LAYER = {
+  id: ANNOTATION_GDT_LAYER_ID,
+  label: "形位公差",
+  category: "engineering",
+  icon: "dimension",
+  order: 130,
   defaultVisible: true
 };
 function layerVisibilityStorageKey(sessionId) {
@@ -10157,9 +10831,7 @@ function legacyPartitionVisibilityKey(sessionId) {
 }
 function readLayerVisibility(sessionId, definitions, storage) {
   const saved = readSavedMap(sessionId, storage);
-  const result = Object.fromEntries(
-    Object.entries(saved).filter((entry) => typeof entry[1] === "boolean")
-  );
+  const result = {};
   for (const definition of definitions) {
     const savedValue = saved[definition.id];
     if (typeof savedValue === "boolean") {
@@ -10211,7 +10883,7 @@ const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_AC
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
 const dimensionChainLayerId = (chainId) => `${ANNOTATION_DIMENSION_CHAIN_LAYER_ID}:${chainId}`;
-const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER];
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIAMETER_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER, ANNOTATION_DATUM_LAYER, ANNOTATION_GDT_LAYER];
 const subscribeToNoLayers = () => () => void 0;
 const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
 const EMPTY_DIMENSION_STATE = {
@@ -10239,9 +10911,33 @@ const EMPTY_DIMENSION_CONTROLLER = {
   },
   dispose: () => void 0
 };
-function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, dimensionPlan, layerRegistry }) {
+const EMPTY_GDT_STATE = {
+  plan: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 },
+  busy: false,
+  previewHeld: false,
+  error: null
+};
+const EMPTY_GDT_CONTROLLER = {
+  state: { getSnapshot: () => EMPTY_GDT_STATE, subscribe: () => () => void 0 },
+  actions: {
+    refresh: async () => void 0,
+    edit: async () => void 0,
+    moveDatum: async () => void 0,
+    moveFrame: async () => void 0,
+    setOverride: async () => void 0,
+    clearOverride: async () => void 0,
+    confirm: async () => void 0,
+    cancel: async () => void 0,
+    undo: async () => void 0,
+    redo: async () => void 0,
+    setPreviewHeld: () => void 0
+  },
+  dispose: () => void 0
+};
+function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, gdt: suppliedGdt, dimensionPlan, layerRegistry }) {
   var _a2, _b, _c, _d;
   const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
+  const gdt = suppliedGdt ?? EMPTY_GDT_CONTROLLER;
   const snapshot = useObservable(runtime.snapshot);
   const viewport = useObservable(runtime.viewport);
   const selectedIds = useObservable(runtime.selection);
@@ -10249,12 +10945,14 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   const annotationState = useObservable(state);
   const partitionState = useObservable(partition.state);
   const dimensionState = useObservable(dimensionChain.state);
+  const gdtState = useObservable(gdt.state);
   const displaySnapshot = presentation.displaySnapshot ?? snapshot;
   const [importError, setImportError] = reactExports.useState(null);
   const [stagedDocumentNames, setStagedDocumentNames] = reactExports.useState([]);
   const [activePanel, setActivePanel] = reactExports.useState(null);
   const [panelWidth, setPanelWidth] = reactExports.useState(260);
   const [partitionView, setPartitionView] = reactExports.useState("functional");
+  const [selectedGdtIntentId, setSelectedGdtIntentId] = reactExports.useState(null);
   const registeredLayers = reactExports.useSyncExternalStore(
     (layerRegistry == null ? void 0 : layerRegistry.subscribeLayers) ?? subscribeToNoLayers,
     (layerRegistry == null ? void 0 : layerRegistry.getLayers) ?? readFallbackLayers,
@@ -10265,20 +10963,24 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     registeredLayers,
     typeof sessionStorage === "undefined" ? null : sessionStorage
   ));
-  const fitAfterAnalysis = reactExports.useRef(partitionState.busy);
   const displayedDrawingRef = reactExports.useRef(null);
+  const initializedViewportDrawingId = reactExports.useRef(null);
   const openingAngleVisible = layerVisibility[ANNOTATION_OPENING_ANGLE_LAYER_ID] ?? ANNOTATION_OPENING_ANGLE_LAYER.defaultVisible;
+  const diameterVisible = layerVisibility[ANNOTATION_DIAMETER_LAYER_ID] ?? ANNOTATION_DIAMETER_LAYER.defaultVisible;
+  const datumVisible = layerVisibility[ANNOTATION_DATUM_LAYER_ID] ?? ANNOTATION_DATUM_LAYER.defaultVisible;
+  const gdtVisible = layerVisibility[ANNOTATION_GDT_LAYER_ID] ?? ANNOTATION_GDT_LAYER.defaultVisible;
   const hasOpeningAngle = (displaySnapshot == null ? void 0 : displaySnapshot.document.annotations.some((annotation) => annotation.type === "dimension" && annotation.dimensionKind === "angular")) ?? false;
+  const hasDiameter = (displaySnapshot == null ? void 0 : displaySnapshot.document.annotations.some((annotation) => annotation.type === "dimension" && annotation.dimensionKind === "diameter")) ?? false;
   const surfaceSnapshot = reactExports.useMemo(() => displaySnapshot === null ? null : {
     ...displaySnapshot,
     document: {
       ...displaySnapshot.document,
       // Keep imported hatches and generated engineering dimensions. Source DXF
       // text remains hidden so the clean engineering canvas does not regress.
-      annotations: displaySnapshot.document.annotations.filter((annotation) => annotation.type === "section-hatch" || annotation.type === "dimension" && (annotation.dimensionKind !== "angular" || openingAngleVisible)),
+      annotations: displaySnapshot.document.annotations.filter((annotation) => annotation.type === "section-hatch" || annotation.type === "dimension" && ((annotation.dimensionKind !== "angular" || openingAngleVisible) && (annotation.dimensionKind !== "diameter" || diameterVisible))),
       relations: []
     }
-  }, [displaySnapshot, openingAngleVisible]);
+  }, [diameterVisible, displaySnapshot, openingAngleVisible]);
   const draft = partitionState.partition.draft;
   const confirmed = partitionState.partition.confirmed;
   const dimensionRadialExtent = Math.max(0, ...((_a2 = draft ?? confirmed) == null ? void 0 : _a2.segments.map(({ profile }) => profile.maxRadius)) ?? []);
@@ -10299,6 +11001,9 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
   const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID] ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
   const dimensionScheme = ((_b = dimensionState.plan.draft) == null ? void 0 : _b.axialScheme) ?? ((_c = dimensionState.plan.confirmed) == null ? void 0 : _c.axialScheme);
+  const gdtPlan = gdtState.plan.draft ?? gdtState.plan.confirmed;
+  const hasGdt = ((gdtPlan == null ? void 0 : gdtPlan.geometricTolerances.length) ?? 0) > 0;
+  const hasDatums = ((gdtPlan == null ? void 0 : gdtPlan.datums.length) ?? 0) > 0;
   const dimensionChainLayers = reactExports.useMemo(() => (dimensionScheme == null ? void 0 : dimensionScheme.chains.map((chain, index) => ({
     id: dimensionChainLayerId(chain.id),
     label: `尺寸链 ${index + 1}`,
@@ -10329,8 +11034,9 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
   }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
   const fitPaddingRef = reactExports.useRef(fitPadding);
   fitPaddingRef.current = fitPadding;
-  const previousViewportSizeRef = reactExports.useRef({ width: viewport.width, height: viewport.height });
+  const previousViewportSize = reactExports.useRef(null);
   const dimensionHistoryActive = dimensionState.plan.drawingRef !== void 0 && (dimensionState.plan.phase !== "idle" || dimensionState.plan.canUndo || dimensionState.plan.canRedo);
+  const gdtHistoryActive = hasGdt && gdtState.plan.drawingRef !== void 0 && (gdtState.plan.phase !== "idle" || gdtState.plan.canUndo || gdtState.plan.canRedo);
   reactExports.useEffect(() => {
     let active = true;
     let timer;
@@ -10356,23 +11062,19 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     const release = () => {
       partition.actions.setPreviewHeld(false);
       dimensionChain.actions.setPreviewHeld(false);
+      gdt.actions.setPreviewHeld(false);
     };
     window.addEventListener("blur", release);
     return () => {
       window.removeEventListener("blur", release);
       release();
     };
-  }, [dimensionChain, partition]);
+  }, [dimensionChain, gdt, partition]);
   reactExports.useEffect(() => {
     if (!partitionState.busy) {
-      void runtime.actions.refresh().then(() => {
-        if (!fitAfterAnalysis.current) return;
-        fitAfterAnalysis.current = false;
-        fitRuntimeToDrawing(runtime, void 0, fitPaddingRef.current);
-      });
+      void runtime.actions.refresh();
       return;
     }
-    fitAfterAnalysis.current = true;
     void runtime.actions.refresh();
     const timer = window.setInterval(() => {
       void runtime.actions.refresh();
@@ -10380,15 +11082,24 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     return () => window.clearInterval(timer);
   }, [partitionState.busy, runtime]);
   reactExports.useEffect(() => {
-    if (displaySnapshot === null) return;
-    fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
-  }, [displaySnapshot, runtime]);
-  reactExports.useEffect(() => {
-    const previous = previousViewportSizeRef.current;
-    previousViewportSizeRef.current = { width: viewport.width, height: viewport.height };
-    if (displaySnapshot === null || previous.width === viewport.width && previous.height === viewport.height) return;
-    fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
+    if (displaySnapshot === null || viewport.width <= 0 || viewport.height <= 0) return;
+    const drawingId = displaySnapshot.ref.drawingId;
+    if (initializedViewportDrawingId.current === drawingId) return;
+    initializedViewportDrawingId.current = drawingId;
+    const stored = readStoredViewport(drawingId);
+    runtime.actions.setViewport(stored === null ? fitViewportForSnapshot(displaySnapshot, viewport, fitPaddingRef.current) : { ...stored, width: viewport.width, height: viewport.height });
   }, [displaySnapshot, runtime, viewport.height, viewport.width]);
+  reactExports.useEffect(() => {
+    const previous = previousViewportSize.current;
+    previousViewportSize.current = { width: viewport.width, height: viewport.height };
+    if (previous === null || previous.width === viewport.width && previous.height === viewport.height) return;
+    runtime.actions.setViewport({ ...viewport, width: viewport.width, height: viewport.height });
+  }, [runtime, viewport]);
+  reactExports.useEffect(() => {
+    const drawingId = displaySnapshot == null ? void 0 : displaySnapshot.ref.drawingId;
+    if (!drawingId || initializedViewportDrawingId.current !== drawingId || viewport.width <= 0 || viewport.height <= 0) return;
+    writeStoredViewport(drawingId, viewport);
+  }, [displaySnapshot == null ? void 0 : displaySnapshot.ref.drawingId, viewport]);
   reactExports.useEffect(() => {
     if (displaySnapshot === null) return;
     const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
@@ -10396,10 +11107,12 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     displayedDrawingRef.current = key;
     if (previous !== null && previous !== key) void partition.actions.refresh().catch(() => void 0);
     if (previous !== null && previous !== key) void dimensionChain.actions.refresh().catch(() => void 0);
-  }, [dimensionChain, displaySnapshot, partition]);
+    if (previous !== null && previous !== key) void gdt.actions.refresh().catch(() => void 0);
+  }, [dimensionChain, displaySnapshot, gdt, partition]);
   reactExports.useEffect(() => {
     void dimensionChain.actions.refresh().catch(() => void 0);
-  }, [annotationState.activationEpoch, dimensionChain]);
+    void gdt.actions.refresh().catch(() => void 0);
+  }, [annotationState.activationEpoch, dimensionChain, gdt]);
   const beginImport = (drawing, documents) => {
     setImportError(null);
     void partition.actions.importFiles(drawing, documents).then(() => setActivePanel(null)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
@@ -10427,6 +11140,16 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
         scheme: dimensionScheme,
         controller: dimensionChain,
         editable: dimensionState.plan.phase === "editing"
+      }
+    ),
+    gdtPlan && hasGdt && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      GdtInspector,
+      {
+        draft: gdtPlan,
+        selectedIntentId: selectedGdtIntentId,
+        selectedGeometryIds: selectedIds,
+        controller: gdt,
+        onSelectIntent: setSelectedGdtIntentId
       }
     ),
     !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -10475,7 +11198,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               DrawingLayerManager,
               {
-                layers: [...registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme)).map((definition) => ({
+                layers: [...registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIAMETER_LAYER_ID && hasDiameter || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme) || id === ANNOTATION_DATUM_LAYER_ID && hasDatums || id === ANNOTATION_GDT_LAYER_ID && hasGdt).map((definition) => ({
                   definition,
                   visible: layerVisibility[definition.id] ?? definition.defaultVisible,
                   ...definition.id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && dimensionChainLayers.length > 0 ? {
@@ -10488,7 +11211,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                 onVisibilityChange: updateLayerVisibility
               }
             ),
-            (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
+            (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null || gdtState.error !== null) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
               partitionState.busy && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vai-partition-progress", "data-partition-progress": partitionState.partition.phase, role: "status", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "vai-partition-progress__pulse", "aria-hidden": "true" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status) })
@@ -10505,7 +11228,8 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                 }, children: "清除" })
               ] }),
               (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: importError ?? `边界未保存：${partitionState.error}` }),
-              dimensionState.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: `尺寸位置未保存：${dimensionState.error}；请重新拖动后再试` })
+              dimensionState.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: `尺寸位置未保存：${dimensionState.error}；请重新拖动后再试` }),
+              gdtState.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "vai-partition-error", role: "alert", children: `形位公差未保存：${gdtState.error}` })
             ] }),
             surfaceSnapshot !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
               DrawingSurface,
@@ -10516,7 +11240,7 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                 display: presentation.display,
                 sourceUrl: presentation.sourceUrl,
                 className: "vai-canvas vai-annotation-workspace__surface",
-                fitToDrawingOnResize: true,
+                fitToDrawingOnResize: false,
                 fitPadding,
                 onViewportChange: runtime.actions.setViewport,
                 onSelectionChange: runtime.actions.setSelection,
@@ -10545,25 +11269,48 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
                       visibleChainIds: visibleDimensionChainIds,
                       previewHeld: dimensionState.previewHeld,
                       onMoveChain: (chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset),
-                      onMoveCandidate: (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)
+                      onMoveCandidate: (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset),
+                      onChooseClosure: (chainId, candidateId) => dimensionChain.actions.chooseClosure(chainId, candidateId)
+                    }
+                  ),
+                  gdtPlan && (hasDatums || hasGdt) && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    GdtOverlay,
+                    {
+                      draft: gdtPlan,
+                      document: surfaceSnapshot.document,
+                      scale: viewport.scale,
+                      viewport,
+                      datumVisible,
+                      gdtVisible,
+                      previewHeld: gdtState.previewHeld,
+                      selectedIntentId: selectedGdtIntentId,
+                      onSelectIntent: setSelectedGdtIntentId,
+                      onMoveDatum: (datumId, position) => gdt.actions.moveDatum(datumId, position),
+                      onMoveGdtGroup: (intentIds, position) => gdt.actions.moveFrame(intentIds, position)
                     }
                   )
                 ] })
               }
             ),
-            dimensionState.plan.phase === "editing" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: dimensionChain, previewHeld: dimensionState.previewHeld, subject: "尺寸链" }) : partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
+            gdtState.plan.phase === "editing" && hasGdt ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: gdt, previewHeld: gdtState.previewHeld, subject: "形位公差" }) : dimensionState.plan.phase === "editing" ? /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: dimensionChain, previewHeld: dimensionState.previewHeld, subject: "尺寸链" }) : partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntimeExports.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
             displaySnapshot && /* @__PURE__ */ jsxRuntimeExports.jsx(
               WorkspaceToolbarView,
               {
                 snapshot: displaySnapshot,
                 viewport,
                 unavailable: partitionState.busy,
-                fitPadding,
-                canUndo: dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
-                canRedo: dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
-                onFit: runtime.actions.setViewport,
-                onUndo: () => dimensionHistoryActive ? dimensionChain.actions.undo() : partition.actions.undo(),
-                onRedo: () => dimensionHistoryActive ? dimensionChain.actions.redo() : partition.actions.redo(),
+                fitPadding: 1.12,
+                canUndo: gdtHistoryActive ? gdtState.plan.canUndo : dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
+                canRedo: gdtHistoryActive ? gdtState.plan.canRedo : dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
+                onFit: (nextViewport) => runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, nextViewport, 1.12)),
+                onUndo: () => gdtHistoryActive || dimensionHistoryActive ? runSharedAnnotationHistory(
+                  gdtHistoryActive ? () => gdt.actions.undo() : () => dimensionChain.actions.undo(),
+                  [() => gdt.actions.refresh(), () => dimensionChain.actions.refresh()]
+                ) : partition.actions.undo(),
+                onRedo: () => gdtHistoryActive || dimensionHistoryActive ? runSharedAnnotationHistory(
+                  gdtHistoryActive ? () => gdt.actions.redo() : () => dimensionChain.actions.redo(),
+                  [() => gdt.actions.refresh(), () => dimensionChain.actions.refresh()]
+                ) : partition.actions.redo(),
                 onUploadFiles: handleToolbarUpload,
                 uploadAccept: ANNOTATION_UPLOAD_ACCEPT,
                 uploadMultiple: true
@@ -10575,14 +11322,31 @@ function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, 
     }
   );
 }
-function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot(), padding = 1.2) {
-  if (snapshot === null) return;
-  const viewport = runtime.viewport.getSnapshot();
-  if (viewport.width <= 0 || viewport.height <= 0) return;
-  runtime.actions.setViewport(fitViewportToDrawing({
+function fitViewportForSnapshot(snapshot, viewport, padding) {
+  return fitViewportToDrawing({
     ...snapshot.document,
     annotations: snapshot.document.annotations.filter(({ type }) => type === "section-hatch" || type === "dimension")
-  }, viewport, padding));
+  }, viewport, padding);
+}
+function viewportStorageKey(drawingId) {
+  return `vectorai:annotation:viewport:${drawingId}`;
+}
+function readStoredViewport(drawingId) {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const value = JSON.parse(localStorage.getItem(viewportStorageKey(drawingId)) ?? "null");
+    if (!value || !Number.isFinite(value.x) || !Number.isFinite(value.y) || !Number.isFinite(value.scale) || !(value.scale > 0)) return null;
+    return { x: value.x, y: value.y, scale: value.scale };
+  } catch {
+    return null;
+  }
+}
+function writeStoredViewport(drawingId, viewport) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(viewportStorageKey(drawingId), JSON.stringify({ x: viewport.x, y: viewport.y, scale: viewport.scale }));
+  } catch {
+  }
 }
 function useObservable(observable) {
   return reactExports.useSyncExternalStore(observable.subscribe, observable.getSnapshot, observable.getSnapshot);
@@ -16009,7 +16773,8 @@ const entityAnchorSchema = discriminatedUnion("kind", [
 ]);
 const dimensionTargetSchema = object({
   geometryId: idSchema,
-  anchor: entityAnchorSchema
+  anchor: entityAnchorSchema,
+  labelPosition: vec2Schema.optional()
 }).strict();
 const dimensionCandidateSchema = object({
   targets: array(dimensionTargetSchema),
@@ -16049,7 +16814,7 @@ const toleranceProjectionSchema = object({
     context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
   }
 });
-const datumReferenceSchema = object({
+const drawingDatumReferenceSchema = object({
   datumId: idSchema,
   role: _enum(["primary", "secondary", "tertiary", "origin"]),
   geometryId: idSchema,
@@ -16130,7 +16895,7 @@ const annotationSchema = discriminatedUnion("type", [
     unit: _enum(["mm", "cm", "m", "deg"]).optional(),
     tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
     toleranceProjection: toleranceProjectionSchema.optional(),
-    datumReferences: array(datumReferenceSchema).optional(),
+    datumReferences: array(drawingDatumReferenceSchema).optional(),
     engineeringIntentId: idSchema.optional(),
     engineeringChainIds: array(idSchema).optional(),
     generationOrder: number().int().nonnegative().optional(),
@@ -16768,6 +17533,7 @@ const engineeringDatumSchema = object({
   name: string().min(1).max(120),
   geometryId: idSchema,
   anchor: entityAnchorSchema,
+  labelPosition: vec2Schema.optional(),
   role: _enum(["primary", "secondary", "tertiary", "origin"]),
   source: _enum(["document", "geometry", "manual", "ai-candidate"]),
   status: _enum(["candidate", "confirmed", "conflict", "stale"]),
@@ -16806,6 +17572,53 @@ const toleranceSpecSchema = object({
   status: engineeringStateSchema,
   evidenceIds: array(idSchema),
   diagnostics: array(engineeringDiagnosticSchema)
+}).strict();
+const geometricCharacteristicSchema = _enum([
+  "straightness",
+  "flatness",
+  "circularity",
+  "cylindricity",
+  "profile-line",
+  "profile-surface",
+  "parallelism",
+  "perpendicularity",
+  "angularity",
+  "position",
+  "coaxiality",
+  "symmetry",
+  "circular-runout",
+  "total-runout"
+]);
+const materialConditionSchema = _enum(["rfs", "mmc", "lmc"]);
+const geometricDatumFrameReferenceSchema = object({
+  datumId: idSchema,
+  materialCondition: materialConditionSchema.optional()
+}).strict();
+const toleranceZoneSchema = object({
+  shape: _enum(["linear", "diametrical", "spherical"]),
+  materialCondition: materialConditionSchema.optional(),
+  projectedZoneLength: number().finite().positive().optional()
+}).strict();
+const geometricToleranceIntentSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  characteristic: geometricCharacteristicSchema,
+  controlledTargets: array(dimensionTargetSchema),
+  toleranceZone: toleranceZoneSchema,
+  datumReferenceFrame: array(geometricDatumFrameReferenceSchema),
+  computed: object({
+    status: _enum(["pending", "resolved", "conflict", "stale"]),
+    value: number().finite().positive().optional(),
+    unit: literal("mm"),
+    ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+    inputDigest: idSchema.optional(),
+    diagnostics: array(engineeringDiagnosticSchema)
+  }).strict(),
+  override: object({ value: number().finite().positive() }).strict().optional(),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: _enum(["candidate", "pending-calculation", "resolved", "confirmed", "conflict", "stale"]),
+  evidenceIds: array(idSchema),
+  framePosition: vec2Schema.optional()
 }).strict();
 const dimensionChainSchema = object({
   id: idSchema,
@@ -16947,12 +17760,23 @@ const dimensionSchemeEditCommandSchema = discriminatedUnion("type", [
     expectedDrawingRef: drawingRefSchema
   }).strict()
 ]);
+const geometricToleranceEditCommandSchema = discriminatedUnion("type", [
+  object({ type: literal("datum.layout"), datumId: idSchema, position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("frame.layout"), intentIds: array(idSchema).min(1), position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("characteristic.set"), intentId: idSchema, characteristic: geometricCharacteristicSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("controlled-targets.set"), intentId: idSchema, targets: array(dimensionTargetSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("datum-frame.set"), intentId: idSchema, references: array(geometricDatumFrameReferenceSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("zone.set"), intentId: idSchema, zone: toleranceZoneSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("override.set"), intentId: idSchema, value: number().finite().positive(), expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("override.clear"), intentId: idSchema, expectedDrawingRef: drawingRefSchema }).strict()
+]);
 const engineeringAnnotationDraftSchema = object({
   version: literal(1),
   drawingRef: drawingRefSchema,
   datums: array(engineeringDatumSchema),
   intents: array(dimensionIntentSchema),
   tolerances: array(toleranceSpecSchema),
+  geometricTolerances: array(geometricToleranceIntentSchema).default([]),
   chains: array(dimensionChainSchema),
   dependencies: array(annotationDependencySchema),
   diagnostics: array(engineeringDiagnosticSchema),
@@ -17026,6 +17850,7 @@ function dimensionDescriptors() {
   return [
     dimensionDescriptor("getDimensionPlan", []),
     dimensionDescriptor("editDimensionScheme", [jsonParameter("command", "@vectorai/plugin-space-contracts#DimensionSchemeEditCommand", dimensionSchemeEditCommandSchema)]),
+    dimensionDescriptor("editGeometricTolerance", [jsonParameter("command", "@vectorai/plugin-space-contracts#GeometricToleranceEditCommand", geometricToleranceEditCommandSchema)]),
     dimensionDescriptor("confirmDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
     dimensionDescriptor("cancelDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
     dimensionDescriptor("undoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),

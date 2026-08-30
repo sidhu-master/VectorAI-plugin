@@ -9,7 +9,7 @@ describe('ANNOTATION_REMOTE', () => {
     expect(ANNOTATION_REMOTE.descriptors.map(({ method }) => method)).toEqual([
       'getSessionState', 'importDrawing', 'stageDocuments', 'clearDocuments', 'importAndAnalyze', 'supplementDocuments', 'getPartitionState', 'editPartition',
       'confirmPartition', 'cancelPartition', 'reopenPartition', 'undoPartition', 'redoPartition',
-      'getDimensionPlan', 'editDimensionScheme', 'confirmDimensionPlan', 'cancelDimensionPlan', 'undoDimensionPlan', 'redoDimensionPlan',
+      'getDimensionPlan', 'editDimensionScheme', 'editGeometricTolerance', 'confirmDimensionPlan', 'cancelDimensionPlan', 'undoDimensionPlan', 'redoDimensionPlan',
     ]);
     const [descriptor] = ANNOTATION_REMOTE.descriptors;
     expect(descriptor?.method).toBe('getSessionState');

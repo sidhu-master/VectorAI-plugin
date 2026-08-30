@@ -3,6 +3,7 @@
 import type { DimensionAnnotation, DimensionTarget, EntityAnchor, GeometryId } from '@vectorai/drawing-core';
 import type { DrawingRef } from '@vectorai/drawing-edit-protocol';
 import type { AxialDimensionScheme } from '../dimension-inference/types';
+import type { GeometricToleranceIntent } from '../gdt/types';
 
 export type EngineeringState = 'candidate' | 'resolved' | 'confirmed' | 'conflict' | 'stale';
 export type DimensionFunctionalRole = 'datum' | 'overall' | 'functional' | 'assembly' | 'process' | 'inspection' | 'auxiliary' | 'closure';
@@ -38,6 +39,8 @@ export interface EngineeringDatum {
   name: string;
   geometryId: GeometryId;
   anchor: EntityAnchor;
+  /** World-space position of the draggable datum label; never viewport-relative. */
+  labelPosition?: [number, number];
   role: 'primary' | 'secondary' | 'tertiary' | 'origin';
   source: 'document' | 'geometry' | 'manual' | 'ai-candidate';
   status: 'candidate' | 'confirmed' | 'conflict' | 'stale';
@@ -100,6 +103,7 @@ export interface EngineeringAnnotationDraft {
   datums: EngineeringDatum[];
   intents: DimensionIntent[];
   tolerances: ToleranceSpec[];
+  geometricTolerances: GeometricToleranceIntent[];
   chains: DimensionChain[];
   dependencies: AnnotationDependency[];
   diagnostics: EngineeringDiagnostic[];

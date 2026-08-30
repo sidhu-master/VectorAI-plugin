@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createDimensionChainStartTool,
   createEngineeringAnnotationTool,
+  createGdtStartTool,
   createPartitionStartTool,
   createPartitionStatusTool,
 } from './tools';
@@ -98,6 +99,52 @@ describe('drawing_auto_annotate', () => {
     expect(runExtensionProgram).toHaveBeenCalledOnce();
     expect(runExtensionProgram.mock.calls[0]?.[1]).toMatchObject({ targetNodeIds: ['left-lower', 'left-upper'] });
     expect(partitions.advanceDrawingRevision).not.toHaveBeenCalled();
+  });
+
+  it('does not report the automatic set complete before datum and GD&T recommendation', async () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const rise = 4 * Math.sqrt(3);
+    const journal = 12.9 - rise;
+    document.geometry = [
+      ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
+      ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
+    ].map(([id, start, end]) => ({ id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality }));
+    const tool = createEngineeringAnnotationTool({
+      getSnapshot: () => ({
+        version: 1, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+      runExtensionProgram: vi.fn(async () => ({ result: {
+        status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-1',
+        ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
+      } })) as never,
+    }, new AnnotationSessionStateStore(), undefined, undefined, {
+      name: 'drawing_auto_annotate', description: 'automatic set',
+      annotationKinds: ['opening-angle', 'diameter'], objective: 'automatic set',
+      afterAnnotations: () => ({
+        version: 1, phase: 'editing', drawingRef: { drawingId: 'drawing-1', revision: 2 },
+        canUndo: false, canRedo: false, updatedAt: 1,
+        draft: {
+          version: 1, drawingRef: { drawingId: 'drawing-1', revision: 2 }, datums: [], intents: [], tolerances: [],
+          geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+        },
+      }),
+      requiresGdtRecommendation: true,
+    });
+
+    await expect(tool.execute({}, {
+      agent: { id: 'session-auto' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({
+      status: 'awaiting-gdt-recommendation',
+      annotationSet: {
+        completionStatus: 'incomplete',
+        completionClaimAllowed: false,
+        gdtStatus: 'required',
+        requiredNextTools: ['drawing_query', 'drawing_gdt_start'],
+      },
+    });
   });
 
   it('sends deterministic axial-end opening annotations through the same preview seam', async () => {
@@ -202,6 +249,40 @@ describe('drawing_partition_status', () => {
     } as ToolRunContext)).resolves.toMatchObject({
       phase: 'editing',
       nextAction: 'review-or-edit-partition-and-continue-opening-angle-annotation-without-confirming',
+    });
+  });
+});
+
+describe('drawing_gdt_start', () => {
+  it('does not claim the automatic set complete from an unverified partial GD&T payload', async () => {
+    const tool = createGdtStartTool({
+      start: vi.fn(() => ({
+        version: 1 as const, phase: 'editing' as const,
+        drawingRef: { drawingId: 'drawing-1', revision: 2 }, canUndo: false, canRedo: false, updatedAt: 1,
+        draft: {
+          version: 1 as const, drawingRef: { drawingId: 'drawing-1', revision: 2 },
+          datums: [{ id: 'datum:A' }], geometricTolerances: [{ id: 'gdt:1', computed: { status: 'pending' } }],
+          axialScheme: { displayedCandidateIds: ['dimension:1'], closureCandidateIds: ['dimension:closure'] },
+          diagnostics: [],
+        },
+      } as never)),
+    });
+
+    await expect(tool.execute({
+      datums: [{ name: 'A', geometryId: 'edge:datum', role: 'primary' }],
+      controls: [{
+        id: 'gdt:1', characteristic: 'perpendicularity', geometryIds: ['edge:controlled'],
+        datumNames: ['A'], toleranceZoneShape: 'linear',
+      }],
+    }, {
+      agent: { id: 'session-auto' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({
+      status: 'editing', datumCount: 1, controlCount: 1,
+      annotationSet: {
+        completionStatus: 'incomplete', completionClaimAllowed: false,
+        gdtStatus: 'editing', dimensionChainStatus: 'editing',
+      },
     });
   });
 });

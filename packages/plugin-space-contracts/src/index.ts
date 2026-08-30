@@ -110,6 +110,7 @@ const entityAnchorSchema = z.discriminatedUnion('kind', [
 const dimensionTargetSchema = z.object({
   geometryId: idSchema,
   anchor: entityAnchorSchema,
+  labelPosition: vec2Schema.optional(),
 }).strict();
 const dimensionCandidateSchema = z.object({
   targets: z.array(dimensionTargetSchema),
@@ -149,7 +150,7 @@ const toleranceProjectionSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_EVIDENCE_REQUIRED' });
   }
 });
-const datumReferenceSchema = z.object({
+const drawingDatumReferenceSchema = z.object({
   datumId: idSchema,
   role: z.enum(['primary', 'secondary', 'tertiary', 'origin']),
   geometryId: idSchema,
@@ -217,7 +218,7 @@ const annotationSchema = z.discriminatedUnion('type', [
     unit: z.enum(['mm', 'cm', 'm', 'deg']).optional(),
     tolerance: z.object({ upper: z.number().optional(), lower: z.number().optional() }).strict().optional(),
     toleranceProjection: toleranceProjectionSchema.optional(),
-    datumReferences: z.array(datumReferenceSchema).optional(),
+    datumReferences: z.array(drawingDatumReferenceSchema).optional(),
     engineeringIntentId: idSchema.optional(),
     engineeringChainIds: z.array(idSchema).optional(),
     generationOrder: z.number().int().nonnegative().optional(),
@@ -961,6 +962,7 @@ const engineeringDatumSchema = z.object({
   name: z.string().min(1).max(120),
   geometryId: idSchema,
   anchor: entityAnchorSchema,
+  labelPosition: vec2Schema.optional(),
   role: z.enum(['primary', 'secondary', 'tertiary', 'origin']),
   source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
   status: z.enum(['candidate', 'confirmed', 'conflict', 'stale']),
@@ -999,6 +1001,42 @@ const toleranceSpecSchema = z.object({
   status: engineeringStateSchema,
   evidenceIds: z.array(idSchema),
   diagnostics: z.array(engineeringDiagnosticSchema),
+}).strict();
+export const geometricCharacteristicSchema = z.enum([
+  'straightness', 'flatness', 'circularity', 'cylindricity',
+  'profile-line', 'profile-surface', 'parallelism', 'perpendicularity', 'angularity',
+  'position', 'coaxiality', 'symmetry', 'circular-runout', 'total-runout',
+]);
+const materialConditionSchema = z.enum(['rfs', 'mmc', 'lmc']);
+const geometricDatumFrameReferenceSchema = z.object({
+  datumId: idSchema,
+  materialCondition: materialConditionSchema.optional(),
+}).strict();
+const toleranceZoneSchema = z.object({
+  shape: z.enum(['linear', 'diametrical', 'spherical']),
+  materialCondition: materialConditionSchema.optional(),
+  projectedZoneLength: z.number().finite().positive().optional(),
+}).strict();
+export const geometricToleranceIntentSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  characteristic: geometricCharacteristicSchema,
+  controlledTargets: z.array(dimensionTargetSchema),
+  toleranceZone: toleranceZoneSchema,
+  datumReferenceFrame: z.array(geometricDatumFrameReferenceSchema),
+  computed: z.object({
+    status: z.enum(['pending', 'resolved', 'conflict', 'stale']),
+    value: z.number().finite().positive().optional(),
+    unit: z.literal('mm'),
+    ruleRef: z.object({ id: idSchema, version: idSchema }).strict().optional(),
+    inputDigest: idSchema.optional(),
+    diagnostics: z.array(engineeringDiagnosticSchema),
+  }).strict(),
+  override: z.object({ value: z.number().finite().positive() }).strict().optional(),
+  source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
+  status: z.enum(['candidate', 'pending-calculation', 'resolved', 'confirmed', 'conflict', 'stale']),
+  evidenceIds: z.array(idSchema),
+  framePosition: vec2Schema.optional(),
 }).strict();
 const dimensionChainSchema = z.object({
   id: idSchema,
@@ -1135,12 +1173,24 @@ export const dimensionSchemeEditCommandSchema = z.discriminatedUnion('type', [
   }).strict(),
 ]);
 
+export const geometricToleranceEditCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('datum.layout'), datumId: idSchema, position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('frame.layout'), intentIds: z.array(idSchema).min(1), position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('characteristic.set'), intentId: idSchema, characteristic: geometricCharacteristicSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('controlled-targets.set'), intentId: idSchema, targets: z.array(dimensionTargetSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('datum-frame.set'), intentId: idSchema, references: z.array(geometricDatumFrameReferenceSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('zone.set'), intentId: idSchema, zone: toleranceZoneSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('override.set'), intentId: idSchema, value: z.number().finite().positive(), expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('override.clear'), intentId: idSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+]);
+
 export const engineeringAnnotationDraftSchema = z.object({
   version: z.literal(1),
   drawingRef: drawingRefSchema,
   datums: z.array(engineeringDatumSchema),
   intents: z.array(dimensionIntentSchema),
   tolerances: z.array(toleranceSpecSchema),
+  geometricTolerances: z.array(geometricToleranceIntentSchema).default([]),
   chains: z.array(dimensionChainSchema),
   dependencies: z.array(annotationDependencySchema),
   diagnostics: z.array(engineeringDiagnosticSchema),
@@ -1173,3 +1223,5 @@ export type EngineeringAnnotationRevision = z.infer<typeof engineeringAnnotation
 export type DimensionPlanSessionSnapshot = z.infer<typeof dimensionPlanSessionSnapshotSchema>;
 export type AxialDimensionScheme = z.infer<typeof axialDimensionSchemeSchema>;
 export type DimensionSchemeEditCommand = z.infer<typeof dimensionSchemeEditCommandSchema>;
+export type GeometricToleranceIntent = z.infer<typeof geometricToleranceIntentSchema>;
+export type GeometricToleranceEditCommand = z.infer<typeof geometricToleranceEditCommandSchema>;

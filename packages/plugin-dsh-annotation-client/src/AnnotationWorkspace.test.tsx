@@ -510,7 +510,7 @@ describe('AnnotationWorkspace', () => {
       layerRegistry={layerRegistry}
       dimensionPlan={{
         draft: {
-          version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
+          version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
         },
         generationOrder: [],
       }}

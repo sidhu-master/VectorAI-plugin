@@ -26,7 +26,7 @@ function draft(nominalValue = 20): EngineeringAnnotationDraft {
       nominalValue, unit: 'mm', functionalRole: 'closure', source: 'manual', status: 'confirmed',
       evidenceIds: ['manual:closure'],
     }],
-    tolerances: [],
+    tolerances: [], geometricTolerances: [],
     chains: [{
       id: 'chain-1', drawingRef: { drawingId: 'drawing-1', revision: 1 }, datumIds: [],
       members: [
@@ -83,6 +83,51 @@ function inferredDraft(status: AxialDimensionScheme['status'] = 'resolved'): Eng
 }
 
 describe('DimensionPlanStore', () => {
+  it('persists datum label movement directly on a confirmed annotation plan', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    const value = draft();
+    value.datums = [{
+      id: 'datum:A', drawingRef, name: 'A', geometryId: 'line-1' as GeometryId, anchor: { kind: 'start' },
+      role: 'primary', source: 'ai-candidate', status: 'candidate', evidenceIds: [],
+    }];
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+    store.confirm('session', drawingRef);
+
+    const moved = store.editGeometricTolerance('session', {
+      type: 'datum.layout', datumId: 'datum:A', position: [42, -18], expectedDrawingRef: drawingRef,
+    });
+
+    expect(moved.phase).toBe('confirmed');
+    expect(moved.confirmed?.datums[0]?.labelPosition).toEqual([42, -18]);
+  });
+
+  it('persists one dragged geometric-tolerance frame position for every row in its visual group', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    const value = draft();
+    value.geometricTolerances = ['gdt:1', 'gdt:2', 'gdt:3'].map((id, index) => ({
+      id, drawingRef, characteristic: ['straightness', 'circularity', 'cylindricity'][index] as 'straightness',
+      controlledTargets: [{ geometryId: 'line-1' as GeometryId, anchor: { kind: 'end' } }],
+      toleranceZone: { shape: 'linear' }, datumReferenceFrame: [],
+      computed: { status: 'resolved', value: 0.01, unit: 'mm', diagnostics: [] },
+      source: 'ai-candidate', status: 'confirmed', evidenceIds: [],
+    }));
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+    store.confirm('session', drawingRef);
+
+    const moved = store.editGeometricTolerance('session', {
+      type: 'frame.layout', intentIds: ['gdt:1', 'gdt:2', 'gdt:3'], position: [120, 80], expectedDrawingRef: drawingRef,
+    } as never);
+
+    expect(moved.phase).toBe('confirmed');
+    expect(moved.confirmed?.geometricTolerances.map(({ framePosition, status }) => ({ framePosition, status }))).toEqual([
+      { framePosition: [120, 80], status: 'confirmed' },
+      { framePosition: [120, 80], status: 'confirmed' },
+      { framePosition: [120, 80], status: 'confirmed' },
+    ]);
+  });
+
   it('tracks draft edits, confirms atomically, then undoes and redoes confirmation', () => {
     const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
     store.begin('session', drawingRef);
@@ -211,6 +256,35 @@ describe('DimensionPlanStore', () => {
     expect(store.redo('session', drawingRef).draft?.axialScheme?.layout?.chainNormalOffsets).toEqual([
       { chainId: 'chain:overall', normalOffset: 18 },
     ]);
+  });
+
+  it('switches a confirmed chain closure immediately without reopening the save toolbar', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    const value = inferredDraft();
+    value.axialScheme!.chains[0]!.alternativeClosureCandidateIds = ['candidate:local'];
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+    store.confirm('session', drawingRef);
+
+    const switched = store.editScheme('session', {
+      type: 'closure.choose', chainId: 'chain:overall', candidateId: 'candidate:local', expectedDrawingRef: drawingRef,
+    });
+
+    expect(switched.phase).toBe('confirmed');
+    expect(switched.confirmed?.axialScheme?.chains[0]).toMatchObject({
+      closureCandidateId: 'candidate:local',
+      childCandidateIds: ['candidate:closure'],
+    });
+  });
+
+  it('hydrates switchable closure candidates for legacy confirmed schemes', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    store.begin('session', drawingRef);
+    store.setDraft('session', inferredDraft());
+    store.confirm('session', drawingRef);
+
+    expect(store.get('session').confirmed?.axialScheme?.chains[0]?.alternativeClosureCandidateIds)
+      .toContain('candidate:local');
   });
 
   it.each(['needs-review', 'conflict', 'stale'] as const)('blocks confirmation for a %s inferred scheme', (status) => {

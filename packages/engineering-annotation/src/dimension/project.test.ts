@@ -31,6 +31,7 @@ function draft(): EngineeringAnnotationDraft {
       },
       status: 'resolved', evidenceIds: ['rule:rule-a@1'], diagnostics: [],
     }],
+    geometricTolerances: [],
     chains: [{
       id: 'chain-a', drawingRef: { drawingId: 'drawing-1', revision: 1 }, datumIds: ['datum-a'],
       members: [{ dimensionIntentId: 'intent-a', coefficient: 1, role: 'functional' }],

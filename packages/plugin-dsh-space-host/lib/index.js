@@ -245,6 +245,9 @@ function canonicalSemanticString(document) {
   const semantic = Object.fromEntries(
     Object.entries(document).filter(([key]) => key !== "metadata")
   );
+  for (const plane of ["geometry", "annotations", "relations", "features"]) {
+    semantic[plane] = [...document[plane]].sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  }
   return canonicalString(semantic);
 }
 function normalize(value2) {
@@ -13161,7 +13164,7 @@ const toleranceProjectionSchema = object$1({
     context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
   }
 });
-const datumReferenceSchema = object$1({
+const drawingDatumReferenceSchema = object$1({
   datumId: idSchema,
   role: _enum(["primary", "secondary", "tertiary", "origin"]),
   geometryId: idSchema,
@@ -13242,7 +13245,7 @@ const annotationSchema = discriminatedUnion("type", [
     unit: _enum(["mm", "cm", "m", "deg"]).optional(),
     tolerance: object$1({ upper: number().optional(), lower: number().optional() }).strict().optional(),
     toleranceProjection: toleranceProjectionSchema.optional(),
-    datumReferences: array$1(datumReferenceSchema).optional(),
+    datumReferences: array$1(drawingDatumReferenceSchema).optional(),
     engineeringIntentId: idSchema.optional(),
     engineeringChainIds: array$1(idSchema).optional(),
     generationOrder: number().int().nonnegative().optional(),
@@ -13919,6 +13922,52 @@ const toleranceSpecSchema = object$1({
   evidenceIds: array$1(idSchema),
   diagnostics: array$1(engineeringDiagnosticSchema)
 }).strict();
+const geometricCharacteristicSchema = _enum([
+  "straightness",
+  "flatness",
+  "circularity",
+  "cylindricity",
+  "profile-line",
+  "profile-surface",
+  "parallelism",
+  "perpendicularity",
+  "angularity",
+  "position",
+  "coaxiality",
+  "symmetry",
+  "circular-runout",
+  "total-runout"
+]);
+const materialConditionSchema = _enum(["rfs", "mmc", "lmc"]);
+const geometricDatumFrameReferenceSchema = object$1({
+  datumId: idSchema,
+  materialCondition: materialConditionSchema.optional()
+}).strict();
+const toleranceZoneSchema = object$1({
+  shape: _enum(["linear", "diametrical", "spherical"]),
+  materialCondition: materialConditionSchema.optional(),
+  projectedZoneLength: number().finite().positive().optional()
+}).strict();
+const geometricToleranceIntentSchema = object$1({
+  id: idSchema,
+  drawingRef: drawingRefSchema$1,
+  characteristic: geometricCharacteristicSchema,
+  controlledTargets: array$1(dimensionTargetSchema),
+  toleranceZone: toleranceZoneSchema,
+  datumReferenceFrame: array$1(geometricDatumFrameReferenceSchema),
+  computed: object$1({
+    status: _enum(["pending", "resolved", "conflict", "stale"]),
+    value: number().finite().positive().optional(),
+    unit: literal$1("mm"),
+    ruleRef: object$1({ id: idSchema, version: idSchema }).strict().optional(),
+    inputDigest: idSchema.optional(),
+    diagnostics: array$1(engineeringDiagnosticSchema)
+  }).strict(),
+  override: object$1({ value: number().finite().positive() }).strict().optional(),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: _enum(["candidate", "pending-calculation", "resolved", "confirmed", "conflict", "stale"]),
+  evidenceIds: array$1(idSchema)
+}).strict();
 const dimensionChainSchema = object$1({
   id: idSchema,
   drawingRef: drawingRefSchema$1,
@@ -14059,12 +14108,21 @@ discriminatedUnion("type", [
     expectedDrawingRef: drawingRefSchema$1
   }).strict()
 ]);
+discriminatedUnion("type", [
+  object$1({ type: literal$1("characteristic.set"), intentId: idSchema, characteristic: geometricCharacteristicSchema, expectedDrawingRef: drawingRefSchema$1 }).strict(),
+  object$1({ type: literal$1("controlled-targets.set"), intentId: idSchema, targets: array$1(dimensionTargetSchema), expectedDrawingRef: drawingRefSchema$1 }).strict(),
+  object$1({ type: literal$1("datum-frame.set"), intentId: idSchema, references: array$1(geometricDatumFrameReferenceSchema), expectedDrawingRef: drawingRefSchema$1 }).strict(),
+  object$1({ type: literal$1("zone.set"), intentId: idSchema, zone: toleranceZoneSchema, expectedDrawingRef: drawingRefSchema$1 }).strict(),
+  object$1({ type: literal$1("override.set"), intentId: idSchema, value: number().finite().positive(), expectedDrawingRef: drawingRefSchema$1 }).strict(),
+  object$1({ type: literal$1("override.clear"), intentId: idSchema, expectedDrawingRef: drawingRefSchema$1 }).strict()
+]);
 const engineeringAnnotationDraftSchema = object$1({
   version: literal$1(1),
   drawingRef: drawingRefSchema$1,
   datums: array$1(engineeringDatumSchema),
   intents: array$1(dimensionIntentSchema),
   tolerances: array$1(toleranceSpecSchema),
+  geometricTolerances: array$1(geometricToleranceIntentSchema).default([]),
   chains: array$1(dimensionChainSchema),
   dependencies: array$1(annotationDependencySchema),
   diagnostics: array$1(engineeringDiagnosticSchema),

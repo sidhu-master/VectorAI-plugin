@@ -100,6 +100,7 @@ const draft: EngineeringAnnotationDraft = {
   datums: [],
   intents,
   tolerances: [resolved.spec, closureTolerance],
+  geometricTolerances: [],
   chains: [{
     id: 'chain-main', drawingRef, name: '主尺寸链', datumIds: [],
     members: [

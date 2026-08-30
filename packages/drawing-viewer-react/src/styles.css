@@ -733,6 +733,16 @@
   stroke: #22d3ee;
 }
 
+.vai-entity--diameter-dimension {
+  color: #22d3ee;
+  fill: #22d3ee;
+  stroke: #22d3ee;
+}
+
+.vai-entity--diameter-dimension [data-diameter-role="extension"] {
+  opacity: .55;
+}
+
 .vai-entity--section-hatch {
   color: #facc15;
   stroke: #facc15;

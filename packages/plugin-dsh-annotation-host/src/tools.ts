@@ -2,7 +2,12 @@
 
 import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { planEngineeringAnnotations, type AxialInferencePolicy } from '@vectorai/engineering-annotation';
+import {
+  DEFAULT_AUTOMATIC_ANNOTATION_KINDS,
+  planEngineeringAnnotations,
+  type AxialInferencePolicy,
+  type DeterministicAnnotationKind,
+} from '@vectorai/engineering-annotation';
 import type {
   DrawingExtensionProgramWorkflow,
   DrawingSpaceExtensionHost,
@@ -11,16 +16,30 @@ import type {
 } from '@vectorai/plugin-space-contracts';
 import type { AnnotationSessionStateStore } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
+import type { GdtRecommendation } from './gdt-grounding';
 
 export function createEngineeringAnnotationTool(
   host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
   sessions: AnnotationSessionStateStore,
   partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
   dimensionPlans?: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'>,
+  options: {
+    name: string;
+    description: string;
+    annotationKinds: readonly DeterministicAnnotationKind[];
+    objective: string;
+    afterAnnotations?: (agent: Agent, signal?: AbortSignal) => DimensionPlanSessionSnapshot | Promise<DimensionPlanSessionSnapshot>;
+    requiresGdtRecommendation?: boolean;
+  } = {
+    name: 'drawing_auto_annotate',
+    description: 'AUTHORITATIVE ROUTE for generic automatic or complete engineering annotation. Call it directly without drawing_observe or individual annotation tools. The registered set runs as one host-owned workflow.',
+    annotationKinds: DEFAULT_AUTOMATIC_ANNOTATION_KINDS,
+    objective: '工程图纸自动标注集',
+  },
 ) {
   return defineTool({
-    name: 'drawing_auto_annotate',
-    description: 'Create only deterministic axial opening-angle dimensions. An editable shaft partition may remain unconfirmed and is preserved independently. This tool never creates diameter, radius, or other dimensions and never edits partition boundaries.',
+    name: options.name,
+    description: options.description,
     parameters: {},
     output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(_args, exec) {
@@ -36,44 +55,112 @@ export function createEngineeringAnnotationTool(
       const plan = planEngineeringAnnotations({
         document: snapshot.document,
         ref: snapshot.ref,
-        objective: '工程图纸自动标注',
+        objective: options.objective,
+        annotationKinds: options.annotationKinds,
       });
       const workflowId = `annotation_${sessionId}_${Date.now()}`;
       sessions.start(sessionId, workflowId);
-      if (!plan.program) {
-        sessions.finish(sessionId, 'completed');
-        return {
-          status: 'no-effect',
-          pending: plan.pending,
-          suppressed: plan.suppressed,
-        } as unknown as JsonValue;
-      }
       try {
-        const workflow = await host.runExtensionProgram(agent, {
-          targetNodeIds: plan.targetNodeIds,
-          program: plan.program,
-        }, exec.signal);
-        if (workflow.result.status === 'committed'
-          && partition?.drawingRef?.drawingId === snapshot.ref.drawingId
-          && partition.drawingRef.revision === snapshot.ref.revision) {
-          partitions?.advanceDrawingRevision(sessionId, snapshot.ref, workflow.result.ref);
-          if (dimensionPlans?.get(sessionId).draft?.axialScheme) {
-            dimensionPlans.markNeedsRebase(sessionId, workflow.result.ref);
+        let status = 'no-effect';
+        let result: DrawingExtensionProgramWorkflow['result'] | undefined;
+        if (plan.program) {
+          const workflow = await host.runExtensionProgram(agent, {
+            targetNodeIds: plan.targetNodeIds,
+            program: plan.program,
+          }, exec.signal);
+          status = workflow.result.status;
+          result = workflow.result;
+          if (workflow.result.status === 'committed'
+            && partition?.drawingRef?.drawingId === snapshot.ref.drawingId
+            && partition.drawingRef.revision === snapshot.ref.revision) {
+            partitions?.advanceDrawingRevision(sessionId, snapshot.ref, workflow.result.ref);
+            if (dimensionPlans?.get(sessionId).draft?.axialScheme) {
+              dimensionPlans.markNeedsRebase(sessionId, workflow.result.ref);
+            }
+          }
+          if (workflow.result.status !== 'committed' && workflow.result.status !== 'already-satisfied') {
+            sessions.finish(sessionId, terminalStatus(workflow.result.status));
+            return {
+              status,
+              annotations: plan.annotations.map(({ id }) => id),
+              pending: plan.pending,
+              suppressed: plan.suppressed,
+              result,
+            } as unknown as JsonValue;
           }
         }
-        sessions.finish(sessionId, terminalStatus(workflow.result.status));
+        const followup = await options.afterAnnotations?.(agent, exec.signal);
+        sessions.finish(sessionId, 'completed');
+        const dimensionDraft = followup?.draft;
+        const datumCount = dimensionDraft?.datums.length ?? 0;
+        const gdtCount = dimensionDraft?.geometricTolerances.length ?? 0;
+        const gdtCoverageComplete = dimensionDraft?.diagnostics.some(({ code }) => code === 'GDT_COVERAGE_COMPLETE') === true;
+        const automaticSetReady = options.requiresGdtRecommendation !== true
+          || dimensionDraft?.axialScheme !== undefined && datumCount > 0 && gdtCount > 0 && gdtCoverageComplete;
+        const awaitingGdt = options.requiresGdtRecommendation === true && !automaticSetReady;
         return {
-          status: workflow.result.status,
+          status: awaitingGdt ? 'awaiting-gdt-recommendation' : status,
+          ...(awaitingGdt ? { deterministicStatus: status } : {}),
           annotations: plan.annotations.map(({ id }) => id),
           pending: plan.pending,
           suppressed: plan.suppressed,
-          result: workflow.result,
+          ...(result === undefined ? {} : { result }),
+          ...(followup === undefined ? {} : {
+            annotationSet: {
+              deterministicKinds: [...options.annotationKinds],
+              dimensionChainStatus: followup.phase,
+              displayedDimensionCount: followup.draft?.axialScheme?.displayedCandidateIds.length ?? 0,
+              closureCount: followup.draft?.axialScheme?.closureCandidateIds.length ?? 0,
+              datumCount,
+              geometricToleranceCount: gdtCount,
+              ...(awaitingGdt ? {
+                gdtStatus: 'required',
+                completionStatus: 'incomplete',
+                completionClaimAllowed: false,
+                requiredNextTools: ['drawing_query', 'drawing_gdt_start'],
+                nextAction: 'inspect-grounded-geometry-and-call-drawing_gdt_start',
+              } : options.requiresGdtRecommendation === true ? {
+                gdtStatus: followup.phase,
+                completionStatus: 'preview-ready',
+                completionClaimAllowed: true,
+                nextAction: 'review-complete-automatic-annotation-preview',
+              } : { nextAction: 'preview-or-confirm' }),
+            },
+          }),
         } as unknown as JsonValue;
       } catch (error) {
         sessions.finish(sessionId, 'failed', error instanceof Error ? error.message : String(error));
         throw error;
       }
     },
+  });
+}
+
+export function createOpeningAngleAnnotationTool(
+  host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
+  sessions: AnnotationSessionStateStore,
+  partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
+  dimensionPlans?: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'>,
+) {
+  return createEngineeringAnnotationTool(host, sessions, partitions, dimensionPlans, {
+    name: 'drawing_opening_angle_annotate',
+    description: 'Create only deterministic axial opening-angle dimensions when the user explicitly asks for opening-angle annotation. This tool never creates diameters, radii, tolerances, GD&T, or dimension chains.',
+    annotationKinds: ['opening-angle'],
+    objective: '工程图纸开角标注',
+  });
+}
+
+export function createDiameterAnnotationTool(
+  host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
+  sessions: AnnotationSessionStateStore,
+  partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
+  dimensionPlans?: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'>,
+) {
+  return createEngineeringAnnotationTool(host, sessions, partitions, dimensionPlans, {
+    name: 'drawing_diameter_annotate',
+    description: 'Create only deterministic simple shaft-diameter dimensions when the user explicitly asks to mark diameters or shaft diameters. Local geometry pairs opposite cylindrical profile edges and calculates every diameter. This tool never creates opening angles, radii, tolerances, GD&T, or dimension chains.',
+    annotationKinds: ['diameter'],
+    objective: '工程图纸直径标注',
   });
 }
 
@@ -164,6 +251,73 @@ export function createDimensionChainStartTool(workflow: {
         closureCount: snapshot.draft?.axialScheme?.closureCandidateIds.length ?? 0,
         diagnostics: snapshot.draft?.axialScheme?.diagnostics.map(({ code }) => code) ?? [],
         nextAction: snapshot.draft?.axialScheme?.status === 'resolved' ? 'preview-or-confirm' : 'review-dimension-chain',
+      } as unknown as JsonValue;
+    },
+  });
+}
+
+export function createGdtStartTool(workflow: {
+  start(agent: Agent, recommendation: GdtRecommendation): DimensionPlanSessionSnapshot;
+}) {
+  return defineTool({
+    name: 'drawing_gdt_start',
+    description: 'Start datum and GD&T preview only when the user explicitly requests datum or geometric-tolerance annotation as a standalone task. NEVER call this tool for a generic automatic/complete annotation request; drawing_auto_annotate owns and executes that full workflow internally. For a standalone request, use drawing_query stable node IDs only—never drawing_observe cN candidate keys. Recommend identities and characteristic types only; never coordinates or tolerance values.',
+    parameters: {
+      datums: {
+        type: 'array',
+        required: true,
+        description: 'Recommended datum features grounded to geometry IDs.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            name: { type: 'string', required: true }, geometryId: { type: 'string', required: true },
+            role: { type: 'string', enum: ['primary', 'secondary', 'tertiary', 'origin'], required: true },
+          },
+        },
+      },
+      controls: {
+        type: 'array',
+        required: true,
+        description: 'Recommended controlled features and GD&T characteristic identities.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true },
+            characteristic: { type: 'string', enum: ['straightness', 'flatness', 'circularity', 'cylindricity', 'profile-line', 'profile-surface', 'parallelism', 'perpendicularity', 'angularity', 'position', 'coaxiality', 'symmetry', 'circular-runout', 'total-runout'], required: true },
+            geometryIds: { type: 'array', items: { type: 'string' }, required: true },
+            datumNames: { type: 'array', items: { type: 'string' }, required: true },
+            toleranceZoneShape: { type: 'string', enum: ['linear', 'diametrical', 'spherical'], required: true },
+            materialCondition: { type: 'string', enum: ['rfs', 'mmc', 'lmc'] },
+          },
+        },
+      },
+    },
+    output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+    async execute(args, exec) {
+      if (!exec.agent) throw new Error('DRAWING_SESSION_REQUIRED');
+      const snapshot = workflow.start(exec.agent, args as unknown as GdtRecommendation);
+      const draft = snapshot.draft;
+      const datumCount = draft?.datums.length ?? 0;
+      const controlCount = draft?.geometricTolerances.length ?? 0;
+      const dimensionChainAvailable = draft?.axialScheme !== undefined;
+      const gdtCoverageComplete = draft?.diagnostics.some(({ code }) => code === 'GDT_COVERAGE_COMPLETE') === true;
+      const automaticSetReady = dimensionChainAvailable && datumCount > 0 && controlCount > 0 && gdtCoverageComplete;
+      return {
+        status: snapshot.phase,
+        datumCount,
+        controlCount,
+        pendingCalculationCount: draft?.geometricTolerances.filter(({ computed }) => computed.status === 'pending').length ?? 0,
+        diagnostics: draft?.diagnostics.map(({ code }) => code) ?? [],
+        nextAction: 'review-gdt-preview',
+        annotationSet: {
+          completionStatus: automaticSetReady ? 'preview-ready' : 'incomplete',
+          completionClaimAllowed: automaticSetReady,
+          dimensionChainStatus: dimensionChainAvailable ? snapshot.phase : 'missing',
+          gdtStatus: datumCount > 0 && controlCount > 0 ? snapshot.phase : 'incomplete',
+          nextAction: automaticSetReady ? 'review-complete-automatic-annotation-preview' : 'complete-missing-annotation-stages',
+        },
       } as unknown as JsonValue;
     },
   });

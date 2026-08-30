@@ -34,6 +34,7 @@ function draft(): EngineeringAnnotationDraft {
       source: 'enterprise-rule', ruleRef: { id: 'corp-shaft', version: '2026.1' }, inputs: {},
       status: 'candidate', evidenceIds: ['rule:corp-shaft'], diagnostics: [],
     }],
+    geometricTolerances: [],
     chains: [{
       id: 'chain-1', drawingRef: ref, datumIds: ['datum-a'],
       members: [

@@ -34,6 +34,7 @@ export function projectAxialDimensionScheme(input: ProjectAxialSchemeInput): Eng
     datums: [],
     intents,
     tolerances: [],
+    geometricTolerances: [],
     chains,
     dependencies,
     diagnostics: structuredClone(input.scheme.diagnostics),

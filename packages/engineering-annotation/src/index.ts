@@ -29,3 +29,8 @@ export * from './tolerance/rules';
 export * from './tolerance/digest';
 export * from './tolerance/evaluate';
 export * from './opening-angle/index';
+export * from './diameter/index';
+export * from './gdt/types';
+export * from './gdt/value';
+export * from './gdt/edit';
+export * from './gdt/validate';

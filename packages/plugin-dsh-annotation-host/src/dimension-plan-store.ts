@@ -2,10 +2,12 @@
 
 import {
   analyzeDimensionChain,
+  applyGeometricToleranceEdit,
   applyDimensionSchemeEdit,
   orderDimensionIntents,
   projectAxialDimensionScheme,
   validateEngineeringDraft,
+  withSwitchableClosureAlternatives,
   type AxialDimensionScheme,
   type EngineeringAnnotationDraft,
   type EngineeringDiagnostic,
@@ -17,6 +19,7 @@ import {
   type DimensionPlanSessionSnapshot,
   type DimensionSchemeEditCommand,
   type DrawingRef,
+  type GeometricToleranceEditCommand,
 } from '@vectorai/plugin-space-contracts';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -46,7 +49,7 @@ export class DimensionPlanStore {
   ) {}
 
   get(sessionId: string): DimensionPlanSessionSnapshot {
-    return structuredClone(this.#envelope(sessionId).snapshot);
+    return hydrateClosureAlternatives(structuredClone(this.#envelope(sessionId).snapshot));
   }
 
   begin(sessionId: string, drawingRef: DrawingRef): DimensionPlanSessionSnapshot {
@@ -70,7 +73,7 @@ export class DimensionPlanStore {
       version: 1,
       phase: 'editing',
       drawingRef: parsedDraft.drawingRef,
-      draft: parsedDraft,
+      draft: parsedDraft as unknown as DimensionPlanSessionSnapshot['draft'],
       ...(state.snapshot.confirmed === undefined ? {} : { confirmed: state.snapshot.confirmed }),
       canUndo: true,
       canRedo: false,
@@ -81,22 +84,32 @@ export class DimensionPlanStore {
   editScheme(sessionId: string, command: DimensionSchemeEditCommand): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, command.expectedDrawingRef);
-    if ((command.type === 'chain.layout' || command.type === 'candidate.layout')
+    if ((command.type === 'chain.layout' || command.type === 'candidate.layout' || command.type === 'closure.choose')
       && state.snapshot.phase === 'confirmed'
       && state.snapshot.confirmed?.axialScheme) {
-      const scheme = applyDimensionSchemeEdit(state.snapshot.confirmed.axialScheme as unknown as AxialDimensionScheme, command.type === 'chain.layout'
-        ? { type: command.type, chainId: command.chainId, normalOffset: command.normalOffset }
-        : { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset });
+      const edit = command.type === 'chain.layout'
+        ? { type: command.type, chainId: command.chainId, normalOffset: command.normalOffset } as const
+        : command.type === 'candidate.layout'
+          ? { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset } as const
+          : { type: command.type, chainId: command.chainId, candidateId: command.candidateId } as const;
+      const scheme = applyDimensionSchemeEdit(
+        withSwitchableClosureAlternatives(state.snapshot.confirmed.axialScheme as unknown as AxialDimensionScheme),
+        edit,
+      );
       return this.#push(sessionId, {
         ...state.snapshot,
         phase: 'confirmed',
-        confirmed: { ...state.snapshot.confirmed, axialScheme: scheme },
+        confirmed: {
+          ...state.snapshot.confirmed,
+          axialScheme: scheme as unknown as NonNullable<DimensionPlanSessionSnapshot['confirmed']>['axialScheme'],
+        },
         canUndo: true,
         canRedo: false,
         updatedAt: this.ports.now(),
       });
     }
-    const draft = state.snapshot.draft ?? editableDraftFrom(state.snapshot.confirmed);
+    const draft = (state.snapshot.draft as unknown as EngineeringAnnotationDraft | undefined)
+      ?? editableDraftFrom(state.snapshot.confirmed);
     if (!draft?.axialScheme) throw new Error('DIMENSION_SCHEME_DRAFT_REQUIRED');
     const edit = command.type === 'candidate.display'
       ? { type: command.type, candidateId: command.candidateId, displayed: command.displayed } as const
@@ -105,11 +118,90 @@ export class DimensionPlanStore {
         : command.type === 'candidate.layout'
           ? { type: command.type, candidateId: command.candidateId, normalOffset: command.normalOffset } as const
           : { type: command.type, chainId: command.chainId, normalOffset: command.normalOffset } as const;
-    const scheme = applyDimensionSchemeEdit(draft.axialScheme as unknown as AxialDimensionScheme, edit);
+    const scheme = applyDimensionSchemeEdit(
+      withSwitchableClosureAlternatives(draft.axialScheme as unknown as AxialDimensionScheme),
+      edit,
+    );
     return this.setDraft(sessionId, projectAxialDimensionScheme({
       scheme,
       ...(draft.baseRevisionId === undefined ? {} : { baseRevisionId: draft.baseRevisionId }),
     }));
+  }
+
+  editGeometricTolerance(sessionId: string, command: GeometricToleranceEditCommand): DimensionPlanSessionSnapshot {
+    const state = this.#envelope(sessionId);
+    requireRef(state.snapshot, command.expectedDrawingRef);
+    if (command.type === 'datum.layout') {
+      const move = <T extends { datums: Array<{ id: string; labelPosition?: unknown }> }>(value: T): T => {
+        const index = value.datums.findIndex(({ id }) => id === command.datumId);
+        if (index < 0) throw new Error('GDT_DATUM_UNKNOWN');
+        const datums = [...value.datums];
+        datums[index] = { ...datums[index]!, labelPosition: [...command.position] as [number, number] };
+        return { ...value, datums } as T;
+      };
+      if (state.snapshot.phase === 'confirmed' && state.snapshot.confirmed) {
+        return this.#push(sessionId, {
+          ...state.snapshot,
+          phase: 'confirmed',
+          confirmed: move(state.snapshot.confirmed),
+          canUndo: true,
+          canRedo: false,
+          updatedAt: this.ports.now(),
+        });
+      }
+      if (!state.snapshot.draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+      return this.#push(sessionId, {
+        ...state.snapshot,
+        draft: engineeringAnnotationDraftSchema.parse(compact(move(state.snapshot.draft))),
+        canUndo: true,
+        canRedo: false,
+        updatedAt: this.ports.now(),
+      });
+    }
+    if (command.type === 'frame.layout') {
+      const move = <T extends { geometricTolerances: Array<{ id: string; framePosition?: unknown }> }>(value: T): T => {
+        const ids = new Set(command.intentIds);
+        if (ids.size !== command.intentIds.length || value.geometricTolerances.filter(({ id }) => ids.has(id)).length !== ids.size) {
+          throw new Error('GDT_INTENT_UNKNOWN');
+        }
+        return {
+          ...value,
+          geometricTolerances: value.geometricTolerances.map((intent) => ids.has(intent.id)
+            ? { ...intent, framePosition: [...command.position] as [number, number] }
+            : intent),
+        } as T;
+      };
+      if (state.snapshot.phase === 'confirmed' && state.snapshot.confirmed) {
+        return this.#push(sessionId, {
+          ...state.snapshot,
+          phase: 'confirmed',
+          confirmed: move(state.snapshot.confirmed),
+          canUndo: true,
+          canRedo: false,
+          updatedAt: this.ports.now(),
+        });
+      }
+      if (!state.snapshot.draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+      return this.#push(sessionId, {
+        ...state.snapshot,
+        draft: engineeringAnnotationDraftSchema.parse(compact(move(state.snapshot.draft))),
+        canUndo: true,
+        canRedo: false,
+        updatedAt: this.ports.now(),
+      });
+    }
+    const draft = (state.snapshot.draft as unknown as EngineeringAnnotationDraft | undefined)
+      ?? editableDraftFrom(state.snapshot.confirmed);
+    if (!draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+    const index = draft.geometricTolerances.findIndex(({ id }) => id === command.intentId);
+    if (index < 0) throw new Error('GDT_INTENT_UNKNOWN');
+    const { intentId: _intentId, expectedDrawingRef: _expectedDrawingRef, ...edit } = command;
+    const geometricTolerances = [...draft.geometricTolerances];
+    geometricTolerances[index] = applyGeometricToleranceEdit(
+      geometricTolerances[index]! as Parameters<typeof applyGeometricToleranceEdit>[0],
+      edit as Parameters<typeof applyGeometricToleranceEdit>[1],
+    ) as typeof geometricTolerances[number];
+    return this.setDraft(sessionId, { ...draft, geometricTolerances });
   }
 
   confirm(sessionId: string, expected: DrawingRef): DimensionPlanSessionSnapshot {
@@ -133,6 +225,7 @@ export class DimensionPlanStore {
       datums: draft.datums,
       intents: draft.intents,
       tolerances: draft.tolerances,
+      geometricTolerances: draft.geometricTolerances,
       chains: draft.chains,
       dependencies: draft.dependencies,
       diagnostics: [...draft.diagnostics, ...diagnostics],
@@ -196,6 +289,11 @@ export class DimensionPlanStore {
     const state = this.#envelope(sessionId);
     const draft = state.snapshot.draft === undefined ? undefined : {
       ...state.snapshot.draft,
+      geometricTolerances: state.snapshot.draft.geometricTolerances.map((intent) => ({
+        ...intent,
+        computed: { ...intent.computed, status: 'stale' as const },
+        status: 'stale' as const,
+      })),
       ...(state.snapshot.draft.axialScheme === undefined ? {} : {
         axialScheme: { ...state.snapshot.draft.axialScheme, status: 'stale' as const },
       }),
@@ -259,12 +357,13 @@ function editableDraftFrom(
     datums: revision.datums,
     intents: revision.intents,
     tolerances: revision.tolerances,
+    geometricTolerances: revision.geometricTolerances,
     chains: revision.chains,
     dependencies: revision.dependencies,
     diagnostics: revision.diagnostics,
     ...(revision.axialScheme === undefined ? {} : { axialScheme: revision.axialScheme }),
     baseRevisionId: revision.id,
-  };
+  } as unknown as EngineeringAnnotationDraft;
 }
 
 export class FileDimensionPlanStorage implements DimensionPlanStorage {
@@ -317,6 +416,12 @@ function confirmationDiagnostics(
       diagnostics.push(problem('TOLERANCE_RESULT_REQUIRED', tolerance.id));
     }
   }
+  for (const intent of draft.geometricTolerances) {
+    if (intent.status === 'conflict' || intent.status === 'stale') diagnostics.push(problem('GDT_INTENT_CONFLICT', intent.id));
+    if (intent.status === 'confirmed' && intent.override?.value === undefined && intent.computed.value === undefined) {
+      diagnostics.push(problem('GDT_EFFECTIVE_VALUE_REQUIRED', intent.id));
+    }
+  }
   for (const chain of draft.chains) {
     if (chain.status === 'conflict' || chain.status === 'stale') {
       diagnostics.push(problem('DIMENSION_CHAIN_CONFLICT', chain.id));
@@ -328,6 +433,20 @@ function confirmationDiagnostics(
     }).diagnostics);
   }
   return diagnostics.sort((first, second) => first.id < second.id ? -1 : first.id > second.id ? 1 : 0);
+}
+
+function hydrateClosureAlternatives(snapshot: DimensionPlanSessionSnapshot): DimensionPlanSessionSnapshot {
+  if (snapshot.draft?.axialScheme) {
+    snapshot.draft.axialScheme = withSwitchableClosureAlternatives(
+      snapshot.draft.axialScheme as unknown as AxialDimensionScheme,
+    ) as unknown as typeof snapshot.draft.axialScheme;
+  }
+  if (snapshot.confirmed?.axialScheme) {
+    snapshot.confirmed.axialScheme = withSwitchableClosureAlternatives(
+      snapshot.confirmed.axialScheme as unknown as AxialDimensionScheme,
+    ) as unknown as typeof snapshot.confirmed.axialScheme;
+  }
+  return snapshot;
 }
 
 function requireRef(snapshot: DimensionPlanSessionSnapshot, expected: DrawingRef): void {

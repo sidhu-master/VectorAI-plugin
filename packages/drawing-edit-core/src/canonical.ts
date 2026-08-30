@@ -9,7 +9,10 @@ export function canonicalString(value: unknown): string {
 export function canonicalSemanticString(document: DrawingDocument): string {
   const semantic = Object.fromEntries(
     Object.entries(document).filter(([key]) => key !== 'metadata'),
-  );
+  ) as Record<string, unknown>;
+  for (const plane of ['geometry', 'annotations', 'relations', 'features'] as const) {
+    semantic[plane] = [...document[plane]].sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  }
   return canonicalString(semantic);
 }
 

@@ -30,8 +30,8 @@ export function EntityRenderer({
   previewDiff,
 }: EntityRendererProps) {
   if (!node.visible) return null;
-  const semanticClassName = node.type === 'dimension' && node.dimensionKind === 'angular'
-    ? ' vai-entity--angular-dimension'
+  const semanticClassName = node.type === 'dimension' && (node.dimensionKind === 'angular' || node.dimensionKind === 'diameter')
+    ? ` vai-entity--${node.dimensionKind}-dimension`
     : node.type === 'section-hatch'
       ? ' vai-entity--section-hatch'
       : '';
@@ -97,6 +97,9 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
       if (node.dimensionKind === 'angular' && node.definitionPoints.length >= 5) {
         return <AngularDimension node={node} viewport={viewport} />;
       }
+      if (node.dimensionKind === 'diameter' && node.definitionPoints.length >= 2) {
+        return <DiameterDimension node={node} viewport={viewport} />;
+      }
       return (
         <>
           {node.definitionPoints.length > 1 ? (
@@ -132,6 +135,29 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
     case 'section-hatch':
       return <HatchRenderer node={node} viewportScale={viewport.scale} />;
   }
+}
+
+function DiameterDimension({
+  node,
+  viewport,
+}: {
+  node: Extract<AnnotationNode, { type: 'dimension' }>;
+  viewport: DrawingWorkspaceViewport;
+}) {
+  const [first, second, sourceFirst = first, sourceSecond = second] = node.definitionPoints;
+  if (!first || !second) return null;
+  const vectorStroke = { vectorEffect: 'non-scaling-stroke' as const };
+  const arrowSize = 7 / Math.max(viewport.scale, 1e-9);
+  return <>
+    <line data-diameter-role="extension" x1={sourceFirst[0]} y1={sourceFirst[1]} x2={first[0]} y2={first[1]} {...vectorStroke} />
+    <line data-diameter-role="extension" x1={sourceSecond[0]} y1={sourceSecond[1]} x2={second[0]} y2={second[1]} {...vectorStroke} />
+    <line data-diameter-role="dimension" x1={first[0]} y1={first[1]} x2={second[0]} y2={second[1]} {...vectorStroke} />
+    <path data-diameter-role="arrow" d={arrowPath(first, second, arrowSize)} {...vectorStroke} />
+    <path data-diameter-role="arrow" d={arrowPath(second, first, arrowSize)} {...vectorStroke} />
+    <ScreenSpaceLabel position={node.textPosition} viewportScale={viewport.scale}>
+      {dimensionLabel(node)}
+    </ScreenSpaceLabel>
+  </>;
 }
 
 function AngularDimension({

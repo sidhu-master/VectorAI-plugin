@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-export { createDimensionChainStartTool, createEngineeringAnnotationTool } from './tools';
+export {
+  createDiameterAnnotationTool,
+  createDimensionChainStartTool,
+  createEngineeringAnnotationTool,
+  createOpeningAngleAnnotationTool,
+  createGdtStartTool,
+} from './tools';
 export { planEngineeringAnnotations } from '@vectorai/engineering-annotation';
 export {
   AnnotationSessionStateStore,
@@ -18,3 +24,6 @@ export {
 } from './dimension-plan-store';
 export type { DimensionPlanStorage } from './dimension-plan-store';
 export { DimensionInferenceService } from './dimension-inference-service';
+export { GdtService } from './gdt-service';
+export { groundGdtRecommendation } from './gdt-grounding';
+export type { GdtRecommendation } from './gdt-grounding';

@@ -4371,7 +4371,7 @@ window.__ModuleLoader__.load({
       previewDiff
     }) {
       if (!node.visible) return null;
-      const semanticClassName = node.type === "dimension" && node.dimensionKind === "angular" ? " vai-entity--angular-dimension" : node.type === "section-hatch" ? " vai-entity--section-hatch" : "";
+      const semanticClassName = node.type === "dimension" && (node.dimensionKind === "angular" || node.dimensionKind === "diameter") ? ` vai-entity--${node.dimensionKind}-dimension` : node.type === "section-hatch" ? " vai-entity--section-hatch" : "";
       const className = `vai-entity vai-entity--${node.quality.status}${semanticClassName}${selected ? " vai-entity--selected" : ""}${aiGrounded ? " vai-entity--ai-grounded" : ""}${motionRigActive ? " vai-entity--motion-rig" : ""}${previewDiff === void 0 ? "" : ` vai-entity--preview-${previewDiff}`}`;
       const interactiveText = (node.type === "text" || node.type === "dimension") && onTextPointerDown !== void 0;
       return /* @__PURE__ */ jsxRuntime.jsx(
@@ -4432,6 +4432,9 @@ window.__ModuleLoader__.load({
           if (node.dimensionKind === "angular" && node.definitionPoints.length >= 5) {
             return /* @__PURE__ */ jsxRuntime.jsx(AngularDimension, { node, viewport });
           }
+          if (node.dimensionKind === "diameter" && node.definitionPoints.length >= 2) {
+            return /* @__PURE__ */ jsxRuntime.jsx(DiameterDimension, { node, viewport });
+          }
           return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
             node.definitionPoints.length > 1 ? /* @__PURE__ */ jsxRuntime.jsx("polyline", { points: pointsAttribute(node.definitionPoints), fill: "none", ...vectorStroke }) : null,
             /* @__PURE__ */ jsxRuntime.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
@@ -4460,6 +4463,23 @@ window.__ModuleLoader__.load({
         case "section-hatch":
           return /* @__PURE__ */ jsxRuntime.jsx(HatchRenderer, { node, viewportScale: viewport.scale });
       }
+    }
+    function DiameterDimension({
+      node,
+      viewport
+    }) {
+      const [first, second, sourceFirst = first, sourceSecond = second] = node.definitionPoints;
+      if (!first || !second) return null;
+      const vectorStroke = { vectorEffect: "non-scaling-stroke" };
+      const arrowSize = 7 / Math.max(viewport.scale, 1e-9);
+      return /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntime.jsx("line", { "data-diameter-role": "extension", x1: sourceFirst[0], y1: sourceFirst[1], x2: first[0], y2: first[1], ...vectorStroke }),
+        /* @__PURE__ */ jsxRuntime.jsx("line", { "data-diameter-role": "extension", x1: sourceSecond[0], y1: sourceSecond[1], x2: second[0], y2: second[1], ...vectorStroke }),
+        /* @__PURE__ */ jsxRuntime.jsx("line", { "data-diameter-role": "dimension", x1: first[0], y1: first[1], x2: second[0], y2: second[1], ...vectorStroke }),
+        /* @__PURE__ */ jsxRuntime.jsx("path", { "data-diameter-role": "arrow", d: arrowPath(first, second, arrowSize), ...vectorStroke }),
+        /* @__PURE__ */ jsxRuntime.jsx("path", { "data-diameter-role": "arrow", d: arrowPath(second, first, arrowSize), ...vectorStroke }),
+        /* @__PURE__ */ jsxRuntime.jsx(ScreenSpaceLabel, { position: node.textPosition, viewportScale: viewport.scale, children: dimensionLabel(node) })
+      ] });
     }
     function AngularDimension({
       node,
@@ -5960,6 +5980,10 @@ window.__ModuleLoader__.load({
         }
       );
     }
+    async function runSharedAnnotationHistory(operation, refreshPeers) {
+      await operation();
+      await Promise.all(refreshPeers.map((refresh) => refresh()));
+    }
     function DimensionChainOverlay({
       scheme,
       scale,
@@ -5968,13 +5992,23 @@ window.__ModuleLoader__.load({
       previewHeld = false,
       visibleChainIds,
       onMoveChain,
-      onMoveCandidate
+      onMoveCandidate,
+      onChooseClosure
     }) {
-      const [dragPreview, setDragPreview] = react.useState(null);
+      const [dragPreviews, setDragPreviews] = react.useState({});
+      const [closureMenu, setClosureMenu] = react.useState(null);
       const dragRef = react.useRef(null);
+      react.useEffect(() => {
+        if (typeof window === "undefined" || closureMenu === null) return void 0;
+        const closeOnEscape = (event) => {
+          if (event.key === "Escape") setClosureMenu(null);
+        };
+        window.addEventListener("keydown", closeOnEscape);
+        return () => window.removeEventListener("keydown", closeOnEscape);
+      }, [closureMenu]);
       if (!visible) return null;
       const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === "error" ? entityIds ?? [] : []));
-      const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview);
+      const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews);
       const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
       const grouped = scheme.chains.map((chain, chainIndex) => ({
         chain,
@@ -6005,10 +6039,11 @@ window.__ModuleLoader__.load({
         event.preventDefault();
         event.stopPropagation();
         const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0] + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
-        setDragPreview({
-          targetKey: `${drag.target.type}:${drag.target.id}`,
-          normalOffset: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset)
-        });
+        const targetKey2 = `${drag.target.type}:${drag.target.id}`;
+        setDragPreviews((current) => ({
+          ...current,
+          [targetKey2]: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset)
+        }));
       };
       const finishDrag = (event) => {
         const drag = dragRef.current;
@@ -6018,12 +6053,21 @@ window.__ModuleLoader__.load({
         const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
         const targetKey2 = `${drag.target.type}:${drag.target.id}`;
         dragRef.current = null;
-        setDragPreview({ targetKey: targetKey2, normalOffset: groupOffset });
+        setDragPreviews((current) => ({ ...current, [targetKey2]: groupOffset }));
         event.currentTarget.releasePointerCapture(event.pointerId);
         const save = drag.target.type === "chain" ? onMoveChain == null ? void 0 : onMoveChain(drag.target.id, roundOffset(groupOffset)) : onMoveCandidate == null ? void 0 : onMoveCandidate(drag.target.id, roundOffset(groupOffset));
         void Promise.resolve(save).then(() => window.requestAnimationFrame(() => {
-          setDragPreview((current) => (current == null ? void 0 : current.targetKey) === targetKey2 ? null : current);
-        })).catch(() => setDragPreview((current) => (current == null ? void 0 : current.targetKey) === targetKey2 ? null : current));
+          setDragPreviews((current) => {
+            if (!(targetKey2 in current)) return current;
+            const next = { ...current };
+            delete next[targetKey2];
+            return next;
+          });
+        })).catch(() => setDragPreviews((current) => {
+          const next = { ...current };
+          delete next[targetKey2];
+          return next;
+        }));
       };
       const cancelDrag = (event, releaseCapture) => {
         const drag = dragRef.current;
@@ -6031,7 +6075,12 @@ window.__ModuleLoader__.load({
         event.preventDefault();
         event.stopPropagation();
         dragRef.current = null;
-        setDragPreview(null);
+        const targetKey2 = `${drag.target.type}:${drag.target.id}`;
+        setDragPreviews((current) => {
+          const next = { ...current };
+          delete next[targetKey2];
+          return next;
+        });
         if (releaseCapture) event.currentTarget.releasePointerCapture(event.pointerId);
       };
       const renderInterval = (layout, standaloneDraggable = false, groupedDraggable = false) => {
@@ -6051,7 +6100,12 @@ window.__ModuleLoader__.load({
             onPointerMove: ownsPointerHandlers ? updateDrag : void 0,
             onPointerUp: ownsPointerHandlers ? finishDrag : void 0,
             onPointerCancel: ownsPointerHandlers ? (event) => cancelDrag(event, true) : void 0,
-            onLostPointerCapture: ownsPointerHandlers ? (event) => cancelDrag(event, false) : void 0
+            onLostPointerCapture: ownsPointerHandlers ? (event) => cancelDrag(event, false) : void 0,
+            onContextMenu: onChooseClosure && layout.chainId !== void 0 && closureOptionsForCandidate(scheme, layout.candidate.id, layout.chainId).length > 0 ? (event, position) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setClosureMenu({ candidateId: layout.candidate.id, chainId: layout.chainId, position });
+            } : void 0
           },
           layout.candidate.id
         );
@@ -6062,6 +6116,7 @@ window.__ModuleLoader__.load({
         {
           className: "vai-dimension-chain-overlay",
           "data-dimension-chain-overlay": "true",
+          onPointerDown: () => setClosureMenu(null),
           children: [
             grouped.map(({ chain, chainIndex, layouts: owned }) => {
               const draggable = Boolean(onMoveChain) && !previewHeld && owned.length > 0;
@@ -6072,7 +6127,7 @@ window.__ModuleLoader__.load({
                   "data-dimension-chain-group": chain.id,
                   "data-dimension-draggable": draggable || void 0,
                   "data-dimension-drag-axis": dragAxis,
-                  pointerEvents: draggable ? "all" : "none",
+                  pointerEvents: draggable || Boolean(onChooseClosure) ? "all" : "none",
                   onPointerDown: draggable ? (event) => beginDrag(owned[0], event) : void 0,
                   onPointerMove: draggable ? updateDrag : void 0,
                   onPointerUp: draggable ? finishDrag : void 0,
@@ -6096,7 +6151,21 @@ window.__ModuleLoader__.load({
                 chain.id
               );
             }),
-            standalone.map((layout) => renderInterval(layout, true))
+            standalone.map((layout) => renderInterval(layout, true)),
+            closureMenu && /* @__PURE__ */ jsxRuntime.jsx(
+              ClosureContextMenu,
+              {
+                scheme,
+                candidateId: closureMenu.candidateId,
+                chainId: closureMenu.chainId,
+                position: closureMenu.position,
+                scale: safeScale,
+                onChoose: (chainId) => {
+                  setClosureMenu(null);
+                  void Promise.resolve(onChooseClosure == null ? void 0 : onChooseClosure(chainId, closureMenu.candidateId)).catch(() => void 0);
+                }
+              }
+            )
           ]
         }
       );
@@ -6120,7 +6189,7 @@ window.__ModuleLoader__.load({
       const freeFraction = Math.max(0.2, 1 - 2 * structuralPixels / Math.max(availablePixels, 1));
       return Math.max(1.2, (referenceRadius + maxManualOffset) / referenceRadius / freeFraction * 1.05);
     }
-    function layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreview) {
+    function layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews = {}) {
       var _a2, _b;
       const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
       const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
@@ -6158,7 +6227,7 @@ window.__ModuleLoader__.load({
         const minimumOffset = radialExtent + 14 / safeScale;
         const candidateOffset = manual.get(candidateId) ?? 0;
         const targetKey2 = owner === void 0 ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
-        const requestedGroupOffset = (dragPreview == null ? void 0 : dragPreview.targetKey) === targetKey2 ? dragPreview.normalOffset : owner === void 0 ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0;
+        const requestedGroupOffset = dragPreviews[targetKey2] ?? (owner === void 0 ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0);
         return [{
           candidate,
           ...owner === void 0 ? {} : { chainId: owner.chainId },
@@ -6265,8 +6334,12 @@ window.__ModuleLoader__.load({
           "data-dimension-conflict": conflict || void 0,
           "data-dimension-draggable": draggable || void 0,
           "data-dimension-drag-axis": dragAxis,
-          pointerEvents: draggable ? "all" : "none",
+          pointerEvents: draggable || pointerHandlers.onContextMenu ? "all" : "none",
           ...pointerHandlers,
+          onContextMenu: pointerHandlers.onContextMenu ? (event) => {
+            var _a2;
+            return (_a2 = pointerHandlers.onContextMenu) == null ? void 0 : _a2.call(pointerHandlers, event, middle);
+          } : void 0,
           children: [
             /* @__PURE__ */ jsxRuntime.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "start", x1: witnessA[0], y1: witnessA[1], x2: a[0], y2: a[1], vectorEffect: "non-scaling-stroke" }),
             /* @__PURE__ */ jsxRuntime.jsx("line", { className: "vai-dimension-chain-extension", "data-dimension-extension": "end", x1: witnessB[0], y1: witnessB[1], x2: b[0], y2: b[1], vectorEffect: "non-scaling-stroke" }),
@@ -6288,6 +6361,58 @@ window.__ModuleLoader__.load({
           ]
         }
       );
+    }
+    function ClosureContextMenu({ scheme, candidateId, chainId, position, scale, onChoose }) {
+      const options = closureOptionsForCandidate(scheme, candidateId, chainId);
+      const width = options.length > 1 ? 188 : 148;
+      const rowHeight = 30;
+      return /* @__PURE__ */ jsxRuntime.jsxs(
+        "g",
+        {
+          className: "vai-dimension-closure-menu",
+          "data-dimension-closure-menu": candidateId,
+          role: "menu",
+          transform: screenSpaceTransform(position, scale),
+          pointerEvents: "all",
+          onPointerDown: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          },
+          onContextMenu: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntime.jsx("rect", { className: "vai-dimension-closure-menu__surface", x: 0, y: 0, width, height: options.length * rowHeight, rx: 8 }),
+            options.map(({ chain, chainIndex, current }, optionIndex) => {
+              const label = current ? options.length > 1 ? `尺寸链 ${chainIndex + 1} · 当前缺省段` : "当前缺省段" : options.length > 1 ? `尺寸链 ${chainIndex + 1} · 切换为缺省段` : "切换为缺省段";
+              return /* @__PURE__ */ jsxRuntime.jsxs(
+                "g",
+                {
+                  className: "vai-dimension-closure-menu__item",
+                  "data-closure-chain-id": chain.id,
+                  "data-closure-current": current || void 0,
+                  role: "menuitem",
+                  "aria-disabled": current || void 0,
+                  transform: `translate(0 ${optionIndex * rowHeight})`,
+                  onClick: current ? void 0 : (event) => {
+                    event.stopPropagation();
+                    onChoose(chain.id);
+                  },
+                  children: [
+                    /* @__PURE__ */ jsxRuntime.jsx("rect", { x: 3, y: 3, width: width - 6, height: rowHeight - 6, rx: 6 }),
+                    /* @__PURE__ */ jsxRuntime.jsx("text", { x: 12, y: rowHeight / 2, dominantBaseline: "middle", fontSize: 11, children: label })
+                  ]
+                },
+                chain.id
+              );
+            })
+          ]
+        }
+      );
+    }
+    function closureOptionsForCandidate(scheme, candidateId, chainId) {
+      return scheme.chains.flatMap((chain, chainIndex) => chain.id !== chainId ? [] : chain.closureCandidateId === candidateId ? [{ chain, chainIndex, current: true }] : chain.alternativeClosureCandidateIds.includes(candidateId) ? [{ chain, chainIndex, current: false }] : []);
     }
     function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, scale, draggable }) {
       const layouts = [chain.parentCandidateId, ...chain.childCandidateIds, chain.closureCandidateId].flatMap((id) => layoutByCandidate.get(id) ?? []).filter((layout) => layout.chainId === chain.id);
@@ -6332,8 +6457,10 @@ window.__ModuleLoader__.load({
       return !(left.end + padding < right.start || left.start - padding > right.end);
     }
     function normalized(value) {
-      const length = Math.hypot(value[0], value[1]) || 1;
-      return [value[0] / length, value[1] / length];
+      const x = typeof value[0] === "number" ? value[0] : 0;
+      const y = typeof value[1] === "number" ? value[1] : 0;
+      const length = Math.hypot(x, y) || 1;
+      return [x / length, y / length];
     }
     function roundOffset(value) {
       return Math.round(value * 1e3) / 1e3;
@@ -6891,6 +7018,526 @@ window.__ModuleLoader__.load({
     function chainRoleLabel(role) {
       return { functional: "功能环", component: "组成环", closure: "封闭环" }[role];
     }
+    const ROW_HEIGHT = 24;
+    const DRAWING_GAP = 28;
+    function GdtOverlay({
+      draft,
+      document: document2,
+      scale,
+      viewport,
+      datumVisible,
+      gdtVisible,
+      previewHeld,
+      selectedIntentId,
+      onSelectIntent,
+      onMoveDatum,
+      onMoveGdtGroup
+    }) {
+      const safeScale = Math.max(scale, 1e-6);
+      const [datumDragPositions, setDatumDragPositions] = react.useState({});
+      const datumDragRef = react.useRef(null);
+      const datumPersistTimerRef = react.useRef(null);
+      const [gdtDragPositions, setGdtDragPositions] = react.useState({});
+      const gdtDragRef = react.useRef(null);
+      const gdtPersistTimerRef = react.useRef(null);
+      const gdtMouseCleanupRef = react.useRef(null);
+      const suppressGdtClickRef = react.useRef(false);
+      const geometry = new Map(document2.geometry.map((node) => [String(node.id), node]));
+      const datums = new Map(draft.datums.map((datum) => [datum.id, datum]));
+      const bounds = drawingBounds({ ...document2, annotations: [] }) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+      const groups = layoutGroups(draft, geometry, datums, bounds, viewport, safeScale);
+      const updateDatumDrag = (event) => {
+        const drag = datumDragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return null;
+        event.preventDefault();
+        event.stopPropagation();
+        const next = [
+          drag.startPosition[0] + (event.clientX - drag.startClient[0]) / safeScale,
+          drag.startPosition[1] - (event.clientY - drag.startClient[1]) / safeScale
+        ];
+        drag.currentPosition = next;
+        setDatumDragPositions((current) => ({ ...current, [drag.datumId]: next }));
+        if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
+        datumPersistTimerRef.current = setTimeout(() => {
+          datumPersistTimerRef.current = null;
+          void Promise.resolve(onMoveDatum(drag.datumId, drag.currentPosition)).catch(() => void 0);
+        }, 120);
+        return next;
+      };
+      const commitDatumDrag = (drag, next) => {
+        if (datumPersistTimerRef.current !== null) {
+          clearTimeout(datumPersistTimerRef.current);
+          datumPersistTimerRef.current = null;
+        }
+        datumDragRef.current = null;
+        void Promise.resolve(onMoveDatum(drag.datumId, next)).then(() => {
+          setDatumDragPositions((current) => {
+            if (!(drag.datumId in current)) return current;
+            const updated = { ...current };
+            delete updated[drag.datumId];
+            return updated;
+          });
+        }).catch(() => setDatumDragPositions((current) => {
+          const updated = { ...current };
+          delete updated[drag.datumId];
+          return updated;
+        }));
+      };
+      react.useEffect(() => () => {
+        var _a2;
+        if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
+        if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+        (_a2 = gdtMouseCleanupRef.current) == null ? void 0 : _a2.call(gdtMouseCleanupRef);
+      }, []);
+      const finishDatumDrag = (event) => {
+        const drag = datumDragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        const next = updateDatumDrag(event) ?? drag.currentPosition;
+        commitDatumDrag(drag, next);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      };
+      const updateGdtDragAt = (clientX, clientY) => {
+        const drag = gdtDragRef.current;
+        if (!drag) return null;
+        const dx = clientX - drag.startClient[0];
+        const dy = clientY - drag.startClient[1];
+        const next = [drag.startPosition[0] + dx / safeScale, drag.startPosition[1] - dy / safeScale];
+        drag.currentPosition = next;
+        if (Math.hypot(dx, dy) > 3) suppressGdtClickRef.current = true;
+        setGdtDragPositions((current) => ({ ...current, [drag.groupId]: next }));
+        if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+        gdtPersistTimerRef.current = setTimeout(() => {
+          gdtPersistTimerRef.current = null;
+          void Promise.resolve(onMoveGdtGroup(drag.intentIds, drag.currentPosition)).catch(() => void 0);
+        }, 120);
+        return next;
+      };
+      const updateGdtDrag = (event) => {
+        const drag = gdtDragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return null;
+        event.preventDefault();
+        event.stopPropagation();
+        return updateGdtDragAt(event.clientX, event.clientY);
+      };
+      const commitGdtDrag = (drag, next) => {
+        if (gdtPersistTimerRef.current !== null) {
+          clearTimeout(gdtPersistTimerRef.current);
+          gdtPersistTimerRef.current = null;
+        }
+        gdtDragRef.current = null;
+        void Promise.resolve(onMoveGdtGroup(drag.intentIds, next)).then(() => {
+          setGdtDragPositions((current) => {
+            const updated = { ...current };
+            delete updated[drag.groupId];
+            return updated;
+          });
+        }).catch(() => setGdtDragPositions((current) => {
+          const updated = { ...current };
+          delete updated[drag.groupId];
+          return updated;
+        }));
+      };
+      const finishGdtDrag = (event) => {
+        const drag = gdtDragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        const next = updateGdtDrag(event) ?? drag.currentPosition;
+        commitGdtDrag(drag, next);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      };
+      return /* @__PURE__ */ jsxRuntime.jsxs("g", { className: "vai-gdt-overlay", "data-preview-held": previewHeld ? "true" : void 0, children: [
+        datumVisible && draft.datums.map((datum) => {
+          const target = resolveAnchor(geometry.get(String(datum.geometryId)), datum.anchor);
+          if (!target) return null;
+          const marker = datumDragPositions[datum.id] ?? datum.labelPosition ?? [target[0], bounds.minY - defaultDatumGap(bounds)];
+          return /* @__PURE__ */ jsxRuntime.jsxs(
+            "g",
+            {
+              className: `vai-datum-marker vai-datum-marker--${datum.status}`,
+              "data-datum-id": datum.id,
+              pointerEvents: "all",
+              onMouseDown: (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              },
+              onClick: (event) => event.stopPropagation(),
+              onDoubleClick: (event) => event.stopPropagation(),
+              onPointerDown: (event) => {
+                if (event.button !== 0 || previewHeld) return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                datumDragRef.current = {
+                  datumId: datum.id,
+                  pointerId: event.pointerId,
+                  startClient: [event.clientX, event.clientY],
+                  startPosition: marker,
+                  currentPosition: marker
+                };
+              },
+              onPointerMove: updateDatumDrag,
+              onPointerUp: finishDatumDrag,
+              onLostPointerCapture: (event) => {
+                const drag = datumDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                commitDatumDrag(drag, drag.currentPosition);
+              },
+              onPointerCancel: (event) => {
+                const drag = datumDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                if (datumPersistTimerRef.current !== null) {
+                  clearTimeout(datumPersistTimerRef.current);
+                  datumPersistTimerRef.current = null;
+                }
+                datumDragRef.current = null;
+                setDatumDragPositions((current) => {
+                  const updated = { ...current };
+                  delete updated[drag.datumId];
+                  return updated;
+                });
+              },
+              children: [
+                /* @__PURE__ */ jsxRuntime.jsx("path", { className: "vai-datum-leader", pointerEvents: "none", d: datumLeaderPath(target, marker) }),
+                /* @__PURE__ */ jsxRuntime.jsxs("g", { transform: screenSpaceTransform(marker, safeScale), children: [
+                  /* @__PURE__ */ jsxRuntime.jsx("rect", { className: "vai-datum-marker__hit", x: -14, y: -10, width: 28, height: 40, rx: 4 }),
+                  /* @__PURE__ */ jsxRuntime.jsx("path", { d: "M -5 0 L 5 0 L 0 -8 Z" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("path", { d: "M 0 0 L 0 8" }),
+                  /* @__PURE__ */ jsxRuntime.jsx("rect", { x: -10, y: 8, width: 20, height: 20, rx: 2 }),
+                  /* @__PURE__ */ jsxRuntime.jsx("text", { x: 0, y: 18, dominantBaseline: "middle", textAnchor: "middle", fontSize: 11, children: datum.name })
+                ] })
+              ]
+            },
+            datum.id
+          );
+        }),
+        gdtVisible && groups.map((sourceGroup) => {
+          const group = gdtDragPositions[sourceGroup.id] ? { ...sourceGroup, origin: gdtDragPositions[sourceGroup.id] } : sourceGroup;
+          return /* @__PURE__ */ jsxRuntime.jsxs(
+            "g",
+            {
+              className: "vai-gdt-frame-group",
+              "data-gdt-group": group.id,
+              pointerEvents: "all",
+              onMouseDown: (event) => {
+                var _a2;
+                event.preventDefault();
+                event.stopPropagation();
+                if (event.button !== 0 || previewHeld) return;
+                if (!gdtDragRef.current) {
+                  gdtDragRef.current = {
+                    groupId: group.id,
+                    intentIds: group.intentIds,
+                    pointerId: -1,
+                    startClient: [event.clientX, event.clientY],
+                    startPosition: group.origin,
+                    currentPosition: group.origin
+                  };
+                }
+                (_a2 = gdtMouseCleanupRef.current) == null ? void 0 : _a2.call(gdtMouseCleanupRef);
+                const handleMouseMove = (moveEvent) => {
+                  moveEvent.preventDefault();
+                  moveEvent.stopPropagation();
+                  updateGdtDragAt(moveEvent.clientX, moveEvent.clientY);
+                };
+                const handleMouseUp = (upEvent) => {
+                  var _a3;
+                  upEvent.preventDefault();
+                  upEvent.stopPropagation();
+                  const drag = gdtDragRef.current;
+                  if (drag) commitGdtDrag(drag, updateGdtDragAt(upEvent.clientX, upEvent.clientY) ?? drag.currentPosition);
+                  (_a3 = gdtMouseCleanupRef.current) == null ? void 0 : _a3.call(gdtMouseCleanupRef);
+                };
+                const cleanup = () => {
+                  window.removeEventListener("mousemove", handleMouseMove, true);
+                  window.removeEventListener("mouseup", handleMouseUp, true);
+                  if (gdtMouseCleanupRef.current === cleanup) gdtMouseCleanupRef.current = null;
+                };
+                gdtMouseCleanupRef.current = cleanup;
+                window.addEventListener("mousemove", handleMouseMove, true);
+                window.addEventListener("mouseup", handleMouseUp, true);
+              },
+              onPointerDown: (event) => {
+                if (event.button !== 0 || previewHeld) return;
+                event.preventDefault();
+                event.stopPropagation();
+                suppressGdtClickRef.current = false;
+                event.currentTarget.setPointerCapture(event.pointerId);
+                gdtDragRef.current = {
+                  groupId: group.id,
+                  intentIds: group.intentIds,
+                  pointerId: event.pointerId,
+                  startClient: [event.clientX, event.clientY],
+                  startPosition: group.origin,
+                  currentPosition: group.origin
+                };
+              },
+              onPointerMove: updateGdtDrag,
+              onPointerUp: finishGdtDrag,
+              onLostPointerCapture: (event) => {
+                const drag = gdtDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                commitGdtDrag(drag, drag.currentPosition);
+              },
+              onPointerCancel: (event) => {
+                const drag = gdtDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+                gdtPersistTimerRef.current = null;
+                gdtDragRef.current = null;
+                setGdtDragPositions((current) => {
+                  const updated = { ...current };
+                  delete updated[drag.groupId];
+                  return updated;
+                });
+              },
+              children: [
+                /* @__PURE__ */ jsxRuntime.jsx("path", { className: "vai-gdt-leader", pointerEvents: "none", d: orthogonalLeaderPath(group) }),
+                group.rows.map(({ intent, cells, widths }, rowIndex) => {
+                  const totalWidth = widths.reduce((sum, width) => sum + width, 0);
+                  const rowOrigin = [group.origin[0], group.origin[1] - rowIndex * ROW_HEIGHT * group.frameScale];
+                  let cursor = 0;
+                  return /* @__PURE__ */ jsxRuntime.jsx(
+                    "g",
+                    {
+                      className: `vai-gdt-frame${selectedIntentId === intent.id ? " is-selected" : ""}${intent.override ? " is-overridden" : ""}`,
+                      "data-gdt-id": intent.id,
+                      onClick: (event) => {
+                        event.stopPropagation();
+                        if (suppressGdtClickRef.current) {
+                          suppressGdtClickRef.current = false;
+                          return;
+                        }
+                        if (!previewHeld) onSelectIntent(intent.id);
+                      },
+                      children: /* @__PURE__ */ jsxRuntime.jsxs("g", { transform: `translate(${rowOrigin[0]} ${rowOrigin[1]}) scale(${group.frameScale} ${-group.frameScale})`, children: [
+                        cells.map((cell, cellIndex) => {
+                          const width = widths[cellIndex];
+                          const cellX = cursor;
+                          cursor += width;
+                          return /* @__PURE__ */ jsxRuntime.jsxs("g", { children: [
+                            /* @__PURE__ */ jsxRuntime.jsx("rect", { x: cellX, y: 0, width, height: ROW_HEIGHT }),
+                            /* @__PURE__ */ jsxRuntime.jsx("text", { x: cellX + width / 2, y: ROW_HEIGHT / 2, dominantBaseline: "middle", textAnchor: "middle", fontSize: 11, children: cell })
+                          ] }, `${intent.id}:${cellIndex}`);
+                        }),
+                        /* @__PURE__ */ jsxRuntime.jsx("rect", { className: "vai-gdt-frame__hit", x: 0, y: 0, width: totalWidth, height: ROW_HEIGHT })
+                      ] })
+                    },
+                    intent.id
+                  );
+                })
+              ]
+            },
+            group.id
+          );
+        })
+      ] });
+    }
+    function defaultDatumGap(bounds) {
+      return Math.max(4, Math.min(12, Math.abs(bounds.maxY - bounds.minY) * 0.12));
+    }
+    function datumLeaderPath(target, marker) {
+      return `M ${target[0]} ${target[1]} L ${target[0]} ${marker[1]} L ${marker[0]} ${marker[1]}`;
+    }
+    function layoutGroups(draft, geometry, datums, bounds, _viewport, scale) {
+      var _a2;
+      const grouped = /* @__PURE__ */ new Map();
+      for (const intent of draft.geometricTolerances) {
+        const target = intent.controlledTargets[0];
+        const point3 = target ? resolveAnchor(geometry.get(String(target.geometryId)), target.anchor) : null;
+        if (!target || !point3) continue;
+        const value = ((_a2 = intent.override) == null ? void 0 : _a2.value) ?? intent.computed.value;
+        const cells = [
+          characteristicSymbol(intent.characteristic),
+          value === void 0 ? "—" : `${intent.toleranceZone.shape === "diametrical" ? "⌀" : ""}${value} mm`,
+          ...intent.datumReferenceFrame.map((reference) => {
+            var _a3;
+            const name = ((_a3 = datums.get(reference.datumId)) == null ? void 0 : _a3.name) ?? "?";
+            return `${name}${reference.materialCondition ? `(${reference.materialCondition.toUpperCase()})` : ""}`;
+          })
+        ];
+        const widths = cells.map((cell, index) => Math.max(index === 0 ? 26 : 44, estimateScreenTextWidth(cell, 11) + 16));
+        const key = String(target.geometryId);
+        const existing = grouped.get(key) ?? { id: key, target: point3, rows: [] };
+        existing.rows.push({ intent, cells, widths });
+        grouped.set(key, existing);
+      }
+      const ordered = [...grouped.values()].sort((left, right) => left.target[0] - right.target[0]);
+      const centerX = (bounds.minX + bounds.maxX) / 2;
+      const drawingWidth = Math.max(1, Math.abs(bounds.maxX - bounds.minX));
+      const drawingHeight = Math.max(1, Math.abs(bounds.maxY - bounds.minY));
+      const frameScale = Math.min(1, 1 / scale);
+      return ordered.map(({ id, target, rows }, groupIndex) => {
+        var _a3;
+        const width = Math.max(...rows.map(({ widths }) => widths.reduce((sum, value) => sum + value, 0)));
+        const bearingStack = rows.length >= 3;
+        const stored = (_a3 = rows.find(({ intent }) => intent.framePosition !== void 0)) == null ? void 0 : _a3.intent.framePosition;
+        const automaticSide = !bearingStack && target[0] >= centerX ? "bottom" : "top";
+        const side = stored ? stored[1] >= target[1] ? "top" : "bottom" : automaticSide;
+        const laneDistance = Math.max(6, drawingHeight * (0.22 + groupIndex * 0.12));
+        const x = (stored == null ? void 0 : stored[0]) ?? (bearingStack ? target[0] < centerX ? bounds.minX - drawingWidth * 0.18 : bounds.maxX + drawingWidth * 0.04 : target[0] - drawingWidth * 0.06);
+        const y = (stored == null ? void 0 : stored[1]) ?? (side === "top" ? bounds.maxY + laneDistance : bounds.minY - laneDistance);
+        return {
+          id,
+          intentIds: rows.map(({ intent }) => intent.id),
+          target,
+          rows,
+          width,
+          side,
+          lane: groupIndex,
+          frameScale,
+          origin: [x, y]
+        };
+      });
+    }
+    function orthogonalLeaderPath(group) {
+      const frameLeft = group.origin[0];
+      const frameRight = frameLeft + group.width * group.frameScale;
+      const frameTop = group.origin[1];
+      const frameBottom = frameTop - group.rows.length * ROW_HEIGHT * group.frameScale;
+      const attachX = Math.max(frameLeft, Math.min(group.target[0], frameRight));
+      const laneGap = Math.min(DRAWING_GAP - 4, 10 + group.lane * 4) * group.frameScale;
+      const laneY = group.side === "top" ? frameBottom - laneGap : frameTop + laneGap;
+      const attachY = group.side === "top" ? frameBottom : frameTop;
+      return `M ${group.target[0]} ${group.target[1]} L ${group.target[0]} ${laneY} L ${attachX} ${laneY} L ${attachX} ${attachY}`;
+    }
+    function characteristicSymbol(value) {
+      return {
+        straightness: "—",
+        flatness: "▱",
+        circularity: "○",
+        cylindricity: "⌭",
+        "profile-line": "⌒",
+        "profile-surface": "⌓",
+        parallelism: "∥",
+        perpendicularity: "⊥",
+        angularity: "∠",
+        position: "⌖",
+        coaxiality: "◎",
+        symmetry: "⌯",
+        "circular-runout": "↗",
+        "total-runout": "↗↗"
+      }[value];
+    }
+    function resolveAnchor(node, anchor) {
+      var _a2, _b, _c;
+      if (anchor.kind === "nearest") {
+        const [x, y] = anchor.point;
+        return typeof x === "number" && typeof y === "number" ? [x, y] : null;
+      }
+      if (!node) return null;
+      if (anchor.kind === "center") return "center" in node ? node.center : node.type === "point" ? [node.x, node.y] : null;
+      if (anchor.kind === "start") return node.type === "line" ? node.start : node.type === "polyline" ? ((_a2 = node.vertices[0]) == null ? void 0 : _a2.point) ?? null : null;
+      if (anchor.kind === "end") return node.type === "line" ? node.end : node.type === "polyline" ? ((_b = node.vertices.at(-1)) == null ? void 0 : _b.point) ?? null : null;
+      if (anchor.kind === "vertex" && node.type === "polyline") return ((_c = node.vertices[anchor.index]) == null ? void 0 : _c.point) ?? null;
+      return null;
+    }
+    const CHARACTERISTICS = [
+      "straightness",
+      "flatness",
+      "circularity",
+      "cylindricity",
+      "profile-line",
+      "profile-surface",
+      "parallelism",
+      "perpendicularity",
+      "angularity",
+      "position",
+      "coaxiality",
+      "symmetry",
+      "circular-runout",
+      "total-runout"
+    ];
+    function GdtInspector({ draft, selectedIntentId, selectedGeometryIds, controller, onSelectIntent }) {
+      var _a2, _b, _c;
+      const intent = draft.geometricTolerances.find(({ id }) => id === selectedIntentId) ?? draft.geometricTolerances[0];
+      if (!intent) return null;
+      const effective = ((_a2 = intent.override) == null ? void 0 : _a2.value) ?? intent.computed.value;
+      return /* @__PURE__ */ jsxRuntime.jsxs("section", { className: "vai-gdt-inspector", "aria-label": "形位公差编辑", children: [
+        /* @__PURE__ */ jsxRuntime.jsxs("header", { children: [
+          /* @__PURE__ */ jsxRuntime.jsx("h2", { children: "基准与形位公差" }),
+          /* @__PURE__ */ jsxRuntime.jsxs("span", { children: [
+            draft.geometricTolerances.length,
+            " 项"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
+          "标注",
+          /* @__PURE__ */ jsxRuntime.jsx("select", { value: intent.id, onChange: (event) => onSelectIntent(event.target.value), children: draft.geometricTolerances.map((item) => /* @__PURE__ */ jsxRuntime.jsx("option", { value: item.id, children: item.id }, item.id)) })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
+          "公差类型",
+          /* @__PURE__ */ jsxRuntime.jsx("select", { value: intent.characteristic, onChange: (event) => void controller.actions.edit({ type: "characteristic.set", intentId: intent.id, characteristic: event.target.value }), children: CHARACTERISTICS.map((value) => /* @__PURE__ */ jsxRuntime.jsx("option", { value, children: characteristicLabel(value) }, value)) })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
+          "公差带",
+          /* @__PURE__ */ jsxRuntime.jsxs("select", { value: intent.toleranceZone.shape, onChange: (event) => void controller.actions.edit({ type: "zone.set", intentId: intent.id, zone: { ...intent.toleranceZone, shape: event.target.value } }), children: [
+            /* @__PURE__ */ jsxRuntime.jsx("option", { value: "linear", children: "线性" }),
+            /* @__PURE__ */ jsxRuntime.jsx("option", { value: "diametrical", children: "直径" }),
+            /* @__PURE__ */ jsxRuntime.jsx("option", { value: "spherical", children: "球形" })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("label", { children: [
+          "人工修订值（mm）",
+          /* @__PURE__ */ jsxRuntime.jsx(
+            "input",
+            {
+              type: "number",
+              min: "0",
+              step: "0.001",
+              value: ((_b = intent.override) == null ? void 0 : _b.value) ?? "",
+              placeholder: ((_c = intent.computed.value) == null ? void 0 : _c.toString()) ?? "等待算法计算",
+              onChange: (event) => {
+                const value = Number(event.target.value);
+                if (value > 0) void controller.actions.setOverride(intent.id, value);
+              }
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-gdt-inspector__value", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("span", { children: "算法值" }),
+          /* @__PURE__ */ jsxRuntime.jsx("strong", { children: intent.computed.value ?? "待计算" })
+        ] }),
+        /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-gdt-inspector__value", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("span", { children: "当前值" }),
+          /* @__PURE__ */ jsxRuntime.jsx("strong", { children: effective ?? "待计算" })
+        ] }),
+        intent.override && /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", onClick: () => void controller.actions.clearOverride(intent.id), children: "恢复算法值" }),
+        selectedGeometryIds.length > 0 && /* @__PURE__ */ jsxRuntime.jsx("button", { type: "button", onClick: () => void controller.actions.edit({
+          type: "controlled-targets.set",
+          intentId: intent.id,
+          targets: selectedGeometryIds.map((geometryId) => {
+            var _a3;
+            return { geometryId, anchor: { kind: "nearest", point: ((_a3 = intent.controlledTargets[0]) == null ? void 0 : _a3.anchor.kind) === "nearest" ? intent.controlledTargets[0].anchor.point : [0, 0] } };
+          })
+        }), children: "使用画布当前选中图元" }),
+        /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-gdt-inspector__datums", children: [
+          /* @__PURE__ */ jsxRuntime.jsx("span", { children: "基准顺序" }),
+          intent.datumReferenceFrame.map((reference, index) => /* @__PURE__ */ jsxRuntime.jsx("select", { value: reference.datumId, onChange: (event) => {
+            const references = intent.datumReferenceFrame.map((item, itemIndex) => itemIndex === index ? { ...item, datumId: event.target.value } : item);
+            void controller.actions.edit({ type: "datum-frame.set", intentId: intent.id, references });
+          }, children: draft.datums.map((datum) => /* @__PURE__ */ jsxRuntime.jsx("option", { value: datum.id, children: datum.name }, datum.id)) }, `${intent.id}:${index}`))
+        ] })
+      ] });
+    }
+    function characteristicLabel(value) {
+      return {
+        straightness: "直线度",
+        flatness: "平面度",
+        circularity: "圆度",
+        cylindricity: "圆柱度",
+        "profile-line": "线轮廓度",
+        "profile-surface": "面轮廓度",
+        parallelism: "平行度",
+        perpendicularity: "垂直度",
+        angularity: "倾斜度",
+        position: "位置度",
+        coaxiality: "同轴度",
+        symmetry: "对称度",
+        "circular-runout": "圆跳动",
+        "total-runout": "全跳动"
+      }[value];
+    }
     function ConfirmedPartitionInspector({
       revision,
       busy,
@@ -7217,7 +7864,10 @@ window.__ModuleLoader__.load({
     }
     const ANNOTATION_PARTITION_LAYER_ID = "vectorai.annotation.partition";
     const ANNOTATION_OPENING_ANGLE_LAYER_ID = "vectorai.annotation.opening-angle";
+    const ANNOTATION_DIAMETER_LAYER_ID = "vectorai.annotation.diameter";
     const ANNOTATION_DIMENSION_CHAIN_LAYER_ID = "vectorai.annotation.dimension-chain";
+    const ANNOTATION_DATUM_LAYER_ID = "vectorai.annotation.datum";
+    const ANNOTATION_GDT_LAYER_ID = "vectorai.annotation.gdt";
     const ANNOTATION_PARTITION_LAYER = {
       id: ANNOTATION_PARTITION_LAYER_ID,
       label: "智能分区",
@@ -7234,12 +7884,36 @@ window.__ModuleLoader__.load({
       order: 110,
       defaultVisible: true
     };
+    const ANNOTATION_DIAMETER_LAYER = {
+      id: ANNOTATION_DIAMETER_LAYER_ID,
+      label: "直径标注",
+      category: "engineering",
+      icon: "dimension",
+      order: 115,
+      defaultVisible: true
+    };
     const ANNOTATION_DIMENSION_CHAIN_LAYER = {
       id: ANNOTATION_DIMENSION_CHAIN_LAYER_ID,
       label: "尺寸链",
       category: "engineering",
       icon: "dimension",
       order: 120,
+      defaultVisible: true
+    };
+    const ANNOTATION_DATUM_LAYER = {
+      id: ANNOTATION_DATUM_LAYER_ID,
+      label: "基准",
+      category: "engineering",
+      icon: "dimension",
+      order: 125,
+      defaultVisible: true
+    };
+    const ANNOTATION_GDT_LAYER = {
+      id: ANNOTATION_GDT_LAYER_ID,
+      label: "形位公差",
+      category: "engineering",
+      icon: "dimension",
+      order: 130,
       defaultVisible: true
     };
     function layerVisibilityStorageKey(sessionId) {
@@ -7250,9 +7924,7 @@ window.__ModuleLoader__.load({
     }
     function readLayerVisibility(sessionId, definitions, storage) {
       const saved = readSavedMap(sessionId, storage);
-      const result = Object.fromEntries(
-        Object.entries(saved).filter((entry) => typeof entry[1] === "boolean")
-      );
+      const result = {};
       for (const definition of definitions) {
         const savedValue = saved[definition.id];
         if (typeof savedValue === "boolean") {
@@ -7304,7 +7976,7 @@ window.__ModuleLoader__.load({
     const PARTITION_HYDRATION_INTERVAL_MS = 500;
     const PARTITION_HYDRATION_MAX_ATTEMPTS = 1200;
     const dimensionChainLayerId = (chainId) => `${ANNOTATION_DIMENSION_CHAIN_LAYER_ID}:${chainId}`;
-    const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER];
+    const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIAMETER_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER, ANNOTATION_DATUM_LAYER, ANNOTATION_GDT_LAYER];
     const subscribeToNoLayers = () => () => void 0;
     const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
     const EMPTY_DIMENSION_STATE = {
@@ -7332,9 +8004,33 @@ window.__ModuleLoader__.load({
       },
       dispose: () => void 0
     };
-    function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, dimensionPlan, layerRegistry }) {
+    const EMPTY_GDT_STATE = {
+      plan: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 },
+      busy: false,
+      previewHeld: false,
+      error: null
+    };
+    const EMPTY_GDT_CONTROLLER = {
+      state: { getSnapshot: () => EMPTY_GDT_STATE, subscribe: () => () => void 0 },
+      actions: {
+        refresh: async () => void 0,
+        edit: async () => void 0,
+        moveDatum: async () => void 0,
+        moveFrame: async () => void 0,
+        setOverride: async () => void 0,
+        clearOverride: async () => void 0,
+        confirm: async () => void 0,
+        cancel: async () => void 0,
+        undo: async () => void 0,
+        redo: async () => void 0,
+        setPreviewHeld: () => void 0
+      },
+      dispose: () => void 0
+    };
+    function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, gdt: suppliedGdt, dimensionPlan, layerRegistry }) {
       var _a2, _b, _c, _d;
       const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
+      const gdt = suppliedGdt ?? EMPTY_GDT_CONTROLLER;
       const snapshot = useObservable(runtime.snapshot);
       const viewport = useObservable(runtime.viewport);
       const selectedIds = useObservable(runtime.selection);
@@ -7342,12 +8038,14 @@ window.__ModuleLoader__.load({
       const annotationState = useObservable(state);
       const partitionState = useObservable(partition.state);
       const dimensionState = useObservable(dimensionChain.state);
+      const gdtState = useObservable(gdt.state);
       const displaySnapshot = presentation.displaySnapshot ?? snapshot;
       const [importError, setImportError] = react.useState(null);
       const [stagedDocumentNames, setStagedDocumentNames] = react.useState([]);
       const [activePanel, setActivePanel] = react.useState(null);
       const [panelWidth, setPanelWidth] = react.useState(260);
       const [partitionView, setPartitionView] = react.useState("functional");
+      const [selectedGdtIntentId, setSelectedGdtIntentId] = react.useState(null);
       const registeredLayers = react.useSyncExternalStore(
         (layerRegistry == null ? void 0 : layerRegistry.subscribeLayers) ?? subscribeToNoLayers,
         (layerRegistry == null ? void 0 : layerRegistry.getLayers) ?? readFallbackLayers,
@@ -7358,20 +8056,24 @@ window.__ModuleLoader__.load({
         registeredLayers,
         typeof sessionStorage === "undefined" ? null : sessionStorage
       ));
-      const fitAfterAnalysis = react.useRef(partitionState.busy);
       const displayedDrawingRef = react.useRef(null);
+      const initializedViewportDrawingId = react.useRef(null);
       const openingAngleVisible = layerVisibility[ANNOTATION_OPENING_ANGLE_LAYER_ID] ?? ANNOTATION_OPENING_ANGLE_LAYER.defaultVisible;
+      const diameterVisible = layerVisibility[ANNOTATION_DIAMETER_LAYER_ID] ?? ANNOTATION_DIAMETER_LAYER.defaultVisible;
+      const datumVisible = layerVisibility[ANNOTATION_DATUM_LAYER_ID] ?? ANNOTATION_DATUM_LAYER.defaultVisible;
+      const gdtVisible = layerVisibility[ANNOTATION_GDT_LAYER_ID] ?? ANNOTATION_GDT_LAYER.defaultVisible;
       const hasOpeningAngle = (displaySnapshot == null ? void 0 : displaySnapshot.document.annotations.some((annotation) => annotation.type === "dimension" && annotation.dimensionKind === "angular")) ?? false;
+      const hasDiameter = (displaySnapshot == null ? void 0 : displaySnapshot.document.annotations.some((annotation) => annotation.type === "dimension" && annotation.dimensionKind === "diameter")) ?? false;
       const surfaceSnapshot = react.useMemo(() => displaySnapshot === null ? null : {
         ...displaySnapshot,
         document: {
           ...displaySnapshot.document,
           // Keep imported hatches and generated engineering dimensions. Source DXF
           // text remains hidden so the clean engineering canvas does not regress.
-          annotations: displaySnapshot.document.annotations.filter((annotation) => annotation.type === "section-hatch" || annotation.type === "dimension" && (annotation.dimensionKind !== "angular" || openingAngleVisible)),
+          annotations: displaySnapshot.document.annotations.filter((annotation) => annotation.type === "section-hatch" || annotation.type === "dimension" && ((annotation.dimensionKind !== "angular" || openingAngleVisible) && (annotation.dimensionKind !== "diameter" || diameterVisible))),
           relations: []
         }
-      }, [displaySnapshot, openingAngleVisible]);
+      }, [diameterVisible, displaySnapshot, openingAngleVisible]);
       const draft = partitionState.partition.draft;
       const confirmed = partitionState.partition.confirmed;
       const dimensionRadialExtent = Math.max(0, ...((_a2 = draft ?? confirmed) == null ? void 0 : _a2.segments.map(({ profile }) => profile.maxRadius)) ?? []);
@@ -7392,6 +8094,9 @@ window.__ModuleLoader__.load({
       const partitionOverlayVisible = layerVisibility[ANNOTATION_PARTITION_LAYER_ID] ?? ANNOTATION_PARTITION_LAYER.defaultVisible;
       const dimensionChainVisible = layerVisibility[ANNOTATION_DIMENSION_CHAIN_LAYER_ID] ?? ANNOTATION_DIMENSION_CHAIN_LAYER.defaultVisible;
       const dimensionScheme = ((_b = dimensionState.plan.draft) == null ? void 0 : _b.axialScheme) ?? ((_c = dimensionState.plan.confirmed) == null ? void 0 : _c.axialScheme);
+      const gdtPlan = gdtState.plan.draft ?? gdtState.plan.confirmed;
+      const hasGdt = ((gdtPlan == null ? void 0 : gdtPlan.geometricTolerances.length) ?? 0) > 0;
+      const hasDatums = ((gdtPlan == null ? void 0 : gdtPlan.datums.length) ?? 0) > 0;
       const dimensionChainLayers = react.useMemo(() => (dimensionScheme == null ? void 0 : dimensionScheme.chains.map((chain, index) => ({
         id: dimensionChainLayerId(chain.id),
         label: `尺寸链 ${index + 1}`,
@@ -7422,8 +8127,9 @@ window.__ModuleLoader__.load({
       }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
       const fitPaddingRef = react.useRef(fitPadding);
       fitPaddingRef.current = fitPadding;
-      const previousViewportSizeRef = react.useRef({ width: viewport.width, height: viewport.height });
+      const previousViewportSize = react.useRef(null);
       const dimensionHistoryActive = dimensionState.plan.drawingRef !== void 0 && (dimensionState.plan.phase !== "idle" || dimensionState.plan.canUndo || dimensionState.plan.canRedo);
+      const gdtHistoryActive = hasGdt && gdtState.plan.drawingRef !== void 0 && (gdtState.plan.phase !== "idle" || gdtState.plan.canUndo || gdtState.plan.canRedo);
       react.useEffect(() => {
         let active = true;
         let timer;
@@ -7449,23 +8155,19 @@ window.__ModuleLoader__.load({
         const release = () => {
           partition.actions.setPreviewHeld(false);
           dimensionChain.actions.setPreviewHeld(false);
+          gdt.actions.setPreviewHeld(false);
         };
         window.addEventListener("blur", release);
         return () => {
           window.removeEventListener("blur", release);
           release();
         };
-      }, [dimensionChain, partition]);
+      }, [dimensionChain, gdt, partition]);
       react.useEffect(() => {
         if (!partitionState.busy) {
-          void runtime.actions.refresh().then(() => {
-            if (!fitAfterAnalysis.current) return;
-            fitAfterAnalysis.current = false;
-            fitRuntimeToDrawing(runtime, void 0, fitPaddingRef.current);
-          });
+          void runtime.actions.refresh();
           return;
         }
-        fitAfterAnalysis.current = true;
         void runtime.actions.refresh();
         const timer = window.setInterval(() => {
           void runtime.actions.refresh();
@@ -7473,15 +8175,24 @@ window.__ModuleLoader__.load({
         return () => window.clearInterval(timer);
       }, [partitionState.busy, runtime]);
       react.useEffect(() => {
-        if (displaySnapshot === null) return;
-        fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
-      }, [displaySnapshot, runtime]);
-      react.useEffect(() => {
-        const previous = previousViewportSizeRef.current;
-        previousViewportSizeRef.current = { width: viewport.width, height: viewport.height };
-        if (displaySnapshot === null || previous.width === viewport.width && previous.height === viewport.height) return;
-        fitRuntimeToDrawing(runtime, displaySnapshot, fitPaddingRef.current);
+        if (displaySnapshot === null || viewport.width <= 0 || viewport.height <= 0) return;
+        const drawingId = displaySnapshot.ref.drawingId;
+        if (initializedViewportDrawingId.current === drawingId) return;
+        initializedViewportDrawingId.current = drawingId;
+        const stored = readStoredViewport(drawingId);
+        runtime.actions.setViewport(stored === null ? fitViewportForSnapshot(displaySnapshot, viewport, fitPaddingRef.current) : { ...stored, width: viewport.width, height: viewport.height });
       }, [displaySnapshot, runtime, viewport.height, viewport.width]);
+      react.useEffect(() => {
+        const previous = previousViewportSize.current;
+        previousViewportSize.current = { width: viewport.width, height: viewport.height };
+        if (previous === null || previous.width === viewport.width && previous.height === viewport.height) return;
+        runtime.actions.setViewport({ ...viewport, width: viewport.width, height: viewport.height });
+      }, [runtime, viewport]);
+      react.useEffect(() => {
+        const drawingId = displaySnapshot == null ? void 0 : displaySnapshot.ref.drawingId;
+        if (!drawingId || initializedViewportDrawingId.current !== drawingId || viewport.width <= 0 || viewport.height <= 0) return;
+        writeStoredViewport(drawingId, viewport);
+      }, [displaySnapshot == null ? void 0 : displaySnapshot.ref.drawingId, viewport]);
       react.useEffect(() => {
         if (displaySnapshot === null) return;
         const key = `${displaySnapshot.ref.drawingId}@${displaySnapshot.ref.revision}`;
@@ -7489,10 +8200,12 @@ window.__ModuleLoader__.load({
         displayedDrawingRef.current = key;
         if (previous !== null && previous !== key) void partition.actions.refresh().catch(() => void 0);
         if (previous !== null && previous !== key) void dimensionChain.actions.refresh().catch(() => void 0);
-      }, [dimensionChain, displaySnapshot, partition]);
+        if (previous !== null && previous !== key) void gdt.actions.refresh().catch(() => void 0);
+      }, [dimensionChain, displaySnapshot, gdt, partition]);
       react.useEffect(() => {
         void dimensionChain.actions.refresh().catch(() => void 0);
-      }, [annotationState.activationEpoch, dimensionChain]);
+        void gdt.actions.refresh().catch(() => void 0);
+      }, [annotationState.activationEpoch, dimensionChain, gdt]);
       const beginImport = (drawing, documents) => {
         setImportError(null);
         void partition.actions.importFiles(drawing, documents).then(() => setActivePanel(null)).catch((error) => setImportError(engineeringImportErrorText(error instanceof Error ? error.message : String(error))));
@@ -7520,6 +8233,16 @@ window.__ModuleLoader__.load({
             scheme: dimensionScheme,
             controller: dimensionChain,
             editable: dimensionState.plan.phase === "editing"
+          }
+        ),
+        gdtPlan && hasGdt && /* @__PURE__ */ jsxRuntime.jsx(
+          GdtInspector,
+          {
+            draft: gdtPlan,
+            selectedIntentId: selectedGdtIntentId,
+            selectedGeometryIds: selectedIds,
+            controller: gdt,
+            onSelectIntent: setSelectedGdtIntentId
           }
         ),
         !draft && !confirmed && !dimensionPlan && /* @__PURE__ */ jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
@@ -7568,7 +8291,7 @@ window.__ModuleLoader__.load({
                 /* @__PURE__ */ jsxRuntime.jsx(
                   DrawingLayerManager,
                   {
-                    layers: [...registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme)).map((definition) => ({
+                    layers: [...registeredLayers.filter(({ id }) => id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed) || id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle || id === ANNOTATION_DIAMETER_LAYER_ID && hasDiameter || id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme) || id === ANNOTATION_DATUM_LAYER_ID && hasDatums || id === ANNOTATION_GDT_LAYER_ID && hasGdt).map((definition) => ({
                       definition,
                       visible: layerVisibility[definition.id] ?? definition.defaultVisible,
                       ...definition.id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && dimensionChainLayers.length > 0 ? {
@@ -7581,7 +8304,7 @@ window.__ModuleLoader__.load({
                     onVisibilityChange: updateLayerVisibility
                   }
                 ),
-                (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null) && /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
+                (partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null || gdtState.error !== null) && /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-annotation-status-stack", "data-annotation-status-stack": "true", children: [
                   partitionState.busy && /* @__PURE__ */ jsxRuntime.jsxs("div", { className: "vai-partition-progress", "data-partition-progress": partitionState.partition.phase, role: "status", children: [
                     /* @__PURE__ */ jsxRuntime.jsx("span", { className: "vai-partition-progress__pulse", "aria-hidden": "true" }),
                     /* @__PURE__ */ jsxRuntime.jsx("span", { children: partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status) })
@@ -7598,7 +8321,8 @@ window.__ModuleLoader__.load({
                     }, children: "清除" })
                   ] }),
                   (importError ?? partitionState.error) && /* @__PURE__ */ jsxRuntime.jsx("p", { className: "vai-partition-error", role: "alert", children: importError ?? `边界未保存：${partitionState.error}` }),
-                  dimensionState.error && /* @__PURE__ */ jsxRuntime.jsx("p", { className: "vai-partition-error", role: "alert", children: `尺寸位置未保存：${dimensionState.error}；请重新拖动后再试` })
+                  dimensionState.error && /* @__PURE__ */ jsxRuntime.jsx("p", { className: "vai-partition-error", role: "alert", children: `尺寸位置未保存：${dimensionState.error}；请重新拖动后再试` }),
+                  gdtState.error && /* @__PURE__ */ jsxRuntime.jsx("p", { className: "vai-partition-error", role: "alert", children: `形位公差未保存：${gdtState.error}` })
                 ] }),
                 surfaceSnapshot !== null && /* @__PURE__ */ jsxRuntime.jsx(
                   DrawingSurface,
@@ -7609,7 +8333,7 @@ window.__ModuleLoader__.load({
                     display: presentation.display,
                     sourceUrl: presentation.sourceUrl,
                     className: "vai-canvas vai-annotation-workspace__surface",
-                    fitToDrawingOnResize: true,
+                    fitToDrawingOnResize: false,
                     fitPadding,
                     onViewportChange: runtime.actions.setViewport,
                     onSelectionChange: runtime.actions.setSelection,
@@ -7638,25 +8362,48 @@ window.__ModuleLoader__.load({
                           visibleChainIds: visibleDimensionChainIds,
                           previewHeld: dimensionState.previewHeld,
                           onMoveChain: (chainId, normalOffset) => dimensionChain.actions.moveChain(chainId, normalOffset),
-                          onMoveCandidate: (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)
+                          onMoveCandidate: (candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset),
+                          onChooseClosure: (chainId, candidateId) => dimensionChain.actions.chooseClosure(chainId, candidateId)
+                        }
+                      ),
+                      gdtPlan && (hasDatums || hasGdt) && /* @__PURE__ */ jsxRuntime.jsx(
+                        GdtOverlay,
+                        {
+                          draft: gdtPlan,
+                          document: surfaceSnapshot.document,
+                          scale: viewport.scale,
+                          viewport,
+                          datumVisible,
+                          gdtVisible,
+                          previewHeld: gdtState.previewHeld,
+                          selectedIntentId: selectedGdtIntentId,
+                          onSelectIntent: setSelectedGdtIntentId,
+                          onMoveDatum: (datumId, position) => gdt.actions.moveDatum(datumId, position),
+                          onMoveGdtGroup: (intentIds, position) => gdt.actions.moveFrame(intentIds, position)
                         }
                       )
                     ] })
                   }
                 ),
-                dimensionState.plan.phase === "editing" ? /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: dimensionChain, previewHeld: dimensionState.previewHeld, subject: "尺寸链" }) : partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
+                gdtState.plan.phase === "editing" && hasGdt ? /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: gdt, previewHeld: gdtState.previewHeld, subject: "形位公差" }) : dimensionState.plan.phase === "editing" ? /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: dimensionChain, previewHeld: dimensionState.previewHeld, subject: "尺寸链" }) : partitionState.partition.phase === "editing" && /* @__PURE__ */ jsxRuntime.jsx(PartitionActionToolbar, { controller: partition, previewHeld: partitionState.previewHeld }),
                 displaySnapshot && /* @__PURE__ */ jsxRuntime.jsx(
                   WorkspaceToolbarView,
                   {
                     snapshot: displaySnapshot,
                     viewport,
                     unavailable: partitionState.busy,
-                    fitPadding,
-                    canUndo: dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
-                    canRedo: dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
-                    onFit: runtime.actions.setViewport,
-                    onUndo: () => dimensionHistoryActive ? dimensionChain.actions.undo() : partition.actions.undo(),
-                    onRedo: () => dimensionHistoryActive ? dimensionChain.actions.redo() : partition.actions.redo(),
+                    fitPadding: 1.12,
+                    canUndo: gdtHistoryActive ? gdtState.plan.canUndo : dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo,
+                    canRedo: gdtHistoryActive ? gdtState.plan.canRedo : dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo,
+                    onFit: (nextViewport) => runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, nextViewport, 1.12)),
+                    onUndo: () => gdtHistoryActive || dimensionHistoryActive ? runSharedAnnotationHistory(
+                      gdtHistoryActive ? () => gdt.actions.undo() : () => dimensionChain.actions.undo(),
+                      [() => gdt.actions.refresh(), () => dimensionChain.actions.refresh()]
+                    ) : partition.actions.undo(),
+                    onRedo: () => gdtHistoryActive || dimensionHistoryActive ? runSharedAnnotationHistory(
+                      gdtHistoryActive ? () => gdt.actions.redo() : () => dimensionChain.actions.redo(),
+                      [() => gdt.actions.refresh(), () => dimensionChain.actions.refresh()]
+                    ) : partition.actions.redo(),
                     onUploadFiles: handleToolbarUpload,
                     uploadAccept: ANNOTATION_UPLOAD_ACCEPT,
                     uploadMultiple: true
@@ -7668,14 +8415,31 @@ window.__ModuleLoader__.load({
         }
       );
     }
-    function fitRuntimeToDrawing(runtime, snapshot = runtime.snapshot.getSnapshot(), padding = 1.2) {
-      if (snapshot === null) return;
-      const viewport = runtime.viewport.getSnapshot();
-      if (viewport.width <= 0 || viewport.height <= 0) return;
-      runtime.actions.setViewport(fitViewportToDrawing({
+    function fitViewportForSnapshot(snapshot, viewport, padding) {
+      return fitViewportToDrawing({
         ...snapshot.document,
         annotations: snapshot.document.annotations.filter(({ type }) => type === "section-hatch" || type === "dimension")
-      }, viewport, padding));
+      }, viewport, padding);
+    }
+    function viewportStorageKey(drawingId) {
+      return `vectorai:annotation:viewport:${drawingId}`;
+    }
+    function readStoredViewport(drawingId) {
+      if (typeof localStorage === "undefined") return null;
+      try {
+        const value = JSON.parse(localStorage.getItem(viewportStorageKey(drawingId)) ?? "null");
+        if (!value || !Number.isFinite(value.x) || !Number.isFinite(value.y) || !Number.isFinite(value.scale) || !(value.scale > 0)) return null;
+        return { x: value.x, y: value.y, scale: value.scale };
+      } catch {
+        return null;
+      }
+    }
+    function writeStoredViewport(drawingId, viewport) {
+      if (typeof localStorage === "undefined") return;
+      try {
+        localStorage.setItem(viewportStorageKey(drawingId), JSON.stringify({ x: viewport.x, y: viewport.y, scale: viewport.scale }));
+      } catch {
+      }
     }
     function useObservable(observable) {
       return react.useSyncExternalStore(observable.subscribe, observable.getSnapshot, observable.getSnapshot);
@@ -13102,7 +13866,8 @@ window.__ModuleLoader__.load({
     ]);
     const dimensionTargetSchema = object({
       geometryId: idSchema,
-      anchor: entityAnchorSchema
+      anchor: entityAnchorSchema,
+      labelPosition: vec2Schema.optional()
     }).strict();
     const dimensionCandidateSchema = object({
       targets: array(dimensionTargetSchema),
@@ -13142,7 +13907,7 @@ window.__ModuleLoader__.load({
         context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
       }
     });
-    const datumReferenceSchema = object({
+    const drawingDatumReferenceSchema = object({
       datumId: idSchema,
       role: _enum(["primary", "secondary", "tertiary", "origin"]),
       geometryId: idSchema,
@@ -13223,7 +13988,7 @@ window.__ModuleLoader__.load({
         unit: _enum(["mm", "cm", "m", "deg"]).optional(),
         tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
         toleranceProjection: toleranceProjectionSchema.optional(),
-        datumReferences: array(datumReferenceSchema).optional(),
+        datumReferences: array(drawingDatumReferenceSchema).optional(),
         engineeringIntentId: idSchema.optional(),
         engineeringChainIds: array(idSchema).optional(),
         generationOrder: number().int().nonnegative().optional(),
@@ -13861,6 +14626,7 @@ window.__ModuleLoader__.load({
       name: string().min(1).max(120),
       geometryId: idSchema,
       anchor: entityAnchorSchema,
+      labelPosition: vec2Schema.optional(),
       role: _enum(["primary", "secondary", "tertiary", "origin"]),
       source: _enum(["document", "geometry", "manual", "ai-candidate"]),
       status: _enum(["candidate", "confirmed", "conflict", "stale"]),
@@ -13899,6 +14665,53 @@ window.__ModuleLoader__.load({
       status: engineeringStateSchema,
       evidenceIds: array(idSchema),
       diagnostics: array(engineeringDiagnosticSchema)
+    }).strict();
+    const geometricCharacteristicSchema = _enum([
+      "straightness",
+      "flatness",
+      "circularity",
+      "cylindricity",
+      "profile-line",
+      "profile-surface",
+      "parallelism",
+      "perpendicularity",
+      "angularity",
+      "position",
+      "coaxiality",
+      "symmetry",
+      "circular-runout",
+      "total-runout"
+    ]);
+    const materialConditionSchema = _enum(["rfs", "mmc", "lmc"]);
+    const geometricDatumFrameReferenceSchema = object({
+      datumId: idSchema,
+      materialCondition: materialConditionSchema.optional()
+    }).strict();
+    const toleranceZoneSchema = object({
+      shape: _enum(["linear", "diametrical", "spherical"]),
+      materialCondition: materialConditionSchema.optional(),
+      projectedZoneLength: number().finite().positive().optional()
+    }).strict();
+    const geometricToleranceIntentSchema = object({
+      id: idSchema,
+      drawingRef: drawingRefSchema,
+      characteristic: geometricCharacteristicSchema,
+      controlledTargets: array(dimensionTargetSchema),
+      toleranceZone: toleranceZoneSchema,
+      datumReferenceFrame: array(geometricDatumFrameReferenceSchema),
+      computed: object({
+        status: _enum(["pending", "resolved", "conflict", "stale"]),
+        value: number().finite().positive().optional(),
+        unit: literal("mm"),
+        ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+        inputDigest: idSchema.optional(),
+        diagnostics: array(engineeringDiagnosticSchema)
+      }).strict(),
+      override: object({ value: number().finite().positive() }).strict().optional(),
+      source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+      status: _enum(["candidate", "pending-calculation", "resolved", "confirmed", "conflict", "stale"]),
+      evidenceIds: array(idSchema),
+      framePosition: vec2Schema.optional()
     }).strict();
     const dimensionChainSchema = object({
       id: idSchema,
@@ -14040,12 +14853,23 @@ window.__ModuleLoader__.load({
         expectedDrawingRef: drawingRefSchema
       }).strict()
     ]);
+    const geometricToleranceEditCommandSchema = discriminatedUnion("type", [
+      object({ type: literal("datum.layout"), datumId: idSchema, position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+      object({ type: literal("frame.layout"), intentIds: array(idSchema).min(1), position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+      object({ type: literal("characteristic.set"), intentId: idSchema, characteristic: geometricCharacteristicSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+      object({ type: literal("controlled-targets.set"), intentId: idSchema, targets: array(dimensionTargetSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+      object({ type: literal("datum-frame.set"), intentId: idSchema, references: array(geometricDatumFrameReferenceSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+      object({ type: literal("zone.set"), intentId: idSchema, zone: toleranceZoneSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+      object({ type: literal("override.set"), intentId: idSchema, value: number().finite().positive(), expectedDrawingRef: drawingRefSchema }).strict(),
+      object({ type: literal("override.clear"), intentId: idSchema, expectedDrawingRef: drawingRefSchema }).strict()
+    ]);
     const engineeringAnnotationDraftSchema = object({
       version: literal(1),
       drawingRef: drawingRefSchema,
       datums: array(engineeringDatumSchema),
       intents: array(dimensionIntentSchema),
       tolerances: array(toleranceSpecSchema),
+      geometricTolerances: array(geometricToleranceIntentSchema).default([]),
       chains: array(dimensionChainSchema),
       dependencies: array(annotationDependencySchema),
       diagnostics: array(engineeringDiagnosticSchema),
@@ -14119,6 +14943,7 @@ window.__ModuleLoader__.load({
       return [
         dimensionDescriptor("getDimensionPlan", []),
         dimensionDescriptor("editDimensionScheme", [jsonParameter("command", "@vectorai/plugin-space-contracts#DimensionSchemeEditCommand", dimensionSchemeEditCommandSchema)]),
+        dimensionDescriptor("editGeometricTolerance", [jsonParameter("command", "@vectorai/plugin-space-contracts#GeometricToleranceEditCommand", geometricToleranceEditCommandSchema)]),
         dimensionDescriptor("confirmDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
         dimensionDescriptor("cancelDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
         dimensionDescriptor("undoDimensionPlan", [jsonParameter("expected", "@vectorai/drawing-edit-protocol#DrawingRef", drawingRefSchema)]),
@@ -14175,7 +15000,7 @@ window.__ModuleLoader__.load({
             ...pendingPartition === void 0 ? {} : { partition: pendingPartition }
           });
           try {
-            update({ partition: unwrap$1(await operation()) });
+            update({ partition: unwrap$2(await operation()) });
           } catch (error) {
             update({ error: error instanceof Error ? error.message : String(error) });
             throw error;
@@ -14260,7 +15085,7 @@ window.__ModuleLoader__.load({
         }
       };
     }
-    function unwrap$1(result) {
+    function unwrap$2(result) {
       if (result.ok !== true) throw new Error(result.error.message);
       return structuredClone(result.value);
     }
@@ -14310,7 +15135,7 @@ window.__ModuleLoader__.load({
         const task = queue.then(async () => {
           update({ busy: true, error: null });
           try {
-            update({ plan: unwrap(await operation()) });
+            update({ plan: unwrap$1(await operation()) });
           } catch (error) {
             update({ error: error instanceof Error ? error.message : String(error) });
             throw error;
@@ -14352,6 +15177,73 @@ window.__ModuleLoader__.load({
         }
       };
     }
+    function unwrap$1(result) {
+      if (result.ok !== true) throw new Error(result.error.message);
+      return structuredClone(result.value);
+    }
+    function createGdtController(sessionId, remoteSource) {
+      let current = {
+        plan: { version: 1, phase: "idle", canUndo: false, canRedo: false, updatedAt: 0 },
+        busy: false,
+        previewHeld: false,
+        error: null
+      };
+      const listeners = /* @__PURE__ */ new Set();
+      let queue = Promise.resolve();
+      let disposed = false;
+      const update = (changes) => {
+        if (disposed) return;
+        current = { ...current, ...changes };
+        listeners.forEach((listener) => listener());
+      };
+      const remote = () => typeof remoteSource === "function" ? remoteSource() : remoteSource;
+      const run = (operation) => {
+        const task = queue.then(async () => {
+          update({ busy: true, error: null });
+          try {
+            update({ plan: unwrap(await operation()) });
+          } catch (error) {
+            update({ error: error instanceof Error ? error.message : String(error) });
+            throw error;
+          } finally {
+            update({ busy: false });
+          }
+        });
+        queue = task.catch(() => void 0);
+        return task;
+      };
+      const drawingRef = () => {
+        if (!current.plan.drawingRef) throw new Error("GDT_DRAWING_REQUIRED");
+        return current.plan.drawingRef;
+      };
+      const edit = (command) => run(() => remote().editGeometricTolerance(
+        sessionId,
+        { ...command, expectedDrawingRef: drawingRef() }
+      ));
+      return {
+        state: { getSnapshot: () => current, subscribe(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        } },
+        actions: {
+          refresh: () => run(() => remote().getDimensionPlan(sessionId)),
+          edit,
+          moveDatum: (datumId, position) => edit({ type: "datum.layout", datumId, position: [...position] }),
+          moveFrame: (intentIds, position) => edit({ type: "frame.layout", intentIds: [...intentIds], position: [...position] }),
+          setOverride: (intentId, value) => edit({ type: "override.set", intentId, value }),
+          clearOverride: (intentId) => edit({ type: "override.clear", intentId }),
+          confirm: () => run(() => remote().confirmDimensionPlan(sessionId, drawingRef())),
+          cancel: () => run(() => remote().cancelDimensionPlan(sessionId, drawingRef())),
+          undo: () => run(() => remote().undoDimensionPlan(sessionId, drawingRef())),
+          redo: () => run(() => remote().redoDimensionPlan(sessionId, drawingRef())),
+          setPreviewHeld: (previewHeld) => update({ previewHeld })
+        },
+        dispose() {
+          disposed = true;
+          listeners.clear();
+        }
+      };
+    }
     function unwrap(result) {
       if (result.ok !== true) throw new Error(result.error.message);
       return structuredClone(result.value);
@@ -14369,6 +15261,7 @@ window.__ModuleLoader__.load({
           const stateSource = createAnnotationRemoteStateSource(annotationRemote);
           const partitionControllers = /* @__PURE__ */ new Map();
           const dimensionControllers = /* @__PURE__ */ new Map();
+          const gdtControllers = /* @__PURE__ */ new Map();
           const partitionFor = (sessionId) => {
             const current = partitionControllers.get(sessionId);
             if (current) return current;
@@ -14391,9 +15284,20 @@ window.__ModuleLoader__.load({
             void controller.actions.refresh();
             return controller;
           };
+          const gdtFor = (sessionId) => {
+            const current = gdtControllers.get(sessionId);
+            if (current) return current;
+            const controller = createGdtController(sessionId, annotationRemote);
+            gdtControllers.set(sessionId, controller);
+            void controller.actions.refresh();
+            return controller;
+          };
           const layerRegistration = registry2.registerLayer(ANNOTATION_PARTITION_LAYER);
           const openingAngleLayerRegistration = registry2.registerLayer(ANNOTATION_OPENING_ANGLE_LAYER);
+          const diameterLayerRegistration = registry2.registerLayer(ANNOTATION_DIAMETER_LAYER);
           const dimensionChainLayerRegistration = registry2.registerLayer(ANNOTATION_DIMENSION_CHAIN_LAYER);
+          const datumLayerRegistration = registry2.registerLayer(ANNOTATION_DATUM_LAYER);
+          const gdtLayerRegistration = registry2.registerLayer(ANNOTATION_GDT_LAYER);
           const registration = registry2.registerWorkspace({
             id: "engineering-annotation",
             apiVersion: 1,
@@ -14405,7 +15309,8 @@ window.__ModuleLoader__.load({
                 ...props,
                 state: stateSource.observeState(props.sessionId),
                 partition: partitionFor(props.sessionId),
-                dimensionChain: dimensionsFor(props.sessionId)
+                dimensionChain: dimensionsFor(props.sessionId),
+                gdt: gdtFor(props.sessionId)
               }
             )
           });
@@ -14425,13 +15330,18 @@ window.__ModuleLoader__.load({
             await dropFiber.dispose();
             registration.dispose();
             openingAngleLayerRegistration.dispose();
+            diameterLayerRegistration.dispose();
             dimensionChainLayerRegistration.dispose();
+            datumLayerRegistration.dispose();
+            gdtLayerRegistration.dispose();
             layerRegistration.dispose();
             stateSource.dispose();
             for (const controller of partitionControllers.values()) controller.dispose();
             partitionControllers.clear();
             for (const controller of dimensionControllers.values()) controller.dispose();
             dimensionControllers.clear();
+            for (const controller of gdtControllers.values()) controller.dispose();
+            gdtControllers.clear();
           };
         }
       );
@@ -14446,7 +15356,7 @@ window.__ModuleLoader__.load({
     module.exports.apply = async (ctx) => {
       var style = document.createElement("style");
       style.dataset["vectoraiDshAnnotation"] = "true";
-      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-layer-manager {\n  position: absolute;\n  z-index: 11;\n  top: 14px;\n  right: 16px;\n  color: #d8e0eb;\n  font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-layer-manager__trigger {\n  display: grid;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  place-items: center;\n  border: 1px solid rgba(148, 163, 184, .22);\n  border-radius: 9px;\n  color: #aebdce;\n  background: rgba(14, 21, 29, .9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, .28);\n  backdrop-filter: blur(12px);\n}\n\n.vai-layer-manager__trigger[aria-expanded=\"true\"] {\n  border-color: rgba(56, 189, 248, .42);\n  color: #7dd3fc;\n  background: rgba(14, 116, 144, .2);\n}\n\n.vai-layer-manager__menu {\n  position: absolute;\n  top: 38px;\n  right: 0;\n  display: grid;\n  min-width: 190px;\n  gap: 8px;\n  padding: 9px;\n  border: 1px solid rgba(148, 163, 184, .2);\n  border-radius: 12px;\n  background: rgba(12, 19, 27, .96);\n  box-shadow: 0 16px 36px rgba(0, 0, 0, .38);\n  backdrop-filter: blur(14px);\n}\n\n.vai-layer-manager__group { display: grid; gap: 4px; }\n.vai-layer-manager__group h3 { margin: 0; padding: 3px 7px; color: #71859a; font-size: 9px; font-weight: 600; letter-spacing: .08em; }\n.vai-layer-manager__branch { display: grid; gap: 2px; }\n.vai-layer-manager__row { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 2px; }\n.vai-layer-manager__disclosure { display: grid; width: 18px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 5px; color: #71859a; background: transparent; }\n.vai-layer-manager__disclosure:hover { color: #c9effd; background: rgba(148, 163, 184, .08); }\n.vai-layer-manager__disclosure-spacer { width: 18px; }\n.vai-layer-manager__children { display: grid; gap: 2px; margin-left: 12px; padding-left: 7px; border-left: 1px solid rgba(56, 189, 248, .16); }\n.vai-layer-manager__item { display: grid; width: 100%; grid-template-columns: 18px minmax(0, 1fr) 18px; align-items: center; gap: 7px; min-height: 32px; padding: 5px 7px; border: 1px solid transparent; border-radius: 8px; color: #8295aa; background: transparent; font-size: 11px; text-align: left; }\n.vai-layer-manager__item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.vai-layer-manager__item[aria-pressed=\"true\"] { border-color: rgba(56, 189, 248, .2); color: #c9effd; background: rgba(14, 116, 144, .13); }\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel, #12161b);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel-deep, #0d1014);\n}\n\n.vai-activity-bar--overlay {\n  position: absolute;\n  inset: 0 auto 0 0;\n  box-sizing: border-box;\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n  border: 1px solid transparent;\n  color: var(--vai-muted);\n  background: transparent;\n  cursor: pointer;\n}\n\n.vai-activity-bar__button:hover,\n.vai-activity-bar__button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--overlay {\n  position: absolute;\n  z-index: 5;\n  inset: 0 auto 0 42px;\n  box-sizing: border-box;\n  box-shadow: 14px 0 30px rgba(0, 0, 0, 0.28);\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n/* CAD semantic palette: geometry stays neutral, dimensions read in cyan and\n   section hatches in yellow without changing the source drawing data. */\n.vai-entity--angular-dimension {\n  color: #22d3ee;\n  fill: #22d3ee;\n  stroke: #22d3ee;\n}\n\n.vai-entity--section-hatch {\n  color: #facc15;\n  stroke: #facc15;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  flex: 1 1 auto;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }\n.vai-annotation-workspace__body { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-annotation-status-stack { position: absolute; z-index: 12; top: 14px; left: 50%; display: grid; justify-items: center; gap: 7px; width: max-content; max-width: calc(100% - 96px); transform: translateX(-50%); pointer-events: none; }\n.vai-partition-progress { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; }\n.vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }\n.vai-partition-error { margin: 0; padding: 7px 12px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; }\n@keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-panel { min-height: 0; padding: 14px; overflow: auto; }\n.vai-annotation-panel h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-panel dt { color: #8fa1b5; }\n.vai-annotation-panel dd { margin: 0; }\n\n.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }\n.vai-annotation-import--panel { box-sizing: border-box; width: 100%; margin: 0; padding: 16px 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }\n.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }\n.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }\n.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }\n.vai-annotation-import__files { display: grid; max-height: 112px; gap: 4px; margin: -4px 0 0; padding: 8px 10px 8px 28px; overflow: auto; border-radius: 8px; color: #9fb2c7; background: rgba(5, 12, 19, .55); font-size: 11px; }\n.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }\n.vai-engineering-documents-status { display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 8px 10px 8px 14px; border: 1px solid rgba(52, 211, 153, .42); border-radius: 10px; color: #b7f7db; background: rgba(8, 32, 29, .94); box-shadow: 0 10px 28px rgba(0, 0, 0, .28); font-size: 12px; pointer-events: auto; }\n.vai-engineering-documents-status button { padding: 4px 8px; border: 1px solid rgba(148, 163, 184, .3); border-radius: 7px; color: #d7e1ec; background: rgba(30, 41, 59, .72); cursor: pointer; }\n\n.vai-engineering-drop { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; padding: 6px 10px; border: 1px solid rgba(72, 187, 238, .28); border-radius: 9px; color: #b8dff2; background: rgba(9, 50, 70, .58); font-size: 12px; }\n.vai-engineering-drop--pending { border-color: rgba(96, 165, 250, .3); background: rgba(30, 64, 175, .12); }\n.vai-engineering-drop--importing { border-color: rgba(52, 211, 153, .3); color: #9ce8c5; background: rgba(6, 95, 70, .15); }\n.vai-engineering-drop--success { border-color: rgba(52, 211, 153, .38); color: #a7f3d0; background: rgba(6, 95, 70, .2); }\n.vai-engineering-drop--error { border-color: rgba(248, 113, 113, .35); color: #ffabb1; background: rgba(127, 29, 29, .18); }\n.vai-engineering-drop button { flex: none; padding: 3px 8px; border: 1px solid currentColor; border-radius: 7px; color: inherit; background: transparent; font-size: 11px; }\n\n.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }\n.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }\n.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }\n.vai-partition-band--geometry { stroke-dasharray: 8 5; }\n.vai-partition-label-anchor[role=\"button\"] { cursor: text; }\n.vai-partition-label-bg { fill: rgba(10, 18, 26, .9); stroke: rgba(125, 211, 252, .35); stroke-width: 1px; }\n.vai-partition-label { fill: #e6f7ff; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; letter-spacing: .2px; }\n.vai-partition-label-input { box-sizing: border-box; width: 100%; height: 18px; padding: 1px 5px; border: 1px solid rgba(125, 211, 252, .7); border-radius: 5px; outline: none; color: #e6f7ff; background: #0a121a; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; text-align: center; }\n.vai-partition-handle-leader { stroke: rgba(84, 200, 247, .72); stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }\n\n.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }\n.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }\n.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }\n.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }\n.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }\n.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-partition-inspector__title { display: grid; gap: 9px; margin-bottom: 12px; }\n.vai-partition-inspector__title h2 { margin: 0; }\n.vai-partition-view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 9px; background: rgba(5, 12, 19, .5); }\n.vai-partition-view-switch button { min-width: 0; padding: 6px 8px; border: 0; border-radius: 6px; color: #8295aa; background: transparent; font-size: 10px; }\n.vai-partition-view-switch button.is-active { color: #dff6ff; background: rgba(14, 165, 233, .2); box-shadow: inset 0 0 0 1px rgba(56, 189, 248, .22); }\n.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }\n.vai-partition-inspector small { color: #8295aa; }\n.vai-partition-inspector__unclassified { margin: 10px 0 0; color: #8295aa; font-size: 10px; line-height: 1.5; }\n.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }\n.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }\n.vai-partition-inspector__commands { display: flex; gap: 5px; }\n.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }\n.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }\n.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }\n.vai-confirmed-partition__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }\n.vai-confirmed-partition__heading > div { display: flex; align-items: center; gap: 7px; }\n.vai-confirmed-partition__heading h2 { margin: 0; }\n.vai-confirmed-partition__heading span { padding: 2px 6px; border: 1px solid rgba(52, 211, 153, .26); border-radius: 999px; color: #6ee7b7; background: rgba(6, 78, 59, .28); font-size: 9px; }\n.vai-confirmed-partition__heading button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, .28); border-radius: 7px; color: #bae6fd; background: rgba(14, 116, 144, .16); font-size: 10px; }\n.vai-confirmed-partition__heading button:disabled { opacity: .45; }\n.vai-confirmed-partition__actions { display: flex; align-items: center; gap: 6px; }\n.vai-confirmed-partition__meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0 0 12px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .045); font-size: 10px; }\n.vai-confirmed-partition__meta dt { color: #8295aa; }\n.vai-confirmed-partition__meta dd { min-width: 0; margin: 0; overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }\n.vai-confirmed-partition em { color: #7dd3fc; font-size: 10px; font-style: normal; }\n\n.vai-dimension-plan { min-width: 0; }\n.vai-dimension-plan > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }\n.vai-dimension-plan > header h2 { margin: 0; }\n.vai-dimension-plan > header span { color: #8295aa; font-size: 11px; }\n.vai-dimension-plan ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-plan li { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(148, 163, 184, .055); }\n.vai-dimension-plan__row-title { display: flex; align-items: center; gap: 7px; font-size: 12px; }\n.vai-dimension-plan__order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #8fdcff; background: rgba(14, 165, 233, .14); font: 600 10px ui-monospace, monospace; }\n.vai-dimension-plan__row-title strong { flex: 1; }\n.vai-dimension-plan__nominal { color: #e2e8f0; font: 600 13px ui-monospace, monospace; }\n.vai-dimension-plan dl { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 7px; margin: 0; font-size: 10px; line-height: 1.45; }\n.vai-dimension-plan dt { color: #71859a; }\n.vai-dimension-plan dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #aebdce; }\n.vai-dimension-plan dd code { display: block; margin-top: 2px; color: #7dd3fc; font-size: 10px; }\n.vai-dimension-badge { padding: 2px 6px; border-radius: 999px; color: #9fb0c2; background: rgba(148, 163, 184, .1); font-size: 9px; }\n.vai-dimension-badge--confirmed, .vai-dimension-badge--resolved { color: #64dca2; background: rgba(34, 197, 94, .13); }\n.vai-dimension-badge--candidate { color: #f7c86c; background: rgba(245, 158, 11, .13); }\n.vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }\n.vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }\n.vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }\n\n.vai-dimension-chain-group { color: #22d3ee; }\n.vai-dimension-chain-group--tone-1 { color: #34d399; }\n.vai-dimension-chain-group--tone-2 { color: #a78bfa; }\n.vai-dimension-chain-group[data-dimension-drag-axis=\"y\"] { cursor: ns-resize; }\n.vai-dimension-chain-group[data-dimension-drag-axis=\"x\"] { cursor: ew-resize; }\n.vai-dimension-chain-interval { color: #22d3ee; }\n.vai-dimension-chain-group > .vai-dimension-chain-interval { color: inherit; }\n.vai-dimension-chain-interval[data-dimension-drag-axis=\"y\"] { cursor: ns-resize; }\n.vai-dimension-chain-interval[data-dimension-drag-axis=\"x\"] { cursor: ew-resize; }\n.vai-dimension-chain-interval line { stroke: currentColor; stroke-width: 1.35; }\n.vai-dimension-chain-interval[data-dimension-draggable=\"true\"]:hover .vai-dimension-chain-line { stroke-width: 2.4; }\n.vai-dimension-chain-extension { opacity: .42; stroke-width: 1 !important; }\n.vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }\n.vai-dimension-chain-label .vai-screen-space-label__background { fill: rgba(8, 16, 24, .94); stroke: currentColor; stroke-width: 1px; }\n.vai-dimension-chain-interval--closure { color: #f59e0b; }\n.vai-dimension-chain-interval--closure .vai-dimension-chain-line { opacity: .45; stroke-linecap: round; }\n.vai-dimension-chain-interval--closure .vai-dimension-chain-label { opacity: .6; }\n.vai-dimension-chain-interval--closure .vai-dimension-chain-label .vai-screen-space-label__background { stroke-dasharray: 3 2; }\n.vai-dimension-chain-interval[data-dimension-conflict=\"true\"] { color: #fb7185; }\n.vai-dimension-chain-bracket path, .vai-dimension-chain-bracket > line { stroke: currentColor; stroke-width: 1.5; opacity: .8; }\n.vai-dimension-chain-title text { fill: currentColor; font: 600 10px ui-sans-serif, system-ui, sans-serif; }\n.vai-dimension-chain-title .vai-screen-space-label__background { fill: rgba(8, 16, 24, .9); stroke: currentColor; stroke-width: 1px; }\n.vai-dimension-chain-inspector { display: grid; gap: 10px; }\n.vai-dimension-chain-inspector > header { display: flex; align-items: center; justify-content: space-between; }\n.vai-dimension-chain-inspector h2, .vai-dimension-chain-inspector h3 { margin: 0; }\n.vai-dimension-chain-inspector h3 { color: #b8c5d5; font-size: 11px; }\n.vai-dimension-chain-inspector > header span { padding: 2px 6px; border-radius: 999px; color: #7dd3fc; background: rgba(14, 165, 233, .14); font-size: 9px; }\n.vai-dimension-chain-inspector ol, .vai-dimension-chain-inspector ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-chain-inspector ol > li { display: grid; gap: 5px; padding: 9px; border: 1px solid rgba(56, 189, 248, .16); border-radius: 9px; background: rgba(14, 165, 233, .055); font-size: 11px; }\n.vai-dimension-chain-inspector small { color: #8295aa; }\n.vai-dimension-chain-inspector__alternatives { display: flex; flex-wrap: wrap; gap: 5px; }\n.vai-dimension-chain-inspector button { padding: 5px 7px; border: 1px solid rgba(245, 158, 11, .3); border-radius: 6px; color: #fbc56d; background: rgba(146, 64, 14, .16); font-size: 10px; }\n.vai-dimension-chain-inspector__candidates label { display: flex; align-items: center; gap: 7px; color: #c7d2df; font-size: 11px; }\n.vai-dimension-chain-inspector__diagnostics li { color: #f6bf73; font-size: 10px; }\n";
+      style.textContent = ".vai-workspace {\n  --vai-bg: #090b0e;\n  --vai-panel: #12161b;\n  --vai-panel-deep: #0d1014;\n  --vai-panel-hover: rgba(255, 255, 255, 0.035);\n  --vai-border: rgba(255, 255, 255, 0.07);\n  --vai-text: #cbd5e1;\n  --vai-muted: #64748b;\n  --vai-subtle: #334155;\n  --vai-accent: #6da9d2;\n  --vai-danger: #ef6a6a;\n  --vai-success: #4ade80;\n  box-sizing: border-box;\n  display: flex;\n  width: 100%;\n  height: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text);\n  background: var(--vai-bg);\n  font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-workspace *,\n.vai-workspace *::before,\n.vai-workspace *::after {\n  box-sizing: border-box;\n}\n\n.vai-workspace__header {\n  display: flex;\n  height: 44px;\n  min-height: 44px;\n  align-items: center;\n  gap: 8px;\n  padding: 0 10px;\n  border-bottom: 1px solid var(--vai-border);\n  background: var(--vai-bg);\n  color: var(--vai-muted);\n}\n\n.vai-workspace__identity {\n  display: flex;\n  min-width: 0;\n  max-width: 220px;\n  align-items: center;\n  gap: 7px;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-workspace__drawing-id {\n  overflow: hidden;\n  color: var(--vai-text);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-workspace__badge {\n  border-radius: 999px;\n  padding: 2px 7px;\n  color: #d7a45e;\n  background: rgba(230, 161, 93, 0.1);\n}\n\n.vai-workspace__badge--preview {\n  border-color: rgba(56, 189, 248, 0.55);\n  background: rgba(14, 165, 233, 0.14);\n  color: #7dd3fc;\n}\n\n.vai-entity--preview-created,\n.vai-entity--preview-updated {\n  color: #38bdf8;\n  filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.65));\n}\n\n.vai-entity--preview-before {\n  opacity: 0.28;\n  color: #f59e0b;\n  pointer-events: none;\n}\n\n.vai-entity--preview-deleted {\n  opacity: 0.24;\n  color: #fb7185;\n  stroke-dasharray: 5 4;\n  pointer-events: none;\n}\n\n.vai-workspace__busy {\n  margin-left: auto;\n}\n\n.vai-workspace__error {\n  padding: 7px 14px;\n  border-bottom: 1px solid #f1c4c1;\n  color: var(--vai-danger);\n  background: #fff1f0;\n}\n\n.vai-workspace__body {\n  position: relative;\n  display: flex;\n  min-height: 0;\n  flex: 1;\n}\n\n.vai-workspace__canvas-region {\n  position: relative;\n  display: flex;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n}\n\n.vai-workspace button {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  padding: 5px 7px;\n  color: var(--vai-muted);\n  background: transparent;\n  font: inherit;\n  cursor: pointer;\n}\n\n.vai-workspace button:hover:not(:disabled),\n.vai-workspace button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-workspace button:disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-layer-manager {\n  position: absolute;\n  z-index: 11;\n  top: 14px;\n  right: 16px;\n  color: #d8e0eb;\n  font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n}\n\n.vai-layer-manager__trigger {\n  display: grid;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  place-items: center;\n  border: 1px solid rgba(148, 163, 184, .22);\n  border-radius: 9px;\n  color: #aebdce;\n  background: rgba(14, 21, 29, .9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, .28);\n  backdrop-filter: blur(12px);\n}\n\n.vai-layer-manager__trigger[aria-expanded=\"true\"] {\n  border-color: rgba(56, 189, 248, .42);\n  color: #7dd3fc;\n  background: rgba(14, 116, 144, .2);\n}\n\n.vai-layer-manager__menu {\n  position: absolute;\n  top: 38px;\n  right: 0;\n  display: grid;\n  min-width: 190px;\n  gap: 8px;\n  padding: 9px;\n  border: 1px solid rgba(148, 163, 184, .2);\n  border-radius: 12px;\n  background: rgba(12, 19, 27, .96);\n  box-shadow: 0 16px 36px rgba(0, 0, 0, .38);\n  backdrop-filter: blur(14px);\n}\n\n.vai-layer-manager__group { display: grid; gap: 4px; }\n.vai-layer-manager__group h3 { margin: 0; padding: 3px 7px; color: #71859a; font-size: 9px; font-weight: 600; letter-spacing: .08em; }\n.vai-layer-manager__branch { display: grid; gap: 2px; }\n.vai-layer-manager__row { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 2px; }\n.vai-layer-manager__disclosure { display: grid; width: 18px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 5px; color: #71859a; background: transparent; }\n.vai-layer-manager__disclosure:hover { color: #c9effd; background: rgba(148, 163, 184, .08); }\n.vai-layer-manager__disclosure-spacer { width: 18px; }\n.vai-layer-manager__children { display: grid; gap: 2px; margin-left: 12px; padding-left: 7px; border-left: 1px solid rgba(56, 189, 248, .16); }\n.vai-layer-manager__item { display: grid; width: 100%; grid-template-columns: 18px minmax(0, 1fr) 18px; align-items: center; gap: 7px; min-height: 32px; padding: 5px 7px; border: 1px solid transparent; border-radius: 8px; color: #8295aa; background: transparent; font-size: 11px; text-align: left; }\n.vai-layer-manager__item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.vai-layer-manager__item[aria-pressed=\"true\"] { border-color: rgba(56, 189, 248, .2); color: #c9effd; background: rgba(14, 116, 144, .13); }\n\n.vai-toolbar {\n  position: absolute;\n  z-index: 8;\n  bottom: 16px;\n  left: 50%;\n  display: flex;\n  max-width: calc(100% - 32px);\n  align-items: center;\n  gap: 5px;\n  padding: 6px;\n  border: 1px solid rgba(255, 255, 255, 0.1);\n  border-radius: 12px;\n  background: rgba(18, 22, 27, 0.92);\n  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);\n  backdrop-filter: blur(14px);\n  transform: translateX(-50%);\n}\n\n.vai-toolbar--motion-rig {\n  bottom: 70px;\n  gap: 0;\n  padding: 4px;\n  border-color: rgba(255, 255, 255, 0.08);\n  border-radius: 10px;\n  background: rgba(15, 19, 24, 0.9);\n  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel {\n  border-color: transparent;\n  color: var(--vai-danger);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--cancel:hover:not(:disabled) {\n  border-color: transparent;\n  color: #fca5a5;\n  background: rgba(239, 106, 106, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm {\n  border-color: transparent;\n  color: var(--vai-success);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview {\n  border-color: transparent;\n  color: var(--vai-accent);\n  background: transparent;\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--preview:hover:not(:disabled),\n.vai-toolbar--motion-rig .vai-toolbar__action--preview[aria-pressed=\"true\"] {\n  border-color: transparent;\n  color: #bae6fd;\n  background: rgba(109, 169, 210, 0.12);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:hover:not(:disabled) {\n  border-color: transparent;\n  color: #86efac;\n  background: rgba(74, 222, 128, 0.1);\n}\n\n.vai-toolbar--motion-rig .vai-toolbar__action--confirm:disabled {\n  color: #476455;\n  background: transparent;\n  opacity: 0.55;\n}\n\n.vai-toolbar__separator--motion-rig {\n  height: 18px;\n  margin: 0 2px;\n  background: rgba(255, 255, 255, 0.09);\n}\n\n.vai-toolbar button,\n.vai-toolbar__upload {\n  display: inline-flex;\n  width: 32px;\n  height: 32px;\n  flex: 0 0 auto;\n  align-items: center;\n  justify-content: center;\n  padding: 0;\n  white-space: nowrap;\n}\n\n.vai-toolbar__separator {\n  width: 1px;\n  height: 20px;\n  background: var(--vai-border);\n}\n\n.vai-toolbar__upload {\n  border: 1px solid transparent;\n  border-radius: 6px;\n  color: var(--vai-muted);\n  cursor: pointer;\n}\n\n.vai-toolbar__upload:hover {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-toolbar__upload--disabled {\n  cursor: not-allowed;\n  opacity: 0.45;\n}\n\n.vai-toolbar__upload input {\n  position: absolute;\n  width: 1px;\n  height: 1px;\n  overflow: hidden;\n  clip: rect(0 0 0 0);\n  white-space: nowrap;\n  clip-path: inset(50%);\n}\n\n.vai-inspector-stack {\n  display: flex;\n  width: 240px;\n  min-width: 210px;\n  min-height: 0;\n  flex: 0 0 240px;\n  flex-direction: column;\n  overflow: hidden;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel, #12161b);\n}\n\n.vai-activity-bar {\n  z-index: 6;\n  display: flex;\n  width: 42px;\n  min-width: 42px;\n  flex: 0 0 42px;\n  flex-direction: column;\n  align-items: center;\n  gap: 4px;\n  padding: 6px 4px;\n  border-right: 1px solid var(--vai-border, rgba(255, 255, 255, 0.07));\n  background: var(--vai-panel-deep, #0d1014);\n}\n\n.vai-activity-bar--overlay {\n  position: absolute;\n  inset: 0 auto 0 0;\n  box-sizing: border-box;\n}\n\n.vai-activity-bar__button {\n  position: relative;\n  display: inline-flex;\n  width: 34px;\n  height: 34px;\n  flex: 0 0 34px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n  border-radius: 7px !important;\n  border: 1px solid transparent;\n  color: var(--vai-muted);\n  background: transparent;\n  cursor: pointer;\n}\n\n.vai-activity-bar__button:hover,\n.vai-activity-bar__button[aria-pressed=\"true\"] {\n  border-color: rgba(109, 169, 210, 0.22);\n  color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.08);\n}\n\n.vai-activity-bar__button[aria-pressed=\"true\"]::before {\n  position: absolute;\n  top: 7px;\n  bottom: 7px;\n  left: -5px;\n  width: 2px;\n  border-radius: 0 2px 2px 0;\n  background: var(--vai-accent);\n  content: \"\";\n}\n\n.vai-inspector-stack--activity {\n  position: relative;\n  width: 260px;\n  min-width: 220px;\n  max-width: 420px;\n  flex: 0 0 auto;\n}\n\n.vai-inspector-stack--overlay {\n  position: absolute;\n  z-index: 5;\n  inset: 0 auto 0 42px;\n  box-sizing: border-box;\n  box-shadow: 14px 0 30px rgba(0, 0, 0, 0.28);\n}\n\n.vai-inspector-stack--activity > .vai-panel {\n  min-height: 0;\n  flex: 1 1 auto;\n}\n\n.vai-inspector-stack--activity > .vai-inspector {\n  height: auto;\n  border-top: 0;\n}\n\n.vai-inspector-stack--activity .vai-panel__title {\n  padding-right: 42px;\n}\n\n.vai-panel-close {\n  position: absolute;\n  z-index: 2;\n  top: 7px;\n  right: 7px;\n  display: inline-flex;\n  width: 28px;\n  height: 28px;\n  align-items: center;\n  justify-content: center;\n  padding: 0 !important;\n}\n\n.vai-panel-resizer {\n  position: absolute;\n  z-index: 3;\n  top: 0;\n  right: -3px;\n  bottom: 0;\n  width: 6px;\n  cursor: col-resize;\n  touch-action: none;\n}\n\n.vai-panel-resizer::after {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 2px;\n  width: 1px;\n  background: var(--vai-accent);\n  content: \"\";\n  opacity: 0;\n  transition: opacity 120ms ease;\n}\n\n.vai-panel-resizer:hover::after,\n.vai-panel-resizer:focus-visible::after {\n  opacity: 0.9;\n}\n\n.vai-panel-resizer:focus-visible {\n  outline: none;\n}\n\n.vai-panel {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  flex-direction: column;\n  border: 0;\n  background: var(--vai-panel);\n}\n\n.vai-object-list {\n  flex: 1 1 auto;\n}\n\n.vai-inspector {\n  height: 256px;\n  flex: 0 0 256px;\n  border-top: 1px solid var(--vai-border);\n}\n\n.vai-panel__title {\n  display: flex;\n  min-height: 44px;\n  align-items: center;\n  padding: 0 12px;\n  border-bottom: 1px solid var(--vai-border);\n  color: #cbd5e1;\n  font-size: 11px;\n  font-weight: 500;\n}\n\n.vai-panel__empty,\n.vai-object-group__empty {\n  padding: 12px;\n  color: var(--vai-muted);\n}\n\n.vai-object-list__scroll,\n.vai-inspector__scroll {\n  min-height: 0;\n  flex: 1;\n  overflow: auto;\n}\n\n.vai-object-group h3 {\n  display: flex;\n  margin: 0;\n  padding: 8px 10px 5px;\n  justify-content: space-between;\n  color: #475569;\n  font-size: 9px;\n  font-weight: 500;\n  letter-spacing: 0.04em;\n}\n\n.vai-object-row {\n  display: flex;\n  align-items: center;\n  gap: 3px;\n  border-left: 2px solid transparent;\n  padding: 3px 7px;\n}\n\n.vai-object-row--selected {\n  border-left-color: var(--vai-accent);\n  background: rgba(109, 169, 210, 0.07);\n}\n\n.vai-object-row--ai-grounded {\n  border-left-color: #2dd4bf;\n  background: rgba(45, 212, 191, 0.12);\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-object-row__main {\n  display: flex;\n  min-width: 0;\n  flex: 1;\n  align-items: center;\n  gap: 7px;\n  border: 0 !important;\n  text-align: left;\n}\n\n.vai-object-row__glyph {\n  width: 18px;\n  color: var(--vai-accent);\n  text-align: center;\n}\n\n.vai-object-row__identity {\n  display: flex;\n  min-width: 0;\n  flex-direction: column;\n}\n\n.vai-object-row__identity strong,\n.vai-object-row__identity small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.vai-object-row__identity strong {\n  color: #94a3b8;\n  font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;\n  font-weight: 400;\n}\n\n.vai-object-row__identity small {\n  color: var(--vai-muted);\n  font-size: 10px;\n}\n\n.vai-icon-button {\n  width: 26px;\n  padding: 3px !important;\n}\n\n.vai-icon-button--danger:hover:not(:disabled) {\n  color: var(--vai-danger) !important;\n}\n\n.vai-inspector__identity {\n  display: grid;\n  grid-template-columns: 70px minmax(0, 1fr);\n  margin: 0;\n  padding: 10px;\n  gap: 6px;\n  border-bottom: 1px solid var(--vai-border);\n}\n\n.vai-inspector__identity dt {\n  color: var(--vai-muted);\n}\n\n.vai-inspector__identity dd {\n  min-width: 0;\n  margin: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}\n\n.vai-inspector__fields {\n  display: grid;\n  padding: 10px;\n  gap: 8px;\n}\n\n.vai-field {\n  display: grid;\n  grid-template-columns: 80px minmax(0, 1fr);\n  align-items: center;\n  gap: 7px;\n}\n\n.vai-field span {\n  color: var(--vai-muted);\n}\n\n.vai-field input:not([type=\"checkbox\"]) {\n  min-width: 0;\n  width: 100%;\n  border: 1px solid var(--vai-border);\n  border-radius: 4px;\n  padding: 5px 6px;\n  color: inherit;\n  background: var(--vai-panel-deep);\n  font: inherit;\n}\n\n.vai-inspector__raw {\n  margin: 0 10px 12px;\n  color: var(--vai-muted);\n}\n\n.vai-inspector__raw pre {\n  overflow: auto;\n  padding: 8px;\n  border-radius: 5px;\n  background: var(--vai-bg);\n  font-size: 10px;\n}\n\n.vai-status {\n  display: flex;\n  min-height: 28px;\n  align-items: center;\n  gap: 14px;\n  padding: 0 10px;\n  border-top: 1px solid var(--vai-border);\n  color: var(--vai-muted);\n  background: var(--vai-panel);\n  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-status__coords {\n  margin-left: auto;\n}\n\n@media (max-width: 760px) {\n  .vai-inspector-stack {\n    position: absolute;\n    z-index: 5;\n    top: 0;\n    bottom: 0;\n    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.18);\n  }\n\n  .vai-workspace__identity {\n    display: none;\n  }\n\n  .vai-status > span:nth-child(-n+3) {\n    display: none;\n  }\n}\n\n.vai-canvas {\n  position: relative;\n  min-width: 0;\n  min-height: 0;\n  flex: 1;\n  overflow: hidden;\n  outline: none;\n  background: #101419;\n}\n\n.vai-canvas:focus-visible {\n  box-shadow: inset 0 0 0 2px var(--vai-accent);\n}\n\n.vai-canvas__svg {\n  display: block;\n  width: 100%;\n  height: 100%;\n  user-select: none;\n  touch-action: none;\n}\n\n.vai-grid__minor {\n  stroke: rgba(148, 163, 184, 0.025);\n  stroke-width: 1;\n}\n\n.vai-grid__major {\n  stroke: rgba(148, 163, 184, 0.075);\n  stroke-width: 1;\n}\n\n.vai-grid__axes line {\n  stroke: rgba(148, 163, 184, 0.3);\n  stroke-width: 1;\n}\n\n.vai-grid__axes text {\n  fill: rgba(148, 163, 184, 0.45);\n  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity {\n  cursor: pointer;\n  fill: #d7e0ea;\n  stroke: #d7e0ea;\n  stroke-width: 1.35;\n}\n\n/* CAD semantic palette: geometry stays neutral, dimensions read in cyan and\n   section hatches in yellow without changing the source drawing data. */\n.vai-entity--angular-dimension {\n  color: #22d3ee;\n  fill: #22d3ee;\n  stroke: #22d3ee;\n}\n\n.vai-entity--diameter-dimension {\n  color: #22d3ee;\n  fill: #22d3ee;\n  stroke: #22d3ee;\n}\n\n.vai-entity--diameter-dimension [data-diameter-role=\"extension\"] {\n  opacity: .55;\n}\n\n.vai-entity--section-hatch {\n  color: #facc15;\n  stroke: #facc15;\n}\n\n.vai-entity--candidate {\n  stroke: #e6a15d;\n  stroke-dasharray: 6 4;\n}\n\n.vai-entity--selected {\n  fill: #72b9e8;\n  stroke: #72b9e8;\n  stroke-width: 2;\n}\n\n.vai-entity--motion-rig {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  stroke-width: 2.25;\n  filter: drop-shadow(0 0 3px rgba(56, 189, 248, 0.5));\n}\n\n.vai-motion-rig__guide {\n  stroke: rgba(125, 211, 252, 0.65);\n  stroke-width: 1.5;\n  stroke-dasharray: 5 5;\n}\n\n.vai-motion-rig__anchor {\n  fill: #101419;\n  stroke: #e2e8f0;\n  stroke-width: 2;\n}\n\n.vai-motion-rig__handle {\n  cursor: grab;\n  fill: #0ea5e9;\n  stroke: #e0f2fe;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig--preview .vai-motion-rig__handle {\n  cursor: grab;\n  fill: #22c55e;\n}\n\n.vai-motion-rig__connector-handle {\n  cursor: grab;\n  fill: #101419;\n  stroke: #38bdf8;\n  stroke-width: 2;\n}\n\n.vai-motion-rig--dragging .vai-motion-rig__connector-handle {\n  cursor: grabbing;\n}\n\n.vai-motion-rig__status {\n  fill: #e0f2fe;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-entity--ai-grounded {\n  fill: #2dd4bf;\n  stroke: #2dd4bf;\n  stroke-width: 2;\n  filter: drop-shadow(0 0 3px rgba(45, 212, 191, 0.75));\n  animation: vai-ai-grounded-pulse 0.85s ease-in-out infinite;\n}\n\n.vai-entity--motion-rig.vai-entity--ai-grounded {\n  fill: #38bdf8;\n  stroke: #38bdf8;\n  animation: none;\n}\n\n.vai-motion-preview__before .vai-entity {\n  cursor: default;\n  opacity: 0.32;\n  fill: #a69b87;\n  stroke: #a69b87;\n  stroke-width: 1.2;\n  stroke-dasharray: 5 4;\n  filter: none;\n  pointer-events: none;\n}\n\n@keyframes vai-ai-grounded-pulse {\n  0%, 100% { opacity: 0.42; }\n  50% { opacity: 1; }\n}\n\n@media (prefers-reduced-motion: reduce) {\n  .vai-entity--ai-grounded,\n  .vai-object-row--ai-grounded {\n    animation: none;\n  }\n}\n\n.vai-entity text {\n  fill: currentColor;\n  stroke: none;\n  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.vai-relations {\n  color: #88a5bb;\n  fill: #88a5bb;\n  stroke: #88a5bb;\n  stroke-width: 1;\n  stroke-dasharray: 4 4;\n}\n\n.vai-canvas__selection-box {\n  fill: rgba(22, 119, 255, 0.16);\n  stroke: #4ea0ff;\n  stroke-width: 1;\n  stroke-dasharray: 4 3;\n}\n\n.vai-preview-motion {\n  fill: none;\n  stroke: #54b9ff;\n  stroke-width: 2;\n  stroke-dasharray: 7 5;\n  animation: vai-preview-motion-flow 0.8s linear infinite;\n}\n\n#vai-preview-motion-arrow path {\n  fill: #54b9ff;\n}\n\n@keyframes vai-preview-motion-flow {\n  to { stroke-dashoffset: -24; }\n}\n\n.vai-workspace__state {\n  max-width: 440px;\n  margin: auto;\n  padding: 32px;\n  text-align: center;\n}\n\n.vai-workspace__state-title {\n  font-size: 16px;\n  font-weight: 650;\n}\n\n.vai-workspace__state-detail {\n  margin-top: 7px;\n  color: var(--vai-muted);\n}\n.vai-annotation-workspace {\n  display: flex;\n  width: 100%;\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  flex: 1 1 auto;\n  flex-direction: column;\n  overflow: hidden;\n  color: var(--vai-text, #d8e0eb);\n  background: var(--vai-bg, #0e141b);\n}\n\n.vai-annotation-workspace__header {\n  display: flex;\n  min-height: 48px;\n  align-items: center;\n  justify-content: space-between;\n  padding: 0 16px;\n  border-bottom: 1px solid rgba(148, 163, 184, .18);\n}\n\n.vai-annotation-workspace__header > div { display: flex; gap: 12px; align-items: baseline; }\n.vai-annotation-workspace__header span { color: #8fa1b5; font-size: 12px; }\n.vai-annotation-workspace__header .vai-annotation-provisional { color: #f6b94d; border: 1px solid #6d5427; border-radius: 999px; padding: 2px 8px; }\n.vai-annotation-workspace__body { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; }\n.vai-annotation-workspace__surface { position: absolute; inset: 0; }\n.vai-annotation-status-stack { position: absolute; z-index: 12; top: 14px; left: 50%; display: grid; justify-items: center; gap: 7px; width: max-content; max-width: calc(100% - 96px); transform: translateX(-50%); pointer-events: none; }\n.vai-partition-progress { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; }\n.vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }\n.vai-partition-error { margin: 0; padding: 7px 12px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; }\n@keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }\n.vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }\n.vai-annotation-panel { min-height: 0; padding: 14px; overflow: auto; }\n.vai-annotation-panel h2 { margin: 0 0 16px; font-size: 13px; }\n.vai-annotation-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0; font-size: 12px; }\n.vai-annotation-panel dt { color: #8fa1b5; }\n.vai-annotation-panel dd { margin: 0; }\n\n.vai-annotation-import { display: grid; width: min(440px, calc(100% - 48px)); gap: 14px; margin: auto; padding: 24px; border: 1px solid rgba(148, 163, 184, .22); border-radius: 14px; background: rgba(17, 25, 35, .94); box-shadow: 0 18px 45px rgba(0, 0, 0, .3); }\n.vai-annotation-import--panel { box-sizing: border-box; width: 100%; margin: 0; padding: 16px 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }\n.vai-annotation-import p { margin: 0; color: #8fa1b5; font-size: 12px; line-height: 1.6; }\n.vai-annotation-import label { display: grid; gap: 7px; color: #b9c6d6; font-size: 12px; }\n.vai-annotation-import input { padding: 10px; border: 1px dashed rgba(148, 163, 184, .32); border-radius: 9px; color: #cbd5e1; background: #0c1219; }\n.vai-annotation-import__files { display: grid; max-height: 112px; gap: 4px; margin: -4px 0 0; padding: 8px 10px 8px 28px; overflow: auto; border-radius: 8px; color: #9fb2c7; background: rgba(5, 12, 19, .55); font-size: 11px; }\n.vai-annotation-import button { min-height: 38px; border: 1px solid #2789b8; border-radius: 9px; color: #e8f8ff; background: #126286; }\n.vai-engineering-documents-status { display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 8px 10px 8px 14px; border: 1px solid rgba(52, 211, 153, .42); border-radius: 10px; color: #b7f7db; background: rgba(8, 32, 29, .94); box-shadow: 0 10px 28px rgba(0, 0, 0, .28); font-size: 12px; pointer-events: auto; }\n.vai-engineering-documents-status button { padding: 4px 8px; border: 1px solid rgba(148, 163, 184, .3); border-radius: 7px; color: #d7e1ec; background: rgba(30, 41, 59, .72); cursor: pointer; }\n\n.vai-engineering-drop { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; padding: 6px 10px; border: 1px solid rgba(72, 187, 238, .28); border-radius: 9px; color: #b8dff2; background: rgba(9, 50, 70, .58); font-size: 12px; }\n.vai-engineering-drop--pending { border-color: rgba(96, 165, 250, .3); background: rgba(30, 64, 175, .12); }\n.vai-engineering-drop--importing { border-color: rgba(52, 211, 153, .3); color: #9ce8c5; background: rgba(6, 95, 70, .15); }\n.vai-engineering-drop--success { border-color: rgba(52, 211, 153, .38); color: #a7f3d0; background: rgba(6, 95, 70, .2); }\n.vai-engineering-drop--error { border-color: rgba(248, 113, 113, .35); color: #ffabb1; background: rgba(127, 29, 29, .18); }\n.vai-engineering-drop button { flex: none; padding: 3px 8px; border: 1px solid currentColor; border-radius: 7px; color: inherit; background: transparent; font-size: 11px; }\n\n.vai-partition-band { fill: rgba(63, 187, 238, .08); stroke: #46bcec; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-band--document { fill: rgba(87, 202, 142, .1); stroke: #61d79c; }\n.vai-partition-band--ai { fill: rgba(177, 128, 255, .08); stroke: #b58aff; stroke-dasharray: 2 4; }\n.vai-partition-band--manual { fill: rgba(255, 205, 92, .08); stroke: #ffd166; }\n.vai-partition-band--geometry { stroke-dasharray: 8 5; }\n.vai-partition-label-anchor[role=\"button\"] { cursor: text; }\n.vai-partition-label-bg { fill: rgba(10, 18, 26, .9); stroke: rgba(125, 211, 252, .35); stroke-width: 1px; }\n.vai-partition-label { fill: #e6f7ff; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; letter-spacing: .2px; }\n.vai-partition-label-input { box-sizing: border-box; width: 100%; height: 18px; padding: 1px 5px; border: 1px solid rgba(125, 211, 252, .7); border-radius: 5px; outline: none; color: #e6f7ff; background: #0a121a; font: 600 11px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; text-align: center; }\n.vai-partition-handle-leader { stroke: rgba(84, 200, 247, .72); stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-partition-handle { fill: #0e1821; stroke: #54c8f7; stroke-width: 2.5; vector-effect: non-scaling-stroke; cursor: ew-resize; }\n\n.vai-partition-actions { position: absolute; z-index: 8; left: 50%; bottom: 82px; display: flex; gap: 8px; padding: 7px; transform: translateX(-50%); border: 1px solid rgba(148, 163, 184, .2); border-radius: 14px; background: rgba(14, 21, 29, .94); box-shadow: 0 12px 30px rgba(0, 0, 0, .36); backdrop-filter: blur(12px); }\n.vai-partition-action { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid transparent; border-radius: 10px; color: #b9c6d6; background: rgba(148, 163, 184, .08); font-size: 22px; }\n.vai-partition-action--cancel { color: #ff7c86; border-color: rgba(239, 68, 68, .35); background: rgba(127, 29, 29, .24); }\n.vai-partition-action--confirm { color: #56e29a; border-color: rgba(34, 197, 94, .35); background: rgba(20, 83, 45, .3); }\n.vai-partition-action--preview.is-held { color: #7dd3fc; border-color: rgba(56, 189, 248, .42); background: rgba(3, 105, 161, .24); }\n.vai-partition-inspector ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-partition-inspector__title { display: grid; gap: 9px; margin-bottom: 12px; }\n.vai-partition-inspector__title h2 { margin: 0; }\n.vai-partition-view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 9px; background: rgba(5, 12, 19, .5); }\n.vai-partition-view-switch button { min-width: 0; padding: 6px 8px; border: 0; border-radius: 6px; color: #8295aa; background: transparent; font-size: 10px; }\n.vai-partition-view-switch button.is-active { color: #dff6ff; background: rgba(14, 165, 233, .2); box-shadow: inset 0 0 0 1px rgba(56, 189, 248, .22); }\n.vai-partition-inspector li { display: grid; gap: 3px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .06); font-size: 12px; }\n.vai-partition-inspector small { color: #8295aa; }\n.vai-partition-inspector__unclassified { margin: 10px 0 0; color: #8295aa; font-size: 10px; line-height: 1.5; }\n.vai-partition-inspector__fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }\n.vai-partition-inspector input { min-width: 0; padding: 5px 7px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 6px; color: #d8e0eb; background: #0b1219; font-size: 11px; }\n.vai-partition-inspector__commands { display: flex; gap: 5px; }\n.vai-partition-inspector__commands button { padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 6px; color: #aebdce; background: rgba(148, 163, 184, .06); font-size: 10px; }\n.vai-partition-inspector__boundary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px; color: #8295aa; font-size: 10px; }\n.vai-partition-diagnostics { margin-top: 14px; color: #f6bf73; font-size: 11px; }\n.vai-confirmed-partition__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }\n.vai-confirmed-partition__heading > div { display: flex; align-items: center; gap: 7px; }\n.vai-confirmed-partition__heading h2 { margin: 0; }\n.vai-confirmed-partition__heading span { padding: 2px 6px; border: 1px solid rgba(52, 211, 153, .26); border-radius: 999px; color: #6ee7b7; background: rgba(6, 78, 59, .28); font-size: 9px; }\n.vai-confirmed-partition__heading button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid rgba(56, 189, 248, .28); border-radius: 7px; color: #bae6fd; background: rgba(14, 116, 144, .16); font-size: 10px; }\n.vai-confirmed-partition__heading button:disabled { opacity: .45; }\n.vai-confirmed-partition__actions { display: flex; align-items: center; gap: 6px; }\n.vai-confirmed-partition__meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 9px; margin: 0 0 12px; padding: 9px; border-radius: 8px; background: rgba(148, 163, 184, .045); font-size: 10px; }\n.vai-confirmed-partition__meta dt { color: #8295aa; }\n.vai-confirmed-partition__meta dd { min-width: 0; margin: 0; overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }\n.vai-confirmed-partition em { color: #7dd3fc; font-size: 10px; font-style: normal; }\n\n.vai-dimension-plan { min-width: 0; }\n.vai-dimension-plan > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }\n.vai-dimension-plan > header h2 { margin: 0; }\n.vai-dimension-plan > header span { color: #8295aa; font-size: 11px; }\n.vai-dimension-plan ol { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-plan li { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(148, 163, 184, .055); }\n.vai-dimension-plan__row-title { display: flex; align-items: center; gap: 7px; font-size: 12px; }\n.vai-dimension-plan__order { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 6px; color: #8fdcff; background: rgba(14, 165, 233, .14); font: 600 10px ui-monospace, monospace; }\n.vai-dimension-plan__row-title strong { flex: 1; }\n.vai-dimension-plan__nominal { color: #e2e8f0; font: 600 13px ui-monospace, monospace; }\n.vai-dimension-plan dl { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 4px 7px; margin: 0; font-size: 10px; line-height: 1.45; }\n.vai-dimension-plan dt { color: #71859a; }\n.vai-dimension-plan dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #aebdce; }\n.vai-dimension-plan dd code { display: block; margin-top: 2px; color: #7dd3fc; font-size: 10px; }\n.vai-dimension-badge { padding: 2px 6px; border-radius: 999px; color: #9fb0c2; background: rgba(148, 163, 184, .1); font-size: 9px; }\n.vai-dimension-badge--confirmed, .vai-dimension-badge--resolved { color: #64dca2; background: rgba(34, 197, 94, .13); }\n.vai-dimension-badge--candidate { color: #f7c86c; background: rgba(245, 158, 11, .13); }\n.vai-dimension-badge--conflict, .vai-dimension-badge--stale { color: #ff8e97; background: rgba(239, 68, 68, .14); }\n\n.vai-datum-marker path, .vai-datum-marker rect { fill: #101820; stroke: #ffd400; stroke-width: 1.5; vector-effect: non-scaling-stroke; }\n.vai-datum-marker { cursor: grab; }\n.vai-datum-marker:active { cursor: grabbing; }\n.vai-datum-marker .vai-datum-leader { fill: none; stroke-linejoin: miter; stroke-linecap: square; }\n.vai-datum-marker .vai-datum-marker__hit { fill: transparent; stroke: transparent; pointer-events: all; }\n.vai-datum-marker text { fill: #ffd400; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }\n.vai-datum-marker--candidate { opacity: .82; }\n.vai-gdt-frame { cursor: pointer; color: #38d9ff; }\n.vai-gdt-frame-group { cursor: grab; }\n.vai-gdt-frame-group:active { cursor: grabbing; }\n.vai-gdt-frame rect, .vai-gdt-leader { fill: rgba(8, 18, 27, .96); stroke: currentColor; stroke-width: 1.35; vector-effect: non-scaling-stroke; }\n.vai-gdt-leader { fill: none; stroke-linejoin: miter; stroke-linecap: square; }\n.vai-gdt-frame text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }\n.vai-gdt-frame.is-selected { color: #ffd400; filter: drop-shadow(0 0 4px rgba(255, 212, 0, .35)); }\n.vai-gdt-frame.is-overridden { color: #ffb347; }\n.vai-gdt-frame__hit { fill: transparent !important; stroke: transparent !important; pointer-events: all; }\n.vai-gdt-inspector { display: grid; gap: 10px; }\n.vai-gdt-inspector header { display: flex; align-items: center; justify-content: space-between; }\n.vai-gdt-inspector h2 { margin: 0; font-size: 13px; }\n.vai-gdt-inspector label { display: grid; gap: 5px; color: #9fb2c7; font-size: 10px; }\n.vai-gdt-inspector select, .vai-gdt-inspector input, .vai-gdt-inspector button { min-height: 30px; border: 1px solid rgba(84, 178, 220, .28); border-radius: 7px; color: #dff6ff; background: #101923; padding: 5px 8px; }\n.vai-gdt-inspector button { cursor: pointer; }\n.vai-gdt-inspector__value { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 7px; background: rgba(56, 189, 248, .07); font-size: 10px; }\n.vai-gdt-inspector__datums { display: grid; gap: 6px; }\n.vai-dimension-plan__diagnostics { display: flex; flex-wrap: wrap; gap: 4px; }\n.vai-dimension-plan__diagnostics span { padding: 3px 6px; border-radius: 5px; color: #ff9da5; background: rgba(127, 29, 29, .22); font: 9px ui-monospace, monospace; }\n\n.vai-dimension-chain-group { color: #22d3ee; }\n.vai-dimension-chain-group--tone-1 { color: #34d399; }\n.vai-dimension-chain-group--tone-2 { color: #a78bfa; }\n.vai-dimension-chain-group[data-dimension-drag-axis=\"y\"] { cursor: ns-resize; }\n.vai-dimension-chain-group[data-dimension-drag-axis=\"x\"] { cursor: ew-resize; }\n.vai-dimension-chain-interval { color: #22d3ee; }\n.vai-dimension-chain-group > .vai-dimension-chain-interval { color: inherit; }\n.vai-dimension-chain-interval[data-dimension-drag-axis=\"y\"] { cursor: ns-resize; }\n.vai-dimension-chain-interval[data-dimension-drag-axis=\"x\"] { cursor: ew-resize; }\n.vai-dimension-chain-interval line { stroke: currentColor; stroke-width: 1.35; }\n.vai-dimension-chain-interval[data-dimension-draggable=\"true\"]:hover .vai-dimension-chain-line { stroke-width: 2.4; }\n.vai-dimension-chain-extension { opacity: .42; stroke-width: 1 !important; }\n.vai-dimension-chain-interval text { fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }\n.vai-dimension-chain-label .vai-screen-space-label__background { fill: rgba(8, 16, 24, .94); stroke: currentColor; stroke-width: 1px; }\n.vai-dimension-chain-interval--closure { color: #f59e0b; }\n.vai-dimension-chain-interval--closure .vai-dimension-chain-line { opacity: .45; stroke-linecap: round; }\n.vai-dimension-chain-interval--closure .vai-dimension-chain-label { opacity: .6; }\n.vai-dimension-chain-interval--closure .vai-dimension-chain-label .vai-screen-space-label__background { stroke-dasharray: 3 2; }\n.vai-dimension-chain-interval[data-dimension-conflict=\"true\"] { color: #fb7185; }\n.vai-dimension-chain-bracket path, .vai-dimension-chain-bracket > line { stroke: currentColor; stroke-width: 1.5; opacity: .8; }\n.vai-dimension-chain-title text { fill: currentColor; font: 600 10px ui-sans-serif, system-ui, sans-serif; }\n.vai-dimension-chain-title .vai-screen-space-label__background { fill: rgba(8, 16, 24, .9); stroke: currentColor; stroke-width: 1px; }\n.vai-dimension-closure-menu { color: #d9e5f2; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, .38)); }\n.vai-dimension-closure-menu__surface { fill: rgba(13, 20, 29, .98); stroke: rgba(125, 211, 252, .28); stroke-width: 1px; }\n.vai-dimension-closure-menu__item { cursor: pointer; }\n.vai-dimension-closure-menu__item rect { fill: transparent; }\n.vai-dimension-closure-menu__item:hover rect { fill: rgba(56, 189, 248, .14); }\n.vai-dimension-closure-menu__item text { fill: currentColor; font: 500 11px ui-sans-serif, system-ui, sans-serif; }\n.vai-dimension-closure-menu__item[data-closure-current=\"true\"] { cursor: default; opacity: .48; }\n.vai-dimension-chain-inspector { display: grid; gap: 10px; }\n.vai-dimension-chain-inspector > header { display: flex; align-items: center; justify-content: space-between; }\n.vai-dimension-chain-inspector h2, .vai-dimension-chain-inspector h3 { margin: 0; }\n.vai-dimension-chain-inspector h3 { color: #b8c5d5; font-size: 11px; }\n.vai-dimension-chain-inspector > header span { padding: 2px 6px; border-radius: 999px; color: #7dd3fc; background: rgba(14, 165, 233, .14); font-size: 9px; }\n.vai-dimension-chain-inspector ol, .vai-dimension-chain-inspector ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }\n.vai-dimension-chain-inspector ol > li { display: grid; gap: 5px; padding: 9px; border: 1px solid rgba(56, 189, 248, .16); border-radius: 9px; background: rgba(14, 165, 233, .055); font-size: 11px; }\n.vai-dimension-chain-inspector small { color: #8295aa; }\n.vai-dimension-chain-inspector__alternatives { display: flex; flex-wrap: wrap; gap: 5px; }\n.vai-dimension-chain-inspector button { padding: 5px 7px; border: 1px solid rgba(245, 158, 11, .3); border-radius: 6px; color: #fbc56d; background: rgba(146, 64, 14, .16); font-size: 10px; }\n.vai-dimension-chain-inspector__candidates label { display: flex; align-items: center; gap: 7px; color: #c7d2df; font-size: 11px; }\n.vai-dimension-chain-inspector__diagnostics li { color: #f6bf73; font-size: 10px; }\n";
       document.head.append(style);
       var dispose;
       try {

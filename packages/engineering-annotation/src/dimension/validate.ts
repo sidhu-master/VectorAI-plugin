@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EngineeringAnnotationDraft, EngineeringDiagnostic, ToleranceSpec } from './types';
+import { validateGeometricTolerances } from '../gdt/validate';
 
 export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): EngineeringDiagnostic[] {
   const diagnostics: EngineeringDiagnostic[] = [];
@@ -44,6 +45,7 @@ export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): Eng
       diagnostics.push(problem('DIMENSION_DEPENDENCY_UNKNOWN', `${dependency.beforeIntentId}->${dependency.afterIntentId}`, 'Dependency references an unknown intent'));
     }
   }
+  diagnostics.push(...validateGeometricTolerances({ datums: draft.datums, intents: draft.geometricTolerances ?? [] }));
   return diagnostics;
 }
 

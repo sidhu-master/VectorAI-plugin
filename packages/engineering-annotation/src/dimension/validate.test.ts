@@ -33,6 +33,7 @@ function validDraft(): EngineeringAnnotationDraft {
       },
       status: 'confirmed', evidenceIds: ['manual:tolerance'], diagnostics: [],
     }],
+    geometricTolerances: [],
     chains: [{
       id: 'chain-1', drawingRef: { drawingId: 'drawing-1', revision: 1 },
       datumIds: ['datum-a'],

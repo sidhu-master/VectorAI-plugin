@@ -2,6 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type {
   AnnotationSessionState,
@@ -14,6 +15,7 @@ import type {
   PartitionSessionSnapshot,
   DimensionPlanSessionSnapshot,
   DimensionSchemeEditCommand,
+  GeometricToleranceEditCommand,
 } from '@vectorai/plugin-space-contracts';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -24,9 +26,12 @@ import {
 } from './session-state';
 import {
   createDimensionChainStartTool,
+  createDiameterAnnotationTool,
   createEngineeringAnnotationTool,
+  createOpeningAngleAnnotationTool,
   createPartitionStartTool,
   createPartitionStatusTool,
+  createGdtStartTool,
 } from './tools';
 import { FilePartitionStorage, PartitionSessionStore } from './partition-store';
 import { PartitionWorkflowService } from './partition-service';
@@ -34,6 +39,13 @@ import { createPartitionSemanticReviewer } from './semantic-reviewer';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { acceptPendingPartitionForEvent } from './partition-auto-confirm';
+import { GdtService } from './gdt-service';
+import { createAutomaticGdtReviewer } from './gdt-reviewer';
+import {
+  AUTO_ANNOTATION_CONFLICTING_TOOLS,
+  isGenericAutoAnnotationEvent,
+  isGenericAutoAnnotationText,
+} from './auto-annotation-route';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -50,6 +62,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   readonly partitionWorkflow: PartitionWorkflowService;
   readonly dimensionPlans: DimensionPlanStore;
   readonly dimensionInference: DimensionInferenceService;
+  readonly gdt: GdtService;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingAnnotation');
@@ -74,7 +87,31 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       this.partitionWorkflow,
       this.dimensionPlans,
     );
+    this.gdt = new GdtService(
+      ctx.drawingSpace,
+      this.dimensionPlans,
+      createAutomaticGdtReviewer(ctx, ctx.drawingSpace),
+    );
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(
+      ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans, {
+        name: 'drawing_auto_annotate',
+        description: 'AUTHORITATIVE ROUTE for a generic request such as “自动标注”, “进行自动标注”, or “全部标注”. Call this tool immediately and do not call drawing_observe, drawing_gdt_start, drawing_dimension_chain_start, or individual annotation tools first. One call creates opening angles and shaft diameters, starts the axial dimension-chain preview, and performs an isolated AI semantic review for datum and GD&T candidates; all coordinates and geometry grounding remain local. Report completion only from completionClaimAllowed.',
+        annotationKinds: ['opening-angle', 'diameter'],
+        objective: '工程图纸自动标注集',
+        afterAnnotations: async (agent, signal) => {
+          this.dimensionInference.start(agent);
+          const partition = this.partitions.get(String(agent.id));
+          const value = partition.draft ?? partition.confirmed;
+          if (!value) throw new Error('GDT_PARTITION_REQUIRED');
+          return this.gdt.startAutomatic(agent, value as never, signal);
+        },
+        requiresGdtRecommendation: true,
+      },
+    )));
+    ctx.effect(() => ctx.tools.register(createOpeningAngleAnnotationTool(
+      ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans,
+    )));
+    ctx.effect(() => ctx.tools.register(createDiameterAnnotationTool(
       ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans,
     )));
     ctx.effect(() => ctx.tools.register(createPartitionStartTool({
@@ -82,14 +119,64 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     })));
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.effect(() => ctx.tools.register(createDimensionChainStartTool(this.dimensionInference)));
+    ctx.effect(() => ctx.tools.register(createGdtStartTool(this.gdt)));
+    const automaticRouteDisposers = new Map<string, () => void>();
+    ctx.on('agent/pre-step', async (payload, next) => {
+      const decision = await next();
+      if (decision.kind !== 'enter') return decision;
+      const directUserObjective = [...decision.messages].reverse()
+        .find((message) => message.source.kind === 'user')?.content
+        .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
+        .map(({ text }) => text)
+        .join('\n') ?? '';
+      if (!automaticRouteDisposers.has(String(payload.agent.id))
+        && !isGenericAutoAnnotationText(directUserObjective)) return decision;
+      const instruction = [
+        'The current direct user request activates VectorAI automatic annotation routing.',
+        'Call drawing_auto_annotate now, even if an older turn shows a failure from a previous plugin build.',
+        'Do not substitute drawing_observe, an individual annotation tool, a guessed tool name, or a summary of existing state.',
+        'Only a successful drawing_auto_annotate result with completionClaimAllowed=true permits a completion claim.',
+      ].join(' ');
+      return {
+        kind: 'enter',
+        messages: [...decision.messages, createUserMessage({
+          content: [{ type: 'text', text: instruction }],
+          source: {
+            kind: 'plugin', plugin: '@vectorai/plugin-dsh-annotation-host', form: 'snapshot',
+            sections: [{ name: 'vectorai:auto-annotation-route', text: instruction }],
+          },
+        })],
+      };
+    });
+    ctx.on('tools/result', (execution, result) => {
+      void result;
+      if (execution.name !== 'drawing_auto_annotate' || !execution.agent) return;
+      const sessionId = String(execution.agent.id);
+      automaticRouteDisposers.get(sessionId)?.();
+      automaticRouteDisposers.delete(sessionId);
+    });
     ctx.on('session/event', (session, event) => {
       const sessionId = String(session.id);
+      if (event.type === 'user/message' && event.data.source.kind === 'user') {
+        automaticRouteDisposers.get(sessionId)?.();
+        automaticRouteDisposers.delete(sessionId);
+        if (isGenericAutoAnnotationEvent(event)) {
+          const agent = ctx.agents.get(session.id);
+          if (agent) {
+            automaticRouteDisposers.set(sessionId, agent.ctx.tools.restrict({
+              deny: AUTO_ANNOTATION_CONFLICTING_TOOLS,
+            }));
+          }
+        }
+      }
       acceptPendingPartitionForEvent(sessionId, event, this.partitions, this.sessions, (drawingRef) => {
         this.dimensionInference.markStaleSession(sessionId, drawingRef);
       });
     });
     ctx.on('session/disposed', (session) => {
       const sessionId = String(session.id);
+      automaticRouteDisposers.get(sessionId)?.();
+      automaticRouteDisposers.delete(sessionId);
       this.partitionWorkflow.disposeSession(sessionId);
       this.sessions.disposeSession(sessionId);
     });
@@ -172,6 +259,11 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   editDimensionScheme(agent: Agent, command: DimensionSchemeEditCommand): DimensionPlanSessionSnapshot {
     return this.dimensionInference.edit(agent, command);
+  }
+
+  @Remote
+  editGeometricTolerance(agent: Agent, command: GeometricToleranceEditCommand): DimensionPlanSessionSnapshot {
+    return this.gdt.edit(agent, command);
   }
 
   @Remote

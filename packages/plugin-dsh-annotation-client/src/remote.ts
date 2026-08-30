@@ -12,6 +12,7 @@ import {
   partitionSessionSnapshotSchema,
   dimensionPlanSessionSnapshotSchema,
   dimensionSchemeEditCommandSchema,
+  geometricToleranceEditCommandSchema,
   type AnnotationSessionState,
   type EngineeringDocumentStageRequest,
   type DrawingRef,
@@ -21,6 +22,7 @@ import {
   type PartitionSessionSnapshot,
   type DimensionPlanSessionSnapshot,
   type DimensionSchemeEditCommand,
+  type GeometricToleranceEditCommand,
 } from '@vectorai/plugin-space-contracts';
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -41,6 +43,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       redoPartition(sessionId: string, expected: DrawingRef): Promise<RemoteResult<PartitionSessionSnapshot>>;
       getDimensionPlan(sessionId: string): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
       editDimensionScheme(sessionId: string, command: DimensionSchemeEditCommand): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+      editGeometricTolerance(sessionId: string, command: GeometricToleranceEditCommand): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
       confirmDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
       cancelDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
       undoDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
@@ -65,6 +68,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'drawingAnnotation/redoPartition': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<PartitionSessionSnapshot>>;
     'drawingAnnotation/getDimensionPlan': (sessionId: string) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     'drawingAnnotation/editDimensionScheme': (sessionId: string, command: DimensionSchemeEditCommand) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+    'drawingAnnotation/editGeometricTolerance': (sessionId: string, command: GeometricToleranceEditCommand) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     'drawingAnnotation/confirmDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     'drawingAnnotation/cancelDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     'drawingAnnotation/undoDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
@@ -120,6 +124,7 @@ function dimensionDescriptors() {
   return [
     dimensionDescriptor('getDimensionPlan', []),
     dimensionDescriptor('editDimensionScheme', [jsonParameter('command', '@vectorai/plugin-space-contracts#DimensionSchemeEditCommand', dimensionSchemeEditCommandSchema)]),
+    dimensionDescriptor('editGeometricTolerance', [jsonParameter('command', '@vectorai/plugin-space-contracts#GeometricToleranceEditCommand', geometricToleranceEditCommandSchema)]),
     dimensionDescriptor('confirmDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     dimensionDescriptor('cancelDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     dimensionDescriptor('undoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),

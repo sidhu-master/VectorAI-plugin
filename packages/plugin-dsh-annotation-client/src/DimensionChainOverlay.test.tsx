@@ -64,6 +64,39 @@ describe('DimensionChainOverlay', () => {
     expect(root.findByProps({ 'data-dimension-candidate-id': 'closure' }).props['data-dimension-role']).toBe('closure');
   });
 
+  it('switches the right-clicked interval to the missing segment of its selected chain', () => {
+    const switchable = {
+      ...scheme,
+      chains: [{
+        ...scheme.chains[0]!,
+        alternativeClosureCandidateIds: ['local'],
+      }],
+    } as AxialDimensionScheme;
+    const onChooseClosure = vi.fn();
+    const view = renderer.create(<DimensionChainOverlay
+      scheme={switchable}
+      scale={2}
+      visible
+      onMoveChain={() => undefined}
+      onChooseClosure={onChooseClosure}
+    />);
+    const local = view.root.findByProps({ 'data-dimension-candidate-id': 'local' });
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    act(() => local.props.onContextMenu({ preventDefault, stopPropagation }));
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    const menu = view.root.findByProps({ 'data-dimension-closure-menu': 'local' });
+    const action = menu.findByProps({ 'data-closure-chain-id': 'chain:overall' });
+    expect(action.findByType('text').children).toEqual(['切换为缺省段']);
+
+    act(() => action.props.onClick({ stopPropagation() {} }));
+    expect(onChooseClosure).toHaveBeenCalledWith('chain:overall', 'local');
+    expect(view.root.findAllByProps({ 'data-dimension-closure-menu': 'local' })).toHaveLength(0);
+  });
+
   it('drags only the selected dimension chain as one group from any member or its title', () => {
     const multiChainScheme = {
       ...scheme,

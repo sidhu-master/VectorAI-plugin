@@ -11,6 +11,7 @@ import {
   partitionSessionSnapshotSchema,
   dimensionPlanSessionSnapshotSchema,
   dimensionSchemeEditCommandSchema,
+  geometricToleranceEditCommandSchema,
 } from '@vectorai/plugin-space-contracts';
 
 const agentParameter = {
@@ -67,6 +68,7 @@ function dimensionInvocations() {
   return [
     dimensionInvocation('getDimensionPlan', []),
     dimensionInvocation('editDimensionScheme', [jsonParameter('command', '@vectorai/plugin-space-contracts#DimensionSchemeEditCommand', dimensionSchemeEditCommandSchema)]),
+    dimensionInvocation('editGeometricTolerance', [jsonParameter('command', '@vectorai/plugin-space-contracts#GeometricToleranceEditCommand', geometricToleranceEditCommandSchema)]),
     dimensionInvocation('confirmDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     dimensionInvocation('cancelDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     dimensionInvocation('undoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),

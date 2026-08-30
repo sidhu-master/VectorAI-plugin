@@ -45,6 +45,20 @@ describe('golden axial dimension-chain inference', () => {
     }));
     expect(scheme.diagnostics.map(({ code }) => code)).not.toContain('DIMENSION_STATION_UNRESOLVED');
   });
+
+  it('retains valid displayed members as switchable closure alternatives under the default policy', async () => {
+    const input = await analyzeGoldenInferenceInput();
+    const scheme = inferAxialDimensionScheme({
+      topology: input.topology,
+      candidateSet: input.candidateSet,
+      policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+    });
+    const root = scheme.chains[0]!;
+    const inner = scheme.chains.slice(1).find(({ childCandidateIds }) => childCandidateIds.length > 0)!;
+
+    expect(root.alternativeClosureCandidateIds).toContain(root.childCandidateIds[0]);
+    expect(inner.alternativeClosureCandidateIds).toContain(inner.childCandidateIds[0]);
+  });
 });
 
 function intervals(ids: readonly string[], scheme: AxialDimensionScheme): Array<[number, number]> {

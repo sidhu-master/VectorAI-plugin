@@ -85,7 +85,7 @@ describe('planEngineeringAnnotations', () => {
     });
 
     expect(plan.program?.operations).toEqual([{ kind: 'delete_nodes', nodeIds: ['legacy-radius'] }]);
-    expect(plan.targetNodeIds).toEqual(['arc-1']);
+    expect(plan.targetNodeIds).toEqual(['arc-1', 'legacy-radius']);
   });
 
   it('adds only deterministic axial-end opening angles to the automatic annotation plan', () => {
@@ -136,6 +136,11 @@ describe('planEngineeringAnnotations', () => {
     committed.relations = structuredClone(first.associations);
 
     expect(planEngineeringAnnotations({ ...input, document: committed }).program).toBeNull();
+    const reordered = structuredClone(committed);
+    const association = reordered.relations[0] as typeof first.associations[number];
+    association.geometryIds.reverse();
+    association.quality.evidenceRefs.reverse();
+    expect(planEngineeringAnnotations({ ...input, document: reordered }).program).toBeNull();
 
     const stale = structuredClone(committed);
     const opening = stale.annotations[0] as DimensionAnnotation;
@@ -146,12 +151,31 @@ describe('planEngineeringAnnotations', () => {
     });
     const refreshed = planEngineeringAnnotations({ ...input, document: stale });
     expect(refreshed.program?.operations).toEqual([
-      { kind: 'delete_nodes', nodeIds: expect.arrayContaining([opening.id]) },
+      { kind: 'delete_nodes', nodeIds: [first.associations[0]!.id, opening.id] },
       expect.objectContaining({
         kind: 'create_annotation_batch',
         annotations: [expect.objectContaining({ id: opening.id, textPosition: expect.not.arrayContaining([-999]) })],
       }),
     ]);
     expect(refreshed.program?.operations[0]).not.toEqual(expect.objectContaining({ nodeIds: expect.arrayContaining(['manual-angle']) }));
+
+    const staleAssociation = structuredClone(committed);
+    staleAssociation.relations[0] = {
+      ...staleAssociation.relations[0]!,
+      geometryIds: [] as never,
+    };
+    const refreshedAssociation = planEngineeringAnnotations({ ...input, document: staleAssociation });
+    expect(refreshedAssociation.program?.operations).toEqual([
+      { kind: 'delete_nodes', nodeIds: [first.associations[0]!.id, first.annotations[0]!.id] },
+      expect.objectContaining({
+        kind: 'create_annotation_batch',
+        annotations: [expect.objectContaining({ id: first.annotations[0]!.id })],
+        associations: [expect.objectContaining({ id: first.associations[0]!.id })],
+      }),
+    ]);
+    expect(refreshedAssociation.targetNodeIds).toEqual(expect.arrayContaining([
+      first.annotations[0]!.id,
+      first.associations[0]!.id,
+    ]));
   });
 });

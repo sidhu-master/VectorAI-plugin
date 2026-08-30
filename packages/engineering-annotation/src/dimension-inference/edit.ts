@@ -10,6 +10,41 @@ export type ApplyDimensionSchemeEditInput =
   | { type: 'candidate.layout'; candidateId: string; normalOffset: number }
   | { type: 'chain.layout'; chainId: string; normalOffset: number };
 
+export function withSwitchableClosureAlternatives(scheme: AxialDimensionScheme): AxialDimensionScheme {
+  const coordinates = new Map(scheme.topology.stations.map(({ id, coordinate }) => [id, coordinate]));
+  const candidateStart = (candidate: AxialDimensionCandidate) => coordinates.get(candidate.startStationId);
+  const candidateEnd = (candidate: AxialDimensionCandidate) => coordinates.get(candidate.endStationId);
+  const scores = new Map(scheme.decisions.map(({ candidateId, score }) => [candidateId, score]));
+  const chains = scheme.chains.map((chain) => {
+    const parent = requireCandidate(scheme, chain.parentCandidateId);
+    const parentStart = candidateStart(parent);
+    const parentEnd = candidateEnd(parent);
+    const alternatives = scheme.candidates.filter((candidate) => {
+      if (candidate.id === parent.id || candidate.id === chain.closureCandidateId) return false;
+      const start = candidateStart(candidate);
+      const end = candidateEnd(candidate);
+      if (parentStart === undefined || parentEnd === undefined || start === undefined || end === undefined
+        || start < parentStart || end > parentEnd) return false;
+      try {
+        coverRange(scheme, parent.startStationId, candidate.startStationId, parent.id, candidate.id);
+        coverRange(scheme, candidate.endStationId, parent.endStationId, parent.id, candidate.id);
+        return true;
+      } catch {
+        return false;
+      }
+    }).sort((left, right) => (
+      (scores.get(right.id) ?? 0) - (scores.get(left.id) ?? 0)
+      || (candidateStart(left) ?? 0) - (candidateStart(right) ?? 0)
+    ));
+    return { ...chain, alternativeClosureCandidateIds: alternatives.map(({ id }) => id) };
+  });
+  return {
+    ...structuredClone(scheme),
+    chains,
+    decisions: updateDecisions(scheme.decisions, scheme.displayedCandidateIds, scheme.closureCandidateIds, chains),
+  };
+}
+
 export function applyDimensionSchemeEdit(
   scheme: AxialDimensionScheme,
   command: ApplyDimensionSchemeEditInput,

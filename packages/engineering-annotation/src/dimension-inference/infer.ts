@@ -32,13 +32,13 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
     parentCandidateId: root.id,
     childCandidateIds: rootChildren.map(({ id }) => id),
     closureCandidateId: rootClosure.id,
-    alternativeClosureCandidateIds: input.policy.preferTerminalRootClosure
-      ? []
-      : viableRootClosureAlternatives(root, rootClosure, input.candidateSet.candidates, decisions, index).map(({ id }) => id),
+    alternativeClosureCandidateIds: viableRootClosureAlternatives(
+      root, rootClosure, input.candidateSet.candidates, decisions, index,
+    ).map(({ id }) => id),
     status: input.policy.preferTerminalRootClosure ? 'resolved' : 'needs-review',
   }];
   for (const parent of rootChildren.filter((candidate) => candidate.roles.some((role) => role === 'process' || role === 'composite'))) {
-    const chain = materializeInnerChain(parent, input.candidateSet.candidates, input.candidateSet.evidence, index);
+    const chain = materializeInnerChain(parent, input.candidateSet.candidates, input.candidateSet.evidence, decisions, index);
     if (chain) chains.push(chain);
   }
   const displayedCandidateIds = unique([
@@ -102,6 +102,7 @@ function materializeInnerChain(
   parent: AxialDimensionCandidate,
   candidates: readonly AxialDimensionCandidate[],
   evidence: readonly DimensionEvidence[],
+  decisions: readonly DimensionDecisionTrace[],
   index: CoordinateIndex,
 ): AxialChainNode | undefined {
   const inside = candidates.filter((candidate) => candidate.id !== parent.id && contains(parent, candidate, index));
@@ -126,7 +127,9 @@ function materializeInnerChain(
     parentCandidateId: parent.id,
     childCandidateIds: children.map(({ id }) => id),
     closureCandidateId: closure.id,
-    alternativeClosureCandidateIds: [],
+    alternativeClosureCandidateIds: viableRootClosureAlternatives(
+      parent, closure, candidates, decisions, index,
+    ).map(({ id }) => id),
     status: 'resolved',
   };
 }
@@ -182,7 +185,7 @@ function viableRootClosureAlternatives(
     } catch {
       return false;
     }
-  }).sort((left, right) => scoreOf(right, decisions) - scoreOf(left, decisions)).slice(0, 3);
+  }).sort((left, right) => scoreOf(right, decisions) - scoreOf(left, decisions));
 }
 
 function terminalCandidates(root: AxialDimensionCandidate, candidates: readonly AxialDimensionCandidate[], index: CoordinateIndex): AxialDimensionCandidate[] {

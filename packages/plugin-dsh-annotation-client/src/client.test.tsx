@@ -87,11 +87,35 @@ describe('annotation client contribution', () => {
         defaultVisible: true,
       },
       {
+        id: 'vectorai.annotation.diameter',
+        label: '直径标注',
+        category: 'engineering',
+        icon: 'dimension',
+        order: 115,
+        defaultVisible: true,
+      },
+      {
         id: 'vectorai.annotation.dimension-chain',
         label: '尺寸链',
         category: 'engineering',
         icon: 'dimension',
         order: 120,
+        defaultVisible: true,
+      },
+      {
+        id: 'vectorai.annotation.datum',
+        label: '基准',
+        category: 'engineering',
+        icon: 'dimension',
+        order: 125,
+        defaultVisible: true,
+      },
+      {
+        id: 'vectorai.annotation.gdt',
+        label: '形位公差',
+        category: 'engineering',
+        icon: 'dimension',
+        order: 130,
         defaultVisible: true,
       },
     ]);
@@ -111,7 +135,7 @@ describe('annotation client contribution', () => {
     expect(disposeFiber).toHaveBeenCalledOnce();
     expect(disposeDropFiber).toHaveBeenCalledOnce();
     expect(disposeContribution).toHaveBeenCalledOnce();
-    expect(disposeLayer).toHaveBeenCalledTimes(3);
+    expect(disposeLayer).toHaveBeenCalledTimes(6);
     expect(disposeRemote).toHaveBeenCalledOnce();
   });
 });

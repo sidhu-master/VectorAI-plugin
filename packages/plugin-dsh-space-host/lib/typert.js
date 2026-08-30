@@ -5469,7 +5469,7 @@ const toleranceProjectionSchema = object({
     context.addIssue({ code: ZodIssueCode.custom, message: "TOLERANCE_EVIDENCE_REQUIRED" });
   }
 });
-const datumReferenceSchema = object({
+const drawingDatumReferenceSchema = object({
   datumId: idSchema,
   role: _enum(["primary", "secondary", "tertiary", "origin"]),
   geometryId: idSchema,
@@ -5550,7 +5550,7 @@ const annotationSchema = discriminatedUnion("type", [
     unit: _enum(["mm", "cm", "m", "deg"]).optional(),
     tolerance: object({ upper: number().optional(), lower: number().optional() }).strict().optional(),
     toleranceProjection: toleranceProjectionSchema.optional(),
-    datumReferences: array(datumReferenceSchema).optional(),
+    datumReferences: array(drawingDatumReferenceSchema).optional(),
     engineeringIntentId: idSchema.optional(),
     engineeringChainIds: array(idSchema).optional(),
     generationOrder: number().int().nonnegative().optional(),
@@ -6228,6 +6228,52 @@ const toleranceSpecSchema = object({
   evidenceIds: array(idSchema),
   diagnostics: array(engineeringDiagnosticSchema)
 }).strict();
+const geometricCharacteristicSchema = _enum([
+  "straightness",
+  "flatness",
+  "circularity",
+  "cylindricity",
+  "profile-line",
+  "profile-surface",
+  "parallelism",
+  "perpendicularity",
+  "angularity",
+  "position",
+  "coaxiality",
+  "symmetry",
+  "circular-runout",
+  "total-runout"
+]);
+const materialConditionSchema = _enum(["rfs", "mmc", "lmc"]);
+const geometricDatumFrameReferenceSchema = object({
+  datumId: idSchema,
+  materialCondition: materialConditionSchema.optional()
+}).strict();
+const toleranceZoneSchema = object({
+  shape: _enum(["linear", "diametrical", "spherical"]),
+  materialCondition: materialConditionSchema.optional(),
+  projectedZoneLength: number().finite().positive().optional()
+}).strict();
+const geometricToleranceIntentSchema = object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  characteristic: geometricCharacteristicSchema,
+  controlledTargets: array(dimensionTargetSchema),
+  toleranceZone: toleranceZoneSchema,
+  datumReferenceFrame: array(geometricDatumFrameReferenceSchema),
+  computed: object({
+    status: _enum(["pending", "resolved", "conflict", "stale"]),
+    value: number().finite().positive().optional(),
+    unit: literal("mm"),
+    ruleRef: object({ id: idSchema, version: idSchema }).strict().optional(),
+    inputDigest: idSchema.optional(),
+    diagnostics: array(engineeringDiagnosticSchema)
+  }).strict(),
+  override: object({ value: number().finite().positive() }).strict().optional(),
+  source: _enum(["document", "geometry", "manual", "ai-candidate"]),
+  status: _enum(["candidate", "pending-calculation", "resolved", "confirmed", "conflict", "stale"]),
+  evidenceIds: array(idSchema)
+}).strict();
 const dimensionChainSchema = object({
   id: idSchema,
   drawingRef: drawingRefSchema,
@@ -6368,12 +6414,21 @@ discriminatedUnion("type", [
     expectedDrawingRef: drawingRefSchema
   }).strict()
 ]);
+discriminatedUnion("type", [
+  object({ type: literal("characteristic.set"), intentId: idSchema, characteristic: geometricCharacteristicSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("controlled-targets.set"), intentId: idSchema, targets: array(dimensionTargetSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("datum-frame.set"), intentId: idSchema, references: array(geometricDatumFrameReferenceSchema), expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("zone.set"), intentId: idSchema, zone: toleranceZoneSchema, expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("override.set"), intentId: idSchema, value: number().finite().positive(), expectedDrawingRef: drawingRefSchema }).strict(),
+  object({ type: literal("override.clear"), intentId: idSchema, expectedDrawingRef: drawingRefSchema }).strict()
+]);
 const engineeringAnnotationDraftSchema = object({
   version: literal(1),
   drawingRef: drawingRefSchema,
   datums: array(engineeringDatumSchema),
   intents: array(dimensionIntentSchema),
   tolerances: array(toleranceSpecSchema),
+  geometricTolerances: array(geometricToleranceIntentSchema).default([]),
   chains: array(dimensionChainSchema),
   dependencies: array(annotationDependencySchema),
   diagnostics: array(engineeringDiagnosticSchema),

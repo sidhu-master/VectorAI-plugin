@@ -138,6 +138,7 @@ describe('DSH drawing workspace wire schemas', () => {
       datums: [],
       intents: [],
       tolerances: [],
+      geometricTolerances: [],
       chains: [],
       dependencies: [],
       diagnostics: [],
@@ -163,7 +164,7 @@ describe('DSH drawing workspace wire schemas', () => {
       draft: {
         version: 1 as const,
         drawingRef: { drawingId: 'drawing-1', revision: 1 },
-        datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
+        datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
       },
       canUndo: true,
       canRedo: false,
@@ -180,7 +181,7 @@ describe('DSH drawing workspace wire schemas', () => {
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
       draft: {
         version: 1 as const, drawingRef: { drawingId: 'drawing-1', revision: 1 },
-        datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [],
+        datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
         axialScheme: axialScheme(),
       },
       canUndo: true, canRedo: false, updatedAt: 7,
