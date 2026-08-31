@@ -82,6 +82,7 @@ export function mergeAxialDimensionProjection(
     datums: structuredClone(base.datums),
     intents,
     tolerances: structuredClone(base.tolerances.filter(({ dimensionIntentId }) => intentIds.has(dimensionIntentId))),
+    fitAssignments: structuredClone(base.fitAssignments),
     geometricTolerances: structuredClone(base.geometricTolerances),
     chains,
     dependencies,
