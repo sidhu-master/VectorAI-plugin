@@ -227,6 +227,11 @@ export class DimensionPlanStore {
     const draft = (state.snapshot.draft as unknown as EngineeringAnnotationDraft | undefined)
       ?? editableDraftFrom(state.snapshot.confirmed);
     if (!draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+    if ((command.type === 'standard.single.apply' || command.type === 'manual.apply')
+      && draft.fitAssignments.some((assignment) => assignment.holeDimensionId === command.dimensionIntentId
+        || assignment.shaftDimensionId === command.dimensionIntentId)) {
+      throw new Error('FIT_PAIR_TARGET_CONFLICT');
+    }
     let edited: EngineeringAnnotationDraft;
     if (command.type === 'standard.single.apply') {
       if (!resolved || !('featureClass' in resolved)) throw new Error('TOLERANCE_RESULT_REQUIRED');

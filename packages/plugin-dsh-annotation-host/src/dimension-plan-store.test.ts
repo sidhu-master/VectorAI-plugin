@@ -408,5 +408,45 @@ describe('DimensionPlanStore', () => {
       expect.objectContaining({ status: 'stale', diagnostics: [expect.objectContaining({ code: 'FIT_PAIR_BASIC_SIZE_MISMATCH' })] }),
     ]);
     expect(reconciled.tolerances.filter(({ fitGroupId }) => fitGroupId === 'fit:hole:shaft').every(({ resolved }) => resolved === undefined)).toBe(true);
+
+    reconciled.intents.find(({ id }) => id === 'hole')!.nominalValue = 14;
+    const recovered = store.setDraft('session', reconciled as unknown as EngineeringAnnotationDraft).draft!;
+    expect(recovered.fitAssignments).toEqual([
+      expect.objectContaining({ fitGroupId: 'fit:hole:shaft', designation: 'H7/g6' }),
+    ]);
+    expect(recovered.tolerances.filter(({ fitGroupId }) => fitGroupId === 'fit:hole:shaft')).toEqual([
+      expect.objectContaining({ status: 'resolved', resolved: expect.objectContaining({ lowerLimit: 14 }) }),
+      expect.objectContaining({ status: 'resolved', resolved: expect.objectContaining({ upperLimit: 13.994 }) }),
+    ]);
+  });
+
+  it('recovers an unavailable stale fit after both members return to a supported interval', () => {
+    const provider = createGbt1800Provider();
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' }, createToleranceReconciler(provider));
+    const value = draft(13);
+    value.intents[0]!.id = 'hole';
+    value.intents[1]!.id = 'shaft';
+    const fitted = applyFitTolerance(value, provider.resolveFit({ basicSize: 13, basis: 'hole', designation: 'H7/g6' }), {
+      fitGroupId: 'fit:hole:shaft', holeDimensionIntentId: 'hole', shaftDimensionIntentId: 'shaft',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+    });
+    store.begin('session', drawingRef);
+    store.setDraft('session', fitted);
+
+    const unsupported = structuredClone(fitted);
+    unsupported.intents.find(({ id }) => id === 'hole')!.nominalValue = 19;
+    unsupported.intents.find(({ id }) => id === 'shaft')!.nominalValue = 19;
+    const stale = store.setDraft('session', unsupported).draft!;
+    expect(stale.fitAssignments).toEqual([]);
+    expect(stale.tolerances.every(({ status, diagnostics }) => status === 'stale'
+      && diagnostics.some(({ code }) => code === 'TOLERANCE_STANDARD_UNAVAILABLE'))).toBe(true);
+
+    stale.intents.find(({ id }) => id === 'hole')!.nominalValue = 14;
+    stale.intents.find(({ id }) => id === 'shaft')!.nominalValue = 14;
+    const recovered = store.setDraft('session', stale as unknown as EngineeringAnnotationDraft).draft!;
+    expect(recovered.fitAssignments).toEqual([
+      expect.objectContaining({ fitGroupId: 'fit:hole:shaft', designation: 'H7/g6' }),
+    ]);
+    expect(recovered.tolerances.every(({ status, resolved }) => status === 'resolved' && resolved !== undefined)).toBe(true);
   });
 });

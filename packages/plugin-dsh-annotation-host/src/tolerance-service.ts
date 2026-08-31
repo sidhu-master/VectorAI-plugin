@@ -40,6 +40,7 @@ export class ToleranceService {
       && matching.featureClass === request.featureClass
       && matching.selection?.source === 'ai-recommended'
       && matching.selection.evidenceRefs.length > 0
+      && matching.selection.evidenceRefs.every((reference) => matching.evidenceIds.includes(reference))
       && this.provider.listBands({ basicSize: intent.nominalValue, featureClass: request.featureClass })
         .some(({ designation, available }) => designation === matching.selection!.designation && available)
       ? {
@@ -58,7 +59,9 @@ export class ToleranceService {
         numericProvenance: this.provider.datasetMetadata.numericProvenance.map((item) => ({ ...item })),
       },
       bands: structuredClone(this.provider.listBands({ basicSize: intent.nominalValue, featureClass: request.featureClass })),
-      ...(matching?.source === 'standard' && matching.selection ? { selection: { ...matching.selection } } : {}),
+      ...(matching?.source === 'standard' && matching.featureClass === request.featureClass && matching.selection
+        ? { selection: { ...matching.selection } }
+        : {}),
       ...(recommendation === undefined ? {} : { recommendation }),
     };
   }
@@ -84,17 +87,23 @@ export class ToleranceService {
 
   edit(sessionId: string, command: ToleranceEditCommand): DimensionPlanSessionSnapshot {
     const plan = requirePlan(this.plans.get(sessionId), command.expectedDrawingRef);
+    requireAiRecommendation(plan, command);
     let resolved: ToleranceEditResolution;
     if (command.type === 'standard.single.apply') {
       const basicSize = requireMillimetreSize(requireIntent(plan, command.dimensionIntentId));
       const result = this.provider.resolveBand({ basicSize, featureClass: command.featureClass, designation: command.designation });
-      verifyDigest(result, this.provider);
+      verifyProviderResult(result, {
+        basicSize, featureClass: command.featureClass, designation: command.designation,
+      }, this.provider);
       resolved = result;
     } else if (command.type === 'standard.fit.apply') {
       const basicSize = requireEqualFitSize(plan, command.holeDimensionIntentId, command.shaftDimensionIntentId);
       const result = this.provider.resolveFit({ basicSize, basis: command.basis, designation: command.designation });
-      verifyDigest(result.hole, this.provider);
-      verifyDigest(result.shaft, this.provider);
+      const [holeDesignation, shaftDesignation] = command.designation.split('/');
+      if (result.designation !== command.designation || result.basis !== command.basis
+        || !holeDesignation || !shaftDesignation) throw new Error('TOLERANCE_PROVIDER_RESULT_MISMATCH');
+      verifyProviderResult(result.hole, { basicSize, featureClass: 'internal', designation: holeDesignation }, this.provider);
+      verifyProviderResult(result.shaft, { basicSize, featureClass: 'external', designation: shaftDesignation }, this.provider);
       resolved = result;
     }
     return this.plans.editTolerance(sessionId, command, resolved);
@@ -111,38 +120,45 @@ function reconcileTolerances(
 ): EngineeringAnnotationDraft {
   let next = structuredClone(draft);
   const handled = new Set<string>();
-  for (const assignment of draft.fitAssignments) {
-    const members = draft.tolerances.filter(({ fitGroupId }) => fitGroupId === assignment.fitGroupId);
-    const hole = draft.intents.find(({ id }) => id === assignment.holeDimensionId);
-    const shaft = draft.intents.find(({ id }) => id === assignment.shaftDimensionId);
+  for (const identity of fitReconcileIdentities(draft)) {
+    const members = draft.tolerances.filter(({ fitGroupId }) => fitGroupId === identity.fitGroupId);
+    const hole = draft.intents.find(({ id }) => id === identity.holeDimensionId);
+    const shaft = draft.intents.find(({ id }) => id === identity.shaftDimensionId);
     if (!hole || !shaft) continue;
     const changed = members.some((spec) => spec.inputs.basicSize !== requireMillimetreSize(
       spec.dimensionIntentId === hole.id ? hole : shaft,
     ));
     if (!changed) continue;
-    handled.add(assignment.fitGroupId);
+    handled.add(identity.fitGroupId);
     if (hole.unit !== 'mm' || shaft.unit !== 'mm' || hole.nominalValue !== shaft.nominalValue) {
-      next = staleFit(next, assignment.fitGroupId, 'FIT_PAIR_BASIC_SIZE_MISMATCH');
+      next = staleFit(next, identity, 'FIT_PAIR_BASIC_SIZE_MISMATCH');
       continue;
     }
     try {
       const result = provider.resolveFit({
-        basicSize: hole.nominalValue, basis: assignment.basis, designation: assignment.designation,
+        basicSize: hole.nominalValue, basis: identity.basis, designation: identity.designation,
       });
-      verifyDigest(result.hole, provider);
-      verifyDigest(result.shaft, provider);
+      const [holeDesignation, shaftDesignation] = identity.designation.split('/');
+      if (result.designation !== identity.designation || result.basis !== identity.basis
+        || !holeDesignation || !shaftDesignation) throw new Error('TOLERANCE_PROVIDER_RESULT_MISMATCH');
+      verifyProviderResult(result.hole, {
+        basicSize: hole.nominalValue, featureClass: 'internal', designation: holeDesignation,
+      }, provider);
+      verifyProviderResult(result.shaft, {
+        basicSize: shaft.nominalValue, featureClass: 'external', designation: shaftDesignation,
+      }, provider);
       const overrides = new Map(members.flatMap((spec) => spec.override ? [[spec.dimensionIntentId, spec.override] as const] : []));
       next = applyFitTolerance(next, result, {
-        fitGroupId: assignment.fitGroupId,
-        holeDimensionIntentId: assignment.holeDimensionId,
-        shaftDimensionIntentId: assignment.shaftDimensionId,
+        fitGroupId: identity.fitGroupId,
+        holeDimensionIntentId: identity.holeDimensionId,
+        shaftDimensionIntentId: identity.shaftDimensionId,
         selectionSource: members[0]?.selection?.source ?? 'manual',
         displayPreference: members[0]?.displayPreference ?? 'deviations',
         evidenceRefs: members[0]?.selection?.evidenceRefs ?? members[0]?.evidenceIds ?? [],
       });
       next.tolerances = next.tolerances.map((spec) => attachOverrideReview(spec, overrides.get(spec.dimensionIntentId)));
     } catch (error) {
-      next = staleFit(next, assignment.fitGroupId, errorCode(error));
+      next = staleFit(next, identity, errorCode(error));
     }
   }
 
@@ -156,7 +172,9 @@ function reconcileTolerances(
       const result = provider.resolveBand({
         basicSize, featureClass: original.featureClass, designation: original.selection.designation,
       });
-      verifyDigest(result, provider);
+      verifyProviderResult(result, {
+        basicSize, featureClass: original.featureClass, designation: original.selection.designation,
+      }, provider);
       next = applySingleTolerance(next, result, {
         dimensionIntentId: original.dimensionIntentId,
         selectionSource: original.selection.source,
@@ -175,14 +193,57 @@ function reconcileTolerances(
   return next;
 }
 
-function staleFit(draft: EngineeringAnnotationDraft, fitGroupId: string, code: string): EngineeringAnnotationDraft {
+interface FitReconcileIdentity {
+  fitGroupId: string;
+  holeDimensionId: string;
+  shaftDimensionId: string;
+  basis: 'hole' | 'shaft';
+  designation: string;
+}
+
+function fitReconcileIdentities(draft: EngineeringAnnotationDraft): FitReconcileIdentity[] {
+  const identities = new Map(draft.fitAssignments.map((assignment) => [assignment.fitGroupId, {
+    fitGroupId: assignment.fitGroupId,
+    holeDimensionId: assignment.holeDimensionId,
+    shaftDimensionId: assignment.shaftDimensionId,
+    basis: assignment.basis,
+    designation: assignment.designation,
+  }]));
+  for (const spec of draft.tolerances) {
+    if (!spec.fitGroupId || identities.has(spec.fitGroupId)) continue;
+    const holeDimensionId = spec.inputs.fitHoleDimensionId;
+    const shaftDimensionId = spec.inputs.fitShaftDimensionId;
+    const basis = spec.inputs.fitBasis;
+    const designation = spec.inputs.fitDesignation;
+    if (typeof holeDimensionId === 'string' && typeof shaftDimensionId === 'string'
+      && (basis === 'hole' || basis === 'shaft') && typeof designation === 'string') {
+      identities.set(spec.fitGroupId, {
+        fitGroupId: spec.fitGroupId, holeDimensionId, shaftDimensionId, basis, designation,
+      });
+    }
+  }
+  return [...identities.values()];
+}
+
+function staleFit(draft: EngineeringAnnotationDraft, identity: FitReconcileIdentity, code: string): EngineeringAnnotationDraft {
   const intents = new Map(draft.intents.map((intent) => [intent.id, intent]));
   return {
     ...draft,
-    fitAssignments: draft.fitAssignments.filter((assignment) => assignment.fitGroupId !== fitGroupId),
-    tolerances: draft.tolerances.map((spec) => spec.fitGroupId === fitGroupId
-      ? staleSpec(spec, intents.get(spec.dimensionIntentId)?.nominalValue, code)
-      : spec),
+    fitAssignments: draft.fitAssignments.filter((assignment) => assignment.fitGroupId !== identity.fitGroupId),
+    tolerances: draft.tolerances.map((spec) => {
+      if (spec.fitGroupId !== identity.fitGroupId) return spec;
+      const stale = staleSpec(spec, intents.get(spec.dimensionIntentId)?.nominalValue, code);
+      return {
+        ...stale,
+        inputs: {
+          ...stale.inputs,
+          fitHoleDimensionId: identity.holeDimensionId,
+          fitShaftDimensionId: identity.shaftDimensionId,
+          fitBasis: identity.basis,
+          fitDesignation: identity.designation,
+        },
+      };
+    }),
   };
 }
 
@@ -235,15 +296,49 @@ function requireEqualFitSize(plan: AnnotationPlan, holeId: string, shaftId: stri
   return hole;
 }
 
-function verifyDigest(result: ResolvedStandardTolerance, provider: ToleranceStandardProvider): void {
+function requireAiRecommendation(plan: AnnotationPlan, command: ToleranceEditCommand): void {
+  if ((command.type !== 'standard.single.apply' && command.type !== 'standard.fit.apply')
+    || command.selectionSource !== 'ai-recommended') return;
+  const targetIds = command.type === 'standard.single.apply'
+    ? new Set([command.dimensionIntentId])
+    : new Set([command.holeDimensionIntentId, command.shaftDimensionIntentId]);
+  const match = plan.tolerances.some((spec) => spec.source === 'ai-candidate'
+    && spec.status === 'candidate'
+    && targetIds.has(spec.dimensionIntentId)
+    && spec.selection?.source === 'ai-recommended'
+    && spec.selection.designation === command.designation
+    && spec.selection.evidenceRefs.length > 0
+    && spec.selection.evidenceRefs.every((reference) => spec.evidenceIds.includes(reference))
+    && (command.type !== 'standard.single.apply' || spec.featureClass === command.featureClass)
+    && sameStrings(spec.selection.evidenceRefs, command.evidenceRefs));
+  if (!match) throw new Error('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
+}
+
+function sameStrings(first: readonly string[], second: readonly string[]): boolean {
+  if (first.length !== second.length) return false;
+  const right = new Set(second);
+  return right.size === second.length && first.every((value) => right.has(value));
+}
+
+function verifyProviderResult(
+  result: ResolvedStandardTolerance,
+  request: { basicSize: number; featureClass: 'internal' | 'external'; designation: string },
+  provider: ToleranceStandardProvider,
+): void {
+  if (result.basicSize !== request.basicSize || result.featureClass !== request.featureClass
+    || result.designation !== request.designation || result.unit !== 'mm'
+    || result.standardRef.id !== provider.standardRef.id
+    || result.standardRef.edition !== provider.standardRef.edition) {
+    throw new Error('TOLERANCE_PROVIDER_RESULT_MISMATCH');
+  }
   const expected = canonicalRuleInputDigest({
-    nominalValue: result.basicSize,
+    nominalValue: request.basicSize,
     unit: 'mm',
     inputs: {
       standardId: provider.standardRef.id,
       edition: provider.standardRef.edition,
-      featureClass: result.featureClass,
-      designation: result.designation,
+      featureClass: request.featureClass,
+      designation: request.designation,
     },
   });
   if (result.ruleRef.inputDigest !== expected) throw new Error('TOLERANCE_INPUT_DIGEST_MISMATCH');

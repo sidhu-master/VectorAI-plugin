@@ -2,6 +2,7 @@
 
 import type { GeometryId } from '@vectorai/drawing-core';
 import {
+  canonicalRuleInputDigest,
   createGbt1800Provider,
   type EngineeringAnnotationDraft,
   type ToleranceStandardProvider,
@@ -78,6 +79,19 @@ describe('ToleranceService', () => {
     })).toThrow('TOLERANCE_INTENT_UNKNOWN');
   });
 
+  it('does not expose a stored selection in a catalog for another feature class', () => {
+    const { service } = setup();
+    service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    });
+
+    expect(service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'internal',
+    })).not.toHaveProperty('selection');
+  });
+
   it('previews without mutating the plan and applies through shared undo history', () => {
     const { plans, service } = setup();
     const before = plans.get('session');
@@ -95,6 +109,32 @@ describe('ToleranceService', () => {
       evidenceRefs: ['manual:u6'],
     });
     expect(plans.undo('session', drawingRef).draft).toEqual(before.draft);
+  });
+
+  it('rejects a self-consistent provider result that does not match the apply request', () => {
+    const delegate = createGbt1800Provider();
+    const provider: ToleranceStandardProvider = {
+      ...delegate,
+      resolveBand({ basicSize }) {
+        return {
+          ...delegate.resolveBand({ basicSize, featureClass: 'external', designation: 'h6' }),
+          ruleRef: {
+            id: 'GB/T 1800', version: '1',
+            inputDigest: canonicalRuleInputDigest({
+              nominalValue: basicSize, unit: 'mm',
+              inputs: { standardId: 'GB/T 1800', edition: '2020', featureClass: 'external', designation: 'h6' },
+            }),
+          },
+        };
+      },
+    };
+    const { service } = setup(provider);
+
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    })).toThrow('TOLERANCE_PROVIDER_RESULT_MISMATCH');
   });
 
   it('rejects unsupported ranges, stale refs, and unequal fit sizes', () => {
@@ -137,6 +177,29 @@ describe('ToleranceService', () => {
     });
     expect(plans.undo('session', drawingRef).draft).toEqual(before);
     expect(plans.redo('session', drawingRef).draft?.fitAssignments).toHaveLength(1);
+  });
+
+  it('rejects single-sided standard or manual replacement of an active fit member', () => {
+    const { plans, service } = setup();
+    service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+    });
+    const before = plans.get('session');
+
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    })).toThrow('FIT_PAIR_TARGET_CONFLICT');
+    expect(plans.get('session')).toEqual(before);
+
+    expect(() => service.edit('session', {
+      type: 'manual.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole', mode: 'bilateral',
+      upperDeviation: .02, lowerDeviation: 0, displayPreference: 'deviations', evidenceRefs: ['manual:deviation'],
+    })).toThrow('FIT_PAIR_TARGET_CONFLICT');
+    expect(plans.get('session')).toEqual(before);
   });
 
   it('opens a confirmed fit as a complete editable draft and restores the confirmation in one undo', () => {
@@ -183,6 +246,30 @@ describe('ToleranceService', () => {
     expect(catalog).not.toHaveProperty('recommendation');
     expect(plans.get('session').draft?.tolerances[0]).toMatchObject({ source: 'ai-candidate', status: 'candidate' });
     expect(plans.get('session').draft?.tolerances[0]).not.toHaveProperty('resolved');
+  });
+
+  it('rejects ai-recommended apply without a matching evidenced active candidate', () => {
+    const { plans, service } = setup();
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'ai-recommended', displayPreference: 'both',
+      evidenceRefs: ['invented:evidence'],
+    })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
+
+    const ungrounded = draft();
+    ungrounded.tolerances = [{
+      id: 'tolerance:ai:intent-shaft', dimensionIntentId: 'intent-shaft', mode: 'bilateral',
+      source: 'ai-candidate', featureClass: 'external',
+      selection: { designation: 'u6', source: 'ai-recommended', evidenceRefs: ['invented:evidence'] },
+      inputs: { basicSize: 13, designation: 'u6', featureClass: 'external' },
+      status: 'candidate', evidenceIds: [], diagnostics: [],
+    }];
+    plans.setDraft('session', ungrounded);
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'ai-recommended', displayPreference: 'both',
+      evidenceRefs: ['invented:evidence'],
+    })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
   });
 
   it('surfaces an evidenced AI candidate without numeric fields and resolves it again during Apply', () => {
