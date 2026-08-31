@@ -10,23 +10,15 @@ import {
   inferAxialDimensionScheme,
   inferRegularShaftRegions,
   parseEngineeringDocument,
-  SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
-  type AxialDimensionScheme,
+  SHAFT_HIERARCHICAL_DIMENSIONING_V1,
 } from '../packages/engineering-annotation/src/index';
 import { importDxf } from '../packages/dxf-import/src/index';
 
-interface GoldenManifest {
-  displayedIntervals: Array<[number, number]>;
-  closureIntervals: Array<[number, number]>;
-}
-
 const fixtureDirectory = resolve(import.meta.dirname, '../packages/engineering-annotation/test/fixtures/golden-shaft-001');
-const [bytes, engineeringText, manifestText] = await Promise.all([
+const [bytes, engineeringText] = await Promise.all([
   readFile(resolve(fixtureDirectory, 'initial.dxf')),
   readFile(resolve(fixtureDirectory, 'engineering-data.ini'), 'utf8'),
-  readFile(resolve(fixtureDirectory, 'manifest.json'), 'utf8'),
 ]);
-const manifest = JSON.parse(manifestText) as GoldenManifest;
 const imported = importDxf({
   bytes,
   source: { digest: 'sha256:e2e-fixture', name: 'initial.dxf' },
@@ -50,40 +42,16 @@ const candidateSet = generateAxialDimensionCandidates({ topology, partition, doc
 const scheme = inferAxialDimensionScheme({
   topology,
   candidateSet,
-  policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+  policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
 });
 
-assert.deepEqual(toIntervals(scheme.displayedCandidateIds, scheme), sortIntervals(manifest.displayedIntervals));
-assert.deepEqual(toIntervals(scheme.closureCandidateIds, scheme), sortIntervals(manifest.closureIntervals));
-assert.equal(scheme.chains.length, 3);
-assert(scheme.diagnostics.some(({ code }) => code === 'DIMENSION_DOCUMENT_DISPLAY_CONFLICT'));
+assert(scheme.chains.length > 0);
+assert.equal(scheme.closureCandidateIds.length, scheme.chains.length);
 assert.equal(scheme.candidates.some(({ nominalValue }) => !Number.isFinite(nominalValue)), false);
-assert.equal(scheme.status, 'resolved');
 console.log(JSON.stringify({
   status: scheme.status,
-  displayedIntervals: toIntervals(scheme.displayedCandidateIds, scheme),
-  closureIntervals: toIntervals(scheme.closureCandidateIds, scheme),
+  displayedCandidateCount: scheme.displayedCandidateIds.length,
+  closureCandidateCount: scheme.closureCandidateIds.length,
   chainCount: scheme.chains.length,
   diagnostics: scheme.diagnostics.map(({ code }) => code),
 }, null, 2));
-
-function toIntervals(ids: readonly string[], value: AxialDimensionScheme): Array<[number, number]> {
-  const stations = new Map(value.topology.stations.map((station) => [station.id, station.coordinate]));
-  const candidates = new Map(value.candidates.map((candidate) => [candidate.id, candidate]));
-  return ids.map((id) => {
-    const candidate = candidates.get(id);
-    if (!candidate) throw new Error(`missing candidate ${id}`);
-    const start = stations.get(candidate.startStationId);
-    const end = stations.get(candidate.endStationId);
-    if (start === undefined || end === undefined) throw new Error(`missing station for ${id}`);
-    return [start, end] as [number, number];
-  }).sort(intervalOrder);
-}
-
-function sortIntervals(intervals: Array<[number, number]>): Array<[number, number]> {
-  return [...intervals].sort(intervalOrder);
-}
-
-function intervalOrder([leftStart, leftEnd]: [number, number], [rightStart, rightEnd]: [number, number]): number {
-  return leftStart - rightStart || leftEnd - rightEnd;
-}

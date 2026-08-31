@@ -23,7 +23,9 @@ function partition(): PartitionDraft {
   };
 }
 
-function service(partitionValue: PartitionDraft | null = partition()) {
+function service(partitionValue: PartitionDraft | null = partition(), plans = new DimensionPlanStore(
+  undefined, { now: () => 7, id: () => 'dimension:r1' },
+)) {
   const document = createEmptyDrawing({ idFactory: { next: () => 'drawing:shaft' }, now: () => 1 });
   document.geometry = [{
     id: 'geometry:shaft' as GeometryId, type: 'line', start: [0, 0], end: [20, 0], visible: true,
@@ -35,17 +37,16 @@ function service(partitionValue: PartitionDraft | null = partition()) {
       ? { version: 1, phase: 'idle', drawingRef: ref, canUndo: false, canRedo: false, updatedAt: 0 }
       : { version: 1, phase: 'editing', drawingRef: ref, draft: partitionValue as never, canUndo: false, canRedo: false, updatedAt: 0 } },
     { getStagedEngineeringText: () => undefined },
-    new DimensionPlanStore(undefined, { now: () => 7, id: () => 'dimension:r1' }),
+    plans,
   );
 }
 
 describe('DimensionInferenceService', () => {
-  it('defaults to the reference terminal-closure convention', () => {
+  it('defaults to the evidence-weighted hierarchical convention', () => {
     const workflow = service();
     const result = workflow.start(agent);
     expect(result.draft?.axialScheme).toMatchObject({
-      status: 'resolved',
-      policy: { id: 'shaft-reference-terminal-closure-v1' },
+      policy: { id: 'shaft-hierarchical-dimensioning-v1' },
     });
   });
 
@@ -53,13 +54,47 @@ describe('DimensionInferenceService', () => {
     const workflow = service();
     expect(workflow.getState(agent).phase).toBe('idle');
 
-    const result = workflow.start(agent, 'shaft-reference-terminal-closure-v1');
+    const result = workflow.start(agent, 'shaft-hierarchical-dimensioning-v1');
 
     expect(result.phase).toBe('editing');
-    expect(result.draft?.axialScheme).toMatchObject({ status: 'resolved', policy: { id: 'shaft-reference-terminal-closure-v1' } });
+    expect(result.draft?.axialScheme).toMatchObject({ policy: { id: 'shaft-hierarchical-dimensioning-v1' } });
   });
 
   it('rejects a missing partition without fabricating topology', () => {
     expect(() => service(null).start(agent)).toThrow('DIMENSION_PARTITION_REQUIRED');
+  });
+
+  it('preserves existing datum and GD&T annotations when dimension inference is refreshed', () => {
+    const plans = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'dimension:r1' });
+    const existing = {
+      version: 1 as const, drawingRef: ref,
+      datums: [{
+        id: 'datum:A', drawingRef: ref, name: 'A', geometryId: 'geometry:shaft' as GeometryId,
+        anchor: { kind: 'start' as const }, role: 'primary' as const, source: 'ai-candidate' as const,
+        status: 'candidate' as const, evidenceIds: [],
+      }],
+      intents: [], tolerances: [],
+      geometricTolerances: [{
+        id: 'gdt:runout', drawingRef: ref, characteristic: 'circular-runout' as const,
+        controlledTargets: [{ geometryId: 'geometry:shaft' as GeometryId, anchor: { kind: 'start' as const } }],
+        toleranceZone: { shape: 'linear' as const }, datumReferenceFrame: [{ datumId: 'datum:A' }],
+        computed: { status: 'pending' as const, unit: 'mm' as const, diagnostics: [] }, source: 'ai-candidate' as const,
+        status: 'candidate' as const, evidenceIds: [],
+      }],
+      chains: [], dependencies: [], diagnostics: [{
+        id: 'diagnostic:gdt:coverage', severity: 'info' as const,
+        code: 'GDT_COVERAGE_COMPLETE', message: 'complete',
+      }],
+    };
+    plans.begin(String(agent.id), ref);
+    plans.setDraft(String(agent.id), existing);
+
+    const result = service(partition(), plans).start(agent);
+
+    expect(result.draft).toMatchObject({
+      datums: existing.datums,
+      geometricTolerances: existing.geometricTolerances,
+      diagnostics: expect.arrayContaining(existing.diagnostics),
+    });
   });
 });

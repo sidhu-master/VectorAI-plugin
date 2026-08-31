@@ -66,12 +66,13 @@ export function createPartitionSemanticReviewer(
       boundaryConfidence: segment.boundaryConfidence,
     }));
     const payload = JSON.stringify({
-      instruction: '不要展示分析过程，立即返回要求的结构化结果。C 标签只作为已分类上下文，不得重新分类或放入 proposal；只判断 S 标签对应的候选轴段。结合已有区域避免把齿轮后的窄退刀槽、过渡段或工艺收尾段误认成新的花键或齿轮。只识别有明确视觉证据的主要功能区域。允许返回空 proposals，并允许不覆盖全部轴段：过渡段、退刀段、工艺收尾段、常规轴段或证据不足的轴段必须留空，不得为了连续覆盖而强行分类。可将构成同一功能区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择；name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。',
+      instruction: '不要展示分析过程，立即返回要求的结构化结果。C 标签只作为已分类上下文，不得重新分类或放入 proposal；只判断 S 标签对应的候选轴段。只识别有明确视觉证据的主要区域。允许返回空 proposals，并允许不覆盖全部轴段，不得为了连续覆盖而强行分类。可将构成同一语义区域的相邻轴段放入同一提案。semanticType 必须从 gear、spline、bearing-seat、shaft-seat、seal-seat、oil-seal-seat、coupling-seat、thread、keyway、shoulder 中选择。dimensionRole 必须从 functional-feature、process-datum、transition、ordinary 中选择：直接承担传动、配合、密封或连接功能的区域才是 functional-feature；定位轴肩是 process-datum；退刀、收尾或功能区之间的短过渡是 transition；仅有稳定圆柱外形但没有直接功能证据的轴段是 ordinary，不能因为名称含 shaft-seat 就判为 functional-feature。name 和 reason 使用简短中文。每个 segmentId 都必须提供对应的 observation:segmentId 视觉证据，confidence 低于 0.8 时不要提议。不要返回坐标、边界、尺寸或几何编辑命令。',
       segments: catalog,
       existingRegions: contextGroups.map(({ group, visualLabel, origin }) => ({
         visualLabel,
         name: group.name ?? group.semanticType,
         semanticType: group.semanticType,
+        dimensionRole: group.dimensionRole,
         origin,
       })),
       observationDigest: rendered.contentDigest,
@@ -139,6 +140,7 @@ function consolidateProposals(
   const merged: SegmentSemanticProposal[] = [];
   for (const proposal of proposals) {
     const matches = merged.filter((candidate) => candidate.semanticType === proposal.semanticType
+      && candidate.dimensionRole === proposal.dimensionRole
       && candidate.segmentIds.some((id) => proposal.segmentIds.includes(id)));
     if (matches.length === 0) {
       merged.push(structuredClone(proposal));
@@ -168,10 +170,10 @@ const proposalSchema = {
   type: 'object', additionalProperties: false, required: ['proposals'],
   properties: { proposals: { type: 'array', items: {
     type: 'object', additionalProperties: false,
-    required: ['segmentIds', 'semanticType', 'confidence', 'reason', 'visualEvidenceIds'],
+    required: ['segmentIds', 'semanticType', 'dimensionRole', 'confidence', 'reason', 'visualEvidenceIds'],
     properties: {
       segmentIds: { type: 'array', items: { type: 'string' } },
-      semanticType: { type: 'string' }, name: { type: 'string' },
+      semanticType: { type: 'string' }, dimensionRole: { type: 'string' }, name: { type: 'string' },
       confidence: { type: 'number' }, reason: { type: 'string' },
       visualEvidenceIds: { type: 'array', items: { type: 'string' } },
     },
@@ -188,14 +190,19 @@ function validProposal(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
   const keys = Object.keys(item);
-  const allowed = new Set(['segmentIds', 'semanticType', 'name', 'confidence', 'reason', 'visualEvidenceIds']);
+  const allowed = new Set(['segmentIds', 'semanticType', 'dimensionRole', 'name', 'confidence', 'reason', 'visualEvidenceIds']);
   return keys.every((key) => allowed.has(key))
-    && ['segmentIds', 'semanticType', 'confidence', 'reason', 'visualEvidenceIds'].every((key) => keys.includes(key))
+    && ['segmentIds', 'semanticType', 'dimensionRole', 'confidence', 'reason', 'visualEvidenceIds'].every((key) => keys.includes(key))
     && Array.isArray(item.segmentIds) && item.segmentIds.length > 0 && item.segmentIds.every((id) => typeof id === 'string')
     && typeof item.semanticType === 'string' && (item.name === undefined || typeof item.name === 'string')
+    && typeof item.dimensionRole === 'string' && DIMENSION_ROLES.has(item.dimensionRole)
     && typeof item.confidence === 'number' && typeof item.reason === 'string'
     && Array.isArray(item.visualEvidenceIds) && item.visualEvidenceIds.every((id) => typeof id === 'string');
 }
+
+const DIMENSION_ROLES = new Set([
+  'functional-feature', 'process-datum', 'transition', 'ordinary',
+]);
 
 function combineSignals(first: AbortSignal | undefined, second: AbortSignal): AbortSignal {
   if (first === undefined) return second;

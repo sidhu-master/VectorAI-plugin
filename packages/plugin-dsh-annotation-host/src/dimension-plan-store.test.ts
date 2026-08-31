@@ -53,7 +53,7 @@ function inferredDraft(status: AxialDimensionScheme['status'] = 'resolved'): Eng
   });
   const scheme: AxialDimensionScheme = {
     version: 1, drawingRef,
-    policy: { id: 'shaft-reference-terminal-closure-v1', version: '1' },
+    policy: { id: 'shaft-hierarchical-dimensioning-v1', version: '1' },
     inputDigest: 'sha256:test-scheme',
     topology: {
       drawingRef,
@@ -80,6 +80,28 @@ function inferredDraft(status: AxialDimensionScheme['status'] = 'resolved'): Eng
     decisions: [], diagnostics: [], status,
   };
   return projectAxialDimensionScheme({ scheme });
+}
+
+function enrichedInferredDraft(): EngineeringAnnotationDraft {
+  const value = inferredDraft();
+  value.datums = [{
+    id: 'datum:A', drawingRef, name: 'A', geometryId: 'geometry:station:0' as GeometryId,
+    anchor: { kind: 'start' }, role: 'primary', source: 'ai-candidate', status: 'candidate', evidenceIds: [],
+  }];
+  value.tolerances = [{
+    id: 'tolerance:overall', dimensionIntentId: 'dimension-intent:candidate:overall', mode: 'bilateral',
+    source: 'manual', inputs: {}, status: 'candidate', evidenceIds: [], diagnostics: [],
+  }];
+  value.geometricTolerances = [{
+    id: 'gdt:runout', drawingRef, characteristic: 'circular-runout',
+    controlledTargets: [{ geometryId: 'geometry:station:0' as GeometryId, anchor: { kind: 'start' } }],
+    toleranceZone: { shape: 'linear' }, datumReferenceFrame: [{ datumId: 'datum:A' }],
+    computed: { status: 'pending', unit: 'mm', diagnostics: [] }, source: 'ai-candidate', status: 'candidate', evidenceIds: [],
+  }];
+  value.diagnostics = [{
+    id: 'diagnostic:gdt:coverage', severity: 'info', code: 'GDT_COVERAGE_COMPLETE', message: 'complete',
+  }];
+  return value;
 }
 
 describe('DimensionPlanStore', () => {
@@ -256,6 +278,24 @@ describe('DimensionPlanStore', () => {
     expect(store.redo('session', drawingRef).draft?.axialScheme?.layout?.chainNormalOffsets).toEqual([
       { chainId: 'chain:overall', normalOffset: 18 },
     ]);
+  });
+
+  it('preserves every non-chain annotation field while editing an unconfirmed dimension chain', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    const value = enrichedInferredDraft();
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+
+    const edited = store.editScheme('session', {
+      type: 'chain.layout', chainId: 'chain:overall', normalOffset: 18, expectedDrawingRef: drawingRef,
+    });
+
+    expect(edited.draft).toMatchObject({
+      datums: value.datums,
+      tolerances: value.tolerances,
+      geometricTolerances: value.geometricTolerances,
+      diagnostics: expect.arrayContaining(value.diagnostics),
+    });
   });
 
   it('switches a confirmed chain closure immediately without reopening the save toolbar', () => {

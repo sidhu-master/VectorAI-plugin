@@ -42,20 +42,30 @@ export class GdtService {
     const current = this.plans.get(sessionId);
     const base = editableBase(current, drawing.ref);
     const grounded = groundGdtRecommendation(drawing, recommendation);
+    const coverageDiagnostics = recommendation.coverage === undefined ? [] : [{
+      id: 'diagnostic:gdt:coverage',
+      severity: recommendation.coverage.complete ? 'info' as const : recommendation.coverage.status === 'needs-user-input' ? 'warning' as const : 'error' as const,
+      code: recommendation.coverage.complete ? 'GDT_COVERAGE_COMPLETE'
+        : recommendation.coverage.status === 'needs-user-input' ? 'GDT_USER_INPUT_REQUIRED' : 'GDT_COVERAGE_INCOMPLETE',
+      message: recommendation.coverage.complete
+        ? `GD&T coverage verified: ${recommendation.coverage.requiredDatumCount} datums and ${recommendation.coverage.requiredControlCount} controls`
+        : recommendation.coverage.status === 'needs-user-input'
+          ? 'GD&T rule resolution requires user clarification before the automatic set can be completed'
+          : `GD&T coverage incomplete: expected ${recommendation.coverage.requiredDatumCount} datums and ${recommendation.coverage.requiredControlCount} controls`,
+    }, ...(recommendation.coverage.questions ?? []).map((question, index) => ({
+      id: `diagnostic:gdt:clarification:${index}`,
+      severity: 'warning' as const,
+      code: question.code,
+      message: question.prompt,
+      ...(question.segmentIds.length === 0 ? {} : { segmentIds: [...question.segmentIds] }),
+    }))];
     this.plans.begin(sessionId, drawing.ref);
     return this.plans.setDraft(sessionId, {
       ...base,
       drawingRef: drawing.ref,
       datums: mergeById(options.replaceExistingGdt ? [] : base.datums, grounded.datums),
       geometricTolerances: mergeById(options.replaceExistingGdt ? [] : base.geometricTolerances, grounded.geometricTolerances),
-      diagnostics: mergeById(base.diagnostics, recommendation.coverage === undefined ? [] : [{
-        id: 'diagnostic:gdt:coverage',
-        severity: recommendation.coverage.complete ? 'info' : 'error',
-        code: recommendation.coverage.complete ? 'GDT_COVERAGE_COMPLETE' : 'GDT_COVERAGE_INCOMPLETE',
-        message: recommendation.coverage.complete
-          ? `GD&T coverage verified: ${recommendation.coverage.requiredDatumCount} datums and ${recommendation.coverage.requiredControlCount} controls`
-          : `GD&T coverage incomplete: expected ${recommendation.coverage.requiredDatumCount} datums and ${recommendation.coverage.requiredControlCount} controls`,
-      }]),
+      diagnostics: mergeById(base.diagnostics, coverageDiagnostics),
     });
   }
 

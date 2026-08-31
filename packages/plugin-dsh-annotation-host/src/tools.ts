@@ -14,7 +14,7 @@ import type {
   PartitionSessionSnapshot,
   DimensionPlanSessionSnapshot,
 } from '@vectorai/plugin-space-contracts';
-import type { AnnotationSessionStateStore } from './session-state';
+import type { AnnotationSessionStateStore, AnnotationWorkflowStage } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
 import type { GdtRecommendation } from './gdt-grounding';
 
@@ -28,7 +28,11 @@ export function createEngineeringAnnotationTool(
     description: string;
     annotationKinds: readonly DeterministicAnnotationKind[];
     objective: string;
-    afterAnnotations?: (agent: Agent, signal?: AbortSignal) => DimensionPlanSessionSnapshot | Promise<DimensionPlanSessionSnapshot>;
+    afterAnnotations?: (
+      agent: Agent,
+      signal: AbortSignal | undefined,
+      reportStage: (stage: AnnotationWorkflowStage) => void,
+    ) => DimensionPlanSessionSnapshot | Promise<DimensionPlanSessionSnapshot>;
     requiresGdtRecommendation?: boolean;
   } = {
     name: 'drawing_auto_annotate',
@@ -52,15 +56,15 @@ export function createEngineeringAnnotationTool(
       }
       const snapshot = host.getSnapshot(agent);
       if (!snapshot) throw new Error('DRAWING_REQUIRED');
-      const plan = planEngineeringAnnotations({
-        document: snapshot.document,
-        ref: snapshot.ref,
-        objective: options.objective,
-        annotationKinds: options.annotationKinds,
-      });
       const workflowId = `annotation_${sessionId}_${Date.now()}`;
-      sessions.start(sessionId, workflowId);
+      sessions.start(sessionId, workflowId, 'deterministic');
       try {
+        const plan = planEngineeringAnnotations({
+          document: snapshot.document,
+          ref: snapshot.ref,
+          objective: options.objective,
+          annotationKinds: options.annotationKinds,
+        });
         let status = 'no-effect';
         let result: DrawingExtensionProgramWorkflow['result'] | undefined;
         if (plan.program) {
@@ -89,17 +93,26 @@ export function createEngineeringAnnotationTool(
             } as unknown as JsonValue;
           }
         }
-        const followup = await options.afterAnnotations?.(agent, exec.signal);
-        sessions.finish(sessionId, 'completed');
+        const followup = await options.afterAnnotations?.(
+          agent,
+          exec.signal,
+          (stage) => sessions.advance(sessionId, stage),
+        );
+        if (followup?.phase === 'editing') sessions.advance(sessionId, 'review', 'reviewing');
+        else sessions.finish(sessionId, 'completed');
         const dimensionDraft = followup?.draft;
         const datumCount = dimensionDraft?.datums.length ?? 0;
         const gdtCount = dimensionDraft?.geometricTolerances.length ?? 0;
         const gdtCoverageComplete = dimensionDraft?.diagnostics.some(({ code }) => code === 'GDT_COVERAGE_COMPLETE') === true;
+        const gdtNeedsUserInput = dimensionDraft?.diagnostics.some(({ code }) => code === 'GDT_USER_INPUT_REQUIRED') === true;
+        const clarificationQuestions = dimensionDraft?.diagnostics
+          .filter(({ code }) => code === 'GDT_FEATURE_CONFIDENCE_LOW' || code === 'GDT_AXIS_SUPPORT_PAIR_REQUIRED')
+          .map(({ message }) => message) ?? [];
         const automaticSetReady = options.requiresGdtRecommendation !== true
           || dimensionDraft?.axialScheme !== undefined && datumCount > 0 && gdtCount > 0 && gdtCoverageComplete;
         const awaitingGdt = options.requiresGdtRecommendation === true && !automaticSetReady;
         return {
-          status: awaitingGdt ? 'awaiting-gdt-recommendation' : status,
+          status: gdtNeedsUserInput ? 'needs-user-input' : awaitingGdt ? 'awaiting-gdt-recommendation' : status,
           ...(awaitingGdt ? { deterministicStatus: status } : {}),
           annotations: plan.annotations.map(({ id }) => id),
           pending: plan.pending,
@@ -113,7 +126,13 @@ export function createEngineeringAnnotationTool(
               closureCount: followup.draft?.axialScheme?.closureCandidateIds.length ?? 0,
               datumCount,
               geometricToleranceCount: gdtCount,
-              ...(awaitingGdt ? {
+              ...(gdtNeedsUserInput ? {
+                gdtStatus: 'needs-user-input',
+                completionStatus: 'needs-user-input',
+                completionClaimAllowed: false,
+                clarificationQuestions,
+                nextAction: 'ask-user-for-gdt-clarification',
+              } : awaitingGdt ? {
                 gdtStatus: 'required',
                 completionStatus: 'incomplete',
                 completionClaimAllowed: false,
@@ -233,16 +252,14 @@ export function createDimensionChainStartTool(workflow: {
     parameters: {
       policy: {
         type: 'string',
-        enum: ['shaft-hierarchical-dimensioning-v1', 'shaft-reference-terminal-closure-v1'],
-        description: 'Optional drafting policy. Omit it for the default reference terminal-closure convention; use the hierarchical policy only when the user explicitly requests it.',
+        enum: ['shaft-hierarchical-dimensioning-v1'],
+        description: 'Optional evidence-weighted hierarchical drafting policy. Omit it to use this default.',
       },
     },
     output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args, exec) {
       if (!exec.agent) throw new Error('DRAWING_SESSION_REQUIRED');
-      const policy = args.policy === 'shaft-hierarchical-dimensioning-v1'
-        ? args.policy
-        : 'shaft-reference-terminal-closure-v1';
+      const policy = 'shaft-hierarchical-dimensioning-v1';
       const snapshot = workflow.start(exec.agent, policy);
       return {
         status: snapshot.phase,

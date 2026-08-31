@@ -47,6 +47,7 @@
     "@vectorai/drawing-surface-api": "workspace:*",
     "@vectorai/drawing-viewer-react": "workspace:*",
     "@vectorai/drawing-workspace": "workspace:*",
+    "@vectorai/plugin-dsh-space-client": "workspace:*",
     "@vectorai/plugin-space-contracts": "workspace:*",
     "lucide-react": "0.511.0",
     "react": "18.3.1",

@@ -210,6 +210,56 @@ describe('canonical DXF import', () => {
     }));
   });
 
+  it('round-trips native CAD DIMENSION entities as editable canonical annotations', () => {
+    const dimension = `0
+DIMENSION
+5
+20
+8
+7标注层
+2
+*D1
+10
+10
+20
+15
+11
+5
+21
+18
+70
+160
+42
+10
+1
+10 mm
+3
+GB_LINEAR
+13
+0
+23
+0
+14
+10
+24
+0
+`;
+    const result = importDxf({
+      bytes: new TextEncoder().encode(fixture.replace('0\nVIEWPORT', `${dimension}0\nVIEWPORT`)),
+      source: { digest: 'sha256:dimension-roundtrip' }, drawingId: 'drawing:dimension', now: () => 1,
+    });
+
+    expect(result.status).toBe('imported');
+    if (result.status !== 'imported') return;
+    expect(result.document.annotations).toContainEqual(expect.objectContaining({
+      type: 'dimension', dimensionKind: 'linear', computedValue: 10,
+      displayText: '10 mm', textPosition: [5, 18], visible: true,
+    }));
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({
+      code: 'DXF_ENTITY_UNSUPPORTED', message: 'Unsupported DXF entity DIMENSION',
+    }));
+  });
+
   it('rejects unterminated sections and invalid supported entities atomically', () => {
     const unterminated = importDxf({
       bytes: new TextEncoder().encode(fixture.replace('0\nENDSEC\n0\nEOF\n', '0\nEOF\n')),

@@ -21,7 +21,7 @@ describe('partition semantic reviewer', () => {
       tools: { schemas: () => [{ name: 'drawing_observe' }, { name: 'structured_output' }, { name: 'drawing_select_parts' }] },
       subagents: {
         list: () => ['local'], getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true, persona: true } }),
-        start: async (_name: string, input: Record<string, unknown>) => { started = input; return { result: Promise.resolve({ stopReason: 'completed', structured: { proposals: [{ segmentIds: ['segment:1'], semanticType: 'shaft-seat', confidence: 0.8, reason: 'visible constant profile', visualEvidenceIds: ['observation:segment:1'] }] } }), dispose: async () => {} }; },
+        start: async (_name: string, input: Record<string, unknown>) => { started = input; return { result: Promise.resolve({ stopReason: 'completed', structured: { proposals: [{ segmentIds: ['segment:1'], semanticType: 'shaft-seat', dimensionRole: 'ordinary', confidence: 0.8, reason: 'visible constant profile', visualEvidenceIds: ['observation:segment:1'] }] } }), dispose: async () => {} }; },
       },
     } as never, { renderObservation } as never);
     const result = await reviewer({ agent: { id: 's' } as Agent, draft, segmentIds: ['segment:1'] });
@@ -32,10 +32,12 @@ describe('partition semantic reviewer', () => {
     });
     expect(started?.persona).toMatch(/immediately|structured/i);
     expect(JSON.stringify(started?.prompt)).toContain('semanticType 必须从');
+    expect(JSON.stringify(started?.prompt)).toContain('dimensionRole');
     expect(JSON.stringify(started?.prompt)).toContain('允许不覆盖全部轴段');
     expect(JSON.stringify(started?.prompt)).toContain('允许返回空 proposals');
     expect(JSON.stringify(started?.outputSchema)).not.toMatch(/maxItems|minItems|minimum|maximum|maxLength/);
     expect(result.draft.segments[0]).toMatchObject({ semanticType: 'shaft-seat' });
+    expect(result.draft.semanticGroups[0]).toMatchObject({ dimensionRole: 'ordinary' });
   });
 
   it('shows already classified document regions as read-only visual context', async () => {
@@ -85,7 +87,7 @@ describe('partition semantic reviewer', () => {
         list: () => ['local'], getProvider: () => ({ capabilities: { outputSchema: true, toolFilter: true, depthLimit: true } }),
         start: async () => ({
           result: Promise.resolve({ stopReason: 'completed', structured: { proposals: [{
-            segmentIds: ['segment:1'], semanticType: 'shaft-seat', confidence: 2,
+            segmentIds: ['segment:1'], semanticType: 'shaft-seat', dimensionRole: 'ordinary', confidence: 2,
             reason: 'x'.repeat(501), visualEvidenceIds: ['observation:segment:1'],
           }] } }),
           dispose: async () => {},
@@ -138,7 +140,7 @@ describe('partition semantic reviewer', () => {
         : Array.from({ length: 9 }, (_, index) => `segment:${index + 120}`);
       return {
         result: Promise.resolve({ stopReason: 'completed', structured: { proposals: [{
-          segmentIds, semanticType: 'gear', name: '跨批齿轮', confidence: 0.9,
+          segmentIds, semanticType: 'gear', dimensionRole: 'functional-feature', name: '跨批齿轮', confidence: 0.9,
           reason: '跨批次连续齿形', visualEvidenceIds: segmentIds.map((id) => `observation:${id}`),
         }] } }),
         dispose: async () => {},

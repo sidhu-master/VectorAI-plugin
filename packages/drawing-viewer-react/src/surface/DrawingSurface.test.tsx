@@ -98,6 +98,25 @@ describe('controlled DrawingSurface', () => {
     act(() => renderer.unmount());
   });
 
+  it('does not request viewport fitting when the canvas is double-clicked', () => {
+    const onViewportChange = vi.fn();
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={snapshot()}
+        viewport={viewport}
+        selectedIds={[]}
+        onViewportChange={onViewportChange}
+        onSelectionChange={() => undefined}
+      />,
+    );
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+
+    act(() => svg.props.onDoubleClick?.({}));
+
+    expect(onViewportChange).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
   it('fits the drawing to the measured controlled surface when requested', () => {
     const onViewportChange = vi.fn();
     const value = snapshot();

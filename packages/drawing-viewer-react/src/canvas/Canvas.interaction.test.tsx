@@ -159,6 +159,17 @@ describe('shared Canvas interaction', () => {
     act(() => renderer.unmount());
   });
 
+  it('does not change the viewport when the canvas is double-clicked', async () => {
+    const { store, renderer } = await renderCanvas();
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const before = structuredClone(store.getState().viewport);
+
+    act(() => svg.props.onDoubleClick?.({}));
+
+    expect(store.getState().viewport).toEqual(before);
+    act(() => renderer.unmount());
+  });
+
   it('supports click selection and modifier multi-selection', async () => {
     const { store, renderer } = await renderCanvas();
     const line = renderer.root.findByProps({ 'data-entity-id': 'line-1' });

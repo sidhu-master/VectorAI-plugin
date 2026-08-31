@@ -61,6 +61,51 @@ describe('planEngineeringAnnotations', () => {
     expect(planEngineeringAnnotations(input)).toEqual(planEngineeringAnnotations(input));
   });
 
+  it('adds one shaft centerline and one radius dimension per distinct confirmed radius', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    document.geometry = [
+      { id: 'top' as GeometryId, type: 'line', start: [0, 10], end: [100, 10], visible: true, quality },
+      { id: 'bottom' as GeometryId, type: 'line', start: [0, -10], end: [100, -10], visible: true, quality },
+      { id: 'r2-a' as GeometryId, type: 'arc', center: [20, 8], radius: 2, startAngle: 0, endAngle: 90, counterClockwise: true, visible: true, quality },
+      { id: 'r2-b' as GeometryId, type: 'arc', center: [30, -8], radius: 2, startAngle: 180, endAngle: 270, counterClockwise: true, visible: true, quality },
+      { id: 'r3' as GeometryId, type: 'arc', center: [70, 7], radius: 3, startAngle: 0, endAngle: 90, counterClockwise: true, visible: true, quality },
+      { id: 'r2-a-v' as GeometryId, type: 'line', start: [22, 8], end: [22, 0], visible: true, quality },
+      { id: 'r2-a-h' as GeometryId, type: 'line', start: [20, 10], end: [10, 10], visible: true, quality },
+      { id: 'r2-b-v' as GeometryId, type: 'line', start: [28, -8], end: [28, 0], visible: true, quality },
+      { id: 'r2-b-h' as GeometryId, type: 'line', start: [30, -10], end: [40, -10], visible: true, quality },
+      { id: 'r3-v' as GeometryId, type: 'line', start: [73, 7], end: [73, 0], visible: true, quality },
+      { id: 'r3-h' as GeometryId, type: 'line', start: [70, 10], end: [60, 10], visible: true, quality },
+    ];
+
+    const plan = planEngineeringAnnotations({
+      document, ref: { drawingId: 'drawing-1', revision: 1 }, objective: '全部标注',
+      annotationKinds: ['centerline', 'radius'],
+    });
+
+    expect(plan.annotations.filter(({ type }) => type === 'centerline')).toHaveLength(1);
+    expect(plan.annotations.filter((item) => item.type === 'dimension' && item.dimensionKind === 'radius')
+      .map((item) => item.displayText).sort()).toEqual(['R2', 'R3']);
+  });
+
+  it('annotates a topological fillet and ignores an isolated arc with no tangent neighbors', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-fillet' }, now: () => 1 });
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    document.geometry = [
+      { id: 'horizontal' as GeometryId, type: 'line', start: [0, 10], end: [10, 10], visible: true, quality },
+      { id: 'vertical' as GeometryId, type: 'line', start: [12, 8], end: [12, 0], visible: true, quality },
+      { id: 'fillet' as GeometryId, type: 'arc', center: [10, 8], radius: 2, startAngle: 0, endAngle: 90, counterClockwise: true, visible: true, quality },
+      { id: 'isolated' as GeometryId, type: 'arc', center: [30, 30], radius: 7, startAngle: 0, endAngle: 120, counterClockwise: true, visible: true, quality },
+    ];
+
+    const plan = planEngineeringAnnotations({
+      document, ref: { drawingId: 'drawing-fillet', revision: 1 }, objective: '标注圆角', annotationKinds: ['radius'],
+    });
+
+    expect(plan.annotations.filter((item) => item.type === 'dimension' && item.dimensionKind === 'radius')
+      .map((item) => item.displayText)).toEqual(['R2']);
+  });
+
   it('removes legacy primitive-driven dimensions without touching manual dimensions', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     document.geometry = [{

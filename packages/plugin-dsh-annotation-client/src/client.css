@@ -29,6 +29,12 @@
 .vai-annotation-status-stack { position: absolute; z-index: 12; top: 14px; left: 50%; display: grid; justify-items: center; gap: 7px; width: max-content; max-width: calc(100% - 96px); transform: translateX(-50%); pointer-events: none; }
 .vai-partition-progress { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid rgba(56, 189, 248, .3); border-radius: 999px; color: #b9e8fa; background: rgba(9, 33, 46, .88); box-shadow: 0 8px 24px rgba(0, 0, 0, .26); backdrop-filter: blur(10px); font-size: 11px; }
 .vai-partition-progress__pulse { width: 7px; height: 7px; border-radius: 50%; background: #38bdf8; box-shadow: 0 0 0 0 rgba(56, 189, 248, .55); animation: vai-partition-pulse 1.35s ease-out infinite; }
+.vai-annotation-generation { position: absolute; z-index: 24; top: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 7px; border: 1px solid rgba(108, 130, 153, .32); border-radius: 14px; color: #718096; background: rgba(12, 19, 27, .94); box-shadow: 0 12px 32px rgba(0, 0, 0, .28); backdrop-filter: blur(12px); pointer-events: none; }
+.vai-annotation-generation__step { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 9px; white-space: nowrap; font-size: 11px; }
+.vai-annotation-generation__step > span { display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; }
+.vai-annotation-generation__step.is-complete { color: #3bd99a; }
+.vai-annotation-generation__step.is-active { color: #d8f3ff; background: rgba(39, 153, 215, .2); }
+.vai-annotation-generation__step.is-active > span { border-color: #38bdf8; background: #1597d1; box-shadow: 0 0 0 4px rgba(56, 189, 248, .12); }
 .vai-partition-error { margin: 0; padding: 7px 12px; border: 1px solid rgba(248, 113, 113, .45); border-radius: 999px; color: #fecaca; background: rgba(69, 10, 10, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .3); font-size: 11px; }
 @keyframes vai-partition-pulse { 70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }
 .vai-annotation-workspace__empty { display: grid; height: 100%; place-items: center; color: #8fa1b5; }
@@ -186,3 +192,26 @@
 .vai-dimension-chain-inspector button { padding: 5px 7px; border: 1px solid rgba(245, 158, 11, .3); border-radius: 6px; color: #fbc56d; background: rgba(146, 64, 14, .16); font-size: 10px; }
 .vai-dimension-chain-inspector__candidates label { display: flex; align-items: center; gap: 7px; color: #c7d2df; font-size: 11px; }
 .vai-dimension-chain-inspector__diagnostics li { color: #f6bf73; font-size: 10px; }
+
+.vai-export-toast {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  z-index: 80;
+  max-width: min(520px, calc(100% - 40px));
+  transform: translateX(-50%);
+  padding: 10px 14px;
+  border: 1px solid rgba(86, 211, 142, .55);
+  border-radius: 10px;
+  background: rgba(13, 34, 27, .96);
+  color: #baf5d4;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .32);
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+.vai-export-toast--error {
+  border-color: rgba(255, 100, 105, .6);
+  background: rgba(54, 18, 20, .96);
+  color: #ffc3c5;
+}

@@ -4,7 +4,7 @@ import type { StepCandidate } from '../partition/types';
 import type { ShaftProfile } from './profile';
 
 export function detectShaftSteps(profile: ShaftProfile): StepCandidate[] {
-  const tolerance = Math.max(profile.axis.zMax * 1e-5, 1e-6);
+  const tolerance = Math.max(Math.abs(profile.axis.zMax - profile.axis.zMin) * 1e-5, 1e-6);
   const candidates = [
     { z: profile.axis.zMin, score: 1, geometryNodeIds: [] as string[] },
     ...profile.shoulders.map(({ z, radialSpan, geometryNodeIds }) => ({

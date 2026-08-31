@@ -4,6 +4,7 @@ import { createEmptyDrawing, type AnnotationId, type GeometryId } from '@vectora
 import { describe, expect, it } from 'vitest';
 
 import {
+  allocateAxialDimensionLanes,
   drawingRefSchema,
   drawingDocumentSchema,
   drawingGroundingOverlaySchema,
@@ -30,6 +31,7 @@ import {
   drawingObservationRequestSchema,
   drawingObservationResultSchema,
   partitionSessionSnapshotSchema,
+  partitionDraftSchema,
   partitionEditCommandSchema,
   partitionDocumentSupplementRequestSchema,
   partitionImportRequestSchema,
@@ -91,6 +93,20 @@ function snapshot() {
 }
 
 describe('DSH drawing workspace wire schemas', () => {
+  it('allocates axial dimensions from short/inner to long/outer while packing equal spans', () => {
+    const lanes = allocateAxialDimensionLanes([
+      { id: 'long', span: 100, occupiedStart: 0, occupiedEnd: 100 },
+      { id: 'short-left', span: 10, occupiedStart: 0, occupiedEnd: 10 },
+      { id: 'short-right', span: 10, occupiedStart: 20, occupiedEnd: 30 },
+      { id: 'short-overlap', span: 10, occupiedStart: 5, occupiedEnd: 15 },
+    ]);
+
+    expect(lanes.get('short-left')).toBe(0);
+    expect(lanes.get('short-right')).toBe(0);
+    expect(lanes.get('short-overlap')).toBe(1);
+    expect(lanes.get('long')).toBe(2);
+  });
+
   it('accepts a revision-bound functional partition rename', () => {
     const command = {
       type: 'semantic-group.rename',
@@ -312,6 +328,27 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(partitionEditCommandSchema.parse({
       type: 'semantic-range.move', expectedDrawingRef: ref, groupId: 'group:G01', edge: 'start', requestedZ: 63.5, snapTolerance: 0.5,
     })).toMatchObject({ type: 'semantic-range.move', groupId: 'group:G01', edge: 'start' });
+  });
+
+  it('carries an optional dimension role on semantic partition groups', () => {
+    const ref = { drawingId: 'drawing-1', revision: 1 };
+    const draft = {
+      version: 1 as const, drawingRef: ref,
+      axis: { origin: [0, 0] as [number, number], direction: [1, 0] as [number, number], normal: [0, 1] as [number, number], zMin: 0, zMax: 10, orientation: 'forward' as const },
+      segments: [{
+        id: 'segment:0-10', zStart: 0, zEnd: 10,
+        profile: { minRadius: 5, maxRadius: 5, sampleCount: 2 },
+        semanticType: 'shoulder', boundaryConfidence: 1,
+        geometryNodeIds: [], boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [],
+      }],
+      semanticGroups: [{
+        id: 'group:shoulder', segmentIds: ['segment:0-10'], range: { zStart: 0, zEnd: 10 },
+        semanticType: 'shoulder', dimensionRole: 'process-datum', evidenceIds: [],
+      }],
+      stepCandidates: [], evidence: [], diagnostics: [],
+    };
+
+    expect(partitionDraftSchema.parse(draft).semanticGroups[0]?.dimensionRole).toBe('process-datum');
   });
 
   it('bounds extension DXF import and local observation requests without geometry commands', () => {

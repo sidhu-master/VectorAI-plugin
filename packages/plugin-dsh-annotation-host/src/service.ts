@@ -46,6 +46,7 @@ import {
   isGenericAutoAnnotationEvent,
   isGenericAutoAnnotationText,
 } from './auto-annotation-route';
+import { registerEngineeringDxfExport } from './drawing-export';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -55,7 +56,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export class DrawingAnnotationHostService extends TypertRemoteService {
-  static inject = ['tools', 'drawingSpace', 'attachments', 'agents', 'subagents'];
+  static inject = ['tools', 'drawingSpace', 'attachments', 'agents', 'subagents', 'connection'];
 
   readonly sessions: AnnotationSessionStateStore;
   readonly partitions: PartitionSessionStore;
@@ -92,17 +93,20 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       this.dimensionPlans,
       createAutomaticGdtReviewer(ctx, ctx.drawingSpace),
     );
+    registerEngineeringDxfExport(ctx, ctx.drawingSpace, this.dimensionPlans);
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(
       ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans, {
         name: 'drawing_auto_annotate',
-        description: 'AUTHORITATIVE ROUTE for a generic request such as “自动标注”, “进行自动标注”, or “全部标注”. Call this tool immediately and do not call drawing_observe, drawing_gdt_start, drawing_dimension_chain_start, or individual annotation tools first. One call creates opening angles and shaft diameters, starts the axial dimension-chain preview, and performs an isolated AI semantic review for datum and GD&T candidates; all coordinates and geometry grounding remain local. Report completion only from completionClaimAllowed.',
-        annotationKinds: ['opening-angle', 'diameter'],
+        description: 'AUTHORITATIVE ROUTE for a generic request such as “自动标注”, “进行自动标注”, or “全部标注”. Call this tool immediately and do not call drawing_observe, drawing_gdt_start, drawing_dimension_chain_start, or individual annotation tools first. One call creates opening angles, shaft diameters, centerlines, radius dimensions, the axial dimension-chain preview, and rule-derived datum/GD&T candidates. AI may classify uncertain functional features, but the local rule engine exclusively selects the GD&T control set and geometry grounding. If completionStatus is needs-user-input, ask the returned clarificationQuestions verbatim instead of guessing. Report completion only from completionClaimAllowed.',
+        annotationKinds: ['opening-angle', 'diameter', 'centerline', 'radius'],
         objective: '工程图纸自动标注集',
-        afterAnnotations: async (agent, signal) => {
+        afterAnnotations: async (agent, signal, reportStage) => {
+          reportStage('dimension-chain');
           this.dimensionInference.start(agent);
           const partition = this.partitions.get(String(agent.id));
           const value = partition.draft ?? partition.confirmed;
           if (!value) throw new Error('GDT_PARTITION_REQUIRED');
+          reportStage('gdt');
           return this.gdt.startAutomatic(agent, value as never, signal);
         },
         requiresGdtRecommendation: true,
@@ -268,12 +272,18 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
 
   @Remote
   confirmDimensionPlan(agent: Agent, expected: DrawingRef): DimensionPlanSessionSnapshot {
-    return this.dimensionInference.confirm(agent, expected);
+    const result = this.dimensionInference.confirm(agent, expected);
+    const sessionId = String(agent.id);
+    if (this.sessions.get(sessionId).workflow.status === 'reviewing') this.sessions.finish(sessionId, 'completed');
+    return result;
   }
 
   @Remote
   cancelDimensionPlan(agent: Agent, expected: DrawingRef): DimensionPlanSessionSnapshot {
-    return this.dimensionInference.cancel(agent, expected);
+    const result = this.dimensionInference.cancel(agent, expected);
+    const sessionId = String(agent.id);
+    if (this.sessions.get(sessionId).workflow.status === 'reviewing') this.sessions.finish(sessionId, 'canceled');
+    return result;
   }
 
   @Remote

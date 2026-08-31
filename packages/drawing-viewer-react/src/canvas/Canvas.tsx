@@ -322,7 +322,6 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={() => setMouseWorld(null)}
-        onDoubleClick={() => setViewport(fitViewportToDrawing(snapshot.document, viewport))}
       >
         <CadGrid viewport={viewport} showGrid={display.grid} showAxes={display.axes} />
         <rect

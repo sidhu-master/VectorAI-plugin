@@ -19,6 +19,7 @@ describe('client apply', () => {
     const createDraftImages = vi.fn();
     const disposeRemote = vi.fn();
     const disposeRegistry = vi.fn();
+    const disposeFileExport = vi.fn();
     const disposeRootFiber = vi.fn();
     const disposeViewFiber = vi.fn();
     const registrations = new Map<string, {
@@ -57,9 +58,13 @@ describe('client apply', () => {
     };
     const ctx = {
       provide: vi.fn((name: string, value: unknown) => {
-        expect(name).toBe('drawingSurfaceRegistry');
-        expect(value).toMatchObject({ registerWorkspace: expect.any(Function) });
-        return disposeRegistry;
+        if (name === 'drawingSurfaceRegistry') {
+          expect(value).toMatchObject({ registerWorkspace: expect.any(Function) });
+          return disposeRegistry;
+        }
+        expect(name).toBe('drawingFileExport');
+        expect(value).toMatchObject({ download: expect.any(Function) });
+        return disposeFileExport;
       }),
       get(name: string) {
         if (name === 'remote') return remote;
@@ -112,5 +117,6 @@ describe('client apply', () => {
     expect(disposeRootFiber).toHaveBeenCalledOnce();
     expect(disposeRemote).toHaveBeenCalledOnce();
     expect(disposeRegistry).toHaveBeenCalledOnce();
+    expect(disposeFileExport).toHaveBeenCalledOnce();
   });
 });

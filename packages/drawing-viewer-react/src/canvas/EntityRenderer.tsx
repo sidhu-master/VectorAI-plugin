@@ -154,7 +154,12 @@ function DiameterDimension({
     <line data-diameter-role="dimension" x1={first[0]} y1={first[1]} x2={second[0]} y2={second[1]} {...vectorStroke} />
     <path data-diameter-role="arrow" d={arrowPath(first, second, arrowSize)} {...vectorStroke} />
     <path data-diameter-role="arrow" d={arrowPath(second, first, arrowSize)} {...vectorStroke} />
-    <ScreenSpaceLabel position={node.textPosition} viewportScale={viewport.scale}>
+    <ScreenSpaceLabel
+      position={node.textPosition}
+      viewportScale={viewport.scale}
+      textAnchor="start"
+      offsetX={8}
+    >
       {dimensionLabel(node)}
     </ScreenSpaceLabel>
   </>;

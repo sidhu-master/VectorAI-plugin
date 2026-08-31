@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PartitionDraft, PartitionEvidence, ShaftSemanticGroup } from './types';
+import type { PartitionDraft, PartitionEvidence, ShaftDimensionRole, ShaftSemanticGroup } from './types';
 
 export interface SegmentSemanticProposal {
   segmentIds: string[];
   semanticType: string;
+  dimensionRole?: ShaftDimensionRole;
   name?: string;
   confidence: number;
   reason: string;
@@ -25,6 +26,7 @@ export function applySemanticProposals(
   let applied = 0;
   for (const [index, proposal] of proposals.entries()) {
     if (proposal.segmentIds.length === 0 || !proposal.semanticType.trim() || proposal.semanticType.length > 80
+      || proposal.dimensionRole !== undefined && !DIMENSION_ROLES.has(proposal.dimensionRole)
       || proposal.name !== undefined && proposal.name.length > 120
       || !Number.isFinite(proposal.confidence) || proposal.confidence < 0 || proposal.confidence > 1
       || !proposal.reason.trim() || proposal.reason.length > 500) throw new Error('AI_SEMANTIC_PROPOSAL_INVALID');
@@ -58,6 +60,7 @@ export function applySemanticProposals(
     const group: ShaftSemanticGroup = {
       id: `group:${evidenceId}`,
       segmentIds: [...proposal.segmentIds], semanticType: proposal.semanticType,
+      ...(proposal.dimensionRole === undefined ? {} : { dimensionRole: proposal.dimensionRole }),
       range,
       ...(proposal.name === undefined ? {} : { name: proposal.name }),
       evidenceIds: [evidenceId, ...proposal.visualEvidenceIds],
@@ -87,6 +90,9 @@ function isGenericProposal(proposal: SegmentSemanticProposal): boolean {
 const SUPPORTED_SEMANTIC_TYPES = new Set([
   'gear', 'spline', 'bearing-seat', 'shaft-seat', 'seal-seat', 'oil-seal-seat',
   'coupling-seat', 'thread', 'keyway', 'shoulder',
+]);
+const DIMENSION_ROLES = new Set<ShaftDimensionRole>([
+  'functional-feature', 'process-datum', 'transition', 'ordinary',
 ]);
 
 function singleUncoveredRange(

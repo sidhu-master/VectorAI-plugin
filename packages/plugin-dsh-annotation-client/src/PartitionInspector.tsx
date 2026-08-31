@@ -32,7 +32,7 @@ export function PartitionInspector({ draft, controller, mode, onModeChange }: {
         <input aria-label={`轴段 ${index + 1} 类型`} defaultValue={segment.semanticType ?? ''} placeholder="类型" onBlur={(event) => void controller.actions.updateSegment(segment.id, { semanticType: event.currentTarget.value }).catch(() => undefined)} />
       </div>
       <div className="vai-partition-inspector__commands">
-        <button type="button" aria-label={`拆分轴段 ${index + 1}`} onClick={() => void controller.actions.splitSegment(segment.id, (segment.zStart + segment.zEnd) / 2, Math.max(draft.axis.zMax * 0.003, 0.05)).catch(() => undefined)}>拆分</button>
+        <button type="button" aria-label={`拆分轴段 ${index + 1}`} onClick={() => void controller.actions.splitSegment(segment.id, (segment.zStart + segment.zEnd) / 2, Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 0.003, 0.05)).catch(() => undefined)}>拆分</button>
         {index > 0 && <button type="button" aria-label={`合并边界 ${index}`} onClick={() => void controller.actions.mergeBoundary(index).catch(() => undefined)}>与前段合并</button>}
       </div>
       {index < draft.segments.length - 1 && <label className="vai-partition-inspector__boundary">结束位置

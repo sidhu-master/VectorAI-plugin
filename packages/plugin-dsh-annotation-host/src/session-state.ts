@@ -11,6 +11,7 @@ import {
 export type { AnnotationSessionState } from '@vectorai/plugin-space-contracts';
 
 export type AnnotationWorkflowStatus = AnnotationSessionState['workflow']['status'];
+export type AnnotationWorkflowStage = NonNullable<AnnotationSessionState['workflow']['stage']>;
 
 export interface AnnotationSessionStorage {
   load(sessionId: string): unknown | null;
@@ -35,13 +36,30 @@ export class AnnotationSessionStateStore {
     return structuredClone(state);
   }
 
-  start(sessionId: string, workflowId: string): AnnotationSessionState {
+  start(sessionId: string, workflowId: string, stage: AnnotationWorkflowStage = 'deterministic'): AnnotationSessionState {
     const previous = this.get(sessionId);
     return this.#set(sessionId, {
       version: 1,
       workspaceClaimed: true,
       activationEpoch: previous.workspaceClaimed ? previous.activationEpoch : this.ports.now(),
-      workflow: { status: 'running', workflowId },
+      workflow: { status: 'running', stage, workflowId },
+    });
+  }
+
+  advance(
+    sessionId: string,
+    stage: AnnotationWorkflowStage,
+    status: Extract<AnnotationWorkflowStatus, 'running' | 'reviewing'> = 'running',
+  ): AnnotationSessionState {
+    const previous = this.get(sessionId);
+    if (!previous.workspaceClaimed) throw new Error('ANNOTATION_WORKSPACE_NOT_CLAIMED');
+    return this.#set(sessionId, {
+      ...previous,
+      workflow: {
+        status,
+        stage,
+        ...(previous.workflow.workflowId === undefined ? {} : { workflowId: previous.workflow.workflowId }),
+      },
     });
   }
 
@@ -56,6 +74,7 @@ export class AnnotationSessionStateStore {
       ...previous,
       workflow: {
         status,
+        ...(previous.workflow.stage === undefined ? {} : { stage: previous.workflow.stage }),
         ...(previous.workflow.workflowId === undefined ? {} : { workflowId: previous.workflow.workflowId }),
         ...(message === undefined ? {} : { message }),
       },

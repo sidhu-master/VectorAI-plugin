@@ -13,6 +13,11 @@ import type {
 import type { GeometryNode, Vec2 } from '@vectorai/drawing-core';
 import type { DrawingSpaceExtensionHost } from '@vectorai/plugin-space-contracts';
 import type { GdtRecommendation } from './gdt-grounding';
+import {
+  resolveShaftGdtRules,
+  type GdtClarificationQuestion,
+  type ReviewedShaftFeature,
+} from './shaft-gdt-rules';
 
 type SpacePort = Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'renderObservation'>;
 type ShaftPartition = PartitionDraft | PartitionRevision;
@@ -23,6 +28,23 @@ export type AutomaticGdtReviewer = (input: {
   signal?: AbortSignal;
 }) => Promise<GdtRecommendation>;
 
+export type DatumFunction = 'axis-support' | 'axial-stop' | 'clocking';
+
+export interface ReviewedSemanticRecommendation {
+  datums: Array<{ segmentId: string; function: DatumFunction; confidence: number }>;
+  controls: Array<{
+    id: string;
+    characteristic: GeometricCharacteristic;
+    segmentIds: string[];
+    surfaceRole?: 'segment-surface' | 'positive-locating-shoulder';
+    boundary?: 'start' | 'end';
+    datumSegmentIds: string[];
+    toleranceZoneShape: 'linear' | 'diametrical' | 'spherical';
+    materialCondition?: 'rfs' | 'mmc' | 'lmc';
+    confidence: number;
+  }>;
+}
+
 export interface SemanticRecommendation {
   datums: Array<{ name: string; segmentId: string; role: 'primary' | 'secondary' | 'tertiary' | 'origin'; confidence: number }>;
   controls: Array<{
@@ -30,6 +52,7 @@ export interface SemanticRecommendation {
     characteristic: GeometricCharacteristic;
     segmentIds: string[];
     surfaceRole?: 'segment-surface' | 'positive-locating-shoulder';
+    boundary?: 'start' | 'end';
     datumNames: string[];
     toleranceZoneShape: 'linear' | 'diametrical' | 'spherical';
     materialCondition?: 'rfs' | 'mmc' | 'lmc';
@@ -48,6 +71,13 @@ export function createAutomaticGdtReviewer(
     if (!sameRef(drawing.ref, partition.drawingRef)) throw new Error('GDT_PARTITION_STALE');
     const segments = partition.segments.slice(0, 64);
     if (segments.length === 0) throw new Error('GDT_PARTITION_REQUIRED');
+    const localResolution = resolveShaftGdtRules(partition);
+    if (localResolution.status === 'resolved') {
+      return {
+        ...groundSegmentRecommendation(drawing.document.geometry, partition, localResolution.recommendation),
+        coverage: evaluateShaftGdtCoverage(partition, localResolution.recommendation, localResolution.questions),
+      };
+    }
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error('AI_GDT_REVIEW_TIMEOUT')), options.timeoutMs ?? 60_000);
     const reviewSignal = combineSignals(signal, timeout.signal);
@@ -70,7 +100,7 @@ export function createAutomaticGdtReviewer(
         throw new Error('AI_GDT_REVIEW_ISOLATION_REQUIRED');
       }
       const payload = JSON.stringify({
-        instruction: '根据编号轴段图和工程语义，审核轴类零件的基准与形位公差类型。优先用轴承位建立主/次基准；检查每个轴承位的圆度、圆柱度和相对公共基准的圆跳动，以及齿轮、花键等旋转功能面的圆跳动。只选择 S 标签对应的 segmentId，不返回坐标、几何 ID或任何公差数值。datum 名称使用 A/B/C。confidence 低于 0.8 的项目不要返回。',
+        instruction: '只识别轴段的功能角色，不选择形位公差特征、基准名称、公差值或坐标。function 只能是 axis-support（建立旋转轴线的圆柱支承面）、rotary-functional（齿轮、花键等旋转配合功能区）、axial-stop（轴向定位端面）或 clocking（键槽、平面等周向定位特征）。同一功能特征允许包含多个相邻 segmentId。只有可由图像和语义共同支持时才返回；confidence 必须反映真实把握，低于 0.8 也要保留，交由系统询问用户。形位控制集合和基准顺序全部由本地规则计算。',
         segments: segments.map((segment, index) => ({
           segmentId: segment.id,
           visualLabel: `S${index + 1}`,
@@ -79,30 +109,28 @@ export function createAutomaticGdtReviewer(
           width: clean(segment.zEnd - segment.zStart),
           diameter: clean(segment.profile.maxRadius * 2),
         })),
-        allowedCharacteristics: CHARACTERISTICS,
         observationDigest: rendered.contentDigest,
       });
       const run = await abortable(ctx.subagents.start(providerName, {
         label: 'shaft-gdt-semantic-reviewer', parent, signal: reviewSignal, maxDepth: 1,
         toolFilter: { allow: [] },
         persona: provider.capabilities.persona
-          ? 'You are a bounded shaft GD&T recommender. Return only the requested structured result. Never invent coordinates or tolerance values.'
+          ? 'You are a bounded shaft functional-feature classifier. Return only functional roles and confidence. Never choose GD&T controls, coordinates or tolerance values.'
           : undefined,
         prompt: [{ type: 'text', text: payload }, { type: 'image', attachment }],
-        outputSchema: recommendationSchema as never,
+        outputSchema: featureReviewSchema as never,
       }), reviewSignal);
       try {
         const result = await abortable(run.result, reviewSignal);
-        const semantic = result.stopReason === 'completed' ? validateRecommendation(result.structured, segments) : null;
-        if (!semantic) throw new Error('AI_GDT_REVIEW_INVALID');
-        const completed = completeShaftGdtRecommendation(partition, semantic);
+        const semantic = result.stopReason === 'completed' ? validateFeatureReview(result.structured, segments) : null;
+        const resolution = resolveShaftGdtRules(partition, semantic?.features ?? []);
         return {
           ...groundSegmentRecommendation(
-          drawing.document.geometry,
-          partition,
-          completed,
+            drawing.document.geometry,
+            partition,
+            resolution.recommendation,
           ),
-          coverage: evaluateShaftGdtCoverage(partition, completed),
+          coverage: evaluateShaftGdtCoverage(partition, resolution.recommendation, resolution.questions),
         };
       } finally {
         await abortable(run.dispose(), reviewSignal).catch(() => undefined);
@@ -113,91 +141,66 @@ export function createAutomaticGdtReviewer(
   };
 }
 
-/**
- * Enforces the generic shaft GD&T coverage policy after AI semantic review.
- * The policy is driven only by functional segment roles; it contains no
- * sample drawing identities, coordinates, or tolerance magnitudes.
- */
+/** Compatibility normalizer for explicit/manual semantic recommendations. */
 export function completeShaftGdtRecommendation(
   partition: ShaftPartition,
-  reviewed: SemanticRecommendation,
+  reviewed: ReviewedSemanticRecommendation,
 ): SemanticRecommendation {
-  const features = classifyPolicyFeatures(partition.segments);
-  if (features.bearings.length < 2) return structuredClone(reviewed);
-  const left = features.bearings[0]!;
-  const right = features.bearings.at(-1)!;
-  const datums: SemanticRecommendation['datums'] = [
-    { name: 'A', segmentId: right.id, role: 'primary', confidence: 1 },
-    { name: 'B', segmentId: left.id, role: 'secondary', confidence: 1 },
-  ];
-  const controls: SemanticRecommendation['controls'] = [];
-  for (const segment of features.bearings) {
-    controls.push(policyControl(segment, 'circularity', []));
-    controls.push(policyControl(segment, 'cylindricity', []));
-    controls.push(policyControl(segment, 'circular-runout', ['A', 'B']));
-  }
-  for (const segment of features.rotary) {
-    controls.push(policyControl(segment, 'circular-runout', ['A', 'B'], 'positive-locating-shoulder'));
-  }
+  const reviewedCandidates = dedupeDatumCandidates(reviewed.datums);
+  const normalizedControls = reviewed.controls.map((control) => ({
+    ...structuredClone(control),
+    datumSegmentIds: selectControlDatumSegments(control, reviewedCandidates, partition),
+  }));
+  const referenced = new Set(normalizedControls.flatMap(({ datumSegmentIds }) => datumSegmentIds));
+  const candidates = reviewedCandidates
+    .filter(({ segmentId }) => referenced.has(segmentId))
+    .sort((left, right) => compareDatumCandidates(left, right, partition));
+  const datums = candidates.map((candidate, index) => ({
+    name: datumName(index),
+    segmentId: candidate.segmentId,
+    role: datumRole(index),
+    confidence: candidate.confidence,
+  }));
+  const nameBySegment = new Map(datums.map(({ segmentId, name }) => [segmentId, name]));
+  const orderByName = new Map(datums.map(({ name }, index) => [name, index]));
+  const controls = normalizedControls.map(({ datumSegmentIds, ...control }) => ({
+    ...structuredClone(control),
+    datumNames: [...new Set(datumSegmentIds.flatMap((segmentId) => {
+      const name = nameBySegment.get(segmentId);
+      return name === undefined ? [] : [name];
+    }))].sort((left, right) => orderByName.get(left)! - orderByName.get(right)!),
+  }));
   return { datums, controls };
 }
 
 export function evaluateShaftGdtCoverage(
   partition: ShaftPartition,
   recommendation: SemanticRecommendation,
-): { complete: boolean; requiredDatumCount: number; requiredControlCount: number } {
-  const expected = completeShaftGdtRecommendation(partition, { datums: [], controls: [] });
-  const actualDatums = new Set(recommendation.datums.map(({ name, segmentId }) => `${name}:${segmentId}`));
-  const actualControls = new Set(recommendation.controls.map(controlIdentity));
-  return {
-    complete: expected.datums.every(({ name, segmentId }) => actualDatums.has(`${name}:${segmentId}`))
-      && expected.controls.every((control) => actualControls.has(controlIdentity(control))),
-    requiredDatumCount: expected.datums.length,
-    requiredControlCount: expected.controls.length,
-  };
-}
-
-function classifyPolicyFeatures(segments: readonly ShaftPartitionSegment[]): {
-  bearings: ShaftPartitionSegment[];
-  rotary: ShaftPartitionSegment[];
+  questions: readonly GdtClarificationQuestion[] = [],
+): {
+  complete: boolean;
+  requiredDatumCount: number;
+  requiredControlCount: number;
+  status?: 'needs-user-input';
+  questions?: GdtClarificationQuestion[];
 } {
-  const ordered = [...segments].sort((left, right) => left.zStart - right.zStart);
-  const bearings = ordered.filter((segment) => semanticRole(segment) === 'bearing');
-  const rotary = ordered.filter((segment) => {
-    const role = semanticRole(segment);
-    return role === 'gear' || role === 'spline';
-  });
-  return { bearings, rotary };
-}
-
-function semanticRole(segment: ShaftPartitionSegment): 'bearing' | 'gear' | 'spline' | 'other' {
-  const value = `${segment.semanticType ?? ''} ${segment.name ?? ''}`.toLowerCase();
-  if (value.includes('bearing') || value.includes('轴承')) return 'bearing';
-  if (value.includes('gear') || value.includes('齿轮')) return 'gear';
-  if (value.includes('spline') || value.includes('花键')) return 'spline';
-  return 'other';
-}
-
-function policyControl(
-  segment: ShaftPartitionSegment,
-  characteristic: GeometricCharacteristic,
-  datumNames: string[],
-  surfaceRole: SemanticRecommendation['controls'][number]['surfaceRole'] = 'segment-surface',
-): SemanticRecommendation['controls'][number] {
+  const segmentIds = new Set(partition.segments.map(({ id }) => id));
+  const datumNames = new Set(recommendation.datums.map(({ name }) => name));
+  const structurallyValid = recommendation.datums.every(({ segmentId }) => segmentIds.has(segmentId))
+    && recommendation.controls.every((control) => (
+      control.segmentIds.length > 0
+      && control.segmentIds.every((segmentId) => segmentIds.has(segmentId))
+      && control.datumNames.every((name) => datumNames.has(name))
+    ));
   return {
-    id: `gdt:shaft:${stableId(segment.id)}:${characteristic}:${surfaceRole}`,
-    characteristic,
-    segmentIds: [segment.id],
-    surfaceRole,
-    datumNames,
-    toleranceZoneShape: 'linear',
-    confidence: 1,
+    complete: questions.length === 0 && recommendation.controls.length > 0 && structurallyValid,
+    requiredDatumCount: recommendation.datums.length,
+    requiredControlCount: recommendation.controls.length,
+    ...(questions.length === 0 ? {} : {
+      status: 'needs-user-input' as const,
+      questions: questions.map((question) => structuredClone(question)),
+    }),
   };
-}
-
-function stableId(value: string): string { return value.replace(/[^a-zA-Z0-9_.-]+/g, '-'); }
-function controlIdentity(control: SemanticRecommendation['controls'][number]): string {
-  return `${control.characteristic}:${control.surfaceRole ?? 'segment-surface'}:${[...control.segmentIds].sort().join(',')}:${control.datumNames.join(',')}`;
 }
 
 export function groundSegmentRecommendation(
@@ -221,7 +224,7 @@ export function groundSegmentRecommendation(
     geometryIds: [...new Set(item.segmentIds.map((segmentId) => {
       const segment = requireSegment(segmentById, segmentId);
       return item.surfaceRole === 'positive-locating-shoulder'
-        ? selectPositiveLocatingShoulderGeometry(segment, partition.segments, nodeById, partition.axis)
+        ? selectLocatingShoulderGeometry(segment, nodeById, partition.axis, item.boundary)
         : selectRepresentativeGeometry(
           segment, nodeById, partition.axis,
           prefersRadialSurface(item.characteristic) ? 'radial' : 'axial',
@@ -234,14 +237,16 @@ export function groundSegmentRecommendation(
   return { datums, controls };
 }
 
-function selectPositiveLocatingShoulderGeometry(
+function selectLocatingShoulderGeometry(
   feature: ShaftPartitionSegment,
-  segments: readonly ShaftPartitionSegment[],
   nodes: ReadonlyMap<string, GeometryNode>,
   axis: ShaftPartition['axis'],
+  boundary: 'start' | 'end' | undefined,
 ): string {
-  const station = positiveLocatingShoulderStation(feature, segments);
-  const stationTolerance = Math.max(0.05, Math.abs(axis.zMax - axis.zMin) * 0.0015);
+  const stations = boundary === 'start' ? [feature.zStart]
+    : boundary === 'end' ? [feature.zEnd]
+      : [feature.zStart, feature.zEnd];
+  const stationTolerance = Math.max(Number.EPSILON * 1e6, Math.abs(axis.zMax - axis.zMin) * 1e-6);
   let selected: { node: GeometryNode & { type: 'line' }; score: number } | null = null;
   for (const node of nodes.values()) {
     if (node.type !== 'line') continue;
@@ -251,33 +256,16 @@ function selectPositiveLocatingShoulderGeometry(
     if (radialSpan <= axialSpan * 2 || radialSpan < stationTolerance) continue;
     const midpoint: Vec2 = [(node.start[0] + node.end[0]) / 2, (node.start[1] + node.end[1]) / 2];
     const midpointZ = dot([midpoint[0] - axis.origin[0], midpoint[1] - axis.origin[1]], axis.direction);
-    const stationError = Math.abs(midpointZ - station);
+    const stationError = Math.min(...stations.map((station) => Math.abs(midpointZ - station)));
     if (stationError > stationTolerance) continue;
     // A complete annular shoulder projects as the longest radial line at the
     // selected station. This naturally rejects tooth edges, fillets and
     // relief details without encoding any drawing-specific coordinates.
-    const score = radialSpan - axialSpan - stationError * 1_000;
+    const score = radialSpan - axialSpan - stationError;
     if (!selected || score > selected.score) selected = { node, score };
   }
   if (selected) return String(selected.node.id);
   return selectRepresentativeGeometry(feature, nodes, axis, 'radial');
-}
-
-function positiveLocatingShoulderStation(
-  feature: ShaftPartitionSegment,
-  segments: readonly ShaftPartitionSegment[],
-): number {
-  const ordered = [...segments].sort((left, right) => left.zStart - right.zStart);
-  const index = ordered.findIndex(({ id }) => id === feature.id);
-  const next = index < 0 ? undefined : ordered[index + 1];
-  if (!next || Math.abs(next.zStart - feature.zEnd) > Math.max(0.05, (feature.zEnd - feature.zStart) * 0.005)) {
-    return feature.zEnd;
-  }
-  const transitionWidth = next.zEnd - next.zStart;
-  const maximumReliefWidth = Math.max(0.5, Math.min(8, (feature.zEnd - feature.zStart) * 0.2));
-  return semanticRole(next) === 'other' && transitionWidth <= maximumReliefWidth
-    ? next.zEnd
-    : feature.zEnd;
 }
 
 function selectRepresentativeGeometry(
@@ -288,16 +276,47 @@ function selectRepresentativeGeometry(
 ): string {
   const candidates = segment.geometryNodeIds.map((id) => nodes.get(String(id))).filter((node) => node !== undefined);
   if (candidates.length === 0) throw new Error(`GDT_SEGMENT_GEOMETRY_REQUIRED:${segment.id}`);
-  return String(candidates.reduce((best, node) => scoreNode(node, axis, segment, preference) > scoreNode(best, axis, segment, preference) ? node : best).id);
+  return String([...candidates].sort((left, right) => compareRepresentativeNodes(left, right, axis, segment, preference))[0]!.id);
 }
 
-function scoreNode(
-  node: GeometryNode,
+interface RepresentativeNodeMetrics {
+  line: boolean;
+  inside: boolean;
+  outsideDistance: number;
+  overflow: number;
+  preferredSpan: number;
+  crossSpan: number;
+  signedRadius: number;
+}
+
+function compareRepresentativeNodes(
+  left: GeometryNode,
+  right: GeometryNode,
   axis: ShaftPartition['axis'],
   segment: ShaftPartitionSegment,
   preference: 'axial' | 'axial-bottom' | 'radial',
 ): number {
-  if (node.type !== 'line') return 0.01;
+  const a = representativeNodeMetrics(left, axis, segment, preference);
+  const b = representativeNodeMetrics(right, axis, segment, preference);
+  return Number(b.line) - Number(a.line)
+    || Number(b.inside) - Number(a.inside)
+    || a.outsideDistance - b.outsideDistance
+    || a.overflow - b.overflow
+    || b.preferredSpan - a.preferredSpan
+    || a.crossSpan - b.crossSpan
+    || (preference === 'axial-bottom' ? a.signedRadius - b.signedRadius : 0)
+    || String(left.id).localeCompare(String(right.id));
+}
+
+function representativeNodeMetrics(
+  node: GeometryNode,
+  axis: ShaftPartition['axis'],
+  segment: ShaftPartitionSegment,
+  preference: 'axial' | 'axial-bottom' | 'radial',
+): RepresentativeNodeMetrics {
+  if (node.type !== 'line') {
+    return { line: false, inside: false, outsideDistance: Number.POSITIVE_INFINITY, overflow: Number.POSITIVE_INFINITY, preferredSpan: 0, crossSpan: 0, signedRadius: 0 };
+  }
   const delta: Vec2 = [node.end[0] - node.start[0], node.end[1] - node.start[1]];
   const axial = Math.abs(dot(delta, axis.direction));
   const radial = Math.abs(dot(delta, axis.normal));
@@ -306,11 +325,16 @@ function scoreNode(
   const segmentWidth = Math.max(segment.zEnd - segment.zStart, 1e-6);
   const outsideDistance = midpointZ < segment.zStart ? segment.zStart - midpointZ
     : midpointZ > segment.zEnd ? midpointZ - segment.zEnd : 0;
-  const excessAxialSpan = Math.max(0, axial - segmentWidth * 1.25);
-  const locality = (outsideDistance === 0 ? 1_000 : -outsideDistance * 100) - excessAxialSpan * 10;
-  if (preference === 'radial') return locality + radial - axial * 0.1;
   const signedRadius = dot([midpoint[0] - axis.origin[0], midpoint[1] - axis.origin[1]], axis.normal);
-  return locality + axial - radial * 0.1 + (preference === 'axial-bottom' ? -signedRadius * 0.001 : 0);
+  return {
+    line: true,
+    inside: outsideDistance === 0,
+    outsideDistance,
+    overflow: Math.max(0, axial - segmentWidth),
+    preferredSpan: preference === 'radial' ? radial : axial,
+    crossSpan: preference === 'radial' ? axial : radial,
+    signedRadius,
+  };
 }
 
 function prefersRadialSurface(value: GeometricCharacteristic): boolean {
@@ -323,40 +347,136 @@ function requireSegment(values: ReadonlyMap<string, ShaftPartitionSegment>, id: 
   return value;
 }
 
-function validateRecommendation(value: unknown, segments: readonly ShaftPartitionSegment[]): SemanticRecommendation | null {
+function validateFeatureReview(
+  value: unknown,
+  segments: readonly ShaftPartitionSegment[],
+): { features: ReviewedShaftFeature[] } | null {
   if (!value || typeof value !== 'object') return null;
-  const candidate = value as Partial<SemanticRecommendation>;
-  if (!Array.isArray(candidate.datums) || !Array.isArray(candidate.controls)) return null;
+  const candidate = value as { features?: ReviewedShaftFeature[] };
+  if (!Array.isArray(candidate.features)) return null;
   const allowedSegments = new Set(segments.map(({ id }) => id));
-  const datums = candidate.datums.filter((item) => item && item.confidence >= 0.8 && allowedSegments.has(item.segmentId));
-  const datumNames = new Set(datums.map(({ name }) => name));
-  const controls = candidate.controls.filter((item) => item && item.confidence >= 0.8
-    && item.segmentIds.length > 0 && item.segmentIds.every((id) => allowedSegments.has(id))
-    && item.datumNames.every((name) => datumNames.has(name)));
-  if (datums.length === 0 || controls.length === 0) return null;
-  return { datums: structuredClone(datums), controls: structuredClone(controls) };
+  const features = candidate.features.filter((item) => item
+    && typeof item.id === 'string'
+    && Array.isArray(item.segmentIds)
+    && item.segmentIds.length > 0
+    && item.segmentIds.every((id) => allowedSegments.has(id))
+    && FEATURE_FUNCTIONS.has(item.function)
+    && Number.isFinite(item.confidence));
+  return { features: structuredClone(features) };
 }
 
-const CHARACTERISTICS = [
-  'straightness', 'flatness', 'circularity', 'cylindricity', 'profile-line', 'profile-surface',
-  'parallelism', 'perpendicularity', 'angularity', 'position', 'coaxiality', 'symmetry',
-  'circular-runout', 'total-runout',
-] as const;
+const FEATURE_FUNCTIONS = new Set<ReviewedShaftFeature['function']>([
+  'axis-support', 'rotary-functional', 'axial-stop', 'clocking',
+]);
+const DATUM_FUNCTION_ORDER: Record<DatumFunction, number> = {
+  'axis-support': 0,
+  'axial-stop': 1,
+  clocking: 2,
+};
 
-const recommendationSchema = {
-  type: 'object', additionalProperties: false, required: ['datums', 'controls'],
+function dedupeDatumCandidates(values: readonly ReviewedSemanticRecommendation['datums'][number][]): ReviewedSemanticRecommendation['datums'] {
+  const bySegment = new Map<string, ReviewedSemanticRecommendation['datums'][number]>();
+  for (const value of values) {
+    const current = bySegment.get(value.segmentId);
+    if (!current || value.confidence > current.confidence) bySegment.set(value.segmentId, structuredClone(value));
+  }
+  return [...bySegment.values()];
+}
+
+const DATUM_FREE_CHARACTERISTICS = new Set<GeometricCharacteristic>([
+  'straightness', 'flatness', 'circularity', 'cylindricity',
+]);
+const AXIS_DATUM_CHARACTERISTICS = new Set<GeometricCharacteristic>([
+  'coaxiality', 'circular-runout', 'total-runout',
+]);
+
+function selectControlDatumSegments(
+  control: ReviewedSemanticRecommendation['controls'][number],
+  candidates: readonly ReviewedSemanticRecommendation['datums'][number][],
+  partition: ShaftPartition,
+): string[] {
+  if (DATUM_FREE_CHARACTERISTICS.has(control.characteristic)) return [];
+  const requested = new Set(control.datumSegmentIds);
+  const eligible = candidates.filter(({ segmentId, function: datumFunction }) => (
+    requested.has(segmentId)
+    && (!AXIS_DATUM_CHARACTERISTICS.has(control.characteristic) || datumFunction === 'axis-support')
+  ));
+  const axisSupports = selectStableAxisSupports(eligible.filter(({ function: value }) => value === 'axis-support'), partition);
+  const axialStop = highestConfidence(eligible.filter(({ function: value }) => value === 'axial-stop'));
+  const clocking = highestConfidence(eligible.filter(({ function: value }) => value === 'clocking'));
+  return [
+    ...axisSupports,
+    ...(AXIS_DATUM_CHARACTERISTICS.has(control.characteristic) ? [] : [axialStop, clocking]),
+  ].filter((value) => value !== undefined)
+    .sort((left, right) => compareDatumCandidates(left, right, partition))
+    .map(({ segmentId }) => segmentId);
+}
+
+function selectStableAxisSupports(
+  candidates: readonly ReviewedSemanticRecommendation['datums'][number][],
+  partition: ShaftPartition,
+): ReviewedSemanticRecommendation['datums'] {
+  if (candidates.length <= 2) return [...candidates];
+  const stations = new Map(partition.segments.map((segment) => [segment.id, (segment.zStart + segment.zEnd) / 2]));
+  let selected: [ReviewedSemanticRecommendation['datums'][number], ReviewedSemanticRecommendation['datums'][number]] | undefined;
+  let separation = -1;
+  let confidence = -1;
+  for (let left = 0; left < candidates.length; left += 1) {
+    for (let right = left + 1; right < candidates.length; right += 1) {
+      const pair: [ReviewedSemanticRecommendation['datums'][number], ReviewedSemanticRecommendation['datums'][number]] = [
+        candidates[left]!, candidates[right]!,
+      ];
+      const pairSeparation = Math.abs((stations.get(pair[0].segmentId) ?? 0) - (stations.get(pair[1].segmentId) ?? 0));
+      const pairConfidence = pair[0].confidence + pair[1].confidence;
+      if (pairSeparation > separation || pairSeparation === separation && pairConfidence > confidence) {
+        selected = pair;
+        separation = pairSeparation;
+        confidence = pairConfidence;
+      }
+    }
+  }
+  return selected ?? [];
+}
+
+function highestConfidence(
+  values: readonly ReviewedSemanticRecommendation['datums'][number][],
+): ReviewedSemanticRecommendation['datums'][number] | undefined {
+  return [...values].sort((left, right) => right.confidence - left.confidence || left.segmentId.localeCompare(right.segmentId))[0];
+}
+
+function compareDatumCandidates(
+  left: ReviewedSemanticRecommendation['datums'][number],
+  right: ReviewedSemanticRecommendation['datums'][number],
+  partition: ShaftPartition,
+): number {
+  const functionOrder = DATUM_FUNCTION_ORDER[left.function] - DATUM_FUNCTION_ORDER[right.function];
+  if (functionOrder !== 0) return functionOrder;
+  const segments = new Map(partition.segments.map((segment) => [segment.id, segment]));
+  const leftSegment = segments.get(left.segmentId);
+  const rightSegment = segments.get(right.segmentId);
+  const leftStation = leftSegment ? (leftSegment.zStart + leftSegment.zEnd) / 2 : 0;
+  const rightStation = rightSegment ? (rightSegment.zStart + rightSegment.zEnd) / 2 : 0;
+  const direction = partition.axis.orientation === 'reversed' ? -1 : 1;
+  return (leftStation - rightStation) * direction || left.segmentId.localeCompare(right.segmentId);
+}
+
+function datumName(index: number): string {
+  return String.fromCharCode('A'.charCodeAt(0) + index);
+}
+
+function datumRole(index: number): 'primary' | 'secondary' | 'tertiary' {
+  return index === 0 ? 'primary' : index === 1 ? 'secondary' : 'tertiary';
+}
+
+const featureReviewSchema = {
+  type: 'object', additionalProperties: false, required: ['features'],
   properties: {
-    datums: { type: 'array', items: { type: 'object', additionalProperties: false,
-      required: ['name', 'segmentId', 'role', 'confidence'], properties: {
-        name: { type: 'string' }, segmentId: { type: 'string' },
-        role: { type: 'string', enum: ['primary', 'secondary', 'tertiary', 'origin'] }, confidence: { type: 'number' },
-      } } },
-    controls: { type: 'array', items: { type: 'object', additionalProperties: false,
-      required: ['id', 'characteristic', 'segmentIds', 'datumNames', 'toleranceZoneShape', 'confidence'], properties: {
-        id: { type: 'string' }, characteristic: { type: 'string', enum: CHARACTERISTICS },
-        segmentIds: { type: 'array', items: { type: 'string' } }, datumNames: { type: 'array', items: { type: 'string' } },
-        toleranceZoneShape: { type: 'string', enum: ['linear', 'diametrical', 'spherical'] },
-        materialCondition: { type: 'string', enum: ['rfs', 'mmc', 'lmc'] }, confidence: { type: 'number' },
+    features: { type: 'array', items: { type: 'object', additionalProperties: false,
+      required: ['id', 'segmentIds', 'function', 'confidence'], properties: {
+        id: { type: 'string' },
+        segmentIds: { type: 'array', items: { type: 'string' } },
+        function: { type: 'string', enum: ['axis-support', 'rotary-functional', 'axial-stop', 'clocking'] },
+        confidence: { type: 'number' },
       } } },
   },
 } as const;

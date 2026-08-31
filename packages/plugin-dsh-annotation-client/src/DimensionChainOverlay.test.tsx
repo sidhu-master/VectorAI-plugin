@@ -32,7 +32,7 @@ describe('DimensionChainOverlay', () => {
     expect(root.findByProps({ 'data-dimension-conflict': true })).toBeDefined();
     const labels = root.findAll((node) => node.type === 'g' && node.props.className === 'vai-dimension-chain-label');
     expect(labels).toHaveLength(3);
-    expect(labels.map(({ props }) => props['data-dimension-lane'])).toEqual([0, 0, 1]);
+    expect(labels.map(({ props }) => props['data-dimension-lane'])).toEqual([2, 0, 1]);
     expect(labels[0]?.props.transform).toMatch(/scale\(0\.5 -0\.5\)$/);
     expect(labels[0]?.findByType('text').props.fontSize).toBe(11);
     expect(labels[0]?.findAllByType('rect')).toHaveLength(1);
@@ -257,6 +257,26 @@ describe('DimensionChainOverlay', () => {
       .findAll((node) => node.type === 'g' && node.props.className === 'vai-dimension-chain-label');
 
     expect(labels.map(({ props }) => props['data-dimension-lane'])).toEqual([0, 1]);
+  });
+
+  it('places longer axial dimensions farther outside than shorter dimensions regardless of input order', () => {
+    const lengthOrdered = {
+      ...scheme,
+      topology: { ...scheme.topology, stations: [
+        { id: 's0', sourceCoordinate: 0 }, { id: 's1', sourceCoordinate: 10 },
+        { id: 's2', sourceCoordinate: 100 },
+      ] },
+      candidates: [
+        { id: 'long', startStationId: 's0', endStationId: 's2', nominalValue: 100 },
+        { id: 'short', startStationId: 's0', endStationId: 's1', nominalValue: 10 },
+      ],
+      displayedCandidateIds: ['long', 'short'], closureCandidateIds: [], chains: [], diagnostics: [],
+    } as unknown as AxialDimensionScheme;
+    const root = renderer.create(<DimensionChainOverlay scheme={lengthOrdered} scale={1} radialExtent={30} visible />).root;
+    const long = root.findByProps({ 'data-dimension-candidate-id': 'long' });
+    const short = root.findByProps({ 'data-dimension-candidate-id': 'short' });
+
+    expect(long.props['data-normal-offset']).toBeGreaterThan(short.props['data-normal-offset']);
   });
 
   it('renders nothing while hidden', () => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { estimateScreenTextWidth, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
-import type { AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
+import { allocateAxialDimensionLanes, type AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
 
 type Candidate = AxialDimensionScheme['candidates'][number];
@@ -271,14 +271,11 @@ function layoutIntervals(
   const closures = previewHeld ? new Set<string>() : new Set(scheme.closureCandidateIds);
   const visibleIds = [...scheme.displayedCandidateIds, ...closures];
   const membershipByCandidate = candidateMemberships(scheme);
-  const chainDepths = chainDepthIndex(scheme);
-  const maxDepth = Math.max(0, ...chainDepths.values());
   const safeScale = Math.max(scale, 1e-6);
   const base = radialExtent + 28 / safeScale;
   const manual = new Map(scheme.layout?.candidateNormalOffsets.map(({ candidateId, normalOffset }) => [candidateId, normalOffset]) ?? []);
   const chainOffsets = new Map(scheme.layout?.chainNormalOffsets.map(({ chainId, normalOffset }) => [chainId, normalOffset]) ?? []);
-  const occupiedByRow = new Map<number, Array<{ start: number; end: number; lane: number }>>();
-  const layouts = [...new Set(visibleIds)].flatMap((candidateId): IntervalLayout[] => {
+  const prepared = [...new Set(visibleIds)].flatMap((candidateId) => {
     const candidate = candidates.get(candidateId);
     if (!candidate) return [];
     const first = coordinates.get(candidate.startStationId);
@@ -286,25 +283,28 @@ function layoutIntervals(
     if (first === undefined || second === undefined) return [];
     const memberships = membershipByCandidate.get(candidateId) ?? [];
     const owner = primaryMembership(memberships);
-    const role = closures.has(candidateId) ? 'closure' : owner?.role ?? 'standalone';
-    const depth = owner === undefined ? 0 : chainDepths.get(owner.chainId) ?? 0;
-    const row = role === 'parent' ? maxDepth + 1 : role === 'standalone' ? maxDepth + 2 : maxDepth - depth;
+    const role: Role = closures.has(candidateId) ? 'closure' : owner?.role ?? 'standalone';
     const label = `${candidate.nominalValue} ${scheme.topology.unit}`;
     const halfLabelWidth = (estimateScreenTextWidth(label, 11) + 10) / (2 * safeScale);
     const center = (first + second) / 2;
     const visual = { start: Math.min(first, second, center - halfLabelWidth), end: Math.max(first, second, center + halfLabelWidth) };
-    const occupied = occupiedByRow.get(row) ?? [];
-    let lane = 0;
-    while (occupied.some((item) => item.lane === lane && overlaps(visual, item, 8 / safeScale))) lane += 1;
-    occupied.push({ start: visual.start, end: visual.end, lane });
-    occupiedByRow.set(row, occupied);
-    const automaticOffset = base + (row * 26 + lane * 22) / safeScale;
+    return [{ candidate, first, second, memberships, owner, role, visual }];
+  });
+  const lanes = allocateAxialDimensionLanes(prepared.map(({ candidate, first, second, visual }) => ({
+    id: candidate.id,
+    span: Math.abs(second - first),
+    occupiedStart: visual.start,
+    occupiedEnd: visual.end,
+  })), 8 / safeScale);
+  const layouts = prepared.map(({ candidate, first, second, memberships, owner, role }): IntervalLayout => {
+    const lane = lanes.get(candidate.id) ?? 0;
+    const automaticOffset = base + lane * 26 / safeScale;
     const minimumOffset = radialExtent + 14 / safeScale;
-    const candidateOffset = manual.get(candidateId) ?? 0;
-    const targetKey = owner === undefined ? `candidate:${candidateId}` : `chain:${owner.chainId}`;
+    const candidateOffset = manual.get(candidate.id) ?? 0;
+    const targetKey = owner === undefined ? `candidate:${candidate.id}` : `chain:${owner.chainId}`;
     const requestedGroupOffset = dragPreviews[targetKey]
       ?? (owner === undefined ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0);
-    return [{
+    return {
       candidate,
       ...(owner === undefined ? {} : { chainId: owner.chainId }),
       chainIndex: owner?.chainIndex ?? -1,
@@ -317,7 +317,7 @@ function layoutIntervals(
       manualOffset: owner === undefined ? 0 : candidateOffset,
       groupOffset: requestedGroupOffset,
       minimumGroupOffset: minimumOffset - automaticOffset - (owner === undefined ? 0 : candidateOffset),
-    }];
+    };
   });
   const minimumByTarget = new Map<string, number>();
   for (const layout of layouts) {
@@ -361,26 +361,6 @@ function primaryMembership(memberships: IntervalLayout['memberships']): Interval
   return memberships.find(({ role }) => role === 'closure')
     ?? memberships.find(({ role }) => role === 'parent')
     ?? memberships[0];
-}
-
-function chainDepthIndex(scheme: AxialDimensionScheme): Map<string, number> {
-  const byParentCandidate = new Map(scheme.chains.map((chain) => [chain.parentCandidateId, chain]));
-  const parentByChain = new Map<string, string>();
-  for (const chain of scheme.chains) {
-    const parent = scheme.chains.find((candidate) => candidate.childCandidateIds.includes(chain.parentCandidateId));
-    if (parent) parentByChain.set(chain.id, parent.id);
-  }
-  const result = new Map<string, number>();
-  const depth = (chainId: string): number => {
-    const cached = result.get(chainId);
-    if (cached !== undefined) return cached;
-    const parent = parentByChain.get(chainId);
-    const value = parent === undefined ? 0 : depth(parent) + 1;
-    result.set(chainId, value);
-    return value;
-  };
-  for (const chain of byParentCandidate.values()) depth(chain.id);
-  return result;
 }
 
 function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, conflict, draggable, ...pointerHandlers }: {
@@ -557,10 +537,6 @@ function ChainBracket({ scheme, chain, chainIndex, layoutByCandidate, scale, dra
       {`尺寸链 ${chainIndex + 1}`}
     </ScreenSpaceLabel>
   </g>;
-}
-
-function overlaps(left: { start: number; end: number }, right: { start: number; end: number }, padding: number): boolean {
-  return !(left.end + padding < right.start || left.start - padding > right.end);
 }
 
 function normalized(value: readonly unknown[]): readonly [number, number] {

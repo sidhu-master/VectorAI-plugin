@@ -36,11 +36,10 @@
     "@deepseek-ai/dsh-subagent": "0.1.0-rc.8",
     "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
     "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.8",
+    "@node-projects/acad-ts": "3.0.2",
+    "@vectorai/drawing-core": "workspace:*",
     "@vectorai/engineering-annotation": "workspace:*",
     "@vectorai/plugin-space-contracts": "workspace:*",
     "officeparser": "7.8.0"
-  },
-  "devDependencies": {
-    "@vectorai/drawing-core": "workspace:*"
   }
 }

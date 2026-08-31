@@ -27,16 +27,17 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-export const inject = ['remote', 'drawingSurfaceRegistry', 'slots'];
+export const inject = ['remote', 'drawingSurfaceRegistry', 'drawingFileExport', 'slots'];
 
 export async function apply(ctx: Context) {
   const remote = ctx.get('remote');
   const disposeRemote = await remote.$mount(ANNOTATION_REMOTE);
   const fiber = ctx.inject(
-    ['remote.drawingAnnotation', 'drawingSurfaceRegistry', 'slots'],
+    ['remote.drawingAnnotation', 'drawingSurfaceRegistry', 'drawingFileExport', 'slots'],
     (scope) => {
       const annotationRemote = scope.get('remote').drawingAnnotation;
       const registry = scope.get('drawingSurfaceRegistry');
+      const drawingFileExport = scope.get('drawingFileExport');
       const slots = scope.get('slots');
       const stateSource = createAnnotationRemoteStateSource(annotationRemote);
       const partitionControllers = new Map<string, ReturnType<typeof createPartitionController>>();
@@ -89,6 +90,7 @@ export async function apply(ctx: Context) {
           partition={partitionFor(props.sessionId)}
           dimensionChain={dimensionsFor(props.sessionId)}
           gdt={gdtFor(props.sessionId)}
+          drawingFileExport={drawingFileExport}
         />,
       });
       const dropFiber = slots.inject('conversation.input.dock', () => slots.register({

@@ -36,7 +36,10 @@ describe('DSH plugin bundle boundaries', () => {
       name: '@newwe/vectorai-plugin-dsh-annotation',
       dsh: { bundle: { patch: './cordis.patch.yml' } },
     });
-    expect(bundle.dependencies).toEqual({ officeparser: '7.8.0' });
+    expect(bundle.dependencies).toEqual({
+      '@node-projects/acad-ts': '3.0.2',
+      officeparser: '7.8.0',
+    });
     expect(host.name).toBe('@vectorai/plugin-dsh-annotation-host');
     expect(client.name).toBe('@vectorai/plugin-dsh-annotation-client');
     expect(host.exports?.['./package.json']).toBe('./package.json');
@@ -63,6 +66,15 @@ describe('DSH plugin bundle boundaries', () => {
     expect(buildScript).toContain("id === 'officeparser'");
     expect(readManifest('packages/plugin-dsh-annotation-host/package.json').dependencies)
       .toMatchObject({ officeparser: '7.8.0' });
+  });
+
+  it.each([
+    ['space', '@newwe/vectorai-plugin-dsh-space'],
+    ['annotation', '@newwe/vectorai-plugin-dsh-annotation'],
+  ])('owns the %s bundle TYPERT manifest under its published package name', (bundle, packageName) => {
+    const typert = readFileSync(resolve(root, `packages/plugin-dsh-${bundle}/lib/typert.js`), 'utf8');
+
+    expect(typert).toContain(`package: ${JSON.stringify(packageName)}`);
   });
 });
 

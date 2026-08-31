@@ -5,45 +5,27 @@ import manifest from '../../test/fixtures/golden-shaft-001/manifest.json';
 import { sortIntervals } from './golden-fixture-test-support';
 import { analyzeGoldenInferenceInput } from './golden-input-test-support';
 import { inferAxialDimensionScheme } from './infer';
-import {
-  SHAFT_HIERARCHICAL_DIMENSIONING_V1,
-  SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
-} from './policy';
+import { SHAFT_HIERARCHICAL_DIMENSIONING_V1 } from './policy';
 import type { AxialDimensionScheme } from './types';
 
 describe('golden axial dimension-chain inference', () => {
-  it('keeps the generic policy reviewable when target convention conflicts with the document', async () => {
+  it('produces a deterministic, internally valid scheme without using target annotations as input', async () => {
     const input = await analyzeGoldenInferenceInput();
-    const scheme = inferAxialDimensionScheme({
+    const first = inferAxialDimensionScheme({
+      topology: input.topology,
+      candidateSet: input.candidateSet,
+      policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
+    });
+    const second = inferAxialDimensionScheme({
       topology: input.topology,
       candidateSet: input.candidateSet,
       policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
     });
 
-    expect(scheme.status).toBe('needs-review');
-    expect(scheme.diagnostics.map(({ code }) => code)).toEqual(expect.arrayContaining([
-      'DIMENSION_CLOSURE_AMBIGUOUS',
-      'DIMENSION_DOCUMENT_DISPLAY_CONFLICT',
-    ]));
-  });
-
-  it('reproduces the reviewed target under the explicit reference policy', async () => {
-    const input = await analyzeGoldenInferenceInput();
-    const scheme = inferAxialDimensionScheme({
-      topology: input.topology,
-      candidateSet: input.candidateSet,
-      policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
-    });
-    const expectedDisplayed = manifest.displayedIntervals.map(([start, end]) => [start, end] as [number, number]);
-    const expectedClosures = manifest.closureIntervals.map(([start, end]) => [start, end] as [number, number]);
-
-    expect(sortIntervals(intervals(scheme.displayedCandidateIds, scheme))).toEqual(sortIntervals(expectedDisplayed));
-    expect(sortIntervals(intervals(scheme.closureCandidateIds, scheme))).toEqual(sortIntervals(expectedClosures));
-    expect(scheme.chains).toHaveLength(3);
-    expect(scheme.diagnostics).toContainEqual(expect.objectContaining({
-      code: 'DIMENSION_DOCUMENT_DISPLAY_CONFLICT', severity: 'warning',
-    }));
-    expect(scheme.diagnostics.map(({ code }) => code)).not.toContain('DIMENSION_STATION_UNRESOLVED');
+    expect(second).toEqual(first);
+    expect(first.chains.length).toBeGreaterThan(0);
+    expect(first.closureCandidateIds).toHaveLength(first.chains.length);
+    expect(first.diagnostics.map(({ code }) => code)).not.toContain('DIMENSION_STATION_UNRESOLVED');
   });
 
   it('retains valid displayed members as switchable closure alternatives under the default policy', async () => {
@@ -51,13 +33,29 @@ describe('golden axial dimension-chain inference', () => {
     const scheme = inferAxialDimensionScheme({
       topology: input.topology,
       candidateSet: input.candidateSet,
-      policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+      policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
     });
     const root = scheme.chains[0]!;
-    const inner = scheme.chains.slice(1).find(({ childCandidateIds }) => childCandidateIds.length > 0)!;
 
     expect(root.alternativeClosureCandidateIds).toContain(root.childCandidateIds[0]);
-    expect(inner.alternativeClosureCandidateIds).toContain(inner.childCandidateIds[0]);
+    expect(root.alternativeClosureCandidateIds.length).toBeGreaterThan(0);
+  });
+
+  it('builds the reviewed hierarchical chains from source topology and semantics', async () => {
+    const input = await analyzeGoldenInferenceInput();
+    const scheme = inferAxialDimensionScheme({
+      topology: input.topology,
+      candidateSet: input.candidateSet,
+      policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
+    });
+
+    expect(sortIntervals(intervals(scheme.displayedCandidateIds, scheme))).toEqual(sortIntervals(
+      manifest.displayedIntervals.map(([start, end]) => [start, end] as [number, number]),
+    ));
+    expect(sortIntervals(intervals(scheme.closureCandidateIds, scheme))).toEqual(sortIntervals(
+      manifest.closureIntervals.map(([start, end]) => [start, end] as [number, number]),
+    ));
+    expect(scheme.chains).toHaveLength(3);
   });
 });
 

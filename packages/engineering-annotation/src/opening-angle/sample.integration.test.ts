@@ -6,6 +6,7 @@ import type { DimensionAnnotation } from '@vectorai/drawing-core';
 import { importDxf } from '@vectorai/dxf-import';
 import { describe, expect, it } from 'vitest';
 
+import { resolveShaftAxis } from '../shaft/axis';
 import { planEngineeringAnnotations } from '../plan';
 
 describe('approved shaft DXF opening-angle annotation', () => {
@@ -38,4 +39,44 @@ describe('approved shaft DXF opening-angle annotation', () => {
     expect(angular.every(({ targets }) => targets.length === 2)).toBe(true);
     expect(angular.every(({ computedValue }) => computedValue !== undefined && Math.abs(computedValue - 90) > 0.5)).toBe(true);
   });
+
+  it('keeps readable diameters inside while ordering right-side fallbacks outside', async () => {
+    const bytes = await readFile(resolve(import.meta.dirname, '../../../dxf-import/test/fixtures/initial-shaft.dxf'));
+    const imported = importDxf({
+      bytes,
+      source: { name: 'initial-shaft.dxf', digest: 'sha256:diameter-layout' },
+      drawingId: 'drawing:diameter-layout',
+      now: () => 1,
+    });
+    expect(imported.status).toBe('imported');
+    if (imported.status !== 'imported') return;
+    const axis = resolveShaftAxis(imported.document, { regions: [] });
+    expect(axis).not.toBeNull();
+    if (!axis) return;
+    const plan = planEngineeringAnnotations({
+      document: imported.document,
+      ref: { drawingId: 'drawing:diameter-layout', revision: 1 },
+      objective: '自动标注',
+      annotationKinds: ['opening-angle', 'diameter'],
+    });
+    const diameters = plan.annotations.filter((item): item is DimensionAnnotation => (
+      item.type === 'dimension' && item.dimensionKind === 'diameter'
+    ));
+    const inside = diameters.filter((item) => {
+      const coordinate = axialCoordinate(item.textPosition, axis.origin, axis.direction);
+      return coordinate >= axis.zMin && coordinate <= axis.zMax;
+    });
+    const right = diameters.filter((item) => (
+      axialCoordinate(item.textPosition, axis.origin, axis.direction) > axis.zMax
+    )).sort((left, right) => (left.computedValue ?? 0) - (right.computedValue ?? 0));
+    const outwardCoordinates = right.map(({ textPosition }) => axialCoordinate(textPosition, axis.origin, axis.direction));
+
+    expect(inside.map(({ computedValue }) => computedValue)).toEqual(expect.arrayContaining([20, 57.03]));
+    expect(right.map(({ computedValue }) => computedValue)).toEqual([35, 48]);
+    expect(outwardCoordinates.every((coordinate, index) => index === 0 || coordinate > outwardCoordinates[index - 1]!)).toBe(true);
+  });
 });
+
+function axialCoordinate(point: readonly [number, number], origin: readonly [number, number], direction: readonly [number, number]): number {
+  return (point[0] - origin[0]) * direction[0] + (point[1] - origin[1]) * direction[1];
+}

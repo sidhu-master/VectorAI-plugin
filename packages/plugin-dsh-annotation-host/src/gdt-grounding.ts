@@ -10,6 +10,7 @@ import type {
   ToleranceZoneShape,
 } from '@vectorai/engineering-annotation';
 import type { DrawingWorkspaceSnapshot } from '@vectorai/drawing-workspace';
+import type { GdtClarificationQuestion } from './shaft-gdt-rules';
 
 export interface GdtRecommendation {
   datums: Array<{ name: string; geometryId: string; role: EngineeringDatum['role'] }>;
@@ -25,6 +26,8 @@ export interface GdtRecommendation {
     complete: boolean;
     requiredDatumCount: number;
     requiredControlCount: number;
+    status?: 'resolved' | 'needs-user-input';
+    questions?: GdtClarificationQuestion[];
   };
 }
 

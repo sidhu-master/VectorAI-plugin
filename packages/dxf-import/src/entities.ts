@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  AnnotationNode,
+  AnnotationId,
   ArcGeometry,
+  DimensionAnnotation,
   GeometryId,
   GeometryNode,
   LineGeometry,
@@ -25,7 +28,7 @@ export interface DxfEntityContext {
 
 export interface DxfEntityProjection {
   geometry?: GeometryNode;
-  annotation?: ReturnType<typeof projectHatch>;
+  annotation?: AnnotationNode;
 }
 
 export function readEntityRecords(pairs: readonly DxfPair[]): DxfEntityRecord[] {
@@ -56,6 +59,7 @@ export function projectEntity(
     if (record.type === 'ARC') return { geometry: arc(record, context) };
     if (record.type === 'SPLINE') return { geometry: spline(record, context) };
     if (record.type === 'HATCH') return { annotation: projectHatch(record, context) };
+    if (record.type === 'DIMENSION') return { annotation: dimension(record, context) };
     if (record.type === 'VIEWPORT') {
       context.diagnostics.push(diagnostic(record, 'info', 'DXF_VIEWPORT_IGNORED', 'DXF VIEWPORT is presentation metadata, not drawing geometry'));
       return null;
@@ -168,9 +172,58 @@ function spline(record: DxfEntityRecord, context: DxfEntityContext): SplineGeome
   };
 }
 
+function dimension(record: DxfEntityRecord, context: DxfEntityContext): DimensionAnnotation {
+  const nativeKind = number(record, 70, 0) & 7;
+  const rawText = value(record, 1) ?? '<>';
+  const displayText = rawText.replace(/%%[cC]/g, 'Ø');
+  const measured = number(record, 42, 0);
+  const dimensionKind: DimensionAnnotation['dimensionKind'] = nativeKind === 2
+    ? 'angular'
+    : nativeKind === 3
+      ? 'diameter'
+      : nativeKind === 4
+        ? 'radius'
+        : nativeKind === 6
+          ? 'ordinate'
+          : /^[Ø⌀]/u.test(displayText)
+            ? 'diameter'
+            : 'linear';
+  const definitionPoint: [number, number] = [number(record, 10, 0), number(record, 20, 0)];
+  const first: [number, number] = [number(record, 13, definitionPoint[0]), number(record, 23, definitionPoint[1])];
+  const second: [number, number] = [number(record, 14, definitionPoint[0]), number(record, 24, definitionPoint[1])];
+  const definitionPoints: Array<[number, number]> = dimensionKind === 'angular'
+    ? [
+      first,
+      second,
+      [number(record, 15, first[0]), number(record, 25, first[1])],
+      [number(record, 16, second[0]), number(record, 26, second[1])],
+      definitionPoint,
+    ]
+    : [first, second, definitionPoint];
+
+  return {
+    ...base(record, context, 'annotation'),
+    type: 'dimension',
+    dimensionKind,
+    associationStatus: 'resolved',
+    targets: [],
+    computedValue: measured,
+    ...(rawText === '<>' ? {} : { displayText }),
+    unit: dimensionKind === 'angular' ? 'deg' : 'mm',
+    textPosition: [number(record, 11, definitionPoint[0]), number(record, 21, definitionPoint[1])],
+    definitionPoints,
+  };
+}
+
+function base(record: DxfEntityRecord, context: DxfEntityContext, plane: 'geometry'): {
+  id: GeometryId; visible: true; quality: { status: 'confirmed'; evidenceRefs: never[] }; sourceRef: ReturnType<typeof sourceRef>;
+};
+function base(record: DxfEntityRecord, context: DxfEntityContext, plane: 'annotation'): {
+  id: AnnotationId; visible: true; quality: { status: 'confirmed'; evidenceRefs: never[] }; sourceRef: ReturnType<typeof sourceRef>;
+};
 function base(record: DxfEntityRecord, context: DxfEntityContext, plane: 'geometry' | 'annotation') {
   return {
-    id: context.nodeId(record, plane) as GeometryId,
+    id: context.nodeId(record, plane) as GeometryId | AnnotationId,
     visible: true,
     quality: { status: 'confirmed' as const, evidenceRefs: [] },
     sourceRef: sourceRef(record, context.sourceId),

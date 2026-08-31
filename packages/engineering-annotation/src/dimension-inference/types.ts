@@ -77,16 +77,13 @@ export type DimensionScoreFeature =
   | 'process-envelope'
   | 'composite-block'
   | 'overall-root'
-  | 'elementary-span'
-  | 'ordinary-residual'
-  | 'terminal-residual';
+  | 'elementary-span';
 
 export interface AxialInferencePolicy {
-  id: 'shaft-hierarchical-dimensioning-v1' | 'shaft-reference-terminal-closure-v1';
+  id: 'shaft-hierarchical-dimensioning-v1';
   version: '1';
   weights: Readonly<Record<DimensionScoreFeature, number>>;
   ambiguityMargin: number;
-  preferTerminalRootClosure: boolean;
 }
 
 export interface DimensionDecisionTrace {

@@ -47,4 +47,41 @@ describe('automatic GD&T service', () => {
       diagnostics: [{ code: 'GDT_COVERAGE_COMPLETE' }],
     });
   });
+
+  it('persists clarification questions instead of presenting low-confidence coverage as complete', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-2' }, now: () => 1 });
+    document.geometry = [{
+      id: 'edge:form' as GeometryId, type: 'line', start: [0, 4], end: [12, 4], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const ref = { drawingId: 'drawing-2', revision: 1 };
+    const service = new GdtService({
+      getSnapshot: () => ({
+        version: 1, ref, document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+    }, new DimensionPlanStore());
+
+    const result = service.start({ id: 'session-2' } as Agent, {
+      datums: [],
+      controls: [{
+        id: 'gdt:form', characteristic: 'cylindricity', geometryIds: ['edge:form'],
+        datumNames: [], toleranceZoneShape: 'linear',
+      }],
+      coverage: {
+        complete: false, requiredDatumCount: 0, requiredControlCount: 1,
+        status: 'needs-user-input',
+        questions: [{
+          code: 'GDT_AXIS_SUPPORT_PAIR_REQUIRED',
+          prompt: '请确认哪两个轴段共同建立旋转基准轴线。',
+          segmentIds: [],
+        }],
+      },
+    });
+
+    expect(result.draft?.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'GDT_USER_INPUT_REQUIRED' }),
+      expect.objectContaining({ code: 'GDT_AXIS_SUPPORT_PAIR_REQUIRED', message: '请确认哪两个轴段共同建立旋转基准轴线。' }),
+    ]));
+  });
 });

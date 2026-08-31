@@ -33,7 +33,7 @@ describe('exportDrawingDxf', () => {
     const dxf = exportDrawingDxf(document);
 
     expect(dxf).toContain('0\r\nSECTION\r\n2\r\nHEADER');
-    expect(dxf).toContain('9\r\n$ACADVER\r\n1\r\nAC1015');
+    expect(dxf).toContain('9\r\n$ACADVER\r\n1\r\nAC1027');
     expect(dxf).toContain('9\r\n$INSUNITS\r\n70\r\n5');
     expect(dxf).toContain('0\r\nPOINT');
     expect(dxf).toContain('0\r\nLINE');
@@ -47,7 +47,13 @@ describe('exportDrawingDxf', () => {
     expect(dxf).toContain('0\r\nXLINE');
     expect(dxf).toContain('0\r\nTEXT');
     expect(dxf).toContain('1\r\n孔位');
-    expect(dxf).toContain('8\r\nANNOTATIONS');
+    expect(dxf).toContain('2\r\nGEOMETRY');
+    expect(dxf).toContain('2\r\nCENTERLINE');
+    expect(dxf).toContain('2\r\nSECTION_HATCH');
+    expect(dxf).toContain('2\r\nTEXT');
+    expect(dxf).toContain('2\r\nDIMENSIONS');
+    expect(dxf).not.toContain('2\r\n1轮廓实线层');
+    expect(dxf).not.toContain('2\r\nANNOTATIONS');
     expect(dxf).not.toContain('100\r\n20\r\n100');
     expect(dxf.endsWith('0\r\nEOF\r\n')).toBe(true);
   });
@@ -81,7 +87,7 @@ describe('exportDrawingDxf', () => {
     }];
 
     const dxf = exportDrawingDxf(document);
-    expect(dxf).toContain('0\r\nHATCH\r\n8\r\nANNOTATIONS\r\n100\r\nAcDbHatch');
+    expect(dxf).toMatch(/0\r\nHATCH\r\n[\s\S]*?8\r\nSECTION_HATCH\r\n100\r\nAcDbHatch/);
     expect(dxf).toContain('2\r\nANSI31\r\n70\r\n0\r\n71\r\n0\r\n91\r\n1');
     expect(dxf).toContain('75\r\n1\r\n76\r\n0\r\n52\r\n15\r\n41\r\n2\r\n77\r\n0\r\n78\r\n1');
     expect(dxf).toContain('79\r\n2\r\n49\r\n4\r\n49\r\n-2');
@@ -147,7 +153,73 @@ describe('exportDrawingDxf', () => {
       },
     }];
     const dxf = exportDrawingDxf(document);
-    expect(dxf).toContain('1\r\n10 H7\\P0\\PLINE\r\n50\r\n0');
+    expect(dxf).toContain('1\r\n10 H7\\P0\\PLINE');
     expect(dxf).not.toContain('1\r\n10 H7\r\n0\r\nLINE');
+  });
+
+  it('exports dimensions as native CAD DIMENSION entities with style and anonymous picture blocks', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-native-dimension' }, now: () => 1 });
+    document.annotations = [{
+      id: 'dimension-native' as never, type: 'dimension', dimensionKind: 'linear',
+      associationStatus: 'resolved', targets: [], computedValue: 24.5, displayText: '24.5', unit: 'mm',
+      textPosition: [12.25, 15], definitionPoints: [[0, 0], [24.5, 0], [0, 15], [24.5, 15]],
+      visible: true, quality,
+    }];
+
+    const dxf = exportDrawingDxf(document);
+
+    expect(dxf).toContain('0\r\nTABLE\r\n2\r\nDIMSTYLE');
+    expect(dxf).toContain('0\r\nTABLE\r\n2\r\nBLOCK_RECORD');
+    expect(dxf).toContain('0\r\nSECTION\r\n2\r\nBLOCKS');
+    expect(dxf).toMatch(/0\r\nDIMENSION\r\n[\s\S]*?8\r\nDIMENSIONS/);
+    expect(dxf).toContain('100\r\nAcDbDimension');
+    expect(dxf).toMatch(/100\r\nAcDbAlignedDimension[\s\S]*?100\r\nAcDbRotatedDimension/);
+    expect(dxf).toMatch(/0\r\nDIMENSION[\s\S]*?2\r\n\*D1/);
+  });
+
+  it('exports a right-facing angular dimension through the requested short counter-clockwise DXF arc', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-right-angular-dimension' }, now: () => 1 });
+    document.annotations = [{
+      id: 'dimension-right-angle' as never, type: 'dimension', dimensionKind: 'angular',
+      associationStatus: 'resolved', targets: [], computedValue: 60, displayText: '60°', unit: 'deg',
+      textPosition: [14, 0],
+      definitionPoints: [
+        [0, 0],
+        [12, 6.928203],
+        [12, -6.928203],
+        [8.660254, 5],
+        [8.660254, -5],
+      ],
+      visible: true, quality,
+    }];
+
+    const dxf = exportDrawingDxf(document);
+    const pictureArc = dxf.match(/0\r\nARC\r\n[\s\S]*?50\r\n([^\r]+)\r\n51\r\n([^\r]+)/);
+    const nativeDimension = dxf.match(/0\r\nDIMENSION\r\n[\s\S]*?10\r\n([^\r]+)\r\n20\r\n([^\r]+)/);
+
+    expect(pictureArc).not.toBeNull();
+    expect(Number(pictureArc?.[1])).toBeCloseTo(330, 4);
+    expect(Number(pictureArc?.[2])).toBeCloseTo(30, 4);
+    expect(nativeDimension).not.toBeNull();
+    expect(Number(nativeDimension?.[1])).toBeCloseTo(10, 4);
+    expect(Number(nativeDimension?.[2])).toBeCloseTo(0, 4);
+  });
+
+  it('preserves source CAD layer names so drawing semantics survive round-trip export', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-layers' }, now: () => 1 });
+    document.geometry = [{
+      id: 'outline' as never, type: 'line', start: [0, 0], end: [10, 0], visible: true, quality,
+      sourceRef: { sourceId: 'source:golden', objectType: 'LINE', layer: '1轮廓实线层' },
+    }];
+    document.annotations = [{
+      id: 'hatch' as never, type: 'section-hatch', pattern: 'ANSI31', angle: 45, spacing: 2,
+      segments: [{ start: [0, 0], end: [2, 2] }], visible: true, quality,
+      sourceRef: { sourceId: 'source:golden', objectType: 'HATCH', layer: '5剖面线层' },
+    }];
+
+    const dxf = exportDrawingDxf(document);
+    expect(dxf).toMatch(/0\r\nLINE\r\n[\s\S]*?8\r\n1轮廓实线层/);
+    expect(dxf).toContain('8\r\n5剖面线层');
+    expect(dxf).toContain('62\r\n2\r\n6\r\nContinuous');
   });
 });

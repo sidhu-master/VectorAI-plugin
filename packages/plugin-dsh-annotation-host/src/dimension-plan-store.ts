@@ -4,6 +4,7 @@ import {
   analyzeDimensionChain,
   applyGeometricToleranceEdit,
   applyDimensionSchemeEdit,
+  mergeAxialDimensionProjection,
   orderDimensionIntents,
   projectAxialDimensionScheme,
   validateEngineeringDraft,
@@ -122,10 +123,10 @@ export class DimensionPlanStore {
       withSwitchableClosureAlternatives(draft.axialScheme as unknown as AxialDimensionScheme),
       edit,
     );
-    return this.setDraft(sessionId, projectAxialDimensionScheme({
+    return this.setDraft(sessionId, mergeAxialDimensionProjection(draft, projectAxialDimensionScheme({
       scheme,
       ...(draft.baseRevisionId === undefined ? {} : { baseRevisionId: draft.baseRevisionId }),
-    }));
+    })));
   }
 
   editGeometricTolerance(sessionId: string, command: GeometricToleranceEditCommand): DimensionPlanSessionSnapshot {

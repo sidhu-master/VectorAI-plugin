@@ -42,18 +42,18 @@ export function extractShaftProfile(document: DrawingDocument, axis: ShaftAxis):
     }
   }
   const maxRadius = Math.max(0, ...pieces.flatMap(({ r1, r2 }) => [Math.abs(r1), Math.abs(r2)]));
-  const axialTolerance = Math.max(axis.zMax * 1e-5, 1e-6);
+  const axialTolerance = Math.max(Math.abs(axis.zMax - axis.zMin) * 1e-5, 1e-6);
   const events: ShoulderEvent[] = [];
   for (const piece of pieces) {
     if (Math.abs(piece.z2 - piece.z1) > axialTolerance) continue;
     const radialSpan = Math.abs(piece.r2 - piece.r1);
-    if (radialSpan <= Math.max(maxRadius * 0.025, 0.05)) continue;
+    if (radialSpan <= Math.max(maxRadius * 0.025, Number.EPSILON * 1e6)) continue;
     if (piece.r1 * piece.r2 <= 0) continue;
     const z = (piece.z1 + piece.z2) / 2;
     events.push({ z, radialSpan, positive: (piece.r1 + piece.r2) / 2 > 0, geometryNodeId: piece.geometryNodeId });
   }
   const clusters = clusterShoulderEvents(events, axialTolerance);
-  const minimumSideSpan = Math.max(maxRadius * 0.01, 0.05);
+  const minimumSideSpan = Math.max(maxRadius * 0.01, Number.EPSILON * 1e6);
   const shoulders = clusters
     .filter(({ positiveSpan, negativeSpan }) => positiveSpan > minimumSideSpan && negativeSpan > minimumSideSpan)
     .map(({ weightedZ, weight, positiveSpan, negativeSpan, geometryNodeIds }) => ({

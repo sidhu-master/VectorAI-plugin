@@ -3,6 +3,7 @@
 import type { EngineeringRegionEvidence } from '../engineering-document/parser';
 import type { EngineeringDiagnostic } from '../dimension/types';
 import type { PartitionDraft, PartitionRevision, ShaftSemanticGroup } from '../partition/types';
+import { resolveShaftDimensionRole } from '../partition/dimension-role';
 import type {
   AxialCandidateSet,
   AxialDimensionCandidate,
@@ -21,7 +22,7 @@ export function generateAxialDimensionCandidates(input: GenerateCandidateInput):
   for (const span of input.topology.elementarySpans) {
     accumulator.add(span.startStationId, span.endStationId, 'local', elementaryEvidence(span));
   }
-  for (const group of input.partition.semanticGroups) addFunctionalInterval(accumulator, group);
+  for (const group of input.partition.semanticGroups) addFunctionalInterval(accumulator, group, input.partition);
   for (const region of input.document?.regions ?? []) addDocumentInterval(accumulator, region, input.partition);
   const envelopes = deriveProcessEnvelopes(input.partition, input.topology);
   for (const envelope of envelopes) {
@@ -32,8 +33,8 @@ export function generateAxialDimensionCandidates(input: GenerateCandidateInput):
     const current = envelopes[index]!;
     if (previous.endStationId === current.endStationId) continue;
     accumulator.add(previous.endStationId, current.endStationId, 'composite', {
-      id: `partition:hierarchy:${previous.groupId}:${current.groupId}`,
-      origin: 'partition', kind: 'process-envelope', label: '相邻关键功能包络', required: false,
+      id: `partition:process-datum-chain:${previous.groupId}:${current.groupId}`,
+      origin: 'partition', kind: 'process-envelope', label: '相邻功能工艺基准链', required: false,
       sourceIds: [previous.groupId, current.groupId],
     });
   }
@@ -117,8 +118,12 @@ class CandidateAccumulator {
   }
 }
 
-function addFunctionalInterval(accumulator: CandidateAccumulator, group: ShaftSemanticGroup): void {
-  if (!group.range) return;
+function addFunctionalInterval(
+  accumulator: CandidateAccumulator,
+  group: ShaftSemanticGroup,
+  partition: PartitionDraft | PartitionRevision,
+): void {
+  if (!group.range || resolveShaftDimensionRole(group, partition) !== 'functional-feature') return;
   const resolved = resolveCoordinates(accumulator.topology, group.range.zStart, group.range.zEnd);
   const evidence: DimensionEvidence = {
     id: `partition:group:${group.id}`, origin: 'partition', kind: 'functional-region',
@@ -171,30 +176,39 @@ function deriveProcessEnvelopes(
   partition: PartitionDraft | PartitionRevision,
   topology: AxialTopology,
 ): ProcessEnvelope[] {
-  const functionalSegmentIds = new Set(partition.semanticGroups
-    .filter(({ semanticType }) => semanticType !== 'regular-shaft')
+  const tolerance = coordinateTolerance(topology);
+  const segments = [...partition.segments].sort((left, right) => left.zStart - right.zStart);
+  const claimedSegmentIds = new Set(partition.semanticGroups
+    .filter((group) => resolveShaftDimensionRole(group, partition) === 'functional-feature')
     .flatMap(({ segmentIds }) => segmentIds));
-  const output: ProcessEnvelope[] = [];
-  for (const group of partition.semanticGroups) {
-    if (!group.range || group.semanticType === 'bearing' || group.semanticType === 'regular-shaft') continue;
-    const width = Math.abs(group.range.zEnd - group.range.zStart);
-    const next = partition.segments.find(({ zStart, id }) => (
-      Math.abs(zStart - group.range!.zEnd) <= coordinateTolerance(topology) && !functionalSegmentIds.has(id)
+  return partition.semanticGroups.flatMap((group): ProcessEnvelope[] => {
+    if (!group.range || !isProcessFeature(group, partition)) return [];
+    const transitionIndex = segments.findIndex((segment) => (
+      Math.abs(segment.zStart - group.range!.zEnd) <= tolerance
+      && !claimedSegmentIds.has(segment.id)
     ));
-    if (!next || Math.abs(next.zEnd - next.zStart) > width * 0.25) continue;
-    const resolved = resolveCoordinates(topology, group.range.zStart, next.zEnd);
-    if (!resolved) continue;
-    output.push({
+    if (transitionIndex < 0 || !segments[transitionIndex + 1]) return [];
+    const transition = segments[transitionIndex]!;
+    const resolved = resolveCoordinates(topology, group.range.zStart, transition.zEnd);
+    if (!resolved) return [];
+    return [{
       ...resolved,
       groupId: group.id,
       evidence: {
-        id: `partition:process-envelope:${group.id}`, origin: 'partition', kind: 'process-envelope',
-        label: `${group.name ?? group.semanticType}工艺包络`, required: false,
-        sourceIds: [group.id, next.id, ...next.boundaryEvidenceIds],
+        id: `partition:process-envelope:${group.id}`,
+        origin: 'partition', kind: 'process-envelope', label: `${group.name ?? group.semanticType}工艺包络`,
+        required: false, sourceIds: [group.id, transition.id, ...transition.boundaryEvidenceIds],
       },
-    });
-  }
-  return output.sort((left, right) => stationCoordinate(topology, left.startStationId) - stationCoordinate(topology, right.startStationId));
+    }];
+  }).sort((left, right) => stationCoordinate(topology, left.startStationId) - stationCoordinate(topology, right.startStationId));
+}
+
+function isProcessFeature(
+  group: ShaftSemanticGroup,
+  partition: PartitionDraft | PartitionRevision,
+): boolean {
+  return resolveShaftDimensionRole(group, partition) === 'functional-feature'
+    && !['bearing', 'bearing-seat'].includes(group.semanticType.toLowerCase());
 }
 
 function elementaryEvidence(span: AxialElementarySpan): DimensionEvidence {
@@ -212,7 +226,7 @@ function resolveCoordinates(topology: AxialTopology, start: number, end: number)
 }
 
 function coordinateTolerance(topology: AxialTopology): number {
-  const length = topology.stations.at(-1)?.coordinate ?? 1;
+  const length = (topology.stations.at(-1)?.coordinate ?? 1) - (topology.stations[0]?.coordinate ?? 0);
   return Math.max(Math.abs(length) * 1e-5, 1e-6);
 }
 

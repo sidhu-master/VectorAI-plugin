@@ -19,6 +19,18 @@ describe('bounded AI semantic proposals', () => {
     expect(result.draft.semanticGroups[0]?.range).toEqual({ zStart: 1, zEnd: 2 });
   });
 
+  it('persists an explicit dimension-chain role independently from the semantic label', () => {
+    const result = applySemanticProposals(draft, [{
+      segmentIds: ['segment:2'], semanticType: 'shoulder', dimensionRole: 'process-datum',
+      name: '定位轴肩', confidence: 0.9, reason: '相邻功能区之间的轴向定位面',
+      visualEvidenceIds: ['observation:segment:2'],
+    }]);
+
+    expect(result.draft.semanticGroups[0]).toMatchObject({
+      semanticType: 'shoulder', dimensionRole: 'process-datum',
+    });
+  });
+
   it('abstains from low-confidence, generic, and incompletely evidenced proposals', () => {
     const proposals = [
       { segmentIds: ['segment:1'], semanticType: 'shaft-work-area', name: '工作区域', confidence: 0.95, reason: '普通连续外形', visualEvidenceIds: ['observation:segment:1'] },

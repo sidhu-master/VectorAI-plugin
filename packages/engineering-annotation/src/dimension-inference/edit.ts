@@ -156,10 +156,10 @@ function chooseChainClosure(
     ...scheme.displayedCandidateIds.filter((id) => !chain.childCandidateIds.includes(id) && id !== chosen.id),
     ...childCandidateIds,
   ]);
-  const closureCandidateIds = unique([
-    ...scheme.closureCandidateIds.filter((id) => id !== chain.closureCandidateId),
-    chosen.id,
-  ]);
+  const activeChains = chains.filter((candidateChain) => (
+    candidateChain.id === nextChain.id || displayedCandidateIds.includes(candidateChain.parentCandidateId)
+  ));
+  const closureCandidateIds = unique(activeChains.map(({ closureCandidateId }) => closureCandidateId));
   const diagnostics = scheme.diagnostics.filter(({ code }) => (
     code !== 'DIMENSION_CLOSURE_AMBIGUOUS' && code !== 'DIMENSION_DOCUMENT_DISPLAY_CONFLICT'
   ));
@@ -172,12 +172,12 @@ function chooseChainClosure(
   });
   return {
     ...structuredClone(scheme),
-    chains,
+    chains: activeChains,
     displayedCandidateIds,
     closureCandidateIds,
     diagnostics,
     status: 'resolved',
-    decisions: updateDecisions(scheme.decisions, displayedCandidateIds, closureCandidateIds, chains),
+    decisions: updateDecisions(scheme.decisions, displayedCandidateIds, closureCandidateIds, activeChains),
   };
 }
 

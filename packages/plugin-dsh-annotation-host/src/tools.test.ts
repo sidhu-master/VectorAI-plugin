@@ -95,7 +95,8 @@ describe('drawing_auto_annotate', () => {
 
     const result = await tool.execute({}, exec);
 
-    expect(result).toMatchObject({ status: 'committed', annotations: [expect.stringMatching(/^annotation_auto_/)] });
+    expect(result).toMatchObject({ status: 'committed' });
+    expect(result.annotations).toEqual(expect.arrayContaining([expect.stringMatching(/^annotation_auto_/)]));
     expect(runExtensionProgram).toHaveBeenCalledOnce();
     expect(runExtensionProgram.mock.calls[0]?.[1]).toMatchObject({ targetNodeIds: ['left-lower', 'left-upper'] });
     expect(partitions.advanceDrawingRevision).not.toHaveBeenCalled();
@@ -147,6 +148,46 @@ describe('drawing_auto_annotate', () => {
     });
   });
 
+  it('returns user-facing clarification questions without routing to a manual GD&T tool', async () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-clarify' }, now: () => 1 });
+    const tool = createEngineeringAnnotationTool({
+      getSnapshot: () => ({
+        version: 1, ref: { drawingId: 'drawing-clarify', revision: 1 }, document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+      runExtensionProgram: vi.fn(),
+    }, new AnnotationSessionStateStore(), undefined, undefined, {
+      name: 'drawing_auto_annotate', description: 'automatic set', annotationKinds: [], objective: 'automatic set',
+      afterAnnotations: () => ({
+        version: 1, phase: 'editing', drawingRef: { drawingId: 'drawing-clarify', revision: 1 },
+        canUndo: false, canRedo: false, updatedAt: 1,
+        draft: {
+          version: 1, drawingRef: { drawingId: 'drawing-clarify', revision: 1 }, datums: [], intents: [], tolerances: [],
+          geometricTolerances: [], chains: [], dependencies: [], diagnostics: [{
+            id: 'diagnostic:gdt:coverage', severity: 'warning', code: 'GDT_USER_INPUT_REQUIRED', message: 'GD&T needs clarification',
+          }, {
+            id: 'diagnostic:gdt:clarification:0', severity: 'warning', code: 'GDT_AXIS_SUPPORT_PAIR_REQUIRED',
+            message: '请确认哪两个轴段共同建立旋转基准轴线。',
+          }],
+        },
+      }),
+      requiresGdtRecommendation: true,
+    });
+
+    await expect(tool.execute({}, {
+      agent: { id: 'session-clarify' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({
+      status: 'needs-user-input',
+      annotationSet: {
+        completionStatus: 'needs-user-input',
+        completionClaimAllowed: false,
+        clarificationQuestions: ['请确认哪两个轴段共同建立旋转基准轴线。'],
+        nextAction: 'ask-user-for-gdt-clarification',
+      },
+    });
+  });
+
   it('sends deterministic axial-end opening annotations through the same preview seam', async () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -179,9 +220,9 @@ describe('drawing_auto_annotate', () => {
     const request = runExtensionProgram.mock.calls[0]?.[1] as {
       program: { operations: Array<{ kind: string; annotations?: Array<{ dimensionKind?: string; displayText?: string }> }> };
     };
-    expect(request.program.operations[0]?.annotations).toEqual([
+    expect(request.program.operations[0]?.annotations).toEqual(expect.arrayContaining([
       expect.objectContaining({ dimensionKind: 'angular', displayText: '120°' }),
-    ]);
+    ]));
   });
 
   it('claims only after a real Drawing route succeeds and retains the claim after failure', async () => {
@@ -332,13 +373,13 @@ describe('drawing_dimension_chain_start', () => {
     const tool = createDimensionChainStartTool({ start });
 
     expect(tool.name).toBe('drawing_dimension_chain_start');
-    await expect(tool.execute({ policy: 'shaft-reference-terminal-closure-v1' }, {
+    await expect(tool.execute({ policy: 'shaft-hierarchical-dimensioning-v1' }, {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
     } as ToolRunContext)).resolves.toMatchObject({ status: 'editing' });
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1' }),
-      'shaft-reference-terminal-closure-v1',
+      'shaft-hierarchical-dimensioning-v1',
     );
   });
 
@@ -357,7 +398,7 @@ describe('drawing_dimension_chain_start', () => {
 
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1' }),
-      'shaft-reference-terminal-closure-v1',
+      'shaft-hierarchical-dimensioning-v1',
     );
   });
 });

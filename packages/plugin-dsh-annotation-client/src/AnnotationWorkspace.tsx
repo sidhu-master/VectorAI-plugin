@@ -15,7 +15,8 @@ import type {
   DrawingWorkspaceSnapshot,
   DrawingWorkspaceViewport,
 } from '@vectorai/drawing-workspace';
-import type { AnnotationSessionState, EngineeringAnnotationDraft } from '@vectorai/plugin-space-contracts';
+import { DRAWING_ANNOTATED_DXF_EXPORT_PATH, type AnnotationSessionState, type EngineeringAnnotationDraft } from '@vectorai/plugin-space-contracts';
+import type { DrawingFileExport } from '@vectorai/plugin-dsh-space-client';
 import { ListTree } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { PartitionController } from './partition-controller';
@@ -55,6 +56,7 @@ const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.ma
 const ANNOTATION_UPLOAD_ACCEPT = `.dxf,application/dxf,${ENGINEERING_DOCUMENT_ACCEPT}`;
 const PARTITION_HYDRATION_INTERVAL_MS = 500;
 const PARTITION_HYDRATION_MAX_ATTEMPTS = 1_200;
+const ANNOTATION_HYDRATION_INTERVAL_MS = 350;
 const dimensionChainLayerId = (chainId: string) => `${ANNOTATION_DIMENSION_CHAIN_LAYER_ID}:${chainId}`;
 type AnnotationPanelId = 'structure';
 const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIAMETER_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER, ANNOTATION_DATUM_LAYER, ANNOTATION_GDT_LAYER] as const;
@@ -109,9 +111,10 @@ export interface AnnotationWorkspaceProps {
   dimensionChain?: DimensionChainController;
   gdt?: GdtController;
   dimensionPlan?: { draft: EngineeringAnnotationDraft; generationOrder: string[] };
+  drawingFileExport?: DrawingFileExport;
 }
 
-export function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, gdt: suppliedGdt, dimensionPlan, layerRegistry }: AnnotationWorkspaceProps) {
+export function AnnotationWorkspace({ sessionId, namespace, runtime, state, partition, dimensionChain: suppliedDimensionChain, gdt: suppliedGdt, dimensionPlan, layerRegistry, drawingFileExport }: AnnotationWorkspaceProps) {
   const dimensionChain = suppliedDimensionChain ?? EMPTY_DIMENSION_CONTROLLER;
   const gdt = suppliedGdt ?? EMPTY_GDT_CONTROLLER;
   const snapshot = useObservable(runtime.snapshot);
@@ -129,6 +132,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const [panelWidth, setPanelWidth] = useState(260);
   const [partitionView, setPartitionView] = useState<PartitionViewMode>('functional');
   const [selectedGdtIntentId, setSelectedGdtIntentId] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const registeredLayers = useSyncExternalStore(
     layerRegistry?.subscribeLayers ?? subscribeToNoLayers,
     layerRegistry?.getLayers ?? readFallbackLayers,
@@ -265,11 +269,25 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     return () => { window.removeEventListener('blur', release); release(); };
   }, [dimensionChain, gdt, partition]);
   useEffect(() => {
-    if (!partitionState.busy) { void runtime.actions.refresh(); return; }
-    void runtime.actions.refresh();
-    const timer = window.setInterval(() => { void runtime.actions.refresh(); }, 500);
-    return () => window.clearInterval(timer);
-  }, [partitionState.busy, runtime]);
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const workflowActive = annotationState.workflow.status === 'running'
+      || annotationState.workflow.status === 'reviewing';
+    const hydrate = async () => {
+      await Promise.allSettled([
+        runtime.actions.refresh(),
+        dimensionChain.actions.refresh(),
+        gdt.actions.refresh(),
+      ]);
+      if (!active || (!workflowActive && !partitionState.busy)) return;
+      timer = setTimeout(() => { void hydrate(); }, ANNOTATION_HYDRATION_INTERVAL_MS);
+    };
+    void hydrate();
+    return () => {
+      active = false;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [annotationState.workflow.status, dimensionChain, gdt, partitionState.busy, runtime]);
   useEffect(() => {
     if (displaySnapshot === null || viewport.width <= 0 || viewport.height <= 0) return;
     const drawingId = displaySnapshot.ref.drawingId;
@@ -304,6 +322,22 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     void dimensionChain.actions.refresh().catch(() => undefined);
     void gdt.actions.refresh().catch(() => undefined);
   }, [annotationState.activationEpoch, dimensionChain, gdt]);
+  useEffect(() => {
+    if (exportNotice === null) return;
+    const timer = setTimeout(() => setExportNotice(null), 4_000);
+    return () => clearTimeout(timer);
+  }, [exportNotice]);
+
+  const exportAnnotatedDxf = () => {
+    if (!drawingFileExport || !displaySnapshot) return;
+    setExportNotice(null);
+    void drawingFileExport.download(sessionId, displaySnapshot, DRAWING_ANNOTATED_DXF_EXPORT_PATH)
+      .then(({ filename }) => setExportNotice({ kind: 'success', message: `已导出到下载文件夹：${filename}` }))
+      .catch((error: unknown) => setExportNotice({
+        kind: 'error',
+        message: `DXF 导出失败：${error instanceof Error ? error.message : String(error)}`,
+      }));
+  };
 
   const beginImport = (drawing: File, documents: readonly File[]) => {
     setImportError(null);
@@ -376,6 +410,9 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
         panels={panels}
       />
       <main className="vai-annotation-workspace__canvas">
+        {exportNotice && <div className={`vai-export-toast vai-export-toast--${exportNotice.kind}`} role="status">
+          {exportNotice.message}
+        </div>}
         <DrawingLayerManager
           layers={[...registeredLayers
             .filter(({ id }) => (
@@ -398,6 +435,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             }))]}
           onVisibilityChange={updateLayerVisibility}
         />
+        {(annotationState.workflow.status === 'running' || annotationState.workflow.status === 'reviewing')
+          && <AnnotationGenerationProgress
+            stage={annotationState.workflow.stage ?? 'deterministic'}
+            reviewing={annotationState.workflow.status === 'reviewing'}
+          />}
         {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null || gdtState.error !== null) &&
           <div className="vai-annotation-status-stack" data-annotation-status-stack="true">
             {partitionState.busy && <div className="vai-partition-progress" data-partition-progress={partitionState.partition.phase} role="status">
@@ -435,8 +477,8 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           worldLayers={<>
             <g data-annotation-candidate-layer="true" data-preview-active={presentation.preview === null ? undefined : 'true'} pointerEvents="none" />
             {partitionOverlayVisible && draft && <PartitionOverlay draft={draft} mode={partitionView} previewHeld={partitionState.previewHeld} scale={viewport.scale}
-              onMoveBoundary={(index, z) => partition.actions.moveBoundary(index, z, Math.max(draft.axis.zMax * 0.003, 0.05))}
-              onMoveSemanticRange={(groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(draft.axis.zMax * 0.003, 0.05))}
+              onMoveBoundary={(index, z) => partition.actions.moveBoundary(index, z, Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 0.003, 0.05))}
+              onMoveSemanticRange={(groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 0.003, 0.05))}
               onRenameBand={(band, name) => partitionView === 'functional'
                 ? partition.actions.renameSemanticGroup(band.id, name)
                 : partition.actions.updateSegment(band.segmentIds[0]!, { name })} />}
@@ -495,10 +537,38 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           onUploadFiles={handleToolbarUpload}
           uploadAccept={ANNOTATION_UPLOAD_ACCEPT}
           uploadMultiple
+          onExport={drawingFileExport === undefined ? undefined : exportAnnotatedDxf}
         />}
       </main>
     </div>
   </section>;
+}
+
+const ANNOTATION_GENERATION_STAGES = [
+  ['deterministic', '基础尺寸'],
+  ['dimension-chain', '尺寸链'],
+  ['gdt', '基准与形位公差'],
+  ['review', '待确认'],
+] as const;
+
+function AnnotationGenerationProgress({
+  stage,
+  reviewing,
+}: {
+  stage: NonNullable<AnnotationSessionState['workflow']['stage']>;
+  reviewing: boolean;
+}) {
+  const current = ANNOTATION_GENERATION_STAGES.findIndex(([id]) => id === stage);
+  return <div className="vai-annotation-generation" role="status" aria-label="自动标注生成进度">
+    {ANNOTATION_GENERATION_STAGES.map(([id, label], index) => <div
+      key={id}
+      className={`vai-annotation-generation__step${index < current ? ' is-complete' : index === current ? ' is-active' : ''}`}
+      data-annotation-generation-stage={id}
+    >
+      <span aria-hidden="true">{index < current ? '✓' : index + 1}</span>
+      <strong>{id === 'review' && reviewing ? '等待确认' : label}</strong>
+    </div>)}
+  </div>;
 }
 
 function fitViewportForSnapshot(

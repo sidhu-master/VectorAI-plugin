@@ -14,6 +14,11 @@ import {
 import type { DrawingWorkspaceSnapshot } from '@vectorai/drawing-workspace';
 
 export * from '@vectorai/drawing-edit-protocol';
+export * from './axial-dimension-layout';
+
+/** Same-origin DSH Host route used by every VectorAI client workspace to download DXF. */
+export const DRAWING_DXF_EXPORT_PATH = '/api/vectorai.drawing.export';
+export const DRAWING_ANNOTATED_DXF_EXPORT_PATH = '/api/vectorai.drawingAnnotation.export';
 
 export type {
   DrawingSourceRef,
@@ -744,6 +749,7 @@ export const annotationSessionStateSchema = z.object({
   activationEpoch: z.number().int().nonnegative(),
   workflow: z.object({
     status: z.enum(['idle', 'running', 'reviewing', 'completed', 'canceled', 'failed', 'needs-rebase']),
+    stage: z.enum(['deterministic', 'dimension-chain', 'gdt', 'review']).optional(),
     workflowId: idSchema.optional(),
     message: z.string().min(1).optional(),
   }).strict(),
@@ -883,7 +889,9 @@ const partitionSegmentSchema = z.object({
 const partitionGroupSchema = z.object({
   id: idSchema, segmentIds: z.array(idSchema),
   range: z.object({ zStart: z.number(), zEnd: z.number() }).strict().optional(),
-  semanticType: z.string(), name: z.string().optional(), evidenceIds: z.array(idSchema),
+  semanticType: z.string(),
+  dimensionRole: z.enum(['functional-feature', 'process-datum', 'transition', 'ordinary']).optional(),
+  name: z.string().optional(), evidenceIds: z.array(idSchema),
 }).strict();
 export const partitionDraftSchema = z.object({
   version: z.literal(1), drawingRef: drawingRefSchema, axis: shaftAxisSchema,
@@ -1123,7 +1131,7 @@ export const axialDimensionSchemeSchema = z.object({
   drawingRef: drawingRefSchema,
   partitionRevisionId: idSchema.optional(),
   policy: z.object({
-    id: z.enum(['shaft-hierarchical-dimensioning-v1', 'shaft-reference-terminal-closure-v1']),
+    id: z.literal('shaft-hierarchical-dimensioning-v1'),
     version: z.literal('1'),
   }).strict(),
   inputDigest: idSchema,

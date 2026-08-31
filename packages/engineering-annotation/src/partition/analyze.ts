@@ -44,7 +44,7 @@ export function analyzeShaftPartition(request: AnalyzeShaftPartitionRequest): An
     }
   }
   const boundaries = stepCandidates.filter(({ accepted }) => accepted).map(({ z }) => z);
-  const tolerance = Math.max(axis.zMax * 1e-8, 1e-8);
+  const tolerance = Math.max(Math.abs(axis.zMax - axis.zMin) * 1e-8, 1e-8);
   const sorted = [...boundaries].sort((a, b) => a - b).filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]!) > tolerance);
   let draft: PartitionDraft = {
     version: 1,

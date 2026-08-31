@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { applyDimensionSchemeEdit } from './edit';
 import { analyzeGoldenInferenceInput } from './golden-input-test-support';
 import { inferAxialDimensionScheme } from './infer';
-import { SHAFT_HIERARCHICAL_DIMENSIONING_V1, SHAFT_REFERENCE_TERMINAL_CLOSURE_V1 } from './policy';
+import { SHAFT_HIERARCHICAL_DIMENSIONING_V1 } from './policy';
 
 describe('applyDimensionSchemeEdit', () => {
   it('chooses a closure alternative immutably and resolves the review decision', async () => {
@@ -23,13 +23,14 @@ describe('applyDimensionSchemeEdit', () => {
     expect(scheme).toEqual(original);
     expect(edited.chains[0]?.closureCandidateId).toBe(alternative);
     expect(edited.status).toBe('resolved');
+    expect(edited.chains.slice(1).every(({ parentCandidateId }) => edited.displayedCandidateIds.includes(parentCandidateId))).toBe(true);
     expect(edited.diagnostics.map(({ code }) => code)).not.toContain('DIMENSION_CLOSURE_AMBIGUOUS');
   });
 
   it('marks a plan conflicting when a displayed chain member is hidden', async () => {
     const input = await analyzeGoldenInferenceInput();
     const scheme = inferAxialDimensionScheme({
-      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
     });
     const childId = scheme.chains[0]!.childCandidateIds[0]!;
 
@@ -44,7 +45,7 @@ describe('applyDimensionSchemeEdit', () => {
   it('rejects unknown candidate IDs', async () => {
     const input = await analyzeGoldenInferenceInput();
     const scheme = inferAxialDimensionScheme({
-      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
     });
 
     expect(() => applyDimensionSchemeEdit(scheme, {
@@ -55,7 +56,7 @@ describe('applyDimensionSchemeEdit', () => {
   it('stores an independent normal offset for one dimension chain', async () => {
     const input = await analyzeGoldenInferenceInput();
     const scheme = inferAxialDimensionScheme({
-      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_REFERENCE_TERMINAL_CLOSURE_V1,
+      topology: input.topology, candidateSet: input.candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,
     });
     const chainId = scheme.chains[0]!.id;
     const edited = applyDimensionSchemeEdit(scheme, { type: 'chain.layout', chainId, normalOffset: 12.5 });

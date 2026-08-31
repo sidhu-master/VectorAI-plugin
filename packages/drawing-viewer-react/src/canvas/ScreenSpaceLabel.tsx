@@ -13,6 +13,8 @@ export interface ScreenSpaceLabelProps {
   background?: boolean;
   paddingX?: number;
   paddingY?: number;
+  offsetX?: number;
+  offsetY?: number;
   textProps?: SVGProps<SVGTextElement>;
   className?: string;
   pointerEvents?: SVGProps<SVGGElement>['pointerEvents'];
@@ -29,6 +31,8 @@ export function ScreenSpaceLabel({
   background = false,
   paddingX = 5,
   paddingY = 3,
+  offsetX = 0,
+  offsetY = 0,
   textProps,
   ...groupProps
 }: ScreenSpaceLabelProps) {
@@ -40,14 +44,16 @@ export function ScreenSpaceLabel({
     data-screen-space-label={true}
     transform={screenSpaceTransform(position, viewportScale)}
   >
-    {background && <rect
-      className="vai-screen-space-label__background"
-      x={x}
-      y={-height / 2}
-      width={width}
-      height={height}
-      rx={4}
-    />}
-    <text {...textProps} fontSize={fontSize} textAnchor={textAnchor} dominantBaseline="middle">{children}</text>
+    <g transform={`translate(${offsetX} ${offsetY})`}>
+      {background && <rect
+        className="vai-screen-space-label__background"
+        x={x}
+        y={-height / 2}
+        width={width}
+        height={height}
+        rx={4}
+      />}
+      <text {...textProps} fontSize={fontSize} textAnchor={textAnchor} dominantBaseline="middle">{children}</text>
+    </g>
   </g>;
 }

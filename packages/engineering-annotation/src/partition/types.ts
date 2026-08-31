@@ -7,6 +7,7 @@ export type EvidenceOrigin = 'document' | 'geometry' | 'fused' | 'ai' | 'manual'
 export interface ShaftAxis { origin: Vec2; direction: Vec2; normal: Vec2; zMin: number; zMax: number; orientation: 'forward' | 'reversed'; geometryNodeIds?: string[] }
 export interface StepCandidate { id: string; z: number; score: number; evidenceIds: string[]; accepted: boolean }
 export interface ShaftProfileSummary { minRadius: number; maxRadius: number; sampleCount: number }
+export type ShaftDimensionRole = 'functional-feature' | 'process-datum' | 'transition' | 'ordinary';
 export interface PartitionDiagnostic { id: string; severity: 'info' | 'warning' | 'error'; code: string; message: string; segmentIds?: string[]; evidenceIds?: string[] }
 export interface PartitionEvidence { id: string; origin: EvidenceOrigin; label: string; sourceLines?: number[]; geometryNodeIds?: string[] }
 export interface ShaftPartitionSegment {
@@ -21,6 +22,8 @@ export interface ShaftSemanticGroup {
   /** Independent functional extent. Legacy persisted groups may omit it. */
   range?: { zStart: number; zEnd: number };
   semanticType: string;
+  /** Dimension-chain significance; omitted by legacy persisted partitions and derived locally. */
+  dimensionRole?: ShaftDimensionRole;
   name?: string;
   evidenceIds: string[];
 }

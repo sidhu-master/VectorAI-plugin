@@ -17,25 +17,30 @@ interface CoordinateIndex {
   candidate: Map<string, AxialDimensionCandidate>;
 }
 
+interface ClosurePlan {
+  closure: AxialDimensionCandidate;
+  leftChildren: AxialDimensionCandidate[];
+  rightChildren: AxialDimensionCandidate[];
+}
+
 export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput): AxialDimensionScheme {
   const index = coordinateIndex(input);
   const root = requireOverall(input.candidateSet.candidates);
   const decisions = input.candidateSet.candidates.map((candidate) => scoreCandidate(candidate, input.candidateSet.evidence, input.policy.weights));
-  const terminal = terminalCandidates(root, input.candidateSet.candidates, index);
-  if (terminal.length === 0) throw new Error('DIMENSION_CLOSURE_MISSING');
-  const rootClosure = terminal.at(-1)!;
-  const leftChildren = solveCoverage(root.startStationId, rootClosure.startStationId, root, input.candidateSet.candidates, decisions, index);
-  const rightChildren = solveCoverage(rootClosure.endStationId, root.endStationId, root, input.candidateSet.candidates, decisions, index);
-  const rootChildren = [...leftChildren, ...rightChildren];
+  const rootPlans = viableClosurePlans(root, input.candidateSet.candidates, decisions, index, input.topology.axis.orientation);
+  const selectedRootPlan = rootPlans[0];
+  if (!selectedRootPlan) throw new Error('DIMENSION_CLOSURE_MISSING');
+  const rootClosure = selectedRootPlan.closure;
+  const rootChildren = [...selectedRootPlan.leftChildren, ...selectedRootPlan.rightChildren];
+  const rootAmbiguous = rootPlans[1] !== undefined
+    && sameRootClosurePreference(root, rootPlans[0]!.closure, rootPlans[1]!.closure, decisions, input.topology.axis.orientation);
   const chains: AxialChainNode[] = [{
     id: `chain:${root.id}`,
     parentCandidateId: root.id,
     childCandidateIds: rootChildren.map(({ id }) => id),
     closureCandidateId: rootClosure.id,
-    alternativeClosureCandidateIds: viableRootClosureAlternatives(
-      root, rootClosure, input.candidateSet.candidates, decisions, index,
-    ).map(({ id }) => id),
-    status: input.policy.preferTerminalRootClosure ? 'resolved' : 'needs-review',
+    alternativeClosureCandidateIds: rootPlans.slice(1).map(({ closure }) => closure.id),
+    status: rootAmbiguous ? 'needs-review' : 'resolved',
   }];
   for (const parent of rootChildren.filter((candidate) => candidate.roles.some((role) => role === 'process' || role === 'composite'))) {
     const chain = materializeInnerChain(parent, input.candidateSet.candidates, input.candidateSet.evidence, decisions, index);
@@ -48,11 +53,11 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
   ]);
   const closureCandidateIds = unique(chains.map(({ closureCandidateId }) => closureCandidateId));
   const diagnostics: EngineeringDiagnostic[] = [...input.candidateSet.diagnostics];
-  if (!input.policy.preferTerminalRootClosure) {
+  if (rootAmbiguous) {
     diagnostics.push({
       id: `dimension-scheme:DIMENSION_CLOSURE_AMBIGUOUS:${root.id}`,
       severity: 'warning', code: 'DIMENSION_CLOSURE_AMBIGUOUS',
-      message: 'The root closure follows a drafting convention that requires review.', entityIds: [root.id],
+      message: 'Multiple viable closure intervals have equivalent evidence and require review.', entityIds: [root.id],
     });
   }
   for (const closureId of closureCandidateIds) {
@@ -88,7 +93,7 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
             : 'rejected',
     })),
     diagnostics: [],
-    status: input.policy.preferTerminalRootClosure ? 'resolved' : 'needs-review',
+    status: rootAmbiguous ? 'needs-review' : 'resolved',
   };
   const validation = validateAxialDimensionScheme(initial);
   return {
@@ -115,7 +120,7 @@ function materializeInnerChain(
   const uncovered = elementary.filter((candidate) => !protectedCandidates.some((protectedCandidate) => contains(protectedCandidate, candidate, index)));
   if (uncovered.length === 0) return undefined;
   const closure = [...uncovered].sort((left, right) => (
-    right.nominalValue - left.nominalValue || start(left, index) - start(right, index)
+    right.nominalValue - left.nominalValue || compareClosurePreference(left, right, decisions, index)
   ))[0]!;
   const children = uniqueCandidates([
     ...protectedCandidates,
@@ -185,13 +190,86 @@ function viableRootClosureAlternatives(
     } catch {
       return false;
     }
-  }).sort((left, right) => scoreOf(right, decisions) - scoreOf(left, decisions));
+  }).sort((left, right) => compareClosurePreference(left, right, decisions, index));
 }
 
-function terminalCandidates(root: AxialDimensionCandidate, candidates: readonly AxialDimensionCandidate[], index: CoordinateIndex): AxialDimensionCandidate[] {
-  return candidates.filter((candidate) => (
-    candidate.id !== root.id && candidate.endStationId === root.endStationId && contains(root, candidate, index)
-  )).sort((left, right) => start(left, index) - start(right, index));
+function viableClosurePlans(
+  root: AxialDimensionCandidate,
+  candidates: readonly AxialDimensionCandidate[],
+  decisions: readonly DimensionDecisionTrace[],
+  index: CoordinateIndex,
+  orientation: 'forward' | 'reversed',
+): ClosurePlan[] {
+  return candidates.flatMap((closure): ClosurePlan[] => {
+    if (closure.id === root.id || !contains(root, closure, index)) return [];
+    try {
+      return [{
+        closure,
+        leftChildren: solveCoverage(root.startStationId, closure.startStationId, root, candidates, decisions, index),
+        rightChildren: solveCoverage(closure.endStationId, root.endStationId, root, candidates, decisions, index),
+      }];
+    } catch {
+      return [];
+    }
+  }).sort((left, right) => compareRootClosurePreference(
+    root, left.closure, right.closure, decisions, index, orientation,
+  ));
+}
+
+function compareRootClosurePreference(
+  root: AxialDimensionCandidate,
+  left: AxialDimensionCandidate,
+  right: AxialDimensionCandidate,
+  decisions: readonly DimensionDecisionTrace[],
+  index: CoordinateIndex,
+  orientation: 'forward' | 'reversed',
+): number {
+  return Number(!isDirectionalTerminal(root, left, orientation)) - Number(!isDirectionalTerminal(root, right, orientation))
+    || compareClosurePreference(left, right, decisions, index);
+}
+
+function compareClosurePreference(
+  left: AxialDimensionCandidate,
+  right: AxialDimensionCandidate,
+  decisions: readonly DimensionDecisionTrace[],
+  index: CoordinateIndex,
+): number {
+  return Number(left.required) - Number(right.required)
+    || scoreOf(left, decisions) - scoreOf(right, decisions)
+    || left.nominalValue - right.nominalValue
+    || start(left, index) - start(right, index)
+    || left.id.localeCompare(right.id);
+}
+
+function sameClosurePreference(
+  left: AxialDimensionCandidate,
+  right: AxialDimensionCandidate,
+  decisions: readonly DimensionDecisionTrace[],
+): boolean {
+  return left.required === right.required
+    && scoreOf(left, decisions) === scoreOf(right, decisions)
+    && Math.abs(left.nominalValue - right.nominalValue) <= Number.EPSILON;
+}
+
+function sameRootClosurePreference(
+  root: AxialDimensionCandidate,
+  left: AxialDimensionCandidate,
+  right: AxialDimensionCandidate,
+  decisions: readonly DimensionDecisionTrace[],
+  orientation: 'forward' | 'reversed',
+): boolean {
+  return isDirectionalTerminal(root, left, orientation) === isDirectionalTerminal(root, right, orientation)
+    && sameClosurePreference(left, right, decisions);
+}
+
+function isDirectionalTerminal(
+  root: AxialDimensionCandidate,
+  candidate: AxialDimensionCandidate,
+  orientation: 'forward' | 'reversed',
+): boolean {
+  return orientation === 'forward'
+    ? candidate.endStationId === root.endStationId
+    : candidate.startStationId === root.startStationId;
 }
 
 function scoreCandidate(

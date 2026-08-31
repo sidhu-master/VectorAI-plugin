@@ -5,10 +5,13 @@ import {
   buildAxialTopology,
   generateAxialDimensionCandidates,
   inferAxialDimensionScheme,
+  mergeAxialDimensionProjection,
   parseEngineeringDocument,
   policyById,
   projectAxialDimensionScheme,
   type AxialInferencePolicy,
+  type EngineeringAnnotationDraft,
+  type EngineeringAnnotationRevision,
   type PartitionDraft,
   type PartitionRevision,
 } from '@vectorai/engineering-annotation';
@@ -35,7 +38,7 @@ export class DimensionInferenceService {
 
   start(
     agent: Agent,
-    policyId: AxialInferencePolicy['id'] = 'shaft-reference-terminal-closure-v1',
+    policyId: AxialInferencePolicy['id'] = 'shaft-hierarchical-dimensioning-v1',
   ): DimensionPlanSessionSnapshot {
     const sessionId = String(agent.id);
     const drawing = this.space.getSnapshot(agent);
@@ -57,8 +60,14 @@ export class DimensionInferenceService {
       policy: policyById(policyId),
       ...(partition.confirmed?.id === undefined ? {} : { partitionRevisionId: partition.confirmed.id }),
     });
+    const current = this.plans.get(sessionId);
+    const base = current.draft ?? current.confirmed;
+    const projection = projectAxialDimensionScheme({ scheme });
     this.plans.begin(sessionId, drawing.ref);
-    return this.plans.setDraft(sessionId, projectAxialDimensionScheme({ scheme }));
+    return this.plans.setDraft(sessionId, mergeAxialDimensionProjection(
+      base as unknown as EngineeringAnnotationDraft | EngineeringAnnotationRevision | undefined,
+      projection,
+    ));
   }
 
   getState(agent: Agent): DimensionPlanSessionSnapshot {

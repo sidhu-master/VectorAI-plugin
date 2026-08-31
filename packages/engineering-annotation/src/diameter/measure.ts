@@ -4,6 +4,7 @@ import type { DrawingDocument, Vec2 } from '@vectorai/drawing-core';
 import { resolveShaftAxis } from '../shaft/axis';
 import { extractShaftProfile, type ShaftProfilePiece } from '../shaft/profile';
 import type { ShaftAxis } from '../partition/types';
+import { layoutDiameterSpans } from './layout';
 import type { ShaftDiameterFact } from './types';
 
 interface AxialSurface {
@@ -25,10 +26,11 @@ export function measureShaftDiameters(document: DrawingDocument): ShaftDiameterF
   const axis = resolveShaftAxis(document, { regions: [] });
   if (!axis) return [];
   const profile = extractShaftProfile(document, axis);
-  const radialTolerance = Math.max(profile.maxRadius * 5e-4, 0.005);
-  const minimumPieceLength = Math.max(axis.zMax * 2e-4, 0.02);
+  const axisLength = axis.zMax - axis.zMin;
+  const radialTolerance = Math.max(profile.maxRadius * 5e-4, axisLength * 1e-6, Number.EPSILON * 1e6);
+  const minimumPieceLength = Math.max(axisLength * 2e-4, radialTolerance * 4);
   const surfaces = profile.pieces.flatMap((piece) => axialSurface(piece, radialTolerance, minimumPieceLength));
-  return layoutFacts(diameterSpans(surfaces, axis.zMax, radialTolerance), axis);
+  return layoutFacts(diameterSpans(surfaces, axisLength, radialTolerance), axis);
 }
 
 function axialSurface(piece: ShaftProfilePiece, radialTolerance: number, minimumLength: number): AxialSurface[] {
@@ -53,9 +55,14 @@ function diameterSpans(surfaces: AxialSurface[], axisLength: number, radiusToler
     if (!group || reference === undefined || Math.abs(surface.radius - reference) > radiusTolerance) radialGroups.push([surface]);
     else group.push(surface);
   }
-  const axialJoinGap = Math.max(axisLength * 0.08, 2);
-  return radialGroups.flatMap((radialGroup) => splitAxially(radialGroup, axialJoinGap))
-    .flatMap((group) => diameterSpan(group, axisLength));
+  const maximumAxialRadius = Math.max(0, ...radialGroups.map(weightedRadius));
+  const axialJoinGap = Math.max(axisLength * 1e-6, radiusTolerance * 4);
+  return radialGroups.flatMap((radialGroup) => (
+    Math.abs(weightedRadius(radialGroup) - maximumAxialRadius) <= radiusTolerance
+      ? [radialGroup]
+      : splitAxially(radialGroup, axialJoinGap)
+  ))
+    .flatMap((group) => diameterSpan(group, axisLength, radiusTolerance));
 }
 
 function splitAxially(surfaces: AxialSurface[], joinGap: number): AxialSurface[][] {
@@ -74,15 +81,15 @@ function splitAxially(surfaces: AxialSurface[], joinGap: number): AxialSurface[]
   return groups;
 }
 
-function diameterSpan(surfaces: AxialSurface[], axisLength: number): DiameterSpan[] {
+function diameterSpan(surfaces: AxialSurface[], axisLength: number, radiusTolerance: number): DiameterSpan[] {
   const positive = surfaces.filter(({ side }) => side === 1);
   const negative = surfaces.filter(({ side }) => side === -1);
   if (positive.length === 0 || negative.length === 0) return [];
   const positiveCoverage = coverage(positive);
   const negativeCoverage = coverage(negative);
-  const strongPair = Math.min(positiveCoverage, negativeCoverage) >= Math.max(axisLength * 0.003, 0.5);
-  const asymmetricSectionEdge = Math.max(positiveCoverage, negativeCoverage) >= 2
-    && Math.min(positiveCoverage, negativeCoverage) >= 0.05;
+  const strongPair = Math.min(positiveCoverage, negativeCoverage) >= Math.max(axisLength * 0.003, radiusTolerance * 4);
+  const asymmetricSectionEdge = Math.max(positiveCoverage, negativeCoverage) >= radiusTolerance * 20
+    && Math.min(positiveCoverage, negativeCoverage) >= radiusTolerance;
   if (!strongPair && !asymmetricSectionEdge) return [];
   const zStart = Math.max(Math.min(...positive.map(({ zStart }) => zStart)), Math.min(...negative.map(({ zStart }) => zStart)));
   const zEnd = Math.min(Math.max(...positive.map(({ zEnd }) => zEnd)), Math.max(...negative.map(({ zEnd }) => zEnd)));
@@ -98,20 +105,18 @@ function diameterSpan(surfaces: AxialSurface[], axisLength: number): DiameterSpa
 function layoutFacts(spans: DiameterSpan[], axis: ShaftAxis): ShaftDiameterFact[] {
   if (spans.length === 0) return [];
   const maximumRadius = Math.max(...spans.map(({ radius }) => radius));
-  const left = spans.filter(({ zEnd }) => zEnd <= axis.zMax * 0.24).sort((a, b) => a.radius - b.radius);
-  const right = spans.filter((span) => span.zEnd >= axis.zMax * 0.98 || Math.abs(span.radius - maximumRadius) <= 0.01)
-    .filter((span) => !left.includes(span))
-    .sort((a, b) => a.radius - b.radius);
-  const leftLanes = new Map(left.map((span, index) => [span, -10 - index * 9]));
-  const rightLanes = new Map(right.map((span, index) => [span, axis.zMax + 10 + index * 9]));
-  return [...spans]
+  const placements = layoutDiameterSpans(
+    spans.map((span, index) => ({ ...span, id: `diameter-span:${index}` })),
+    { zMin: axis.zMin, zMax: axis.zMax, maximumRadius },
+  );
+  return placements
     .sort((a, b) => a.zStart - b.zStart || a.radius - b.radius)
-    .map((span) => layoutFact(span, axis, leftLanes.get(span) ?? rightLanes.get(span)));
+    .map((span) => layoutFact(span, axis, span.dimensionZ));
 }
 
-function layoutFact(span: DiameterSpan, axis: ShaftAxis, exteriorZ?: number): ShaftDiameterFact {
+function layoutFact(span: DiameterSpan, axis: ShaftAxis, layoutZ?: number): ShaftDiameterFact {
   const sourceZ = (span.zStart + span.zEnd) / 2;
-  const dimensionZ = exteriorZ ?? sourceZ;
+  const dimensionZ = layoutZ ?? sourceZ;
   const sourceLower = world(axis, sourceZ, -span.radius);
   const sourceUpper = world(axis, sourceZ, span.radius);
   const lower = world(axis, dimensionZ, -span.radius);

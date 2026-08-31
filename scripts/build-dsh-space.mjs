@@ -71,6 +71,7 @@ async function buildPluginPair({
     emptyOutDir: false,
     external: serverExternal,
   });
+  await rewriteTypertOwner(join(outputDir, 'lib/typert.js'), clientModuleId);
   await stripTrailingWhitespace(join(outputDir, 'lib/typert.js'));
   await buildClient({
     sourceDirectory: clientDir,
@@ -114,7 +115,11 @@ async function buildClient({ sourceDirectory, outputDirectory, temporaryPrefix, 
 }
 
 function serverExternal(id) {
-  return deepseekExternal(id) || id.startsWith('node:') || id === 'sharp' || id === 'officeparser';
+  return deepseekExternal(id)
+    || id.startsWith('node:')
+    || id === 'sharp'
+    || id === 'officeparser'
+    || id === '@node-projects/acad-ts';
 }
 
 function browserExternal(id) {
@@ -149,6 +154,16 @@ async function buildLibrary({ entry, outDir, fileName, format, external, emptyOu
 async function stripTrailingWhitespace(path) {
   const source = await readFile(path, 'utf8');
   await writeFile(path, source.replace(/[ \t]+$/gm, ''));
+}
+
+async function rewriteTypertOwner(path, packageName) {
+  const source = await readFile(path, 'utf8');
+  const ownerPattern = /package:\s*["'][^"']+["']/g;
+  const owners = source.match(ownerPattern) ?? [];
+  if (owners.length !== 1) {
+    throw new Error(`Expected one TYPERT package owner in ${path}, found ${owners.length}`);
+  }
+  await writeFile(path, source.replace(ownerPattern, `package: ${JSON.stringify(packageName)}`));
 }
 
 function indent(text, spaces) {

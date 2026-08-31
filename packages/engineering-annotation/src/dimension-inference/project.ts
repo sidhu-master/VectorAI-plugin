@@ -7,6 +7,7 @@ import type {
   DimensionFunctionalRole,
   DimensionIntent,
   EngineeringAnnotationDraft,
+  EngineeringAnnotationRevision,
 } from '../dimension/types';
 import type { AxialDimensionCandidate, AxialDimensionScheme } from './types';
 
@@ -41,6 +42,70 @@ export function projectAxialDimensionScheme(input: ProjectAxialSchemeInput): Eng
     axialScheme: structuredClone(input.scheme),
     ...(input.baseRevisionId === undefined ? {} : { baseRevisionId: input.baseRevisionId }),
   };
+}
+
+/**
+ * Replaces only the axial-dimension-owned part of a shared annotation plan.
+ * Datums, GD&T, tolerances and unrelated dimension intents belong to other
+ * workflows and must survive an axial scheme refresh or layout edit.
+ */
+export function mergeAxialDimensionProjection(
+  base: EngineeringAnnotationDraft | EngineeringAnnotationRevision | undefined,
+  projection: EngineeringAnnotationDraft,
+): EngineeringAnnotationDraft {
+  if (!base || base.drawingRef.drawingId !== projection.drawingRef.drawingId
+    || base.drawingRef.revision !== projection.drawingRef.revision) return structuredClone(projection);
+
+  const previousAxialIntentIds = new Set(
+    base.axialScheme?.candidates.map(({ id }) => intentId(id)) ?? [],
+  );
+  const previousAxialChainIds = new Set(base.axialScheme?.chains.map(({ id }) => id) ?? []);
+  const intents = mergeById(
+    base.intents.filter(({ id }) => !previousAxialIntentIds.has(id)),
+    projection.intents,
+  );
+  const intentIds = new Set(intents.map(({ id }) => id));
+  const chains = mergeById(
+    base.chains.filter(({ id }) => !previousAxialChainIds.has(id)),
+    projection.chains,
+  );
+  const dependencies = mergeDependencies(
+    base.dependencies.filter(({ beforeIntentId, afterIntentId }) => (
+      !previousAxialIntentIds.has(beforeIntentId) || !previousAxialIntentIds.has(afterIntentId)
+    )),
+    projection.dependencies,
+  ).filter(({ beforeIntentId, afterIntentId }) => intentIds.has(beforeIntentId) && intentIds.has(afterIntentId));
+
+  return {
+    ...structuredClone(projection),
+    datums: structuredClone(base.datums),
+    intents,
+    tolerances: structuredClone(base.tolerances.filter(({ dimensionIntentId }) => intentIds.has(dimensionIntentId))),
+    geometricTolerances: structuredClone(base.geometricTolerances),
+    chains,
+    dependencies,
+    diagnostics: mergeById(base.diagnostics, projection.diagnostics),
+    ...('id' in base ? { baseRevisionId: base.id }
+      : base.baseRevisionId === undefined ? {} : { baseRevisionId: base.baseRevisionId }),
+  };
+}
+
+function mergeById<T extends { id: string }>(base: readonly T[], replacement: readonly T[]): T[] {
+  const values = new Map(base.map((item) => [item.id, structuredClone(item)]));
+  for (const item of replacement) values.set(item.id, structuredClone(item));
+  return [...values.values()];
+}
+
+function mergeDependencies(
+  base: readonly AnnotationDependency[],
+  replacement: readonly AnnotationDependency[],
+): AnnotationDependency[] {
+  const key = ({ beforeIntentId, afterIntentId, reason }: AnnotationDependency) => (
+    `${beforeIntentId}\u0000${afterIntentId}\u0000${reason}`
+  );
+  const values = new Map(base.map((item) => [key(item), structuredClone(item)]));
+  for (const item of replacement) values.set(key(item), structuredClone(item));
+  return [...values.values()];
 }
 
 function projectIntent(candidate: AxialDimensionCandidate, scheme: AxialDimensionScheme): DimensionIntent {

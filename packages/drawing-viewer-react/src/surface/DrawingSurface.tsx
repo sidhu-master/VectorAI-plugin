@@ -210,7 +210,6 @@ export function DrawingSurface({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => onMouseWorldChange?.(null)}
-      onDoubleClick={() => onViewportChange(fitViewportToDrawing(snapshot.document, viewport, fitPadding))}
     >
       <CadGrid viewport={viewport} showGrid={display.grid} showAxes={display.axes} />
       <rect data-canvas-background="true" width="100%" height="100%" fill="transparent" />

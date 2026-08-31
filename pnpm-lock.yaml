@@ -234,6 +234,9 @@ importers:
       '@newwe/vectorai-plugin-dsh-space':
         specifier: 0.1.0-alpha.0
         version: link:../plugin-dsh-space
+      '@node-projects/acad-ts':
+        specifier: 3.0.2
+        version: 3.0.2
       officeparser:
         specifier: 7.8.0
         version: 7.8.0
@@ -264,6 +267,9 @@ importers:
       '@vectorai/drawing-workspace':
         specifier: workspace:*
         version: link:../drawing-workspace
+      '@vectorai/plugin-dsh-space-client':
+        specifier: workspace:*
+        version: link:../plugin-dsh-space-client
       '@vectorai/plugin-space-contracts':
         specifier: workspace:*
         version: link:../plugin-space-contracts
@@ -319,6 +325,12 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: 0.1.0-rc.8
         version: 0.1.0-rc.8(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.8)
+      '@node-projects/acad-ts':
+        specifier: 3.0.2
+        version: 3.0.2
+      '@vectorai/drawing-core':
+        specifier: workspace:*
+        version: link:../drawing-core
       '@vectorai/engineering-annotation':
         specifier: workspace:*
         version: link:../engineering-annotation
@@ -328,10 +340,6 @@ importers:
       officeparser:
         specifier: 7.8.0
         version: 7.8.0
-    devDependencies:
-      '@vectorai/drawing-core':
-        specifier: workspace:*
-        version: link:../drawing-core
 
   packages/plugin-dsh-space:
     dependencies:
@@ -3140,6 +3148,10 @@ packages:
     requiresBuild: true
     dev: true
     optional: true
+
+  /@node-projects/acad-ts@3.0.2:
+    resolution: {integrity: sha512-o9cD4pX9/gpxrM4S2+phOd8OUCr59EFcpgETe1pgOMocztUJzx7OslSMmi0Af2lO1/xKo+PFXQwTZuRiDOjd5A==}
+    dev: false
 
   /@rolldown/pluginutils@1.0.0-beta.27:
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}

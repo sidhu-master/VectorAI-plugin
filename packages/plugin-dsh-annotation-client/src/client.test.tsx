@@ -53,15 +53,17 @@ describe('annotation client contribution', () => {
         })),
       },
     };
+    const drawingFileExport = { download: vi.fn() };
     const ctx = {
       get(name: string) {
         if (name === 'remote') return remote;
         if (name === 'drawingSurfaceRegistry') return registry;
+        if (name === 'drawingFileExport') return drawingFileExport;
         if (name === 'slots') return slots;
         throw new Error(`unexpected service ${name}`);
       },
       inject(deps: string[], callback: (scope: Context) => unknown) {
-        expect(deps).toEqual(['remote.drawingAnnotation', 'drawingSurfaceRegistry', 'slots']);
+        expect(deps).toEqual(['remote.drawingAnnotation', 'drawingSurfaceRegistry', 'drawingFileExport', 'slots']);
         disposeInjected = callback(ctx as unknown as Context) as (() => void) | undefined;
         return { dispose: disposeFiber };
       },

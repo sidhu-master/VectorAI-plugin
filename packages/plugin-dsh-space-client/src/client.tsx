@@ -26,10 +26,12 @@ import { DrawingSurfaceHost } from './DrawingSurfaceHost';
 import { createDrawingSurfaceRegistry } from './surface-registry';
 import { VectorAIWorkspaceOverlay, type DrawingPresence } from './VectorAIWorkspaceOverlay';
 import type { DrawingWorkspaceSlotProps } from './workspace-slot';
+import { createDrawingFileExport, type DrawingFileExport } from './drawing-export';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     drawingSurfaceRegistry: DrawingSurfaceRegistry;
+    drawingFileExport: DrawingFileExport;
   }
 }
 
@@ -44,6 +46,7 @@ interface DrawingConversationViewProps extends Pick<DrawingWorkspaceSlotProps, '
   inputActions: DrawingWorkspaceSlotProps['inputActions'];
   createDraftImages(files: readonly File[]): readonly { id: string }[];
   releaseSources(): void;
+  drawingFileExport: DrawingFileExport;
 }
 
 function sessionIsRunning(snapshot: unknown): boolean {
@@ -62,6 +65,7 @@ export function DrawingConversationView({
   inputActions,
   createDraftImages,
   releaseSources,
+  drawingFileExport,
 }: DrawingConversationViewProps) {
   const running = useSession(sessionIsRunning);
   const store = useMemo(
@@ -105,7 +109,13 @@ export function DrawingConversationView({
           className="vai-dsh-workspace-host"
           data-conversation-workspace-active=""
         >
-          <DrawingWorkspace onUploadFiles={uploadDrawing} />
+          <DrawingWorkspace
+            onUploadFiles={uploadDrawing}
+            onExport={() => {
+              const snapshot = store.getState().displaySnapshot;
+              if (snapshot !== null) void drawingFileExport.download(sessionId, snapshot).catch(() => undefined);
+            }}
+          />
         </div>}
       />
     </DrawingWorkspaceProvider>
@@ -115,7 +125,9 @@ export function DrawingConversationView({
 // eslint-disable-next-line react-refresh/only-export-components
 export async function apply(ctx: Context) {
   const surfaceRegistry = createDrawingSurfaceRegistry();
+  const drawingFileExport = createDrawingFileExport();
   const disposeRegistry = ctx.provide('drawingSurfaceRegistry', surfaceRegistry);
+  const disposeFileExport = ctx.provide('drawingFileExport', drawingFileExport);
   const remote = ctx.get('remote');
   const slots = ctx.get('slots');
   const disposeRemote = await remote.$mount(DRAWING_SPACE_REMOTE);
@@ -172,6 +184,7 @@ export async function apply(ctx: Context) {
           }),
           createDraftImages: (files: readonly File[]) => conversation.createDraftImages(files),
           releaseSources: () => undefined,
+          drawingFileExport,
         };
       },
     } as never, DrawingConversationView as never));
@@ -180,6 +193,7 @@ export async function apply(ctx: Context) {
     await viewFiber.dispose();
     await overlayFiber.dispose();
     await disposeRegistry();
+    await disposeFileExport();
     await disposeRemote();
   };
 }

@@ -55,6 +55,7 @@ import { renderDrawingObservation } from './review-renderer';
 import type { DrawingInteractiveStageResult } from '@vectorai/drawing-workspace';
 import type { OperationLookupResult } from '@vectorai/drawing-edit-protocol';
 import { ExtensionPreviewService } from './extension-preview-service';
+import { registerDrawingDxfExport } from './drawing-export';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -63,7 +64,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export class DrawingSpaceHostService extends TypertRemoteService implements DrawingSpaceExtensionHost<Agent> {
-  static inject = ['tools', 'attachments', 'userQuestions', 'commands', 'agents', 'subagents'];
+  static inject = ['tools', 'attachments', 'userQuestions', 'commands', 'agents', 'subagents', 'connection'];
 
   private readonly drawings: InMemoryDrawingRepository;
   private readonly semantic: SemanticEditService;
@@ -77,6 +78,7 @@ export class DrawingSpaceHostService extends TypertRemoteService implements Draw
       vectorizer: new LocalCleanLineVectorizer(),
       storage: new FileDrawingRepositoryStorage(resolve(homedir(), '.dsh/vectorai/drawings')),
     });
+    registerDrawingDxfExport(ctx, this.drawings);
     const editPorts = {
       id: (kind) => `${kind}_${randomUUID()}`,
       now: Date.now,
