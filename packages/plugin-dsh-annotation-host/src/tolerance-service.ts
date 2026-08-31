@@ -1,0 +1,258 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  applyFitTolerance,
+  applySingleTolerance,
+  canonicalRuleInputDigest,
+  createGbt1800Provider,
+  type EngineeringAnnotationDraft,
+  type EngineeringDiagnostic,
+  type ResolvedFit,
+  type ResolvedStandardTolerance,
+  type ToleranceSpec,
+  type ToleranceStandardProvider,
+} from '@vectorai/engineering-annotation';
+import type {
+  DimensionPlanSessionSnapshot,
+  DrawingRef,
+  ToleranceCatalogRequest,
+  ToleranceCatalogResult,
+  ToleranceEditCommand,
+  TolerancePreviewRequest,
+  TolerancePreviewResult,
+} from '@vectorai/plugin-space-contracts';
+import type { DimensionPlanStore, ToleranceEditResolution } from './dimension-plan-store';
+
+type AnnotationPlan = NonNullable<DimensionPlanSessionSnapshot['draft'] | DimensionPlanSessionSnapshot['confirmed']>;
+
+export class ToleranceService {
+  constructor(
+    private readonly plans: DimensionPlanStore,
+    private readonly provider: ToleranceStandardProvider = createGbt1800Provider(),
+  ) {}
+
+  query(sessionId: string, request: ToleranceCatalogRequest): ToleranceCatalogResult {
+    const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
+    const intent = requireIntent(plan, request.dimensionIntentId);
+    requireMillimetreSize(intent);
+    const matching = [...plan.tolerances].reverse().find(({ dimensionIntentId }) => dimensionIntentId === request.dimensionIntentId);
+    const recommendation = matching?.source === 'ai-candidate'
+      && matching.featureClass === request.featureClass
+      && matching.selection?.source === 'ai-recommended'
+      && matching.selection.evidenceRefs.length > 0
+      && this.provider.listBands({ basicSize: intent.nominalValue, featureClass: request.featureClass })
+        .some(({ designation, available }) => designation === matching.selection!.designation && available)
+      ? {
+        designation: matching.selection.designation,
+        source: 'ai-recommended' as const,
+        evidenceRefs: [...matching.selection.evidenceRefs],
+      }
+      : undefined;
+    return {
+      drawingRef: plan.drawingRef,
+      dimensionIntentId: request.dimensionIntentId,
+      featureClass: request.featureClass,
+      standardRef: { ...this.provider.standardRef },
+      datasetMetadata: {
+        ...this.provider.datasetMetadata,
+        numericProvenance: this.provider.datasetMetadata.numericProvenance.map((item) => ({ ...item })),
+      },
+      bands: structuredClone(this.provider.listBands({ basicSize: intent.nominalValue, featureClass: request.featureClass })),
+      ...(matching?.source === 'standard' && matching.selection ? { selection: { ...matching.selection } } : {}),
+      ...(recommendation === undefined ? {} : { recommendation }),
+    };
+  }
+
+  preview(sessionId: string, request: TolerancePreviewRequest): TolerancePreviewResult {
+    const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
+    if (request.type === 'single') {
+      const intent = requireIntent(plan, request.dimensionIntentId);
+      const basicSize = requireMillimetreSize(intent);
+      return {
+        type: 'single', drawingRef: plan.drawingRef, dimensionIntentId: request.dimensionIntentId, status: 'resolved',
+        result: this.provider.resolveBand({ basicSize, featureClass: request.featureClass, designation: request.designation }),
+      };
+    }
+    const basicSize = requireEqualFitSize(plan, request.holeDimensionIntentId, request.shaftDimensionIntentId);
+    return {
+      type: 'fit', drawingRef: plan.drawingRef,
+      holeDimensionIntentId: request.holeDimensionIntentId, shaftDimensionIntentId: request.shaftDimensionIntentId,
+      status: 'resolved',
+      result: this.provider.resolveFit({ basicSize, basis: request.basis, designation: request.designation }),
+    };
+  }
+
+  edit(sessionId: string, command: ToleranceEditCommand): DimensionPlanSessionSnapshot {
+    const plan = requirePlan(this.plans.get(sessionId), command.expectedDrawingRef);
+    let resolved: ToleranceEditResolution;
+    if (command.type === 'standard.single.apply') {
+      const basicSize = requireMillimetreSize(requireIntent(plan, command.dimensionIntentId));
+      const result = this.provider.resolveBand({ basicSize, featureClass: command.featureClass, designation: command.designation });
+      verifyDigest(result, this.provider);
+      resolved = result;
+    } else if (command.type === 'standard.fit.apply') {
+      const basicSize = requireEqualFitSize(plan, command.holeDimensionIntentId, command.shaftDimensionIntentId);
+      const result = this.provider.resolveFit({ basicSize, basis: command.basis, designation: command.designation });
+      verifyDigest(result.hole, this.provider);
+      verifyDigest(result.shaft, this.provider);
+      resolved = result;
+    }
+    return this.plans.editTolerance(sessionId, command, resolved);
+  }
+}
+
+export function createToleranceReconciler(provider: ToleranceStandardProvider = createGbt1800Provider()) {
+  return (draft: EngineeringAnnotationDraft): EngineeringAnnotationDraft => reconcileTolerances(draft, provider);
+}
+
+function reconcileTolerances(
+  draft: EngineeringAnnotationDraft,
+  provider: ToleranceStandardProvider,
+): EngineeringAnnotationDraft {
+  let next = structuredClone(draft);
+  const handled = new Set<string>();
+  for (const assignment of draft.fitAssignments) {
+    const members = draft.tolerances.filter(({ fitGroupId }) => fitGroupId === assignment.fitGroupId);
+    const hole = draft.intents.find(({ id }) => id === assignment.holeDimensionId);
+    const shaft = draft.intents.find(({ id }) => id === assignment.shaftDimensionId);
+    if (!hole || !shaft) continue;
+    const changed = members.some((spec) => spec.inputs.basicSize !== requireMillimetreSize(
+      spec.dimensionIntentId === hole.id ? hole : shaft,
+    ));
+    if (!changed) continue;
+    handled.add(assignment.fitGroupId);
+    if (hole.unit !== 'mm' || shaft.unit !== 'mm' || hole.nominalValue !== shaft.nominalValue) {
+      next = staleFit(next, assignment.fitGroupId, 'FIT_PAIR_BASIC_SIZE_MISMATCH');
+      continue;
+    }
+    try {
+      const result = provider.resolveFit({
+        basicSize: hole.nominalValue, basis: assignment.basis, designation: assignment.designation,
+      });
+      verifyDigest(result.hole, provider);
+      verifyDigest(result.shaft, provider);
+      const overrides = new Map(members.flatMap((spec) => spec.override ? [[spec.dimensionIntentId, spec.override] as const] : []));
+      next = applyFitTolerance(next, result, {
+        fitGroupId: assignment.fitGroupId,
+        holeDimensionIntentId: assignment.holeDimensionId,
+        shaftDimensionIntentId: assignment.shaftDimensionId,
+        selectionSource: members[0]?.selection?.source ?? 'manual',
+        displayPreference: members[0]?.displayPreference ?? 'deviations',
+        evidenceRefs: members[0]?.selection?.evidenceRefs ?? members[0]?.evidenceIds ?? [],
+      });
+      next.tolerances = next.tolerances.map((spec) => attachOverrideReview(spec, overrides.get(spec.dimensionIntentId)));
+    } catch (error) {
+      next = staleFit(next, assignment.fitGroupId, errorCode(error));
+    }
+  }
+
+  for (const original of draft.tolerances) {
+    if (original.fitGroupId && handled.has(original.fitGroupId)) continue;
+    if (original.source !== 'standard' || original.fitGroupId || !original.selection || !original.featureClass) continue;
+    const intent = draft.intents.find(({ id }) => id === original.dimensionIntentId);
+    if (!intent || original.inputs.basicSize === intent.nominalValue) continue;
+    try {
+      const basicSize = requireMillimetreSize(intent);
+      const result = provider.resolveBand({
+        basicSize, featureClass: original.featureClass, designation: original.selection.designation,
+      });
+      verifyDigest(result, provider);
+      next = applySingleTolerance(next, result, {
+        dimensionIntentId: original.dimensionIntentId,
+        selectionSource: original.selection.source,
+        displayPreference: original.displayPreference ?? 'deviations',
+        evidenceRefs: original.selection.evidenceRefs,
+      });
+      next.tolerances = next.tolerances.map((spec) => spec.dimensionIntentId === original.dimensionIntentId
+        ? attachOverrideReview(spec, original.override)
+        : spec);
+    } catch (error) {
+      next.tolerances = next.tolerances.map((spec) => spec.dimensionIntentId === original.dimensionIntentId
+        ? staleSpec(spec, intent.nominalValue, errorCode(error))
+        : spec);
+    }
+  }
+  return next;
+}
+
+function staleFit(draft: EngineeringAnnotationDraft, fitGroupId: string, code: string): EngineeringAnnotationDraft {
+  const intents = new Map(draft.intents.map((intent) => [intent.id, intent]));
+  return {
+    ...draft,
+    fitAssignments: draft.fitAssignments.filter((assignment) => assignment.fitGroupId !== fitGroupId),
+    tolerances: draft.tolerances.map((spec) => spec.fitGroupId === fitGroupId
+      ? staleSpec(spec, intents.get(spec.dimensionIntentId)?.nominalValue, code)
+      : spec),
+  };
+}
+
+function staleSpec(spec: ToleranceSpec, basicSize: number | undefined, code: string): ToleranceSpec {
+  const { resolved: _resolved, ...withoutResolved } = spec;
+  const diagnostics = [diagnostic(spec.id, code), ...(spec.override ? [diagnostic(spec.id, 'TOLERANCE_OVERRIDE_REVIEW_REQUIRED')] : [])];
+  return {
+    ...withoutResolved,
+    inputs: basicSize === undefined ? { ...spec.inputs } : { ...spec.inputs, basicSize },
+    status: 'stale',
+    diagnostics,
+  };
+}
+
+function attachOverrideReview(spec: ToleranceSpec, override: ToleranceSpec['override']): ToleranceSpec {
+  if (!override) return spec;
+  return { ...spec, override: { ...override }, diagnostics: [diagnostic(spec.id, 'TOLERANCE_OVERRIDE_REVIEW_REQUIRED')] };
+}
+
+function diagnostic(entityId: string, code: string): EngineeringDiagnostic {
+  return {
+    id: `tolerance:${code}:${entityId}`, severity: 'warning', code, message: code, entityIds: [entityId],
+  };
+}
+
+function requirePlan(snapshot: DimensionPlanSessionSnapshot, expected: DrawingRef): AnnotationPlan {
+  if (!snapshot.drawingRef || !sameRef(snapshot.drawingRef, expected)) throw new Error('ANNOTATION_PLAN_DRAWING_STALE');
+  const plan = snapshot.draft ?? snapshot.confirmed;
+  if (!plan) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+  if (!sameRef(plan.drawingRef, expected)) throw new Error('ANNOTATION_PLAN_DRAWING_STALE');
+  return plan;
+}
+
+function requireIntent(plan: AnnotationPlan, id: string): AnnotationPlan['intents'][number] {
+  const intent = plan.intents.find((candidate) => candidate.id === id);
+  if (!intent) throw new Error('TOLERANCE_INTENT_UNKNOWN');
+  return intent;
+}
+
+function requireMillimetreSize(intent: { unit: string; nominalValue: number }): number {
+  if (intent.unit !== 'mm' || !Number.isFinite(intent.nominalValue)) throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
+  return intent.nominalValue;
+}
+
+function requireEqualFitSize(plan: AnnotationPlan, holeId: string, shaftId: string): number {
+  if (holeId === shaftId) throw new Error('TOLERANCE_FIT_INTENTS_DISTINCT');
+  const hole = requireMillimetreSize(requireIntent(plan, holeId));
+  const shaft = requireMillimetreSize(requireIntent(plan, shaftId));
+  if (hole !== shaft) throw new Error('FIT_PAIR_BASIC_SIZE_MISMATCH');
+  return hole;
+}
+
+function verifyDigest(result: ResolvedStandardTolerance, provider: ToleranceStandardProvider): void {
+  const expected = canonicalRuleInputDigest({
+    nominalValue: result.basicSize,
+    unit: 'mm',
+    inputs: {
+      standardId: provider.standardRef.id,
+      edition: provider.standardRef.edition,
+      featureClass: result.featureClass,
+      designation: result.designation,
+    },
+  });
+  if (result.ruleRef.inputDigest !== expected) throw new Error('TOLERANCE_INPUT_DIGEST_MISMATCH');
+}
+
+function errorCode(error: unknown): string {
+  return error instanceof Error && error.message.trim().length > 0 ? error.message : 'TOLERANCE_STANDARD_UNAVAILABLE';
+}
+
+function sameRef(first: DrawingRef, second: DrawingRef): boolean {
+  return first.drawingId === second.drawingId && first.revision === second.revision;
+}

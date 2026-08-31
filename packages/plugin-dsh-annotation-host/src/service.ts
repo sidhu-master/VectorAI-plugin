@@ -16,7 +16,13 @@ import type {
   DimensionPlanSessionSnapshot,
   DimensionSchemeEditCommand,
   GeometricToleranceEditCommand,
+  ToleranceCatalogRequest,
+  ToleranceCatalogResult,
+  ToleranceEditCommand,
+  TolerancePreviewRequest,
+  TolerancePreviewResult,
 } from '@vectorai/plugin-space-contracts';
+import { createGbt1800Provider } from '@vectorai/engineering-annotation';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
@@ -47,6 +53,7 @@ import {
   isGenericAutoAnnotationText,
 } from './auto-annotation-route';
 import { registerEngineeringDxfExport } from './drawing-export';
+import { createToleranceReconciler, ToleranceService } from './tolerance-service';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -64,6 +71,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   readonly dimensionPlans: DimensionPlanStore;
   readonly dimensionInference: DimensionInferenceService;
   readonly gdt: GdtService;
+  readonly tolerances: ToleranceService;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingAnnotation');
@@ -73,9 +81,13 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     this.partitions = new PartitionSessionStore(new FilePartitionStorage(
       resolve(homedir(), '.dsh/vectorai/annotation-partitions'),
     ));
-    this.dimensionPlans = new DimensionPlanStore(new FileDimensionPlanStorage(
-      resolve(homedir(), '.dsh/vectorai/dimension-plans'),
-    ));
+    const toleranceProvider = createGbt1800Provider();
+    this.dimensionPlans = new DimensionPlanStore(
+      new FileDimensionPlanStorage(resolve(homedir(), '.dsh/vectorai/dimension-plans')),
+      undefined,
+      createToleranceReconciler(toleranceProvider),
+    );
+    this.tolerances = new ToleranceService(this.dimensionPlans, toleranceProvider);
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,
       this.partitions,
@@ -294,6 +306,21 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   @Remote
   redoDimensionPlan(agent: Agent, expected: DrawingRef): DimensionPlanSessionSnapshot {
     return this.dimensionInference.redo(agent, expected);
+  }
+
+  @Remote
+  queryToleranceCatalog(agent: Agent, request: ToleranceCatalogRequest): ToleranceCatalogResult {
+    return this.tolerances.query(String(agent.id), request);
+  }
+
+  @Remote
+  previewTolerance(agent: Agent, request: TolerancePreviewRequest): TolerancePreviewResult {
+    return this.tolerances.preview(String(agent.id), request);
+  }
+
+  @Remote
+  editTolerance(agent: Agent, command: ToleranceEditCommand): DimensionPlanSessionSnapshot {
+    return this.tolerances.edit(String(agent.id), command);
   }
 }
 

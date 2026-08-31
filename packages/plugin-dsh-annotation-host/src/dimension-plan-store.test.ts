@@ -2,6 +2,9 @@
 
 import type { GeometryId } from '@vectorai/drawing-core';
 import {
+  applyFitTolerance,
+  applySingleTolerance,
+  createGbt1800Provider,
   projectAxialDimensionScheme,
   type AxialDimensionScheme,
   type EngineeringAnnotationDraft,
@@ -11,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
+import { createToleranceReconciler } from './tolerance-service';
 
 function draft(nominalValue = 20): EngineeringAnnotationDraft {
   return {
@@ -26,7 +30,7 @@ function draft(nominalValue = 20): EngineeringAnnotationDraft {
       nominalValue, unit: 'mm', functionalRole: 'closure', source: 'manual', status: 'confirmed',
       evidenceIds: ['manual:closure'],
     }],
-    tolerances: [], geometricTolerances: [],
+    tolerances: [], fitAssignments: [], geometricTolerances: [],
     chains: [{
       id: 'chain-1', drawingRef: { drawingId: 'drawing-1', revision: 1 }, datumIds: [],
       members: [
@@ -332,5 +336,77 @@ describe('DimensionPlanStore', () => {
     store.begin('session', drawingRef);
     store.setDraft('session', inferredDraft(status));
     expect(() => store.confirm('session', drawingRef)).toThrow('ANNOTATION_PLAN_INVALID');
+  });
+
+  it('re-resolves a preserved standard selection only when its nominal input changes within verified data', () => {
+    const provider = createGbt1800Provider();
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' }, createToleranceReconciler(provider));
+    const value = draft(13);
+    value.tolerances = [applySingleTolerance(value, provider.resolveBand({
+      basicSize: 13, featureClass: 'external', designation: 'u6',
+    }), {
+      dimensionIntentId: 'component', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:u6'],
+    }).tolerances[0]!];
+    const oldDigest = value.tolerances[0]!.resolved!.inputDigest;
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+
+    const changed = structuredClone(value);
+    changed.intents[0]!.nominalValue = 14;
+    const reconciled = store.setDraft('session', changed).draft!.tolerances[0]!;
+    expect(reconciled).toMatchObject({
+      status: 'resolved', inputs: { basicSize: 14 },
+      resolved: { upperDeviation: .044, lowerDeviation: .033, upperLimit: 14.044, lowerLimit: 14.033 },
+    });
+    expect(reconciled.resolved?.inputDigest).not.toBe(oldDigest);
+  });
+
+  it('marks an unavailable partial-data recalculation stale and keeps a manual override for review', () => {
+    const provider = createGbt1800Provider();
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' }, createToleranceReconciler(provider));
+    let value = draft(13);
+    value = applySingleTolerance(value, provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'u6' }), {
+      dimensionIntentId: 'component', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:u6'],
+    });
+    value.tolerances[0]!.override = { upperDeviation: .05, lowerDeviation: .04 };
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+
+    const changed = structuredClone(value);
+    changed.intents[0]!.nominalValue = 19;
+    const stale = store.setDraft('session', changed).draft!.tolerances[0]!;
+    expect(stale).toMatchObject({
+      status: 'stale', selection: { designation: 'u6' }, override: { upperDeviation: .05, lowerDeviation: .04 },
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ code: 'TOLERANCE_STANDARD_UNAVAILABLE' }),
+        expect.objectContaining({ code: 'TOLERANCE_OVERRIDE_REVIEW_REQUIRED' }),
+      ]),
+    });
+    expect(stale).not.toHaveProperty('resolved');
+  });
+
+  it('marks both members stale and removes old fit values when paired nominal sizes diverge', () => {
+    const provider = createGbt1800Provider();
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' }, createToleranceReconciler(provider));
+    const value = draft(13);
+    value.intents[0]!.id = 'hole';
+    value.intents[1]!.id = 'shaft';
+    value.fitAssignments = [];
+    const fitted = applyFitTolerance(value, provider.resolveFit({ basicSize: 13, basis: 'hole', designation: 'H7/g6' }), {
+      fitGroupId: 'fit:hole:shaft', holeDimensionIntentId: 'hole', shaftDimensionIntentId: 'shaft',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+    });
+    store.begin('session', drawingRef);
+    store.setDraft('session', fitted);
+
+    const changed = structuredClone(fitted);
+    changed.intents.find(({ id }) => id === 'shaft')!.nominalValue = 14;
+    const reconciled = store.setDraft('session', changed).draft!;
+    expect(reconciled.fitAssignments).toEqual([]);
+    expect(reconciled.tolerances.filter(({ fitGroupId }) => fitGroupId === 'fit:hole:shaft')).toEqual([
+      expect.objectContaining({ status: 'stale', diagnostics: [expect.objectContaining({ code: 'FIT_PAIR_BASIC_SIZE_MISMATCH' })] }),
+      expect.objectContaining({ status: 'stale', diagnostics: [expect.objectContaining({ code: 'FIT_PAIR_BASIC_SIZE_MISMATCH' })] }),
+    ]);
+    expect(reconciled.tolerances.filter(({ fitGroupId }) => fitGroupId === 'fit:hole:shaft').every(({ resolved }) => resolved === undefined)).toBe(true);
   });
 });

@@ -2,16 +2,23 @@
 
 import {
   analyzeDimensionChain,
+  applyFitTolerance,
   applyGeometricToleranceEdit,
   applyDimensionSchemeEdit,
+  applyManualTolerance,
+  applySingleTolerance,
+  clearToleranceOverride,
   mergeAxialDimensionProjection,
   orderDimensionIntents,
   projectAxialDimensionScheme,
+  setToleranceOverride,
   validateEngineeringDraft,
   withSwitchableClosureAlternatives,
   type AxialDimensionScheme,
   type EngineeringAnnotationDraft,
   type EngineeringDiagnostic,
+  type ResolvedFit,
+  type ResolvedStandardTolerance,
 } from '@vectorai/engineering-annotation';
 import {
   dimensionPlanSessionSnapshotSchema,
@@ -21,6 +28,7 @@ import {
   type DimensionSchemeEditCommand,
   type DrawingRef,
   type GeometricToleranceEditCommand,
+  type ToleranceEditCommand,
 } from '@vectorai/plugin-space-contracts';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -38,6 +46,9 @@ interface DimensionPlanEnvelope {
   lastConfirmed?: NonNullable<DimensionPlanSessionSnapshot['confirmed']>;
 }
 
+export type ToleranceEditResolution = ResolvedStandardTolerance | ResolvedFit | undefined;
+export type ReconcileTolerances = (draft: EngineeringAnnotationDraft) => EngineeringAnnotationDraft;
+
 export class DimensionPlanStore {
   readonly #states = new Map<string, DimensionPlanEnvelope>();
 
@@ -47,6 +58,7 @@ export class DimensionPlanStore {
       now: Date.now,
       id: () => `dimension_plan_${globalThis.crypto.randomUUID()}`,
     },
+    private readonly reconcileTolerances: ReconcileTolerances = (draft) => draft,
   ) {}
 
   get(sessionId: string): DimensionPlanSessionSnapshot {
@@ -69,7 +81,7 @@ export class DimensionPlanStore {
   setDraft(sessionId: string, draft: EngineeringAnnotationDraft): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, draft.drawingRef);
-    const parsedDraft = engineeringAnnotationDraftSchema.parse(compact(draft));
+    const parsedDraft = engineeringAnnotationDraftSchema.parse(compact(this.reconcileTolerances(structuredClone(draft))));
     return this.#push(sessionId, {
       version: 1,
       phase: 'editing',
@@ -205,6 +217,64 @@ export class DimensionPlanStore {
     return this.setDraft(sessionId, { ...draft, geometricTolerances });
   }
 
+  editTolerance(
+    sessionId: string,
+    command: ToleranceEditCommand,
+    resolved: ToleranceEditResolution,
+  ): DimensionPlanSessionSnapshot {
+    const state = this.#envelope(sessionId);
+    requireRef(state.snapshot, command.expectedDrawingRef);
+    const draft = (state.snapshot.draft as unknown as EngineeringAnnotationDraft | undefined)
+      ?? editableDraftFrom(state.snapshot.confirmed);
+    if (!draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+    let edited: EngineeringAnnotationDraft;
+    if (command.type === 'standard.single.apply') {
+      if (!resolved || !('featureClass' in resolved)) throw new Error('TOLERANCE_RESULT_REQUIRED');
+      edited = applySingleTolerance(draft, resolved, {
+        dimensionIntentId: command.dimensionIntentId,
+        selectionSource: command.selectionSource,
+        displayPreference: command.displayPreference,
+        evidenceRefs: command.evidenceRefs,
+      });
+    } else if (command.type === 'standard.fit.apply') {
+      if (!resolved || !('hole' in resolved)) throw new Error('TOLERANCE_RESULT_REQUIRED');
+      edited = applyFitTolerance(draft, resolved, {
+        fitGroupId: `fit:${command.holeDimensionIntentId}:${command.shaftDimensionIntentId}`,
+        holeDimensionIntentId: command.holeDimensionIntentId,
+        shaftDimensionIntentId: command.shaftDimensionIntentId,
+        selectionSource: command.selectionSource,
+        displayPreference: command.displayPreference,
+        evidenceRefs: command.evidenceRefs,
+      });
+    } else if (command.type === 'manual.apply') {
+      edited = applyManualTolerance(draft, {
+        dimensionIntentId: command.dimensionIntentId,
+        mode: command.mode,
+        ...(command.upperDeviation === undefined ? {} : { upperDeviation: command.upperDeviation }),
+        ...(command.lowerDeviation === undefined ? {} : { lowerDeviation: command.lowerDeviation }),
+        displayPreference: command.displayPreference,
+        evidenceRefs: command.evidenceRefs,
+      });
+    } else if (command.type === 'standard.override.set') {
+      edited = setToleranceOverride(draft, command.dimensionIntentId, {
+        upperDeviation: command.upperDeviation, lowerDeviation: command.lowerDeviation,
+      });
+    } else {
+      edited = clearToleranceOverride(draft, command.dimensionIntentId);
+    }
+    const parsedDraft = engineeringAnnotationDraftSchema.parse(compact(edited));
+    return this.#push(sessionId, {
+      version: 1,
+      phase: 'editing',
+      drawingRef: parsedDraft.drawingRef,
+      draft: parsedDraft as unknown as DimensionPlanSessionSnapshot['draft'],
+      ...(state.snapshot.confirmed === undefined ? {} : { confirmed: state.snapshot.confirmed }),
+      canUndo: true,
+      canRedo: false,
+      updatedAt: this.ports.now(),
+    });
+  }
+
   confirm(sessionId: string, expected: DrawingRef): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, expected);
@@ -226,6 +296,7 @@ export class DimensionPlanStore {
       datums: draft.datums,
       intents: draft.intents,
       tolerances: draft.tolerances,
+      fitAssignments: draft.fitAssignments,
       geometricTolerances: draft.geometricTolerances,
       chains: draft.chains,
       dependencies: draft.dependencies,
@@ -358,6 +429,7 @@ function editableDraftFrom(
     datums: revision.datums,
     intents: revision.intents,
     tolerances: revision.tolerances,
+    fitAssignments: revision.fitAssignments,
     geometricTolerances: revision.geometricTolerances,
     chains: revision.chains,
     dependencies: revision.dependencies,

@@ -12,6 +12,11 @@ import {
   dimensionPlanSessionSnapshotSchema,
   dimensionSchemeEditCommandSchema,
   geometricToleranceEditCommandSchema,
+  toleranceCatalogRequestSchema,
+  toleranceCatalogResultSchema,
+  toleranceEditCommandSchema,
+  tolerancePreviewRequestSchema,
+  tolerancePreviewResultSchema,
 } from '@vectorai/plugin-space-contracts';
 
 const agentParameter = {
@@ -43,7 +48,7 @@ export const TYPERT = {
     sourceLocation: {
       file: 'packages/plugin-dsh-annotation-host/src/service.ts', line: 41, column: 3,
     },
-  }, ...partitionInvocations(), ...dimensionInvocations()],
+  }, ...partitionInvocations(), ...dimensionInvocations(), ...toleranceInvocations()],
   model: { services: [], events: [], objects: [] },
 } as const;
 
@@ -62,6 +67,55 @@ function partitionInvocations() {
     invocation('undoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     invocation('redoPartition', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
   ] as const;
+}
+
+function toleranceInvocations() {
+  return [
+    toleranceInvocation(
+      'queryToleranceCatalog',
+      'ToleranceCatalogRequest',
+      toleranceCatalogRequestSchema,
+      'ToleranceCatalogResult',
+      toleranceCatalogResultSchema,
+    ),
+    toleranceInvocation(
+      'previewTolerance',
+      'TolerancePreviewRequest',
+      tolerancePreviewRequestSchema,
+      'TolerancePreviewResult',
+      tolerancePreviewResultSchema,
+    ),
+    toleranceInvocation(
+      'editTolerance',
+      'ToleranceEditCommand',
+      toleranceEditCommandSchema,
+      'DimensionPlanSessionSnapshot',
+      dimensionPlanSessionSnapshotSchema,
+    ),
+  ] as const;
+}
+
+function toleranceInvocation(
+  method: string,
+  parameterType: string,
+  parameterSchema: { parse(input: unknown): unknown },
+  resultType: string,
+  resultSchema: { parse(input: unknown): unknown },
+) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: 'drawingAnnotation', namespace: 'drawingAnnotation', method,
+    invocation: { kind: 'direct' }, scope: { context: 'agent', wire: 'agentId' },
+    parameters: [agentParameter, jsonParameter(
+      method === 'editTolerance' ? 'command' : 'request',
+      `@vectorai/plugin-space-contracts#${parameterType}`,
+      parameterSchema,
+    )],
+    result: {
+      mode: 'strict', typeSymbol: `@vectorai/plugin-space-contracts#${resultType}`, schema: resultSchema,
+    },
+    sourceLocation: { file: 'packages/plugin-dsh-annotation-host/src/service.ts', line: 300, column: 3 },
+  } as const;
 }
 
 function dimensionInvocations() {
