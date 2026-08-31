@@ -228,8 +228,7 @@ export class DimensionPlanStore {
       ?? editableDraftFrom(state.snapshot.confirmed);
     if (!draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
     if ((command.type === 'standard.single.apply' || command.type === 'manual.apply')
-      && draft.fitAssignments.some((assignment) => assignment.holeDimensionId === command.dimensionIntentId
-        || assignment.shaftDimensionId === command.dimensionIntentId)) {
+      && isFitPairMember(draft, command.dimensionIntentId)) {
       throw new Error('FIT_PAIR_TARGET_CONFLICT');
     }
     let edited: EngineeringAnnotationDraft;
@@ -535,6 +534,15 @@ function requireRef(snapshot: DimensionPlanSessionSnapshot, expected: DrawingRef
 
 function sameRef(first: DrawingRef, second: DrawingRef): boolean {
   return first.drawingId === second.drawingId && first.revision === second.revision;
+}
+
+function isFitPairMember(draft: EngineeringAnnotationDraft, dimensionIntentId: string): boolean {
+  if (draft.fitAssignments.some((assignment) => assignment.holeDimensionId === dimensionIntentId
+    || assignment.shaftDimensionId === dimensionIntentId)) return true;
+  return draft.tolerances.some((spec) => spec.fitGroupId !== undefined
+    && spec.status === 'stale'
+    && (spec.inputs.fitHoleDimensionId === dimensionIntentId
+      || spec.inputs.fitShaftDimensionId === dimensionIntentId));
 }
 
 function problem(code: string, entityId: string): EngineeringDiagnostic {

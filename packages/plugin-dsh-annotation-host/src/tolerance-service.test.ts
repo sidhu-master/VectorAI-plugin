@@ -60,6 +60,19 @@ function setup(provider: ToleranceStandardProvider = createGbt1800Provider()) {
   return { plans, service: new ToleranceService(plans, provider) };
 }
 
+function setupStaleFit() {
+  const state = setup();
+  state.service.edit('session', {
+    type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+    holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+    designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+  });
+  const changed = state.plans.get('session').draft as unknown as EngineeringAnnotationDraft;
+  changed.intents.find(({ id }) => id === 'intent-shaft')!.nominalValue = 14;
+  state.plans.setDraft('session', changed);
+  return state;
+}
+
 describe('ToleranceService', () => {
   it('queries partial catalog metadata and validates the active drawing and intent', () => {
     const { service } = setup();
@@ -194,6 +207,33 @@ describe('ToleranceService', () => {
       evidenceRefs: ['manual:u6'],
     })).toThrow('FIT_PAIR_TARGET_CONFLICT');
     expect(plans.get('session')).toEqual(before);
+
+    expect(() => service.edit('session', {
+      type: 'manual.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole', mode: 'bilateral',
+      upperDeviation: .02, lowerDeviation: 0, displayPreference: 'deviations', evidenceRefs: ['manual:deviation'],
+    })).toThrow('FIT_PAIR_TARGET_CONFLICT');
+    expect(plans.get('session')).toEqual(before);
+  });
+
+  it('rejects standard.single replacement of one stale fit member', () => {
+    const { plans, service } = setupStaleFit();
+    const before = plans.get('session');
+    expect(before.draft?.fitAssignments).toEqual([]);
+    expect(before.draft?.tolerances.every(({ fitGroupId, status }) => fitGroupId !== undefined && status === 'stale')).toBe(true);
+
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    })).toThrow('FIT_PAIR_TARGET_CONFLICT');
+    expect(plans.get('session')).toEqual(before);
+  });
+
+  it('rejects manual replacement of one stale fit member', () => {
+    const { plans, service } = setupStaleFit();
+    const before = plans.get('session');
+    expect(before.draft?.fitAssignments).toEqual([]);
+    expect(before.draft?.tolerances.every(({ fitGroupId, status }) => fitGroupId !== undefined && status === 'stale')).toBe(true);
 
     expect(() => service.edit('session', {
       type: 'manual.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole', mode: 'bilateral',
