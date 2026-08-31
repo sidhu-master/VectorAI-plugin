@@ -13,6 +13,11 @@ import {
   dimensionPlanSessionSnapshotSchema,
   dimensionSchemeEditCommandSchema,
   geometricToleranceEditCommandSchema,
+  toleranceCatalogRequestSchema,
+  toleranceCatalogResultSchema,
+  toleranceEditCommandSchema,
+  tolerancePreviewRequestSchema,
+  tolerancePreviewResultSchema,
   type AnnotationSessionState,
   type EngineeringDocumentStageRequest,
   type DrawingRef,
@@ -23,6 +28,11 @@ import {
   type DimensionPlanSessionSnapshot,
   type DimensionSchemeEditCommand,
   type GeometricToleranceEditCommand,
+  type ToleranceCatalogRequest,
+  type ToleranceCatalogResult,
+  type ToleranceEditCommand,
+  type TolerancePreviewRequest,
+  type TolerancePreviewResult,
 } from '@vectorai/plugin-space-contracts';
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -48,6 +58,9 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       cancelDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
       undoDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
       redoDimensionPlan(sessionId: string, expected: DrawingRef): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+      queryToleranceCatalog(sessionId: string, request: ToleranceCatalogRequest): Promise<RemoteResult<ToleranceCatalogResult>>;
+      previewTolerance(sessionId: string, request: TolerancePreviewRequest): Promise<RemoteResult<TolerancePreviewResult>>;
+      editTolerance(sessionId: string, command: ToleranceEditCommand): Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     };
   }
   interface TypertRemoteMap {
@@ -73,6 +86,9 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'drawingAnnotation/cancelDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     'drawingAnnotation/undoDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
     'drawingAnnotation/redoDimensionPlan': (sessionId: string, expected: DrawingRef) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
+    'drawingAnnotation/queryToleranceCatalog': (sessionId: string, request: ToleranceCatalogRequest) => Promise<RemoteResult<ToleranceCatalogResult>>;
+    'drawingAnnotation/previewTolerance': (sessionId: string, request: TolerancePreviewRequest) => Promise<RemoteResult<TolerancePreviewResult>>;
+    'drawingAnnotation/editTolerance': (sessionId: string, command: ToleranceEditCommand) => Promise<RemoteResult<DimensionPlanSessionSnapshot>>;
   }
 }
 
@@ -100,7 +116,7 @@ export const ANNOTATION_REMOTE: TypertRemoteContribution = {
       typeSymbol: '@vectorai/plugin-space-contracts#AnnotationSessionState',
       schema: annotationSessionStateSchema,
     },
-  }, ...partitionDescriptors(), ...dimensionDescriptors()],
+  }, ...partitionDescriptors(), ...dimensionDescriptors(), ...toleranceDescriptors()],
 };
 
 function partitionDescriptors() {
@@ -130,6 +146,43 @@ function dimensionDescriptors() {
     dimensionDescriptor('undoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
     dimensionDescriptor('redoDimensionPlan', [jsonParameter('expected', '@vectorai/drawing-edit-protocol#DrawingRef', drawingRefSchema)]),
   ];
+}
+
+function toleranceDescriptors() {
+  return [
+    toleranceDescriptor(
+      'queryToleranceCatalog', 'request',
+      '@vectorai/plugin-space-contracts#ToleranceCatalogRequest', toleranceCatalogRequestSchema,
+      '@vectorai/plugin-space-contracts#ToleranceCatalogResult', toleranceCatalogResultSchema,
+    ),
+    toleranceDescriptor(
+      'previewTolerance', 'request',
+      '@vectorai/plugin-space-contracts#TolerancePreviewRequest', tolerancePreviewRequestSchema,
+      '@vectorai/plugin-space-contracts#TolerancePreviewResult', tolerancePreviewResultSchema,
+    ),
+    toleranceDescriptor(
+      'editTolerance', 'command',
+      '@vectorai/plugin-space-contracts#ToleranceEditCommand', toleranceEditCommandSchema,
+      '@vectorai/plugin-space-contracts#DimensionPlanSessionSnapshot', dimensionPlanSessionSnapshotSchema,
+    ),
+  ];
+}
+
+function toleranceDescriptor(
+  method: string,
+  parameterName: string,
+  parameterType: string,
+  parameterSchema: { parse(input: unknown): unknown },
+  resultType: string,
+  resultSchema: { parse(input: unknown): unknown },
+) {
+  return {
+    id: `@vectorai/plugin-dsh-annotation-host#drawingAnnotation/${method}`,
+    service: 'drawingAnnotation', namespace: 'drawingAnnotation', method,
+    invocation: { kind: 'direct' as const }, scope: { context: 'agent' as const, wire: 'agentId' },
+    parameters: [agentParameter, jsonParameter(parameterName, parameterType, parameterSchema)],
+    result: { mode: 'strict' as const, typeSymbol: resultType, schema: resultSchema },
+  };
 }
 
 function dimensionDescriptor(method: string, parameters: Array<ReturnType<typeof jsonParameter>>) {
