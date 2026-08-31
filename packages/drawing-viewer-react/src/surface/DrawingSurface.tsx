@@ -190,6 +190,8 @@ export function DrawingSurface({
     : (id: string, event: MouseEvent<SVGGElement>) => {
       event.preventDefault();
       event.stopPropagation();
+      dragRef.current = null;
+      setSelectionBox(null);
       onNodeContextMenu(id, event);
     };
 

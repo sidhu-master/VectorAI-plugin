@@ -115,7 +115,7 @@ describe('controlled DrawingSurface', () => {
     act(() => renderer.unmount());
   });
 
-  it('does not arm canvas interaction during a macOS Control-click context-menu gesture', () => {
+  it('cancels canvas interaction during a macOS Control-click context-menu gesture', () => {
     const onNodeContextMenu = vi.fn();
     const onViewportChange = vi.fn();
     const onSelectionChange = vi.fn();
@@ -162,10 +162,58 @@ describe('controlled DrawingSurface', () => {
     act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 620, clientY: 280 }));
     act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 620, clientY: 280 }));
 
-    expect(mouseDownStopPropagation).toHaveBeenCalledOnce();
+    expect(mouseDownStopPropagation).not.toHaveBeenCalled();
     expect(onNodeContextMenu).toHaveBeenCalledWith('line-1', contextMenuEvent);
     expect(onViewportChange).not.toHaveBeenCalled();
     expect(onSelectionChange).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('still box-selects additively from an entity on Ctrl-left drag when no context menu occurs', () => {
+    const onViewportChange = vi.fn();
+    const onSelectionChange = vi.fn();
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={snapshot()}
+        viewport={viewport}
+        selectedIds={['existing-selection']}
+        onViewportChange={onViewportChange}
+        onSelectionChange={onSelectionChange}
+        onNodeContextMenu={() => undefined}
+      />,
+    );
+    const geometry = renderer.root.findByProps({ 'data-entity-id': 'line-1' });
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const svgTarget = {
+      tagName: 'svg',
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    };
+    const groupTarget = { tagName: 'g', ownerSVGElement: svgTarget };
+    const mouseDownStopPropagation = vi.fn();
+    const mouseDownEvent = {
+      currentTarget: groupTarget,
+      target: groupTarget,
+      clientX: 380,
+      clientY: 320,
+      button: 0,
+      metaKey: false,
+      ctrlKey: true,
+      preventDefault: vi.fn(),
+      stopPropagation: mouseDownStopPropagation,
+    };
+
+    act(() => {
+      geometry.props.onMouseDown?.(mouseDownEvent);
+      if (mouseDownStopPropagation.mock.calls.length === 0) {
+        svg.props.onMouseDown({ ...mouseDownEvent, currentTarget: svgTarget });
+      }
+    });
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 620, clientY: 280 }));
+    act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 620, clientY: 280 }));
+
+    expect(mouseDownStopPropagation).not.toHaveBeenCalled();
+    expect(onViewportChange).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenCalledWith(['existing-selection', 'line-1']);
     act(() => renderer.unmount());
   });
 
