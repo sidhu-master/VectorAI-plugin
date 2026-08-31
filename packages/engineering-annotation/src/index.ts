@@ -31,6 +31,8 @@ export * from './tolerance/digest';
 export * from './tolerance/evaluate';
 export * from './tolerance/standard-types';
 export * from './tolerance/feature-of-size';
+export * from './tolerance/gbt1800-2020-data';
+export * from './tolerance/gbt1800-provider';
 export * from './opening-angle/index';
 export * from './diameter/index';
 export * from './gdt/types';

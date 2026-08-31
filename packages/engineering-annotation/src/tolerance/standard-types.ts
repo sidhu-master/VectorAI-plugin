@@ -13,7 +13,7 @@ export interface ToleranceBand {
   featureClass: FeatureOfSizeClass;
   category: ToleranceBandCategory;
   available: boolean;
-  unavailableCode?: 'TOLERANCE_SIZE_RANGE_UNSUPPORTED' | 'TOLERANCE_DESIGNATION_INVALID';
+  unavailableCode?: 'TOLERANCE_SIZE_RANGE_UNSUPPORTED' | 'TOLERANCE_DESIGNATION_INVALID' | 'TOLERANCE_STANDARD_UNAVAILABLE';
 }
 
 export interface ResolvedStandardTolerance {
