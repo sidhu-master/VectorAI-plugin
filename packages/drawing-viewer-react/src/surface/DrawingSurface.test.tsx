@@ -63,6 +63,73 @@ describe('controlled DrawingSurface', () => {
     expect(markup).toContain('data-selected="true"');
   });
 
+  it('reports exact geometry and annotation context-menu targets without canvas side effects', () => {
+    const value = snapshot();
+    value.document.annotations = [{
+      id: 'annotation-dimension-1' as AnnotationId,
+      type: 'dimension',
+      dimensionKind: 'linear',
+      associationStatus: 'resolved',
+      targets: [],
+      computedValue: 100,
+      displayText: '100 mm',
+      unit: 'mm',
+      textPosition: [50, 10],
+      definitionPoints: [[0, 0], [0, 10], [100, 10], [100, 0]],
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const onNodeContextMenu = vi.fn();
+    const onViewportChange = vi.fn();
+    const onSelectionChange = vi.fn();
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={value}
+        viewport={viewport}
+        selectedIds={[]}
+        onViewportChange={onViewportChange}
+        onSelectionChange={onSelectionChange}
+        onNodeContextMenu={onNodeContextMenu}
+      />,
+    );
+    const geometry = renderer.root.findByProps({ 'data-entity-id': 'line-1' });
+    const annotation = renderer.root.findByProps({ 'data-entity-id': 'annotation-dimension-1' });
+    const geometryEvent = {
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 120, clientY: 80,
+    };
+    const annotationEvent = {
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 320, clientY: 180,
+    };
+
+    act(() => geometry.props.onContextMenu(geometryEvent));
+    act(() => annotation.props.onContextMenu(annotationEvent));
+
+    expect(onNodeContextMenu).toHaveBeenNthCalledWith(1, 'line-1', geometryEvent);
+    expect(onNodeContextMenu).toHaveBeenNthCalledWith(2, 'annotation-dimension-1', annotationEvent);
+    expect(geometryEvent.preventDefault).toHaveBeenCalledOnce();
+    expect(geometryEvent.stopPropagation).toHaveBeenCalledOnce();
+    expect(annotationEvent.preventDefault).toHaveBeenCalledOnce();
+    expect(annotationEvent.stopPropagation).toHaveBeenCalledOnce();
+    expect(onViewportChange).not.toHaveBeenCalled();
+    expect(onSelectionChange).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('leaves entity context menus to the browser when no callback is provided', () => {
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={snapshot()}
+        viewport={viewport}
+        selectedIds={[]}
+        onViewportChange={() => undefined}
+        onSelectionChange={() => undefined}
+      />,
+    );
+
+    expect(renderer.root.findByProps({ 'data-entity-id': 'line-1' }).props.onContextMenu).toBeUndefined();
+    act(() => renderer.unmount());
+  });
+
   it('reports zoom and blank-canvas deselection through callbacks', () => {
     const onViewportChange = vi.fn();
     const onSelectionChange = vi.fn();

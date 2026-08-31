@@ -15,6 +15,7 @@ export interface EntityRendererProps {
   aiGrounded?: boolean;
   motionRigActive?: boolean;
   onSelect(event: MouseEvent<SVGGElement>): void;
+  onContextMenu?(event: MouseEvent<SVGGElement>): void;
   onTextPointerDown?(event: MouseEvent<SVGGElement>): void;
   previewDiff?: 'created' | 'updated' | 'before' | 'deleted';
 }
@@ -26,6 +27,7 @@ export function EntityRenderer({
   aiGrounded = false,
   motionRigActive = false,
   onSelect,
+  onContextMenu,
   onTextPointerDown,
   previewDiff,
 }: EntityRendererProps) {
@@ -47,6 +49,7 @@ export function EntityRenderer({
       data-motion-rig-active={motionRigActive || undefined}
       data-preview-diff={previewDiff}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       onMouseDown={interactiveText ? onTextPointerDown : undefined}
     >
       {renderNode(node, viewport)}

@@ -50,6 +50,7 @@ export interface DrawingSurfaceProps {
   fitPadding?: number;
   onViewportChange(viewport: DrawingWorkspaceViewport): void;
   onSelectionChange(ids: readonly string[]): void;
+  onNodeContextMenu?(nodeId: string, event: MouseEvent<SVGGElement>): void;
   onMouseWorldChange?(point: Vec2 | null): void;
 }
 
@@ -75,6 +76,7 @@ export function DrawingSurface({
   fitPadding = 1.2,
   onViewportChange,
   onSelectionChange,
+  onNodeContextMenu,
   onMouseWorldChange,
 }: DrawingSurfaceProps) {
   const display = { ...DEFAULT_DISPLAY, ...displayInput };
@@ -183,6 +185,14 @@ export function DrawingSurface({
       : [id]);
   };
 
+  const handleNodeContextMenu = onNodeContextMenu === undefined
+    ? undefined
+    : (id: string, event: MouseEvent<SVGGElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onNodeContextMenu(id, event);
+    };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Escape') return;
     dragRef.current = null;
@@ -226,6 +236,7 @@ export function DrawingSurface({
           selectedIds={selectedIds}
           attentionIds={attentionIds}
           onSelect={selectEntity}
+          onContextMenu={handleNodeContextMenu}
         />
         {display.annotations ? <AnnotationLayer
           nodes={snapshot.document.annotations}
@@ -233,6 +244,7 @@ export function DrawingSurface({
           selectedIds={selectedIds}
           attentionIds={attentionIds}
           onSelect={selectEntity}
+          onContextMenu={handleNodeContextMenu}
         /> : null}
         {worldLayers}
       </g>

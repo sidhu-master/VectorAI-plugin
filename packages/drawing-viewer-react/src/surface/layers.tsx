@@ -48,6 +48,7 @@ export interface EntityLayerProps<Node extends GeometryNode | AnnotationNode> {
   selectedIds: readonly string[];
   attentionIds: readonly string[];
   onSelect(id: string, event: MouseEvent<SVGGElement>): void;
+  onContextMenu?(id: string, event: MouseEvent<SVGGElement>): void;
 }
 
 export function GeometryLayer({
@@ -56,6 +57,7 @@ export function GeometryLayer({
   selectedIds,
   attentionIds,
   onSelect,
+  onContextMenu,
 }: EntityLayerProps<GeometryNode>) {
   return <g data-layer="geometry">{nodes.map((node) => (
     <EntityRenderer
@@ -65,6 +67,7 @@ export function GeometryLayer({
       selected={selectedIds.includes(node.id)}
       aiGrounded={attentionIds.includes(node.id)}
       onSelect={(event) => onSelect(node.id, event)}
+      onContextMenu={onContextMenu === undefined ? undefined : (event) => onContextMenu(node.id, event)}
     />
   ))}</g>;
 }
@@ -75,6 +78,7 @@ export function AnnotationLayer({
   selectedIds,
   attentionIds,
   onSelect,
+  onContextMenu,
 }: EntityLayerProps<AnnotationNode>) {
   return <g data-layer="annotations">{nodes.map((node) => (
     <EntityRenderer
@@ -84,6 +88,7 @@ export function AnnotationLayer({
       selected={selectedIds.includes(node.id)}
       aiGrounded={attentionIds.includes(node.id)}
       onSelect={(event) => onSelect(node.id, event)}
+      onContextMenu={onContextMenu === undefined ? undefined : (event) => onContextMenu(node.id, event)}
     />
   ))}</g>;
 }
