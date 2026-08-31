@@ -144,4 +144,26 @@ describe('portable engineering annotation projection', () => {
     expect(result.annotations).toEqual([]);
     expect(result.diagnostics[0]?.code).toBe('TOLERANCE_RESULT_INVALID');
   });
+
+  it('projects an effective override together with standard selection provenance', () => {
+    const input = draft();
+    input.tolerances[0] = {
+      ...input.tolerances[0]!, source: 'standard',
+      featureClass: 'external',
+      selection: { designation: 'H7/g6', source: 'ai-recommended', evidenceRefs: ['ai:fit-1'] },
+      standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both',
+      override: { upperDeviation: .05, lowerDeviation: .04 },
+    };
+
+    const result = projectEngineeringAnnotations({
+      draft: input, orderedIntentIds: ['intent-a'], existingAnnotations: [],
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.annotations[0]?.toleranceProjection).toMatchObject({
+      mode: 'bilateral', upperDeviation: .05, lowerDeviation: .04, fitDesignation: 'H7/g6',
+      featureClass: 'external', standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both',
+      source: 'standard', ruleRef: { id: 'rule-a', version: '1', inputDigest: 'sha256:fixture' },
+    });
+  });
 });

@@ -29,6 +29,7 @@ export * from './dimension-inference/edit';
 export * from './tolerance/rules';
 export * from './tolerance/digest';
 export * from './tolerance/evaluate';
+export * from './tolerance/edit';
 export * from './tolerance/standard-types';
 export * from './tolerance/feature-of-size';
 export * from './tolerance/gbt1800-2020-data';

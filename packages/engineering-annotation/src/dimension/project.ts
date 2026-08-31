@@ -126,19 +126,25 @@ function projectTolerance(
     return undefined;
   }
   const resolved = spec.resolved;
+  const effective = spec.override ?? resolved;
   return {
     mode: spec.mode,
-    ...(resolved.upperDeviation === undefined ? {} : { upperDeviation: resolved.upperDeviation }),
-    ...(resolved.lowerDeviation === undefined ? {} : { lowerDeviation: resolved.lowerDeviation }),
+    ...(effective.upperDeviation === undefined ? {} : { upperDeviation: effective.upperDeviation }),
+    ...(effective.lowerDeviation === undefined ? {} : { lowerDeviation: effective.lowerDeviation }),
     ...(resolved.upperLimit === undefined ? {} : { upperLimit: resolved.upperLimit }),
     ...(resolved.lowerLimit === undefined ? {} : { lowerLimit: resolved.lowerLimit }),
-    ...(resolved.fitDesignation === undefined ? {} : { fitDesignation: resolved.fitDesignation }),
+    ...(spec.selection?.designation === undefined && resolved.fitDesignation === undefined ? {} : {
+      fitDesignation: spec.selection?.designation ?? resolved.fitDesignation,
+    }),
     unit: intent.unit,
     status: spec.status === 'confirmed' ? 'confirmed' : 'resolved',
     source: spec.source,
     ...(spec.ruleRef === undefined ? {} : {
       ruleRef: { ...spec.ruleRef, inputDigest: resolved.inputDigest },
     }),
+    ...(spec.featureClass === undefined ? {} : { featureClass: spec.featureClass }),
+    ...(spec.standardRef === undefined ? {} : { standardRef: { ...spec.standardRef } }),
+    ...(spec.displayPreference === undefined ? {} : { displayPreference: spec.displayPreference }),
     evidenceRefs: [...spec.evidenceIds],
   };
 }
