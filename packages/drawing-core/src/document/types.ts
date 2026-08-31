@@ -153,6 +153,9 @@ export interface ToleranceProjection {
   status: 'candidate' | 'resolved' | 'confirmed' | 'conflict';
   source: ToleranceSource;
   ruleRef?: { id: string; version: string; inputDigest: string };
+  featureClass?: 'internal' | 'external';
+  standardRef?: { id: string; edition: string };
+  displayPreference?: 'deviations' | 'designation' | 'both';
   evidenceRefs: string[];
 }
 

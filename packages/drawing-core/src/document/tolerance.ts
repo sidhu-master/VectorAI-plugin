@@ -26,6 +26,12 @@ export function validateToleranceProjection(value: ToleranceProjection): void {
   if (value.ruleRef !== undefined && (!value.ruleRef.id || !value.ruleRef.version || !value.ruleRef.inputDigest)) {
     throw new TypeError('TOLERANCE_RULE_REF_INVALID');
   }
+  if (value.standardRef !== undefined && (!value.standardRef.id.trim() || !value.standardRef.edition.trim())) {
+    throw new TypeError('TOLERANCE_STANDARD_REF_INVALID');
+  }
+  if (value.featureClass !== undefined && value.unit === 'deg') {
+    throw new TypeError('TOLERANCE_FEATURE_CLASS_UNIT_INVALID');
+  }
 }
 
 export function normalizeToleranceProjection(input: {

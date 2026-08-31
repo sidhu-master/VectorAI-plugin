@@ -38,6 +38,11 @@ import {
   engineeringAnnotationDraftSchema,
   dimensionPlanSessionSnapshotSchema,
   dimensionSchemeEditCommandSchema,
+  toleranceCatalogRequestSchema,
+  toleranceCatalogResultSchema,
+  toleranceEditCommandSchema,
+  tolerancePreviewRequestSchema,
+  tolerancePreviewResultSchema,
 } from './index';
 
 function axialScheme() {
@@ -154,6 +159,7 @@ describe('DSH drawing workspace wire schemas', () => {
       datums: [],
       intents: [],
       tolerances: [],
+      fitAssignments: [],
       geometricTolerances: [],
       chains: [],
       dependencies: [],
@@ -172,6 +178,104 @@ describe('DSH drawing workspace wire schemas', () => {
     })).toThrow();
   });
 
+  it('round-trips a standard-backed tolerance and paired fit', () => {
+    const legacyDraft = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      datums: [], intents: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+    };
+    const parsed = engineeringAnnotationDraftSchema.parse({
+      ...legacyDraft,
+      tolerances: [{
+        id: 'tol-1', dimensionIntentId: 'intent-1', mode: 'fit', source: 'manual',
+        featureClass: 'external',
+        selection: { designation: 'u6', source: 'manual', evidenceRefs: ['manual:tol-1'] },
+        standardRef: { id: 'GB/T 1800', edition: '2020' },
+        displayPreference: 'both',
+        inputs: {}, resolved: { upperDeviation: .044, lowerDeviation: .033, inputDigest: 'sha256:x', evaluatedAt: 1 },
+        status: 'resolved', evidenceIds: ['manual:tol-1'], diagnostics: [],
+      }],
+      fitAssignments: [{
+        fitGroupId: 'fit-1', holeDimensionId: 'intent-hole', shaftDimensionId: 'intent-shaft', basis: 'hole',
+        designation: 'H7/g6', fitType: 'clearance', minimumClearance: .01, maximumClearance: .04,
+        standardRef: { id: 'GB/T 1800', edition: '2020' },
+      }],
+    });
+    expect(parsed.tolerances[0]?.selection?.designation).toBe('u6');
+    expect(parsed.fitAssignments[0]?.designation).toBe('H7/g6');
+  });
+
+  it('defaults fitAssignments for existing persisted version-1 drafts', () => {
+    expect(engineeringAnnotationDraftSchema.parse({
+      version: 1, drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+    }).fitAssignments).toEqual([]);
+  });
+
+  it('strictly round-trips catalog and preview envelopes with dataset completeness', () => {
+    const request = {
+      expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+      dimensionIntentId: 'intent-1', featureClass: 'external',
+    } as const;
+    expect(toleranceCatalogRequestSchema.parse(request)).toEqual(request);
+    const catalog = {
+      drawingRef: request.expectedDrawingRef,
+      dimensionIntentId: request.dimensionIntentId,
+      featureClass: request.featureClass,
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+      datasetMetadata: {
+        completeness: 'partial', catalogClassification: 'unverified',
+        numericProvenance: [{ kind: 'plan-reference-vector', referenceId: 'plan', description: 'Partial dataset' }],
+      },
+      bands: [{ designation: 'u6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' }],
+    } as const;
+    expect(toleranceCatalogResultSchema.parse(catalog)).toEqual(catalog);
+
+    const previewRequest = {
+      type: 'single', expectedDrawingRef: request.expectedDrawingRef, dimensionIntentId: 'intent-1',
+      featureClass: 'external', designation: 'u6',
+    } as const;
+    expect(tolerancePreviewRequestSchema.parse(previewRequest)).toEqual(previewRequest);
+    expect(tolerancePreviewRequestSchema.parse({
+      type: 'fit', expectedDrawingRef: request.expectedDrawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole', designation: 'H7/g6',
+    })).toMatchObject({ type: 'fit', designation: 'H7/g6' });
+    expect(tolerancePreviewResultSchema.parse({
+      type: 'single', drawingRef: request.expectedDrawingRef, dimensionIntentId: 'intent-1', status: 'resolved',
+      result: {
+        designation: 'u6', featureClass: 'external', basicSize: 20, unit: 'mm', upperDeviation: .044, lowerDeviation: .033,
+        upperLimitSize: 20.044, lowerLimitSize: 20.033, standardRef: catalog.standardRef,
+        ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:x' },
+      },
+    })).toMatchObject({ status: 'resolved', result: { designation: 'u6' } });
+  });
+
+  it('strictly accepts valid tolerance edits and rejects incomplete manual deviations', () => {
+    const manual = {
+      type: 'manual.apply', expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+      dimensionIntentId: 'intent-1', mode: 'unilateral', upperDeviation: .02, evidenceRefs: [],
+    } as const;
+    expect(toleranceEditCommandSchema.parse(manual)).toMatchObject({ ...manual, displayPreference: 'deviations' });
+    expect(() => toleranceEditCommandSchema.parse({ ...manual, mode: 'bilateral' })).toThrow();
+    expect(() => toleranceEditCommandSchema.parse({ ...manual, upperDeviation: undefined })).toThrow();
+    expect(() => toleranceEditCommandSchema.parse({
+      type: 'standard.single.apply', expectedDrawingRef: manual.expectedDrawingRef, dimensionIntentId: 'intent-1',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [], extra: true,
+    })).toThrow();
+    expect(toleranceEditCommandSchema.parse({
+      type: 'standard.fit.apply', expectedDrawingRef: manual.expectedDrawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole', designation: 'H7/g6',
+      selectionSource: 'rule', displayPreference: 'designation', evidenceRefs: [],
+    })).toMatchObject({ type: 'standard.fit.apply' });
+    expect(toleranceEditCommandSchema.parse({
+      type: 'standard.override.set', expectedDrawingRef: manual.expectedDrawingRef,
+      dimensionIntentId: 'intent-1', upperDeviation: .02, lowerDeviation: -.01,
+    })).toMatchObject({ type: 'standard.override.set' });
+    expect(toleranceEditCommandSchema.parse({
+      type: 'standard.override.clear', expectedDrawingRef: manual.expectedDrawingRef, dimensionIntentId: 'intent-1',
+    })).toMatchObject({ type: 'standard.override.clear' });
+  });
+
   it('strictly carries durable dimension-plan session snapshots', () => {
     const snapshot = {
       version: 1 as const,
@@ -180,7 +284,7 @@ describe('DSH drawing workspace wire schemas', () => {
       draft: {
         version: 1 as const,
         drawingRef: { drawingId: 'drawing-1', revision: 1 },
-        datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+        datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
       },
       canUndo: true,
       canRedo: false,
@@ -197,7 +301,7 @@ describe('DSH drawing workspace wire schemas', () => {
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
       draft: {
         version: 1 as const, drawingRef: { drawingId: 'drawing-1', revision: 1 },
-        datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+        datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
         axialScheme: axialScheme(),
       },
       canUndo: true, canRedo: false, updatedAt: 7,

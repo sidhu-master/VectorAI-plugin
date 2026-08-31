@@ -137,6 +137,9 @@ const toleranceProjectionSchema = z.object({
     version: idSchema,
     inputDigest: idSchema,
   }).strict().optional(),
+  featureClass: z.enum(['internal', 'external']).optional(),
+  standardRef: z.object({ id: z.string().trim().min(1), edition: z.string().trim().min(1) }).strict().optional(),
+  displayPreference: z.enum(['deviations', 'designation', 'both']).optional(),
   evidenceRefs: z.array(idSchema),
 }).strict().superRefine((value, context) => {
   if (value.mode === 'limits' && (value.lowerLimit === undefined || value.upperLimit === undefined || value.lowerLimit > value.upperLimit)) {
@@ -153,6 +156,9 @@ const toleranceProjectionSchema = z.object({
   }
   if (value.status === 'confirmed' && value.evidenceRefs.length === 0) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_EVIDENCE_REQUIRED' });
+  }
+  if (value.featureClass !== undefined && value.unit === 'deg') {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_FEATURE_CLASS_UNIT_INVALID' });
   }
 });
 const drawingDatumReferenceSchema = z.object({
@@ -998,18 +1004,219 @@ const resolvedToleranceSchema = z.object({
   inputDigest: idSchema,
   evaluatedAt: z.number().finite(),
 }).strict();
+const featureClassSchema = z.enum(['internal', 'external']);
+const toleranceSelectionSourceSchema = z.enum(['rule', 'ai-recommended', 'manual']);
+const toleranceDisplayPreferenceSchema = z.enum(['deviations', 'designation', 'both']);
+const toleranceStandardRefSchema = z.object({
+  id: z.string().trim().min(1),
+  edition: z.string().trim().min(1),
+}).strict();
+const toleranceDatasetProvenanceSchema = z.object({
+  kind: z.enum(['authorized-standard-tabulation', 'plan-reference-vector']),
+  referenceId: idSchema,
+  description: z.string().min(1),
+}).strict();
+const toleranceDatasetMetadataSchema = z.object({
+  completeness: z.enum(['complete', 'partial']),
+  catalogClassification: z.enum(['verified', 'unverified']),
+  numericProvenance: z.array(toleranceDatasetProvenanceSchema),
+}).strict();
+const toleranceBandSchema = z.object({
+  designation: z.string().min(2).max(8),
+  featureClass: featureClassSchema,
+  category: z.enum(['preferred', 'common', 'other', 'unknown']),
+  available: z.boolean(),
+  unavailableCode: z.enum([
+    'TOLERANCE_SIZE_RANGE_UNSUPPORTED',
+    'TOLERANCE_DESIGNATION_INVALID',
+    'TOLERANCE_STANDARD_UNAVAILABLE',
+  ]).optional(),
+}).strict();
+const resolvedStandardToleranceSchema = z.object({
+  designation: z.string().min(2).max(8),
+  featureClass: featureClassSchema,
+  basicSize: z.number().finite(),
+  unit: z.literal('mm'),
+  upperDeviation: z.number().finite(),
+  lowerDeviation: z.number().finite(),
+  upperLimitSize: z.number().finite(),
+  lowerLimitSize: z.number().finite(),
+  standardRef: toleranceStandardRefSchema,
+  ruleRef: z.object({ id: idSchema, version: idSchema, inputDigest: idSchema }).strict(),
+}).strict().superRefine((value, context) => {
+  if (value.lowerLimitSize > value.upperLimitSize) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_LIMIT_ORDER' });
+  }
+});
+const resolvedFitSchema = z.object({
+  designation: z.string().min(5).max(17),
+  basis: z.enum(['hole', 'shaft']),
+  hole: resolvedStandardToleranceSchema,
+  shaft: resolvedStandardToleranceSchema,
+  fitType: z.enum(['clearance', 'transition', 'interference']),
+  minimumClearance: z.number().finite(),
+  maximumClearance: z.number().finite(),
+}).strict().superRefine((value, context) => {
+  if (value.minimumClearance > value.maximumClearance) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_FIT_CLEARANCE_ORDER' });
+  }
+});
+const fitAssignmentSchema = z.object({
+  fitGroupId: idSchema,
+  holeDimensionId: idSchema,
+  shaftDimensionId: idSchema,
+  basis: z.enum(['hole', 'shaft']),
+  designation: z.string().min(5).max(17),
+  fitType: z.enum(['clearance', 'transition', 'interference']),
+  minimumClearance: z.number().finite(),
+  maximumClearance: z.number().finite(),
+  standardRef: toleranceStandardRefSchema,
+}).strict().superRefine((value, context) => {
+  if (value.minimumClearance > value.maximumClearance) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_FIT_CLEARANCE_ORDER' });
+  }
+});
 const toleranceSpecSchema = z.object({
   id: idSchema,
   dimensionIntentId: idSchema,
   mode: z.enum(['bilateral', 'unilateral', 'limits', 'fit', 'formula']),
   source: z.enum(['document', 'standard', 'enterprise-rule', 'manual', 'ai-candidate']),
   ruleRef: z.object({ id: idSchema, version: idSchema }).strict().optional(),
+  featureClass: featureClassSchema.optional(),
+  selection: z.object({
+    designation: z.string().min(2).max(17),
+    source: toleranceSelectionSourceSchema,
+    evidenceRefs: z.array(idSchema),
+  }).strict().optional(),
+  standardRef: toleranceStandardRefSchema.optional(),
+  override: z.object({
+    upperDeviation: z.number().finite(),
+    lowerDeviation: z.number().finite(),
+  }).strict().optional(),
+  displayPreference: toleranceDisplayPreferenceSchema.optional(),
+  fitGroupId: idSchema.optional(),
   inputs: z.record(z.string(), z.union([z.number().finite(), z.string(), z.boolean()])),
   resolved: resolvedToleranceSchema.optional(),
   status: engineeringStateSchema,
   evidenceIds: z.array(idSchema),
   diagnostics: z.array(engineeringDiagnosticSchema),
 }).strict();
+
+export const toleranceCatalogRequestSchema = z.object({
+  expectedDrawingRef: drawingRefSchema,
+  dimensionIntentId: idSchema,
+  featureClass: featureClassSchema,
+}).strict();
+
+export const toleranceCatalogResultSchema = z.object({
+  drawingRef: drawingRefSchema,
+  dimensionIntentId: idSchema,
+  featureClass: featureClassSchema,
+  standardRef: toleranceStandardRefSchema,
+  datasetMetadata: toleranceDatasetMetadataSchema,
+  bands: z.array(toleranceBandSchema),
+  selection: z.object({
+    designation: z.string().min(2).max(17),
+    source: toleranceSelectionSourceSchema,
+    evidenceRefs: z.array(idSchema),
+  }).strict().optional(),
+  recommendation: z.object({
+    designation: z.string().min(2).max(17),
+    source: z.literal('ai-recommended'),
+    evidenceRefs: z.array(idSchema),
+  }).strict().optional(),
+}).strict();
+
+export const tolerancePreviewRequestSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('single'),
+    expectedDrawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    featureClass: featureClassSchema,
+    designation: z.string().min(2).max(8),
+  }).strict(),
+  z.object({
+    type: z.literal('fit'),
+    expectedDrawingRef: drawingRefSchema,
+    holeDimensionIntentId: idSchema,
+    shaftDimensionIntentId: idSchema,
+    basis: z.enum(['hole', 'shaft']),
+    designation: z.string().min(5).max(17),
+  }).strict(),
+]);
+
+export const tolerancePreviewResultSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('single'),
+    drawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    status: z.literal('resolved'),
+    result: resolvedStandardToleranceSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('fit'),
+    drawingRef: drawingRefSchema,
+    holeDimensionIntentId: idSchema,
+    shaftDimensionIntentId: idSchema,
+    status: z.literal('resolved'),
+    result: resolvedFitSchema,
+  }).strict(),
+]);
+
+export const toleranceEditCommandSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('standard.single.apply'),
+    expectedDrawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    featureClass: featureClassSchema,
+    designation: z.string().min(2).max(8),
+    selectionSource: toleranceSelectionSourceSchema,
+    displayPreference: toleranceDisplayPreferenceSchema,
+    evidenceRefs: z.array(idSchema),
+  }).strict(),
+  z.object({
+    type: z.literal('standard.fit.apply'),
+    expectedDrawingRef: drawingRefSchema,
+    holeDimensionIntentId: idSchema,
+    shaftDimensionIntentId: idSchema,
+    basis: z.enum(['hole', 'shaft']),
+    designation: z.string().min(5).max(17),
+    selectionSource: toleranceSelectionSourceSchema,
+    displayPreference: toleranceDisplayPreferenceSchema,
+    evidenceRefs: z.array(idSchema),
+  }).strict(),
+  z.object({
+    type: z.literal('standard.override.set'),
+    expectedDrawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    upperDeviation: z.number().finite(),
+    lowerDeviation: z.number().finite(),
+  }).strict(),
+  z.object({
+    type: z.literal('standard.override.clear'),
+    expectedDrawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('manual.apply'),
+    expectedDrawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    mode: z.enum(['unilateral', 'bilateral']),
+    upperDeviation: z.number().finite().optional(),
+    lowerDeviation: z.number().finite().optional(),
+    displayPreference: toleranceDisplayPreferenceSchema.default('deviations'),
+    evidenceRefs: z.array(idSchema),
+  }).strict(),
+]).superRefine((value, context) => {
+  if (value.type !== 'manual.apply') return;
+  const bothDeviations = value.upperDeviation !== undefined && value.lowerDeviation !== undefined;
+  if (value.mode === 'bilateral' && !bothDeviations) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATIONS_REQUIRED' });
+  }
+  if (value.mode === 'unilateral' && value.upperDeviation === undefined && value.lowerDeviation === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_REQUIRED' });
+  }
+});
 export const geometricCharacteristicSchema = z.enum([
   'straightness', 'flatness', 'circularity', 'cylindricity',
   'profile-line', 'profile-surface', 'parallelism', 'perpendicularity', 'angularity',
@@ -1198,6 +1405,7 @@ export const engineeringAnnotationDraftSchema = z.object({
   datums: z.array(engineeringDatumSchema),
   intents: z.array(dimensionIntentSchema),
   tolerances: z.array(toleranceSpecSchema),
+  fitAssignments: z.array(fitAssignmentSchema).default([]),
   geometricTolerances: z.array(geometricToleranceIntentSchema).default([]),
   chains: z.array(dimensionChainSchema),
   dependencies: z.array(annotationDependencySchema),
@@ -1233,3 +1441,8 @@ export type AxialDimensionScheme = z.infer<typeof axialDimensionSchemeSchema>;
 export type DimensionSchemeEditCommand = z.infer<typeof dimensionSchemeEditCommandSchema>;
 export type GeometricToleranceIntent = z.infer<typeof geometricToleranceIntentSchema>;
 export type GeometricToleranceEditCommand = z.infer<typeof geometricToleranceEditCommandSchema>;
+export type ToleranceCatalogRequest = z.infer<typeof toleranceCatalogRequestSchema>;
+export type ToleranceCatalogResult = z.infer<typeof toleranceCatalogResultSchema>;
+export type TolerancePreviewRequest = z.infer<typeof tolerancePreviewRequestSchema>;
+export type TolerancePreviewResult = z.infer<typeof tolerancePreviewResultSchema>;
+export type ToleranceEditCommand = z.infer<typeof toleranceEditCommandSchema>;
