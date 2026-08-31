@@ -39,6 +39,15 @@ export function EntityRenderer({
       : '';
   const className = `vai-entity vai-entity--${node.quality.status}${semanticClassName}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${motionRigActive ? ' vai-entity--motion-rig' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
   const interactiveText = (node.type === 'text' || node.type === 'dimension') && onTextPointerDown !== undefined;
+  const handleMouseDown = onContextMenu === undefined
+    ? interactiveText ? onTextPointerDown : undefined
+    : (event: MouseEvent<SVGGElement>) => {
+      if (event.button === 0 && event.ctrlKey) {
+        event.stopPropagation();
+        return;
+      }
+      if (interactiveText) onTextPointerDown(event);
+    };
   return (
     <g
       className={className}
@@ -50,7 +59,7 @@ export function EntityRenderer({
       data-preview-diff={previewDiff}
       onClick={onSelect}
       onContextMenu={onContextMenu}
-      onMouseDown={interactiveText ? onTextPointerDown : undefined}
+      onMouseDown={handleMouseDown}
     >
       {renderNode(node, viewport)}
     </g>

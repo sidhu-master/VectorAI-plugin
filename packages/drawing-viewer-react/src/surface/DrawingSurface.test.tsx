@@ -115,6 +115,105 @@ describe('controlled DrawingSurface', () => {
     act(() => renderer.unmount());
   });
 
+  it('does not arm canvas interaction during a macOS Control-click context-menu gesture', () => {
+    const onNodeContextMenu = vi.fn();
+    const onViewportChange = vi.fn();
+    const onSelectionChange = vi.fn();
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={snapshot()}
+        viewport={viewport}
+        selectedIds={[]}
+        onViewportChange={onViewportChange}
+        onSelectionChange={onSelectionChange}
+        onNodeContextMenu={onNodeContextMenu}
+      />,
+    );
+    const geometry = renderer.root.findByProps({ 'data-entity-id': 'line-1' });
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const svgTarget = {
+      tagName: 'svg',
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    };
+    const groupTarget = { tagName: 'g', ownerSVGElement: svgTarget };
+    const mouseDownStopPropagation = vi.fn();
+    const mouseDownEvent = {
+      currentTarget: groupTarget,
+      target: groupTarget,
+      clientX: 380,
+      clientY: 320,
+      button: 0,
+      metaKey: false,
+      ctrlKey: true,
+      preventDefault: vi.fn(),
+      stopPropagation: mouseDownStopPropagation,
+    };
+
+    act(() => {
+      geometry.props.onMouseDown?.(mouseDownEvent);
+      if (mouseDownStopPropagation.mock.calls.length === 0) {
+        svg.props.onMouseDown({ ...mouseDownEvent, currentTarget: svgTarget });
+      }
+    });
+    const contextMenuEvent = {
+      preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 380, clientY: 320,
+    };
+    act(() => geometry.props.onContextMenu(contextMenuEvent));
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 620, clientY: 280 }));
+    act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 620, clientY: 280 }));
+
+    expect(mouseDownStopPropagation).toHaveBeenCalledOnce();
+    expect(onNodeContextMenu).toHaveBeenCalledWith('line-1', contextMenuEvent);
+    expect(onViewportChange).not.toHaveBeenCalled();
+    expect(onSelectionChange).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('still pans from an entity on an ordinary left drag when context menus are enabled', () => {
+    const onViewportChange = vi.fn();
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={snapshot()}
+        viewport={viewport}
+        selectedIds={[]}
+        onViewportChange={onViewportChange}
+        onSelectionChange={() => undefined}
+        onNodeContextMenu={() => undefined}
+      />,
+    );
+    const geometry = renderer.root.findByProps({ 'data-entity-id': 'line-1' });
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const svgTarget = {
+      tagName: 'svg',
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    };
+    const groupTarget = { tagName: 'g', ownerSVGElement: svgTarget };
+    const mouseDownStopPropagation = vi.fn();
+    const mouseDownEvent = {
+      currentTarget: groupTarget,
+      target: groupTarget,
+      clientX: 100,
+      clientY: 100,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: mouseDownStopPropagation,
+    };
+
+    act(() => {
+      geometry.props.onMouseDown?.(mouseDownEvent);
+      if (mouseDownStopPropagation.mock.calls.length === 0) {
+        svg.props.onMouseDown({ ...mouseDownEvent, currentTarget: svgTarget });
+      }
+    });
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 130, clientY: 140 }));
+
+    expect(mouseDownStopPropagation).not.toHaveBeenCalled();
+    expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({ x: 430, y: 340 }));
+    act(() => renderer.unmount());
+  });
+
   it('leaves entity context menus to the browser when no callback is provided', () => {
     const renderer = TestRenderer.create(
       <DrawingSurface
@@ -126,7 +225,9 @@ describe('controlled DrawingSurface', () => {
       />,
     );
 
-    expect(renderer.root.findByProps({ 'data-entity-id': 'line-1' }).props.onContextMenu).toBeUndefined();
+    const entity = renderer.root.findByProps({ 'data-entity-id': 'line-1' });
+    expect(entity.props.onContextMenu).toBeUndefined();
+    expect(entity.props.onMouseDown).toBeUndefined();
     act(() => renderer.unmount());
   });
 
