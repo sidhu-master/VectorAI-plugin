@@ -223,6 +223,7 @@ export function planEngineeringAnnotations(input: {
       evidenceIds: annotation.quality.evidenceRefs.map(String),
     })),
     tolerances: [],
+    fitAssignments: [],
     geometricTolerances: [],
     chains: [],
     dependencies: [],

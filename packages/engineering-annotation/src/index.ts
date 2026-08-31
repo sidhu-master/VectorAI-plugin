@@ -29,6 +29,8 @@ export * from './dimension-inference/edit';
 export * from './tolerance/rules';
 export * from './tolerance/digest';
 export * from './tolerance/evaluate';
+export * from './tolerance/standard-types';
+export * from './tolerance/feature-of-size';
 export * from './opening-angle/index';
 export * from './diameter/index';
 export * from './gdt/types';

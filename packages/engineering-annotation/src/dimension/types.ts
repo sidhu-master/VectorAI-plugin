@@ -4,6 +4,7 @@ import type { DimensionAnnotation, DimensionTarget, EntityAnchor, GeometryId } f
 import type { DrawingRef } from '@vectorai/drawing-edit-protocol';
 import type { AxialDimensionScheme } from '../dimension-inference/types';
 import type { GeometricToleranceIntent } from '../gdt/types';
+import type { FeatureOfSizeClass, ToleranceStandardRef } from '../tolerance/standard-types';
 
 export type EngineeringState = 'candidate' | 'resolved' | 'confirmed' | 'conflict' | 'stale';
 export type DimensionFunctionalRole = 'datum' | 'overall' | 'functional' | 'assembly' | 'process' | 'inspection' | 'auxiliary' | 'closure';
@@ -68,6 +69,30 @@ export interface ToleranceSpec {
   status: EngineeringState;
   evidenceIds: string[];
   diagnostics: EngineeringDiagnostic[];
+  featureClass?: FeatureOfSizeClass;
+  selection?: {
+    designation: string;
+    source: 'rule' | 'ai-recommended' | 'manual';
+    evidenceRefs: string[];
+  };
+  standardRef?: ToleranceStandardRef;
+  override?: {
+    upperDeviation: number;
+    lowerDeviation: number;
+  };
+  fitGroupId?: string;
+}
+
+export interface FitAssignment {
+  fitGroupId: string;
+  holeDimensionId: string;
+  shaftDimensionId: string;
+  basis: 'hole' | 'shaft';
+  designation: string;
+  fitType: 'clearance' | 'transition' | 'interference';
+  minimumClearance: number;
+  maximumClearance: number;
+  standardRef: ToleranceStandardRef;
 }
 
 export interface DimensionChainMember {
@@ -103,6 +128,7 @@ export interface EngineeringAnnotationDraft {
   datums: EngineeringDatum[];
   intents: DimensionIntent[];
   tolerances: ToleranceSpec[];
+  fitAssignments: FitAssignment[];
   geometricTolerances: GeometricToleranceIntent[];
   chains: DimensionChain[];
   dependencies: AnnotationDependency[];
