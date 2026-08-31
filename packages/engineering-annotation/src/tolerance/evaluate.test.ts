@@ -58,6 +58,29 @@ describe('deterministic tolerance rule resolution', () => {
     });
   });
 
+  it('preserves a standard-backed display preference through resolution', () => {
+    const result = resolveToleranceSpec({
+      intent,
+      spec: spec({
+        source: 'standard',
+        featureClass: 'external',
+        selection: { designation: 'u6', source: 'manual', evidenceRefs: ['manual:u6'] },
+        standardRef: { id: 'GB/T 1800', edition: '2020' },
+        displayPreference: 'both',
+      }),
+      provider,
+      now: () => 7,
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.spec).toMatchObject({
+      source: 'standard',
+      selection: { designation: 'u6' },
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+      displayPreference: 'both',
+    });
+  });
+
   it('rejects unknown versions, invalid results, and AI numeric authority', () => {
     expect(resolveToleranceSpec({
       intent, spec: spec({ ruleRef: { id: 'fixture-rule', version: '2' } }), provider, now: () => 1,

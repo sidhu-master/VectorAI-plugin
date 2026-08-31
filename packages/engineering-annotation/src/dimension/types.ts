@@ -80,6 +80,7 @@ export interface ToleranceSpec {
     upperDeviation: number;
     lowerDeviation: number;
   };
+  displayPreference?: 'deviations' | 'designation' | 'both';
   fitGroupId?: string;
 }
 
