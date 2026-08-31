@@ -3,6 +3,7 @@
 import { canonicalRuleInputDigest } from './digest';
 import {
   GBT_1800_2020_COMMON_DESIGNATIONS,
+  GBT_1800_2020_DATASET_METADATA,
   GBT_1800_2020_INTERVALS,
   GBT_1800_2020_MANIFEST,
   GBT_1800_2020_PREFERRED_DESIGNATIONS,
@@ -10,7 +11,6 @@ import {
 } from './gbt1800-2020-data';
 import type {
   FeatureOfSizeClass,
-  ResolvedFit,
   ResolvedStandardTolerance,
   ToleranceBand,
   ToleranceBandCategory,
@@ -22,6 +22,13 @@ const CATALOG: Readonly<Record<FeatureOfSizeClass, readonly string[]>> = {
   external: collectDesignations('external'),
 };
 
+const INTERNAL_POSITIONS = new Set([
+  'A', 'B', 'C', 'CD', 'D', 'E', 'EF', 'F', 'FG', 'G', 'H', 'JS', 'J', 'K',
+  'M', 'N', 'P', 'R', 'S', 'T', 'U', 'V', 'X', 'Y', 'Z', 'ZA', 'ZB', 'ZC',
+]);
+const EXTERNAL_POSITIONS = new Set([...INTERNAL_POSITIONS].map((position) => position.toLowerCase()));
+const TOLERANCE_GRADE = /^(?:01|0|[1-9]|1[0-8])$/;
+
 export function createGbt1800Provider(): ToleranceStandardProvider {
   const standardRef = {
     id: GBT_1800_2020_MANIFEST.standardId,
@@ -30,8 +37,9 @@ export function createGbt1800Provider(): ToleranceStandardProvider {
 
   return {
     standardRef,
+    datasetMetadata: GBT_1800_2020_DATASET_METADATA,
     listBands({ basicSize, featureClass }) {
-      const interval = findInterval(basicSize);
+      const interval = findGbt1800Interval(basicSize);
       return CATALOG[featureClass].map((designation): ToleranceBand => {
         const available = interval[featureClass][designation] !== undefined;
         return {
@@ -44,8 +52,8 @@ export function createGbt1800Provider(): ToleranceStandardProvider {
       });
     },
     resolveBand(request) {
-      const interval = findInterval(request.basicSize);
-      validateDesignation(request.featureClass, request.designation);
+      const interval = findGbt1800Interval(request.basicSize);
+      validateDesignationSyntax(request.featureClass, request.designation);
       const deviations = interval[request.featureClass][request.designation];
       if (deviations === undefined) throw new Error('TOLERANCE_STANDARD_UNAVAILABLE');
       return resolveTolerance(request, deviations, standardRef);
@@ -80,7 +88,7 @@ function collectDesignations(featureClass: FeatureOfSizeClass): readonly string[
   return [...new Set(GBT_1800_2020_INTERVALS.flatMap((interval) => Object.keys(interval[featureClass])))].sort(compareText);
 }
 
-function findInterval(basicSize: number): Gbt1800IntervalRecord {
+export function findGbt1800Interval(basicSize: number): Gbt1800IntervalRecord {
   if (!Number.isFinite(basicSize)
     || basicSize <= GBT_1800_2020_MANIFEST.minimumExclusive
     || basicSize > GBT_1800_2020_MANIFEST.maximumInclusive) {
@@ -91,8 +99,13 @@ function findInterval(basicSize: number): Gbt1800IntervalRecord {
   return interval;
 }
 
-function validateDesignation(featureClass: FeatureOfSizeClass, designation: string): void {
-  if (!CATALOG[featureClass].includes(designation)) throw new Error('TOLERANCE_DESIGNATION_INVALID');
+function validateDesignationSyntax(featureClass: FeatureOfSizeClass, designation: string): void {
+  const match = /^([A-Za-z]{1,2})(\d{1,2})$/.exec(designation);
+  if (match === null) throw new Error('TOLERANCE_DESIGNATION_INVALID');
+  const positions = featureClass === 'internal' ? INTERNAL_POSITIONS : EXTERNAL_POSITIONS;
+  if (!positions.has(match[1]!) || !TOLERANCE_GRADE.test(match[2]!)) {
+    throw new Error('TOLERANCE_DESIGNATION_INVALID');
+  }
 }
 
 function resolveTolerance(
@@ -130,7 +143,7 @@ function resolveTolerance(
 function categoryOf(featureClass: FeatureOfSizeClass, designation: string): ToleranceBandCategory {
   if (GBT_1800_2020_PREFERRED_DESIGNATIONS[featureClass].includes(designation)) return 'preferred';
   if (GBT_1800_2020_COMMON_DESIGNATIONS[featureClass].includes(designation)) return 'common';
-  return 'other';
+  return GBT_1800_2020_DATASET_METADATA.catalogClassification === 'verified' ? 'other' : 'unknown';
 }
 
 function roundMillimetres(value: number): number {

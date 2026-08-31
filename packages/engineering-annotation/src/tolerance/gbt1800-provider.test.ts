@@ -9,7 +9,7 @@ import {
   GBT_1800_2020_INTERVALS,
   GBT_1800_2020_MANIFEST,
 } from './gbt1800-2020-data';
-import { createGbt1800Provider } from './gbt1800-provider';
+import { createGbt1800Provider, findGbt1800Interval } from './gbt1800-provider';
 
 describe('GB/T 1800.1/2-2020 provider', () => {
   const provider = createGbt1800Provider();
@@ -46,15 +46,47 @@ describe('GB/T 1800.1/2-2020 provider', () => {
       .toThrow('TOLERANCE_DESIGNATION_INVALID');
   });
 
+  it('separates designation syntax and case from numeric availability', () => {
+    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'f7' }))
+      .toThrow('TOLERANCE_STANDARD_UNAVAILABLE');
+    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'internal', designation: 'JS8' }))
+      .toThrow('TOLERANCE_STANDARD_UNAVAILABLE');
+    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'F7' }))
+      .toThrow('TOLERANCE_DESIGNATION_INVALID');
+    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'shaft6' }))
+      .toThrow('TOLERANCE_DESIGNATION_INVALID');
+    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'h99' }))
+      .toThrow('TOLERANCE_DESIGNATION_INVALID');
+  });
+
   it('reports unverified cells as unavailable instead of inferring values', () => {
     expect(() => provider.resolveBand({ basicSize: 19, featureClass: 'external', designation: 'h6' }))
       .toThrow('TOLERANCE_STANDARD_UNAVAILABLE');
     expect(provider.listBands({ basicSize: 19, featureClass: 'external' }))
       .toEqual([
-        { designation: 'g6', featureClass: 'external', category: 'other', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
-        { designation: 'h6', featureClass: 'external', category: 'other', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
-        { designation: 'u6', featureClass: 'external', category: 'other', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
+        { designation: 'g6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
+        { designation: 'h6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
+        { designation: 'u6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
       ]);
+  });
+
+  it('exposes partial completeness and plan-reference provenance to consumers', () => {
+    expect(provider.datasetMetadata).toEqual({
+      completeness: 'partial',
+      catalogClassification: 'unverified',
+      numericProvenance: [
+        {
+          kind: 'plan-reference-vector',
+          referenceId: 'task-2-13mm-H7-g6',
+          description: '13 mm components: H7 [0, 18] µm; g6 [-17, -6] µm',
+        },
+        {
+          kind: 'plan-reference-vector',
+          referenceId: 'task-2-13mm-h6-u6',
+          description: '13 mm components: h6 [-11, 0] µm; u6 [33, 44] µm',
+        },
+      ],
+    });
   });
 
   it('defines all nominal intervals contiguously with ordered, case-correct cells', () => {
@@ -84,6 +116,8 @@ describe('GB/T 1800.1/2-2020 provider', () => {
       datasetVersion: '1',
       sourceParts: ['GB/T 1800.1-2020', 'GB/T 1800.2-2020'],
       availability: 'partial-reference-cases-only',
+      completeness: 'partial',
+      catalogClassification: 'unverified',
     });
     expect(GBT_1800_2020_MANIFEST.checksum).toBe(canonicalRuleInputDigest({
       nominalValue: 500,
@@ -92,12 +126,31 @@ describe('GB/T 1800.1/2-2020 provider', () => {
     }));
   });
 
-  it('accepts every interval edge in range and rejects the exclusive lower edge', () => {
-    expect(() => provider.listBands({ basicSize: 0, featureClass: 'external' }))
+  it('runtime-freezes interval records, deviation tuples, metadata, and the manifest', () => {
+    const referenceInterval = GBT_1800_2020_INTERVALS[3]!;
+    expect(Object.isFrozen(GBT_1800_2020_INTERVALS)).toBe(true);
+    expect(Object.isFrozen(referenceInterval)).toBe(true);
+    expect(Object.isFrozen(referenceInterval.internal)).toBe(true);
+    expect(Object.isFrozen(referenceInterval.internal.H7)).toBe(true);
+    expect(Object.isFrozen(GBT_1800_2020_MANIFEST)).toBe(true);
+    expect(Object.isFrozen(GBT_1800_2020_MANIFEST.numericProvenance)).toBe(true);
+    expect(() => {
+      (referenceInterval.internal.H7 as unknown as number[])[0] = referenceInterval.internal.H7![0];
+    }).toThrow(TypeError);
+  });
+
+  it('selects each concrete (over, through] interval at both boundaries', () => {
+    expect(() => findGbt1800Interval(0))
       .toThrow('TOLERANCE_SIZE_RANGE_UNSUPPORTED');
     for (const interval of GBT_1800_2020_INTERVALS) {
-      if (interval.over > 0) expect(() => provider.listBands({ basicSize: interval.over, featureClass: 'external' })).not.toThrow();
-      expect(() => provider.listBands({ basicSize: interval.through, featureClass: 'external' })).not.toThrow();
+      expect(findGbt1800Interval(interval.through)).toBe(interval);
+      const justInsideLowerBoundary = interval.over === 0
+        ? Number.MIN_VALUE
+        : interval.over + Number.EPSILON * interval.over;
+      expect(findGbt1800Interval(justInsideLowerBoundary)).toBe(interval);
+      if (interval.over > 0) {
+        expect(findGbt1800Interval(interval.over)).toBe(GBT_1800_2020_INTERVALS[GBT_1800_2020_INTERVALS.indexOf(interval) - 1]);
+      }
     }
   });
 

@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type FeatureOfSizeClass = 'internal' | 'external';
-export type ToleranceBandCategory = 'preferred' | 'common' | 'other';
+export type ToleranceBandCategory = 'preferred' | 'common' | 'other' | 'unknown';
+
+export interface ToleranceDatasetProvenance {
+  kind: 'authorized-standard-tabulation' | 'plan-reference-vector';
+  referenceId: string;
+  description: string;
+}
+
+export interface ToleranceDatasetMetadata {
+  completeness: 'complete' | 'partial';
+  catalogClassification: 'verified' | 'unverified';
+  numericProvenance: readonly ToleranceDatasetProvenance[];
+}
 
 export interface ToleranceStandardRef {
   id: string;
@@ -41,6 +53,7 @@ export interface ResolvedFit {
 
 export interface ToleranceStandardProvider {
   readonly standardRef: ToleranceStandardRef;
+  readonly datasetMetadata: ToleranceDatasetMetadata;
   listBands(request: { basicSize: number; featureClass: FeatureOfSizeClass }): ToleranceBand[];
   resolveBand(request: { basicSize: number; featureClass: FeatureOfSizeClass; designation: string }): ResolvedStandardTolerance;
   resolveFit(request: { basicSize: number; basis: 'hole' | 'shaft'; designation: string }): ResolvedFit;
