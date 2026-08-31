@@ -82,7 +82,7 @@ describe('immutable tolerance edits', () => {
     expect(after.chains).toEqual(original.chains);
   });
 
-  it('replaces one fit group atomically without changing a different group', () => {
+  it('replaces one fit group atomically', () => {
     const before = draft();
     before.tolerances.push({
       id: 'old-hole', dimensionIntentId: 'intent-hole', mode: 'bilateral', source: 'standard', inputs: {},
@@ -93,11 +93,6 @@ describe('immutable tolerance edits', () => {
       resolved: { upperDeviation: 0, lowerDeviation: -.01, inputDigest: 'sha256:old-shaft', evaluatedAt: 0 },
       status: 'resolved', evidenceIds: [], diagnostics: [], fitGroupId: 'fit-1',
     });
-    before.fitAssignments.push({
-      fitGroupId: 'fit-other', holeDimensionId: 'intent-other', shaftDimensionId: 'intent-shaft', basis: 'hole',
-      designation: 'H7/g6', fitType: 'clearance', minimumClearance: 0, maximumClearance: .1,
-      standardRef: { id: 'GB/T 1800', edition: '2020' },
-    });
     const original = structuredClone(before);
 
     const after = applyFitTolerance(before, fit(), {
@@ -107,7 +102,6 @@ describe('immutable tolerance edits', () => {
 
     expect(before).toEqual(original);
     expect(after.fitAssignments).toEqual([
-      original.fitAssignments[0],
       expect.objectContaining({ fitGroupId: 'fit-1', designation: 'H7/g6' }),
     ]);
     expect(after.tolerances.filter(({ fitGroupId }) => fitGroupId === 'fit-1')).toEqual([
@@ -166,5 +160,30 @@ describe('immutable tolerance edits', () => {
       fitGroupId: 'fit-1', holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft',
       selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit-1'],
     })).toThrow('TOLERANCE_FIT_DESIGNATION_MISMATCH');
+  });
+
+  it('rejects a fit target already owned by another complete fit group without changing it', () => {
+    const before = draft();
+    before.tolerances.push({
+      id: 'other-fit-hole', dimensionIntentId: 'intent-other', mode: 'bilateral', source: 'standard', inputs: {},
+      resolved: { upperDeviation: .021, lowerDeviation: 0, inputDigest: 'sha256:other-hole', evaluatedAt: 0 },
+      status: 'resolved', evidenceIds: [], diagnostics: [], fitGroupId: 'fit-other',
+    }, {
+      id: 'other-fit-shaft', dimensionIntentId: 'intent-shaft', mode: 'bilateral', source: 'standard', inputs: {},
+      resolved: { upperDeviation: 0, lowerDeviation: -.02, inputDigest: 'sha256:other-shaft', evaluatedAt: 0 },
+      status: 'resolved', evidenceIds: [], diagnostics: [], fitGroupId: 'fit-other',
+    });
+    before.fitAssignments.push({
+      fitGroupId: 'fit-other', holeDimensionId: 'intent-other', shaftDimensionId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', fitType: 'clearance', minimumClearance: .007, maximumClearance: .041,
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+    });
+    const original = structuredClone(before);
+
+    expect(() => applyFitTolerance(before, fit(), {
+      fitGroupId: 'fit-1', holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit-1'],
+    })).toThrow('FIT_PAIR_TARGET_CONFLICT');
+    expect(before).toEqual(original);
   });
 });

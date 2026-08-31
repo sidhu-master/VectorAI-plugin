@@ -3,7 +3,9 @@
 import type { AnnotationId, AnnotationNode, GeometryId } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 import {
+  clearToleranceOverride,
   projectEngineeringAnnotations,
+  setToleranceOverride,
   type EngineeringAnnotationDraft,
 } from '../index';
 
@@ -165,5 +167,30 @@ describe('portable engineering annotation projection', () => {
       featureClass: 'external', standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both',
       source: 'standard', ruleRef: { id: 'rule-a', version: '1', inputDigest: 'sha256:fixture' },
     });
+  });
+
+  it('uses the last duplicate tolerance for override and clear, matching projection', () => {
+    const input = draft();
+    input.tolerances = [{
+      ...input.tolerances[0]!, id: 'tolerance-first',
+      resolved: { upperDeviation: .1, lowerDeviation: .09, inputDigest: 'sha256:first', evaluatedAt: 1 },
+      override: { upperDeviation: .12, lowerDeviation: .11 },
+    }, {
+      ...input.tolerances[0]!, id: 'tolerance-last',
+      resolved: { upperDeviation: .02, lowerDeviation: -.01, inputDigest: 'sha256:last', evaluatedAt: 1 },
+    }];
+
+    const overridden = setToleranceOverride(input, 'intent-a', { upperDeviation: .05, lowerDeviation: .04 });
+    expect(projectEngineeringAnnotations({
+      draft: overridden, orderedIntentIds: ['intent-a'], existingAnnotations: [],
+    }).annotations[0]?.toleranceProjection).toMatchObject({ upperDeviation: .05, lowerDeviation: .04 });
+    expect(overridden.tolerances[0]?.override).toEqual({ upperDeviation: .12, lowerDeviation: .11 });
+
+    const cleared = clearToleranceOverride(overridden, 'intent-a');
+    expect(projectEngineeringAnnotations({
+      draft: cleared, orderedIntentIds: ['intent-a'], existingAnnotations: [],
+    }).annotations[0]?.toleranceProjection).toMatchObject({ upperDeviation: .02, lowerDeviation: -.01 });
+    expect(cleared.tolerances[0]?.override).toEqual({ upperDeviation: .12, lowerDeviation: .11 });
+    expect(cleared.tolerances[1]).not.toHaveProperty('override');
   });
 });

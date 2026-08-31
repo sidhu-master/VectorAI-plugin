@@ -57,6 +57,7 @@ export function applyFitTolerance(
   const holeIntent = requireMillimetreIntent(draft, options.holeDimensionIntentId);
   const shaftIntent = requireMillimetreIntent(draft, options.shaftDimensionIntentId);
   validateFitResult(result, holeIntent.nominalValue, shaftIntent.nominalValue);
+  rejectFitTargetConflict(draft, options);
 
   const common = {
     selection: result.designation,
@@ -195,9 +196,27 @@ function requireMillimetreIntent(draft: EngineeringAnnotationDraft, dimensionInt
 
 function requireToleranceIndex(draft: EngineeringAnnotationDraft, dimensionIntentId: string): number {
   requireIntent(draft, dimensionIntentId);
-  const index = draft.tolerances.findIndex((spec) => spec.dimensionIntentId === dimensionIntentId);
+  let index = -1;
+  for (const [candidateIndex, spec] of draft.tolerances.entries()) {
+    if (spec.dimensionIntentId === dimensionIntentId) index = candidateIndex;
+  }
   if (index < 0) throw new Error('TOLERANCE_SPEC_UNKNOWN');
   return index;
+}
+
+function rejectFitTargetConflict(draft: EngineeringAnnotationDraft, options: ApplyFitToleranceOptions): void {
+  const targetIds = new Set([options.holeDimensionIntentId, options.shaftDimensionIntentId]);
+  const assignmentConflict = draft.fitAssignments.some((assignment) => (
+    assignment.fitGroupId !== options.fitGroupId
+    && (targetIds.has(assignment.holeDimensionId) || targetIds.has(assignment.shaftDimensionId))
+  ));
+  const toleranceConflict = draft.tolerances.some((spec) => (
+    targetIds.has(spec.dimensionIntentId)
+    && spec.fitGroupId !== undefined
+    && nonBlank(spec.fitGroupId)
+    && spec.fitGroupId !== options.fitGroupId
+  ));
+  if (assignmentConflict || toleranceConflict) throw new Error('FIT_PAIR_TARGET_CONFLICT');
 }
 
 function validateStandardResult(result: ResolvedStandardTolerance, basicSize: number): void {
