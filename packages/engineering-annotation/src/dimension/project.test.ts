@@ -152,6 +152,31 @@ describe('portable engineering annotation projection', () => {
     expect(input).toEqual(before);
   });
 
+  it('keeps standard-provider deviations in millimetres when projecting an inch intent', () => {
+    const input = draft();
+    input.intents[0]!.nominalValue = .5;
+    input.intents[0]!.unit = 'in';
+    input.tolerances[0] = {
+      ...input.tolerances[0]!, source: 'standard', featureClass: 'internal',
+      selection: { designation: 'H7', source: 'manual', evidenceRefs: ['manual:H7'] },
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+      inputs: { basicSize: 12.7, featureClass: 'internal', designation: 'H7' },
+      resolved: {
+        upperDeviation: .018, lowerDeviation: 0, upperLimit: 12.718, lowerLimit: 12.7,
+        inputDigest: 'sha256:inch-H7', evaluatedAt: 1,
+      },
+    };
+
+    const result = projectEngineeringAnnotations({
+      draft: input, orderedIntentIds: ['intent-a'], existingAnnotations: [],
+    });
+
+    expect(result.annotations[0]).toMatchObject({
+      computedValue: .5, unit: 'in',
+      toleranceProjection: { upperDeviation: .018, lowerDeviation: 0, unit: 'mm', source: 'standard' },
+    });
+  });
+
   it('allows a confirmed untoleranced dimension but rejects candidate or unresolved tolerance data', () => {
     const untoleranced = draft();
     untoleranced.tolerances = [];

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { createEmptyDrawing, exportDrawingDxf, type DimensionAnnotation } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 
 import { importDxf } from './import';
@@ -257,6 +258,37 @@ GB_LINEAR
     }));
     expect(result.diagnostics).not.toContainEqual(expect.objectContaining({
       code: 'DXF_ENTITY_UNSUPPORTED', message: 'Unsupported DXF entity DIMENSION',
+    }));
+  });
+
+  it('round-trips an inch drawing and assigns its header unit to imported non-angular dimensions', () => {
+    const document = createEmptyDrawing({ unit: 'in', idFactory: { next: () => 'drawing-inch-roundtrip' }, now: () => 1 });
+    document.geometry = [{
+      id: 'line-inch' as never, type: 'line', start: [0, 0], end: [.5, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    document.annotations = [{
+      id: 'diameter-inch' as never, type: 'dimension', dimensionKind: 'diameter', associationStatus: 'resolved',
+      targets: [], computedValue: .5, displayText: '⌀0.5', unit: 'in', textPosition: [.25, .2],
+      definitionPoints: [[0, 0], [.5, 0]], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      toleranceProjection: {
+        mode: 'bilateral', fitDesignation: 'H7', upperDeviation: .018, lowerDeviation: 0,
+        unit: 'mm', source: 'standard', status: 'confirmed', featureClass: 'internal',
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['standard:H7'],
+      },
+    } satisfies DimensionAnnotation];
+
+    const result = importDxf({
+      bytes: new TextEncoder().encode(exportDrawingDxf(document)),
+      source: { digest: 'sha256:inch-roundtrip' }, drawingId: 'drawing:inch-roundtrip', now: () => 1,
+    });
+
+    expect(result.status).toBe('imported');
+    if (result.status !== 'imported') return;
+    expect(result.document.unitSystem.length).toBe('in');
+    expect(result.document.annotations).toContainEqual(expect.objectContaining({
+      type: 'dimension', dimensionKind: 'diameter', computedValue: .5, unit: 'in',
     }));
   });
 

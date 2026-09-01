@@ -371,6 +371,41 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(() => drawingDocumentSchema.parse(invalid)).toThrow();
   });
 
+  it('enforces UTF-8 standard-reference field bounds on Drawing and engineering-plan wire payloads', () => {
+    const exact = '界'.repeat(1_194) + 'aa';
+    const overLimit = `${exact}a`;
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-standard-ref-boundary' }, now: () => 1 });
+    document.annotations = [{
+      id: 'dimension-boundary' as AnnotationId, type: 'dimension', visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] }, dimensionKind: 'diameter', associationStatus: 'resolved',
+      targets: [], computedValue: 20, unit: 'mm', textPosition: [0, 0], definitionPoints: [[-10, 0], [10, 0]],
+      toleranceProjection: {
+        mode: 'fit', fitDesignation: 'H7', unit: 'mm', status: 'confirmed', source: 'standard',
+        standardRef: { id: exact, edition: '2020' }, evidenceRefs: ['standard:H7'],
+      },
+    }];
+    const plan = {
+      version: 1 as const, drawingRef: { drawingId: 'drawing-1', revision: 1 }, datums: [], intents: [],
+      tolerances: [{
+        id: 'tolerance-boundary', dimensionIntentId: 'intent-boundary', mode: 'fit' as const, source: 'standard' as const,
+        standardRef: { id: exact, edition: '2020' }, inputs: {}, status: 'resolved' as const,
+        evidenceIds: [], diagnostics: [],
+      }],
+      fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+    };
+
+    expect(drawingDocumentSchema.parse(document).annotations).toHaveLength(1);
+    expect(engineeringAnnotationDraftSchema.parse(plan).tolerances).toHaveLength(1);
+    const invalidDocument = structuredClone(document);
+    const invalidProjection = (invalidDocument.annotations[0] as { toleranceProjection: { standardRef: { id: string } } }).toleranceProjection;
+    invalidProjection.standardRef.id = overLimit;
+    expect(() => drawingDocumentSchema.parse(invalidDocument)).toThrow();
+    expect(() => engineeringAnnotationDraftSchema.parse({
+      ...plan,
+      tolerances: [{ ...plan.tolerances[0], standardRef: { id: overLimit, edition: '2020' } }],
+    })).toThrow();
+  });
+
   it('round-trips a parametric DXF hatch without flattening it into display segments', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-hatch' }, now: () => 1 });
     document.annotations = [{

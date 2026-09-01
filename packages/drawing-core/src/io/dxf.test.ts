@@ -90,6 +90,20 @@ function drawingWithToleranceStandardRef(standardId: string, edition = '2020') {
   return document;
 }
 
+function expectedVectorAiAggregateBytes(standardId: string): number {
+  const encoder = new TextEncoder();
+  const payload = expectedTolerancePayload(standardId);
+  const payloadBytes = encoder.encode(payload).byteLength;
+  if (payloadBytes <= 254) return encoder.encode('VECTORAI').byteLength + 1 + payloadBytes + 1;
+  const chunkCount = Math.ceil(payloadBytes / 254);
+  const metadata = JSON.stringify({
+    version: 1, format: 'vectorai-tolerance-json', encoding: 'utf-8', chunkCount, byteLength: payloadBytes,
+  });
+  return encoder.encode('VECTORAI').byteLength + 1
+    + encoder.encode(metadata).byteLength + 1
+    + payloadBytes + chunkCount;
+}
+
 describe('exportDrawingDxf', () => {
   it('exports canonical geometry and annotations as a unit-aware ASCII DXF drawing', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-dxf' }, now: () => 1 });
@@ -361,6 +375,17 @@ describe('exportDrawingDxf', () => {
     expect(reassembled).toBe(expected);
     expect(reassembled).not.toContain('�');
     expect(JSON.parse(reassembled).standardRef).toEqual({ id: standardId, edition });
+  });
+
+  it('guards the 16KB aggregate per-entity XDATA boundary without truncating a legacy standard reference', () => {
+    const safeId = 'x'.repeat(16_051);
+    const overLimitId = `${safeId}x`;
+
+    expect(expectedVectorAiAggregateBytes(safeId)).toBe(16 * 1_024);
+    expect(expectedVectorAiAggregateBytes(overLimitId)).toBe(16 * 1_024 + 1);
+    expect(() => exportDrawingDxf(drawingWithToleranceStandardRef(safeId))).not.toThrow();
+    expect(() => exportDrawingDxf(drawingWithToleranceStandardRef(overLimitId)))
+      .toThrow('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
   });
 
   it('keeps negative same-sign fit members explicit while a sign-spanning fit member stays native', () => {

@@ -28,7 +28,7 @@ export function importDxf(request: DxfImportRequest): DxfImportResult {
     return rejected(diagnostics, 'DXF_REQUIRED_SECTION_MISSING', 'DXF HEADER and ENTITIES sections are required');
   }
   const unit = readUnit(sections.header.pairs);
-  if (unit === null) return rejected(diagnostics, 'DXF_UNITS_REQUIRED', 'DXF $INSUNITS must be mm, cm, or m');
+  if (unit === null) return rejected(diagnostics, 'DXF_UNITS_REQUIRED', 'DXF $INSUNITS must be in, mm, cm, or m');
   const records = readEntityRecords(sections.entities.pairs);
   const counts: Record<string, number> = {};
   for (const record of records) counts[record.type] = (counts[record.type] ?? 0) + 1;
@@ -51,6 +51,7 @@ export function importDxf(request: DxfImportRequest): DxfImportResult {
     const projected = projectEntity(record, {
       sourceId,
       diagnostics,
+      lengthUnit: unit,
       nodeId: stableNodeId(request.source.digest, record),
     });
     if (projected?.geometry !== undefined) document.geometry.push(projected.geometry);
@@ -92,10 +93,11 @@ function validateDocument(document: DrawingDocument): string | null {
   return walk(document) ? null : 'Projected document contains non-finite values';
 }
 
-function readUnit(pairs: readonly DxfPair[]): 'mm' | 'cm' | 'm' | null {
+function readUnit(pairs: readonly DxfPair[]): DrawingDocument['unitSystem']['length'] | null {
   const variable = pairs.findIndex((pair) => pair.code === 9 && pair.value === '$INSUNITS');
   if (variable < 0) return null;
   const code = pairs.slice(variable + 1).find((pair) => pair.code === 70);
+  if (code?.value === '1') return 'in';
   if (code?.value === '4') return 'mm';
   if (code?.value === '5') return 'cm';
   if (code?.value === '6') return 'm';

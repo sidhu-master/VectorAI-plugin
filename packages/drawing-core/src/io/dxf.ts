@@ -6,6 +6,7 @@ import type {
   GeometryNode,
   Vec2,
 } from '../document';
+import { convertLength } from '../document/length-unit';
 import {
   DEFAULT_DXF_EXPORT_PROFILE,
   type DxfDimensionStyle,
@@ -75,16 +76,16 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
     const blockName = `*D${nextDimensionBlock++}`;
     const entity = canonicalDimensionEntity(node, profile, document.unitSystem.length);
     const tolerance = portableDimensionTolerance(node, document.unitSystem.length);
+    const nativeTolerance = tolerance?.native ? {
+      upperDeviation: tolerance.upperDeviation,
+      lowerDeviationMagnitude: Math.abs(tolerance.lowerDeviation),
+      decimalPlaces: toleranceDecimalPlaces(profile, entity.style),
+    } : undefined;
+    assertXDataAggregateLimit(nativeTolerance, tolerance?.vectorAiStrings);
     nativeDimensions.push({
       entity,
       blockName,
-      ...(tolerance?.native ? {
-        nativeTolerance: {
-          upperDeviation: tolerance.upperDeviation,
-          lowerDeviationMagnitude: Math.abs(tolerance.lowerDeviation),
-          decimalPlaces: toleranceDecimalPlaces(profile, entity.style),
-        },
-      } : {}),
+      ...(nativeTolerance === undefined ? {} : { nativeTolerance }),
       ...(tolerance?.vectorAiStrings === undefined ? {} : { vectorAiToleranceStrings: tolerance.vectorAiStrings }),
     });
   }
@@ -802,8 +803,7 @@ function convertToleranceValue(
 ): number | undefined {
   if (sourceUnit === targetUnit) return value;
   if (sourceUnit === 'deg' || targetUnit === 'deg') return undefined;
-  const millimetresPerUnit = { mm: 1, cm: 10, m: 1_000, in: 25.4 } as const;
-  return value * millimetresPerUnit[sourceUnit] / millimetresPerUnit[targetUnit];
+  return convertLength(value, sourceUnit, targetUnit);
 }
 
 function toleranceDecimalPlaces(
@@ -850,6 +850,30 @@ function toleranceXDataStrings(value: {
     byteLength,
   });
   return [metadata, ...chunks];
+}
+
+function assertXDataAggregateLimit(
+  nativeTolerance: NativeDimensionTolerance | undefined,
+  vectorAiStrings: readonly string[] | undefined,
+): void {
+  let byteLength = 0;
+  if (nativeTolerance !== undefined) {
+    byteLength += xdataStringBytes('ACAD')
+      + xdataStringBytes('DSTYLE')
+      + xdataStringBytes('{')
+      + xdataStringBytes('}')
+      + 6 * 2
+      + 2 * 8;
+  }
+  if (vectorAiStrings !== undefined) {
+    byteLength += xdataStringBytes('VECTORAI');
+    for (const value of vectorAiStrings) byteLength += xdataStringBytes(value);
+  }
+  if (byteLength > 16 * 1_024) throw new RangeError('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
+}
+
+function xdataStringBytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength + 1;
 }
 
 function writeBlockReference(writer: DxfWriter, value: PreparedBlockReference): void {

@@ -76,4 +76,24 @@ describe('portable tolerance projection', () => {
       featureClass: 'internal', evidenceRefs: [],
     })).toThrow('TOLERANCE_FEATURE_CLASS_UNIT_INVALID');
   });
+
+  it('accepts the UTF-8 standard-reference field boundary and rejects one byte beyond it', () => {
+    const exact = '界'.repeat(1_194) + 'aa';
+    const projection = {
+      mode: 'fit' as const, fitDesignation: 'H7', unit: 'mm' as const, source: 'standard' as const,
+      status: 'resolved' as const, standardRef: { id: exact, edition: '2020' }, evidenceRefs: [],
+    };
+
+    expect(new TextEncoder().encode(exact).byteLength).toBe(3_584);
+    expect(() => validateToleranceProjection(projection)).not.toThrow();
+    expect(() => validateToleranceProjection({
+      ...projection, standardRef: { ...projection.standardRef, id: `${exact}a` },
+    })).toThrow('TOLERANCE_STANDARD_REF_INVALID');
+    expect(() => validateToleranceProjection({
+      ...projection, standardRef: { ...projection.standardRef, edition: `${exact}a` },
+    })).toThrow('TOLERANCE_STANDARD_REF_INVALID');
+    expect(() => validateToleranceProjection({
+      ...projection, standardRef: { ...projection.standardRef, id: 'GB/T\n1800' },
+    })).toThrow('TOLERANCE_STANDARD_REF_INVALID');
+  });
 });

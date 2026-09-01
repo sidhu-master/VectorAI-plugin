@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DrawingDocument } from '@vectorai/drawing-core';
+import { convertLength, type DrawingDocument } from '@vectorai/drawing-core';
 import type { DrawingRef } from '@vectorai/drawing-edit-protocol';
 import { parseEngineeringDocument } from '../engineering-document/parser';
 import { resolveShaftAxis } from '../shaft/axis';
@@ -23,7 +23,9 @@ export type AnalyzeShaftPartitionResult =
 
 export function analyzeShaftPartition(request: AnalyzeShaftPartitionRequest): AnalyzeShaftPartitionResult {
   const parsed = request.engineeringText === undefined ? undefined : parseEngineeringDocument(request.engineeringText);
-  const documentScale = parsed?.drawing.unit === undefined ? 1 : unitScale(parsed.drawing.unit) / unitScale(request.document.unitSystem.length);
+  const documentScale = parsed?.drawing.unit === undefined
+    ? 1
+    : convertLength(1, parsed.drawing.unit, request.document.unitSystem.length);
   const documentRegions = (parsed?.regions ?? []).map((region) => ({
     ...region,
     ...(region.interval === undefined ? {} : { interval: { start: region.interval.start * documentScale, end: region.interval.end * documentScale } }),
@@ -92,6 +94,3 @@ export function analyzeShaftPartition(request: AnalyzeShaftPartitionRequest): An
 }
 
 function canonical(value: number): string { return Number(value.toFixed(6)).toString(); }
-function unitScale(unit: 'mm' | 'cm' | 'm' | 'in'): number {
-  return unit === 'mm' ? 0.001 : unit === 'cm' ? 0.01 : unit === 'in' ? 0.0254 : 1;
-}

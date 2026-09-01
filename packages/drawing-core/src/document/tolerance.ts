@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ToleranceProjection } from './types';
+import { isToleranceStandardRefField } from './tolerance-standard-ref';
 
 export function validateToleranceProjection(value: ToleranceProjection): void {
   const numeric = [
@@ -26,7 +27,10 @@ export function validateToleranceProjection(value: ToleranceProjection): void {
   if (value.ruleRef !== undefined && (!value.ruleRef.id || !value.ruleRef.version || !value.ruleRef.inputDigest)) {
     throw new TypeError('TOLERANCE_RULE_REF_INVALID');
   }
-  if (value.standardRef !== undefined && (!value.standardRef.id.trim() || !value.standardRef.edition.trim())) {
+  if (value.standardRef !== undefined && (
+    !isToleranceStandardRefField(value.standardRef.id)
+    || !isToleranceStandardRefField(value.standardRef.edition)
+  )) {
     throw new TypeError('TOLERANCE_STANDARD_REF_INVALID');
   }
   if (value.featureClass !== undefined && value.unit === 'deg') {

@@ -12,6 +12,7 @@ import {
   type SpatialEditProgram,
 } from '@vectorai/drawing-edit-protocol';
 import type { DrawingWorkspaceSnapshot } from '@vectorai/drawing-workspace';
+import { isToleranceStandardRefField } from '@vectorai/drawing-core';
 
 export * from '@vectorai/drawing-edit-protocol';
 export * from './axial-dimension-layout';
@@ -45,6 +46,9 @@ export type {
 } from '@vectorai/drawing-workspace';
 
 const idSchema = z.string().min(1);
+const toleranceStandardRefFieldSchema = z.string().trim().min(1).refine(isToleranceStandardRefField, {
+  message: 'TOLERANCE_STANDARD_REF_INVALID',
+});
 const vec2Schema = z.tuple([z.number(), z.number()]);
 const qualitySchema = z.object({
   status: z.enum(['confirmed', 'candidate']),
@@ -138,7 +142,7 @@ const toleranceProjectionSchema = z.object({
     inputDigest: idSchema,
   }).strict().optional(),
   featureClass: z.enum(['internal', 'external']).optional(),
-  standardRef: z.object({ id: z.string().trim().min(1), edition: z.string().trim().min(1) }).strict().optional(),
+  standardRef: z.object({ id: toleranceStandardRefFieldSchema, edition: toleranceStandardRefFieldSchema }).strict().optional(),
   displayPreference: z.enum(['deviations', 'designation', 'both']).optional(),
   evidenceRefs: z.array(idSchema),
 }).strict().superRefine((value, context) => {
@@ -1012,8 +1016,8 @@ const toleranceOverrideSchema = z.object({
   lowerDeviation: z.number().finite(),
 }).strict();
 const toleranceStandardRefSchema = z.object({
-  id: z.string().trim().min(1),
-  edition: z.string().trim().min(1),
+  id: toleranceStandardRefFieldSchema,
+  edition: toleranceStandardRefFieldSchema,
 }).strict();
 const toleranceDatasetProvenanceSchema = z.object({
   kind: z.enum(['authorized-standard-tabulation', 'plan-reference-vector']),

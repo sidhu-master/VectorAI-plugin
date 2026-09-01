@@ -24,4 +24,11 @@ describe('engineering document parser', () => {
       'DOCUMENT_UNIT_UNSUPPORTED', 'DOCUMENT_NUMBER_INVALID', 'DOCUMENT_WIDTH_INVALID', 'DOCUMENT_REGION_DUPLICATE',
     ]));
   });
+
+  it('accepts the canonical inch unit token without treating aliases as instructions', () => {
+    const parsed = parseEngineeringDocument('[drawing]\nunit=in\n[region:seat:S1]\ncenter_z=0.5\nwidth=0.2\n');
+
+    expect(parsed.drawing.unit).toBe('in');
+    expect(parsed.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'DOCUMENT_UNIT_UNSUPPORTED' }));
+  });
 });

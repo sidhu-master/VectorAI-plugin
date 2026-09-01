@@ -147,6 +147,128 @@ describe('ToleranceService', () => {
     expect(plans.undo('session', drawingRef).draft).toEqual(before.draft);
   });
 
+  it('queries, previews, and applies H7, g6, and u6 for a 0.5 inch intent through the millimetre provider boundary', () => {
+    const { plans, service } = setup();
+    const imperial = draft(.5, .5);
+    imperial.intents[0]!.unit = 'in';
+    imperial.intents[1]!.unit = 'in';
+    plans.setDraft('session', imperial);
+
+    expect(service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole', featureClass: 'internal',
+    }).bands).toContainEqual(expect.objectContaining({ designation: 'H7', available: true }));
+    expect(service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    }).bands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ designation: 'g6', available: true }),
+      expect.objectContaining({ designation: 'u6', available: true }),
+    ]));
+
+    const h7 = service.preview('session', {
+      type: 'single', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole',
+      featureClass: 'internal', designation: 'H7',
+    });
+    const g6 = service.preview('session', {
+      type: 'single', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'g6',
+    });
+    expect(h7).toMatchObject({ result: { basicSize: 12.7, unit: 'mm', upperDeviation: .018, lowerDeviation: 0 } });
+    expect(g6).toMatchObject({ result: { basicSize: 12.7, unit: 'mm', upperDeviation: -.006, lowerDeviation: -.017 } });
+
+    const applied = service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    });
+    expect(applied.draft?.tolerances[0]).toMatchObject({
+      inputs: { basicSize: 12.7 }, resolved: { upperDeviation: .044, lowerDeviation: .033 },
+    });
+    const stored = structuredClone(applied.draft!.tolerances[0]!);
+    expect(stored.resolved?.inputDigest).toBe(canonicalRuleInputDigest({
+      nominalValue: 12.7, unit: 'mm',
+      inputs: {
+        standardId: 'GB/T 1800', edition: '2020', featureClass: 'external', designation: 'u6',
+      },
+    }));
+    const equivalent = applied.draft as unknown as EngineeringAnnotationDraft;
+    equivalent.intents[1]!.nominalValue = 12.7;
+    equivalent.intents[1]!.unit = 'mm';
+    plans.setDraft('session', equivalent);
+    expect(plans.get('session').draft?.tolerances[0]).toEqual(stored);
+  });
+
+  it('previews and applies a fit to equal physical sizes expressed as inches and millimetres', () => {
+    const { plans, service } = setup();
+    const mixed = draft(.5, 12.7);
+    mixed.intents[0]!.unit = 'in';
+    plans.setDraft('session', mixed);
+
+    expect(service.preview('session', {
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
+      basis: 'hole', designation: 'H7/g6',
+    })).toMatchObject({ result: { hole: { basicSize: 12.7 }, shaft: { basicSize: 12.7 } } });
+
+    const applied = service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+    });
+    expect(applied.draft?.tolerances).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dimensionIntentId: 'intent-hole', inputs: expect.objectContaining({ basicSize: 12.7 }) }),
+      expect.objectContaining({ dimensionIntentId: 'intent-shaft', inputs: expect.objectContaining({ basicSize: 12.7 }) }),
+    ]));
+  });
+
+  it('recovers an inch standard tolerance after nominal changes', () => {
+    const { plans, service } = setup();
+    const imperial = draft(.5, 12.7);
+    imperial.intents[0]!.unit = 'in';
+    plans.setDraft('session', imperial);
+
+    service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole',
+      featureClass: 'internal', designation: 'H7', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:H7'],
+    });
+    const unsupported = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
+    unsupported.intents[0]!.nominalValue = 20;
+    plans.setDraft('session', unsupported);
+    expect(plans.get('session').draft?.tolerances[0]).toMatchObject({
+      status: 'stale', inputs: { basicSize: 508 },
+    });
+
+    const restored = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
+    restored.intents[0]!.nominalValue = .5;
+    plans.setDraft('session', restored);
+    expect(plans.get('session').draft?.tolerances[0]).toMatchObject({
+      status: 'resolved', inputs: { basicSize: 12.7 }, resolved: { upperDeviation: .018, lowerDeviation: 0 },
+    });
+  });
+
+  it('stores canonical provider sizes when an inch fit becomes stale', () => {
+    const { plans, service } = setup();
+    const imperial = draft(.5, .5);
+    imperial.intents[0]!.unit = 'in';
+    imperial.intents[1]!.unit = 'in';
+    plans.setDraft('session', imperial);
+    service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+    });
+
+    const changed = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
+    changed.intents[1]!.nominalValue = .6;
+    plans.setDraft('session', changed);
+
+    expect(plans.get('session').draft?.tolerances).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dimensionIntentId: 'intent-hole', status: 'stale', inputs: expect.objectContaining({ basicSize: 12.7 }) }),
+      expect.objectContaining({ dimensionIntentId: 'intent-shaft', status: 'stale', inputs: expect.objectContaining({ basicSize: 15.24 }) }),
+    ]));
+  });
+
   it('returns Host-derived tolerance magnitudes for both fit members', () => {
     const { service } = setup();
     const preview = service.preview('session', {

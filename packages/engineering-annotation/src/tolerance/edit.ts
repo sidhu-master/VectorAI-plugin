@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { canonicalMillimetres } from '@vectorai/drawing-core';
 import type { EngineeringAnnotationDraft, DimensionIntent, ToleranceSpec } from '../dimension/types';
 import type { ResolvedFit, ResolvedStandardTolerance } from './standard-types';
 
@@ -36,8 +37,8 @@ export function applySingleTolerance(
   result: ResolvedStandardTolerance,
   options: ApplySingleToleranceOptions,
 ): EngineeringAnnotationDraft {
-  const intent = requireMillimetreIntent(draft, options.dimensionIntentId);
-  validateStandardResult(result, intent.nominalValue);
+  const basicSize = requireProviderBasicSize(draft, options.dimensionIntentId);
+  validateStandardResult(result, basicSize);
   const spec = standardSpec(options.dimensionIntentId, result, {
     selection: result.designation,
     selectionSource: options.selectionSource,
@@ -54,9 +55,9 @@ export function applyFitTolerance(
 ): EngineeringAnnotationDraft {
   if (!nonBlank(options.fitGroupId)) throw new Error('TOLERANCE_FIT_GROUP_REQUIRED');
   if (options.holeDimensionIntentId === options.shaftDimensionIntentId) throw new Error('TOLERANCE_FIT_INTENTS_DISTINCT');
-  const holeIntent = requireMillimetreIntent(draft, options.holeDimensionIntentId);
-  const shaftIntent = requireMillimetreIntent(draft, options.shaftDimensionIntentId);
-  validateFitResult(result, holeIntent.nominalValue, shaftIntent.nominalValue);
+  const holeBasicSize = requireProviderBasicSize(draft, options.holeDimensionIntentId);
+  const shaftBasicSize = requireProviderBasicSize(draft, options.shaftDimensionIntentId);
+  validateFitResult(result, holeBasicSize, shaftBasicSize);
   rejectFitTargetConflict(draft, options);
 
   const common = {
@@ -188,10 +189,14 @@ function requireIntent(draft: EngineeringAnnotationDraft, dimensionIntentId: str
   return intent;
 }
 
-function requireMillimetreIntent(draft: EngineeringAnnotationDraft, dimensionIntentId: string): DimensionIntent {
+function requireProviderBasicSize(draft: EngineeringAnnotationDraft, dimensionIntentId: string): number {
   const intent = requireIntent(draft, dimensionIntentId);
-  if (intent.unit !== 'mm' || !Number.isFinite(intent.nominalValue)) throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
-  return intent;
+  if (intent.unit === 'deg' || !Number.isFinite(intent.nominalValue)) throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
+  try {
+    return canonicalMillimetres(intent.nominalValue, intent.unit);
+  } catch {
+    throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
+  }
 }
 
 function requireToleranceIndex(draft: EngineeringAnnotationDraft, dimensionIntentId: string): number {

@@ -100,6 +100,7 @@ const draft: EngineeringAnnotationDraft = {
   datums: [],
   intents,
   tolerances: [resolved.spec, closureTolerance],
+  fitAssignments: [],
   geometricTolerances: [],
   chains: [{
     id: 'chain-main', drawingRef, name: '主尺寸链', datumIds: [],
@@ -154,7 +155,9 @@ document.annotations = projection.annotations;
 const serializedDrawing = JSON.stringify(document);
 assert(!serializedDrawing.includes('formulaSource'));
 const dxf = exportDrawingDxf(document);
-assert(dxf.includes('1\r\n20 +0.02/-0.01'));
+assert.match(dxf, /1001\r\nACAD\r\n1000\r\nDSTYLE\r\n1002\r\n\{\r\n1070\r\n71\r\n1070\r\n1/);
+assert.match(dxf, /1070\r\n47\r\n1040\r\n0\.02/);
+assert.match(dxf, /1070\r\n48\r\n1040\r\n0\.01/);
 
 const storage = new JsonMemoryStorage();
 const firstStore = new DimensionPlanStore(storage, { now: () => 11, id: () => 'revision-e2e' });

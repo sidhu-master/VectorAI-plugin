@@ -22,6 +22,7 @@ export interface DxfEntityRecord {
 
 export interface DxfEntityContext {
   sourceId: string;
+  lengthUnit: 'mm' | 'cm' | 'm' | 'in';
   nodeId(record: DxfEntityRecord, plane: 'geometry' | 'annotation'): string;
   diagnostics: DxfImportDiagnostic[];
 }
@@ -209,7 +210,7 @@ function dimension(record: DxfEntityRecord, context: DxfEntityContext): Dimensio
     targets: [],
     computedValue: measured,
     ...(rawText === '<>' ? {} : { displayText }),
-    unit: dimensionKind === 'angular' ? 'deg' : 'mm',
+    unit: dimensionKind === 'angular' ? 'deg' : context.lengthUnit,
     textPosition: [number(record, 11, definitionPoint[0]), number(record, 21, definitionPoint[1])],
     definitionPoints,
   };

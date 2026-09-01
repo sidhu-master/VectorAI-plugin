@@ -14,7 +14,7 @@ export interface EngineeringRegionEvidence {
 export interface ParsedEngineeringDocument {
   drawing: {
     drawingName?: string;
-    unit?: 'mm' | 'cm' | 'm';
+    unit?: 'mm' | 'cm' | 'm' | 'in';
     axisOrigin?: 'left_end' | 'right_end';
     orientation?: 'auto' | 'forward' | 'reversed';
   };
@@ -74,7 +74,7 @@ function parseDrawing(result: ParsedEngineeringDocument, key: string, value: str
   if (key === 'drawing_id') { if (value) result.unknown.push({ section: 'drawing', key, value, line }); return; }
   if (key === 'unit') {
     if (!value) return;
-    if (value === 'mm' || value === 'cm' || value === 'm') result.drawing.unit = value;
+    if (value === 'mm' || value === 'cm' || value === 'm' || value === 'in') result.drawing.unit = value;
     else diagnostic(result, 'DOCUMENT_UNIT_UNSUPPORTED', `Unsupported unit ${value}`, line);
     return;
   }

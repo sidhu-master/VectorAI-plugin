@@ -59,6 +59,24 @@ describe('shaft axis and persistent step analysis', () => {
     expect(result.draft.semanticGroups[0]).toMatchObject({ name: '中间轴段', segmentIds: ['segment:10-25'] });
   });
 
+  it('converts inch document coordinates into an equivalent millimetre drawing partition', () => {
+    const result = analyzeShaftPartition({
+      document: stepped(), drawingRef: { drawingId: 'shaft', revision: 1 },
+      engineeringText: [
+        '[drawing]', 'unit=in', '[region:seat:middle]', 'name=英制中间轴段',
+        'center_z=0.688976377952756', 'width=0.590551181102362', 'outer_diameter=0.62992125984252',
+      ].join('\n'),
+    });
+
+    expect(result.status).toBe('drafted');
+    if (result.status !== 'drafted') return;
+    expect(result.draft.semanticGroups[0]).toMatchObject({
+      name: '英制中间轴段', segmentIds: ['segment:10-25'],
+    });
+    expect(result.draft.semanticGroups[0]?.range?.zStart).toBeCloseTo(10, 12);
+    expect(result.draft.semanticGroups[0]?.range?.zEnd).toBeCloseTo(25, 12);
+  });
+
   it('uses document diameter evidence to choose among detached shaft views', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'multi' }, now: () => 1 });
     const rectangle = (x: number, length: number, radius: number) => [

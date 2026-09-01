@@ -12,6 +12,7 @@ import {
   type ToleranceSpec,
   type ToleranceStandardProvider,
 } from '@vectorai/engineering-annotation';
+import { canonicalMillimetres } from '@vectorai/drawing-core';
 import type {
   DimensionPlanSessionSnapshot,
   DrawingRef,
@@ -34,14 +35,14 @@ export class ToleranceService {
   query(sessionId: string, request: ToleranceCatalogRequest): ToleranceCatalogResult {
     const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
     const intent = requireIntent(plan, request.dimensionIntentId);
-    requireMillimetreSize(intent);
+    const basicSize = requireProviderBasicSize(intent);
     const matching = [...plan.tolerances].reverse().find(({ dimensionIntentId }) => dimensionIntentId === request.dimensionIntentId);
     const recommendation = matching?.source === 'ai-candidate'
       && matching.featureClass === request.featureClass
       && matching.selection?.source === 'ai-recommended'
       && matching.selection.evidenceRefs.length > 0
       && matching.selection.evidenceRefs.every((reference) => matching.evidenceIds.includes(reference))
-      && this.provider.listBands({ basicSize: intent.nominalValue, featureClass: request.featureClass })
+      && this.provider.listBands({ basicSize, featureClass: request.featureClass })
         .some(({ designation, available }) => designation === matching.selection!.designation && available)
       ? {
         designation: matching.selection.designation,
@@ -58,7 +59,7 @@ export class ToleranceService {
         ...this.provider.datasetMetadata,
         numericProvenance: this.provider.datasetMetadata.numericProvenance.map((item) => ({ ...item })),
       },
-      bands: structuredClone(this.provider.listBands({ basicSize: intent.nominalValue, featureClass: request.featureClass })),
+      bands: structuredClone(this.provider.listBands({ basicSize, featureClass: request.featureClass })),
       ...(matching?.source === 'standard' && matching.featureClass === request.featureClass && matching.selection
         ? { selection: {
           ...matching.selection,
@@ -74,7 +75,7 @@ export class ToleranceService {
     const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
     if (request.type === 'single') {
       const intent = requireIntent(plan, request.dimensionIntentId);
-      const basicSize = requireMillimetreSize(intent);
+      const basicSize = requireProviderBasicSize(intent);
       return {
         type: 'single', drawingRef: plan.drawingRef, dimensionIntentId: request.dimensionIntentId, status: 'resolved',
         result: withToleranceMagnitude(this.provider.resolveBand({
@@ -99,7 +100,7 @@ export class ToleranceService {
     requireAiRecommendation(plan, command);
     let resolved: ToleranceEditResolution;
     if (command.type === 'standard.single.apply') {
-      const basicSize = requireMillimetreSize(requireIntent(plan, command.dimensionIntentId));
+      const basicSize = requireProviderBasicSize(requireIntent(plan, command.dimensionIntentId));
       const result = this.provider.resolveBand({ basicSize, featureClass: command.featureClass, designation: command.designation });
       verifyProviderResult(result, {
         basicSize, featureClass: command.featureClass, designation: command.designation,
@@ -164,27 +165,29 @@ function reconcileTolerances(
     const hole = draft.intents.find(({ id }) => id === identity.holeDimensionId);
     const shaft = draft.intents.find(({ id }) => id === identity.shaftDimensionId);
     if (!hole || !shaft) continue;
-    const changed = members.some((spec) => spec.inputs.basicSize !== requireMillimetreSize(
+    const changed = members.some((spec) => spec.inputs.basicSize !== requireProviderBasicSize(
       spec.dimensionIntentId === hole.id ? hole : shaft,
     ));
     if (!changed) continue;
     handled.add(identity.fitGroupId);
-    if (hole.unit !== 'mm' || shaft.unit !== 'mm' || hole.nominalValue !== shaft.nominalValue) {
+    const holeBasicSize = requireProviderBasicSize(hole);
+    const shaftBasicSize = requireProviderBasicSize(shaft);
+    if (holeBasicSize !== shaftBasicSize) {
       next = staleFit(next, identity, 'FIT_PAIR_BASIC_SIZE_MISMATCH');
       continue;
     }
     try {
       const result = provider.resolveFit({
-        basicSize: hole.nominalValue, basis: identity.basis, designation: identity.designation,
+        basicSize: holeBasicSize, basis: identity.basis, designation: identity.designation,
       });
       const [holeDesignation, shaftDesignation] = identity.designation.split('/');
       if (result.designation !== identity.designation || result.basis !== identity.basis
         || !holeDesignation || !shaftDesignation) throw new Error('TOLERANCE_PROVIDER_RESULT_MISMATCH');
       verifyProviderResult(result.hole, {
-        basicSize: hole.nominalValue, featureClass: 'internal', designation: holeDesignation,
+        basicSize: holeBasicSize, featureClass: 'internal', designation: holeDesignation,
       }, provider);
       verifyProviderResult(result.shaft, {
-        basicSize: shaft.nominalValue, featureClass: 'external', designation: shaftDesignation,
+        basicSize: shaftBasicSize, featureClass: 'external', designation: shaftDesignation,
       }, provider);
       const overrides = new Map(members.flatMap((spec) => spec.override ? [[spec.dimensionIntentId, spec.override] as const] : []));
       next = applyFitTolerance(next, result, {
@@ -205,9 +208,10 @@ function reconcileTolerances(
     if (original.fitGroupId && handled.has(original.fitGroupId)) continue;
     if (original.source !== 'standard' || original.fitGroupId || !original.selection || !original.featureClass) continue;
     const intent = draft.intents.find(({ id }) => id === original.dimensionIntentId);
-    if (!intent || original.inputs.basicSize === intent.nominalValue) continue;
+    if (!intent) continue;
+    const basicSize = requireProviderBasicSize(intent);
+    if (original.inputs.basicSize === basicSize) continue;
     try {
-      const basicSize = requireMillimetreSize(intent);
       const result = provider.resolveBand({
         basicSize, featureClass: original.featureClass, designation: original.selection.designation,
       });
@@ -225,7 +229,7 @@ function reconcileTolerances(
         : spec);
     } catch (error) {
       next.tolerances = next.tolerances.map((spec) => spec.dimensionIntentId === original.dimensionIntentId
-        ? staleSpec(spec, intent.nominalValue, errorCode(error))
+        ? staleSpec(spec, basicSize, errorCode(error))
         : spec);
     }
   }
@@ -271,7 +275,8 @@ function staleFit(draft: EngineeringAnnotationDraft, identity: FitReconcileIdent
     fitAssignments: draft.fitAssignments.filter((assignment) => assignment.fitGroupId !== identity.fitGroupId),
     tolerances: draft.tolerances.map((spec) => {
       if (spec.fitGroupId !== identity.fitGroupId) return spec;
-      const stale = staleSpec(spec, intents.get(spec.dimensionIntentId)?.nominalValue, code);
+      const intent = intents.get(spec.dimensionIntentId);
+      const stale = staleSpec(spec, intent === undefined ? undefined : providerBasicSizeOrUndefined(intent), code);
       return {
         ...stale,
         inputs: {
@@ -323,15 +328,29 @@ function requireIntent(plan: AnnotationPlan, id: string): AnnotationPlan['intent
   return intent;
 }
 
-function requireMillimetreSize(intent: { unit: string; nominalValue: number }): number {
-  if (intent.unit !== 'mm' || !Number.isFinite(intent.nominalValue)) throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
-  return intent.nominalValue;
+function requireProviderBasicSize(intent: { unit: string; nominalValue: number }): number {
+  if (!['mm', 'cm', 'm', 'in'].includes(intent.unit) || !Number.isFinite(intent.nominalValue)) {
+    throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
+  }
+  try {
+    return canonicalMillimetres(intent.nominalValue, intent.unit as 'mm' | 'cm' | 'm' | 'in');
+  } catch {
+    throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
+  }
+}
+
+function providerBasicSizeOrUndefined(intent: { unit: string; nominalValue: number }): number | undefined {
+  try {
+    return requireProviderBasicSize(intent);
+  } catch {
+    return undefined;
+  }
 }
 
 function requireEqualFitSize(plan: AnnotationPlan, holeId: string, shaftId: string): number {
   if (holeId === shaftId) throw new Error('TOLERANCE_FIT_INTENTS_DISTINCT');
-  const hole = requireMillimetreSize(requireIntent(plan, holeId));
-  const shaft = requireMillimetreSize(requireIntent(plan, shaftId));
+  const hole = requireProviderBasicSize(requireIntent(plan, holeId));
+  const shaft = requireProviderBasicSize(requireIntent(plan, shaftId));
   if (hole !== shaft) throw new Error('FIT_PAIR_BASIC_SIZE_MISMATCH');
   return hole;
 }

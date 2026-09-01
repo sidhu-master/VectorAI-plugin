@@ -136,7 +136,7 @@ function projectTolerance(
     ...(spec.selection?.designation === undefined && resolved.fitDesignation === undefined ? {} : {
       fitDesignation: spec.selection?.designation ?? resolved.fitDesignation,
     }),
-    unit: intent.unit,
+    unit: spec.source === 'standard' ? 'mm' : intent.unit,
     status: spec.status === 'confirmed' ? 'confirmed' : 'resolved',
     source: spec.source,
     ...(spec.ruleRef === undefined ? {} : {

@@ -82,6 +82,27 @@ describe('immutable tolerance edits', () => {
     expect(after.chains).toEqual(original.chains);
   });
 
+  it.each([
+    ['mm', 12.7], ['cm', 1.27], ['m', .0127], ['in', .5],
+  ] as const)('applies millimetre provider output to an equivalent %s intent', (unit, nominalValue) => {
+    const input = draft();
+    const intent = input.intents.find(({ id }) => id === 'intent-shaft')!;
+    intent.nominalValue = nominalValue;
+    intent.unit = unit;
+
+    const after = applySingleTolerance(input, standard('u6', 'external', 12.7, .044, .033), {
+      dimensionIntentId: 'intent-shaft', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:u6'],
+    });
+
+    expect(after.tolerances.find(({ dimensionIntentId }) => dimensionIntentId === 'intent-shaft')).toMatchObject({
+      inputs: { basicSize: 12.7, featureClass: 'external', designation: 'u6' },
+      resolved: {
+        upperDeviation: .044, lowerDeviation: .033,
+        upperLimit: expect.closeTo(12.744, 12), lowerLimit: expect.closeTo(12.733, 12),
+      },
+    });
+  });
+
   it('replaces one fit group atomically', () => {
     const before = draft();
     before.tolerances.push({
