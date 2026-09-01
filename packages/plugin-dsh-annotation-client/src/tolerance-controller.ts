@@ -177,7 +177,9 @@ export function createToleranceController(input: {
   let pendingOverrideEdit: 'set' | 'clear' | null = null;
   let targetEpoch = 0;
   let catalogGeneration = 0;
+  let fitCatalogGeneration = 0;
   let previewGeneration = 0;
+  let pendingTargetGeneration = 0;
   let selectionEpoch: number | null = null;
   let pendingRequests = 0;
   let applying: Promise<void> | null = null;
@@ -265,6 +267,7 @@ export function createToleranceController(input: {
     const sameTarget = current.target !== null && sameTargetIdentity(current.target, target);
     targetEpoch += 1;
     catalogGeneration += 1;
+    fitCatalogGeneration += 1;
     previewGeneration += 1;
     const epoch = targetEpoch;
     selectionEpoch = null;
@@ -305,6 +308,7 @@ export function createToleranceController(input: {
         return;
       }
       if (current.dirty) {
+        pendingTargetGeneration += 1;
         update({ pendingTarget: clone(target), closeDecision: null });
         return;
       }
@@ -313,8 +317,17 @@ export function createToleranceController(input: {
     async applyAndSwitch() {
       const pending = current.pendingTarget;
       if (pending === null) return;
+      const epoch = targetEpoch;
+      const pendingGeneration = pendingTargetGeneration;
       await actions.apply();
-      await activateTarget(pending);
+      if (epoch !== targetEpoch) return;
+      if (pendingGeneration !== pendingTargetGeneration) {
+        const latest = current.pendingTarget;
+        if (latest !== null) await activateTarget(latest);
+        return;
+      }
+      if (current.pendingTarget === null || !sameTargetIdentity(current.pendingTarget, pending)) return;
+      await activateTarget(current.pendingTarget);
     },
     async discardAndSwitch() {
       const pending = current.pendingTarget;
@@ -335,7 +348,23 @@ export function createToleranceController(input: {
       }
     },
     async applyAndClose() {
+      const epoch = targetEpoch;
+      const pendingGeneration = pendingTargetGeneration;
       await actions.apply();
+      if (epoch !== targetEpoch) return;
+      if (pendingGeneration !== pendingTargetGeneration && current.pendingTarget !== null) {
+        await activateTarget(current.pendingTarget);
+        return;
+      }
+      if (current.pendingTarget !== null) {
+        await activateTarget(current.pendingTarget);
+        return;
+      }
+      targetEpoch += 1;
+      catalogGeneration += 1;
+      fitCatalogGeneration += 1;
+      previewGeneration += 1;
+      selectionEpoch = null;
       update({ visible: false, closeDecision: null, preview: null, canvasPreview: null, selection: null, override: null });
     },
     discardAndClose() {
@@ -471,6 +500,9 @@ export function createToleranceController(input: {
         const target = requireTarget();
         const selection = current.selection;
         if (selection === null) throw new Error('TOLERANCE_SELECTION_REQUIRED');
+        if (!current.dirty || !selectionHasCurrentPreview(selection, current.preview, target)) {
+          throw new Error('TOLERANCE_PREVIEW_REQUIRED');
+        }
         const epoch = targetEpoch;
         if (selectionEpoch !== epoch) throw new Error('TOLERANCE_TARGET_STALE');
         let command: ToleranceEditCommand;
@@ -536,25 +568,35 @@ export function createToleranceController(input: {
     async beginFit(basis) {
       const target = requireTarget();
       const epoch = targetEpoch;
+      const generation = ++fitCatalogGeneration;
+      const isCurrent = () => epoch === targetEpoch && generation === fitCatalogGeneration;
       update({
         tab: basis === 'hole' ? 'hole-fit' : 'shaft-fit',
         fit: { basis, selectingSecondTarget: true, secondTarget: null },
+        fitCatalogs: null,
         error: null,
       });
       persist();
-      const [internal, external] = await Promise.all([
-        run(() => remote().queryToleranceCatalog(input.sessionId, {
-          expectedDrawingRef: target.drawingRef,
-          dimensionIntentId: target.dimensionIntentId,
-          featureClass: 'internal',
-        }), epoch),
-        run(() => remote().queryToleranceCatalog(input.sessionId, {
-          expectedDrawingRef: target.drawingRef,
-          dimensionIntentId: target.dimensionIntentId,
-          featureClass: 'external',
-        }), epoch),
-      ]);
-      if (epoch !== targetEpoch
+      let internal: ToleranceCatalogResult;
+      let external: ToleranceCatalogResult;
+      try {
+        [internal, external] = await Promise.all([
+          run(() => remote().queryToleranceCatalog(input.sessionId, {
+            expectedDrawingRef: target.drawingRef,
+            dimensionIntentId: target.dimensionIntentId,
+            featureClass: 'internal',
+          }), epoch, isCurrent),
+          run(() => remote().queryToleranceCatalog(input.sessionId, {
+            expectedDrawingRef: target.drawingRef,
+            dimensionIntentId: target.dimensionIntentId,
+            featureClass: 'external',
+          }), epoch, isCurrent),
+        ]);
+      } catch (error) {
+        if (!isCurrent()) return;
+        throw error;
+      }
+      if (!isCurrent()
         || !catalogMatches(internal, target, 'internal')
         || !catalogMatches(external, target, 'external')) return;
       update({ fitCatalogs: { internal: clone(internal), external: clone(external) } });
@@ -717,6 +759,23 @@ function previewMatchesRequest(result: TolerancePreviewResult, request: Toleranc
       && result.shaftDimensionIntentId === request.shaftDimensionIntentId
       && result.result.basis === request.basis
       && result.result.designation === request.designation;
+}
+
+function selectionHasCurrentPreview(
+  selection: ToleranceSelection,
+  preview: TolerancePreviewResult | null,
+  target: ToleranceTarget,
+): boolean {
+  if (selection.kind === 'manual') return true;
+  if (preview === null || !sameDrawingRef(preview.drawingRef, target.drawingRef)) return false;
+  if (selection.kind === 'single') {
+    return singlePreviewMatches(preview, target, selection.featureClass, selection.designation);
+  }
+  return preview.type === 'fit'
+    && preview.holeDimensionIntentId === selection.holeDimensionIntentId
+    && preview.shaftDimensionIntentId === selection.shaftDimensionIntentId
+    && preview.result.basis === selection.basis
+    && preview.result.designation === selection.designation;
 }
 
 function commandTargets(command: ToleranceEditCommand, target: ToleranceTarget): boolean {

@@ -29,6 +29,16 @@ const preview = {
     ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:x' },
   },
 };
+const fitPreview = {
+  type: 'fit' as const, drawingRef: target.drawingRef,
+  holeDimensionIntentId: 'hole-1', shaftDimensionIntentId: 'shaft-1', status: 'resolved' as const,
+  result: {
+    designation: 'H7/g6', basis: 'hole' as const,
+    hole: { ...preview.result, designation: 'H7', featureClass: 'internal' as const, upperDeviation: .018, lowerDeviation: 0, toleranceMagnitude: .018, upperLimitSize: 13.018, lowerLimitSize: 13 },
+    shaft: { ...preview.result, designation: 'g6', upperDeviation: -.006, lowerDeviation: -.017, toleranceMagnitude: .011, upperLimitSize: 12.994, lowerLimitSize: 12.983 },
+    fitType: 'clearance' as const, minimumClearance: .006, maximumClearance: .035,
+  },
+};
 
 function props(overrides: Partial<TolerancePopupProps> = {}): TolerancePopupProps {
   return {
@@ -61,7 +71,7 @@ function renderPopup(overrides: Partial<TolerancePopupProps> = {}): { tree: Reac
 
 describe('TolerancePopup', () => {
   it('previews on click, applies with Command/Control+Enter, and isolates canvas events', () => {
-    const { tree, value } = renderPopup();
+    const { tree, value } = renderPopup({ dirty: true });
     act(() => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
     expect(value.onPreview).toHaveBeenCalledWith('u6');
     const root = tree.root.findByProps({ 'data-tolerance-popup': true });
@@ -85,16 +95,6 @@ describe('TolerancePopup', () => {
     expect(single.findAllByType('dd').flatMap(({ children }) => children)).toEqual(expect.arrayContaining([
       'u6', '13', '0.044', '0.033', '0.011', '13.044', '13.033',
     ]));
-    const fitPreview = {
-      type: 'fit' as const, drawingRef: target.drawingRef,
-      holeDimensionIntentId: 'hole-1', shaftDimensionIntentId: 'shaft-1', status: 'resolved' as const,
-      result: {
-        designation: 'H7/g6', basis: 'hole' as const,
-        hole: { ...preview.result, designation: 'H7', featureClass: 'internal' as const, upperDeviation: .018, lowerDeviation: 0, toleranceMagnitude: .018, upperLimitSize: 13.018, lowerLimitSize: 13 },
-        shaft: { ...preview.result, designation: 'g6', upperDeviation: -.006, lowerDeviation: -.017, toleranceMagnitude: .011, upperLimitSize: 12.994, lowerLimitSize: 12.983 },
-        fitType: 'clearance' as const, minimumClearance: .006, maximumClearance: .035,
-      },
-    };
     const fit = renderPopup({ preview: fitPreview }).tree.root.findByProps({ 'data-tolerance-fit-result': true });
     expect(fit.findAllByType('dd').flatMap(({ children }) => children)).toEqual(expect.arrayContaining([
       'H7/g6', 'clearance', '0.006', '0.035', '13', '0.018', '0.011', '13.018', '12.983',
@@ -179,7 +179,7 @@ describe('TolerancePopup', () => {
     expect(value.onPreview).toHaveBeenCalledWith('u6');
   });
 
-  it('owns display preference and standard/manual override controls', () => {
+  it('owns display preference and standard/manual override controls', async () => {
     const { tree, value } = renderPopup();
     act(() => tree.root.findByProps({ 'data-display-preference': 'designation' }).props.onClick());
     act(() => tree.root.findByProps({ 'data-display-preference': 'both' }).props.onClick());
@@ -190,7 +190,7 @@ describe('TolerancePopup', () => {
     const lower = tree.root.findByProps({ 'data-tolerance-override': 'lower' });
     act(() => upper.props.onChange({ currentTarget: { value: '0.05' } }));
     act(() => lower.props.onChange({ currentTarget: { value: '0.04' } }));
-    act(() => tree.root.findByProps({ 'data-preview-override': true }).props.onClick());
+    await act(async () => tree.root.findByProps({ 'data-preview-override': true }).props.onClick());
     expect(value.onOverridePreview).toHaveBeenCalledWith({ upperDeviation: .05, lowerDeviation: .04 });
     act(() => tree.root.findByProps({ 'data-restore-standard': true }).props.onClick());
     act(() => tree.root.findByProps({ 'data-restore-recommendation': true }).props.onClick());
@@ -219,7 +219,7 @@ describe('TolerancePopup', () => {
       ...target,
       classification: { status: 'ambiguous' as const, code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' as const },
     };
-    const { tree, value } = renderPopup({ target: ambiguous, bands: [], preview: null });
+    const { tree, value } = renderPopup({ target: ambiguous, bands: [], preview: null, dirty: true });
     expect(tree.root.findByProps({ 'data-tolerance-diagnostic': true }).children).toContain('TOLERANCE_FEATURE_CLASS_AMBIGUOUS');
     act(() => tree.root.findByProps({ 'data-feature-class-choice': 'internal' }).props.onClick());
     act(() => tree.root.findByProps({ 'data-feature-class-choice': 'external' }).props.onClick());
@@ -234,14 +234,108 @@ describe('TolerancePopup', () => {
 
   it('renders dirty target-switch decisions and wires both explicit outcomes', () => {
     const pendingTarget = { ...target, dimensionIntentId: 'intent-2', label: '⌀20' };
-    const { tree, value } = renderPopup({ pendingTarget });
+    const { tree, value } = renderPopup({ pendingTarget, dirty: true });
     act(() => tree.root.findByProps({ 'data-dirty-switch': 'discard' }).props.onClick());
     act(() => tree.root.findByProps({ 'data-dirty-switch': 'apply' }).props.onClick());
     expect(value.onDiscardAndSwitch).toHaveBeenCalledOnce();
     expect(value.onApplyAndSwitch).toHaveBeenCalledOnce();
   });
 
-  it('combines only provider-backed internal and external bands into a direct fit preview', () => {
+  it('gates dirty decision Apply actions with the same busy and preview readiness as normal Apply', () => {
+    const pendingTarget = { ...target, dimensionIntentId: 'intent-2', label: '⌀20' };
+    const { tree, value } = renderPopup({
+      pendingTarget, closeDecision: 'dirty', dirty: true, busy: true,
+    });
+    const normal = tree.root.findByProps({ 'data-apply-tolerance': true });
+    const close = tree.root.findByProps({ 'data-dirty-close': 'apply' });
+    const switching = tree.root.findByProps({ 'data-dirty-switch': 'apply' });
+    expect(normal.props.disabled).toBe(true);
+    expect(close.props.disabled).toBe(true);
+    expect(switching.props.disabled).toBe(true);
+    act(() => close.props.onClick());
+    act(() => switching.props.onClick());
+    expect(value.onApplyClose).not.toHaveBeenCalled();
+    expect(value.onApplyAndSwitch).not.toHaveBeenCalled();
+  });
+
+  it('disables Apply for a clean hydrated selection', () => {
+    const { tree, value } = renderPopup({ dirty: false, preview });
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+    act(() => tree.root.findByProps({ 'data-tolerance-popup': true }).props.onKeyDown({
+      key: 'Enter', metaKey: true, ctrlKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn(),
+    }));
+    expect(value.onApply).not.toHaveBeenCalled();
+  });
+
+  it('blocks stale standard preview after override input edits until override preview completes', async () => {
+    const onOverridePreview = vi.fn(async () => undefined);
+    const { tree } = renderPopup({
+      dirty: true, override: { upperDeviation: .05, lowerDeviation: .04 }, onOverridePreview,
+    });
+    act(() => tree.root.findByProps({ 'data-tolerance-override': 'upper' }).props.onChange({ currentTarget: { value: '0.06' } }));
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+    expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(0);
+
+    await act(async () => tree.root.findByProps({ 'data-preview-override': true }).props.onClick());
+    expect(onOverridePreview).toHaveBeenCalledWith({ upperDeviation: .06, lowerDeviation: .04 });
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+  });
+
+  it('does not re-enable Apply when an older override preview settles after another edit', async () => {
+    let resolvePreview!: () => void;
+    const onOverridePreview = vi.fn(() => new Promise<void>((resolve) => { resolvePreview = resolve; }));
+    const { tree } = renderPopup({
+      dirty: true, override: { upperDeviation: .05, lowerDeviation: .04 }, onOverridePreview,
+    });
+    const upper = tree.root.findByProps({ 'data-tolerance-override': 'upper' });
+    act(() => upper.props.onChange({ currentTarget: { value: '0.06' } }));
+    act(() => tree.root.findByProps({ 'data-preview-override': true }).props.onClick());
+    act(() => upper.props.onChange({ currentTarget: { value: '0.07' } }));
+    await act(async () => resolvePreview());
+
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+    expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(0);
+  });
+
+  it('invalidates manual readiness when either manual input changes after preview', () => {
+    const ambiguous = {
+      ...target,
+      classification: { status: 'ambiguous' as const, code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' as const },
+    };
+    const { tree } = renderPopup({ target: ambiguous, bands: [], preview: null, dirty: true });
+    act(() => tree.root.findByProps({ 'data-manual-deviation': 'upper' }).props.onChange({ currentTarget: { value: '0.02' } }));
+    act(() => tree.root.findByProps({ 'data-preview-manual': true }).props.onClick());
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+
+    act(() => tree.root.findByProps({ 'data-manual-deviation': 'lower' }).props.onChange({ currentTarget: { value: '-0.01' } }));
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+  });
+
+  it('blocks a stale fit preview after either fit selector changes until re-preview', async () => {
+    const internalBands = [
+      { designation: 'H7', featureClass: 'internal' as const, category: 'preferred' as const, available: true },
+    ];
+    const externalBands = [
+      { designation: 'g6', featureClass: 'external' as const, category: 'preferred' as const, available: true },
+      { designation: 'u6', featureClass: 'external' as const, category: 'common' as const, available: true },
+    ];
+    const onPreview = vi.fn(async () => undefined);
+    const { tree } = renderPopup({
+      dirty: true, tab: 'hole-fit', preview: fitPreview,
+      fitCatalogs: { internal: internalBands, external: externalBands }, onPreview,
+    });
+    act(() => tree.root.findByProps({ 'data-fit-band': 'internal' }).props.onChange({ currentTarget: { value: 'H7' } }));
+    act(() => tree.root.findByProps({ 'data-fit-band': 'external' }).props.onChange({ currentTarget: { value: 'g6' } }));
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+    await act(async () => tree.root.findByProps({ 'data-preview-fit': true }).props.onClick());
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+
+    act(() => tree.root.findByProps({ 'data-fit-band': 'external' }).props.onChange({ currentTarget: { value: 'u6' } }));
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+    expect(tree.root.findAllByProps({ 'data-tolerance-fit-result': true })).toHaveLength(0);
+  });
+
+  it('combines only provider-backed internal and external bands into a direct fit preview', async () => {
     const internalBands = [
       { designation: 'H7', featureClass: 'internal' as const, category: 'preferred' as const, available: true },
       { designation: 'G7', featureClass: 'internal' as const, category: 'other' as const, available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' as const },
@@ -256,7 +350,7 @@ describe('TolerancePopup', () => {
     });
     act(() => tree.root.findByProps({ 'data-fit-band': 'internal' }).props.onChange({ currentTarget: { value: 'H7' } }));
     act(() => tree.root.findByProps({ 'data-fit-band': 'external' }).props.onChange({ currentTarget: { value: 'g6' } }));
-    act(() => tree.root.findByProps({ 'data-preview-fit': true }).props.onClick());
+    await act(async () => tree.root.findByProps({ 'data-preview-fit': true }).props.onClick());
     expect(value.onPreview).toHaveBeenCalledWith('H7/g6');
     expect(tree.root.findByProps({ 'data-fit-band': 'internal' }).findAllByType('option').map(({ props }) => props.value)).toEqual(['', 'H7', 'G7']);
     expect(tree.root.findByProps({ 'data-fit-option': 'G7' }).props).toMatchObject({ disabled: true, title: 'TOLERANCE_STANDARD_UNAVAILABLE' });
@@ -286,7 +380,7 @@ describe('TolerancePopup', () => {
   it('uses one blocked/busy predicate for keyboard and button apply and suppresses duplicates', async () => {
     let resolveApply!: () => void;
     const onApply = vi.fn(() => new Promise<void>((resolve) => { resolveApply = resolve; }));
-    const { tree } = renderPopup({ onApply });
+    const { tree } = renderPopup({ onApply, dirty: true });
     const root = tree.root.findByProps({ 'data-tolerance-popup': true });
     await act(async () => {
       root.props.onKeyDown({ key: 'Enter', metaKey: true, ctrlKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn() });
@@ -310,7 +404,7 @@ describe('TolerancePopup', () => {
   });
 
   it('retains an async Apply failure as an in-popup diagnostic', async () => {
-    const tree = renderPopup({ onApply: vi.fn(async () => { throw new Error('REMOTE_APPLY_FAILED'); }) }).tree;
+    const tree = renderPopup({ dirty: true, onApply: vi.fn(async () => { throw new Error('REMOTE_APPLY_FAILED'); }) }).tree;
     await act(async () => {
       tree.root.findByProps({ 'data-apply-tolerance': true }).props.onClick();
     });
