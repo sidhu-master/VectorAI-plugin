@@ -2,7 +2,7 @@
 
 export function canonicalRuleInputDigest(value: {
   nominalValue: number;
-  unit: 'mm' | 'cm' | 'm' | 'deg';
+  unit: 'mm' | 'cm' | 'm' | 'in' | 'deg';
   inputs: Record<string, number | string | boolean>;
 }): string {
   return `sha256:${sha256(JSON.stringify(canonical(value)))}`;

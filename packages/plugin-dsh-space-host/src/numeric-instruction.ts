@@ -2,7 +2,7 @@
 
 import type { ExplicitNumericConstraint } from '@vectorai/drawing-edit-protocol';
 
-type DrawingLengthUnit = 'mm' | 'cm' | 'm';
+type DrawingLengthUnit = 'mm' | 'cm' | 'm' | 'in';
 
 const NUMBER_SOURCE = String.raw`[-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?`;
 const UNIT_SOURCE = [

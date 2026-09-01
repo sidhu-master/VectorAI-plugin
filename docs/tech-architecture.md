@@ -156,7 +156,7 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 
 确认或已确定解析的第二层记录先通过统一 projector 变成第一层可移植 `ToleranceProjection`。Drawing/Core、通用 Viewer 和 DXF exporter 只消费这个 projection，不读取 provider 表、推荐状态或 popup session。投影到既有尺寸时只替换对应 `toleranceProjection`；尺寸 ID、几何、文字位置、源图层、可见性、剖面、尺寸链、基准、GD&T、直径和开口角均保持第一层/原计划权威。
 
-R2013 DXF 对跨零偏差使用每个 `DIMENSION` 的 ACAD `DSTYLE` XDATA：`DIMTOL=1`、`DIMTP=upper`、`DIMTM=abs(lower)`、`DIMTDEC=profile tolerance decimals`，并保持整数/实数组代码类型。上下偏差同号时禁止写入会丢失符号的 native `DIMTOL`，改用带显式正负号的 stacked MText；代号、两项有效偏差、feature class 和 standard ref 同时写入小于 255 bytes 的版本化 `VECTORAI` XDATA。designation-only 展示不会暗中启用 native tolerance，旧 `tolerance.upper/lower` 数据仍按旧文本路径输出且不冒充标准语义。
+R2013 DXF 对跨零偏差使用每个 `DIMENSION` 的 ACAD `DSTYLE` XDATA：`DIMTOL=1`、`DIMTP=upper`、`DIMTM=abs(lower)`、`DIMTDEC=profile tolerance decimals`，并保持整数/实数组代码类型。写入 DSTYLE 或可见 stacked MText 前，偏差从 projection 的原始单位换算到 Drawing 的 DXF 长度单位；`VECTORAI` XDATA 仍保留未经换算的数值和单位。上下偏差同号时禁止写入会丢失符号的 native `DIMTOL`，改用带显式正负号的 stacked MText。短语义 payload 继续作为单个不超过 254 bytes 的 `1000` 值；合法的长 standard ref 使用版本化元数据和按顺序、UTF-8 安全的多个 `1000` 分片，每片不超过 254 bytes，可精确重组而不截断字段。直径尺寸输出原生 `AcDbDiametricDimension`，并保留相同的 native/fallback 公差路径。designation-only 展示不会暗中启用 native tolerance，旧 `tolerance.upper/lower` 数据仍按旧文本路径输出且不冒充标准语义。
 
 确认后的第二层 revision 通过 `projectEngineeringAnnotations` 生成第一层 `DimensionAnnotation`，DXF 只格式化 portable projection，绝不回调规则提供器。第二层标注计划使用独立 durable envelope 保存 snapshot、undo、redo 和 `lastConfirmed`，先成功落盘再发布内存状态；Drawing revision 变化进入 `needs-rebase`。
 

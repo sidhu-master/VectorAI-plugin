@@ -42,7 +42,7 @@ interface PreparedDimension {
   entity: Extract<DxfExportEntity, { type: 'dimension' }>;
   blockName: string;
   nativeTolerance?: NativeDimensionTolerance;
-  vectorAiTolerancePayload?: string;
+  vectorAiToleranceStrings?: readonly string[];
 }
 
 interface NativeDimensionTolerance {
@@ -57,7 +57,7 @@ interface PortableDimensionTolerance {
   showDeviations: boolean;
   showDesignation: boolean;
   native: boolean;
-  vectorAiPayload?: string;
+  vectorAiStrings?: readonly string[];
 }
 
 interface PreparedBlockReference {
@@ -73,8 +73,8 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
   for (const node of document.annotations) {
     if (!node.visible || node.type !== 'dimension') continue;
     const blockName = `*D${nextDimensionBlock++}`;
-    const entity = canonicalDimensionEntity(node, profile);
-    const tolerance = portableDimensionTolerance(node);
+    const entity = canonicalDimensionEntity(node, profile, document.unitSystem.length);
+    const tolerance = portableDimensionTolerance(node, document.unitSystem.length);
     nativeDimensions.push({
       entity,
       blockName,
@@ -85,7 +85,7 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
           decimalPlaces: toleranceDecimalPlaces(profile, entity.style),
         },
       } : {}),
-      ...(tolerance?.vectorAiPayload === undefined ? {} : { vectorAiTolerancePayload: tolerance.vectorAiPayload }),
+      ...(tolerance?.vectorAiStrings === undefined ? {} : { vectorAiToleranceStrings: tolerance.vectorAiStrings }),
     });
   }
   for (const value of options.entities ?? []) {
@@ -453,19 +453,21 @@ function writeBlockGraphic(writer: DxfWriter, value: DxfBlockGraphic, multilineT
 function canonicalDimensionEntity(
   node: Extract<AnnotationNode, { type: 'dimension' }>,
   profile: DxfExportProfile,
+  drawingLengthUnit: DrawingDocument['unitSystem']['length'],
 ): Extract<DxfExportEntity, { type: 'dimension' }> {
   const genericLabel = dimensionLabel(node);
-  const portableTolerance = portableDimensionTolerance(node);
+  const portableTolerance = portableDimensionTolerance(node, drawingLengthUnit);
   const label = portableTolerance !== undefined || profile.cadConvention === 'gb'
-    ? gbDimensionPictureText(node, genericLabel)
+    ? gbDimensionPictureText(node, genericLabel, drawingLengthUnit)
     : genericLabel;
   const points = node.definitionPoints;
   const measurement = node.observedValue ?? node.computedValue ?? dimensionMeasurement(node.dimensionKind, points);
   const kind: Extract<DxfExportEntity, { type: 'dimension' }>['dimensionKind'] =
     node.dimensionKind === 'angular' ? 'angular'
       : node.dimensionKind === 'radius' ? 'radius'
-        : 'linear';
-  const style = kind === 'angular' ? 'GB_ANGULAR' : kind === 'radius' ? 'GB_RADIAL' : 'GB_LINEAR';
+        : node.dimensionKind === 'diameter' ? 'diameter'
+          : 'linear';
+  const style = kind === 'angular' ? 'GB_ANGULAR' : kind === 'radius' || kind === 'diameter' ? 'GB_RADIAL' : 'GB_LINEAR';
   const dimensionStyle = profile.dimensionStyles.find(({ name }) => name === style);
   const textHeight = dimensionStyle?.textHeight ?? annotationTextHeight(node);
   const arrowSize = dimensionStyle?.arrowSize ?? textHeight;
@@ -531,9 +533,9 @@ function writeNativeDimension(writer: DxfWriter, value: PreparedDimension): void
     writer.pair(50, Math.atan2(second[1] - first[1], second[0] - first[0]) * 180 / Math.PI);
   }
   if (value.nativeTolerance) writeNativeToleranceOverride(writer, value.nativeTolerance);
-  if (value.vectorAiTolerancePayload !== undefined) {
+  if (value.vectorAiToleranceStrings !== undefined) {
     writer.pair(1001, 'VECTORAI');
-    writer.pair(1000, value.vectorAiTolerancePayload);
+    for (const entry of value.vectorAiToleranceStrings) writer.pair(1000, entry);
   }
 }
 
@@ -713,9 +715,9 @@ function gbDimensionOverride(
         : '';
       if (portableTolerance && !portableTolerance.showDeviations) return `${placeholder}${designation}`;
       if (portableTolerance?.native) return `${placeholder}${designation}`;
-      const upper = signed(projection.upperDeviation ?? 0);
-      const lower = signed(projection.lowerDeviation ?? 0);
-      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${upper}^${lower};}}`;
+      const convertedUpper = signed(portableTolerance?.upperDeviation ?? projection.upperDeviation ?? 0);
+      const convertedLower = signed(portableTolerance?.lowerDeviation ?? projection.lowerDeviation ?? 0);
+      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${convertedUpper}^${convertedLower};}}`;
     }
     if (projection.mode === 'limits' && finite(projection.upperLimit) && finite(projection.lowerLimit)) {
       return `\\A1;${placeholder}{\\C2;{\\H0.71x;\\S${textNumber(projection.upperLimit)}^${textNumber(projection.lowerLimit)};}}`;
@@ -741,11 +743,12 @@ function gbDimensionOverride(
 function gbDimensionPictureText(
   node: Extract<AnnotationNode, { type: 'dimension' }>,
   genericLabel: string,
+  drawingLengthUnit: DrawingDocument['unitSystem']['length'],
 ): string {
   // The anonymous picture block is a frozen visual fallback. Keep the exact
   // deviations in it even when the editable DIMENSION entity carries DSTYLE
   // overrides that a CAD application will regenerate natively.
-  const portableTolerance = portableDimensionTolerance(node);
+  const portableTolerance = portableDimensionTolerance(node, drawingLengthUnit);
   const override = gbDimensionOverride(node, portableTolerance === undefined
     ? undefined
     : { ...portableTolerance, native: false });
@@ -756,24 +759,28 @@ function gbDimensionPictureText(
 
 function portableDimensionTolerance(
   node: Extract<AnnotationNode, { type: 'dimension' }>,
+  drawingLengthUnit: DrawingDocument['unitSystem']['length'],
 ): PortableDimensionTolerance | undefined {
   const projection = node.toleranceProjection;
   if (!projection || (projection.status !== 'resolved' && projection.status !== 'confirmed')) return undefined;
   if (!['bilateral', 'unilateral', 'fit'].includes(projection.mode)) return undefined;
   if (!finite(projection.upperDeviation) && !finite(projection.lowerDeviation)) return undefined;
-  const upperDeviation = projection.upperDeviation ?? 0;
-  const lowerDeviation = projection.lowerDeviation ?? 0;
+  const targetUnit = node.dimensionKind === 'angular' ? 'deg' : drawingLengthUnit;
+  const upperDeviation = convertToleranceValue(projection.upperDeviation ?? 0, projection.unit, targetUnit);
+  const lowerDeviation = convertToleranceValue(projection.lowerDeviation ?? 0, projection.unit, targetUnit);
+  if (upperDeviation === undefined || lowerDeviation === undefined) return undefined;
   const displayPreference = projection.displayPreference ?? (projection.mode === 'fit' ? 'designation' : 'deviations');
   const showDeviations = displayPreference !== 'designation';
   const showDesignation = Boolean(projection.fitDesignation?.trim()) && displayPreference !== 'deviations';
   const native = showDeviations && upperDeviation >= 0 && lowerDeviation <= 0;
-  const vectorAiPayload = projection.fitDesignation?.trim()
+  const vectorAiStrings = projection.fitDesignation?.trim()
     && projection.featureClass
     && projection.standardRef
-    ? toleranceXDataPayload({
+    ? toleranceXDataStrings({
       designation: projection.fitDesignation.trim(),
-      upperDeviation,
-      lowerDeviation,
+      upperDeviation: projection.upperDeviation ?? 0,
+      lowerDeviation: projection.lowerDeviation ?? 0,
+      unit: projection.unit,
       featureClass: projection.featureClass,
       standardRef: projection.standardRef,
     })
@@ -784,8 +791,19 @@ function portableDimensionTolerance(
     showDeviations,
     showDesignation,
     native,
-    ...(vectorAiPayload === undefined ? {} : { vectorAiPayload }),
+    ...(vectorAiStrings === undefined ? {} : { vectorAiStrings }),
   };
+}
+
+function convertToleranceValue(
+  value: number,
+  sourceUnit: NonNullable<Extract<AnnotationNode, { type: 'dimension' }>['toleranceProjection']>['unit'],
+  targetUnit: DrawingDocument['unitSystem']['length'] | 'deg',
+): number | undefined {
+  if (sourceUnit === targetUnit) return value;
+  if (sourceUnit === 'deg' || targetUnit === 'deg') return undefined;
+  const millimetresPerUnit = { mm: 1, cm: 10, m: 1_000, in: 25.4 } as const;
+  return value * millimetresPerUnit[sourceUnit] / millimetresPerUnit[targetUnit];
 }
 
 function toleranceDecimalPlaces(
@@ -798,16 +816,40 @@ function toleranceDecimalPlaces(
   return dimensionStyle?.toleranceDecimalPlaces ?? dimensionStyle?.decimalPlaces ?? 2;
 }
 
-function toleranceXDataPayload(value: {
+function toleranceXDataStrings(value: {
   designation: string;
   upperDeviation: number;
   lowerDeviation: number;
+  unit: 'mm' | 'cm' | 'm' | 'in' | 'deg';
   featureClass: 'internal' | 'external';
   standardRef: { id: string; edition: string };
-}): string {
+}): readonly string[] {
   const payload = JSON.stringify({ version: 1, ...value });
-  if (new TextEncoder().encode(payload).byteLength >= 255) throw new RangeError('DXF_TOLERANCE_XDATA_TOO_LONG');
-  return payload;
+  const encoder = new TextEncoder();
+  const byteLength = encoder.encode(payload).byteLength;
+  if (byteLength <= 254) return [payload];
+  const chunks: string[] = [];
+  let chunk = '';
+  let chunkBytes = 0;
+  for (const character of payload) {
+    const characterBytes = encoder.encode(character).byteLength;
+    if (chunkBytes + characterBytes > 254) {
+      chunks.push(chunk);
+      chunk = '';
+      chunkBytes = 0;
+    }
+    chunk += character;
+    chunkBytes += characterBytes;
+  }
+  if (chunk) chunks.push(chunk);
+  const metadata = JSON.stringify({
+    version: 1,
+    format: 'vectorai-tolerance-json',
+    encoding: 'utf-8',
+    chunkCount: chunks.length,
+    byteLength,
+  });
+  return [metadata, ...chunks];
 }
 
 function writeBlockReference(writer: DxfWriter, value: PreparedBlockReference): void {
@@ -1244,7 +1286,7 @@ function dxfText(value: string): string {
 }
 
 function insertionUnit(unit: DrawingDocument['unitSystem']['length']): number {
-  return { mm: 4, cm: 5, m: 6 }[unit];
+  return { in: 1, mm: 4, cm: 5, m: 6 }[unit];
 }
 
 function normalizeDegrees(value: number): number {

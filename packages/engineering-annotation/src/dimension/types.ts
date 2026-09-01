@@ -27,7 +27,7 @@ export interface DimensionIntent {
   targets: DimensionTarget[];
   datumIds: string[];
   nominalValue: number;
-  unit: 'mm' | 'cm' | 'm' | 'deg';
+  unit: 'mm' | 'cm' | 'm' | 'in' | 'deg';
   functionalRole: DimensionFunctionalRole;
   source: 'document' | 'geometry' | 'manual' | 'ai-candidate';
   status: EngineeringState;

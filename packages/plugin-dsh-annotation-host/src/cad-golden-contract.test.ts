@@ -34,8 +34,8 @@ describe('golden CAD export contract', () => {
     expect(actual.layers['7标注层']).toEqual(golden.layers['7标注层']);
     expect(actual.dimensionStyles.GB_LINEAR).toEqual(golden.dimensionStyles.GB_LINEAR);
     expect(actual.dimensionPictures).toEqual({ hasMText: true, hasHatchArrowheads: true });
-    expect(actual.dimensionKinds.diametric).toBe(0);
-    expect(actual.dimensionKinds.linear).toBe(1);
+    expect(actual.dimensionKinds.diametric).toBe(1);
+    expect(actual.dimensionKinds.linear).toBe(0);
   });
 
   it('preserves the golden 45 degree section hatch through CAD normalization', () => {

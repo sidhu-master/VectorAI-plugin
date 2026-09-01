@@ -27,6 +27,42 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(dxf).not.toContain('ZWISOGDT');
   });
 
+  it('preserves ordered UTF-8 tolerance XDATA chunks through CAD normalization', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-long-tolerance-xdata' }, now: () => 1 });
+    const standardRef = { id: '国家标准公差数据'.repeat(80), edition: '二〇二六版'.repeat(30) };
+    document.annotations = [{
+      id: 'dimension-long-tolerance' as never, type: 'dimension', dimensionKind: 'diameter',
+      associationStatus: 'resolved', targets: [], computedValue: 13, displayText: '⌀13', unit: 'mm',
+      textPosition: [0, 5], definitionPoints: [[-6.5, 0], [6.5, 0]], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+      toleranceProjection: {
+        mode: 'bilateral', fitDesignation: 'u6', upperDeviation: .044, lowerDeviation: .033,
+        unit: 'mm', source: 'standard', status: 'confirmed', featureClass: 'external',
+        standardRef, displayPreference: 'both', evidenceRefs: ['standard:u6'],
+      },
+    }];
+    const expected = JSON.stringify({
+      version: 1, designation: 'u6', upperDeviation: .044, lowerDeviation: .033,
+      unit: 'mm', featureClass: 'external', standardRef,
+    });
+
+    const dxf = exportEngineeringDrawingDxf(document, {
+      version: 1, phase: 'idle', drawingRef: { drawingId: document.id, revision: 1 },
+      canUndo: false, canRedo: false, updatedAt: 1,
+    });
+    const values = vectorAiXDataStrings(dxf);
+    const metadata = JSON.parse(values[0]!);
+    const encoder = new TextEncoder();
+
+    expect(values.length).toBeGreaterThan(2);
+    expect(values.every((value) => encoder.encode(value).byteLength <= 254)).toBe(true);
+    expect(metadata).toMatchObject({
+      version: 1, format: 'vectorai-tolerance-json', encoding: 'utf-8',
+      chunkCount: values.length - 1, byteLength: encoder.encode(expected).byteLength,
+    });
+    expect(values.slice(1).join('')).toBe(expected);
+  });
+
   it('uses native dimensions and anonymous symbol blocks like the golden CAD sample', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-golden' }, now: () => 1 });
     document.geometry = [{
@@ -274,6 +310,7 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(appliedDxf).toContain('5剖面线层');
     expect(appliedDxf).toContain('8符号标注层');
     expect(entityCount(appliedDxf, 'DIMENSION')).toBe(3);
+    expect(appliedDxf).toContain('100\r\nAcDbDiametricDimension');
     expect(entityCount(appliedDxf, 'HATCH')).toBeGreaterThanOrEqual(1);
     expect(appliedDxf).toContain('0.01');
     expect(appliedDxf).toContain('A');
@@ -336,6 +373,18 @@ function snapshot(options: {
 
 function entityCount(dxf: string, type: string): number {
   return (dxf.match(new RegExp(`(?:^|\\r?\\n)\\s*0\\r?\\n${type}\\r?\\n`, 'g')) ?? []).length;
+}
+
+function vectorAiXDataStrings(dxf: string): string[] {
+  const lines = dxf.split(/\r?\n/);
+  const appIndex = lines.findIndex((value, index) => value.trim() === '1001' && lines[index + 1] === 'VECTORAI');
+  if (appIndex < 0) return [];
+  const values: string[] = [];
+  for (let index = appIndex + 2; index + 1 < lines.length; index += 2) {
+    if (lines[index]!.trim() !== '1000') break;
+    values.push(lines[index + 1]!);
+  }
+  return values;
 }
 
 function nativeDimensions(dxf: string): Array<{ measurement: number; normalCoordinate: number }> {

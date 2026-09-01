@@ -129,7 +129,7 @@ const toleranceProjectionSchema = z.object({
   upperLimit: z.number().finite().optional(),
   lowerLimit: z.number().finite().optional(),
   fitDesignation: z.string().min(1).max(32).optional(),
-  unit: z.enum(['mm', 'cm', 'm', 'deg']),
+  unit: z.enum(['mm', 'cm', 'm', 'in', 'deg']),
   status: z.enum(['candidate', 'resolved', 'confirmed', 'conflict']),
   source: z.enum(['document', 'standard', 'enterprise-rule', 'manual', 'ai-candidate']),
   ruleRef: z.object({
@@ -226,7 +226,7 @@ const annotationSchema = z.discriminatedUnion('type', [
     observedValue: z.number().optional(),
     computedValue: z.number().optional(),
     displayText: z.string().optional(),
-    unit: z.enum(['mm', 'cm', 'm', 'deg']).optional(),
+    unit: z.enum(['mm', 'cm', 'm', 'in', 'deg']).optional(),
     tolerance: z.object({ upper: z.number().optional(), lower: z.number().optional() }).strict().optional(),
     toleranceProjection: toleranceProjectionSchema.optional(),
     datumReferences: z.array(drawingDatumReferenceSchema).optional(),
@@ -318,7 +318,7 @@ export const drawingDocumentSchema = z.object({
   schemaVersion: z.literal('1.0'),
   id: idSchema,
   metadata: z.object({ createdAt: z.number(), updatedAt: z.number() }).strict(),
-  unitSystem: z.object({ length: z.enum(['mm', 'cm', 'm']), angle: z.literal('deg') }).strict(),
+  unitSystem: z.object({ length: z.enum(['mm', 'cm', 'm', 'in']), angle: z.literal('deg') }).strict(),
   sources: z.array(z.object({
     id: idSchema,
     kind: z.enum(['image', 'dxf']),
@@ -855,7 +855,7 @@ export interface Bounds2D {
 
 export interface DrawingSummary {
   ref: DrawingRef;
-  unit: 'mm' | 'cm' | 'm';
+  unit: 'mm' | 'cm' | 'm' | 'in';
   bounds: Bounds2D;
   geometryByType: Record<string, number>;
   provisional: boolean;
@@ -989,7 +989,7 @@ const dimensionIntentSchema = z.object({
   targets: z.array(dimensionTargetSchema),
   datumIds: z.array(idSchema),
   nominalValue: z.number().finite(),
-  unit: z.enum(['mm', 'cm', 'm', 'deg']),
+  unit: z.enum(['mm', 'cm', 'm', 'in', 'deg']),
   functionalRole: z.enum(['datum', 'overall', 'functional', 'assembly', 'process', 'inspection', 'auxiliary', 'closure']),
   source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
   status: engineeringStateSchema,
@@ -1290,7 +1290,7 @@ const axialStationSchema = z.object({
   id: idSchema,
   coordinate: z.number().finite(),
   sourceCoordinate: z.number().finite(),
-  unit: z.enum(['mm', 'cm', 'm']),
+  unit: z.enum(['mm', 'cm', 'm', 'in']),
   kinds: z.array(z.enum(['drawing-end', 'shoulder', 'partition-boundary', 'datum'])),
   geometryNodeIds: z.array(idSchema),
   evidenceIds: z.array(idSchema),
@@ -1351,7 +1351,7 @@ export const axialDimensionSchemeSchema = z.object({
   topology: z.object({
     drawingRef: drawingRefSchema,
     axis: shaftAxisSchema,
-    unit: z.enum(['mm', 'cm', 'm']),
+    unit: z.enum(['mm', 'cm', 'm', 'in']),
     stations: z.array(axialStationSchema),
     elementarySpans: z.array(axialElementarySpanSchema),
   }).strict(),

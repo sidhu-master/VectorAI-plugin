@@ -13,7 +13,7 @@ export interface AxialStation {
   id: string;
   coordinate: number;
   sourceCoordinate: number;
-  unit: 'mm' | 'cm' | 'm';
+  unit: 'mm' | 'cm' | 'm' | 'in';
   kinds: AxialStationKind[];
   geometryNodeIds: string[];
   evidenceIds: string[];
@@ -31,7 +31,7 @@ export interface AxialElementarySpan {
 export interface AxialTopology {
   drawingRef: DrawingRef;
   axis: ShaftAxis;
-  unit: 'mm' | 'cm' | 'm';
+  unit: 'mm' | 'cm' | 'm' | 'in';
   stations: AxialStation[];
   elementarySpans: AxialElementarySpan[];
 }

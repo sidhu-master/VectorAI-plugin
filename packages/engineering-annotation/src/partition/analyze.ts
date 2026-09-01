@@ -92,4 +92,6 @@ export function analyzeShaftPartition(request: AnalyzeShaftPartitionRequest): An
 }
 
 function canonical(value: number): string { return Number(value.toFixed(6)).toString(); }
-function unitScale(unit: 'mm' | 'cm' | 'm'): number { return unit === 'mm' ? 0.001 : unit === 'cm' ? 0.01 : 1; }
+function unitScale(unit: 'mm' | 'cm' | 'm' | 'in'): number {
+  return unit === 'mm' ? 0.001 : unit === 'cm' ? 0.01 : unit === 'in' ? 0.0254 : 1;
+}

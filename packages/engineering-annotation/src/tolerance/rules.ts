@@ -16,7 +16,7 @@ export interface ToleranceRuleRequest {
   ruleId: string;
   ruleVersion: string;
   nominalValue: number;
-  unit: 'mm' | 'cm' | 'm' | 'deg';
+  unit: 'mm' | 'cm' | 'm' | 'in' | 'deg';
   inputs: Record<string, number | string | boolean>;
 }
 

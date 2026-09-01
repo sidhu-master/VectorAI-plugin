@@ -5,7 +5,7 @@ import type { AxialElementarySpan, AxialStation, AxialStationKind, AxialTopology
 
 export interface BuildAxialTopologyInput {
   partition: PartitionDraft | PartitionRevision;
-  unit?: 'mm' | 'cm' | 'm';
+  unit?: 'mm' | 'cm' | 'm' | 'in';
   coordinateTolerance?: number;
 }
 

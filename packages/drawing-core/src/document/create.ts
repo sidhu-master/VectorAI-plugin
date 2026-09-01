@@ -21,7 +21,7 @@ export const randomIdFactory: IdFactory = {
 };
 
 export function createEmptyDrawing(input: {
-  unit?: 'mm' | 'cm' | 'm';
+  unit?: 'mm' | 'cm' | 'm' | 'in';
   idFactory?: IdFactory;
   now?: () => number;
 } = {}): DrawingDocument {

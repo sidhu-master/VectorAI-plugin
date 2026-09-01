@@ -149,7 +149,7 @@ export interface ToleranceProjection {
   upperLimit?: number;
   lowerLimit?: number;
   fitDesignation?: string;
-  unit: 'mm' | 'cm' | 'm' | 'deg';
+  unit: 'mm' | 'cm' | 'm' | 'in' | 'deg';
   status: 'candidate' | 'resolved' | 'confirmed' | 'conflict';
   source: ToleranceSource;
   ruleRef?: { id: string; version: string; inputDigest: string };
@@ -181,7 +181,7 @@ export interface DimensionAnnotation extends BaseNode<AnnotationId, 'dimension'>
   observedValue?: number;
   computedValue?: number;
   displayText?: string;
-  unit?: 'mm' | 'cm' | 'm' | 'deg';
+  unit?: 'mm' | 'cm' | 'm' | 'in' | 'deg';
   tolerance?: { upper?: number; lower?: number };
   toleranceProjection?: ToleranceProjection;
   datumReferences?: DatumReference[];
@@ -364,7 +364,7 @@ export interface DrawingDocument {
     updatedAt: number;
   };
   unitSystem: {
-    length: 'mm' | 'cm' | 'm';
+    length: 'mm' | 'cm' | 'm' | 'in';
     angle: 'deg';
   };
   sources?: DrawingSourceDescriptor[];

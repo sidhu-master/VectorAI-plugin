@@ -101,7 +101,7 @@ export function createDrawingSummarizeTool(drawings: InMemoryDrawingRepository) 
         type: 'object',
         properties: {
           ref: { ...drawingRefSchema, required: true },
-          unit: { type: 'string', enum: ['mm', 'cm', 'm'], required: true },
+          unit: { type: 'string', enum: ['mm', 'cm', 'm', 'in'], required: true },
           bounds: {
             type: 'object',
             properties: {

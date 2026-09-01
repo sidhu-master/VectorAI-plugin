@@ -56,6 +56,40 @@ function dxfEntities(dxf: string, type: string): string[] {
     .map((record) => `${record.join('\r\n')}\r\n`);
 }
 
+function vectorAiXDataStrings(entity: string): string[] {
+  const pairs = entity.split(/\r?\n/);
+  const appIndex = pairs.findIndex((value, index) => value.trim() === '1001' && pairs[index + 1] === 'VECTORAI');
+  if (appIndex < 0) return [];
+  const values: string[] = [];
+  for (let index = appIndex + 2; index + 1 < pairs.length; index += 2) {
+    if (pairs[index]!.trim() === '1001') break;
+    if (pairs[index]!.trim() === '1000') values.push(pairs[index + 1]!);
+  }
+  return values;
+}
+
+function expectedTolerancePayload(standardId: string, edition = '2020'): string {
+  return JSON.stringify({
+    version: 1,
+    designation: 'u6',
+    upperDeviation: .044,
+    lowerDeviation: .033,
+    unit: 'mm',
+    featureClass: 'external',
+    standardRef: { id: standardId, edition },
+  });
+}
+
+function drawingWithToleranceStandardRef(standardId: string, edition = '2020') {
+  const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-xdata-chunks' }, now: () => 1 });
+  document.annotations = [toleranceDimension('chunked-u6', {
+    mode: 'bilateral', fitDesignation: 'u6', upperDeviation: .044, lowerDeviation: .033, unit: 'mm',
+    source: 'standard', status: 'confirmed', featureClass: 'external',
+    standardRef: { id: standardId, edition }, displayPreference: 'both', evidenceRefs: ['standard:u6'],
+  })];
+  return document;
+}
+
 describe('exportDrawingDxf', () => {
   it('exports canonical geometry and annotations as a unit-aware ASCII DXF drawing', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-dxf' }, now: () => 1 });
@@ -237,6 +271,7 @@ describe('exportDrawingDxf', () => {
       designation: 'u6',
       upperDeviation: .044,
       lowerDeviation: .033,
+      unit: 'mm',
       featureClass: 'external',
       standardRef: { id: 'GB/T 1800', edition: '2020' },
     });
@@ -244,6 +279,88 @@ describe('exportDrawingDxf', () => {
     const [defaultProfileEntity] = dxfEntities(exportDrawingDxf(document), 'DIMENSION');
     expect(defaultProfileEntity).toContain('1\r\n\\A1;<>{\\C3;u6}{\\C2;{\\H0.71x;\\S+0.044^+0.033;}}');
     expect(defaultProfileEntity).not.toContain('1001\r\nACAD');
+  });
+
+  it('converts mm deviations into cm and inch drawing units while XDATA keeps the original semantic values', () => {
+    const centimetreDrawing = createEmptyDrawing({ idFactory: { next: () => 'drawing-cm-tolerance' }, now: () => 1 });
+    centimetreDrawing.unitSystem.length = 'cm';
+    centimetreDrawing.annotations = [toleranceDimension('cm-native', {
+      mode: 'bilateral', fitDesignation: 'H7', upperDeviation: .02, lowerDeviation: -.01, unit: 'mm',
+      source: 'standard', status: 'confirmed', featureClass: 'internal',
+      standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['standard:H7'],
+    })];
+
+    const [centimetreEntity] = dxfEntities(exportDrawingDxf(centimetreDrawing, { profile: gbProfile }), 'DIMENSION');
+    expect(centimetreEntity).toMatch(/1070\r\n47\r\n1040\r\n0\.002/);
+    expect(centimetreEntity).toMatch(/1070\r\n48\r\n1040\r\n0\.001/);
+    expect(JSON.parse(vectorAiXDataStrings(centimetreEntity!)[0]!)).toMatchObject({
+      upperDeviation: .02, lowerDeviation: -.01, unit: 'mm',
+    });
+
+    const inchDrawing = createEmptyDrawing({ idFactory: { next: () => 'drawing-inch-tolerance' }, now: () => 1 });
+    inchDrawing.unitSystem.length = 'in';
+    inchDrawing.annotations = [toleranceDimension('inch-fallback', {
+      mode: 'bilateral', fitDesignation: 'u6', upperDeviation: .044, lowerDeviation: .033, unit: 'mm',
+      source: 'standard', status: 'confirmed', featureClass: 'external',
+      standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['standard:u6'],
+    })];
+
+    const inchDxf = exportDrawingDxf(inchDrawing, { profile: gbProfile });
+    const [inchEntity] = dxfEntities(inchDxf, 'DIMENSION');
+    expect(inchDxf).toContain('9\r\n$INSUNITS\r\n70\r\n1');
+    expect(inchEntity).toContain('\\S+0.001732283464566929^+0.001299212598425197;');
+    expect(inchEntity).not.toContain('1001\r\nACAD');
+    expect(JSON.parse(vectorAiXDataStrings(inchEntity!)[0]!)).toMatchObject({
+      upperDeviation: .044, lowerDeviation: .033, unit: 'mm',
+    });
+  });
+
+  it('keeps a 254-byte payload compatible and chunks a 255-byte payload for exact ordered reassembly', () => {
+    const encoder = new TextEncoder();
+    const baseBytes = encoder.encode(expectedTolerancePayload('')).byteLength;
+    const shortId = 'x'.repeat(254 - baseBytes);
+    const boundaryId = 'x'.repeat(255 - baseBytes);
+
+    const [shortEntity] = dxfEntities(exportDrawingDxf(drawingWithToleranceStandardRef(shortId)), 'DIMENSION');
+    const shortValues = vectorAiXDataStrings(shortEntity!);
+    expect(shortValues).toEqual([expectedTolerancePayload(shortId)]);
+    expect(encoder.encode(shortValues[0]).byteLength).toBe(254);
+
+    const [boundaryEntity] = dxfEntities(exportDrawingDxf(drawingWithToleranceStandardRef(boundaryId)), 'DIMENSION');
+    const boundaryValues = vectorAiXDataStrings(boundaryEntity!);
+    const metadata = JSON.parse(boundaryValues[0]!);
+    const chunks = boundaryValues.slice(1);
+    expect(metadata).toEqual({
+      version: 1,
+      format: 'vectorai-tolerance-json',
+      encoding: 'utf-8',
+      chunkCount: chunks.length,
+      byteLength: 255,
+    });
+    expect(boundaryValues.every((value) => encoder.encode(value).byteLength <= 254)).toBe(true);
+    expect(chunks.join('')).toBe(expectedTolerancePayload(boundaryId));
+  });
+
+  it('chunks long CJK standard references without splitting UTF-8 code points or losing fields', () => {
+    const encoder = new TextEncoder();
+    const standardId = '国家标准公差数据'.repeat(80);
+    const edition = '二〇二六版'.repeat(30);
+    const expected = expectedTolerancePayload(standardId, edition);
+
+    const [entity] = dxfEntities(exportDrawingDxf(drawingWithToleranceStandardRef(standardId, edition)), 'DIMENSION');
+    const values = vectorAiXDataStrings(entity!);
+    const metadata = JSON.parse(values[0]!);
+    const reassembled = values.slice(1).join('');
+
+    expect(values.length).toBeGreaterThan(2);
+    expect(values.every((value) => encoder.encode(value).byteLength <= 254)).toBe(true);
+    expect(metadata).toMatchObject({
+      version: 1, format: 'vectorai-tolerance-json', encoding: 'utf-8',
+      chunkCount: values.length - 1, byteLength: encoder.encode(expected).byteLength,
+    });
+    expect(reassembled).toBe(expected);
+    expect(reassembled).not.toContain('�');
+    expect(JSON.parse(reassembled).standardRef).toEqual({ id: standardId, edition });
   });
 
   it('keeps negative same-sign fit members explicit while a sign-spanning fit member stays native', () => {
@@ -315,6 +432,46 @@ describe('exportDrawingDxf', () => {
     expect(entity).toContain('\\S+0.03^-0.02;');
     expect(entity).not.toContain('1001\r\nACAD');
     expect(entity).not.toContain('1001\r\nVECTORAI');
+  });
+
+  it('exports diameter tolerances as native diametric dimensions in both native and fallback paths', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-diameter-tolerances' }, now: () => 1 });
+    const diameter = (
+      id: string,
+      y: number,
+      toleranceProjection: NonNullable<DimensionAnnotation['toleranceProjection']>,
+    ): DimensionAnnotation => ({
+      ...toleranceDimension(id, toleranceProjection),
+      dimensionKind: 'diameter', displayText: '⌀13', textPosition: [0, y],
+      definitionPoints: [[-6.5, y], [6.5, y]],
+    });
+    document.annotations = [
+      diameter('diameter-native', 0, {
+        mode: 'bilateral', fitDesignation: 'H7', upperDeviation: .018, lowerDeviation: 0, unit: 'mm',
+        source: 'standard', status: 'confirmed', featureClass: 'internal',
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['standard:H7'],
+      }),
+      diameter('diameter-fallback', 20, {
+        mode: 'bilateral', fitDesignation: 'u6', upperDeviation: .044, lowerDeviation: .033, unit: 'mm',
+        source: 'standard', status: 'confirmed', featureClass: 'external',
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['standard:u6'],
+      }),
+    ];
+
+    const [native, fallback] = dxfEntities(exportDrawingDxf(document, { profile: gbProfile }), 'DIMENSION');
+    for (const entity of [native, fallback]) {
+      expect(entity).toContain('70\r\n163');
+      expect(entity).toContain('100\r\nAcDbDiametricDimension');
+      expect(entity).not.toContain('100\r\nAcDbAlignedDimension');
+      expect(entity).not.toContain('100\r\nAcDbRotatedDimension');
+    }
+    expect(native).toContain('%%C<>{\\C3;H7}');
+    expect(native).toContain('1001\r\nACAD');
+    expect(native).toContain('1001\r\nVECTORAI');
+    expect(fallback).toContain('%%C<>{\\C3;u6}');
+    expect(fallback).toContain('\\S+0.044^+0.033;');
+    expect(fallback).not.toContain('1001\r\nACAD');
+    expect(fallback).toContain('1001\r\nVECTORAI');
   });
 
   it('sanitizes tolerance designation text before writing a DXF group value', () => {

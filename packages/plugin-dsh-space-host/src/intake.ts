@@ -13,7 +13,7 @@ interface PendingSourceWriter {
   bindPending(sessionId: string, attachment: ImageAttachmentRef): void;
   getSnapshot?(sessionId: string): {
     ref: { drawingId: string; revision: number };
-    document?: { unitSystem: { length: 'mm' | 'cm' | 'm' } };
+    document?: { unitSystem: { length: 'mm' | 'cm' | 'm' | 'in' } };
   } | null;
 }
 

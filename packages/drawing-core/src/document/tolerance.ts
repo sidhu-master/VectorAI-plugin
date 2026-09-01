@@ -37,7 +37,7 @@ export function validateToleranceProjection(value: ToleranceProjection): void {
 export function normalizeToleranceProjection(input: {
   projection?: ToleranceProjection;
   legacy?: { upper?: number; lower?: number };
-  unit: 'mm' | 'cm' | 'm' | 'deg';
+  unit: 'mm' | 'cm' | 'm' | 'in' | 'deg';
 }): ToleranceProjection | undefined {
   if (input.projection !== undefined) {
     validateToleranceProjection(input.projection);

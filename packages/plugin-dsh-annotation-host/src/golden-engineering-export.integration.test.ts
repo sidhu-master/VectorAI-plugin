@@ -101,7 +101,12 @@ describe('golden shaft complete engineering DXF export', () => {
     for (const style of ['GB_LINEAR', 'GB_ANGULAR', 'GB_RADIAL']) {
       expect(actual.dimensionStyles[style]).toEqual(golden.dimensionStyles[style]);
     }
-    expect(actual.dimensionKinds.diametric).toBe(0);
+    const plannedDiameterCount = planned.annotations.filter(
+      (annotation) =>
+        annotation.type === 'dimension' && annotation.dimensionKind === 'diameter'
+    ).length;
+    expect(plannedDiameterCount).toBeGreaterThan(0);
+    expect(actual.dimensionKinds.diametric).toBe(plannedDiameterCount);
     expect(actual.dimensionKinds.angular).toBe(golden.dimensionKinds.angular);
     expect(actual.dimensionKinds.radial).toBeGreaterThan(0);
     expect(actual.dimensionPictures).toEqual({ hasMText: true, hasHatchArrowheads: true });

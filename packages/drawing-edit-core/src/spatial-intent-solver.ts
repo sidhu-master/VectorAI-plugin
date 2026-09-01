@@ -999,10 +999,13 @@ function distanceToSegment(point: Vec2, start: Vec2, end: Vec2): number {
   return Math.hypot(point[0] - (start[0] + ratio * dx), point[1] - (start[1] + ratio * dy));
 }
 
-function distanceInDrawingUnits(value: number, unit: string, drawingUnit: 'mm' | 'cm' | 'm'): number {
+function distanceInDrawingUnits(value: number, unit: string, drawingUnit: 'mm' | 'cm' | 'm' | 'in'): number {
   const millimeters = unit === 'mm' ? value : unit === 'cm' ? value * 10 : unit === 'm' ? value * 1_000 : unit === 'in' ? value * 25.4 : Number.NaN;
   if (!Number.isFinite(millimeters)) throw new Error('EDIT_NUMERIC_UNIT_UNSUPPORTED');
-  return drawingUnit === 'mm' ? millimeters : drawingUnit === 'cm' ? millimeters / 10 : millimeters / 1_000;
+  return drawingUnit === 'mm' ? millimeters
+    : drawingUnit === 'cm' ? millimeters / 10
+      : drawingUnit === 'in' ? millimeters / 25.4
+        : millimeters / 1_000;
 }
 
 function angleRadians(value: number, unit: string): number {
