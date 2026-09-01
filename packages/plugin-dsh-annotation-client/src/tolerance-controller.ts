@@ -80,6 +80,7 @@ export interface ToleranceControllerState {
   target: ToleranceTarget | null;
   pendingTarget: ToleranceTarget | null;
   catalog: ToleranceCatalogResult | null;
+  fitCatalogs: { internal: ToleranceCatalogResult; external: ToleranceCatalogResult } | null;
   preview: TolerancePreviewResult | null;
   canvasPreview: TolerancePreview | null;
   selection: ToleranceSelection | null;
@@ -120,7 +121,7 @@ export interface ToleranceController {
     restoreStandard(): void;
     restoreRecommendation(): Promise<void>;
     apply(): Promise<void>;
-    beginFit(basis: 'hole' | 'shaft'): void;
+    beginFit(basis: 'hole' | 'shaft'): Promise<void>;
     selectFitTarget(target: ToleranceTarget): void;
     setGeometry(geometry: PopupRect, options?: { userDragged?: boolean }): void;
     setTab(tab: TolerancePopupTab): void;
@@ -159,6 +160,7 @@ export function createToleranceController(input: {
     target: null,
     pendingTarget: null,
     catalog: null,
+    fitCatalogs: null,
     preview: null,
     canvasPreview: null,
     selection: null,
@@ -173,6 +175,12 @@ export function createToleranceController(input: {
   const listeners = new Set<() => void>();
   let disposed = false;
   let pendingOverrideEdit: 'set' | 'clear' | null = null;
+  let targetEpoch = 0;
+  let catalogGeneration = 0;
+  let previewGeneration = 0;
+  let selectionEpoch: number | null = null;
+  let pendingRequests = 0;
+  let applying: Promise<void> | null = null;
 
   const update = (changes: Partial<ToleranceControllerState>) => {
     if (disposed) return;
@@ -191,20 +199,75 @@ export function createToleranceController(input: {
     catch { /* Browser storage is optional. */ }
   };
   const remote = () => typeof input.remote === 'function' ? input.remote() : input.remote;
-  const run = async <T>(operation: () => Promise<RemoteResult<T>>): Promise<T> => {
-    update({ busy: true, error: null });
+  const run = async <T>(
+    operation: () => Promise<RemoteResult<T>>,
+    epoch = targetEpoch,
+    isCurrent: () => boolean = () => true,
+  ): Promise<T> => {
+    pendingRequests += 1;
+    if (epoch === targetEpoch && isCurrent()) update({ busy: true, error: null });
     try { return unwrap(await operation()); }
     catch (error) {
-      update({ error: errorText(error) });
+      if (epoch === targetEpoch && isCurrent()) update({ error: errorText(error) });
       throw error;
-    } finally { update({ busy: false }); }
+    } finally {
+      pendingRequests -= 1;
+      update({ busy: pendingRequests > 0 });
+    }
   };
   const requireTarget = () => {
     if (current.target === null) throw new Error('TOLERANCE_TARGET_REQUIRED');
     return current.target;
   };
+  const refreshCatalogFor = async (
+    target: ToleranceTarget,
+    featureClass: 'internal' | 'external',
+    epoch: number,
+    hydrate: boolean,
+  ): Promise<void> => {
+    const generation = ++catalogGeneration;
+    const isCurrent = () => epoch === targetEpoch && generation === catalogGeneration;
+    const result = await run(() => remote().queryToleranceCatalog(input.sessionId, {
+      expectedDrawingRef: target.drawingRef,
+      dimensionIntentId: target.dimensionIntentId,
+      featureClass,
+    }), epoch, isCurrent);
+    if (!isCurrent() || !catalogMatches(result, target, featureClass)) return;
+    update({ catalog: clone(result), standardEdition: result.standardRef.edition });
+    if ((hydrate || (!current.dirty && current.preview === null)) && result.selection !== undefined) {
+      const selection = result.selection;
+      const hydrationGeneration = ++previewGeneration;
+      const isCurrentHydration = () => isCurrent() && hydrationGeneration === previewGeneration;
+      const host = await run(() => remote().previewTolerance(input.sessionId, {
+        type: 'single', expectedDrawingRef: target.drawingRef,
+        dimensionIntentId: target.dimensionIntentId, featureClass,
+        designation: selection.designation,
+      }), epoch, isCurrentHydration);
+      if (!isCurrentHydration() || !singlePreviewMatches(host, target, featureClass, selection.designation)) return;
+      const preview = clone(host);
+      const override = selection.override === undefined ? null : { ...selection.override };
+      selectionEpoch = epoch;
+      update({
+        preview,
+        canvasPreview: { host: clone(preview), override, displayPreference: selection.displayPreference },
+        selection: {
+          kind: 'single', featureClass, designation: selection.designation,
+          source: selection.source, evidenceRefs: [...selection.evidenceRefs],
+        },
+        override,
+        displayPreference: selection.displayPreference,
+        dirty: false,
+      });
+    }
+    persist();
+  };
   const activateTarget = async (target: ToleranceTarget): Promise<void> => {
-    const sameTarget = current.target?.dimensionIntentId === target.dimensionIntentId;
+    const sameTarget = current.target !== null && sameTargetIdentity(current.target, target);
+    targetEpoch += 1;
+    catalogGeneration += 1;
+    previewGeneration += 1;
+    const epoch = targetEpoch;
+    selectionEpoch = null;
     viewport = target.viewport ?? viewport;
     const geometry = current.userPositioned || sameTarget
       ? clampGeometry(current.geometry, viewport)
@@ -216,6 +279,7 @@ export function createToleranceController(input: {
       target: clone(target),
       pendingTarget: null,
       catalog: sameTarget ? current.catalog : null,
+      fitCatalogs: null,
       preview: null,
       canvasPreview: null,
       selection: null,
@@ -226,7 +290,9 @@ export function createToleranceController(input: {
       error: null,
     });
     persist();
-    if (target.classification.status === 'resolved') await actions.refreshCatalog();
+    if (target.classification.status === 'resolved') {
+      await refreshCatalogFor(target, target.classification.featureClass, epoch, false);
+    }
   };
 
   const actions: ToleranceController['actions'] = {
@@ -234,7 +300,7 @@ export function createToleranceController(input: {
     openFromContextMenu: activateTarget,
     openFromDesignationDoubleClick: activateTarget,
     requestTarget(target) {
-      if (current.target?.dimensionIntentId === target.dimensionIntentId) {
+      if (current.target !== null && sameTargetIdentity(current.target, target)) {
         update({ target: clone(target), visible: true });
         return;
       }
@@ -254,12 +320,19 @@ export function createToleranceController(input: {
       const pending = current.pendingTarget;
       if (pending === null) return;
       pendingOverrideEdit = null;
+      selectionEpoch = null;
       update({ dirty: false, preview: null, canvasPreview: null, selection: null, override: null });
       await activateTarget(pending);
     },
     requestClose() {
       if (current.dirty) update({ closeDecision: 'dirty' });
-      else update({ visible: false, closeDecision: null, preview: null, canvasPreview: null, selection: null, override: null });
+      else {
+        targetEpoch += 1;
+        catalogGeneration += 1;
+        previewGeneration += 1;
+        selectionEpoch = null;
+        update({ visible: false, closeDecision: null, preview: null, canvasPreview: null, selection: null, override: null });
+      }
     },
     async applyAndClose() {
       await actions.apply();
@@ -267,47 +340,34 @@ export function createToleranceController(input: {
     },
     discardAndClose() {
       pendingOverrideEdit = null;
+      targetEpoch += 1;
+      catalogGeneration += 1;
+      previewGeneration += 1;
+      selectionEpoch = null;
       update({ visible: false, dirty: false, closeDecision: null, preview: null, canvasPreview: null, selection: null, override: null });
     },
     cancelPreview() {
       pendingOverrideEdit = null;
+      previewGeneration += 1;
+      selectionEpoch = null;
       update({ dirty: false, closeDecision: null, preview: null, canvasPreview: null, selection: null, override: null });
     },
     async refreshCatalog() {
       const target = requireTarget();
       if (target.classification.status !== 'resolved') throw new Error(target.classification.code);
-      const featureClass = target.classification.featureClass;
-      const result = await run(() => remote().queryToleranceCatalog(input.sessionId, {
-        expectedDrawingRef: target.drawingRef,
-        dimensionIntentId: target.dimensionIntentId,
-        featureClass,
-      }));
-      update({ catalog: clone(result), standardEdition: result.standardRef.edition });
-      if (!current.dirty && current.preview === null && result.selection !== undefined) {
-        const selection = result.selection;
-        const host = await run(() => remote().previewTolerance(input.sessionId, {
-          type: 'single', expectedDrawingRef: target.drawingRef,
-          dimensionIntentId: target.dimensionIntentId, featureClass,
-          designation: selection.designation,
-        }));
-        const preview = clone(host);
-        update({
-          preview,
-          canvasPreview: { host: clone(preview), override: null, displayPreference: current.displayPreference },
-          selection: {
-            kind: 'single', featureClass, designation: selection.designation,
-            source: selection.source, evidenceRefs: [...selection.evidenceRefs],
-          },
-          override: null,
-          dirty: false,
-        });
-      }
-      persist();
+      await refreshCatalogFor(target, target.classification.featureClass, targetEpoch, false);
     },
     async chooseFeatureClass(featureClass) {
       const target = requireTarget();
-      update({ target: { ...target, classification: { status: 'resolved', featureClass } }, tab: featureClass });
-      await actions.refreshCatalog();
+      targetEpoch += 1;
+      const epoch = targetEpoch;
+      selectionEpoch = null;
+      const resolvedTarget: ToleranceTarget = { ...target, classification: { status: 'resolved', featureClass } };
+      update({
+        target: resolvedTarget, tab: featureClass, catalog: null, fitCatalogs: null,
+        preview: null, canvasPreview: null, selection: null, override: null, dirty: false,
+      });
+      await refreshCatalogFor(resolvedTarget, featureClass, epoch, false);
       persist();
     },
     async preview(selection) {
@@ -343,9 +403,14 @@ export function createToleranceController(input: {
           source: selection.source ?? 'manual', evidenceRefs: [...(selection.evidenceRefs ?? [])],
         };
       }
-      const result = await run(() => remote().previewTolerance(input.sessionId, request));
+      const epoch = targetEpoch;
+      const generation = ++previewGeneration;
+      const isCurrent = () => epoch === targetEpoch && generation === previewGeneration;
+      const result = await run(() => remote().previewTolerance(input.sessionId, request), epoch, isCurrent);
+      if (!isCurrent() || !previewMatchesRequest(result, request)) return;
       const preview = clone(result);
       pendingOverrideEdit = null;
+      selectionEpoch = epoch;
       update({
         preview,
         canvasPreview: { host: clone(preview), override: null, displayPreference: current.displayPreference },
@@ -357,6 +422,7 @@ export function createToleranceController(input: {
       if (!target.acceptsManualTolerance) throw new Error('TOLERANCE_MANUAL_UNSUPPORTED');
       if (value.upperDeviation === undefined && value.lowerDeviation === undefined) throw new Error('TOLERANCE_DEVIATION_REQUIRED');
       pendingOverrideEdit = null;
+      selectionEpoch = targetEpoch;
       update({ selection: { kind: 'manual', ...value }, preview: null, canvasPreview: null, override: null, dirty: true, error: null });
     },
     async previewOverride(value) {
@@ -400,67 +466,98 @@ export function createToleranceController(input: {
       });
     },
     async apply() {
-      const target = requireTarget();
-      const selection = current.selection;
-      if (selection === null) throw new Error('TOLERANCE_SELECTION_REQUIRED');
-      let command: ToleranceEditCommand;
-      if (pendingOverrideEdit !== null) {
-        if (selection.kind !== 'single' || current.catalog?.selection?.designation !== selection.designation) {
-          throw new Error('TOLERANCE_OVERRIDE_REQUIRES_APPLIED_STANDARD');
-        }
-        if (pendingOverrideEdit === 'set') {
-          const override = current.override;
-          if (override === null) throw new Error('TOLERANCE_OVERRIDE_REQUIRED');
+      if (applying !== null) return applying;
+      const task = (async () => {
+        const target = requireTarget();
+        const selection = current.selection;
+        if (selection === null) throw new Error('TOLERANCE_SELECTION_REQUIRED');
+        const epoch = targetEpoch;
+        if (selectionEpoch !== epoch) throw new Error('TOLERANCE_TARGET_STALE');
+        let command: ToleranceEditCommand;
+        if (pendingOverrideEdit !== null) {
+          if (selection.kind !== 'single' || current.catalog?.selection?.designation !== selection.designation) {
+            throw new Error('TOLERANCE_OVERRIDE_REQUIRES_APPLIED_STANDARD');
+          }
+          if (pendingOverrideEdit === 'set') {
+            const override = current.override;
+            if (override === null) throw new Error('TOLERANCE_OVERRIDE_REQUIRED');
+            command = {
+              type: 'standard.override.set', expectedDrawingRef: target.drawingRef,
+              dimensionIntentId: target.dimensionIntentId,
+              ...override,
+            };
+          } else {
+            command = {
+              type: 'standard.override.clear', expectedDrawingRef: target.drawingRef,
+              dimensionIntentId: target.dimensionIntentId,
+            };
+          }
+        } else if (selection.kind === 'single') {
           command = {
-            type: 'standard.override.set', expectedDrawingRef: target.drawingRef,
+            type: 'standard.single.apply', expectedDrawingRef: target.drawingRef,
             dimensionIntentId: target.dimensionIntentId,
-            ...override,
+            featureClass: selection.featureClass, designation: selection.designation,
+            selectionSource: selection.source, displayPreference: current.displayPreference,
+            evidenceRefs: [...selection.evidenceRefs],
+          };
+        } else if (selection.kind === 'fit') {
+          command = {
+            type: 'standard.fit.apply', expectedDrawingRef: target.drawingRef,
+            holeDimensionIntentId: selection.holeDimensionIntentId,
+            shaftDimensionIntentId: selection.shaftDimensionIntentId,
+            basis: selection.basis, designation: selection.designation,
+            selectionSource: selection.source, displayPreference: current.displayPreference,
+            evidenceRefs: [...selection.evidenceRefs],
           };
         } else {
           command = {
-            type: 'standard.override.clear', expectedDrawingRef: target.drawingRef,
+            type: 'manual.apply', expectedDrawingRef: target.drawingRef,
             dimensionIntentId: target.dimensionIntentId,
+            mode: selection.upperDeviation !== undefined && selection.lowerDeviation !== undefined ? 'bilateral' : 'unilateral',
+            ...(selection.upperDeviation === undefined ? {} : { upperDeviation: selection.upperDeviation }),
+            ...(selection.lowerDeviation === undefined ? {} : { lowerDeviation: selection.lowerDeviation }),
+            displayPreference: current.displayPreference,
+            evidenceRefs: [],
           };
         }
-      } else if (selection.kind === 'single') {
-        command = {
-          type: 'standard.single.apply', expectedDrawingRef: target.drawingRef,
-          dimensionIntentId: target.dimensionIntentId,
-          featureClass: selection.featureClass, designation: selection.designation,
-          selectionSource: selection.source, displayPreference: current.displayPreference,
-          evidenceRefs: [...selection.evidenceRefs],
-        };
-      } else if (selection.kind === 'fit') {
-        command = {
-          type: 'standard.fit.apply', expectedDrawingRef: target.drawingRef,
-          holeDimensionIntentId: selection.holeDimensionIntentId,
-          shaftDimensionIntentId: selection.shaftDimensionIntentId,
-          basis: selection.basis, designation: selection.designation,
-          selectionSource: selection.source, displayPreference: current.displayPreference,
-          evidenceRefs: [...selection.evidenceRefs],
-        };
-      } else {
-        command = {
-          type: 'manual.apply', expectedDrawingRef: target.drawingRef,
-          dimensionIntentId: target.dimensionIntentId,
-          mode: selection.upperDeviation !== undefined && selection.lowerDeviation !== undefined ? 'bilateral' : 'unilateral',
-          ...(selection.upperDeviation === undefined ? {} : { upperDeviation: selection.upperDeviation }),
-          ...(selection.lowerDeviation === undefined ? {} : { lowerDeviation: selection.lowerDeviation }),
-          displayPreference: current.displayPreference,
-          evidenceRefs: [],
-        };
-      }
-      await run(() => remote().editTolerance(input.sessionId, command));
-      pendingOverrideEdit = null;
-      update({ dirty: false, closeDecision: null, error: null });
+        const snapshot = await run(() => remote().editTolerance(input.sessionId, command), epoch);
+        if (epoch !== targetEpoch || !commandTargets(command, target)) return;
+        pendingOverrideEdit = null;
+        update({ dirty: false, closeDecision: null, error: null });
+        if (command.type === 'standard.single.apply') {
+          const nextTarget = { ...target, drawingRef: snapshot.drawingRef ?? target.drawingRef };
+          update({ target: nextTarget, preview: null, canvasPreview: null });
+          await refreshCatalogFor(nextTarget, command.featureClass, epoch, true);
+        }
+      })();
+      applying = task;
+      try { await task; } finally { if (applying === task) applying = null; }
     },
-    beginFit(basis) {
+    async beginFit(basis) {
+      const target = requireTarget();
+      const epoch = targetEpoch;
       update({
         tab: basis === 'hole' ? 'hole-fit' : 'shaft-fit',
         fit: { basis, selectingSecondTarget: true, secondTarget: null },
         error: null,
       });
       persist();
+      const [internal, external] = await Promise.all([
+        run(() => remote().queryToleranceCatalog(input.sessionId, {
+          expectedDrawingRef: target.drawingRef,
+          dimensionIntentId: target.dimensionIntentId,
+          featureClass: 'internal',
+        }), epoch),
+        run(() => remote().queryToleranceCatalog(input.sessionId, {
+          expectedDrawingRef: target.drawingRef,
+          dimensionIntentId: target.dimensionIntentId,
+          featureClass: 'external',
+        }), epoch),
+      ]);
+      if (epoch !== targetEpoch
+        || !catalogMatches(internal, target, 'internal')
+        || !catalogMatches(external, target, 'external')) return;
+      update({ fitCatalogs: { internal: clone(internal), external: clone(external) } });
     },
     selectFitTarget(target) {
       const primary = requireTarget();
@@ -473,7 +570,11 @@ export function createToleranceController(input: {
         update({ error: 'FIT_PAIR_CLASS_INCOMPATIBLE' });
         return;
       }
-      if (primary.basicSize !== undefined && target.basicSize !== undefined && primary.basicSize !== target.basicSize) {
+      if (!finite(primary.basicSize) || !finite(target.basicSize)) {
+        update({ error: 'TOLERANCE_BASIC_SIZE_INVALID' });
+        return;
+      }
+      if (primary.basicSize !== target.basicSize) {
         update({ error: 'FIT_PAIR_BASIC_SIZE_MISMATCH' });
         return;
       }
@@ -513,9 +614,14 @@ function initialGeometry(target: ToleranceTarget, previous: PopupRect, viewport:
     return clampGeometry({ ...size, x: target.anchor.x + 12, y: target.anchor.y + 12 }, viewport);
   }
   const gap = 12;
-  const right = bounds.x + bounds.width + gap;
-  const x = right + size.width <= viewport.width ? right : bounds.x - size.width - gap;
-  return clampGeometry({ ...size, x, y: bounds.y }, viewport);
+  const candidates = [
+    { ...size, x: bounds.x + bounds.width + gap, y: bounds.y },
+    { ...size, x: bounds.x - size.width - gap, y: bounds.y },
+    { ...size, x: bounds.x, y: bounds.y + bounds.height + gap },
+    { ...size, x: bounds.x, y: bounds.y - size.height - gap },
+  ];
+  const fitting = candidates.find((candidate) => fitsViewport(candidate, viewport) && !rectanglesOverlap(candidate, bounds));
+  return fitting ?? clampGeometry(candidates[0]!, viewport);
 }
 
 export function clampTolerancePopupGeometry(geometry: PopupRect, viewport: PopupSize): PopupRect {
@@ -567,6 +673,66 @@ function errorText(error: unknown): string { return error instanceof Error ? err
 function unwrap<T>(result: RemoteResult<T>): T {
   if (result.ok !== true) throw new Error(result.error.message);
   return clone(result.value);
+}
+
+function sameDrawingRef(first: DrawingRef, second: DrawingRef): boolean {
+  return first.drawingId === second.drawingId && first.revision === second.revision;
+}
+
+function sameTargetIdentity(first: ToleranceTarget, second: ToleranceTarget): boolean {
+  return first.dimensionIntentId === second.dimensionIntentId && sameDrawingRef(first.drawingRef, second.drawingRef);
+}
+
+function catalogMatches(
+  result: ToleranceCatalogResult,
+  target: ToleranceTarget,
+  featureClass: 'internal' | 'external',
+): boolean {
+  return result.dimensionIntentId === target.dimensionIntentId
+    && result.featureClass === featureClass
+    && sameDrawingRef(result.drawingRef, target.drawingRef);
+}
+
+function singlePreviewMatches(
+  result: TolerancePreviewResult,
+  target: ToleranceTarget,
+  featureClass: 'internal' | 'external',
+  designation: string,
+): boolean {
+  return result.type === 'single'
+    && result.dimensionIntentId === target.dimensionIntentId
+    && sameDrawingRef(result.drawingRef, target.drawingRef)
+    && result.result.featureClass === featureClass
+    && result.result.designation === designation;
+}
+
+function previewMatchesRequest(result: TolerancePreviewResult, request: TolerancePreviewRequest): boolean {
+  if (!sameDrawingRef(result.drawingRef, request.expectedDrawingRef) || result.type !== request.type) return false;
+  return request.type === 'single' && result.type === 'single'
+    ? result.dimensionIntentId === request.dimensionIntentId
+      && result.result.featureClass === request.featureClass
+      && result.result.designation === request.designation
+    : request.type === 'fit' && result.type === 'fit'
+      && result.holeDimensionIntentId === request.holeDimensionIntentId
+      && result.shaftDimensionIntentId === request.shaftDimensionIntentId
+      && result.result.basis === request.basis
+      && result.result.designation === request.designation;
+}
+
+function commandTargets(command: ToleranceEditCommand, target: ToleranceTarget): boolean {
+  if (!sameDrawingRef(command.expectedDrawingRef, target.drawingRef)) return false;
+  return command.type === 'standard.fit.apply'
+    ? command.holeDimensionIntentId === target.dimensionIntentId || command.shaftDimensionIntentId === target.dimensionIntentId
+    : command.dimensionIntentId === target.dimensionIntentId;
+}
+
+function fitsViewport(rect: PopupRect, viewport: PopupSize): boolean {
+  return rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= viewport.width && rect.y + rect.height <= viewport.height;
+}
+
+function rectanglesOverlap(first: PopupRect, second: PopupRect): boolean {
+  return first.x < second.x + second.width && first.x + first.width > second.x
+    && first.y < second.y + second.height && first.y + first.height > second.y;
 }
 function resolvedFeatureClass(target: ToleranceTarget): 'internal' | 'external' {
   if (target.classification.status !== 'resolved') throw new Error(target.classification.code);

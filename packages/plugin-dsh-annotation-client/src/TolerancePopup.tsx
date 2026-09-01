@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { TolerancePreviewResult } from '@vectorai/plugin-space-contracts';
-import { useRef, useState, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { clampTolerancePopupGeometry, type PopupRect, type PopupSize, type ToleranceDisplayPreference, type TolerancePopupTab, type ToleranceTarget } from './tolerance-controller';
 import { ToleranceBandMatrix, type ToleranceBand } from './ToleranceBandMatrix';
 
@@ -10,6 +10,7 @@ export interface TolerancePopupProps {
   viewport: PopupSize;
   target: ToleranceTarget;
   bands: readonly ToleranceBand[];
+  fitCatalogs?: { internal: readonly ToleranceBand[]; external: readonly ToleranceBand[] } | null;
   tab: TolerancePopupTab;
   zoom: number;
   standardEdition: string;
@@ -18,15 +19,19 @@ export interface TolerancePopupProps {
   displayPreference: ToleranceDisplayPreference;
   dirty: boolean;
   closeDecision: 'dirty' | null;
+  pendingTarget?: ToleranceTarget | null;
+  recommendation?: string | null;
   busy: boolean;
   error: string | null;
   fitStatus?: string | null;
   override?: { upperDeviation: number; lowerDeviation: number } | null;
   onPreview(designation: string): void;
-  onApply(): void;
+  onApply(): void | Promise<void>;
   onRequestClose(): void;
   onDiscardClose(): void;
   onApplyClose(): void;
+  onDiscardAndSwitch(): void;
+  onApplyAndSwitch(): void;
   onGeometryChange(geometry: PopupRect, options: { userDragged: true }): void;
   onTabChange(tab: TolerancePopupTab): void;
   onZoomChange(zoom: number): void;
@@ -59,19 +64,52 @@ const preferences: Array<{ id: ToleranceDisplayPreference; label: string }> = [
 
 export function TolerancePopup(props: TolerancePopupProps) {
   const operation = useRef<PointerOperation | null>(null);
+  const capture = useRef<{ owner: HTMLElement; pointerId: number } | null>(null);
   const [inspectedBand, setInspectedBand] = useState<ToleranceBand | null>(null);
   const [overrideUpper, setOverrideUpper] = useState(props.override === null || props.override === undefined ? '' : String(props.override.upperDeviation));
   const [overrideLower, setOverrideLower] = useState(props.override === null || props.override === undefined ? '' : String(props.override.lowerDeviation));
   const [manualUpper, setManualUpper] = useState('');
   const [manualLower, setManualLower] = useState('');
   const [manualReady, setManualReady] = useState(false);
+  const [fitInternal, setFitInternal] = useState('');
+  const [fitExternal, setFitExternal] = useState('');
+  const [applying, setApplying] = useState(false);
+  const applyingRef = useRef(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const targetIdentity = `${props.target.drawingRef.drawingId}:${props.target.drawingRef.revision}:${props.target.dimensionIntentId}`;
+  const hydratedOverrideUpper = props.override?.upperDeviation;
+  const hydratedOverrideLower = props.override?.lowerDeviation;
+  const localTargetIdentity = useRef(targetIdentity);
+  const localHydratedOverride = useRef({ targetIdentity, upper: hydratedOverrideUpper, lower: hydratedOverrideLower });
+  useEffect(() => {
+    if (localTargetIdentity.current === targetIdentity) return;
+    localTargetIdentity.current = targetIdentity;
+    setManualUpper('');
+    setManualLower('');
+    setManualReady(false);
+    setFitInternal('');
+    setFitExternal('');
+    setInspectedBand(null);
+    setActionError(null);
+  }, [targetIdentity]);
+  useEffect(() => {
+    const previous = localHydratedOverride.current;
+    if (previous.targetIdentity === targetIdentity
+      && Object.is(previous.upper, hydratedOverrideUpper)
+      && Object.is(previous.lower, hydratedOverrideLower)) return;
+    localHydratedOverride.current = { targetIdentity, upper: hydratedOverrideUpper, lower: hydratedOverrideLower };
+    setOverrideUpper(hydratedOverrideUpper === undefined ? '' : String(hydratedOverrideUpper));
+    setOverrideLower(hydratedOverrideLower === undefined ? '' : String(hydratedOverrideLower));
+  }, [targetIdentity, hydratedOverrideUpper, hydratedOverrideLower]);
   const stop = (event: SyntheticEvent) => event.stopPropagation();
   const begin = (kind: PointerOperation['kind'], event: ReactPointerEvent<HTMLElement>) => {
-    event.stopPropagation();
+    event.stopPropagation?.();
     event.currentTarget.setPointerCapture(event.pointerId);
+    capture.current = { owner: event.currentTarget, pointerId: event.pointerId };
     operation.current = { kind, pointer: { x: event.clientX, y: event.clientY }, geometry: props.geometry } as PointerOperation;
   };
   const move = (event: ReactPointerEvent<HTMLElement>) => {
+    event.stopPropagation?.();
     const active = operation.current;
     if (active === null) return;
     const dx = event.clientX - active.pointer.x;
@@ -85,22 +123,46 @@ export function TolerancePopup(props: TolerancePopupProps) {
           : { ...active.geometry, width: active.geometry.width + dx, height: active.geometry.height + dy };
     props.onGeometryChange(clampTolerancePopupGeometry(requested, props.viewport), { userDragged: true });
   };
+  const finish = (event?: ReactPointerEvent<HTMLElement>) => {
+    event?.stopPropagation();
+    const activeCapture = capture.current;
+    if (activeCapture !== null) {
+      const owner = activeCapture.owner as HTMLElement & {
+        hasPointerCapture?: (pointerId: number) => boolean;
+        releasePointerCapture?: (pointerId: number) => void;
+      };
+      if (owner.releasePointerCapture !== undefined
+        && (owner.hasPointerCapture === undefined || owner.hasPointerCapture(activeCapture.pointerId))) {
+        owner.releasePointerCapture(activeCapture.pointerId);
+      }
+    }
+    capture.current = null;
+    operation.current = null;
+  };
   const keyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation?.();
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      props.onApply();
+      void invokeApply();
     } else if (event.key === 'Escape') {
       event.preventDefault();
       props.onRequestClose();
     }
   };
   const classification = props.target.classification;
-  const manualFallback = classification.status === 'unsupported' && props.target.acceptsManualTolerance;
-  const applicationBlocked = props.busy
-    || classification.status === 'ambiguous'
-    || (classification.status === 'unsupported' && (!props.target.acceptsManualTolerance || !manualReady))
+  const manualFallback = classification.status !== 'resolved' && props.target.acceptsManualTolerance;
+  const applicationBlocked = props.busy || applying
+    || (classification.status !== 'resolved' && (!props.target.acceptsManualTolerance || !manualReady))
     || (classification.status === 'resolved' && props.preview === null);
+  const invokeApply = async () => {
+    if (applicationBlocked || applyingRef.current) return;
+    applyingRef.current = true;
+    setApplying(true);
+    setActionError(null);
+    try { await props.onApply(); }
+    catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
+    finally { applyingRef.current = false; setApplying(false); }
+  };
 
   return <aside
     className="vai-tolerance-popup"
@@ -113,11 +175,15 @@ export function TolerancePopup(props: TolerancePopupProps) {
     onKeyDown={keyDown}
     onPointerDown={stop}
     onPointerMove={move}
-    onPointerUp={() => { operation.current = null; }}
+    onPointerUp={finish}
+    onPointerCancel={finish}
     onMouseDown={stop}
+    onMouseUp={(event) => { stop(event); finish(); }}
     onClick={stop}
+    onDoubleClick={stop}
     onContextMenu={stop}
     onWheel={stop}
+    onKeyUp={stop}
   >
     <header
       className="vai-tolerance-popup__title"
@@ -146,6 +212,7 @@ export function TolerancePopup(props: TolerancePopupProps) {
       部分数据：不可用项目保持禁用，不会推算或回退到其他标准。
     </p>}
     {props.error !== null && <p className="vai-tolerance-popup__error" role="alert">{props.error}</p>}
+    {actionError !== null && <p className="vai-tolerance-popup__error" role="alert">{actionError}</p>}
     {classification.status !== 'resolved' && <section className="vai-tolerance-popup__diagnostic">
       <p data-tolerance-diagnostic={true}>{classification.code}</p>
       {classification.status === 'ambiguous' && <div className="vai-tolerance-popup__class-choice">
@@ -167,13 +234,20 @@ export function TolerancePopup(props: TolerancePopupProps) {
     </section>}
 
     {classification.status === 'resolved' && <div className="vai-tolerance-popup__body">
-      <ToleranceBandMatrix
+      {props.tab === 'hole-fit' || props.tab === 'shaft-fit' ? <FitBandSelection
+        catalogs={props.fitCatalogs ?? null}
+        internal={fitInternal}
+        external={fitExternal}
+        onInternal={setFitInternal}
+        onExternal={setFitExternal}
+        onPreview={() => props.onPreview(`${fitInternal}/${fitExternal}`)}
+      /> : <ToleranceBandMatrix
         bands={props.bands}
         selectedDesignation={props.preview?.result.designation}
         zoom={props.zoom}
         onPreview={props.onPreview}
         onInspect={setInspectedBand}
-      />
+      />}
       <section className="vai-tolerance-inspector">
         {inspectedBand !== null && <p className="vai-tolerance-inspector__hover" data-hovered-tolerance-band={inspectedBand.designation}>
           {inspectedBand.designation}{inspectedBand.available ? '' : ` · ${inspectedBand.unavailableCode}`}
@@ -210,15 +284,21 @@ export function TolerancePopup(props: TolerancePopupProps) {
         <span>{Math.round(props.zoom * 100)}%</span>
         <button type="button" aria-label="放大公差表" onClick={() => props.onZoomChange(props.zoom + .1)}>+</button>
       </div>
-      <button type="button" data-restore-recommendation={true} onClick={props.onRestoreRecommendation}>恢复自动推荐</button>
+      <button type="button" data-restore-recommendation={true} disabled={props.recommendation == null} onClick={props.onRestoreRecommendation}>恢复自动推荐</button>
+      {props.recommendation == null && <span data-recommendation-unavailable={true}>TOLERANCE_RECOMMENDATION_UNAVAILABLE</span>}
       <button type="button" onClick={props.onRequestClose}>取消</button>
-      <button type="button" data-apply-tolerance={true} disabled={applicationBlocked} onClick={props.onApply}>应用</button>
+      <button type="button" data-apply-tolerance={true} disabled={applicationBlocked} onClick={() => void invokeApply()}>应用</button>
     </footer>
 
     {props.closeDecision === 'dirty' && <div className="vai-tolerance-popup__decision" role="alertdialog" aria-label="未应用的公差预览">
       <span>当前预览尚未应用</span>
       <button type="button" data-dirty-close="discard" onClick={props.onDiscardClose}>放弃并关闭</button>
       <button type="button" data-dirty-close="apply" onClick={props.onApplyClose}>应用并关闭</button>
+    </div>}
+    {props.pendingTarget != null && <div className="vai-tolerance-popup__decision" role="alertdialog" aria-label="切换公差目标">
+      <span>当前预览尚未应用，是否切换到 {props.pendingTarget.label ?? props.pendingTarget.dimensionIntentId}</span>
+      <button type="button" data-dirty-switch="discard" onClick={props.onDiscardAndSwitch}>放弃并切换</button>
+      <button type="button" data-dirty-switch="apply" onClick={props.onApplyAndSwitch}>应用并切换</button>
     </div>}
     <button
       type="button"
@@ -244,6 +324,41 @@ export function TolerancePopup(props: TolerancePopupProps) {
   </aside>;
 }
 
+function FitBandSelection({
+  catalogs, internal, external, onInternal, onExternal, onPreview,
+}: {
+  catalogs: { internal: readonly ToleranceBand[]; external: readonly ToleranceBand[] } | null;
+  internal: string;
+  external: string;
+  onInternal(value: string): void;
+  onExternal(value: string): void;
+  onPreview(): void;
+}) {
+  const internalBands = catalogs?.internal ?? [];
+  const externalBands = catalogs?.external ?? [];
+  return <section className="vai-tolerance-matrix-shell" data-fit-catalogs={catalogs === null ? 'unavailable' : 'available'}>
+    <label>孔/内部代号
+      <select data-fit-band="internal" value={internal} onChange={(event) => onInternal(event.currentTarget.value)}>
+        <option value="">请选择</option>
+        {internalBands.map(({ designation, available, unavailableCode }) => <option
+          key={designation} value={designation} data-fit-option={designation} disabled={!available} title={unavailableCode}
+        >{designation}{available ? '' : ` · ${unavailableCode}`}</option>)}
+      </select>
+    </label>
+    <label>轴/外部代号
+      <select data-fit-band="external" value={external} onChange={(event) => onExternal(event.currentTarget.value)}>
+        <option value="">请选择</option>
+        {externalBands.map(({ designation, available, unavailableCode }) => <option
+          key={designation} value={designation} data-fit-option={designation} disabled={!available} title={unavailableCode}
+        >{designation}{available ? '' : ` · ${unavailableCode}`}</option>)}
+      </select>
+    </label>
+    <button type="button" data-preview-fit={true} disabled={internal === '' || external === ''} onClick={onPreview}>
+      预览 {internal === '' || external === '' ? '配合' : `${internal}/${external}`}
+    </button>
+  </section>;
+}
+
 function ToleranceResult({ preview }: { preview: TolerancePreviewResult }) {
   if (preview.type === 'single') {
     const result = preview.result;
@@ -252,6 +367,7 @@ function ToleranceResult({ preview }: { preview: TolerancePreviewResult }) {
       <dt>基本尺寸</dt><dd>{String(result.basicSize)}</dd>
       <dt>上偏差</dt><dd>{String(result.upperDeviation)}</dd>
       <dt>下偏差</dt><dd>{String(result.lowerDeviation)}</dd>
+      <dt>公差值</dt><dd>{String(result.toleranceMagnitude)}</dd>
       <dt>上极限尺寸</dt><dd>{String(result.upperLimitSize)}</dd>
       <dt>下极限尺寸</dt><dd>{String(result.lowerLimitSize)}</dd>
       <dt>标准</dt><dd>{result.standardRef.id} · {result.standardRef.edition}</dd>
@@ -263,8 +379,14 @@ function ToleranceResult({ preview }: { preview: TolerancePreviewResult }) {
     <dt>类型</dt><dd>{String(result.fitType)}</dd>
     <dt>最小间隙/过盈</dt><dd>{String(result.minimumClearance)}</dd>
     <dt>最大间隙/过盈</dt><dd>{String(result.maximumClearance)}</dd>
+    <dt>基本尺寸</dt><dd>{String(result.hole.basicSize)}</dd>
     <dt>孔偏差</dt><dd>{String(result.hole.upperDeviation)} / {String(result.hole.lowerDeviation)}</dd>
+    <dt>孔公差值</dt><dd>{String(result.hole.toleranceMagnitude)}</dd>
+    <dt>孔极限尺寸</dt><dd>{String(result.hole.upperLimitSize)} / {String(result.hole.lowerLimitSize)}</dd>
     <dt>轴偏差</dt><dd>{String(result.shaft.upperDeviation)} / {String(result.shaft.lowerDeviation)}</dd>
+    <dt>轴公差值</dt><dd>{String(result.shaft.toleranceMagnitude)}</dd>
+    <dt>轴极限尺寸</dt><dd>{String(result.shaft.upperLimitSize)} / {String(result.shaft.lowerLimitSize)}</dd>
+    <dt>标准</dt><dd>{result.hole.standardRef.id} · {result.hole.standardRef.edition}</dd>
   </dl>;
 }
 

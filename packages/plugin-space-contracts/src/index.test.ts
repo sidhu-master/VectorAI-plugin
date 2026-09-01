@@ -228,6 +228,10 @@ describe('DSH drawing workspace wire schemas', () => {
         numericProvenance: [{ kind: 'plan-reference-vector', referenceId: 'plan', description: 'Partial dataset' }],
       },
       bands: [{ designation: 'u6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' }],
+      selection: {
+        designation: 'u6', source: 'manual', evidenceRefs: ['manual:u6'], displayPreference: 'both',
+        override: { upperDeviation: .05, lowerDeviation: .04 },
+      },
     } as const;
     expect(toleranceCatalogResultSchema.parse(catalog)).toEqual(catalog);
 
@@ -244,6 +248,7 @@ describe('DSH drawing workspace wire schemas', () => {
       type: 'single', drawingRef: request.expectedDrawingRef, dimensionIntentId: 'intent-1', status: 'resolved',
       result: {
         designation: 'u6', featureClass: 'external', basicSize: 20, unit: 'mm', upperDeviation: .044, lowerDeviation: .033,
+        toleranceMagnitude: .011,
         upperLimitSize: 20.044, lowerLimitSize: 20.033, standardRef: catalog.standardRef,
         ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:x' },
       },

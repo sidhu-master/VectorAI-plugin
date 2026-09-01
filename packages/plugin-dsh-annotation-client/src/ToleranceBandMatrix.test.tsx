@@ -29,11 +29,13 @@ describe('ToleranceBandMatrix', () => {
     const onInspect = vi.fn();
     const onPreview = vi.fn();
     const tree = create(<ToleranceBandMatrix bands={bands} onInspect={onInspect} onPreview={onPreview} />);
-    act(() => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onMouseEnter());
+    act(() => tree.root.findByProps({ 'data-tolerance-band-wrapper': 'u6' }).props.onMouseEnter());
     expect(onInspect).toHaveBeenCalledWith(bands[1]);
     expect(onPreview).not.toHaveBeenCalled();
     act(() => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
     expect(onPreview).toHaveBeenCalledWith('u6');
+    act(() => tree.root.findByProps({ 'data-tolerance-band-wrapper': 'g6' }).props.onMouseEnter());
+    expect(onInspect).toHaveBeenLastCalledWith(bands[2]);
   });
 
   it('filters by direct search and previews an exact available result with Enter', () => {

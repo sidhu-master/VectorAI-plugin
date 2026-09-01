@@ -105,15 +105,38 @@ describe('ToleranceService', () => {
     })).not.toHaveProperty('selection');
   });
 
+  it('hydrates the stored display preference and override in the matching catalog', () => {
+    const { service } = setup();
+    service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    });
+    service.edit('session', {
+      type: 'standard.override.set', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      upperDeviation: .05, lowerDeviation: .04,
+    });
+
+    expect(service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    }).selection).toEqual({
+      designation: 'u6', source: 'manual', evidenceRefs: ['manual:u6'], displayPreference: 'both',
+      override: { upperDeviation: .05, lowerDeviation: .04 },
+    });
+  });
+
   it('previews without mutating the plan and applies through shared undo history', () => {
     const { plans, service } = setup();
     const before = plans.get('session');
-    expect(service.preview('session', {
+    const preview = service.preview('session', {
       type: 'single', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
       featureClass: 'external', designation: 'u6',
-    })).toMatchObject({
-      type: 'single', status: 'resolved', result: { upperDeviation: .044, lowerDeviation: .033 },
     });
+    expect(preview).toMatchObject({
+      type: 'single', status: 'resolved', result: { basicSize: 13, upperDeviation: .044, lowerDeviation: .033 },
+    });
+    if (preview.type !== 'single') throw new Error('expected single preview');
+    expect(preview.result.toleranceMagnitude).toBeCloseTo(.011);
     expect(plans.get('session')).toEqual(before);
 
     service.edit('session', {
@@ -122,6 +145,21 @@ describe('ToleranceService', () => {
       evidenceRefs: ['manual:u6'],
     });
     expect(plans.undo('session', drawingRef).draft).toEqual(before.draft);
+  });
+
+  it('returns Host-derived tolerance magnitudes for both fit members', () => {
+    const { service } = setup();
+    const preview = service.preview('session', {
+      type: 'fit', expectedDrawingRef: drawingRef, holeDimensionIntentId: 'intent-hole',
+      shaftDimensionIntentId: 'intent-shaft', basis: 'hole', designation: 'H7/g6',
+    });
+    if (preview.type !== 'fit') throw new Error('expected fit preview');
+    expect(preview.result.hole.toleranceMagnitude).toBeCloseTo(
+      preview.result.hole.upperDeviation - preview.result.hole.lowerDeviation,
+    );
+    expect(preview.result.shaft.toleranceMagnitude).toBeCloseTo(
+      preview.result.shaft.upperDeviation - preview.result.shaft.lowerDeviation,
+    );
   });
 
   it('rejects a self-consistent provider result that does not match the apply request', () => {

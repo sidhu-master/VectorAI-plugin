@@ -254,6 +254,7 @@
 .vai-tolerance-search input, .vai-tolerance-popup fieldset input { box-sizing: border-box; min-width: 0; padding: 6px 8px; border: 1px solid rgba(125, 211, 252, .2); border-radius: 7px; outline: none; color: #dff5ff; background: #091119; user-select: text; }
 .vai-tolerance-search input:focus, .vai-tolerance-popup fieldset input:focus { border-color: rgba(56, 189, 248, .62); }
 .vai-tolerance-matrix { display: grid; min-height: 0; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); align-content: start; gap: 6px; padding: 3px; overflow: auto; outline: none; }
+.vai-tolerance-band-wrapper { display: contents; }
 .vai-tolerance-band { position: relative; min-height: calc(34px * var(--vai-tolerance-table-zoom, 1)); padding: 5px; border: 1px solid rgba(148, 163, 184, .2); border-radius: 7px; color: #c7d5e2; background: #111d28; font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important; }
 .vai-tolerance-band--preferred { border-color: #f87171; }
 .vai-tolerance-band--common { border-color: #60a5fa; }

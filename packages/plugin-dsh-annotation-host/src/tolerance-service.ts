@@ -60,7 +60,11 @@ export class ToleranceService {
       },
       bands: structuredClone(this.provider.listBands({ basicSize: intent.nominalValue, featureClass: request.featureClass })),
       ...(matching?.source === 'standard' && matching.featureClass === request.featureClass && matching.selection
-        ? { selection: { ...matching.selection } }
+        ? { selection: {
+          ...matching.selection,
+          displayPreference: matching.displayPreference ?? 'deviations',
+          ...(matching.override ? { override: { ...matching.override } } : {}),
+        } }
         : {}),
       ...(recommendation === undefined ? {} : { recommendation }),
     };
@@ -73,7 +77,9 @@ export class ToleranceService {
       const basicSize = requireMillimetreSize(intent);
       return {
         type: 'single', drawingRef: plan.drawingRef, dimensionIntentId: request.dimensionIntentId, status: 'resolved',
-        result: this.provider.resolveBand({ basicSize, featureClass: request.featureClass, designation: request.designation }),
+        result: withToleranceMagnitude(this.provider.resolveBand({
+          basicSize, featureClass: request.featureClass, designation: request.designation,
+        })),
       };
     }
     const basicSize = requireEqualFitSize(plan, request.holeDimensionIntentId, request.shaftDimensionIntentId);
@@ -81,7 +87,9 @@ export class ToleranceService {
       type: 'fit', drawingRef: plan.drawingRef,
       holeDimensionIntentId: request.holeDimensionIntentId, shaftDimensionIntentId: request.shaftDimensionIntentId,
       status: 'resolved',
-      result: this.provider.resolveFit({ basicSize, basis: request.basis, designation: request.designation }),
+      result: withFitToleranceMagnitudes(this.provider.resolveFit({
+        basicSize, basis: request.basis, designation: request.designation,
+      })),
     };
   }
 
@@ -108,6 +116,18 @@ export class ToleranceService {
     }
     return this.plans.editTolerance(sessionId, command, resolved);
   }
+}
+
+function withToleranceMagnitude(result: ResolvedStandardTolerance) {
+  return { ...result, toleranceMagnitude: result.upperDeviation - result.lowerDeviation };
+}
+
+function withFitToleranceMagnitudes(result: ResolvedFit) {
+  return {
+    ...result,
+    hole: withToleranceMagnitude(result.hole),
+    shaft: withToleranceMagnitude(result.shaft),
+  };
 }
 
 export function createToleranceReconciler(provider: ToleranceStandardProvider = createGbt1800Provider()) {
@@ -248,7 +268,8 @@ function staleFit(draft: EngineeringAnnotationDraft, identity: FitReconcileIdent
 }
 
 function staleSpec(spec: ToleranceSpec, basicSize: number | undefined, code: string): ToleranceSpec {
-  const { resolved: _resolved, ...withoutResolved } = spec;
+  const withoutResolved = { ...spec };
+  delete withoutResolved.resolved;
   const diagnostics = [diagnostic(spec.id, code), ...(spec.override ? [diagnostic(spec.id, 'TOLERANCE_OVERRIDE_REVIEW_REQUIRED')] : [])];
   return {
     ...withoutResolved,

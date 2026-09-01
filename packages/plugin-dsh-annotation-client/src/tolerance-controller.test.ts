@@ -55,6 +55,7 @@ function singlePreview(dimensionIntentId = 'intent-1', designation = 'u6', featu
       unit: 'mm' as const,
       upperDeviation: .044,
       lowerDeviation: .033,
+      toleranceMagnitude: .011,
       upperLimitSize: 13.044,
       lowerLimitSize: 13.033,
       standardRef: { id: 'GB/T 1800', edition: '2020' },
@@ -292,7 +293,10 @@ describe('createToleranceController', () => {
     const api = remote({
       queryToleranceCatalog: vi.fn(async (_sessionId, request) => success<ToleranceCatalogResult>({
         ...catalog(request.dimensionIntentId, request.featureClass),
-        selection: { designation: 'u6', source: 'manual', evidenceRefs: ['existing:tolerance'] },
+        selection: {
+          designation: 'u6', source: 'manual', evidenceRefs: ['existing:tolerance'], displayPreference: 'both',
+          override: { upperDeviation: .05, lowerDeviation: .04 },
+        },
       })),
     });
     const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
@@ -304,7 +308,12 @@ describe('createToleranceController', () => {
       dirty: false,
       selection: { kind: 'single', designation: 'u6', source: 'manual', evidenceRefs: ['existing:tolerance'] },
       preview: { result: { designation: 'u6' } },
-      canvasPreview: { host: { result: { designation: 'u6' } }, override: null, displayPreference: 'deviations' },
+      override: { upperDeviation: .05, lowerDeviation: .04 },
+      displayPreference: 'both',
+      canvasPreview: {
+        host: { result: { designation: 'u6' } },
+        override: { upperDeviation: .05, lowerDeviation: .04 }, displayPreference: 'both',
+      },
     });
   });
 
@@ -312,7 +321,9 @@ describe('createToleranceController', () => {
     const api = remote({
       queryToleranceCatalog: vi.fn(async (_sessionId, request) => success<ToleranceCatalogResult>({
         ...catalog(request.dimensionIntentId, request.featureClass),
-        selection: { designation: 'u6', source: 'manual', evidenceRefs: ['existing:tolerance'] },
+        selection: {
+          designation: 'u6', source: 'manual', evidenceRefs: ['existing:tolerance'], displayPreference: 'deviations',
+        },
       })),
     });
     const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
@@ -361,9 +372,203 @@ describe('createToleranceController', () => {
       instanceId: 1, geometry: { x: 44, y: 55, width: 700, height: 480 }, userPositioned: true,
     });
   });
+
+  it('ignores late catalog results after a clean target switch and keeps busy until all requests settle', async () => {
+    const pending = new Map<string, ReturnType<typeof deferred<RemoteResult<ToleranceCatalogResult>>>>();
+    const api = remote({
+      queryToleranceCatalog: vi.fn((_sessionId, request) => {
+        const requestDeferred = deferred<RemoteResult<ToleranceCatalogResult>>();
+        pending.set(request.dimensionIntentId, requestDeferred);
+        return requestDeferred.promise;
+      }),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    const openA = controller.actions.open(externalTarget);
+    await vi.waitFor(() => expect(pending.has('intent-1')).toBe(true));
+    controller.actions.requestTarget({ ...externalTarget, dimensionIntentId: 'intent-2' });
+    await vi.waitFor(() => expect(pending.has('intent-2')).toBe(true));
+
+    pending.get('intent-2')!.resolve(success(catalog('intent-2')));
+    await vi.waitFor(() => expect(controller.state.getSnapshot().catalog?.dimensionIntentId).toBe('intent-2'));
+    expect(controller.state.getSnapshot().busy).toBe(true);
+    pending.get('intent-1')!.resolve(success(catalog('intent-1')));
+    await openA;
+
+    expect(controller.state.getSnapshot()).toMatchObject({
+      target: { dimensionIntentId: 'intent-2' }, catalog: { dimensionIntentId: 'intent-2' }, busy: false,
+    });
+  });
+
+  it('ignores an older same-target catalog refresh that resolves after a newer refresh', async () => {
+    const pending: Array<ReturnType<typeof deferred<RemoteResult<ToleranceCatalogResult>>>> = [];
+    const api = remote({
+      queryToleranceCatalog: vi.fn(() => {
+        const request = deferred<RemoteResult<ToleranceCatalogResult>>();
+        pending.push(request);
+        return request.promise;
+      }),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    const opening = controller.actions.open(externalTarget);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const refreshing = controller.actions.refreshCatalog();
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!.resolve(success({ ...catalog('intent-1'), standardRef: { id: 'GB/T 1800', edition: '2024' } }));
+    await refreshing;
+    pending[0]!.resolve(success(catalog('intent-1')));
+    await opening;
+
+    expect(controller.state.getSnapshot()).toMatchObject({ standardEdition: '2024', catalog: { standardRef: { edition: '2024' } } });
+  });
+
+  it('drops a late preview for target A and never applies it to target B', async () => {
+    const previewDeferred = deferred<RemoteResult<TolerancePreviewResult>>();
+    const api = remote({ previewTolerance: vi.fn(() => previewDeferred.promise) });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+    const previewA = controller.actions.preview({ kind: 'single', featureClass: 'external', designation: 'u6' });
+    controller.actions.requestTarget({ ...externalTarget, dimensionIntentId: 'intent-2' });
+    await vi.waitFor(() => expect(controller.state.getSnapshot().target?.dimensionIntentId).toBe('intent-2'));
+    previewDeferred.resolve(success(singlePreview('intent-1')));
+    await previewA;
+
+    expect(controller.state.getSnapshot()).toMatchObject({
+      target: { dimensionIntentId: 'intent-2' }, selection: null, preview: null, dirty: false,
+    });
+    await expect(controller.actions.apply()).rejects.toThrow('TOLERANCE_SELECTION_REQUIRED');
+    expect(api.editTolerance).not.toHaveBeenCalled();
+  });
+
+  it('keeps the newest same-target preview when an older preview resolves last', async () => {
+    const pending: Array<ReturnType<typeof deferred<RemoteResult<TolerancePreviewResult>>>> = [];
+    const api = remote({
+      previewTolerance: vi.fn(() => {
+        const request = deferred<RemoteResult<TolerancePreviewResult>>();
+        pending.push(request);
+        return request.promise;
+      }),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+    const first = controller.actions.preview({ kind: 'single', featureClass: 'external', designation: 'u6' });
+    const second = controller.actions.preview({ kind: 'single', featureClass: 'external', designation: 'h6' });
+    pending[1]!.resolve(success(singlePreview('intent-1', 'h6')));
+    await second;
+    pending[0]!.resolve(success(singlePreview('intent-1', 'u6')));
+    await first;
+
+    expect(controller.state.getSnapshot()).toMatchObject({
+      selection: { designation: 'h6' }, preview: { result: { designation: 'h6' } }, busy: false,
+    });
+  });
+
+  it('invalidates a late preview when a clean popup closes', async () => {
+    const pending = deferred<RemoteResult<TolerancePreviewResult>>();
+    const controller = createToleranceController({
+      remote: remote({ previewTolerance: vi.fn(() => pending.promise) }), sessionId: 's', storage: memoryStorage(),
+    });
+    await controller.actions.open(externalTarget);
+    const previewing = controller.actions.preview({ kind: 'single', featureClass: 'external', designation: 'u6' });
+    controller.actions.requestClose();
+    pending.resolve(success(singlePreview()));
+    await previewing;
+    expect(controller.state.getSnapshot()).toMatchObject({ visible: false, preview: null, selection: null, dirty: false });
+  });
+
+  it('loads provider-backed internal and external catalogs for fit selection', async () => {
+    const api = remote();
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+
+    await controller.actions.beginFit('hole');
+
+    expect(api.queryToleranceCatalog).toHaveBeenCalledWith('s', expect.objectContaining({ featureClass: 'internal' }));
+    expect(api.queryToleranceCatalog).toHaveBeenCalledWith('s', expect.objectContaining({ featureClass: 'external' }));
+    expect(controller.state.getSnapshot()).toMatchObject({
+      fitCatalogs: {
+        internal: { featureClass: 'internal', bands: [{ designation: 'H7' }, { designation: 'G7', available: false }] },
+        external: { featureClass: 'external', bands: [{ designation: 'u6' }, { designation: 'h6', available: false }] },
+      },
+    });
+  });
+
+  it('rejects a fit second target with either basic size missing and retains selection mode', async () => {
+    const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open({ ...externalTarget, classification: { status: 'resolved', featureClass: 'internal' } });
+    await controller.actions.beginFit('hole');
+    controller.actions.selectFitTarget({
+      ...externalTarget, dimensionIntentId: 'shaft-missing', basicSize: undefined,
+      classification: { status: 'resolved', featureClass: 'external' },
+    });
+    expect(controller.state.getSnapshot()).toMatchObject({
+      error: 'TOLERANCE_BASIC_SIZE_INVALID',
+      fit: { selectingSecondTarget: true, secondTarget: null },
+    });
+
+    const missingPrimary = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
+    await missingPrimary.actions.open({
+      ...externalTarget, basicSize: undefined, classification: { status: 'resolved', featureClass: 'internal' },
+    });
+    await missingPrimary.actions.beginFit('hole');
+    missingPrimary.actions.selectFitTarget({
+      ...externalTarget, dimensionIntentId: 'shaft-1', classification: { status: 'resolved', featureClass: 'external' },
+    });
+    expect(missingPrimary.state.getSnapshot()).toMatchObject({
+      error: 'TOLERANCE_BASIC_SIZE_INVALID', fit: { selectingSecondTarget: true, secondTarget: null },
+    });
+  });
+
+  it('refreshes and hydrates the applied selection before enabling immediate override', async () => {
+    let queryCount = 0;
+    const api = remote({
+      queryToleranceCatalog: vi.fn(async (_sessionId, request) => {
+        queryCount += 1;
+        return success<ToleranceCatalogResult>({
+          ...catalog(request.dimensionIntentId, request.featureClass),
+          ...(queryCount === 1 ? {} : {
+            selection: {
+              designation: 'u6', source: 'manual' as const, evidenceRefs: [], displayPreference: 'deviations',
+            },
+          }),
+        });
+      }),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+    await controller.actions.preview({ kind: 'single', featureClass: 'external', designation: 'u6' });
+
+    await controller.actions.apply();
+
+    expect(controller.state.getSnapshot()).toMatchObject({
+      dirty: false, catalog: { selection: { designation: 'u6' } }, selection: { designation: 'u6' },
+    });
+    await controller.actions.previewOverride({ upperDeviation: .05, lowerDeviation: .04 });
+    expect(controller.state.getSnapshot().override).toEqual({ upperDeviation: .05, lowerDeviation: .04 });
+  });
+
+  it('tries below the annotation when right and left do not fit without overlap', async () => {
+    const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open({
+      ...externalTarget,
+      anchor: { x: 500, y: 65 },
+      annotationBounds: { x: 200, y: 50, width: 600, height: 30 },
+      viewport: { width: 1_200, height: 800 },
+    });
+    expect(controller.state.getSnapshot().geometry).toMatchObject({ x: 200, y: 92 });
+  });
 });
 
 function success<T>(value: T): RemoteResult<T> { return { ok: true, value }; }
 function failure<T>(message: string): RemoteResult<T> {
   return { ok: false, error: { code: 'REMOTE', message, details: {} } };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }

@@ -78,25 +78,30 @@ export function ToleranceBandMatrix({
       onKeyDown={navigate}
       style={{ '--vai-tolerance-table-zoom': zoom } as React.CSSProperties}
     >
-      {visibleBands.map((band) => <button
+      {visibleBands.map((band) => <span
         key={`${band.featureClass}:${band.designation}`}
-        type="button"
-        className={`vai-tolerance-band vai-tolerance-band--${band.category}`}
-        data-tolerance-band={band.designation}
-        data-band-category={band.category}
-        data-available={String(band.available)}
-        data-selected={selectedDesignation === band.designation ? 'true' : undefined}
-        data-focused={focusedDesignation === band.designation ? 'true' : undefined}
-        disabled={!band.available}
-        title={band.available ? undefined : band.unavailableCode}
-        onFocus={() => band.available && setFocusedDesignation(band.designation)}
+        className="vai-tolerance-band-wrapper"
+        data-tolerance-band-wrapper={band.designation}
         onMouseEnter={() => onInspect?.(band)}
         onMouseLeave={() => onInspect?.(null)}
-        onClick={() => band.available && onPreview(band.designation)}
       >
-        {band.designation}
-        {band.category === 'preferred' && <span className="vai-tolerance-band__marker">优选</span>}
-      </button>)}
+        <button
+          type="button"
+          className={`vai-tolerance-band vai-tolerance-band--${band.category}`}
+          data-tolerance-band={band.designation}
+          data-band-category={band.category}
+          data-available={String(band.available)}
+          data-selected={selectedDesignation === band.designation ? 'true' : undefined}
+          data-focused={focusedDesignation === band.designation ? 'true' : undefined}
+          disabled={!band.available}
+          title={band.available ? undefined : band.unavailableCode}
+          onFocus={() => band.available && setFocusedDesignation(band.designation)}
+          onClick={() => band.available && onPreview(band.designation)}
+        >
+          {band.designation}
+          {band.category === 'preferred' && <span className="vai-tolerance-band__marker">优选</span>}
+        </button>
+      </span>)}
       {visibleBands.length === 0 && <p className="vai-tolerance-matrix__empty">没有匹配的公差代号</p>}
     </div>
   </section>;

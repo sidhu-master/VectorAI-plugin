@@ -1007,6 +1007,10 @@ const resolvedToleranceSchema = z.object({
 const featureClassSchema = z.enum(['internal', 'external']);
 const toleranceSelectionSourceSchema = z.enum(['rule', 'ai-recommended', 'manual']);
 const toleranceDisplayPreferenceSchema = z.enum(['deviations', 'designation', 'both']);
+const toleranceOverrideSchema = z.object({
+  upperDeviation: z.number().finite(),
+  lowerDeviation: z.number().finite(),
+}).strict();
 const toleranceStandardRefSchema = z.object({
   id: z.string().trim().min(1),
   edition: z.string().trim().min(1),
@@ -1039,6 +1043,7 @@ const resolvedStandardToleranceSchema = z.object({
   unit: z.literal('mm'),
   upperDeviation: z.number().finite(),
   lowerDeviation: z.number().finite(),
+  toleranceMagnitude: z.number().finite().nonnegative(),
   upperLimitSize: z.number().finite(),
   lowerLimitSize: z.number().finite(),
   standardRef: toleranceStandardRefSchema,
@@ -1089,10 +1094,7 @@ const toleranceSpecSchema = z.object({
     evidenceRefs: z.array(idSchema),
   }).strict().optional(),
   standardRef: toleranceStandardRefSchema.optional(),
-  override: z.object({
-    upperDeviation: z.number().finite(),
-    lowerDeviation: z.number().finite(),
-  }).strict().optional(),
+  override: toleranceOverrideSchema.optional(),
   displayPreference: toleranceDisplayPreferenceSchema.optional(),
   fitGroupId: idSchema.optional(),
   inputs: z.record(z.string(), z.union([z.number().finite(), z.string(), z.boolean()])),
@@ -1119,6 +1121,8 @@ export const toleranceCatalogResultSchema = z.object({
     designation: z.string().min(2).max(17),
     source: toleranceSelectionSourceSchema,
     evidenceRefs: z.array(idSchema),
+    displayPreference: toleranceDisplayPreferenceSchema,
+    override: toleranceOverrideSchema.optional(),
   }).strict().optional(),
   recommendation: z.object({
     designation: z.string().min(2).max(17),
