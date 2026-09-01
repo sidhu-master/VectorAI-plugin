@@ -97,6 +97,35 @@ describe('DimensionChainOverlay', () => {
     expect(view.root.findAllByProps({ 'data-dimension-closure-menu': 'local' })).toHaveLength(0);
   });
 
+  it('offers tolerance for the exact chain candidate without leaking closure actions', () => {
+    const onSetTolerance = vi.fn();
+    const toleranceOnly = {
+      ...scheme,
+      chains: [{ ...scheme.chains[0]!, alternativeClosureCandidateIds: ['local'] }],
+    } as AxialDimensionScheme;
+    const view = renderer.create(<DimensionChainOverlay
+      scheme={toleranceOnly}
+      scale={2}
+      visible
+      onSetTolerance={onSetTolerance}
+    />);
+    const local = view.root.findByProps({ 'data-dimension-candidate-id': 'local' });
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    act(() => local.props.onContextMenu({ preventDefault, stopPropagation }));
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    const menu = view.root.findByProps({ 'data-dimension-context-menu': 'local' });
+    expect(menu.findAllByProps({ 'data-action': 'set-tolerance' })).toHaveLength(1);
+    expect(menu.findAll((node) => typeof node.props['data-closure-chain-id'] === 'string')).toHaveLength(0);
+
+    act(() => menu.findByProps({ 'data-action': 'set-tolerance' }).props.onClick({ stopPropagation() {} }));
+    expect(onSetTolerance).toHaveBeenCalledWith('dimension-intent:local');
+    expect(view.root.findAllByProps({ 'data-dimension-context-menu': 'local' })).toHaveLength(0);
+  });
+
   it('drags only the selected dimension chain as one group from any member or its title', () => {
     const multiChainScheme = {
       ...scheme,

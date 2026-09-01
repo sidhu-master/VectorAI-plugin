@@ -11,6 +11,7 @@ import { ANNOTATION_REMOTE } from './remote';
 import { createPartitionController } from './partition-controller';
 import { createDimensionChainController } from './dimension-chain-controller';
 import { createGdtController } from './gdt-controller';
+import { createToleranceController } from './tolerance-controller';
 import { EngineeringDropBridge } from './EngineeringDropBridge';
 import {
   ANNOTATION_DIMENSION_CHAIN_LAYER,
@@ -43,6 +44,7 @@ export async function apply(ctx: Context) {
       const partitionControllers = new Map<string, ReturnType<typeof createPartitionController>>();
       const dimensionControllers = new Map<string, ReturnType<typeof createDimensionChainController>>();
       const gdtControllers = new Map<string, ReturnType<typeof createGdtController>>();
+      const toleranceControllers = new Map<string, ReturnType<typeof createToleranceController>>();
       const partitionFor = (sessionId: string) => {
         const current = partitionControllers.get(sessionId);
         if (current) return current;
@@ -73,6 +75,17 @@ export async function apply(ctx: Context) {
         void controller.actions.refresh();
         return controller;
       };
+      const toleranceFor = (sessionId: string) => {
+        const current = toleranceControllers.get(sessionId);
+        if (current) return current;
+        const controller = createToleranceController({
+          sessionId,
+          remote: annotationRemote,
+          storage: typeof localStorage === 'undefined' ? null : localStorage,
+        });
+        toleranceControllers.set(sessionId, controller);
+        return controller;
+      };
       const layerRegistration = registry.registerLayer(ANNOTATION_PARTITION_LAYER);
       const openingAngleLayerRegistration = registry.registerLayer(ANNOTATION_OPENING_ANGLE_LAYER);
       const diameterLayerRegistration = registry.registerLayer(ANNOTATION_DIAMETER_LAYER);
@@ -90,6 +103,7 @@ export async function apply(ctx: Context) {
           partition={partitionFor(props.sessionId)}
           dimensionChain={dimensionsFor(props.sessionId)}
           gdt={gdtFor(props.sessionId)}
+          tolerance={toleranceFor(props.sessionId)}
           drawingFileExport={drawingFileExport}
         />,
       });
@@ -121,6 +135,8 @@ export async function apply(ctx: Context) {
         dimensionControllers.clear();
         for (const controller of gdtControllers.values()) controller.dispose();
         gdtControllers.clear();
+        for (const controller of toleranceControllers.values()) controller.dispose();
+        toleranceControllers.clear();
       };
     },
   );

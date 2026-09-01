@@ -5,9 +5,13 @@ import { validateEngineeringDraft } from '../dimension/validate';
 import { analyzeGoldenInferenceInput } from './golden-input-test-support';
 import { inferAxialDimensionScheme } from './infer';
 import { SHAFT_HIERARCHICAL_DIMENSIONING_V1 } from './policy';
-import { mergeAxialDimensionProjection, projectAxialDimensionScheme } from './project';
+import { axialDimensionIntentId, mergeAxialDimensionProjection, projectAxialDimensionScheme } from './project';
 
 describe('projectAxialDimensionScheme', () => {
+  it('maps a chain candidate to the stable engineering intent id used by projection', () => {
+    expect(axialDimensionIntentId('candidate:3')).toBe('dimension-intent:candidate:3');
+  });
+
   it('projects nominal intents and signed reference-only chains without tolerances', async () => {
     const input = await analyzeGoldenInferenceInput();
     const scheme = inferAxialDimensionScheme({

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { estimateScreenTextWidth, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
+import { axialDimensionIntentId } from '@vectorai/engineering-annotation';
 import { allocateAxialDimensionLanes, type AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
 
@@ -27,9 +28,9 @@ interface DragState {
   startGroupOffset: number;
   minimumGroupOffset: number;
 }
-interface ClosureMenuState {
+interface DimensionContextMenuState {
   candidateId: string;
-  chainId: string;
+  chainId?: string;
   position: readonly [number, number];
 }
 
@@ -43,6 +44,7 @@ export function DimensionChainOverlay({
   onMoveChain,
   onMoveCandidate,
   onChooseClosure,
+  onSetTolerance,
 }: {
   scheme: AxialDimensionScheme;
   scale: number;
@@ -53,18 +55,19 @@ export function DimensionChainOverlay({
   onMoveChain?(chainId: string, normalOffset: number): void | Promise<void>;
   onMoveCandidate?(candidateId: string, normalOffset: number): void | Promise<void>;
   onChooseClosure?(chainId: string, candidateId: string): void | Promise<void>;
+  onSetTolerance?(dimensionIntentId: string): void | Promise<void>;
 }) {
   const [dragPreviews, setDragPreviews] = useState<Record<string, number>>({});
-  const [closureMenu, setClosureMenu] = useState<ClosureMenuState | null>(null);
+  const [contextMenu, setContextMenu] = useState<DimensionContextMenuState | null>(null);
   const dragRef = useRef<DragState | null>(null);
   useEffect(() => {
-    if (typeof window === 'undefined' || closureMenu === null) return undefined;
+    if (typeof window === 'undefined' || contextMenu === null) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setClosureMenu(null);
+      if (event.key === 'Escape') setContextMenu(null);
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [closureMenu]);
+  }, [contextMenu]);
   if (!visible) return null;
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : []));
   const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews);
@@ -157,6 +160,10 @@ export function DimensionChainOverlay({
   const renderInterval = (layout: IntervalLayout, standaloneDraggable = false, groupedDraggable = false) => {
     const ownsPointerHandlers = standaloneDraggable && Boolean(onMoveCandidate) && !previewHeld;
     const draggable = groupedDraggable || ownsPointerHandlers;
+    const closureChainId = onChooseClosure && layout.chainId !== undefined
+      && closureOptionsForCandidate(scheme, layout.candidate.id, layout.chainId).length > 0
+      ? layout.chainId
+      : undefined;
     return <IntervalGraphic
       key={layout.candidate.id}
       scheme={scheme}
@@ -171,12 +178,15 @@ export function DimensionChainOverlay({
       onPointerUp={ownsPointerHandlers ? finishDrag : undefined}
       onPointerCancel={ownsPointerHandlers ? (event) => cancelDrag(event, true) : undefined}
       onLostPointerCapture={ownsPointerHandlers ? (event) => cancelDrag(event, false) : undefined}
-      onContextMenu={onChooseClosure && layout.chainId !== undefined
-        && closureOptionsForCandidate(scheme, layout.candidate.id, layout.chainId).length > 0
+      onContextMenu={onSetTolerance || closureChainId !== undefined
         ? (event, position) => {
           event.preventDefault();
           event.stopPropagation();
-          setClosureMenu({ candidateId: layout.candidate.id, chainId: layout.chainId!, position });
+          setContextMenu({
+            candidateId: layout.candidate.id,
+            ...(closureChainId === undefined ? {} : { chainId: closureChainId }),
+            position,
+          });
         }
         : undefined}
     />;
@@ -186,7 +196,7 @@ export function DimensionChainOverlay({
   return <g
     className="vai-dimension-chain-overlay"
     data-dimension-chain-overlay="true"
-    onPointerDown={() => setClosureMenu(null)}
+    onPointerDown={() => setContextMenu(null)}
   >
     {grouped.map(({ chain, chainIndex, layouts: owned }) => {
       const draggable = Boolean(onMoveChain) && !previewHeld && owned.length > 0;
@@ -196,7 +206,7 @@ export function DimensionChainOverlay({
         data-dimension-chain-group={chain.id}
         data-dimension-draggable={draggable || undefined}
         data-dimension-drag-axis={dragAxis}
-        pointerEvents={draggable || Boolean(onChooseClosure) ? 'all' : 'none'}
+        pointerEvents={draggable || Boolean(onChooseClosure) || Boolean(onSetTolerance) ? 'all' : 'none'}
         onPointerDown={draggable ? (event) => beginDrag(owned[0]!, event) : undefined}
         onPointerMove={draggable ? updateDrag : undefined}
         onPointerUp={draggable ? finishDrag : undefined}
@@ -215,15 +225,19 @@ export function DimensionChainOverlay({
     </g>;
     })}
     {standalone.map((layout) => renderInterval(layout, true))}
-    {closureMenu && <ClosureContextMenu
+    {contextMenu && <DimensionContextMenu
       scheme={scheme}
-      candidateId={closureMenu.candidateId}
-      chainId={closureMenu.chainId}
-      position={closureMenu.position}
+      candidateId={contextMenu.candidateId}
+      chainId={contextMenu.chainId}
+      position={contextMenu.position}
       scale={safeScale}
       onChoose={(chainId) => {
-        setClosureMenu(null);
-        void Promise.resolve(onChooseClosure?.(chainId, closureMenu.candidateId)).catch(() => undefined);
+        setContextMenu(null);
+        void Promise.resolve(onChooseClosure?.(chainId, contextMenu.candidateId)).catch(() => undefined);
+      }}
+      onSetTolerance={onSetTolerance === undefined ? undefined : () => {
+        setContextMenu(null);
+        void Promise.resolve(onSetTolerance(axialDimensionIntentId(contextMenu.candidateId))).catch(() => undefined);
       }}
     />}
   </g>;
@@ -439,27 +453,39 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   </g>;
 }
 
-function ClosureContextMenu({ scheme, candidateId, chainId, position, scale, onChoose }: {
+function DimensionContextMenu({ scheme, candidateId, chainId, position, scale, onChoose, onSetTolerance }: {
   scheme: AxialDimensionScheme;
   candidateId: string;
-  chainId: string;
+  chainId?: string;
   position: readonly [number, number];
   scale: number;
   onChoose(chainId: string): void;
+  onSetTolerance?(): void;
 }) {
-  const options = closureOptionsForCandidate(scheme, candidateId, chainId);
+  const options = chainId === undefined ? [] : closureOptionsForCandidate(scheme, candidateId, chainId);
   const width = options.length > 1 ? 188 : 148;
   const rowHeight = 30;
+  const toleranceRows = onSetTolerance === undefined ? 0 : 1;
   return <g
     className="vai-dimension-closure-menu"
     data-dimension-closure-menu={candidateId}
+    data-dimension-context-menu={candidateId}
     role="menu"
     transform={screenSpaceTransform(position, scale)}
     pointerEvents="all"
     onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
     onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
   >
-    <rect className="vai-dimension-closure-menu__surface" x={0} y={0} width={width} height={options.length * rowHeight} rx={8} />
+    <rect className="vai-dimension-closure-menu__surface" x={0} y={0} width={width} height={(options.length + toleranceRows) * rowHeight} rx={8} />
+    {onSetTolerance && <g
+      className="vai-dimension-closure-menu__item"
+      data-action="set-tolerance"
+      role="menuitem"
+      onClick={(event) => { event.stopPropagation(); onSetTolerance(); }}
+    >
+      <rect x={3} y={3} width={width - 6} height={rowHeight - 6} rx={6} />
+      <text x={12} y={rowHeight / 2} dominantBaseline="middle" fontSize={11}>设置公差</text>
+    </g>}
     {options.map(({ chain, chainIndex, current }, optionIndex) => {
       const label = current
         ? options.length > 1 ? `尺寸链 ${chainIndex + 1} · 当前缺省段` : '当前缺省段'
@@ -471,7 +497,7 @@ function ClosureContextMenu({ scheme, candidateId, chainId, position, scale, onC
         data-closure-current={current || undefined}
         role="menuitem"
         aria-disabled={current || undefined}
-        transform={`translate(0 ${optionIndex * rowHeight})`}
+        transform={`translate(0 ${(optionIndex + toleranceRows) * rowHeight})`}
         onClick={current ? undefined : (event) => { event.stopPropagation(); onChoose(chain.id); }}
       >
         <rect x={3} y={3} width={width - 6} height={rowHeight - 6} rx={6} />

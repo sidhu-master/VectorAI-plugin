@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createEmptyDrawing } from '@vectorai/drawing-core';
+import { createEmptyDrawing, type DimensionAnnotation } from '@vectorai/drawing-core';
 import type { DrawingSurfaceRuntime } from '@vectorai/drawing-workspace';
 import type { DrawingLayerRegistry } from '@vectorai/drawing-surface-api';
+import { DrawingSurface } from '@vectorai/drawing-viewer-react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TestRenderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,7 +11,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { AnnotationWorkspace } from './AnnotationWorkspace';
 import type { PartitionController } from './partition-controller';
 import type { DimensionChainController } from './dimension-chain-controller';
+import type { GdtController } from './gdt-controller';
 import { ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_PARTITION_LAYER } from './drawing-layers';
+import { createToleranceController, type ToleranceRemote } from './tolerance-controller';
+import { TolerancePopup } from './TolerancePopup';
 
 function observable<T>(value: T) {
   return { getSnapshot: () => value, subscribe: () => () => undefined };
@@ -26,7 +30,207 @@ function mutableObservable<T>(initial: T) {
   };
 }
 
+function toleranceSuccess<T>(value: T) {
+  return { ok: true as const, value };
+}
+
+function toleranceRemote(
+  drawingRef: { drawingId: string; revision: number },
+  editTolerance: ToleranceRemote['editTolerance'],
+): ToleranceRemote {
+  return {
+    queryToleranceCatalog: vi.fn(async (_sessionId, request) => toleranceSuccess({
+      drawingRef,
+      dimensionIntentId: request.dimensionIntentId,
+      featureClass: request.featureClass,
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+      datasetMetadata: {
+        completeness: 'partial' as const,
+        catalogClassification: 'unverified' as const,
+        numericProvenance: [{ kind: 'plan-reference-vector' as const, referenceId: 'task-8', description: 'test vector' }],
+      },
+      bands: [{ designation: request.featureClass === 'external' ? 'u6' : 'H7', featureClass: request.featureClass, category: 'unknown' as const, available: true }],
+    })),
+    previewTolerance: vi.fn(async (_sessionId, request) => {
+      if (request.type !== 'single') throw new Error('unexpected fit preview');
+      return toleranceSuccess({
+        type: 'single' as const,
+        drawingRef,
+        dimensionIntentId: request.dimensionIntentId,
+        status: 'resolved' as const,
+        result: {
+          designation: request.designation,
+          featureClass: request.featureClass,
+          basicSize: 13,
+          unit: 'mm' as const,
+          upperDeviation: .044,
+          lowerDeviation: .033,
+          toleranceMagnitude: .011,
+          upperLimitSize: 13.044,
+          lowerLimitSize: 13.033,
+          standardRef: { id: 'GB/T 1800', edition: '2020' },
+          ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:task-8' },
+        },
+      });
+    }),
+    editTolerance,
+  };
+}
+
 describe('AnnotationWorkspace', () => {
+  it('opens one tolerance popup from exact drawing entry points and previews without mutating workspace state', async () => {
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { requestAnimationFrame: (callback: FrameRequestCallback) => callback(0) }));
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    const dimension = {
+      id: 'dimension-1' as never,
+      type: 'dimension' as const,
+      dimensionKind: 'linear' as const,
+      associationStatus: 'resolved' as const,
+      targets: [],
+      computedValue: 13,
+      unit: 'mm' as const,
+      textPosition: [20, 10] as [number, number],
+      definitionPoints: [[0, 0], [13, 0]] as [number, number][],
+      engineeringIntentId: 'intent-1',
+      toleranceProjection: {
+        mode: 'bilateral' as const, upperDeviation: .044, lowerDeviation: .033, unit: 'mm' as const,
+        status: 'confirmed' as const, source: 'standard' as const, featureClass: 'external' as const,
+        fitDesignation: 'u6', displayPreference: 'both' as const, evidenceRefs: [],
+      },
+      visible: true,
+      quality: { status: 'confirmed' as const, evidenceRefs: [] },
+    } satisfies DimensionAnnotation;
+    const fitDimension = {
+      ...structuredClone(dimension),
+      id: 'dimension-2' as never,
+      engineeringIntentId: 'intent-2',
+      textPosition: [40, 10] as [number, number],
+      toleranceProjection: { ...dimension.toleranceProjection, featureClass: 'internal' as const, fitDesignation: 'H7' },
+    } satisfies DimensionAnnotation;
+    const unequalFitDimension = {
+      ...structuredClone(fitDimension),
+      id: 'dimension-3' as never,
+      engineeringIntentId: 'intent-3',
+      computedValue: 14,
+      textPosition: [60, 10] as [number, number],
+    } satisfies DimensionAnnotation;
+    document.annotations = [dimension, fitDimension, unequalFitDimension];
+    const snapshot = {
+      version: 1 as const, ref: { drawingId: 'drawing-1', revision: 1 }, document,
+      capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+    };
+    const viewportValue = { x: 17, y: 23, scale: 4, width: 800, height: 600 };
+    const selection = mutableObservable<readonly string[]>(['dimension-1']);
+    const setSelection = vi.fn((ids: readonly string[]) => selection.set(ids));
+    const runtime = {
+      snapshot: observable(snapshot),
+      viewport: observable(viewportValue),
+      selection,
+      presentation: observable({
+        displaySnapshot: snapshot, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport: vi.fn(), setSelection, refresh: vi.fn(async () => undefined) },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({ version: 1 as const, workspaceClaimed: true, activationEpoch: 1, workflow: { status: 'completed' as const } });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+    const dimensionRefresh = vi.fn(async () => undefined);
+    const dimensionChain = {
+      state: observable({ plan: { version: 1, phase: 'editing', drawingRef: snapshot.ref, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh: dimensionRefresh, setPreviewHeld() {} }, dispose() {},
+    } as unknown as DimensionChainController;
+    const gdtRefresh = vi.fn(async () => undefined);
+    const gdt = {
+      state: observable({ plan: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh: gdtRefresh, setPreviewHeld() {} }, dispose() {},
+    } as unknown as GdtController;
+    const editTolerance = vi.fn(async () => toleranceSuccess({
+      version: 1 as const, phase: 'editing' as const, drawingRef: snapshot.ref,
+      canUndo: true, canRedo: false, updatedAt: 2,
+    }));
+    const tolerance = createToleranceController({
+      sessionId: 'session-1',
+      remote: toleranceRemote(snapshot.ref, editTolerance),
+      viewport: viewportValue,
+    });
+    const before = {
+      snapshot: structuredClone(snapshot), viewport: structuredClone(viewportValue),
+      selection: [...selection.getSnapshot()], dimension: structuredClone(dimensionChain.state.getSnapshot()),
+    };
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state}
+        partition={partition} dimensionChain={dimensionChain} gdt={gdt} tolerance={tolerance}
+      />);
+    });
+    dimensionRefresh.mockClear();
+    gdtRefresh.mockClear();
+    const entity = renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' });
+    act(() => entity.props.onContextMenu({ clientX: 310, clientY: 170, preventDefault() {}, stopPropagation() {} }));
+    const contextMenu = renderer!.root.findByProps({ 'data-annotation-dimension-context-menu': 'dimension-1' });
+    await act(async () => { contextMenu.findByProps({ 'data-action': 'set-tolerance' }).props.onClick(); await Promise.resolve(); });
+
+    expect(renderer!.root.findAllByType(TolerancePopup)).toHaveLength(1);
+    expect(tolerance.state.getSnapshot()).toMatchObject({ instanceId: 1, target: { dimensionIntentId: 'intent-1' } });
+    expect(renderer!.root.findByProps({ 'aria-label': '公差与配合面板' }).props.title).toBe('公差与配合');
+    expect(renderer!.root.findAllByProps({ 'data-panel': 'tolerance' })).toHaveLength(0);
+
+    await act(async () => renderer!.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
+    const preview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
+    expect(preview.findByProps({ 'data-entity-id': 'dimension-1' }).props['data-preview-diff']).toBe('updated');
+    expect(runtime.snapshot.getSnapshot()).toEqual(before.snapshot);
+    expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
+    expect(runtime.selection.getSnapshot()).toEqual(before.selection);
+    expect(dimensionChain.state.getSnapshot()).toEqual(before.dimension);
+    expect(editTolerance).not.toHaveBeenCalled();
+
+    await act(async () => renderer!.root.findByType(TolerancePopup).props.onApply());
+    expect(editTolerance).toHaveBeenCalledOnce();
+    expect(dimensionRefresh).toHaveBeenCalledOnce();
+    expect(gdtRefresh).toHaveBeenCalledOnce();
+    expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
+
+    tolerance.actions.requestClose();
+    await act(async () => { await Promise.resolve(); });
+    expect(renderer!.root.findAllByType(TolerancePopup)).toHaveLength(0);
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '公差与配合面板' }).props.onClick());
+    expect(renderer!.root.findAllByType(TolerancePopup)).toHaveLength(1);
+    expect(tolerance.state.getSnapshot().instanceId).toBe(1);
+    tolerance.actions.requestClose();
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => renderer!.root.findByProps({ 'data-tolerance-designation': 'dimension-1' }).props.onDoubleClick({ preventDefault() {}, stopPropagation() {} }));
+    expect(renderer!.root.findAllByType(TolerancePopup)).toHaveLength(1);
+    expect(tolerance.state.getSnapshot().instanceId).toBe(1);
+
+    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
+    await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-2']));
+    expect(tolerance.state.getSnapshot().fit).toMatchObject({
+      selectingSecondTarget: false,
+      secondTarget: { dimensionIntentId: 'intent-2' },
+    });
+    expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-2']);
+
+    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
+    await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-3']));
+    expect(tolerance.state.getSnapshot()).toMatchObject({ error: 'FIT_PAIR_BASIC_SIZE_MISMATCH', preview: null });
+    expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-3']);
+
+    await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange([]));
+    expect(tolerance.state.getSnapshot()).toMatchObject({
+      visible: true, target: { dimensionIntentId: 'intent-1' }, fit: null, error: null,
+    });
+    expect(runtime.selection.getSnapshot()).toEqual(['dimension-1']);
+
+    act(() => renderer!.unmount());
+    tolerance.dispose();
+    vi.unstubAllGlobals();
+  });
+
   it('does not refit for dimension layout changes but still refits after a viewport resize', async () => {
     vi.stubGlobal('window', new EventTarget());
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
@@ -67,7 +271,7 @@ describe('AnnotationWorkspace', () => {
     const dimensionState = mutableObservable({
       plan: {
         version: 1 as const, phase: 'editing' as const, drawingRef: snapshot.ref,
-        draft: { version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], chains: [], dependencies: [], diagnostics: [], axialScheme },
+        draft: { version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], fitAssignments: [], chains: [], dependencies: [], diagnostics: [], axialScheme },
         canUndo: false, canRedo: false, updatedAt: 1,
       },
       busy: false, previewHeld: false, error: null,
@@ -510,7 +714,7 @@ describe('AnnotationWorkspace', () => {
       layerRegistry={layerRegistry}
       dimensionPlan={{
         draft: {
-          version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+          version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
         },
         generationOrder: [],
       }}

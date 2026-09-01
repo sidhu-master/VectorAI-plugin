@@ -26,7 +26,7 @@ export function projectAxialDimensionScheme(input: ProjectAxialSchemeInput): Eng
   ]);
   const candidates = new Map(input.scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const intents = candidateIds.map((id) => projectIntent(requireCandidate(candidates, id), input.scheme));
-  const intentByCandidate = new Map(candidateIds.map((id) => [id, intentId(id)]));
+  const intentByCandidate = new Map(candidateIds.map((id) => [id, axialDimensionIntentId(id)]));
   const chains = input.scheme.chains.map((chain) => projectChain(chain, input.scheme, intentByCandidate));
   const dependencies = projectDependencies(input.scheme, intentByCandidate);
   return {
@@ -58,7 +58,7 @@ export function mergeAxialDimensionProjection(
     || base.drawingRef.revision !== projection.drawingRef.revision) return structuredClone(projection);
 
   const previousAxialIntentIds = new Set(
-    base.axialScheme?.candidates.map(({ id }) => intentId(id)) ?? [],
+    base.axialScheme?.candidates.map(({ id }) => axialDimensionIntentId(id)) ?? [],
   );
   const previousAxialChainIds = new Set(base.axialScheme?.chains.map(({ id }) => id) ?? []);
   const intents = mergeById(
@@ -120,7 +120,7 @@ function projectIntent(candidate: AxialDimensionCandidate, scheme: AxialDimensio
   if (!startGeometryId || !endGeometryId) throw new Error('DIMENSION_TARGET_STALE');
   const closure = scheme.closureCandidateIds.includes(candidate.id);
   return {
-    id: intentId(candidate.id),
+    id: axialDimensionIntentId(candidate.id),
     drawingRef: scheme.drawingRef,
     kind: 'linear',
     targets: [
@@ -211,7 +211,9 @@ function axialChainName(chain: AxialDimensionScheme['chains'][number], scheme: A
   return `轴向尺寸链 ${format(parent.nominalValue)} ${scheme.topology.unit}`;
 }
 
-function intentId(candidateId: string): string { return `dimension-intent:${candidateId}`; }
+export function axialDimensionIntentId(candidateId: string): string {
+  return `dimension-intent:${candidateId}`;
+}
 function requireIntent(values: ReadonlyMap<string, string>, candidateId: string): string {
   const value = values.get(candidateId);
   if (!value) throw new Error('DIMENSION_CHAIN_MEMBER_UNKNOWN');

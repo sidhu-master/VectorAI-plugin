@@ -12,7 +12,11 @@ describe('annotation client contribution', () => {
     const disposeRemote = vi.fn();
     let disposeInjected: (() => void | Promise<void>) | undefined;
     const disposeFiber = vi.fn(async () => { await disposeInjected?.(); });
-    let registered: { id: string; claimSource: { observe(sessionId: string): { getSnapshot(): unknown } } } | undefined;
+    let registered: {
+      id: string;
+      claimSource: { observe(sessionId: string): { getSnapshot(): unknown } };
+      Component(props: { sessionId: string; namespace: string; runtime: unknown }): { props: Record<string, unknown> };
+    } | undefined;
     const registeredLayers: unknown[] = [];
     const registry = {
       registerLayer: vi.fn((definition) => {
@@ -123,6 +127,10 @@ describe('annotation client contribution', () => {
     ]);
     expect(registered?.claimSource.observe('session-1').getSnapshot())
       .toEqual({ active: false, activationEpoch: 0 });
+    const firstWorkspace = registered?.Component({ sessionId: 'session-1', namespace: 'engineering-annotation', runtime: {} });
+    const secondWorkspace = registered?.Component({ sessionId: 'session-1', namespace: 'engineering-annotation', runtime: {} });
+    expect(firstWorkspace?.props.tolerance).toBeDefined();
+    expect(secondWorkspace?.props.tolerance).toBe(firstWorkspace?.props.tolerance);
     expect(dropEntry?.options).toMatchObject({
       name: 'conversation.input.dock',
       id: 'vectorai-engineering-import-drop',

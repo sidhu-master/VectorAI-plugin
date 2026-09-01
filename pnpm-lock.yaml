@@ -267,6 +267,9 @@ importers:
       '@vectorai/drawing-workspace':
         specifier: workspace:*
         version: link:../drawing-workspace
+      '@vectorai/engineering-annotation':
+        specifier: workspace:*
+        version: link:../engineering-annotation
       '@vectorai/plugin-dsh-space-client':
         specifier: workspace:*
         version: link:../plugin-dsh-space-client
