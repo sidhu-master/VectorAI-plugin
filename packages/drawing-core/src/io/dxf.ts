@@ -856,9 +856,16 @@ function assertXDataAggregateLimit(
   nativeTolerance: NativeDimensionTolerance | undefined,
   vectorAiStrings: readonly string[] | undefined,
 ): void {
+  // AutoCAD documents a 16,383-byte XDATA ceiling. Its internal REGAPP
+  // bookkeeping is not represented by the ASCII DXF pairs, so reserve a
+  // conservative 40 bytes per application in addition to the encoded
+  // application name and typed values emitted below.
+  const safeMaximumBytes = 16_383;
+  const regappReserveBytes = 40;
   let byteLength = 0;
   if (nativeTolerance !== undefined) {
-    byteLength += xdataStringBytes('ACAD')
+    byteLength += regappReserveBytes
+      + xdataStringBytes('ACAD')
       + xdataStringBytes('DSTYLE')
       + xdataStringBytes('{')
       + xdataStringBytes('}')
@@ -866,10 +873,10 @@ function assertXDataAggregateLimit(
       + 2 * 8;
   }
   if (vectorAiStrings !== undefined) {
-    byteLength += xdataStringBytes('VECTORAI');
+    byteLength += regappReserveBytes + xdataStringBytes('VECTORAI');
     for (const value of vectorAiStrings) byteLength += xdataStringBytes(value);
   }
-  if (byteLength > 16 * 1_024) throw new RangeError('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
+  if (byteLength > safeMaximumBytes) throw new RangeError('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
 }
 
 function xdataStringBytes(value: string): number {

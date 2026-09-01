@@ -2,10 +2,11 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
-import type { PartitionDraft } from '@vectorai/engineering-annotation';
+import { createGbt1800Provider, type PartitionDraft, type ToleranceStandardProvider } from '@vectorai/engineering-annotation';
 import { describe, expect, it } from 'vitest';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { DimensionPlanStore } from './dimension-plan-store';
+import { ToleranceService } from './tolerance-service';
 
 const ref = { drawingId: 'drawing:shaft', revision: 1 };
 const agent = { id: 'session:shaft' } as Agent;
@@ -25,8 +26,11 @@ function partition(): PartitionDraft {
 
 function service(partitionValue: PartitionDraft | null = partition(), plans = new DimensionPlanStore(
   undefined, { now: () => 7, id: () => 'dimension:r1' },
-)) {
-  const document = createEmptyDrawing({ idFactory: { next: () => 'drawing:shaft' }, now: () => 1 });
+), options: { drawingUnit?: 'mm' | 'cm' | 'm' | 'in'; engineeringText?: string } = {}) {
+  const document = createEmptyDrawing({
+    ...(options.drawingUnit === undefined ? {} : { unit: options.drawingUnit }),
+    idFactory: { next: () => 'drawing:shaft' }, now: () => 1,
+  });
   document.geometry = [{
     id: 'geometry:shaft' as GeometryId, type: 'line', start: [0, 0], end: [20, 0], visible: true,
     quality: { status: 'confirmed', evidenceRefs: [] },
@@ -36,7 +40,7 @@ function service(partitionValue: PartitionDraft | null = partition(), plans = ne
     { get: () => partitionValue === null
       ? { version: 1, phase: 'idle', drawingRef: ref, canUndo: false, canRedo: false, updatedAt: 0 }
       : { version: 1, phase: 'editing', drawingRef: ref, draft: partitionValue as never, canUndo: false, canRedo: false, updatedAt: 0 } },
-    { getStagedEngineeringText: () => undefined },
+    { getStagedEngineeringText: () => options.engineeringText },
     plans,
   );
 }
@@ -96,5 +100,46 @@ describe('DimensionInferenceService', () => {
       geometricTolerances: existing.geometricTolerances,
       diagnostics: expect.arrayContaining(existing.diagnostics),
     });
+  });
+
+  it('keeps normalized millimetre partition coordinates authoritative when the source engineering document is inch', () => {
+    const normalizedPartition = partition();
+    normalizedPartition.axis.zMax = 15;
+    normalizedPartition.segments[0]!.zEnd = 5;
+    normalizedPartition.segments[1]!.zStart = 5;
+    normalizedPartition.segments[1]!.zEnd = 15;
+    const delegate = createGbt1800Provider();
+    const providerSizes: number[] = [];
+    const provider: ToleranceStandardProvider = {
+      ...delegate,
+      listBands(request) { providerSizes.push(request.basicSize); return delegate.listBands(request); },
+      resolveBand(request) { providerSizes.push(request.basicSize); return delegate.resolveBand(request); },
+    };
+    const plans = new DimensionPlanStore(
+      undefined, { now: () => 7, id: () => 'dimension:r1' },
+    );
+    const workflow = service(normalizedPartition, plans, {
+      drawingUnit: 'mm',
+      engineeringText: '[drawing]\nunit=in',
+    });
+
+    const inferred = workflow.start(agent).draft?.intents.find(({ nominalValue }) => nominalValue === 15);
+    expect(inferred).toMatchObject({ nominalValue: 15, unit: 'mm' });
+    if (inferred === undefined) throw new Error('expected inferred 15 mm intent');
+
+    const tolerances = new ToleranceService(plans, provider);
+    expect(tolerances.query(String(agent.id), {
+      expectedDrawingRef: ref, dimensionIntentId: inferred.id, featureClass: 'external',
+    }).bands).toContainEqual(expect.objectContaining({ designation: 'u6', available: true }));
+    tolerances.edit(String(agent.id), {
+      type: 'standard.single.apply', expectedDrawingRef: ref, dimensionIntentId: inferred.id,
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    });
+
+    expect(providerSizes).toEqual([15, 15]);
+    expect(plans.get(String(agent.id)).draft?.tolerances).toContainEqual(expect.objectContaining({
+      dimensionIntentId: inferred.id, inputs: expect.objectContaining({ basicSize: 15 }),
+    }));
   });
 });

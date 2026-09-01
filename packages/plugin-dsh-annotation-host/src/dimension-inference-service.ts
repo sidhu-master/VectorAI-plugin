@@ -51,7 +51,7 @@ export class DimensionInferenceService {
     const domainPartition = partitionValue as unknown as PartitionDraft | PartitionRevision;
     const topology = buildAxialTopology({
       partition: domainPartition,
-      unit: document.drawing.unit ?? drawing.document.unitSystem.length,
+      unit: drawing.document.unitSystem.length,
     });
     const candidateSet = generateAxialDimensionCandidates({ topology, partition: domainPartition, document });
     const scheme = inferAxialDimensionScheme({

@@ -80,6 +80,18 @@ function expectedTolerancePayload(standardId: string, edition = '2020'): string 
   });
 }
 
+function expectedNativeTolerancePayload(standardId: string, edition = '2020'): string {
+  return JSON.stringify({
+    version: 1,
+    designation: 'H7',
+    upperDeviation: .02,
+    lowerDeviation: -.01,
+    unit: 'mm',
+    featureClass: 'internal',
+    standardRef: { id: standardId, edition },
+  });
+}
+
 function drawingWithToleranceStandardRef(standardId: string, edition = '2020') {
   const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-xdata-chunks' }, now: () => 1 });
   document.annotations = [toleranceDimension('chunked-u6', {
@@ -90,18 +102,55 @@ function drawingWithToleranceStandardRef(standardId: string, edition = '2020') {
   return document;
 }
 
-function expectedVectorAiAggregateBytes(standardId: string): number {
+function drawingWithNativeToleranceStandardRef(standardId: string, edition = '2020') {
+  const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-native-xdata-limit' }, now: () => 1 });
+  document.annotations = [toleranceDimension('native-H7', {
+    mode: 'bilateral', fitDesignation: 'H7', upperDeviation: .02, lowerDeviation: -.01, unit: 'mm',
+    source: 'standard', status: 'confirmed', featureClass: 'internal',
+    standardRef: { id: standardId, edition }, displayPreference: 'both', evidenceRefs: ['standard:H7'],
+  })];
+  return document;
+}
+
+const CONSERVATIVE_XDATA_LIMIT = 16_383;
+const CONSERVATIVE_REGAPP_OVERHEAD = 40;
+
+function expectedVectorAiAggregateBytes(payload: string): number {
   const encoder = new TextEncoder();
-  const payload = expectedTolerancePayload(standardId);
   const payloadBytes = encoder.encode(payload).byteLength;
-  if (payloadBytes <= 254) return encoder.encode('VECTORAI').byteLength + 1 + payloadBytes + 1;
+  if (payloadBytes <= 254) {
+    return CONSERVATIVE_REGAPP_OVERHEAD + encoder.encode('VECTORAI').byteLength + 1 + payloadBytes + 1;
+  }
   const chunkCount = Math.ceil(payloadBytes / 254);
   const metadata = JSON.stringify({
     version: 1, format: 'vectorai-tolerance-json', encoding: 'utf-8', chunkCount, byteLength: payloadBytes,
   });
-  return encoder.encode('VECTORAI').byteLength + 1
+  return CONSERVATIVE_REGAPP_OVERHEAD + encoder.encode('VECTORAI').byteLength + 1
     + encoder.encode(metadata).byteLength + 1
     + payloadBytes + chunkCount;
+}
+
+function expectedNativeAndVectorAiAggregateBytes(standardId: string): number {
+  const encoder = new TextEncoder();
+  return expectedVectorAiAggregateBytes(expectedNativeTolerancePayload(standardId))
+    + CONSERVATIVE_REGAPP_OVERHEAD
+    + encoder.encode('ACAD').byteLength + 1
+    + encoder.encode('DSTYLE').byteLength + 1
+    + encoder.encode('{').byteLength + 1
+    + encoder.encode('}').byteLength + 1
+    + 6 * 2
+    + 2 * 8;
+}
+
+function lastSafeStandardIdLength(aggregateBytes: (standardId: string) => number): number {
+  let lower = 0;
+  let upper = CONSERVATIVE_XDATA_LIMIT;
+  while (lower < upper) {
+    const candidate = Math.ceil((lower + upper) / 2);
+    if (aggregateBytes('x'.repeat(candidate)) <= CONSERVATIVE_XDATA_LIMIT) lower = candidate;
+    else upper = candidate - 1;
+  }
+  return lower;
 }
 
 describe('exportDrawingDxf', () => {
@@ -377,14 +426,27 @@ describe('exportDrawingDxf', () => {
     expect(JSON.parse(reassembled).standardRef).toEqual({ id: standardId, edition });
   });
 
-  it('guards the 16KB aggregate per-entity XDATA boundary without truncating a legacy standard reference', () => {
-    const safeId = 'x'.repeat(16_051);
+  it('guards the conservative per-entity XDATA boundary without truncating a legacy standard reference', () => {
+    const safeId = 'x'.repeat(lastSafeStandardIdLength((id) => expectedVectorAiAggregateBytes(expectedTolerancePayload(id))));
     const overLimitId = `${safeId}x`;
 
-    expect(expectedVectorAiAggregateBytes(safeId)).toBe(16 * 1_024);
-    expect(expectedVectorAiAggregateBytes(overLimitId)).toBe(16 * 1_024 + 1);
+    expect(expectedVectorAiAggregateBytes(expectedTolerancePayload(safeId))).toBeLessThanOrEqual(CONSERVATIVE_XDATA_LIMIT);
+    expect(expectedVectorAiAggregateBytes(expectedTolerancePayload(overLimitId))).toBeGreaterThan(CONSERVATIVE_XDATA_LIMIT);
     expect(() => exportDrawingDxf(drawingWithToleranceStandardRef(safeId))).not.toThrow();
     expect(() => exportDrawingDxf(drawingWithToleranceStandardRef(overLimitId)))
+      .toThrow('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
+  });
+
+  it('conservatively guards native ACAD DSTYLE and VECTORAI XDATA together at the last safe standard reference', () => {
+    const safeId = 'x'.repeat(lastSafeStandardIdLength(expectedNativeAndVectorAiAggregateBytes));
+    const overLimitId = `${safeId}x`;
+
+    expect(expectedNativeAndVectorAiAggregateBytes(safeId)).toBeLessThanOrEqual(CONSERVATIVE_XDATA_LIMIT);
+    expect(expectedNativeAndVectorAiAggregateBytes(overLimitId)).toBeGreaterThan(CONSERVATIVE_XDATA_LIMIT);
+    const safeDxf = exportDrawingDxf(drawingWithNativeToleranceStandardRef(safeId));
+    expect(safeDxf).toContain('1001\r\nACAD\r\n1000\r\nDSTYLE');
+    expect(safeDxf).toContain('1001\r\nVECTORAI');
+    expect(() => exportDrawingDxf(drawingWithNativeToleranceStandardRef(overLimitId)))
       .toThrow('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
   });
 
