@@ -541,6 +541,51 @@ GB_LINEAR
     }
   });
 
+  it('rejects an entity whose individually valid ACAD and VECTORAI applications exceed the combined XDATA limit', () => {
+    const exported = exportDrawingDxf(toleranceDrawing({
+      projection: {
+        mode: 'bilateral', fitDesignation: 'H7', upperDeviation: .021, lowerDeviation: -.012,
+        unit: 'mm', source: 'standard', status: 'confirmed', featureClass: 'internal',
+        standardRef: { id: 'ISO 286-2', edition: '2010' }, displayPreference: 'both', evidenceRefs: ['standard:H7'],
+      },
+    }));
+    const chunks = [...Array.from({ length: 63 }, () => 'x'.repeat(254)), 'x'.repeat(100)];
+    const metadata = JSON.stringify({
+      version: 1, format: 'vectorai-tolerance-json', encoding: 'utf-8',
+      chunkCount: chunks.length, byteLength: chunks.reduce((total, chunk) => total + chunk.length, 0),
+    });
+    const strings = [metadata, ...chunks];
+    const encoder = new TextEncoder();
+    const vectorAiBytes = 40 + encoder.encode('VECTORAI').byteLength + 1
+      + strings.reduce((total, value) => total + encoder.encode(value).byteLength + 1, 0);
+    const acadBytes = 40
+      + encoder.encode('ACAD').byteLength + 1
+      + encoder.encode('DSTYLE').byteLength + 1
+      + encoder.encode('{').byteLength + 1
+      + encoder.encode('}').byteLength + 1
+      + 6 * 2 + 2 * 8;
+    expect(vectorAiBytes).toBeLessThanOrEqual(16_383);
+    expect(acadBytes).toBeLessThanOrEqual(16_383);
+    expect(vectorAiBytes + acadBytes).toBeGreaterThan(16_383);
+    const overCombinedLimit = exported.replace(
+      /1001\r\nVECTORAI\r\n1000\r\n[^\r\n]+/u,
+      `1001\r\nVECTORAI\r\n${strings.map((value) => `1000\r\n${value}`).join('\r\n')}`,
+    );
+
+    const result = importDxf({
+      bytes: encoder.encode(overCombinedLimit),
+      source: { digest: 'sha256:combined-xdata-limit' },
+      drawingId: 'drawing:combined-xdata-limit',
+    });
+
+    expect(result.status).toBe('imported');
+    expect(importedDimension(result).toleranceProjection).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      severity: 'warning', code: 'DXF_TOLERANCE_XDATA_INVALID',
+      message: 'DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG',
+    }));
+  });
+
   it('uses only REGAPP-scoped tolerance data and safely imports legacy dimensions without it', () => {
     const document = toleranceDrawing({
       projection: {

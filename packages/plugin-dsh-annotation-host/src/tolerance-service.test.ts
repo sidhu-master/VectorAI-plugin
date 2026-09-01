@@ -106,7 +106,7 @@ describe('ToleranceService', () => {
     })).toThrow('TOLERANCE_INTENT_UNKNOWN');
   });
 
-  it('does not expose a stored selection in a catalog for another feature class', () => {
+  it('rejects querying a stored standard target under another feature class', () => {
     const { service } = setup();
     service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
@@ -114,9 +114,9 @@ describe('ToleranceService', () => {
       evidenceRefs: ['manual:u6'],
     });
 
-    expect(service.query('session', {
+    expect(() => service.query('session', {
       expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'internal',
-    })).not.toHaveProperty('selection');
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
   });
 
   it('hydrates the stored display preference and override in the matching catalog', () => {
@@ -137,6 +137,28 @@ describe('ToleranceService', () => {
       designation: 'u6', source: 'manual', evidenceRefs: ['manual:u6'], displayPreference: 'both',
       override: { upperDeviation: .05, lowerDeviation: .04 },
     });
+  });
+
+  it('exposes complete fit hydration metadata from either saved member', () => {
+    const { service } = setup();
+    service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:fit'],
+    });
+
+    const expectedFit = {
+      fitGroupId: 'fit:intent-hole:intent-shaft', basis: 'hole', designation: 'H7/g6',
+      holeDimensionIntentId: 'intent-hole', holeFeatureClass: 'internal', holeDesignation: 'H7',
+      shaftDimensionIntentId: 'intent-shaft', shaftFeatureClass: 'external', shaftDesignation: 'g6',
+    } as const;
+    expect(service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole', featureClass: 'internal',
+    }).selection).toMatchObject({ designation: 'H7/g6', fit: expectedFit });
+    expect(service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    }).selection).toMatchObject({ designation: 'H7/g6', fit: expectedFit });
   });
 
   it('previews without mutating the plan and applies through shared undo history', () => {
@@ -381,6 +403,53 @@ describe('ToleranceService', () => {
     })).toThrow('TOLERANCE_FEATURE_UNSUPPORTED');
   });
 
+  it('binds hostile direct-contract feature classes to existing domain evidence', () => {
+    const { plans, service } = setup();
+    service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'),
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:u6'],
+    });
+
+    expect(() => service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'internal',
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+    expect(() => service.preview('session', {
+      type: 'single', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'internal', designation: 'H7',
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'internal', designation: 'H7', expectedInputDigest: inputDigest('internal', 'H7'),
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+
+    const stale = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
+    stale.tolerances[0]!.status = 'stale';
+    plans.setDraft('session', stale);
+    expect(() => service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'internal',
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+  });
+
+  it('does not turn two evidenced external members into a fit through hostile caller labels', () => {
+    const { service } = setup();
+    for (const dimensionIntentId of ['intent-hole', 'intent-shaft']) {
+      service.edit('session', {
+        type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId,
+        featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'),
+        selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+      });
+    }
+
+    expect(() => service.preview('session', {
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
+      basis: 'hole', designation: 'H7/g6',
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+  });
+
   it('rejects apply when the nominal changed at the same drawing ref after preview', () => {
     const { plans, service } = setup();
     const preview = service.preview('session', {
@@ -519,6 +588,34 @@ describe('ToleranceService', () => {
     });
     expect(plans.undo('session', drawingRef)).toMatchObject({
       phase: 'confirmed', confirmed: { id: 'revision-1', fitAssignments: [{ designation: 'H7/g6' }] },
+    });
+  });
+
+  it('updates fit arithmetic atomically for override set, clear, undo, redo, and confirmation', () => {
+    const { plans, service } = setup();
+    service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+    });
+    const baseline = plans.get('session').draft!.fitAssignments[0]!;
+
+    const overridden = service.edit('session', {
+      type: 'standard.override.set', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      upperDeviation: .01, lowerDeviation: .005,
+    });
+    expect(overridden.draft?.fitAssignments[0]).toMatchObject({
+      fitType: 'transition', minimumClearance: expect.closeTo(-.01, 12), maximumClearance: expect.closeTo(.013, 12),
+    });
+    expect(plans.undo('session', drawingRef).draft?.fitAssignments[0]).toEqual(baseline);
+    expect(plans.redo('session', drawingRef).draft?.fitAssignments[0]).toEqual(overridden.draft?.fitAssignments[0]);
+
+    const cleared = service.edit('session', {
+      type: 'standard.override.clear', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+    });
+    expect(cleared.draft?.fitAssignments[0]).toEqual(baseline);
+    expect(plans.confirm('session', drawingRef)).toMatchObject({
+      phase: 'confirmed', confirmed: { fitAssignments: [baseline] },
     });
   });
 

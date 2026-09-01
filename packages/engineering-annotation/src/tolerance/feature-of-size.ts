@@ -3,7 +3,7 @@
 import type { FeatureOfSizeClass } from './standard-types';
 
 export interface FeatureOfSizeFacts {
-  dimensionKind: 'linear' | 'diameter' | 'radius' | 'arc-length' | 'angular';
+  dimensionKind: 'linear' | 'aligned' | 'diameter' | 'radius' | 'arc-length' | 'angular' | 'ordinate';
   semanticRole?: 'bore' | 'shaft';
   opposedSurfaceRole?: 'slot-width' | 'key-thickness' | 'part-thickness';
 }
@@ -18,10 +18,12 @@ export function classifyFeatureOfSize(facts: FeatureOfSizeFacts): FeatureOfSizeC
     case 'angular':
     case 'radius':
     case 'arc-length':
+    case 'ordinate':
       return { status: 'unsupported', code: 'TOLERANCE_FEATURE_UNSUPPORTED' };
     case 'diameter':
       return classifySemanticRole(facts.semanticRole);
     case 'linear':
+    case 'aligned':
       return classifyOpposedSurfaceRole(facts.opposedSurfaceRole);
   }
 }

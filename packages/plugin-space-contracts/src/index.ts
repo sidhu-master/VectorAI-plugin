@@ -1127,6 +1127,17 @@ export const toleranceCatalogResultSchema = z.object({
     evidenceRefs: z.array(idSchema),
     displayPreference: toleranceDisplayPreferenceSchema,
     override: toleranceOverrideSchema.optional(),
+    fit: z.object({
+      fitGroupId: idSchema,
+      basis: z.enum(['hole', 'shaft']),
+      designation: z.string().min(5).max(17),
+      holeDimensionIntentId: idSchema,
+      holeFeatureClass: z.literal('internal'),
+      holeDesignation: z.string().min(2).max(8),
+      shaftDimensionIntentId: idSchema,
+      shaftFeatureClass: z.literal('external'),
+      shaftDesignation: z.string().min(2).max(8),
+    }).strict().optional(),
   }).strict().optional(),
   recommendation: z.object({
     designation: z.string().min(2).max(17),

@@ -128,24 +128,74 @@ export function setToleranceOverride(
   const index = requireToleranceIndex(draft, dimensionIntentId);
   const spec = draft.tolerances[index]!;
   if (!spec.resolved) throw new Error('TOLERANCE_RESULT_REQUIRED');
-  return {
+  return recomputeFitAssignment({
     ...draft,
     tolerances: draft.tolerances.map((item, itemIndex) => itemIndex === index
       ? { ...item, override: { ...override } }
       : item),
-  };
+  }, dimensionIntentId);
 }
 
 export function clearToleranceOverride(draft: EngineeringAnnotationDraft, dimensionIntentId: string): EngineeringAnnotationDraft {
   const index = requireToleranceIndex(draft, dimensionIntentId);
-  return {
+  return recomputeFitAssignment({
     ...draft,
     tolerances: draft.tolerances.map((item, itemIndex) => {
       if (itemIndex !== index) return item;
-      const { override: _override, ...withoutOverride } = item;
+      const withoutOverride = { ...item };
+      delete withoutOverride.override;
       return withoutOverride;
     }),
+  }, dimensionIntentId);
+}
+
+function recomputeFitAssignment(draft: EngineeringAnnotationDraft, dimensionIntentId: string): EngineeringAnnotationDraft {
+  const member = [...draft.tolerances].reverse().find((spec) => spec.dimensionIntentId === dimensionIntentId);
+  if (member?.fitGroupId === undefined) return draft;
+  const assignment = draft.fitAssignments.find(({ fitGroupId }) => fitGroupId === member.fitGroupId);
+  if (assignment === undefined) return draft;
+  const hole = draft.tolerances.find((spec) => spec.fitGroupId === assignment.fitGroupId
+    && spec.dimensionIntentId === assignment.holeDimensionId);
+  const shaft = draft.tolerances.find((spec) => spec.fitGroupId === assignment.fitGroupId
+    && spec.dimensionIntentId === assignment.shaftDimensionId);
+  const effective = (spec: ToleranceSpec | undefined, featureClass: 'internal' | 'external') => {
+    if (spec === undefined || spec.source !== 'standard' || spec.featureClass !== featureClass
+      || (spec.status !== 'resolved' && spec.status !== 'confirmed')) return undefined;
+    const upperDeviation = spec.override?.upperDeviation ?? spec.resolved?.upperDeviation;
+    const lowerDeviation = spec.override?.lowerDeviation ?? spec.resolved?.lowerDeviation;
+    return Number.isFinite(upperDeviation) && Number.isFinite(lowerDeviation)
+      && lowerDeviation! <= upperDeviation!
+      ? { upperDeviation: upperDeviation!, lowerDeviation: lowerDeviation! }
+      : undefined;
   };
+  const holeEffective = effective(hole, 'internal');
+  const shaftEffective = effective(shaft, 'external');
+  if (holeEffective === undefined || shaftEffective === undefined) {
+    return {
+      ...draft,
+      fitAssignments: draft.fitAssignments.filter(({ fitGroupId }) => fitGroupId !== assignment.fitGroupId),
+      tolerances: draft.tolerances.map((spec) => spec.fitGroupId === assignment.fitGroupId
+        ? { ...spec, status: 'stale' as const }
+        : spec),
+    };
+  }
+  const minimumClearance = roundFitValue(holeEffective.lowerDeviation - shaftEffective.upperDeviation);
+  const maximumClearance = roundFitValue(holeEffective.upperDeviation - shaftEffective.lowerDeviation);
+  const fitType = minimumClearance >= 0
+    ? 'clearance' as const
+    : maximumClearance <= 0
+      ? 'interference' as const
+      : 'transition' as const;
+  return {
+    ...draft,
+    fitAssignments: draft.fitAssignments.map((candidate) => candidate.fitGroupId === assignment.fitGroupId
+      ? { ...candidate, minimumClearance, maximumClearance, fitType }
+      : candidate),
+  };
+}
+
+function roundFitValue(value: number): number {
+  return Number(value.toFixed(12));
 }
 
 function standardSpec(

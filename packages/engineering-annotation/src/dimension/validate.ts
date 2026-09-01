@@ -87,6 +87,27 @@ function validateFitAssignments(
       && sameStandard;
     if (!validMembers) {
       diagnostics.push(problem('FIT_ASSIGNMENT_TOLERANCE_INVALID', assignment.fitGroupId, 'Fit assignment must match its paired tolerance members'));
+      continue;
+    }
+    const holeUpper = hole!.override?.upperDeviation ?? hole!.resolved?.upperDeviation;
+    const holeLower = hole!.override?.lowerDeviation ?? hole!.resolved?.lowerDeviation;
+    const shaftUpper = shaft!.override?.upperDeviation ?? shaft!.resolved?.upperDeviation;
+    const shaftLower = shaft!.override?.lowerDeviation ?? shaft!.resolved?.lowerDeviation;
+    if (![holeUpper, holeLower, shaftUpper, shaftLower].every((value) => typeof value === 'number' && Number.isFinite(value))) {
+      diagnostics.push(problem('FIT_ASSIGNMENT_ARITHMETIC_INVALID', assignment.fitGroupId, 'Fit assignment requires effective deviations for both members'));
+      continue;
+    }
+    const minimumClearance = roundFitValue(holeLower! - shaftUpper!);
+    const maximumClearance = roundFitValue(holeUpper! - shaftLower!);
+    const fitType = minimumClearance >= 0
+      ? 'clearance'
+      : maximumClearance <= 0
+        ? 'interference'
+        : 'transition';
+    if (!closeEnough(assignment.minimumClearance, minimumClearance)
+      || !closeEnough(assignment.maximumClearance, maximumClearance)
+      || assignment.fitType !== fitType) {
+      diagnostics.push(problem('FIT_ASSIGNMENT_ARITHMETIC_INVALID', assignment.fitGroupId, 'Fit assignment range must match both members effective deviations'));
     }
   }
   for (const tolerance of draft.tolerances) {
@@ -126,6 +147,9 @@ export function isResolvedToleranceValid(tolerance: ToleranceSpec): boolean {
 function finite(value: number | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
+
+function roundFitValue(value: number): number { return Number(value.toFixed(12)); }
+function closeEnough(first: number, second: number): boolean { return Math.abs(first - second) <= 1e-12; }
 
 function problem(code: string, id: string, message: string): EngineeringDiagnostic {
   return { id: `diagnostic:${code}:${id}`, severity: 'error', code, message, entityIds: [id] };

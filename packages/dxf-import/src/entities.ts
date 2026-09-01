@@ -236,6 +236,18 @@ function readToleranceProjection(
   let native: { upperDeviation: number; lowerDeviation: number } | undefined;
   let portable: ToleranceProjection | undefined;
 
+  try {
+    assertToleranceXdataAggregateLimit(acad, vectorAi);
+  } catch (error) {
+    context.diagnostics.push(diagnostic(
+      record,
+      'warning',
+      'DXF_TOLERANCE_XDATA_INVALID',
+      error instanceof Error ? error.message : String(error),
+    ));
+    return undefined;
+  }
+
   if (acad.length > 0) {
     try {
       native = readAcadDstyle(acad);
@@ -273,6 +285,37 @@ function readToleranceProjection(
   };
   validateToleranceProjection(projection);
   return projection;
+}
+
+function assertToleranceXdataAggregateLimit(
+  acad: readonly (readonly DxfPair[])[],
+  vectorAi: readonly (readonly DxfPair[])[],
+): void {
+  const aggregateBytes = applicationAggregateBytes('ACAD', acad)
+    + applicationAggregateBytes('VECTORAI', vectorAi);
+  if (aggregateBytes > VECTORAI_XDATA_MAX_BYTES) {
+    throw new RangeError('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
+  }
+}
+
+function applicationAggregateBytes(
+  application: string,
+  segments: readonly (readonly DxfPair[])[],
+): number {
+  const encoder = new TextEncoder();
+  return segments.reduce((total, pairs) => total
+    + 40
+    + encoder.encode(application).byteLength + 1
+    + pairs.reduce((pairTotal, pair) => pairTotal + xdataPairBytes(pair, encoder), 0), 0);
+}
+
+function xdataPairBytes(pair: DxfPair, encoder: TextEncoder): number {
+  if ([1000, 1002, 1003, 1005].includes(pair.code)) return encoder.encode(pair.value).byteLength + 1;
+  if (pair.code === 1004) return Math.ceil(pair.value.length / 2);
+  if (pair.code >= 1010 && pair.code <= 1059) return 8;
+  if (pair.code === 1070) return 2;
+  if (pair.code === 1071) return 4;
+  return encoder.encode(pair.value).byteLength + 1;
 }
 
 function applicationSegments(record: DxfEntityRecord, application: string): readonly (readonly DxfPair[])[] {

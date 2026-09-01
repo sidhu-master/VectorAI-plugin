@@ -4,6 +4,7 @@ import {
   applyFitTolerance,
   applySingleTolerance,
   canonicalRuleInputDigest,
+  classifyFeatureOfSize,
   createGbt1800Provider,
   type EngineeringAnnotationDraft,
   type EngineeringDiagnostic,
@@ -34,9 +35,10 @@ export class ToleranceService {
 
   query(sessionId: string, request: ToleranceCatalogRequest): ToleranceCatalogResult {
     const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
-    const intent = requireEligibleIntent(plan, request.dimensionIntentId);
+    const intent = requireEligibleIntent(plan, request.dimensionIntentId, request.featureClass);
     const basicSize = requireProviderBasicSize(intent);
     const matching = [...plan.tolerances].reverse().find(({ dimensionIntentId }) => dimensionIntentId === request.dimensionIntentId);
+    const fit = matching === undefined ? undefined : activeFitHydration(plan, matching);
     const recommendation = matching?.source === 'ai-candidate'
       && matching.featureClass === request.featureClass
       && matching.selection?.source === 'ai-recommended'
@@ -61,10 +63,12 @@ export class ToleranceService {
       },
       bands: structuredClone(this.provider.listBands({ basicSize, featureClass: request.featureClass })),
       ...(matching?.source === 'standard' && matching.featureClass === request.featureClass && matching.selection
+        && (matching.fitGroupId === undefined || fit !== undefined)
         ? { selection: {
           ...matching.selection,
           displayPreference: matching.displayPreference ?? 'deviations',
           ...(matching.override ? { override: { ...matching.override } } : {}),
+          ...(fit === undefined ? {} : { fit }),
         } }
         : {}),
       ...(recommendation === undefined ? {} : { recommendation }),
@@ -74,7 +78,7 @@ export class ToleranceService {
   preview(sessionId: string, request: TolerancePreviewRequest): TolerancePreviewResult {
     const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
     if (request.type === 'single') {
-      const intent = requireEligibleIntent(plan, request.dimensionIntentId);
+      const intent = requireEligibleIntent(plan, request.dimensionIntentId, request.featureClass);
       const basicSize = requireProviderBasicSize(intent);
       return {
         type: 'single', drawingRef: plan.drawingRef, dimensionIntentId: request.dimensionIntentId, status: 'resolved',
@@ -83,8 +87,8 @@ export class ToleranceService {
         })),
       };
     }
-    requireEligibleIntent(plan, request.primaryDimensionIntentId);
-    requireEligibleIntent(plan, request.secondaryDimensionIntentId);
+    requireEligibleIntent(plan, request.primaryDimensionIntentId, request.primaryFeatureClass);
+    requireEligibleIntent(plan, request.secondaryDimensionIntentId, request.secondaryFeatureClass);
     const { holeDimensionIntentId, shaftDimensionIntentId } = requireFitRoles(request);
     const basicSize = requireEqualFitSize(plan, holeDimensionIntentId, shaftDimensionIntentId);
     return {
@@ -102,7 +106,7 @@ export class ToleranceService {
     requireAiRecommendation(plan, command);
     let resolved: ToleranceEditResolution;
     if (command.type === 'standard.single.apply') {
-      const basicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.dimensionIntentId));
+      const basicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.dimensionIntentId, command.featureClass));
       const result = this.provider.resolveBand({ basicSize, featureClass: command.featureClass, designation: command.designation });
       verifyProviderResult(result, {
         basicSize, featureClass: command.featureClass, designation: command.designation,
@@ -112,8 +116,8 @@ export class ToleranceService {
     } else if (command.type === 'standard.fit.apply') {
       const [holeDesignation, shaftDesignation] = command.designation.split('/');
       if (!holeDesignation || !shaftDesignation) throw new Error('TOLERANCE_PROVIDER_RESULT_MISMATCH');
-      const holeBasicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.holeDimensionIntentId));
-      const shaftBasicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.shaftDimensionIntentId));
+      const holeBasicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.holeDimensionIntentId, 'internal'));
+      const shaftBasicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.shaftDimensionIntentId, 'external'));
       if (command.expectedHoleInputDigest !== expectedProviderInputDigest(
         this.provider, holeBasicSize, 'internal', holeDesignation,
       ) || command.expectedShaftInputDigest !== expectedProviderInputDigest(
@@ -334,6 +338,39 @@ function diagnostic(entityId: string, code: string): EngineeringDiagnostic {
   };
 }
 
+function activeFitHydration(plan: AnnotationPlan, member: ToleranceSpec) {
+  if (member.fitGroupId === undefined) return undefined;
+  const assignment = plan.fitAssignments.find(({ fitGroupId }) => fitGroupId === member.fitGroupId);
+  if (assignment === undefined
+    || (member.dimensionIntentId !== assignment.holeDimensionId && member.dimensionIntentId !== assignment.shaftDimensionId)) {
+    return undefined;
+  }
+  const hole = plan.tolerances.find((spec) => spec.fitGroupId === assignment.fitGroupId
+    && spec.dimensionIntentId === assignment.holeDimensionId);
+  const shaft = plan.tolerances.find((spec) => spec.fitGroupId === assignment.fitGroupId
+    && spec.dimensionIntentId === assignment.shaftDimensionId);
+  const active = (spec: ToleranceSpec | undefined, featureClass: 'internal' | 'external') => spec !== undefined
+    && spec.source === 'standard'
+    && spec.featureClass === featureClass
+    && (spec.status === 'resolved' || spec.status === 'confirmed');
+  const holeDesignation = hole?.inputs.designation;
+  const shaftDesignation = shaft?.inputs.designation;
+  if (!active(hole, 'internal') || !active(shaft, 'external')
+    || typeof holeDesignation !== 'string' || typeof shaftDesignation !== 'string'
+    || `${holeDesignation}/${shaftDesignation}` !== assignment.designation) return undefined;
+  return {
+    fitGroupId: assignment.fitGroupId,
+    basis: assignment.basis,
+    designation: assignment.designation,
+    holeDimensionIntentId: assignment.holeDimensionId,
+    holeFeatureClass: 'internal' as const,
+    holeDesignation,
+    shaftDimensionIntentId: assignment.shaftDimensionId,
+    shaftFeatureClass: 'external' as const,
+    shaftDesignation,
+  };
+}
+
 function requirePlan(snapshot: DimensionPlanSessionSnapshot, expected: DrawingRef): AnnotationPlan {
   if (!snapshot.drawingRef || !sameRef(snapshot.drawingRef, expected)) throw new Error('ANNOTATION_PLAN_DRAWING_STALE');
   const plan = snapshot.draft ?? snapshot.confirmed;
@@ -348,10 +385,25 @@ function requireIntent(plan: AnnotationPlan, id: string): AnnotationPlan['intent
   return intent;
 }
 
-function requireEligibleIntent(plan: AnnotationPlan, id: string): AnnotationPlan['intents'][number] {
+function requireEligibleIntent(
+  plan: AnnotationPlan,
+  id: string,
+  requestedFeatureClass: 'internal' | 'external',
+): AnnotationPlan['intents'][number] {
   const intent = requireIntent(plan, id);
-  if (intent.kind !== 'linear' && intent.kind !== 'aligned' && intent.kind !== 'diameter') {
+  const persistedClass = [...plan.tolerances].reverse().find((spec) => (
+    spec.dimensionIntentId === id
+    && spec.featureClass !== undefined
+    && spec.source !== 'ai-candidate'
+  ))?.featureClass;
+  const classification = persistedClass === undefined
+    ? classifyFeatureOfSize({ dimensionKind: intent.kind })
+    : { status: 'resolved' as const, featureClass: persistedClass };
+  if (classification.status === 'unsupported') {
     throw new Error('TOLERANCE_FEATURE_UNSUPPORTED');
+  }
+  if (classification.status === 'resolved' && classification.featureClass !== requestedFeatureClass) {
+    throw new Error('TOLERANCE_FEATURE_CLASS_MISMATCH');
   }
   return intent;
 }

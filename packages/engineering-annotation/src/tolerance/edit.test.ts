@@ -150,6 +150,29 @@ describe('immutable tolerance edits', () => {
       .not.toHaveProperty('override');
   });
 
+  it('recomputes the active fit range and type from both members effective deviations', () => {
+    const active = applyFitTolerance(draft(), fit(), {
+      fitGroupId: 'fit-1', holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit-1'],
+    });
+
+    const overridden = setToleranceOverride(active, 'intent-shaft', {
+      upperDeviation: .01, lowerDeviation: .005,
+    });
+    expect(overridden.fitAssignments).toEqual([
+      expect.objectContaining({
+        fitGroupId: 'fit-1', fitType: 'transition',
+        minimumClearance: expect.closeTo(-.01, 12), maximumClearance: expect.closeTo(.016, 12),
+      }),
+    ]);
+    expect(clearToleranceOverride(overridden, 'intent-shaft').fitAssignments).toEqual([
+      expect.objectContaining({
+        fitGroupId: 'fit-1', fitType: 'clearance',
+        minimumClearance: expect.closeTo(.007, 12), maximumClearance: expect.closeTo(.041, 12),
+      }),
+    ]);
+  });
+
   it('creates a manual result with no standard provenance or fit assignment', () => {
     const after = applyManualTolerance(draft(), {
       dimensionIntentId: 'intent-shaft', mode: 'unilateral', upperDeviation: .02,

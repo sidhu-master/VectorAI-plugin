@@ -102,19 +102,19 @@ describe('engineering dimension domain invariants', () => {
     active.intents[1]!.id = 'shaft';
     active.tolerances = [
       {
-        id: 'fit:pair:hole', dimensionIntentId: 'hole', mode: 'fit', source: 'standard',
+        id: 'fit:pair:hole', dimensionIntentId: 'hole', mode: 'bilateral', source: 'standard',
         featureClass: 'internal', fitGroupId: 'fit:pair',
         selection: { designation: 'H7/g6', source: 'manual', evidenceRefs: [] },
         standardRef: { id: 'GB/T 1800', edition: '2020' }, inputs: {},
-        resolved: { fitDesignation: 'H7/g6', inputDigest: 'sha256:hole', evaluatedAt: 1 },
+        resolved: { upperDeviation: .018, lowerDeviation: 0, fitDesignation: 'H7/g6', inputDigest: 'sha256:hole', evaluatedAt: 1 },
         status: 'resolved', evidenceIds: [], diagnostics: [],
       },
       {
-        id: 'fit:pair:shaft', dimensionIntentId: 'shaft', mode: 'fit', source: 'standard',
+        id: 'fit:pair:shaft', dimensionIntentId: 'shaft', mode: 'bilateral', source: 'standard',
         featureClass: 'external', fitGroupId: 'fit:pair',
         selection: { designation: 'H7/g6', source: 'manual', evidenceRefs: [] },
         standardRef: { id: 'GB/T 1800', edition: '2020' }, inputs: {},
-        resolved: { fitDesignation: 'H7/g6', inputDigest: 'sha256:shaft', evaluatedAt: 1 },
+        resolved: { upperDeviation: -.006, lowerDeviation: -.017, fitDesignation: 'H7/g6', inputDigest: 'sha256:shaft', evaluatedAt: 1 },
         status: 'resolved', evidenceIds: [], diagnostics: [],
       },
     ];
@@ -137,6 +137,21 @@ describe('engineering dimension domain invariants', () => {
     candidateMember.tolerances[1]!.status = 'candidate';
     expect(validateEngineeringDraft(candidateMember)).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'FIT_ASSIGNMENT_TOLERANCE_INVALID' }),
+    ]));
+
+    const staleArithmetic = structuredClone(active);
+    staleArithmetic.tolerances[0]!.override = { upperDeviation: .02, lowerDeviation: .01 };
+    expect(validateEngineeringDraft(staleArithmetic)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'FIT_ASSIGNMENT_ARITHMETIC_INVALID' }),
+    ]));
+    staleArithmetic.fitAssignments[0]!.minimumClearance = .016;
+    staleArithmetic.fitAssignments[0]!.maximumClearance = .037;
+    expect(validateEngineeringDraft(staleArithmetic)).toEqual([]);
+
+    const wrongType = structuredClone(active);
+    wrongType.fitAssignments[0]!.fitType = 'transition';
+    expect(validateEngineeringDraft(wrongType)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'FIT_ASSIGNMENT_ARITHMETIC_INVALID' }),
     ]));
 
     const stale = structuredClone(active);

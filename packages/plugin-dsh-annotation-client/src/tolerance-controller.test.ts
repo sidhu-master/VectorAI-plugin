@@ -341,6 +341,51 @@ describe('createToleranceController', () => {
     });
   });
 
+  it.each([
+    ['intent-hole', 'internal'],
+    ['intent-shaft', 'external'],
+  ] as const)('reopens a saved fit from its %s member as the exact pair', async (dimensionIntentId, featureClass) => {
+    const api = remote({
+      queryToleranceCatalog: vi.fn(async (_sessionId, request) => success<ToleranceCatalogResult>({
+        ...catalog(request.dimensionIntentId, request.featureClass),
+        selection: {
+          designation: 'H7/g6', source: 'manual', evidenceRefs: ['manual:fit'], displayPreference: 'both',
+          fit: {
+            fitGroupId: 'fit:intent-hole:intent-shaft', basis: 'hole', designation: 'H7/g6',
+            holeDimensionIntentId: 'intent-hole', holeFeatureClass: 'internal', holeDesignation: 'H7',
+            shaftDimensionIntentId: 'intent-shaft', shaftFeatureClass: 'external', shaftDesignation: 'g6',
+          },
+        },
+      })),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+
+    await controller.actions.openFromDesignationDoubleClick({
+      ...externalTarget, dimensionIntentId, classification: { status: 'resolved', featureClass },
+    });
+
+    expect(api.previewTolerance).toHaveBeenCalledWith('s', {
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: dimensionIntentId, primaryFeatureClass: featureClass,
+      secondaryDimensionIntentId: featureClass === 'internal' ? 'intent-shaft' : 'intent-hole',
+      secondaryFeatureClass: featureClass === 'internal' ? 'external' : 'internal',
+      basis: 'hole', designation: 'H7/g6',
+    });
+    expect(controller.state.getSnapshot()).toMatchObject({
+      tab: 'hole-fit', dirty: false, displayPreference: 'both', canvasPreview: null,
+      selection: {
+        kind: 'fit', basis: 'hole', designation: 'H7/g6',
+        holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft',
+      },
+      preview: { type: 'fit', result: { designation: 'H7/g6' } },
+      fit: { basis: 'hole', selectingSecondTarget: false, secondTarget: { dimensionIntentId: featureClass === 'internal' ? 'intent-shaft' : 'intent-hole' } },
+      fitCatalogs: {
+        internal: { dimensionIntentId: 'intent-hole', featureClass: 'internal' },
+        external: { dimensionIntentId: 'intent-shaft', featureClass: 'external' },
+      },
+    });
+  });
+
   it('routes visible-popup context and designation entry points through dirty target switching', async () => {
     const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
     await controller.actions.open(externalTarget);

@@ -23,5 +23,9 @@ describe('feature-of-size classification', () => {
       .toEqual({ status: 'unsupported', code: 'TOLERANCE_FEATURE_UNSUPPORTED' });
     expect(classifyFeatureOfSize({ dimensionKind: 'linear' }))
       .toEqual({ status: 'ambiguous', code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' });
+    expect(classifyFeatureOfSize({ dimensionKind: 'aligned' }))
+      .toEqual({ status: 'ambiguous', code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' });
+    expect(classifyFeatureOfSize({ dimensionKind: 'ordinate' }))
+      .toEqual({ status: 'unsupported', code: 'TOLERANCE_FEATURE_UNSUPPORTED' });
   });
 });

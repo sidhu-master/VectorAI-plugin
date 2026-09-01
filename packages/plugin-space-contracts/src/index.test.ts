@@ -231,6 +231,11 @@ describe('DSH drawing workspace wire schemas', () => {
       selection: {
         designation: 'u6', source: 'manual', evidenceRefs: ['manual:u6'], displayPreference: 'both',
         override: { upperDeviation: .05, lowerDeviation: .04 },
+        fit: {
+          fitGroupId: 'fit:intent-hole:intent-shaft', basis: 'hole', designation: 'H7/g6',
+          holeDimensionIntentId: 'intent-hole', holeFeatureClass: 'internal', holeDesignation: 'H7',
+          shaftDimensionIntentId: 'intent-shaft', shaftFeatureClass: 'external', shaftDesignation: 'g6',
+        },
       },
     } as const;
     expect(toleranceCatalogResultSchema.parse(catalog)).toEqual(catalog);
