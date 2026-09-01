@@ -180,7 +180,7 @@ describe('TolerancePopup', () => {
   });
 
   it('owns display preference and standard/manual override controls', async () => {
-    const { tree, value } = renderPopup();
+    const { tree, value } = renderPopup({ override: { upperDeviation: .01, lowerDeviation: 0 } });
     act(() => tree.root.findByProps({ 'data-display-preference': 'designation' }).props.onClick());
     act(() => tree.root.findByProps({ 'data-display-preference': 'both' }).props.onClick());
     expect(value.onDisplayPreferenceChange).toHaveBeenNthCalledWith(1, 'designation');
@@ -367,21 +367,21 @@ describe('TolerancePopup', () => {
   });
 
   it('clears a null-Host override draft immediately when restoring standard', async () => {
-    const value = props({ dirty: true, override: null, preview });
+    const value = props({ dirty: false, override: null, preview });
     const tree = create(<TolerancePopup {...value} />);
     act(() => tree.root.findByProps({ 'data-tolerance-override': 'upper' }).props.onChange({ currentTarget: { value: '0.05' } }));
     expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
     expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(0);
 
     act(() => tree.root.findByProps({ 'data-restore-standard': true }).props.onClick());
-    expect(value.onRestoreStandard).toHaveBeenCalledOnce();
+    expect(value.onRestoreStandard).not.toHaveBeenCalled();
     expect(tree.root.findByProps({ 'data-tolerance-override': 'upper' }).props.value).toBe('');
     expect(tree.root.findByProps({ 'data-tolerance-override': 'lower' }).props.value).toBe('');
-    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
     expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(1);
 
     await act(async () => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
-    act(() => tree.update(<TolerancePopup {...value} preview={preview} />));
+    act(() => tree.update(<TolerancePopup {...value} dirty preview={preview} />));
     expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
     expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(1);
   });

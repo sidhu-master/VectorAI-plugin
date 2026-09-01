@@ -175,6 +175,7 @@ export function createToleranceController(input: {
   const listeners = new Set<() => void>();
   let disposed = false;
   let pendingOverrideEdit: 'set' | 'clear' | null = null;
+  let appliedOverrideDesignation: string | null = null;
   let targetEpoch = 0;
   let catalogGeneration = 0;
   let fitCatalogGeneration = 0;
@@ -235,6 +236,9 @@ export function createToleranceController(input: {
       featureClass,
     }), epoch, isCurrent);
     if (!isCurrent() || !catalogMatches(result, target, featureClass)) return;
+    appliedOverrideDesignation = result.selection?.override === undefined
+      ? null
+      : result.selection.designation;
     update({ catalog: clone(result), standardEdition: result.standardRef.edition });
     if ((hydrate || (!current.dirty && current.preview === null)) && result.selection !== undefined) {
       const selection = result.selection;
@@ -276,6 +280,7 @@ export function createToleranceController(input: {
       ? clampGeometry(current.geometry, viewport)
       : initialGeometry(target, current.geometry, viewport);
     pendingOverrideEdit = null;
+    appliedOverrideDesignation = null;
     update({
       visible: true,
       geometry,
@@ -391,6 +396,7 @@ export function createToleranceController(input: {
       targetEpoch += 1;
       const epoch = targetEpoch;
       selectionEpoch = null;
+      appliedOverrideDesignation = null;
       const resolvedTarget: ToleranceTarget = { ...target, classification: { status: 'resolved', featureClass } };
       update({
         target: resolvedTarget, tab: featureClass, catalog: null, fitCatalogs: null,
@@ -460,7 +466,16 @@ export function createToleranceController(input: {
       }
       const selection = current.selection;
       if (selection?.kind !== 'single') throw new Error('TOLERANCE_STANDARD_SELECTION_REQUIRED');
-      await actions.preview(selection);
+      const epoch = targetEpoch;
+      const previewing = actions.preview(selection);
+      const generation = previewGeneration;
+      await previewing;
+      const target = current.target;
+      if (epoch !== targetEpoch
+        || generation !== previewGeneration
+        || target === null
+        || selectionEpoch !== epoch
+        || !selectionHasCurrentPreview(selection, current.preview, target)) return;
       pendingOverrideEdit = 'set';
       update({
         override: { ...value },
@@ -471,15 +486,21 @@ export function createToleranceController(input: {
       });
     },
     restoreStandard() {
-      const clearsAppliedOverride = current.selection?.kind === 'single'
-        && current.catalog?.selection?.designation === current.selection.designation;
+      previewGeneration += 1;
+      const selection = current.selection;
+      const appliedSelection = selection?.kind === 'single'
+        && current.catalog?.selection?.designation === selection.designation;
+      const clearsAppliedOverride = selection?.kind === 'single'
+        && appliedOverrideDesignation === selection.designation;
+      const cancelsPendingOverride = pendingOverrideEdit === 'set';
+      if (!clearsAppliedOverride && !cancelsPendingOverride) return;
       pendingOverrideEdit = clearsAppliedOverride ? 'clear' : null;
       update({
         override: null,
         canvasPreview: current.preview === null ? null : {
           host: clone(current.preview), override: null, displayPreference: current.displayPreference,
         },
-        dirty: current.selection === null ? current.dirty : true,
+        dirty: clearsAppliedOverride ? true : appliedSelection ? false : current.dirty,
       });
     },
     async restoreRecommendation() {
@@ -554,6 +575,10 @@ export function createToleranceController(input: {
         }
         const snapshot = await run(() => remote().editTolerance(input.sessionId, command), epoch);
         if (epoch !== targetEpoch || !commandTargets(command, target)) return;
+        if (command.type === 'standard.override.set') appliedOverrideDesignation = selection.kind === 'single'
+          ? selection.designation
+          : null;
+        if (command.type === 'standard.override.clear') appliedOverrideDesignation = null;
         pendingOverrideEdit = null;
         update({ dirty: false, closeDecision: null, error: null });
         if (command.type === 'standard.single.apply') {

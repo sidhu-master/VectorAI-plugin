@@ -661,6 +661,64 @@ describe('createToleranceController', () => {
     expect(api.editTolerance).not.toHaveBeenCalled();
   });
 
+  it('keeps restore-standard a no-op for a clean hydrated selection without an override', async () => {
+    const api = remote({
+      queryToleranceCatalog: vi.fn(async (_sessionId, request) => success<ToleranceCatalogResult>({
+        ...catalog(request.dimensionIntentId, request.featureClass),
+        selection: {
+          designation: 'u6', source: 'manual', evidenceRefs: [], displayPreference: 'deviations',
+        },
+      })),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+
+    controller.actions.restoreStandard();
+
+    expect(controller.state.getSnapshot()).toMatchObject({
+      dirty: false, selection: { designation: 'u6' }, override: null,
+    });
+    await expect(controller.actions.apply()).rejects.toThrow('TOLERANCE_PREVIEW_REQUIRED');
+    expect(api.editTolerance).not.toHaveBeenCalled();
+  });
+
+  it('ignores a late override preview after restore-standard schedules the applied override clear', async () => {
+    const pendingOverridePreview = deferred<RemoteResult<TolerancePreviewResult>>();
+    let deferPreview = false;
+    const api = remote({
+      queryToleranceCatalog: vi.fn(async (_sessionId, request) => success<ToleranceCatalogResult>({
+        ...catalog(request.dimensionIntentId, request.featureClass),
+        selection: {
+          designation: 'u6', source: 'manual', evidenceRefs: [], displayPreference: 'deviations',
+          override: { upperDeviation: .03, lowerDeviation: .02 },
+        },
+      })),
+      previewTolerance: vi.fn(async (_sessionId, request) => {
+        if (!deferPreview) return success(singlePreview(request.dimensionIntentId, request.designation));
+        return pendingOverridePreview.promise;
+      }),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+    deferPreview = true;
+    const previewing = controller.actions.previewOverride({ upperDeviation: .05, lowerDeviation: .04 });
+    await vi.waitFor(() => expect(api.previewTolerance).toHaveBeenCalledTimes(2));
+
+    controller.actions.restoreStandard();
+    pendingOverridePreview.resolve(success(singlePreview('intent-1', 'u6')));
+    await previewing;
+
+    expect(controller.state.getSnapshot()).toMatchObject({
+      dirty: true, override: null,
+      canvasPreview: { override: null, host: { result: { designation: 'u6' } } },
+    });
+    await controller.actions.apply();
+    expect(api.editTolerance).toHaveBeenCalledOnce();
+    expect(api.editTolerance).toHaveBeenLastCalledWith('s', {
+      type: 'standard.override.clear', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-1',
+    });
+  });
+
   it('tries below the annotation when right and left do not fit without overlap', async () => {
     const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
     await controller.actions.open({
