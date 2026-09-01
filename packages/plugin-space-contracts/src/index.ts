@@ -1142,8 +1142,10 @@ export const tolerancePreviewRequestSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('fit'),
     expectedDrawingRef: drawingRefSchema,
-    holeDimensionIntentId: idSchema,
-    shaftDimensionIntentId: idSchema,
+    primaryDimensionIntentId: idSchema,
+    primaryFeatureClass: featureClassSchema,
+    secondaryDimensionIntentId: idSchema,
+    secondaryFeatureClass: featureClassSchema,
     basis: z.enum(['hole', 'shaft']),
     designation: z.string().min(5).max(17),
   }).strict(),

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createEmptyDrawing, type DimensionAnnotation } from '@vectorai/drawing-core';
+import { applySingleTolerance, type EngineeringAnnotationDraft } from '@vectorai/engineering-annotation';
+import type { DimensionPlanSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import type { DrawingSurfaceRuntime } from '@vectorai/drawing-workspace';
 import type { DrawingLayerRegistry } from '@vectorai/drawing-surface-api';
 import { DrawingSurface } from '@vectorai/drawing-viewer-react';
@@ -9,6 +11,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AnnotationWorkspace } from './AnnotationWorkspace';
+import { canvasLocalPoint } from './canvas-coordinates';
 import type { PartitionController } from './partition-controller';
 import type { DimensionChainController } from './dimension-chain-controller';
 import type { GdtController } from './gdt-controller';
@@ -52,7 +55,36 @@ function toleranceRemote(
       bands: [{ designation: request.featureClass === 'external' ? 'u6' : 'H7', featureClass: request.featureClass, category: 'unknown' as const, available: true }],
     })),
     previewTolerance: vi.fn(async (_sessionId, request) => {
-      if (request.type !== 'single') throw new Error('unexpected fit preview');
+      if (request.type === 'fit') {
+        if (request.secondaryDimensionIntentId === 'intent-3') {
+          return { ok: false as const, error: { code: 'REMOTE', message: 'FIT_PAIR_BASIC_SIZE_MISMATCH', details: {} } };
+        }
+        const holeDimensionIntentId = request.primaryFeatureClass === 'internal'
+          ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId;
+        const shaftDimensionIntentId = request.primaryFeatureClass === 'external'
+          ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId;
+        return toleranceSuccess({
+          type: 'fit' as const, drawingRef, holeDimensionIntentId, shaftDimensionIntentId, status: 'resolved' as const,
+          result: {
+            designation: request.designation, basis: request.basis,
+            hole: {
+              designation: 'H7', featureClass: 'internal' as const, basicSize: 13, unit: 'mm' as const,
+              upperDeviation: .018, lowerDeviation: 0, toleranceMagnitude: .018,
+              upperLimitSize: 13.018, lowerLimitSize: 13,
+              standardRef: { id: 'GB/T 1800', edition: '2020' },
+              ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:fit-hole' },
+            },
+            shaft: {
+              designation: 'g6', featureClass: 'external' as const, basicSize: 13, unit: 'mm' as const,
+              upperDeviation: -.006, lowerDeviation: -.017, toleranceMagnitude: .011,
+              upperLimitSize: 12.994, lowerLimitSize: 12.983,
+              standardRef: { id: 'GB/T 1800', edition: '2020' },
+              ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:fit-shaft' },
+            },
+            fitType: 'clearance' as const, minimumClearance: .006, maximumClearance: .035,
+          },
+        });
+      }
       return toleranceSuccess({
         type: 'single' as const,
         drawingRef,
@@ -92,11 +124,6 @@ describe('AnnotationWorkspace', () => {
       textPosition: [20, 10] as [number, number],
       definitionPoints: [[0, 0], [13, 0]] as [number, number][],
       engineeringIntentId: 'intent-1',
-      toleranceProjection: {
-        mode: 'bilateral' as const, upperDeviation: .044, lowerDeviation: .033, unit: 'mm' as const,
-        status: 'confirmed' as const, source: 'standard' as const, featureClass: 'external' as const,
-        fitDesignation: 'u6', displayPreference: 'both' as const, evidenceRefs: [],
-      },
       visible: true,
       quality: { status: 'confirmed' as const, evidenceRefs: [] },
     } satisfies DimensionAnnotation;
@@ -105,7 +132,6 @@ describe('AnnotationWorkspace', () => {
       id: 'dimension-2' as never,
       engineeringIntentId: 'intent-2',
       textPosition: [40, 10] as [number, number],
-      toleranceProjection: { ...dimension.toleranceProjection, featureClass: 'internal' as const, fitDesignation: 'H7' },
     } satisfies DimensionAnnotation;
     const unequalFitDimension = {
       ...structuredClone(fitDimension),
@@ -122,6 +148,7 @@ describe('AnnotationWorkspace', () => {
     const viewportValue = { x: 17, y: 23, scale: 4, width: 800, height: 600 };
     const selection = mutableObservable<readonly string[]>(['dimension-1']);
     const setSelection = vi.fn((ids: readonly string[]) => selection.set(ids));
+    const setViewport = vi.fn();
     const runtime = {
       snapshot: observable(snapshot),
       viewport: observable(viewportValue),
@@ -131,16 +158,36 @@ describe('AnnotationWorkspace', () => {
         sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
         busy: false, error: null,
       }),
-      actions: { setViewport: vi.fn(), setSelection, refresh: vi.fn(async () => undefined) },
+      actions: { setViewport, setSelection, refresh: vi.fn(async () => undefined) },
     } as unknown as DrawingSurfaceRuntime;
     const state = observable({ version: 1 as const, workspaceClaimed: true, activationEpoch: 1, workflow: { status: 'completed' as const } });
     const partition = {
       state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
       actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
     } as unknown as PartitionController;
-    const dimensionRefresh = vi.fn(async () => undefined);
+    const dimensionDraft: EngineeringAnnotationDraft = {
+      version: 1, drawingRef: snapshot.ref, datums: [],
+      intents: [dimension, fitDimension, unequalFitDimension].map((annotation) => ({
+        id: annotation.engineeringIntentId!, drawingRef: snapshot.ref, kind: annotation.dimensionKind,
+        targets: [], datumIds: [], nominalValue: annotation.computedValue!, unit: annotation.unit,
+        functionalRole: 'assembly' as const, source: 'manual' as const, status: 'confirmed' as const, evidenceIds: [],
+      })),
+      tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+    };
+    const dimensionState = mutableObservable({
+      plan: {
+        version: 1 as const, phase: 'editing' as const, drawingRef: snapshot.ref, draft: dimensionDraft,
+        canUndo: false, canRedo: false, updatedAt: 1,
+      },
+      busy: false, previewHeld: false, error: null,
+    });
+    type DimensionTestState = ReturnType<typeof dimensionState.getSnapshot>;
+    let appliedSnapshot: DimensionTestState['plan'] = dimensionState.getSnapshot().plan;
+    const dimensionRefresh = vi.fn(async () => {
+      dimensionState.set({ ...dimensionState.getSnapshot(), plan: appliedSnapshot });
+    });
     const dimensionChain = {
-      state: observable({ plan: { version: 1, phase: 'editing', drawingRef: snapshot.ref, canUndo: false, canRedo: false, updatedAt: 1 }, busy: false, previewHeld: false, error: null }),
+      state: dimensionState,
       actions: { refresh: dimensionRefresh, setPreviewHeld() {} }, dispose() {},
     } as unknown as DimensionChainController;
     const gdtRefresh = vi.fn(async () => undefined);
@@ -148,10 +195,21 @@ describe('AnnotationWorkspace', () => {
       state: observable({ plan: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
       actions: { refresh: gdtRefresh, setPreviewHeld() {} }, dispose() {},
     } as unknown as GdtController;
-    const editTolerance = vi.fn(async () => toleranceSuccess({
-      version: 1 as const, phase: 'editing' as const, drawingRef: snapshot.ref,
-      canUndo: true, canRedo: false, updatedAt: 2,
-    }));
+    const editTolerance = vi.fn(async () => {
+      appliedSnapshot = {
+        ...dimensionState.getSnapshot().plan,
+        draft: applySingleTolerance(dimensionDraft, {
+          designation: 'u6', featureClass: 'external', basicSize: 13, unit: 'mm',
+          upperDeviation: .044, lowerDeviation: .033, upperLimitSize: 13.044, lowerLimitSize: 13.033,
+          standardRef: { id: 'GB/T 1800', edition: '2020' },
+          ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:task-8' },
+        }, {
+          dimensionIntentId: 'intent-1', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+        }),
+        canUndo: true, updatedAt: 2,
+      };
+      return toleranceSuccess(appliedSnapshot as unknown as DimensionPlanSessionSnapshot);
+    });
     const tolerance = createToleranceController({
       sessionId: 'session-1',
       remote: toleranceRemote(snapshot.ref, editTolerance),
@@ -170,6 +228,7 @@ describe('AnnotationWorkspace', () => {
     });
     dimensionRefresh.mockClear();
     gdtRefresh.mockClear();
+    setViewport.mockClear();
     const entity = renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' });
     act(() => entity.props.onContextMenu({ clientX: 310, clientY: 170, preventDefault() {}, stopPropagation() {} }));
     const contextMenu = renderer!.root.findByProps({ 'data-annotation-dimension-context-menu': 'dimension-1' });
@@ -180,11 +239,13 @@ describe('AnnotationWorkspace', () => {
     expect(renderer!.root.findByProps({ 'aria-label': '公差与配合面板' }).props.title).toBe('公差与配合');
     expect(renderer!.root.findAllByProps({ 'data-panel': 'tolerance' })).toHaveLength(0);
 
+    await act(async () => renderer!.root.findByProps({ 'data-feature-class-choice': 'external' }).props.onClick());
     await act(async () => renderer!.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
     const preview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
     expect(preview.findByProps({ 'data-entity-id': 'dimension-1' }).props['data-preview-diff']).toBe('updated');
     expect(runtime.snapshot.getSnapshot()).toEqual(before.snapshot);
     expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
+    expect(setViewport).not.toHaveBeenCalled();
     expect(runtime.selection.getSnapshot()).toEqual(before.selection);
     expect(dimensionChain.state.getSnapshot()).toEqual(before.dimension);
     expect(editTolerance).not.toHaveBeenCalled();
@@ -194,6 +255,8 @@ describe('AnnotationWorkspace', () => {
     expect(dimensionRefresh).toHaveBeenCalledOnce();
     expect(gdtRefresh).toHaveBeenCalledOnce();
     expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
+    expect(setViewport).not.toHaveBeenCalled();
+    expect(renderer!.root.findAllByProps({ 'data-tolerance-designation': 'dimension-1' })).toHaveLength(1);
 
     tolerance.actions.requestClose();
     await act(async () => { await Promise.resolve(); });
@@ -211,24 +274,44 @@ describe('AnnotationWorkspace', () => {
     await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-2']));
     expect(tolerance.state.getSnapshot().fit).toMatchObject({
       selectingSecondTarget: false,
-      secondTarget: { dimensionIntentId: 'intent-2' },
+      secondTarget: {
+        dimensionIntentId: 'intent-2',
+        classification: { status: 'ambiguous', code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' },
+      },
     });
+    await act(async () => renderer!.root.findByProps({ 'data-fit-feature-class-choice': 'internal' }).props.onClick());
+    await act(async () => tolerance.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }));
+    expect(tolerance.state.getSnapshot().preview).toMatchObject({ type: 'fit', status: 'resolved' });
     expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-2']);
 
     await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
     await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-3']));
-    expect(tolerance.state.getSnapshot()).toMatchObject({ error: 'FIT_PAIR_BASIC_SIZE_MISMATCH', preview: null });
+    await act(async () => renderer!.root.findByProps({ 'data-fit-feature-class-choice': 'internal' }).props.onClick());
+    await act(async () => {
+      await expect(tolerance.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }))
+        .rejects.toThrow('FIT_PAIR_BASIC_SIZE_MISMATCH');
+    });
+    expect(tolerance.state.getSnapshot()).toMatchObject({ error: 'FIT_PAIR_BASIC_SIZE_MISMATCH', preview: null, canvasPreview: null });
     expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-3']);
 
+    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
+    const selectionBeforeBlank = runtime.selection.getSnapshot();
     await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange([]));
     expect(tolerance.state.getSnapshot()).toMatchObject({
-      visible: true, target: { dimensionIntentId: 'intent-1' }, fit: null, error: null,
+      visible: true, target: { dimensionIntentId: 'intent-1' }, fit: { selectingSecondTarget: false },
     });
-    expect(runtime.selection.getSnapshot()).toEqual(['dimension-1']);
+    expect(runtime.selection.getSnapshot()).toEqual(selectionBeforeBlank);
+    expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toContain('dimension-1');
+    expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
+    expect(setViewport).not.toHaveBeenCalled();
 
     act(() => renderer!.unmount());
     tolerance.dispose();
     vi.unstubAllGlobals();
+  });
+
+  it('converts browser client coordinates to canvas-local popup coordinates', () => {
+    expect(canvasLocalPoint({ x: 310, y: 170 }, { left: 110, top: 70 })).toEqual({ x: 200, y: 100 });
   });
 
   it('does not refit for dimension layout changes but still refits after a viewport resize', async () => {

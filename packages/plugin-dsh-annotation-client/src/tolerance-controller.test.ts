@@ -71,13 +71,17 @@ function remote(overrides: Partial<ToleranceRemote> = {}): ToleranceRemote {
         ? singlePreview(request.dimensionIntentId, request.designation, request.featureClass)
         : {
           type: 'fit' as const, drawingRef,
-          holeDimensionIntentId: request.holeDimensionIntentId,
-          shaftDimensionIntentId: request.shaftDimensionIntentId,
+          holeDimensionIntentId: request.primaryFeatureClass === 'internal'
+            ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId,
+          shaftDimensionIntentId: request.primaryFeatureClass === 'external'
+            ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId,
           status: 'resolved' as const,
           result: {
             designation: request.designation, basis: request.basis,
-            hole: singlePreview(request.holeDimensionIntentId, 'H7', 'internal').result,
-            shaft: singlePreview(request.shaftDimensionIntentId, 'g6', 'external').result,
+            hole: singlePreview(request.primaryFeatureClass === 'internal'
+              ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId, 'H7', 'internal').result,
+            shaft: singlePreview(request.primaryFeatureClass === 'external'
+              ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId, 'g6', 'external').result,
             fitType: 'clearance' as const, minimumClearance: .006, maximumClearance: .035,
           },
         })),
@@ -154,27 +158,31 @@ describe('createToleranceController', () => {
     expect(api.editTolerance).toHaveBeenCalledOnce();
   });
 
-  it('validates a complementary equal-size second target before fit preview', async () => {
-    const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
+  it('defers final fit class and basic-size diagnostics to Host preview', async () => {
+    const api = remote({
+      previewTolerance: vi.fn(async (_sessionId, request) => request.type === 'fit'
+        ? failure<TolerancePreviewResult>(request.primaryFeatureClass === request.secondaryFeatureClass
+          ? 'FIT_PAIR_CLASS_INCOMPATIBLE' : 'FIT_PAIR_BASIC_SIZE_MISMATCH')
+        : success(singlePreview(request.dimensionIntentId, request.designation, request.featureClass))),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
     await controller.actions.open({ ...externalTarget, classification: { status: 'resolved', featureClass: 'internal' } });
-    controller.actions.beginFit('hole');
-    controller.actions.selectFitTarget({
-      ...externalTarget, dimensionIntentId: 'shaft-1', classification: { status: 'resolved', featureClass: 'external' },
-    });
-    expect(controller.state.getSnapshot()).toMatchObject({
-      fit: { basis: 'hole', selectingSecondTarget: false, secondTarget: { dimensionIntentId: 'shaft-1' } }, error: null,
-    });
-
-    controller.actions.beginFit('hole');
+    await controller.actions.beginFit('hole');
     controller.actions.selectFitTarget({
       ...externalTarget, dimensionIntentId: 'hole-2', classification: { status: 'resolved', featureClass: 'internal' },
     });
-    expect(controller.state.getSnapshot()).toMatchObject({ error: 'FIT_PAIR_CLASS_INCOMPATIBLE', fit: { selectingSecondTarget: true } });
+    expect(controller.state.getSnapshot()).toMatchObject({ error: null, fit: { selectingSecondTarget: false } });
+    await expect(controller.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }))
+      .rejects.toThrow('FIT_PAIR_CLASS_INCOMPATIBLE');
 
+    await controller.actions.beginFit('hole');
     controller.actions.selectFitTarget({
       ...externalTarget, dimensionIntentId: 'shaft-2', basicSize: 14, classification: { status: 'resolved', featureClass: 'external' },
     });
-    expect(controller.state.getSnapshot()).toMatchObject({ error: 'FIT_PAIR_BASIC_SIZE_MISMATCH', fit: { selectingSecondTarget: true } });
+    expect(controller.state.getSnapshot()).toMatchObject({ error: null, fit: { selectingSecondTarget: false } });
+    await expect(controller.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }))
+      .rejects.toThrow('FIT_PAIR_BASIC_SIZE_MISMATCH');
+    expect(api.previewTolerance).toHaveBeenCalledTimes(2);
   });
 
   it('clamps restored bounds and persists preferences without preview values', async () => {
@@ -492,29 +500,49 @@ describe('createToleranceController', () => {
     });
   });
 
-  it('rejects a fit second target with either basic size missing and retains selection mode', async () => {
-    const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
+  it('classifies an ambiguous untoleranced fit target explicitly and lets Host validate missing size', async () => {
+    const api = remote({
+      previewTolerance: vi.fn(async (_sessionId, request) => request.type === 'fit'
+        ? failure<TolerancePreviewResult>('TOLERANCE_BASIC_SIZE_INVALID')
+        : success(singlePreview(request.dimensionIntentId, request.designation, request.featureClass))),
+    });
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
     await controller.actions.open({ ...externalTarget, classification: { status: 'resolved', featureClass: 'internal' } });
     await controller.actions.beginFit('hole');
     controller.actions.selectFitTarget({
       ...externalTarget, dimensionIntentId: 'shaft-missing', basicSize: undefined,
-      classification: { status: 'resolved', featureClass: 'external' },
+      classification: { status: 'ambiguous', code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' },
     });
     expect(controller.state.getSnapshot()).toMatchObject({
-      error: 'TOLERANCE_BASIC_SIZE_INVALID',
-      fit: { selectingSecondTarget: true, secondTarget: null },
+      fitDiagnostic: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS',
+      fit: { selectingSecondTarget: false, secondTarget: { dimensionIntentId: 'shaft-missing' } },
     });
+    controller.actions.chooseFitTargetFeatureClass('external');
+    await expect(controller.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }))
+      .rejects.toThrow('TOLERANCE_BASIC_SIZE_INVALID');
+    expect(api.previewTolerance).toHaveBeenCalledWith('s', expect.objectContaining({
+      primaryFeatureClass: 'internal', secondaryFeatureClass: 'external',
+      secondaryDimensionIntentId: 'shaft-missing',
+    }));
+    expect(controller.state.getSnapshot()).toMatchObject({
+      error: 'TOLERANCE_BASIC_SIZE_INVALID', preview: null, canvasPreview: null,
+    });
+  });
 
-    const missingPrimary = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
-    await missingPrimary.actions.open({
-      ...externalTarget, basicSize: undefined, classification: { status: 'resolved', featureClass: 'internal' },
-    });
-    await missingPrimary.actions.beginFit('hole');
-    missingPrimary.actions.selectFitTarget({
-      ...externalTarget, dimensionIntentId: 'shaft-1', classification: { status: 'resolved', featureClass: 'external' },
-    });
-    expect(missingPrimary.state.getSnapshot()).toMatchObject({
-      error: 'TOLERANCE_BASIC_SIZE_INVALID', fit: { selectingSecondTarget: true, secondTarget: null },
+  it('cancels only second-target picking and preserves popup work and decisions', async () => {
+    const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open({ ...externalTarget, classification: { status: 'resolved', featureClass: 'internal' } });
+    await controller.actions.preview({ kind: 'single', featureClass: 'internal', designation: 'H7' });
+    controller.actions.requestTarget({ ...externalTarget, dimensionIntentId: 'pending' });
+    await controller.actions.beginFit('hole');
+    const before = controller.state.getSnapshot();
+
+    controller.actions.cancelFitTargetSelection();
+
+    expect(controller.state.getSnapshot()).toMatchObject({
+      target: before.target, pendingTarget: before.pendingTarget, preview: before.preview,
+      selection: before.selection, override: before.override, dirty: before.dirty,
+      fit: { selectingSecondTarget: false }, fitDiagnostic: null,
     });
   });
 

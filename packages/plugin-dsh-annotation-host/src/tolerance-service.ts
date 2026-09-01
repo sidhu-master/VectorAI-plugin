@@ -82,10 +82,11 @@ export class ToleranceService {
         })),
       };
     }
-    const basicSize = requireEqualFitSize(plan, request.holeDimensionIntentId, request.shaftDimensionIntentId);
+    const { holeDimensionIntentId, shaftDimensionIntentId } = requireFitRoles(request);
+    const basicSize = requireEqualFitSize(plan, holeDimensionIntentId, shaftDimensionIntentId);
     return {
       type: 'fit', drawingRef: plan.drawingRef,
-      holeDimensionIntentId: request.holeDimensionIntentId, shaftDimensionIntentId: request.shaftDimensionIntentId,
+      holeDimensionIntentId, shaftDimensionIntentId,
       status: 'resolved',
       result: withFitToleranceMagnitudes(this.provider.resolveFit({
         basicSize, basis: request.basis, designation: request.designation,
@@ -116,6 +117,24 @@ export class ToleranceService {
     }
     return this.plans.editTolerance(sessionId, command, resolved);
   }
+}
+
+function requireFitRoles(request: Extract<TolerancePreviewRequest, { type: 'fit' }>): {
+  holeDimensionIntentId: string;
+  shaftDimensionIntentId: string;
+} {
+  if (request.primaryFeatureClass === request.secondaryFeatureClass) {
+    throw new Error('FIT_PAIR_CLASS_INCOMPATIBLE');
+  }
+  return request.primaryFeatureClass === 'internal'
+    ? {
+      holeDimensionIntentId: request.primaryDimensionIntentId,
+      shaftDimensionIntentId: request.secondaryDimensionIntentId,
+    }
+    : {
+      holeDimensionIntentId: request.secondaryDimensionIntentId,
+      shaftDimensionIntentId: request.primaryDimensionIntentId,
+    };
 }
 
 function withToleranceMagnitude(result: ResolvedStandardTolerance) {

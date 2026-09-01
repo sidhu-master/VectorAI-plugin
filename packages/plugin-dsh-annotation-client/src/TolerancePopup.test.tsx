@@ -59,7 +59,7 @@ function props(overrides: Partial<TolerancePopupProps> = {}): TolerancePopupProp
     onDiscardAndSwitch: vi.fn(), onApplyAndSwitch: vi.fn(),
     onTabChange: vi.fn(), onZoomChange: vi.fn(), onDisplayPreferenceChange: vi.fn(),
     onOverridePreview: vi.fn(), onRestoreStandard: vi.fn(), onRestoreRecommendation: vi.fn(),
-    onFeatureClassChoice: vi.fn(), onManualPreview: vi.fn(),
+    onFeatureClassChoice: vi.fn(), onFitTargetFeatureClassChoice: vi.fn(), onManualPreview: vi.fn(),
     ...overrides,
   };
 }
@@ -230,6 +230,18 @@ describe('TolerancePopup', () => {
     act(() => tree.root.findByProps({ 'data-preview-manual': true }).props.onClick());
     expect(value.onManualPreview).toHaveBeenCalledWith({ upperDeviation: .02 });
     expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+  });
+
+  it('shows an explicit class choice for an ambiguous untoleranced fit target', () => {
+    const ambiguous = { status: 'ambiguous' as const, code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' as const };
+    const { tree, value } = renderPopup({
+      tab: 'hole-fit', preview: null, fitTargetClassification: ambiguous,
+    });
+    expect(tree.root.findByProps({ 'data-fit-target-classification': true })).toBeDefined();
+    act(() => tree.root.findByProps({ 'data-fit-feature-class-choice': 'internal' }).props.onClick());
+    act(() => tree.root.findByProps({ 'data-fit-feature-class-choice': 'external' }).props.onClick());
+    expect(value.onFitTargetFeatureClassChoice).toHaveBeenNthCalledWith(1, 'internal');
+    expect(value.onFitTargetFeatureClassChoice).toHaveBeenNthCalledWith(2, 'external');
   });
 
   it('renders dirty target-switch decisions and wires both explicit outcomes', () => {

@@ -150,8 +150,10 @@ describe('ToleranceService', () => {
   it('returns Host-derived tolerance magnitudes for both fit members', () => {
     const { service } = setup();
     const preview = service.preview('session', {
-      type: 'fit', expectedDrawingRef: drawingRef, holeDimensionIntentId: 'intent-hole',
-      shaftDimensionIntentId: 'intent-shaft', basis: 'hole', designation: 'H7/g6',
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
+      basis: 'hole', designation: 'H7/g6',
     });
     if (preview.type !== 'fit') throw new Error('expected fit preview');
     expect(preview.result.hole.toleranceMagnitude).toBeCloseTo(
@@ -203,9 +205,21 @@ describe('ToleranceService', () => {
 
     plans.setDraft('session', draft(13, 14));
     expect(() => service.preview('session', {
-      type: 'fit', expectedDrawingRef: drawingRef, holeDimensionIntentId: 'intent-hole',
-      shaftDimensionIntentId: 'intent-shaft', basis: 'hole', designation: 'H7/g6',
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
+      basis: 'hole', designation: 'H7/g6',
     })).toThrow('FIT_PAIR_BASIC_SIZE_MISMATCH');
+  });
+
+  it('is the final authority for fit feature roles and preserves its diagnostic', () => {
+    const { service } = setup();
+    expect(() => service.preview('session', {
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'internal',
+      basis: 'hole', designation: 'H7/g6',
+    })).toThrow('FIT_PAIR_CLASS_INCOMPATIBLE');
   });
 
   it('applies a fit as one undo/redo step while preserving every unrelated annotation family', () => {

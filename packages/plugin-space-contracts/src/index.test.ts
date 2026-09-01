@@ -242,7 +242,9 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(tolerancePreviewRequestSchema.parse(previewRequest)).toEqual(previewRequest);
     expect(tolerancePreviewRequestSchema.parse({
       type: 'fit', expectedDrawingRef: request.expectedDrawingRef,
-      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole', designation: 'H7/g6',
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
+      basis: 'hole', designation: 'H7/g6',
     })).toMatchObject({ type: 'fit', designation: 'H7/g6' });
     expect(tolerancePreviewResultSchema.parse({
       type: 'single', drawingRef: request.expectedDrawingRef, dimensionIntentId: 'intent-1', status: 'resolved',

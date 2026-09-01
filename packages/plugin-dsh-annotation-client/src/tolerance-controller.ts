@@ -91,6 +91,7 @@ export interface ToleranceControllerState {
     selectingSecondTarget: boolean;
     secondTarget: ToleranceTarget | null;
   } | null;
+  fitDiagnostic: string | null;
   dirty: boolean;
   closeDecision: 'dirty' | null;
   busy: boolean;
@@ -123,6 +124,8 @@ export interface ToleranceController {
     apply(): Promise<void>;
     beginFit(basis: 'hole' | 'shaft'): Promise<void>;
     selectFitTarget(target: ToleranceTarget): void;
+    chooseFitTargetFeatureClass(featureClass: 'internal' | 'external'): void;
+    cancelFitTargetSelection(): void;
     setGeometry(geometry: PopupRect, options?: { userDragged?: boolean }): void;
     setTab(tab: TolerancePopupTab): void;
     setZoom(zoom: number): void;
@@ -167,6 +170,7 @@ export function createToleranceController(input: {
     override: null,
     displayPreference: 'deviations',
     fit: null,
+    fitDiagnostic: null,
     dirty: false,
     closeDecision: null,
     busy: false,
@@ -293,6 +297,7 @@ export function createToleranceController(input: {
       selection: null,
       override: null,
       fit: null,
+      fitDiagnostic: null,
       dirty: false,
       closeDecision: null,
       error: null,
@@ -408,7 +413,7 @@ export function createToleranceController(input: {
     async preview(selection) {
       const target = requireTarget();
       let request: TolerancePreviewRequest;
-      let normalized: ToleranceSelection;
+      let normalized: ToleranceSelection | null;
       if (selection.kind === 'single') {
         request = {
           type: 'single', expectedDrawingRef: target.drawingRef,
@@ -425,24 +430,31 @@ export function createToleranceController(input: {
         if (fit?.secondTarget === null || fit === null) throw new Error('FIT_PAIR_TARGET_REQUIRED');
         const primaryClass = resolvedFeatureClass(target);
         const secondaryClass = resolvedFeatureClass(fit.secondTarget);
-        const holeDimensionIntentId = primaryClass === 'internal' ? target.dimensionIntentId : fit.secondTarget.dimensionIntentId;
-        const shaftDimensionIntentId = secondaryClass === 'external' ? fit.secondTarget.dimensionIntentId : target.dimensionIntentId;
         request = {
           type: 'fit', expectedDrawingRef: target.drawingRef,
-          holeDimensionIntentId, shaftDimensionIntentId,
+          primaryDimensionIntentId: target.dimensionIntentId,
+          primaryFeatureClass: primaryClass,
+          secondaryDimensionIntentId: fit.secondTarget.dimensionIntentId,
+          secondaryFeatureClass: secondaryClass,
           basis: selection.basis, designation: selection.designation,
         };
-        normalized = {
-          kind: 'fit', basis: selection.basis, designation: selection.designation,
-          holeDimensionIntentId, shaftDimensionIntentId,
-          source: selection.source ?? 'manual', evidenceRefs: [...(selection.evidenceRefs ?? [])],
-        };
+        normalized = null;
       }
       const epoch = targetEpoch;
       const generation = ++previewGeneration;
       const isCurrent = () => epoch === targetEpoch && generation === previewGeneration;
       const result = await run(() => remote().previewTolerance(input.sessionId, request), epoch, isCurrent);
       if (!isCurrent() || !previewMatchesRequest(result, request)) return;
+      if (selection.kind === 'fit') {
+        if (result.type !== 'fit') return;
+        normalized = {
+          kind: 'fit', basis: selection.basis, designation: selection.designation,
+          holeDimensionIntentId: result.holeDimensionIntentId,
+          shaftDimensionIntentId: result.shaftDimensionIntentId,
+          source: selection.source ?? 'manual', evidenceRefs: [...(selection.evidenceRefs ?? [])],
+        };
+      }
+      if (normalized === null) return;
       const preview = clone(result);
       pendingOverrideEdit = null;
       selectionEpoch = epoch;
@@ -597,8 +609,12 @@ export function createToleranceController(input: {
       const isCurrent = () => epoch === targetEpoch && generation === fitCatalogGeneration;
       update({
         tab: basis === 'hole' ? 'hole-fit' : 'shaft-fit',
-        fit: { basis, selectingSecondTarget: true, secondTarget: null },
+        fit: {
+          basis, selectingSecondTarget: true,
+          secondTarget: current.fit?.basis === basis ? current.fit.secondTarget : null,
+        },
         fitCatalogs: null,
+        fitDiagnostic: null,
         error: null,
       });
       persist();
@@ -627,25 +643,55 @@ export function createToleranceController(input: {
       update({ fitCatalogs: { internal: clone(internal), external: clone(external) } });
     },
     selectFitTarget(target) {
-      const primary = requireTarget();
+      requireTarget();
       const fit = current.fit;
       if (fit === null) throw new Error('FIT_PAIR_SELECTION_INACTIVE');
-      if (primary.dimensionIntentId === target.dimensionIntentId
-        || primary.classification.status !== 'resolved'
-        || target.classification.status !== 'resolved'
-        || primary.classification.featureClass === target.classification.featureClass) {
-        update({ error: 'FIT_PAIR_CLASS_INCOMPATIBLE' });
+      previewGeneration += 1;
+      selectionEpoch = null;
+      pendingOverrideEdit = null;
+      const invalidatedPreview = {
+        preview: null,
+        canvasPreview: null,
+        selection: null,
+        override: null,
+        dirty: false,
+        closeDecision: null,
+      } as const;
+      if (target.classification.status === 'unsupported') {
+        update({ ...invalidatedPreview, fitDiagnostic: target.classification.code });
         return;
       }
-      if (!finite(primary.basicSize) || !finite(target.basicSize)) {
-        update({ error: 'TOLERANCE_BASIC_SIZE_INVALID' });
-        return;
-      }
-      if (primary.basicSize !== target.basicSize) {
-        update({ error: 'FIT_PAIR_BASIC_SIZE_MISMATCH' });
-        return;
-      }
-      update({ fit: { ...fit, selectingSecondTarget: false, secondTarget: clone(target) }, error: null });
+      update({
+        ...invalidatedPreview,
+        fit: { ...fit, selectingSecondTarget: false, secondTarget: clone(target) },
+        fitDiagnostic: target.classification.status === 'ambiguous' ? target.classification.code : null,
+        error: null,
+      });
+    },
+    chooseFitTargetFeatureClass(featureClass) {
+      const fit = current.fit;
+      if (fit?.secondTarget === null || fit === null) throw new Error('FIT_PAIR_TARGET_REQUIRED');
+      previewGeneration += 1;
+      selectionEpoch = null;
+      pendingOverrideEdit = null;
+      update({
+        fit: {
+          ...fit,
+          secondTarget: { ...fit.secondTarget, classification: { status: 'resolved', featureClass } },
+        },
+        fitDiagnostic: null,
+        preview: null,
+        canvasPreview: null,
+        selection: null,
+        override: null,
+        dirty: false,
+        closeDecision: null,
+      });
+    },
+    cancelFitTargetSelection() {
+      const fit = current.fit;
+      if (fit === null) return;
+      update({ fit: { ...fit, selectingSecondTarget: false }, fitDiagnostic: null });
     },
     setGeometry(geometry, options) {
       update({ geometry: clampGeometry(geometry, viewport), userPositioned: current.userPositioned || options?.userDragged === true });
@@ -780,8 +826,9 @@ function previewMatchesRequest(result: TolerancePreviewResult, request: Toleranc
       && result.result.featureClass === request.featureClass
       && result.result.designation === request.designation
     : request.type === 'fit' && result.type === 'fit'
-      && result.holeDimensionIntentId === request.holeDimensionIntentId
-      && result.shaftDimensionIntentId === request.shaftDimensionIntentId
+      && new Set([result.holeDimensionIntentId, result.shaftDimensionIntentId]).size === 2
+      && new Set([result.holeDimensionIntentId, result.shaftDimensionIntentId]).has(request.primaryDimensionIntentId)
+      && new Set([result.holeDimensionIntentId, result.shaftDimensionIntentId]).has(request.secondaryDimensionIntentId)
       && result.result.basis === request.basis
       && result.result.designation === request.designation;
 }

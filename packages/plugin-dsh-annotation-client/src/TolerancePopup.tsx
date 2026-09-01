@@ -24,6 +24,7 @@ export interface TolerancePopupProps {
   busy: boolean;
   error: string | null;
   fitStatus?: string | null;
+  fitTargetClassification?: ToleranceTarget['classification'] | null;
   override?: { upperDeviation: number; lowerDeviation: number } | null;
   onPreview(designation: string): void | Promise<void>;
   onApply(): void | Promise<void>;
@@ -40,6 +41,7 @@ export interface TolerancePopupProps {
   onRestoreStandard(): void;
   onRestoreRecommendation(): void;
   onFeatureClassChoice(featureClass: 'internal' | 'external'): void;
+  onFitTargetFeatureClassChoice(featureClass: 'internal' | 'external'): void;
   onManualPreview(value: { upperDeviation?: number; lowerDeviation?: number }): void;
 }
 
@@ -324,6 +326,16 @@ export function TolerancePopup(props: TolerancePopupProps) {
         {fitMode && <p data-fit-selection-status={true}>
           {props.fitStatus ?? '选择配合对象'}
         </p>}
+        {fitMode && props.fitTargetClassification?.status === 'ambiguous' && <div
+          className="vai-tolerance-popup__class-choice"
+          data-fit-target-classification={true}
+        >
+          <span>请选择配合对象类型</span>
+          <button type="button" data-fit-feature-class-choice="internal"
+            onClick={() => props.onFitTargetFeatureClassChoice('internal')}>孔/内部尺寸</button>
+          <button type="button" data-fit-feature-class-choice="external"
+            onClick={() => props.onFitTargetFeatureClassChoice('external')}>轴/外部尺寸</button>
+        </div>}
       </section>
     </div>}
 
