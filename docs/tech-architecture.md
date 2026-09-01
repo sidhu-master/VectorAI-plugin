@@ -150,7 +150,7 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 
 `golden-shaft-001/target.dxf` 是测试 Oracle，不是运行时模板。`pnpm e2e:golden-dimension-chain` 从初始 DXF、工程资料和公共 API 完整重建方案，比较 8 个显示区间、3 个闭环区间和 3 条链，并由源码守卫防止样本文件名或闭环常数进入生产决策。
 
-`ToleranceRuleProvider` 是同步、确定性、宿主无关的扩展口。同一规则 ID、不可变版本、名义值、单位和规范化输入必须产生相同输出。工程文档证据进入分区时已经换算为 Drawing 坐标单位，因此后续尺寸拓扑也必须标记为 Drawing 单位；源文档单位只描述输入证据，不能再次套用于已规范化坐标。Host 在 provider 权威边界把 `mm/cm/m/in` 的尺寸意图统一换算为规范毫米值；provider 输出、持久化 `inputs.basicSize`、输入摘要和 reconciliation 比较都使用这个毫米值，因此同一物理尺寸不会因表达单位变化而失效。输入用 UTF-8 canonical JSON 的 SHA-256 摘要记录。规则模块不能访问 DSH、模型、网络、React、Node 文件系统或可变 Drawing；AI candidate 不具有最终数值权限。通用规则测试仍可使用 Fixture provider，生产标准选择走下述具名、版本化标准 provider。
+`ToleranceRuleProvider` 是同步、确定性、宿主无关的扩展口。同一规则 ID、不可变版本、名义值、单位和规范化输入必须产生相同输出。工程文档证据进入分区时已经换算为 Drawing 坐标单位，因此后续尺寸拓扑也必须标记为 Drawing 单位；用于候选匹配的原始文档 region/anchor 另行生成 Drawing-unit 视图，不能把源文档单位再次套用于已规范化坐标。Host 在 provider 权威边界把 `mm/cm/m/in` 的尺寸意图统一换算为规范毫米值；provider 输出、持久化 `inputs.basicSize`、输入摘要和 reconciliation 比较都使用这个毫米值，因此同一物理尺寸不会因表达单位变化而失效。输入用 UTF-8 canonical JSON 的 SHA-256 摘要记录。规则模块不能访问 DSH、模型、网络、React、Node 文件系统或可变 Drawing；AI candidate 不具有最终数值权限。通用规则测试仍可使用 Fixture provider，生产标准选择走下述具名、版本化标准 provider。
 
 公差与配合选择器仍完全属于第二层插件。`engineering-annotation` 提供版本化、同步、离线的 `ToleranceStandardProvider`；当前 GB/T 1800-2020 数据集明确公布自身完整度和数值来源，未授权的规格单元返回 unavailable，不能从黄金图纸或相邻表格值推断。DSH Host 读取绑定 Drawing revision 的尺寸意图，负责 catalog、preview、apply、manual override、restore 以及配合双方的一笔原子 Undo/Redo；Client 只维护单实例、非模态 popup、临时画布预览和窗口偏好，不计算偏差，也不因 popup 预览改变 viewport。AI 只能推荐功能意图或代号，所有上/下偏差、极限尺寸和配合结果都由本地 provider 确定性解析并由 Host 复核。
 

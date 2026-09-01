@@ -104,10 +104,8 @@ describe('DimensionInferenceService', () => {
 
   it('keeps normalized millimetre partition coordinates authoritative when the source engineering document is inch', () => {
     const normalizedPartition = partition();
-    normalizedPartition.axis.zMax = 15;
-    normalizedPartition.segments[0]!.zEnd = 5;
-    normalizedPartition.segments[1]!.zStart = 5;
-    normalizedPartition.segments[1]!.zEnd = 15;
+    normalizedPartition.axis.zMax = 25;
+    normalizedPartition.segments[1]!.zEnd = 25;
     const delegate = createGbt1800Provider();
     const providerSizes: number[] = [];
     const provider: ToleranceStandardProvider = {
@@ -120,10 +118,24 @@ describe('DimensionInferenceService', () => {
     );
     const workflow = service(normalizedPartition, plans, {
       drawingUnit: 'mm',
-      engineeringText: '[drawing]\nunit=in',
+      engineeringText: `[drawing]
+unit=in
+[region:bearing:B01]
+name=inch source bearing
+center_z=0.6889763779527559
+width=0.5905511811023622`,
     });
 
-    const inferred = workflow.start(agent).draft?.intents.find(({ nominalValue }) => nominalValue === 15);
+    const started = workflow.start(agent);
+    const candidate = started.draft?.axialScheme?.candidates.find(({ nominalValue }) => nominalValue === 15);
+    expect(candidate).toMatchObject({
+      nominalValue: 15, required: true,
+      evidenceIds: expect.arrayContaining(['document:region:B01']),
+    });
+    expect(started.draft?.axialScheme?.diagnostics).not.toContainEqual(expect.objectContaining({
+      code: 'DIMENSION_STATION_UNRESOLVED', evidenceIds: ['document:region:B01'],
+    }));
+    const inferred = started.draft?.intents.find(({ nominalValue }) => nominalValue === 15);
     expect(inferred).toMatchObject({ nominalValue: 15, unit: 'mm' });
     if (inferred === undefined) throw new Error('expected inferred 15 mm intent');
 
@@ -140,6 +152,30 @@ describe('DimensionInferenceService', () => {
     expect(providerSizes).toEqual([15, 15]);
     expect(plans.get(String(agent.id)).draft?.tolerances).toContainEqual(expect.objectContaining({
       dimensionIntentId: inferred.id, inputs: expect.objectContaining({ basicSize: 15 }),
+    }));
+  });
+
+  it('maps centimetre document regions onto millimetre topology stations', () => {
+    const normalizedPartition = partition();
+    normalizedPartition.axis.zMax = 25;
+    normalizedPartition.segments[1]!.zEnd = 25;
+    const started = service(normalizedPartition, undefined, {
+      drawingUnit: 'mm',
+      engineeringText: `[drawing]
+unit=cm
+[region:bearing:B02]
+name=centimetre source bearing
+center_z=1.75
+width=1.5`,
+    }).start(agent);
+
+    expect(started.draft?.axialScheme?.candidates).toContainEqual(expect.objectContaining({
+      nominalValue: 15,
+      required: true,
+      evidenceIds: expect.arrayContaining(['document:region:B02']),
+    }));
+    expect(started.draft?.axialScheme?.diagnostics).not.toContainEqual(expect.objectContaining({
+      code: 'DIMENSION_STATION_UNRESOLVED', evidenceIds: ['document:region:B02'],
     }));
   });
 });

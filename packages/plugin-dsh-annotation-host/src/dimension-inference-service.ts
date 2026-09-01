@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Agent } from '@deepseek-ai/dsh-agent';
+import { convertLength, type LengthUnit } from '@vectorai/drawing-core';
 import {
   buildAxialTopology,
   generateAxialDimensionCandidates,
@@ -14,6 +15,7 @@ import {
   type EngineeringAnnotationRevision,
   type PartitionDraft,
   type PartitionRevision,
+  type ParsedEngineeringDocument,
 } from '@vectorai/engineering-annotation';
 import type {
   DimensionPlanSessionSnapshot,
@@ -47,7 +49,10 @@ export class DimensionInferenceService {
     const partitionValue = partition.draft ?? partition.confirmed;
     if (!partitionValue) throw new Error('DIMENSION_PARTITION_REQUIRED');
     assertSameRef(drawing.ref, partitionValue.drawingRef);
-    const document = parseEngineeringDocument(this.documents.getStagedEngineeringText(agent) ?? '');
+    const document = normalizeDocumentCoordinates(
+      parseEngineeringDocument(this.documents.getStagedEngineeringText(agent) ?? ''),
+      drawing.document.unitSystem.length,
+    );
     const domainPartition = partitionValue as unknown as PartitionDraft | PartitionRevision;
     const topology = buildAxialTopology({
       partition: domainPartition,
@@ -110,4 +115,28 @@ function assertSameRef(left: DrawingRef, right: DrawingRef): void {
   if (left.drawingId !== right.drawingId || left.revision !== right.revision) {
     throw new Error('DIMENSION_PARTITION_STALE');
   }
+}
+
+function normalizeDocumentCoordinates(
+  document: ParsedEngineeringDocument,
+  drawingUnit: LengthUnit,
+): ParsedEngineeringDocument {
+  const sourceUnit = document.drawing.unit ?? drawingUnit;
+  if (sourceUnit === drawingUnit && document.drawing.unit === drawingUnit) return document;
+  return {
+    ...document,
+    drawing: { ...document.drawing, unit: drawingUnit },
+    regions: document.regions.map((region) => ({
+      ...region,
+      ...(region.interval === undefined ? {} : {
+        interval: {
+          start: convertLength(region.interval.start, sourceUnit, drawingUnit),
+          end: convertLength(region.interval.end, sourceUnit, drawingUnit),
+        },
+      }),
+      ...(region.outerDiameter === undefined ? {} : {
+        outerDiameter: convertLength(region.outerDiameter, sourceUnit, drawingUnit),
+      }),
+    })),
+  };
 }
