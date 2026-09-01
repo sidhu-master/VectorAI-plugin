@@ -77,13 +77,14 @@ export class GdtService {
 function editableBase(snapshot: DimensionPlanSessionSnapshot, drawingRef: DrawingRef): EngineeringAnnotationDraft {
   const value = snapshot.draft ?? snapshot.confirmed;
   if (!value || value.drawingRef.drawingId !== drawingRef.drawingId || value.drawingRef.revision !== drawingRef.revision) {
-    return { version: 1, drawingRef, datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [] };
+    return { version: 1, drawingRef, datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [] };
   }
   return {
     version: 1,
     drawingRef,
     datums: structuredClone(value.datums), intents: structuredClone(value.intents),
-    tolerances: structuredClone(value.tolerances), geometricTolerances: structuredClone(value.geometricTolerances),
+    tolerances: structuredClone(value.tolerances), fitAssignments: structuredClone(value.fitAssignments),
+    geometricTolerances: structuredClone(value.geometricTolerances),
     chains: structuredClone(value.chains), dependencies: structuredClone(value.dependencies), diagnostics: structuredClone(value.diagnostics),
     ...(value.axialScheme === undefined ? {} : { axialScheme: structuredClone(value.axialScheme) }),
     ...('id' in value ? { baseRevisionId: value.id } : value.baseRevisionId === undefined ? {} : { baseRevisionId: value.baseRevisionId }),

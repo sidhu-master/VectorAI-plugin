@@ -84,7 +84,7 @@ describe('planEngineeringAnnotations', () => {
     });
 
     expect(plan.annotations.filter(({ type }) => type === 'centerline')).toHaveLength(1);
-    expect(plan.annotations.filter((item) => item.type === 'dimension' && item.dimensionKind === 'radius')
+    expect(plan.annotations.filter((item): item is DimensionAnnotation => item.type === 'dimension' && item.dimensionKind === 'radius')
       .map((item) => item.displayText).sort()).toEqual(['R2', 'R3']);
   });
 
@@ -102,7 +102,7 @@ describe('planEngineeringAnnotations', () => {
       document, ref: { drawingId: 'drawing-fillet', revision: 1 }, objective: '标注圆角', annotationKinds: ['radius'],
     });
 
-    expect(plan.annotations.filter((item) => item.type === 'dimension' && item.dimensionKind === 'radius')
+    expect(plan.annotations.filter((item): item is DimensionAnnotation => item.type === 'dimension' && item.dimensionKind === 'radius')
       .map((item) => item.displayText)).toEqual(['R2']);
   });
 
@@ -205,10 +205,8 @@ describe('planEngineeringAnnotations', () => {
     expect(refreshed.program?.operations[0]).not.toEqual(expect.objectContaining({ nodeIds: expect.arrayContaining(['manual-angle']) }));
 
     const staleAssociation = structuredClone(committed);
-    staleAssociation.relations[0] = {
-      ...staleAssociation.relations[0]!,
-      geometryIds: [] as never,
-    };
+    const staleRelation = staleAssociation.relations[0] as typeof first.associations[number];
+    staleRelation.geometryIds = [];
     const refreshedAssociation = planEngineeringAnnotations({ ...input, document: staleAssociation });
     expect(refreshedAssociation.program?.operations).toEqual([
       { kind: 'delete_nodes', nodeIds: [first.associations[0]!.id, first.annotations[0]!.id] },

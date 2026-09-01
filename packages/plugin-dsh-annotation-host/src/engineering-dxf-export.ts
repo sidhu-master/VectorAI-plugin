@@ -2,6 +2,7 @@
 
 import {
   exportDrawingDxf,
+  type AnnotationNode,
   type DrawingDocument,
   type DxfBlockGraphic,
   type DxfExportEntity,
@@ -9,6 +10,10 @@ import {
   type GeometryNode,
   type Vec2,
 } from '@vectorai/drawing-core';
+import {
+  projectEngineeringAnnotations,
+  type EngineeringAnnotationDraft as DomainEngineeringAnnotationDraft,
+} from '@vectorai/engineering-annotation';
 import {
   allocateAxialDimensionLanes,
   type AxialDimensionScheme,
@@ -60,7 +65,44 @@ export function exportEngineeringDrawingDxf(
   const planConfirmed = plan.confirmed !== undefined && visible === plan.confirmed;
   entities.push(...datumEntities(visible, cadProjection.document, planConfirmed, caxaCompatible, presentation));
   entities.push(...gdtEntities(visible, cadProjection.document, planConfirmed, caxaCompatible, presentation));
-  return normalizeCadDxf(exportDrawingDxf(cadProjection.document, { profile, entities }));
+  const documentWithPortableTolerances = projectPlanTolerances(cadProjection.document, visible);
+  return normalizeCadDxf(exportDrawingDxf(documentWithPortableTolerances, { profile, entities }));
+}
+
+/**
+ * Project only the portable tolerance result onto dimensions that the Drawing
+ * already owns. IDs, geometry, layout, source layers, visibility and every
+ * unrelated annotation remain authoritative in the first-layer document.
+ */
+function projectPlanTolerances(
+  document: DrawingDocument,
+  plan: NonNullable<DimensionPlanSessionSnapshot['draft'] | DimensionPlanSessionSnapshot['confirmed']>,
+): DrawingDocument {
+  const intentIds = new Set(plan.intents.map(({ id }) => id));
+  const toleranceIntentIds = new Set(plan.tolerances.map(({ dimensionIntentId }) => dimensionIntentId));
+  const existingIntentIds = new Set(document.annotations.flatMap((node) => (
+    node.type === 'dimension' && node.engineeringIntentId !== undefined ? [node.engineeringIntentId] : []
+  )));
+  const projected = projectEngineeringAnnotations({
+    draft: plan as unknown as DomainEngineeringAnnotationDraft,
+    orderedIntentIds: plan.intents.map(({ id }) => id).filter((id) => existingIntentIds.has(id)),
+    existingAnnotations: document.annotations,
+  }).annotations;
+  const toleranceByIntentId = new Map(projected.map(({ engineeringIntentId, toleranceProjection }) => (
+    [engineeringIntentId!, toleranceProjection] as const
+  )));
+  const annotations: AnnotationNode[] = document.annotations.map((node) => {
+    if (node.type !== 'dimension' || node.engineeringIntentId === undefined || !intentIds.has(node.engineeringIntentId)) {
+      return node;
+    }
+    const toleranceProjection = toleranceByIntentId.get(node.engineeringIntentId);
+    if (toleranceProjection !== undefined) return { ...node, toleranceProjection };
+    if (!toleranceIntentIds.has(node.engineeringIntentId)) return node;
+    const next = { ...node };
+    delete next.toleranceProjection;
+    return next;
+  });
+  return { ...document, annotations };
 }
 
 function resolveExportProfile(profile: EngineeringDxfExportOptions['profile']): DxfExportProfile {

@@ -2,7 +2,7 @@
 
 > 状态：当前架构与已批准目标的权威说明
 >
-> 更新日期：2026-08-25
+> 更新日期：2026-09-01
 
 ## 1. 架构结论
 
@@ -150,7 +150,13 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 
 `golden-shaft-001/target.dxf` 是测试 Oracle，不是运行时模板。`pnpm e2e:golden-dimension-chain` 从初始 DXF、工程资料和公共 API 完整重建方案，比较 8 个显示区间、3 个闭环区间和 3 条链，并由源码守卫防止样本文件名或闭环常数进入生产决策。
 
-`ToleranceRuleProvider` 是同步、确定性、宿主无关的扩展口。同一规则 ID、不可变版本、名义值、单位和规范化输入必须产生相同输出。输入用 UTF-8 canonical JSON 的 SHA-256 摘要记录。规则模块不能访问 DSH、模型、网络、React、Node 文件系统或可变 Drawing；AI candidate 不具有最终数值权限。当前仅测试和 E2E 使用 Fixture provider，尚未包含生产公差公式。
+`ToleranceRuleProvider` 是同步、确定性、宿主无关的扩展口。同一规则 ID、不可变版本、名义值、单位和规范化输入必须产生相同输出。输入用 UTF-8 canonical JSON 的 SHA-256 摘要记录。规则模块不能访问 DSH、模型、网络、React、Node 文件系统或可变 Drawing；AI candidate 不具有最终数值权限。通用规则测试仍可使用 Fixture provider，生产标准选择走下述具名、版本化标准 provider。
+
+公差与配合选择器仍完全属于第二层插件。`engineering-annotation` 提供版本化、同步、离线的 `ToleranceStandardProvider`；当前 GB/T 1800-2020 数据集明确公布自身完整度和数值来源，未授权的规格单元返回 unavailable，不能从黄金图纸或相邻表格值推断。DSH Host 读取绑定 Drawing revision 的尺寸意图，负责 catalog、preview、apply、manual override、restore 以及配合双方的一笔原子 Undo/Redo；Client 只维护单实例、非模态 popup、临时画布预览和窗口偏好，不计算偏差，也不因 popup 预览改变 viewport。AI 只能推荐功能意图或代号，所有上/下偏差、极限尺寸和配合结果都由本地 provider 确定性解析并由 Host 复核。
+
+确认或已确定解析的第二层记录先通过统一 projector 变成第一层可移植 `ToleranceProjection`。Drawing/Core、通用 Viewer 和 DXF exporter 只消费这个 projection，不读取 provider 表、推荐状态或 popup session。投影到既有尺寸时只替换对应 `toleranceProjection`；尺寸 ID、几何、文字位置、源图层、可见性、剖面、尺寸链、基准、GD&T、直径和开口角均保持第一层/原计划权威。
+
+R2013 DXF 对跨零偏差使用每个 `DIMENSION` 的 ACAD `DSTYLE` XDATA：`DIMTOL=1`、`DIMTP=upper`、`DIMTM=abs(lower)`、`DIMTDEC=profile tolerance decimals`，并保持整数/实数组代码类型。上下偏差同号时禁止写入会丢失符号的 native `DIMTOL`，改用带显式正负号的 stacked MText；代号、两项有效偏差、feature class 和 standard ref 同时写入小于 255 bytes 的版本化 `VECTORAI` XDATA。designation-only 展示不会暗中启用 native tolerance，旧 `tolerance.upper/lower` 数据仍按旧文本路径输出且不冒充标准语义。
 
 确认后的第二层 revision 通过 `projectEngineeringAnnotations` 生成第一层 `DimensionAnnotation`，DXF 只格式化 portable projection，绝不回调规则提供器。第二层标注计划使用独立 durable envelope 保存 snapshot、undo、redo 和 `lastConfirmed`，先成功落盘再发布内存状态；Drawing revision 变化进入 `needs-rebase`。
 

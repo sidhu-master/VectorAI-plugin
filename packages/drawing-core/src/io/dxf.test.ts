@@ -4,8 +4,57 @@ import { describe, expect, it } from 'vitest';
 
 import { createEmptyDrawing, type DimensionAnnotation } from '../document';
 import { exportDrawingDxf } from './dxf';
+import { DEFAULT_DXF_EXPORT_PROFILE } from './dxf-profile';
 
 const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+const gbProfile = {
+  ...DEFAULT_DXF_EXPORT_PROFILE,
+  cadConvention: 'gb' as const,
+  dimensionStyles: DEFAULT_DXF_EXPORT_PROFILE.dimensionStyles.map((style) => ({
+    ...style,
+    toleranceDecimalPlaces: 3,
+  })),
+};
+
+function toleranceDimension(
+  id: string,
+  toleranceProjection: NonNullable<DimensionAnnotation['toleranceProjection']>,
+): DimensionAnnotation {
+  return {
+    id: id as never,
+    type: 'dimension',
+    dimensionKind: 'linear',
+    associationStatus: 'resolved',
+    targets: [],
+    computedValue: 13,
+    displayText: '13',
+    unit: 'mm',
+    textPosition: [6.5, 5],
+    definitionPoints: [[0, 0], [13, 0]],
+    visible: true,
+    quality,
+    toleranceProjection,
+  };
+}
+
+function dxfEntities(dxf: string, type: string): string[] {
+  const lines = dxf.split(/\r?\n/);
+  const records: string[][] = [];
+  let current: string[] | undefined;
+  for (let index = 0; index + 1 < lines.length; index += 2) {
+    const pair = [lines[index]!, lines[index + 1]!];
+    if (pair[0].trim() === '0') {
+      if (current !== undefined) records.push(current);
+      current = pair;
+    } else if (current !== undefined) {
+      current.push(...pair);
+    }
+  }
+  if (current !== undefined) records.push(current);
+  return records
+    .filter((record) => record[1]?.trim() === type)
+    .map((record) => `${record.join('\r\n')}\r\n`);
+}
 
 describe('exportDrawingDxf', () => {
   it('exports canonical geometry and annotations as a unit-aware ASCII DXF drawing', () => {
@@ -134,11 +183,138 @@ describe('exportDrawingDxf', () => {
     ];
 
     const dxf = exportDrawingDxf(document);
-    expect(dxf).toContain('1\r\n10 +0.02/-0.01');
-    expect(dxf).toContain('1\r\n10 +0.02/0');
+    const [bilateral, unilateral] = dxfEntities(dxf, 'DIMENSION');
+    expect(bilateral).toContain('1001\r\nACAD');
+    expect(bilateral).toMatch(/1070\r\n47\r\n1040\r\n0\.02/);
+    expect(bilateral).toMatch(/1070\r\n48\r\n1040\r\n0\.01/);
+    expect(unilateral).toContain('1001\r\nACAD');
+    expect(unilateral).toMatch(/1070\r\n48\r\n1040\r\n0(?:\r\n|$)/);
     expect(dxf).toContain('1\r\n10 [10.02/9.98]');
     expect(dxf).toContain('1\r\n10 H7');
     expect(dxf).toContain('1\r\n10 +0.03/-0.02');
+  });
+
+  it('exports sign-spanning deviations as correctly typed native dimension-style overrides', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-native-tolerance' }, now: () => 1 });
+    document.annotations = [toleranceDimension('bilateral', {
+      mode: 'bilateral', upperDeviation: .02, lowerDeviation: -.01, unit: 'mm',
+      source: 'standard', status: 'confirmed', evidenceRefs: ['standard:test'],
+    })];
+
+    const dxf = exportDrawingDxf(document, { profile: gbProfile });
+    const [entity] = dxfEntities(dxf, 'DIMENSION');
+
+    expect(dxf).toMatch(/0\r\nTABLE\r\n2\r\nAPPID[\s\S]*?2\r\nACAD[\s\S]*?2\r\nVECTORAI/);
+    expect(entity).toContain('1001\r\nACAD\r\n1000\r\nDSTYLE\r\n1002\r\n{');
+    expect(entity).toMatch(/1070\r\n71\r\n1070\r\n1/);
+    expect(entity).toMatch(/1070\r\n47\r\n1040\r\n0\.02/);
+    expect(entity).toMatch(/1070\r\n48\r\n1040\r\n0\.01/);
+    expect(entity).toMatch(/1070\r\n272\r\n1070\r\n3/);
+    expect(entity).toContain('1002\r\n}');
+    expect(entity).not.toContain('\\S+0.02^-0.01;');
+  });
+
+  it('preserves positive same-sign fit deviations as explicit stacked text and compact semantic XDATA', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-u6-tolerance' }, now: () => 1 });
+    document.annotations = [toleranceDimension('u6', {
+      mode: 'bilateral', fitDesignation: 'u6', upperDeviation: .044, lowerDeviation: .033, unit: 'mm',
+      source: 'standard', status: 'confirmed', featureClass: 'external',
+      standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both',
+      evidenceRefs: ['standard:u6'],
+    })];
+
+    const dxf = exportDrawingDxf(document, { profile: gbProfile });
+    const [entity] = dxfEntities(dxf, 'DIMENSION');
+    const payload = entity?.match(/1001\r\nVECTORAI\r\n1000\r\n([^\r]+)/)?.[1];
+
+    expect(entity).toContain('\\S+0.044^+0.033;');
+    expect(entity).toContain('1\r\n\\A1;<>{\\C3;u6}{\\C2;{\\H0.71x;\\S+0.044^+0.033;}}');
+    expect(entity).not.toContain('1001\r\nACAD');
+    expect(payload).toBeDefined();
+    expect(new TextEncoder().encode(payload).byteLength).toBeLessThan(255);
+    expect(JSON.parse(payload!)).toEqual({
+      version: 1,
+      designation: 'u6',
+      upperDeviation: .044,
+      lowerDeviation: .033,
+      featureClass: 'external',
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+    });
+
+    const [defaultProfileEntity] = dxfEntities(exportDrawingDxf(document), 'DIMENSION');
+    expect(defaultProfileEntity).toContain('1\r\n\\A1;<>{\\C3;u6}{\\C2;{\\H0.71x;\\S+0.044^+0.033;}}');
+    expect(defaultProfileEntity).not.toContain('1001\r\nACAD');
+  });
+
+  it('keeps negative same-sign fit members explicit while a sign-spanning fit member stays native', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-fit-members' }, now: () => 1 });
+    document.annotations = [
+      toleranceDimension('H7', {
+        mode: 'bilateral', fitDesignation: 'H7', upperDeviation: .018, lowerDeviation: 0, unit: 'mm',
+        source: 'standard', status: 'confirmed', featureClass: 'internal',
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['standard:H7'],
+      }),
+      toleranceDimension('g6', {
+        mode: 'bilateral', fitDesignation: 'g6', upperDeviation: -.006, lowerDeviation: -.017, unit: 'mm',
+        source: 'standard', status: 'confirmed', featureClass: 'external',
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['standard:g6'],
+      }),
+    ];
+
+    const [hole, shaft] = dxfEntities(exportDrawingDxf(document, { profile: gbProfile }), 'DIMENSION');
+
+    expect(hole).toContain('H7');
+    expect(hole).toMatch(/1070\r\n47\r\n1040\r\n0\.018/);
+    expect(hole).toMatch(/1070\r\n48\r\n1040\r\n0(?:\r\n|$)/);
+    expect(shaft).toContain('g6');
+    expect(shaft).toContain('\\S-0.006^-0.017;');
+    expect(shaft).not.toContain('1001\r\nACAD');
+
+    const [defaultProfileHole] = dxfEntities(exportDrawingDxf({ ...document, annotations: [document.annotations[0]!] }), 'DIMENSION');
+    expect(defaultProfileHole).toContain('1\r\n<>{\\C3;H7}');
+    expect(defaultProfileHole).toContain('1001\r\nACAD');
+  });
+
+  it('round-trips effective manual overrides and designation-only presentation without misleading native tolerance text', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-tolerance-presentation' }, now: () => 1 });
+    document.annotations = [
+      toleranceDimension('override', {
+        mode: 'bilateral', fitDesignation: 'u6', upperDeviation: .05, lowerDeviation: .04, unit: 'mm',
+        source: 'standard', status: 'confirmed', featureClass: 'external',
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'both', evidenceRefs: ['manual:override'],
+      }),
+      toleranceDimension('designation', {
+        mode: 'bilateral', fitDesignation: 'H7', upperDeviation: .018, lowerDeviation: 0, unit: 'mm',
+        source: 'standard', status: 'confirmed', featureClass: 'internal',
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, displayPreference: 'designation', evidenceRefs: ['standard:H7'],
+      }),
+    ];
+
+    const [override, designation] = dxfEntities(exportDrawingDxf(document, { profile: gbProfile }), 'DIMENSION');
+
+    expect(override).toContain('\\S+0.05^+0.04;');
+    expect(override).toContain('"upperDeviation":0.05');
+    expect(override).toContain('"lowerDeviation":0.04');
+    expect(designation).toContain('H7');
+    expect(designation).not.toContain('\\S');
+    expect(designation).not.toContain('1001\r\nACAD');
+    expect(designation).toContain('1001\r\nVECTORAI');
+  });
+
+  it('keeps legacy deviation text without claiming standard native or VECTORAI semantics', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-legacy-tolerance' }, now: () => 1 });
+    const legacy = toleranceDimension('legacy', {
+      mode: 'none', unit: 'mm', source: 'document', status: 'candidate', evidenceRefs: [],
+    });
+    delete legacy.toleranceProjection;
+    legacy.tolerance = { upper: .03, lower: -.02 };
+    document.annotations = [legacy];
+
+    const [entity] = dxfEntities(exportDrawingDxf(document, { profile: gbProfile }), 'DIMENSION');
+
+    expect(entity).toContain('\\S+0.03^-0.02;');
+    expect(entity).not.toContain('1001\r\nACAD');
+    expect(entity).not.toContain('1001\r\nVECTORAI');
   });
 
   it('sanitizes tolerance designation text before writing a DXF group value', () => {

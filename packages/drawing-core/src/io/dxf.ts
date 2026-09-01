@@ -41,6 +41,23 @@ export interface DxfExportOptions {
 interface PreparedDimension {
   entity: Extract<DxfExportEntity, { type: 'dimension' }>;
   blockName: string;
+  nativeTolerance?: NativeDimensionTolerance;
+  vectorAiTolerancePayload?: string;
+}
+
+interface NativeDimensionTolerance {
+  upperDeviation: number;
+  lowerDeviationMagnitude: number;
+  decimalPlaces: number;
+}
+
+interface PortableDimensionTolerance {
+  upperDeviation: number;
+  lowerDeviation: number;
+  showDeviations: boolean;
+  showDesignation: boolean;
+  native: boolean;
+  vectorAiPayload?: string;
 }
 
 interface PreparedBlockReference {
@@ -55,7 +72,21 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
   let nextDimensionBlock = 1;
   for (const node of document.annotations) {
     if (!node.visible || node.type !== 'dimension') continue;
-    nativeDimensions.push({ entity: canonicalDimensionEntity(node, profile), blockName: `*D${nextDimensionBlock++}` });
+    const blockName = `*D${nextDimensionBlock++}`;
+    const entity = canonicalDimensionEntity(node, profile);
+    const tolerance = portableDimensionTolerance(node);
+    nativeDimensions.push({
+      entity,
+      blockName,
+      ...(tolerance?.native ? {
+        nativeTolerance: {
+          upperDeviation: tolerance.upperDeviation,
+          lowerDeviationMagnitude: Math.abs(tolerance.lowerDeviation),
+          decimalPlaces: toleranceDecimalPlaces(profile, entity.style),
+        },
+      } : {}),
+      ...(tolerance?.vectorAiPayload === undefined ? {} : { vectorAiTolerancePayload: tolerance.vectorAiPayload }),
+    });
   }
   for (const value of options.entities ?? []) {
     if (value.type === 'dimension') nativeDimensions.push({ entity: value, blockName: `*D${nextDimensionBlock++}` });
@@ -95,6 +126,7 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
     writer.pair(0, 'ENDTAB');
     const textStyleHandles = writeStyleTable(writer, profile.textStyles);
     writeDimensionStyleTable(writer, profile.dimensionStyles, textStyleHandles);
+    writeAppIdTable(writer);
     writeBlockRecordTable(writer, blockRecordHandles);
   });
   writer.section('BLOCKS', () => {
@@ -327,6 +359,25 @@ function writeDimensionStyleTable(
   writer.pair(0, 'ENDTAB');
 }
 
+function writeAppIdTable(writer: DxfWriter): void {
+  writer.pair(0, 'TABLE');
+  writer.pair(2, 'APPID');
+  writer.pair(5, '15');
+  writer.pair(330, '0');
+  writer.pair(100, 'AcDbSymbolTable');
+  writer.pair(70, 2);
+  for (const [index, name] of ['ACAD', 'VECTORAI'].entries()) {
+    writer.pair(0, 'APPID');
+    writer.pair(5, (0x180 + index).toString(16).toUpperCase());
+    writer.pair(330, '15');
+    writer.pair(100, 'AcDbSymbolTableRecord');
+    writer.pair(100, 'AcDbRegAppTableRecord');
+    writer.pair(2, name);
+    writer.pair(70, 0);
+  }
+  writer.pair(0, 'ENDTAB');
+}
+
 function writeBlockRecordTable(writer: DxfWriter, handles: ReadonlyMap<string, string>): void {
   writer.pair(0, 'TABLE');
   writer.pair(2, 'BLOCK_RECORD');
@@ -404,7 +455,10 @@ function canonicalDimensionEntity(
   profile: DxfExportProfile,
 ): Extract<DxfExportEntity, { type: 'dimension' }> {
   const genericLabel = dimensionLabel(node);
-  const label = profile.cadConvention === 'gb' ? gbDimensionPictureText(node, genericLabel) : genericLabel;
+  const portableTolerance = portableDimensionTolerance(node);
+  const label = portableTolerance !== undefined || profile.cadConvention === 'gb'
+    ? gbDimensionPictureText(node, genericLabel)
+    : genericLabel;
   const points = node.definitionPoints;
   const measurement = node.observedValue ?? node.computedValue ?? dimensionMeasurement(node.dimensionKind, points);
   const kind: Extract<DxfExportEntity, { type: 'dimension' }>['dimensionKind'] =
@@ -421,7 +475,11 @@ function canonicalDimensionEntity(
     dimensionKind: kind,
     definitionPoints: points,
     textPosition: node.textPosition,
-    text: profile.cadConvention === 'gb' ? gbDimensionOverride(node) : dimensionOverride(node, label),
+    text: portableTolerance !== undefined
+      ? gbDimensionOverride(node, portableTolerance)
+      : profile.cadConvention === 'gb'
+      ? gbDimensionOverride(node, portableTolerance)
+      : dimensionOverride(node, label),
     measurement,
     style,
     picture: canonicalDimensionPicture(
@@ -472,6 +530,26 @@ function writeNativeDimension(writer: DxfWriter, value: PreparedDimension): void
     writer.pair(100, 'AcDbRotatedDimension');
     writer.pair(50, Math.atan2(second[1] - first[1], second[0] - first[0]) * 180 / Math.PI);
   }
+  if (value.nativeTolerance) writeNativeToleranceOverride(writer, value.nativeTolerance);
+  if (value.vectorAiTolerancePayload !== undefined) {
+    writer.pair(1001, 'VECTORAI');
+    writer.pair(1000, value.vectorAiTolerancePayload);
+  }
+}
+
+function writeNativeToleranceOverride(writer: DxfWriter, tolerance: NativeDimensionTolerance): void {
+  writer.pair(1001, 'ACAD');
+  writer.pair(1000, 'DSTYLE');
+  writer.pair(1002, '{');
+  writer.pair(1070, 71);
+  writer.pair(1070, 1);
+  writer.pair(1070, 47);
+  writer.pair(1040, tolerance.upperDeviation);
+  writer.pair(1070, 48);
+  writer.pair(1040, tolerance.lowerDeviationMagnitude);
+  writer.pair(1070, 272);
+  writer.pair(1070, tolerance.decimalPlaces);
+  writer.pair(1002, '}');
 }
 
 function canonicalDimensionPicture(
@@ -621,21 +699,36 @@ function dimensionOverride(node: Extract<AnnotationNode, { type: 'dimension' }>,
   return hasTolerance ? cadPictureText(label) : '';
 }
 
-function gbDimensionOverride(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
+function gbDimensionOverride(
+  node: Extract<AnnotationNode, { type: 'dimension' }>,
+  portableTolerance?: PortableDimensionTolerance,
+): string {
   const placeholder = node.dimensionKind === 'diameter' ? '%%C<>' : '<>';
   const projection = node.toleranceProjection;
   if (projection && (projection.status === 'resolved' || projection.status === 'confirmed')) {
     if ((projection.mode === 'bilateral' || projection.mode === 'unilateral')
       && (finite(projection.upperDeviation) || finite(projection.lowerDeviation))) {
+      const designation = portableTolerance?.showDesignation && projection.fitDesignation?.trim()
+        ? `{\\C3;${projection.fitDesignation.trim()}}`
+        : '';
+      if (portableTolerance && !portableTolerance.showDeviations) return `${placeholder}${designation}`;
+      if (portableTolerance?.native) return `${placeholder}${designation}`;
       const upper = signed(projection.upperDeviation ?? 0);
       const lower = signed(projection.lowerDeviation ?? 0);
-      return `\\A1;${placeholder}{\\C2;{\\H0.71x;\\S${upper}^${lower};}}`;
+      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${upper}^${lower};}}`;
     }
     if (projection.mode === 'limits' && finite(projection.upperLimit) && finite(projection.lowerLimit)) {
       return `\\A1;${placeholder}{\\C2;{\\H0.71x;\\S${textNumber(projection.upperLimit)}^${textNumber(projection.lowerLimit)};}}`;
     }
     if (projection.mode === 'fit' && projection.fitDesignation?.trim()) {
-      return `${placeholder}{\\C3;${projection.fitDesignation.trim()}}`;
+      const designation = portableTolerance?.showDesignation === false
+        ? ''
+        : `{\\C3;${projection.fitDesignation.trim()}}`;
+      if (!portableTolerance?.showDeviations) return `${placeholder}${designation}`;
+      if (portableTolerance.native) return `${placeholder}${designation}`;
+      const upper = signed(portableTolerance.upperDeviation);
+      const lower = signed(portableTolerance.lowerDeviation);
+      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${upper}^${lower};}}`;
     }
   }
   const legacy = node.tolerance;
@@ -649,10 +742,72 @@ function gbDimensionPictureText(
   node: Extract<AnnotationNode, { type: 'dimension' }>,
   genericLabel: string,
 ): string {
-  const override = gbDimensionOverride(node);
+  // The anonymous picture block is a frozen visual fallback. Keep the exact
+  // deviations in it even when the editable DIMENSION entity carries DSTYLE
+  // overrides that a CAD application will regenerate natively.
+  const portableTolerance = portableDimensionTolerance(node);
+  const override = gbDimensionOverride(node, portableTolerance === undefined
+    ? undefined
+    : { ...portableTolerance, native: false });
   if (!override) return genericLabel;
   const numericLabel = baseDimensionLabel(node).replace(/^(?:⌀|%%C)/, '');
   return override.replace('<>', numericLabel);
+}
+
+function portableDimensionTolerance(
+  node: Extract<AnnotationNode, { type: 'dimension' }>,
+): PortableDimensionTolerance | undefined {
+  const projection = node.toleranceProjection;
+  if (!projection || (projection.status !== 'resolved' && projection.status !== 'confirmed')) return undefined;
+  if (!['bilateral', 'unilateral', 'fit'].includes(projection.mode)) return undefined;
+  if (!finite(projection.upperDeviation) && !finite(projection.lowerDeviation)) return undefined;
+  const upperDeviation = projection.upperDeviation ?? 0;
+  const lowerDeviation = projection.lowerDeviation ?? 0;
+  const displayPreference = projection.displayPreference ?? (projection.mode === 'fit' ? 'designation' : 'deviations');
+  const showDeviations = displayPreference !== 'designation';
+  const showDesignation = Boolean(projection.fitDesignation?.trim()) && displayPreference !== 'deviations';
+  const native = showDeviations && upperDeviation >= 0 && lowerDeviation <= 0;
+  const vectorAiPayload = projection.fitDesignation?.trim()
+    && projection.featureClass
+    && projection.standardRef
+    ? toleranceXDataPayload({
+      designation: projection.fitDesignation.trim(),
+      upperDeviation,
+      lowerDeviation,
+      featureClass: projection.featureClass,
+      standardRef: projection.standardRef,
+    })
+    : undefined;
+  return {
+    upperDeviation,
+    lowerDeviation,
+    showDeviations,
+    showDesignation,
+    native,
+    ...(vectorAiPayload === undefined ? {} : { vectorAiPayload }),
+  };
+}
+
+function toleranceDecimalPlaces(
+  profile: DxfExportProfile,
+  style: Extract<DxfExportEntity, { type: 'dimension' }>['style'],
+): number {
+  const dimensionStyle = profile.dimensionStyles.find(({ name }) => name === style)
+    ?? profile.dimensionStyles.find(({ name }) => name === 'GB_LINEAR')
+    ?? profile.dimensionStyles[0];
+  return dimensionStyle?.toleranceDecimalPlaces ?? dimensionStyle?.decimalPlaces ?? 2;
+}
+
+function toleranceXDataPayload(value: {
+  designation: string;
+  upperDeviation: number;
+  lowerDeviation: number;
+  featureClass: 'internal' | 'external';
+  standardRef: { id: string; edition: string };
+}): string {
+  const payload = JSON.stringify({ version: 1, ...value });
+  if (new TextEncoder().encode(payload).byteLength >= 255) throw new RangeError('DXF_TOLERANCE_XDATA_TOO_LONG');
+  return payload;
 }
 
 function writeBlockReference(writer: DxfWriter, value: PreparedBlockReference): void {

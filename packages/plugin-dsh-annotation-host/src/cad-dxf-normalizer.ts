@@ -27,10 +27,23 @@ export function normalizeCadDxf(source: string): string {
     } finally {
       writer.dispose();
     }
-    return restoreHatchPatternAngles(source, output.replace(/\r?\n/g, '\r\n'));
+    return restoreDimensionToleranceStacks(
+      source,
+      restoreHatchPatternAngles(source, output.replace(/\r?\n/g, '\r\n')),
+    );
   } finally {
     reader.dispose();
   }
+}
+
+/** acad-ts inserts a presentation-only space after the MText stack separator.
+ * Same-sign tolerance fallbacks require the exact explicit sign sequence, so
+ * restore the authoritative stack tokens emitted by drawing-core. */
+function restoreDimensionToleranceStacks(source: string, output: string): string {
+  const expected = source.match(/\\S[^;^\r\n]+\^[^;\r\n]+;/g) ?? [];
+  if (expected.length === 0) return output;
+  let cursor = 0;
+  return output.replace(/\\S[^;^\r\n]+\^[^;\r\n]+;/g, (actual) => expected[cursor++] ?? actual);
 }
 
 /** acad-ts serializes HATCH pattern-line angles as radians although DXF group

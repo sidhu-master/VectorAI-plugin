@@ -1,9 +1,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { extname, join, relative } from 'node:path';
+import { extname, join, relative, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const packageSourceRoot = join(process.cwd(), 'packages/drawing-core/src');
+const packageSourceRoot = resolve(import.meta.dirname);
 const requiredProductionFiles = [
   'document/create.ts',
   'document/types.ts',

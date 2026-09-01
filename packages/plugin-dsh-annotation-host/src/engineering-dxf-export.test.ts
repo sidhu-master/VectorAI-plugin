@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createEmptyDrawing } from '@vectorai/drawing-core';
+import { createEmptyDrawing, type DimensionAnnotation } from '@vectorai/drawing-core';
+import { createGbt1800Provider, type EngineeringAnnotationDraft } from '@vectorai/engineering-annotation';
 import type { DimensionPlanSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -8,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 
 import { exportEngineeringDrawingDxf } from './engineering-dxf-export';
 import { inspectCadContract } from './cad-test-inspector';
+import { DimensionPlanStore } from './dimension-plan-store';
+import { createToleranceReconciler, ToleranceService } from './tolerance-service';
 
 const ref = { drawingId: 'drawing-golden', revision: 2 };
 
@@ -115,7 +118,10 @@ describe('exportEngineeringDrawingDxf', () => {
       ],
       displayedCandidateIds: ['shown'],
       closureCandidateIds: ['closure'],
-      chains: [{ id: 'chain', parentCandidateId: 'shown', childCandidateIds: [], closureCandidateId: 'closure' }],
+      chains: [{
+        id: 'chain', parentCandidateId: 'shown', childCandidateIds: [], closureCandidateId: 'closure',
+        alternativeClosureCandidateIds: [], status: 'resolved',
+      }],
     } as NonNullable<typeof plan.confirmed>['axialScheme'];
 
     const dxf = exportEngineeringDrawingDxf(document, plan);
@@ -157,6 +163,131 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(long).toBeDefined();
     expect(short).toBeDefined();
     expect(Math.abs(long!.normalCoordinate)).toBeGreaterThan(Math.abs(short!.normalCoordinate));
+  });
+
+  it('applies, exports, undoes, and redoes u6 while preserving every unrelated annotation family', () => {
+    const workflowRef = { drawingId: 'drawing-tolerance-workflow', revision: 1 } as const;
+    const document = createEmptyDrawing({ idFactory: { next: () => workflowRef.drawingId }, now: () => 1 });
+    document.geometry = [
+      { id: 'shaft-edge' as never, type: 'line', start: [0, 0], end: [13, 0], visible: true, quality: { status: 'confirmed', evidenceRefs: [] }, sourceRef: { sourceId: 'source', layer: '1轮廓实线层' } },
+      { id: 'datum-edge' as never, type: 'line', start: [0, -5], end: [0, 5], visible: true, quality: { status: 'confirmed', evidenceRefs: [] }, sourceRef: { sourceId: 'source', layer: '3中心线层' } },
+    ];
+    const dimension = (
+      id: string,
+      engineeringIntentId: string,
+      dimensionKind: DimensionAnnotation['dimensionKind'],
+      value: number,
+      y: number,
+    ): DimensionAnnotation => ({
+      id: id as never, type: 'dimension', dimensionKind, associationStatus: 'resolved', targets: [],
+      computedValue: value, displayText: String(value), unit: dimensionKind === 'angular' ? 'deg' : 'mm',
+      textPosition: [6.5, y], definitionPoints: [[0, 0], [13, 0]], engineeringIntentId,
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+      sourceRef: { sourceId: 'source', layer: dimensionKind === 'angular' ? '8符号标注层' : '7标注层' },
+    });
+    document.annotations = [
+      dimension('dimension-target', 'intent-target', 'linear', 13, 5),
+      {
+        ...dimension('dimension-diameter', 'intent-diameter', 'diameter', 13, 10),
+        toleranceProjection: {
+          mode: 'bilateral' as const, fitDesignation: 'H7', upperDeviation: .018, lowerDeviation: 0,
+          unit: 'mm' as const, source: 'standard' as const, status: 'confirmed' as const,
+          featureClass: 'internal' as const, standardRef: { id: 'GB/T 1800', edition: '2020' },
+          displayPreference: 'both' as const, evidenceRefs: ['existing:H7'],
+        },
+      },
+      {
+        ...dimension('dimension-opening-angle', 'intent-angle', 'angular', 45, 15),
+        toleranceProjection: {
+          mode: 'bilateral' as const, fitDesignation: 'OLD9', upperDeviation: .123, lowerDeviation: -.111,
+          unit: 'deg' as const, source: 'document' as const, status: 'confirmed' as const,
+          displayPreference: 'both' as const, evidenceRefs: ['existing:stale'],
+        },
+      },
+      {
+        id: 'section' as never, type: 'section-hatch', pattern: 'ANSI31', angle: 45, spacing: 2,
+        segments: [{ start: [1, -1], end: [3, 1] }], visible: true,
+        quality: { status: 'confirmed', evidenceRefs: [] }, sourceRef: { sourceId: 'source', layer: '5剖面线层' },
+      },
+    ];
+    const draft: EngineeringAnnotationDraft = {
+      version: 1,
+      drawingRef: workflowRef,
+      datums: [{
+        id: 'datum:A', drawingRef: workflowRef, name: 'A', geometryId: 'datum-edge' as never,
+        anchor: { kind: 'start' }, role: 'primary', source: 'manual', status: 'confirmed', evidenceIds: ['manual:datum'],
+      }],
+      intents: [
+        { id: 'intent-target', drawingRef: workflowRef, kind: 'linear', targets: [], datumIds: ['datum:A'], nominalValue: 13, unit: 'mm', functionalRole: 'functional', source: 'manual', status: 'confirmed', evidenceIds: [] },
+        { id: 'intent-diameter', drawingRef: workflowRef, kind: 'diameter', targets: [], datumIds: [], nominalValue: 13, unit: 'mm', functionalRole: 'inspection', source: 'geometry', status: 'confirmed', evidenceIds: [] },
+        { id: 'intent-angle', drawingRef: workflowRef, kind: 'angular', targets: [], datumIds: [], nominalValue: 45, unit: 'deg', functionalRole: 'inspection', source: 'geometry', status: 'resolved', evidenceIds: [] },
+      ],
+      tolerances: [{
+        id: 'tolerance:stale-angle', dimensionIntentId: 'intent-angle', mode: 'bilateral', source: 'document',
+        inputs: {}, status: 'stale', evidenceIds: ['stale:angle'], diagnostics: [],
+      }],
+      fitAssignments: [],
+      geometricTolerances: [{
+        id: 'gdt:runout', drawingRef: workflowRef, characteristic: 'circular-runout',
+        controlledTargets: [{ geometryId: 'shaft-edge' as never, anchor: { kind: 'end' } }],
+        toleranceZone: { shape: 'linear' }, datumReferenceFrame: [{ datumId: 'datum:A' }],
+        computed: { status: 'resolved', value: .01, unit: 'mm', diagnostics: [] },
+        source: 'manual', status: 'confirmed', evidenceIds: [],
+      }],
+      chains: [{
+        id: 'chain:target', drawingRef: workflowRef, datumIds: ['datum:A'],
+        members: [
+          { dimensionIntentId: 'intent-target', coefficient: 1, role: 'component' },
+          { dimensionIntentId: 'intent-diameter', coefficient: -1, role: 'closure' },
+        ],
+        equation: { closureIntentId: 'intent-diameter' }, analysisMode: 'reference-only',
+        status: 'resolved', evidenceIds: [], diagnostics: [],
+      }],
+      dependencies: [{ beforeIntentId: 'intent-target', afterIntentId: 'intent-diameter', reason: 'component-before-closure', evidenceIds: [] }],
+      diagnostics: [],
+    };
+    const provider = createGbt1800Provider();
+    const plans = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-workflow' }, createToleranceReconciler(provider));
+    plans.begin('workflow', workflowRef);
+    plans.setDraft('workflow', draft);
+    const service = new ToleranceService(plans, provider);
+    const before = plans.get('workflow').draft!;
+
+    const applied = service.edit('workflow', {
+      type: 'standard.single.apply', expectedDrawingRef: workflowRef, dimensionIntentId: 'intent-target',
+      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      evidenceRefs: ['manual:u6'],
+    });
+    const appliedWithoutTargetTolerance = {
+      ...applied.draft!,
+      tolerances: applied.draft!.tolerances.filter(({ dimensionIntentId }) => dimensionIntentId !== 'intent-target'),
+    };
+    expect(appliedWithoutTargetTolerance).toEqual(before);
+    const appliedDxf = exportEngineeringDrawingDxf(document, applied);
+    expect(appliedDxf).toContain('u6');
+    expect(appliedDxf).toContain('\\S+0.044^+0.033;');
+    expect(appliedDxf).toContain('H7');
+    expect(appliedDxf).not.toContain('OLD9');
+    expect(appliedDxf).toContain('VECTORAI');
+    expect(appliedDxf).toContain('1轮廓实线层');
+    expect(appliedDxf).toContain('3中心线层');
+    expect(appliedDxf).toContain('5剖面线层');
+    expect(appliedDxf).toContain('8符号标注层');
+    expect(entityCount(appliedDxf, 'DIMENSION')).toBe(3);
+    expect(entityCount(appliedDxf, 'HATCH')).toBeGreaterThanOrEqual(1);
+    expect(appliedDxf).toContain('0.01');
+    expect(appliedDxf).toContain('A');
+
+    const undone = plans.undo('workflow', workflowRef);
+    expect(undone.draft).toEqual(before);
+    const undoneDxf = exportEngineeringDrawingDxf(document, undone);
+    expect(undoneDxf).not.toContain('"designation":"u6"');
+    expect(undoneDxf).toContain('"designation":"H7"');
+    expect(undoneDxf).not.toContain('OLD9');
+
+    const redone = plans.redo('workflow', workflowRef);
+    expect(redone.draft).toEqual(applied.draft);
+    expect(exportEngineeringDrawingDxf(document, redone)).toContain('"designation":"u6"');
   });
 });
 

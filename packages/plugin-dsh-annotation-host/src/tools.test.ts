@@ -96,7 +96,7 @@ describe('drawing_auto_annotate', () => {
     const result = await tool.execute({}, exec);
 
     expect(result).toMatchObject({ status: 'committed' });
-    expect(result.annotations).toEqual(expect.arrayContaining([expect.stringMatching(/^annotation_auto_/)]));
+    expect((result as { annotations: string[] }).annotations).toEqual(expect.arrayContaining([expect.stringMatching(/^annotation_auto_/)]));
     expect(runExtensionProgram).toHaveBeenCalledOnce();
     expect(runExtensionProgram.mock.calls[0]?.[1]).toMatchObject({ targetNodeIds: ['left-lower', 'left-upper'] });
     expect(partitions.advanceDrawingRevision).not.toHaveBeenCalled();
@@ -127,7 +127,7 @@ describe('drawing_auto_annotate', () => {
         version: 1, phase: 'editing', drawingRef: { drawingId: 'drawing-1', revision: 2 },
         canUndo: false, canRedo: false, updatedAt: 1,
         draft: {
-          version: 1, drawingRef: { drawingId: 'drawing-1', revision: 2 }, datums: [], intents: [], tolerances: [],
+          version: 1, drawingRef: { drawingId: 'drawing-1', revision: 2 }, datums: [], intents: [], tolerances: [], fitAssignments: [],
           geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
         },
       }),
@@ -162,7 +162,7 @@ describe('drawing_auto_annotate', () => {
         version: 1, phase: 'editing', drawingRef: { drawingId: 'drawing-clarify', revision: 1 },
         canUndo: false, canRedo: false, updatedAt: 1,
         draft: {
-          version: 1, drawingRef: { drawingId: 'drawing-clarify', revision: 1 }, datums: [], intents: [], tolerances: [],
+          version: 1, drawingRef: { drawingId: 'drawing-clarify', revision: 1 }, datums: [], intents: [], tolerances: [], fitAssignments: [],
           geometricTolerances: [], chains: [], dependencies: [], diagnostics: [{
             id: 'diagnostic:gdt:coverage', severity: 'warning', code: 'GDT_USER_INPUT_REQUIRED', message: 'GD&T needs clarification',
           }, {

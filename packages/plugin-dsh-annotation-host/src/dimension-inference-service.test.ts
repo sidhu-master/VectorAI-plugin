@@ -73,7 +73,7 @@ describe('DimensionInferenceService', () => {
         anchor: { kind: 'start' as const }, role: 'primary' as const, source: 'ai-candidate' as const,
         status: 'candidate' as const, evidenceIds: [],
       }],
-      intents: [], tolerances: [],
+      intents: [], tolerances: [], fitAssignments: [],
       geometricTolerances: [{
         id: 'gdt:runout', drawingRef: ref, characteristic: 'circular-runout' as const,
         controlledTargets: [{ geometryId: 'geometry:shaft' as GeometryId, anchor: { kind: 'start' as const } }],

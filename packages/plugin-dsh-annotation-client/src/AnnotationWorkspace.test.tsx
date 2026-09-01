@@ -110,7 +110,7 @@ function toleranceRemote(
 }
 
 describe('AnnotationWorkspace', () => {
-  it('opens one tolerance popup from exact drawing entry points and previews without mutating workspace state', async () => {
+  it('opens one tolerance popup from exact drawing entry points and previews before Apply without changing the viewport', async () => {
     vi.stubGlobal('window', Object.assign(new EventTarget(), { requestAnimationFrame: (callback: FrameRequestCallback) => callback(0) }));
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     const dimension = {
@@ -238,6 +238,7 @@ describe('AnnotationWorkspace', () => {
     expect(tolerance.state.getSnapshot()).toMatchObject({ instanceId: 1, target: { dimensionIntentId: 'intent-1' } });
     expect(renderer!.root.findByProps({ 'aria-label': '公差与配合面板' }).props.title).toBe('公差与配合');
     expect(renderer!.root.findAllByProps({ 'data-panel': 'tolerance' })).toHaveLength(0);
+    const surfaceViewportBeforePreview = structuredClone(renderer!.root.findByType(DrawingSurface).props.viewport);
 
     await act(async () => renderer!.root.findByProps({ 'data-feature-class-choice': 'external' }).props.onClick());
     await act(async () => renderer!.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
@@ -245,6 +246,7 @@ describe('AnnotationWorkspace', () => {
     expect(preview.findByProps({ 'data-entity-id': 'dimension-1' }).props['data-preview-diff']).toBe('updated');
     expect(runtime.snapshot.getSnapshot()).toEqual(before.snapshot);
     expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
+    expect(renderer!.root.findByType(DrawingSurface).props.viewport).toEqual(surfaceViewportBeforePreview);
     expect(setViewport).not.toHaveBeenCalled();
     expect(runtime.selection.getSnapshot()).toEqual(before.selection);
     expect(dimensionChain.state.getSnapshot()).toEqual(before.dimension);
