@@ -38,6 +38,10 @@ function catalog(dimensionIntentId = 'intent-1', featureClass: 'internal' | 'ext
       { designation: featureClass === 'external' ? 'u6' : 'H7', featureClass, category: 'unknown' as const, available: true },
       { designation: featureClass === 'external' ? 'h6' : 'G7', featureClass, category: 'unknown' as const, available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' as const },
     ],
+    fitBands: {
+      internal: [{ designation: 'H7', featureClass: 'internal' as const, category: 'unknown' as const, available: true }],
+      external: [{ designation: 'g6', featureClass: 'external' as const, category: 'unknown' as const, available: true }],
+    },
     recommendation: { designation: featureClass === 'external' ? 'u6' : 'H7', source: 'ai-recommended' as const, evidenceRefs: ['evidence-1'] },
   };
 }
@@ -350,10 +354,34 @@ describe('createToleranceController', () => {
         ...catalog(request.dimensionIntentId, request.featureClass),
         selection: {
           designation: 'H7/g6', source: 'manual', evidenceRefs: ['manual:fit'], displayPreference: 'both',
+          ...(request.featureClass === 'external'
+            ? { override: { upperDeviation: -.002, lowerDeviation: -.01 } }
+            : {}),
           fit: {
             fitGroupId: 'fit:intent-hole:intent-shaft', basis: 'hole', designation: 'H7/g6',
             holeDimensionIntentId: 'intent-hole', holeFeatureClass: 'internal', holeDesignation: 'H7',
             shaftDimensionIntentId: 'intent-shaft', shaftFeatureClass: 'external', shaftDesignation: 'g6',
+            holeTarget: {
+              dimensionIntentId: 'intent-hole', label: '⌀0.5 in', basicSize: 12.7, unit: 'mm', featureClass: 'internal',
+            },
+            shaftTarget: {
+              dimensionIntentId: 'intent-shaft', label: '⌀12.7 mm', basicSize: 12.7, unit: 'mm', featureClass: 'external',
+            },
+            shaftOverride: { upperDeviation: -.002, lowerDeviation: -.01 },
+            result: {
+              designation: 'H7/g6', basis: 'hole', fitType: 'clearance' as const,
+              minimumClearance: .002, maximumClearance: .028,
+              hole: {
+                ...singlePreview('intent-hole', 'H7', 'internal').result,
+                basicSize: 12.7, upperDeviation: .018, lowerDeviation: 0, toleranceMagnitude: .018,
+                upperLimitSize: 12.718, lowerLimitSize: 12.7,
+              },
+              shaft: {
+                ...singlePreview('intent-shaft', 'g6', 'external').result,
+                basicSize: 12.7, upperDeviation: -.002, lowerDeviation: -.01, toleranceMagnitude: .008,
+                upperLimitSize: 12.698, lowerLimitSize: 12.69,
+              },
+            },
           },
         },
       })),
@@ -364,24 +392,40 @@ describe('createToleranceController', () => {
       ...externalTarget, dimensionIntentId, classification: { status: 'resolved', featureClass },
     });
 
-    expect(api.previewTolerance).toHaveBeenCalledWith('s', {
-      type: 'fit', expectedDrawingRef: drawingRef,
-      primaryDimensionIntentId: dimensionIntentId, primaryFeatureClass: featureClass,
-      secondaryDimensionIntentId: featureClass === 'internal' ? 'intent-shaft' : 'intent-hole',
-      secondaryFeatureClass: featureClass === 'internal' ? 'external' : 'internal',
-      basis: 'hole', designation: 'H7/g6',
-    });
+    expect(api.previewTolerance).not.toHaveBeenCalled();
     expect(controller.state.getSnapshot()).toMatchObject({
       tab: 'hole-fit', dirty: false, displayPreference: 'both', canvasPreview: null,
+      target: featureClass === 'internal'
+        ? { dimensionIntentId: 'intent-hole', label: '⌀0.5 in', basicSize: 12.7 }
+        : { dimensionIntentId: 'intent-shaft', label: '⌀12.7 mm', basicSize: 12.7 },
       selection: {
         kind: 'fit', basis: 'hole', designation: 'H7/g6',
         holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft',
       },
-      preview: { type: 'fit', result: { designation: 'H7/g6' } },
-      fit: { basis: 'hole', selectingSecondTarget: false, secondTarget: { dimensionIntentId: featureClass === 'internal' ? 'intent-shaft' : 'intent-hole' } },
+      preview: {
+        type: 'fit', result: {
+          designation: 'H7/g6', minimumClearance: .002, maximumClearance: .028,
+          shaft: { upperDeviation: -.002, lowerDeviation: -.01 },
+        },
+      },
+      override: featureClass === 'external' ? { upperDeviation: -.002, lowerDeviation: -.01 } : null,
+      fit: {
+        basis: 'hole', selectingSecondTarget: false,
+        secondTarget: featureClass === 'internal'
+          ? { dimensionIntentId: 'intent-shaft', label: '⌀12.7 mm', basicSize: 12.7 }
+          : { dimensionIntentId: 'intent-hole', label: '⌀0.5 in', basicSize: 12.7 },
+      },
       fitCatalogs: {
-        internal: { dimensionIntentId: 'intent-hole', featureClass: 'internal' },
-        external: { dimensionIntentId: 'intent-shaft', featureClass: 'external' },
+        internal: { featureClass: 'internal', bands: [{ designation: 'H7' }] },
+        external: { featureClass: 'external', bands: [{ designation: 'g6' }] },
+      },
+    });
+    controller.actions.setDisplayPreference('designation');
+    expect(controller.state.getSnapshot()).toMatchObject({
+      dirty: true,
+      canvasPreview: {
+        displayPreference: 'designation',
+        host: { type: 'fit', result: { shaft: { upperDeviation: -.002, lowerDeviation: -.01 } } },
       },
     });
   });
@@ -559,19 +603,30 @@ describe('createToleranceController', () => {
     expect(controller.state.getSnapshot()).toMatchObject({ visible: false, preview: null, selection: null, dirty: false });
   });
 
-  it('loads provider-backed internal and external catalogs for fit selection', async () => {
-    const api = remote();
+  it.each([
+    ['external', 'hole'],
+    ['internal', 'shaft'],
+  ] as const)('loads target-independent fit catalogs from the real %s target class', async (featureClass, basis) => {
+    const api = remote({
+      queryToleranceCatalog: vi.fn(async (_sessionId, request) => request.featureClass === featureClass
+        ? success(catalog(request.dimensionIntentId, request.featureClass))
+        : failure<ToleranceCatalogResult>('TOLERANCE_FEATURE_CLASS_MISMATCH')),
+    });
     const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
-    await controller.actions.open(externalTarget);
+    await controller.actions.open({
+      ...externalTarget,
+      classification: { status: 'resolved', featureClass },
+    });
+    vi.mocked(api.queryToleranceCatalog).mockClear();
 
-    await controller.actions.beginFit('hole');
+    await controller.actions.beginFit(basis);
 
-    expect(api.queryToleranceCatalog).toHaveBeenCalledWith('s', expect.objectContaining({ featureClass: 'internal' }));
-    expect(api.queryToleranceCatalog).toHaveBeenCalledWith('s', expect.objectContaining({ featureClass: 'external' }));
+    expect(api.queryToleranceCatalog).toHaveBeenCalledOnce();
+    expect(api.queryToleranceCatalog).toHaveBeenCalledWith('s', expect.objectContaining({ featureClass }));
     expect(controller.state.getSnapshot()).toMatchObject({
       fitCatalogs: {
-        internal: { featureClass: 'internal', bands: [{ designation: 'H7' }, { designation: 'G7', available: false }] },
-        external: { featureClass: 'external', bands: [{ designation: 'u6' }, { designation: 'h6', available: false }] },
+        internal: { featureClass: 'internal', bands: [{ designation: 'H7' }] },
+        external: { featureClass: 'external', bands: [{ designation: 'g6' }] },
       },
     });
   });
@@ -705,14 +760,12 @@ describe('createToleranceController', () => {
     deferFit = true;
     const older = controller.actions.beginFit('hole');
     const newer = controller.actions.beginFit('shaft');
-    await vi.waitFor(() => expect(pending).toHaveLength(4));
-    for (const item of pending.slice(2)) {
-      item.request.resolve(success({
-        ...catalog('intent-1', item.featureClass), standardRef: { id: 'GB/T 1800', edition: '2024' },
-      }));
-    }
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!.request.resolve(success({
+      ...catalog('intent-1', pending[1]!.featureClass), standardRef: { id: 'GB/T 1800', edition: '2024' },
+    }));
     await newer;
-    for (const item of pending.slice(0, 2)) item.request.resolve(success(catalog('intent-1', item.featureClass)));
+    pending[0]!.request.resolve(success(catalog('intent-1', pending[0]!.featureClass)));
     await older;
     expect(controller.state.getSnapshot()).toMatchObject({
       fit: { basis: 'shaft' },
@@ -740,11 +793,10 @@ describe('createToleranceController', () => {
     deferFit = true;
     const older = controller.actions.beginFit('hole');
     const newer = controller.actions.beginFit('shaft');
-    await vi.waitFor(() => expect(pending).toHaveLength(4));
-    for (const item of pending.slice(2)) item.request.resolve(success(catalog('intent-1', item.featureClass)));
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!.request.resolve(success(catalog('intent-1', pending[1]!.featureClass)));
     await newer;
     pending[0]!.request.resolve(failure('OLD_FIT_LOAD_FAILED'));
-    pending[1]!.request.resolve(success(catalog('intent-1', pending[1]!.featureClass)));
     await expect(older).resolves.toBeUndefined();
     expect(controller.state.getSnapshot()).toMatchObject({ fit: { basis: 'shaft' }, error: null, busy: false });
   });

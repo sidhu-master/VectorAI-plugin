@@ -192,6 +192,7 @@ describe('DSH drawing workspace wire schemas', () => {
         selection: { designation: 'u6', source: 'manual', evidenceRefs: ['manual:tol-1'] },
         standardRef: { id: 'GB/T 1800', edition: '2020' },
         displayPreference: 'both',
+        override: { upperDeviation: .05, lowerDeviation: .04 },
         inputs: {}, resolved: { upperDeviation: .044, lowerDeviation: .033, inputDigest: 'sha256:x', evaluatedAt: 1 },
         status: 'resolved', evidenceIds: ['manual:tol-1'], diagnostics: [],
       }],
@@ -203,6 +204,12 @@ describe('DSH drawing workspace wire schemas', () => {
     });
     expect(parsed.tolerances[0]?.selection?.designation).toBe('u6');
     expect(parsed.fitAssignments[0]?.designation).toBe('H7/g6');
+    expect(() => engineeringAnnotationDraftSchema.parse({
+      ...parsed,
+      tolerances: parsed.tolerances.map((tolerance) => ({
+        ...tolerance, override: { upperDeviation: -.02, lowerDeviation: .01 },
+      })),
+    })).toThrow('TOLERANCE_DEVIATION_ORDER');
   });
 
   it('defaults fitAssignments for existing persisted version-1 drafts', () => {
@@ -228,13 +235,35 @@ describe('DSH drawing workspace wire schemas', () => {
         numericProvenance: [{ kind: 'plan-reference-vector', referenceId: 'plan', description: 'Partial dataset' }],
       },
       bands: [{ designation: 'u6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' }],
+      fitBands: {
+        internal: [{ designation: 'H7', featureClass: 'internal', category: 'preferred', available: true }],
+        external: [{ designation: 'g6', featureClass: 'external', category: 'preferred', available: true }],
+      },
       selection: {
-        designation: 'u6', source: 'manual', evidenceRefs: ['manual:u6'], displayPreference: 'both',
+        designation: 'H7/g6', source: 'manual', evidenceRefs: ['manual:u6'], displayPreference: 'both',
         override: { upperDeviation: .05, lowerDeviation: .04 },
         fit: {
           fitGroupId: 'fit:intent-hole:intent-shaft', basis: 'hole', designation: 'H7/g6',
           holeDimensionIntentId: 'intent-hole', holeFeatureClass: 'internal', holeDesignation: 'H7',
           shaftDimensionIntentId: 'intent-shaft', shaftFeatureClass: 'external', shaftDesignation: 'g6',
+          holeTarget: { dimensionIntentId: 'intent-hole', label: '⌀0.5 in', basicSize: 12.7, unit: 'mm', featureClass: 'internal' },
+          shaftTarget: { dimensionIntentId: 'intent-shaft', label: '⌀12.7 mm', basicSize: 12.7, unit: 'mm', featureClass: 'external' },
+          shaftOverride: { upperDeviation: -.002, lowerDeviation: -.01 },
+          result: {
+            designation: 'H7/g6', basis: 'hole', fitType: 'clearance', minimumClearance: .002, maximumClearance: .028,
+            hole: {
+              designation: 'H7', featureClass: 'internal', basicSize: 12.7, unit: 'mm',
+              upperDeviation: .018, lowerDeviation: 0, toleranceMagnitude: .018,
+              upperLimitSize: 12.718, lowerLimitSize: 12.7, standardRef: { id: 'GB/T 1800', edition: '2020' },
+              ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:hole' },
+            },
+            shaft: {
+              designation: 'g6', featureClass: 'external', basicSize: 12.7, unit: 'mm',
+              upperDeviation: -.002, lowerDeviation: -.01, toleranceMagnitude: .008,
+              upperLimitSize: 12.698, lowerLimitSize: 12.69, standardRef: { id: 'GB/T 1800', edition: '2020' },
+              ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:shaft' },
+            },
+          },
         },
       },
     } as const;
@@ -284,6 +313,13 @@ describe('DSH drawing workspace wire schemas', () => {
       type: 'standard.override.set', expectedDrawingRef: manual.expectedDrawingRef,
       dimensionIntentId: 'intent-1', upperDeviation: .02, lowerDeviation: -.01,
     })).toMatchObject({ type: 'standard.override.set' });
+    expect(() => toleranceEditCommandSchema.parse({
+      type: 'standard.override.set', expectedDrawingRef: manual.expectedDrawingRef,
+      dimensionIntentId: 'intent-1', upperDeviation: -.02, lowerDeviation: .01,
+    })).toThrow('TOLERANCE_DEVIATION_ORDER');
+    expect(() => toleranceEditCommandSchema.parse({
+      ...manual, mode: 'bilateral', upperDeviation: -.02, lowerDeviation: .01,
+    })).toThrow('TOLERANCE_DEVIATION_ORDER');
     expect(toleranceEditCommandSchema.parse({
       type: 'standard.override.clear', expectedDrawingRef: manual.expectedDrawingRef, dimensionIntentId: 'intent-1',
     })).toMatchObject({ type: 'standard.override.clear' });

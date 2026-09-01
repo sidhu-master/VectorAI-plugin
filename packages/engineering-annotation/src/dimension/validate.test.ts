@@ -148,6 +148,15 @@ describe('engineering dimension domain invariants', () => {
     staleArithmetic.fitAssignments[0]!.maximumClearance = .037;
     expect(validateEngineeringDraft(staleArithmetic)).toEqual([]);
 
+    const invertedOverride = structuredClone(active);
+    invertedOverride.tolerances[0]!.override = { upperDeviation: -.01, lowerDeviation: .01 };
+    invertedOverride.fitAssignments[0]!.minimumClearance = .016;
+    invertedOverride.fitAssignments[0]!.maximumClearance = .007;
+    invertedOverride.fitAssignments[0]!.fitType = 'clearance';
+    expect(validateEngineeringDraft(invertedOverride)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'TOLERANCE_DEVIATION_ORDER' }),
+    ]));
+
     const wrongType = structuredClone(active);
     wrongType.fitAssignments[0]!.fitType = 'transition';
     expect(validateEngineeringDraft(wrongType)).toEqual(expect.arrayContaining([

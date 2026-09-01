@@ -37,6 +37,13 @@ export class ToleranceService {
     const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
     const intent = requireEligibleIntent(plan, request.dimensionIntentId, request.featureClass);
     const basicSize = requireProviderBasicSize(intent);
+    const requestedBands = this.provider.listBands({ basicSize, featureClass: request.featureClass });
+    const internalBands = request.featureClass === 'internal'
+      ? requestedBands
+      : this.provider.listBands({ basicSize, featureClass: 'internal' });
+    const externalBands = request.featureClass === 'external'
+      ? requestedBands
+      : this.provider.listBands({ basicSize, featureClass: 'external' });
     const matching = [...plan.tolerances].reverse().find(({ dimensionIntentId }) => dimensionIntentId === request.dimensionIntentId);
     const fit = matching === undefined ? undefined : activeFitHydration(plan, matching);
     const recommendation = matching?.source === 'ai-candidate'
@@ -61,7 +68,11 @@ export class ToleranceService {
         ...this.provider.datasetMetadata,
         numericProvenance: this.provider.datasetMetadata.numericProvenance.map((item) => ({ ...item })),
       },
-      bands: structuredClone(this.provider.listBands({ basicSize, featureClass: request.featureClass })),
+      bands: structuredClone(requestedBands),
+      fitBands: {
+        internal: structuredClone(internalBands),
+        external: structuredClone(externalBands),
+      },
       ...(matching?.source === 'standard' && matching.featureClass === request.featureClass && matching.selection
         && (matching.fitGroupId === undefined || fit !== undefined)
         ? { selection: {
@@ -355,9 +366,44 @@ function activeFitHydration(plan: AnnotationPlan, member: ToleranceSpec) {
     && (spec.status === 'resolved' || spec.status === 'confirmed');
   const holeDesignation = hole?.inputs.designation;
   const shaftDesignation = shaft?.inputs.designation;
+  const holeIntent = plan.intents.find(({ id }) => id === assignment.holeDimensionId);
+  const shaftIntent = plan.intents.find(({ id }) => id === assignment.shaftDimensionId);
   if (!active(hole, 'internal') || !active(shaft, 'external')
+    || holeIntent === undefined || shaftIntent === undefined
     || typeof holeDesignation !== 'string' || typeof shaftDesignation !== 'string'
     || `${holeDesignation}/${shaftDesignation}` !== assignment.designation) return undefined;
+  const effectiveMember = (
+    spec: ToleranceSpec,
+    intent: AnnotationPlan['intents'][number],
+    featureClass: 'internal' | 'external',
+    designation: string,
+  ) => {
+    const basicSize = requireProviderBasicSize(intent);
+    const upperDeviation = spec.override?.upperDeviation ?? spec.resolved?.upperDeviation;
+    const lowerDeviation = spec.override?.lowerDeviation ?? spec.resolved?.lowerDeviation;
+    if (!Number.isFinite(upperDeviation) || !Number.isFinite(lowerDeviation)
+      || lowerDeviation! > upperDeviation! || spec.standardRef === undefined
+      || spec.ruleRef === undefined || spec.resolved === undefined) return undefined;
+    return {
+      designation,
+      featureClass,
+      basicSize,
+      unit: 'mm' as const,
+      upperDeviation: upperDeviation!,
+      lowerDeviation: lowerDeviation!,
+      toleranceMagnitude: upperDeviation! - lowerDeviation!,
+      upperLimitSize: basicSize + upperDeviation!,
+      lowerLimitSize: basicSize + lowerDeviation!,
+      standardRef: { ...spec.standardRef },
+      ruleRef: {
+        ...spec.ruleRef,
+        inputDigest: spec.resolved.inputDigest,
+      },
+    };
+  };
+  const effectiveHole = effectiveMember(hole!, holeIntent, 'internal', holeDesignation);
+  const effectiveShaft = effectiveMember(shaft!, shaftIntent, 'external', shaftDesignation);
+  if (effectiveHole === undefined || effectiveShaft === undefined) return undefined;
   return {
     fitGroupId: assignment.fitGroupId,
     basis: assignment.basis,
@@ -368,6 +414,32 @@ function activeFitHydration(plan: AnnotationPlan, member: ToleranceSpec) {
     shaftDimensionIntentId: assignment.shaftDimensionId,
     shaftFeatureClass: 'external' as const,
     shaftDesignation,
+    holeTarget: hydrationTarget(holeIntent, 'internal'),
+    shaftTarget: hydrationTarget(shaftIntent, 'external'),
+    ...(hole!.override === undefined ? {} : { holeOverride: { ...hole!.override } }),
+    ...(shaft!.override === undefined ? {} : { shaftOverride: { ...shaft!.override } }),
+    result: {
+      designation: assignment.designation,
+      basis: assignment.basis,
+      hole: effectiveHole,
+      shaft: effectiveShaft,
+      fitType: assignment.fitType,
+      minimumClearance: assignment.minimumClearance,
+      maximumClearance: assignment.maximumClearance,
+    },
+  };
+}
+
+function hydrationTarget<FeatureClass extends 'internal' | 'external'>(
+  intent: AnnotationPlan['intents'][number],
+  featureClass: FeatureClass,
+) {
+  return {
+    dimensionIntentId: intent.id,
+    label: `${intent.kind === 'diameter' ? '⌀' : ''}${intent.nominalValue} ${intent.unit}`,
+    basicSize: requireProviderBasicSize(intent),
+    unit: 'mm' as const,
+    featureClass,
   };
 }
 

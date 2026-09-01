@@ -101,6 +101,58 @@ describe('TolerancePopup', () => {
     ]));
   });
 
+  it('hydrates restored fit selectors and keeps display-preference edits applyable', async () => {
+    const value = props({
+      tab: 'hole-fit', preview: fitPreview, dirty: false,
+      fitCatalogs: {
+        internal: [{ designation: 'H7', featureClass: 'internal', category: 'preferred', available: true }],
+        external: [{ designation: 'g6', featureClass: 'external', category: 'preferred', available: true }],
+      },
+    });
+    const tree = create(<TolerancePopup {...value} />);
+
+    expect(tree.root.findByProps({ 'data-fit-band': 'internal' }).props.value).toBe('H7');
+    expect(tree.root.findByProps({ 'data-fit-band': 'external' }).props.value).toBe('g6');
+    act(() => tree.root.findByProps({ 'data-display-preference': 'both' }).props.onClick());
+    expect(value.onDisplayPreferenceChange).toHaveBeenCalledWith('both');
+    act(() => tree.update(<TolerancePopup {...value} displayPreference="both" dirty />));
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+    await act(async () => tree.root.findByProps({ 'data-apply-tolerance': true }).props.onClick());
+    expect(value.onApply).toHaveBeenCalledOnce();
+  });
+
+  it('updates restored fit identity without erasing dirty local selector edits', () => {
+    const catalogs = {
+      internal: [
+        { designation: 'H7', featureClass: 'internal' as const, category: 'preferred' as const, available: true },
+        { designation: 'H8', featureClass: 'internal' as const, category: 'common' as const, available: true },
+      ],
+      external: [
+        { designation: 'g6', featureClass: 'external' as const, category: 'preferred' as const, available: true },
+        { designation: 'f7', featureClass: 'external' as const, category: 'common' as const, available: true },
+        { designation: 'u6', featureClass: 'external' as const, category: 'other' as const, available: true },
+      ],
+    };
+    const initial = props({ tab: 'hole-fit', preview: fitPreview, fitCatalogs: catalogs });
+    const tree = create(<TolerancePopup {...initial} />);
+    const alternate = {
+      ...fitPreview,
+      result: {
+        ...fitPreview.result, designation: 'H8/f7',
+        hole: { ...fitPreview.result.hole, designation: 'H8' },
+        shaft: { ...fitPreview.result.shaft, designation: 'f7' },
+      },
+    };
+
+    act(() => tree.update(<TolerancePopup {...initial} preview={alternate} />));
+    expect(tree.root.findByProps({ 'data-fit-band': 'internal' }).props.value).toBe('H8');
+    expect(tree.root.findByProps({ 'data-fit-band': 'external' }).props.value).toBe('f7');
+    act(() => tree.root.findByProps({ 'data-fit-band': 'external' }).props.onChange({ currentTarget: { value: 'u6' } }));
+    act(() => tree.update(<TolerancePopup {...initial} preview={fitPreview} />));
+    expect(tree.root.findByProps({ 'data-fit-band': 'internal' }).props.value).toBe('H8');
+    expect(tree.root.findByProps({ 'data-fit-band': 'external' }).props.value).toBe('u6');
+  });
+
   it('switches explicit internal/external and fit tabs and reports partial data', () => {
     const { tree, value } = renderPopup();
     act(() => tree.root.findByProps({ 'data-tolerance-tab': 'internal' }).props.onClick());

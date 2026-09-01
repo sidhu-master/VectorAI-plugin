@@ -140,25 +140,69 @@ describe('ToleranceService', () => {
   });
 
   it('exposes complete fit hydration metadata from either saved member', () => {
-    const { service } = setup();
+    const { plans, service } = setup();
+    const mixed = draft(.5, 12.7);
+    mixed.intents[0]!.unit = 'in';
+    plans.setDraft('session', mixed);
     service.edit('session', {
       type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
       holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
-      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'manual', displayPreference: 'both',
+      designation: 'H7/g6', ...fitInputDigests(12.7), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:fit'],
+    });
+    service.edit('session', {
+      type: 'standard.override.set', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      upperDeviation: -.002, lowerDeviation: -.01,
     });
 
     const expectedFit = {
       fitGroupId: 'fit:intent-hole:intent-shaft', basis: 'hole', designation: 'H7/g6',
       holeDimensionIntentId: 'intent-hole', holeFeatureClass: 'internal', holeDesignation: 'H7',
       shaftDimensionIntentId: 'intent-shaft', shaftFeatureClass: 'external', shaftDesignation: 'g6',
+      holeTarget: {
+        dimensionIntentId: 'intent-hole', label: '⌀0.5 in', basicSize: 12.7, unit: 'mm', featureClass: 'internal',
+      },
+      shaftTarget: {
+        dimensionIntentId: 'intent-shaft', label: '⌀12.7 mm', basicSize: 12.7, unit: 'mm', featureClass: 'external',
+      },
+      shaftOverride: { upperDeviation: -.002, lowerDeviation: -.01 },
+      result: {
+        designation: 'H7/g6', basis: 'hole', fitType: 'clearance',
+        minimumClearance: .002, maximumClearance: .028,
+        hole: { designation: 'H7', basicSize: 12.7, upperDeviation: .018, lowerDeviation: 0 },
+        shaft: { designation: 'g6', basicSize: 12.7, upperDeviation: -.002, lowerDeviation: -.01 },
+      },
     } as const;
-    expect(service.query('session', {
+    const fromHole = service.query('session', {
       expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole', featureClass: 'internal',
-    }).selection).toMatchObject({ designation: 'H7/g6', fit: expectedFit });
+    });
+    const fromShaft = service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    });
+    expect(fromHole.selection).toMatchObject({ designation: 'H7/g6', fit: expectedFit });
+    expect(fromShaft.selection).toMatchObject({ designation: 'H7/g6', fit: expectedFit });
+    expect(fromHole.fitBands).toMatchObject({
+      internal: expect.arrayContaining([expect.objectContaining({ designation: 'H7', featureClass: 'internal', available: true })]),
+      external: expect.arrayContaining([expect.objectContaining({ designation: 'g6', featureClass: 'external', available: true })]),
+    });
+    expect(fromShaft.selection?.fit).toEqual(fromHole.selection?.fit);
+
+    service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', ...fitInputDigests(12.7), selectionSource: 'manual', displayPreference: 'designation',
+      evidenceRefs: ['manual:fit'],
+    });
     expect(service.query('session', {
       expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
-    }).selection).toMatchObject({ designation: 'H7/g6', fit: expectedFit });
+    }).selection).toMatchObject({
+      displayPreference: 'designation',
+      override: { upperDeviation: -.002, lowerDeviation: -.01 },
+      fit: {
+        shaftOverride: { upperDeviation: -.002, lowerDeviation: -.01 },
+        result: { minimumClearance: .002, maximumClearance: .028 },
+      },
+    });
   });
 
   it('previews without mutating the plan and applies through shared undo history', () => {

@@ -69,6 +69,13 @@ export interface TolerancePreview {
   displayPreference: ToleranceDisplayPreference;
 }
 
+export interface ToleranceRoleCatalog {
+  featureClass: 'internal' | 'external';
+  standardRef: ToleranceCatalogResult['standardRef'];
+  datasetMetadata: ToleranceCatalogResult['datasetMetadata'];
+  bands: ToleranceCatalogResult['bands'];
+}
+
 export interface ToleranceControllerState {
   instanceId: 1;
   visible: boolean;
@@ -80,7 +87,7 @@ export interface ToleranceControllerState {
   target: ToleranceTarget | null;
   pendingTarget: ToleranceTarget | null;
   catalog: ToleranceCatalogResult | null;
-  fitCatalogs: { internal: ToleranceCatalogResult; external: ToleranceCatalogResult } | null;
+  fitCatalogs: { internal: ToleranceRoleCatalog; external: ToleranceRoleCatalog } | null;
   preview: TolerancePreviewResult | null;
   canvasPreview: TolerancePreview | null;
   selection: ToleranceSelection | null;
@@ -253,34 +260,22 @@ export function createToleranceController(input: {
         const isHole = target.dimensionIntentId === fit.holeDimensionIntentId && featureClass === fit.holeFeatureClass;
         const isShaft = target.dimensionIntentId === fit.shaftDimensionIntentId && featureClass === fit.shaftFeatureClass;
         if (!isHole && !isShaft) return;
-        const secondaryDimensionIntentId = isHole ? fit.shaftDimensionIntentId : fit.holeDimensionIntentId;
-        const secondaryFeatureClass = isHole ? fit.shaftFeatureClass : fit.holeFeatureClass;
-        const counterpart = await run(() => remote().queryToleranceCatalog(input.sessionId, {
-          expectedDrawingRef: target.drawingRef,
-          dimensionIntentId: secondaryDimensionIntentId,
-          featureClass: secondaryFeatureClass,
-        }), epoch, isCurrentHydration);
-        const secondaryTarget: ToleranceTarget = {
-          ...clone(target),
-          dimensionIntentId: secondaryDimensionIntentId,
-          classification: { status: 'resolved', featureClass: secondaryFeatureClass },
+        const currentMetadata = isHole ? fit.holeTarget : fit.shaftTarget;
+        const secondaryMetadata = isHole ? fit.shaftTarget : fit.holeTarget;
+        const hydratedTarget = hydrateFitTarget(target, currentMetadata);
+        const secondaryTarget = hydrateFitTarget(target, secondaryMetadata);
+        const host: TolerancePreviewResult = {
+          type: 'fit', drawingRef: clone(result.drawingRef),
+          holeDimensionIntentId: fit.holeDimensionIntentId,
+          shaftDimensionIntentId: fit.shaftDimensionIntentId,
+          status: 'resolved', result: clone(fit.result),
         };
-        if (!isCurrentHydration() || !catalogMatches(counterpart, secondaryTarget, secondaryFeatureClass)) return;
-        const request: TolerancePreviewRequest = {
-          type: 'fit', expectedDrawingRef: target.drawingRef,
-          primaryDimensionIntentId: target.dimensionIntentId, primaryFeatureClass: featureClass,
-          secondaryDimensionIntentId, secondaryFeatureClass,
-          basis: fit.basis, designation: fit.designation,
-        };
-        const host = await run(() => remote().previewTolerance(input.sessionId, request), epoch, isCurrentHydration);
-        if (!isCurrentHydration() || !previewMatchesRequest(host, request)) return;
-        const internal = featureClass === 'internal' ? result : counterpart;
-        const external = featureClass === 'external' ? result : counterpart;
         appliedOverrideDesignation = null;
         selectionEpoch = epoch;
         update({
           tab: fit.basis === 'hole' ? 'hole-fit' : 'shaft-fit',
-          fitCatalogs: { internal: clone(internal), external: clone(external) },
+          target: hydratedTarget,
+          fitCatalogs: fitRoleCatalogs(result),
           preview: clone(host), canvasPreview: null,
           selection: {
             kind: 'fit', basis: fit.basis, designation: fit.designation,
@@ -288,7 +283,7 @@ export function createToleranceController(input: {
             shaftDimensionIntentId: fit.shaftDimensionIntentId,
             source: selection.source, evidenceRefs: [...selection.evidenceRefs],
           },
-          override: null,
+          override: clone(isHole ? fit.holeOverride ?? null : fit.shaftOverride ?? null),
           displayPreference: selection.displayPreference,
           fit: { basis: fit.basis, selectingSecondTarget: false, secondTarget: secondaryTarget },
           fitDiagnostic: null,
@@ -670,6 +665,7 @@ export function createToleranceController(input: {
     },
     async beginFit(basis) {
       const target = requireTarget();
+      const featureClass = resolvedFeatureClass(target);
       const epoch = targetEpoch;
       const generation = ++fitCatalogGeneration;
       const isCurrent = () => epoch === targetEpoch && generation === fitCatalogGeneration;
@@ -684,29 +680,19 @@ export function createToleranceController(input: {
         error: null,
       });
       persist();
-      let internal: ToleranceCatalogResult;
-      let external: ToleranceCatalogResult;
+      let result: ToleranceCatalogResult;
       try {
-        [internal, external] = await Promise.all([
-          run(() => remote().queryToleranceCatalog(input.sessionId, {
-            expectedDrawingRef: target.drawingRef,
-            dimensionIntentId: target.dimensionIntentId,
-            featureClass: 'internal',
-          }), epoch, isCurrent),
-          run(() => remote().queryToleranceCatalog(input.sessionId, {
-            expectedDrawingRef: target.drawingRef,
-            dimensionIntentId: target.dimensionIntentId,
-            featureClass: 'external',
-          }), epoch, isCurrent),
-        ]);
+        result = await run(() => remote().queryToleranceCatalog(input.sessionId, {
+          expectedDrawingRef: target.drawingRef,
+          dimensionIntentId: target.dimensionIntentId,
+          featureClass,
+        }), epoch, isCurrent);
       } catch (error) {
         if (!isCurrent()) return;
         throw error;
       }
-      if (!isCurrent()
-        || !catalogMatches(internal, target, 'internal')
-        || !catalogMatches(external, target, 'external')) return;
-      update({ fitCatalogs: { internal: clone(internal), external: clone(external) } });
+      if (!isCurrent() || !catalogMatches(result, target, featureClass)) return;
+      update({ fitCatalogs: fitRoleCatalogs(result) });
     },
     selectFitTarget(target) {
       requireTarget();
@@ -870,6 +856,29 @@ function catalogMatches(
   return result.dimensionIntentId === target.dimensionIntentId
     && result.featureClass === featureClass
     && sameDrawingRef(result.drawingRef, target.drawingRef);
+}
+
+function fitRoleCatalogs(result: ToleranceCatalogResult): ToleranceControllerState['fitCatalogs'] {
+  const role = (featureClass: 'internal' | 'external'): ToleranceRoleCatalog => ({
+    featureClass,
+    standardRef: clone(result.standardRef),
+    datasetMetadata: clone(result.datasetMetadata),
+    bands: clone(result.fitBands[featureClass]),
+  });
+  return { internal: role('internal'), external: role('external') };
+}
+
+function hydrateFitTarget(
+  source: ToleranceTarget,
+  metadata: NonNullable<NonNullable<ToleranceCatalogResult['selection']>['fit']>['holeTarget' | 'shaftTarget'],
+): ToleranceTarget {
+  return {
+    ...clone(source),
+    dimensionIntentId: metadata.dimensionIntentId,
+    label: metadata.label,
+    basicSize: metadata.basicSize,
+    classification: { status: 'resolved', featureClass: metadata.featureClass },
+  };
 }
 
 function singlePreviewMatches(

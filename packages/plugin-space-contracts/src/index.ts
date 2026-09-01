@@ -1014,7 +1014,11 @@ const toleranceDisplayPreferenceSchema = z.enum(['deviations', 'designation', 'b
 const toleranceOverrideSchema = z.object({
   upperDeviation: z.number().finite(),
   lowerDeviation: z.number().finite(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.lowerDeviation > value.upperDeviation) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_ORDER' });
+  }
+});
 const toleranceStandardRefSchema = z.object({
   id: toleranceStandardRefFieldSchema,
   edition: toleranceStandardRefFieldSchema,
@@ -1121,6 +1125,10 @@ export const toleranceCatalogResultSchema = z.object({
   standardRef: toleranceStandardRefSchema,
   datasetMetadata: toleranceDatasetMetadataSchema,
   bands: z.array(toleranceBandSchema),
+  fitBands: z.object({
+    internal: z.array(toleranceBandSchema),
+    external: z.array(toleranceBandSchema),
+  }).strict(),
   selection: z.object({
     designation: z.string().min(2).max(17),
     source: toleranceSelectionSourceSchema,
@@ -1137,6 +1145,23 @@ export const toleranceCatalogResultSchema = z.object({
       shaftDimensionIntentId: idSchema,
       shaftFeatureClass: z.literal('external'),
       shaftDesignation: z.string().min(2).max(8),
+      holeTarget: z.object({
+        dimensionIntentId: idSchema,
+        label: z.string().min(1).max(256),
+        basicSize: z.number().finite(),
+        unit: z.literal('mm'),
+        featureClass: z.literal('internal'),
+      }).strict(),
+      shaftTarget: z.object({
+        dimensionIntentId: idSchema,
+        label: z.string().min(1).max(256),
+        basicSize: z.number().finite(),
+        unit: z.literal('mm'),
+        featureClass: z.literal('external'),
+      }).strict(),
+      holeOverride: toleranceOverrideSchema.optional(),
+      shaftOverride: toleranceOverrideSchema.optional(),
+      result: resolvedFitSchema,
     }).strict().optional(),
   }).strict().optional(),
   recommendation: z.object({
@@ -1232,6 +1257,9 @@ export const toleranceEditCommandSchema = z.discriminatedUnion('type', [
     evidenceRefs: z.array(idSchema),
   }).strict(),
 ]).superRefine((value, context) => {
+  if (value.type === 'standard.override.set' && value.lowerDeviation > value.upperDeviation) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_ORDER' });
+  }
   if (value.type !== 'manual.apply') return;
   const bothDeviations = value.upperDeviation !== undefined && value.lowerDeviation !== undefined;
   if (value.mode === 'bilateral' && !bothDeviations) {
@@ -1239,6 +1267,10 @@ export const toleranceEditCommandSchema = z.discriminatedUnion('type', [
   }
   if (value.mode === 'unilateral' && value.upperDeviation === undefined && value.lowerDeviation === undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_REQUIRED' });
+  }
+  if (value.upperDeviation !== undefined && value.lowerDeviation !== undefined
+    && value.lowerDeviation > value.upperDeviation) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_ORDER' });
   }
 });
 export const geometricCharacteristicSchema = z.enum([

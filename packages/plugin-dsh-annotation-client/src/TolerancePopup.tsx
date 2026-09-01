@@ -65,6 +65,7 @@ const preferences: Array<{ id: ToleranceDisplayPreference; label: string }> = [
 ];
 
 export function TolerancePopup(props: TolerancePopupProps) {
+  const initialFit = fitSelectionFromPreview(props.preview);
   const operation = useRef<PointerOperation | null>(null);
   const capture = useRef<{ owner: HTMLElement; pointerId: number } | null>(null);
   const [inspectedBand, setInspectedBand] = useState<ToleranceBand | null>(null);
@@ -73,8 +74,8 @@ export function TolerancePopup(props: TolerancePopupProps) {
   const [manualUpper, setManualUpper] = useState('');
   const [manualLower, setManualLower] = useState('');
   const [manualReady, setManualReady] = useState(false);
-  const [fitInternal, setFitInternal] = useState('');
-  const [fitExternal, setFitExternal] = useState('');
+  const [fitInternal, setFitInternal] = useState(initialFit?.internal ?? '');
+  const [fitExternal, setFitExternal] = useState(initialFit?.external ?? '');
   const [fitInputsDirty, setFitInputsDirty] = useState(false);
   const [overrideInputsDirty, setOverrideInputsDirty] = useState(false);
   const fitInputGeneration = useRef(0);
@@ -86,6 +87,8 @@ export function TolerancePopup(props: TolerancePopupProps) {
   const hydratedOverrideUpper = props.override?.upperDeviation;
   const hydratedOverrideLower = props.override?.lowerDeviation;
   const localTargetIdentity = useRef(targetIdentity);
+  const fitHydrationIdentity = initialFit?.identity ?? '';
+  const localHydratedFit = useRef(fitHydrationIdentity);
   const localHydratedOverride = useRef({ targetIdentity, upper: hydratedOverrideUpper, lower: hydratedOverrideLower });
   useEffect(() => {
     if (localTargetIdentity.current === targetIdentity) return;
@@ -95,6 +98,7 @@ export function TolerancePopup(props: TolerancePopupProps) {
     setManualReady(false);
     setFitInternal('');
     setFitExternal('');
+    localHydratedFit.current = '';
     setFitInputsDirty(false);
     setOverrideInputsDirty(false);
     fitInputGeneration.current += 1;
@@ -102,6 +106,13 @@ export function TolerancePopup(props: TolerancePopupProps) {
     setInspectedBand(null);
     setActionError(null);
   }, [targetIdentity]);
+  useEffect(() => {
+    if (fitInputsDirty || initialFit === null || localHydratedFit.current === fitHydrationIdentity) return;
+    localHydratedFit.current = fitHydrationIdentity;
+    setFitInternal(initialFit.internal);
+    setFitExternal(initialFit.external);
+    setFitInputsDirty(false);
+  }, [targetIdentity, fitHydrationIdentity, fitInputsDirty, initialFit]);
   useEffect(() => {
     const previous = localHydratedOverride.current;
     if (previous.targetIdentity === targetIdentity
@@ -383,6 +394,19 @@ export function TolerancePopup(props: TolerancePopupProps) {
       onPointerDown={(event) => begin('resize-se', event)}
     />
   </aside>;
+}
+
+function fitSelectionFromPreview(preview: TolerancePreviewResult | null): {
+  identity: string;
+  internal: string;
+  external: string;
+} | null {
+  if (preview?.type !== 'fit') return null;
+  return {
+    identity: `${preview.holeDimensionIntentId}:${preview.shaftDimensionIntentId}:${preview.result.basis}:${preview.result.designation}`,
+    internal: preview.result.hole.designation,
+    external: preview.result.shaft.designation,
+  };
 }
 
 function FitBandSelection({

@@ -208,7 +208,9 @@ export class DimensionPlanStore {
     if (!draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
     const index = draft.geometricTolerances.findIndex(({ id }) => id === command.intentId);
     if (index < 0) throw new Error('GDT_INTENT_UNKNOWN');
-    const { intentId: _intentId, expectedDrawingRef: _expectedDrawingRef, ...edit } = command;
+    const edit = { ...command } as Partial<typeof command>;
+    delete edit.intentId;
+    delete edit.expectedDrawingRef;
     const geometricTolerances = [...draft.geometricTolerances];
     geometricTolerances[index] = applyGeometricToleranceEdit(
       geometricTolerances[index]! as Parameters<typeof applyGeometricToleranceEdit>[0],
@@ -242,6 +244,17 @@ export class DimensionPlanStore {
       });
     } else if (command.type === 'standard.fit.apply') {
       if (!resolved || !('hole' in resolved)) throw new Error('TOLERANCE_RESULT_REQUIRED');
+      const existing = draft.fitAssignments.find((assignment) => (
+        assignment.holeDimensionId === command.holeDimensionIntentId
+        && assignment.shaftDimensionId === command.shaftDimensionIntentId
+        && assignment.basis === command.basis
+        && assignment.designation === command.designation
+      ));
+      const overrides = existing === undefined ? [] : draft.tolerances.flatMap((spec) => (
+        spec.fitGroupId === existing.fitGroupId && spec.override !== undefined
+          ? [{ dimensionIntentId: spec.dimensionIntentId, override: { ...spec.override } }]
+          : []
+      ));
       edited = applyFitTolerance(draft, resolved, {
         fitGroupId: `fit:${command.holeDimensionIntentId}:${command.shaftDimensionIntentId}`,
         holeDimensionIntentId: command.holeDimensionIntentId,
@@ -250,6 +263,9 @@ export class DimensionPlanStore {
         displayPreference: command.displayPreference,
         evidenceRefs: command.evidenceRefs,
       });
+      for (const item of overrides) {
+        edited = setToleranceOverride(edited, item.dimensionIntentId, item.override);
+      }
     } else if (command.type === 'manual.apply') {
       edited = applyManualTolerance(draft, {
         dimensionIntentId: command.dimensionIntentId,

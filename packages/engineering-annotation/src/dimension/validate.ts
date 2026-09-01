@@ -23,6 +23,10 @@ export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): Eng
   }
   for (const tolerance of draft.tolerances) {
     if (!intentIds.has(tolerance.dimensionIntentId)) diagnostics.push(problem('TOLERANCE_INTENT_UNKNOWN', tolerance.id, 'Tolerance references an unknown intent'));
+    if (tolerance.override !== undefined
+      && tolerance.override.lowerDeviation > tolerance.override.upperDeviation) {
+      diagnostics.push(problem('TOLERANCE_DEVIATION_ORDER', tolerance.id, 'Tolerance lower deviation must not exceed upper deviation'));
+    }
     if ((tolerance.status === 'resolved' || tolerance.status === 'confirmed') && tolerance.resolved === undefined) {
       diagnostics.push(problem('TOLERANCE_RESULT_REQUIRED', tolerance.id, 'Confirmed tolerance requires a resolved result'));
     } else if (tolerance.resolved !== undefined && !isResolvedToleranceValid(tolerance)) {

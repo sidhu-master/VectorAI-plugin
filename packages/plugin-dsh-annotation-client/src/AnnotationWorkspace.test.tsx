@@ -53,6 +53,10 @@ function toleranceRemote(
         numericProvenance: [{ kind: 'plan-reference-vector' as const, referenceId: 'task-8', description: 'test vector' }],
       },
       bands: [{ designation: request.featureClass === 'external' ? 'u6' : 'H7', featureClass: request.featureClass, category: 'unknown' as const, available: true }],
+      fitBands: {
+        internal: [{ designation: 'H7', featureClass: 'internal' as const, category: 'unknown' as const, available: true }],
+        external: [{ designation: 'g6', featureClass: 'external' as const, category: 'unknown' as const, available: true }],
+      },
     })),
     previewTolerance: vi.fn(async (_sessionId, request) => {
       if (request.type === 'fit') {
@@ -76,12 +80,12 @@ function toleranceRemote(
             },
             shaft: {
               designation: 'g6', featureClass: 'external' as const, basicSize: 13, unit: 'mm' as const,
-              upperDeviation: -.006, lowerDeviation: -.017, toleranceMagnitude: .011,
-              upperLimitSize: 12.994, lowerLimitSize: 12.983,
+              upperDeviation: -.002, lowerDeviation: -.01, toleranceMagnitude: .008,
+              upperLimitSize: 12.998, lowerLimitSize: 12.99,
               standardRef: { id: 'GB/T 1800', edition: '2020' },
               ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:fit-shaft' },
             },
-            fitType: 'clearance' as const, minimumClearance: .006, maximumClearance: .035,
+            fitType: 'clearance' as const, minimumClearance: .002, maximumClearance: .028,
           },
         });
       }
@@ -326,7 +330,7 @@ describe('AnnotationWorkspace', () => {
     expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-2']);
     const fitPreview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
     expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm H7/g6 -0.006/-0.017');
+      .toBe('13 mm H7/g6 -0.002/-0.01');
     expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-2' }).findByType('text').children.join(''))
       .toBe('13 mm H7/g6 +0.018/0');
 
