@@ -1268,8 +1268,9 @@ export const toleranceEditCommandSchema = z.discriminatedUnion('type', [
   if (value.mode === 'unilateral' && value.upperDeviation === undefined && value.lowerDeviation === undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_REQUIRED' });
   }
-  if (value.upperDeviation !== undefined && value.lowerDeviation !== undefined
-    && value.lowerDeviation > value.upperDeviation) {
+  const effectiveUpper = value.upperDeviation ?? 0;
+  const effectiveLower = value.lowerDeviation ?? 0;
+  if (effectiveLower > effectiveUpper) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'TOLERANCE_DEVIATION_ORDER' });
   }
 });

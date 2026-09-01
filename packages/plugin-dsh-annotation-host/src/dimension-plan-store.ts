@@ -236,12 +236,22 @@ export class DimensionPlanStore {
     let edited: EngineeringAnnotationDraft;
     if (command.type === 'standard.single.apply') {
       if (!resolved || !('featureClass' in resolved)) throw new Error('TOLERANCE_RESULT_REQUIRED');
+      const existing = [...draft.tolerances].reverse().find((spec) => (
+        spec.dimensionIntentId === command.dimensionIntentId
+        && spec.fitGroupId === undefined
+        && spec.source === 'standard'
+        && spec.featureClass === command.featureClass
+        && spec.selection?.designation === command.designation
+      ));
       edited = applySingleTolerance(draft, resolved, {
         dimensionIntentId: command.dimensionIntentId,
         selectionSource: command.selectionSource,
         displayPreference: command.displayPreference,
         evidenceRefs: command.evidenceRefs,
       });
+      if (existing?.override !== undefined) {
+        edited = setToleranceOverride(edited, command.dimensionIntentId, existing.override);
+      }
     } else if (command.type === 'standard.fit.apply') {
       if (!resolved || !('hole' in resolved)) throw new Error('TOLERANCE_RESULT_REQUIRED');
       const existing = draft.fitAssignments.find((assignment) => (

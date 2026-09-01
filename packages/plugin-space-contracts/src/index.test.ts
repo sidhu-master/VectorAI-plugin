@@ -297,8 +297,20 @@ describe('DSH drawing workspace wire schemas', () => {
       dimensionIntentId: 'intent-1', mode: 'unilateral', upperDeviation: .02, evidenceRefs: [],
     } as const;
     expect(toleranceEditCommandSchema.parse(manual)).toMatchObject({ ...manual, displayPreference: 'deviations' });
+    expect(toleranceEditCommandSchema.parse({ ...manual, upperDeviation: 0 })).toMatchObject({ upperDeviation: 0 });
+    expect(toleranceEditCommandSchema.parse({
+      ...manual, upperDeviation: undefined, lowerDeviation: 0,
+    })).toMatchObject({ lowerDeviation: 0 });
+    expect(toleranceEditCommandSchema.parse({
+      ...manual, upperDeviation: undefined, lowerDeviation: -.02,
+    })).toMatchObject({ lowerDeviation: -.02 });
     expect(() => toleranceEditCommandSchema.parse({ ...manual, mode: 'bilateral' })).toThrow();
     expect(() => toleranceEditCommandSchema.parse({ ...manual, upperDeviation: undefined })).toThrow();
+    expect(() => toleranceEditCommandSchema.parse({ ...manual, upperDeviation: -.02 }))
+      .toThrow('TOLERANCE_DEVIATION_ORDER');
+    expect(() => toleranceEditCommandSchema.parse({
+      ...manual, upperDeviation: undefined, lowerDeviation: .02,
+    })).toThrow('TOLERANCE_DEVIATION_ORDER');
     expect(() => toleranceEditCommandSchema.parse({
       type: 'standard.single.apply', expectedDrawingRef: manual.expectedDrawingRef, dimensionIntentId: 'intent-1',
       featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [], extra: true,

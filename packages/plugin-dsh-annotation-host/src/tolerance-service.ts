@@ -520,9 +520,71 @@ function requireAiRecommendation(plan: AnnotationPlan, command: ToleranceEditCom
     && spec.selection.designation === command.designation
     && spec.selection.evidenceRefs.length > 0
     && spec.selection.evidenceRefs.every((reference) => spec.evidenceIds.includes(reference))
-    && (command.type !== 'standard.single.apply' || spec.featureClass === command.featureClass)
+    && (command.type === 'standard.single.apply'
+      ? spec.featureClass === command.featureClass
+      : (spec.dimensionIntentId === command.holeDimensionIntentId && spec.featureClass === 'internal')
+        || (spec.dimensionIntentId === command.shaftDimensionIntentId && spec.featureClass === 'external'))
     && sameStrings(spec.selection.evidenceRefs, command.evidenceRefs));
-  if (!match) throw new Error('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
+  if (!match && !matchesPersistedAiSelection(plan, command)) {
+    throw new Error('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
+  }
+}
+
+function matchesPersistedAiSelection(
+  plan: AnnotationPlan,
+  command: Extract<ToleranceEditCommand, { type: 'standard.single.apply' | 'standard.fit.apply' }>,
+): boolean {
+  if (command.type === 'standard.single.apply') {
+    const spec = [...plan.tolerances].reverse().find((candidate) => (
+      candidate.dimensionIntentId === command.dimensionIntentId
+      && candidate.fitGroupId === undefined
+    ));
+    return spec !== undefined
+      && activePersistedAiSpec(spec, command.designation, command.evidenceRefs)
+      && spec.featureClass === command.featureClass
+      && spec.inputs.designation === command.designation
+      && spec.inputs.featureClass === command.featureClass;
+  }
+  const assignment = plan.fitAssignments.find((candidate) => (
+    candidate.holeDimensionId === command.holeDimensionIntentId
+    && candidate.shaftDimensionId === command.shaftDimensionIntentId
+    && candidate.basis === command.basis
+    && candidate.designation === command.designation
+  ));
+  if (assignment === undefined) return false;
+  const members = plan.tolerances.filter(({ fitGroupId }) => fitGroupId === assignment.fitGroupId);
+  const hole = members.find(({ dimensionIntentId }) => dimensionIntentId === assignment.holeDimensionId);
+  const shaft = members.find(({ dimensionIntentId }) => dimensionIntentId === assignment.shaftDimensionId);
+  const [holeDesignation, shaftDesignation] = command.designation.split('/');
+  return members.length === 2
+    && hole !== undefined
+    && shaft !== undefined
+    && holeDesignation !== undefined
+    && shaftDesignation !== undefined
+    && activePersistedAiSpec(hole, command.designation, command.evidenceRefs)
+    && activePersistedAiSpec(shaft, command.designation, command.evidenceRefs)
+    && hole.featureClass === 'internal'
+    && shaft.featureClass === 'external'
+    && hole.inputs.designation === holeDesignation
+    && shaft.inputs.designation === shaftDesignation
+    && hole.standardRef?.id === assignment.standardRef.id
+    && hole.standardRef.edition === assignment.standardRef.edition
+    && shaft.standardRef?.id === assignment.standardRef.id
+    && shaft.standardRef.edition === assignment.standardRef.edition;
+}
+
+function activePersistedAiSpec(
+  spec: ToleranceSpec,
+  designation: string,
+  evidenceRefs: readonly string[],
+): boolean {
+  return spec.source === 'standard'
+    && (spec.status === 'resolved' || spec.status === 'confirmed')
+    && spec.selection?.source === 'ai-recommended'
+    && spec.selection.designation === designation
+    && spec.selection.evidenceRefs.length > 0
+    && spec.selection.evidenceRefs.every((reference) => spec.evidenceIds.includes(reference))
+    && sameStrings(spec.selection.evidenceRefs, evidenceRefs);
 }
 
 function sameStrings(first: readonly string[], second: readonly string[]): boolean {

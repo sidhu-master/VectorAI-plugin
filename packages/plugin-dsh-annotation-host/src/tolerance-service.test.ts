@@ -744,6 +744,110 @@ describe('ToleranceService', () => {
     });
   });
 
+  it('reapplies an exact persisted AI single selection without a consumed candidate', () => {
+    const { plans, service } = setup();
+    const candidate = draft();
+    candidate.tolerances = [{
+      id: 'tolerance:ai:intent-shaft', dimensionIntentId: 'intent-shaft', mode: 'bilateral',
+      source: 'ai-candidate', featureClass: 'external',
+      selection: { designation: 'u6', source: 'ai-recommended', evidenceRefs: ['document:bearing-seat'] },
+      inputs: { basicSize: 13, designation: 'u6', featureClass: 'external' },
+      status: 'candidate', evidenceIds: ['document:bearing-seat'], diagnostics: [],
+    }];
+    plans.setDraft('session', candidate);
+    service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'),
+      selectionSource: 'ai-recommended', displayPreference: 'both', evidenceRefs: ['document:bearing-seat'],
+    });
+    service.edit('session', {
+      type: 'standard.override.set', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      upperDeviation: .05, lowerDeviation: .04,
+    });
+    const beforeReapply = plans.get('session');
+
+    const reapplied = service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'),
+      selectionSource: 'ai-recommended', displayPreference: 'designation', evidenceRefs: ['document:bearing-seat'],
+    });
+
+    expect(reapplied.draft?.tolerances).toContainEqual(expect.objectContaining({
+      dimensionIntentId: 'intent-shaft', displayPreference: 'designation',
+      override: { upperDeviation: .05, lowerDeviation: .04 },
+      selection: {
+        designation: 'u6', source: 'ai-recommended', evidenceRefs: ['document:bearing-seat'],
+      },
+      evidenceIds: ['document:bearing-seat'],
+    }));
+    expect(plans.undo('session', drawingRef).draft).toEqual(beforeReapply.draft);
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'h6', expectedInputDigest: inputDigest('external', 'h6'),
+      selectionSource: 'ai-recommended', displayPreference: 'both', evidenceRefs: ['document:bearing-seat'],
+    })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'),
+      selectionSource: 'ai-recommended', displayPreference: 'both', evidenceRefs: ['spoofed:evidence'],
+    })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
+  });
+
+  it('reapplies an exact persisted AI fit as one override-preserving history edit', () => {
+    const { plans, service } = setup();
+    const candidate = draft();
+    candidate.tolerances = [{
+      id: 'tolerance:ai:fit', dimensionIntentId: 'intent-shaft', mode: 'bilateral',
+      source: 'ai-candidate', featureClass: 'external',
+      selection: { designation: 'H7/g6', source: 'ai-recommended', evidenceRefs: ['document:fit'] },
+      inputs: { basicSize: 13, designation: 'H7/g6', featureClass: 'external' },
+      status: 'candidate', evidenceIds: ['document:fit'], diagnostics: [],
+    }];
+    plans.setDraft('session', candidate);
+    service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'ai-recommended',
+      displayPreference: 'both', evidenceRefs: ['document:fit'],
+    });
+    service.edit('session', {
+      type: 'standard.override.set', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      upperDeviation: -.002, lowerDeviation: -.01,
+    });
+    const beforeReapply = plans.get('session');
+
+    const reapplied = service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'ai-recommended',
+      displayPreference: 'designation', evidenceRefs: ['document:fit'],
+    });
+
+    expect(reapplied.draft?.tolerances).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        dimensionIntentId: 'intent-hole', displayPreference: 'designation',
+        selection: { designation: 'H7/g6', source: 'ai-recommended', evidenceRefs: ['document:fit'] },
+      }),
+      expect.objectContaining({
+        dimensionIntentId: 'intent-shaft', displayPreference: 'designation',
+        override: { upperDeviation: -.002, lowerDeviation: -.01 },
+        selection: { designation: 'H7/g6', source: 'ai-recommended', evidenceRefs: ['document:fit'] },
+      }),
+    ]));
+    expect(reapplied.draft?.fitAssignments[0]).toMatchObject({
+      designation: 'H7/g6', minimumClearance: .002, maximumClearance: .028,
+    });
+    expect(plans.undo('session', drawingRef).draft).toEqual(beforeReapply.draft);
+    expect(() => service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/u6',
+      expectedHoleInputDigest: inputDigest('internal', 'H7'),
+      expectedShaftInputDigest: inputDigest('external', 'u6'),
+      selectionSource: 'ai-recommended', displayPreference: 'both', evidenceRefs: ['document:fit'],
+    })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
+  });
+
   it('retains recorded provider edition and values across reload until explicit reapply', () => {
     const directory = mkdtempSync(join(tmpdir(), 'vectorai-tolerance-service-'));
     const storage = new FileDimensionPlanStorage(directory);
