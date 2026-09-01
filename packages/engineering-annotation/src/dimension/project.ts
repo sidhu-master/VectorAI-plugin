@@ -43,8 +43,8 @@ export function projectEngineeringAnnotations(input: {
       continue;
     }
     const intentDiagnostics: EngineeringDiagnostic[] = [];
-    if (intent.status !== 'confirmed') {
-      intentDiagnostics.push(issue('ANNOTATION_INTENT_NOT_CONFIRMED', '只有已确认的尺寸意图可以投影到第一层。', [intent.id]));
+    if (!['resolved', 'confirmed'].includes(intent.status)) {
+      intentDiagnostics.push(issue('ANNOTATION_INTENT_NOT_CONFIRMED', '只有已解析或已确认的尺寸意图可以投影到第一层。', [intent.id]));
     }
 
     const tolerance = toleranceByIntentId.get(intent.id);

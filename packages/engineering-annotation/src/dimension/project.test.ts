@@ -3,9 +3,13 @@
 import type { AnnotationId, AnnotationNode, GeometryId } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 import {
+  applySingleTolerance,
+  axialDimensionIntentId,
   clearToleranceOverride,
   projectEngineeringAnnotations,
+  projectAxialDimensionScheme,
   setToleranceOverride,
+  type AxialDimensionScheme,
   type EngineeringAnnotationDraft,
 } from '../index';
 
@@ -56,6 +60,69 @@ function existing(): AnnotationNode {
 }
 
 describe('portable engineering annotation projection', () => {
+  it('projects a resolved axial intent with a persisted standard tolerance', () => {
+    const scheme: AxialDimensionScheme = {
+      version: 1,
+      drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      policy: { id: 'shaft-hierarchical-dimensioning-v1', version: '1' },
+      inputDigest: 'sha256:resolved-axial',
+      topology: {
+        drawingRef: { drawingId: 'drawing-1', revision: 1 },
+        axis: {
+          origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 20,
+          orientation: 'forward', geometryNodeIds: ['line-a'],
+        },
+        unit: 'mm',
+        stations: [
+          { id: 'station-0', coordinate: 0, sourceCoordinate: 0, unit: 'mm', kinds: ['drawing-end'], geometryNodeIds: ['line-a'], evidenceIds: [] },
+          { id: 'station-20', coordinate: 20, sourceCoordinate: 20, unit: 'mm', kinds: ['drawing-end'], geometryNodeIds: ['line-a'], evidenceIds: [] },
+        ],
+        elementarySpans: [],
+      },
+      evidence: [],
+      candidates: [{
+        id: 'candidate:resolved', startStationId: 'station-0', endStationId: 'station-20', nominalValue: 20,
+        roles: ['overall'], evidenceIds: [], required: true,
+      }],
+      displayedCandidateIds: ['candidate:resolved'], closureCandidateIds: [], chains: [],
+      decisions: [{
+        candidateId: 'candidate:resolved', decision: 'displayed', score: 1,
+        features: [], reasonCodes: ['required'],
+      }],
+      diagnostics: [], status: 'resolved',
+    };
+    const intentId = axialDimensionIntentId('candidate:resolved');
+    const axial = projectAxialDimensionScheme({ scheme });
+    expect(axial.intents[0]?.status).toBe('resolved');
+    const persisted = applySingleTolerance(axial, {
+      designation: 'u6', featureClass: 'external', basicSize: 20, unit: 'mm',
+      upperDeviation: .044, lowerDeviation: .033, upperLimitSize: 20.044, lowerLimitSize: 20.033,
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+      ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:u6' },
+    }, {
+      dimensionIntentId: intentId, selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+    });
+    const placed = existing();
+    if (placed.type !== 'dimension') throw new Error('fixture');
+    placed.engineeringIntentId = intentId;
+
+    const result = projectEngineeringAnnotations({
+      draft: persisted, orderedIntentIds: [intentId], existingAnnotations: [placed],
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.annotations).toEqual([
+      expect.objectContaining({
+        id: 'annotation-existing', engineeringIntentId: intentId,
+        textPosition: [10, 5], definitionPoints: [[0, 0], [20, 0]],
+        toleranceProjection: expect.objectContaining({
+          source: 'standard', status: 'resolved', featureClass: 'external', fitDesignation: 'u6',
+          upperDeviation: .044, lowerDeviation: .033,
+        }),
+      }),
+    ]);
+  });
+
   it('projects confirmed intent, datum, chain, order, and resolved tolerance provenance', () => {
     const input = draft();
     const before = structuredClone(input);
@@ -103,6 +170,16 @@ describe('portable engineering annotation projection', () => {
       'ANNOTATION_INTENT_NOT_CONFIRMED',
       'TOLERANCE_RESULT_REQUIRED',
     ]);
+  });
+
+  it.each(['candidate', 'conflict', 'stale'] as const)('does not project a %s intent', (status) => {
+    const invalid = draft();
+    invalid.intents[0]!.status = status;
+    const result = projectEngineeringAnnotations({
+      draft: invalid, orderedIntentIds: ['intent-a'], existingAnnotations: [existing()],
+    });
+    expect(result.annotations).toEqual([]);
+    expect(result.diagnostics.map(({ code }) => code)).toContain('ANNOTATION_INTENT_NOT_CONFIRMED');
   });
 
   it('preserves placement but replaces stale semantic and display payload during reprojection', () => {

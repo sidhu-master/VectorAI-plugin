@@ -170,7 +170,7 @@ describe('AnnotationWorkspace', () => {
       intents: [dimension, fitDimension, unequalFitDimension].map((annotation) => ({
         id: annotation.engineeringIntentId!, drawingRef: snapshot.ref, kind: annotation.dimensionKind,
         targets: [], datumIds: [], nominalValue: annotation.computedValue!, unit: annotation.unit,
-        functionalRole: 'assembly' as const, source: 'manual' as const, status: 'confirmed' as const, evidenceIds: [],
+        functionalRole: 'assembly' as const, source: 'geometry' as const, status: 'resolved' as const, evidenceIds: [],
       })),
       tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
     };
