@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createEmptyDrawing, type DimensionAnnotation } from '@vectorai/drawing-core';
-import { createGbt1800Provider, type EngineeringAnnotationDraft } from '@vectorai/engineering-annotation';
+import { canonicalRuleInputDigest, createGbt1800Provider, type EngineeringAnnotationDraft } from '@vectorai/engineering-annotation';
 import type { DimensionPlanSessionSnapshot } from '@vectorai/plugin-space-contracts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -291,7 +291,12 @@ describe('exportEngineeringDrawingDxf', () => {
 
     const applied = service.edit('workflow', {
       type: 'standard.single.apply', expectedDrawingRef: workflowRef, dimensionIntentId: 'intent-target',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6',
+      expectedInputDigest: canonicalRuleInputDigest({
+        nominalValue: 13, unit: 'mm',
+        inputs: { standardId: 'GB/T 1800', edition: '2020', featureClass: 'external', designation: 'u6' },
+      }),
+      selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     });
     const appliedWithoutTargetTolerance = {

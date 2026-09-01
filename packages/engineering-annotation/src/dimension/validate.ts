@@ -29,6 +29,7 @@ export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): Eng
       diagnostics.push(problem('TOLERANCE_RESULT_INVALID', tolerance.id, 'Resolved tolerance does not match its declared mode'));
     }
   }
+  validateFitAssignments(draft, intentIds, diagnostics);
   for (const chain of draft.chains) {
     for (const member of chain.members) {
       if (member.coefficient !== 1 && member.coefficient !== -1) {
@@ -47,6 +48,51 @@ export function validateEngineeringDraft(draft: EngineeringAnnotationDraft): Eng
   }
   diagnostics.push(...validateGeometricTolerances({ datums: draft.datums, intents: draft.geometricTolerances ?? [] }));
   return diagnostics;
+}
+
+function validateFitAssignments(
+  draft: EngineeringAnnotationDraft,
+  intentIds: ReadonlySet<string>,
+  diagnostics: EngineeringDiagnostic[],
+): void {
+  const assignmentGroups = new Set<string>();
+  for (const assignment of draft.fitAssignments) {
+    const memberIdsValid = assignment.holeDimensionId !== assignment.shaftDimensionId
+      && intentIds.has(assignment.holeDimensionId)
+      && intentIds.has(assignment.shaftDimensionId)
+      && !assignmentGroups.has(assignment.fitGroupId);
+    assignmentGroups.add(assignment.fitGroupId);
+    if (!memberIdsValid) {
+      diagnostics.push(problem('FIT_ASSIGNMENT_MEMBER_INVALID', assignment.fitGroupId, 'Fit assignment members must be distinct existing intents'));
+      continue;
+    }
+    const members = draft.tolerances.filter(({ fitGroupId }) => fitGroupId === assignment.fitGroupId);
+    const hole = members.find(({ dimensionIntentId }) => dimensionIntentId === assignment.holeDimensionId);
+    const shaft = members.find(({ dimensionIntentId }) => dimensionIntentId === assignment.shaftDimensionId);
+    const sameStandard = hole?.standardRef?.id === assignment.standardRef.id
+      && hole.standardRef.edition === assignment.standardRef.edition
+      && shaft?.standardRef?.id === assignment.standardRef.id
+      && shaft.standardRef.edition === assignment.standardRef.edition;
+    const validMembers = members.length === 2
+      && hole?.source === 'standard'
+      && shaft.source === 'standard'
+      && (hole.status === 'resolved' || hole.status === 'confirmed')
+      && (shaft.status === 'resolved' || shaft.status === 'confirmed')
+      && hole?.featureClass === 'internal'
+      && shaft?.featureClass === 'external'
+      && hole.selection?.designation === assignment.designation
+      && shaft.selection?.designation === assignment.designation
+      && hole.resolved?.fitDesignation === assignment.designation
+      && shaft.resolved?.fitDesignation === assignment.designation
+      && sameStandard;
+    if (!validMembers) {
+      diagnostics.push(problem('FIT_ASSIGNMENT_TOLERANCE_INVALID', assignment.fitGroupId, 'Fit assignment must match its paired tolerance members'));
+    }
+  }
+  for (const tolerance of draft.tolerances) {
+    if (!tolerance.fitGroupId || assignmentGroups.has(tolerance.fitGroupId) || tolerance.status === 'stale') continue;
+    diagnostics.push(problem('FIT_ASSIGNMENT_REQUIRED', tolerance.id, 'Resolved fit tolerance requires an active fit assignment'));
+  }
 }
 
 export function isResolvedToleranceValid(tolerance: ToleranceSpec): boolean {

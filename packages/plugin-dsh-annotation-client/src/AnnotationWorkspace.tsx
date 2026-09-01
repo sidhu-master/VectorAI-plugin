@@ -453,6 +453,11 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     if (!fitSelectionActive) {
       setFitAttemptAnnotationId(null);
       runtime.actions.setSelection(ids);
+      if (toleranceState.visible && ids.length > 0) {
+        const annotation = dimensionById.get(ids.at(-1)! as never);
+        const target = annotation === undefined ? null : targetForAnnotation(annotation);
+        if (target !== null) tolerance.actions.requestTarget(target);
+      }
       return;
     }
     if (ids.length === 0) {
@@ -772,13 +777,13 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           onUndo={() => gdtHistoryActive || dimensionHistoryActive
             ? runSharedAnnotationHistory(
               gdtHistoryActive ? () => gdt.actions.undo() : () => dimensionChain.actions.undo(),
-              [() => gdt.actions.refresh(), () => dimensionChain.actions.refresh()],
+              [async () => { tolerance.actions.cancelPreview(); }, () => gdt.actions.refresh(), () => dimensionChain.actions.refresh()],
             )
             : partition.actions.undo()}
           onRedo={() => gdtHistoryActive || dimensionHistoryActive
             ? runSharedAnnotationHistory(
               gdtHistoryActive ? () => gdt.actions.redo() : () => dimensionChain.actions.redo(),
-              [() => gdt.actions.refresh(), () => dimensionChain.actions.refresh()],
+              [async () => { tolerance.actions.cancelPreview(); }, () => gdt.actions.refresh(), () => dimensionChain.actions.refresh()],
             )
             : partition.actions.redo()}
           onUploadFiles={handleToolbarUpload}
@@ -869,7 +874,7 @@ function projectTolerancePreview(
     const annotation = annotations.find((candidate) => candidate.engineeringIntentId === dimensionIntentId);
     return annotation === undefined ? [] : [{
       ...structuredClone(annotation),
-      toleranceProjection: toleranceProjection(result, null, preview.displayPreference, 'fit'),
+      toleranceProjection: toleranceProjection(result, null, preview.displayPreference, 'fit', host.result.designation),
     }];
   });
 }
@@ -879,6 +884,7 @@ function toleranceProjection(
   override: { upperDeviation: number; lowerDeviation: number } | null,
   displayPreference: ToleranceProjection['displayPreference'],
   mode: 'bilateral' | 'fit',
+  fitDesignation = result.designation,
 ): ToleranceProjection {
   const effective = override ?? result;
   return {
@@ -887,7 +893,7 @@ function toleranceProjection(
     lowerDeviation: effective.lowerDeviation,
     upperLimit: result.upperLimitSize,
     lowerLimit: result.lowerLimitSize,
-    fitDesignation: result.designation,
+    fitDesignation,
     unit: result.unit,
     status: 'resolved',
     source: 'standard',

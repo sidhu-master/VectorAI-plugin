@@ -280,7 +280,7 @@ function writeStyleTable(writer: DxfWriter, styles: readonly DxfTextStyle[]): Re
   writer.pair(330, '0');
   writer.pair(100, 'AcDbSymbolTable');
   writer.pair(70, styles.length);
-  styles.forEach((style, index) => {
+  styles.forEach((style) => {
     writer.pair(0, 'STYLE');
     writer.pair(5, handles.get(style.name)!);
     writer.pair(330, '12');
@@ -499,6 +499,8 @@ function writeNativeDimension(writer: DxfWriter, value: PreparedDimension): void
   const second = points[1] ?? first;
   const definition = item.dimensionKind === 'angular'
     ? angularDimensionDefinitionPoint(points, item.measurement, item.textPosition)
+    : item.dimensionKind === 'diameter'
+      ? first
     : points.at(-1) ?? item.textPosition;
   writer.pair(0, 'DIMENSION');
   writer.handle();

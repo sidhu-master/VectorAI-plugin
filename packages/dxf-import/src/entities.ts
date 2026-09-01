@@ -9,7 +9,9 @@ import type {
   GeometryNode,
   LineGeometry,
   SplineGeometry,
+  ToleranceProjection,
 } from '@vectorai/drawing-core';
+import { validateToleranceProjection } from '@vectorai/drawing-core';
 
 import { projectHatch } from './hatch';
 import type { DxfImportDiagnostic, DxfPair } from './types';
@@ -200,7 +202,10 @@ function dimension(record: DxfEntityRecord, context: DxfEntityContext): Dimensio
       [number(record, 16, second[0]), number(record, 26, second[1])],
       definitionPoint,
     ]
+    : dimensionKind === 'diameter'
+      ? [definitionPoint, [number(record, 15, definitionPoint[0]), number(record, 25, definitionPoint[1])]]
     : [first, second, definitionPoint];
+  const toleranceProjection = readToleranceProjection(record, context, rawText);
 
   return {
     ...base(record, context, 'annotation'),
@@ -213,7 +218,262 @@ function dimension(record: DxfEntityRecord, context: DxfEntityContext): Dimensio
     unit: dimensionKind === 'angular' ? 'deg' : context.lengthUnit,
     textPosition: [number(record, 11, definitionPoint[0]), number(record, 21, definitionPoint[1])],
     definitionPoints,
+    ...(toleranceProjection === undefined ? {} : { toleranceProjection }),
   };
+}
+
+const VECTORAI_XDATA_MAX_BYTES = 16_383;
+const VECTORAI_XDATA_MAX_STRING_BYTES = 254;
+const VECTORAI_XDATA_MAX_CHUNKS = 64;
+
+function readToleranceProjection(
+  record: DxfEntityRecord,
+  context: DxfEntityContext,
+  rawText: string,
+): ToleranceProjection | undefined {
+  const vectorAi = applicationSegments(record, 'VECTORAI');
+  const acad = applicationSegments(record, 'ACAD');
+  let native: { upperDeviation: number; lowerDeviation: number } | undefined;
+  let portable: ToleranceProjection | undefined;
+
+  if (acad.length > 0) {
+    try {
+      native = readAcadDstyle(acad);
+    } catch (error) {
+      context.diagnostics.push(diagnostic(
+        record,
+        'warning',
+        'DXF_TOLERANCE_DSTYLE_INVALID',
+        error instanceof Error ? error.message : String(error),
+      ));
+    }
+  }
+  if (vectorAi.length > 0) {
+    try {
+      portable = readVectorAiTolerance(vectorAi, rawText, native !== undefined);
+    } catch (error) {
+      context.diagnostics.push(diagnostic(
+        record,
+        'warning',
+        'DXF_TOLERANCE_XDATA_INVALID',
+        error instanceof Error ? error.message : String(error),
+      ));
+    }
+  }
+  if (portable !== undefined) return portable;
+  if (native === undefined) return undefined;
+  const projection: ToleranceProjection = {
+    mode: 'bilateral',
+    ...native,
+    unit: context.lengthUnit,
+    source: 'document',
+    status: 'confirmed',
+    displayPreference: 'deviations',
+    evidenceRefs: ['dxf:acad-dstyle'],
+  };
+  validateToleranceProjection(projection);
+  return projection;
+}
+
+function applicationSegments(record: DxfEntityRecord, application: string): readonly (readonly DxfPair[])[] {
+  const segments: DxfPair[][] = [];
+  let current: DxfPair[] | undefined;
+  for (const pair of record.pairs) {
+    if (pair.code === 1001) {
+      current = pair.value === application ? [] : undefined;
+      if (current !== undefined) segments.push(current);
+    } else if (current !== undefined) {
+      current.push(pair);
+    }
+  }
+  return segments;
+}
+
+function readAcadDstyle(segments: readonly (readonly DxfPair[])[]): {
+  upperDeviation: number;
+  lowerDeviation: number;
+} | undefined {
+  if (segments.length !== 1) throw new TypeError('DXF_TOLERANCE_DSTYLE_REGAPP_DUPLICATE');
+  const pairs = segments[0]!;
+  const marker = pairs.findIndex((pair) => pair.code === 1000 && pair.value === 'DSTYLE');
+  if (marker < 0) return undefined;
+  if (pairs[marker + 1]?.code !== 1002 || pairs[marker + 1]?.value !== '{') {
+    throw new TypeError('DXF_TOLERANCE_DSTYLE_OPEN_REQUIRED');
+  }
+  const variables = new Map<number, DxfPair>();
+  let closed = false;
+  for (let index = marker + 2; index < pairs.length; index += 1) {
+    const pair = pairs[index]!;
+    if (pair.code === 1002 && pair.value === '}') {
+      closed = true;
+      break;
+    }
+    if (pair.code !== 1070) throw new TypeError('DXF_TOLERANCE_DSTYLE_VARIABLE_INVALID');
+    const variable = strictInteger(pair.value, 'DXF_TOLERANCE_DSTYLE_VARIABLE_INVALID');
+    const variableValue = pairs[index + 1];
+    if (variableValue === undefined || ![1040, 1070].includes(variableValue.code)) {
+      throw new TypeError('DXF_TOLERANCE_DSTYLE_VALUE_REQUIRED');
+    }
+    if (variables.has(variable)) throw new TypeError('DXF_TOLERANCE_DSTYLE_VARIABLE_DUPLICATE');
+    variables.set(variable, variableValue);
+    index += 1;
+  }
+  if (!closed) throw new TypeError('DXF_TOLERANCE_DSTYLE_CLOSE_REQUIRED');
+  if (variables.get(71)?.code !== 1070 || strictNumber(variables.get(71)!.value) !== 1) return undefined;
+  const upperPair = variables.get(47);
+  const lowerPair = variables.get(48);
+  if (upperPair?.code !== 1040 || lowerPair?.code !== 1040) {
+    throw new TypeError('DXF_TOLERANCE_DSTYLE_DEVIATIONS_REQUIRED');
+  }
+  const upperDeviation = strictNumber(upperPair.value);
+  const lowerMagnitude = strictNumber(lowerPair.value);
+  if (upperDeviation < 0 || lowerMagnitude < 0) {
+    throw new TypeError('DXF_TOLERANCE_DSTYLE_DEVIATION_INVALID');
+  }
+  return { upperDeviation, lowerDeviation: -lowerMagnitude };
+}
+
+function readVectorAiTolerance(
+  segments: readonly (readonly DxfPair[])[],
+  rawText: string,
+  hasNativeDeviations: boolean,
+): ToleranceProjection {
+  if (segments.length !== 1) throw new TypeError('DXF_TOLERANCE_XDATA_REGAPP_DUPLICATE');
+  const pairs = segments[0]!;
+  if (pairs.length === 0 || pairs.some((pair) => pair.code !== 1000)) {
+    throw new TypeError('DXF_TOLERANCE_XDATA_STRING_REQUIRED');
+  }
+  const strings = pairs.map((pair) => pair.value);
+  const encoder = new TextEncoder();
+  if (strings.some((entry) => encoder.encode(entry).byteLength > VECTORAI_XDATA_MAX_STRING_BYTES)) {
+    throw new RangeError('DXF_TOLERANCE_XDATA_STRING_TOO_LONG');
+  }
+  const aggregateBytes = encoder.encode('VECTORAI').byteLength + 1
+    + strings.reduce((total, entry) => total + encoder.encode(entry).byteLength + 1, 40);
+  if (aggregateBytes > VECTORAI_XDATA_MAX_BYTES) {
+    throw new RangeError('DXF_TOLERANCE_XDATA_AGGREGATE_TOO_LONG');
+  }
+
+  let payloadText: string;
+  if (strings.length === 1) {
+    payloadText = strings[0]!;
+  } else {
+    const metadata = parseJsonObject(strings[0]!, 'DXF_TOLERANCE_XDATA_METADATA_INVALID');
+    requireExactKeys(
+      metadata,
+      ['version', 'format', 'encoding', 'chunkCount', 'byteLength'],
+      'DXF_TOLERANCE_XDATA_METADATA_INVALID',
+    );
+    if (metadata.version !== 1
+      || metadata.format !== 'vectorai-tolerance-json'
+      || metadata.encoding !== 'utf-8') {
+      throw new TypeError('DXF_TOLERANCE_XDATA_METADATA_INVALID');
+    }
+    const chunkCount = safePositiveInteger(metadata.chunkCount, 'DXF_TOLERANCE_XDATA_CHUNK_COUNT_INVALID');
+    const byteLength = safePositiveInteger(metadata.byteLength, 'DXF_TOLERANCE_XDATA_BYTE_LENGTH_INVALID');
+    const chunks = strings.slice(1);
+    if (chunkCount > VECTORAI_XDATA_MAX_CHUNKS || chunkCount !== chunks.length || chunks.some((chunk) => chunk.length === 0)) {
+      throw new RangeError('DXF_TOLERANCE_XDATA_CHUNK_COUNT_INVALID');
+    }
+    payloadText = chunks.join('');
+    if (encoder.encode(payloadText).byteLength !== byteLength) {
+      throw new RangeError('DXF_TOLERANCE_XDATA_BYTE_LENGTH_MISMATCH');
+    }
+  }
+
+  const payload = parseJsonObject(payloadText, 'DXF_TOLERANCE_XDATA_PAYLOAD_INVALID');
+  requireExactKeys(
+    payload,
+    ['version', 'designation', 'upperDeviation', 'lowerDeviation', 'unit', 'featureClass', 'standardRef'],
+    'DXF_TOLERANCE_XDATA_PAYLOAD_INVALID',
+  );
+  if (payload.version !== 1
+    || typeof payload.designation !== 'string'
+    || payload.designation !== payload.designation.trim()
+    || typeof payload.upperDeviation !== 'number'
+    || typeof payload.lowerDeviation !== 'number'
+    || typeof payload.unit !== 'string'
+    || !['mm', 'cm', 'm', 'in', 'deg'].includes(payload.unit)
+    || typeof payload.featureClass !== 'string'
+    || !['internal', 'external'].includes(payload.featureClass)) {
+    throw new TypeError('DXF_TOLERANCE_XDATA_PAYLOAD_INVALID');
+  }
+  const upperDeviation = strictNumber(payload.upperDeviation);
+  const lowerDeviation = strictNumber(payload.lowerDeviation);
+  if (lowerDeviation > upperDeviation) throw new TypeError('DXF_TOLERANCE_XDATA_DEVIATION_ORDER_INVALID');
+  const standardRef = objectValue(payload.standardRef, 'DXF_TOLERANCE_XDATA_STANDARD_REF_INVALID');
+  requireExactKeys(standardRef, ['id', 'edition'], 'DXF_TOLERANCE_XDATA_STANDARD_REF_INVALID');
+  if (typeof standardRef.id !== 'string' || typeof standardRef.edition !== 'string') {
+    throw new TypeError('DXF_TOLERANCE_XDATA_STANDARD_REF_INVALID');
+  }
+  const designation = payload.designation.trim();
+  const showDesignation = designation.length > 0 && rawText.includes(designation);
+  const showDeviations = hasNativeDeviations || rawText.includes('\\S');
+  const displayPreference = showDesignation && showDeviations
+    ? 'both'
+    : showDesignation
+      ? 'designation'
+      : 'deviations';
+  const projection: ToleranceProjection = {
+    mode: designation.includes('/') ? 'fit' : 'bilateral',
+    fitDesignation: designation,
+    upperDeviation,
+    lowerDeviation,
+    unit: payload.unit as ToleranceProjection['unit'],
+    source: 'standard',
+    status: 'confirmed',
+    featureClass: payload.featureClass as NonNullable<ToleranceProjection['featureClass']>,
+    standardRef: { id: standardRef.id, edition: standardRef.edition },
+    displayPreference,
+    evidenceRefs: ['dxf:vectorai-tolerance'],
+  };
+  validateToleranceProjection(projection);
+  return projection;
+}
+
+function parseJsonObject(value: string, code: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new TypeError(code);
+  }
+  return objectValue(parsed, code);
+}
+
+function objectValue(value: unknown, code: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(code);
+  return value as Record<string, unknown>;
+}
+
+function requireExactKeys(value: Record<string, unknown>, keys: readonly string[], code: string): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new TypeError(code);
+  }
+}
+
+function strictNumber(value: unknown): number {
+  if (typeof value !== 'number' && (typeof value !== 'string' || value.trim().length === 0)) {
+    throw new TypeError('DXF_TOLERANCE_NUMBER_INVALID');
+  }
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) throw new TypeError('DXF_TOLERANCE_NUMBER_INVALID');
+  return parsed;
+}
+
+function strictInteger(value: unknown, code: string): number {
+  const parsed = strictNumber(value);
+  if (!Number.isSafeInteger(parsed)) throw new TypeError(code);
+  return parsed;
+}
+
+function safePositiveInteger(value: unknown, code: string): number {
+  if (typeof value !== 'number') throw new TypeError(code);
+  const parsed = strictInteger(value, code);
+  if (parsed <= 0) throw new TypeError(code);
+  return parsed;
 }
 
 function base(record: DxfEntityRecord, context: DxfEntityContext, plane: 'geometry'): {

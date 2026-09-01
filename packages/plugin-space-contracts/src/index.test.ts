@@ -272,6 +272,7 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(toleranceEditCommandSchema.parse({
       type: 'standard.fit.apply', expectedDrawingRef: manual.expectedDrawingRef,
       holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole', designation: 'H7/g6',
+      expectedHoleInputDigest: 'sha256:hole', expectedShaftInputDigest: 'sha256:shaft',
       selectionSource: 'rule', displayPreference: 'designation', evidenceRefs: [],
     })).toMatchObject({ type: 'standard.fit.apply' });
     expect(toleranceEditCommandSchema.parse({
@@ -281,6 +282,23 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(toleranceEditCommandSchema.parse({
       type: 'standard.override.clear', expectedDrawingRef: manual.expectedDrawingRef, dimensionIntentId: 'intent-1',
     })).toMatchObject({ type: 'standard.override.clear' });
+  });
+
+  it('requires preview digests on standard apply commands', () => {
+    const base = {
+      type: 'standard.single.apply', expectedDrawingRef: { drawingId: 'drawing-1', revision: 1 },
+      dimensionIntentId: 'intent-1', featureClass: 'external', designation: 'u6',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+    } as const;
+    expect(toleranceEditCommandSchema.parse({ ...base, expectedInputDigest: 'sha256:preview' }))
+      .toMatchObject({ expectedInputDigest: 'sha256:preview' });
+    expect(() => toleranceEditCommandSchema.parse(base)).toThrow();
+    expect(() => toleranceEditCommandSchema.parse({
+      type: 'standard.fit.apply', expectedDrawingRef: base.expectedDrawingRef,
+      holeDimensionIntentId: 'hole', shaftDimensionIntentId: 'shaft', basis: 'hole', designation: 'H7/g6',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+      expectedHoleInputDigest: 'sha256:hole',
+    })).toThrow();
   });
 
   it('strictly carries durable dimension-plan session snapshots', () => {

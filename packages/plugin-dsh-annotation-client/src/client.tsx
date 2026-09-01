@@ -81,7 +81,7 @@ export async function apply(ctx: Context) {
         const controller = createToleranceController({
           sessionId,
           remote: annotationRemote,
-          storage: typeof localStorage === 'undefined' ? null : localStorage,
+          storage: typeof sessionStorage === 'undefined' ? null : sessionStorage,
         });
         toleranceControllers.set(sessionId, controller);
         return controller;

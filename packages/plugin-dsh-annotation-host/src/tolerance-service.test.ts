@@ -16,6 +16,20 @@ import { createToleranceReconciler, ToleranceService } from './tolerance-service
 
 const drawingRef = { drawingId: 'drawing-1', revision: 1 } as const;
 
+function inputDigest(featureClass: 'internal' | 'external', designation: string, basicSize = 13): string {
+  return canonicalRuleInputDigest({
+    nominalValue: basicSize, unit: 'mm',
+    inputs: { standardId: 'GB/T 1800', edition: '2020', featureClass, designation },
+  });
+}
+
+function fitInputDigests(basicSize = 13) {
+  return {
+    expectedHoleInputDigest: inputDigest('internal', 'H7', basicSize),
+    expectedShaftInputDigest: inputDigest('external', 'g6', basicSize),
+  };
+}
+
 function draft(holeSize = 13, shaftSize = 13): EngineeringAnnotationDraft {
   return {
     version: 1,
@@ -65,7 +79,7 @@ function setupStaleFit() {
   state.service.edit('session', {
     type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
     holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
-    designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+    designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
   });
   const changed = state.plans.get('session').draft as unknown as EngineeringAnnotationDraft;
   changed.intents.find(({ id }) => id === 'intent-shaft')!.nominalValue = 14;
@@ -96,7 +110,7 @@ describe('ToleranceService', () => {
     const { service } = setup();
     service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     });
 
@@ -109,7 +123,7 @@ describe('ToleranceService', () => {
     const { service } = setup();
     service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     });
     service.edit('session', {
@@ -141,7 +155,7 @@ describe('ToleranceService', () => {
 
     service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: preview.result.ruleRef.inputDigest, selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     });
     expect(plans.undo('session', drawingRef).draft).toEqual(before.draft);
@@ -177,7 +191,7 @@ describe('ToleranceService', () => {
 
     const applied = service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6', 12.7), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     });
     expect(applied.draft?.tolerances[0]).toMatchObject({
@@ -213,7 +227,7 @@ describe('ToleranceService', () => {
     const applied = service.edit('session', {
       type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
       holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
-      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+      designation: 'H7/g6', ...fitInputDigests(12.7), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
     });
     expect(applied.draft?.tolerances).toEqual(expect.arrayContaining([
       expect.objectContaining({ dimensionIntentId: 'intent-hole', inputs: expect.objectContaining({ basicSize: 12.7 }) }),
@@ -229,7 +243,7 @@ describe('ToleranceService', () => {
 
     service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole',
-      featureClass: 'internal', designation: 'H7', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'internal', designation: 'H7', expectedInputDigest: inputDigest('internal', 'H7', 12.7), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:H7'],
     });
     const unsupported = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
@@ -256,7 +270,7 @@ describe('ToleranceService', () => {
     service.edit('session', {
       type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
       holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
-      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+      designation: 'H7/g6', ...fitInputDigests(12.7), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
     });
 
     const changed = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
@@ -307,7 +321,7 @@ describe('ToleranceService', () => {
 
     expect(() => service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     })).toThrow('TOLERANCE_PROVIDER_RESULT_MISMATCH');
   });
@@ -344,13 +358,79 @@ describe('ToleranceService', () => {
     })).toThrow('FIT_PAIR_CLASS_INCOMPATIBLE');
   });
 
+  it('rejects unsupported feature kinds before catalog, preview, or fit resolution', () => {
+    const { plans, service } = setup();
+    const unsupported = draft();
+    unsupported.intents.push({
+      ...structuredClone(unsupported.intents[1]!), id: 'intent-radius', kind: 'radius', nominalValue: 13,
+    });
+    plans.setDraft('session', unsupported);
+
+    expect(() => service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-opening-angle', featureClass: 'external',
+    })).toThrow('TOLERANCE_FEATURE_UNSUPPORTED');
+    expect(() => service.preview('session', {
+      type: 'single', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-radius',
+      featureClass: 'external', designation: 'u6',
+    })).toThrow('TOLERANCE_FEATURE_UNSUPPORTED');
+    expect(() => service.preview('session', {
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-radius', secondaryFeatureClass: 'external',
+      basis: 'hole', designation: 'H7/g6',
+    })).toThrow('TOLERANCE_FEATURE_UNSUPPORTED');
+  });
+
+  it('rejects apply when the nominal changed at the same drawing ref after preview', () => {
+    const { plans, service } = setup();
+    const preview = service.preview('session', {
+      type: 'single', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6',
+    });
+    if (preview.type !== 'single') throw new Error('expected single preview');
+    const changed = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
+    changed.intents.find(({ id }) => id === 'intent-shaft')!.nominalValue = 14;
+    plans.setDraft('session', changed);
+
+    expect(() => service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: preview.result.ruleRef.inputDigest,
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+    } as never)).toThrow('TOLERANCE_TARGET_STALE');
+    expect(plans.get('session').draft?.tolerances).toEqual([]);
+  });
+
+  it('rejects fit apply with the same stale diagnostic when either member changed after preview', () => {
+    const { plans, service } = setup();
+    const preview = service.preview('session', {
+      type: 'fit', expectedDrawingRef: drawingRef,
+      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
+      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
+      basis: 'hole', designation: 'H7/g6',
+    });
+    if (preview.type !== 'fit') throw new Error('expected fit preview');
+    const changed = plans.get('session').draft as unknown as EngineeringAnnotationDraft;
+    changed.intents.find(({ id }) => id === 'intent-shaft')!.nominalValue = 14;
+    plans.setDraft('session', changed);
+
+    expect(() => service.edit('session', {
+      type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
+      holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
+      designation: 'H7/g6',
+      expectedHoleInputDigest: preview.result.hole.ruleRef.inputDigest,
+      expectedShaftInputDigest: preview.result.shaft.ruleRef.inputDigest,
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+    })).toThrow('TOLERANCE_TARGET_STALE');
+    expect(plans.get('session').draft?.tolerances).toEqual([]);
+  });
+
   it('applies a fit as one undo/redo step while preserving every unrelated annotation family', () => {
     const { plans, service } = setup();
     const before = plans.get('session').draft!;
     const applied = service.edit('session', {
       type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
       holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
-      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
     });
 
     expect(applied.draft).toMatchObject({
@@ -371,13 +451,13 @@ describe('ToleranceService', () => {
     service.edit('session', {
       type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
       holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
-      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
     });
     const before = plans.get('session');
 
     expect(() => service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     })).toThrow('FIT_PAIR_TARGET_CONFLICT');
     expect(plans.get('session')).toEqual(before);
@@ -397,7 +477,7 @@ describe('ToleranceService', () => {
 
     expect(() => service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6', 14), selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     })).toThrow('FIT_PAIR_TARGET_CONFLICT');
     expect(plans.get('session')).toEqual(before);
@@ -421,7 +501,7 @@ describe('ToleranceService', () => {
     service.edit('session', {
       type: 'standard.fit.apply', expectedDrawingRef: drawingRef,
       holeDimensionIntentId: 'intent-hole', shaftDimensionIntentId: 'intent-shaft', basis: 'hole',
-      designation: 'H7/g6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
+      designation: 'H7/g6', ...fitInputDigests(), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:fit'],
     });
     const confirmed = plans.confirm('session', drawingRef);
 
@@ -466,7 +546,7 @@ describe('ToleranceService', () => {
     const { plans, service } = setup();
     expect(() => service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'ai-recommended', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'ai-recommended', displayPreference: 'both',
       evidenceRefs: ['invented:evidence'],
     })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
 
@@ -481,7 +561,7 @@ describe('ToleranceService', () => {
     plans.setDraft('session', ungrounded);
     expect(() => service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'ai-recommended', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'ai-recommended', displayPreference: 'both',
       evidenceRefs: ['invented:evidence'],
     })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
   });
@@ -513,7 +593,7 @@ describe('ToleranceService', () => {
 
     const applied = service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'ai-recommended', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'ai-recommended', displayPreference: 'both',
       evidenceRefs: ['document:bearing-seat'],
     });
     expect(resolutionCount).toBe(1);
@@ -532,7 +612,7 @@ describe('ToleranceService', () => {
     first.setDraft('session', draft());
     new ToleranceService(first, provider).edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:u6'],
+      featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:u6'],
     });
     first.confirm('session', drawingRef);
 

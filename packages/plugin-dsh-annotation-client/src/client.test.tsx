@@ -7,6 +7,10 @@ import { apply } from './client';
 
 describe('annotation client contribution', () => {
   it('registers independently without claiming or registering the DSH workspace slot', async () => {
+    const localSetItem = vi.fn();
+    const sessionSetItem = vi.fn();
+    vi.stubGlobal('localStorage', { getItem: vi.fn(() => null), setItem: localSetItem });
+    vi.stubGlobal('sessionStorage', { getItem: vi.fn(() => null), setItem: sessionSetItem });
     const disposeContribution = vi.fn();
     const disposeLayer = vi.fn();
     const disposeRemote = vi.fn();
@@ -131,6 +135,9 @@ describe('annotation client contribution', () => {
     const secondWorkspace = registered?.Component({ sessionId: 'session-1', namespace: 'engineering-annotation', runtime: {} });
     expect(firstWorkspace?.props.tolerance).toBeDefined();
     expect(secondWorkspace?.props.tolerance).toBe(firstWorkspace?.props.tolerance);
+    (firstWorkspace?.props.tolerance as { actions: { setTab(tab: 'external'): void } }).actions.setTab('external');
+    expect(sessionSetItem).toHaveBeenCalled();
+    expect(localSetItem).not.toHaveBeenCalled();
     expect(dropEntry?.options).toMatchObject({
       name: 'conversation.input.dock',
       id: 'vectorai-engineering-import-drop',
@@ -147,5 +154,6 @@ describe('annotation client contribution', () => {
     expect(disposeContribution).toHaveBeenCalledOnce();
     expect(disposeLayer).toHaveBeenCalledTimes(6);
     expect(disposeRemote).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
   });
 });

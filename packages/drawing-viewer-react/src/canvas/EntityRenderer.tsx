@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { sampleSpline, type AnnotationNode, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
+import {
+  convertLength,
+  sampleSpline,
+  type AnnotationNode,
+  type GeometryNode,
+  type ToleranceProjection,
+  type Vec2,
+} from '@vectorai/drawing-core';
 import type { MouseEvent } from 'react';
 
 import { nodeBounds, worldBoundsForViewport } from './geometry';
@@ -231,10 +238,62 @@ function WorldText({
 }
 
 function dimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
-  if (node.displayText !== undefined) return node.displayText;
-  const value = node.observedValue ?? node.computedValue;
-  if (value === undefined) return '—';
-  return `${node.prefix ?? ''}${value}${node.unit ? ` ${node.unit}` : ''}${node.suffix ?? ''}`;
+  const base = node.displayText ?? (() => {
+    const value = node.observedValue ?? node.computedValue;
+    if (value === undefined) return '—';
+    return `${node.prefix ?? ''}${value}${node.unit ? ` ${node.unit}` : ''}${node.suffix ?? ''}`;
+  })();
+  const tolerance = formatPortableTolerance(node.toleranceProjection, node.unit);
+  return tolerance === undefined ? base : `${base} ${tolerance}`;
+}
+
+function formatPortableTolerance(
+  projection: ToleranceProjection | undefined,
+  targetUnit: Extract<AnnotationNode, { type: 'dimension' }>['unit'],
+): string | undefined {
+  if (projection === undefined || (projection.status !== 'resolved' && projection.status !== 'confirmed')) return undefined;
+  const preference = projection.displayPreference ?? (projection.mode === 'fit' ? 'designation' : 'deviations');
+  const designation = preference === 'deviations' ? undefined : projection.fitDesignation?.trim() || undefined;
+  const deviations = preference === 'designation' ? undefined : portableDeviationText(projection, targetUnit ?? projection.unit);
+  return [designation, deviations].filter((value): value is string => value !== undefined).join(' ') || undefined;
+}
+
+function portableDeviationText(
+  projection: ToleranceProjection,
+  targetUnit: NonNullable<Extract<AnnotationNode, { type: 'dimension' }>['unit']>,
+): string | undefined {
+  const convert = (value: number | undefined): number | undefined => {
+    if (!finite(value)) return undefined;
+    if (projection.unit === targetUnit) return value;
+    if (projection.unit === 'deg' || targetUnit === 'deg') return undefined;
+    return Number(convertLength(value, projection.unit, targetUnit).toPrecision(15));
+  };
+  if (projection.mode === 'limits') {
+    const upper = convert(projection.upperLimit);
+    const lower = convert(projection.lowerLimit);
+    return upper === undefined || lower === undefined || lower > upper
+      ? undefined
+      : `[${textNumber(upper)}/${textNumber(lower)}]`;
+  }
+  if (projection.mode !== 'bilateral' && projection.mode !== 'unilateral' && projection.mode !== 'fit') return undefined;
+  const upper = convert(projection.upperDeviation);
+  const lower = convert(projection.lowerDeviation);
+  if (projection.mode === 'bilateral' && (upper === undefined || lower === undefined)) return undefined;
+  const values = [upper, lower].filter((value): value is number => value !== undefined);
+  return values.length === 0 ? undefined : values.map(signed).join('/');
+}
+
+function finite(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function signed(value: number): string {
+  if (Object.is(value, -0) || value === 0) return '0';
+  return value > 0 ? `+${textNumber(value)}` : textNumber(value);
+}
+
+function textNumber(value: number): string {
+  return Object.is(value, -0) ? '0' : String(value);
 }
 
 function pointsAttribute(points: readonly Vec2[]): string {

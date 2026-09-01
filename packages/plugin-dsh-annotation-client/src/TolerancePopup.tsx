@@ -262,10 +262,10 @@ export function TolerancePopup(props: TolerancePopupProps) {
         external={fitExternal}
         onInternal={(value) => { setFitInternal(value); setFitInputsDirty(true); fitInputGeneration.current += 1; }}
         onExternal={(value) => { setFitExternal(value); setFitInputsDirty(true); fitInputGeneration.current += 1; }}
-        onPreview={async () => {
+        onPreview={async (directDesignation) => {
           const generation = fitInputGeneration.current;
           try {
-            await props.onPreview(fitDesignation);
+            await props.onPreview(directDesignation ?? fitDesignation);
             if (generation === fitInputGeneration.current) setFitInputsDirty(false);
           } catch (error) {
             setActionError(error instanceof Error ? error.message : String(error));
@@ -393,11 +393,33 @@ function FitBandSelection({
   external: string;
   onInternal(value: string): void;
   onExternal(value: string): void;
-  onPreview(): void;
+  onPreview(designation?: string): void;
 }) {
   const internalBands = catalogs?.internal ?? [];
   const externalBands = catalogs?.external ?? [];
+  const [search, setSearch] = useState('');
+  const previewSearch = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return;
+    const [requestedInternal, requestedExternal, extra] = search.trim().split('/');
+    if (extra !== undefined || !requestedInternal || !requestedExternal) return;
+    const matchedInternal = internalBands.find(({ designation, available }) => available && designation === requestedInternal);
+    const matchedExternal = externalBands.find(({ designation, available }) => available && designation === requestedExternal);
+    if (matchedInternal === undefined || matchedExternal === undefined) return;
+    event.preventDefault();
+    onInternal(matchedInternal.designation);
+    onExternal(matchedExternal.designation);
+    onPreview(`${matchedInternal.designation}/${matchedExternal.designation}`);
+  };
   return <section className="vai-tolerance-matrix-shell" data-fit-catalogs={catalogs === null ? 'unavailable' : 'available'}>
+    <label>直接搜索
+      <input
+        data-fit-search={true}
+        value={search}
+        placeholder="H7/g6"
+        onChange={(event) => setSearch(event.currentTarget.value)}
+        onKeyDown={previewSearch}
+      />
+    </label>
     <label>孔/内部代号
       <select data-fit-band="internal" value={internal} onChange={(event) => onInternal(event.currentTarget.value)}>
         <option value="">请选择</option>
@@ -414,7 +436,7 @@ function FitBandSelection({
         >{designation}{available ? '' : ` · ${unavailableCode}`}</option>)}
       </select>
     </label>
-    <button type="button" data-preview-fit={true} disabled={internal === '' || external === ''} onClick={onPreview}>
+    <button type="button" data-preview-fit={true} disabled={internal === '' || external === ''} onClick={() => onPreview()}>
       预览 {internal === '' || external === '' ? '配合' : `${internal}/${external}`}
     </button>
   </section>;

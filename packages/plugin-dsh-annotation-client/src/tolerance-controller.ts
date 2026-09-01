@@ -259,7 +259,7 @@ export function createToleranceController(input: {
       selectionEpoch = epoch;
       update({
         preview,
-        canvasPreview: { host: clone(preview), override, displayPreference: selection.displayPreference },
+        canvasPreview: null,
         selection: {
           kind: 'single', featureClass, designation: selection.designation,
           source: selection.source, evidenceRefs: [...selection.evidenceRefs],
@@ -310,8 +310,16 @@ export function createToleranceController(input: {
 
   const actions: ToleranceController['actions'] = {
     open: activateTarget,
-    openFromContextMenu: activateTarget,
-    openFromDesignationDoubleClick: activateTarget,
+    openFromContextMenu(target) {
+      if (!current.visible) return activateTarget(target);
+      actions.requestTarget(target);
+      return Promise.resolve();
+    },
+    openFromDesignationDoubleClick(target) {
+      if (!current.visible) return activateTarget(target);
+      actions.requestTarget(target);
+      return Promise.resolve();
+    },
     requestTarget(target) {
       if (current.target !== null && sameTargetIdentity(current.target, target)) {
         update({ target: clone(target), visible: true });
@@ -562,6 +570,9 @@ export function createToleranceController(input: {
             type: 'standard.single.apply', expectedDrawingRef: target.drawingRef,
             dimensionIntentId: target.dimensionIntentId,
             featureClass: selection.featureClass, designation: selection.designation,
+            expectedInputDigest: current.preview!.type === 'single'
+              ? current.preview!.result.ruleRef.inputDigest
+              : '',
             selectionSource: selection.source, displayPreference: current.displayPreference,
             evidenceRefs: [...selection.evidenceRefs],
           };
@@ -571,6 +582,12 @@ export function createToleranceController(input: {
             holeDimensionIntentId: selection.holeDimensionIntentId,
             shaftDimensionIntentId: selection.shaftDimensionIntentId,
             basis: selection.basis, designation: selection.designation,
+            expectedHoleInputDigest: current.preview!.type === 'fit'
+              ? current.preview!.result.hole.ruleRef.inputDigest
+              : '',
+            expectedShaftInputDigest: current.preview!.type === 'fit'
+              ? current.preview!.result.shaft.ruleRef.inputDigest
+              : '',
             selectionSource: selection.source, displayPreference: current.displayPreference,
             evidenceRefs: [...selection.evidenceRefs],
           };
@@ -592,7 +609,7 @@ export function createToleranceController(input: {
           : null;
         if (command.type === 'standard.override.clear') appliedOverrideDesignation = null;
         pendingOverrideEdit = null;
-        update({ dirty: false, closeDecision: null, error: null });
+        update({ dirty: false, closeDecision: null, error: null, canvasPreview: null });
         if (command.type === 'standard.single.apply') {
           const nextTarget = { ...target, drawingRef: snapshot.drawingRef ?? target.drawingRef };
           update({ target: nextTarget, preview: null, canvasPreview: null });

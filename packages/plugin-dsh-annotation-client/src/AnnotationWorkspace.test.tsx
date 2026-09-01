@@ -183,12 +183,23 @@ describe('AnnotationWorkspace', () => {
     });
     type DimensionTestState = ReturnType<typeof dimensionState.getSnapshot>;
     let appliedSnapshot: DimensionTestState['plan'] = dimensionState.getSnapshot().plan;
+    let tolerancedSnapshot: DimensionTestState['plan'] | null = null;
     const dimensionRefresh = vi.fn(async () => {
       dimensionState.set({ ...dimensionState.getSnapshot(), plan: appliedSnapshot });
     });
+    const dimensionUndo = vi.fn(async () => {
+      appliedSnapshot = {
+        ...dimensionState.getSnapshot().plan,
+        draft: structuredClone(dimensionDraft), canUndo: false, canRedo: true, updatedAt: 3,
+      };
+    });
+    const dimensionRedo = vi.fn(async () => {
+      if (tolerancedSnapshot === null) throw new Error('Missing toleranced snapshot');
+      appliedSnapshot = { ...tolerancedSnapshot, canUndo: true, canRedo: false, updatedAt: 4 };
+    });
     const dimensionChain = {
       state: dimensionState,
-      actions: { refresh: dimensionRefresh, setPreviewHeld() {} }, dispose() {},
+      actions: { refresh: dimensionRefresh, undo: dimensionUndo, redo: dimensionRedo, setPreviewHeld() {} }, dispose() {},
     } as unknown as DimensionChainController;
     const gdtRefresh = vi.fn(async () => undefined);
     const gdt = {
@@ -208,6 +219,7 @@ describe('AnnotationWorkspace', () => {
         }),
         canUndo: true, updatedAt: 2,
       };
+      tolerancedSnapshot = structuredClone(appliedSnapshot);
       return toleranceSuccess(appliedSnapshot as unknown as DimensionPlanSessionSnapshot);
     });
     const tolerance = createToleranceController({
@@ -243,7 +255,9 @@ describe('AnnotationWorkspace', () => {
     await act(async () => renderer!.root.findByProps({ 'data-feature-class-choice': 'external' }).props.onClick());
     await act(async () => renderer!.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
     const preview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
-    expect(preview.findByProps({ 'data-entity-id': 'dimension-1' }).props['data-preview-diff']).toBe('updated');
+    const previewEntity = preview.findByProps({ 'data-entity-id': 'dimension-1' });
+    expect(previewEntity.props['data-preview-diff']).toBe('updated');
+    expect(previewEntity.findByType('text').children.join('')).toBe('13 mm +0.044/+0.033');
     expect(runtime.snapshot.getSnapshot()).toEqual(before.snapshot);
     expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
     expect(renderer!.root.findByType(DrawingSurface).props.viewport).toEqual(surfaceViewportBeforePreview);
@@ -252,6 +266,28 @@ describe('AnnotationWorkspace', () => {
     expect(dimensionChain.state.getSnapshot()).toEqual(before.dimension);
     expect(editTolerance).not.toHaveBeenCalled();
 
+    await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-2']));
+    expect(tolerance.state.getSnapshot()).toMatchObject({
+      target: { dimensionIntentId: 'intent-1' }, pendingTarget: { dimensionIntentId: 'intent-2' }, dirty: true,
+    });
+    await act(async () => tolerance.actions.discardAndSwitch());
+    await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-1']));
+    await vi.waitFor(() => expect(tolerance.state.getSnapshot().target?.dimensionIntentId).toBe('intent-1'));
+    await act(async () => renderer!.root.findByProps({ 'data-feature-class-choice': 'external' }).props.onClick());
+    await act(async () => tolerance.actions.preview({ kind: 'single', featureClass: 'external', designation: 'u6' }));
+    act(() => tolerance.actions.setDisplayPreference('both'));
+    expect(renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' })
+      .findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
+      .toBe('13 mm u6 +0.044/+0.033');
+    await act(async () => tolerance.actions.previewOverride({ upperDeviation: .05, lowerDeviation: .04 }));
+    expect(renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' })
+      .findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
+      .toBe('13 mm u6 +0.05/+0.04');
+    act(() => tolerance.actions.restoreStandard());
+    expect(renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' })
+      .findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
+      .toBe('13 mm u6 +0.044/+0.033');
+
     await act(async () => renderer!.root.findByType(TolerancePopup).props.onApply());
     expect(editTolerance).toHaveBeenCalledOnce();
     expect(dimensionRefresh).toHaveBeenCalledOnce();
@@ -259,6 +295,9 @@ describe('AnnotationWorkspace', () => {
     expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
     expect(setViewport).not.toHaveBeenCalled();
     expect(renderer!.root.findAllByProps({ 'data-tolerance-designation': 'dimension-1' })).toHaveLength(1);
+    expect(tolerance.state.getSnapshot().canvasPreview).toBeNull();
+    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
+      .toBe('13 mm u6 +0.044/+0.033');
 
     tolerance.actions.requestClose();
     await act(async () => { await Promise.resolve(); });
@@ -285,6 +324,24 @@ describe('AnnotationWorkspace', () => {
     await act(async () => tolerance.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }));
     expect(tolerance.state.getSnapshot().preview).toMatchObject({ type: 'fit', status: 'resolved' });
     expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-2']);
+    const fitPreview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
+    expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
+      .toBe('13 mm H7/g6 -0.006/-0.017');
+    expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-2' }).findByType('text').children.join(''))
+      .toBe('13 mm H7/g6 +0.018/0');
+
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '撤销' }).props.onClick());
+    expect(dimensionUndo).toHaveBeenCalledOnce();
+    expect(tolerance.state.getSnapshot().canvasPreview).toBeNull();
+    expect(renderer!.root.findAllByProps({ 'data-tolerance-preview': 'intent-1' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join('')).toBe('13 mm');
+
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '反撤销' }).props.onClick());
+    expect(dimensionRedo).toHaveBeenCalledOnce();
+    expect(tolerance.state.getSnapshot().canvasPreview).toBeNull();
+    expect(renderer!.root.findAllByProps({ 'data-tolerance-preview': 'intent-1' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
+      .toBe('13 mm u6 +0.044/+0.033');
 
     await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
     await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-3']));

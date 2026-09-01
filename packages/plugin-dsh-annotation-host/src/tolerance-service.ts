@@ -34,7 +34,7 @@ export class ToleranceService {
 
   query(sessionId: string, request: ToleranceCatalogRequest): ToleranceCatalogResult {
     const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
-    const intent = requireIntent(plan, request.dimensionIntentId);
+    const intent = requireEligibleIntent(plan, request.dimensionIntentId);
     const basicSize = requireProviderBasicSize(intent);
     const matching = [...plan.tolerances].reverse().find(({ dimensionIntentId }) => dimensionIntentId === request.dimensionIntentId);
     const recommendation = matching?.source === 'ai-candidate'
@@ -74,7 +74,7 @@ export class ToleranceService {
   preview(sessionId: string, request: TolerancePreviewRequest): TolerancePreviewResult {
     const plan = requirePlan(this.plans.get(sessionId), request.expectedDrawingRef);
     if (request.type === 'single') {
-      const intent = requireIntent(plan, request.dimensionIntentId);
+      const intent = requireEligibleIntent(plan, request.dimensionIntentId);
       const basicSize = requireProviderBasicSize(intent);
       return {
         type: 'single', drawingRef: plan.drawingRef, dimensionIntentId: request.dimensionIntentId, status: 'resolved',
@@ -83,6 +83,8 @@ export class ToleranceService {
         })),
       };
     }
+    requireEligibleIntent(plan, request.primaryDimensionIntentId);
+    requireEligibleIntent(plan, request.secondaryDimensionIntentId);
     const { holeDimensionIntentId, shaftDimensionIntentId } = requireFitRoles(request);
     const basicSize = requireEqualFitSize(plan, holeDimensionIntentId, shaftDimensionIntentId);
     return {
@@ -100,20 +102,38 @@ export class ToleranceService {
     requireAiRecommendation(plan, command);
     let resolved: ToleranceEditResolution;
     if (command.type === 'standard.single.apply') {
-      const basicSize = requireProviderBasicSize(requireIntent(plan, command.dimensionIntentId));
+      const basicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.dimensionIntentId));
       const result = this.provider.resolveBand({ basicSize, featureClass: command.featureClass, designation: command.designation });
       verifyProviderResult(result, {
         basicSize, featureClass: command.featureClass, designation: command.designation,
       }, this.provider);
+      if (result.ruleRef.inputDigest !== command.expectedInputDigest) throw new Error('TOLERANCE_TARGET_STALE');
       resolved = result;
     } else if (command.type === 'standard.fit.apply') {
-      const basicSize = requireEqualFitSize(plan, command.holeDimensionIntentId, command.shaftDimensionIntentId);
-      const result = this.provider.resolveFit({ basicSize, basis: command.basis, designation: command.designation });
       const [holeDesignation, shaftDesignation] = command.designation.split('/');
+      if (!holeDesignation || !shaftDesignation) throw new Error('TOLERANCE_PROVIDER_RESULT_MISMATCH');
+      const holeBasicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.holeDimensionIntentId));
+      const shaftBasicSize = requireProviderBasicSize(requireEligibleIntent(plan, command.shaftDimensionIntentId));
+      if (command.expectedHoleInputDigest !== expectedProviderInputDigest(
+        this.provider, holeBasicSize, 'internal', holeDesignation,
+      ) || command.expectedShaftInputDigest !== expectedProviderInputDigest(
+        this.provider, shaftBasicSize, 'external', shaftDesignation,
+      )) throw new Error('TOLERANCE_TARGET_STALE');
+      if (command.holeDimensionIntentId === command.shaftDimensionIntentId) throw new Error('TOLERANCE_FIT_INTENTS_DISTINCT');
+      if (holeBasicSize !== shaftBasicSize) throw new Error('FIT_PAIR_BASIC_SIZE_MISMATCH');
+      const result = this.provider.resolveFit({
+        basicSize: holeBasicSize, basis: command.basis, designation: command.designation,
+      });
       if (result.designation !== command.designation || result.basis !== command.basis
         || !holeDesignation || !shaftDesignation) throw new Error('TOLERANCE_PROVIDER_RESULT_MISMATCH');
-      verifyProviderResult(result.hole, { basicSize, featureClass: 'internal', designation: holeDesignation }, this.provider);
-      verifyProviderResult(result.shaft, { basicSize, featureClass: 'external', designation: shaftDesignation }, this.provider);
+      verifyProviderResult(result.hole, {
+        basicSize: holeBasicSize, featureClass: 'internal', designation: holeDesignation,
+      }, this.provider);
+      verifyProviderResult(result.shaft, {
+        basicSize: shaftBasicSize, featureClass: 'external', designation: shaftDesignation,
+      }, this.provider);
+      if (result.hole.ruleRef.inputDigest !== command.expectedHoleInputDigest
+        || result.shaft.ruleRef.inputDigest !== command.expectedShaftInputDigest) throw new Error('TOLERANCE_TARGET_STALE');
       resolved = result;
     }
     return this.plans.editTolerance(sessionId, command, resolved);
@@ -328,6 +348,14 @@ function requireIntent(plan: AnnotationPlan, id: string): AnnotationPlan['intent
   return intent;
 }
 
+function requireEligibleIntent(plan: AnnotationPlan, id: string): AnnotationPlan['intents'][number] {
+  const intent = requireIntent(plan, id);
+  if (intent.kind !== 'linear' && intent.kind !== 'aligned' && intent.kind !== 'diameter') {
+    throw new Error('TOLERANCE_FEATURE_UNSUPPORTED');
+  }
+  return intent;
+}
+
 function requireProviderBasicSize(intent: { unit: string; nominalValue: number }): number {
   if (!['mm', 'cm', 'm', 'in'].includes(intent.unit) || !Number.isFinite(intent.nominalValue)) {
     throw new Error('TOLERANCE_BASIC_SIZE_INVALID');
@@ -401,6 +429,24 @@ function verifyProviderResult(
     },
   });
   if (result.ruleRef.inputDigest !== expected) throw new Error('TOLERANCE_INPUT_DIGEST_MISMATCH');
+}
+
+function expectedProviderInputDigest(
+  provider: ToleranceStandardProvider,
+  basicSize: number,
+  featureClass: 'internal' | 'external',
+  designation: string,
+): string {
+  return canonicalRuleInputDigest({
+    nominalValue: basicSize,
+    unit: 'mm',
+    inputs: {
+      standardId: provider.standardRef.id,
+      edition: provider.standardRef.edition,
+      featureClass,
+      designation,
+    },
+  });
 }
 
 function errorCode(error: unknown): string {

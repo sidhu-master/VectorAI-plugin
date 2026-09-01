@@ -95,4 +95,57 @@ describe('engineering dimension domain invariants', () => {
       expect.objectContaining({ code: 'TOLERANCE_RESULT_INVALID' }),
     ]);
   });
+
+  it('validates active fit assignments while allowing intentional stale orphan members', () => {
+    const active = validDraft();
+    active.intents[0]!.id = 'hole';
+    active.intents[1]!.id = 'shaft';
+    active.tolerances = [
+      {
+        id: 'fit:pair:hole', dimensionIntentId: 'hole', mode: 'fit', source: 'standard',
+        featureClass: 'internal', fitGroupId: 'fit:pair',
+        selection: { designation: 'H7/g6', source: 'manual', evidenceRefs: [] },
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, inputs: {},
+        resolved: { fitDesignation: 'H7/g6', inputDigest: 'sha256:hole', evaluatedAt: 1 },
+        status: 'resolved', evidenceIds: [], diagnostics: [],
+      },
+      {
+        id: 'fit:pair:shaft', dimensionIntentId: 'shaft', mode: 'fit', source: 'standard',
+        featureClass: 'external', fitGroupId: 'fit:pair',
+        selection: { designation: 'H7/g6', source: 'manual', evidenceRefs: [] },
+        standardRef: { id: 'GB/T 1800', edition: '2020' }, inputs: {},
+        resolved: { fitDesignation: 'H7/g6', inputDigest: 'sha256:shaft', evaluatedAt: 1 },
+        status: 'resolved', evidenceIds: [], diagnostics: [],
+      },
+    ];
+    active.fitAssignments = [{
+      fitGroupId: 'fit:pair', holeDimensionId: 'hole', shaftDimensionId: 'shaft', basis: 'hole',
+      designation: 'H7/g6', fitType: 'clearance', minimumClearance: .006, maximumClearance: .035,
+      standardRef: { id: 'GB/T 1800', edition: '2020' },
+    }];
+    active.chains = [];
+    active.dependencies = [];
+    expect(validateEngineeringDraft(active)).toEqual([]);
+
+    const inconsistent = structuredClone(active);
+    inconsistent.tolerances[1]!.selection!.designation = 'H7/h6';
+    expect(validateEngineeringDraft(inconsistent)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'FIT_ASSIGNMENT_TOLERANCE_INVALID' }),
+    ]));
+
+    const candidateMember = structuredClone(active);
+    candidateMember.tolerances[1]!.status = 'candidate';
+    expect(validateEngineeringDraft(candidateMember)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'FIT_ASSIGNMENT_TOLERANCE_INVALID' }),
+    ]));
+
+    const stale = structuredClone(active);
+    stale.fitAssignments = [];
+    stale.tolerances = stale.tolerances.map((member) => {
+      const next = { ...member, status: 'stale' as const };
+      delete next.resolved;
+      return next;
+    });
+    expect(validateEngineeringDraft(stale)).toEqual([]);
+  });
 });

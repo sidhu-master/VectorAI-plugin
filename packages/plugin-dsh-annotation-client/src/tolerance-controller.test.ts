@@ -185,6 +185,25 @@ describe('createToleranceController', () => {
     expect(api.previewTolerance).toHaveBeenCalledTimes(2);
   });
 
+  it('carries both Host preview digests into the standard fit apply command', async () => {
+    const api = remote();
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open({ ...externalTarget, classification: { status: 'resolved', featureClass: 'internal' } });
+    await controller.actions.beginFit('hole');
+    controller.actions.selectFitTarget({
+      ...externalTarget, dimensionIntentId: 'intent-2', classification: { status: 'resolved', featureClass: 'external' },
+    });
+    await controller.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' });
+
+    await controller.actions.apply();
+
+    expect(api.editTolerance).toHaveBeenCalledWith('s', expect.objectContaining({
+      type: 'standard.fit.apply',
+      expectedHoleInputDigest: 'sha256:input',
+      expectedShaftInputDigest: 'sha256:input',
+    }));
+  });
+
   it('clamps restored bounds and persists preferences without preview values', async () => {
     const storage = memoryStorage({
       x: 9_000, y: -200, width: 2_000, height: 2_000,
@@ -318,10 +337,22 @@ describe('createToleranceController', () => {
       preview: { result: { designation: 'u6' } },
       override: { upperDeviation: .05, lowerDeviation: .04 },
       displayPreference: 'both',
-      canvasPreview: {
-        host: { result: { designation: 'u6' } },
-        override: { upperDeviation: .05, lowerDeviation: .04 }, displayPreference: 'both',
-      },
+      canvasPreview: null,
+    });
+  });
+
+  it('routes visible-popup context and designation entry points through dirty target switching', async () => {
+    const controller = createToleranceController({ remote: remote(), sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+    await controller.actions.preview({ kind: 'single', featureClass: 'external', designation: 'u6' });
+
+    await controller.actions.openFromContextMenu({ ...externalTarget, dimensionIntentId: 'intent-context' });
+    expect(controller.state.getSnapshot()).toMatchObject({
+      target: { dimensionIntentId: 'intent-1' }, pendingTarget: { dimensionIntentId: 'intent-context' }, dirty: true,
+    });
+    await controller.actions.openFromDesignationDoubleClick({ ...externalTarget, dimensionIntentId: 'intent-designation' });
+    expect(controller.state.getSnapshot()).toMatchObject({
+      target: { dimensionIntentId: 'intent-1' }, pendingTarget: { dimensionIntentId: 'intent-designation' }, dirty: true,
     });
   });
 
@@ -569,6 +600,7 @@ describe('createToleranceController', () => {
 
     expect(controller.state.getSnapshot()).toMatchObject({
       dirty: false, catalog: { selection: { designation: 'u6' } }, selection: { designation: 'u6' },
+      canvasPreview: null,
     });
     await controller.actions.previewOverride({ upperDeviation: .05, lowerDeviation: .04 });
     expect(controller.state.getSnapshot().override).toEqual({ upperDeviation: .05, lowerDeviation: .04 });
@@ -773,8 +805,7 @@ describe('createToleranceController', () => {
     await previewing;
 
     expect(controller.state.getSnapshot()).toMatchObject({
-      dirty: false, override: null,
-      canvasPreview: { override: null, host: { result: { designation: 'u6' } } },
+      dirty: false, override: null, canvasPreview: null,
     });
     await expect(controller.actions.apply()).rejects.toThrow('TOLERANCE_PREVIEW_REQUIRED');
     expect(api.editTolerance).not.toHaveBeenCalled();

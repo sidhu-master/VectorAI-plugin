@@ -419,6 +419,31 @@ describe('TolerancePopup', () => {
     expect(tree.root.findByProps({ 'data-fit-option': 'G7' }).props).toMatchObject({ disabled: true, title: 'TOLERANCE_STANDARD_UNAVAILABLE' });
   });
 
+  it('parses direct H7/g6 search only from available Host-provided fit catalogs', async () => {
+    const internalBands = [
+      { designation: 'H7', featureClass: 'internal' as const, category: 'preferred' as const, available: true },
+      { designation: 'G7', featureClass: 'internal' as const, category: 'other' as const, available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' as const },
+    ];
+    const externalBands = [
+      { designation: 'g6', featureClass: 'external' as const, category: 'preferred' as const, available: true },
+      { designation: 'h6', featureClass: 'external' as const, category: 'other' as const, available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' as const },
+    ];
+    const { tree, value } = renderPopup({
+      tab: 'hole-fit', fitCatalogs: { internal: internalBands, external: externalBands },
+    });
+    const search = tree.root.findByProps({ 'data-fit-search': true });
+    act(() => search.props.onChange({ currentTarget: { value: 'H7/g6' } }));
+    await act(async () => search.props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() }));
+
+    expect(value.onPreview).toHaveBeenCalledWith('H7/g6');
+    expect(tree.root.findByProps({ 'data-fit-band': 'internal' }).props.value).toBe('H7');
+    expect(tree.root.findByProps({ 'data-fit-band': 'external' }).props.value).toBe('g6');
+
+    act(() => search.props.onChange({ currentTarget: { value: 'G7/h6' } }));
+    await act(async () => search.props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() }));
+    expect(value.onPreview).toHaveBeenCalledTimes(1);
+  });
+
   it('resets target-local override and manual inputs when the target identity changes', () => {
     const initial = props({ override: { upperDeviation: .05, lowerDeviation: .04 } });
     const tree = create(<TolerancePopup {...initial} />);

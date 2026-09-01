@@ -2,7 +2,7 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
-import { createGbt1800Provider, type PartitionDraft, type ToleranceStandardProvider } from '@vectorai/engineering-annotation';
+import { canonicalRuleInputDigest, createGbt1800Provider, type PartitionDraft, type ToleranceStandardProvider } from '@vectorai/engineering-annotation';
 import { describe, expect, it } from 'vitest';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { DimensionPlanStore } from './dimension-plan-store';
@@ -145,7 +145,12 @@ width=0.5905511811023622`,
     }).bands).toContainEqual(expect.objectContaining({ designation: 'u6', available: true }));
     tolerances.edit(String(agent.id), {
       type: 'standard.single.apply', expectedDrawingRef: ref, dimensionIntentId: inferred.id,
-      featureClass: 'external', designation: 'u6', selectionSource: 'manual', displayPreference: 'both',
+      featureClass: 'external', designation: 'u6',
+      expectedInputDigest: canonicalRuleInputDigest({
+        nominalValue: 15, unit: 'mm',
+        inputs: { standardId: 'GB/T 1800', edition: '2020', featureClass: 'external', designation: 'u6' },
+      }),
+      selectionSource: 'manual', displayPreference: 'both',
       evidenceRefs: ['manual:u6'],
     });
 
