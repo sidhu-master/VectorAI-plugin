@@ -374,7 +374,7 @@ describe('TolerancePopup', () => {
     expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(0);
 
     act(() => tree.root.findByProps({ 'data-restore-standard': true }).props.onClick());
-    expect(value.onRestoreStandard).not.toHaveBeenCalled();
+    expect(value.onRestoreStandard).toHaveBeenCalledOnce();
     expect(tree.root.findByProps({ 'data-tolerance-override': 'upper' }).props.value).toBe('');
     expect(tree.root.findByProps({ 'data-tolerance-override': 'lower' }).props.value).toBe('');
     expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);

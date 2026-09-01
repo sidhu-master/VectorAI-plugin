@@ -318,7 +318,7 @@ export function TolerancePopup(props: TolerancePopupProps) {
             setOverrideUpper('');
             setOverrideLower('');
             setOverrideInputsDirty(false);
-            if (props.override !== null && props.override !== undefined) props.onRestoreStandard();
+            props.onRestoreStandard();
           }}>恢复标准值</button>
         </fieldset>
         {fitMode && <p data-fit-selection-status={true}>
