@@ -70,9 +70,9 @@ function renderPopup(overrides: Partial<TolerancePopupProps> = {}): { tree: Reac
 }
 
 describe('TolerancePopup', () => {
-  it('previews on click, applies with Command/Control+Enter, and isolates canvas events', () => {
+  it('previews on click, applies with Command/Control+Enter, and isolates canvas events', async () => {
     const { tree, value } = renderPopup({ dirty: true });
-    act(() => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
+    await act(async () => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
     expect(value.onPreview).toHaveBeenCalledWith('u6');
     const root = tree.root.findByProps({ 'data-tolerance-popup': true });
     const preventDefault = vi.fn();
@@ -333,6 +333,57 @@ describe('TolerancePopup', () => {
     act(() => tree.root.findByProps({ 'data-fit-band': 'external' }).props.onChange({ currentTarget: { value: 'u6' } }));
     expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
     expect(tree.root.findAllByProps({ 'data-tolerance-fit-result': true })).toHaveLength(0);
+  });
+
+  it('keeps edited fit selectors invalid after switching tabs until a fresh standard preview', async () => {
+    const internalBands = [
+      { designation: 'H7', featureClass: 'internal' as const, category: 'preferred' as const, available: true },
+    ];
+    const externalBands = [
+      { designation: 'g6', featureClass: 'external' as const, category: 'preferred' as const, available: true },
+      { designation: 'u6', featureClass: 'external' as const, category: 'common' as const, available: true },
+    ];
+    const pendingTarget = { ...target, dimensionIntentId: 'intent-2' };
+    const value = props({
+      dirty: true, tab: 'hole-fit', preview: fitPreview, pendingTarget, closeDecision: 'dirty',
+      fitCatalogs: { internal: internalBands, external: externalBands },
+    });
+    const tree = create(<TolerancePopup {...value} />);
+    act(() => tree.root.findByProps({ 'data-fit-band': 'internal' }).props.onChange({ currentTarget: { value: 'H7' } }));
+    act(() => tree.root.findByProps({ 'data-fit-band': 'external' }).props.onChange({ currentTarget: { value: 'u6' } }));
+    act(() => tree.update(<TolerancePopup {...value} tab="external" />));
+
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+    expect(tree.root.findByProps({ 'data-dirty-close': 'apply' }).props.disabled).toBe(true);
+    expect(tree.root.findByProps({ 'data-dirty-switch': 'apply' }).props.disabled).toBe(true);
+    expect(tree.root.findAllByProps({ 'data-tolerance-fit-result': true })).toHaveLength(0);
+
+    await act(async () => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
+    act(() => tree.update(<TolerancePopup {...value} tab="external" preview={preview} />));
+    expect(value.onPreview).toHaveBeenCalledWith('u6');
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+    expect(tree.root.findByProps({ 'data-dirty-close': 'apply' }).props.disabled).toBe(false);
+    expect(tree.root.findByProps({ 'data-dirty-switch': 'apply' }).props.disabled).toBe(false);
+  });
+
+  it('clears a null-Host override draft immediately when restoring standard', async () => {
+    const value = props({ dirty: true, override: null, preview });
+    const tree = create(<TolerancePopup {...value} />);
+    act(() => tree.root.findByProps({ 'data-tolerance-override': 'upper' }).props.onChange({ currentTarget: { value: '0.05' } }));
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(true);
+    expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(0);
+
+    act(() => tree.root.findByProps({ 'data-restore-standard': true }).props.onClick());
+    expect(value.onRestoreStandard).toHaveBeenCalledOnce();
+    expect(tree.root.findByProps({ 'data-tolerance-override': 'upper' }).props.value).toBe('');
+    expect(tree.root.findByProps({ 'data-tolerance-override': 'lower' }).props.value).toBe('');
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+    expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(1);
+
+    await act(async () => tree.root.findByProps({ 'data-tolerance-band': 'u6' }).props.onClick());
+    act(() => tree.update(<TolerancePopup {...value} preview={preview} />));
+    expect(tree.root.findByProps({ 'data-apply-tolerance': true }).props.disabled).toBe(false);
+    expect(tree.root.findAllByProps({ 'data-tolerance-result': true })).toHaveLength(1);
   });
 
   it('combines only provider-backed internal and external bands into a direct fit preview', async () => {

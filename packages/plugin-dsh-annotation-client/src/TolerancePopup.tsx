@@ -167,12 +167,13 @@ export function TolerancePopup(props: TolerancePopupProps) {
     && fitExternal !== ''
     && props.preview?.type === 'fit'
     && props.preview.result.designation === fitDesignation;
-  const resolvedPreviewReady = !overrideInputsDirty && (fitMode ? fitPreviewReady : props.preview !== null);
+  const resolvedPreviewReady = !overrideInputsDirty && !fitInputsDirty
+    && (fitMode ? fitPreviewReady : props.preview !== null);
   const applicationBlocked = props.busy || applying
     || !props.dirty
     || (classification.status !== 'resolved' && (!props.target.acceptsManualTolerance || !manualReady))
     || (classification.status === 'resolved' && !resolvedPreviewReady);
-  const displayedPreview = overrideInputsDirty || (fitMode && fitInputsDirty) ? null : props.preview;
+  const displayedPreview = overrideInputsDirty || fitInputsDirty ? null : props.preview;
   const invokeApplication = async (action: () => void | Promise<void>) => {
     if (applicationBlocked || applyingRef.current) return;
     applyingRef.current = true;
@@ -272,7 +273,15 @@ export function TolerancePopup(props: TolerancePopupProps) {
         bands={props.bands}
         selectedDesignation={displayedPreview?.result.designation}
         zoom={props.zoom}
-        onPreview={props.onPreview}
+        onPreview={async (designation) => {
+          const generation = fitInputGeneration.current;
+          try {
+            await props.onPreview(designation);
+            if (generation === fitInputGeneration.current) setFitInputsDirty(false);
+          } catch (error) {
+            setActionError(error instanceof Error ? error.message : String(error));
+          }
+        }}
         onInspect={setInspectedBand}
       />}
       <section className="vai-tolerance-inspector">
@@ -304,7 +313,13 @@ export function TolerancePopup(props: TolerancePopupProps) {
               setActionError(error instanceof Error ? error.message : String(error));
             }
           })()}>预览覆盖</button>
-          <button type="button" data-restore-standard={true} onClick={props.onRestoreStandard}>恢复标准值</button>
+          <button type="button" data-restore-standard={true} onClick={() => {
+            overrideInputGeneration.current += 1;
+            setOverrideUpper('');
+            setOverrideLower('');
+            setOverrideInputsDirty(false);
+            props.onRestoreStandard();
+          }}>恢复标准值</button>
         </fieldset>
         {fitMode && <p data-fit-selection-status={true}>
           {props.fitStatus ?? '选择配合对象'}
