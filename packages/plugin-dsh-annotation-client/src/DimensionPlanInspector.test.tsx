@@ -36,6 +36,7 @@ function draft(): EngineeringAnnotationDraft {
     }],
     fitAssignments: [],
     geometricTolerances: [],
+    surfaceTextures: [],
     chains: [{
       id: 'chain-1', drawingRef: ref, datumIds: ['datum-a'],
       members: [

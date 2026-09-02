@@ -4,7 +4,7 @@ import type { DrawingDocument, Vec2 } from '@vectorai/drawing-core';
 import { resolveShaftAxis } from '../shaft/axis';
 import { extractShaftProfile, type ShaftProfilePiece } from '../shaft/profile';
 import type { ShaftAxis } from '../partition/types';
-import { layoutDiameterSpans } from './layout';
+import { diameterLabelWidth, layoutDiameterSpans } from './layout';
 import type { ShaftDiameterFact } from './types';
 
 interface AxialSurface {
@@ -106,7 +106,11 @@ function layoutFacts(spans: DiameterSpan[], axis: ShaftAxis): ShaftDiameterFact[
   if (spans.length === 0) return [];
   const maximumRadius = Math.max(...spans.map(({ radius }) => radius));
   const placements = layoutDiameterSpans(
-    spans.map((span, index) => ({ ...span, id: `diameter-span:${index}` })),
+    spans.map((span, index) => ({
+      ...span,
+      id: `diameter-span:${index}`,
+      labelWidth: diameterLabelWidth(span.radius * 2),
+    })),
     { zMin: axis.zMin, zMax: axis.zMax, maximumRadius },
   );
   return placements

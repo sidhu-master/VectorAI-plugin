@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Vec2 } from '@vectorai/drawing-core';
+import type { AnnotationNode, Vec2 } from '@vectorai/drawing-core';
 import type {
   DrawingWorkspaceDisplay,
   DrawingWorkspaceSnapshot,
@@ -31,10 +31,17 @@ import {
   SourceLayer,
 } from './layers';
 import { CadGrid } from '../canvas/Grid';
+import { projectAnnotationDrag } from '../canvas/annotation-drag';
 
 type DragState =
   | { kind: 'pan'; start: Vec2; viewport: DrawingWorkspaceViewport; clearSelectionOnClick: boolean }
-  | { kind: 'box'; start: Vec2; current: Vec2; additive: boolean };
+  | { kind: 'box'; start: Vec2; current: Vec2; additive: boolean }
+  | { kind: 'annotation'; annotation: Extract<AnnotationNode, { type: 'dimension' }>; startWorld: Vec2; currentWorld: Vec2 };
+
+export interface DrawingSurfaceAnnotationChanges {
+  textPosition: Vec2;
+  definitionPoints: Vec2[];
+}
 
 export interface DrawingSurfaceProps {
   snapshot: DrawingWorkspaceSnapshot;
@@ -51,6 +58,7 @@ export interface DrawingSurfaceProps {
   onViewportChange(viewport: DrawingWorkspaceViewport): void;
   onSelectionChange(ids: readonly string[]): void;
   onNodeContextMenu?(nodeId: string, event: MouseEvent<SVGGElement>): void;
+  onAnnotationChange?(nodeId: string, changes: DrawingSurfaceAnnotationChanges): boolean | void | Promise<boolean | void>;
   onMouseWorldChange?(point: Vec2 | null): void;
 }
 
@@ -77,12 +85,24 @@ export function DrawingSurface({
   onViewportChange,
   onSelectionChange,
   onNodeContextMenu,
+  onAnnotationChange,
   onMouseWorldChange,
 }: DrawingSurfaceProps) {
   const display = { ...DEFAULT_DISPLAY, ...displayInput };
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ start: Vec2; current: Vec2 } | null>(null);
+  const [annotationDragPreview, setAnnotationDragPreview] = useState<AnnotationNode | null>(null);
+
+  useEffect(() => {
+    if (annotationDragPreview?.type !== 'dimension') return;
+    const persisted = snapshot.document.annotations.find(({ id }) => id === annotationDragPreview.id);
+    if (persisted?.type === 'dimension'
+      && JSON.stringify(persisted.textPosition) === JSON.stringify(annotationDragPreview.textPosition)
+      && JSON.stringify(persisted.definitionPoints) === JSON.stringify(annotationDragPreview.definitionPoints)) {
+      setAnnotationDragPreview(null);
+    }
+  }, [annotationDragPreview, snapshot.document.annotations]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -153,6 +173,9 @@ export function DrawingSurface({
     } else if (drag?.kind === 'box') {
       drag.current = point;
       setSelectionBox({ start: drag.start, current: point });
+    } else if (drag?.kind === 'annotation') {
+      drag.currentWorld = screenToWorld(point, viewport);
+      setAnnotationDragPreview(projectAnnotationDrag(drag.annotation, drag.startWorld, drag.currentWorld));
     }
   };
 
@@ -175,7 +198,41 @@ export function DrawingSurface({
         onSelectionChange(drag.additive ? [...new Set([...selectedIds, ...ids])] : ids);
       }
       setSelectionBox(null);
+      return;
     }
+    if (drag?.kind === 'annotation') {
+      const projected = projectAnnotationDrag(drag.annotation, drag.startWorld, drag.currentWorld);
+      if (Math.hypot(
+        drag.currentWorld[0] - drag.startWorld[0],
+        drag.currentWorld[1] - drag.startWorld[1],
+      ) > 0.001) {
+        setAnnotationDragPreview(projected);
+        const save = onAnnotationChange?.(drag.annotation.id, {
+          textPosition: projected.textPosition,
+          definitionPoints: projected.definitionPoints,
+        });
+        void Promise.resolve(save).then(
+          (saved) => { if (saved === false) setAnnotationDragPreview(null); },
+          () => setAnnotationDragPreview(null),
+        );
+      } else {
+        setAnnotationDragPreview(null);
+      }
+    }
+  };
+
+  const handleAnnotationPointerDown = (
+    annotation: Extract<AnnotationNode, { type: 'dimension' }>,
+    event: MouseEvent<SVGGElement>,
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const world = screenToWorld(eventScreenPoint(event), viewport);
+    const original = structuredClone(annotation);
+    dragRef.current = { kind: 'annotation', annotation: original, startWorld: world, currentWorld: world };
+    setAnnotationDragPreview(original);
+    onSelectionChange([annotation.id]);
   };
 
   const selectEntity = (id: string, event: MouseEvent<SVGGElement>) => {
@@ -198,6 +255,7 @@ export function DrawingSurface({
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Escape') return;
     dragRef.current = null;
+    setAnnotationDragPreview(null);
     setSelectionBox(null);
     onSelectionChange([]);
   };
@@ -241,12 +299,15 @@ export function DrawingSurface({
           onContextMenu={handleNodeContextMenu}
         />
         {display.annotations ? <AnnotationLayer
-          nodes={snapshot.document.annotations}
+          nodes={snapshot.document.annotations.map((node) => annotationDragPreview?.id === node.id
+            ? annotationDragPreview
+            : node)}
           viewport={viewport}
           selectedIds={selectedIds}
           attentionIds={attentionIds}
           onSelect={selectEntity}
           onContextMenu={handleNodeContextMenu}
+          onPointerDown={onAnnotationChange === undefined ? undefined : handleAnnotationPointerDown}
         /> : null}
         {worldLayers}
       </g>

@@ -3,6 +3,7 @@
 import {
   analyzeDimensionChain,
   applyFitTolerance,
+  applyMatingFitTolerance,
   applyGeometricToleranceEdit,
   applyDimensionSchemeEdit,
   applyManualTolerance,
@@ -144,6 +145,32 @@ export class DimensionPlanStore {
   editGeometricTolerance(sessionId: string, command: GeometricToleranceEditCommand): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     requireRef(state.snapshot, command.expectedDrawingRef);
+    if (command.type === 'surface-texture.layout' || command.type === 'surface-texture.set') {
+      const update = <T extends NonNullable<DimensionPlanSessionSnapshot['draft']>>(value: T): T => {
+        const index = value.surfaceTextures.findIndex(({ id }) => id === command.intentId);
+        if (index < 0) throw new Error('SURFACE_TEXTURE_INTENT_UNKNOWN');
+        const surfaceTextures = [...value.surfaceTextures];
+        surfaceTextures[index] = command.type === 'surface-texture.layout'
+          ? { ...surfaceTextures[index]!, labelPosition: [...command.position] as [number, number] }
+          : {
+            ...surfaceTextures[index]!, parameter: command.parameter, value: command.value,
+            materialRemoval: command.materialRemoval, source: 'manual', status: 'resolved',
+          };
+        return { ...value, surfaceTextures } as T;
+      };
+      if (state.snapshot.phase === 'confirmed' && state.snapshot.confirmed) {
+        return this.#push(sessionId, {
+          ...state.snapshot, phase: 'confirmed', confirmed: update(state.snapshot.confirmed),
+          canUndo: true, canRedo: false, updatedAt: this.ports.now(),
+        });
+      }
+      if (!state.snapshot.draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+      return this.#push(sessionId, {
+        ...state.snapshot,
+        draft: engineeringAnnotationDraftSchema.parse(compact(update(state.snapshot.draft))),
+        canUndo: true, canRedo: false, updatedAt: this.ports.now(),
+      });
+    }
     if (command.type === 'datum.layout') {
       const move = <T extends { datums: Array<{ id: string; labelPosition?: unknown }> }>(value: T): T => {
         const index = value.datums.findIndex(({ id }) => id === command.datumId);
@@ -166,6 +193,36 @@ export class DimensionPlanStore {
       return this.#push(sessionId, {
         ...state.snapshot,
         draft: engineeringAnnotationDraftSchema.parse(compact(move(state.snapshot.draft))),
+        canUndo: true,
+        canRedo: false,
+        updatedAt: this.ports.now(),
+      });
+    }
+    if (command.type === 'datum.set') {
+      const updateDatum = <T extends { datums: Array<{ id: string }> }>(value: T): T => {
+        const index = value.datums.findIndex(({ id }) => id === command.datumId);
+        if (index < 0) throw new Error('GDT_DATUM_UNKNOWN');
+        const datums = [...value.datums];
+        datums[index] = {
+          ...datums[index]!, name: command.name, role: command.role,
+          geometryId: command.geometryId, anchor: structuredClone(command.anchor),
+        } as typeof datums[number];
+        return { ...value, datums } as T;
+      };
+      if (state.snapshot.phase === 'confirmed' && state.snapshot.confirmed) {
+        return this.#push(sessionId, {
+          ...state.snapshot,
+          phase: 'confirmed',
+          confirmed: updateDatum(state.snapshot.confirmed),
+          canUndo: true,
+          canRedo: false,
+          updatedAt: this.ports.now(),
+        });
+      }
+      if (!state.snapshot.draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
+      return this.#push(sessionId, {
+        ...state.snapshot,
+        draft: engineeringAnnotationDraftSchema.parse(compact(updateDatum(state.snapshot.draft))),
         canUndo: true,
         canRedo: false,
         updatedAt: this.ports.now(),
@@ -229,7 +286,7 @@ export class DimensionPlanStore {
     const draft = (state.snapshot.draft as unknown as EngineeringAnnotationDraft | undefined)
       ?? editableDraftFrom(state.snapshot.confirmed);
     if (!draft) throw new Error('ANNOTATION_PLAN_DRAFT_REQUIRED');
-    if ((command.type === 'standard.single.apply' || command.type === 'manual.apply')
+    if ((command.type === 'standard.single.apply' || command.type === 'standard.mating-fit.apply' || command.type === 'manual.apply')
       && isFitPairMember(draft, command.dimensionIntentId)) {
       throw new Error('FIT_PAIR_TARGET_CONFLICT');
     }
@@ -275,6 +332,18 @@ export class DimensionPlanStore {
       });
       for (const item of overrides) {
         edited = setToleranceOverride(edited, item.dimensionIntentId, item.override);
+      }
+    } else if (command.type === 'standard.mating-fit.apply') {
+      if (!resolved || !('hole' in resolved)) throw new Error('TOLERANCE_RESULT_REQUIRED');
+      edited = applyMatingFitTolerance(draft, resolved, {
+        dimensionIntentId: command.dimensionIntentId,
+        currentFeatureClass: command.currentFeatureClass,
+        selectionSource: command.selectionSource,
+        displayPreference: command.displayPreference,
+        evidenceRefs: command.evidenceRefs,
+      });
+      if (command.override !== undefined) {
+        edited = setToleranceOverride(edited, command.dimensionIntentId, command.override);
       }
     } else if (command.type === 'manual.apply') {
       edited = applyManualTolerance(draft, {
@@ -328,6 +397,7 @@ export class DimensionPlanStore {
       tolerances: draft.tolerances,
       fitAssignments: draft.fitAssignments,
       geometricTolerances: draft.geometricTolerances,
+      surfaceTextures: draft.surfaceTextures ?? [],
       chains: draft.chains,
       dependencies: draft.dependencies,
       diagnostics: [...draft.diagnostics, ...diagnostics],
@@ -396,6 +466,9 @@ export class DimensionPlanStore {
         computed: { ...intent.computed, status: 'stale' as const },
         status: 'stale' as const,
       })),
+      surfaceTextures: state.snapshot.draft.surfaceTextures.map((intent) => ({
+        ...intent, status: 'stale' as const,
+      })),
       ...(state.snapshot.draft.axialScheme === undefined ? {} : {
         axialScheme: { ...state.snapshot.draft.axialScheme, status: 'stale' as const },
       }),
@@ -461,6 +534,7 @@ function editableDraftFrom(
     tolerances: revision.tolerances,
     fitAssignments: revision.fitAssignments,
     geometricTolerances: revision.geometricTolerances,
+    surfaceTextures: revision.surfaceTextures,
     chains: revision.chains,
     dependencies: revision.dependencies,
     diagnostics: revision.diagnostics,

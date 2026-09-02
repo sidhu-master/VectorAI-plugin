@@ -83,6 +83,16 @@ export function resolveShaftGdtRules(
   });
   const datumNames = datums.map(({ name }) => name);
   const controls: SemanticRecommendation['controls'] = [];
+  const surfaceTextures: NonNullable<SemanticRecommendation['surfaceTextures']> = supports.map((feature) => ({
+    id: `surface-texture:rule:${feature.function}:${feature.id}:ra`,
+    segmentIds: [...feature.segmentIds],
+    parameter: 'Ra',
+    value: 0.8,
+    materialRemoval: 'required',
+    source: 'process-rule',
+    confidence: feature.confidence,
+    ruleRef: { id: 'shaft-axis-support-surface-texture', version: '1' },
+  }));
 
   for (const feature of supports) {
     controls.push(
@@ -107,7 +117,7 @@ export function resolveShaftGdtRules(
 
   return {
     status: questions.length === 0 ? 'resolved' : 'needs-user-input',
-    recommendation: { datums, controls },
+    recommendation: { datums, controls, surfaceTextures },
     questions: dedupeQuestions(questions),
   };
 }

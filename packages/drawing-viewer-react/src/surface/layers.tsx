@@ -79,7 +79,10 @@ export function AnnotationLayer({
   attentionIds,
   onSelect,
   onContextMenu,
-}: EntityLayerProps<AnnotationNode>) {
+  onPointerDown,
+}: EntityLayerProps<AnnotationNode> & {
+  onPointerDown?(node: Extract<AnnotationNode, { type: 'dimension' }>, event: MouseEvent<SVGGElement>): void;
+}) {
   return <g data-layer="annotations">{nodes.map((node) => (
     <EntityRenderer
       key={node.id}
@@ -89,6 +92,11 @@ export function AnnotationLayer({
       aiGrounded={attentionIds.includes(node.id)}
       onSelect={(event) => onSelect(node.id, event)}
       onContextMenu={onContextMenu === undefined ? undefined : (event) => onContextMenu(node.id, event)}
+      onTextPointerDown={node.type === 'dimension'
+        && (node.dimensionKind === 'diameter' || node.dimensionKind === 'angular')
+        && onPointerDown !== undefined
+        ? (event) => onPointerDown(node, event)
+        : undefined}
     />
   ))}</g>;
 }

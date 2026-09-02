@@ -128,6 +128,14 @@ describe('annotation client contribution', () => {
         order: 130,
         defaultVisible: true,
       },
+      {
+        id: 'vectorai.annotation.surface-texture',
+        label: '表面粗糙度',
+        category: 'engineering',
+        icon: 'dimension',
+        order: 135,
+        defaultVisible: true,
+      },
     ]);
     expect(registered?.claimSource.observe('session-1').getSnapshot())
       .toEqual({ active: false, activationEpoch: 0 });
@@ -152,7 +160,7 @@ describe('annotation client contribution', () => {
     expect(disposeFiber).toHaveBeenCalledOnce();
     expect(disposeDropFiber).toHaveBeenCalledOnce();
     expect(disposeContribution).toHaveBeenCalledOnce();
-    expect(disposeLayer).toHaveBeenCalledTimes(6);
+    expect(disposeLayer).toHaveBeenCalledTimes(7);
     expect(disposeRemote).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
   });

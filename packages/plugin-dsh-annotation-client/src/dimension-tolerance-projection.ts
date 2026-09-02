@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AnnotationNode, DimensionAnnotation } from '@vectorai/drawing-core';
+import type { AnnotationNode, DimensionAnnotation, ToleranceProjection } from '@vectorai/drawing-core';
 import {
   projectEngineeringAnnotations,
   type EngineeringAnnotationDraft,
@@ -8,6 +8,22 @@ import {
 import type { DimensionPlanSessionSnapshot } from '@vectorai/plugin-space-contracts';
 
 type Plan = NonNullable<DimensionPlanSessionSnapshot['draft'] | DimensionPlanSessionSnapshot['confirmed']>;
+
+export function projectDimensionToleranceByIntentId(
+  plan: Plan | undefined,
+): ReadonlyMap<string, ToleranceProjection> {
+  if (plan === undefined) return new Map();
+  const projected = projectEngineeringAnnotations({
+    draft: plan as unknown as EngineeringAnnotationDraft,
+    orderedIntentIds: plan.intents.map(({ id }) => id),
+    existingAnnotations: [],
+  }).annotations;
+  return new Map(projected.flatMap(({ engineeringIntentId, toleranceProjection }) => (
+    engineeringIntentId === undefined || toleranceProjection === undefined
+      ? []
+      : [[engineeringIntentId, toleranceProjection] as const]
+  )));
+}
 
 /**
  * Reuses the engineering-domain projector, then merges only portable tolerance

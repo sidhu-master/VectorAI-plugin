@@ -4,6 +4,7 @@ import type { GeometryId } from '@vectorai/drawing-core';
 import { describe, expect, it } from 'vitest';
 import {
   applyFitTolerance,
+  applyMatingFitTolerance,
   applyManualTolerance,
   applySingleTolerance,
   clearToleranceOverride,
@@ -62,6 +63,28 @@ function draft(): EngineeringAnnotationDraft {
 }
 
 describe('immutable tolerance edits', () => {
+  it('applies only the current drawing dimension while preserving an external mating requirement', () => {
+    const before = draft();
+    const after = applyMatingFitTolerance(before, fit(), {
+      dimensionIntentId: 'intent-shaft', currentFeatureClass: 'external',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:mating-fit'],
+    });
+
+    expect(after.fitAssignments).toEqual([]);
+    expect(after.tolerances.filter(({ dimensionIntentId }) => dimensionIntentId === 'intent-shaft')).toEqual([
+      expect.objectContaining({
+        selection: { designation: 'g6', source: 'manual', evidenceRefs: ['manual:mating-fit'] },
+        matingFit: expect.objectContaining({
+          matingFeatureClass: 'internal', matingDesignation: 'H7',
+          designation: 'H7/g6', fitType: 'clearance',
+          minimumClearance: .007, maximumClearance: .041,
+        }),
+      }),
+    ]);
+    expect(after.tolerances.find(({ dimensionIntentId }) => dimensionIntentId === 'intent-hole')).toBeUndefined();
+    expect(after.tolerances.find(({ dimensionIntentId }) => dimensionIntentId === 'intent-other')).toEqual(before.tolerances[0]);
+  });
+
   it('replaces only the target intent while preserving unrelated annotation families', () => {
     const before = draft();
     const original = structuredClone(before);

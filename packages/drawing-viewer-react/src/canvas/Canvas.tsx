@@ -18,6 +18,7 @@ import { MotionRigOverlay } from './MotionRigOverlay';
 import { ScreenSpaceLabel } from './ScreenSpaceLabel';
 import { SourceUnderlay } from './SourceUnderlay';
 import { isRasterDrawingSource } from './source-types';
+import { projectAnnotationDrag } from './annotation-drag';
 import {
   fitViewportToDrawing,
   nodeBounds,
@@ -35,7 +36,7 @@ type DragState =
     clearSelectionOnClick: boolean;
   }
   | { kind: 'box'; start: Vec2; current: Vec2; additive: boolean }
-  | { kind: 'annotation'; id: string; startWorld: Vec2; currentWorld: Vec2 }
+  | { kind: 'annotation'; id: string; annotation: AnnotationNode; startWorld: Vec2; currentWorld: Vec2 }
   | { kind: 'motion-rig'; startWorld: Vec2; currentWorld: Vec2 };
 
 export interface CanvasProps {
@@ -56,6 +57,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
   const setMouseWorld = useDrawingWorkspace((state) => state.setMouseWorld);
   const setSelection = useDrawingWorkspace((state) => state.setSelection);
   const moveAnnotationText = useDrawingWorkspace((state) => state.moveAnnotationText);
+  const updateNode = useDrawingWorkspace((state) => state.updateNode);
   const rebuildMotionRigFromSelection = useDrawingWorkspace((state) => state.rebuildMotionRigFromSelection);
   const beginMotionRigDrag = useDrawingWorkspace((state) => state.beginMotionRigDrag);
   const beginMotionRigConnectorDrag = useDrawingWorkspace((state) => state.beginMotionRigConnectorDrag);
@@ -67,6 +69,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
   const dragRef = useRef<DragState | null>(null);
   const spacePressed = useRef(false);
   const [selectionBox, setSelectionBox] = useState<{ start: Vec2; current: Vec2 } | null>(null);
+  const [annotationDragPreview, setAnnotationDragPreview] = useState<AnnotationNode | null>(null);
 
   const document = snapshot?.document;
 
@@ -101,7 +104,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
   const entities = [
     ...snapshot.document.geometry,
     ...(display.annotations ? snapshot.document.annotations : []),
-  ];
+  ].map((node) => annotationDragPreview?.id === node.id ? annotationDragPreview : node);
   const groundedNodeIds = new Set(
     groundingOverlay?.groups
       .filter((group) => group.role !== 'reference')
@@ -199,6 +202,9 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
       return;
     }
     drag.currentWorld = screenToWorld(point, viewport);
+    if (drag.annotation.type === 'dimension' && isFixedDirectionDimension(drag.annotation)) {
+      setAnnotationDragPreview(projectAnnotationDrag(drag.annotation, drag.startWorld, drag.currentWorld));
+    }
   };
 
   const handleMouseUp = (event: MouseEvent<SVGSVGElement>) => {
@@ -234,11 +240,22 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
       return;
     }
     if (drag.kind === 'annotation') {
+      const projected = drag.annotation.type === 'dimension' && isFixedDirectionDimension(drag.annotation)
+        ? projectAnnotationDrag(drag.annotation, drag.startWorld, drag.currentWorld)
+        : null;
+      setAnnotationDragPreview(null);
       if (Math.hypot(
         drag.currentWorld[0] - drag.startWorld[0],
         drag.currentWorld[1] - drag.startWorld[1],
       ) > 0.001) {
-        void moveAnnotationText(drag.id, drag.currentWorld);
+        if (projected !== null) {
+          void updateNode(drag.id, {
+            textPosition: projected.textPosition,
+            definitionPoints: projected.definitionPoints,
+          });
+        } else {
+          void moveAnnotationText(drag.id, drag.currentWorld);
+        }
       }
     }
   };
@@ -259,6 +276,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
         return;
       }
       dragRef.current = null;
+      setAnnotationDragPreview(null);
       setSelectionBox(null);
       setSelection([]);
     }
@@ -296,7 +314,13 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
     event.stopPropagation();
     const point = eventScreenPoint(event);
     const world = screenToWorld(point, viewport);
-    dragRef.current = { kind: 'annotation', id: annotation.id, startWorld: world, currentWorld: world };
+    dragRef.current = {
+      kind: 'annotation', id: annotation.id, annotation: structuredClone(annotation),
+      startWorld: world, currentWorld: world,
+    };
+    if (annotation.type === 'dimension' && isFixedDirectionDimension(annotation)) {
+      setAnnotationDragPreview(structuredClone(annotation));
+    }
     setSelection([annotation.id]);
   };
 
@@ -417,6 +441,12 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
       </svg>
     </div>
   );
+}
+
+function isFixedDirectionDimension(
+  annotation: Extract<AnnotationNode, { type: 'dimension' }>,
+): boolean {
+  return annotation.dimensionKind === 'diameter' || annotation.dimensionKind === 'angular';
 }
 
 function drawingNodesEqual(

@@ -23,6 +23,14 @@ export interface ApplyFitToleranceOptions {
   evidenceRefs: string[];
 }
 
+export interface ApplyMatingFitToleranceOptions {
+  dimensionIntentId: string;
+  currentFeatureClass: 'internal' | 'external';
+  selectionSource: SelectionSource;
+  displayPreference: DisplayPreference;
+  evidenceRefs: string[];
+}
+
 export interface ApplyManualToleranceOptions {
   dimensionIntentId: string;
   mode: 'bilateral' | 'unilateral';
@@ -89,6 +97,39 @@ export function applyFitTolerance(
     ...draft,
     tolerances,
     fitAssignments: [...draft.fitAssignments.filter(({ fitGroupId }) => fitGroupId !== options.fitGroupId), assignment],
+  };
+}
+
+export function applyMatingFitTolerance(
+  draft: EngineeringAnnotationDraft,
+  result: ResolvedFit,
+  options: ApplyMatingFitToleranceOptions,
+): EngineeringAnnotationDraft {
+  const current = options.currentFeatureClass === 'internal' ? result.hole : result.shaft;
+  const mating = options.currentFeatureClass === 'internal' ? result.shaft : result.hole;
+  const basicSize = requireProviderBasicSize(draft, options.dimensionIntentId);
+  validateStandardResult(current, basicSize);
+  validateStandardResult(mating, basicSize);
+  const spec: ToleranceSpec = {
+    ...standardSpec(options.dimensionIntentId, current, {
+      selection: current.designation,
+      selectionSource: options.selectionSource,
+      displayPreference: options.displayPreference,
+      evidenceRefs: options.evidenceRefs,
+    }),
+    matingFit: {
+      matingFeatureClass: mating.featureClass,
+      matingDesignation: mating.designation,
+      designation: result.designation,
+      fitType: result.fitType,
+      minimumClearance: result.minimumClearance,
+      maximumClearance: result.maximumClearance,
+      standardRef: { ...result.hole.standardRef },
+    },
+  };
+  return {
+    ...draft,
+    tolerances: replaceIntentTolerance(draft.tolerances, options.dimensionIntentId, spec),
   };
 }
 

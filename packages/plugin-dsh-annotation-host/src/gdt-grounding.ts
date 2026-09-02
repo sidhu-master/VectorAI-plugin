@@ -7,6 +7,7 @@ import type {
   GeometricCharacteristic,
   GeometricToleranceIntent,
   MaterialCondition,
+  SurfaceTextureIntent,
   ToleranceZoneShape,
 } from '@vectorai/engineering-annotation';
 import type { DrawingWorkspaceSnapshot } from '@vectorai/drawing-workspace';
@@ -22,6 +23,16 @@ export interface GdtRecommendation {
     toleranceZoneShape: ToleranceZoneShape;
     materialCondition?: MaterialCondition;
   }>;
+  surfaceTextures?: Array<{
+    id: string;
+    geometryIds: string[];
+    parameter: SurfaceTextureIntent['parameter'];
+    value: number;
+    materialRemoval: SurfaceTextureIntent['materialRemoval'];
+    source: 'process-rule' | 'ai-candidate';
+    confidence: number;
+    ruleRef?: { id: string; version: string };
+  }>;
   coverage?: {
     complete: boolean;
     requiredDatumCount: number;
@@ -34,7 +45,7 @@ export interface GdtRecommendation {
 export function groundGdtRecommendation(
   snapshot: DrawingWorkspaceSnapshot,
   recommendation: GdtRecommendation,
-): Pick<EngineeringAnnotationDraft, 'datums' | 'geometricTolerances'> {
+): Pick<EngineeringAnnotationDraft, 'datums' | 'geometricTolerances' | 'surfaceTextures'> {
   const geometry = new Map(snapshot.document.geometry.map((node) => [String(node.id), node]));
   const datums: EngineeringDatum[] = recommendation.datums.map((item) => {
     const node = requireGeometry(geometry, item.geometryId);
@@ -77,7 +88,26 @@ export function groundGdtRecommendation(
       evidenceIds: [...new Set(nodes.flatMap(({ quality }) => quality.evidenceRefs.map(String)))],
     };
   });
-  return { datums, geometricTolerances };
+  const surfaceTextures: SurfaceTextureIntent[] = (recommendation.surfaceTextures ?? []).map((item) => {
+    const nodes = item.geometryIds.map((id) => requireGeometry(geometry, id));
+    return {
+      id: item.id,
+      drawingRef: structuredClone(snapshot.ref),
+      controlledTargets: nodes.map((node) => ({
+        geometryId: node.id,
+        anchor: { kind: 'nearest' as const, point: representativePoint(node) },
+      })),
+      parameter: item.parameter,
+      value: item.value,
+      unit: 'um',
+      materialRemoval: item.materialRemoval,
+      source: item.source,
+      status: 'candidate',
+      evidenceIds: [...new Set(nodes.flatMap(({ quality }) => quality.evidenceRefs.map(String)))],
+      ...(item.ruleRef === undefined ? {} : { ruleRef: structuredClone(item.ruleRef) }),
+    };
+  });
+  return { datums, geometricTolerances, surfaceTextures };
 }
 
 function requireGeometry(geometry: ReadonlyMap<string, GeometryNode>, id: string): GeometryNode {

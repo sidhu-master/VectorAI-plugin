@@ -17,7 +17,13 @@ import { projectEngineeringAnnotations } from './dimension/project';
 import type { EngineeringAnnotationDraft } from './dimension/types';
 import { layoutOpeningAngles, measureOpeningAngles, selectAxialEndOpeningAngles } from './opening-angle';
 import { measureShaftDiameters, type ShaftDiameterFact } from './diameter';
-import type { OpeningAngleLayout } from './opening-angle';
+import type { OpeningAngleFact, OpeningAngleLayout } from './opening-angle';
+import {
+  CAD_DIMENSION_TEXT_GAP,
+  CAD_DIMENSION_TEXT_HEIGHT,
+  diameterLabelWidth,
+  findNearestFreeCoordinate,
+} from './diameter/layout';
 
 export interface PendingEngineeringAnnotation {
   nodeId: string;
@@ -162,7 +168,14 @@ export function planEngineeringAnnotations(input: {
     suppressed.push({ nodeId: key, reason });
   }
   const diameterFacts = (input.annotationKinds ?? ['opening-angle']).includes('diameter')
-    ? avoidOpeningAngleCollisions(measureShaftDiameters(input.document), openingLayouts, geometry)
+    ? avoidOpeningAngleCollisions(
+      measureShaftDiameters(input.document),
+      openingSelection.selected.flatMap((fact) => {
+        const layout = openingLayouts[fact.key];
+        return layout === undefined ? [] : [{ fact, layout }];
+      }),
+      geometry,
+    )
     : [];
   for (const fact of diameterFacts) {
     const annotationId = `annotation_diameter_${stableKey(fact.key)}` as AnnotationId;
@@ -218,6 +231,7 @@ export function planEngineeringAnnotations(input: {
       nominalValue: annotation.computedValue ?? annotation.observedValue ?? 0,
       unit: annotation.unit ?? input.document.unitSystem.length,
       functionalRole: 'inspection',
+      ...(annotation.dimensionKind === 'diameter' ? { featureClass: 'external' as const } : {}),
       source: 'geometry',
       status: 'confirmed',
       evidenceIds: annotation.quality.evidenceRefs.map(String),
@@ -225,6 +239,7 @@ export function planEngineeringAnnotations(input: {
     tolerances: [],
     fitAssignments: [],
     geometricTolerances: [],
+    surfaceTextures: [],
     chains: [],
     dependencies: [],
     diagnostics: [],
@@ -329,81 +344,145 @@ export function planEngineeringAnnotations(input: {
   return { annotations, associations, targetNodeIds, pending, suppressed, program };
 }
 
-interface LayoutBounds { minX: number; minY: number; maxX: number; maxY: number }
+interface OpeningCollisionLayout {
+  fact: OpeningAngleFact;
+  layout: OpeningAngleLayout;
+}
 
 function avoidOpeningAngleCollisions(
   facts: ShaftDiameterFact[],
-  openingLayouts: Record<string, OpeningAngleLayout>,
+  openings: OpeningCollisionLayout[],
   geometry: DrawingDocument['geometry'],
 ): ShaftDiameterFact[] {
-  if (facts.length === 0 || Object.keys(openingLayouts).length === 0) return facts;
+  if (facts.length === 0 || openings.length === 0) return facts;
   const geometryPoints = geometry.flatMap(layoutPoints);
   if (geometryPoints.length === 0) return facts;
-  const geometryBounds = boundsOf(geometryPoints);
-  const diagonal = Math.hypot(
-    geometryBounds.maxX - geometryBounds.minX,
-    geometryBounds.maxY - geometryBounds.minY,
-  );
-  const clearance = Math.max(diagonal * 0.025, 3);
-  const step = Math.max(diagonal * 0.045, 6);
-  const center: Vec2 = [
-    (geometryBounds.minX + geometryBounds.maxX) / 2,
-    (geometryBounds.minY + geometryBounds.maxY) / 2,
-  ];
-  const occupied = Object.values(openingLayouts).map((layout) => openingBounds(layout, clearance));
-  const result: ShaftDiameterFact[] = [];
-  for (const original of [...facts].sort((left, right) => (
-    left.diameter - right.diameter || left.key.localeCompare(right.key)
-  ))) {
-    const fact = structuredClone(original);
-    const direction = diameterOutwardDirection(fact, center);
-    let attempts = 0;
-    while (occupied.some((bounds) => intersects(diameterBounds(fact, clearance), bounds)) && attempts < 24) {
-      fact.definitionPoints[0] = translate(fact.definitionPoints[0], direction, step);
-      fact.definitionPoints[1] = translate(fact.definitionPoints[1], direction, step);
-      fact.textPosition = translate(fact.textPosition, direction, step);
-      attempts += 1;
-    }
-    occupied.push(diameterBounds(fact, clearance));
-    result.push(fact);
+  const result = structuredClone(facts);
+  const axis = diameterAxisDirection(result[0]!);
+  const geometryProjections = geometryPoints.map((point) => dot(point, axis));
+  const axialMin = Math.min(...geometryProjections);
+  const axialMax = Math.max(...geometryProjections);
+  const exteriorKeys = new Set(facts.filter((fact) => (
+    !isWithinShaftInterval(fact, axis, axialMin, axialMax)
+    || openings.some((opening) => diameterIntersectsOpening(fact, opening))
+  )).map(({ key }) => key));
+
+  for (const side of ['min', 'max'] as const) {
+    const group = result.filter((fact) => exteriorKeys.has(fact.key) && diameterSide(fact, axis, axialMin, axialMax) === side)
+      .sort((left, right) => left.diameter - right.diameter || left.key.localeCompare(right.key));
+    let cursor = side === 'min' ? axialMin : axialMax;
+    let previousWidth = 0;
+    group.forEach((fact, index) => {
+      const width = diameterLabelWidth(fact.diameter);
+      const distance = index === 0
+        ? width / 2 + CAD_DIMENSION_TEXT_GAP
+        : (previousWidth + width) / 2 + CAD_DIMENSION_TEXT_GAP * 2;
+      cursor += side === 'min' ? -distance : distance;
+      const direction = side === 'min' ? -1 : 1;
+      const maximumDistance = openingSearchDistance(cursor, direction, openings, axis);
+      const coordinate = findNearestFreeCoordinate({
+        start: cursor,
+        direction,
+        step: CAD_DIMENSION_TEXT_GAP / 2,
+        maximumDistance,
+        isBlocked: (candidate) => {
+          const probe = structuredClone(fact);
+          placeDiameterAtProjection(probe, axis, candidate);
+          return openings.some((opening) => diameterIntersectsOpening(probe, opening));
+        },
+      });
+      placeDiameterAtProjection(fact, axis, coordinate);
+      cursor = coordinate;
+      previousWidth = width;
+    });
   }
   return result;
 }
 
-function openingBounds(layout: OpeningAngleLayout, clearance: number): LayoutBounds {
-  const [vertex, , , arcStart, arcEnd] = layout.definitionPoints;
-  const points = [arcStart, arcEnd, layout.textPosition];
-  const bounds = boundsOf(points);
-  return {
-    minX: Math.min(bounds.minX, vertex[0]) - clearance,
-    minY: bounds.minY - clearance,
-    maxX: Math.max(bounds.maxX, vertex[0]) + clearance,
-    maxY: bounds.maxY + clearance,
-  };
+function openingSearchDistance(
+  start: number,
+  direction: -1 | 1,
+  openings: OpeningCollisionLayout[],
+  axis: Vec2,
+): number {
+  const projected = openings.flatMap(({ fact, layout }) => {
+    const text = `${format(fact.value)}°`;
+    const textWidth = [...text].length * CAD_DIMENSION_TEXT_HEIGHT * 0.62 + CAD_DIMENSION_TEXT_GAP * 2;
+    const textHeight = CAD_DIMENSION_TEXT_HEIGHT + CAD_DIMENSION_TEXT_GAP * 2;
+    const halfTextProjection = Math.abs(axis[0]) * textWidth / 2 + Math.abs(axis[1]) * textHeight / 2;
+    return [
+      ...layout.definitionPoints.map((point) => dot(point, axis)),
+      dot(layout.textPosition, axis) - halfTextProjection,
+      dot(layout.textPosition, axis) + halfTextProjection,
+    ];
+  });
+  const farthest = direction === -1 ? Math.min(...projected) : Math.max(...projected);
+  return Math.max(0, direction === -1 ? start - farthest : farthest - start)
+    + CAD_DIMENSION_TEXT_HEIGHT + CAD_DIMENSION_TEXT_GAP * 2;
 }
 
-function diameterBounds(fact: ShaftDiameterFact, clearance: number): LayoutBounds {
-  const bounds = boundsOf([fact.definitionPoints[0], fact.definitionPoints[1], fact.textPosition]);
-  return {
-    minX: bounds.minX - clearance,
-    minY: bounds.minY - clearance,
-    maxX: bounds.maxX + clearance * 2.4,
-    maxY: bounds.maxY + clearance,
-  };
+function isWithinShaftInterval(
+  fact: ShaftDiameterFact,
+  axis: Vec2,
+  axialMin: number,
+  axialMax: number,
+): boolean {
+  const [first, second] = fact.definitionPoints;
+  const coordinate = dot([(first[0] + second[0]) / 2, (first[1] + second[1]) / 2], axis);
+  return coordinate >= axialMin && coordinate <= axialMax;
 }
 
-function diameterOutwardDirection(fact: ShaftDiameterFact, drawingCenter: Vec2): Vec2 {
-  const [first, second, sourceFirst, sourceSecond] = fact.definitionPoints;
-  const dimensionCenter: Vec2 = [(first[0] + second[0]) / 2, (first[1] + second[1]) / 2];
-  const sourceCenter: Vec2 = [(sourceFirst[0] + sourceSecond[0]) / 2, (sourceFirst[1] + sourceSecond[1]) / 2];
-  const existing = normalize([dimensionCenter[0] - sourceCenter[0], dimensionCenter[1] - sourceCenter[1]]);
-  if (existing) return existing;
-  const line = normalize([second[0] - first[0], second[1] - first[1]]) ?? [0, 1];
-  let direction: Vec2 = [line[1], -line[0]];
-  const fromCenter: Vec2 = [sourceCenter[0] - drawingCenter[0], sourceCenter[1] - drawingCenter[1]];
-  if (dot(direction, fromCenter) < 0) direction = [-direction[0], -direction[1]];
-  if (Math.abs(dot(direction, fromCenter)) <= 1e-6 && direction[0] < 0) direction = [-direction[0], -direction[1]];
-  return direction;
+function diameterIntersectsOpening(fact: ShaftDiameterFact, opening: OpeningCollisionLayout): boolean {
+  const [diameterStart, diameterEnd] = fact.definitionPoints;
+  const [vertex, firstExtension, secondExtension, arcStart, arcEnd] = opening.layout.definitionPoints;
+  const clearance = CAD_DIMENSION_TEXT_GAP;
+  if (segmentDistance(diameterStart, diameterEnd, vertex, firstExtension) <= clearance) return true;
+  if (segmentDistance(diameterStart, diameterEnd, vertex, secondExtension) <= clearance) return true;
+  if (segmentArcDistance(
+    diameterStart,
+    diameterEnd,
+    vertex,
+    arcStart,
+    arcEnd,
+    opening.fact.value,
+  ) <= clearance) return true;
+  const text = `${format(opening.fact.value)}°`;
+  const textWidth = [...text].length * CAD_DIMENSION_TEXT_HEIGHT * 0.62 + CAD_DIMENSION_TEXT_GAP * 2;
+  const textHeight = CAD_DIMENSION_TEXT_HEIGHT + CAD_DIMENSION_TEXT_GAP * 2;
+  return segmentIntersectsRectangle(diameterStart, diameterEnd, {
+    minX: opening.layout.textPosition[0] - textWidth / 2,
+    maxX: opening.layout.textPosition[0] + textWidth / 2,
+    minY: opening.layout.textPosition[1] - textHeight / 2,
+    maxY: opening.layout.textPosition[1] + textHeight / 2,
+  });
+}
+
+function diameterAxisDirection(fact: ShaftDiameterFact): Vec2 {
+  const [, , sourceFirst, sourceSecond] = fact.definitionPoints;
+  const radial = normalize([sourceSecond[0] - sourceFirst[0], sourceSecond[1] - sourceFirst[1]]) ?? [0, 1];
+  return [radial[1], -radial[0]];
+}
+
+function diameterSide(
+  fact: ShaftDiameterFact,
+  axis: Vec2,
+  axialMin: number,
+  axialMax: number,
+): 'min' | 'max' {
+  const [, , sourceFirst, sourceSecond] = fact.definitionPoints;
+  const sourceProjection = dot([
+    (sourceFirst[0] + sourceSecond[0]) / 2,
+    (sourceFirst[1] + sourceSecond[1]) / 2,
+  ], axis);
+  return sourceProjection - axialMin <= axialMax - sourceProjection ? 'min' : 'max';
+}
+
+function placeDiameterAtProjection(fact: ShaftDiameterFact, axis: Vec2, coordinate: number): void {
+  const current = dot(fact.textPosition, axis);
+  const delta = coordinate - current;
+  fact.definitionPoints[0] = translate(fact.definitionPoints[0], axis, delta);
+  fact.definitionPoints[1] = translate(fact.definitionPoints[1], axis, delta);
+  fact.textPosition = translate(fact.textPosition, axis, delta);
 }
 
 function layoutPoints(node: DrawingDocument['geometry'][number]): Vec2[] {
@@ -421,6 +500,8 @@ function layoutPoints(node: DrawingDocument['geometry'][number]): Vec2[] {
   return [];
 }
 
+interface LayoutBounds { minX: number; minY: number; maxX: number; maxY: number }
+
 function boundsOf(points: readonly Vec2[]): LayoutBounds {
   return {
     minX: Math.min(...points.map(([x]) => x)),
@@ -430,9 +511,140 @@ function boundsOf(points: readonly Vec2[]): LayoutBounds {
   };
 }
 
-function intersects(left: LayoutBounds, right: LayoutBounds): boolean {
-  return left.minX <= right.maxX && left.maxX >= right.minX
-    && left.minY <= right.maxY && left.maxY >= right.minY;
+function segmentIntersectsRectangle(start: Vec2, end: Vec2, bounds: LayoutBounds): boolean {
+  if (pointInBounds(start, bounds) || pointInBounds(end, bounds)) return true;
+  const topLeft: Vec2 = [bounds.minX, bounds.maxY];
+  const topRight: Vec2 = [bounds.maxX, bounds.maxY];
+  const bottomLeft: Vec2 = [bounds.minX, bounds.minY];
+  const bottomRight: Vec2 = [bounds.maxX, bounds.minY];
+  return segmentDistance(start, end, topLeft, topRight) <= 1e-9
+    || segmentDistance(start, end, topRight, bottomRight) <= 1e-9
+    || segmentDistance(start, end, bottomRight, bottomLeft) <= 1e-9
+    || segmentDistance(start, end, bottomLeft, topLeft) <= 1e-9;
+}
+
+function pointInBounds(point: Vec2, bounds: LayoutBounds): boolean {
+  return point[0] >= bounds.minX && point[0] <= bounds.maxX
+    && point[1] >= bounds.minY && point[1] <= bounds.maxY;
+}
+
+function segmentDistance(firstStart: Vec2, firstEnd: Vec2, secondStart: Vec2, secondEnd: Vec2): number {
+  if (segmentsIntersect(firstStart, firstEnd, secondStart, secondEnd)) return 0;
+  return Math.min(
+    pointSegmentDistance(firstStart, secondStart, secondEnd),
+    pointSegmentDistance(firstEnd, secondStart, secondEnd),
+    pointSegmentDistance(secondStart, firstStart, firstEnd),
+    pointSegmentDistance(secondEnd, firstStart, firstEnd),
+  );
+}
+
+function segmentsIntersect(firstStart: Vec2, firstEnd: Vec2, secondStart: Vec2, secondEnd: Vec2): boolean {
+  const firstA = cross(firstStart, firstEnd, secondStart);
+  const firstB = cross(firstStart, firstEnd, secondEnd);
+  const secondA = cross(secondStart, secondEnd, firstStart);
+  const secondB = cross(secondStart, secondEnd, firstEnd);
+  const epsilon = 1e-9;
+  if (firstA * firstB < -epsilon && secondA * secondB < -epsilon) return true;
+  return Math.abs(firstA) <= epsilon && pointOnSegment(secondStart, firstStart, firstEnd, epsilon)
+    || Math.abs(firstB) <= epsilon && pointOnSegment(secondEnd, firstStart, firstEnd, epsilon)
+    || Math.abs(secondA) <= epsilon && pointOnSegment(firstStart, secondStart, secondEnd, epsilon)
+    || Math.abs(secondB) <= epsilon && pointOnSegment(firstEnd, secondStart, secondEnd, epsilon);
+}
+
+function pointOnSegment(point: Vec2, start: Vec2, end: Vec2, epsilon: number): boolean {
+  return point[0] >= Math.min(start[0], end[0]) - epsilon
+    && point[0] <= Math.max(start[0], end[0]) + epsilon
+    && point[1] >= Math.min(start[1], end[1]) - epsilon
+    && point[1] <= Math.max(start[1], end[1]) + epsilon;
+}
+
+function pointSegmentDistance(point: Vec2, start: Vec2, end: Vec2): number {
+  const delta: Vec2 = [end[0] - start[0], end[1] - start[1]];
+  const lengthSquared = dot(delta, delta);
+  if (lengthSquared <= 1e-18) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  const projection = Math.max(0, Math.min(1, dot([point[0] - start[0], point[1] - start[1]], delta) / lengthSquared));
+  return Math.hypot(point[0] - start[0] - delta[0] * projection, point[1] - start[1] - delta[1] * projection);
+}
+
+function segmentArcDistance(
+  segmentStart: Vec2,
+  segmentEnd: Vec2,
+  center: Vec2,
+  arcStart: Vec2,
+  arcEnd: Vec2,
+  valueDegrees: number,
+): number {
+  const radius = (distanceBetween(center, arcStart) + distanceBetween(center, arcEnd)) / 2;
+  const startAngle = Math.atan2(arcStart[1] - center[1], arcStart[0] - center[0]);
+  const endAngle = Math.atan2(arcEnd[1] - center[1], arcEnd[0] - center[0]);
+  const sweep = angularSweepForValue(startAngle, endAngle, valueDegrees);
+  if (segmentCircleIntersectsArc(segmentStart, segmentEnd, center, radius, startAngle, sweep)) return 0;
+  let minimum = Math.min(
+    pointSegmentDistance(arcStart, segmentStart, segmentEnd),
+    pointSegmentDistance(arcEnd, segmentStart, segmentEnd),
+  );
+  const closest = closestPointOnSegment(center, segmentStart, segmentEnd);
+  if (angleWithinSweep(Math.atan2(closest[1] - center[1], closest[0] - center[0]), startAngle, sweep)) {
+    minimum = Math.min(minimum, Math.abs(distanceBetween(center, closest) - radius));
+  }
+  return minimum;
+}
+
+function segmentCircleIntersectsArc(
+  start: Vec2,
+  end: Vec2,
+  center: Vec2,
+  radius: number,
+  startAngle: number,
+  sweep: number,
+): boolean {
+  const direction: Vec2 = [end[0] - start[0], end[1] - start[1]];
+  const offset: Vec2 = [start[0] - center[0], start[1] - center[1]];
+  const a = dot(direction, direction);
+  if (a <= 1e-18) return false;
+  const b = 2 * dot(offset, direction);
+  const c = dot(offset, offset) - radius * radius;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return false;
+  const root = Math.sqrt(Math.max(0, discriminant));
+  return [(-b - root) / (2 * a), (-b + root) / (2 * a)].some((parameter) => {
+    if (parameter < 0 || parameter > 1) return false;
+    const point: Vec2 = [start[0] + direction[0] * parameter, start[1] + direction[1] * parameter];
+    return angleWithinSweep(Math.atan2(point[1] - center[1], point[0] - center[0]), startAngle, sweep);
+  });
+}
+
+function closestPointOnSegment(point: Vec2, start: Vec2, end: Vec2): Vec2 {
+  const delta: Vec2 = [end[0] - start[0], end[1] - start[1]];
+  const lengthSquared = dot(delta, delta);
+  if (lengthSquared <= 1e-18) return [...start];
+  const projection = Math.max(0, Math.min(1, dot([point[0] - start[0], point[1] - start[1]], delta) / lengthSquared));
+  return [start[0] + delta[0] * projection, start[1] + delta[1] * projection];
+}
+
+function angularSweepForValue(start: number, end: number, valueDegrees: number): number {
+  const counterClockwise = modulo(end - start, Math.PI * 2);
+  const clockwise = counterClockwise - Math.PI * 2;
+  const target = Math.abs(valueDegrees) * Math.PI / 180;
+  return Math.abs(Math.abs(counterClockwise) - target) <= Math.abs(Math.abs(clockwise) - target)
+    ? counterClockwise : clockwise;
+}
+
+function angleWithinSweep(angle: number, start: number, sweep: number): boolean {
+  const relative = sweep >= 0 ? modulo(angle - start, Math.PI * 2) : modulo(start - angle, Math.PI * 2);
+  return relative <= Math.abs(sweep) + 1e-9;
+}
+
+function modulo(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function distanceBetween(first: Vec2, second: Vec2): number {
+  return Math.hypot(second[0] - first[0], second[1] - first[1]);
+}
+
+function cross(start: Vec2, end: Vec2, point: Vec2): number {
+  return (end[0] - start[0]) * (point[1] - start[1]) - (end[1] - start[1]) * (point[0] - start[0]);
 }
 
 function translate(point: Vec2, direction: Vec2, distance: number): Vec2 {

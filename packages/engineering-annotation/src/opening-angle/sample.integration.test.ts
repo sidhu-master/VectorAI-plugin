@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveShaftAxis } from '../shaft/axis';
 import { planEngineeringAnnotations } from '../plan';
+import { CAD_DIMENSION_TEXT_GAP, diameterLabelWidth } from '../diameter/layout';
 
 describe('approved shaft DXF opening-angle annotation', () => {
   it('imports and deterministically plans only real axial-end openings', async () => {
@@ -40,7 +41,7 @@ describe('approved shaft DXF opening-angle annotation', () => {
     expect(angular.every(({ computedValue }) => computedValue !== undefined && Math.abs(computedValue - 90) > 0.5)).toBe(true);
   });
 
-  it('keeps readable diameters inside while ordering right-side fallbacks outside', async () => {
+  it('keeps feature-local diameters inside and moves only opening-zone conflicts outside', async () => {
     const bytes = await readFile(resolve(import.meta.dirname, '../../../dxf-import/test/fixtures/initial-shaft.dxf'));
     const imported = importDxf({
       bytes,
@@ -66,13 +67,35 @@ describe('approved shaft DXF opening-angle annotation', () => {
       const coordinate = axialCoordinate(item.textPosition, axis.origin, axis.direction);
       return coordinate >= axis.zMin && coordinate <= axis.zMax;
     });
+    const left = diameters.filter((item) => (
+      axialCoordinate(item.textPosition, axis.origin, axis.direction) < axis.zMin
+    )).sort((left, right) => (left.computedValue ?? 0) - (right.computedValue ?? 0));
     const right = diameters.filter((item) => (
       axialCoordinate(item.textPosition, axis.origin, axis.direction) > axis.zMax
     )).sort((left, right) => (left.computedValue ?? 0) - (right.computedValue ?? 0));
+    const inwardLeftCoordinates = left.map(({ textPosition }) => axialCoordinate(textPosition, axis.origin, axis.direction));
     const outwardCoordinates = right.map(({ textPosition }) => axialCoordinate(textPosition, axis.origin, axis.direction));
-
-    expect(inside.map(({ computedValue }) => computedValue)).toEqual(expect.arrayContaining([20, 57.03]));
-    expect(right.map(({ computedValue }) => computedValue)).toEqual([35, 48]);
+    expect(diameters.map(({ computedValue }) => computedValue).sort((a, b) => (a ?? 0) - (b ?? 0)))
+      .toEqual([20, 35, 35, 38, 40, 42.21, 44.59, 48, 51, 57.03]);
+    expect(inside.length).toBeGreaterThan(left.length + right.length);
+    expect(left.length + right.length).toBeGreaterThan(0);
+    const insideIntervals = inside.map((item) => {
+      const center = axialCoordinate(item.textPosition, axis.origin, axis.direction);
+      const width = diameterLabelWidth(item.computedValue ?? 0);
+      return { min: center - width / 2, max: center + width / 2 };
+    }).sort((first, second) => first.min - second.min);
+    expect(insideIntervals.every((interval, index) => (
+      index === 0 || interval.min - insideIntervals[index - 1]!.max >= CAD_DIMENSION_TEXT_GAP - 1e-6
+    ))).toBe(true);
+    expect(left.every((item) => (
+      axialCoordinate(item.textPosition, axis.origin, axis.direction)
+        + diameterLabelWidth(item.computedValue ?? 0) / 2 < axis.zMin
+    ))).toBe(true);
+    expect(right.every((item) => (
+      axialCoordinate(item.textPosition, axis.origin, axis.direction)
+        - diameterLabelWidth(item.computedValue ?? 0) / 2 > axis.zMax
+    ))).toBe(true);
+    expect(inwardLeftCoordinates.every((coordinate, index) => index === 0 || coordinate < inwardLeftCoordinates[index - 1]!)).toBe(true);
     expect(outwardCoordinates.every((coordinate, index) => index === 0 || coordinate > outwardCoordinates[index - 1]!)).toBe(true);
   });
 });

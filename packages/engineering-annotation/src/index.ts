@@ -40,3 +40,5 @@ export * from './gdt/types';
 export * from './gdt/value';
 export * from './gdt/edit';
 export * from './gdt/validate';
+export * from './gdt/gbt1184-catalog';
+export * from './surface-texture/gbt1031-catalog';

@@ -58,6 +58,16 @@ export interface SemanticRecommendation {
     materialCondition?: 'rfs' | 'mmc' | 'lmc';
     confidence: number;
   }>;
+  surfaceTextures?: Array<{
+    id: string;
+    segmentIds: string[];
+    parameter: 'Ra' | 'Rz' | 'Rq' | 'Rt';
+    value: number;
+    materialRemoval: 'required' | 'prohibited' | 'unspecified';
+    source: 'process-rule' | 'ai-candidate';
+    confidence: number;
+    ruleRef?: { id: string; version: string };
+  }>;
 }
 
 export function createAutomaticGdtReviewer(
@@ -234,7 +244,18 @@ export function groundSegmentRecommendation(
     toleranceZoneShape: item.toleranceZoneShape,
     ...(item.materialCondition === undefined ? {} : { materialCondition: item.materialCondition }),
   }));
-  return { datums, controls };
+  const surfaceTextures = (recommendation.surfaceTextures ?? []).map((item) => ({
+    ...structuredClone(item),
+    geometryIds: [...new Set(item.segmentIds.map((segmentId) => {
+      const segment = requireSegment(segmentById, segmentId);
+      return selectRepresentativeGeometry(segment, nodeById, partition.axis, 'radial');
+    }))],
+  }));
+  return {
+    datums,
+    controls,
+    ...(surfaceTextures.length === 0 ? {} : { surfaceTextures }),
+  };
 }
 
 function selectLocatingShoulderGeometry(

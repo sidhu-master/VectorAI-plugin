@@ -20,6 +20,7 @@ import {
   ANNOTATION_PARTITION_LAYER,
   ANNOTATION_DATUM_LAYER,
   ANNOTATION_GDT_LAYER,
+  ANNOTATION_SURFACE_TEXTURE_LAYER,
 } from './drawing-layers';
 
 declare module '@deepseek-ai/cordis' {
@@ -92,6 +93,7 @@ export async function apply(ctx: Context) {
       const dimensionChainLayerRegistration = registry.registerLayer(ANNOTATION_DIMENSION_CHAIN_LAYER);
       const datumLayerRegistration = registry.registerLayer(ANNOTATION_DATUM_LAYER);
       const gdtLayerRegistration = registry.registerLayer(ANNOTATION_GDT_LAYER);
+      const surfaceTextureLayerRegistration = registry.registerLayer(ANNOTATION_SURFACE_TEXTURE_LAYER);
       const registration = registry.registerWorkspace({
         id: 'engineering-annotation',
         apiVersion: 1,
@@ -127,6 +129,7 @@ export async function apply(ctx: Context) {
         dimensionChainLayerRegistration.dispose();
         datumLayerRegistration.dispose();
         gdtLayerRegistration.dispose();
+        surfaceTextureLayerRegistration.dispose();
         layerRegistration.dispose();
         stateSource.dispose();
         for (const controller of partitionControllers.values()) controller.dispose();

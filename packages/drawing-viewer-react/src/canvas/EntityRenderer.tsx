@@ -158,6 +158,10 @@ function DiameterDimension({
   if (!first || !second) return null;
   const vectorStroke = { vectorEffect: 'non-scaling-stroke' as const };
   const arrowSize = 7 / Math.max(viewport.scale, 1e-9);
+  const dimensionCenter: Vec2 = [(first[0] + second[0]) / 2, (first[1] + second[1]) / 2];
+  const sourceCenter: Vec2 = [(sourceFirst[0] + sourceSecond[0]) / 2, (sourceFirst[1] + sourceSecond[1]) / 2];
+  const horizontalDisplacement = dimensionCenter[0] - sourceCenter[0];
+  const labelOnLeft = horizontalDisplacement < -1e-9;
   return <>
     <line data-diameter-role="extension" x1={sourceFirst[0]} y1={sourceFirst[1]} x2={first[0]} y2={first[1]} {...vectorStroke} />
     <line data-diameter-role="extension" x1={sourceSecond[0]} y1={sourceSecond[1]} x2={second[0]} y2={second[1]} {...vectorStroke} />
@@ -167,8 +171,8 @@ function DiameterDimension({
     <ScreenSpaceLabel
       position={node.textPosition}
       viewportScale={viewport.scale}
-      textAnchor="start"
-      offsetX={8}
+      textAnchor={labelOnLeft ? 'end' : 'start'}
+      offsetX={labelOnLeft ? -8 : 8}
     >
       {dimensionLabel(node)}
     </ScreenSpaceLabel>
@@ -247,7 +251,7 @@ function dimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): s
   return tolerance === undefined ? base : `${base} ${tolerance}`;
 }
 
-function formatPortableTolerance(
+export function formatPortableTolerance(
   projection: ToleranceProjection | undefined,
   targetUnit: Extract<AnnotationNode, { type: 'dimension' }>['unit'],
 ): string | undefined {

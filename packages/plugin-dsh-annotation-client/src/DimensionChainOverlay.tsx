@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { estimateScreenTextWidth, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
+import type { ToleranceProjection } from '@vectorai/drawing-core';
+import { estimateScreenTextWidth, formatPortableTolerance, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import { axialDimensionIntentId } from '@vectorai/engineering-annotation';
 import { allocateAxialDimensionLanes, type AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
@@ -20,6 +21,8 @@ interface IntervalLayout {
   manualOffset: number;
   groupOffset: number;
   minimumGroupOffset: number;
+  label: string;
+  toleranceProjection?: ToleranceProjection;
 }
 interface DragState {
   target: { type: 'chain' | 'candidate'; id: string };
@@ -45,6 +48,7 @@ export function DimensionChainOverlay({
   onMoveCandidate,
   onChooseClosure,
   onSetTolerance,
+  toleranceByIntentId,
 }: {
   scheme: AxialDimensionScheme;
   scale: number;
@@ -56,6 +60,7 @@ export function DimensionChainOverlay({
   onMoveCandidate?(candidateId: string, normalOffset: number): void | Promise<void>;
   onChooseClosure?(chainId: string, candidateId: string): void | Promise<void>;
   onSetTolerance?(dimensionIntentId: string): void | Promise<void>;
+  toleranceByIntentId?: ReadonlyMap<string, ToleranceProjection>;
 }) {
   const [dragPreviews, setDragPreviews] = useState<Record<string, number>>({});
   const [contextMenu, setContextMenu] = useState<DimensionContextMenuState | null>(null);
@@ -65,12 +70,20 @@ export function DimensionChainOverlay({
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setContextMenu(null);
     };
+    const closeOnOutsidePointer = (event: globalThis.PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('[data-dimension-context-menu]') === null) setContextMenu(null);
+    };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    window.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+    };
   }, [contextMenu]);
   if (!visible) return null;
   const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : []));
-  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews);
+  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews, toleranceByIntentId);
   const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
   const grouped = scheme.chains
     .map((chain, chainIndex) => ({
@@ -279,6 +292,7 @@ function layoutIntervals(
   radialExtent: number,
   previewHeld: boolean,
   dragPreviews: Readonly<Record<string, number>> = {},
+  toleranceByIntentId?: ReadonlyMap<string, ToleranceProjection>,
 ): IntervalLayout[] {
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
@@ -298,11 +312,13 @@ function layoutIntervals(
     const memberships = membershipByCandidate.get(candidateId) ?? [];
     const owner = primaryMembership(memberships);
     const role: Role = closures.has(candidateId) ? 'closure' : owner?.role ?? 'standalone';
-    const label = `${candidate.nominalValue} ${scheme.topology.unit}`;
-    const halfLabelWidth = (estimateScreenTextWidth(label, 11) + 10) / (2 * safeScale);
+    const toleranceProjection = toleranceByIntentId?.get(axialDimensionIntentId(candidate.id));
+    const tolerance = formatPortableTolerance(toleranceProjection, scheme.topology.unit);
+    const label = `${candidate.nominalValue} ${scheme.topology.unit}${tolerance === undefined ? '' : ` ${tolerance}`}`;
+    const halfLabelWidth = cadDimensionLabelWidth(candidate.nominalValue, scheme.topology.unit, toleranceProjection) / (2 * safeScale);
     const center = (first + second) / 2;
     const visual = { start: Math.min(first, second, center - halfLabelWidth), end: Math.max(first, second, center + halfLabelWidth) };
-    return [{ candidate, first, second, memberships, owner, role, visual }];
+    return [{ candidate, first, second, memberships, owner, role, visual, label, toleranceProjection }];
   });
   const lanes = allocateAxialDimensionLanes(prepared.map(({ candidate, first, second, visual }) => ({
     id: candidate.id,
@@ -310,7 +326,7 @@ function layoutIntervals(
     occupiedStart: visual.start,
     occupiedEnd: visual.end,
   })), 8 / safeScale);
-  const layouts = prepared.map(({ candidate, first, second, memberships, owner, role }): IntervalLayout => {
+  const layouts = prepared.map(({ candidate, first, second, memberships, owner, role, label, toleranceProjection }): IntervalLayout => {
     const lane = lanes.get(candidate.id) ?? 0;
     const automaticOffset = base + lane * 26 / safeScale;
     const minimumOffset = radialExtent + 14 / safeScale;
@@ -320,6 +336,8 @@ function layoutIntervals(
       ?? (owner === undefined ? candidateOffset : chainOffsets.get(owner.chainId) ?? 0);
     return {
       candidate,
+      label,
+      ...(toleranceProjection === undefined ? {} : { toleranceProjection }),
       ...(owner === undefined ? {} : { chainId: owner.chainId }),
       chainIndex: owner?.chainIndex ?? -1,
       role,
@@ -447,10 +465,118 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
     />
     <line x1={a[0] - normal[0] * tick} y1={a[1] - normal[1] * tick} x2={a[0] + normal[0] * tick} y2={a[1] + normal[1] * tick} vectorEffect="non-scaling-stroke" />
     <line x1={b[0] - normal[0] * tick} y1={b[1] - normal[1] * tick} x2={b[0] + normal[0] * tick} y2={b[1] + normal[1] * tick} vectorEffect="non-scaling-stroke" />
-    <ScreenSpaceLabel position={middle} viewportScale={scale} background className="vai-dimension-chain-label" data-dimension-lane={lane}>
-      {`${candidate.nominalValue} ${scheme.topology.unit}`}
-    </ScreenSpaceLabel>
+    <CadDimensionLabel
+      position={middle}
+      viewportScale={scale}
+      nominalValue={candidate.nominalValue}
+      unit={scheme.topology.unit}
+      projection={layout.toleranceProjection}
+      fallback={layout.label}
+      lane={lane}
+    />
   </g>;
+}
+
+function CadDimensionLabel({ position, viewportScale, nominalValue, unit, projection, fallback, lane }: {
+  position: readonly [number, number];
+  viewportScale: number;
+  nominalValue: number;
+  unit: AxialDimensionScheme['topology']['unit'];
+  projection?: ToleranceProjection;
+  fallback: string;
+  lane: number;
+}) {
+  const parts = cadToleranceParts(projection, unit);
+  if (parts === null) {
+    return <ScreenSpaceLabel position={position} viewportScale={viewportScale} background className="vai-dimension-chain-label" data-dimension-lane={lane}>
+      {fallback}
+    </ScreenSpaceLabel>;
+  }
+  const main = `${nominalValue}`;
+  const suffix = `${unit}${parts.designation === undefined ? '' : ` ${parts.designation}`}`;
+  const mainWidth = estimateScreenTextWidth(main, 11);
+  const suffixWidth = estimateScreenTextWidth(suffix, 8.5);
+  const deviationWidth = parts.symmetric === undefined
+    ? Math.max(estimateScreenTextWidth(parts.upper ?? '', 7.5), estimateScreenTextWidth(parts.lower ?? '', 7.5))
+    : estimateScreenTextWidth(parts.symmetric, 8.5);
+  const gapAfterMain = deviationWidth > 0 ? 2 : 4;
+  const gapAfterDeviation = deviationWidth > 0 ? 4 : 0;
+  const contentWidth = mainWidth + gapAfterMain + deviationWidth + gapAfterDeviation + suffixWidth;
+  const width = contentWidth + 10;
+  const height = parts.upper !== undefined && parts.lower !== undefined ? 21 : 17;
+  let cursor = -contentWidth / 2;
+  const mainCenter = cursor + mainWidth / 2;
+  cursor += mainWidth + gapAfterMain;
+  const deviationStart = cursor;
+  cursor += deviationWidth + gapAfterDeviation;
+  const suffixCenter = cursor + suffixWidth / 2;
+  return <g
+    className="vai-dimension-chain-label vai-dimension-chain-label--cad"
+    data-dimension-lane={lane}
+    data-screen-space-label={true}
+    transform={screenSpaceTransform(position, viewportScale)}
+  >
+    <rect className="vai-screen-space-label__background" x={-width / 2} y={-height / 2} width={width} height={height} rx={4} />
+    <text className="vai-dimension-chain-label__nominal" x={mainCenter} y={0} fontSize={11} textAnchor="middle" dominantBaseline="middle">{main}</text>
+    {parts.symmetric !== undefined
+      ? <text className="vai-dimension-chain-label__tolerance vai-dimension-chain-label__tolerance--symmetric" x={deviationStart} y={0} fontSize={8.5} textAnchor="start" dominantBaseline="middle">{parts.symmetric}</text>
+      : <text className="vai-dimension-chain-label__tolerance vai-dimension-chain-label__tolerance--asymmetric" fontSize={7.5} textAnchor="start">
+        <tspan x={deviationStart} y={-3.5}>{parts.upper}</tspan>
+        <tspan x={deviationStart} y={5}>{parts.lower}</tspan>
+      </text>}
+    <text className="vai-dimension-chain-label__designation" x={suffixCenter} y={0} fontSize={8.5} textAnchor="middle" dominantBaseline="middle">{suffix}</text>
+  </g>;
+}
+
+function cadDimensionLabelWidth(
+  nominalValue: number,
+  unit: AxialDimensionScheme['topology']['unit'],
+  projection?: ToleranceProjection,
+): number {
+  const parts = cadToleranceParts(projection, unit);
+  if (parts === null) {
+    const tolerance = formatPortableTolerance(projection, unit);
+    return estimateScreenTextWidth(`${nominalValue} ${unit}${tolerance === undefined ? '' : ` ${tolerance}`}`, 11) + 10;
+  }
+  const mainWidth = estimateScreenTextWidth(`${nominalValue}`, 11);
+  const suffixWidth = estimateScreenTextWidth(`${unit}${parts.designation === undefined ? '' : ` ${parts.designation}`}`, 8.5);
+  const deviationWidth = parts.symmetric === undefined
+    ? Math.max(estimateScreenTextWidth(parts.upper ?? '', 7.5), estimateScreenTextWidth(parts.lower ?? '', 7.5))
+    : estimateScreenTextWidth(parts.symmetric, 8.5);
+  return mainWidth + (deviationWidth > 0 ? 2 : 4) + deviationWidth
+    + (deviationWidth > 0 ? 4 : 0) + suffixWidth + 10;
+}
+
+function cadToleranceParts(projection: ToleranceProjection | undefined, unit: AxialDimensionScheme['topology']['unit']): {
+  designation?: string;
+  symmetric?: string;
+  upper?: string;
+  lower?: string;
+} | null {
+  if (projection === undefined || projection.unit !== unit
+    || (projection.status !== 'resolved' && projection.status !== 'confirmed')) return null;
+  const preference = projection.displayPreference ?? (projection.mode === 'fit' ? 'designation' : 'deviations');
+  const designation = preference === 'deviations' ? undefined : projection.fitDesignation?.trim() || undefined;
+  if (preference === 'designation') return designation === undefined ? null : { designation };
+  const upper = projection.upperDeviation;
+  const lower = projection.lowerDeviation;
+  if (!Number.isFinite(upper) || !Number.isFinite(lower)) return designation === undefined ? null : { designation };
+  if (upper! > 0 && Math.abs(upper! + lower!) <= 1e-9) {
+    return { ...(designation === undefined ? {} : { designation }), symmetric: `±${cadNumber(upper!)}` };
+  }
+  return {
+    ...(designation === undefined ? {} : { designation }),
+    upper: cadSignedNumber(upper!),
+    lower: cadSignedNumber(lower!),
+  };
+}
+
+function cadSignedNumber(value: number): string {
+  return value > 0 ? `+${cadNumber(value)}` : cadNumber(value);
+}
+
+function cadNumber(value: number): string {
+  return Object.is(value, -0) || value === 0 ? '0' : Number(value.toFixed(6)).toString();
 }
 
 function DimensionContextMenu({ scheme, candidateId, chainId, position, scale, onChoose, onSetTolerance }: {

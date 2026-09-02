@@ -974,6 +974,7 @@ const engineeringDiagnosticSchema = z.object({
   evidenceIds: z.array(idSchema).optional(),
 }).strict();
 const engineeringStateSchema = z.enum(['candidate', 'resolved', 'confirmed', 'conflict', 'stale']);
+const featureClassSchema = z.enum(['internal', 'external']);
 const engineeringDatumSchema = z.object({
   id: idSchema,
   drawingRef: drawingRefSchema,
@@ -995,6 +996,7 @@ const dimensionIntentSchema = z.object({
   nominalValue: z.number().finite(),
   unit: z.enum(['mm', 'cm', 'm', 'in', 'deg']),
   functionalRole: z.enum(['datum', 'overall', 'functional', 'assembly', 'process', 'inspection', 'auxiliary', 'closure']),
+  featureClass: featureClassSchema.optional(),
   source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
   status: engineeringStateSchema,
   evidenceIds: z.array(idSchema),
@@ -1008,7 +1010,6 @@ const resolvedToleranceSchema = z.object({
   inputDigest: idSchema,
   evaluatedAt: z.number().finite(),
 }).strict();
-const featureClassSchema = z.enum(['internal', 'external']);
 const toleranceSelectionSourceSchema = z.enum(['rule', 'ai-recommended', 'manual']);
 const toleranceDisplayPreferenceSchema = z.enum(['deviations', 'designation', 'both']);
 const toleranceOverrideSchema = z.object({
@@ -1105,6 +1106,15 @@ const toleranceSpecSchema = z.object({
   override: toleranceOverrideSchema.optional(),
   displayPreference: toleranceDisplayPreferenceSchema.optional(),
   fitGroupId: idSchema.optional(),
+  matingFit: z.object({
+    matingFeatureClass: featureClassSchema,
+    matingDesignation: z.string().min(2).max(8),
+    designation: z.string().min(5).max(17),
+    fitType: z.enum(['clearance', 'transition', 'interference']),
+    minimumClearance: z.number().finite(),
+    maximumClearance: z.number().finite(),
+    standardRef: toleranceStandardRefSchema,
+  }).strict().optional(),
   inputs: z.record(z.string(), z.union([z.number().finite(), z.string(), z.boolean()])),
   resolved: resolvedToleranceSchema.optional(),
   status: engineeringStateSchema,
@@ -1163,12 +1173,26 @@ export const toleranceCatalogResultSchema = z.object({
       shaftOverride: toleranceOverrideSchema.optional(),
       result: resolvedFitSchema,
     }).strict().optional(),
+    matingFit: z.object({
+      currentFeatureClass: featureClassSchema,
+      currentDesignation: z.string().min(2).max(8),
+      matingFeatureClass: featureClassSchema,
+      matingDesignation: z.string().min(2).max(8),
+      result: resolvedFitSchema,
+    }).strict().optional(),
   }).strict().optional(),
   recommendation: z.object({
     designation: z.string().min(2).max(17),
     source: z.literal('ai-recommended'),
     evidenceRefs: z.array(idSchema),
   }).strict().optional(),
+  recommendations: z.array(z.object({
+    designation: z.string().min(2).max(8),
+    category: z.enum(['preferred', 'common', 'other']),
+    source: z.enum(['ai-recommended', 'standard-selection']),
+    evidenceRefs: z.array(idSchema),
+    result: resolvedStandardToleranceSchema,
+  }).strict()).optional(),
 }).strict();
 
 export const tolerancePreviewRequestSchema = z.discriminatedUnion('type', [
@@ -1189,6 +1213,14 @@ export const tolerancePreviewRequestSchema = z.discriminatedUnion('type', [
     basis: z.enum(['hole', 'shaft']),
     designation: z.string().min(5).max(17),
   }).strict(),
+  z.object({
+    type: z.literal('mating-fit'),
+    expectedDrawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    currentFeatureClass: featureClassSchema,
+    matingDesignation: z.string().min(2).max(8),
+    currentDesignation: z.string().min(2).max(8),
+  }).strict(),
 ]);
 
 export const tolerancePreviewResultSchema = z.discriminatedUnion('type', [
@@ -1204,6 +1236,14 @@ export const tolerancePreviewResultSchema = z.discriminatedUnion('type', [
     drawingRef: drawingRefSchema,
     holeDimensionIntentId: idSchema,
     shaftDimensionIntentId: idSchema,
+    status: z.literal('resolved'),
+    result: resolvedFitSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('mating-fit'),
+    drawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    currentFeatureClass: featureClassSchema,
     status: z.literal('resolved'),
     result: resolvedFitSchema,
   }).strict(),
@@ -1233,6 +1273,20 @@ export const toleranceEditCommandSchema = z.discriminatedUnion('type', [
     selectionSource: toleranceSelectionSourceSchema,
     displayPreference: toleranceDisplayPreferenceSchema,
     evidenceRefs: z.array(idSchema),
+  }).strict(),
+  z.object({
+    type: z.literal('standard.mating-fit.apply'),
+    expectedDrawingRef: drawingRefSchema,
+    dimensionIntentId: idSchema,
+    currentFeatureClass: featureClassSchema,
+    matingDesignation: z.string().min(2).max(8),
+    currentDesignation: z.string().min(2).max(8),
+    expectedCurrentInputDigest: z.string().min(1).max(256),
+    expectedMatingInputDigest: z.string().min(1).max(256),
+    selectionSource: toleranceSelectionSourceSchema,
+    displayPreference: toleranceDisplayPreferenceSchema,
+    evidenceRefs: z.array(idSchema),
+    override: toleranceOverrideSchema.optional(),
   }).strict(),
   z.object({
     type: z.literal('standard.override.set'),
@@ -1309,6 +1363,20 @@ export const geometricToleranceIntentSchema = z.object({
   status: z.enum(['candidate', 'pending-calculation', 'resolved', 'confirmed', 'conflict', 'stale']),
   evidenceIds: z.array(idSchema),
   framePosition: vec2Schema.optional(),
+}).strict();
+export const surfaceTextureIntentSchema = z.object({
+  id: idSchema,
+  drawingRef: drawingRefSchema,
+  controlledTargets: z.array(dimensionTargetSchema).min(1),
+  parameter: z.enum(['Ra', 'Rz', 'Rq', 'Rt']),
+  value: z.number().finite().positive(),
+  unit: z.literal('um'),
+  materialRemoval: z.enum(['required', 'prohibited', 'unspecified']),
+  source: z.enum(['document', 'manual', 'process-rule', 'ai-candidate']),
+  status: z.enum(['candidate', 'resolved', 'confirmed', 'conflict', 'stale']),
+  evidenceIds: z.array(idSchema),
+  ruleRef: z.object({ id: idSchema, version: idSchema }).strict().optional(),
+  labelPosition: vec2Schema.optional(),
 }).strict();
 const dimensionChainSchema = z.object({
   id: idSchema,
@@ -1446,7 +1514,19 @@ export const dimensionSchemeEditCommandSchema = z.discriminatedUnion('type', [
 ]);
 
 export const geometricToleranceEditCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('surface-texture.layout'), intentId: idSchema, position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({
+    type: z.literal('surface-texture.set'), intentId: idSchema,
+    parameter: z.enum(['Ra', 'Rz', 'Rq', 'Rt']), value: z.number().finite().positive(),
+    materialRemoval: z.enum(['required', 'prohibited', 'unspecified']),
+    expectedDrawingRef: drawingRefSchema,
+  }).strict(),
   z.object({ type: z.literal('datum.layout'), datumId: idSchema, position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({
+    type: z.literal('datum.set'), datumId: idSchema, name: z.string().min(1).max(120),
+    role: z.enum(['primary', 'secondary', 'tertiary', 'origin']), geometryId: idSchema,
+    anchor: entityAnchorSchema, expectedDrawingRef: drawingRefSchema,
+  }).strict(),
   z.object({ type: z.literal('frame.layout'), intentIds: z.array(idSchema).min(1), position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
   z.object({ type: z.literal('characteristic.set'), intentId: idSchema, characteristic: geometricCharacteristicSchema, expectedDrawingRef: drawingRefSchema }).strict(),
   z.object({ type: z.literal('controlled-targets.set'), intentId: idSchema, targets: z.array(dimensionTargetSchema), expectedDrawingRef: drawingRefSchema }).strict(),
@@ -1464,6 +1544,7 @@ export const engineeringAnnotationDraftSchema = z.object({
   tolerances: z.array(toleranceSpecSchema),
   fitAssignments: z.array(fitAssignmentSchema).default([]),
   geometricTolerances: z.array(geometricToleranceIntentSchema).default([]),
+  surfaceTextures: z.array(surfaceTextureIntentSchema).default([]),
   chains: z.array(dimensionChainSchema),
   dependencies: z.array(annotationDependencySchema),
   diagnostics: z.array(engineeringDiagnosticSchema),
@@ -1497,6 +1578,7 @@ export type DimensionPlanSessionSnapshot = z.infer<typeof dimensionPlanSessionSn
 export type AxialDimensionScheme = z.infer<typeof axialDimensionSchemeSchema>;
 export type DimensionSchemeEditCommand = z.infer<typeof dimensionSchemeEditCommandSchema>;
 export type GeometricToleranceIntent = z.infer<typeof geometricToleranceIntentSchema>;
+export type SurfaceTextureIntent = z.infer<typeof surfaceTextureIntentSchema>;
 export type GeometricToleranceEditCommand = z.infer<typeof geometricToleranceEditCommandSchema>;
 export type ToleranceCatalogRequest = z.infer<typeof toleranceCatalogRequestSchema>;
 export type ToleranceCatalogResult = z.infer<typeof toleranceCatalogResultSchema>;

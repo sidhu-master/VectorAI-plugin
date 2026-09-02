@@ -46,3 +46,22 @@ describe('angular dimension rendering', () => {
     expect(markup).toContain('font-size="11"');
   });
 });
+
+describe('diameter dimension rendering', () => {
+  it('places a left exterior label on the outward side of its dimension line', () => {
+    const node: DimensionAnnotation = {
+      id: 'diameter-left' as never, type: 'dimension', visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] }, dimensionKind: 'diameter',
+      associationStatus: 'resolved', targets: [], computedValue: 35, displayText: '⌀35', unit: 'mm',
+      textPosition: [-10, 0], definitionPoints: [[-10, -17.5], [-10, 17.5], [0, -17.5], [0, 17.5]],
+    };
+
+    const markup = renderToStaticMarkup(<svg><EntityRenderer
+      node={node} selected={false} onSelect={() => {}}
+      viewport={{ x: 0, y: 0, scale: 2, width: 800, height: 600 }}
+    /></svg>);
+
+    expect(markup).toContain('text-anchor="end"');
+    expect(markup).toContain('translate(-8 0)');
+  });
+});

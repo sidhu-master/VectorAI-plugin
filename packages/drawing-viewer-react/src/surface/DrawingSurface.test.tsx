@@ -279,6 +279,116 @@ describe('controlled DrawingSurface', () => {
     act(() => renderer.unmount());
   });
 
+  it('keeps the diameter drag preview visible until the controlled save finishes', async () => {
+    const value = snapshot();
+    value.document.annotations = [{
+      id: 'diameter-1' as AnnotationId,
+      type: 'dimension',
+      dimensionKind: 'diameter',
+      associationStatus: 'resolved',
+      targets: [],
+      computedValue: 20,
+      displayText: 'Ø20',
+      unit: 'mm',
+      textPosition: [4, 0],
+      definitionPoints: [[0, -10], [0, 10], [0, -10], [0, 10]],
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    let finishSave!: () => void;
+    const savePending = new Promise<void>((resolve) => { finishSave = resolve; });
+    const onAnnotationChange = vi.fn(() => savePending);
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={value}
+        viewport={viewport}
+        selectedIds={[]}
+        onViewportChange={() => undefined}
+        onSelectionChange={() => undefined}
+        onAnnotationChange={onAnnotationChange}
+      />,
+    );
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const svgTarget = {
+      tagName: 'svg',
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    };
+    const groupTarget = { tagName: 'g', ownerSVGElement: svgTarget };
+    const diameter = renderer.root.findByProps({ 'data-entity-id': 'diameter-1' });
+
+    act(() => diameter.props.onMouseDown({
+      currentTarget: groupTarget, target: groupTarget,
+      clientX: 420, clientY: 300, button: 0,
+      preventDefault: vi.fn(), stopPropagation: vi.fn(),
+    }));
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 430, clientY: 286 }));
+
+    const preview = renderer.root.findByProps({ 'data-entity-id': 'diameter-1' });
+    expect(preview.findByProps({ 'data-diameter-role': 'dimension' }).props.x1).toBe(5);
+
+    act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 430, clientY: 286 }));
+    expect(onAnnotationChange).toHaveBeenCalledWith('diameter-1', {
+      textPosition: [9, 0],
+      definitionPoints: [[5, -10], [5, 10], [0, -10], [0, 10]],
+    });
+    expect(renderer.root.findByProps({ 'data-entity-id': 'diameter-1' })
+      .findByProps({ 'data-diameter-role': 'dimension' }).props.x1).toBe(5);
+    await act(async () => { finishSave(); await savePending; });
+    act(() => renderer.unmount());
+  });
+
+  it('previews and commits an angular annotation drag along its bisector', () => {
+    const value = snapshot();
+    value.document.annotations = [{
+      id: 'angle-1' as AnnotationId,
+      type: 'dimension',
+      dimensionKind: 'angular',
+      associationStatus: 'resolved',
+      targets: [],
+      computedValue: 90,
+      displayText: '90°',
+      unit: 'deg',
+      textPosition: [14, 0],
+      definitionPoints: [[0, 0], [10, 0], [0, 10], [10, 0], [0, 10]],
+      visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const onAnnotationChange = vi.fn();
+    const renderer = TestRenderer.create(
+      <DrawingSurface
+        snapshot={value}
+        viewport={viewport}
+        selectedIds={[]}
+        onViewportChange={() => undefined}
+        onSelectionChange={() => undefined}
+        onAnnotationChange={onAnnotationChange}
+      />,
+    );
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+    const svgTarget = {
+      tagName: 'svg',
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    };
+    const groupTarget = { tagName: 'g', ownerSVGElement: svgTarget };
+    const angle = renderer.root.findByProps({ 'data-entity-id': 'angle-1' });
+
+    act(() => angle.props.onMouseDown({
+      currentTarget: groupTarget, target: groupTarget,
+      clientX: 428, clientY: 300, button: 0,
+      preventDefault: vi.fn(), stopPropagation: vi.fn(),
+    }));
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 436, clientY: 282 }));
+    act(() => svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 436, clientY: 282 }));
+
+    expect(onAnnotationChange).toHaveBeenCalledWith('angle-1', expect.objectContaining({
+      textPosition: [18, 0],
+    }));
+    const changes = onAnnotationChange.mock.calls[0]?.[1];
+    expect(changes.definitionPoints[0]).toEqual([0, 0]);
+    expect(Math.hypot(...changes.definitionPoints[3])).toBeGreaterThan(10);
+    act(() => renderer.unmount());
+  });
+
   it('reports zoom and blank-canvas deselection through callbacks', () => {
     const onViewportChange = vi.fn();
     const onSelectionChange = vi.fn();

@@ -27,6 +27,16 @@ describe('shaft GD&T functional rules', () => {
     expect(result.recommendation.controls.some(({ characteristic }) => (
       characteristic === 'coaxiality' || characteristic === 'perpendicularity' || characteristic === 'symmetry'
     ))).toBe(false);
+    expect(result.recommendation.surfaceTextures).toEqual([
+      expect.objectContaining({
+        segmentIds: ['support-west'], parameter: 'Ra', value: 0.8,
+        materialRemoval: 'required', source: 'process-rule',
+      }),
+      expect.objectContaining({
+        segmentIds: ['support-east'], parameter: 'Ra', value: 0.8,
+        materialRemoval: 'required', source: 'process-rule',
+      }),
+    ]);
   });
 
   it('asks the user instead of using a low-confidence functional classification', () => {
@@ -61,6 +71,9 @@ describe('shaft GD&T functional rules', () => {
     expect(result.recommendation.datums).toEqual([]);
     expect(result.recommendation.controls.map(({ characteristic }) => characteristic).sort()).toEqual([
       'circularity', 'cylindricity',
+    ]);
+    expect(result.recommendation.surfaceTextures).toEqual([
+      expect.objectContaining({ segmentIds: ['support-only'], parameter: 'Ra', value: 0.8 }),
     ]);
   });
 });

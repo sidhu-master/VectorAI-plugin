@@ -4,7 +4,6 @@ import {
   applyFitTolerance,
   applySingleTolerance,
   canonicalRuleInputDigest,
-  classifyFeatureOfSize,
   createGbt1800Provider,
   type EngineeringAnnotationDraft,
   type EngineeringDiagnostic,
@@ -46,6 +45,17 @@ export class ToleranceService {
       : this.provider.listBands({ basicSize, featureClass: 'external' });
     const matching = [...plan.tolerances].reverse().find(({ dimensionIntentId }) => dimensionIntentId === request.dimensionIntentId);
     const fit = matching === undefined ? undefined : activeFitHydration(plan, matching);
+    const matingFit = matching?.matingFit === undefined ? undefined : {
+      currentFeatureClass: request.featureClass,
+      currentDesignation: matching.selection?.designation ?? String(matching.inputs.designation ?? ''),
+      matingFeatureClass: matching.matingFit.matingFeatureClass,
+      matingDesignation: matching.matingFit.matingDesignation,
+      result: withFitToleranceMagnitudes(this.provider.resolveFit({
+        basicSize,
+        basis: request.featureClass === 'external' ? 'hole' : 'shaft',
+        designation: matching.matingFit.designation,
+      })),
+    };
     const recommendation = matching?.source === 'ai-candidate'
       && matching.featureClass === request.featureClass
       && matching.selection?.source === 'ai-recommended'
@@ -59,6 +69,13 @@ export class ToleranceService {
         evidenceRefs: [...matching.selection.evidenceRefs],
       }
       : undefined;
+    const recommendations = buildRecommendations(
+      this.provider,
+      basicSize,
+      request.featureClass,
+      requestedBands,
+      recommendation,
+    );
     return {
       drawingRef: plan.drawingRef,
       dimensionIntentId: request.dimensionIntentId,
@@ -80,9 +97,11 @@ export class ToleranceService {
           displayPreference: matching.displayPreference ?? 'deviations',
           ...(matching.override ? { override: { ...matching.override } } : {}),
           ...(fit === undefined ? {} : { fit }),
+          ...(matingFit === undefined ? {} : { matingFit }),
         } }
         : {}),
       ...(recommendation === undefined ? {} : { recommendation }),
+      recommendations,
     };
   }
 
@@ -98,9 +117,27 @@ export class ToleranceService {
         })),
       };
     }
+    if (request.type === 'mating-fit') {
+      const intent = requireEligibleIntent(plan, request.dimensionIntentId, request.currentFeatureClass);
+      const basicSize = requireProviderBasicSize(intent);
+      const designation = request.currentFeatureClass === 'external'
+        ? `${request.matingDesignation}/${request.currentDesignation}`
+        : `${request.currentDesignation}/${request.matingDesignation}`;
+      return {
+        type: 'mating-fit', drawingRef: plan.drawingRef,
+        dimensionIntentId: request.dimensionIntentId,
+        currentFeatureClass: request.currentFeatureClass,
+        status: 'resolved',
+        result: withFitToleranceMagnitudes(this.provider.resolveFit({
+          basicSize,
+          basis: request.currentFeatureClass === 'external' ? 'hole' : 'shaft',
+          designation,
+        })),
+      };
+    }
+    const { holeDimensionIntentId, shaftDimensionIntentId } = requireFitRoles(request);
     requireEligibleIntent(plan, request.primaryDimensionIntentId, request.primaryFeatureClass);
     requireEligibleIntent(plan, request.secondaryDimensionIntentId, request.secondaryFeatureClass);
-    const { holeDimensionIntentId, shaftDimensionIntentId } = requireFitRoles(request);
     const basicSize = requireEqualFitSize(plan, holeDimensionIntentId, shaftDimensionIntentId);
     return {
       type: 'fit', drawingRef: plan.drawingRef,
@@ -150,9 +187,64 @@ export class ToleranceService {
       if (result.hole.ruleRef.inputDigest !== command.expectedHoleInputDigest
         || result.shaft.ruleRef.inputDigest !== command.expectedShaftInputDigest) throw new Error('TOLERANCE_TARGET_STALE');
       resolved = result;
+    } else if (command.type === 'standard.mating-fit.apply') {
+      const basicSize = requireProviderBasicSize(requireEligibleIntent(
+        plan, command.dimensionIntentId, command.currentFeatureClass,
+      ));
+      const matingFeatureClass = command.currentFeatureClass === 'external' ? 'internal' : 'external';
+      const designation = command.currentFeatureClass === 'external'
+        ? `${command.matingDesignation}/${command.currentDesignation}`
+        : `${command.currentDesignation}/${command.matingDesignation}`;
+      const result = this.provider.resolveFit({
+        basicSize,
+        basis: command.currentFeatureClass === 'external' ? 'hole' : 'shaft',
+        designation,
+      });
+      const current = command.currentFeatureClass === 'external' ? result.shaft : result.hole;
+      const mating = command.currentFeatureClass === 'external' ? result.hole : result.shaft;
+      verifyProviderResult(current, {
+        basicSize, featureClass: command.currentFeatureClass, designation: command.currentDesignation,
+      }, this.provider);
+      verifyProviderResult(mating, {
+        basicSize, featureClass: matingFeatureClass, designation: command.matingDesignation,
+      }, this.provider);
+      if (current.ruleRef.inputDigest !== command.expectedCurrentInputDigest
+        || mating.ruleRef.inputDigest !== command.expectedMatingInputDigest) {
+        throw new Error('TOLERANCE_TARGET_STALE');
+      }
+      resolved = result;
     }
     return this.plans.editTolerance(sessionId, command, resolved);
   }
+}
+
+function buildRecommendations(
+  provider: ToleranceStandardProvider,
+  basicSize: number,
+  featureClass: 'internal' | 'external',
+  bands: ReturnType<ToleranceStandardProvider['listBands']>,
+  aiRecommendation: { designation: string; source: 'ai-recommended'; evidenceRefs: string[] } | undefined,
+): NonNullable<ToleranceCatalogResult['recommendations']> {
+  const ordered = [
+    ...(aiRecommendation === undefined ? [] : [aiRecommendation.designation]),
+    ...bands
+      .filter(({ available, category }) => available && (category === 'preferred' || category === 'common'))
+      .map(({ designation }) => designation),
+  ];
+  return [...new Set(ordered)].slice(0, 12).map((designation) => {
+    const band = bands.find((candidate) => candidate.designation === designation);
+    if (band === undefined || !band.available || band.category === 'unknown') {
+      throw new Error('TOLERANCE_STANDARD_UNAVAILABLE');
+    }
+    const fromAi = aiRecommendation?.designation === designation;
+    return {
+      designation,
+      category: band.category,
+      source: fromAi ? 'ai-recommended' as const : 'standard-selection' as const,
+      evidenceRefs: fromAi ? [...aiRecommendation.evidenceRefs] : [],
+      result: withToleranceMagnitude(provider.resolveBand({ basicSize, featureClass, designation })),
+    };
+  });
 }
 
 function requireFitRoles(request: Extract<TolerancePreviewRequest, { type: 'fit' }>): {
@@ -463,18 +555,15 @@ function requireEligibleIntent(
   requestedFeatureClass: 'internal' | 'external',
 ): AnnotationPlan['intents'][number] {
   const intent = requireIntent(plan, id);
-  const persistedClass = [...plan.tolerances].reverse().find((spec) => (
+  const persistedClass = intent.featureClass ?? [...plan.tolerances].reverse().find((spec) => (
     spec.dimensionIntentId === id
     && spec.featureClass !== undefined
     && spec.source !== 'ai-candidate'
   ))?.featureClass;
-  const classification = persistedClass === undefined
-    ? classifyFeatureOfSize({ dimensionKind: intent.kind })
-    : { status: 'resolved' as const, featureClass: persistedClass };
-  if (classification.status === 'unsupported') {
+  if (!['linear', 'aligned', 'diameter'].includes(intent.kind)) {
     throw new Error('TOLERANCE_FEATURE_UNSUPPORTED');
   }
-  if (classification.status === 'resolved' && classification.featureClass !== requestedFeatureClass) {
+  if (persistedClass !== undefined && persistedClass !== requestedFeatureClass) {
     throw new Error('TOLERANCE_FEATURE_CLASS_MISMATCH');
   }
   return intent;

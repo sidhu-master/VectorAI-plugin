@@ -42,10 +42,12 @@ function draft(holeSize = 13, shaftSize = 13): EngineeringAnnotationDraft {
       id: 'intent-hole', drawingRef, kind: 'diameter',
       targets: [{ geometryId: 'circle-hole' as GeometryId, anchor: { kind: 'center' } }], datumIds: [],
       nominalValue: holeSize, unit: 'mm', functionalRole: 'assembly', source: 'manual', status: 'confirmed', evidenceIds: [],
+      featureClass: 'internal',
     }, {
       id: 'intent-shaft', drawingRef, kind: 'diameter',
       targets: [{ geometryId: 'circle-shaft' as GeometryId, anchor: { kind: 'center' } }], datumIds: [],
       nominalValue: shaftSize, unit: 'mm', functionalRole: 'assembly', source: 'manual', status: 'confirmed', evidenceIds: [],
+      featureClass: 'external',
     }, {
       id: 'intent-opening-angle', drawingRef, kind: 'angular',
       targets: [{ geometryId: 'line-angle' as GeometryId, anchor: { kind: 'end' } }], datumIds: [],
@@ -88,15 +90,105 @@ function setupStaleFit() {
 }
 
 describe('ToleranceService', () => {
-  it('queries partial catalog metadata and validates the active drawing and intent', () => {
+  it('previews and applies a mating fit without requiring the mating feature in the drawing', () => {
+    const { plans, service } = setup();
+    const preview = service.preview('session', {
+      type: 'mating-fit', expectedDrawingRef: drawingRef,
+      dimensionIntentId: 'intent-shaft', currentFeatureClass: 'external',
+      matingDesignation: 'H7', currentDesignation: 'g6',
+    });
+    expect(preview).toMatchObject({
+      type: 'mating-fit', dimensionIntentId: 'intent-shaft', currentFeatureClass: 'external',
+      result: { designation: 'H7/g6', fitType: 'clearance' },
+    });
+
+    service.edit('session', {
+      type: 'standard.mating-fit.apply', expectedDrawingRef: drawingRef,
+      dimensionIntentId: 'intent-shaft', currentFeatureClass: 'external',
+      matingDesignation: 'H7', currentDesignation: 'g6',
+      expectedCurrentInputDigest: inputDigest('external', 'g6'),
+      expectedMatingInputDigest: inputDigest('internal', 'H7'),
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:mating-fit'],
+      override: { upperDeviation: -.005, lowerDeviation: -.016 },
+    });
+    expect(plans.get('session').draft?.tolerances).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        dimensionIntentId: 'intent-shaft', selection: expect.objectContaining({ designation: 'g6' }),
+        matingFit: expect.objectContaining({ designation: 'H7/g6', matingDesignation: 'H7' }),
+        override: { upperDeviation: -.005, lowerDeviation: -.016 },
+      }),
+    ]));
+    expect(plans.get('session').draft?.fitAssignments).toEqual([]);
+    expect(service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    }).selection?.matingFit).toMatchObject({
+      currentDesignation: 'g6', matingDesignation: 'H7',
+      result: { designation: 'H7/g6', fitType: 'clearance' },
+    });
+  });
+
+  it('uses the feature class persisted during annotation instead of reclassifying in the popup flow', () => {
+    const { service } = setup();
+    const result = service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    });
+    expect(result.featureClass).toBe('external');
+    expect(result.bands.every(({ featureClass }) => featureClass === 'external')).toBe(true);
+    expect(() => service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'internal',
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+  });
+
+  it('builds recommendations from the persisted feature class and basic size without geometry reanalysis', () => {
+    const { service } = setup();
+    const result = service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    });
+    expect(result.recommendations?.slice(0, 4).map(({ designation }) => designation))
+      .toEqual(['g6', 'h6', 'js6', 'k6']);
+    expect(result.recommendations?.every(({ result: resolved }) => (
+      resolved.featureClass === 'external' && resolved.basicSize === 13
+    ))).toBe(true);
+  });
+
+  it('accepts an explicit user classification for an unclassified size and persists it on Apply', () => {
+    const { plans, service } = setup();
+    const unresolved = structuredClone(plans.get('session').draft!);
+    delete unresolved.intents.find(({ id }) => id === 'intent-shaft')!.featureClass;
+    plans.setDraft('session', unresolved as unknown as EngineeringAnnotationDraft);
+
+    const catalog = service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
+    });
+    expect(catalog.recommendations?.map(({ designation }) => designation)).toContain('g6');
+    const preview = service.preview('session', {
+      type: 'single', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'g6',
+    });
+    expect(preview).toMatchObject({ type: 'single', result: { designation: 'g6', featureClass: 'external' } });
+
+    service.edit('session', {
+      type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
+      featureClass: 'external', designation: 'g6', expectedInputDigest: inputDigest('external', 'g6'),
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: ['manual:feature-class'],
+    });
+    expect(plans.get('session').draft?.tolerances.at(-1)).toMatchObject({
+      dimensionIntentId: 'intent-shaft', featureClass: 'external', selection: { designation: 'g6' },
+    });
+    expect(() => service.query('session', {
+      expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'internal',
+    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+  });
+
+  it('queries complete catalog metadata and validates the active drawing and intent', () => {
     const { service } = setup();
     expect(service.query('session', {
       expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
     })).toMatchObject({
       drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
       standardRef: { id: 'GB/T 1800', edition: '2020' },
-      datasetMetadata: { completeness: 'partial', catalogClassification: 'unverified' },
-      bands: expect.arrayContaining([{ designation: 'u6', featureClass: 'external', category: 'unknown', available: true }]),
+      datasetMetadata: { completeness: 'complete', catalogClassification: 'verified' },
+      bands: expect.arrayContaining([{ designation: 'u6', featureClass: 'external', category: 'common', available: true }]),
     });
     expect(() => service.query('session', {
       expectedDrawingRef: { ...drawingRef, revision: 2 }, dimensionIntentId: 'intent-shaft', featureClass: 'external',
@@ -478,20 +570,11 @@ describe('ToleranceService', () => {
 
   it('does not turn two evidenced external members into a fit through hostile caller labels', () => {
     const { service } = setup();
-    for (const dimensionIntentId of ['intent-hole', 'intent-shaft']) {
-      service.edit('session', {
-        type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId,
+    expect(() => service.edit('session', {
+        type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-hole',
         featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'),
         selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
-      });
-    }
-
-    expect(() => service.preview('session', {
-      type: 'fit', expectedDrawingRef: drawingRef,
-      primaryDimensionIntentId: 'intent-hole', primaryFeatureClass: 'internal',
-      secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
-      basis: 'hole', designation: 'H7/g6',
-    })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
+      })).toThrow('TOLERANCE_FEATURE_CLASS_MISMATCH');
   });
 
   it('rejects apply when the nominal changed at the same drawing ref after preview', () => {
@@ -707,7 +790,7 @@ describe('ToleranceService', () => {
     })).toThrow('TOLERANCE_AI_RECOMMENDATION_REQUIRED');
   });
 
-  it('surfaces an evidenced AI candidate without numeric fields and resolves it again during Apply', () => {
+  it('surfaces an evidenced AI candidate in the resolved recommendation list and resolves it again during Apply', () => {
     const delegate = createGbt1800Provider();
     let resolutionCount = 0;
     const provider: ToleranceStandardProvider = {
@@ -725,19 +808,23 @@ describe('ToleranceService', () => {
       status: 'candidate', evidenceIds: ['document:bearing-seat'], diagnostics: [],
     }];
     plans.setDraft('session', candidate);
-    expect(service.query('session', {
+    const catalog = service.query('session', {
       expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft', featureClass: 'external',
-    }).recommendation).toEqual({
+    });
+    expect(catalog.recommendation).toEqual({
       designation: 'u6', source: 'ai-recommended', evidenceRefs: ['document:bearing-seat'],
     });
-    expect(resolutionCount).toBe(0);
+    expect(catalog.recommendations?.[0]).toMatchObject({
+      designation: 'u6', source: 'ai-recommended', result: { upperDeviation: .044, lowerDeviation: .033 },
+    });
+    expect(resolutionCount).toBe(catalog.recommendations?.length);
 
     const applied = service.edit('session', {
       type: 'standard.single.apply', expectedDrawingRef: drawingRef, dimensionIntentId: 'intent-shaft',
       featureClass: 'external', designation: 'u6', expectedInputDigest: inputDigest('external', 'u6'), selectionSource: 'ai-recommended', displayPreference: 'both',
       evidenceRefs: ['document:bearing-seat'],
     });
-    expect(resolutionCount).toBe(1);
+    expect(resolutionCount).toBe((catalog.recommendations?.length ?? 0) + 1);
     expect(applied.draft?.tolerances[0]).toMatchObject({
       source: 'standard', selection: { source: 'ai-recommended' },
       resolved: { upperDeviation: .044, lowerDeviation: .033 },

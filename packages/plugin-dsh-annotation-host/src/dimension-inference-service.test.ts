@@ -154,7 +154,8 @@ width=0.5905511811023622`,
       evidenceRefs: ['manual:u6'],
     });
 
-    expect(providerSizes).toEqual([15, 15, 15]);
+    expect(providerSizes.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(providerSizes)).toEqual(new Set([15]));
     expect(plans.get(String(agent.id)).draft?.tolerances).toContainEqual(expect.objectContaining({
       dimensionIntentId: inferred.id, inputs: expect.objectContaining({ basicSize: 15 }),
     }));

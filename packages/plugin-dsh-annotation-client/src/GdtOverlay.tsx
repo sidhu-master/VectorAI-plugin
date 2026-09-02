@@ -10,7 +10,7 @@ const ROW_HEIGHT = 24;
 const DRAWING_GAP = 28;
 
 export function GdtOverlay({
-  draft, document, scale, viewport, datumVisible, gdtVisible, previewHeld, selectedIntentId, onSelectIntent, onMoveDatum, onMoveGdtGroup,
+  draft, document, scale, viewport, datumVisible, gdtVisible, previewHeld, selectedIntentId, onSelectDatum, onSelectIntent, onMoveDatum, onMoveGdtGroup,
 }: {
   draft: EngineeringAnnotationDraft;
   document: DrawingDocument;
@@ -20,6 +20,7 @@ export function GdtOverlay({
   gdtVisible: boolean;
   previewHeld: boolean;
   selectedIntentId: string | null;
+  onSelectDatum(id: string): void;
   onSelectIntent(id: string): void;
   onMoveDatum(id: string, position: readonly [number, number]): void | Promise<void>;
   onMoveGdtGroup(intentIds: readonly string[], position: readonly [number, number]): void | Promise<void>;
@@ -27,6 +28,7 @@ export function GdtOverlay({
   const safeScale = Math.max(scale, 1e-6);
   const [datumDragPositions, setDatumDragPositions] = useState<Record<string, Vec2>>({});
   const datumDragRef = useRef<DatumDragState | null>(null);
+  const suppressDatumClickRef = useRef(false);
   const datumPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [gdtDragPositions, setGdtDragPositions] = useState<Record<string, Vec2>>({});
   const gdtDragRef = useRef<GdtDragState | null>(null);
@@ -47,6 +49,9 @@ export function GdtOverlay({
       drag.startPosition[0] + (event.clientX - drag.startClient[0]) / safeScale,
       drag.startPosition[1] - (event.clientY - drag.startClient[1]) / safeScale,
     ];
+    if (Math.hypot(event.clientX - drag.startClient[0], event.clientY - drag.startClient[1]) > 3) {
+      suppressDatumClickRef.current = true;
+    }
     drag.currentPosition = next;
     setDatumDragPositions((current) => ({ ...current, [drag.datumId]: next }));
     if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
@@ -154,13 +159,18 @@ export function GdtOverlay({
           event.preventDefault();
           event.stopPropagation();
         }}
-        onClick={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (suppressDatumClickRef.current) { suppressDatumClickRef.current = false; return; }
+          if (!previewHeld) onSelectDatum(datum.id);
+        }}
         onDoubleClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => {
           if (event.button !== 0 || previewHeld) return;
           event.preventDefault();
           event.stopPropagation();
           event.currentTarget.setPointerCapture(event.pointerId);
+          suppressDatumClickRef.current = false;
           datumDragRef.current = {
             datumId: datum.id,
             pointerId: event.pointerId,
@@ -275,7 +285,9 @@ export function GdtOverlay({
                 const width = widths[cellIndex]!; const cellX = cursor; cursor += width;
                 return <g key={`${intent.id}:${cellIndex}`}>
                   <rect x={cellX} y={0} width={width} height={ROW_HEIGHT} />
-                  <text x={cellX + width / 2} y={ROW_HEIGHT / 2} dominantBaseline="middle" textAnchor="middle" fontSize={11}>{cell}</text>
+                  {cellIndex === 0
+                    ? <CharacteristicMark characteristic={intent.characteristic} x={cellX + width / 2} y={ROW_HEIGHT / 2} />
+                    : <text x={cellX + width / 2} y={ROW_HEIGHT / 2} dominantBaseline="middle" textAnchor="middle" fontSize={11}>{cell}</text>}
                 </g>;
               })}
               <rect className="vai-gdt-frame__hit" x={0} y={0} width={totalWidth} height={ROW_HEIGHT} />
@@ -344,19 +356,29 @@ function layoutGroups(
     const point = target ? resolveAnchor(geometry.get(String(target.geometryId)), target.anchor) : null;
     if (!target || !point) continue;
     const value = intent.override?.value ?? intent.computed.value;
+    const datumCell = intent.datumReferenceFrame.map((reference) => {
+      const name = datums.get(reference.datumId)?.name ?? '?';
+      return `${name}${reference.materialCondition ? `(${reference.materialCondition.toUpperCase()})` : ''}`;
+    }).join('-');
     const cells = [
       characteristicSymbol(intent.characteristic),
       value === undefined ? '—' : `${intent.toleranceZone.shape === 'diametrical' ? '⌀' : ''}${value} mm`,
-      ...intent.datumReferenceFrame.map((reference) => {
-        const name = datums.get(reference.datumId)?.name ?? '?';
-        return `${name}${reference.materialCondition ? `(${reference.materialCondition.toUpperCase()})` : ''}`;
-      }),
+      ...(datumCell ? [datumCell] : []),
     ];
-    const widths = cells.map((cell, index) => Math.max(index === 0 ? 26 : 44, estimateScreenTextWidth(cell, 11) + 16));
+    const widths = cells.map((cell, index) => (
+      index === 0 ? 26 : Math.max(44, estimateScreenTextWidth(cell, 11) + 16)
+    ));
     const key = String(target.geometryId);
     const existing = grouped.get(key) ?? { id: key, target: point, rows: [] };
     existing.rows.push({ intent, cells, widths });
     grouped.set(key, existing);
+  }
+  for (const group of grouped.values()) {
+    const valueWidth = Math.max(...group.rows.map(({ widths }) => widths[1] ?? 44));
+    group.rows = group.rows.map((row) => ({
+      ...row,
+      widths: row.widths.map((width, index) => index === 1 ? valueWidth : width),
+    }));
   }
   const ordered = [...grouped.values()].sort((left, right) => left.target[0] - right.target[0]);
   const centerX = (bounds.minX + bounds.maxX) / 2;
@@ -399,8 +421,20 @@ function characteristicSymbol(value: EngineeringAnnotationDraft['geometricTolera
   return {
     straightness: '—', flatness: '▱', circularity: '○', cylindricity: '⌭',
     'profile-line': '⌒', 'profile-surface': '⌓', parallelism: '∥', perpendicularity: '⊥', angularity: '∠',
-    position: '⌖', coaxiality: '◎', symmetry: '⌯', 'circular-runout': '↗', 'total-runout': '↗↗',
+    position: '⌖', coaxiality: '◎', symmetry: '⌯', 'circular-runout': '↗', 'total-runout': '⌰',
   }[value];
+}
+
+function CharacteristicMark({ characteristic, x, y }: {
+  characteristic: EngineeringAnnotationDraft['geometricTolerances'][number]['characteristic'];
+  x: number;
+  y: number;
+}) {
+  return <text data-gdt-symbol={characteristic} x={x} y={y} dominantBaseline="middle" textAnchor="middle"
+    fontFamily={characteristic === 'total-runout' ? "'Apple Symbols', 'Arial Unicode MS', 'Noto Sans Symbols 2', 'Segoe UI Symbol', sans-serif" : undefined}
+    fontSize={characteristic === 'total-runout' ? 14 : 11}>
+    {characteristicSymbol(characteristic)}
+  </text>;
 }
 
 type OverlayAnchor = EngineeringAnnotationDraft['datums'][number]['anchor']

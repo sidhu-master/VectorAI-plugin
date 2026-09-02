@@ -59,6 +59,32 @@ function toleranceRemote(
       },
     })),
     previewTolerance: vi.fn(async (_sessionId, request) => {
+      if (request.type === 'mating-fit') {
+        return toleranceSuccess({
+          type: 'mating-fit' as const, drawingRef,
+          dimensionIntentId: request.dimensionIntentId,
+          currentFeatureClass: request.currentFeatureClass,
+          status: 'resolved' as const,
+          result: {
+            designation: 'H7/g6', basis: 'hole' as const,
+            hole: {
+              designation: 'H7', featureClass: 'internal' as const, basicSize: 13, unit: 'mm' as const,
+              upperDeviation: .018, lowerDeviation: 0, toleranceMagnitude: .018,
+              upperLimitSize: 13.018, lowerLimitSize: 13,
+              standardRef: { id: 'GB/T 1800', edition: '2020' },
+              ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:fit-hole' },
+            },
+            shaft: {
+              designation: 'g6', featureClass: 'external' as const, basicSize: 13, unit: 'mm' as const,
+              upperDeviation: -.002, lowerDeviation: -.01, toleranceMagnitude: .008,
+              upperLimitSize: 12.998, lowerLimitSize: 12.99,
+              standardRef: { id: 'GB/T 1800', edition: '2020' },
+              ruleRef: { id: 'GB/T 1800', version: '2020', inputDigest: 'sha256:fit-shaft' },
+            },
+            fitType: 'clearance' as const, minimumClearance: .002, maximumClearance: .028,
+          },
+        });
+      }
       if (request.type === 'fit') {
         if (request.secondaryDimensionIntentId === 'intent-3') {
           return { ok: false as const, error: { code: 'REMOTE', message: 'FIT_PAIR_BASIC_SIZE_MISMATCH', details: {} } };
@@ -176,7 +202,7 @@ describe('AnnotationWorkspace', () => {
         targets: [], datumIds: [], nominalValue: annotation.computedValue!, unit: annotation.unit,
         functionalRole: 'assembly' as const, source: 'geometry' as const, status: 'resolved' as const, evidenceIds: [],
       })),
-      tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+      tolerances: [], fitAssignments: [], geometricTolerances: [], surfaceTextures: [], chains: [], dependencies: [], diagnostics: [],
     };
     const dimensionState = mutableObservable({
       plan: {
@@ -247,6 +273,11 @@ describe('AnnotationWorkspace', () => {
     setViewport.mockClear();
     const entity = renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' });
     act(() => entity.props.onContextMenu({ clientX: 310, clientY: 170, preventDefault() {}, stopPropagation() {} }));
+    expect(renderer!.root.findAllByProps({ 'data-annotation-dimension-context-menu': 'dimension-1' })).toHaveLength(1);
+    act(() => renderer!.root.findByType(DrawingSurface).props.onSelectionChange([]));
+    expect(renderer!.root.findAllByProps({ 'data-annotation-dimension-context-menu': 'dimension-1' })).toHaveLength(0);
+    act(() => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-1']));
+    act(() => entity.props.onContextMenu({ clientX: 310, clientY: 170, preventDefault() {}, stopPropagation() {} }));
     const contextMenu = renderer!.root.findByProps({ 'data-annotation-dimension-context-menu': 'dimension-1' });
     await act(async () => { contextMenu.findByProps({ 'data-action': 'set-tolerance' }).props.onClick(); await Promise.resolve(); });
 
@@ -315,24 +346,19 @@ describe('AnnotationWorkspace', () => {
     expect(renderer!.root.findAllByType(TolerancePopup)).toHaveLength(1);
     expect(tolerance.state.getSnapshot().instanceId).toBe(1);
 
-    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
-    await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-2']));
+    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('shaft-fit'));
     expect(tolerance.state.getSnapshot().fit).toMatchObject({
       selectingSecondTarget: false,
-      secondTarget: {
-        dimensionIntentId: 'intent-2',
-        classification: { status: 'ambiguous', code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' },
-      },
+      secondTarget: null,
     });
-    await act(async () => renderer!.root.findByProps({ 'data-fit-feature-class-choice': 'internal' }).props.onClick());
-    await act(async () => tolerance.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }));
-    expect(tolerance.state.getSnapshot().preview).toMatchObject({ type: 'fit', status: 'resolved' });
-    expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-2']);
+    await act(async () => tolerance.actions.preview({
+      kind: 'mating-fit', currentFeatureClass: 'external', matingDesignation: 'H7', currentDesignation: 'g6',
+    }));
+    expect(tolerance.state.getSnapshot().preview).toMatchObject({ type: 'mating-fit', status: 'resolved' });
+    expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1']);
     const fitPreview = renderer!.root.findByProps({ 'data-tolerance-preview': 'intent-1' });
     expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
-      .toBe('13 mm H7/g6 -0.002/-0.01');
-    expect(fitPreview.findByProps({ 'data-entity-id': 'dimension-2' }).findByType('text').children.join(''))
-      .toBe('13 mm H7/g6 +0.018/0');
+      .toBe('13 mm g6 -0.002/-0.01');
 
     await act(async () => renderer!.root.findByProps({ 'aria-label': '撤销' }).props.onClick());
     expect(dimensionUndo).toHaveBeenCalledOnce();
@@ -347,23 +373,14 @@ describe('AnnotationWorkspace', () => {
     expect(renderer!.root.findByProps({ 'data-entity-id': 'dimension-1' }).findByType('text').children.join(''))
       .toBe('13 mm u6 +0.044/+0.033');
 
-    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
-    await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange(['dimension-3']));
-    await act(async () => renderer!.root.findByProps({ 'data-fit-feature-class-choice': 'internal' }).props.onClick());
-    await act(async () => {
-      await expect(tolerance.actions.preview({ kind: 'fit', basis: 'hole', designation: 'H7/g6' }))
-        .rejects.toThrow('FIT_PAIR_BASIC_SIZE_MISMATCH');
-    });
-    expect(tolerance.state.getSnapshot()).toMatchObject({ error: 'FIT_PAIR_BASIC_SIZE_MISMATCH', preview: null, canvasPreview: null });
-    expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toEqual(['dimension-1', 'dimension-3']);
-
-    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('hole-fit'));
+    await act(async () => renderer!.root.findByType(TolerancePopup).props.onTabChange('shaft-fit'));
     const selectionBeforeBlank = runtime.selection.getSnapshot();
     await act(async () => renderer!.root.findByType(DrawingSurface).props.onSelectionChange([]));
     expect(tolerance.state.getSnapshot()).toMatchObject({
       visible: true, target: { dimensionIntentId: 'intent-1' }, fit: { selectingSecondTarget: false },
     });
-    expect(runtime.selection.getSnapshot()).toEqual(selectionBeforeBlank);
+    expect(selectionBeforeBlank).toEqual(['dimension-1']);
+    expect(runtime.selection.getSnapshot()).toEqual([]);
     expect(renderer!.root.findByType(DrawingSurface).props.selectedIds).toContain('dimension-1');
     expect(runtime.viewport.getSnapshot()).toEqual(before.viewport);
     expect(setViewport).not.toHaveBeenCalled();
@@ -375,6 +392,63 @@ describe('AnnotationWorkspace', () => {
 
   it('converts browser client coordinates to canvas-local popup coordinates', () => {
     expect(canvasLocalPoint({ x: 310, y: 170 }, { left: 110, top: 70 })).toEqual({ x: 200, y: 100 });
+  });
+
+  it('persists fixed-direction annotation drags through the shared drawing runtime', async () => {
+    vi.stubGlobal('window', new EventTarget());
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    document.annotations = [{
+      id: 'diameter-1' as never,
+      type: 'dimension', dimensionKind: 'diameter', associationStatus: 'resolved', targets: [],
+      computedValue: 20, displayText: 'Ø20', unit: 'mm', textPosition: [4, 0],
+      definitionPoints: [[0, -10], [0, 10], [0, -10], [0, 10]], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const snapshot = {
+      version: 1 as const, ref: { drawingId: 'drawing-1', revision: 7 }, document,
+      capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+    };
+    const stage = vi.fn(async () => true);
+    const runtime = {
+      snapshot: observable(snapshot),
+      viewport: observable({ x: 400, y: 300, scale: 2, width: 800, height: 600 }),
+      selection: observable([]),
+      presentation: observable({
+        displaySnapshot: snapshot, preview: null, groundingOverlay: null, motionRig: null,
+        sourceUrl: null, display: { grid: true, axes: true, relations: true, annotations: true, sourceUnderlay: false },
+        busy: false, error: null,
+      }),
+      actions: { setViewport() {}, setSelection() {}, refresh: async () => undefined, stage },
+    } as unknown as DrawingSurfaceRuntime;
+    const state = observable({ version: 1 as const, workspaceClaimed: true, activationEpoch: 1, workflow: { status: 'completed' as const } });
+    const partition = {
+      state: observable({ partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null }),
+      actions: { refresh: async () => undefined, setPreviewHeld() {} }, dispose() {},
+    } as unknown as PartitionController;
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<AnnotationWorkspace
+        sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
+      />);
+    });
+
+    const changes = {
+      textPosition: [9, 0] as [number, number],
+      definitionPoints: [[5, -10], [5, 10], [0, -10], [0, 10]] as [number, number][],
+    };
+    await act(async () => {
+      await renderer!.root.findByType(DrawingSurface).props.onAnnotationChange('diameter-1', changes);
+    });
+
+    expect(stage).toHaveBeenCalledWith({
+      expectedRevision: 7,
+      commands: [{
+        type: 'node.update', id: 'diameter-1', changes,
+        expected: { textPosition: [4, 0], definitionPoints: [[0, -10], [0, 10], [0, -10], [0, 10]] },
+      }],
+    });
+    act(() => renderer!.unmount());
+    vi.unstubAllGlobals();
   });
 
   it('does not refit for dimension layout changes but still refits after a viewport resize', async () => {
@@ -606,6 +680,10 @@ describe('AnnotationWorkspace', () => {
     testWindow.clearInterval = globalThis.clearInterval;
     vi.stubGlobal('window', testWindow);
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
+    document.geometry = [{
+      id: 'line-fit' as never, type: 'line', start: [0, 0], end: [100, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
     const snapshot = {
       version: 1 as const, ref: { drawingId: 'drawing-1', revision: 1 }, document,
       capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
@@ -635,7 +713,12 @@ describe('AnnotationWorkspace', () => {
     await act(async () => {
       renderer = TestRenderer.create(<AnnotationWorkspace
         sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
-      />);
+      />, {
+        createNodeMock: () => Object.assign(new EventTarget(), {
+          getBoundingClientRect: () => ({ x: 0, y: 0, left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600 }),
+          setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => false,
+        }),
+      });
     });
     expect(setViewport).toHaveBeenCalledWith(expect.objectContaining({ width: 800, height: 600 }));
     act(() => renderer!.unmount());
@@ -860,7 +943,7 @@ describe('AnnotationWorkspace', () => {
       layerRegistry={layerRegistry}
       dimensionPlan={{
         draft: {
-          version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+          version: 1, drawingRef: snapshot.ref, datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], surfaceTextures: [], chains: [], dependencies: [], diagnostics: [],
         },
         generationOrder: [],
       }}

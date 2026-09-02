@@ -29,6 +29,8 @@ export interface DimensionIntent {
   nominalValue: number;
   unit: 'mm' | 'cm' | 'm' | 'in' | 'deg';
   functionalRole: DimensionFunctionalRole;
+  /** Feature-of-size classification resolved while the annotation is generated. */
+  featureClass?: FeatureOfSizeClass;
   source: 'document' | 'geometry' | 'manual' | 'ai-candidate';
   status: EngineeringState;
   evidenceIds: string[];
@@ -82,6 +84,16 @@ export interface ToleranceSpec {
   };
   displayPreference?: 'deviations' | 'designation' | 'both';
   fitGroupId?: string;
+  /** A mating requirement whose complementary feature is outside the current drawing. */
+  matingFit?: {
+    matingFeatureClass: FeatureOfSizeClass;
+    matingDesignation: string;
+    designation: string;
+    fitType: 'clearance' | 'transition' | 'interference';
+    minimumClearance: number;
+    maximumClearance: number;
+    standardRef: ToleranceStandardRef;
+  };
 }
 
 export interface FitAssignment {
@@ -123,6 +135,21 @@ export interface AnnotationDependency {
   evidenceIds: string[];
 }
 
+export interface SurfaceTextureIntent {
+  id: string;
+  drawingRef: DrawingRef;
+  controlledTargets: DimensionTarget[];
+  parameter: 'Ra' | 'Rz' | 'Rq' | 'Rt';
+  value: number;
+  unit: 'um';
+  materialRemoval: 'required' | 'prohibited' | 'unspecified';
+  source: 'document' | 'manual' | 'process-rule' | 'ai-candidate';
+  status: 'candidate' | 'resolved' | 'confirmed' | 'conflict' | 'stale';
+  evidenceIds: string[];
+  ruleRef?: { id: string; version: string };
+  labelPosition?: [number, number];
+}
+
 export interface EngineeringAnnotationDraft {
   version: 1;
   drawingRef: DrawingRef;
@@ -131,6 +158,8 @@ export interface EngineeringAnnotationDraft {
   tolerances: ToleranceSpec[];
   fitAssignments: FitAssignment[];
   geometricTolerances: GeometricToleranceIntent[];
+  /** Present in current drafts; optional only for persisted pre-migration plans. */
+  surfaceTextures?: SurfaceTextureIntent[];
   chains: DimensionChain[];
   dependencies: AnnotationDependency[];
   diagnostics: EngineeringDiagnostic[];

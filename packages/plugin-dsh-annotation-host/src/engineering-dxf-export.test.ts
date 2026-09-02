@@ -91,6 +91,29 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(inspectCadContract(dxf).symbolPictureColors).toEqual(golden.symbolPictureColors);
   });
 
+  it('exports Ra 0.8 as a machined surface-texture symbol and keeps common datum A-B in one frame cell', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-golden' }, now: () => 1 });
+    document.geometry = [{
+      id: 'shaft' as never, type: 'line', start: [0, 0], end: [100, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const plan = snapshot({ datumStatus: 'confirmed', gdtStatus: 'confirmed', computedStatus: 'resolved', computedValue: 0.01 });
+    plan.confirmed!.datums.push({ ...plan.confirmed!.datums[0]!, id: 'datum:B', name: 'B', role: 'secondary' });
+    plan.confirmed!.geometricTolerances[0]!.datumReferenceFrame = [{ datumId: 'datum:A' }, { datumId: 'datum:B' }];
+    plan.confirmed!.surfaceTextures = [{
+      id: 'surface-texture:shaft', drawingRef: ref,
+      controlledTargets: [{ geometryId: 'shaft', anchor: { kind: 'nearest', point: [50, 0] } }],
+      parameter: 'Ra', value: 0.8, unit: 'um', materialRemoval: 'required',
+      source: 'process-rule', status: 'confirmed', evidenceIds: [],
+    }];
+
+    const dxf = exportEngineeringDrawingDxf(document, plan, { profile: 'caxa-compatible' });
+
+    expect(dxf).toContain('Ra 0.8');
+    expect(dxf).toContain('A-B');
+    expect(dxf).not.toContain('A}{\\Fisocp,GBCBIG;\\W0.707;B');
+  });
+
   it('preserves confirmed-plan datum and unresolved GD&T structure without inventing a tolerance value', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-golden' }, now: () => 1 });
     document.geometry = [{
@@ -254,7 +277,7 @@ describe('exportEngineeringDrawingDxf', () => {
         anchor: { kind: 'start' }, role: 'primary', source: 'manual', status: 'confirmed', evidenceIds: ['manual:datum'],
       }],
       intents: [
-        { id: 'intent-target', drawingRef: workflowRef, kind: 'linear', targets: [], datumIds: ['datum:A'], nominalValue: 13, unit: 'mm', functionalRole: 'functional', source: 'manual', status: 'confirmed', evidenceIds: [] },
+        { id: 'intent-target', drawingRef: workflowRef, kind: 'linear', targets: [], datumIds: ['datum:A'], nominalValue: 13, unit: 'mm', functionalRole: 'functional', featureClass: 'external', source: 'manual', status: 'confirmed', evidenceIds: [] },
         { id: 'intent-diameter', drawingRef: workflowRef, kind: 'diameter', targets: [], datumIds: [], nominalValue: 13, unit: 'mm', functionalRole: 'inspection', source: 'geometry', status: 'confirmed', evidenceIds: [] },
         { id: 'intent-angle', drawingRef: workflowRef, kind: 'angular', targets: [], datumIds: [], nominalValue: 45, unit: 'deg', functionalRole: 'inspection', source: 'geometry', status: 'resolved', evidenceIds: [] },
       ],

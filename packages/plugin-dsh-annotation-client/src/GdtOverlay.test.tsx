@@ -39,12 +39,81 @@ function render(scale: number, onMoveDatum = vi.fn(), onMoveGdtGroup = vi.fn()) 
       draft={draft} document={document} scale={scale}
       viewport={{ x: 0, y: 0, scale, width: 800, height: 600 }}
       datumVisible gdtVisible previewHeld={false} selectedIntentId={null}
-      onSelectIntent={() => undefined} onMoveDatum={onMoveDatum} onMoveGdtGroup={onMoveGdtGroup}
+      onSelectDatum={() => undefined} onSelectIntent={() => undefined} onMoveDatum={onMoveDatum} onMoveGdtGroup={onMoveGdtGroup}
     /></svg>),
   };
 }
 
 describe('GdtOverlay datum marker', () => {
+  it('renders the standard Unicode total-runout mark and combines a common datum A-B in one cell', () => {
+    const { document, draft } = fixture();
+    draft.datums.push({
+      ...draft.datums[0]!, id: 'datum:B', name: 'B', role: 'secondary',
+    });
+    draft.geometricTolerances = [{
+      ...draft.geometricTolerances[0]!, id: 'gdt:total-runout', characteristic: 'total-runout',
+      datumReferenceFrame: [{ datumId: 'datum:A' }, { datumId: 'datum:B' }],
+      computed: { status: 'resolved', value: 0.01, unit: 'mm', diagnostics: [] },
+    }];
+    const view = TestRenderer.create(<svg><GdtOverlay
+      draft={draft} document={document} scale={1}
+      viewport={{ x: 0, y: 0, scale: 1, width: 800, height: 600 }}
+      datumVisible gdtVisible previewHeld={false} selectedIntentId={null}
+      onSelectDatum={() => undefined} onSelectIntent={() => undefined}
+      onMoveDatum={() => undefined} onMoveGdtGroup={() => undefined}
+    /></svg>);
+
+    expect(view.root.findAllByProps({ 'data-gdt-symbol': 'total-runout' })).toHaveLength(1);
+    const row = view.root.findByProps({ 'data-gdt-id': 'gdt:total-runout' });
+    const cells = row.findAllByType('rect').filter(({ props }) => props.className !== 'vai-gdt-frame__hit');
+    expect(cells[0]?.props.width).toBe(26);
+    const mark = view.root.findByProps({ 'data-gdt-symbol': 'total-runout' });
+    expect(mark.type).toBe('text');
+    expect(mark.children.join('')).toBe('⌰');
+    expect(view.root.findAllByType('text').map(({ children }) => children.join(''))).toContain('A-B');
+  });
+
+  it('uses one shared value-column width for every row in a tolerance frame', () => {
+    const { document, draft } = fixture();
+    draft.geometricTolerances.forEach((intent, index) => {
+      intent.computed = { status: 'resolved', value: [0.003, 0.005, 0.01][index], unit: 'mm', diagnostics: [] };
+    });
+    const view = TestRenderer.create(<svg><GdtOverlay
+      draft={draft} document={document} scale={1}
+      viewport={{ x: 0, y: 0, scale: 1, width: 800, height: 600 }}
+      datumVisible gdtVisible previewHeld={false} selectedIntentId={null}
+      onSelectDatum={() => undefined} onSelectIntent={() => undefined}
+      onMoveDatum={() => undefined} onMoveGdtGroup={() => undefined}
+    /></svg>);
+
+    const valueWidths = draft.geometricTolerances.map((intent) => {
+      const row = view.root.findByProps({ 'data-gdt-id': intent.id });
+      return row.findAllByType('rect').filter(({ props }) => props.className !== 'vai-gdt-frame__hit')[1]?.props.width;
+    });
+    expect(new Set(valueWidths).size).toBe(1);
+  });
+
+  it('opens the matching editor when a datum marker or tolerance row is clicked', () => {
+    const { document, draft } = fixture();
+    const onSelectDatum = vi.fn();
+    const onSelectIntent = vi.fn();
+    const view = TestRenderer.create(<svg><GdtOverlay
+      draft={draft} document={document} scale={1}
+      viewport={{ x: 0, y: 0, scale: 1, width: 800, height: 600 }}
+      datumVisible gdtVisible previewHeld={false} selectedIntentId={null}
+      onSelectDatum={onSelectDatum}
+      onSelectIntent={onSelectIntent}
+      onMoveDatum={() => undefined}
+      onMoveGdtGroup={() => undefined}
+    /></svg>);
+
+    act(() => view.root.findByProps({ 'data-datum-id': 'datum:A' }).props.onClick({ stopPropagation: vi.fn() }));
+    act(() => view.root.findByProps({ 'data-gdt-id': 'gdt:2' }).props.onClick({ stopPropagation: vi.fn() }));
+
+    expect(onSelectDatum).toHaveBeenCalledWith('datum:A');
+    expect(onSelectIntent).toHaveBeenCalledWith('gdt:2');
+  });
+
   it('keeps a world-anchored marker at a constant readable screen size while zooming', () => {
     const atOne = render(1).view.root.findByProps({ 'data-datum-id': 'datum:A' })
       .findAll((node) => node.type === 'g' && typeof node.props.transform === 'string')[0]!;

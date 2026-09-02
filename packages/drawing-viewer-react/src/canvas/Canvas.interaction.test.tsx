@@ -40,6 +40,18 @@ class InteractionPort implements DrawingWorkspacePort {
       id: 'text-1' as AnnotationId,
       type: 'text', content: 'A', position: [20, 20], height: 6, rotation: 0,
       alignment: 'left', verticalAlignment: 'baseline', visible: true, quality,
+    }, {
+      id: 'diameter-1' as AnnotationId,
+      type: 'dimension', dimensionKind: 'diameter', associationStatus: 'resolved',
+      targets: [], computedValue: 20, unit: 'mm', textPosition: [150, 0],
+      definitionPoints: [[150, -10], [150, 10], [140, -10], [140, 10]],
+      visible: true, quality,
+    }, {
+      id: 'angle-1' as AnnotationId,
+      type: 'dimension', dimensionKind: 'angular', associationStatus: 'resolved',
+      targets: [], computedValue: 60, unit: 'deg', textPosition: [114, 100],
+      definitionPoints: [[100, 100], [112, 94], [112, 106], [110, 95], [110, 105]],
+      visible: true, quality,
     }];
     this.value = {
       version: 1,
@@ -299,6 +311,83 @@ describe('shared Canvas interaction', () => {
         expectedPosition: [20, 20],
       }],
     });
+    act(() => renderer.unmount());
+  });
+
+  it('previews and commits a diameter drag only along its shaft axis', async () => {
+    const { port, renderer } = await renderCanvas();
+    const diameter = renderer.root.findByProps({ 'data-entity-id': 'diameter-1' });
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+
+    act(() => diameter.props.onMouseDown({
+      currentTarget: groupTarget,
+      clientX: 700,
+      clientY: 300,
+      button: 0,
+      stopPropagation,
+    }));
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 720, clientY: 280 }));
+
+    const previewLine = renderer.root.findByProps({ 'data-diameter-role': 'dimension' });
+    expect(previewLine.props.x1).toBe(160);
+    expect(previewLine.props.y1).toBe(-10);
+
+    await act(async () => {
+      svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 720, clientY: 280 });
+      await Promise.resolve();
+    });
+
+    expect(port.commits[0]).toEqual({
+      expectedRevision: 2,
+      commands: [{
+        type: 'node.update', id: 'diameter-1',
+        changes: {
+          textPosition: [160, 0],
+          definitionPoints: [[160, -10], [160, 10], [140, -10], [140, 10]],
+        },
+        expected: {
+          textPosition: [150, 0],
+          definitionPoints: [[150, -10], [150, 10], [140, -10], [140, 10]],
+        },
+      }],
+    });
+    act(() => renderer.unmount());
+  });
+
+  it('previews and commits an opening-angle drag only along its bisector', async () => {
+    const { port, renderer } = await renderCanvas();
+    const angle = renderer.root.findByProps({ 'data-entity-id': 'angle-1' });
+    const svg = renderer.root.findByProps({ 'aria-label': '图纸画布' });
+
+    act(() => angle.props.onMouseDown({
+      currentTarget: groupTarget,
+      clientX: 628,
+      clientY: 100,
+      button: 0,
+      stopPropagation,
+    }));
+    act(() => svg.props.onMouseMove({ currentTarget: svgTarget, clientX: 636, clientY: 80 }));
+
+    const previewAngle = renderer.root.findByProps({ 'data-entity-id': 'angle-1' });
+    const previewArc = previewAngle.findByProps({ 'data-angular-role': 'arc' });
+    expect(previewArc.props.d).not.toContain('A 11.180339887498949 11.180339887498949');
+
+    await act(async () => {
+      svg.props.onMouseUp({ currentTarget: svgTarget, clientX: 636, clientY: 80 });
+      await Promise.resolve();
+    });
+
+    expect(port.commits[0]?.commands[0]).toMatchObject({
+      type: 'node.update',
+      id: 'angle-1',
+      changes: { textPosition: [118, 100] },
+      expected: { textPosition: [114, 100] },
+    });
+    const command = port.commits[0]?.commands[0];
+    expect(command?.type).toBe('node.update');
+    if (command?.type === 'node.update') {
+      expect((command.changes.definitionPoints as number[][])[0]).toEqual([100, 100]);
+    }
     act(() => renderer.unmount());
   });
 });

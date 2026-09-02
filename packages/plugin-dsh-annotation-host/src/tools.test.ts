@@ -128,7 +128,7 @@ describe('drawing_auto_annotate', () => {
         canUndo: false, canRedo: false, updatedAt: 1,
         draft: {
           version: 1, drawingRef: { drawingId: 'drawing-1', revision: 2 }, datums: [], intents: [], tolerances: [], fitAssignments: [],
-          geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+          geometricTolerances: [], surfaceTextures: [], chains: [], dependencies: [], diagnostics: [],
         },
       }),
       requiresGdtRecommendation: true,
@@ -163,7 +163,7 @@ describe('drawing_auto_annotate', () => {
         canUndo: false, canRedo: false, updatedAt: 1,
         draft: {
           version: 1, drawingRef: { drawingId: 'drawing-clarify', revision: 1 }, datums: [], intents: [], tolerances: [], fitAssignments: [],
-          geometricTolerances: [], chains: [], dependencies: [], diagnostics: [{
+          geometricTolerances: [], surfaceTextures: [], chains: [], dependencies: [], diagnostics: [{
             id: 'diagnostic:gdt:coverage', severity: 'warning', code: 'GDT_USER_INPUT_REQUIRED', message: 'GD&T needs clarification',
           }, {
             id: 'diagnostic:gdt:clarification:0', severity: 'warning', code: 'GDT_AXIS_SUPPORT_PAIR_REQUIRED',

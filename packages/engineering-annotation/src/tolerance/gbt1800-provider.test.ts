@@ -24,6 +24,31 @@ describe('GB/T 1800.1/2-2020 provider', () => {
       });
   });
 
+  it('resolves the golden-sample 35 mm n6 value from the standard table', () => {
+    expect(provider.resolveBand({ basicSize: 35, featureClass: 'external', designation: 'n6' }))
+      .toMatchObject({
+        upperDeviation: 0.033,
+        lowerDeviation: 0.017,
+        upperLimitSize: 35.033,
+        lowerLimitSize: 35.017,
+      });
+  });
+
+  it('provides verified numeric cells throughout the supported 0–500 mm range', () => {
+    const vectors = [
+      { basicSize: 2, featureClass: 'internal' as const, designation: 'H7', lower: 0, upper: 0.01 },
+      { basicSize: 25, featureClass: 'external' as const, designation: 'g6', lower: -0.02, upper: -0.007 },
+      { basicSize: 125, featureClass: 'internal' as const, designation: 'F7', lower: 0.043, upper: 0.083 },
+      { basicSize: 499, featureClass: 'external' as const, designation: 'h6', lower: -0.04, upper: 0 },
+    ];
+    for (const vector of vectors) {
+      expect(provider.resolveBand(vector)).toMatchObject({
+        lowerDeviation: vector.lower,
+        upperDeviation: vector.upper,
+      });
+    }
+  });
+
   it('resolves H7/g6 and classifies its clearance fit', () => {
     expect(provider.resolveFit({ basicSize: 13, basis: 'hole', designation: 'H7/g6' }))
       .toMatchObject({ fitType: 'clearance', minimumClearance: 0.006, maximumClearance: 0.035 });
@@ -47,9 +72,9 @@ describe('GB/T 1800.1/2-2020 provider', () => {
   });
 
   it('separates designation syntax and case from numeric availability', () => {
-    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'f7' }))
+    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'a5' }))
       .toThrow('TOLERANCE_STANDARD_UNAVAILABLE');
-    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'internal', designation: 'JS8' }))
+    expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'internal', designation: 'A5' }))
       .toThrow('TOLERANCE_STANDARD_UNAVAILABLE');
     expect(() => provider.resolveBand({ basicSize: 13, featureClass: 'external', designation: 'F7' }))
       .toThrow('TOLERANCE_DESIGNATION_INVALID');
@@ -59,40 +84,32 @@ describe('GB/T 1800.1/2-2020 provider', () => {
       .toThrow('TOLERANCE_DESIGNATION_INVALID');
   });
 
-  it('reports unverified cells as unavailable instead of inferring values', () => {
-    expect(() => provider.resolveBand({ basicSize: 19, featureClass: 'external', designation: 'h6' }))
-      .toThrow('TOLERANCE_STANDARD_UNAVAILABLE');
-    expect(provider.listBands({ basicSize: 19, featureClass: 'external' }))
-      .toEqual([
-        { designation: 'g6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
-        { designation: 'h6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
-        { designation: 'u6', featureClass: 'external', category: 'unknown', available: false, unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' },
-      ]);
+  it('lists only the selected feature class and orders recommended available bands first', () => {
+    const bands = provider.listBands({ basicSize: 35, featureClass: 'external' });
+    expect(bands.every(({ featureClass }) => featureClass === 'external')).toBe(true);
+    expect(bands.filter(({ available }) => available).slice(0, 4).map(({ designation }) => designation))
+      .toEqual(['g6', 'h6', 'js6', 'k6']);
+    expect(bands).toContainEqual(expect.objectContaining({ designation: 'n6', available: true }));
   });
 
-  it('exposes partial completeness and plan-reference provenance to consumers', () => {
+  it('exposes complete authorized-standard provenance to consumers', () => {
     expect(provider.datasetMetadata).toEqual({
-      completeness: 'partial',
-      catalogClassification: 'unverified',
+      completeness: 'complete',
+      catalogClassification: 'verified',
       numericProvenance: [
         {
-          kind: 'plan-reference-vector',
-          referenceId: 'task-2-13mm-H7-g6',
-          description: '13 mm components: H7 [0, 18] µm; g6 [-17, -6] µm',
-        },
-        {
-          kind: 'plan-reference-vector',
-          referenceId: 'task-2-13mm-h6-u6',
-          description: '13 mm components: h6 [-11, 0] µm; u6 [33, 44] µm',
+          kind: 'authorized-standard-tabulation',
+          referenceId: 'GBT-1800.2-2020-tables-2-32',
+          description: 'GB/T 1800.2-2020 tables 2–32, nominal sizes greater than 0 mm through 500 mm',
         },
       ],
     });
   });
 
   it('defines all nominal intervals contiguously with ordered, case-correct cells', () => {
-    expect(GBT_1800_2020_INTERVALS).toHaveLength(13);
+    expect(GBT_1800_2020_INTERVALS.length).toBeGreaterThanOrEqual(13);
     expect(GBT_1800_2020_INTERVALS[0]).toMatchObject({ over: 0, through: 3 });
-    expect(GBT_1800_2020_INTERVALS.at(-1)).toMatchObject({ over: 400, through: 500 });
+    expect(GBT_1800_2020_INTERVALS.at(-1)).toMatchObject({ over: 450, through: 500 });
 
     for (const [index, interval] of GBT_1800_2020_INTERVALS.entries()) {
       if (index > 0) expect(interval.over).toBe(GBT_1800_2020_INTERVALS[index - 1]!.through);
@@ -107,17 +124,31 @@ describe('GB/T 1800.1/2-2020 provider', () => {
     }
   });
 
+  it('keeps every imported cell equal to the IT width encoded by H/h for that interval', () => {
+    for (const interval of GBT_1800_2020_INTERVALS) {
+      for (const featureClass of ['internal', 'external'] as const) {
+        for (const [designation, [lower, upper]] of Object.entries(interval[featureClass])) {
+          const grade = Number(/\d+$/.exec(designation)?.[0]);
+          const reference = interval[featureClass][`${featureClass === 'internal' ? 'H' : 'h'}${grade}`];
+          expect(reference, `${designation} in (${interval.over}, ${interval.through}]`).toBeDefined();
+          expect(upper - lower, `${designation} in (${interval.over}, ${interval.through}]`)
+            .toBeCloseTo(reference![1] - reference![0], 8);
+        }
+      }
+    }
+  });
+
   it('uses an honest deterministic manifest checksum for the canonical dataset', () => {
     expect(GBT_1800_2020_MANIFEST).toMatchObject({
       standardId: 'GB/T 1800',
       edition: '2020',
       minimumExclusive: 0,
       maximumInclusive: 500,
-      datasetVersion: '1',
+      datasetVersion: '2',
       sourceParts: ['GB/T 1800.1-2020', 'GB/T 1800.2-2020'],
-      availability: 'partial-reference-cases-only',
-      completeness: 'partial',
-      catalogClassification: 'unverified',
+      availability: 'complete-0-through-500-mm',
+      completeness: 'complete',
+      catalogClassification: 'verified',
     });
     expect(GBT_1800_2020_MANIFEST.checksum).toBe(canonicalRuleInputDigest({
       nominalValue: 500,

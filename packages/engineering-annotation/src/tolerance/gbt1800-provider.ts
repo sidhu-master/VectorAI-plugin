@@ -49,7 +49,7 @@ export function createGbt1800Provider(): ToleranceStandardProvider {
           available,
           ...(available ? {} : { unavailableCode: 'TOLERANCE_STANDARD_UNAVAILABLE' as const }),
         };
-      });
+      }).sort(compareBands);
     },
     resolveBand(request) {
       const interval = findGbt1800Interval(request.basicSize);
@@ -152,4 +152,11 @@ function roundMillimetres(value: number): number {
 
 function compareText(first: string, second: string): number {
   return first < second ? -1 : first > second ? 1 : 0;
+}
+
+function compareBands(first: ToleranceBand, second: ToleranceBand): number {
+  if (first.available !== second.available) return first.available ? -1 : 1;
+  const rank = { preferred: 0, common: 1, other: 2, unknown: 3 } as const;
+  return rank[first.category] - rank[second.category]
+    || compareText(first.designation, second.designation);
 }

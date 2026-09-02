@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TolerancePreviewResult } from '@vectorai/plugin-space-contracts';
+import type { ToleranceCatalogResult, TolerancePreviewResult } from '@vectorai/plugin-space-contracts';
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { clampTolerancePopupGeometry, type PopupRect, type PopupSize, type ToleranceDisplayPreference, type TolerancePopupTab, type ToleranceTarget } from './tolerance-controller';
 import { ToleranceBandMatrix, type ToleranceBand } from './ToleranceBandMatrix';
@@ -21,6 +21,7 @@ export interface TolerancePopupProps {
   closeDecision: 'dirty' | null;
   pendingTarget?: ToleranceTarget | null;
   recommendation?: string | null;
+  recommendations?: NonNullable<ToleranceCatalogResult['recommendations']>;
   busy: boolean;
   error: string | null;
   fitStatus?: string | null;
@@ -51,19 +52,6 @@ type PointerOperation =
   | { kind: 'resize-s'; pointer: { x: number; y: number }; geometry: PopupRect }
   | { kind: 'resize-se'; pointer: { x: number; y: number }; geometry: PopupRect };
 
-const tabs: Array<{ id: TolerancePopupTab; label: string }> = [
-  { id: 'recommendation', label: '推荐' },
-  { id: 'external', label: '轴/外部尺寸' },
-  { id: 'internal', label: '孔/内部尺寸' },
-  { id: 'hole-fit', label: '基孔配合' },
-  { id: 'shaft-fit', label: '基轴配合' },
-];
-const preferences: Array<{ id: ToleranceDisplayPreference; label: string }> = [
-  { id: 'deviations', label: '仅偏差' },
-  { id: 'designation', label: '仅代号' },
-  { id: 'both', label: '代号与偏差' },
-];
-
 export function TolerancePopup(props: TolerancePopupProps) {
   const initialFit = fitSelectionFromPreview(props.preview);
   const operation = useRef<PointerOperation | null>(null);
@@ -74,6 +62,8 @@ export function TolerancePopup(props: TolerancePopupProps) {
   const [manualUpper, setManualUpper] = useState('');
   const [manualLower, setManualLower] = useState('');
   const [manualReady, setManualReady] = useState(false);
+  const [manualPanelOpen, setManualPanelOpen] = useState(false);
+  const [editingOverrideField, setEditingOverrideField] = useState<'upper' | 'lower' | null>(null);
   const [fitInternal, setFitInternal] = useState(initialFit?.internal ?? '');
   const [fitExternal, setFitExternal] = useState(initialFit?.external ?? '');
   const [fitInputsDirty, setFitInputsDirty] = useState(false);
@@ -96,6 +86,8 @@ export function TolerancePopup(props: TolerancePopupProps) {
     setManualUpper('');
     setManualLower('');
     setManualReady(false);
+    setManualPanelOpen(false);
+    setEditingOverrideField(null);
     setFitInternal('');
     setFitExternal('');
     localHydratedFit.current = '';
@@ -173,12 +165,15 @@ export function TolerancePopup(props: TolerancePopupProps) {
   };
   const classification = props.target.classification;
   const manualFallback = classification.status !== 'resolved' && props.target.acceptsManualTolerance;
+  const catalogTab: TolerancePopupTab = classification.status === 'resolved' ? classification.featureClass : 'external';
+  const fitTab: TolerancePopupTab = classification.status === 'resolved' && classification.featureClass === 'internal' ? 'hole-fit' : 'shaft-fit';
   const fitMode = props.tab === 'hole-fit' || props.tab === 'shaft-fit';
+  const compactTab = fitMode ? 'fit' : 'recommendation';
   const fitDesignation = `${fitInternal}/${fitExternal}`;
   const fitPreviewReady = !fitInputsDirty
     && fitInternal !== ''
     && fitExternal !== ''
-    && props.preview?.type === 'fit'
+    && (props.preview?.type === 'fit' || props.preview?.type === 'mating-fit')
     && props.preview.result.designation === fitDesignation;
   const resolvedPreviewReady = !overrideInputsDirty && !fitInputsDirty
     && (fitMode ? fitPreviewReady : props.preview !== null);
@@ -186,7 +181,63 @@ export function TolerancePopup(props: TolerancePopupProps) {
     || !props.dirty
     || (classification.status !== 'resolved' && (!props.target.acceptsManualTolerance || !manualReady))
     || (classification.status === 'resolved' && !resolvedPreviewReady);
-  const displayedPreview = overrideInputsDirty || fitInputsDirty ? null : props.preview;
+  const displayedPreview = fitInputsDirty ? null : props.preview;
+  const cancelInlineOverride = () => {
+    overrideInputGeneration.current += 1;
+    setOverrideUpper(hydratedOverrideUpper === undefined ? '' : String(hydratedOverrideUpper));
+    setOverrideLower(hydratedOverrideLower === undefined ? '' : String(hydratedOverrideLower));
+    setOverrideInputsDirty(false);
+    setEditingOverrideField(null);
+  };
+  const beginInlineOverride = (field: 'upper' | 'lower') => {
+    const standard = currentDeviationPair(props.preview, classification.status === 'resolved' ? classification.featureClass : null);
+    setOverrideUpper(String(props.override?.upperDeviation ?? standard?.upperDeviation ?? ''));
+    setOverrideLower(String(props.override?.lowerDeviation ?? standard?.lowerDeviation ?? ''));
+    setOverrideInputsDirty(false);
+    setEditingOverrideField(field);
+  };
+  const confirmInlineOverride = async () => {
+    const value = requiredDeviationPair(overrideUpper, overrideLower);
+    if (value === null) return;
+    const generation = overrideInputGeneration.current;
+    try {
+      await props.onOverridePreview(value);
+      if (generation === overrideInputGeneration.current) {
+        setOverrideInputsDirty(false);
+        setEditingOverrideField(null);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const restoreInlineOverride = async (field: 'upper' | 'lower') => {
+    const standard = currentDeviationPair(props.preview, classification.status === 'resolved' ? classification.featureClass : null);
+    if (standard === null || props.override == null) return;
+    const next = field === 'upper'
+      ? { upperDeviation: standard.upperDeviation, lowerDeviation: props.override.lowerDeviation }
+      : { upperDeviation: props.override.upperDeviation, lowerDeviation: standard.lowerDeviation };
+    const generation = ++overrideInputGeneration.current;
+    setActionError(null);
+    setEditingOverrideField(null);
+    if (Object.is(next.upperDeviation, standard.upperDeviation)
+      && Object.is(next.lowerDeviation, standard.lowerDeviation)) {
+      setOverrideUpper(String(standard.upperDeviation));
+      setOverrideLower(String(standard.lowerDeviation));
+      setOverrideInputsDirty(false);
+      props.onRestoreStandard();
+      return;
+    }
+    try {
+      await props.onOverridePreview(next);
+      if (generation === overrideInputGeneration.current) {
+        setOverrideUpper(String(next.upperDeviation));
+        setOverrideLower(String(next.lowerDeviation));
+        setOverrideInputsDirty(false);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
   const invokeApplication = async (action: () => void | Promise<void>) => {
     if (applicationBlocked || applyingRef.current) return;
     applyingRef.current = true;
@@ -225,50 +276,77 @@ export function TolerancePopup(props: TolerancePopupProps) {
     >
       <div>
         <strong>{props.target.label ?? props.target.dimensionIntentId}</strong>
-        <span>{classification.status === 'resolved' ? featureClassLabel(classification.featureClass) : classification.code}</span>
+        <span>{classification.status === 'resolved'
+          ? featureClassLabel(classification.featureClass)
+          : classification.status === 'ambiguous'
+            ? '需要确认尺寸类型'
+            : '仅支持手动偏差'}</span>
       </div>
       <span>GB/T 1800 · {props.standardEdition}</span>
       <button type="button" aria-label="关闭公差选择器" onPointerDown={stop} onClick={props.onRequestClose}>×</button>
     </header>
 
-    <nav className="vai-tolerance-popup__tabs" aria-label="公差类型">
-      {tabs.map(({ id, label }) => <button
-        key={id}
-        type="button"
-        data-tolerance-tab={id}
-        aria-pressed={props.tab === id}
-        onClick={() => props.onTabChange(id)}
-      >{label}</button>)}
-    </nav>
+    {classification.status === 'resolved' && <nav className="vai-tolerance-popup__tabs" aria-label="公差类型">
+      <button type="button" data-tolerance-tab="recommendation" aria-pressed={compactTab === 'recommendation'}
+        onClick={() => props.onTabChange('recommendation')}>推荐</button>
+      <button type="button" data-tolerance-tab={fitTab} aria-pressed={compactTab === 'fit'}
+        onClick={() => props.onTabChange(fitTab)}>配合</button>
+    </nav>}
 
-    {props.datasetCompleteness === 'partial' && <p className="vai-tolerance-popup__dataset" data-tolerance-dataset="partial">
-      部分数据：不可用项目保持禁用，不会推算或回退到其他标准。
-    </p>}
-    {props.error !== null && <p className="vai-tolerance-popup__error" role="alert">{props.error}</p>}
-    {actionError !== null && <p className="vai-tolerance-popup__error" role="alert">{actionError}</p>}
-    {classification.status !== 'resolved' && <section className="vai-tolerance-popup__diagnostic">
-      <p data-tolerance-diagnostic={true}>{classification.code}</p>
-      {classification.status === 'ambiguous' && <div className="vai-tolerance-popup__class-choice">
-        <button type="button" data-feature-class-choice="internal" onClick={() => props.onFeatureClassChoice('internal')}>孔/内部尺寸</button>
-        <button type="button" data-feature-class-choice="external" onClick={() => props.onFeatureClassChoice('external')}>轴/外部尺寸</button>
-      </div>}
-      {manualFallback && <ManualEditor
-        upper={manualUpper}
-        lower={manualLower}
-        onUpper={(value) => { setManualUpper(value); setManualReady(false); }}
-        onLower={(value) => { setManualLower(value); setManualReady(false); }}
-        onPreview={() => {
-          const value = optionalDeviationPair(manualUpper, manualLower);
-          if (value === null) return;
-          setManualReady(true);
-          props.onManualPreview(value);
-        }}
-      />}
+    <div className="vai-tolerance-popup__notices" data-tolerance-notices={true}>
+      {props.datasetCompleteness === 'partial' && <p className="vai-tolerance-popup__dataset" data-tolerance-dataset="partial">
+        部分数据：不可用项目保持禁用，不会推算或回退到其他标准。
+      </p>}
+      {props.error !== null && <p className="vai-tolerance-popup__error" role="alert">{userFacingToleranceError(props.error)}</p>}
+      {actionError !== null && <p className="vai-tolerance-popup__error" role="alert">{actionError}</p>}
+    </div>
+    {classification.status === 'ambiguous' && <section
+      className="vai-tolerance-popup__classification"
+      data-tolerance-classification-step={true}
+      data-tolerance-content={true}
+    >
+      <div className="vai-tolerance-popup__classification-intro">
+        <span>第一步</span>
+        <h2 data-tolerance-classification-title={true}>选择尺寸类型</h2>
+        <p>用于筛选适用的 GB/T 1800 公差带，不会修改图纸几何。</p>
+      </div>
+      <div className="vai-tolerance-popup__classification-cards">
+        <button type="button" data-feature-class-choice="internal" onClick={() => props.onFeatureClassChoice('internal')}>
+          <span aria-hidden="true">○</span><strong>孔 / 内部尺寸</strong><small>孔径、槽宽等包容尺寸</small>
+        </button>
+        <button type="button" data-feature-class-choice="external" onClick={() => props.onFeatureClassChoice('external')}>
+          <span aria-hidden="true">⌀</span><strong>轴 / 外部尺寸</strong><small>轴径、凸台宽等被包容尺寸</small>
+        </button>
+      </div>
     </section>}
 
-    {classification.status === 'resolved' && <div className="vai-tolerance-popup__body">
+    {classification.status === 'unsupported' && <section className="vai-tolerance-popup__unsupported" data-tolerance-unsupported={true} data-tolerance-content={true}>
+      <h2>该尺寸不能自动匹配标准公差带</h2>
+      <p>{manualFallback ? '如已有工艺依据，可以手动输入上下偏差。' : '当前尺寸类型不支持设置线性尺寸公差。'}</p>
+      {manualFallback && <>
+        <button type="button" className="vai-tolerance-manual-trigger" data-open-manual-tolerance={true}
+          aria-expanded={manualPanelOpen} onClick={() => setManualPanelOpen((open) => !open)}>
+          {manualPanelOpen ? '收起手动设置' : '手动设置偏差'}
+        </button>
+        {manualPanelOpen && <ManualEditor
+          upper={manualUpper}
+          lower={manualLower}
+          onUpper={(value) => { setManualUpper(value); setManualReady(false); }}
+          onLower={(value) => { setManualLower(value); setManualReady(false); }}
+          onPreview={() => {
+            const value = optionalDeviationPair(manualUpper, manualLower);
+            if (value === null) return;
+            setManualReady(true);
+            props.onManualPreview(value);
+          }}
+        />}
+      </>}
+    </section>}
+
+    {classification.status === 'resolved' && <div className="vai-tolerance-popup__body" data-tolerance-content={true}>
       {fitMode ? <FitBandSelection
         catalogs={props.fitCatalogs ?? null}
+        currentFeatureClass={classification.featureClass}
         internal={fitInternal}
         external={fitExternal}
         onInternal={(value) => { setFitInternal(value); setFitInputsDirty(true); fitInputGeneration.current += 1; }}
@@ -282,85 +360,64 @@ export function TolerancePopup(props: TolerancePopupProps) {
             setActionError(error instanceof Error ? error.message : String(error));
           }
         }}
-      /> : <ToleranceBandMatrix
-        bands={props.bands}
-        selectedDesignation={displayedPreview?.result.designation}
-        zoom={props.zoom}
-        onPreview={async (designation) => {
-          const generation = fitInputGeneration.current;
-          try {
-            await props.onPreview(designation);
-            if (generation === fitInputGeneration.current) setFitInputsDirty(false);
-          } catch (error) {
-            setActionError(error instanceof Error ? error.message : String(error));
-          }
-        }}
-        onInspect={setInspectedBand}
-      />}
+      /> : props.tab === 'recommendation'
+        ? <ToleranceRecommendationList
+          recommendations={props.recommendations ?? []}
+          bands={props.bands}
+          selectedDesignation={displayedPreview?.result.designation}
+          zoom={props.zoom}
+          onPreview={props.onPreview}
+          onInspect={setInspectedBand}
+          onOpenCatalog={() => props.onTabChange(catalogTab)}
+        />
+        : <ToleranceCatalogSelection
+          bands={props.bands}
+          selectedDesignation={displayedPreview?.result.designation}
+          zoom={props.zoom}
+          onBack={() => props.onTabChange('recommendation')}
+          onPreview={async (designation) => {
+            const generation = fitInputGeneration.current;
+            try {
+              await props.onPreview(designation);
+              if (generation === fitInputGeneration.current) setFitInputsDirty(false);
+            } catch (error) {
+              setActionError(error instanceof Error ? error.message : String(error));
+            }
+          }}
+          onInspect={setInspectedBand}
+        />}
       <section className="vai-tolerance-inspector">
         {inspectedBand !== null && <p className="vai-tolerance-inspector__hover" data-hovered-tolerance-band={inspectedBand.designation}>
           {inspectedBand.designation}{inspectedBand.available ? '' : ` · ${inspectedBand.unavailableCode}`}
         </p>}
-        {displayedPreview === null ? <p>选择公差代号以预览结果</p> : <ToleranceResult preview={displayedPreview} />}
-        <div className="vai-tolerance-display-preference" aria-label="公差显示方式">
-          {preferences.map(({ id, label }) => <button
-            key={id}
-            type="button"
-            data-display-preference={id}
-            aria-pressed={props.displayPreference === id}
-            onClick={() => props.onDisplayPreferenceChange(id)}
-          >{label}</button>)}
-        </div>
-        <fieldset className="vai-tolerance-override">
-          <legend>手动偏差覆盖</legend>
-          <label>上偏差<input data-tolerance-override="upper" inputMode="decimal" value={overrideUpper} onChange={(event) => { setOverrideUpper(event.currentTarget.value); setOverrideInputsDirty(true); overrideInputGeneration.current += 1; }} /></label>
-          <label>下偏差<input data-tolerance-override="lower" inputMode="decimal" value={overrideLower} onChange={(event) => { setOverrideLower(event.currentTarget.value); setOverrideInputsDirty(true); overrideInputGeneration.current += 1; }} /></label>
-          <button type="button" data-preview-override={true} onClick={() => void (async () => {
-            const value = requiredDeviationPair(overrideUpper, overrideLower);
-            if (value === null) return;
-            const generation = overrideInputGeneration.current;
-            try {
-              await props.onOverridePreview(value);
-              if (generation === overrideInputGeneration.current) setOverrideInputsDirty(false);
-            } catch (error) {
-              setActionError(error instanceof Error ? error.message : String(error));
-            }
-          })()}>预览覆盖</button>
-          <button type="button" data-restore-standard={true} onClick={() => {
-            overrideInputGeneration.current += 1;
-            setOverrideUpper('');
-            setOverrideLower('');
-            setOverrideInputsDirty(false);
-            props.onRestoreStandard();
-          }}>恢复标准值</button>
-        </fieldset>
-        {fitMode && <p data-fit-selection-status={true}>
-          {props.fitStatus ?? '选择配合对象'}
-        </p>}
-        {fitMode && props.fitTargetClassification?.status === 'ambiguous' && <div
-          className="vai-tolerance-popup__class-choice"
-          data-fit-target-classification={true}
-        >
-          <span>请选择配合对象类型</span>
-          <button type="button" data-fit-feature-class-choice="internal"
-            onClick={() => props.onFitTargetFeatureClassChoice('internal')}>孔/内部尺寸</button>
-          <button type="button" data-fit-feature-class-choice="external"
-            onClick={() => props.onFitTargetFeatureClassChoice('external')}>轴/外部尺寸</button>
-        </div>}
+        {displayedPreview === null
+          ? fitMode
+            ? <div className="vai-tolerance-fit-empty"><strong>等待计算配合结果</strong><span>选择孔与轴的公差代号后，可查看配合类型和间隙或过盈范围。</span></div>
+            : <p>选择公差代号以预览结果</p>
+          : <ToleranceResult
+            preview={displayedPreview}
+            currentFeatureClass={classification.status === 'resolved' ? classification.featureClass : null}
+            override={props.override ?? null}
+            editingField={editingOverrideField}
+            editUpper={overrideUpper}
+            editLower={overrideLower}
+            onEdit={beginInlineOverride}
+            onEditValue={(field, value) => {
+              if (field === 'upper') setOverrideUpper(value); else setOverrideLower(value);
+              setOverrideInputsDirty(true);
+              overrideInputGeneration.current += 1;
+            }}
+            onConfirmEdit={() => void confirmInlineOverride()}
+            onCancelEdit={cancelInlineOverride}
+            onRestore={(field) => void restoreInlineOverride(field)}
+          />}
       </section>
     </div>}
 
-    <footer className="vai-tolerance-popup__footer">
-      <div className="vai-tolerance-popup__zoom">
-        <button type="button" aria-label="缩小公差表" onClick={() => props.onZoomChange(props.zoom - .1)}>−</button>
-        <span>{Math.round(props.zoom * 100)}%</span>
-        <button type="button" aria-label="放大公差表" onClick={() => props.onZoomChange(props.zoom + .1)}>+</button>
-      </div>
-      <button type="button" data-restore-recommendation={true} disabled={props.recommendation == null} onClick={props.onRestoreRecommendation}>恢复自动推荐</button>
-      {props.recommendation == null && <span data-recommendation-unavailable={true}>TOLERANCE_RECOMMENDATION_UNAVAILABLE</span>}
+    {classification.status !== 'ambiguous' && <footer className="vai-tolerance-popup__footer" data-tolerance-footer={true}>
       <button type="button" onClick={props.onRequestClose}>取消</button>
       <button type="button" data-apply-tolerance={true} disabled={applicationBlocked} onClick={() => void invokeApplication(props.onApply)}>应用</button>
-    </footer>
+    </footer>}
 
     {props.closeDecision === 'dirty' && <div className="vai-tolerance-popup__decision" role="alertdialog" aria-label="未应用的公差预览">
       <span>当前预览尚未应用</span>
@@ -396,23 +453,97 @@ export function TolerancePopup(props: TolerancePopupProps) {
   </aside>;
 }
 
+function ToleranceRecommendationList({
+  recommendations, bands, selectedDesignation, zoom, onPreview, onInspect, onOpenCatalog,
+}: {
+  recommendations: NonNullable<ToleranceCatalogResult['recommendations']>;
+  bands: readonly ToleranceBand[];
+  selectedDesignation?: string;
+  zoom: number;
+  onPreview(designation: string): void | Promise<void>;
+  onInspect(band: ToleranceBand | null): void;
+  onOpenCatalog(): void;
+}) {
+  return <section className="vai-tolerance-recommendations" aria-label="推荐公差">
+    <header>
+      <strong>适用于当前标注</strong>
+      <span>按已保存的部位类型与基本尺寸筛选</span>
+    </header>
+    {recommendations.length > 0 ? <div>
+      {recommendations.map(({ designation, category, source, result }) => <button
+        key={designation}
+        type="button"
+        data-tolerance-recommendation={designation}
+        data-selected={selectedDesignation === designation}
+        onClick={() => onPreview(designation)}
+      >
+        <strong>{designation}</strong>
+        <span>{source === 'ai-recommended' ? 'AI 推荐' : category === 'preferred' ? '优先公差带' : '常用公差带'}</span>
+        <small>{formatSigned(result.upperDeviation)} / {formatSigned(result.lowerDeviation)} mm</small>
+      </button>)}
+    </div> : <ToleranceBandMatrix
+      bands={bands}
+      selectedDesignation={selectedDesignation}
+      zoom={zoom}
+      onPreview={onPreview}
+      onInspect={onInspect}
+    />}
+    <button type="button" className="vai-tolerance-recommendations__catalog" data-open-tolerance-catalog={true} onClick={onOpenCatalog}>
+      <strong>查看全部公差</strong>
+      <span>浏览适用于当前尺寸的完整标准公差带</span>
+    </button>
+  </section>;
+}
+
+function ToleranceCatalogSelection({
+  bands, selectedDesignation, zoom, onBack, onPreview, onInspect,
+}: {
+  bands: readonly ToleranceBand[];
+  selectedDesignation?: string;
+  zoom: number;
+  onBack(): void;
+  onPreview(designation: string): void | Promise<void>;
+  onInspect(band: ToleranceBand | null): void;
+}) {
+  return <section className="vai-tolerance-catalog-selection">
+    <header>
+      <button type="button" data-close-tolerance-catalog={true} onClick={onBack}>← 返回推荐</button>
+      <span>全部公差</span>
+    </header>
+    <ToleranceBandMatrix
+      bands={bands}
+      selectedDesignation={selectedDesignation}
+      zoom={zoom}
+      onPreview={onPreview}
+      onInspect={onInspect}
+    />
+  </section>;
+}
+
+function formatSigned(value: number): string {
+  return value > 0 ? `+${value}` : value === 0 ? '0' : String(value);
+}
+
 function fitSelectionFromPreview(preview: TolerancePreviewResult | null): {
   identity: string;
   internal: string;
   external: string;
 } | null {
-  if (preview?.type !== 'fit') return null;
+  if (preview?.type !== 'fit' && preview?.type !== 'mating-fit') return null;
   return {
-    identity: `${preview.holeDimensionIntentId}:${preview.shaftDimensionIntentId}:${preview.result.basis}:${preview.result.designation}`,
+    identity: preview.type === 'fit'
+      ? `${preview.holeDimensionIntentId}:${preview.shaftDimensionIntentId}:${preview.result.basis}:${preview.result.designation}`
+      : `${preview.dimensionIntentId}:${preview.currentFeatureClass}:${preview.result.designation}`,
     internal: preview.result.hole.designation,
     external: preview.result.shaft.designation,
   };
 }
 
 function FitBandSelection({
-  catalogs, internal, external, onInternal, onExternal, onPreview,
+  catalogs, currentFeatureClass, internal, external, onInternal, onExternal, onPreview,
 }: {
   catalogs: { internal: readonly ToleranceBand[]; external: readonly ToleranceBand[] } | null;
+  currentFeatureClass: 'internal' | 'external';
   internal: string;
   external: string;
   onInternal(value: string): void;
@@ -421,80 +552,209 @@ function FitBandSelection({
 }) {
   const internalBands = catalogs?.internal ?? [];
   const externalBands = catalogs?.external ?? [];
-  const [search, setSearch] = useState('');
-  const previewSearch = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== 'Enter') return;
-    const [requestedInternal, requestedExternal, extra] = search.trim().split('/');
-    if (extra !== undefined || !requestedInternal || !requestedExternal) return;
-    const matchedInternal = internalBands.find(({ designation, available }) => available && designation === requestedInternal);
-    const matchedExternal = externalBands.find(({ designation, available }) => available && designation === requestedExternal);
-    if (matchedInternal === undefined || matchedExternal === undefined) return;
-    event.preventDefault();
-    onInternal(matchedInternal.designation);
-    onExternal(matchedExternal.designation);
-    onPreview(`${matchedInternal.designation}/${matchedExternal.designation}`);
-  };
+  const matingIsInternal = currentFeatureClass === 'external';
   return <section className="vai-tolerance-matrix-shell" data-fit-catalogs={catalogs === null ? 'unavailable' : 'available'}>
-    <label>直接搜索
-      <input
-        data-fit-search={true}
-        value={search}
-        placeholder="H7/g6"
-        onChange={(event) => setSearch(event.currentTarget.value)}
-        onKeyDown={previewSearch}
-      />
-    </label>
-    <label>孔/内部代号
-      <select data-fit-band="internal" value={internal} onChange={(event) => onInternal(event.currentTarget.value)}>
+    <header className="vai-tolerance-matrix-shell__fit-header">
+      <div>
+        <strong>选择孔轴配合</strong>
+        <span data-fit-explanation={true}>配合用于描述孔与轴装配后的松紧关系。选择两侧公差代号，可计算间隙、过渡或过盈结果。</span>
+      </div>
+    </header>
+    <div className="vai-tolerance-fit-cards">
+    <label className="vai-tolerance-fit-card" data-fit-role={matingIsInternal ? 'mating' : 'current'}>
+      <span><strong>{matingIsInternal ? '被配合部位' : '当前部位'}</strong><small>孔 / 内部尺寸</small></span>
+      <select data-fit-band="internal" value={internal} onChange={(event) => {
+        const value = event.currentTarget.value;
+        onInternal(value);
+        if (value !== '' && external !== '') void onPreview(`${value}/${external}`);
+      }}>
         <option value="">请选择</option>
         {internalBands.map(({ designation, available, unavailableCode }) => <option
           key={designation} value={designation} data-fit-option={designation} disabled={!available} title={unavailableCode}
-        >{designation}{available ? '' : ` · ${unavailableCode}`}</option>)}
+        >{designation}{available ? ` · ${fitUsageHint(designation, 'internal')}` : ` · ${unavailableCode}`}</option>)}
       </select>
     </label>
-    <label>轴/外部代号
-      <select data-fit-band="external" value={external} onChange={(event) => onExternal(event.currentTarget.value)}>
+    <label className="vai-tolerance-fit-card" data-fit-role={matingIsInternal ? 'current' : 'mating'}>
+      <span><strong>{matingIsInternal ? '当前部位' : '被配合部位'}</strong><small>轴 / 外部尺寸</small></span>
+      <select data-fit-band="external" value={external} onChange={(event) => {
+        const value = event.currentTarget.value;
+        onExternal(value);
+        if (internal !== '' && value !== '') void onPreview(`${internal}/${value}`);
+      }}>
         <option value="">请选择</option>
         {externalBands.map(({ designation, available, unavailableCode }) => <option
           key={designation} value={designation} data-fit-option={designation} disabled={!available} title={unavailableCode}
-        >{designation}{available ? '' : ` · ${unavailableCode}`}</option>)}
+        >{designation}{available ? ` · ${fitUsageHint(designation, 'external')}` : ` · ${unavailableCode}`}</option>)}
       </select>
     </label>
-    <button type="button" data-preview-fit={true} disabled={internal === '' || external === ''} onClick={() => onPreview()}>
-      预览 {internal === '' || external === '' ? '配合' : `${internal}/${external}`}
-    </button>
+    </div>
   </section>;
 }
 
-function ToleranceResult({ preview }: { preview: TolerancePreviewResult }) {
+function ToleranceResult({
+  preview, currentFeatureClass, override, editingField, editUpper, editLower,
+  onEdit, onEditValue, onConfirmEdit, onCancelEdit, onRestore,
+}: {
+  preview: TolerancePreviewResult;
+  currentFeatureClass: 'internal' | 'external' | null;
+  override: { upperDeviation: number; lowerDeviation: number } | null;
+  editingField: 'upper' | 'lower' | null;
+  editUpper: string;
+  editLower: string;
+  onEdit(field: 'upper' | 'lower'): void;
+  onEditValue(field: 'upper' | 'lower', value: string): void;
+  onConfirmEdit(): void;
+  onCancelEdit(): void;
+  onRestore(field: 'upper' | 'lower'): void;
+}) {
+  const standard = currentDeviationPair(preview, currentFeatureClass);
+  const rowProps = (field: 'upper' | 'lower') => ({
+    field,
+    editing: editingField === field,
+    editValue: field === 'upper' ? editUpper : editLower,
+    manuallyOverridden: override !== null && standard !== null && !Object.is(
+      field === 'upper' ? override.upperDeviation : override.lowerDeviation,
+      field === 'upper' ? standard.upperDeviation : standard.lowerDeviation,
+    ),
+    onEdit, onEditValue, onConfirmEdit, onCancelEdit, onRestore,
+  });
   if (preview.type === 'single') {
     const result = preview.result;
-    return <dl className="vai-tolerance-result" data-tolerance-result={true}>
+    const shown = displayedToleranceMember(result, true, override);
+    return <div className="vai-tolerance-result-shell"><dl className="vai-tolerance-result" data-tolerance-result={true}>
       <dt>代号</dt><dd>{String(result.designation)}</dd>
       <dt>基本尺寸</dt><dd>{String(result.basicSize)}</dd>
-      <dt>上偏差</dt><dd>{String(result.upperDeviation)}</dd>
-      <dt>下偏差</dt><dd>{String(result.lowerDeviation)}</dd>
-      <dt>公差值</dt><dd>{String(result.toleranceMagnitude)}</dd>
-      <dt>上极限尺寸</dt><dd>{String(result.upperLimitSize)}</dd>
-      <dt>下极限尺寸</dt><dd>{String(result.lowerLimitSize)}</dd>
-      <dt>标准</dt><dd>{result.standardRef.id} · {result.standardRef.edition}</dd>
-    </dl>;
+      <DeviationRow label="上偏差" value={shown.upperDeviation} {...rowProps('upper')} />
+      <DeviationRow label="下偏差" value={shown.lowerDeviation} {...rowProps('lower')} />
+      <dt>公差值</dt><dd>{formatDecimal(shown.toleranceMagnitude)}</dd>
+      <dt>上极限尺寸</dt><dd>{formatDecimal(shown.upperLimitSize)}</dd>
+      <dt>下极限尺寸</dt><dd>{formatDecimal(shown.lowerLimitSize)}</dd>
+      <dt>标准</dt><dd data-tolerance-standard={true}>{result.standardRef.id} · {result.standardRef.edition}</dd>
+    </dl></div>;
   }
   const result = preview.result;
-  return <dl className="vai-tolerance-result" data-tolerance-fit-result={true}>
+  const holeEditable = currentFeatureClass === 'internal';
+  const shaftEditable = currentFeatureClass === 'external';
+  const hole = displayedToleranceMember(result.hole, holeEditable, override);
+  const shaft = displayedToleranceMember(result.shaft, shaftEditable, override);
+  return <div className="vai-tolerance-result-shell"><dl className="vai-tolerance-result" data-tolerance-fit-result={true}>
     <dt>配合</dt><dd>{String(result.designation)}</dd>
-    <dt>类型</dt><dd>{String(result.fitType)}</dd>
-    <dt>最小间隙/过盈</dt><dd>{String(result.minimumClearance)}</dd>
-    <dt>最大间隙/过盈</dt><dd>{String(result.maximumClearance)}</dd>
-    <dt>基本尺寸</dt><dd>{String(result.hole.basicSize)}</dd>
-    <dt>孔偏差</dt><dd>{String(result.hole.upperDeviation)} / {String(result.hole.lowerDeviation)}</dd>
-    <dt>孔公差值</dt><dd>{String(result.hole.toleranceMagnitude)}</dd>
-    <dt>孔极限尺寸</dt><dd>{String(result.hole.upperLimitSize)} / {String(result.hole.lowerLimitSize)}</dd>
-    <dt>轴偏差</dt><dd>{String(result.shaft.upperDeviation)} / {String(result.shaft.lowerDeviation)}</dd>
-    <dt>轴公差值</dt><dd>{String(result.shaft.toleranceMagnitude)}</dd>
-    <dt>轴极限尺寸</dt><dd>{String(result.shaft.upperLimitSize)} / {String(result.shaft.lowerLimitSize)}</dd>
-    <dt>标准</dt><dd>{result.hole.standardRef.id} · {result.hole.standardRef.edition}</dd>
-  </dl>;
+    <dt>配合类型</dt><dd data-fit-business-label={true}>{fitBusinessLabel(result)}</dd>
+    <dt>最小间隙/过盈</dt><dd>{formatDecimal(result.minimumClearance)} mm</dd>
+    <dt>最大间隙/过盈</dt><dd>{formatDecimal(result.maximumClearance)} mm</dd>
+    <dt>基本尺寸</dt><dd>{formatDecimal(result.hole.basicSize)} mm</dd>
+    <DeviationRow label="孔上偏差" value={hole.upperDeviation} editable={holeEditable} testId="data-fit-hole-upper" {...rowProps('upper')} />
+    <DeviationRow label="孔下偏差" value={hole.lowerDeviation} editable={holeEditable} testId="data-fit-hole-lower" {...rowProps('lower')} />
+    <dt>孔公差值</dt><dd>{formatDecimal(hole.toleranceMagnitude)} mm</dd>
+    <dt>孔上极限尺寸</dt><dd>{formatDecimal(hole.upperLimitSize)} mm</dd>
+    <dt>孔下极限尺寸</dt><dd>{formatDecimal(hole.lowerLimitSize)} mm</dd>
+    <DeviationRow label="轴上偏差" value={shaft.upperDeviation} editable={shaftEditable} testId="data-fit-shaft-upper" {...rowProps('upper')} />
+    <DeviationRow label="轴下偏差" value={shaft.lowerDeviation} editable={shaftEditable} testId="data-fit-shaft-lower" {...rowProps('lower')} />
+    <dt>轴公差值</dt><dd>{formatDecimal(shaft.toleranceMagnitude)} mm</dd>
+    <dt>轴上极限尺寸</dt><dd>{formatDecimal(shaft.upperLimitSize)} mm</dd>
+    <dt>轴下极限尺寸</dt><dd>{formatDecimal(shaft.lowerLimitSize)} mm</dd>
+    <dt>标准</dt><dd data-tolerance-standard={true}>{result.hole.standardRef.id} · {result.hole.standardRef.edition}</dd>
+  </dl></div>;
+}
+
+function DeviationRow({
+  label, value, editable = true, field, editing, editValue, manuallyOverridden, testId,
+  onEdit, onEditValue, onConfirmEdit, onCancelEdit, onRestore,
+}: {
+  label: string;
+  value: number;
+  editable?: boolean;
+  field: 'upper' | 'lower';
+  editing: boolean;
+  editValue: string;
+  manuallyOverridden: boolean;
+  testId?: string;
+  onEdit(field: 'upper' | 'lower'): void;
+  onEditValue(field: 'upper' | 'lower', value: string): void;
+  onConfirmEdit(): void;
+  onCancelEdit(): void;
+  onRestore(field: 'upper' | 'lower'): void;
+}) {
+  const testProps = testId === undefined ? {} : { [testId]: true };
+  return <>
+    <dt className="vai-tolerance-deviation-label">{label}{editable && !editing && <button type="button" data-edit-deviation={field} aria-label={`编辑${label}`} onClick={() => onEdit(field)}>✎</button>}</dt>
+    <dd {...testProps} className="vai-tolerance-deviation-value">
+      {editing ? <span className="vai-tolerance-inline-editor">
+        <input
+          data-tolerance-override={field}
+          inputMode="decimal"
+          value={editValue}
+          onChange={(event) => onEditValue(field, event.currentTarget.value)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter') { event.preventDefault(); onConfirmEdit(); }
+            if (event.key === 'Escape') { event.preventDefault(); onCancelEdit(); }
+          }}
+        />
+        <span>mm</span>
+        <button type="button" data-confirm-inline-override={field} aria-label={`确认${label}`} onClick={onConfirmEdit}>✓</button>
+        <button type="button" data-cancel-manual-override={field} aria-label={`取消${label}`} onClick={onCancelEdit}>×</button>
+      </span> : <>{formatSignedDecimal(value)} mm{editable && manuallyOverridden && <>
+        <small data-manual-override-status={field}>手动</small>
+        <button type="button" data-restore-standard={field} aria-label={`恢复${label}标准值`} onClick={() => onRestore(field)}>↺</button>
+      </>}</>}
+    </dd>
+  </>;
+}
+
+function displayedToleranceMember<T extends {
+  basicSize: number; upperDeviation: number; lowerDeviation: number;
+  toleranceMagnitude: number; upperLimitSize: number; lowerLimitSize: number;
+}>(member: T, editable: boolean, override: { upperDeviation: number; lowerDeviation: number } | null): T {
+  if (!editable || override === null) return member;
+  return {
+    ...member,
+    upperDeviation: override.upperDeviation,
+    lowerDeviation: override.lowerDeviation,
+    toleranceMagnitude: Math.abs(override.upperDeviation - override.lowerDeviation),
+    upperLimitSize: member.basicSize + override.upperDeviation,
+    lowerLimitSize: member.basicSize + override.lowerDeviation,
+  };
+}
+
+function currentDeviationPair(
+  preview: TolerancePreviewResult | null,
+  currentFeatureClass: 'internal' | 'external' | null,
+): { upperDeviation: number; lowerDeviation: number } | null {
+  if (preview === null) return null;
+  if (preview.type === 'single') return preview.result;
+  const featureClass = preview.type === 'mating-fit' ? preview.currentFeatureClass : currentFeatureClass;
+  return featureClass === 'internal' ? preview.result.hole : featureClass === 'external' ? preview.result.shaft : null;
+}
+
+function formatDecimal(value: number): string {
+  return Number(value.toFixed(6)).toString();
+}
+
+function formatSignedDecimal(value: number): string {
+  const formatted = formatDecimal(value);
+  return value > 0 ? `+${formatted}` : formatted;
+}
+
+function fitBusinessLabel(result: Extract<TolerancePreviewResult, { type: 'fit' | 'mating-fit' }>['result']): string {
+  if (result.fitType === 'transition') return '过渡配合';
+  const holePosition = result.hole.designation.replace(/\d+$/, '');
+  const shaftPosition = result.shaft.designation.replace(/\d+$/, '');
+  if (result.fitType === 'clearance') {
+    return holePosition === 'H' && (shaftPosition === 'g' || shaftPosition === 'h')
+      ? '小间隙配合' : '间隙配合';
+  }
+  return shaftPosition === 'p' ? '轻压入配合' : '过盈配合';
+}
+
+function fitUsageHint(designation: string, featureClass: 'internal' | 'external'): string {
+  const position = designation.replace(/\d+$/, '').toLowerCase();
+  if (featureClass === 'internal' && position === 'h') return '常用基准孔';
+  if (position === 'g' || position === 'h') return '常用于小间隙';
+  if (['a', 'b', 'c', 'cd', 'd', 'e', 'ef', 'f', 'fg'].includes(position)) return '常用于间隙';
+  if (['js', 'j', 'k', 'm', 'n'].includes(position)) return '常用于过渡';
+  if (['p', 'r', 's', 't', 'u', 'v', 'x', 'y', 'z', 'za', 'zb', 'zc'].includes(position)) return '常用于过盈';
+  return '标准公差带';
 }
 
 function ManualEditor({
@@ -533,4 +793,19 @@ function optionalDeviationPair(upper: string, lower: string): { upperDeviation?:
 
 function featureClassLabel(value: 'internal' | 'external'): string {
   return value === 'internal' ? '孔/内部尺寸' : '轴/外部尺寸';
+}
+
+function userFacingToleranceError(error: string): string {
+  switch (error) {
+    case 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS':
+      return '尚未确认尺寸类型，请关闭后重新选择尺寸类型。';
+    case 'TOLERANCE_FEATURE_CLASS_MISMATCH':
+      return '当前选择与已保存的尺寸类型不一致。';
+    case 'TOLERANCE_STANDARD_UNAVAILABLE':
+      return '当前基本尺寸没有可用的标准公差数据。';
+    case 'TOLERANCE_BASIC_SIZE_INVALID':
+      return '该尺寸不能用于标准公差计算。';
+    default:
+      return error;
+  }
 }

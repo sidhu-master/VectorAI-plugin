@@ -8,6 +8,7 @@ export const ANNOTATION_DIAMETER_LAYER_ID = 'vectorai.annotation.diameter';
 export const ANNOTATION_DIMENSION_CHAIN_LAYER_ID = 'vectorai.annotation.dimension-chain';
 export const ANNOTATION_DATUM_LAYER_ID = 'vectorai.annotation.datum';
 export const ANNOTATION_GDT_LAYER_ID = 'vectorai.annotation.gdt';
+export const ANNOTATION_SURFACE_TEXTURE_LAYER_ID = 'vectorai.annotation.surface-texture';
 
 export const ANNOTATION_PARTITION_LAYER: DrawingLayerDefinition = {
   id: ANNOTATION_PARTITION_LAYER_ID,
@@ -60,5 +61,14 @@ export const ANNOTATION_GDT_LAYER: DrawingLayerDefinition = {
   category: 'engineering',
   icon: 'dimension',
   order: 130,
+  defaultVisible: true,
+};
+
+export const ANNOTATION_SURFACE_TEXTURE_LAYER: DrawingLayerDefinition = {
+  id: ANNOTATION_SURFACE_TEXTURE_LAYER_ID,
+  label: '表面粗糙度',
+  category: 'engineering',
+  icon: 'dimension',
+  order: 135,
   defaultVisible: true,
 };

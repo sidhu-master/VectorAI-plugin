@@ -191,6 +191,9 @@ importers:
       '@vectorai/drawing-edit-protocol':
         specifier: workspace:*
         version: link:../drawing-edit-protocol
+      labella:
+        specifier: 1.1.4
+        version: 1.1.4
     devDependencies:
       '@vectorai/dxf-import':
         specifier: workspace:*
@@ -4312,6 +4315,10 @@ packages:
     dependencies:
       json-buffer: 3.0.1
     dev: true
+
+  /labella@1.1.4:
+    resolution: {integrity: sha512-JJ6EWVRVuNy9KcvtgN8QvYTWHY0L5W1AYKYfr4YNBxAf/hnS6AnNDwKCYb59drWIRAejJqrQPDeFU0Zw3KPDFQ==}
+    dev: false
 
   /levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}

@@ -65,6 +65,7 @@ export function exportEngineeringDrawingDxf(
   const planConfirmed = plan.confirmed !== undefined && visible === plan.confirmed;
   entities.push(...datumEntities(visible, cadProjection.document, planConfirmed, caxaCompatible, presentation));
   entities.push(...gdtEntities(visible, cadProjection.document, planConfirmed, caxaCompatible, presentation));
+  entities.push(...surfaceTextureEntities(visible, cadProjection.document, planConfirmed, caxaCompatible, presentation));
   const documentWithPortableTolerances = projectPlanTolerances(cadProjection.document, visible);
   return normalizeCadDxf(exportDrawingDxf(documentWithPortableTolerances, { profile, entities }));
 }
@@ -266,7 +267,9 @@ function gdtEntities(
         value !== undefined && Number.isFinite(value)
           ? cadText(`${intent.toleranceZone.shape === 'diametrical' ? '%%C' : ''}${format(value)}`, caxaCompatible)
           : cadText('待计算', caxaCompatible),
-        ...intent.datumReferenceFrame.map((reference) => cadText(`${datumNames.get(reference.datumId) ?? '?'}${reference.materialCondition ? `(${reference.materialCondition.toUpperCase()})` : ''}`, caxaCompatible)),
+        ...(intent.datumReferenceFrame.length === 0 ? [] : [cadText(intent.datumReferenceFrame.map((reference) => (
+          `${datumNames.get(reference.datumId) ?? '?'}${reference.materialCondition ? `(${reference.materialCondition.toUpperCase()})` : ''}`
+        )).join('-'), caxaCompatible)]),
       ];
     });
     const columnCount = Math.max(...rows.map((row) => row.length));
@@ -307,6 +310,62 @@ function gdtEntities(
         });
       });
       x += width;
+    });
+    return [{ type: 'block-reference', layer, picture }];
+  });
+}
+
+function surfaceTextureEntities(
+  plan: EngineeringAnnotationDraft,
+  document: DrawingDocument,
+  planConfirmed: boolean,
+  caxaCompatible: boolean,
+  presentation: EngineeringCadPresentation,
+): DxfExportEntity[] {
+  const geometry = new Map(document.geometry.map((node) => [String(node.id), node]));
+  const bounds = documentBounds(document);
+  const height = presentation.dimension.textHeight;
+  const layer = presentation.layers.symbol;
+  return (plan.surfaceTextures ?? []).flatMap((intent, index): DxfExportEntity[] => {
+    if (intent.status === 'conflict' || intent.status === 'stale') return [];
+    if (intent.status !== 'confirmed' && !planConfirmed) return [];
+    const targetSpec = intent.controlledTargets[0];
+    const target = targetSpec ? resolveAnchor(geometry.get(String(targetSpec.geometryId)), targetSpec.anchor) : null;
+    if (!target) return [];
+    const marker = intent.labelPosition === undefined
+      ? [target[0], bounds.maxY + height * (7 + index * 4)] as Vec2
+      : asVec2(intent.labelPosition);
+    const size = height * 2.2;
+    const base: Vec2 = [marker[0], marker[1]];
+    const picture: DxfBlockGraphic[] = [
+      {
+        type: 'polyline', layer, color: presentation.symbolColors.line,
+        points: [target, [target[0], marker[1]], base],
+      },
+      {
+        type: 'polyline', layer, color: presentation.symbolColors.frame,
+        points: [[marker[0] - size * 0.65, marker[1] + size * 0.2], marker, [marker[0] + size * 0.55, marker[1] + size * 1.15]],
+      },
+    ];
+    if (intent.materialRemoval === 'required') picture.push({
+      type: 'polyline', layer, color: presentation.symbolColors.frame,
+      points: [[marker[0] - size * 0.05, marker[1] + size * 0.65], [marker[0] + size * 1.35, marker[1] + size * 0.65]],
+    });
+    if (intent.materialRemoval === 'prohibited') {
+      const center: Vec2 = [marker[0] + size * 0.02, marker[1] + size * 0.28];
+      picture.push({
+        type: 'polyline', layer, color: presentation.symbolColors.frame, closed: true,
+        points: Array.from({ length: 16 }, (_, pointIndex): Vec2 => {
+          const angle = pointIndex / 16 * Math.PI * 2;
+          return [center[0] + Math.cos(angle) * size * 0.3, center[1] + Math.sin(angle) * size * 0.3];
+        }),
+      });
+    }
+    picture.push({
+      type: 'mtext', layer, color: presentation.symbolColors.text,
+      position: [marker[0] + size * 1.55, marker[1] + size * 0.72],
+      content: cadText(`${intent.parameter} ${format(intent.value)}`, caxaCompatible),
+      height, style: presentation.dimension.textStyle, alignment: 4,
     });
     return [{ type: 'block-reference', layer, picture }];
   });

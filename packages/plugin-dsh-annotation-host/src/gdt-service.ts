@@ -65,6 +65,7 @@ export class GdtService {
       drawingRef: drawing.ref,
       datums: mergeById(options.replaceExistingGdt ? [] : base.datums, grounded.datums),
       geometricTolerances: mergeById(options.replaceExistingGdt ? [] : base.geometricTolerances, grounded.geometricTolerances),
+      surfaceTextures: mergeById(options.replaceExistingGdt ? [] : (base.surfaceTextures ?? []), grounded.surfaceTextures ?? []),
       diagnostics: mergeById(base.diagnostics, coverageDiagnostics),
     });
   }
@@ -77,7 +78,7 @@ export class GdtService {
 function editableBase(snapshot: DimensionPlanSessionSnapshot, drawingRef: DrawingRef): EngineeringAnnotationDraft {
   const value = snapshot.draft ?? snapshot.confirmed;
   if (!value || value.drawingRef.drawingId !== drawingRef.drawingId || value.drawingRef.revision !== drawingRef.revision) {
-    return { version: 1, drawingRef, datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [] };
+    return { version: 1, drawingRef, datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], surfaceTextures: [], chains: [], dependencies: [], diagnostics: [] };
   }
   return {
     version: 1,
@@ -85,6 +86,7 @@ function editableBase(snapshot: DimensionPlanSessionSnapshot, drawingRef: Drawin
     datums: structuredClone(value.datums), intents: structuredClone(value.intents),
     tolerances: structuredClone(value.tolerances), fitAssignments: structuredClone(value.fitAssignments),
     geometricTolerances: structuredClone(value.geometricTolerances),
+    surfaceTextures: structuredClone(value.surfaceTextures ?? []),
     chains: structuredClone(value.chains), dependencies: structuredClone(value.dependencies), diagnostics: structuredClone(value.diagnostics),
     ...(value.axialScheme === undefined ? {} : { axialScheme: structuredClone(value.axialScheme) }),
     ...('id' in value ? { baseRevisionId: value.id } : value.baseRevisionId === undefined ? {} : { baseRevisionId: value.baseRevisionId }),

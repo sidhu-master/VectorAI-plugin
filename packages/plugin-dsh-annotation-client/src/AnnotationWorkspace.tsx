@@ -31,7 +31,8 @@ import { PartitionActionToolbar } from './PartitionActionToolbar';
 import { PartitionInspector } from './PartitionInspector';
 import { DimensionPlanInspector } from './DimensionPlanInspector';
 import { GdtOverlay } from './GdtOverlay';
-import { GdtInspector } from './GdtInspector';
+import { SurfaceTextureOverlay } from './SurfaceTextureOverlay';
+import { estimateGdtEvaluationLength, GdtInspector, type GdtEditorSelection } from './GdtInspector';
 import { ConfirmedPartitionInspector } from './ConfirmedPartitionInspector';
 import { SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS } from './engineering-file-policy';
 import { classifyEngineeringDrop } from './engineering-drop';
@@ -50,11 +51,13 @@ import {
   ANNOTATION_DATUM_LAYER_ID,
   ANNOTATION_GDT_LAYER,
   ANNOTATION_GDT_LAYER_ID,
+  ANNOTATION_SURFACE_TEXTURE_LAYER,
+  ANNOTATION_SURFACE_TEXTURE_LAYER_ID,
 } from './drawing-layers';
 import { readLayerVisibility, writeLayerVisibility } from './layer-visibility';
 import { TolerancePopup } from './TolerancePopup';
 import type { ToleranceController, ToleranceControllerState, ToleranceTarget } from './tolerance-controller';
-import { projectPersistedDimensionTolerances } from './dimension-tolerance-projection';
+import { projectDimensionToleranceByIntentId, projectPersistedDimensionTolerances } from './dimension-tolerance-projection';
 import { canvasLocalPoint } from './canvas-coordinates';
 
 const ENGINEERING_DOCUMENT_ACCEPT = SUPPORTED_ENGINEERING_DOCUMENT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
@@ -64,7 +67,7 @@ const PARTITION_HYDRATION_MAX_ATTEMPTS = 1_200;
 const ANNOTATION_HYDRATION_INTERVAL_MS = 350;
 const dimensionChainLayerId = (chainId: string) => `${ANNOTATION_DIMENSION_CHAIN_LAYER_ID}:${chainId}`;
 type AnnotationPanelId = 'structure' | 'tolerance';
-const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIAMETER_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER, ANNOTATION_DATUM_LAYER, ANNOTATION_GDT_LAYER] as const;
+const FALLBACK_LAYER_DEFINITIONS = [ANNOTATION_PARTITION_LAYER, ANNOTATION_OPENING_ANGLE_LAYER, ANNOTATION_DIAMETER_LAYER, ANNOTATION_DIMENSION_CHAIN_LAYER, ANNOTATION_DATUM_LAYER, ANNOTATION_GDT_LAYER, ANNOTATION_SURFACE_TEXTURE_LAYER] as const;
 const subscribeToNoLayers = () => () => undefined;
 const readFallbackLayers = () => FALLBACK_LAYER_DEFINITIONS;
 const EMPTY_DIMENSION_STATE = {
@@ -150,10 +153,20 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const [panelWidth, setPanelWidth] = useState(260);
   const [partitionView, setPartitionView] = useState<PartitionViewMode>('functional');
   const [selectedGdtIntentId, setSelectedGdtIntentId] = useState<string | null>(null);
+  const [gdtEditorSelection, setGdtEditorSelection] = useState<GdtEditorSelection | null>(null);
   const [exportNotice, setExportNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [dimensionContextMenu, setDimensionContextMenu] = useState<{
     annotationId: string; target: ToleranceTarget; position: { x: number; y: number };
   } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || dimensionContextMenu === null) return undefined;
+    const closeOnOutsidePointer = (event: globalThis.PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('[data-annotation-dimension-context-menu]') === null) setDimensionContextMenu(null);
+    };
+    window.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => window.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+  }, [dimensionContextMenu]);
   const [fitAttemptAnnotationId, setFitAttemptAnnotationId] = useState<string | null>(null);
   const registeredLayers = useSyncExternalStore(
     layerRegistry?.subscribeLayers ?? subscribeToNoLayers,
@@ -174,6 +187,8 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     ?? ANNOTATION_DIAMETER_LAYER.defaultVisible;
   const datumVisible = layerVisibility[ANNOTATION_DATUM_LAYER_ID] ?? ANNOTATION_DATUM_LAYER.defaultVisible;
   const gdtVisible = layerVisibility[ANNOTATION_GDT_LAYER_ID] ?? ANNOTATION_GDT_LAYER.defaultVisible;
+  const surfaceTextureVisible = layerVisibility[ANNOTATION_SURFACE_TEXTURE_LAYER_ID]
+    ?? ANNOTATION_SURFACE_TEXTURE_LAYER.defaultVisible;
   const hasOpeningAngle = displaySnapshot?.document.annotations.some((annotation) => (
     annotation.type === 'dimension' && annotation.dimensionKind === 'angular'
   )) ?? false;
@@ -200,13 +215,18 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const dimensionAnnotations = useMemo(() => surfaceSnapshot?.document.annotations.filter(
     (annotation): annotation is DimensionAnnotation => annotation.type === 'dimension',
   ) ?? [], [surfaceSnapshot]);
+  const toleranceByIntentId = useMemo(
+    () => projectDimensionToleranceByIntentId(sharedDimensionPlan),
+    [sharedDimensionPlan],
+  );
   const dimensionById = useMemo(() => new Map(dimensionAnnotations.map((annotation) => [annotation.id, annotation])), [dimensionAnnotations]);
   const annotationByIntentId = useMemo(() => new Map(dimensionAnnotations.flatMap((annotation) => (
     annotation.engineeringIntentId === undefined ? [] : [[annotation.engineeringIntentId, annotation] as const]
   ))), [dimensionAnnotations]);
   const targetForAnnotation = (annotation: DimensionAnnotation, anchor?: { x: number; y: number }): ToleranceTarget | null => {
     if (displaySnapshot === null || annotation.engineeringIntentId === undefined) return null;
-    return toleranceTargetFromAnnotation(annotation, displaySnapshot.ref, viewport, anchor);
+    const intent = sharedDimensionPlan?.intents.find(({ id }) => id === annotation.engineeringIntentId);
+    return toleranceTargetFromAnnotation(annotation, displaySnapshot.ref, viewport, anchor, intent?.featureClass);
   };
   const selectedToleranceTarget = selectedIds.flatMap((id) => {
     const annotation = dimensionById.get(id as never);
@@ -254,6 +274,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const gdtPlan = gdtState.plan.draft ?? gdtState.plan.confirmed;
   const hasGdt = (gdtPlan?.geometricTolerances.length ?? 0) > 0;
   const hasDatums = (gdtPlan?.datums.length ?? 0) > 0;
+  const hasSurfaceTextures = (gdtPlan?.surfaceTextures.length ?? 0) > 0;
   const dimensionChainLayers = useMemo(() => dimensionScheme?.chains.map((chain, index) => ({
     id: dimensionChainLayerId(chain.id),
     label: `尺寸链 ${index + 1}`,
@@ -284,8 +305,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     }
     return padding;
   }, [dimensionChainVisible, dimensionRadialExtent, dimensionScheme, surfaceSnapshot, viewport.height, viewport.width]);
-  const fitPaddingRef = useRef(fitPadding);
-  fitPaddingRef.current = fitPadding;
+  const annotationFitPadding = Math.min(1.9, Math.max(1.32, fitPadding));
   const previousViewportSize = useRef<{ width: number; height: number } | null>(null);
   const dimensionHistoryActive = dimensionState.plan.drawingRef !== undefined && (
     dimensionState.plan.phase !== 'idle' || dimensionState.plan.canUndo || dimensionState.plan.canRedo
@@ -345,15 +365,32 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     };
   }, [annotationState.workflow.status, dimensionChain, gdt, partitionState.busy, runtime]);
   useEffect(() => {
-    if (displaySnapshot === null || viewport.width <= 0 || viewport.height <= 0) return;
+    if (displaySnapshot === null) return undefined;
+    if (!displaySnapshot.document.geometry.some(({ visible }) => visible)) return;
     const drawingId = displaySnapshot.ref.drawingId;
-    if (initializedViewportDrawingId.current === drawingId) return;
-    initializedViewportDrawingId.current = drawingId;
-    const stored = readStoredViewport(drawingId);
-    runtime.actions.setViewport(stored === null
-      ? fitViewportForSnapshot(displaySnapshot, viewport, fitPaddingRef.current)
-      : { ...stored, width: viewport.width, height: viewport.height });
-  }, [displaySnapshot, runtime, viewport.height, viewport.width]);
+    if (initializedViewportDrawingId.current === drawingId) return undefined;
+    const canvas = canvasRootRef.current;
+    if (canvas === null) return undefined;
+    let observer: ResizeObserver | undefined;
+    const fitWhenVisible = () => {
+      if (initializedViewportDrawingId.current === drawingId) return true;
+      const bounds = canvas.getBoundingClientRect();
+      if (!(bounds.width > 0 && bounds.height > 0)) return false;
+      initializedViewportDrawingId.current = drawingId;
+      runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, {
+        ...viewport,
+        width: bounds.width,
+        height: bounds.height,
+      }, annotationFitPadding));
+      observer?.disconnect();
+      return true;
+    };
+    if (!fitWhenVisible() && typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => { fitWhenVisible(); });
+      observer.observe(canvas);
+    }
+    return () => observer?.disconnect();
+  }, [annotationFitPadding, displaySnapshot, runtime, viewport]);
   useEffect(() => {
     const previous = previousViewportSize.current;
     previousViewportSize.current = { width: viewport.width, height: viewport.height };
@@ -444,12 +481,15 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       basicSize: intent.nominalValue,
       label: `${intent.nominalValue} ${intent.unit}`,
       classification: intent.kind === 'linear' || intent.kind === 'aligned' || intent.kind === 'diameter'
-        ? { status: 'ambiguous', code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' }
+        ? intent.featureClass === undefined
+          ? { status: 'ambiguous', code: 'TOLERANCE_FEATURE_CLASS_AMBIGUOUS' }
+          : { status: 'resolved', featureClass: intent.featureClass }
         : { status: 'unsupported', code: 'TOLERANCE_FEATURE_UNSUPPORTED' },
       acceptsManualTolerance: intent.unit !== 'deg',
     }, 'context');
   };
   const selectCanvasIds = (ids: readonly string[]) => {
+    setDimensionContextMenu(null);
     if (!fitSelectionActive) {
       setFitAttemptAnnotationId(null);
       runtime.actions.setSelection(ids);
@@ -480,8 +520,32 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     }
     tolerance.actions.selectFitTarget(target);
   };
+  const persistAnnotationChange = async (
+    nodeId: string,
+    changes: { textPosition: [number, number]; definitionPoints: [number, number][] },
+  ) => {
+    const annotation = snapshot?.document.annotations.find((node) => String(node.id) === nodeId);
+    if (snapshot === null || annotation?.type !== 'dimension') {
+      await runtime.actions.refresh();
+      return false;
+    }
+    const committed = await runtime.actions.stage({
+      expectedRevision: snapshot.ref.revision,
+      commands: [{
+        type: 'node.update',
+        id: nodeId,
+        changes: structuredClone(changes),
+        expected: {
+          textPosition: structuredClone(annotation.textPosition),
+          definitionPoints: structuredClone(annotation.definitionPoints),
+        },
+      }],
+    });
+    if (!committed) await runtime.actions.refresh();
+    return committed;
+  };
   const applyTolerance = () => runSharedAnnotationHistory(
-    () => tolerance.actions.apply(),
+    () => tolerance.actions.applyAndClose(),
     [() => dimensionChain.actions.refresh(), () => gdt.actions.refresh()],
   );
   const structurePanel = <div className="vai-annotation-panel">
@@ -492,13 +556,6 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       scheme={dimensionScheme}
       controller={dimensionChain}
       editable={dimensionState.plan.phase === 'editing'}
-    />}
-    {gdtPlan && hasGdt && <GdtInspector
-      draft={gdtPlan}
-      selectedIntentId={selectedGdtIntentId}
-      selectedGeometryIds={selectedIds}
-      controller={gdt}
-      onSelectIntent={setSelectedGdtIntentId}
     />}
     {!draft && !confirmed && !dimensionPlan && <><h2>标注检查</h2><dl>
       <dt>流程</dt><dd>{workflowLabel(annotationState.workflow.status)}</dd>
@@ -560,6 +617,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               || (id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme))
               || (id === ANNOTATION_DATUM_LAYER_ID && hasDatums)
               || (id === ANNOTATION_GDT_LAYER_ID && hasGdt)
+              || (id === ANNOTATION_SURFACE_TEXTURE_LAYER_ID && hasSurfaceTextures)
             ))
             .map((definition) => ({
               definition,
@@ -612,6 +670,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           fitPadding={fitPadding}
           onViewportChange={runtime.actions.setViewport}
           onSelectionChange={selectCanvasIds}
+          onAnnotationChange={persistAnnotationChange}
           onNodeContextMenu={(nodeId, event) => {
             const annotation = dimensionById.get(nodeId as never);
             if (annotation === undefined) return;
@@ -647,6 +706,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               onMoveCandidate={(candidateId, normalOffset) => dimensionChain.actions.moveCandidate(candidateId, normalOffset)}
               onChooseClosure={(chainId, candidateId) => dimensionChain.actions.chooseClosure(chainId, candidateId)}
               onSetTolerance={openChainCandidateTolerance}
+              toleranceByIntentId={toleranceByIntentId}
             />}
             {tolerancePreviewAnnotations.length > 0 && <g data-tolerance-preview={toleranceState.target?.dimensionIntentId} pointerEvents="none">
               <PreviewLayer nodes={tolerancePreviewAnnotations} viewport={viewport} />
@@ -678,11 +738,41 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               gdtVisible={gdtVisible}
               previewHeld={gdtState.previewHeld}
               selectedIntentId={selectedGdtIntentId}
-              onSelectIntent={setSelectedGdtIntentId}
+              onSelectDatum={(id) => setGdtEditorSelection({ type: 'datum', id })}
+              onSelectIntent={(id) => {
+                setSelectedGdtIntentId(id);
+                setGdtEditorSelection({ type: 'intent', id });
+              }}
               onMoveDatum={(datumId, position) => gdt.actions.moveDatum(datumId, position)}
               onMoveGdtGroup={(intentIds, position) => gdt.actions.moveFrame(intentIds, position)}
             />}
+            {gdtPlan && hasSurfaceTextures && <SurfaceTextureOverlay
+              draft={gdtPlan}
+              document={surfaceSnapshot.document}
+              scale={viewport.scale}
+              visible={surfaceTextureVisible}
+              previewHeld={gdtState.previewHeld}
+              onSelect={(id) => setGdtEditorSelection({ type: 'surface-texture', id })}
+              onMove={(intentId, position) => gdt.actions.edit({
+                type: 'surface-texture.layout', intentId, position: [...position] as [number, number],
+              })}
+            />}
           </>}
+        />}
+        {gdtPlan && gdtEditorSelection !== null && <GdtInspector
+          key={`${gdtEditorSelection.type}:${gdtEditorSelection.id}`}
+          draft={gdtPlan}
+          selection={gdtEditorSelection}
+          selectedGeometryIds={selectedIds}
+          evaluationLength={gdtEditorSelection.type === 'intent' && surfaceSnapshot !== null
+            ? estimateGdtEvaluationLength(
+              surfaceSnapshot.document,
+              gdtPlan.geometricTolerances.find(({ id }) => id === gdtEditorSelection.id)
+                ?.controlledTargets.map(({ geometryId }) => String(geometryId)) ?? [],
+            )
+            : undefined}
+          controller={gdt}
+          onClose={() => setGdtEditorSelection(null)}
         />}
         {dimensionContextMenu !== null && <div
           className="vai-dimension-context-menu"
@@ -714,6 +804,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           closeDecision={toleranceState.closeDecision}
           pendingTarget={toleranceState.pendingTarget}
           recommendation={toleranceState.catalog?.recommendation?.designation ?? null}
+          recommendations={toleranceState.catalog?.recommendations}
           busy={toleranceState.busy}
           error={toleranceState.error}
           fitStatus={toleranceState.error ?? toleranceState.fitDiagnostic ?? (fitSelectionActive ? '选择配合对象' : toleranceState.fit?.secondTarget?.label ?? null)}
@@ -724,7 +815,14 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
             const tab = tolerance.state.getSnapshot().tab;
             if (target === null) return;
             if (tab === 'hole-fit' || tab === 'shaft-fit') {
-              return tolerance.actions.preview({ kind: 'fit', basis: tab === 'hole-fit' ? 'hole' : 'shaft', designation });
+              if (target.classification.status !== 'resolved') return;
+              const [internal, external] = designation.split('/');
+              if (!internal || !external) return;
+              return tolerance.actions.preview({
+                kind: 'mating-fit', currentFeatureClass: target.classification.featureClass,
+                matingDesignation: target.classification.featureClass === 'external' ? internal : external,
+                currentDesignation: target.classification.featureClass === 'external' ? external : internal,
+              });
             }
             if (target.classification.status !== 'resolved') return;
             return tolerance.actions.preview({
@@ -747,7 +845,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           onTabChange={(tab) => {
             setFitAttemptAnnotationId(null);
             if (tab === 'hole-fit' || tab === 'shaft-fit') {
-              void tolerance.actions.beginFit(tab === 'hole-fit' ? 'hole' : 'shaft').catch(() => undefined);
+              void tolerance.actions.beginMatingFit().catch(() => undefined);
             } else {
               tolerance.actions.setTab(tab);
             }
@@ -761,19 +859,16 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           onFitTargetFeatureClassChoice={tolerance.actions.chooseFitTargetFeatureClass}
           onManualPreview={tolerance.actions.previewManual}
         />}
-        {gdtState.plan.phase === 'editing' && hasGdt
-          ? <PartitionActionToolbar controller={gdt} previewHeld={gdtState.previewHeld} subject="形位公差" />
-          : dimensionState.plan.phase === 'editing'
-          ? <PartitionActionToolbar controller={dimensionChain} previewHeld={dimensionState.previewHeld} subject="尺寸链" />
-          : partitionState.partition.phase === 'editing' && <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
+        {partitionState.partition.phase === 'editing' && draft &&
+          <PartitionActionToolbar controller={partition} previewHeld={partitionState.previewHeld} />}
         {displaySnapshot && <WorkspaceToolbarView
           snapshot={displaySnapshot}
           viewport={viewport}
           unavailable={partitionState.busy}
-          fitPadding={1.12}
+          fitPadding={annotationFitPadding}
           canUndo={gdtHistoryActive ? gdtState.plan.canUndo : dimensionHistoryActive ? dimensionState.plan.canUndo : partitionState.partition.canUndo}
           canRedo={gdtHistoryActive ? gdtState.plan.canRedo : dimensionHistoryActive ? dimensionState.plan.canRedo : partitionState.partition.canRedo}
-          onFit={(nextViewport) => runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, nextViewport, 1.12))}
+          onFit={(nextViewport) => runtime.actions.setViewport(fitViewportForSnapshot(displaySnapshot, nextViewport, annotationFitPadding))}
           onUndo={() => gdtHistoryActive || dimensionHistoryActive
             ? runSharedAnnotationHistory(
               gdtHistoryActive ? () => gdt.actions.undo() : () => dimensionChain.actions.undo(),
@@ -828,12 +923,13 @@ function toleranceTargetFromAnnotation(
   drawingRef: { drawingId: string; revision: number },
   viewport: DrawingWorkspaceViewport,
   requestedAnchor?: { x: number; y: number },
+  annotatedFeatureClass?: 'internal' | 'external',
 ): ToleranceTarget {
   const screen = {
     x: viewport.x + annotation.textPosition[0] * viewport.scale,
     y: viewport.y - annotation.textPosition[1] * viewport.scale,
   };
-  const featureClass = annotation.toleranceProjection?.featureClass;
+  const featureClass = annotatedFeatureClass ?? annotation.toleranceProjection?.featureClass;
   const supportsStandardTable = annotation.dimensionKind === 'linear'
     || annotation.dimensionKind === 'aligned'
     || annotation.dimensionKind === 'diameter';
@@ -865,6 +961,14 @@ function projectTolerancePreview(
     return annotation === undefined ? [] : [{
       ...structuredClone(annotation),
       toleranceProjection: toleranceProjection(host.result, preview.override, preview.displayPreference, 'bilateral'),
+    }];
+  }
+  if (host.type === 'mating-fit') {
+    const annotation = annotations.find(({ engineeringIntentId }) => engineeringIntentId === host.dimensionIntentId);
+    const result = host.currentFeatureClass === 'external' ? host.result.shaft : host.result.hole;
+    return annotation === undefined ? [] : [{
+      ...structuredClone(annotation),
+      toleranceProjection: toleranceProjection(result, null, preview.displayPreference, 'fit', result.designation),
     }];
   }
   return [
@@ -912,23 +1016,12 @@ function fitViewportForSnapshot(
 ): DrawingWorkspaceViewport {
   return fitViewportToDrawing({
     ...snapshot.document,
-    annotations: snapshot.document.annotations.filter(({ type }) => type === 'section-hatch' || type === 'dimension'),
+    annotations: snapshot.document.annotations.filter(({ type }) => type === 'section-hatch'),
   } as DrawingDocument, viewport, padding);
 }
 
 function viewportStorageKey(drawingId: string): string {
   return `vectorai:annotation:viewport:${drawingId}`;
-}
-
-function readStoredViewport(drawingId: string): Pick<DrawingWorkspaceViewport, 'x' | 'y' | 'scale'> | null {
-  if (typeof localStorage === 'undefined') return null;
-  try {
-    const value = JSON.parse(localStorage.getItem(viewportStorageKey(drawingId)) ?? 'null') as Partial<DrawingWorkspaceViewport> | null;
-    if (!value || !Number.isFinite(value.x) || !Number.isFinite(value.y) || !Number.isFinite(value.scale) || !(value.scale! > 0)) return null;
-    return { x: value.x!, y: value.y!, scale: value.scale! };
-  } catch {
-    return null;
-  }
 }
 
 function writeStoredViewport(drawingId: string, viewport: DrawingWorkspaceViewport): void {

@@ -128,6 +128,26 @@ describe('DimensionPlanStore', () => {
     expect(moved.confirmed?.datums[0]?.labelPosition).toEqual([42, -18]);
   });
 
+  it('updates datum identity and controlled geometry from the popup', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    const value = draft();
+    value.datums = [{
+      id: 'datum:A', drawingRef, name: 'A', geometryId: 'line-1' as GeometryId, anchor: { kind: 'start' },
+      role: 'primary', source: 'ai-candidate', status: 'candidate', evidenceIds: [],
+    }];
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+
+    const edited = store.editGeometricTolerance('session', {
+      type: 'datum.set', datumId: 'datum:A', name: 'B', role: 'secondary',
+      geometryId: 'line-2', anchor: { kind: 'end' }, expectedDrawingRef: drawingRef,
+    } as never);
+
+    expect(edited.draft?.datums[0]).toMatchObject({
+      id: 'datum:A', name: 'B', role: 'secondary', geometryId: 'line-2', anchor: { kind: 'end' },
+    });
+  });
+
   it('persists one dragged geometric-tolerance frame position for every row in its visual group', () => {
     const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
     const value = draft();
@@ -152,6 +172,34 @@ describe('DimensionPlanStore', () => {
       { framePosition: [120, 80], status: 'confirmed' },
       { framePosition: [120, 80], status: 'confirmed' },
     ]);
+  });
+
+  it('edits and moves a surface-texture annotation directly without entering a confirmation workflow', () => {
+    const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
+    const value = draft();
+    value.surfaceTextures = [{
+      id: 'surface-texture:1', drawingRef,
+      controlledTargets: [{ geometryId: 'line-1' as GeometryId, anchor: { kind: 'end' } }],
+      parameter: 'Ra', value: 0.8, unit: 'um', materialRemoval: 'required',
+      source: 'process-rule', status: 'confirmed', evidenceIds: [],
+    }];
+    store.begin('session', drawingRef);
+    store.setDraft('session', value);
+    store.confirm('session', drawingRef);
+
+    store.editGeometricTolerance('session', {
+      type: 'surface-texture.set', intentId: 'surface-texture:1', parameter: 'Rz', value: 3.2,
+      materialRemoval: 'unspecified', expectedDrawingRef: drawingRef,
+    });
+    const moved = store.editGeometricTolerance('session', {
+      type: 'surface-texture.layout', intentId: 'surface-texture:1', position: [35, 18], expectedDrawingRef: drawingRef,
+    });
+
+    expect(moved.phase).toBe('confirmed');
+    expect(moved.confirmed?.surfaceTextures[0]).toMatchObject({
+      parameter: 'Rz', value: 3.2, materialRemoval: 'unspecified', source: 'manual',
+      labelPosition: [35, 18],
+    });
   });
 
   it('tracks draft edits, confirms atomically, then undoes and redoes confirmation', () => {
@@ -361,7 +409,7 @@ describe('DimensionPlanStore', () => {
     expect(reconciled.resolved?.inputDigest).not.toBe(oldDigest);
   });
 
-  it('marks an unavailable partial-data recalculation stale and keeps a manual override for review', () => {
+  it('marks an out-of-range recalculation stale and keeps a manual override for review', () => {
     const provider = createGbt1800Provider();
     const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' }, createToleranceReconciler(provider));
     let value = draft(13);
@@ -373,12 +421,12 @@ describe('DimensionPlanStore', () => {
     store.setDraft('session', value);
 
     const changed = structuredClone(value);
-    changed.intents[0]!.nominalValue = 19;
+    changed.intents[0]!.nominalValue = 501;
     const stale = store.setDraft('session', changed).draft!.tolerances[0]!;
     expect(stale).toMatchObject({
       status: 'stale', selection: { designation: 'u6' }, override: { upperDeviation: .05, lowerDeviation: .04 },
       diagnostics: expect.arrayContaining([
-        expect.objectContaining({ code: 'TOLERANCE_STANDARD_UNAVAILABLE' }),
+        expect.objectContaining({ code: 'TOLERANCE_SIZE_RANGE_UNSUPPORTED' }),
         expect.objectContaining({ code: 'TOLERANCE_OVERRIDE_REVIEW_REQUIRED' }),
       ]),
     });
@@ -420,7 +468,7 @@ describe('DimensionPlanStore', () => {
     ]);
   });
 
-  it('recovers an unavailable stale fit after both members return to a supported interval', () => {
+  it('recovers an out-of-range stale fit after both members return to a supported interval', () => {
     const provider = createGbt1800Provider();
     const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' }, createToleranceReconciler(provider));
     const value = draft(13);
@@ -434,12 +482,12 @@ describe('DimensionPlanStore', () => {
     store.setDraft('session', fitted);
 
     const unsupported = structuredClone(fitted);
-    unsupported.intents.find(({ id }) => id === 'hole')!.nominalValue = 19;
-    unsupported.intents.find(({ id }) => id === 'shaft')!.nominalValue = 19;
+    unsupported.intents.find(({ id }) => id === 'hole')!.nominalValue = 501;
+    unsupported.intents.find(({ id }) => id === 'shaft')!.nominalValue = 501;
     const stale = store.setDraft('session', unsupported).draft!;
     expect(stale.fitAssignments).toEqual([]);
     expect(stale.tolerances.every(({ status, diagnostics }) => status === 'stale'
-      && diagnostics.some(({ code }) => code === 'TOLERANCE_STANDARD_UNAVAILABLE'))).toBe(true);
+      && diagnostics.some(({ code }) => code === 'TOLERANCE_SIZE_RANGE_UNSUPPORTED'))).toBe(true);
 
     stale.intents.find(({ id }) => id === 'hole')!.nominalValue = 14;
     stale.intents.find(({ id }) => id === 'shaft')!.nominalValue = 14;

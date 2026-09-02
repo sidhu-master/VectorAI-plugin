@@ -161,6 +161,7 @@ describe('DSH drawing workspace wire schemas', () => {
       tolerances: [],
       fitAssignments: [],
       geometricTolerances: [],
+      surfaceTextures: [],
       chains: [],
       dependencies: [],
       diagnostics: [],
@@ -176,6 +177,37 @@ describe('DSH drawing workspace wire schemas', () => {
         status: 'candidate', evidenceIds: [], diagnostics: [],
       }],
     })).toThrow();
+  });
+
+  it('round-trips a first-class Ra surface-texture requirement and rejects invalid values', () => {
+    const drawingRef = { drawingId: 'drawing-1', revision: 1 };
+    const draft = {
+      version: 1 as const, drawingRef,
+      datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [],
+      surfaceTextures: [{
+        id: 'surface-texture:bearing-left', drawingRef,
+        controlledTargets: [{ geometryId: 'journal-edge', anchor: { kind: 'nearest', point: [12, 8] } }],
+        parameter: 'Ra', value: 0.8, unit: 'um', materialRemoval: 'required',
+        source: 'process-rule', status: 'resolved', evidenceIds: ['feature:bearing-left'],
+        ruleRef: { id: 'shaft-bearing-journal-surface-texture', version: '1' },
+      }],
+      chains: [], dependencies: [], diagnostics: [],
+    };
+
+    expect(engineeringAnnotationDraftSchema.parse(draft).surfaceTextures[0]).toMatchObject({
+      parameter: 'Ra', value: 0.8, unit: 'um', materialRemoval: 'required',
+    });
+    expect(() => engineeringAnnotationDraftSchema.parse({
+      ...draft,
+      surfaceTextures: [{ ...draft.surfaceTextures[0], value: 0 }],
+    })).toThrow();
+  });
+
+  it('defaults surfaceTextures for persisted version-1 drafts', () => {
+    expect(engineeringAnnotationDraftSchema.parse({
+      version: 1, drawingRef: { drawingId: 'drawing-1', revision: 1 },
+      datums: [], intents: [], tolerances: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+    }).surfaceTextures).toEqual([]);
   });
 
   it('round-trips a standard-backed tolerance and paired fit', () => {
@@ -280,6 +312,11 @@ describe('DSH drawing workspace wire schemas', () => {
       secondaryDimensionIntentId: 'intent-shaft', secondaryFeatureClass: 'external',
       basis: 'hole', designation: 'H7/g6',
     })).toMatchObject({ type: 'fit', designation: 'H7/g6' });
+    expect(tolerancePreviewRequestSchema.parse({
+      type: 'mating-fit', expectedDrawingRef: request.expectedDrawingRef,
+      dimensionIntentId: 'intent-shaft', currentFeatureClass: 'external',
+      matingDesignation: 'H7', currentDesignation: 'g6',
+    })).toMatchObject({ type: 'mating-fit', matingDesignation: 'H7', currentDesignation: 'g6' });
     expect(tolerancePreviewResultSchema.parse({
       type: 'single', drawingRef: request.expectedDrawingRef, dimensionIntentId: 'intent-1', status: 'resolved',
       result: {
@@ -322,6 +359,14 @@ describe('DSH drawing workspace wire schemas', () => {
       selectionSource: 'rule', displayPreference: 'designation', evidenceRefs: [],
     })).toMatchObject({ type: 'standard.fit.apply' });
     expect(toleranceEditCommandSchema.parse({
+      type: 'standard.mating-fit.apply', expectedDrawingRef: manual.expectedDrawingRef,
+      dimensionIntentId: 'intent-shaft', currentFeatureClass: 'external',
+      matingDesignation: 'H7', currentDesignation: 'g6',
+      expectedCurrentInputDigest: 'sha256:shaft', expectedMatingInputDigest: 'sha256:hole',
+      selectionSource: 'manual', displayPreference: 'both', evidenceRefs: [],
+      override: { upperDeviation: -.005, lowerDeviation: -.016 },
+    })).toMatchObject({ type: 'standard.mating-fit.apply', override: { upperDeviation: -.005, lowerDeviation: -.016 } });
+    expect(toleranceEditCommandSchema.parse({
       type: 'standard.override.set', expectedDrawingRef: manual.expectedDrawingRef,
       dimensionIntentId: 'intent-1', upperDeviation: .02, lowerDeviation: -.01,
     })).toMatchObject({ type: 'standard.override.set' });
@@ -362,7 +407,7 @@ describe('DSH drawing workspace wire schemas', () => {
       draft: {
         version: 1 as const,
         drawingRef: { drawingId: 'drawing-1', revision: 1 },
-        datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+        datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], surfaceTextures: [], chains: [], dependencies: [], diagnostics: [],
       },
       canUndo: true,
       canRedo: false,
@@ -379,7 +424,7 @@ describe('DSH drawing workspace wire schemas', () => {
       drawingRef: { drawingId: 'drawing-1', revision: 1 },
       draft: {
         version: 1 as const, drawingRef: { drawingId: 'drawing-1', revision: 1 },
-        datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], chains: [], dependencies: [], diagnostics: [],
+        datums: [], intents: [], tolerances: [], fitAssignments: [], geometricTolerances: [], surfaceTextures: [], chains: [], dependencies: [], diagnostics: [],
         axialScheme: axialScheme(),
       },
       canUndo: true, canRedo: false, updatedAt: 7,

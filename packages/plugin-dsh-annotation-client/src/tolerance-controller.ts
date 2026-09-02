@@ -60,6 +60,11 @@ export type ToleranceSelection =
     source: 'rule' | 'ai-recommended' | 'manual'; evidenceRefs: string[];
   }
   | {
+    kind: 'mating-fit'; currentFeatureClass: 'internal' | 'external';
+    matingDesignation: string; currentDesignation: string;
+    source: 'rule' | 'ai-recommended' | 'manual'; evidenceRefs: string[];
+  }
+  | {
     kind: 'manual'; upperDeviation?: number; lowerDeviation?: number;
   };
 
@@ -123,6 +128,7 @@ export interface ToleranceController {
     preview(selection:
       | { kind: 'single'; featureClass: 'internal' | 'external'; designation: string; source?: 'rule' | 'ai-recommended' | 'manual'; evidenceRefs?: string[] }
       | { kind: 'fit'; basis: 'hole' | 'shaft'; designation: string; source?: 'rule' | 'ai-recommended' | 'manual'; evidenceRefs?: string[] }
+      | { kind: 'mating-fit'; currentFeatureClass: 'internal' | 'external'; matingDesignation: string; currentDesignation: string; source?: 'rule' | 'ai-recommended' | 'manual'; evidenceRefs?: string[] }
     ): Promise<void>;
     previewManual(value: { upperDeviation?: number; lowerDeviation?: number }): void;
     previewOverride(value: { upperDeviation: number; lowerDeviation: number }): Promise<void>;
@@ -130,6 +136,7 @@ export interface ToleranceController {
     restoreRecommendation(): Promise<void>;
     apply(): Promise<void>;
     beginFit(basis: 'hole' | 'shaft'): Promise<void>;
+    beginMatingFit(): Promise<void>;
     selectFitTarget(target: ToleranceTarget): void;
     chooseFitTargetFeatureClass(featureClass: 'internal' | 'external'): void;
     cancelFitTargetSelection(): void;
@@ -255,6 +262,37 @@ export function createToleranceController(input: {
       const selection = result.selection;
       const hydrationGeneration = ++previewGeneration;
       const isCurrentHydration = () => isCurrent() && hydrationGeneration === previewGeneration;
+      if (selection.matingFit !== undefined) {
+        const mating = selection.matingFit;
+        const host: TolerancePreviewResult = {
+          type: 'mating-fit', drawingRef: clone(result.drawingRef),
+          dimensionIntentId: target.dimensionIntentId,
+          currentFeatureClass: mating.currentFeatureClass,
+          status: 'resolved', result: clone(mating.result),
+        };
+        selectionEpoch = epoch;
+        update({
+          tab: mating.currentFeatureClass === 'external' ? 'shaft-fit' : 'hole-fit',
+          fitCatalogs: fitRoleCatalogs(result),
+          preview: clone(host), canvasPreview: null,
+          selection: {
+            kind: 'mating-fit', currentFeatureClass: mating.currentFeatureClass,
+            currentDesignation: mating.currentDesignation,
+            matingDesignation: mating.matingDesignation,
+            source: selection.source, evidenceRefs: [...selection.evidenceRefs],
+          },
+          override: clone(selection.override ?? null),
+          displayPreference: selection.displayPreference,
+          fit: {
+            basis: mating.currentFeatureClass === 'external' ? 'hole' : 'shaft',
+            selectingSecondTarget: false, secondTarget: null,
+          },
+          fitDiagnostic: null,
+          dirty: false,
+        });
+        persist();
+        return;
+      }
       if (selection.fit !== undefined) {
         const fit = selection.fit;
         const isHole = target.dimensionIntentId === fit.holeDimensionIntentId && featureClass === fit.holeFeatureClass;
@@ -456,7 +494,7 @@ export function createToleranceController(input: {
       appliedOverrideDesignation = null;
       const resolvedTarget: ToleranceTarget = { ...target, classification: { status: 'resolved', featureClass } };
       update({
-        target: resolvedTarget, tab: featureClass, catalog: null, fitCatalogs: null,
+        target: resolvedTarget, tab: 'recommendation', catalog: null, fitCatalogs: null,
         preview: null, canvasPreview: null, selection: null, override: null, dirty: false,
       });
       await refreshCatalogFor(resolvedTarget, featureClass, epoch, false);
@@ -475,6 +513,18 @@ export function createToleranceController(input: {
         };
         normalized = {
           kind: 'single', featureClass: selection.featureClass, designation: selection.designation,
+          source: selection.source ?? 'manual', evidenceRefs: [...(selection.evidenceRefs ?? [])],
+        };
+      } else if (selection.kind === 'mating-fit') {
+        request = {
+          type: 'mating-fit', expectedDrawingRef: target.drawingRef,
+          dimensionIntentId: target.dimensionIntentId,
+          currentFeatureClass: selection.currentFeatureClass,
+          matingDesignation: selection.matingDesignation,
+          currentDesignation: selection.currentDesignation,
+        };
+        normalized = {
+          ...selection,
           source: selection.source ?? 'manual', evidenceRefs: [...(selection.evidenceRefs ?? [])],
         };
       } else {
@@ -529,7 +579,9 @@ export function createToleranceController(input: {
         throw new Error('TOLERANCE_RESULT_INVALID');
       }
       const selection = current.selection;
-      if (selection?.kind !== 'single') throw new Error('TOLERANCE_STANDARD_SELECTION_REQUIRED');
+      if (selection?.kind !== 'single' && selection?.kind !== 'mating-fit') {
+        throw new Error('TOLERANCE_STANDARD_SELECTION_REQUIRED');
+      }
       const epoch = targetEpoch;
       const previewing = actions.preview(selection);
       const generation = previewGeneration;
@@ -554,8 +606,9 @@ export function createToleranceController(input: {
       const selection = current.selection;
       const appliedSelection = selection?.kind === 'single'
         && current.catalog?.selection?.designation === selection.designation;
-      const clearsAppliedOverride = selection?.kind === 'single'
-        && appliedOverrideDesignation === selection.designation;
+      const clearsAppliedOverride = (selection?.kind === 'single'
+        && appliedOverrideDesignation === selection.designation)
+        || (selection?.kind === 'mating-fit' && current.override !== null && pendingOverrideEdit !== 'set');
       const cancelsPendingOverride = pendingOverrideEdit === 'set';
       if (!clearsAppliedOverride && !cancelsPendingOverride) return;
       pendingOverrideEdit = clearsAppliedOverride ? 'clear' : null;
@@ -591,7 +644,7 @@ export function createToleranceController(input: {
         const epoch = targetEpoch;
         if (selectionEpoch !== epoch) throw new Error('TOLERANCE_TARGET_STALE');
         let command: ToleranceEditCommand;
-        if (pendingOverrideEdit !== null) {
+        if (pendingOverrideEdit !== null && selection.kind === 'single') {
           if (selection.kind !== 'single' || current.catalog?.selection?.designation !== selection.designation) {
             throw new Error('TOLERANCE_OVERRIDE_REQUIRES_APPLIED_STANDARD');
           }
@@ -609,6 +662,11 @@ export function createToleranceController(input: {
               dimensionIntentId: target.dimensionIntentId,
             };
           }
+        } else if (pendingOverrideEdit === 'clear' && selection.kind === 'mating-fit') {
+          command = {
+            type: 'standard.override.clear', expectedDrawingRef: target.drawingRef,
+            dimensionIntentId: target.dimensionIntentId,
+          };
         } else if (selection.kind === 'single') {
           command = {
             type: 'standard.single.apply', expectedDrawingRef: target.drawingRef,
@@ -635,6 +693,27 @@ export function createToleranceController(input: {
             selectionSource: selection.source, displayPreference: current.displayPreference,
             evidenceRefs: [...selection.evidenceRefs],
           };
+        } else if (selection.kind === 'mating-fit') {
+          if (current.preview?.type !== 'mating-fit') throw new Error('TOLERANCE_PREVIEW_REQUIRED');
+          const currentResult = selection.currentFeatureClass === 'external'
+            ? current.preview.result.shaft : current.preview.result.hole;
+          const matingResult = selection.currentFeatureClass === 'external'
+            ? current.preview.result.hole : current.preview.result.shaft;
+          command = {
+            type: 'standard.mating-fit.apply', expectedDrawingRef: target.drawingRef,
+            dimensionIntentId: target.dimensionIntentId,
+            currentFeatureClass: selection.currentFeatureClass,
+            matingDesignation: selection.matingDesignation,
+            currentDesignation: selection.currentDesignation,
+            expectedCurrentInputDigest: currentResult.ruleRef.inputDigest,
+            expectedMatingInputDigest: matingResult.ruleRef.inputDigest,
+            selectionSource: selection.source,
+            displayPreference: current.displayPreference,
+            evidenceRefs: [...selection.evidenceRefs],
+            ...(pendingOverrideEdit === 'set' && current.override !== null
+              ? { override: { ...current.override } }
+              : {}),
+          };
         } else {
           command = {
             type: 'manual.apply', expectedDrawingRef: target.drawingRef,
@@ -654,10 +733,11 @@ export function createToleranceController(input: {
         if (command.type === 'standard.override.clear') appliedOverrideDesignation = null;
         pendingOverrideEdit = null;
         update({ dirty: false, closeDecision: null, error: null, canvasPreview: null });
-        if (command.type === 'standard.single.apply') {
+        if (command.type === 'standard.single.apply' || command.type === 'standard.mating-fit.apply') {
           const nextTarget = { ...target, drawingRef: snapshot.drawingRef ?? target.drawingRef };
           update({ target: nextTarget, preview: null, canvasPreview: null });
-          await refreshCatalogFor(nextTarget, command.featureClass, epoch, true);
+          await refreshCatalogFor(nextTarget, command.type === 'standard.single.apply'
+            ? command.featureClass : command.currentFeatureClass, epoch, true);
         }
       })();
       applying = task;
@@ -691,6 +771,26 @@ export function createToleranceController(input: {
         if (!isCurrent()) return;
         throw error;
       }
+      if (!isCurrent() || !catalogMatches(result, target, featureClass)) return;
+      update({ fitCatalogs: fitRoleCatalogs(result) });
+    },
+    async beginMatingFit() {
+      const target = requireTarget();
+      const featureClass = resolvedFeatureClass(target);
+      const epoch = targetEpoch;
+      const generation = ++fitCatalogGeneration;
+      const isCurrent = () => epoch === targetEpoch && generation === fitCatalogGeneration;
+      update({
+        tab: featureClass === 'internal' ? 'hole-fit' : 'shaft-fit',
+        fit: { basis: featureClass === 'external' ? 'hole' : 'shaft', selectingSecondTarget: false, secondTarget: null },
+        fitCatalogs: null, fitDiagnostic: null, error: null,
+      });
+      persist();
+      const result = await run(() => remote().queryToleranceCatalog(input.sessionId, {
+        expectedDrawingRef: target.drawingRef,
+        dimensionIntentId: target.dimensionIntentId,
+        featureClass,
+      }), epoch, isCurrent);
       if (!isCurrent() || !catalogMatches(result, target, featureClass)) return;
       update({ fitCatalogs: fitRoleCatalogs(result) });
     },
@@ -900,7 +1000,13 @@ function previewMatchesRequest(result: TolerancePreviewResult, request: Toleranc
     ? result.dimensionIntentId === request.dimensionIntentId
       && result.result.featureClass === request.featureClass
       && result.result.designation === request.designation
-    : request.type === 'fit' && result.type === 'fit'
+    : request.type === 'mating-fit' && result.type === 'mating-fit'
+      ? result.dimensionIntentId === request.dimensionIntentId
+        && result.currentFeatureClass === request.currentFeatureClass
+        && result.result.designation === (request.currentFeatureClass === 'external'
+          ? `${request.matingDesignation}/${request.currentDesignation}`
+          : `${request.currentDesignation}/${request.matingDesignation}`)
+      : request.type === 'fit' && result.type === 'fit'
       && new Set([result.holeDimensionIntentId, result.shaftDimensionIntentId]).size === 2
       && new Set([result.holeDimensionIntentId, result.shaftDimensionIntentId]).has(request.primaryDimensionIntentId)
       && new Set([result.holeDimensionIntentId, result.shaftDimensionIntentId]).has(request.secondaryDimensionIntentId)
@@ -917,6 +1023,14 @@ function selectionHasCurrentPreview(
   if (preview === null || !sameDrawingRef(preview.drawingRef, target.drawingRef)) return false;
   if (selection.kind === 'single') {
     return singlePreviewMatches(preview, target, selection.featureClass, selection.designation);
+  }
+  if (selection.kind === 'mating-fit') {
+    return preview.type === 'mating-fit'
+      && preview.dimensionIntentId === target.dimensionIntentId
+      && preview.currentFeatureClass === selection.currentFeatureClass
+      && preview.result.designation === (selection.currentFeatureClass === 'external'
+        ? `${selection.matingDesignation}/${selection.currentDesignation}`
+        : `${selection.currentDesignation}/${selection.matingDesignation}`);
   }
   return preview.type === 'fit'
     && preview.holeDimensionIntentId === selection.holeDimensionIntentId

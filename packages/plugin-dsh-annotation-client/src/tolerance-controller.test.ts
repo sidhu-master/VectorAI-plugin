@@ -73,7 +73,21 @@ function remote(overrides: Partial<ToleranceRemote> = {}): ToleranceRemote {
     queryToleranceCatalog: vi.fn(async (_sessionId, request) => success(catalog(request.dimensionIntentId, request.featureClass))),
     previewTolerance: vi.fn(async (_sessionId, request) => success(request.type === 'single'
         ? singlePreview(request.dimensionIntentId, request.designation, request.featureClass)
-        : {
+        : request.type === 'mating-fit' ? {
+          type: 'mating-fit' as const, drawingRef, dimensionIntentId: request.dimensionIntentId,
+          currentFeatureClass: request.currentFeatureClass, status: 'resolved' as const,
+          result: {
+            designation: request.currentFeatureClass === 'external'
+              ? `${request.matingDesignation}/${request.currentDesignation}`
+              : `${request.currentDesignation}/${request.matingDesignation}`,
+            basis: request.currentFeatureClass === 'external' ? 'hole' as const : 'shaft' as const,
+            hole: singlePreview(request.dimensionIntentId, request.currentFeatureClass === 'external'
+              ? request.matingDesignation : request.currentDesignation, 'internal').result,
+            shaft: singlePreview(request.dimensionIntentId, request.currentFeatureClass === 'external'
+              ? request.currentDesignation : request.matingDesignation, 'external').result,
+            fitType: 'clearance' as const, minimumClearance: .006, maximumClearance: .035,
+          },
+        } : {
           type: 'fit' as const, drawingRef,
           holeDimensionIntentId: request.primaryFeatureClass === 'internal'
             ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId,
@@ -107,6 +121,47 @@ function memoryStorage(initial?: unknown): TolerancePopupStorage & { writes: str
 }
 
 describe('createToleranceController', () => {
+  it('previews and applies a fit against an external mating requirement without selecting another drawing target', async () => {
+    const api = remote();
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+    await controller.actions.beginMatingFit();
+    expect(controller.state.getSnapshot().fit).toMatchObject({ selectingSecondTarget: false, secondTarget: null });
+
+    await controller.actions.preview({
+      kind: 'mating-fit', currentFeatureClass: 'external',
+      matingDesignation: 'H7', currentDesignation: 'g6',
+    });
+    expect(controller.state.getSnapshot().preview).toMatchObject({
+      type: 'mating-fit', result: { designation: 'H7/g6', fitType: 'clearance' },
+    });
+    await controller.actions.apply();
+    expect(api.editTolerance).toHaveBeenCalledWith('s', expect.objectContaining({
+      type: 'standard.mating-fit.apply', dimensionIntentId: 'intent-1',
+      matingDesignation: 'H7', currentDesignation: 'g6',
+    }));
+  });
+
+  it('applies a manual override atomically with the current side of a mating fit', async () => {
+    const api = remote();
+    const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
+    await controller.actions.open(externalTarget);
+    await controller.actions.beginMatingFit();
+    await controller.actions.preview({
+      kind: 'mating-fit', currentFeatureClass: 'external',
+      matingDesignation: 'H7', currentDesignation: 'g6',
+    });
+
+    await controller.actions.previewOverride({ upperDeviation: -.005, lowerDeviation: -.016 });
+    expect(controller.state.getSnapshot().override).toEqual({ upperDeviation: -.005, lowerDeviation: -.016 });
+    await controller.actions.apply();
+
+    expect(api.editTolerance).toHaveBeenLastCalledWith('s', expect.objectContaining({
+      type: 'standard.mating-fit.apply', dimensionIntentId: 'intent-1',
+      override: { upperDeviation: -.005, lowerDeviation: -.016 },
+    }));
+  });
+
   it('keeps one popup instance and requires a dirty-switch decision', async () => {
     const api = remote();
     const controller = createToleranceController({ remote: api, sessionId: 's', storage: memoryStorage() });
@@ -277,6 +332,7 @@ describe('createToleranceController', () => {
     expect(api.queryToleranceCatalog).not.toHaveBeenCalled();
     await controller.actions.chooseFeatureClass('internal');
     expect(api.queryToleranceCatalog).toHaveBeenCalledWith('s', expect.objectContaining({ featureClass: 'internal' }));
+    expect(controller.state.getSnapshot().tab).toBe('recommendation');
 
     await controller.actions.open({
       ...externalTarget, dimensionIntentId: 'radius-1',
