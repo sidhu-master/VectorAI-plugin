@@ -3,6 +3,7 @@
 import { createEmptyDrawing } from '@vectorai/drawing-core';
 import type { DrawingWorkspaceSnapshot } from '@vectorai/plugin-space-contracts';
 import { describe, expect, it, vi } from 'vitest';
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 
 import { createDshDrawingWorkspacePort } from './dsh-workspace-port';
 
@@ -205,7 +206,7 @@ describe('createDshDrawingWorkspacePort', () => {
       remote: {
         getSnapshot: vi.fn(async () => ({
           ok: false as const,
-          error: { code: 'DISCONNECTED', message: 'Host disconnected', details: {} },
+          error: new RemoteError('gateway/internal', 'Host disconnected', {}),
         })),
         projectSelection: vi.fn(),
         stageInteractiveEdit: vi.fn(),

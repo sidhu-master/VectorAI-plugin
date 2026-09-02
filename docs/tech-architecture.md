@@ -70,7 +70,7 @@ DSH 持久化使用版本化 durable envelope，包含当前 Drawing、追加式
 
 ### Client 与布局
 
-第一层 Client 通过 DSH `0.1.2-alpha.1` 的正式 `shell.overlay` 扩展位声明 session-scoped Drawing 子槽，并按官方 Conversation 区域的真实尺寸为画布预留左侧空间。它在内部维护 `DrawingSurfaceRegistry`；专业插件注册 contribution，但注册本身不激活 UI，只有当前 session 的成功能力 claim 才参与确定性选举。没有 Drawing 时不产生 Overlay、Conversation 恢复全宽；存在 Drawing 时固定使用“图纸在中间、聊天在右侧”的横向布局。仓库不再包含或运行 DSH 编译产物补丁，也不覆盖官方 root/sidebar/details 的所有权。
+第一层 Client 通过 DSH `0.1.2-alpha.5` 的正式 `shell.overlay` 扩展位声明 session-scoped Drawing 子槽，并按官方 Conversation 区域的真实尺寸为画布预留左侧空间。它在内部维护 `DrawingSurfaceRegistry`；专业插件注册 contribution，但注册本身不激活 UI，只有当前 session 的成功能力 claim 才参与确定性选举。没有 Drawing 时不产生 Overlay、Conversation 恢复全宽；存在 Drawing 时固定使用“图纸在中间、聊天在右侧”的横向布局。仓库不再包含或运行 DSH 编译产物补丁，也不覆盖官方 root/sidebar/details 的所有权。
 
 macOS Launcher 在无终端窗口下启动 DSH，处理 3080 端口占用、独立窗口和关闭窗口后终止所属进程组。
 

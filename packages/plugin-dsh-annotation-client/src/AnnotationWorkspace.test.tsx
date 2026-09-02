@@ -9,6 +9,7 @@ import { DrawingSurface } from '@vectorai/drawing-viewer-react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TestRenderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 
 import { AnnotationWorkspace } from './AnnotationWorkspace';
 import { canvasLocalPoint } from './canvas-coordinates';
@@ -87,7 +88,7 @@ function toleranceRemote(
       }
       if (request.type === 'fit') {
         if (request.secondaryDimensionIntentId === 'intent-3') {
-          return { ok: false as const, error: { code: 'REMOTE', message: 'FIT_PAIR_BASIC_SIZE_MISMATCH', details: {} } };
+          return { ok: false as const, error: new RemoteError('gateway/internal', 'FIT_PAIR_BASIC_SIZE_MISMATCH', {}) };
         }
         const holeDimensionIntentId = request.primaryFeatureClass === 'internal'
           ? request.primaryDimensionIntentId : request.secondaryDimensionIntentId;

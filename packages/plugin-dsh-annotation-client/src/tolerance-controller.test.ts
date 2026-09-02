@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from 'vitest';
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
+import { RemoteError, type RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { ToleranceCatalogResult, TolerancePreviewResult } from '@vectorai/plugin-space-contracts';
 
 import {
@@ -978,7 +978,7 @@ describe('createToleranceController', () => {
 
 function success<T>(value: T): RemoteResult<T> { return { ok: true, value }; }
 function failure<T>(message: string): RemoteResult<T> {
-  return { ok: false, error: { code: 'REMOTE', message, details: {} } };
+  return { ok: false, error: new RemoteError('gateway/internal', message, {}) };
 }
 
 function deferred<T>() {

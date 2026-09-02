@@ -1,6 +1,6 @@
 # @newwe/vectorai-plugin-dsh-space
 
-Apache-2.0 licensed VectorAI 2D Space and Canvas bundle for DeepSeek Harness `0.1.2-alpha.1`.
+Apache-2.0 licensed VectorAI 2D Space and Canvas bundle for DeepSeek Harness `0.1.2-alpha.5`.
 
 Install the prebuilt public Bundle through DSH's official profile command:
 

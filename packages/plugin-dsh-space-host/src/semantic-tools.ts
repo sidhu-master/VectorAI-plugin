@@ -4,12 +4,12 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { UserQuestionService } from '@deepseek-ai/dsh-user-questions';
 import {
   defineTool,
-  type JsonValue,
   type ObjectValueSchemaSpec,
   type ParameterPropertySpec,
   type ParameterSchemaSpec,
   type ValueSchemaSpec,
 } from '@deepseek-ai/dsh-tools';
+import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import {
   drawingSelectPartsRequestSchema,
   spatialIntentRequestSchema,

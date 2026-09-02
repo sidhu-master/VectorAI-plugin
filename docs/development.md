@@ -4,7 +4,7 @@
 
 - Node.js 22（或仓库依赖支持的兼容版本）
 - pnpm 11.7.0
-- DeepSeek Harness `0.1.2-alpha.1` 与 `web` profile（开发 DSH 插件时）
+- DeepSeek Harness `0.1.2-alpha.5` 与 `web` profile（开发 DSH 插件时）
 - macOS/Xcode Command Line Tools（构建原生 Launcher 时）
 - Python 3.13.2（仅用于贡献者构建自包含矢量化运行时）
 

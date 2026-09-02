@@ -2,7 +2,7 @@
   "version": "0.1.0-alpha.1",
   "npmTag": "alpha",
   "dsh": {
-    "version": "0.1.2-alpha.1",
+    "version": "0.1.2-alpha.5",
     "profile": "web",
     "installArgs": {
       "@newwe/vectorai-plugin-dsh-annotation": ["--allow-build=tesseract.js"]

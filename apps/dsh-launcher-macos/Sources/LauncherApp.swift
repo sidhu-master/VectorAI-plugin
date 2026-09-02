@@ -7,7 +7,7 @@ import WebKit
 private enum LauncherConstants {
     static let port: UInt16 = 3080
     static let startupTimeout: TimeInterval = 90
-    static let bootstrapVersion = "0.1.2-alpha.1"
+    static let bootstrapVersion = "0.1.2-alpha.5"
     static let runtimeRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/VectorAI/dsh-runtime", isDirectory: true)
 }

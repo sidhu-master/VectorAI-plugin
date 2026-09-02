@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-DSH_TAG="dsh-v0.1.2-alpha.1"
-DSH_COMMIT="cd5ef8148158c3a752a658978873241fdf8e2bbc"
-RUNTIME_DIR="${1:-$HOME/Library/Application Support/VectorAI/dsh-runtime/0.1.2-alpha.1}"
+DSH_TAG="dsh-v0.1.2-alpha.5"
+DSH_COMMIT="db6bdc3576c2d4e7c965e8e3ed0c2a731eed87f5"
+RUNTIME_DIR="${1:-$HOME/Library/Application Support/VectorAI/dsh-runtime/0.1.2-alpha.5}"
 
 if [[ ! -d "$RUNTIME_DIR/.git" ]]; then
   mkdir -p "${RUNTIME_DIR:h}"
@@ -19,7 +19,7 @@ if [[ "$actual_commit" != "$DSH_COMMIT" ]]; then
 fi
 
 actual_version="$(node -p "require(process.argv[1]).version" "$RUNTIME_DIR/package.json")"
-if [[ "$actual_version" != "0.1.2-alpha.1" ]]; then
+if [[ "$actual_version" != "0.1.2-alpha.5" ]]; then
   print -u2 -- "DSH runtime version mismatch: $actual_version"
   exit 1
 fi

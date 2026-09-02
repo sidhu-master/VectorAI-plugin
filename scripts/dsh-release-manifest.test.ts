@@ -23,6 +23,22 @@ const bundles = [
 ] as const;
 
 describe('official DSH release manifests', () => {
+  it('targets one exact supported DSH alpha across the release and Bundle manifests', async () => {
+    const release = JSON.parse(await readFile(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
+    expect(release.dsh.version).toBe('0.1.2-alpha.5');
+
+    for (const bundle of bundles) {
+      const manifest = JSON.parse(await readFile(
+        resolve(root, 'packages', bundle.directory, 'package.json'),
+        'utf8',
+      ));
+      expect(manifest.peerDependencies['@deepseek-ai/dsh-client-runtime']).toBeUndefined();
+      for (const [name, version] of Object.entries(manifest.peerDependencies)) {
+        if (name.startsWith('@deepseek-ai/dsh-')) expect(version).toBe('0.1.2-alpha.5');
+      }
+    }
+  });
+
   for (const bundle of bundles) {
     it(`${bundle.name} is one prebuilt dual-face Bundle`, async () => {
       const directory = resolve(root, 'packages', bundle.directory);

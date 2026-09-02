@@ -15,7 +15,7 @@ The current React boundary is also too coarse for a professional second layer:
 - grid, geometry, annotations, selection, Grounding, Preview, and Motion Rig rendering are assembled inside one component;
 - pointer behavior is hard-coded in the same component;
 - the only public visual extension is a readonly Preview overlay;
-- DSH `0.1.2-alpha.1` exposes a public `shell.overlay` list slot, while VectorAI still needs one internal session-scoped outlet so independently installed drawing plugins do not compete for the shell itself.
+- DSH `0.1.2-alpha.5` exposes a public `shell.overlay` list slot, while VectorAI still needs one internal session-scoped outlet so independently installed drawing plugins do not compete for the shell itself.
 
 Engineering Annotation needs its own long-lived workflow and its own drawing UI while reusing the same Drawing document, coordinate system, renderer, selection semantics, transactions, and history. The first layer must therefore become a small 2D application platform rather than one fixed application screen.
 
@@ -453,7 +453,7 @@ The platform is complete when:
 
 ### Competing directly for the DSH root slot
 
-DSH `0.1.2-alpha.1` permits priority shadowing of `root`, but the winning root exclusively owns its child-slot declarations. A replacement cannot safely reuse the official sidebar, conversation and details tree. Therefore VectorAI preserves the official root, contributes through `shell.overlay`, and lets professional plugins use the session claim registry behind the first-layer drawing outlet.
+DSH `0.1.2-alpha.5` permits priority shadowing of `root`, but the winning root exclusively owns its child-slot declarations. A replacement cannot safely reuse the official sidebar, conversation and details tree. Therefore VectorAI preserves the official root, contributes through `shell.overlay`, and lets professional plugins use the session claim registry behind the first-layer drawing outlet.
 
 ### Adding more fixed slots to the current DrawingWorkspace
 

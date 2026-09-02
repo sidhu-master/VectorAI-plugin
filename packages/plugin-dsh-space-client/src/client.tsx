@@ -5,6 +5,7 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type {
   ConversationController,
 } from '@deepseek-ai/dsh-client-ui-conversation/client';
+import type { UseSession } from '@deepseek-ai/dsh-client-ui-session/client';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import {
   DrawingWorkspace,
@@ -39,7 +40,8 @@ declare module '@deepseek-ai/cordis' {
 // eslint-disable-next-line react-refresh/only-export-components
 export const inject = ['slots', 'remote', 'conversation', 'uiConversation'];
 
-interface DrawingConversationViewProps extends Pick<DrawingWorkspaceSlotProps, 'useSession'> {
+interface DrawingConversationViewProps {
+  useSession: UseSession;
   sessionId: string;
   surfaceRegistry: DrawingSurfaceRegistry;
   workspacePort: DrawingWorkspacePort;

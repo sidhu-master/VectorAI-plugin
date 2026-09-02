@@ -20,6 +20,7 @@ const inputActions = {
   dropImages: vi.fn(), pruneImages: vi.fn(), submit: vi.fn(),
 } as never;
 const createDraftImages = vi.fn(() => []);
+const drawingFileExport = { download: vi.fn() } as never;
 
 function drawingSnapshot(): DrawingWorkspaceSnapshot {
   return {
@@ -56,6 +57,7 @@ describe('DrawingConversationView', () => {
           inputActions={inputActions}
           createDraftImages={createDraftImages}
           releaseSources={() => undefined}
+          drawingFileExport={drawingFileExport}
         />,
       );
     });
@@ -82,6 +84,7 @@ describe('DrawingConversationView', () => {
           inputActions={inputActions}
           createDraftImages={createDraftImages}
           releaseSources={() => undefined}
+          drawingFileExport={drawingFileExport}
         />,
       );
     });
@@ -119,6 +122,7 @@ describe('DrawingConversationView', () => {
           inputActions={localInputActions}
           createDraftImages={localCreateDraftImages}
           releaseSources={() => undefined}
+          drawingFileExport={drawingFileExport}
         />,
       );
     });

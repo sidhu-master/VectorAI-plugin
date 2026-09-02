@@ -79,10 +79,10 @@ private func testSourceDSHResolverSelectsOnlyPinnedExecutable() throws {
         return executable
     }
 
-    let pinnedExecutable = try createSourceDSH(version: "0.1.2-alpha.1")
+    let pinnedExecutable = try createSourceDSH(version: "0.1.2-alpha.5")
 
     let resolved = SourceDSHResolver.find(in: temporaryDirectory)
-    try expect(resolved?.standardizedFileURL == pinnedExecutable.standardizedFileURL, "must resolve only the pinned alpha.1 source runtime")
+    try expect(resolved?.standardizedFileURL == pinnedExecutable.standardizedFileURL, "must resolve only the pinned alpha.5 source runtime")
 
     let command = DSHServerCommand.makeDirect(port: 43123, dshURL: pinnedExecutable)
     try expect(command.executableURL == pinnedExecutable, "direct launch must invoke the cached DSH executable")

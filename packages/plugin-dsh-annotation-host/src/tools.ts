@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools';
+import { defineTool } from '@deepseek-ai/dsh-tools';
+import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import {
   DEFAULT_AUTOMATIC_ANNOTATION_KINDS,
