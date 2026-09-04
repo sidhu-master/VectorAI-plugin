@@ -152,6 +152,8 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 
 回测产物只保存规范化结果、阶段状态、版本、规则摘要和 SHA-256 指纹。提示词正文、system 正文、图片字节、工程文档正文、凭据、环境变量和 provider header 不得进入报告或持久化记录。模型路由、DSH 运行时版本、管线版本、测试夹具或规则版本任一变化都会改变可复现指纹。
 
+仓库命令 `pnpm probe:dsh-recognition` 是显式、可选的真实环境检查。它先拒绝过期的 annotation bundle，再在 `.local/dsh-recognition-probe` 下生成隔离的临时 Cordis patch，通过当前 Headless DSH profile 发起一次 60 秒内的结构化子代理请求。命令校验三项 DSH 版本、运行时兼容状态、结构化结束原因、子会话请求观察和 SHA-256 摘要；终端只打印通过状态、provider、model、reasoning effort、版本和观察次数。JSONL 结果若包含 prompt、persona、messages 或 system 正文会直接判失败。`VECTORAI_DSH_CLI` 仅用于开发时显式指定 CLI 文件，不能改变版本门槛。
+
 ### 公差与尺寸链数据边界
 
 第一层 `drawing-core` 只保存通用 Viewer/Exporter 能理解的已解析结果：公差显示模式、偏差或极限值、配合代号、基准引用、规则 ID/版本/输入摘要及证据。旧 `tolerance.upper/lower` 字段仍可读取。第一层不保存公式源码、尺寸链方程、AI 提示词或可变工作流状态。
