@@ -25,4 +25,16 @@ describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
     expect(service).toContain('DimensionPlanStore');
     expect(store).not.toMatch(/ToleranceRuleProvider|resolveToleranceSpec|formulaSource|eval\s*\(|new Function/);
   });
+
+  it('isolates DSH request observation in the recognition adapter', () => {
+    const directory = dirname(fileURLToPath(import.meta.url));
+    for (const name of ['service.ts', 'semantic-reviewer.ts', 'gdt-reviewer.ts']) {
+      const source = readFileSync(join(directory, name), 'utf8');
+      expect(source).not.toContain("'agent/request'");
+      expect(source).not.toContain("'llm/stream'");
+    }
+    const adapter = readFileSync(join(directory, 'dsh-recognition-model-adapter.ts'), 'utf8');
+    expect(adapter).toContain("'agent/request'");
+    expect(adapter).toContain("'llm/stream'");
+  });
 });

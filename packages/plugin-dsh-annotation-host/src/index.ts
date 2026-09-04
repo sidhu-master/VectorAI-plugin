@@ -32,6 +32,18 @@ export {
   createRecognitionFingerprint,
   recognitionDigest,
 } from './recognition-runtime';
+export {
+  DshRecognitionModelAdapter,
+  SUPPORTED_DSH_RECOGNITION_VERSION,
+  createDshRecognitionModelAdapter,
+  loadDshRecognitionVersions,
+} from './dsh-recognition-model-adapter';
+export type {
+  DshRecognitionBridge,
+  DshRecognitionBridgeRun,
+  DshRecognitionProvider,
+  DshRecognitionRuntimeReport,
+} from './dsh-recognition-model-adapter';
 export type {
   RecognitionContractCase,
   RecognitionEvaluationAttempt,
