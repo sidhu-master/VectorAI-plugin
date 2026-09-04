@@ -16,6 +16,7 @@ import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
 import { PartitionSessionStore } from './partition-store';
 import { createEngineeringAnnotationTool } from './tools';
 import { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
+import { createEngineeringAnnotationPlanner } from './deterministic-annotation-pipeline';
 import type { RecognitionModelPort } from './recognition-runtime';
 
 const fixtureDirectory = resolve(import.meta.dirname, '../../engineering-annotation/test/fixtures/golden-shaft-001');
@@ -84,6 +85,7 @@ describe('complete automatic annotation workflow', () => {
       partitions,
       plans,
       {
+        planner: createEngineeringAnnotationPlanner(recognition),
         name: 'drawing_auto_annotate',
         description: 'automatic set',
         annotationKinds: ['opening-angle', 'diameter', 'centerline', 'radius'],
@@ -123,7 +125,11 @@ describe('complete automatic annotation workflow', () => {
     const completedDraft = plans.get(sessionId).draft;
     expect(completedDraft?.surfaceTextures.length).toBeGreaterThan(0);
     expect(completedDraft?.diagnostics).toContainEqual(expect.objectContaining({ code: 'GDT_COVERAGE_COMPLETE' }));
-    expect(recognition.list()).toEqual(['partition-semantic-review', 'shaft-gdt-semantic-review']);
+    expect(recognition.list()).toEqual([
+      'partition-semantic-review',
+      'deterministic-engineering-annotation-plan',
+      'shaft-gdt-semantic-review',
+    ]);
     expect(review).not.toHaveBeenCalled();
   });
 });

@@ -41,4 +41,11 @@ describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
     expect(adapter).toContain('subagents.start');
     expect(adapter).toContain('attachments.saveImage');
   });
+
+  it('keeps deterministic recognition algorithms behind pipeline modules', () => {
+    const directory = dirname(fileURLToPath(import.meta.url));
+    const tools = readFileSync(join(directory, 'tools.ts'), 'utf8');
+    expect(tools).not.toContain('planEngineeringAnnotations');
+    expect(tools).toContain('EngineeringAnnotationPlanner');
+  });
 });

@@ -14,8 +14,71 @@ import {
 } from './tools';
 import { AnnotationSessionStateStore } from './session-state';
 import { PartitionSessionStore } from './partition-store';
+import {
+  createDeterministicAnnotationPipeline,
+  createEngineeringAnnotationPlanner,
+} from './deterministic-annotation-pipeline';
+import { RecognitionPipelineRunner, type RecognitionModelPort } from './recognition-runtime';
+
+const deterministicRunner = new RecognitionPipelineRunner({
+  review: async () => { throw new Error('MODEL_MUST_NOT_RUN'); },
+} as RecognitionModelPort);
+deterministicRunner.register(createDeterministicAnnotationPipeline());
+const testPlanner = createEngineeringAnnotationPlanner(deterministicRunner);
+
+function defaultAutomaticOptions() {
+  return {
+    planner: testPlanner,
+    name: 'drawing_auto_annotate',
+    description: 'automatic set',
+    annotationKinds: ['opening-angle'] as const,
+    objective: 'automatic set',
+  };
+}
 
 describe('drawing_auto_annotate', () => {
+  it('uses the injected recognition planner as the only annotation source', async () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing:pipeline-only' }, now: () => 1 });
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const rise = 4 * Math.sqrt(3);
+    const journal = 12.9 - rise;
+    document.geometry = [
+      ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
+      ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
+    ].map(([id, start, end]) => ({
+      id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality,
+    }));
+    const planner = vi.fn(async () => ({
+      annotations: [], associations: [], targetNodeIds: [], pending: [], suppressed: [], program: null,
+    }));
+    const runExtensionProgram = vi.fn();
+    const tool = createEngineeringAnnotationTool({
+      getSnapshot: () => ({
+        version: 1 as const, ref: { drawingId: 'drawing:pipeline-only', revision: 1 }, document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+      runExtensionProgram,
+    }, new AnnotationSessionStateStore(), undefined, undefined, {
+      planner,
+      name: 'drawing_auto_annotate', description: 'automatic set',
+      annotationKinds: ['opening-angle'], objective: 'pipeline-only',
+    } as never);
+
+    const result = await tool.execute({}, {
+      agent: { id: 'session:pipeline-only' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext);
+
+    expect(result).toMatchObject({ status: 'no-effect', annotations: [] });
+    expect(planner).toHaveBeenCalledWith({
+      document,
+      ref: { drawingId: 'drawing:pipeline-only', revision: 1 },
+      objective: 'pipeline-only',
+      annotationKinds: ['opening-angle'],
+    }, expect.any(AbortSignal));
+    expect(runExtensionProgram).not.toHaveBeenCalled();
+  });
+
   it('resolves an editable partition once and continues in the same tool call', async () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-confirm' }, now: () => 1 });
     const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -52,6 +115,7 @@ describe('drawing_auto_annotate', () => {
       }),
       advanceDrawingRevision: vi.fn(),
     }, undefined, {
+      planner: testPlanner,
       name: 'drawing_auto_annotate', description: 'automatic set',
       annotationKinds: ['opening-angle'], objective: 'automatic set',
       preparePartition: async () => ({
@@ -99,7 +163,7 @@ describe('drawing_auto_annotate', () => {
         capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
       }),
       runExtensionProgram: runExtensionProgram as never,
-    }, sessions, partitions);
+    }, sessions, partitions, undefined, defaultAutomaticOptions());
 
     await expect(tool.execute({}, {
       agent: { id: 'session-1' } as Agent,
@@ -140,7 +204,7 @@ describe('drawing_auto_annotate', () => {
         capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
       }),
       runExtensionProgram: runExtensionProgram as never,
-    }, new AnnotationSessionStateStore(undefined, { now: () => 10 }), partitions);
+    }, new AnnotationSessionStateStore(undefined, { now: () => 10 }), partitions, undefined, defaultAutomaticOptions());
     const exec = {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
@@ -174,6 +238,7 @@ describe('drawing_auto_annotate', () => {
         ref: { drawingId: 'drawing-1', revision: 2 }, operationId: 'op-1', operationBindingDigest: 'sha256:binding',
       } })) as never,
     }, new AnnotationSessionStateStore(), undefined, undefined, {
+      planner: testPlanner,
       name: 'drawing_auto_annotate', description: 'automatic set',
       annotationKinds: ['opening-angle', 'diameter'], objective: 'automatic set',
       afterAnnotations: () => ({
@@ -210,6 +275,7 @@ describe('drawing_auto_annotate', () => {
       }),
       runExtensionProgram: vi.fn(),
     }, new AnnotationSessionStateStore(), undefined, undefined, {
+      planner: testPlanner,
       name: 'drawing_auto_annotate', description: 'automatic set', annotationKinds: [], objective: 'automatic set',
       afterAnnotations: () => ({
         version: 1, phase: 'editing', drawingRef: { drawingId: 'drawing-clarify', revision: 1 },
@@ -263,7 +329,7 @@ describe('drawing_auto_annotate', () => {
         capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
       }),
       runExtensionProgram: runExtensionProgram as never,
-    }, new AnnotationSessionStateStore());
+    }, new AnnotationSessionStateStore(), undefined, undefined, defaultAutomaticOptions());
 
     await tool.execute({}, {
       agent: { id: 'session-angle' } as Agent,
@@ -283,7 +349,7 @@ describe('drawing_auto_annotate', () => {
     const noDrawing = createEngineeringAnnotationTool({
       getSnapshot: () => null,
       runExtensionProgram: vi.fn() as never,
-    }, sessions);
+    }, sessions, undefined, undefined, defaultAutomaticOptions());
     const exec = {
       agent: { id: 'session-1' } as Agent,
       signal: new AbortController().signal,
@@ -305,7 +371,7 @@ describe('drawing_auto_annotate', () => {
         capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
       }),
       runExtensionProgram: vi.fn(async () => { throw new Error('ASSESSMENT_FAILED'); }) as never,
-    }, sessions);
+    }, sessions, undefined, undefined, defaultAutomaticOptions());
     await expect(failing.execute({}, exec)).rejects.toThrow('ASSESSMENT_FAILED');
     expect(sessions.get('session-1')).toMatchObject({
       workspaceClaimed: true,

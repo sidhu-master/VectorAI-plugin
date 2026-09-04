@@ -45,6 +45,7 @@ import { createPartitionSemanticReviewer } from './semantic-reviewer';
 import { RecognitionPipelineRunner } from './recognition-runtime';
 import { createDshRecognitionModelAdapter } from './dsh-recognition-model-adapter';
 import { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
+import { createEngineeringAnnotationPlanner } from './deterministic-annotation-pipeline';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { acceptPendingPartitionForEvent } from './partition-auto-confirm';
@@ -101,6 +102,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       createDshRecognitionModelAdapter(ctx),
       ctx.drawingSpace,
     );
+    const deterministicAnnotations = createEngineeringAnnotationPlanner(this.recognition);
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,
       this.partitions,
@@ -121,6 +123,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     registerEngineeringDxfExport(ctx, ctx.drawingSpace, this.dimensionPlans);
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(
       ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans, {
+        planner: deterministicAnnotations,
         name: 'drawing_auto_annotate',
         description: 'AUTHORITATIVE ROUTE for a generic request such as “自动标注”, “进行自动标注”, or “全部标注”. Call this tool immediately and do not call drawing_observe, drawing_gdt_start, drawing_dimension_chain_start, or individual annotation tools first. One call creates deterministic opening-angle, diameter, centerline and radius annotations plus the axial dimension-chain preview. Functional-feature recognition may locate candidate surfaces, but it MUST NOT invent datum precedence, GD&T characteristics, tolerance values, or roughness. Those design decisions require a documented requirement or explicit user confirmation. If completionStatus is needs-user-input, ask the returned clarificationQuestions verbatim instead of guessing. Report completion only from completionClaimAllowed.',
         annotationKinds: ['opening-angle', 'diameter', 'centerline', 'radius'],
@@ -143,10 +146,10 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       },
     )));
     ctx.effect(() => ctx.tools.register(createOpeningAngleAnnotationTool(
-      ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans,
+      ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans, deterministicAnnotations,
     )));
     ctx.effect(() => ctx.tools.register(createDiameterAnnotationTool(
-      ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans,
+      ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans, deterministicAnnotations,
     )));
     ctx.effect(() => ctx.tools.register(createPartitionStartTool({
       start: (agent, engineeringContext, signal) => this.partitionWorkflow.analyzeCurrent(agent, engineeringContext, signal),

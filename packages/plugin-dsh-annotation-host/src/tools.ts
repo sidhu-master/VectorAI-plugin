@@ -4,8 +4,6 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import {
-  DEFAULT_AUTOMATIC_ANNOTATION_KINDS,
-  planEngineeringAnnotations,
   type AxialInferencePolicy,
   type DeterministicAnnotationKind,
 } from '@vectorai/engineering-annotation';
@@ -19,13 +17,15 @@ import type { AnnotationSessionStateStore, AnnotationWorkflowStage } from './ses
 import type { PartitionSessionStore } from './partition-store';
 import type { GdtRecommendation } from './gdt-grounding';
 import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
+import type { EngineeringAnnotationPlanner } from './deterministic-annotation-pipeline';
 
 export function createEngineeringAnnotationTool(
   host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
   sessions: AnnotationSessionStateStore,
-  partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
-  dimensionPlans?: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'>,
+  partitions: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'> | undefined,
+  dimensionPlans: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'> | undefined,
   options: {
+    planner: EngineeringAnnotationPlanner;
     name: string;
     description: string;
     annotationKinds: readonly DeterministicAnnotationKind[];
@@ -43,11 +43,6 @@ export function createEngineeringAnnotationTool(
       signal: AbortSignal | undefined,
       partition: PartitionSessionSnapshot,
     ) => 'confirm' | 'skip' | Promise<'confirm' | 'skip'>;
-  } = {
-    name: 'drawing_auto_annotate',
-    description: 'AUTHORITATIVE ROUTE for generic automatic or complete engineering annotation. Call it directly without drawing_observe or individual annotation tools. The registered set runs as one host-owned workflow.',
-    annotationKinds: DEFAULT_AUTOMATIC_ANNOTATION_KINDS,
-    objective: '工程图纸自动标注集',
   },
 ) {
   return defineTool({
@@ -118,12 +113,12 @@ export function createEngineeringAnnotationTool(
       }
       sessions.start(sessionId, workflowId, 'deterministic');
       try {
-        const plan = planEngineeringAnnotations({
+        const plan = await options.planner({
           document: snapshot.document,
           ref: snapshot.ref,
           objective: options.objective,
           annotationKinds: options.annotationKinds,
-        });
+        }, exec.signal);
         let status = 'no-effect';
         let result: DrawingExtensionProgramWorkflow['result'] | undefined;
         if (plan.program) {
@@ -256,8 +251,11 @@ export function createOpeningAngleAnnotationTool(
   sessions: AnnotationSessionStateStore,
   partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
   dimensionPlans?: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'>,
+  planner?: EngineeringAnnotationPlanner,
 ) {
+  if (!planner) throw new Error('ANNOTATION_RECOGNITION_PLANNER_REQUIRED');
   return createEngineeringAnnotationTool(host, sessions, partitions, dimensionPlans, {
+    planner,
     name: 'drawing_opening_angle_annotate',
     description: 'Create only deterministic axial opening-angle dimensions when the user explicitly asks for opening-angle annotation. This tool never creates diameters, radii, tolerances, GD&T, or dimension chains.',
     annotationKinds: ['opening-angle'],
@@ -270,8 +268,11 @@ export function createDiameterAnnotationTool(
   sessions: AnnotationSessionStateStore,
   partitions?: Pick<PartitionSessionStore, 'get' | 'advanceDrawingRevision'>,
   dimensionPlans?: Pick<import('./dimension-plan-store').DimensionPlanStore, 'get' | 'markNeedsRebase'>,
+  planner?: EngineeringAnnotationPlanner,
 ) {
+  if (!planner) throw new Error('ANNOTATION_RECOGNITION_PLANNER_REQUIRED');
   return createEngineeringAnnotationTool(host, sessions, partitions, dimensionPlans, {
+    planner,
     name: 'drawing_diameter_annotate',
     description: 'Create only deterministic simple shaft-diameter dimensions when the user explicitly asks to mark diameters or shaft diameters. Local geometry pairs opposite cylindrical profile edges and calculates every diameter. This tool never creates opening angles, radii, tolerances, GD&T, or dimension chains.',
     annotationKinds: ['diameter'],
