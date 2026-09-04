@@ -135,7 +135,16 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 
 ### 识别运行时与真实请求回测
 
-第二层 Host 只创建一个 `RecognitionPipelineRunner`，并在其中注册版本化的分区语义识别与轴类形位公差语义识别管线。生产流程和合同回测执行同一个已注册的 `RecognitionPipeline` 对象；测试不能复制一套“近似生产”的提示词、后处理或落点算法。确定性管线可以直接完成并记录本地阶段，不会为了形成统一接口而强制发起模型请求。
+第二层 Host 只通过 `createAnnotationRecognitionRunner()` 创建一个 `RecognitionPipelineRunner`，并按固定顺序注册四条生产管线：
+
+1. `partition-semantic-review`：分区视觉观察、受限语义复核、校验与本地落地；
+2. `deterministic-engineering-annotation-plan`：开角、内外径、中心线与圆角的确定性识别及排版；
+3. `axial-dimension-inference`：工程资料单位归一化、轴向拓扑、尺寸候选、尺寸链求解与投影；
+4. `shaft-gdt-semantic-review`：轴类功能面、基准顺序、形位控制、粗糙度和受控几何落点。
+
+全局入口是唯一注册表与组合根，不是把不同工程域塞进一个算法文件。每条管线仍维护自己的强类型输入、输出和版本，但生产流程与合同回测必须执行同一个已注册的 `RecognitionPipeline` 对象；测试不能复制一套“近似生产”的提示词、几何抽取、后处理、工程规则或落点算法。确定性管线可以直接完成并记录本地阶段，不会为了形成统一接口而强制发起模型请求。
+
+工具与业务服务只能注入 `runner.run()` 的薄封装：标注工具负责应用 edit program，尺寸服务负责合并并保存投影，分区与形位服务负责各自的会话事务。识别管线不得写 Drawing、分区、尺寸计划或标注会话；反过来，持久化服务也不得拥有或直接调用底层识别算法。尺寸链的人工显示/闭环编辑复用轴向管线提供的重投影边界，不复制尺寸投影实现。
 
 所有 DSH 耦合集中在 `dsh-recognition-model-adapter.ts`：父 Agent 解析、图片附件入库、子代理启动、`agent/request` 与 `llm/stream` 观测，以及资源释放都只能从这一边界发生。子代理传输提供方与实际 LLM provider/model 是两套独立路由，不得互相代用。当前兼容门槛精确锁定 `@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-llm` 和 `@deepseek-ai/dsh-subagent` 的 `0.1.2-alpha.5`；任一版本不同、五项子代理能力不完整、子会话请求无法关联或 Agent/LLM 路由漂移时均明确失败，不静默降级为另一种请求方式。
 

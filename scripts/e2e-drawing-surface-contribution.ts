@@ -179,10 +179,15 @@ async function runFirstLayerAnnotationTransaction() {
   });
   const snapshot = drawings.getSnapshot(drawingSessionId);
   if (snapshot === null) throw new Error('SURFACE_E2E_DRAWING_REQUIRED');
-  const plan = annotationHost.planEngineeringAnnotations({
+  const recognition = new annotationHost.RecognitionPipelineRunner({
+    review: async () => { throw new Error('SURFACE_E2E_MODEL_MUST_NOT_RUN'); },
+  });
+  recognition.register(annotationHost.createDeterministicAnnotationPipeline());
+  const plan = await annotationHost.createEngineeringAnnotationPlanner(recognition)({
     document: snapshot.document,
     ref: snapshot.ref,
     objective: '工程图纸自动标注',
+    annotationKinds: ['opening-angle', 'diameter', 'centerline', 'radius'],
   });
   if (plan.program === null) throw new Error('SURFACE_E2E_ANNOTATION_PLAN_REQUIRED');
   const preview = await extensions.create(drawingSessionId, {

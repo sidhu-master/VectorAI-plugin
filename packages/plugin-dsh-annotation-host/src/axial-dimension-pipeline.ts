@@ -8,6 +8,7 @@ import {
   parseEngineeringDocument,
   policyById,
   projectAxialDimensionScheme,
+  type AxialDimensionScheme,
   type AxialInferencePolicy,
   type EngineeringAnnotationDraft,
   type ParsedEngineeringDocument,
@@ -131,6 +132,14 @@ export function createAxialDimensionInference(
       signal,
     )
   ).output;
+}
+
+/** Re-project an already inferred scheme after a user edit without re-running recognition. */
+export function projectEditedAxialDimensionScheme(input: {
+  scheme: AxialDimensionScheme;
+  baseRevisionId?: string;
+}): EngineeringAnnotationDraft {
+  return projectAxialDimensionScheme(input);
 }
 
 function assertPartitionGeometryCurrent(

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -57,6 +57,31 @@ describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
       'projectAxialDimensionScheme',
     ]) {
       expect(dimensions).not.toContain(implementationDetail);
+    }
+
+    const sources = new Map(readdirSync(directory)
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+      .map((name) => [name, readFileSync(join(directory, name), 'utf8')]));
+    const guardedImplementations = new Map<string, string>([
+      ['planEngineeringAnnotations', 'deterministic-annotation-pipeline.ts'],
+      ['buildAxialTopology', 'axial-dimension-pipeline.ts'],
+      ['generateAxialDimensionCandidates', 'axial-dimension-pipeline.ts'],
+      ['inferAxialDimensionScheme', 'axial-dimension-pipeline.ts'],
+      ['parseEngineeringDocument', 'axial-dimension-pipeline.ts'],
+      ['projectAxialDimensionScheme', 'axial-dimension-pipeline.ts'],
+    ]);
+    for (const [symbol, owner] of guardedImplementations) {
+      const consumers = [...sources]
+        .filter(([name, source]) => name !== owner && source.includes(symbol))
+        .map(([name]) => name);
+      expect(consumers, `${symbol} bypassed ${owner}`).toEqual([]);
+    }
+
+    for (const seam of ["'agent/request'", "'llm/stream'", 'subagents.start', 'attachments.saveImage']) {
+      const consumers = [...sources]
+        .filter(([name, source]) => name !== 'dsh-recognition-model-adapter.ts' && source.includes(seam))
+        .map(([name]) => name);
+      expect(consumers, `${seam} escaped DSH adapter`).toEqual([]);
     }
   });
 });

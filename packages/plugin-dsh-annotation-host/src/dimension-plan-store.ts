@@ -11,7 +11,6 @@ import {
   clearToleranceOverride,
   mergeAxialDimensionProjection,
   orderDimensionIntents,
-  projectAxialDimensionScheme,
   setToleranceOverride,
   validateEngineeringDraft,
   withSwitchableClosureAlternatives,
@@ -31,6 +30,7 @@ import {
   type GeometricToleranceEditCommand,
   type ToleranceEditCommand,
 } from '@vectorai/plugin-space-contracts';
+import { projectEditedAxialDimensionScheme } from './axial-dimension-pipeline';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -136,7 +136,7 @@ export class DimensionPlanStore {
       withSwitchableClosureAlternatives(draft.axialScheme as unknown as AxialDimensionScheme),
       edit,
     );
-    return this.setDraft(sessionId, mergeAxialDimensionProjection(draft, projectAxialDimensionScheme({
+    return this.setDraft(sessionId, mergeAxialDimensionProjection(draft, projectEditedAxialDimensionScheme({
       scheme,
       ...(draft.baseRevisionId === undefined ? {} : { baseRevisionId: draft.baseRevisionId }),
     })));

@@ -7,7 +7,6 @@ export {
   createOpeningAngleAnnotationTool,
   createGdtStartTool,
 } from './tools';
-export { planEngineeringAnnotations } from '@vectorai/engineering-annotation';
 export {
   AnnotationSessionStateStore,
   FileAnnotationSessionStorage,
