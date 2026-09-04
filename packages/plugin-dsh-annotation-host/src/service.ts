@@ -41,7 +41,9 @@ import {
 } from './tools';
 import { FilePartitionStorage, PartitionSessionStore } from './partition-store';
 import { PartitionWorkflowService } from './partition-service';
-import { createPartitionSemanticReviewer } from './semantic-reviewer';
+import { createPartitionSemanticPipeline, createPartitionSemanticReviewer } from './semantic-reviewer';
+import { RecognitionPipelineRunner } from './recognition-runtime';
+import { createDshRecognitionModelAdapter } from './dsh-recognition-model-adapter';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { acceptPendingPartitionForEvent } from './partition-auto-confirm';
@@ -65,7 +67,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export class DrawingAnnotationHostService extends TypertRemoteService {
-  static inject = ['tools', 'drawingSpace', 'attachments', 'userQuestions', 'agents', 'subagents', 'connection'];
+  static inject = ['tools', 'drawingSpace', 'attachments', 'userQuestions', 'agents', 'llm', 'subagents', 'connection'];
 
   private readonly automaticRouteDisposers = new Map<string, () => void>();
   private readonly automaticPartitionContinuations = new Map<string, 'confirmed' | 'skipped'>();
@@ -77,6 +79,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
   readonly dimensionInference: DimensionInferenceService;
   readonly gdt: GdtService;
   readonly tolerances: ToleranceService;
+  readonly recognition: RecognitionPipelineRunner;
 
   constructor(ctx: Context) {
     super(ctx, 'drawingAnnotation');
@@ -93,11 +96,13 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       createToleranceReconciler(toleranceProvider),
     );
     this.tolerances = new ToleranceService(this.dimensionPlans, toleranceProvider);
+    this.recognition = new RecognitionPipelineRunner(createDshRecognitionModelAdapter(ctx));
+    this.recognition.register(createPartitionSemanticPipeline(ctx.drawingSpace));
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,
       this.partitions,
       this.sessions,
-      createPartitionSemanticReviewer(ctx, ctx.drawingSpace),
+      createPartitionSemanticReviewer(this.recognition),
     );
     this.dimensionInference = new DimensionInferenceService(
       ctx.drawingSpace,

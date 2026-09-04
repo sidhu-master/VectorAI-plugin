@@ -1,23 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Context } from '@deepseek-ai/cordis';
-import type { SessionId } from '@deepseek-ai/dsh-session';
-import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent';
 import { applySemanticProposals, type SegmentSemanticProposal } from '@vectorai/engineering-annotation';
 import type { Vec2 } from '@vectorai/drawing-core';
 import type { DrawingSpaceExtensionHost } from '@vectorai/plugin-space-contracts';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { PartitionSemanticReviewer } from './partition-service';
+import type { PartitionSemanticReviewer, PartitionSemanticReviewInput } from './partition-service';
+import {
+  recognitionDigest,
+  type RecognitionPipeline,
+  type RecognitionPipelineRunner,
+} from './recognition-runtime';
 
-export function createPartitionSemanticReviewer(
-  ctx: Context & { subagents: SubagentRuntime },
+export const PARTITION_SEMANTIC_PIPELINE_ID = 'partition-semantic-review';
+export const PARTITION_SEMANTIC_PIPELINE_VERSION = '1';
+
+type PartitionSemanticReviewOutput = Awaited<ReturnType<PartitionSemanticReviewer>>;
+
+export function createPartitionSemanticPipeline(
   space: Pick<DrawingSpaceExtensionHost<Agent>, 'renderObservation'>,
   options: { timeoutMs?: number } = {},
-): PartitionSemanticReviewer {
-  const reviewBatch = async ({ agent, draft, segmentIds, signal }: Parameters<PartitionSemanticReviewer>[0]): Promise<SegmentSemanticProposal[]> => {
+): RecognitionPipeline<PartitionSemanticReviewInput, PartitionSemanticReviewOutput> {
+  return {
+    id: PARTITION_SEMANTIC_PIPELINE_ID,
+    version: PARTITION_SEMANTIC_PIPELINE_VERSION,
+    async execute(input, context) {
+      const reviewBatch = async ({ agent, draft, segmentIds }: PartitionSemanticReviewInput): Promise<SegmentSemanticProposal[]> => {
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error('AI_SEMANTIC_REVIEW_TIMEOUT')), options.timeoutMs ?? 60_000);
-    const reviewSignal = combineSignals(signal, timeout.signal);
+    const reviewSignal = combineSignals(context.signal, timeout.signal);
     try {
     const targets = new Set(segmentIds);
     const segments = draft.segments.filter(({ id }) => targets.has(id));
@@ -50,12 +60,12 @@ export function createPartitionSemanticReviewer(
     const overlays = [...contextGroups.map(({ overlay }) => overlay), ...targetOverlays];
     const rendered = await abortable(space.renderObservation(agent, { ref: draft.drawingRef, overlays }, reviewSignal), reviewSignal);
     if (rendered.status !== 'rendered') throw new Error(`AI_SEMANTIC_OBSERVATION_${rendered.status.toUpperCase()}`);
-    const attachment = await abortable(ctx.attachments.saveImage({ data: rendered.png, mediaType: 'image/png', name: 'shaft-segment-observation.png' }), reviewSignal);
-    const parent = ctx.agents.get(String(agent.id) as SessionId);
-    const providerName = ctx.subagents.list()[0];
-    if (!parent || !providerName) throw new Error('AI_SEMANTIC_REVIEW_UNAVAILABLE');
-    const provider = ctx.subagents.getProvider(providerName);
-    if (!provider?.capabilities.outputSchema || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) throw new Error('AI_SEMANTIC_REVIEW_ISOLATION_REQUIRED');
+    context.record({
+      id: `partition-observation:${segmentIds[0] ?? 'empty'}:${segmentIds.length}`,
+      kind: 'deterministic',
+      status: 'completed',
+      digest: rendered.contentDigest,
+    });
     const catalog = segments.map((segment, index) => ({
       id: segment.id,
       visualLabel: `S${index + 1}`,
@@ -78,28 +88,33 @@ export function createPartitionSemanticReviewer(
       observationDigest: rendered.contentDigest,
     });
     if (payload.length > 64 * 1024) throw new Error('AI_SEMANTIC_PROMPT_LIMIT');
-    const run = await abortable(ctx.subagents.start(providerName, {
-      label: 'shaft-partition-semantic-reviewer', parent, signal: reviewSignal,
-      maxDepth: 1, toolFilter: { allow: [] },
-      persona: provider.capabilities.persona
-        ? 'You are a bounded shaft-region classifier. Do not narrate analysis. Immediately return the requested structured result from the supplied numbered image and segment catalog.'
-        : undefined,
-      prompt: [{ type: 'text', text: payload }, { type: 'image', attachment }],
-      outputSchema: proposalSchema as never,
+    const result = await abortable(context.review<{ proposals: SegmentSemanticProposal[] }>({
+      pipelineId: PARTITION_SEMANTIC_PIPELINE_ID,
+      pipelineVersion: PARTITION_SEMANTIC_PIPELINE_VERSION,
+      parentSessionId: String(agent.id),
+      signal: reviewSignal,
+      maxDepth: 1,
+      timeoutMs: options.timeoutMs ?? 60_000,
+      persona: 'You are a bounded shaft-region classifier. Do not narrate analysis. Immediately return the requested structured result from the supplied numbered image and segment catalog.',
+      prompt: [
+        { type: 'text', text: payload },
+        { type: 'image', data: rendered.png, mediaType: 'image/png', name: 'shaft-segment-observation.png' },
+      ],
+      outputSchema: proposalSchema,
     }), reviewSignal);
-    try {
-      const result = await abortable(run.result, reviewSignal);
-      const proposals = result.stopReason === 'completed' ? validateOutput(result.structured) : null;
-      if (!proposals) throw new Error('AI_SEMANTIC_REVIEW_INVALID');
-      return proposals;
-    } finally {
-      await abortable(run.dispose(), reviewSignal).catch(() => undefined);
-    }
+    context.record({
+      id: `partition-model:${segmentIds[0] ?? 'empty'}:${segmentIds.length}`,
+      kind: 'model',
+      status: result.stopReason === 'completed' ? 'completed' : 'failed',
+      digest: recognitionDigest({ stopReason: result.stopReason, observationCount: result.observations.length }),
+    });
+    const proposals = result.stopReason === 'completed' ? validateOutput(result.structured) : null;
+    if (!proposals) throw new Error('AI_SEMANTIC_REVIEW_INVALID');
+    return proposals;
     } finally {
       clearTimeout(timer);
     }
-  };
-  return async (input) => {
+      };
     const contextCount = countContextOverlays(input.draft);
     const capacity = Math.max(1, 128 - contextCount);
     const overlap = Math.min(8, capacity - 1);
@@ -123,8 +138,38 @@ export function createPartitionSemanticReviewer(
         allowedVisualEvidenceIds: input.segmentIds.map((id) => `observation:${id}`),
       }).draft;
     }
-    return { draft: reviewed };
+      context.record({
+        id: 'partition-semantic-grounding',
+        kind: 'grounding',
+        status: 'completed',
+        digest: recognitionDigest({
+          proposalCount: consolidated.length,
+          semanticGroupCount: reviewed.semanticGroups.length,
+        }),
+      });
+      return { draft: reviewed };
+    },
+    normalize: ({ draft }) => ({
+      drawingRef: draft.drawingRef,
+      segments: draft.segments.map(({ id, semanticType }) => ({ id, semanticType })),
+      semanticGroups: draft.semanticGroups.map(({ id, segmentIds, semanticType, dimensionRole }) => ({
+        id, segmentIds, semanticType, dimensionRole,
+      })),
+      diagnostics: draft.diagnostics.map(({ code, severity }) => ({ code, severity })),
+    }),
   };
+}
+
+export function createPartitionSemanticReviewer(
+  runner: RecognitionPipelineRunner,
+): PartitionSemanticReviewer {
+  return async (input) => (
+    await runner.run<PartitionSemanticReviewInput, PartitionSemanticReviewOutput>(
+      PARTITION_SEMANTIC_PIPELINE_ID,
+      input,
+      input.signal,
+    )
+  ).output;
 }
 
 function countContextOverlays(draft: Parameters<PartitionSemanticReviewer>[0]['draft']): number {

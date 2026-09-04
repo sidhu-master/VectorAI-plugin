@@ -44,6 +44,12 @@ export type {
   DshRecognitionProvider,
   DshRecognitionRuntimeReport,
 } from './dsh-recognition-model-adapter';
+export {
+  PARTITION_SEMANTIC_PIPELINE_ID,
+  PARTITION_SEMANTIC_PIPELINE_VERSION,
+  createPartitionSemanticPipeline,
+  createPartitionSemanticReviewer,
+} from './semantic-reviewer';
 export type {
   RecognitionContractCase,
   RecognitionEvaluationAttempt,
