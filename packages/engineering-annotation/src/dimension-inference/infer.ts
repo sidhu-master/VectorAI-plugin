@@ -27,13 +27,13 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
   const index = coordinateIndex(input);
   const root = requireOverall(input.candidateSet.candidates);
   const decisions = input.candidateSet.candidates.map((candidate) => scoreCandidate(candidate, input.candidateSet.evidence, input.policy.weights));
-  const rootPlans = viableClosurePlans(root, input.candidateSet.candidates, decisions, index, input.topology.axis.orientation);
+  const rootPlans = viableClosurePlans(root, input.candidateSet.candidates, input.candidateSet.evidence, decisions, index);
   const selectedRootPlan = rootPlans[0];
   if (!selectedRootPlan) throw new Error('DIMENSION_CLOSURE_MISSING');
   const rootClosure = selectedRootPlan.closure;
   const rootChildren = [...selectedRootPlan.leftChildren, ...selectedRootPlan.rightChildren];
   const rootAmbiguous = rootPlans[1] !== undefined
-    && sameRootClosurePreference(root, rootPlans[0]!.closure, rootPlans[1]!.closure, decisions, input.topology.axis.orientation);
+    && sameClosurePreference(rootPlans[0]!.closure, rootPlans[1]!.closure, input.candidateSet.evidence, decisions);
   const chains: AxialChainNode[] = [{
     id: `chain:${root.id}`,
     parentCandidateId: root.id,
@@ -41,6 +41,7 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
     closureCandidateId: rootClosure.id,
     alternativeClosureCandidateIds: rootPlans.slice(1).map(({ closure }) => closure.id),
     status: rootAmbiguous ? 'needs-review' : 'resolved',
+    closureRationale: closureRationale(rootClosure, rootPlans.slice(1).map(({ closure }) => closure), input.candidateSet.evidence),
   }];
   for (const parent of rootChildren.filter((candidate) => candidate.roles.some((role) => role === 'process' || role === 'composite'))) {
     const chain = materializeInnerChain(parent, input.candidateSet.candidates, input.candidateSet.evidence, decisions, index);
@@ -52,8 +53,9 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
     ...chains.slice(1).map(({ parentCandidateId }) => parentCandidateId),
   ]);
   const closureCandidateIds = unique(chains.map(({ closureCandidateId }) => closureCandidateId));
+  const hasAmbiguousChain = chains.some(({ status }) => status === 'needs-review');
   const diagnostics: EngineeringDiagnostic[] = [...input.candidateSet.diagnostics];
-  if (rootAmbiguous) {
+  if (hasAmbiguousChain) {
     diagnostics.push({
       id: `dimension-scheme:DIMENSION_CLOSURE_AMBIGUOUS:${root.id}`,
       severity: 'warning', code: 'DIMENSION_CLOSURE_AMBIGUOUS',
@@ -93,7 +95,7 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
             : 'rejected',
     })),
     diagnostics: [],
-    status: rootAmbiguous ? 'needs-review' : 'resolved',
+    status: hasAmbiguousChain ? 'needs-review' : 'resolved',
   };
   const validation = validateAxialDimensionScheme(initial);
   return {
@@ -119,9 +121,12 @@ function materializeInnerChain(
     .sort((left, right) => start(left, index) - start(right, index));
   const uncovered = elementary.filter((candidate) => !protectedCandidates.some((protectedCandidate) => contains(protectedCandidate, candidate, index)));
   if (uncovered.length === 0) return undefined;
-  const closure = [...uncovered].sort((left, right) => (
-    right.nominalValue - left.nominalValue || compareClosurePreference(left, right, decisions, index)
-  ))[0]!;
+  const ranked = [...uncovered]
+    .sort((left, right) => right.nominalValue - left.nominalValue
+      || compareClosurePreference(left, right, evidence, decisions)
+      || left.id.localeCompare(right.id));
+  const closure = ranked[0];
+  if (!closure) return undefined;
   const children = uniqueCandidates([
     ...protectedCandidates,
     ...uncovered.filter(({ id }) => id !== closure.id),
@@ -133,9 +138,10 @@ function materializeInnerChain(
     childCandidateIds: children.map(({ id }) => id),
     closureCandidateId: closure.id,
     alternativeClosureCandidateIds: viableRootClosureAlternatives(
-      parent, closure, candidates, decisions, index,
+      parent, closure, candidates, evidence, decisions, index,
     ).map(({ id }) => id),
-    status: 'resolved',
+    status: ranked[1] && sameClosurePreference(closure, ranked[1], evidence, decisions) ? 'needs-review' : 'resolved',
+    closureRationale: closureRationale(closure, ranked.slice(1), evidence),
   };
 }
 
@@ -178,6 +184,7 @@ function viableRootClosureAlternatives(
   root: AxialDimensionCandidate,
   selected: AxialDimensionCandidate,
   candidates: readonly AxialDimensionCandidate[],
+  evidence: readonly DimensionEvidence[],
   decisions: readonly DimensionDecisionTrace[],
   index: CoordinateIndex,
 ): AxialDimensionCandidate[] {
@@ -190,16 +197,20 @@ function viableRootClosureAlternatives(
     } catch {
       return false;
     }
-  }).sort((left, right) => compareClosurePreference(left, right, decisions, index));
+  }).sort((left, right) => compareClosurePreference(left, right, evidence, decisions) || left.id.localeCompare(right.id));
 }
 
 function viableClosurePlans(
   root: AxialDimensionCandidate,
   candidates: readonly AxialDimensionCandidate[],
+  evidence: readonly DimensionEvidence[],
   decisions: readonly DimensionDecisionTrace[],
   index: CoordinateIndex,
-  orientation: 'forward' | 'reversed',
 ): ClosurePlan[] {
+  // A required interval must remain represented in the chain, but it may be
+  // the closure itself (the reviewed CAD convention uses the terminal bearing
+  // interval this way). Closure eligibility is therefore separate from the
+  // candidate's required flag; only prohibited evidence is excluded.
   return candidates.flatMap((closure): ClosurePlan[] => {
     if (closure.id === root.id || !contains(root, closure, index)) return [];
     try {
@@ -211,65 +222,66 @@ function viableClosurePlans(
     } catch {
       return [];
     }
-  }).sort((left, right) => compareRootClosurePreference(
-    root, left.closure, right.closure, decisions, index, orientation,
-  ));
+  }).sort((left, right) => Number(isDocumentBackedTerminal(right.closure, root, evidence, index))
+      - Number(isDocumentBackedTerminal(left.closure, root, evidence, index))
+      || compareClosurePreference(left.closure, right.closure, evidence, decisions)
+      || left.closure.id.localeCompare(right.closure.id));
 }
 
-function compareRootClosurePreference(
+function isDocumentBackedTerminal(
+  candidate: AxialDimensionCandidate,
   root: AxialDimensionCandidate,
-  left: AxialDimensionCandidate,
-  right: AxialDimensionCandidate,
-  decisions: readonly DimensionDecisionTrace[],
+  evidence: readonly DimensionEvidence[],
   index: CoordinateIndex,
-  orientation: 'forward' | 'reversed',
-): number {
-  return Number(!isDirectionalTerminal(root, left, orientation)) - Number(!isDirectionalTerminal(root, right, orientation))
-    || compareClosurePreference(left, right, decisions, index);
+): boolean {
+  return end(candidate, index) === end(root, index)
+    && candidate.evidenceIds.some((id) => evidence.find((item) => item.id === id)?.origin === 'document');
 }
 
 function compareClosurePreference(
   left: AxialDimensionCandidate,
   right: AxialDimensionCandidate,
+  evidence: readonly DimensionEvidence[],
   decisions: readonly DimensionDecisionTrace[],
-  index: CoordinateIndex,
 ): number {
-  return Number(left.required) - Number(right.required)
-    || scoreOf(left, decisions) - scoreOf(right, decisions)
-    || left.nominalValue - right.nominalValue
-    || start(left, index) - start(right, index)
-    || left.id.localeCompare(right.id);
+  return Number(!isProhibited(left, evidence)) - Number(!isProhibited(right, evidence))
+    || evidenceTier(left, evidence) - evidenceTier(right, evidence)
+    || scoreOf(left, decisions) - scoreOf(right, decisions);
 }
 
 function sameClosurePreference(
   left: AxialDimensionCandidate,
   right: AxialDimensionCandidate,
+  evidence: readonly DimensionEvidence[],
   decisions: readonly DimensionDecisionTrace[],
 ): boolean {
-  return left.required === right.required
+  return isProhibited(left, evidence) === isProhibited(right, evidence)
+    && evidenceTier(left, evidence) === evidenceTier(right, evidence)
     && scoreOf(left, decisions) === scoreOf(right, decisions)
-    && Math.abs(left.nominalValue - right.nominalValue) <= Number.EPSILON;
+    && left.constraint === right.constraint;
 }
 
-function sameRootClosurePreference(
-  root: AxialDimensionCandidate,
-  left: AxialDimensionCandidate,
-  right: AxialDimensionCandidate,
-  decisions: readonly DimensionDecisionTrace[],
-  orientation: 'forward' | 'reversed',
-): boolean {
-  return isDirectionalTerminal(root, left, orientation) === isDirectionalTerminal(root, right, orientation)
-    && sameClosurePreference(left, right, decisions);
+function isProhibited(candidate: AxialDimensionCandidate, evidence: readonly DimensionEvidence[]): boolean {
+  return candidate.constraint === 'prohibited'
+    || candidate.evidenceIds.some((id) => evidence.find((item) => item.id === id)?.constraint === 'prohibited');
 }
-
-function isDirectionalTerminal(
-  root: AxialDimensionCandidate,
-  candidate: AxialDimensionCandidate,
-  orientation: 'forward' | 'reversed',
-): boolean {
-  return orientation === 'forward'
-    ? candidate.endStationId === root.endStationId
-    : candidate.startStationId === root.startStationId;
+function evidenceTier(candidate: AxialDimensionCandidate, evidence: readonly DimensionEvidence[]): number {
+  const authority = { ai: 0, geometry: 1, partition: 2, document: 3, manual: 4 } as const;
+  return Math.max(0, ...candidate.evidenceIds.map((id) => authority[evidence.find((item) => item.id === id)?.origin ?? 'ai']));
+}
+function closureRationale(
+  selected: AxialDimensionCandidate,
+  alternatives: readonly AxialDimensionCandidate[],
+  evidence: readonly DimensionEvidence[],
+): NonNullable<AxialChainNode['closureRationale']> {
+  return {
+    rule: 'hard-constraints-then-evidence-authority',
+    selectedEvidenceTier: evidenceTier(selected, evidence),
+    reasonCodes: [
+      isProhibited(selected, evidence) ? 'DIMENSION_CLOSURE_EXPLICITLY_PROHIBITED_FROM_DISPLAY' : 'DIMENSION_CLOSURE_LOWEST_EVIDENCE_AUTHORITY',
+    ],
+    counterfactualCandidateIds: alternatives.map(({ id }) => id),
+  };
 }
 
 function scoreCandidate(

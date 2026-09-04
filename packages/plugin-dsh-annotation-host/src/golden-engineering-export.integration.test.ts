@@ -46,7 +46,7 @@ describe('golden shaft complete engineering DXF export', () => {
     if (analyzed.status !== 'drafted') return;
     const partition = inferRegularShaftRegions(analyzed.draft);
     const engineering = parseEngineeringDocument(engineeringText);
-    const topology = buildAxialTopology({ partition, unit: engineering.drawing.unit ?? 'mm' });
+    const topology = buildAxialTopology({ document: imported.document, partition, unit: engineering.drawing.unit ?? 'mm' });
     const candidateSet = generateAxialDimensionCandidates({ topology, partition, document: engineering });
     const axialScheme = inferAxialDimensionScheme({
       topology, candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1,

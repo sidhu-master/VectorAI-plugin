@@ -10,11 +10,10 @@ interface SegmentRun {
 
 export function inferRegularShaftRegions(draft: PartitionDraft): PartitionDraft {
   const output = structuredClone(draft);
-  const minimumSpan = substantialSpan(output);
   for (const run of unclassifiedRuns(output)) {
     if (!isBoundedByTrustedDocumentRegions(output, run)
       || !hasAcceptedBoundarySteps(output, run)
-      || runSpan(run) < minimumSpan) continue;
+      || !hasStableGeometry(run)) continue;
     const zStart = run.segments[0]!.zStart;
     const zEnd = run.segments.at(-1)!.zEnd;
     const evidenceId = `fused:regular:${canonical(zStart)}-${canonical(zEnd)}`;
@@ -66,8 +65,8 @@ function isBoundedByTrustedDocumentRegions(draft: PartitionDraft, run: SegmentRu
   const tolerance = Math.max((draft.axis.zMax - draft.axis.zMin) * 1e-6, 1e-6);
   return leftGroup !== undefined && rightGroup !== undefined
     && leftGroup.range !== undefined && rightGroup.range !== undefined
-    && Math.abs(leftGroup.range.zEnd - run.segments[0]!.zStart) <= tolerance
-    && Math.abs(rightGroup.range.zStart - run.segments.at(-1)!.zEnd) <= tolerance
+    && leftGroup.range.zEnd <= run.segments[0]!.zStart + tolerance
+    && rightGroup.range.zStart >= run.segments.at(-1)!.zEnd - tolerance
     && trustedDocumentGroup(draft, leftGroup.evidenceIds)
     && trustedDocumentGroup(draft, rightGroup.evidenceIds);
 }
@@ -88,12 +87,12 @@ function hasAcceptedBoundarySteps(draft: PartitionDraft, run: SegmentRun): boole
   return accepted(run.segments[0]!.zStart) && accepted(run.segments.at(-1)!.zEnd);
 }
 
-function runSpan(run: SegmentRun): number {
-  return run.segments.at(-1)!.zEnd - run.segments[0]!.zStart;
-}
-
-function substantialSpan(draft: PartitionDraft): number {
-  return Math.max((draft.axis.zMax - draft.axis.zMin) * 0.05, 1e-6);
+function hasStableGeometry(run: SegmentRun): boolean {
+  const samples = run.segments.filter(({ profile }) => profile.sampleCount > 0);
+  if (samples.length !== run.segments.length || run.segments.length < 2) return false;
+  return samples.every(({ boundaryConfidence, diagnosticIds }) => (
+    boundaryConfidence >= 0.75 && diagnosticIds.length === 0
+  ));
 }
 
 function canonical(value: number): string {

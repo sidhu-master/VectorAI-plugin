@@ -27,4 +27,7 @@ declare module 'labella' {
     compute(): this;
     getLayers(): Array<Array<Node<T>>>;
   }
+
+  const Labella: { Node: typeof Node; Force: typeof Force };
+  export default Labella;
 }

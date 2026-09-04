@@ -17,6 +17,9 @@ export interface OpeningAngleFact {
   evidenceRefs: EvidenceId[];
   method: 'mirrored-line-pair-opening';
   error: number;
+  /** Axis-local coordinate used for end selection and layout. */
+  axialCoordinate?: number;
+  axialSide?: 'start' | 'end';
 }
 
 export interface OpeningAngleLayout {
@@ -24,4 +27,3 @@ export interface OpeningAngleLayout {
   definitionPoints: readonly [Vec2, Vec2, Vec2, Vec2, Vec2];
   lane: number;
 }
-

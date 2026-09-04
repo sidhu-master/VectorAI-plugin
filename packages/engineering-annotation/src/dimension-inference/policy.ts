@@ -19,6 +19,7 @@ export const SHAFT_HIERARCHICAL_DIMENSIONING_V1: AxialInferencePolicy = {
   ambiguityMargin: 12,
 };
 
-export function policyById(_id?: string): AxialInferencePolicy {
+export function policyById(id: string = SHAFT_HIERARCHICAL_DIMENSIONING_V1.id): AxialInferencePolicy {
+  if (id !== SHAFT_HIERARCHICAL_DIMENSIONING_V1.id) throw new Error(`DIMENSION_POLICY_UNKNOWN:${id}`);
   return SHAFT_HIERARCHICAL_DIMENSIONING_V1;
 }

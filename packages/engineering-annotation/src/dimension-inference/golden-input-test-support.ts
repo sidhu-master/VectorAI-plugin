@@ -24,7 +24,7 @@ export async function analyzeGoldenInferenceInput() {
   if (analyzed.status !== 'drafted') throw new Error(JSON.stringify(analyzed.diagnostics));
   const partition = inferRegularShaftRegions(analyzed.draft);
   const parsedDocument = parseEngineeringDocument(engineeringText);
-  const topology = buildAxialTopology({ partition, unit: parsedDocument.drawing.unit });
+  const topology = buildAxialTopology({ partition, document, unit: parsedDocument.drawing.unit });
   const candidateSet = generateAxialDimensionCandidates({ topology, partition, document: parsedDocument });
   return { partition, parsedDocument, topology, candidateSet };
 }

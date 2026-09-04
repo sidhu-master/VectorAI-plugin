@@ -141,6 +141,20 @@ describe('PartitionSessionStore', () => {
     expect(reloaded.confirm('s', ref)).toMatchObject({ confirmed: { id: 'partition-r2', parentRevisionId: 'partition-r1' } });
   });
 
+  it('recovers an interrupted analysis after process reload so the task can be retried', () => {
+    let saved: unknown = null;
+    const storage = { load: () => saved, save: (_sessionId: string, value: unknown) => { saved = structuredClone(value); } };
+    const ref = { drawingId: 'd', revision: 1 };
+    const first = new PartitionSessionStore(storage, { now: () => 7, id: () => 'partition-r1' });
+    first.beginAnalysis('s', ref);
+
+    const reloaded = new PartitionSessionStore(storage, { now: () => 8, id: () => 'partition-r2' });
+    expect(reloaded.get('s')).toMatchObject({ phase: 'idle', drawingRef: ref, canUndo: false, canRedo: false });
+
+    const persisted = saved as { snapshot: { phase: string } };
+    expect(persisted.snapshot.phase).toBe('idle');
+  });
+
   it('carries an editable partition forward when annotation-only changes create a new drawing revision', () => {
     const store = new PartitionSessionStore(undefined, { now: () => 9, id: () => 'partition-r1' });
     store.beginAnalysis('s', { drawingId: 'd', revision: 1 });

@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { DrawingDocument } from '@vectorai/drawing-core';
 import type { PartitionDraft, PartitionRevision } from '../partition/types';
+import { buildShaftContourTopology } from '../shaft/contour-topology';
 import type { AxialElementarySpan, AxialStation, AxialStationKind, AxialTopology } from './types';
 
 export interface BuildAxialTopologyInput {
   partition: PartitionDraft | PartitionRevision;
+  /** Source geometry is needed to distinguish dimension shoulders from chamfer/fillet transitions. */
+  document?: DrawingDocument;
   unit?: 'mm' | 'cm' | 'm' | 'in';
   coordinateTolerance?: number;
 }
@@ -20,7 +24,8 @@ export function buildAxialTopology(input: BuildAxialTopologyInput): AxialTopolog
   const { partition } = input;
   const length = partition.axis.zMax - partition.axis.zMin;
   const tolerance = input.coordinateTolerance ?? Math.max(Math.abs(length) * 1e-5, 1e-6);
-  const boundaries = collectBoundaryEvidence(partition);
+  const contour = input.document ? buildShaftContourTopology(input.document, partition.axis) : undefined;
+  const boundaries = collectBoundaryEvidence(partition, contour, tolerance);
   if (boundaries.some(({ z }) => !Number.isFinite(z))) throw new Error('DIMENSION_STATION_UNRESOLVED');
   const stations = mergeBoundaries(boundaries, partition.axis.zMin, input.unit ?? 'mm', tolerance);
   const elementarySpans = consecutiveSpans(stations, partition, tolerance);
@@ -33,22 +38,47 @@ export function buildAxialTopology(input: BuildAxialTopologyInput): AxialTopolog
   };
 }
 
-function collectBoundaryEvidence(partition: PartitionDraft | PartitionRevision): BoundaryEvidence[] {
+function collectBoundaryEvidence(
+  partition: PartitionDraft | PartitionRevision,
+  contour: ReturnType<typeof buildShaftContourTopology> | undefined,
+  tolerance: number,
+): BoundaryEvidence[] {
   const output: BoundaryEvidence[] = [
     { z: partition.axis.zMin, kinds: ['drawing-end'], geometryNodeIds: [], evidenceIds: ['axis:start'] },
     { z: partition.axis.zMax, kinds: ['drawing-end'], geometryNodeIds: [], evidenceIds: ['axis:end'] },
   ];
+  const dimensionShoulders = contour?.transitions.filter(({ kind, confidence }) => (
+    kind === 'shoulder' && confidence >= 0.55
+  )) ?? [];
+  // The partition can contain chamfer/fillet decomposition boundaries. When
+  // source geometry is available, only contour transitions classified as true
+  // shoulders become dimension stations; semantic group ranges still add
+  // explicit functional boundaries such as a bearing seat start.
+  const useContourBoundaries = dimensionShoulders.length > 0;
+  const isDimensionBoundary = (z: number): boolean => !useContourBoundaries || dimensionShoulders.some(({ z: shoulder }) => (
+    Math.abs(shoulder - z) <= tolerance * 12
+  ));
   for (const segment of partition.segments) {
-    output.push({
+    if (!isDimensionBoundary(segment.zStart) && !isDimensionBoundary(segment.zEnd)) continue;
+    if (isDimensionBoundary(segment.zStart)) output.push({
       z: segment.zStart,
       kinds: ['partition-boundary'],
       geometryNodeIds: segment.geometryNodeIds,
       evidenceIds: segment.boundaryEvidenceIds,
-    }, {
+    });
+    if (isDimensionBoundary(segment.zEnd)) output.push({
       z: segment.zEnd,
       kinds: ['partition-boundary'],
       geometryNodeIds: segment.geometryNodeIds,
       evidenceIds: segment.boundaryEvidenceIds,
+    });
+  }
+  for (const transition of dimensionShoulders) {
+    output.push({
+      z: transition.z,
+      kinds: ['shoulder'],
+      geometryNodeIds: transition.geometryNodeIds,
+      evidenceIds: transition.geometryNodeIds.map((id) => `geometry:${id}`),
     });
   }
   for (const group of partition.semanticGroups) {
@@ -64,7 +94,7 @@ function collectBoundaryEvidence(partition: PartitionDraft | PartitionRevision):
       });
     }
   }
-  if ('stepCandidates' in partition) {
+  if (!useContourBoundaries && 'stepCandidates' in partition) {
     for (const step of partition.stepCandidates.filter(({ accepted }) => accepted)) {
       output.push({ z: step.z, kinds: ['shoulder'], geometryNodeIds: [], evidenceIds: [step.id, ...step.evidenceIds] });
     }
@@ -85,7 +115,8 @@ function mergeBoundaries(
     else groups.push([value]);
   }
   return groups.map((group) => {
-    const sourceCoordinate = average(group.map(({ z }) => z));
+    const authoritative = group.filter(({ evidenceIds }) => evidenceIds.some((id) => id.startsWith('group:')));
+    const sourceCoordinate = average((authoritative.length > 0 ? authoritative : group).map(({ z }) => z));
     const coordinate = canonicalEngineeringCoordinate(sourceCoordinate - zMin);
     return {
       id: `station:${formatCoordinate(coordinate)}`,

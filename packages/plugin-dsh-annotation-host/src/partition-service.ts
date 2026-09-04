@@ -16,6 +16,7 @@ import type { AnnotationSessionStateStore } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
 import { extractEngineeringDocuments } from './engineering-document-extractor';
 import { ENGINEERING_DOCUMENT_LIMITS } from './engineering-document-extractor';
+import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
 
 export interface PartitionSemanticReviewInput {
   agent: Agent;
@@ -150,43 +151,45 @@ export class PartitionWorkflowService {
     const sessionId = String(agent.id);
     this.annotations.start(sessionId, `partition_${randomUUID()}`);
     this.partitions.beginAnalysis(sessionId, snapshot.ref);
-    const analyzed = analyzeShaftPartition({
-      document: snapshot.document,
-      drawingRef: snapshot.ref,
-      ...(engineeringText === undefined ? {} : { engineeringText }),
-      drawingSourceName,
-    });
-    if (analyzed.status === 'rejected') {
-      this.annotations.finish(sessionId, 'failed', analyzed.diagnostics.map(({ code }) => code).join(', '));
-      throw new Error(`PARTITION_ANALYSIS_REJECTED:${analyzed.diagnostics.map(({ code }) => code).join(',')}`);
-    }
-    let draft = analyzed.draft;
-    let semanticReviewCompleted = analyzed.semanticReviewSegmentIds.length === 0;
-    if (analyzed.semanticReviewSegmentIds.length > 0 && this.reviewer) {
-      try {
-        draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.semanticReviewSegmentIds, signal })).draft;
-        semanticReviewCompleted = true;
-      } catch (error) {
-        if (signal?.aborted) {
-          this.partitions.cancel(sessionId, snapshot.ref);
-          this.annotations.release(sessionId);
-          throw signal.reason ?? error;
-        }
-        draft = structuredClone(draft);
-        draft.diagnostics.push({
-          id: 'diagnostic:ai-semantic-unavailable', severity: 'warning', code: 'AI_SEMANTIC_REVIEW_UNAVAILABLE',
-          message: error instanceof Error ? error.message : String(error),
-          segmentIds: analyzed.semanticReviewSegmentIds,
-        });
+    try {
+      const analyzed = analyzeShaftPartition({
+        document: snapshot.document,
+        drawingRef: snapshot.ref,
+        ...(engineeringText === undefined ? {} : { engineeringText }),
+        drawingSourceName,
+      });
+      if (analyzed.status === 'rejected') {
+        throw new Error(`PARTITION_ANALYSIS_REJECTED:${analyzed.diagnostics.map(({ code }) => code).join(',')}`);
       }
+      let draft = analyzed.draft;
+      let semanticReviewCompleted = analyzed.semanticReviewSegmentIds.length === 0;
+      if (analyzed.semanticReviewSegmentIds.length > 0 && this.reviewer) {
+        try {
+          draft = (await this.reviewer({ agent, draft, segmentIds: analyzed.semanticReviewSegmentIds, signal })).draft;
+          semanticReviewCompleted = true;
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason ?? error;
+          draft = structuredClone(draft);
+          draft.diagnostics.push({
+            id: 'diagnostic:ai-semantic-unavailable', severity: 'warning', code: 'AI_SEMANTIC_REVIEW_UNAVAILABLE',
+            message: error instanceof Error ? error.message : String(error),
+            segmentIds: analyzed.semanticReviewSegmentIds,
+          });
+        }
+      }
+      if (semanticReviewCompleted) draft = inferRegularShaftRegions(draft);
+      draft = {
+        ...draft,
+        geometryFingerprint: partitionGeometryFingerprint(snapshot.document),
+      };
+      signal?.throwIfAborted();
+      return this.partitions.setDraft(sessionId, draft);
+    } catch (error) {
+      try { this.partitions.cancel(sessionId, snapshot.ref); } catch { /* Preserve the original analysis failure. */ }
+      if (signal?.aborted) this.annotations.release(sessionId);
+      else this.annotations.finish(sessionId, 'failed', error instanceof Error ? error.message : String(error));
+      throw error;
     }
-    if (semanticReviewCompleted) draft = inferRegularShaftRegions(draft);
-    if (signal?.aborted) {
-      this.partitions.cancel(sessionId, snapshot.ref);
-      this.annotations.release(sessionId);
-      throw signal.reason ?? new Error('PARTITION_ANALYSIS_CANCELED');
-    }
-    return this.partitions.setDraft(sessionId, draft);
   }
 
   getState(agent: Agent): PartitionSessionSnapshot { return this.partitions.get(String(agent.id)); }

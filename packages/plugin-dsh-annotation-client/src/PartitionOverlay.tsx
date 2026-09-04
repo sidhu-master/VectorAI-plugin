@@ -3,8 +3,9 @@
 import type { PartitionDraft, PartitionRevision } from '@vectorai/plugin-space-contracts';
 import { screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import type { PointerEvent } from 'react';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { partitionBands, type PartitionBand, type PartitionViewMode } from './partition-view-model';
+import { useRafPreview } from './useRafPreview';
 
 interface BoundaryDrag {
   target: BoundaryTarget;
@@ -19,16 +20,19 @@ type BoundaryTarget =
 
 interface BoundaryHandle { key: string; z: number; target: BoundaryTarget }
 
-export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary, onMoveSemanticRange, onRenameBand }: {
+export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scale, onMoveBoundary, onMoveSemanticRange, onRenameBand, onInteractionActiveChange }: {
   draft: PartitionDraft | PartitionRevision; mode: PartitionViewMode; previewHeld: boolean; scale: number;
   onMoveBoundary?(index: number, z: number): void | Promise<void>;
   onMoveSemanticRange?(groupId: string, edge: 'start' | 'end', z: number): void | Promise<void>;
   onRenameBand?(band: PartitionBand, name: string): void | Promise<void>;
+  onInteractionActiveChange?(active: boolean): void;
 }) {
   const [drag, setDrag] = useState<BoundaryDrag | null>(null);
   const [naming, setNaming] = useState<{ bandId: string; value: string } | null>(null);
   const nameCommit = useRef<string | null>(null);
   const current = useRef<BoundaryDrag | null>(null);
+  const pendingCommit = useRef<{ key: string; source: PartitionDraft | PartitionRevision } | null>(null);
+  const dragPreview = useRafPreview((value: BoundaryDrag) => setDrag(value));
   const point = (z: number, r: number): [number, number] => [
     draft.axis.origin[0]! + draft.axis.direction[0]! * z + draft.axis.normal[0]! * r,
     draft.axis.origin[1]! + draft.axis.direction[1]! * z + draft.axis.normal[1]! * r,
@@ -46,7 +50,7 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
       lastClientX: event.clientX,
       lastClientY: event.clientY,
     };
-    setDrag(current.current);
+    dragPreview.schedule(current.current);
   };
   const finishPointer = async (event: PointerEvent<SVGCircleElement>, releaseCapture: boolean) => {
     event.preventDefault();
@@ -56,7 +60,9 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
     if (releaseCapture) {
       try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* capture was already lost */ }
     }
-    if (!value) return;
+    if (!value) { onInteractionActiveChange?.(false); return; }
+    dragPreview.flush(value);
+    pendingCommit.current = { key: targetKey(value.target), source: draft };
     try {
       if (value.target.kind === 'segment') {
         if (!onMoveBoundary) throw new Error('PARTITION_BOUNDARY_HANDLER_REQUIRED');
@@ -66,14 +72,17 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
         if (!onMoveSemanticRange) throw new Error('PARTITION_SEMANTIC_RANGE_HANDLER_REQUIRED');
         await onMoveSemanticRange(value.target.groupId, value.target.edge, value.z);
       }
-      setDrag(null);
     } catch {
+      pendingCommit.current = null;
       // Keep the local result visible. The controller exposes the persistence error and
       // the user can retry the drag or cancel the whole draft explicitly.
       setDrag(value);
+    } finally {
+      onInteractionActiveChange?.(false);
     }
   };
-  const bands = partitionBands(draft, mode);
+  const bands = useMemo(() => partitionBands(draft, mode), [draft, mode]);
+  const visibleDrag = pendingCommit.current !== null && pendingCommit.current.source !== draft ? null : drag;
   const commitName = async (band: PartitionBand) => {
     if (naming?.bandId !== band.id) return;
     const name = naming.value.trim();
@@ -96,7 +105,7 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
     }
   };
   const editable = onMoveBoundary !== undefined || onMoveSemanticRange !== undefined;
-  const handles: BoundaryHandle[] = !editable ? [] : mode === 'segments'
+  const handles: BoundaryHandle[] = useMemo(() => !editable ? [] : mode === 'segments'
     ? [...new Set(bands.flatMap(({ startBoundaryIndex, endBoundaryIndex }) => [startBoundaryIndex, endBoundaryIndex]))]
       .filter((index) => index > 0 && index < draft.segments.length)
       .sort((a, b) => a - b)
@@ -107,19 +116,19 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
         { key: `semantic:${band.id}:start`, z: band.zStart, target: { kind: 'semantic' as const, groupId: band.id, edge: 'start' as const, label } },
         { key: `semantic:${band.id}:end`, z: band.zEnd, target: { kind: 'semantic' as const, groupId: band.id, edge: 'end' as const, label } },
       ];
-    }).sort((a, b) => a.z - b.z || a.key.localeCompare(b.key));
-  const boundaryLanes = handles.map(({ z }, offset) => {
+    }).sort((a, b) => a.z - b.z || a.key.localeCompare(b.key)), [bands, draft.segments, editable, mode]);
+  const boundaryLanes = useMemo(() => handles.map(({ z }, offset) => {
     const previousIsClose = offset > 0 && Math.abs(z - handles[offset - 1]!.z) * scale < 18;
     const nextIsClose = offset < handles.length - 1 && Math.abs(handles[offset + 1]!.z - z) * scale < 18;
     return previousIsClose ? 1 : nextIsClose ? -1 : 0;
-  });
+  }), [handles, scale]);
   return <g data-partition-overlay="true">
     {bands.map((band, bandIndex) => {
       const radius = Math.max(...band.segments.map(({ profile }) => profile.maxRadius), 0.1) * 1.04;
-      const zStart = drag?.target.kind === 'segment' && drag.target.index === band.startBoundaryIndex
-        || drag?.target.kind === 'semantic' && drag.target.groupId === band.id && drag.target.edge === 'start' ? drag.z : band.zStart;
-      const zEnd = drag?.target.kind === 'segment' && drag.target.index === band.endBoundaryIndex
-        || drag?.target.kind === 'semantic' && drag.target.groupId === band.id && drag.target.edge === 'end' ? drag.z : band.zEnd;
+      const zStart = visibleDrag?.target.kind === 'segment' && visibleDrag.target.index === band.startBoundaryIndex
+        || visibleDrag?.target.kind === 'semantic' && visibleDrag.target.groupId === band.id && visibleDrag.target.edge === 'start' ? visibleDrag.z : band.zStart;
+      const zEnd = visibleDrag?.target.kind === 'segment' && visibleDrag.target.index === band.endBoundaryIndex
+        || visibleDrag?.target.kind === 'semantic' && visibleDrag.target.groupId === band.id && visibleDrag.target.edge === 'end' ? visibleDrag.z : band.zEnd;
       const polygon = [point(zStart, -radius), point(zEnd, -radius), point(zEnd, radius), point(zStart, radius)];
       const label = bandLabel(band, bandIndex);
       const labelAnchor = point((zStart + zEnd) / 2, radius);
@@ -171,7 +180,7 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
       </g>;
     })}
     {!previewHeld && handles.map((handle, offset) => {
-      const z = drag?.target.kind === handle.target.kind && targetKey(drag.target) === targetKey(handle.target) ? drag.z : handle.z;
+      const z = visibleDrag?.target.kind === handle.target.kind && targetKey(visibleDrag.target) === targetKey(handle.target) ? visibleDrag.z : handle.z;
       const anchor = point(z, 0);
       const lane = boundaryLanes[offset]!;
       const position = point(z, lane * 12 / Math.max(scale, 0.01));
@@ -186,8 +195,10 @@ export function PartitionOverlay({ draft, mode = 'functional', previewHeld, scal
           event.preventDefault();
           event.stopPropagation();
           event.currentTarget.setPointerCapture(event.pointerId);
+          pendingCommit.current = null;
           current.current = { target: handle.target, z, lastClientX: event.clientX, lastClientY: event.clientY };
           setDrag(current.current);
+          onInteractionActiveChange?.(true);
         }}
         onPointerMove={pointerMove}
         onPointerUp={(event) => finishPointer(event, true)}

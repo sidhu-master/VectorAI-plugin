@@ -133,7 +133,9 @@ export function updateSegmentMetadata(draft: PartitionDraft, input: { segmentId:
 
 function snap(value: number, candidates: StepCandidate[], tolerance: number): number {
   if (!Number.isFinite(value) || !Number.isFinite(tolerance) || tolerance < 0) throw new Error('PARTITION_BOUNDARY_INVALID');
-  const eligible = candidates.filter(({ z }) => Math.abs(z - value) <= tolerance).sort((a, b) => b.score - a.score || Math.abs(a.z - value) - Math.abs(b.z - value));
+  const eligible = candidates
+    .filter(({ accepted, z }) => accepted && Math.abs(z - value) <= tolerance)
+    .sort((a, b) => Math.abs(a.z - value) - Math.abs(b.z - value) || b.score - a.score || a.z - b.z);
   return eligible[0]?.z ?? value;
 }
 

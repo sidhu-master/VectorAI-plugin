@@ -8,7 +8,7 @@ import {
   type ToleranceProjection,
   type Vec2,
 } from '@vectorai/drawing-core';
-import type { MouseEvent } from 'react';
+import { memo, type MouseEvent } from 'react';
 
 import { nodeBounds, worldBoundsForViewport } from './geometry';
 import { HatchRenderer } from './HatchRenderer';
@@ -44,7 +44,12 @@ export function EntityRenderer({
     : node.type === 'section-hatch'
       ? ' vai-entity--section-hatch'
       : '';
-  const className = `vai-entity vai-entity--${node.quality.status}${semanticClassName}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${motionRigActive ? ' vai-entity--motion-rig' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
+  const sourceClassName = node.sourceRef?.layer === 'DETAIL-THREAD'
+    ? ' vai-entity--thread-minor'
+    : node.sourceRef?.layer === 'DETAIL-THREAD-LIMIT'
+      ? ' vai-entity--thread-limit'
+      : '';
+  const className = `vai-entity vai-entity--${node.quality.status}${semanticClassName}${sourceClassName}${selected ? ' vai-entity--selected' : ''}${aiGrounded ? ' vai-entity--ai-grounded' : ''}${motionRigActive ? ' vai-entity--motion-rig' : ''}${previewDiff === undefined ? '' : ` vai-entity--preview-${previewDiff}`}`;
   const interactiveText = (node.type === 'text' || node.type === 'dimension') && onTextPointerDown !== undefined;
   return (
     <g
@@ -100,7 +105,7 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
     case 'polyline':
       return <path d={polylinePath(node)} fill="none" {...vectorStroke} />;
     case 'spline':
-      return <path d={splinePath(node, viewport)} fill="none" {...vectorStroke} />;
+      return <SplineRenderer node={node} viewportScale={viewport.scale} />;
     case 'text':
       return <WorldText position={node.position} rotation={node.rotation} height={node.height} align={node.alignment}>{node.content}</WorldText>;
     case 'dimension':
@@ -146,6 +151,16 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
       return <HatchRenderer node={node} viewportScale={viewport.scale} />;
   }
 }
+
+const SplineRenderer = memo(function SplineRenderer({
+  node,
+  viewportScale,
+}: {
+  node: Extract<GeometryNode, { type: 'spline' }>;
+  viewportScale: number;
+}) {
+  return <path d={splinePath(node, viewportScale)} fill="none" vectorEffect="non-scaling-stroke" />;
+});
 
 function DiameterDimension({
   node,
@@ -306,9 +321,9 @@ function pointsAttribute(points: readonly Vec2[]): string {
 
 function splinePath(
   node: Extract<GeometryNode, { type: 'spline' }>,
-  viewport: DrawingWorkspaceViewport,
+  viewportScale: number,
 ): string {
-  const points = sampleSpline(node, { maxError: Math.max(0.25 / viewport.scale, 1e-8) });
+  const points = sampleSpline(node, { maxError: Math.max(0.25 / viewportScale, 1e-8) });
   if (points.length === 0) return '';
   if (points.length === 1) return `M ${points[0][0]} ${points[0][1]}`;
   const commands = [

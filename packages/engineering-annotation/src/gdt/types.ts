@@ -2,7 +2,7 @@
 
 import type { DimensionTarget } from '@vectorai/drawing-core';
 import type { DrawingRef } from '@vectorai/drawing-edit-protocol';
-import type { EngineeringDiagnostic } from '../dimension/types';
+import type { EngineeringDecisionAuthority, EngineeringDiagnostic } from '../dimension/types';
 
 export type GeometricCharacteristic =
   | 'straightness' | 'flatness' | 'circularity' | 'cylindricity'
@@ -46,6 +46,7 @@ export interface GeometricToleranceIntent {
   source: 'document' | 'geometry' | 'manual' | 'ai-candidate';
   status: 'candidate' | 'pending-calculation' | 'resolved' | 'confirmed' | 'conflict' | 'stale';
   evidenceIds: string[];
+  decisionAuthority?: EngineeringDecisionAuthority;
   /** World-space top-left position shared by rows rendered in one tolerance frame. */
   framePosition?: [number, number];
 }

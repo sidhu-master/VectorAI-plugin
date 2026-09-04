@@ -2,11 +2,15 @@
 
 import type { SectionHatchAnnotation, Vec2 } from '@vectorai/drawing-core';
 import { createHatchRenderPlan } from '@vectorai/drawing-hatch';
-import { useId } from 'react';
+import { memo, useId, useMemo } from 'react';
 
-export function HatchRenderer({ node, viewportScale }: { node: SectionHatchAnnotation; viewportScale: number }) {
+export const HatchRenderer = memo(function HatchRenderer({ node, viewportScale }: { node: SectionHatchAnnotation; viewportScale: number }) {
   const clipId = `vai-hatch-${useId().replace(/:/g, '')}`;
   const vectorStroke = { vectorEffect: 'non-scaling-stroke' as const };
+  const tolerance = Math.min(0.05, Math.max(1e-6, 0.25 / Math.max(viewportScale, 1e-9)));
+  const result = useMemo(() => node.hatch === undefined
+    ? null
+    : createHatchRenderPlan(node.hatch, tolerance), [node.hatch, tolerance]);
   if (node.hatch === undefined) {
     return (
       <g data-section-hatch={node.pattern}>
@@ -16,8 +20,7 @@ export function HatchRenderer({ node, viewportScale }: { node: SectionHatchAnnot
       </g>
     );
   }
-  const tolerance = Math.min(0.05, Math.max(1e-6, 0.25 / Math.max(viewportScale, 1e-9)));
-  const result = createHatchRenderPlan(node.hatch, tolerance);
+  if (result === null) return null;
   if (result.status !== 'ok') return <g data-section-hatch={node.pattern} data-hatch-error={result.code} />;
   const path = result.plan.region.contours.map(contourPath).join(' ');
   return (
@@ -39,7 +42,7 @@ export function HatchRenderer({ node, viewportScale }: { node: SectionHatchAnnot
       ))}
     </g>
   );
-}
+});
 
 function contourPath(points: Vec2[]): string {
   if (points.length === 0) return '';

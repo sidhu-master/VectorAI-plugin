@@ -6,6 +6,8 @@ export * from './partition/invariants';
 export * from './partition/edit';
 export * from './engineering-document/parser';
 export * from './shaft/axis';
+export * from './shaft/coordinate-frame';
+export * from './shaft/contour-topology';
 export * from './shaft/profile';
 export * from './shaft/steps';
 export * from './partition/fuse';

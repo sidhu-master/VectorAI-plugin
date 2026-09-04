@@ -18,6 +18,7 @@ import type {
 import type { AnnotationSessionStateStore, AnnotationWorkflowStage } from './session-state';
 import type { PartitionSessionStore } from './partition-store';
 import type { GdtRecommendation } from './gdt-grounding';
+import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
 
 export function createEngineeringAnnotationTool(
   host: Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'runExtensionProgram'>,
@@ -35,6 +36,13 @@ export function createEngineeringAnnotationTool(
       reportStage: (stage: AnnotationWorkflowStage) => void,
     ) => DimensionPlanSessionSnapshot | Promise<DimensionPlanSessionSnapshot>;
     requiresGdtRecommendation?: boolean;
+    preparePartition?: (agent: Agent, signal?: AbortSignal) => PartitionSessionSnapshot | Promise<PartitionSessionSnapshot>;
+    shouldUsePartition?: (sessionId: string) => boolean;
+    resolvePartitionDecision?: (
+      agent: Agent,
+      signal: AbortSignal | undefined,
+      partition: PartitionSessionSnapshot,
+    ) => 'confirm' | 'skip' | Promise<'confirm' | 'skip'>;
   } = {
     name: 'drawing_auto_annotate',
     description: 'AUTHORITATIVE ROUTE for generic automatic or complete engineering annotation. Call it directly without drawing_observe or individual annotation tools. The registered set runs as one host-owned workflow.',
@@ -51,13 +59,63 @@ export function createEngineeringAnnotationTool(
       const agent = exec.agent;
       if (!agent) throw new Error('DRAWING_SESSION_REQUIRED');
       const sessionId = String(agent.id);
-      const partition = partitions?.get(sessionId);
-      if (partition?.phase === 'analyzing') {
-        throw new Error('PARTITION_ANALYSIS_ACTIVE: wait until the editable partition draft is ready before opening-angle annotation');
-      }
+      let partition = partitions?.get(sessionId);
+      let usePartition = options.shouldUsePartition?.(sessionId) ?? true;
+      let partitionDecisionResolved = false;
       const snapshot = host.getSnapshot(agent);
       if (!snapshot) throw new Error('DRAWING_REQUIRED');
       const workflowId = `annotation_${sessionId}_${Date.now()}`;
+      const partitionValue = partition?.draft ?? partition?.confirmed;
+      if (
+        partition?.drawingRef !== undefined
+        && partitionValue?.geometryFingerprint !== undefined
+        && partition.drawingRef.drawingId === snapshot.ref.drawingId
+        && partition.drawingRef.revision !== snapshot.ref.revision
+        && partitionValue.geometryFingerprint === partitionGeometryFingerprint(snapshot.document)
+      ) {
+        partition = partitions?.advanceDrawingRevision(sessionId, partition.drawingRef, snapshot.ref) ?? partition;
+      }
+      if (options.preparePartition !== undefined && usePartition) {
+        if (partition?.phase === 'analyzing') {
+          return {
+            status: 'awaiting-partition-analysis', completionClaimAllowed: false,
+            partitionStatus: 'analyzing', nextAction: 'wait-for-partition-preview',
+          } as unknown as JsonValue;
+        }
+        if (partition?.phase === 'editing' && partition.draft !== undefined) {
+          sessions.start(sessionId, workflowId, 'review');
+          sessions.advance(sessionId, 'review', 'reviewing');
+          if (options.resolvePartitionDecision === undefined) return partitionConfirmationResult(partition);
+          const decision = await options.resolvePartitionDecision(agent, exec.signal, partition);
+          usePartition = decision === 'confirm';
+          partitionDecisionResolved = true;
+          partition = partitions?.get(sessionId) ?? partition;
+        }
+        const confirmedMatchesDrawing = partition?.phase === 'confirmed'
+          && partition.confirmed?.drawingRef.drawingId === snapshot.ref.drawingId
+          && partition.confirmed.drawingRef.revision === snapshot.ref.revision;
+        if (!confirmedMatchesDrawing && !partitionDecisionResolved) {
+          try {
+            sessions.start(sessionId, workflowId, 'review');
+            partition = await options.preparePartition(agent, exec.signal);
+            if (partition.phase === 'editing' && partition.draft !== undefined) {
+              sessions.start(sessionId, workflowId, 'review');
+              sessions.advance(sessionId, 'review', 'reviewing');
+              if (options.resolvePartitionDecision === undefined) return partitionConfirmationResult(partition);
+              const decision = await options.resolvePartitionDecision(agent, exec.signal, partition);
+              usePartition = decision === 'confirm';
+              partitionDecisionResolved = true;
+              partition = partitions?.get(sessionId) ?? partition;
+            }
+          } catch (error) {
+            if (!(error instanceof Error) || !error.message.startsWith('PARTITION_ANALYSIS_REJECTED')) throw error;
+            usePartition = false;
+          }
+        }
+      }
+      if (partition?.phase === 'analyzing') {
+        throw new Error('PARTITION_ANALYSIS_ACTIVE: wait until the editable partition draft is ready before opening-angle annotation');
+      }
       sessions.start(sessionId, workflowId, 'deterministic');
       try {
         const plan = planEngineeringAnnotations({
@@ -83,7 +141,13 @@ export function createEngineeringAnnotationTool(
               dimensionPlans.markNeedsRebase(sessionId, workflow.result.ref);
             }
           }
-          if (workflow.result.status !== 'committed' && workflow.result.status !== 'already-satisfied') {
+          const deterministicPreviewPending = workflow.result.status === 'rejected'
+            && 'disposition' in workflow.result
+            && workflow.result.disposition === 'confirmation_required'
+            && workflow.result.code === 'LIFECYCLE_CHANGE';
+          if (workflow.result.status !== 'committed'
+            && workflow.result.status !== 'already-satisfied'
+            && !deterministicPreviewPending) {
             sessions.finish(sessionId, terminalStatus(workflow.result.status));
             return {
               status,
@@ -94,11 +158,11 @@ export function createEngineeringAnnotationTool(
             } as unknown as JsonValue;
           }
         }
-        const followup = await options.afterAnnotations?.(
+        const followup = usePartition ? await options.afterAnnotations?.(
           agent,
           exec.signal,
           (stage) => sessions.advance(sessionId, stage),
-        );
+        ) : undefined;
         if (followup?.phase === 'editing') sessions.advance(sessionId, 'review', 'reviewing');
         else sessions.finish(sessionId, 'completed');
         const dimensionDraft = followup?.draft;
@@ -107,19 +171,35 @@ export function createEngineeringAnnotationTool(
         const gdtCoverageComplete = dimensionDraft?.diagnostics.some(({ code }) => code === 'GDT_COVERAGE_COMPLETE') === true;
         const gdtNeedsUserInput = dimensionDraft?.diagnostics.some(({ code }) => code === 'GDT_USER_INPUT_REQUIRED') === true;
         const clarificationQuestions = dimensionDraft?.diagnostics
-          .filter(({ code }) => code === 'GDT_FEATURE_CONFIDENCE_LOW' || code === 'GDT_AXIS_SUPPORT_PAIR_REQUIRED')
+          .filter(({ code }) => code === 'GDT_FEATURE_CONFIDENCE_LOW'
+            || code === 'GDT_AXIS_SUPPORT_PAIR_REQUIRED'
+            || code === 'GDT_ENGINEERING_REQUIREMENTS_REQUIRED'
+            || code === 'GDT_RECOMMENDATION_CONFIRMATION_REQUIRED'
+            || code === 'GDT_REQUIREMENT_INVALID')
           .map(({ message }) => message) ?? [];
-        const automaticSetReady = options.requiresGdtRecommendation !== true
+        const automaticSetReady = !usePartition || options.requiresGdtRecommendation !== true
           || dimensionDraft?.axialScheme !== undefined && datumCount > 0 && gdtCount > 0 && gdtCoverageComplete;
-        const awaitingGdt = options.requiresGdtRecommendation === true && !automaticSetReady;
+        const awaitingGdt = usePartition && options.requiresGdtRecommendation === true && !automaticSetReady;
         return {
-          status: gdtNeedsUserInput ? 'needs-user-input' : awaitingGdt ? 'awaiting-gdt-recommendation' : status,
-          ...(awaitingGdt ? { deterministicStatus: status } : {}),
+          status: !usePartition ? 'completed-without-partition'
+            : gdtNeedsUserInput ? 'needs-user-input'
+              : awaitingGdt ? 'awaiting-gdt-recommendation'
+                : status === 'rejected' ? 'preview-ready' : status,
+          ...(awaitingGdt || status === 'rejected' ? { deterministicStatus: status } : {}),
           annotations: plan.annotations.map(({ id }) => id),
           pending: plan.pending,
           suppressed: plan.suppressed,
           ...(result === undefined ? {} : { result }),
-          ...(followup === undefined ? {} : {
+          ...(!usePartition ? {
+            annotationSet: {
+              deterministicKinds: [...options.annotationKinds],
+              partitionStatus: 'skipped',
+              completionStatus: 'partial',
+              completionClaimAllowed: false,
+              skippedStages: ['dimension-chain', 'datum-gdt', 'surface-texture'],
+              nextAction: 'report-basic-annotations-complete-and-partition-dependent-stages-skipped',
+            },
+          } : followup === undefined ? {} : {
             annotationSet: {
               deterministicKinds: [...options.annotationKinds],
               dimensionChainStatus: followup.phase,
@@ -154,6 +234,21 @@ export function createEngineeringAnnotationTool(
       }
     },
   });
+}
+
+function partitionConfirmationResult(partition: PartitionSessionSnapshot): JsonValue {
+  const draft = partition.draft;
+  return {
+    status: 'awaiting-partition-confirmation',
+    completionClaimAllowed: false,
+    partitionStatus: 'preview-ready',
+    segmentCount: draft?.segments.length ?? 0,
+    semanticGroupCount: draft?.semanticGroups.length ?? 0,
+    nextAction: 'ask-user-whether-to-use-partition-before-continuing-automatic-annotation',
+    confirmationPrompt: '已生成智能分区预览，是否采用该分区并继续自动标注？',
+    acceptedReplies: ['确认', '使用分区', '继续'],
+    rejectedReplies: ['不使用分区', '跳过分区'],
+  } as unknown as JsonValue;
 }
 
 export function createOpeningAngleAnnotationTool(
@@ -249,7 +344,7 @@ export function createDimensionChainStartTool(workflow: {
 }) {
   return defineTool({
     name: 'drawing_dimension_chain_start',
-    description: 'Start axial nominal dimension-chain inference only when the user explicitly asks for a dimension chain or a dimensioning workflow that requires one. Never call this merely because a DXF or engineering document was uploaded. Local geometry owns all coordinates, nominal values, and arithmetic.',
+    description: 'Start axial nominal dimension-chain inference only when the user explicitly asks for a dimension chain or a dimensioning workflow that requires one. Never call this merely because a DXF or engineering document was uploaded. Local geometry owns all coordinates, nominal values, and arithmetic. A resolved result is terminal for this generation request: the dimension chain is already visible and directly editable, so report completion and do not enter the generic drawing preview/finalize/select workflow.',
     parameters: {
       policy: {
         type: 'string',
@@ -262,13 +357,18 @@ export function createDimensionChainStartTool(workflow: {
       if (!exec.agent) throw new Error('DRAWING_SESSION_REQUIRED');
       const policy = 'shaft-hierarchical-dimensioning-v1';
       const snapshot = workflow.start(exec.agent, policy);
+      const ready = snapshot.draft?.axialScheme?.status === 'resolved';
       return {
-        status: snapshot.phase,
+        status: ready ? 'ready' : snapshot.phase,
+        planPhase: snapshot.phase,
         schemeStatus: snapshot.draft?.axialScheme?.status,
         displayedDimensionCount: snapshot.draft?.axialScheme?.displayedCandidateIds.length ?? 0,
         closureCount: snapshot.draft?.axialScheme?.closureCandidateIds.length ?? 0,
         diagnostics: snapshot.draft?.axialScheme?.diagnostics.map(({ code }) => code) ?? [],
-        nextAction: snapshot.draft?.axialScheme?.status === 'resolved' ? 'preview-or-confirm' : 'review-dimension-chain',
+        completionClaimAllowed: ready,
+        nextAction: ready
+          ? 'report-dimension-chain-ready-and-stop; do-not-call-drawing_observe-drawing_evaluate_preview-drawing_finalize_preview-drawing_select_parts-or-drawing_confirm_selection'
+          : 'review-dimension-chain',
       } as unknown as JsonValue;
     },
   });

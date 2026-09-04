@@ -50,7 +50,7 @@ function makeDraft(): PartitionDraft {
     segment(41.5, 53),
     segment(53, 92),
     segment(92, 147, 'gear', '一级齿轮'),
-    segment(147, 150),
+    { ...segment(147, 150), profile: { minRadius: 10, maxRadius: 20, sampleCount: 2 } },
     segment(150, 173, 'bearing', '右轴承位'),
   ];
   const group = (id: string, segmentId: string, semanticType: string, name: string) => {
@@ -78,7 +78,7 @@ function segment(zStart: number, zEnd: number, semanticType?: string, name?: str
   return {
     id: `segment:${zStart}-${zEnd}`,
     zStart, zEnd,
-    profile: { minRadius: 10, maxRadius: 20, sampleCount: 2 },
+      profile: { minRadius: 20, maxRadius: 20, sampleCount: 2 },
     boundaryConfidence: 1,
     geometryNodeIds: [], boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [],
     ...(semanticType === undefined ? {} : { semanticType }),

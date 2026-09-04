@@ -8,7 +8,7 @@ import type {
   Vec2,
 } from '@vectorai/drawing-core';
 import type { DrawingSourceRef, DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
-import type { MouseEvent } from 'react';
+import { memo, useMemo, type MouseEvent } from 'react';
 
 import { CadGrid } from '../canvas/Grid';
 import { EntityRenderer } from '../canvas/EntityRenderer';
@@ -25,7 +25,7 @@ export function AxesLayer({ viewport }: { viewport: DrawingWorkspaceViewport }) 
   return <CadGrid viewport={viewport} showGrid={false} showAxes />;
 }
 
-export function SourceLayer({
+export const SourceLayer = memo(function SourceLayer({
   document,
   source,
   sourceUrl,
@@ -40,7 +40,7 @@ export function SourceLayer({
     resource={{ url: sourceUrl, dispose() {} }}
     document={document}
   />;
-}
+});
 
 export interface EntityLayerProps<Node extends GeometryNode | AnnotationNode> {
   nodes: readonly Node[];
@@ -51,7 +51,7 @@ export interface EntityLayerProps<Node extends GeometryNode | AnnotationNode> {
   onContextMenu?(id: string, event: MouseEvent<SVGGElement>): void;
 }
 
-export function GeometryLayer({
+export const GeometryLayer = memo(function GeometryLayer({
   nodes,
   viewport,
   selectedIds,
@@ -59,20 +59,22 @@ export function GeometryLayer({
   onSelect,
   onContextMenu,
 }: EntityLayerProps<GeometryNode>) {
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const attention = useMemo(() => new Set(attentionIds), [attentionIds]);
   return <g data-layer="geometry">{nodes.map((node) => (
     <EntityRenderer
       key={node.id}
       node={node}
       viewport={viewport}
-      selected={selectedIds.includes(node.id)}
-      aiGrounded={attentionIds.includes(node.id)}
+      selected={selected.has(node.id)}
+      aiGrounded={attention.has(node.id)}
       onSelect={(event) => onSelect(node.id, event)}
       onContextMenu={onContextMenu === undefined ? undefined : (event) => onContextMenu(node.id, event)}
     />
   ))}</g>;
-}
+});
 
-export function AnnotationLayer({
+export const AnnotationLayer = memo(function AnnotationLayer({
   nodes,
   viewport,
   selectedIds,
@@ -80,16 +82,20 @@ export function AnnotationLayer({
   onSelect,
   onContextMenu,
   onPointerDown,
+  hiddenNodeId,
 }: EntityLayerProps<AnnotationNode> & {
   onPointerDown?(node: Extract<AnnotationNode, { type: 'dimension' }>, event: MouseEvent<SVGGElement>): void;
+  hiddenNodeId?: string;
 }) {
-  return <g data-layer="annotations">{nodes.map((node) => (
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const attention = useMemo(() => new Set(attentionIds), [attentionIds]);
+  return <g data-layer="annotations">{nodes.map((node) => node.id === hiddenNodeId ? null : (
     <EntityRenderer
       key={node.id}
       node={node}
       viewport={viewport}
-      selected={selectedIds.includes(node.id)}
-      aiGrounded={attentionIds.includes(node.id)}
+      selected={selected.has(node.id)}
+      aiGrounded={attention.has(node.id)}
       onSelect={(event) => onSelect(node.id, event)}
       onContextMenu={onContextMenu === undefined ? undefined : (event) => onContextMenu(node.id, event)}
       onTextPointerDown={node.type === 'dimension'
@@ -99,9 +105,9 @@ export function AnnotationLayer({
         : undefined}
     />
   ))}</g>;
-}
+});
 
-export function RelationLayer({
+export const RelationLayer = memo(function RelationLayer({
   document,
   viewport,
 }: {
@@ -112,7 +118,7 @@ export function RelationLayer({
     document.relations.filter((relation) => relation.visible && relation.plane !== 'topology')
       .flatMap((relation) => relationSegments(document, relation, viewport))
   }</g>;
-}
+});
 
 export function SelectionLayer({
   box,

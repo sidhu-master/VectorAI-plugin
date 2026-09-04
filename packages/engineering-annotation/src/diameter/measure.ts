@@ -20,6 +20,7 @@ interface DiameterSpan {
   zEnd: number;
   radius: number;
   sourceIds: string[];
+  measurementUncertainty: number;
 }
 
 export function measureShaftDiameters(document: DrawingDocument): ShaftDiameterFact[] {
@@ -55,13 +56,8 @@ function diameterSpans(surfaces: AxialSurface[], axisLength: number, radiusToler
     if (!group || reference === undefined || Math.abs(surface.radius - reference) > radiusTolerance) radialGroups.push([surface]);
     else group.push(surface);
   }
-  const maximumAxialRadius = Math.max(0, ...radialGroups.map(weightedRadius));
   const axialJoinGap = Math.max(axisLength * 1e-6, radiusTolerance * 4);
-  return radialGroups.flatMap((radialGroup) => (
-    Math.abs(weightedRadius(radialGroup) - maximumAxialRadius) <= radiusTolerance
-      ? [radialGroup]
-      : splitAxially(radialGroup, axialJoinGap)
-  ))
+  return radialGroups.flatMap((radialGroup) => splitAxially(radialGroup, axialJoinGap))
     .flatMap((group) => diameterSpan(group, axisLength, radiusTolerance));
 }
 
@@ -99,6 +95,7 @@ function diameterSpan(surfaces: AxialSurface[], axisLength: number, radiusTolera
     zEnd,
     radius: weightedRadius(surfaces),
     sourceIds: unique(surfaces.map(({ geometryNodeId }) => geometryNodeId)),
+    measurementUncertainty: radiusTolerance * 2,
   }];
 }
 
@@ -115,17 +112,17 @@ function layoutFacts(spans: DiameterSpan[], axis: ShaftAxis): ShaftDiameterFact[
   );
   return placements
     .sort((a, b) => a.zStart - b.zStart || a.radius - b.radius)
-    .map((span) => layoutFact(span, axis, span.dimensionZ));
+    .map((span) => layoutFact(span, axis, span.dimensionZ, classifySpan(span, spans)));
 }
 
-function layoutFact(span: DiameterSpan, axis: ShaftAxis, layoutZ?: number): ShaftDiameterFact {
+function layoutFact(span: DiameterSpan, axis: ShaftAxis, layoutZ: number | undefined, featureClass: ShaftDiameterFact['featureClass']): ShaftDiameterFact {
   const sourceZ = (span.zStart + span.zEnd) / 2;
   const dimensionZ = layoutZ ?? sourceZ;
   const sourceLower = world(axis, sourceZ, -span.radius);
   const sourceUpper = world(axis, sourceZ, span.radius);
   const lower = world(axis, dimensionZ, -span.radius);
   const upper = world(axis, dimensionZ, span.radius);
-  const diameter = cleanDiameter(span.radius * 2);
+  const diameter = span.radius * 2;
   return {
     key: `shaft-diameter:${numberKey(span.zStart)}:${numberKey(span.zEnd)}:${numberKey(diameter)}`,
     sourceIds: span.sourceIds,
@@ -134,7 +131,19 @@ function layoutFact(span: DiameterSpan, axis: ShaftAxis, layoutZ?: number): Shaf
     zEnd: span.zEnd,
     definitionPoints: [lower, upper, sourceLower, sourceUpper],
     textPosition: world(axis, dimensionZ, 0),
+    featureClass,
+    profileComponentIds: span.sourceIds,
+    measurementUncertainty: span.measurementUncertainty,
   };
+}
+
+function classifySpan(span: DiameterSpan, all: DiameterSpan[]): ShaftDiameterFact['featureClass'] {
+  const center = (span.zStart + span.zEnd) / 2;
+  return all.some((candidate) => candidate !== span
+    && candidate.radius > span.radius
+    && candidate.zStart <= center && candidate.zEnd >= center)
+    ? 'hole'
+    : 'shaft';
 }
 
 function coverage(surfaces: AxialSurface[]): number {
@@ -152,5 +161,4 @@ function world(axis: ShaftAxis, z: number, radius: number): Vec2 {
 }
 
 function unique(values: string[]): string[] { return [...new Set(values)].sort(); }
-function cleanDiameter(value: number): number { return Number(value.toFixed(2)); }
 function numberKey(value: number): string { return Number(value.toFixed(4)).toString(); }

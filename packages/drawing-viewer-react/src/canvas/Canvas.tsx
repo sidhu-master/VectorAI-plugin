@@ -3,6 +3,7 @@
 import type { AnnotationNode, DrawingDocument, DrawingRelation, Vec2 } from '@vectorai/drawing-core';
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -70,6 +71,28 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
   const spacePressed = useRef(false);
   const [selectionBox, setSelectionBox] = useState<{ start: Vec2; current: Vec2 } | null>(null);
   const [annotationDragPreview, setAnnotationDragPreview] = useState<AnnotationNode | null>(null);
+  const annotationFrameRef = useRef<number | null>(null);
+  const queuedAnnotationRef = useRef<AnnotationNode | null>(null);
+
+  const cancelQueuedAnnotation = useCallback(() => {
+    if (annotationFrameRef.current !== null) {
+      window.cancelAnimationFrame(annotationFrameRef.current);
+      annotationFrameRef.current = null;
+    }
+    queuedAnnotationRef.current = null;
+  }, []);
+  const queueAnnotation = useCallback((annotation: AnnotationNode) => {
+    queuedAnnotationRef.current = annotation;
+    if (annotationFrameRef.current !== null) return;
+    annotationFrameRef.current = window.requestAnimationFrame(() => {
+      annotationFrameRef.current = null;
+      const queued = queuedAnnotationRef.current;
+      queuedAnnotationRef.current = null;
+      if (queued !== null) setAnnotationDragPreview(queued);
+    });
+  }, []);
+
+  useEffect(() => cancelQueuedAnnotation, [cancelQueuedAnnotation]);
 
   const document = snapshot?.document;
 
@@ -183,6 +206,13 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
     setMouseWorld(screenToWorld(point, viewport));
     const drag = dragRef.current;
     if (drag === null) return;
+    if (event.buttons === 0) {
+      dragRef.current = null;
+      cancelQueuedAnnotation();
+      setAnnotationDragPreview(null);
+      setSelectionBox(null);
+      return;
+    }
     if (drag.kind === 'pan') {
       setViewport({
         ...drag.viewport,
@@ -203,7 +233,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
     }
     drag.currentWorld = screenToWorld(point, viewport);
     if (drag.annotation.type === 'dimension' && isFixedDirectionDimension(drag.annotation)) {
-      setAnnotationDragPreview(projectAnnotationDrag(drag.annotation, drag.startWorld, drag.currentWorld));
+      queueAnnotation(projectAnnotationDrag(drag.annotation, drag.startWorld, drag.currentWorld));
     }
   };
 
@@ -240,9 +270,11 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
       return;
     }
     if (drag.kind === 'annotation') {
+      drag.currentWorld = screenToWorld(eventScreenPoint(event), viewport);
       const projected = drag.annotation.type === 'dimension' && isFixedDirectionDimension(drag.annotation)
         ? projectAnnotationDrag(drag.annotation, drag.startWorld, drag.currentWorld)
         : null;
+      cancelQueuedAnnotation();
       setAnnotationDragPreview(null);
       if (Math.hypot(
         drag.currentWorld[0] - drag.startWorld[0],
@@ -276,6 +308,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
         return;
       }
       dragRef.current = null;
+      cancelQueuedAnnotation();
       setAnnotationDragPreview(null);
       setSelectionBox(null);
       setSelection([]);

@@ -613,6 +613,48 @@ describe('DSH drawing workspace wire schemas', () => {
     expect(partitionDraftSchema.parse(draft).semanticGroups[0]?.dimensionRole).toBe('process-datum');
   });
 
+  it('carries partition confidence and document reconciliation diagnostics across the host contract', () => {
+    const ref = { drawingId: 'drawing-1', revision: 1 };
+    const draft = {
+      version: 1 as const, drawingRef: ref,
+      axis: { origin: [0, 0] as [number, number], direction: [1, 0] as [number, number], normal: [0, 1] as [number, number], zMin: 0, zMax: 10, orientation: 'forward' as const },
+      segments: [{
+        id: 'segment:0-10', zStart: 0, zEnd: 10,
+        profile: { minRadius: 5, maxRadius: 5, sampleCount: 2 },
+        semanticType: 'bearing-seat', boundaryConfidence: 1,
+        geometryNodeIds: [], boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [],
+      }],
+      semanticGroups: [{
+        id: 'group:bearing', segmentIds: ['segment:0-10'], range: { zStart: 0, zEnd: 10 },
+        semanticType: 'bearing-seat', evidenceIds: [],
+        reconciliation: {
+          status: 'matched' as const,
+          stationError: 0.1,
+          widthError: 0.2,
+          diameterError: 0.3,
+          topologyError: 0,
+          documentIdentityError: 0,
+          documentRange: { zStart: 0, zEnd: 10 },
+          geometryRange: { zStart: 0.1, zEnd: 9.9 },
+        },
+      }],
+      stepCandidates: [{
+        id: 'step:5', z: 5, score: 0.95, evidenceIds: [], accepted: true,
+        policyVersion: 'shaft-step-confidence-v1' as const,
+        confidenceBreakdown: {
+          contourContinuity: 1,
+          bilateralCorrespondence: 0.9,
+          axialResidence: 0.8,
+          radiusChange: 0.7,
+          entityQuality: 1,
+        },
+      }],
+      evidence: [], diagnostics: [],
+    };
+
+    expect(partitionDraftSchema.parse(draft)).toEqual(draft);
+  });
+
   it('bounds extension DXF import and local observation requests without geometry commands', () => {
     const bytes = new Uint8Array([48, 10]);
     expect(drawingDxfImportRequestSchema.parse({

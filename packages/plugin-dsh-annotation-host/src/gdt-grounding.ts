@@ -2,6 +2,7 @@
 
 import type { GeometryNode, Vec2 } from '@vectorai/drawing-core';
 import type {
+  EngineeringDecisionAuthority,
   EngineeringAnnotationDraft,
   EngineeringDatum,
   GeometricCharacteristic,
@@ -14,7 +15,13 @@ import type { DrawingWorkspaceSnapshot } from '@vectorai/drawing-workspace';
 import type { GdtClarificationQuestion } from './shaft-gdt-rules';
 
 export interface GdtRecommendation {
-  datums: Array<{ name: string; geometryId: string; role: EngineeringDatum['role'] }>;
+  datums: Array<{
+    name: string;
+    geometryId: string;
+    role: EngineeringDatum['role'];
+    decisionAuthority?: EngineeringDecisionAuthority;
+    evidenceIds?: string[];
+  }>;
   controls: Array<{
     id: string;
     characteristic: GeometricCharacteristic;
@@ -22,6 +29,8 @@ export interface GdtRecommendation {
     datumNames: string[];
     toleranceZoneShape: ToleranceZoneShape;
     materialCondition?: MaterialCondition;
+    decisionAuthority?: EngineeringDecisionAuthority;
+    evidenceIds?: string[];
   }>;
   surfaceTextures?: Array<{
     id: string;
@@ -29,8 +38,10 @@ export interface GdtRecommendation {
     parameter: SurfaceTextureIntent['parameter'];
     value: number;
     materialRemoval: SurfaceTextureIntent['materialRemoval'];
-    source: 'process-rule' | 'ai-candidate';
+    source: 'document' | 'manual' | 'process-rule' | 'ai-candidate';
     confidence: number;
+    decisionAuthority?: EngineeringDecisionAuthority;
+    evidenceIds?: string[];
     ruleRef?: { id: string; version: string };
   }>;
   coverage?: {
@@ -56,9 +67,10 @@ export function groundGdtRecommendation(
       geometryId: node.id,
       anchor: { kind: 'nearest', point: representativePoint(node) },
       role: item.role,
-      source: 'ai-candidate',
+      source: sourceForDecisionAuthority(item.decisionAuthority),
       status: 'candidate',
-      evidenceIds: node.quality.evidenceRefs.map(String),
+      evidenceIds: [...new Set([...(item.evidenceIds ?? []), ...node.quality.evidenceRefs.map(String)])],
+      ...(item.decisionAuthority === undefined ? {} : { decisionAuthority: item.decisionAuthority }),
     };
   });
   const datumsByName = new Map(datums.map((datum) => [datum.name, datum]));
@@ -83,9 +95,10 @@ export function groundGdtRecommendation(
       },
       datumReferenceFrame,
       computed: { status: 'pending', unit: 'mm', diagnostics: [] },
-      source: 'ai-candidate',
+      source: sourceForDecisionAuthority(item.decisionAuthority),
       status: 'pending-calculation',
-      evidenceIds: [...new Set(nodes.flatMap(({ quality }) => quality.evidenceRefs.map(String)))],
+      evidenceIds: [...new Set([...(item.evidenceIds ?? []), ...nodes.flatMap(({ quality }) => quality.evidenceRefs.map(String))])],
+      ...(item.decisionAuthority === undefined ? {} : { decisionAuthority: item.decisionAuthority }),
     };
   });
   const surfaceTextures: SurfaceTextureIntent[] = (recommendation.surfaceTextures ?? []).map((item) => {
@@ -103,7 +116,8 @@ export function groundGdtRecommendation(
       materialRemoval: item.materialRemoval,
       source: item.source,
       status: 'candidate',
-      evidenceIds: [...new Set(nodes.flatMap(({ quality }) => quality.evidenceRefs.map(String)))],
+      evidenceIds: [...new Set([...(item.evidenceIds ?? []), ...nodes.flatMap(({ quality }) => quality.evidenceRefs.map(String))])],
+      ...(item.decisionAuthority === undefined ? {} : { decisionAuthority: item.decisionAuthority }),
       ...(item.ruleRef === undefined ? {} : { ruleRef: structuredClone(item.ruleRef) }),
     };
   });
@@ -114,6 +128,19 @@ function requireGeometry(geometry: ReadonlyMap<string, GeometryNode>, id: string
   const node = geometry.get(id);
   if (!node || !node.visible) throw new Error(`GDT_GEOMETRY_UNKNOWN:${id}`);
   return node;
+}
+
+function sourceForDecisionAuthority(
+  authority: EngineeringDecisionAuthority | undefined,
+): EngineeringDatum['source'] {
+  switch (authority) {
+    case 'documented-requirement': return 'document';
+    case 'user-confirmed': return 'manual';
+    case 'deterministic-geometry':
+    case 'standard-expression': return 'geometry';
+    case 'ai-recommendation':
+    default: return 'ai-candidate';
+  }
 }
 
 function representativePoint(node: GeometryNode): Vec2 {

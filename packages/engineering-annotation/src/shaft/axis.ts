@@ -3,6 +3,7 @@
 import { sampleSpline, type DrawingDocument, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
 import type { EngineeringRegionEvidence } from '../engineering-document/parser';
 import type { ShaftAxis } from '../partition/types';
+import { isShaftProfileGeometry } from './geometry-filter';
 
 export interface ShaftAxisHints {
   axisOrigin?: 'left_end' | 'right_end';
@@ -14,13 +15,15 @@ interface NodeSample { id: string; points: Vec2[]; bounds: [number, number, numb
 
 export function resolveShaftAxis(document: DrawingDocument, hints: ShaftAxisHints): ShaftAxis | null {
   const nodes: NodeSample[] = document.geometry
-    .filter(({ visible, type }) => visible && type !== 'ray' && type !== 'xline')
+    .filter(isShaftProfileGeometry)
     .map((node) => {
       const points = sampleNode(node);
       return { id: String(node.id), points, bounds: bounds(points) };
     })
     .filter(({ points }) => points.length >= 2);
   if (nodes.length === 0) return null;
+  const explicit = resolveExplicitCenterline(document, nodes, hints);
+  if (explicit) return explicit;
   const global = bounds(nodes.flatMap(({ points }) => points));
   const tolerance = Math.max(global[2] - global[0], global[3] - global[1], 1) * 1e-5;
   const candidates = connectedComponents(nodes, tolerance)
@@ -51,6 +54,75 @@ export function resolveShaftAxis(document: DrawingDocument, hints: ShaftAxisHint
     orientation: useReverse ? 'reversed' : 'forward',
     geometryNodeIds: selected.nodeIds,
   };
+}
+
+function resolveExplicitCenterline(
+  document: DrawingDocument,
+  nodes: NodeSample[],
+  hints: ShaftAxisHints,
+): ShaftAxis | null {
+  const profilePoints = nodes.flatMap(({ points }) => points);
+  const candidates = document.geometry
+    .filter((node): node is Extract<GeometryNode, { type: 'line' }> => (
+      node.type === 'line'
+      && node.visible
+      && node.quality.status === 'confirmed'
+      && /(?:^|[-_\s])(?:centerline|axis|中心线)(?:$|[-_\s])/iu.test(
+        `${node.sourceRef?.objectType ?? ''} ${node.sourceRef?.layer ?? ''}`,
+      )
+    ))
+    .map((node) => ({
+      node,
+      length: Math.hypot(node.end[0] - node.start[0], node.end[1] - node.start[1]),
+    }))
+    .sort((left, right) => right.length - left.length);
+
+  for (const { node, length } of candidates) {
+    if (length <= 1e-9) continue;
+    let direction: Vec2 = [
+      (node.end[0] - node.start[0]) / length,
+      (node.end[1] - node.start[1]) / length,
+    ];
+    if (Math.abs(direction[0]) >= Math.abs(direction[1]) ? direction[0] < 0 : direction[1] < 0) {
+      direction = [-direction[0], -direction[1]];
+    }
+    const normal: Vec2 = [-direction[1], direction[0]];
+    const axial = profilePoints.map((point) => dot(point, direction));
+    const radial = profilePoints.map((point) => dot(point, normal));
+    const zMinWorld = Math.min(...axial);
+    const zMaxWorld = Math.max(...axial);
+    const profileLength = zMaxWorld - zMinWorld;
+    const radialMin = Math.min(...radial);
+    const radialMax = Math.max(...radial);
+    const radialMidpoint = (radialMin + radialMax) / 2;
+    const centerlineRadial = average([dot(node.start, normal), dot(node.end, normal)]);
+    const radialTolerance = Math.max((radialMax - radialMin) * 0.05, profileLength * 1e-5, 1e-6);
+    if (length < profileLength * 0.75 || Math.abs(centerlineRadial - radialMidpoint) > radialTolerance) continue;
+
+    const useReverse = hints.orientation === 'reversed' || hints.axisOrigin === 'right_end';
+    if (useReverse) direction = [-direction[0], -direction[1]];
+    const resolvedNormal: Vec2 = [-direction[1], direction[0]];
+    const resolvedAxial = profilePoints.map((point) => dot(point, direction));
+    const resolvedZMin = Math.min(...resolvedAxial);
+    const resolvedZMax = Math.max(...resolvedAxial);
+    const resolvedCenterlineRadial = average([
+      dot(node.start, resolvedNormal),
+      dot(node.end, resolvedNormal),
+    ]);
+    return {
+      origin: [
+        direction[0] * resolvedZMin + resolvedNormal[0] * resolvedCenterlineRadial,
+        direction[1] * resolvedZMin + resolvedNormal[1] * resolvedCenterlineRadial,
+      ],
+      direction,
+      normal: resolvedNormal,
+      zMin: 0,
+      zMax: resolvedZMax - resolvedZMin,
+      orientation: useReverse ? 'reversed' : 'forward',
+      geometryNodeIds: [...nodes.map(({ id }) => id), String(node.id)],
+    };
+  }
+  return null;
 }
 
 function connectedComponents(nodes: NodeSample[], tolerance: number): NodeSample[][] {

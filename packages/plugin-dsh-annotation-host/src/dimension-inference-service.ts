@@ -25,6 +25,7 @@ import type {
   PartitionSessionSnapshot,
 } from '@vectorai/plugin-space-contracts';
 import type { DimensionPlanStore } from './dimension-plan-store';
+import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
 
 type SpacePort = Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot'>;
 type PartitionPort = { get(sessionId: string): PartitionSessionSnapshot };
@@ -48,14 +49,18 @@ export class DimensionInferenceService {
     const partition = this.partitions.get(sessionId);
     const partitionValue = partition.draft ?? partition.confirmed;
     if (!partitionValue) throw new Error('DIMENSION_PARTITION_REQUIRED');
-    assertSameRef(drawing.ref, partitionValue.drawingRef);
+    assertPartitionGeometryCurrent(drawing.ref, drawing.document, partitionValue);
     const document = normalizeDocumentCoordinates(
       parseEngineeringDocument(this.documents.getStagedEngineeringText(agent) ?? ''),
       drawing.document.unitSystem.length,
     );
-    const domainPartition = partitionValue as unknown as PartitionDraft | PartitionRevision;
+    const domainPartition = {
+      ...partitionValue,
+      drawingRef: drawing.ref,
+    } as unknown as PartitionDraft | PartitionRevision;
     const topology = buildAxialTopology({
       partition: domainPartition,
+      document: drawing.document,
       unit: drawing.document.unitSystem.length,
     });
     const candidateSet = generateAxialDimensionCandidates({ topology, partition: domainPartition, document });
@@ -106,13 +111,21 @@ export class DimensionInferenceService {
   markStaleSession(sessionId: string, currentRef: DrawingRef): DimensionPlanSessionSnapshot {
     const current = this.plans.get(sessionId);
     return current.draft?.axialScheme
-      ? this.plans.markNeedsRebase(sessionId, currentRef)
+      ? this.plans.markPartitionChanged(sessionId, currentRef)
       : current;
   }
 }
 
-function assertSameRef(left: DrawingRef, right: DrawingRef): void {
-  if (left.drawingId !== right.drawingId || left.revision !== right.revision) {
+function assertPartitionGeometryCurrent(
+  drawingRef: DrawingRef,
+  document: Parameters<typeof partitionGeometryFingerprint>[0],
+  partition: { drawingRef: DrawingRef; geometryFingerprint?: string },
+): void {
+  if (
+    drawingRef.drawingId !== partition.drawingRef.drawingId
+    || partition.geometryFingerprint === undefined
+    || partition.geometryFingerprint !== partitionGeometryFingerprint(document)
+  ) {
     throw new Error('DIMENSION_PARTITION_STALE');
   }
 }

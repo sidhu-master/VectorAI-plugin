@@ -11,7 +11,8 @@ export interface AxialDimensionLaneItem {
 
 /**
  * Allocate stable axial-dimension lanes using the conventional short-inside,
- * long-outside ordering. Equal-length, non-overlapping dimensions share a lane.
+ * long-outside ordering. Any non-overlapping dimensions may share a lane;
+ * a new lane is introduced only when the occupied intervals collide.
  */
 export function allocateAxialDimensionLanes(
   items: readonly AxialDimensionLaneItem[],
@@ -29,28 +30,18 @@ export function allocateAxialDimensionLanes(
     || a.id.localeCompare(b.id));
 
   const result = new Map<string, number>();
-  let groupStart = 0;
-  let cursor = 0;
-  while (cursor < ordered.length) {
-    const groupSpan = ordered[cursor]!.span;
-    const group: typeof ordered = [];
-    while (cursor < ordered.length && sameSpan(ordered[cursor]!.span, groupSpan)) {
-      group.push(ordered[cursor]!);
-      cursor += 1;
+  const laneIntervals: Array<Array<{ start: number; end: number }>> = [];
+  for (const item of ordered) {
+    let lane = laneIntervals.findIndex((intervals) => intervals.every((interval) => (
+      item.occupiedEnd + safeGap <= interval.start
+      || item.occupiedStart >= interval.end + safeGap
+    )));
+    if (lane < 0) {
+      lane = laneIntervals.length;
+      laneIntervals.push([]);
     }
-
-    const laneEnds: number[] = [];
-    for (const item of group) {
-      let localLane = laneEnds.findIndex((end) => item.occupiedStart >= end + safeGap);
-      if (localLane < 0) localLane = laneEnds.length;
-      laneEnds[localLane] = item.occupiedEnd;
-      result.set(item.id, groupStart + localLane);
-    }
-    groupStart += Math.max(1, laneEnds.length);
+    laneIntervals[lane]!.push({ start: item.occupiedStart, end: item.occupiedEnd });
+    result.set(item.id, lane);
   }
   return result;
-}
-
-function sameSpan(a: number, b: number): boolean {
-  return Math.abs(a - b) <= Math.max(1, Math.abs(a), Math.abs(b)) * 1e-9;
 }

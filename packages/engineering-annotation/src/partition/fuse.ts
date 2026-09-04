@@ -5,9 +5,11 @@ import type { PartitionDraft, PartitionEvidence, ShaftPartitionSegment, ShaftSem
 
 interface Match {
   segments: ShaftPartitionSegment[];
-  cost: number;
+  stationError: number;
   widthError: number;
   diameterError?: number;
+  topologyError: number;
+  documentIdentityError: number;
 }
 
 export function fuseDocumentRegions(draft: PartitionDraft, regions: EngineeringRegionEvidence[]): PartitionDraft {
@@ -23,13 +25,34 @@ export function fuseDocumentRegions(draft: PartitionDraft, regions: EngineeringR
     const matches = contiguousMatches(output.segments, region);
     const best = matches[0];
     if (!best) continue;
-    const matched = best.cost <= 0.4;
-    const ambiguous = matches[1] !== undefined && Math.abs(matches[1].cost - best.cost) < 0.01;
-    if (!matched) {
+    const ambiguous = matches[1] !== undefined && equivalentMatch(matches[0]!, matches[1]!);
+    const axialSegments = overlappingSegments(output.segments, region.interval, output.axis.zMax - output.axis.zMin);
+    const rangeTolerance = Math.max((output.axis.zMax - output.axis.zMin) * 1e-6, 1e-6);
+    const documentBoundariesAlignWithSteps = Math.abs(axialSegments[0]!.zStart - region.interval.start) <= rangeTolerance
+      && Math.abs(axialSegments.at(-1)!.zEnd - region.interval.end) <= rangeTolerance;
+    const documentRangeWithinGeometryResolution = boundariesDifferOnlyBySampling(
+      region.interval,
+      {
+        start: best.segments[0]!.zStart,
+        end: best.segments.at(-1)!.zEnd,
+      },
+      output.axis.zMax - output.axis.zMin,
+    );
+    const geometryReconciled = !documentBoundariesAlignWithSteps
+      && !documentRangeWithinGeometryResolution
+      && best.topologyError === 0
+      && best.documentIdentityError === 0
+      && best.widthError <= 0.03
+      && best.diameterError !== undefined
+      && best.diameterError <= 0.03
+      && !ambiguous;
+    const conflict = hasCriticalConflict(best) && !geometryReconciled;
+    const matched = (!hasCriticalConflict(best) || geometryReconciled) && !ambiguous;
+    if (conflict) {
       output.diagnostics.push({
-        id: `diagnostic:document-unmatched:${region.id}`, severity: 'warning',
-        code: 'DOCUMENT_REGION_UNMATCHED', message: `Document region ${region.id} could not be reconciled with geometric steps`,
-        evidenceIds: [evidenceId],
+        id: `diagnostic:document-conflict:${region.id}`, severity: 'warning',
+        code: 'DOCUMENT_REGION_CONFLICT', message: `Document region ${region.id} conflicts with geometric station, width, or diameter evidence`,
+        segmentIds: best.segments.map(({ id }) => id), evidenceIds: [evidenceId, ...best.segments.flatMap(({ boundaryEvidenceIds }) => boundaryEvidenceIds)],
       });
     }
     if (ambiguous) {
@@ -39,31 +62,26 @@ export function fuseDocumentRegions(draft: PartitionDraft, regions: EngineeringR
         evidenceIds: [evidenceId],
       });
     }
-    const confidence = Math.max(0.5, Math.min(0.99, 1 - best.cost));
-    const reliableMatch = matched && !ambiguous;
-    const relatedSegments = reliableMatch
-      ? best.segments
-      : overlappingSegments(output.segments, region.interval, output.axis.zMax - output.axis.zMin);
+    const confidence = matched ? Math.max(0.5, 1 - Math.max(best.stationError, best.widthError, best.diameterError ?? 0)) : 0.5;
+    const reliableMatch = matched;
+    // A document interval is an axial anchor. When no reliable geometric match
+    // exists, keep it attached to overlapping geometry instead of borrowing a
+    // remote segment that merely has a similar diameter.
+    const relatedSegments = matched ? best.segments : axialSegments;
     const matchedRange = {
       zStart: best.segments[0]!.zStart,
       zEnd: best.segments.at(-1)!.zEnd,
     };
-    const rangeTolerance = Math.max((output.axis.zMax - output.axis.zMin) * 1e-3, 1e-6);
-    const sourceAligned = Math.abs(matchedRange.zStart - region.interval.start) <= rangeTolerance
-      && Math.abs(matchedRange.zEnd - region.interval.end) <= rangeTolerance;
-    const geometryReconciled = reliableMatch && !sourceAligned
-      && best.widthError <= 0.03
-      && best.diameterError !== undefined
-      && best.diameterError <= 0.03;
-    const range = geometryReconciled ? matchedRange : {
+    const documentRange = {
       zStart: region.interval.start,
       zEnd: region.interval.end,
     };
+    const range = geometryReconciled ? matchedRange : documentRange;
     if (geometryReconciled) {
       output.diagnostics.push({
         id: `diagnostic:document-reconciled:${region.id}`, severity: 'warning',
         code: 'DOCUMENT_REGION_RECONCILED',
-        message: `Document region ${region.id} was reconciled from ${formatRange(region.interval)} to geometric range ${formatRange(matchedRange)}`,
+        message: `Document region ${region.id} was reconciled from ${formatRange(documentRange)} to geometric range ${formatRange(matchedRange)}`,
         segmentIds: relatedSegments.map(({ id }) => id), evidenceIds: [evidenceId],
       });
     }
@@ -73,7 +91,20 @@ export function fuseDocumentRegions(draft: PartitionDraft, regions: EngineeringR
       range,
       semanticType: region.type,
       ...(region.name === undefined ? {} : { name: region.name }),
-      evidenceIds: [evidenceId],
+      evidenceIds: [evidenceId, ...new Set([
+        ...relatedSegments.flatMap(({ boundaryEvidenceIds }) => boundaryEvidenceIds),
+        ...(conflict ? best.segments.flatMap(({ boundaryEvidenceIds }) => boundaryEvidenceIds) : []),
+      ])],
+      reconciliation: {
+        status: ambiguous ? 'ambiguous' : conflict ? 'conflict' : matched ? 'matched' : 'unmatched',
+        stationError: best.stationError,
+        widthError: best.widthError,
+        ...(best.diameterError === undefined ? {} : { diameterError: best.diameterError }),
+        topologyError: best.topologyError,
+        documentIdentityError: best.documentIdentityError,
+        documentRange,
+        geometryRange: matchedRange,
+      },
     };
     output.semanticGroups.push(group);
     if (!reliableMatch) continue;
@@ -134,16 +165,46 @@ function contiguousMatches(segments: ShaftPartitionSegment[], region: Engineerin
           diameterError = Math.min(1, (measuredError + unprofiledWidth * 0.25) / Math.max(actualWidth, 1e-9));
         }
       }
-      const diameterCost = diameterError ?? 0.25;
       output.push({
         segments: selected,
+        stationError: Math.max(endpointError, centerError),
         widthError,
         ...(diameterError === undefined ? {} : { diameterError }),
-        cost: Math.min(widthError, 2) * 0.3 + diameterCost * 0.6 + centerError * 0.04 + endpointError * 0.06,
+        topologyError: selected.some((segment, index) => index > 0 && Math.abs(segment.zStart - selected[index - 1]!.zEnd) > axisSpan * 1e-8) ? 1 : 0,
+        documentIdentityError: region.name === undefined && region.type === undefined ? 1 : 0,
       });
     }
   }
-  return output.sort((a, b) => a.cost - b.cost || a.segments.length - b.segments.length);
+  return output.sort(compareMatches);
+}
+
+function hasCriticalConflict(match: Match): boolean {
+  return match.topologyError > 0
+    || match.documentIdentityError > 0
+    || match.widthError > 0.08
+    || match.stationError > 0.08
+    || (match.diameterError !== undefined && match.diameterError > 0.05);
+}
+
+function compareMatches(left: Match, right: Match): number {
+  const leftDiameter = left.diameterError ?? Number.POSITIVE_INFINITY;
+  const rightDiameter = right.diameterError ?? Number.POSITIVE_INFINITY;
+  return Number(left.topologyError > 0) - Number(right.topologyError > 0)
+    || Number(left.documentIdentityError > 0) - Number(right.documentIdentityError > 0)
+    || Number(leftDiameter > 0.05) - Number(rightDiameter > 0.05)
+    || Number(left.widthError > 0.08) - Number(right.widthError > 0.08)
+    || leftDiameter - rightDiameter
+    || left.widthError - right.widthError
+    || left.stationError - right.stationError
+    || left.segments.length - right.segments.length;
+}
+
+function equivalentMatch(left: Match, right: Match): boolean {
+  const epsilon = 1e-9;
+  return hasCriticalConflict(left) === hasCriticalConflict(right)
+    && Math.abs(left.stationError - right.stationError) <= epsilon
+    && Math.abs(left.widthError - right.widthError) <= epsilon
+    && Math.abs((left.diameterError ?? 0) - (right.diameterError ?? 0)) <= epsilon;
 }
 
 function overlappingSegments(
@@ -168,8 +229,20 @@ function distanceToSegment(segment: ShaftPartitionSegment, z: number): number {
   return z < segment.zStart ? segment.zStart - z : z > segment.zEnd ? z - segment.zEnd : 0;
 }
 
-function formatRange(range: { start?: number; end?: number; zStart?: number; zEnd?: number }): string {
-  const start = range.start ?? range.zStart;
-  const end = range.end ?? range.zEnd;
-  return `${Number(start?.toFixed(6))}–${Number(end?.toFixed(6))}`;
+function formatRange(range: { zStart: number; zEnd: number }): string {
+  return `${Number(range.zStart.toFixed(6))}–${Number(range.zEnd.toFixed(6))}`;
+}
+
+function boundariesDifferOnlyBySampling(
+  documentRange: { start: number; end: number },
+  geometryRange: { start: number; end: number },
+  axisSpan: number,
+): boolean {
+  const width = Math.abs(documentRange.end - documentRange.start);
+  // DXF arcs and splines are sampled for profile analysis. Their chord bounds
+  // can sit just inside the authored tangent/end coordinates, so a close
+  // geometric match must not overwrite the document's exact engineering range.
+  const tolerance = Math.max(Math.abs(axisSpan) * 1e-3, width * 0.05, 1e-6);
+  return Math.abs(documentRange.start - geometryRange.start) <= tolerance
+    && Math.abs(documentRange.end - geometryRange.end) <= tolerance;
 }

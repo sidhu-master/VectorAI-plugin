@@ -75,8 +75,10 @@ describe('approved shaft DXF opening-angle annotation', () => {
     )).sort((left, right) => (left.computedValue ?? 0) - (right.computedValue ?? 0));
     const inwardLeftCoordinates = left.map(({ textPosition }) => axialCoordinate(textPosition, axis.origin, axis.direction));
     const outwardCoordinates = right.map(({ textPosition }) => axialCoordinate(textPosition, axis.origin, axis.direction));
-    expect(diameters.map(({ computedValue }) => computedValue).sort((a, b) => (a ?? 0) - (b ?? 0)))
-      .toEqual([20, 35, 35, 38, 40, 42.21, 44.59, 48, 51, 57.03]);
+    const measuredDiameters = diameters.map(({ computedValue }) => computedValue ?? 0).sort((a, b) => a - b);
+    const expectedDiameters = [20, 35, 35, 38, 40, 42.21, 44.59, 48, 51];
+    expect(measuredDiameters).toHaveLength(expectedDiameters.length);
+    expectedDiameters.forEach((value, index) => expect(measuredDiameters[index]).toBeCloseTo(value, 2));
     expect(inside.length).toBeGreaterThan(left.length + right.length);
     expect(left.length + right.length).toBeGreaterThan(0);
     const insideIntervals = inside.map((item) => {

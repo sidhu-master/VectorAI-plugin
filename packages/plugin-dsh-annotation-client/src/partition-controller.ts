@@ -51,45 +51,65 @@ export function createPartitionController(sessionId: string, remoteSource: Parti
   let current: PartitionControllerState = { partition: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, busy: false, previewHeld: false, error: null };
   const listeners = new Set<() => void>();
   let queue = Promise.resolve();
+  let mutationVersion = 0;
+  let refreshVersion = 0;
   let disposed = false;
   const update = (changes: Partial<PartitionControllerState>) => {
     if (disposed) return;
     current = { ...current, ...changes };
     for (const listener of listeners) listener();
   };
-  const run = (
+  const mutate = (
     operation: () => Promise<RemoteResult<PartitionSessionSnapshot>>,
     pendingPartition?: PartitionSessionSnapshot,
   ) => {
+    mutationVersion += 1;
     const task = queue.then(async () => {
       update({
         busy: true,
         error: null,
         ...(pendingPartition === undefined ? {} : { partition: pendingPartition }),
       });
-      try { update({ partition: unwrap(await operation()) }); }
-      catch (error) { update({ error: error instanceof Error ? error.message : String(error) }); throw error; }
-      finally { update({ busy: false }); }
+      try { update({ partition: unwrap(await operation()), busy: false }); }
+      catch (error) {
+        update({ error: error instanceof Error ? error.message : String(error), busy: false });
+        throw error;
+      }
     });
     queue = task.catch(() => undefined);
     return task;
+  };
+  const refresh = async () => {
+    const requestedAfterMutation = mutationVersion;
+    const requestVersion = ++refreshVersion;
+    try {
+      const partition = unwrap(await remote().getPartitionState(sessionId));
+      if (disposed || current.busy || requestVersion !== refreshVersion || requestedAfterMutation !== mutationVersion) return;
+      if (partition.updatedAt < current.partition.updatedAt) return;
+      update({ partition, error: null });
+    } catch (error) {
+      if (!disposed && requestVersion === refreshVersion && requestedAfterMutation === mutationVersion) {
+        update({ error: error instanceof Error ? error.message : String(error) });
+      }
+      throw error;
+    }
   };
   const ref = () => {
     if (!current.partition.drawingRef) throw new Error('PARTITION_DRAWING_REQUIRED');
     return current.partition.drawingRef;
   };
   const remote = () => typeof remoteSource === 'function' ? remoteSource() : remoteSource;
-  const edit = (command: PartitionEditWithoutRef) => run(() => remote().editPartition(sessionId, { ...command, expectedDrawingRef: ref() } as PartitionEditCommand));
+  const edit = (command: PartitionEditWithoutRef) => mutate(() => remote().editPartition(sessionId, { ...command, expectedDrawingRef: ref() } as PartitionEditCommand));
   return {
     state: {
       getSnapshot: () => current,
       subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     },
     actions: {
-      refresh: () => run(() => remote().getPartitionState(sessionId)),
+      refresh,
       async importDrawing(dxf) {
         const request = await serializeDxf(dxf);
-        await run(() => remote().importDrawing(sessionId, request));
+        await mutate(() => remote().importDrawing(sessionId, request));
         if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent<DrawingSurfaceRefreshDetail>(
           DRAWING_SURFACE_REFRESH_EVENT, { detail: { sessionId } },
         ));
@@ -97,11 +117,11 @@ export function createPartitionController(sessionId: string, remoteSource: Parti
       async stageDocuments(engineeringDocuments) {
         if (engineeringDocuments.length === 0) throw new Error('ENGINEERING_DOCUMENT_REQUIRED');
         const documents = await serializeEngineeringDocuments(engineeringDocuments);
-        await run(() => remote().stageDocuments(sessionId, {
+        await mutate(() => remote().stageDocuments(sessionId, {
           engineeringDocuments: documents,
         }));
       },
-      clearDocuments: () => run(() => remote().clearDocuments(sessionId)),
+      clearDocuments: () => mutate(() => remote().clearDocuments(sessionId)),
       async importFiles(dxf, engineeringDocuments = []) {
         const dxfRequest = await serializeDxf(dxf);
         const documents = await serializeEngineeringDocuments(engineeringDocuments);
@@ -109,7 +129,7 @@ export function createPartitionController(sessionId: string, remoteSource: Parti
           dxf: dxfRequest,
           engineeringDocuments: documents,
         };
-        await run(() => remote().importAndAnalyze(sessionId, request), {
+        await mutate(() => remote().importAndAnalyze(sessionId, request), {
           version: 1,
           phase: 'analyzing',
           canUndo: false,
@@ -123,7 +143,7 @@ export function createPartitionController(sessionId: string, remoteSource: Parti
           expectedDrawingRef: ref(),
           engineeringDocuments: await serializeEngineeringDocuments(engineeringDocuments),
         };
-        await run(() => remote().supplementDocuments(sessionId, request));
+        await mutate(() => remote().supplementDocuments(sessionId, request));
       },
       moveBoundary: (boundaryIndex, requestedZ, snapTolerance) => edit({ type: 'boundary.move', boundaryIndex, requestedZ, snapTolerance }),
       moveSemanticRange: (groupId, edge, requestedZ, snapTolerance) => edit({ type: 'semantic-range.move', groupId, edge, requestedZ, snapTolerance }),
@@ -131,11 +151,11 @@ export function createPartitionController(sessionId: string, remoteSource: Parti
       splitSegment: (segmentId, z, snapTolerance) => edit({ type: 'segment.split', segmentId, z, snapTolerance }),
       mergeBoundary: (boundaryIndex) => edit({ type: 'boundary.merge', boundaryIndex }),
       updateSegment: (segmentId, value) => edit({ type: 'segment.metadata', segmentId, ...value }),
-      confirm: () => run(() => remote().confirmPartition(sessionId, ref())),
-      cancel: () => run(() => remote().cancelPartition(sessionId, ref())),
-      reopen: () => run(() => remote().reopenPartition(sessionId, ref())),
-      undo: () => run(() => remote().undoPartition(sessionId, ref())),
-      redo: () => run(() => remote().redoPartition(sessionId, ref())),
+      confirm: () => mutate(() => remote().confirmPartition(sessionId, ref())),
+      cancel: () => mutate(() => remote().cancelPartition(sessionId, ref())),
+      reopen: () => mutate(() => remote().reopenPartition(sessionId, ref())),
+      undo: () => mutate(() => remote().undoPartition(sessionId, ref())),
+      redo: () => mutate(() => remote().redoPartition(sessionId, ref())),
       setPreviewHeld: (previewHeld) => update({ previewHeld }),
     },
     dispose() { disposed = true; listeners.clear(); },

@@ -4,13 +4,18 @@ import type { DrawingDocument, GeometryNode, Vec2 } from '@vectorai/drawing-core
 import { drawingBounds, estimateScreenTextWidth, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
 import type { EngineeringAnnotationDraft } from '@vectorai/plugin-space-contracts';
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { SurfaceTextureSymbol } from './SurfaceTextureSymbol';
+import { useRafPreview } from './useRafPreview';
 
 const ROW_HEIGHT = 24;
 const DRAWING_GAP = 28;
 
 export function GdtOverlay({
-  draft, document, scale, viewport, datumVisible, gdtVisible, previewHeld, selectedIntentId, onSelectDatum, onSelectIntent, onMoveDatum, onMoveGdtGroup,
+  draft, document, scale, viewport, datumVisible, gdtVisible, surfaceTextureVisible = false, previewHeld,
+  selectedIntentId, selectedSurfaceTextureId = null, onSelectDatum, onSelectIntent, onSelectSurfaceTexture,
+  onMoveDatum, onMoveGdtGroup,
+  onInteractionActiveChange,
 }: {
   draft: EngineeringAnnotationDraft;
   document: DrawingDocument;
@@ -18,27 +23,57 @@ export function GdtOverlay({
   viewport: DrawingWorkspaceViewport;
   datumVisible: boolean;
   gdtVisible: boolean;
+  surfaceTextureVisible?: boolean;
   previewHeld: boolean;
   selectedIntentId: string | null;
+  selectedSurfaceTextureId?: string | null;
   onSelectDatum(id: string): void;
   onSelectIntent(id: string): void;
+  onSelectSurfaceTexture?(id: string): void;
   onMoveDatum(id: string, position: readonly [number, number]): void | Promise<void>;
   onMoveGdtGroup(intentIds: readonly string[], position: readonly [number, number]): void | Promise<void>;
+  onInteractionActiveChange?(active: boolean): void;
 }) {
   const safeScale = Math.max(scale, 1e-6);
   const [datumDragPositions, setDatumDragPositions] = useState<Record<string, Vec2>>({});
   const datumDragRef = useRef<DatumDragState | null>(null);
   const suppressDatumClickRef = useRef(false);
-  const datumPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [gdtDragPositions, setGdtDragPositions] = useState<Record<string, Vec2>>({});
   const gdtDragRef = useRef<GdtDragState | null>(null);
-  const gdtPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const gdtMouseCleanupRef = useRef<(() => void) | null>(null);
   const suppressGdtClickRef = useRef(false);
-  const geometry = new Map(document.geometry.map((node) => [String(node.id), node]));
-  const datums = new Map(draft.datums.map((datum) => [datum.id, datum]));
-  const bounds = drawingBounds({ ...document, annotations: [] }) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-  const groups = layoutGroups(draft, geometry, datums, bounds, viewport, safeScale);
+  const geometry = useMemo(() => new Map(document.geometry.map((node) => [String(node.id), node])), [document.geometry]);
+  const datums = useMemo(() => new Map(draft.datums.map((datum) => [datum.id, datum])), [draft.datums]);
+  const bounds = useMemo(() => drawingBounds({ ...document, annotations: [] })
+    ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 }, [document]);
+  const groups = useMemo(
+    () => layoutGroups(draft, geometry, datums, bounds, viewport, safeScale),
+    [bounds, datums, draft, geometry, safeScale, viewport],
+  );
+  const texturesByTarget = useMemo(() => {
+    const result = new Map<string, EngineeringAnnotationDraft['surfaceTextures']>();
+    for (const intent of draft.surfaceTextures) {
+      if (intent.status === 'conflict' || intent.status === 'stale') continue;
+      const targetId = String(intent.controlledTargets[0]?.geometryId);
+      result.set(targetId, [...(result.get(targetId) ?? []), intent]);
+    }
+    return result;
+  }, [draft.surfaceTextures]);
+  const datumPreview = useRafPreview(({ datumId, position }: { datumId: string; position: Vec2 }) => {
+    setDatumDragPositions((current) => ({ ...current, [datumId]: position }));
+  });
+  const gdtPreview = useRafPreview(({ groupId, position }: { groupId: string; position: Vec2 }) => {
+    setGdtDragPositions((current) => ({ ...current, [groupId]: position }));
+  });
+  useEffect(() => {
+    setDatumDragPositions((current) => removePersistedPositions(current, (datumId) => {
+      const position = draft.datums.find(({ id }) => id === datumId)?.labelPosition;
+      return position === undefined ? undefined : [position[0], position[1]];
+    }));
+    setGdtDragPositions((current) => removePersistedPositions(
+      current,
+      (groupId) => groups.find(({ id }) => id === groupId)?.origin,
+    ));
+  }, [draft.datums, groups]);
 
   const updateDatumDrag = (event: PointerEvent<SVGGElement>): Vec2 | null => {
     const drag = datumDragRef.current;
@@ -53,38 +88,18 @@ export function GdtOverlay({
       suppressDatumClickRef.current = true;
     }
     drag.currentPosition = next;
-    setDatumDragPositions((current) => ({ ...current, [drag.datumId]: next }));
-    if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
-    datumPersistTimerRef.current = setTimeout(() => {
-      datumPersistTimerRef.current = null;
-      void Promise.resolve(onMoveDatum(drag.datumId, drag.currentPosition)).catch(() => undefined);
-    }, 120);
+    datumPreview.schedule({ datumId: drag.datumId, position: next });
     return next;
   };
   const commitDatumDrag = (drag: DatumDragState, next: Vec2) => {
-    if (datumPersistTimerRef.current !== null) {
-      clearTimeout(datumPersistTimerRef.current);
-      datumPersistTimerRef.current = null;
-    }
+    datumPreview.flush({ datumId: drag.datumId, position: next });
     datumDragRef.current = null;
-    void Promise.resolve(onMoveDatum(drag.datumId, next)).then(() => {
-      setDatumDragPositions((current) => {
-        if (!(drag.datumId in current)) return current;
-        const updated = { ...current };
-        delete updated[drag.datumId];
-        return updated;
-      });
-    }).catch(() => setDatumDragPositions((current) => {
+    void Promise.resolve(onMoveDatum(drag.datumId, next)).catch(() => setDatumDragPositions((current) => {
       const updated = { ...current };
       delete updated[drag.datumId];
       return updated;
-    }));
+    })).finally(() => onInteractionActiveChange?.(false));
   };
-  useEffect(() => () => {
-    if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
-    if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
-    gdtMouseCleanupRef.current?.();
-  }, []);
   const finishDatumDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = datumDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -102,12 +117,7 @@ export function GdtOverlay({
     const next: Vec2 = [drag.startPosition[0] + dx / safeScale, drag.startPosition[1] - dy / safeScale];
     drag.currentPosition = next;
     if (Math.hypot(dx, dy) > 3) suppressGdtClickRef.current = true;
-    setGdtDragPositions((current) => ({ ...current, [drag.groupId]: next }));
-    if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
-    gdtPersistTimerRef.current = setTimeout(() => {
-      gdtPersistTimerRef.current = null;
-      void Promise.resolve(onMoveGdtGroup(drag.intentIds, drag.currentPosition)).catch(() => undefined);
-    }, 120);
+    gdtPreview.schedule({ groupId: drag.groupId, position: next });
     return next;
   };
   const updateGdtDrag = (event: PointerEvent<SVGGElement>): Vec2 | null => {
@@ -118,22 +128,13 @@ export function GdtOverlay({
     return updateGdtDragAt(event.clientX, event.clientY);
   };
   const commitGdtDrag = (drag: GdtDragState, next: Vec2) => {
-    if (gdtPersistTimerRef.current !== null) {
-      clearTimeout(gdtPersistTimerRef.current);
-      gdtPersistTimerRef.current = null;
-    }
+    gdtPreview.flush({ groupId: drag.groupId, position: next });
     gdtDragRef.current = null;
-    void Promise.resolve(onMoveGdtGroup(drag.intentIds, next)).then(() => {
-      setGdtDragPositions((current) => {
-        const updated = { ...current };
-        delete updated[drag.groupId];
-        return updated;
-      });
-    }).catch(() => setGdtDragPositions((current) => {
+    void Promise.resolve(onMoveGdtGroup(drag.intentIds, next)).catch(() => setGdtDragPositions((current) => {
       const updated = { ...current };
       delete updated[drag.groupId];
       return updated;
-    }));
+    })).finally(() => onInteractionActiveChange?.(false));
   };
   const finishGdtDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = gdtDragRef.current;
@@ -178,6 +179,7 @@ export function GdtOverlay({
             startPosition: marker,
             currentPosition: marker,
           };
+          onInteractionActiveChange?.(true);
         }}
         onPointerMove={updateDatumDrag}
         onPointerUp={finishDatumDrag}
@@ -189,11 +191,9 @@ export function GdtOverlay({
         onPointerCancel={(event) => {
           const drag = datumDragRef.current;
           if (!drag || drag.pointerId !== event.pointerId) return;
-          if (datumPersistTimerRef.current !== null) {
-            clearTimeout(datumPersistTimerRef.current);
-            datumPersistTimerRef.current = null;
-          }
+          datumPreview.cancel();
           datumDragRef.current = null;
+          onInteractionActiveChange?.(false);
           setDatumDragPositions((current) => {
             const updated = { ...current };
             delete updated[drag.datumId];
@@ -212,39 +212,9 @@ export function GdtOverlay({
     })}
     {gdtVisible && groups.map((sourceGroup) => {
       const group = gdtDragPositions[sourceGroup.id] ? { ...sourceGroup, origin: gdtDragPositions[sourceGroup.id]! } : sourceGroup;
+      const attachedTextures = surfaceTextureVisible ? texturesByTarget.get(group.id) ?? [] : [];
       return <g key={group.id} className="vai-gdt-frame-group" data-gdt-group={group.id} pointerEvents="all"
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (event.button !== 0 || previewHeld) return;
-          if (!gdtDragRef.current) {
-            gdtDragRef.current = {
-              groupId: group.id, intentIds: group.intentIds, pointerId: -1,
-              startClient: [event.clientX, event.clientY], startPosition: group.origin, currentPosition: group.origin,
-            };
-          }
-          gdtMouseCleanupRef.current?.();
-          const handleMouseMove = (moveEvent: MouseEvent) => {
-            moveEvent.preventDefault();
-            moveEvent.stopPropagation();
-            updateGdtDragAt(moveEvent.clientX, moveEvent.clientY);
-          };
-          const handleMouseUp = (upEvent: MouseEvent) => {
-            upEvent.preventDefault();
-            upEvent.stopPropagation();
-            const drag = gdtDragRef.current;
-            if (drag) commitGdtDrag(drag, updateGdtDragAt(upEvent.clientX, upEvent.clientY) ?? drag.currentPosition);
-            gdtMouseCleanupRef.current?.();
-          };
-          const cleanup = () => {
-            window.removeEventListener('mousemove', handleMouseMove, true);
-            window.removeEventListener('mouseup', handleMouseUp, true);
-            if (gdtMouseCleanupRef.current === cleanup) gdtMouseCleanupRef.current = null;
-          };
-          gdtMouseCleanupRef.current = cleanup;
-          window.addEventListener('mousemove', handleMouseMove, true);
-          window.addEventListener('mouseup', handleMouseUp, true);
-        }}
+        onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
         onPointerDown={(event) => {
           if (event.button !== 0 || previewHeld) return;
           event.preventDefault(); event.stopPropagation();
@@ -254,6 +224,7 @@ export function GdtOverlay({
             groupId: group.id, intentIds: group.intentIds, pointerId: event.pointerId,
             startClient: [event.clientX, event.clientY], startPosition: group.origin, currentPosition: group.origin,
           };
+          onInteractionActiveChange?.(true);
         }}
         onPointerMove={updateGdtDrag}
         onPointerUp={finishGdtDrag}
@@ -265,11 +236,35 @@ export function GdtOverlay({
         onPointerCancel={(event) => {
           const drag = gdtDragRef.current;
           if (!drag || drag.pointerId !== event.pointerId) return;
-          if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
-          gdtPersistTimerRef.current = null; gdtDragRef.current = null;
+          gdtPreview.cancel();
+          gdtDragRef.current = null;
+          onInteractionActiveChange?.(false);
           setGdtDragPositions((current) => { const updated = { ...current }; delete updated[drag.groupId]; return updated; });
         }}>
         <path className="vai-gdt-leader" pointerEvents="none" d={orthogonalLeaderPath(group)} />
+        {attachedTextures.map((intent, textureIndex) => {
+          const marker: Vec2 = [
+            group.origin[0] + (14 + textureIndex * 82) / safeScale,
+            group.origin[1] + 17 / safeScale,
+          ];
+          return <g key={intent.id}
+            className={`vai-surface-texture-attached${selectedSurfaceTextureId === intent.id ? ' is-selected' : ''}`}
+            data-surface-texture-id={intent.id}
+            pointerEvents="all"
+            onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+            onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+            onClick={(event) => {
+              event.preventDefault(); event.stopPropagation();
+              if (!previewHeld) onSelectSurfaceTexture?.(intent.id);
+            }}>
+            <g transform={screenSpaceTransform(marker, safeScale)} data-material-removal={intent.materialRemoval}>
+              <rect className="vai-surface-texture__hit" x={-16} y={-46} width={58} height={58} rx={4} />
+              <SurfaceTextureSymbol materialRemoval={intent.materialRemoval} />
+              <text className="vai-surface-texture__value" x={-2} y={-23} textAnchor="middle" fontSize={11}
+                aria-label={`${intent.parameter} ${formatSurfaceTextureValue(intent.value)}`}>{formatSurfaceTextureValue(intent.value)}</text>
+            </g>
+          </g>;
+        })}
         {group.rows.map(({ intent, cells, widths }, rowIndex) => {
           const totalWidth = widths.reduce((sum, width) => sum + width, 0);
           const rowOrigin: Vec2 = [group.origin[0], group.origin[1] - rowIndex * ROW_HEIGHT * group.frameScale];
@@ -435,6 +430,26 @@ function CharacteristicMark({ characteristic, x, y }: {
     fontSize={characteristic === 'total-runout' ? 14 : 11}>
     {characteristicSymbol(characteristic)}
   </text>;
+}
+
+function formatSurfaceTextureValue(value: number): string {
+  return Number(value.toFixed(6)).toString();
+}
+
+function removePersistedPositions(
+  previews: Record<string, Vec2>,
+  persistedPosition: (id: string) => readonly [number, number] | undefined,
+): Record<string, Vec2> {
+  let changed = false;
+  const next = { ...previews };
+  for (const [id, preview] of Object.entries(previews)) {
+    const persisted = persistedPosition(id);
+    if (persisted !== undefined && Math.hypot(persisted[0] - preview[0], persisted[1] - preview[1]) <= 0.0005) {
+      delete next[id];
+      changed = true;
+    }
+  }
+  return changed ? next : previews;
 }
 
 type OverlayAnchor = EngineeringAnnotationDraft['datums'][number]['anchor']

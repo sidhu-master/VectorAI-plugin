@@ -19,17 +19,67 @@ export function measureOpeningAngles(geometryInput: GeometryNode[]): {
   facts: OpeningAngleFact[];
 } {
   const geometry = geometryInput.filter(({ visible, quality }) => visible && quality.status === 'confirmed');
-  const bounds = geometryBounds(geometry);
+  const worldBounds = geometryBounds(geometry);
+  const worldSegments = collectSegments(geometry);
+  const frame = resolveOpeningFrame(geometry, worldSegments);
+  if (!worldBounds || !frame) return { axis: { start: [0, 0], end: [0, 0], status: 'conflict' }, facts: [] };
+  const segments = worldSegments.map((segment) => ({
+    ...segment, start: toLocal(frame, segment.start), end: toLocal(frame, segment.end),
+  }));
+  const bounds = segmentBounds(segments);
   if (!bounds) return { axis: { start: [0, 0], end: [0, 0], status: 'conflict' }, facts: [] };
   const diagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
   const tolerance = Math.max(diagonal * 1e-6, MINIMUM_TOLERANCE);
-  const segments = collectSegments(geometry);
-  const axisY = explicitAxisY(geometry, tolerance) ?? reflectedAxisY(segments, bounds, tolerance);
+  const axisY = reflectedAxisY(segments, bounds, tolerance);
   const axis: OpeningAngleAxis = axisY === null
-    ? { start: [bounds.minX, (bounds.minY + bounds.maxY) / 2], end: [bounds.maxX, (bounds.minY + bounds.maxY) / 2], status: 'conflict' }
-    : { start: [clean(bounds.minX), clean(axisY)], end: [clean(bounds.maxX), clean(axisY)], status: 'confirmed' };
+    ? { start: toWorld(frame, bounds.minX, (bounds.minY + bounds.maxY) / 2), end: toWorld(frame, bounds.maxX, (bounds.minY + bounds.maxY) / 2), status: 'conflict' }
+    : { start: cleanPoint(toWorld(frame, bounds.minX, axisY)), end: cleanPoint(toWorld(frame, bounds.maxX, axisY)), status: 'confirmed' };
   if (axis.status === 'conflict') return { axis, facts: [] };
-  return { axis, facts: openingAngleFacts(segments, axis.start[1], diagonal, tolerance) };
+  const localFacts = openingAngleFacts(segments, axisY!, diagonal, tolerance);
+  return { axis, facts: localFacts.map((fact) => ({
+    ...fact,
+    key: `${fact.key}:${numberKey(frame.angle)}`,
+    vertex: cleanPoint(toWorld(frame, fact.vertex[0], fact.vertex[1])),
+    rays: [cleanPoint(toWorld(frame, fact.rays[0][0], fact.rays[0][1])), cleanPoint(toWorld(frame, fact.rays[1][0], fact.rays[1][1]))],
+    axialCoordinate: fact.vertex[0] - bounds.minX,
+    axialSide: fact.vertex[0] <= (bounds.minX + bounds.maxX) / 2 ? 'start' : 'end',
+  })) };
+}
+
+interface OpeningFrame { origin: Vec2; axis: Vec2; normal: Vec2; angle: number }
+
+function resolveOpeningFrame(geometry: GeometryNode[], segments: SegmentSample[]): OpeningFrame | null {
+  const explicit = geometry.find((node) => node.type === 'xline' && Math.hypot(...node.direction) > MINIMUM_TOLERANCE);
+  let angle: number;
+  if (explicit?.type === 'xline') angle = Math.atan2(explicit.direction[1], explicit.direction[0]);
+  else {
+    const lengths = segments.map(({ start, end }) => Math.hypot(end[0] - start[0], end[1] - start[1]));
+    const maximum = Math.max(0, ...lengths);
+    const dominant = segments.filter((_, index) => lengths[index]! >= maximum * 0.45);
+    if (dominant.length === 0) return null;
+    let x = 0; let y = 0;
+    for (const segment of dominant) {
+      const dx = segment.end[0] - segment.start[0]; const dy = segment.end[1] - segment.start[1];
+      const weight = Math.hypot(dx, dy); const candidate = Math.atan2(dy, dx);
+      x += Math.cos(candidate * 2) * weight; y += Math.sin(candidate * 2) * weight;
+    }
+    angle = Math.atan2(y, x) / 2;
+  }
+  let axis: Vec2 = [Math.cos(angle), Math.sin(angle)];
+  if (Math.abs(axis[0]) >= Math.abs(axis[1]) ? axis[0] < 0 : axis[1] < 0) axis = [-axis[0], -axis[1]];
+  const normal: Vec2 = [-axis[1], axis[0]];
+  return { origin: [0, 0], axis, normal, angle: Math.atan2(axis[1], axis[0]) };
+}
+
+function toLocal(frame: OpeningFrame, point: Vec2): Vec2 {
+  return [point[0] * frame.axis[0] + point[1] * frame.axis[1], point[0] * frame.normal[0] + point[1] * frame.normal[1]];
+}
+function toWorld(frame: OpeningFrame, z: number, r: number): Vec2 {
+  return [frame.origin[0] + frame.axis[0] * z + frame.normal[0] * r, frame.origin[1] + frame.axis[1] * z + frame.normal[1] * r];
+}
+function segmentBounds(segments: SegmentSample[]) {
+  const points = segments.flatMap(({ start, end }) => [start, end]);
+  return points.length === 0 ? null : { minX: Math.min(...points.map(([x]) => x)), minY: Math.min(...points.map(([, y]) => y)), maxX: Math.max(...points.map(([x]) => x)), maxY: Math.max(...points.map(([, y]) => y)) };
 }
 
 function collectSegments(geometry: GeometryNode[]): SegmentSample[] {
@@ -49,12 +99,6 @@ function collectSegments(geometry: GeometryNode[]): SegmentSample[] {
     }
   }
   return segments;
-}
-
-function explicitAxisY(geometry: GeometryNode[], tolerance: number): number | null {
-  const explicit = geometry.filter((node) => node.type === 'xline'
-    && Math.abs(node.direction[1]) <= tolerance && Math.abs(node.direction[0]) > tolerance);
-  return explicit.length === 1 && explicit[0]?.type === 'xline' ? explicit[0].origin[1] : null;
 }
 
 function reflectedAxisY(
@@ -178,4 +222,3 @@ function cross(a: Vec2, b: Vec2): number { return a[0] * b[1] - a[1] * b[0]; }
 function cleanPoint(point: Vec2): Vec2 { return [clean(point[0]), clean(point[1])]; }
 function numberKey(value: number): string { return clean(value).toFixed(6); }
 function clean(value: number): number { const rounded = Math.round(value * 1_000_000) / 1_000_000; return Math.abs(rounded) <= 1e-12 ? 0 : rounded; }
-

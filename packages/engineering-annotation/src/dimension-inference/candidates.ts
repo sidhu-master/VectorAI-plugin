@@ -84,6 +84,7 @@ class CandidateAccumulator {
       existing.roles = unique([...existing.roles, role]).sort();
       existing.evidenceIds = unique([...existing.evidenceIds, evidence.id]).sort();
       existing.required ||= evidence.required;
+      existing.constraint = mergeConstraint(existing.constraint, evidence.constraint ?? (evidence.required ? 'required' : 'preferred'));
       return;
     }
     this.#candidates.set(key, {
@@ -91,6 +92,7 @@ class CandidateAccumulator {
       ...ordered,
       nominalValue: canonical(this.#stations.get(ordered.endStationId)! - this.#stations.get(ordered.startStationId)!),
       roles: [role], evidenceIds: [evidence.id], required: evidence.required,
+      constraint: evidence.constraint ?? (evidence.required ? 'required' : 'preferred'),
     });
   }
 
@@ -178,26 +180,36 @@ function deriveProcessEnvelopes(
 ): ProcessEnvelope[] {
   const tolerance = coordinateTolerance(topology);
   const segments = [...partition.segments].sort((left, right) => left.zStart - right.zStart);
-  const claimedSegmentIds = new Set(partition.semanticGroups
-    .filter((group) => resolveShaftDimensionRole(group, partition) === 'functional-feature')
-    .flatMap(({ segmentIds }) => segmentIds));
   return partition.semanticGroups.flatMap((group): ProcessEnvelope[] => {
     if (!group.range || !isProcessFeature(group, partition)) return [];
-    const transitionIndex = segments.findIndex((segment) => (
-      Math.abs(segment.zStart - group.range!.zEnd) <= tolerance
-      && !claimedSegmentIds.has(segment.id)
+    const sharedBoundary = partition.semanticGroups.some((candidate) => (
+      candidate.id !== group.id
+      && candidate.range !== undefined
+      && resolveShaftDimensionRole(candidate, partition) === 'functional-feature'
+      && Math.abs(candidate.range.zStart - group.range!.zEnd) <= tolerance
     ));
-    if (transitionIndex < 0 || !segments[transitionIndex + 1]) return [];
-    const transition = segments[transitionIndex]!;
-    const resolved = resolveCoordinates(topology, group.range.zStart, transition.zEnd);
+    if (sharedBoundary) return [];
+    const transitionEnd = topology.stations
+      .map(({ coordinate }) => coordinate)
+      .filter((coordinate) => coordinate > group.range!.zEnd + tolerance)
+      .sort((left, right) => left - right)[0];
+    if (transitionEnd === undefined) return [];
+    const resolved = resolveCoordinates(topology, group.range.zStart, transitionEnd);
     if (!resolved) return [];
+    const transitionSegments = segments.filter(({ zStart, zEnd }) => (
+      zEnd > group.range!.zEnd + tolerance && zStart < transitionEnd - tolerance
+    ));
     return [{
       ...resolved,
       groupId: group.id,
       evidence: {
         id: `partition:process-envelope:${group.id}`,
         origin: 'partition', kind: 'process-envelope', label: `${group.name ?? group.semanticType}工艺包络`,
-        required: false, sourceIds: [group.id, transition.id, ...transition.boundaryEvidenceIds],
+        required: false,
+        sourceIds: [
+          group.id,
+          ...transitionSegments.flatMap(({ id, boundaryEvidenceIds }) => [id, ...boundaryEvidenceIds]),
+        ],
       },
     }];
   }).sort((left, right) => stationCoordinate(topology, left.startStationId) - stationCoordinate(topology, right.startStationId));
@@ -207,8 +219,7 @@ function isProcessFeature(
   group: ShaftSemanticGroup,
   partition: PartitionDraft | PartitionRevision,
 ): boolean {
-  return resolveShaftDimensionRole(group, partition) === 'functional-feature'
-    && !['bearing', 'bearing-seat'].includes(group.semanticType.toLowerCase());
+  return resolveShaftDimensionRole(group, partition) === 'functional-feature';
 }
 
 function elementaryEvidence(span: AxialElementarySpan): DimensionEvidence {
@@ -240,3 +251,10 @@ function candidateOrder(left: AxialDimensionCandidate, right: AxialDimensionCand
 
 function unique<T>(values: T[]): T[] { return [...new Set(values)]; }
 function canonical(value: number): number { return Number(value.toFixed(6)); }
+function mergeConstraint(
+  left: AxialDimensionCandidate['constraint'], right: AxialDimensionCandidate['constraint'],
+): AxialDimensionCandidate['constraint'] {
+  if (left === 'required' || right === 'required') return 'required';
+  if (left === 'prohibited' || right === 'prohibited') return 'prohibited';
+  return 'preferred';
+}

@@ -5,7 +5,17 @@ import type { DrawingRef } from '@vectorai/drawing-edit-protocol';
 
 export type EvidenceOrigin = 'document' | 'geometry' | 'fused' | 'ai' | 'manual';
 export interface ShaftAxis { origin: Vec2; direction: Vec2; normal: Vec2; zMin: number; zMax: number; orientation: 'forward' | 'reversed'; geometryNodeIds?: string[] }
-export interface StepCandidate { id: string; z: number; score: number; evidenceIds: string[]; accepted: boolean }
+export interface StepCandidate {
+  id: string; z: number; score: number; evidenceIds: string[]; accepted: boolean;
+  policyVersion?: 'shaft-step-confidence-v1';
+  confidenceBreakdown?: {
+    contourContinuity: number;
+    bilateralCorrespondence: number;
+    axialResidence: number;
+    radiusChange: number;
+    entityQuality: number;
+  };
+}
 export interface ShaftProfileSummary { minRadius: number; maxRadius: number; sampleCount: number }
 export type ShaftDimensionRole = 'functional-feature' | 'process-datum' | 'transition' | 'ordinary';
 export interface PartitionDiagnostic { id: string; severity: 'info' | 'warning' | 'error'; code: string; message: string; segmentIds?: string[]; evidenceIds?: string[] }
@@ -26,11 +36,26 @@ export interface ShaftSemanticGroup {
   dimensionRole?: ShaftDimensionRole;
   name?: string;
   evidenceIds: string[];
+  reconciliation?: {
+    status: 'matched' | 'ambiguous' | 'conflict' | 'unmatched';
+    stationError: number;
+    widthError: number;
+    diameterError?: number;
+    topologyError: number;
+    documentIdentityError: number;
+    documentRange: { zStart: number; zEnd: number };
+    geometryRange?: { zStart: number; zEnd: number };
+  };
 }
+/** Geometric decomposition: these segments always cover the full shaft axis continuously. */
+export type AxialShaftSegment = ShaftPartitionSegment;
+/** Semantic extents: these regions may be sparse, overlap, or conflict with geometry. */
+export type FunctionalShaftRegion = ShaftSemanticGroup;
 export interface PartitionDraft {
   version: 1; drawingRef: DrawingRef; axis: ShaftAxis;
   segments: ShaftPartitionSegment[]; semanticGroups: ShaftSemanticGroup[];
   stepCandidates: StepCandidate[]; evidence: PartitionEvidence[]; diagnostics: PartitionDiagnostic[];
+  geometryFingerprint?: string;
   basePartitionRevisionId?: string;
 }
 export interface PartitionRevision extends Omit<PartitionDraft, 'stepCandidates' | 'basePartitionRevisionId'> {

@@ -15,6 +15,9 @@ export function selectAxialEndOpeningAngles(input: {
     Math.max(...points.map(([, y]) => y)) - Math.min(...points.map(([, y]) => y)),
   );
   const boundaryTolerance = Math.max(diagonal * 0.01, 0.05);
+  const axisVector = [input.axis.end[0] - input.axis.start[0], input.axis.end[1] - input.axis.start[1]] as const;
+  const axisLength = Math.hypot(...axisVector);
+  const axisDirection = axisLength > 0 ? [axisVector[0] / axisLength, axisVector[1] / axisLength] as const : [1, 0] as const;
   const geometryById = new Map(input.geometry.map((node) => [node.id, node]));
   const selected: OpeningAngleFact[] = [];
   const suppressionReasons: Record<string, string> = {};
@@ -24,8 +27,10 @@ export function selectAxialEndOpeningAngles(input: {
       if (!node) return false;
       const sourcePoints = node.type === 'line' ? [node.start, node.end]
         : node.type === 'polyline' ? node.vertices.map(({ point }) => point) : [];
-      return sourcePoints.some(([x]) => Math.abs(x - input.axis.start[0]) <= boundaryTolerance
-        || Math.abs(x - input.axis.end[0]) <= boundaryTolerance);
+      return sourcePoints.some((point) => {
+        const z = (point[0] - input.axis.start[0]) * axisDirection[0] + (point[1] - input.axis.start[1]) * axisDirection[1];
+        return Math.abs(z) <= boundaryTolerance || Math.abs(z - axisLength) <= boundaryTolerance;
+      });
     });
     const orthogonal = Math.abs(fact.value - 90) <= 0.5;
     if (orthogonal || !atAxialEnd) {
@@ -36,4 +41,3 @@ export function selectAxialEndOpeningAngles(input: {
   }
   return { selected, suppressionReasons };
 }
-

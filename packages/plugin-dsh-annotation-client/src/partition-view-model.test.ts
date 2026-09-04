@@ -3,7 +3,7 @@
 import type { PartitionDraft } from '@vectorai/plugin-space-contracts';
 import { describe, expect, it } from 'vitest';
 
-import { partitionBands } from './partition-view-model';
+import { partitionBands, partitionSnapTolerance } from './partition-view-model';
 
 const draft: PartitionDraft = {
   version: 1,
@@ -60,5 +60,10 @@ describe('partition view model', () => {
     expect(partitionBands(source, 'functional')).toContainEqual(expect.objectContaining({
       id: 'regular', name: '常规区域', origin: 'fused', zStart: 8, zEnd: 10,
     }));
+  });
+
+  it('uses an eight-pixel snap radius with a bounded world-space fallback', () => {
+    expect(partitionSnapTolerance(173, 4)).toBeCloseTo(2, 6);
+    expect(partitionSnapTolerance(173, 0.2)).toBeCloseTo(5.19, 6);
   });
 });

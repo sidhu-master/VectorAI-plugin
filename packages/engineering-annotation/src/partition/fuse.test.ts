@@ -6,7 +6,7 @@ import { fuseDocumentRegions } from './fuse';
 import type { PartitionDraft, ShaftPartitionSegment } from './types';
 
 describe('document region reconciliation', () => {
-  it('uses a width-and-diameter matching geometric range when the document center conflicts', () => {
+  it('uses a unique width-and-diameter matching shoulder range when document station conflicts', () => {
     const draft = makeDraft([
       segment(0, 41.5, 45),
       segment(41.5, 92, 56.3),
@@ -26,6 +26,7 @@ describe('document region reconciliation', () => {
       name: '一级齿轮',
       segmentIds: ['segment:92-147'],
       range: { zStart: 92, zEnd: 147 },
+      reconciliation: { status: 'matched', geometryRange: { zStart: 92, zEnd: 147 } },
     });
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: 'DOCUMENT_REGION_RECONCILED',
@@ -60,10 +61,10 @@ describe('document region reconciliation', () => {
     expect(result.semanticGroups[0]).toMatchObject({ name: '短花键', range: { zStart: 19.5, zEnd: 20.5 } });
     expect(result.semanticGroups[0]?.segmentIds.length).toBeGreaterThan(0);
     expect(result.segments.every(({ semanticType }) => semanticType === undefined)).toBe(true);
-    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'DOCUMENT_REGION_UNMATCHED' }));
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'DOCUMENT_REGION_CONFLICT' }));
   });
 
-  it('does not let one matching maximum diameter hide a mixed-profile candidate', () => {
+  it('keeps an explicit axial interval anchored when another station has a closer diameter', () => {
     const draft = makeDraft([
       segment(0, 40, 40), segment(40, 50, 57), segment(50, 60, 40), segment(60, 80, 57),
     ]);
@@ -73,11 +74,11 @@ describe('document region reconciliation', () => {
     }]);
 
     expect(result.semanticGroups[0]).toMatchObject({
-      segmentIds: ['segment:60-80'], range: { zStart: 60, zEnd: 80 },
+      segmentIds: ['segment:40-50', 'segment:50-60'], range: { zStart: 40, zEnd: 60 },
     });
   });
 
-  it('does not treat a mostly unprofiled candidate as a diameter match', () => {
+  it('does not relocate an explicit axial interval to a remote profiled segment', () => {
     const draft = makeDraft([
       segment(0, 20, 57, 2),
       segment(20, 38, 57, 0), segment(38, 40, 57, 2),
@@ -88,8 +89,37 @@ describe('document region reconciliation', () => {
     }]);
 
     expect(result.semanticGroups[0]).toMatchObject({
-      segmentIds: ['segment:0-20'], range: { zStart: 0, zEnd: 20 },
+      segmentIds: ['segment:20-38', 'segment:38-40'], range: { zStart: 20, zEnd: 40 },
     });
+  });
+
+  it('preserves exact document boundaries when geometry differs only by curve tessellation', () => {
+    const draft = makeDraft([
+      segment(0, 198.10183, 98.115556),
+      segment(198.10183, 200.89817, 83.5),
+      segment(200.89817, 220, 88.5),
+    ]);
+    const result = fuseDocumentRegions(draft, [{
+      id: 'U01',
+      type: 'relief',
+      name: '砂轮越程槽',
+      interval: { start: 198, end: 201 },
+      outerDiameter: 83.5,
+      sourceLines: [1],
+    }]);
+
+    expect(result.semanticGroups[0]).toMatchObject({
+      segmentIds: ['segment:198.10183-200.89817'],
+      range: { zStart: 198, zEnd: 201 },
+      reconciliation: {
+        status: 'matched',
+        documentRange: { zStart: 198, zEnd: 201 },
+        geometryRange: { zStart: 198.10183, zEnd: 200.89817 },
+      },
+    });
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({
+      code: 'DOCUMENT_REGION_RECONCILED',
+    }));
   });
 });
 

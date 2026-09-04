@@ -44,6 +44,7 @@ export interface DimensionEvidence {
   kind: 'drawing-end' | 'elementary-span' | 'functional-region' | 'document-interval' | 'process-envelope' | 'manual-requirement';
   label: string;
   required: boolean;
+  constraint?: 'required' | 'preferred' | 'prohibited';
   sourceIds: string[];
 }
 
@@ -55,6 +56,7 @@ export interface AxialDimensionCandidate {
   roles: AxialDimensionRole[];
   evidenceIds: string[];
   required: boolean;
+  constraint?: 'required' | 'preferred' | 'prohibited';
 }
 
 export interface GenerateCandidateInput {
@@ -101,6 +103,12 @@ export interface AxialChainNode {
   closureCandidateId: string;
   alternativeClosureCandidateIds: string[];
   status: 'resolved' | 'needs-review' | 'conflict';
+  closureRationale?: {
+    rule: 'hard-constraints-then-evidence-authority';
+    selectedEvidenceTier: number;
+    reasonCodes: string[];
+    counterfactualCandidateIds: string[];
+  };
 }
 
 export interface AxialDimensionScheme {

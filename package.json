@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "build:dsh-space": "node scripts/build-dsh-space.mjs space",
     "build:dsh-annotation": "node scripts/build-dsh-space.mjs annotation",
+    "check:dsh-build-freshness": "node scripts/check-dsh-build-freshness.mjs all",
     "pack:dsh-plugins": "node scripts/prepare-dsh-plugin-release.mjs",
     "publish:dsh-plugins": "node scripts/publish-dsh-plugins.mjs",
     "release:dsh-plugins": "node scripts/release-dsh-plugins.mjs",

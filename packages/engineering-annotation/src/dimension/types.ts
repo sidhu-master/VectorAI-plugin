@@ -10,12 +10,25 @@ export type EngineeringState = 'candidate' | 'resolved' | 'confirmed' | 'conflic
 export type DimensionFunctionalRole = 'datum' | 'overall' | 'functional' | 'assembly' | 'process' | 'inspection' | 'auxiliary' | 'closure';
 export type ToleranceMode = 'bilateral' | 'unilateral' | 'limits' | 'fit' | 'formula';
 export type ToleranceOrigin = 'document' | 'standard' | 'enterprise-rule' | 'manual' | 'ai-candidate';
+/**
+ * Records which layer is allowed to make a decision. Geometry and standards
+ * may express or locate a requirement, but only requirements/review can choose
+ * a design control or value.
+ */
+export type EngineeringDecisionAuthority =
+  | 'standard-expression'
+  | 'deterministic-geometry'
+  | 'documented-requirement'
+  | 'ai-recommendation'
+  | 'user-confirmed';
 
 export interface EngineeringDiagnostic {
   id: string;
   severity: 'info' | 'warning' | 'error';
   code: string;
   message: string;
+  /** Partition segments directly involved in this engineering diagnostic. */
+  segmentIds?: string[];
   entityIds?: string[];
   evidenceIds?: string[];
 }
@@ -48,6 +61,7 @@ export interface EngineeringDatum {
   source: 'document' | 'geometry' | 'manual' | 'ai-candidate';
   status: 'candidate' | 'confirmed' | 'conflict' | 'stale';
   evidenceIds: string[];
+  decisionAuthority?: EngineeringDecisionAuthority;
 }
 
 export interface ResolvedTolerance {
@@ -146,6 +160,7 @@ export interface SurfaceTextureIntent {
   source: 'document' | 'manual' | 'process-rule' | 'ai-candidate';
   status: 'candidate' | 'resolved' | 'confirmed' | 'conflict' | 'stale';
   evidenceIds: string[];
+  decisionAuthority?: EngineeringDecisionAuthority;
   ruleRef?: { id: string; version: string };
   labelPosition?: [number, number];
 }

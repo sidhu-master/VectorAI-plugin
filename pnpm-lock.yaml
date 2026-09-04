@@ -234,6 +234,9 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: 0.1.2-alpha.5
         version: 0.1.2-alpha.5(@deepseek-ai/cordis@4.0.2)
+      '@deepseek-ai/dsh-user-questions':
+        specifier: 0.1.2-alpha.5
+        version: 0.1.2-alpha.5(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-agent@0.1.2-alpha.5)(@deepseek-ai/dsh-llm@0.1.2-alpha.5)(@deepseek-ai/dsh-scope@0.1.2-alpha.5)
       '@deepseek-ai/dsh-util-values':
         specifier: 0.1.2-alpha.5
         version: 0.1.2-alpha.5(@deepseek-ai/cordis@4.0.2)
@@ -334,6 +337,9 @@ importers:
       '@deepseek-ai/dsh-typert-protocol':
         specifier: 0.1.2-alpha.5
         version: 0.1.2-alpha.5(@deepseek-ai/cordis@4.0.2)
+      '@deepseek-ai/dsh-user-questions':
+        specifier: 0.1.2-alpha.5
+        version: 0.1.2-alpha.5(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-agent@0.1.2-alpha.5)(@deepseek-ai/dsh-llm@0.1.2-alpha.5)(@deepseek-ai/dsh-scope@0.1.2-alpha.5)
       '@deepseek-ai/dsh-util-values':
         specifier: 0.1.2-alpha.5
         version: 0.1.2-alpha.5(@deepseek-ai/cordis@4.0.2)

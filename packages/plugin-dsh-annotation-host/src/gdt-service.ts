@@ -28,7 +28,12 @@ export class GdtService {
     signal?: AbortSignal,
   ): Promise<DimensionPlanSessionSnapshot> {
     if (!this.automaticReviewer) throw new Error('AI_GDT_REVIEW_UNAVAILABLE');
-    return this.start(agent, await this.automaticReviewer({ agent, partition, signal }), { replaceExistingGdt: true });
+    const recommendation = await this.automaticReviewer({ agent, partition, signal });
+    return this.start(agent, recommendation, {
+      // An unresolved review is not a replacement set. Keeping the current
+      // annotations prevents a clarification-only result from deleting work.
+      replaceExistingGdt: recommendation.coverage?.status !== 'needs-user-input',
+    });
   }
 
   start(

@@ -3,9 +3,18 @@
 import type { PartitionDraft } from '@vectorai/plugin-space-contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TestRenderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PartitionOverlay } from './PartitionOverlay';
+
+beforeAll(() => {
+  Object.assign(globalThis, {
+    window: {
+      requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1; },
+      cancelAnimationFrame: () => undefined,
+    },
+  });
+});
 
 function draft(): PartitionDraft {
   const bounds = [0, 17, 53, 92, 147, 150, 173];
@@ -244,5 +253,30 @@ describe('PartitionOverlay', () => {
     act(() => handle.props.onPointerMove({ ...event, clientX: 120, clientY: 40 }));
     await act(async () => handle.props.onPointerUp({ ...event, currentTarget: { releasePointerCapture: vi.fn() } }));
     expect(renderer.root.findAll((node) => node.type === 'polygon' && Boolean(node.props['data-partition-band']))[0]!.props.points).toContain('27,-');
+  });
+
+  it('shows the persisted snapped boundary instead of retaining the unsnapped pointer preview', async () => {
+    const value = draft();
+    let renderer!: TestRenderer.ReactTestRenderer;
+    const onMoveBoundary = vi.fn(async () => {
+      const snapped = structuredClone(value);
+      snapped.segments[0]!.zEnd = 25;
+      snapped.segments[1]!.zStart = 25;
+      renderer.update(<svg><PartitionOverlay
+        draft={snapped} previewHeld={false} scale={2} onMoveBoundary={onMoveBoundary}
+        mode="segments"
+      /></svg>);
+    });
+    renderer = TestRenderer.create(<svg><PartitionOverlay
+      draft={value} previewHeld={false} scale={2} onMoveBoundary={onMoveBoundary}
+      mode="segments"
+    /></svg>);
+    const handle = renderer.root.findByProps({ 'aria-label': '移动分区边界 1' });
+    const event = { pointerId: 11, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    act(() => handle.props.onPointerDown({ ...event, clientX: 100, clientY: 40, currentTarget: { setPointerCapture: vi.fn() } }));
+    act(() => handle.props.onPointerMove({ ...event, clientX: 120, clientY: 40 }));
+    await act(async () => handle.props.onPointerUp({ ...event, currentTarget: { releasePointerCapture: vi.fn() } }));
+
+    expect(renderer.root.findAll((node) => node.type === 'polygon' && Boolean(node.props['data-partition-band']))[0]!.props.points).toContain('25,-');
   });
 });

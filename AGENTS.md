@@ -8,6 +8,27 @@ Production image vectorization must resolve the exact platform runtime npm packa
 
 End users install exactly two DSH Bundles in two ordered commands: space first, annotation second. Platform runtime packages are internal optional dependencies and must not be presented as additional user installation steps.
 
+## Pre-change requirement and impact discipline
+
+Before changing existing behavior, refactoring a subsystem, or replacing an implementation, first reconstruct what the product currently promises. Do not begin from the local symptom or from the desired new implementation alone.
+
+- Recover the applicable requirements from the current user request, maintained product and technical documentation, existing interaction behavior, relevant code paths, and recent history when necessary. Distinguish intentional behavior from incidental implementation details.
+- Write down the behavior that must remain unchanged, the behavior that is intentionally changing, and any unresolved ambiguity before editing code. If an ambiguity can materially change the user-visible result and cannot be resolved from repository evidence, ask the user instead of guessing.
+- Trace the change through every affected layer and lifecycle transition, including routing, host contracts, client state, persistence, rendering, export, and session restoration where applicable. Check indirect consumers and shared state, not only the file containing the reported symptom.
+- Compare the proposed implementation against the reconstructed requirements before coding. A cleaner design or passing local test is not sufficient if it drops an existing capability, interaction, or state transition.
+- After the change, verify both the intended new behavior and the identified invariants at the smallest useful scope. For refactors, explicitly check that the established end-to-end workflow still behaves the same except for the approved change.
+- When repository evidence conflicts with current behavior, treat it as a requirement discrepancy to resolve, not as permission to silently choose one side.
+
+The required sequence is: reconstruct requirements, analyze impact, define change boundaries and invariants, implement, then verify against both the requested change and preserved behavior.
+
+## Rapid-fix mode
+
+Rapid-fix mode is the default for small bug fixes and UI adjustments unless the user explicitly requests broader verification. Locate the faulty code and make the smallest scoped correction; do not add tests, run unrelated verification, create a PR, or publish a package.
+
+Do not proactively add progress pills, workflow badges, status summaries, completion banners, or similar status UI unless the user explicitly requests that specific feedback. Existing domain state is not authorization to expose a new status indicator; status UI without a reliable lifecycle binding must be removed rather than approximated.
+
+After every rapid-mode source change, always rebuild the affected local DSH bundle so the running app can load the change. Use `pnpm build:dsh-space` for first-layer changes and `pnpm build:dsh-annotation` for second-layer changes; run both only when both layers changed. A source edit is not ready for user inspection until this local rebuild succeeds.
+
 ## New feature delivery discipline
 
 For every new user-facing feature, optimize first for a complete, observable user workflow rather than for infrastructure breadth or theoretical completeness.

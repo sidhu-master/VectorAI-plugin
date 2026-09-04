@@ -19,6 +19,12 @@ export interface PartitionBand {
 
 type PartitionViewSource = Pick<PartitionDraft, 'segments' | 'semanticGroups' | 'evidence'>;
 
+export function partitionSnapTolerance(axisSpan: number, scale: number): number {
+  const span = Math.max(Math.abs(axisSpan), 1e-6);
+  const screenRadius = 8 / Math.max(Math.abs(scale), 1e-6);
+  return Math.max(span * 1e-5, Math.min(screenRadius, span * 0.03));
+}
+
 export function partitionBands(draft: PartitionViewSource, mode: PartitionViewMode): PartitionBand[] {
   if (mode === 'segments') return draft.segments.map((segment, index) => ({
     id: segment.id,

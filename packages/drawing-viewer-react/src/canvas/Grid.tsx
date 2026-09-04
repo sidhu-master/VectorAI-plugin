@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
-import { useId } from 'react';
+import { memo, useId } from 'react';
 
 import { gridPatternMetrics } from './grid-pattern';
 
-export function CadGrid({
+export const CadGrid = memo(function CadGrid({
   viewport,
   showGrid,
   showAxes,
@@ -60,4 +60,4 @@ export function CadGrid({
       ) : null}
     </g>
   );
-}
+});

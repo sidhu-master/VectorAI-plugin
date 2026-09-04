@@ -61,9 +61,11 @@ export function createDimensionChainController(
   const run = (operation: () => Promise<RemoteResult<DimensionPlanSessionSnapshot>>) => {
     const task = queue.then(async () => {
       update({ busy: true, error: null });
-      try { update({ plan: unwrap(await operation()) }); }
-      catch (error) { update({ error: error instanceof Error ? error.message : String(error) }); throw error; }
-      finally { update({ busy: false }); }
+      try { update({ plan: unwrap(await operation()), busy: false }); }
+      catch (error) {
+        update({ error: error instanceof Error ? error.message : String(error), busy: false });
+        throw error;
+      }
     });
     queue = task.catch(() => undefined);
     return task;

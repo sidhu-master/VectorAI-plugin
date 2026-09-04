@@ -483,6 +483,42 @@ export class DimensionPlanStore {
     }, state.undo, state.redo);
   }
 
+  markPartitionChanged(sessionId: string, currentRef: DrawingRef): DimensionPlanSessionSnapshot {
+    const state = this.#envelope(sessionId);
+    const draft = state.snapshot.draft;
+    if (draft?.axialScheme === undefined) return structuredClone(state.snapshot);
+    const sameDrawing = state.snapshot.drawingRef?.drawingId === currentRef.drawingId
+      && state.snapshot.drawingRef.revision === currentRef.revision;
+    const repairedGeometricTolerances = sameDrawing
+      ? draft.geometricTolerances.map((intent) => intent.status !== 'stale' ? intent : ({
+        ...intent,
+        computed: {
+          ...intent.computed,
+          status: intent.computed.value === undefined ? 'pending' as const : 'resolved' as const,
+        },
+        status: intent.computed.value === undefined ? 'pending-calculation' as const : 'resolved' as const,
+      }))
+      : draft.geometricTolerances;
+    const repairedSurfaceTextures = sameDrawing
+      ? draft.surfaceTextures.map((intent) => intent.status === 'stale'
+        ? { ...intent, status: 'candidate' as const }
+        : intent)
+      : draft.surfaceTextures;
+    return this.#replace(sessionId, {
+      ...state.snapshot,
+      phase: 'needs-rebase',
+      drawingRef: currentRef,
+      draft: {
+        ...draft,
+        geometricTolerances: repairedGeometricTolerances,
+        surfaceTextures: repairedSurfaceTextures,
+        axialScheme: { ...draft.axialScheme, status: 'stale' as const },
+      },
+      message: 'Partition changed',
+      updatedAt: this.ports.now(),
+    }, state.undo, state.redo);
+  }
+
   #push(sessionId: string, snapshot: DimensionPlanSessionSnapshot): DimensionPlanSessionSnapshot {
     const state = this.#envelope(sessionId);
     return this.#replace(sessionId, snapshot, [...state.undo, state.snapshot], []);

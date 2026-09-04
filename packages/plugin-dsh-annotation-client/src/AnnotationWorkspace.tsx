@@ -27,6 +27,7 @@ import { runSharedAnnotationHistory } from './annotation-history';
 import { DimensionChainOverlay, dimensionChainFitPadding } from './DimensionChainOverlay';
 import { DimensionChainInspector } from './DimensionChainInspector';
 import { PartitionOverlay } from './PartitionOverlay';
+import { partitionSnapTolerance } from './partition-view-model';
 import { PartitionActionToolbar } from './PartitionActionToolbar';
 import { PartitionInspector } from './PartitionInspector';
 import { DimensionPlanInspector } from './DimensionPlanInspector';
@@ -155,6 +156,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
   const [selectedGdtIntentId, setSelectedGdtIntentId] = useState<string | null>(null);
   const [gdtEditorSelection, setGdtEditorSelection] = useState<GdtEditorSelection | null>(null);
   const [exportNotice, setExportNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const [canvasInteractionActive, setCanvasInteractionActive] = useState(false);
   const [dimensionContextMenu, setDimensionContextMenu] = useState<{
     annotationId: string; target: ToleranceTarget; position: { x: number; y: number };
   } | null>(null);
@@ -283,6 +285,52 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     order: ANNOTATION_DIMENSION_CHAIN_LAYER.order + index + 1,
     defaultVisible: true,
   })) ?? [], [dimensionScheme]);
+  const layerManagerLayers = registeredLayers
+    .filter(({ id }) => (
+      (id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed))
+      || (id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle)
+      || (id === ANNOTATION_DIAMETER_LAYER_ID && hasDiameter)
+      || (id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme))
+      || (id === ANNOTATION_DATUM_LAYER_ID && hasDatums)
+      || (id === ANNOTATION_GDT_LAYER_ID && hasGdt)
+      || (id === ANNOTATION_SURFACE_TEXTURE_LAYER_ID && hasSurfaceTextures)
+    ))
+    .map((definition) => ({
+      definition,
+      visible: layerVisibility[definition.id] ?? definition.defaultVisible,
+      ...(definition.id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && dimensionChainLayers.length > 0 ? {
+        children: dimensionChainLayers.map((childDefinition) => ({
+          definition: childDefinition,
+          visible: layerVisibility[childDefinition.id] ?? childDefinition.defaultVisible,
+        })),
+      } : {}),
+    }));
+  const soloLayerVisibility = (id: string) => {
+    setLayerVisibility((current) => {
+      const next = { ...current };
+      for (const item of layerManagerLayers) {
+        const selectedChild = item.children?.find(({ definition }) => definition.id === id);
+        const parentSelected = item.definition.id === id;
+        next[item.definition.id] = parentSelected || selectedChild !== undefined;
+        for (const child of item.children ?? []) {
+          next[child.definition.id] = parentSelected || child.definition.id === id;
+        }
+      }
+      writeLayerVisibility(sessionId, next, typeof sessionStorage === 'undefined' ? null : sessionStorage);
+      return next;
+    });
+  };
+  const showAllLayerVisibility = () => {
+    setLayerVisibility((current) => {
+      const next = { ...current };
+      for (const item of layerManagerLayers) {
+        next[item.definition.id] = true;
+        for (const child of item.children ?? []) next[child.definition.id] = true;
+      }
+      writeLayerVisibility(sessionId, next, typeof sessionStorage === 'undefined' ? null : sessionStorage);
+      return next;
+    });
+  };
   const visibleDimensionChainIds = useMemo(() => new Set(
     dimensionScheme?.chains
       .filter((chain) => layerVisibility[dimensionChainLayerId(chain.id)] ?? true)
@@ -345,6 +393,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     return () => { window.removeEventListener('blur', release); release(); };
   }, [dimensionChain, gdt, partition]);
   useEffect(() => {
+    if (canvasInteractionActive) return undefined;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const workflowActive = annotationState.workflow.status === 'running'
@@ -352,6 +401,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     const hydrate = async () => {
       await Promise.allSettled([
         runtime.actions.refresh(),
+        partition.actions.refresh(),
         dimensionChain.actions.refresh(),
         gdt.actions.refresh(),
       ]);
@@ -363,7 +413,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       active = false;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [annotationState.workflow.status, dimensionChain, gdt, partitionState.busy, runtime]);
+  }, [annotationState.workflow.status, canvasInteractionActive, dimensionChain, gdt, partition, partitionState.busy, runtime]);
   useEffect(() => {
     if (displaySnapshot === null) return undefined;
     if (!displaySnapshot.document.geometry.some(({ visible }) => visible)) return;
@@ -609,39 +659,13 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           {exportNotice.message}
         </div>}
         <DrawingLayerManager
-          layers={[...registeredLayers
-            .filter(({ id }) => (
-              (id === ANNOTATION_PARTITION_LAYER_ID && Boolean(draft || confirmed))
-              || (id === ANNOTATION_OPENING_ANGLE_LAYER_ID && hasOpeningAngle)
-              || (id === ANNOTATION_DIAMETER_LAYER_ID && hasDiameter)
-              || (id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && Boolean(dimensionScheme))
-              || (id === ANNOTATION_DATUM_LAYER_ID && hasDatums)
-              || (id === ANNOTATION_GDT_LAYER_ID && hasGdt)
-              || (id === ANNOTATION_SURFACE_TEXTURE_LAYER_ID && hasSurfaceTextures)
-            ))
-            .map((definition) => ({
-              definition,
-              visible: layerVisibility[definition.id] ?? definition.defaultVisible,
-              ...(definition.id === ANNOTATION_DIMENSION_CHAIN_LAYER_ID && dimensionChainLayers.length > 0 ? {
-                children: dimensionChainLayers.map((childDefinition) => ({
-                  definition: childDefinition,
-                  visible: layerVisibility[childDefinition.id] ?? childDefinition.defaultVisible,
-                })),
-              } : {}),
-            }))]}
+          layers={layerManagerLayers}
           onVisibilityChange={updateLayerVisibility}
+          onSoloVisibility={soloLayerVisibility}
+          onShowAllVisibility={showAllLayerVisibility}
         />
-        {(annotationState.workflow.status === 'running' || annotationState.workflow.status === 'reviewing')
-          && <AnnotationGenerationProgress
-            stage={annotationState.workflow.stage ?? 'deterministic'}
-            reviewing={annotationState.workflow.status === 'reviewing'}
-          />}
-        {(partitionState.busy || stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null || gdtState.error !== null) &&
+        {(stagedDocumentNames.length > 0 || importError !== null || partitionState.error !== null || dimensionState.error !== null || gdtState.error !== null) &&
           <div className="vai-annotation-status-stack" data-annotation-status-stack="true">
-            {partitionState.busy && <div className="vai-partition-progress" data-partition-progress={partitionState.partition.phase} role="status">
-              <span className="vai-partition-progress__pulse" aria-hidden="true" />
-              <span>{partitionProgressLabel(partitionState.partition.phase, true, annotationState.workflow.status)}</span>
-            </div>}
             {stagedDocumentNames.length > 0 && <div className="vai-engineering-documents-status" role="status">
               <span>已添加 {stagedDocumentNames.length} 份工程资料；请描述任务后再开始分区</span>
               <button type="button" aria-label="清除已添加的工程资料" onClick={() => {
@@ -671,6 +695,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           onViewportChange={runtime.actions.setViewport}
           onSelectionChange={selectCanvasIds}
           onAnnotationChange={persistAnnotationChange}
+          onInteractionActiveChange={setCanvasInteractionActive}
           onNodeContextMenu={(nodeId, event) => {
             const annotation = dimensionById.get(nodeId as never);
             if (annotation === undefined) return;
@@ -689,8 +714,9 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
           worldLayers={<>
             <g data-annotation-candidate-layer="true" data-preview-active={presentation.preview === null ? undefined : 'true'} pointerEvents="none" />
             {partitionOverlayVisible && draft && <PartitionOverlay draft={draft} mode={partitionView} previewHeld={partitionState.previewHeld} scale={viewport.scale}
-              onMoveBoundary={(index, z) => partition.actions.moveBoundary(index, z, Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 0.003, 0.05))}
-              onMoveSemanticRange={(groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, Math.max(Math.abs(draft.axis.zMax - draft.axis.zMin) * 0.003, 0.05))}
+              onInteractionActiveChange={setCanvasInteractionActive}
+              onMoveBoundary={(index, z) => partition.actions.moveBoundary(index, z, partitionSnapTolerance(draft.axis.zMax - draft.axis.zMin, viewport.scale))}
+              onMoveSemanticRange={(groupId, edge, z) => partition.actions.moveSemanticRange(groupId, edge, z, partitionSnapTolerance(draft.axis.zMax - draft.axis.zMin, viewport.scale))}
               onRenameBand={(band, name) => partitionView === 'functional'
                 ? partition.actions.renameSemanticGroup(band.id, name)
                 : partition.actions.updateSegment(band.segmentIds[0]!, { name })} />}
@@ -707,6 +733,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               onChooseClosure={(chainId, candidateId) => dimensionChain.actions.chooseClosure(chainId, candidateId)}
               onSetTolerance={openChainCandidateTolerance}
               toleranceByIntentId={toleranceByIntentId}
+              onInteractionActiveChange={setCanvasInteractionActive}
             />}
             {tolerancePreviewAnnotations.length > 0 && <g data-tolerance-preview={toleranceState.target?.dimensionIntentId} pointerEvents="none">
               <PreviewLayer nodes={tolerancePreviewAnnotations} viewport={viewport} />
@@ -736,15 +763,19 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               viewport={viewport}
               datumVisible={datumVisible}
               gdtVisible={gdtVisible}
+              surfaceTextureVisible={surfaceTextureVisible}
               previewHeld={gdtState.previewHeld}
               selectedIntentId={selectedGdtIntentId}
+              selectedSurfaceTextureId={gdtEditorSelection?.type === 'surface-texture' ? gdtEditorSelection.id : null}
               onSelectDatum={(id) => setGdtEditorSelection({ type: 'datum', id })}
               onSelectIntent={(id) => {
                 setSelectedGdtIntentId(id);
                 setGdtEditorSelection({ type: 'intent', id });
               }}
+              onSelectSurfaceTexture={(id) => setGdtEditorSelection({ type: 'surface-texture', id })}
               onMoveDatum={(datumId, position) => gdt.actions.moveDatum(datumId, position)}
               onMoveGdtGroup={(intentIds, position) => gdt.actions.moveFrame(intentIds, position)}
+              onInteractionActiveChange={setCanvasInteractionActive}
             />}
             {gdtPlan && hasSurfaceTextures && <SurfaceTextureOverlay
               draft={gdtPlan}
@@ -752,10 +783,12 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
               scale={viewport.scale}
               visible={surfaceTextureVisible}
               previewHeld={gdtState.previewHeld}
+              attachToGdt={gdtVisible && hasGdt}
               onSelect={(id) => setGdtEditorSelection({ type: 'surface-texture', id })}
               onMove={(intentId, position) => gdt.actions.edit({
                 type: 'surface-texture.layout', intentId, position: [...position] as [number, number],
               })}
+              onInteractionActiveChange={setCanvasInteractionActive}
             />}
           </>}
         />}
@@ -889,33 +922,6 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       </main>
     </div>
   </section>;
-}
-
-const ANNOTATION_GENERATION_STAGES = [
-  ['deterministic', '基础尺寸'],
-  ['dimension-chain', '尺寸链'],
-  ['gdt', '基准与形位公差'],
-  ['review', '待确认'],
-] as const;
-
-function AnnotationGenerationProgress({
-  stage,
-  reviewing,
-}: {
-  stage: NonNullable<AnnotationSessionState['workflow']['stage']>;
-  reviewing: boolean;
-}) {
-  const current = ANNOTATION_GENERATION_STAGES.findIndex(([id]) => id === stage);
-  return <div className="vai-annotation-generation" role="status" aria-label="自动标注生成进度">
-    {ANNOTATION_GENERATION_STAGES.map(([id, label], index) => <div
-      key={id}
-      className={`vai-annotation-generation__step${index < current ? ' is-complete' : index === current ? ' is-active' : ''}`}
-      data-annotation-generation-stage={id}
-    >
-      <span aria-hidden="true">{index < current ? '✓' : index + 1}</span>
-      <strong>{id === 'review' && reviewing ? '等待确认' : label}</strong>
-    </div>)}
-  </div>;
 }
 
 function toleranceTargetFromAnnotation(

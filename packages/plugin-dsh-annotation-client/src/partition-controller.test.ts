@@ -6,6 +6,41 @@ import { createPartitionController, type PartitionRemote } from './partition-con
 const partition = { version: 1 as const, phase: 'editing' as const, drawingRef: { drawingId: 'd', revision: 1 }, canUndo: false, canRedo: false, updatedAt: 1 };
 
 describe('partition controller', () => {
+  it('does not let a stalled background refresh block or overwrite a manual edit', async () => {
+    let finishRefresh!: (value: { ok: true; value: typeof partition }) => void;
+    let refreshResolved = false;
+    let editStartedBeforeRefreshResolved = false;
+    const getPartitionState = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: partition })
+      .mockImplementationOnce(() => new Promise<{ ok: true; value: typeof partition }>((resolve) => {
+        finishRefresh = (value) => {
+          refreshResolved = true;
+          resolve(value);
+        };
+      }));
+    const edited = { ...partition, updatedAt: 2 };
+    const editPartition = vi.fn(async () => {
+      editStartedBeforeRefreshResolved = !refreshResolved;
+      return { ok: true as const, value: edited };
+    });
+    const controller = createPartitionController('s', {
+      getPartitionState, editPartition,
+      importAndAnalyze: vi.fn(), confirmPartition: vi.fn(), cancelPartition: vi.fn(),
+      undoPartition: vi.fn(), redoPartition: vi.fn(),
+    } as never);
+
+    await controller.actions.refresh();
+    const refreshing = controller.actions.refresh();
+    const editing = controller.actions.moveBoundary(1, 12, 0.5);
+    await vi.waitFor(() => expect(editPartition).toHaveBeenCalledOnce());
+    expect(controller.state.getSnapshot().busy).toBe(false);
+    finishRefresh({ ok: true, value: partition });
+    await Promise.all([refreshing, editing]);
+
+    expect(editStartedBeforeRefreshResolved).toBe(true);
+    expect(controller.state.getSnapshot().partition.updatedAt).toBe(2);
+  });
+
   it('resolves the current remote namespace for actions after a client remount', async () => {
     const staleRemote = {
       getPartitionState: vi.fn(async () => ({ ok: true as const, value: partition })),

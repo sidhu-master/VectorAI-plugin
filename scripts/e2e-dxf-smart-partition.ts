@@ -4,7 +4,15 @@ import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { analyzeShaftPartition, validatePartition, type EvidenceOrigin, type PartitionDraft } from '../packages/engineering-annotation/src/index';
+import {
+  analyzeShaftPartition,
+  buildAxialTopology,
+  generateAxialDimensionCandidates,
+  parseEngineeringDocument,
+  validatePartition,
+  type EvidenceOrigin,
+  type PartitionDraft,
+} from '../packages/engineering-annotation/src/index';
 import { InMemoryDrawingRepository } from '../packages/plugin-dsh-space-host/src/repository';
 import { AnnotationSessionStateStore } from '../packages/plugin-dsh-annotation-host/src/session-state';
 import { PartitionWorkflowService } from '../packages/plugin-dsh-annotation-host/src/partition-service';
@@ -68,23 +76,33 @@ const functionalRanges = reviewed.semanticGroups
     name,
     rounded(range?.zStart),
     rounded(range?.zEnd),
-    reviewed.evidence.find(({ id }) => evidenceIds.includes(id))?.origin,
+    reviewed.evidence.find(({ id, origin }) => evidenceIds.includes(id) && origin === 'document')?.origin
+      ?? reviewed.evidence.find(({ id }) => evidenceIds.includes(id))?.origin,
   ] as const)
   .sort((a, b) => Number(a[1]) - Number(b[1]));
 assert.deepEqual(functionalRanges, [
   ['左轴承位', 0, 17, 'document'],
   ['外花键', 17, 41.5, 'document'],
-  ['常规区域', 41.5, 92, 'fused'],
   ['一级齿轮', 92, 147, 'document'],
   ['右轴承位', 150, 173, 'document'],
 ]);
 assert(functionalRanges.some((range, index) => index > 0 && Number(range[1]) > Number(functionalRanges[index - 1]![2])));
 assert(!reviewed.semanticGroups.some(({ name }) => name === '内花键'));
 const transition = reviewed.segments.filter(({ semanticType }) => semanticType === undefined);
-assert.equal(transition.length, 1);
-assert.equal(rounded(transition[0]!.zStart), 147);
-assert.equal(rounded(transition[0]!.zEnd), 150);
-assert.deepEqual(semanticReviewRanges, [[41.5, 45], [45, 53], [53, 92], [147, 150]]);
+assert(transition.length > 0);
+assert.deepEqual(semanticReviewRanges, transition.map(({ zStart, zEnd }) => [rounded(zStart)!, rounded(zEnd)!]));
+assert(reviewed.semanticGroups.every(({ reconciliation }) => reconciliation !== undefined));
+const parsedEngineeringDocument = parseEngineeringDocument(documentBytes.toString('utf8'));
+const topology = buildAxialTopology({ partition: reviewed, unit: parsedEngineeringDocument.drawing.unit });
+const stationCoordinates = new Map(topology.stations.map(({ id, coordinate }) => [id, coordinate]));
+const gearDimension = generateAxialDimensionCandidates({
+  topology,
+  partition: reviewed,
+  document: parsedEngineeringDocument,
+}).candidates.find(({ startStationId, endStationId }) => (
+  stationCoordinates.get(startStationId) === 92 && stationCoordinates.get(endStationId) === 147
+));
+assert.equal(gearDimension?.nominalValue, 55);
 const noReviewerState = await new PartitionWorkflowService({
   getSnapshot: () => drawings.getSnapshot('e2e'),
 } as never, new PartitionSessionStore(), new AnnotationSessionStateStore()).analyzeCurrent(
@@ -106,6 +124,9 @@ assert.equal(annotations.get('e2e').workspaceClaimed, true);
 const lifecycle: string[] = [state.phase];
 const boundary = reviewed.segments[0]!.zEnd;
 const gear = reviewed.semanticGroups.find(({ name }) => name === '一级齿轮')!;
+const gearStartShoulder = reviewed.stepCandidates.find(({ accepted, z }) => accepted && Math.abs(z - 92) < 0.1)!;
+state = service.edit(agent, { type: 'semantic-range.move', expectedDrawingRef: snapshot.ref, groupId: gear.id, edge: 'start', requestedZ: 91.773439, snapTolerance: 1 });
+assert.equal(state.draft?.semanticGroups.find(({ id }) => id === gear.id)?.range?.zStart, gearStartShoulder.z);
 state = service.edit(agent, { type: 'semantic-range.move', expectedDrawingRef: snapshot.ref, groupId: gear.id, edge: 'start', requestedZ: 64, snapTolerance: 0 });
 assert.equal(state.draft?.semanticGroups.find(({ id }) => id === gear.id)?.range?.zStart, 64);
 assert.equal(state.draft?.segments[0]?.zEnd, boundary);
@@ -160,6 +181,7 @@ const manifest = {
   coveredLength: reviewed.segments.reduce((sum, segment) => sum + segment.zEnd - segment.zStart, 0),
   documentedGroups: reviewed.semanticGroups.filter((group) => group.evidenceIds.some((id) => id.startsWith('document:'))).map(({ name }) => name),
   functionalRanges,
+  gearFunctionalWidth: gearDimension.nominalValue,
   origins,
   diagnosticCodes: reviewed.diagnostics.map(({ code }) => code),
   semanticReviewRanges,

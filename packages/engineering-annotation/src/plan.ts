@@ -126,7 +126,7 @@ export function planEngineeringAnnotations(input: {
   const openingSelection = (input.annotationKinds ?? ['opening-angle']).includes('opening-angle')
     ? selectAxialEndOpeningAngles({ facts: measuredOpenings.facts, geometry, axis: measuredOpenings.axis })
     : { selected: [], suppressionReasons: {} };
-  const openingLayouts = layoutOpeningAngles({ geometry, facts: openingSelection.selected });
+  const openingLayouts = layoutOpeningAngles({ geometry, facts: openingSelection.selected, axis: measuredOpenings.axis });
   for (const fact of openingSelection.selected) {
     const layout = openingLayouts[fact.key];
     if (!layout) continue;

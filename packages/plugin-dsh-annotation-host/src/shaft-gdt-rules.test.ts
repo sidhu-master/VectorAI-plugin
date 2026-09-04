@@ -2,13 +2,12 @@
 
 import type { PartitionDraft } from '@vectorai/engineering-annotation';
 import { describe, expect, it } from 'vitest';
-import { resolveShaftGdtRules } from './shaft-gdt-rules';
+import { resolveShaftGdtRules, type ShaftEngineeringRequirement } from './shaft-gdt-rules';
 
-describe('shaft GD&T functional rules', () => {
-  it('derives the minimum control set from functional roles instead of sample coordinates', () => {
+describe('shaft GD&T evidence boundary', () => {
+  it('derives a complete preview set from high-confidence functional features', () => {
     const partition = genericPartition([
-      feature('support-west', 12, 31, 'bearing', '支承甲', 'document'),
-      feature('coupling', 39, 68, 'spline', '传动连接', 'document'),
+      feature('support-west', 12, 31, 'bearing-seat', '支承甲', 'document'),
       feature('drive', 117, 181, 'gear', '旋转输出', 'manual'),
       feature('support-east', 203, 227, 'bearing-seat', '支承乙', 'document'),
     ]);
@@ -18,62 +17,72 @@ describe('shaft GD&T functional rules', () => {
     expect(result.status).toBe('resolved');
     expect(result.questions).toEqual([]);
     expect(result.recommendation.datums).toHaveLength(2);
-    expect(result.recommendation.controls.map(({ characteristic }) => characteristic).sort()).toEqual([
-      'circular-runout', 'circular-runout',
-      'circularity', 'circularity',
-      'cylindricity', 'cylindricity',
-      'total-runout', 'total-runout',
-    ].sort());
-    expect(result.recommendation.controls.some(({ characteristic }) => (
-      characteristic === 'coaxiality' || characteristic === 'perpendicularity' || characteristic === 'symmetry'
-    ))).toBe(false);
-    expect(result.recommendation.surfaceTextures).toEqual([
-      expect.objectContaining({
-        segmentIds: ['support-west'], parameter: 'Ra', value: 0.8,
-        materialRemoval: 'required', source: 'process-rule',
-      }),
-      expect.objectContaining({
-        segmentIds: ['support-east'], parameter: 'Ra', value: 0.8,
-        materialRemoval: 'required', source: 'process-rule',
-      }),
-    ]);
-  });
-
-  it('asks the user instead of using a low-confidence functional classification', () => {
-    const partition = genericPartition([
-      feature('support-west', 5, 21, 'bearing', '左支承', 'document'),
-      feature('uncertain-support', 88, 109, 'bearing', '疑似右支承', 'ai', 0.71),
-      feature('drive', 43, 76, 'gear', '齿轮段', 'document'),
-    ]);
-
-    const result = resolveShaftGdtRules(partition);
-
-    expect(result.status).toBe('needs-user-input');
-    expect(result.questions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'GDT_FEATURE_CONFIDENCE_LOW', segmentIds: ['uncertain-support'] }),
-      expect.objectContaining({ code: 'GDT_AXIS_SUPPORT_PAIR_REQUIRED' }),
+    expect(result.recommendation.datums.map(({ segmentId }) => segmentId)).toEqual(['support-west', 'support-east']);
+    expect(result.recommendation.controls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ characteristic: 'total-runout', segmentIds: ['support-west'], datumNames: ['A', 'B'] }),
+      expect.objectContaining({ characteristic: 'circular-runout', segmentIds: ['drive'], datumNames: ['A', 'B'] }),
+      expect.objectContaining({ characteristic: 'total-runout', segmentIds: ['support-east'], datumNames: ['A', 'B'] }),
     ]));
-    expect(result.recommendation.controls.some(({ characteristic }) => characteristic.includes('runout'))).toBe(false);
+    expect(result.recommendation.surfaceTextures).toHaveLength(2);
   });
 
-  it('does not invent a common datum axis when only one support is known', () => {
+  it('emits only controls backed by documented requirements', () => {
     const partition = genericPartition([
-      feature('support-only', 10, 30, 'bearing', '唯一支承', 'manual'),
-      feature('drive', 50, 90, 'gear', '旋转功能段', 'document'),
+      feature('support-west', 12, 31, 'bearing-seat', '支承甲', 'document'),
+      feature('drive', 117, 181, 'gear', '旋转输出', 'manual'),
+      feature('support-east', 203, 227, 'bearing-seat', '支承乙', 'document'),
     ]);
+    const requirements: ShaftEngineeringRequirement[] = [
+      {
+        kind: 'datum', id: 'req:datum-a', name: 'A', role: 'primary', segmentId: 'support-west',
+        decisionAuthority: 'documented-requirement', evidenceIds: ['doc:datum-axis'], confidence: 0.99,
+      },
+      {
+        kind: 'datum', id: 'req:datum-b', name: 'B', role: 'secondary', segmentId: 'support-east',
+        decisionAuthority: 'documented-requirement', evidenceIds: ['doc:datum-axis'], confidence: 0.99,
+      },
+      {
+        kind: 'geometric-control', id: 'req:drive-runout', characteristic: 'total-runout',
+        segmentIds: ['drive'], datumNames: ['A', 'B'], toleranceZoneShape: 'linear',
+        decisionAuthority: 'documented-requirement', evidenceIds: ['doc:drive-runout'], confidence: 0.97,
+      },
+      {
+        kind: 'surface-texture', id: 'req:support-ra', segmentIds: ['support-west'], parameter: 'Ra', value: 0.8,
+        materialRemoval: 'required', decisionAuthority: 'documented-requirement',
+        evidenceIds: ['doc:support-finish'], confidence: 0.98,
+        ruleRef: { id: 'document:surface-finish', version: '1' },
+      },
+    ];
 
-    const result = resolveShaftGdtRules(partition);
+    const result = resolveShaftGdtRules(partition, [], requirements);
 
-    expect(result.status).toBe('needs-user-input');
-    expect(result.questions).toEqual([
-      expect.objectContaining({ code: 'GDT_AXIS_SUPPORT_PAIR_REQUIRED' }),
+    expect(result.status).toBe('resolved');
+    expect(result.questions).toEqual([]);
+    expect(result.recommendation.datums).toEqual([
+      expect.objectContaining({ name: 'A', segmentId: 'support-west', decisionAuthority: 'documented-requirement', evidenceIds: ['doc:datum-axis'] }),
+      expect.objectContaining({ name: 'B', segmentId: 'support-east', decisionAuthority: 'documented-requirement', evidenceIds: ['doc:datum-axis'] }),
     ]);
-    expect(result.recommendation.datums).toEqual([]);
-    expect(result.recommendation.controls.map(({ characteristic }) => characteristic).sort()).toEqual([
-      'circularity', 'cylindricity',
+    expect(result.recommendation.controls).toEqual([
+      expect.objectContaining({ id: 'req:drive-runout', characteristic: 'total-runout', segmentIds: ['drive'], datumNames: ['A', 'B'], decisionAuthority: 'documented-requirement', evidenceIds: ['doc:drive-runout'] }),
     ]);
     expect(result.recommendation.surfaceTextures).toEqual([
-      expect.objectContaining({ segmentIds: ['support-only'], parameter: 'Ra', value: 0.8 }),
+      expect.objectContaining({ id: 'req:support-ra', segmentIds: ['support-west'], value: 0.8, decisionAuthority: 'documented-requirement', evidenceIds: ['doc:support-finish'] }),
+    ]);
+  });
+
+  it('does not commit an unconfirmed AI recommendation', () => {
+    const partition = genericPartition([feature('support', 12, 31, 'bearing-seat', '支承', 'document')]);
+    const requirements: ShaftEngineeringRequirement[] = [{
+      kind: 'surface-texture', id: 'ai:finish', segmentIds: ['support'], parameter: 'Ra', value: 0.8,
+      materialRemoval: 'required', decisionAuthority: 'ai-recommendation', evidenceIds: ['ai:review'], confidence: 0.91,
+    }];
+
+    const result = resolveShaftGdtRules(partition, [], requirements);
+
+    expect(result.status).toBe('needs-user-input');
+    expect(result.recommendation.surfaceTextures).toEqual([]);
+    expect(result.questions).toEqual([
+      expect.objectContaining({ code: 'GDT_RECOMMENDATION_CONFIRMATION_REQUIRED', segmentIds: ['support'] }),
     ]);
   });
 });

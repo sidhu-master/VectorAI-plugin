@@ -171,6 +171,49 @@ describe('automatic GD&T segment grounding', () => {
       }],
     });
   });
+
+  it('grounds a rotary feature on the strongest face in its adjacent locating-shoulder group', () => {
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const geometry = [
+      { id: 'feature-surface' as GeometryId, type: 'line' as const, start: [10, 5] as [number, number], end: [30, 5] as [number, number], visible: true, quality },
+      { id: 'feature-start-face' as GeometryId, type: 'line' as const, start: [10, 5] as [number, number], end: [10, 11] as [number, number], visible: true, quality },
+      { id: 'shoulder-entry-face' as GeometryId, type: 'line' as const, start: [30, 5] as [number, number], end: [30, 7] as [number, number], visible: true, quality },
+      { id: 'locating-face-upper' as GeometryId, type: 'line' as const, start: [34, 7] as [number, number], end: [34, 12] as [number, number], visible: true, quality },
+      { id: 'locating-face-lower' as GeometryId, type: 'line' as const, start: [34, -12] as [number, number], end: [34, -7] as [number, number], visible: true, quality },
+      { id: 'shoulder-exit-face' as GeometryId, type: 'line' as const, start: [40, 7] as [number, number], end: [40, 10] as [number, number], visible: true, quality },
+    ];
+    const segment = (id: string, zStart: number, zEnd: number, semanticType: string, geometryNodeIds: string[]) => ({
+      id, zStart, zEnd, semanticType, profile: { minRadius: 5, maxRadius: 12, sampleCount: 2 },
+      boundaryConfidence: 1, geometryNodeIds, boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [],
+    });
+    const feature = segment('rotary-feature', 10, 30, 'spline', ['feature-surface', 'feature-start-face']);
+    const shoulder = segment('locating-shoulder', 30, 40, 'shoulder', [
+      'shoulder-entry-face', 'locating-face-upper', 'locating-face-lower', 'shoulder-exit-face',
+    ]);
+    const partition: PartitionDraft = {
+      version: 1, drawingRef: { drawingId: 'generic-rotary-shaft', revision: 1 },
+      axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 60, orientation: 'forward' },
+      segments: [feature, shoulder],
+      semanticGroups: [{
+        id: 'feature-group', segmentIds: [feature.id], range: { zStart: 10, zEnd: 30 },
+        semanticType: 'spline', dimensionRole: 'functional-feature', evidenceIds: [],
+      }, {
+        id: 'shoulder-group', segmentIds: [shoulder.id], range: { zStart: 30, zEnd: 40 },
+        semanticType: 'shoulder', dimensionRole: 'process-datum', evidenceIds: [],
+      }],
+      stepCandidates: [], evidence: [], diagnostics: [],
+    };
+
+    const result = groundSegmentRecommendation(geometry, partition, {
+      datums: [],
+      controls: [{
+        id: 'runout', characteristic: 'circular-runout', segmentIds: [feature.id],
+        surfaceRole: 'positive-locating-shoulder', datumNames: [], toleranceZoneShape: 'linear', confidence: 0.9,
+      }],
+    });
+
+    expect(result.controls[0]?.geometryIds).toEqual(['locating-face-upper']);
+  });
 });
 
 function testSegment(id: string, zStart: number, zEnd: number) {

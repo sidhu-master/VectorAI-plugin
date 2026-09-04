@@ -210,7 +210,8 @@ function renderDocument(
 }
 
 function renderNode(node: GeometryNode | AnnotationNode, color: string): string {
-  const style = `fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"`;
+  const strokeWidth = node.sourceRef?.layer === 'DETAIL-THREAD' ? 0.8 : 1.5;
+  const style = `fill="none" stroke="${color}" stroke-width="${strokeWidth}" vector-effect="non-scaling-stroke"`;
   switch (node.type) {
     case 'point': return `<circle cx="${node.x}" cy="${node.y}" r="2" ${style}/>`;
     case 'line': return `<line x1="${node.start[0]}" y1="${node.start[1]}" x2="${node.end[0]}" y2="${node.end[1]}" ${style}/>`;

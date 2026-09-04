@@ -4,6 +4,7 @@ import type { ToleranceCatalogResult, TolerancePreviewResult } from '@vectorai/p
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { clampTolerancePopupGeometry, type PopupRect, type PopupSize, type ToleranceDisplayPreference, type TolerancePopupTab, type ToleranceTarget } from './tolerance-controller';
 import { ToleranceBandMatrix, type ToleranceBand } from './ToleranceBandMatrix';
+import { useRafPreview } from './useRafPreview';
 
 export interface TolerancePopupProps {
   geometry: PopupRect;
@@ -47,10 +48,10 @@ export interface TolerancePopupProps {
 }
 
 type PointerOperation =
-  | { kind: 'drag'; pointer: { x: number; y: number }; geometry: PopupRect }
-  | { kind: 'resize-e'; pointer: { x: number; y: number }; geometry: PopupRect }
-  | { kind: 'resize-s'; pointer: { x: number; y: number }; geometry: PopupRect }
-  | { kind: 'resize-se'; pointer: { x: number; y: number }; geometry: PopupRect };
+  | { kind: 'drag'; pointer: { x: number; y: number }; geometry: PopupRect; current: PopupRect }
+  | { kind: 'resize-e'; pointer: { x: number; y: number }; geometry: PopupRect; current: PopupRect }
+  | { kind: 'resize-s'; pointer: { x: number; y: number }; geometry: PopupRect; current: PopupRect }
+  | { kind: 'resize-se'; pointer: { x: number; y: number }; geometry: PopupRect; current: PopupRect };
 
 export function TolerancePopup(props: TolerancePopupProps) {
   const initialFit = fitSelectionFromPreview(props.preview);
@@ -73,6 +74,9 @@ export function TolerancePopup(props: TolerancePopupProps) {
   const [applying, setApplying] = useState(false);
   const applyingRef = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const geometryPreview = useRafPreview((geometry: PopupRect) => {
+    props.onGeometryChange(geometry, { userDragged: true });
+  });
   const targetIdentity = `${props.target.drawingRef.drawingId}:${props.target.drawingRef.revision}:${props.target.dimensionIntentId}`;
   const hydratedOverrideUpper = props.override?.upperDeviation;
   const hydratedOverrideLower = props.override?.lowerDeviation;
@@ -120,7 +124,9 @@ export function TolerancePopup(props: TolerancePopupProps) {
     event.stopPropagation?.();
     event.currentTarget.setPointerCapture(event.pointerId);
     capture.current = { owner: event.currentTarget, pointerId: event.pointerId };
-    operation.current = { kind, pointer: { x: event.clientX, y: event.clientY }, geometry: props.geometry } as PointerOperation;
+    operation.current = {
+      kind, pointer: { x: event.clientX, y: event.clientY }, geometry: props.geometry, current: props.geometry,
+    } as PointerOperation;
   };
   const move = (event: ReactPointerEvent<HTMLElement>) => {
     event.stopPropagation?.();
@@ -135,10 +141,12 @@ export function TolerancePopup(props: TolerancePopupProps) {
         : active.kind === 'resize-s'
           ? { ...active.geometry, height: active.geometry.height + dy }
           : { ...active.geometry, width: active.geometry.width + dx, height: active.geometry.height + dy };
-    props.onGeometryChange(clampTolerancePopupGeometry(requested, props.viewport), { userDragged: true });
+    active.current = clampTolerancePopupGeometry(requested, props.viewport);
+    geometryPreview.schedule(active.current);
   };
   const finish = (event?: ReactPointerEvent<HTMLElement>) => {
     event?.stopPropagation();
+    if (operation.current !== null) geometryPreview.flush(operation.current.current);
     const activeCapture = capture.current;
     if (activeCapture !== null) {
       const owner = activeCapture.owner as HTMLElement & {

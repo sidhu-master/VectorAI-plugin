@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Force, Node } from 'labella';
+import Labella from 'labella';
+
+const { Force, Node } = Labella;
 
 export interface DiameterLayoutSpan {
   id: string;
@@ -32,7 +34,7 @@ export function layoutDiameterSpans<T extends DiameterLayoutSpan>(
   bounds: DiameterLayoutBounds,
 ): Array<DiameterLayoutPlacement<T>> {
   const nodes = spans.map((span) => new Node(midpoint(span), labelWidth(span), span.id));
-  const force = new Force<string>({
+  const force = new Force({
     minPos: bounds.zMin,
     maxPos: bounds.zMax,
     nodeSpacing: CAD_DIMENSION_TEXT_GAP * 2,
@@ -41,7 +43,7 @@ export function layoutDiameterSpans<T extends DiameterLayoutSpan>(
     algorithm: 'overlap',
     removeOverlap: true,
   }).nodes(nodes).compute();
-  const nodeById = new Map((force.nodes() as Array<Node<string>>).map((node) => [node.data, node]));
+  const nodeById = new Map((force.nodes() as Array<InstanceType<typeof Node<string>>>).map((node) => [node.data, node]));
   const classified = spans.map((span) => ({
     span,
     side: nearestSide(span, bounds),

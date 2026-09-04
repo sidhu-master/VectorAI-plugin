@@ -10,4 +10,7 @@ export interface ShaftDiameterFact {
   zEnd: number;
   definitionPoints: [Vec2, Vec2, Vec2, Vec2];
   textPosition: Vec2;
+  featureClass: 'shaft' | 'hole' | 'ambiguous';
+  profileComponentIds: string[];
+  measurementUncertainty: number;
 }

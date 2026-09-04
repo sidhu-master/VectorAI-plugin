@@ -49,8 +49,10 @@ import { GdtService } from './gdt-service';
 import { createAutomaticGdtReviewer } from './gdt-reviewer';
 import {
   AUTO_ANNOTATION_CONFLICTING_TOOLS,
+  classifyPartitionDecisionEvent,
   isGenericAutoAnnotationEvent,
   isGenericAutoAnnotationText,
+  requestAutomaticPartitionDecision,
 } from './auto-annotation-route';
 import { registerEngineeringDxfExport } from './drawing-export';
 import { createToleranceReconciler, ToleranceService } from './tolerance-service';
@@ -63,8 +65,11 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export class DrawingAnnotationHostService extends TypertRemoteService {
-  static inject = ['tools', 'drawingSpace', 'attachments', 'agents', 'subagents', 'connection'];
+  static inject = ['tools', 'drawingSpace', 'attachments', 'userQuestions', 'agents', 'subagents', 'connection'];
 
+  private readonly automaticRouteDisposers = new Map<string, () => void>();
+  private readonly automaticPartitionContinuations = new Map<string, 'confirmed' | 'skipped'>();
+  private readonly automaticPartitionQuestions = new Map<string, Promise<'confirm' | 'skip'>>();
   readonly sessions: AnnotationSessionStateStore;
   readonly partitions: PartitionSessionStore;
   readonly partitionWorkflow: PartitionWorkflowService;
@@ -109,9 +114,14 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(
       ctx.drawingSpace, this.sessions, this.partitions, this.dimensionPlans, {
         name: 'drawing_auto_annotate',
-        description: 'AUTHORITATIVE ROUTE for a generic request such as “自动标注”, “进行自动标注”, or “全部标注”. Call this tool immediately and do not call drawing_observe, drawing_gdt_start, drawing_dimension_chain_start, or individual annotation tools first. One call creates opening angles, shaft diameters, centerlines, radius dimensions, the axial dimension-chain preview, and rule-derived datum/GD&T candidates. AI may classify uncertain functional features, but the local rule engine exclusively selects the GD&T control set and geometry grounding. If completionStatus is needs-user-input, ask the returned clarificationQuestions verbatim instead of guessing. Report completion only from completionClaimAllowed.',
+        description: 'AUTHORITATIVE ROUTE for a generic request such as “自动标注”, “进行自动标注”, or “全部标注”. Call this tool immediately and do not call drawing_observe, drawing_gdt_start, drawing_dimension_chain_start, or individual annotation tools first. One call creates deterministic opening-angle, diameter, centerline and radius annotations plus the axial dimension-chain preview. Functional-feature recognition may locate candidate surfaces, but it MUST NOT invent datum precedence, GD&T characteristics, tolerance values, or roughness. Those design decisions require a documented requirement or explicit user confirmation. If completionStatus is needs-user-input, ask the returned clarificationQuestions verbatim instead of guessing. Report completion only from completionClaimAllowed.',
         annotationKinds: ['opening-angle', 'diameter', 'centerline', 'radius'],
         objective: '工程图纸自动标注集',
+        preparePartition: (agent, signal) => this.partitionWorkflow.analyzeCurrent(agent, undefined, signal),
+        shouldUsePartition: (sessionId) => this.automaticPartitionContinuations.get(sessionId) !== 'skipped',
+        resolvePartitionDecision: (agent, signal, partition) => this.resolveAutomaticPartitionDecision(
+          ctx, agent, signal, partition,
+        ),
         afterAnnotations: async (agent, signal, reportStage) => {
           reportStage('dimension-chain');
           this.dimensionInference.start(agent);
@@ -136,7 +146,6 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     ctx.effect(() => ctx.tools.register(createPartitionStatusTool(this.partitions)));
     ctx.effect(() => ctx.tools.register(createDimensionChainStartTool(this.dimensionInference)));
     ctx.effect(() => ctx.tools.register(createGdtStartTool(this.gdt)));
-    const automaticRouteDisposers = new Map<string, () => void>();
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next();
       if (decision.kind !== 'enter') return decision;
@@ -145,11 +154,22 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
         .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
         .map(({ text }) => text)
         .join('\n') ?? '';
-      if (!automaticRouteDisposers.has(String(payload.agent.id))
+      const sessionId = String(payload.agent.id);
+      const continuation = this.automaticPartitionContinuations.get(sessionId);
+      const annotation = this.sessions.get(sessionId);
+      const awaitingPartitionDecision = continuation === undefined
+        && annotation.workflow.status === 'reviewing'
+        && annotation.workflow.workflowId?.startsWith('annotation_') === true
+        && this.partitions.get(sessionId).phase === 'editing';
+      if (awaitingPartitionDecision) return decision;
+      if (!this.automaticRouteDisposers.has(sessionId)
+        && continuation === undefined
         && !isGenericAutoAnnotationText(directUserObjective)) return decision;
       const instruction = [
         'The current direct user request activates VectorAI automatic annotation routing.',
-        'Call drawing_auto_annotate now, even if an older turn shows a failure from a previous plugin build.',
+        continuation === 'skipped'
+          ? 'The user explicitly declined the partition preview. Call drawing_auto_annotate now; the plugin has recorded that partitioning must be skipped for this continuation.'
+          : 'Call drawing_auto_annotate now with partitioning enabled, even if an older turn shows a failure from a previous plugin build.',
         'Do not substitute drawing_observe, an individual annotation tool, a guessed tool name, or a summary of existing state.',
         'Only a successful drawing_auto_annotate result with completionClaimAllowed=true permits a completion claim.',
       ].join(' ');
@@ -165,37 +185,99 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       };
     });
     ctx.on('tools/result', (execution, result) => {
-      void result;
       if (execution.name !== 'drawing_auto_annotate' || !execution.agent) return;
       const sessionId = String(execution.agent.id);
-      automaticRouteDisposers.get(sessionId)?.();
-      automaticRouteDisposers.delete(sessionId);
+      this.automaticRouteDisposers.get(sessionId)?.();
+      this.automaticRouteDisposers.delete(sessionId);
+      this.automaticPartitionContinuations.delete(sessionId);
+      this.automaticPartitionQuestions.delete(sessionId);
     });
     ctx.on('session/event', (session, event) => {
       const sessionId = String(session.id);
+      const genericAutoRequest = isGenericAutoAnnotationEvent(event);
       if (event.type === 'user/message' && event.data.source.kind === 'user') {
-        automaticRouteDisposers.get(sessionId)?.();
-        automaticRouteDisposers.delete(sessionId);
-        if (isGenericAutoAnnotationEvent(event)) {
+        this.automaticRouteDisposers.get(sessionId)?.();
+        this.automaticRouteDisposers.delete(sessionId);
+        if (genericAutoRequest) {
           const agent = ctx.agents.get(session.id);
           if (agent) {
-            automaticRouteDisposers.set(sessionId, agent.ctx.tools.restrict({
+            this.automaticRouteDisposers.set(sessionId, agent.ctx.tools.restrict({
               deny: AUTO_ANNOTATION_CONFLICTING_TOOLS,
             }));
           }
         }
       }
-      acceptPendingPartitionForEvent(sessionId, event, this.partitions, this.sessions, (drawingRef) => {
-        this.dimensionInference.markStaleSession(sessionId, drawingRef);
-      });
+      const annotation = this.sessions.get(sessionId);
+      const awaitingAutomaticPartition = annotation.workflow.status === 'reviewing'
+        && annotation.workflow.workflowId?.startsWith('annotation_') === true
+        && this.partitions.get(sessionId).phase === 'editing';
+      const partitionDecision = awaitingAutomaticPartition ? classifyPartitionDecisionEvent(event) : null;
+      if (partitionDecision !== null) {
+        const before = this.partitions.get(sessionId);
+        if (before.drawingRef !== undefined) {
+          if (partitionDecision === 'confirm') {
+            this.partitions.confirmPending(sessionId);
+            this.dimensionInference.markStaleSession(sessionId, before.drawingRef);
+            this.automaticPartitionContinuations.set(sessionId, 'confirmed');
+          } else {
+            this.partitions.cancel(sessionId, before.drawingRef);
+            this.automaticPartitionContinuations.set(sessionId, 'skipped');
+          }
+          const agent = ctx.agents.get(session.id);
+          if (agent) this.automaticRouteDisposers.set(sessionId, agent.ctx.tools.restrict({
+            deny: AUTO_ANNOTATION_CONFLICTING_TOOLS,
+          }));
+        }
+      } else if (!awaitingAutomaticPartition && !genericAutoRequest) {
+        acceptPendingPartitionForEvent(sessionId, event, this.partitions, this.sessions, (drawingRef) => {
+          this.dimensionInference.markStaleSession(sessionId, drawingRef);
+        });
+      }
     });
     ctx.on('session/disposed', (session) => {
       const sessionId = String(session.id);
-      automaticRouteDisposers.get(sessionId)?.();
-      automaticRouteDisposers.delete(sessionId);
+      this.automaticRouteDisposers.get(sessionId)?.();
+      this.automaticRouteDisposers.delete(sessionId);
+      this.automaticPartitionContinuations.delete(sessionId);
+      this.automaticPartitionQuestions.delete(sessionId);
       this.partitionWorkflow.disposeSession(sessionId);
       this.sessions.disposeSession(sessionId);
     });
+  }
+
+  private async resolveAutomaticPartitionDecision(
+    ctx: Context,
+    agent: Agent,
+    signal: AbortSignal | undefined,
+    partition: PartitionSessionSnapshot,
+  ): Promise<'confirm' | 'skip'> {
+    const sessionId = String(agent.id);
+    const inFlight = this.automaticPartitionQuestions.get(sessionId);
+    if (inFlight) return await inFlight;
+    const pending = (async () => {
+      const decision = await requestAutomaticPartitionDecision(
+        ctx.userQuestions, agent, signal, partition.draft?.segments.length ?? 0,
+      );
+      const current = this.partitions.get(sessionId);
+      if (current.phase !== 'editing' || current.draft === undefined || current.drawingRef === undefined) {
+        throw new Error('PARTITION_DECISION_STALE');
+      }
+      if (decision === 'confirm') {
+        this.partitions.confirmPending(sessionId);
+        this.dimensionInference.markStaleSession(sessionId, current.drawingRef);
+      } else {
+        this.partitions.cancel(sessionId, current.drawingRef);
+      }
+      return decision;
+    })();
+    this.automaticPartitionQuestions.set(sessionId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.automaticPartitionQuestions.get(sessionId) === pending) {
+        this.automaticPartitionQuestions.delete(sessionId);
+      }
+    }
   }
 
   @Remote

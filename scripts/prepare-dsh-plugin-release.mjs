@@ -29,6 +29,7 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 run('pnpm', ['build:dsh-space'], root);
 run('pnpm', ['build:dsh-annotation'], root);
+run('pnpm', ['check:dsh-build-freshness'], root);
 
 for (const packageDirectory of packages) {
   run('pnpm', ['pack', '--pack-destination', output], resolve(root, 'packages', packageDirectory));

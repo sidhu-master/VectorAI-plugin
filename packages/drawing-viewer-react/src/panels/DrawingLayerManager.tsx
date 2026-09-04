@@ -12,6 +12,7 @@ import {
   DraftingCompass,
   Eye,
   EyeOff,
+  Focus,
   Gauge,
   Layers,
   Layers3,
@@ -30,6 +31,8 @@ export interface DrawingLayerManagerItem {
 export interface DrawingLayerManagerProps {
   layers: readonly DrawingLayerManagerItem[];
   onVisibilityChange(id: string, visible: boolean): void;
+  onSoloVisibility?(id: string): void;
+  onShowAllVisibility?(): void;
 }
 
 const CATEGORY_LABELS: Record<DrawingLayerCategory, string> = {
@@ -55,7 +58,7 @@ const LAYER_ICONS: Record<DrawingLayerIcon, LucideIcon> = {
   assistant: Sparkles,
 };
 
-export function DrawingLayerManager({ layers, onVisibilityChange }: DrawingLayerManagerProps) {
+export function DrawingLayerManager({ layers, onVisibilityChange, onSoloVisibility, onShowAllVisibility }: DrawingLayerManagerProps) {
   const [open, setOpen] = useState(false);
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
   const rootRef = useRef<HTMLDivElement>(null);
@@ -112,6 +115,15 @@ export function DrawingLayerManager({ layers, onVisibilityChange }: DrawingLayer
           <span>{definition.label}</span>
           {visible ? <Eye size={15} aria-hidden="true" /> : <EyeOff size={15} aria-hidden="true" />}
         </button>
+        {onSoloVisibility && <button
+          type="button"
+          className="vai-layer-manager__solo"
+          aria-label={`单独显示${definition.label}`}
+          title="单独显示"
+          onClick={() => onSoloVisibility(definition.id)}
+        >
+          <Focus size={14} aria-hidden="true" />
+        </button>}
       </div>
       {expandable && !collapsed && <div className="vai-layer-manager__children">
         {children!.map((child) => renderItem(child, depth + 1))}
@@ -138,6 +150,16 @@ export function DrawingLayerManager({ layers, onVisibilityChange }: DrawingLayer
       <Layers3 size={17} aria-hidden="true" />
     </button>
     {open && <div className="vai-layer-manager__menu" role="dialog" aria-label="图层显示">
+      {onShowAllVisibility && <button
+        type="button"
+        className="vai-layer-manager__show-all"
+        aria-label="全部显示"
+        title="显示当前全部图层"
+        onClick={onShowAllVisibility}
+      >
+        <Eye size={14} aria-hidden="true" />
+        <span>全部显示</span>
+      </button>}
       {groups.map(({ category, items }) => <section key={category} className="vai-layer-manager__group">
         <h3 data-layer-category={category}>{CATEGORY_LABELS[category]}</h3>
         {items.map((item) => renderItem(item))}

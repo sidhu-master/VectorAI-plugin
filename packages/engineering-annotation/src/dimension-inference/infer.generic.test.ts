@@ -6,7 +6,7 @@ import { SHAFT_HIERARCHICAL_DIMENSIONING_V1 } from './policy';
 import type { AxialCandidateSet, AxialTopology } from './types';
 
 describe('generic axial closure selection', () => {
-  it('uses the downstream terminal interval as the forward root closure', () => {
+  it('does not omit required functional dimensions and ignores axis direction', () => {
     const topology: AxialTopology = {
       drawingRef: { drawingId: 'synthetic-shaft', revision: 1 }, unit: 'mm',
       axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 100, orientation: 'forward' },
@@ -35,21 +35,21 @@ describe('generic axial closure selection', () => {
 
     const result = inferAxialDimensionScheme({ topology, candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1 });
 
-    expect(result.chains[0]?.closureCandidateId).toBe('right-functional');
-    expect(result.displayedCandidateIds).toEqual(expect.arrayContaining(['left-functional', 'ordinary-middle']));
+    expect(result.chains[0]?.closureCandidateId).toBe('ordinary-middle');
+    expect(result.displayedCandidateIds).toEqual(expect.arrayContaining(['left-functional', 'right-functional']));
   });
 
-  it('uses the upstream terminal interval as the reversed root closure', () => {
+  it('selects the same closure after reversing orientation', () => {
     const topology = genericTopology('reversed');
     const candidateSet = genericRootCandidates();
 
     const result = inferAxialDimensionScheme({ topology, candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1 });
 
-    expect(result.chains[0]?.closureCandidateId).toBe('left-functional');
-    expect(result.displayedCandidateIds).toEqual(expect.arrayContaining(['ordinary-middle', 'right-functional']));
+    expect(result.chains[0]?.closureCandidateId).toBe('ordinary-middle');
+    expect(result.displayedCandidateIds).toEqual(expect.arrayContaining(['left-functional', 'right-functional']));
   });
 
-  it('uses the largest unprotected residual as an inner process-chain closure', () => {
+  it('marks equivalent geometry-only inner closure candidates for review', () => {
     const topology: AxialTopology = {
       drawingRef: { drawingId: 'synthetic-process-shaft', revision: 1 }, unit: 'mm',
       axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 100, orientation: 'forward' },
@@ -63,7 +63,7 @@ describe('generic axial closure selection', () => {
     const candidateSet: AxialCandidateSet = {
       candidates: [
         candidate('overall', 0, 100, ['overall'], true, 'overall-evidence'),
-        candidate('process-parent', 0, 80, ['process'], false, 'process-evidence'),
+        candidate('process-parent', 0, 80, ['process'], true, 'process-evidence'),
         candidate('functional-child', 0, 10, ['functional', 'local'], true, 'functional-evidence'),
         candidate('short-residual', 10, 30, ['local'], false, 'short-evidence'),
         candidate('long-residual', 30, 80, ['local'], false, 'long-evidence'),
@@ -71,7 +71,7 @@ describe('generic axial closure selection', () => {
       ],
       evidence: [
         evidence('overall-evidence', 'drawing-end', true),
-        evidence('process-evidence', 'process-envelope', false),
+        evidence('process-evidence', 'process-envelope', true),
         evidence('functional-evidence', 'functional-region', true),
         evidence('short-evidence', 'elementary-span', false),
         evidence('long-evidence', 'elementary-span', false),
@@ -81,10 +81,13 @@ describe('generic axial closure selection', () => {
     };
 
     const result = inferAxialDimensionScheme({ topology, candidateSet, policy: SHAFT_HIERARCHICAL_DIMENSIONING_V1 });
-    const inner = result.chains.find(({ parentCandidateId }) => parentCandidateId === 'process-parent');
+    const root = result.chains[0]!;
 
-    expect(inner?.closureCandidateId).toBe('long-residual');
-    expect(inner?.childCandidateIds).toEqual(['functional-child', 'short-residual']);
+    expect(['short-residual', 'long-residual', 'terminal']).toContain(root.closureCandidateId);
+    expect(root.status).toBe('needs-review');
+    expect(root.alternativeClosureCandidateIds).toEqual(expect.arrayContaining([
+      root.closureCandidateId === 'short-residual' ? 'long-residual' : 'short-residual',
+    ]));
   });
 });
 

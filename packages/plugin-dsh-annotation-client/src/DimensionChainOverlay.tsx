@@ -4,7 +4,8 @@ import type { ToleranceProjection } from '@vectorai/drawing-core';
 import { estimateScreenTextWidth, formatPortableTolerance, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import { axialDimensionIntentId } from '@vectorai/engineering-annotation';
 import { allocateAxialDimensionLanes, type AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
+import { useRafPreview } from './useRafPreview';
 
 type Candidate = AxialDimensionScheme['candidates'][number];
 type Role = 'parent' | 'child' | 'closure' | 'standalone';
@@ -49,6 +50,7 @@ export function DimensionChainOverlay({
   onChooseClosure,
   onSetTolerance,
   toleranceByIntentId,
+  onInteractionActiveChange,
 }: {
   scheme: AxialDimensionScheme;
   scale: number;
@@ -61,10 +63,14 @@ export function DimensionChainOverlay({
   onChooseClosure?(chainId: string, candidateId: string): void | Promise<void>;
   onSetTolerance?(dimensionIntentId: string): void | Promise<void>;
   toleranceByIntentId?: ReadonlyMap<string, ToleranceProjection>;
+  onInteractionActiveChange?(active: boolean): void;
 }) {
   const [dragPreviews, setDragPreviews] = useState<Record<string, number>>({});
   const [contextMenu, setContextMenu] = useState<DimensionContextMenuState | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const dragPreview = useRafPreview(({ targetKey, groupOffset }: { targetKey: string; groupOffset: number }) => {
+    setDragPreviews((current) => ({ ...current, [targetKey]: groupOffset }));
+  });
   useEffect(() => {
     if (typeof window === 'undefined' || contextMenu === null) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -81,20 +87,55 @@ export function DimensionChainOverlay({
       window.removeEventListener('pointerdown', closeOnOutsidePointer, true);
     };
   }, [contextMenu]);
-  if (!visible) return null;
-  const conflicts = new Set(scheme.diagnostics.flatMap(({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : []));
-  const layouts = layoutIntervals(scheme, scale, radialExtent, previewHeld, dragPreviews, toleranceByIntentId);
-  const layoutByCandidate = new Map(layouts.map((layout) => [layout.candidate.id, layout]));
+  const conflicts = useMemo(() => new Set(scheme.diagnostics.flatMap(
+    ({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : [],
+  )), [scheme.diagnostics]);
+  const baseLayouts = useMemo(
+    () => visible ? layoutIntervals(scheme, scale, radialExtent, previewHeld, {}, toleranceByIntentId) : [],
+    [previewHeld, radialExtent, scale, scheme, toleranceByIntentId, visible],
+  );
+  const layouts = useMemo(
+    () => applyDragPreviews(baseLayouts, dragPreviews),
+    [baseLayouts, dragPreviews],
+  );
+  const layoutByCandidate = useMemo(
+    () => new Map(layouts.map((layout) => [layout.candidate.id, layout])),
+    [layouts],
+  );
+  const layoutsByChain = useMemo(() => {
+    const result = new Map<string, IntervalLayout[]>();
+    for (const layout of layouts) {
+      if (layout.chainId === undefined) continue;
+      result.set(layout.chainId, [...(result.get(layout.chainId) ?? []), layout]);
+    }
+    return result;
+  }, [layouts]);
   const grouped = scheme.chains
-    .map((chain, chainIndex) => ({
-      chain,
-      chainIndex,
-      layouts: layouts.filter(({ chainId }) => chainId === chain.id),
-    }))
+    .map((chain, chainIndex) => ({ chain, chainIndex, layouts: layoutsByChain.get(chain.id) ?? [] }))
     .filter(({ chain }) => visibleChainIds === undefined || visibleChainIds.has(chain.id));
   const standalone = layouts.filter(({ chainId }) => chainId === undefined);
   const screenNormal = normalized([scheme.topology.axis.normal[0], -scheme.topology.axis.normal[1]]);
   const safeScale = Math.max(scale, 1e-6);
+  useEffect(() => {
+    setDragPreviews((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const [targetKey, preview] of Object.entries(current)) {
+        const separator = targetKey.indexOf(':');
+        const type = targetKey.slice(0, separator);
+        const id = targetKey.slice(separator + 1);
+        const persisted = type === 'chain'
+          ? scheme.layout?.chainNormalOffsets.find(({ chainId }) => chainId === id)?.normalOffset ?? 0
+          : scheme.layout?.candidateNormalOffsets.find(({ candidateId }) => candidateId === id)?.normalOffset ?? 0;
+        if (Math.abs(persisted - preview) <= 0.0005) {
+          delete next[targetKey];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [scheme.layout]);
+  if (!visible) return null;
 
   const beginDrag = (layout: IntervalLayout, event: PointerEvent<SVGGElement>) => {
     const target = layout.chainId === undefined
@@ -112,6 +153,7 @@ export function DimensionChainOverlay({
       startGroupOffset: layout.groupOffset,
       minimumGroupOffset: layout.minimumGroupOffset,
     };
+    onInteractionActiveChange?.(true);
   };
   const updateDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = dragRef.current;
@@ -121,10 +163,10 @@ export function DimensionChainOverlay({
     const projected = ((event.clientX - drag.startClient[0]) * screenNormal[0]
       + (event.clientY - drag.startClient[1]) * screenNormal[1]) / safeScale;
     const targetKey = `${drag.target.type}:${drag.target.id}`;
-    setDragPreviews((current) => ({
-      ...current,
-      [targetKey]: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset),
-    }));
+    dragPreview.schedule({
+      targetKey,
+      groupOffset: Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset),
+    });
   };
   const finishDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = dragRef.current;
@@ -135,25 +177,18 @@ export function DimensionChainOverlay({
     const groupOffset = Math.max(drag.startGroupOffset + projected, drag.minimumGroupOffset);
     const targetKey = `${drag.target.type}:${drag.target.id}`;
     dragRef.current = null;
-    setDragPreviews((current) => ({ ...current, [targetKey]: groupOffset }));
+    dragPreview.flush({ targetKey, groupOffset });
     event.currentTarget.releasePointerCapture(event.pointerId);
     const save = drag.target.type === 'chain'
       ? onMoveChain?.(drag.target.id, roundOffset(groupOffset))
       : onMoveCandidate?.(drag.target.id, roundOffset(groupOffset));
     void Promise.resolve(save)
-      .then(() => window.requestAnimationFrame(() => {
-        setDragPreviews((current) => {
-          if (!(targetKey in current)) return current;
-          const next = { ...current };
-          delete next[targetKey];
-          return next;
-        });
-      }))
       .catch(() => setDragPreviews((current) => {
         const next = { ...current };
         delete next[targetKey];
         return next;
-      }));
+      }))
+      .finally(() => onInteractionActiveChange?.(false));
   };
   const cancelDrag = (event: PointerEvent<SVGGElement>, releaseCapture: boolean) => {
     const drag = dragRef.current;
@@ -161,6 +196,8 @@ export function DimensionChainOverlay({
     event.preventDefault();
     event.stopPropagation();
     dragRef.current = null;
+    dragPreview.cancel();
+    onInteractionActiveChange?.(false);
     const targetKey = `${drag.target.type}:${drag.target.id}`;
     setDragPreviews((current) => {
       const next = { ...current };
@@ -254,6 +291,24 @@ export function DimensionChainOverlay({
       }}
     />}
   </g>;
+}
+
+function applyDragPreviews(
+  layouts: readonly IntervalLayout[],
+  dragPreviews: Readonly<Record<string, number>>,
+): readonly IntervalLayout[] {
+  if (Object.keys(dragPreviews).length === 0) return layouts;
+  return layouts.map((layout) => {
+    const targetKey = layout.chainId === undefined
+      ? `candidate:${layout.candidate.id}`
+      : `chain:${layout.chainId}`;
+    const preview = dragPreviews[targetKey];
+    return preview === undefined ? layout : {
+      ...layout,
+      groupOffset: preview,
+      manualOffset: layout.manualOffset + preview - layout.groupOffset,
+    };
+  });
 }
 
 // Shared with the workspace's Fit action; keeping it beside the layout engine

@@ -5,6 +5,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent';
 import type {
+  EngineeringDecisionAuthority,
   GeometricCharacteristic,
   PartitionDraft,
   PartitionRevision,
@@ -46,7 +47,14 @@ export interface ReviewedSemanticRecommendation {
 }
 
 export interface SemanticRecommendation {
-  datums: Array<{ name: string; segmentId: string; role: 'primary' | 'secondary' | 'tertiary' | 'origin'; confidence: number }>;
+  datums: Array<{
+    name: string;
+    segmentId: string;
+    role: 'primary' | 'secondary' | 'tertiary' | 'origin';
+    confidence: number;
+    decisionAuthority?: EngineeringDecisionAuthority;
+    evidenceIds?: string[];
+  }>;
   controls: Array<{
     id: string;
     characteristic: GeometricCharacteristic;
@@ -57,6 +65,8 @@ export interface SemanticRecommendation {
     toleranceZoneShape: 'linear' | 'diametrical' | 'spherical';
     materialCondition?: 'rfs' | 'mmc' | 'lmc';
     confidence: number;
+    decisionAuthority?: EngineeringDecisionAuthority;
+    evidenceIds?: string[];
   }>;
   surfaceTextures?: Array<{
     id: string;
@@ -64,8 +74,10 @@ export interface SemanticRecommendation {
     parameter: 'Ra' | 'Rz' | 'Rq' | 'Rt';
     value: number;
     materialRemoval: 'required' | 'prohibited' | 'unspecified';
-    source: 'process-rule' | 'ai-candidate';
+    source: 'document' | 'manual' | 'process-rule' | 'ai-candidate';
     confidence: number;
+    decisionAuthority?: EngineeringDecisionAuthority;
+    evidenceIds?: string[];
     ruleRef?: { id: string; version: string };
   }>;
 }
@@ -82,7 +94,8 @@ export function createAutomaticGdtReviewer(
     const segments = partition.segments.slice(0, 64);
     if (segments.length === 0) throw new Error('GDT_PARTITION_REQUIRED');
     const localResolution = resolveShaftGdtRules(partition);
-    if (localResolution.status === 'resolved') {
+    if (localResolution.status === 'resolved'
+      || localResolution.questions.some(({ code }) => code === 'GDT_ENGINEERING_REQUIREMENTS_REQUIRED')) {
       return {
         ...groundSegmentRecommendation(drawing.document.geometry, partition, localResolution.recommendation),
         coverage: evaluateShaftGdtCoverage(partition, localResolution.recommendation, localResolution.questions),
@@ -145,6 +158,24 @@ export function createAutomaticGdtReviewer(
       } finally {
         await abortable(run.dispose(), reviewSignal).catch(() => undefined);
       }
+    } catch (error) {
+      // Semantic review is an optional enrichment step. A provider timeout or
+      // observation failure must not tear down the deterministic annotation
+      // transaction; preserve the grounded local result and its clarification
+      // state so the caller can continue or ask the user for missing semantics.
+      if (signal?.aborted) throw error;
+      return {
+        ...groundSegmentRecommendation(
+          drawing.document.geometry,
+          partition,
+          localResolution.recommendation,
+        ),
+        coverage: evaluateShaftGdtCoverage(
+          partition,
+          localResolution.recommendation,
+          localResolution.questions,
+        ),
+      };
     } finally {
       clearTimeout(timer);
     }
@@ -224,31 +255,39 @@ export function groundSegmentRecommendation(
     const segment = requireSegment(segmentById, item.segmentId);
     return {
       name: item.name,
-      geometryId: selectRepresentativeGeometry(segment, nodeById, partition.axis, 'axial-bottom'),
+      geometryId: selectRepresentativeGeometry(segment, nodeById, partition.axis, 'axis-parallel-bottom'),
       role: item.role,
+      ...(item.decisionAuthority === undefined ? {} : { decisionAuthority: item.decisionAuthority }),
+      ...(item.evidenceIds === undefined ? {} : { evidenceIds: [...item.evidenceIds] }),
     };
   });
-  const controls = recommendation.controls.map((item) => ({
-    id: item.id,
-    characteristic: item.characteristic,
-    geometryIds: [...new Set(item.segmentIds.map((segmentId) => {
-      const segment = requireSegment(segmentById, segmentId);
-      return item.surfaceRole === 'positive-locating-shoulder'
-        ? selectLocatingShoulderGeometry(segment, nodeById, partition.axis, item.boundary)
-        : selectRepresentativeGeometry(
-          segment, nodeById, partition.axis,
-          prefersRadialSurface(item.characteristic) ? 'radial' : 'axial',
-        );
-    }))],
-    datumNames: [...item.datumNames],
-    toleranceZoneShape: item.toleranceZoneShape,
-    ...(item.materialCondition === undefined ? {} : { materialCondition: item.materialCondition }),
-  }));
+  const controls = recommendation.controls.map((item) => {
+    const segments = item.segmentIds.map((segmentId) => requireSegment(segmentById, segmentId));
+    const geometryIds = item.surfaceRole === 'positive-locating-shoulder'
+      ? [selectLocatingShoulderGeometry(segments, partition, nodeById, item.boundary)]
+      : segments.map((segment) => selectRepresentativeGeometry(
+        segment, nodeById, partition.axis,
+        prefersRadialFace(item.characteristic) ? 'radial-face' : 'axis-parallel-surface',
+      ));
+    return {
+      id: item.id,
+      characteristic: item.characteristic,
+      geometryIds: [...new Set(geometryIds)],
+      datumNames: [...item.datumNames],
+      toleranceZoneShape: item.toleranceZoneShape,
+      ...(item.materialCondition === undefined ? {} : { materialCondition: item.materialCondition }),
+      ...(item.decisionAuthority === undefined ? {} : { decisionAuthority: item.decisionAuthority }),
+      ...(item.evidenceIds === undefined ? {} : { evidenceIds: [...item.evidenceIds] }),
+    };
+  });
   const surfaceTextures = (recommendation.surfaceTextures ?? []).map((item) => ({
     ...structuredClone(item),
     geometryIds: [...new Set(item.segmentIds.map((segmentId) => {
       const segment = requireSegment(segmentById, segmentId);
-      return selectRepresentativeGeometry(segment, nodeById, partition.axis, 'radial');
+      // A journal's surface texture controls the cylindrical working surface.
+      // In an axial section that surface is represented by a line parallel to
+      // the shaft axis; a radial line is an end/shoulder face instead.
+      return selectRepresentativeGeometry(segment, nodeById, partition.axis, 'axis-parallel-surface');
     }))],
   }));
   return {
@@ -259,15 +298,107 @@ export function groundSegmentRecommendation(
 }
 
 function selectLocatingShoulderGeometry(
+  features: readonly ShaftPartitionSegment[],
+  partition: ShaftPartition,
+  nodes: ReadonlyMap<string, GeometryNode>,
+  boundary: 'start' | 'end' | undefined,
+): string {
+  const axis = partition.axis;
+  const feature = boundaryFeatureSegment(features, boundary ?? 'end');
+  const stationTolerance = Math.max(Number.EPSILON * 1e6, Math.abs(axis.zMax - axis.zMin) * 1e-6);
+  const shoulder = adjacentShoulderSegments(partition, features, boundary ?? 'end', stationTolerance);
+  if (shoulder.length === 0) {
+    return selectRadialFaceAtFeatureBoundary(feature, nodes, axis, boundary, stationTolerance);
+  }
+  const candidateIds = new Set(shoulder.flatMap(({ geometryNodeIds }) => geometryNodeIds.map(String)));
+  const range = {
+    zStart: Math.min(...shoulder.map(({ zStart }) => zStart)),
+    zEnd: Math.max(...shoulder.map(({ zEnd }) => zEnd)),
+  };
+  const stations: Array<{
+    z: number;
+    positive: number;
+    negative: number;
+    candidates: Array<{ node: GeometryNode & { type: 'line' }; radialSpan: number; signedRadius: number }>;
+  }> = [];
+  for (const id of candidateIds) {
+    const node = nodes.get(id);
+    if (node.type !== 'line') continue;
+    const delta: Vec2 = [node.end[0] - node.start[0], node.end[1] - node.start[1]];
+    const axialSpan = Math.abs(dot(delta, axis.direction));
+    const radialSpan = Math.abs(dot(delta, axis.normal));
+    if (radialSpan <= axialSpan * 2 || radialSpan < stationTolerance) continue;
+    const midpoint: Vec2 = [(node.start[0] + node.end[0]) / 2, (node.start[1] + node.end[1]) / 2];
+    const midpointZ = dot([midpoint[0] - axis.origin[0], midpoint[1] - axis.origin[1]], axis.direction);
+    if (midpointZ < range.zStart - stationTolerance || midpointZ > range.zEnd + stationTolerance) continue;
+    const signedRadius = dot([midpoint[0] - axis.origin[0], midpoint[1] - axis.origin[1]], axis.normal);
+    let station = stations.find(({ z }) => Math.abs(z - midpointZ) <= stationTolerance);
+    if (!station) {
+      station = { z: midpointZ, positive: 0, negative: 0, candidates: [] };
+      stations.push(station);
+    }
+    station.candidates.push({ node, radialSpan, signedRadius });
+    if (signedRadius >= 0) station.positive += radialSpan;
+    else station.negative += radialSpan;
+  }
+  const selectedStation = stations.sort((left, right) => {
+    const paired = Number(right.positive > stationTolerance && right.negative > stationTolerance)
+      - Number(left.positive > stationTolerance && left.negative > stationTolerance);
+    if (paired !== 0) return paired;
+    const span = right.positive + right.negative - left.positive - left.negative;
+    if (span !== 0) return span;
+    return (boundary ?? 'end') === 'end' ? right.z - left.z : left.z - right.z;
+  })[0];
+  const selected = selectedStation?.candidates.sort((left, right) => (
+    right.radialSpan - left.radialSpan
+    || right.signedRadius - left.signedRadius
+    || String(left.node.id).localeCompare(String(right.node.id))
+  ))[0];
+  return selected ? String(selected.node.id) : selectRepresentativeGeometry(feature, nodes, axis, 'radial-face');
+}
+
+function boundaryFeatureSegment(features: readonly ShaftPartitionSegment[], boundary: 'start' | 'end') {
+  if (features.length === 0) throw new Error('GDT_SEGMENT_GEOMETRY_REQUIRED');
+  return [...features].sort((left, right) => boundary === 'start'
+    ? left.zStart - right.zStart
+    : right.zEnd - left.zEnd)[0]!;
+}
+
+function adjacentShoulderSegments(
+  partition: ShaftPartition,
+  features: readonly ShaftPartitionSegment[],
+  boundary: 'start' | 'end',
+  tolerance: number,
+): ShaftPartitionSegment[] {
+  const featureStation = boundary === 'start'
+    ? Math.min(...features.map(({ zStart }) => zStart))
+    : Math.max(...features.map(({ zEnd }) => zEnd));
+  const segmentById = new Map(partition.segments.map((segment) => [segment.id, segment]));
+  const groups = partition.semanticGroups.filter(({ semanticType }) => semanticType === 'shoulder').map((group) => {
+    const segments = group.segmentIds.map((id) => segmentById.get(id)).filter((segment) => segment !== undefined);
+    const range = group.range ?? (segments.length === 0 ? undefined : {
+      zStart: Math.min(...segments.map(({ zStart }) => zStart)),
+      zEnd: Math.max(...segments.map(({ zEnd }) => zEnd)),
+    });
+    return { segments, range };
+  }).filter(({ segments, range }) => segments.length > 0 && range !== undefined);
+  const adjacent = groups.filter(({ range }) => boundary === 'start'
+    ? Math.abs(range!.zEnd - featureStation) <= tolerance
+    : Math.abs(range!.zStart - featureStation) <= tolerance);
+  if (adjacent.length !== 1) return [];
+  return adjacent[0]!.segments;
+}
+
+function selectRadialFaceAtFeatureBoundary(
   feature: ShaftPartitionSegment,
   nodes: ReadonlyMap<string, GeometryNode>,
   axis: ShaftPartition['axis'],
   boundary: 'start' | 'end' | undefined,
+  stationTolerance: number,
 ): string {
   const stations = boundary === 'start' ? [feature.zStart]
     : boundary === 'end' ? [feature.zEnd]
       : [feature.zStart, feature.zEnd];
-  const stationTolerance = Math.max(Number.EPSILON * 1e6, Math.abs(axis.zMax - axis.zMin) * 1e-6);
   let selected: { node: GeometryNode & { type: 'line' }; score: number } | null = null;
   for (const node of nodes.values()) {
     if (node.type !== 'line') continue;
@@ -279,21 +410,19 @@ function selectLocatingShoulderGeometry(
     const midpointZ = dot([midpoint[0] - axis.origin[0], midpoint[1] - axis.origin[1]], axis.direction);
     const stationError = Math.min(...stations.map((station) => Math.abs(midpointZ - station)));
     if (stationError > stationTolerance) continue;
-    // A complete annular shoulder projects as the longest radial line at the
-    // selected station. This naturally rejects tooth edges, fillets and
-    // relief details without encoding any drawing-specific coordinates.
     const score = radialSpan - axialSpan - stationError;
     if (!selected || score > selected.score) selected = { node, score };
   }
-  if (selected) return String(selected.node.id);
-  return selectRepresentativeGeometry(feature, nodes, axis, 'radial');
+  return selected ? String(selected.node.id) : selectRepresentativeGeometry(feature, nodes, axis, 'radial-face');
 }
+
+type RepresentativeSurfacePreference = 'axis-parallel-surface' | 'axis-parallel-bottom' | 'radial-face';
 
 function selectRepresentativeGeometry(
   segment: ShaftPartitionSegment,
   nodes: ReadonlyMap<string, GeometryNode>,
   axis: ShaftPartition['axis'],
-  preference: 'axial' | 'axial-bottom' | 'radial',
+  preference: RepresentativeSurfacePreference,
 ): string {
   const candidates = segment.geometryNodeIds.map((id) => nodes.get(String(id))).filter((node) => node !== undefined);
   if (candidates.length === 0) throw new Error(`GDT_SEGMENT_GEOMETRY_REQUIRED:${segment.id}`);
@@ -315,7 +444,7 @@ function compareRepresentativeNodes(
   right: GeometryNode,
   axis: ShaftPartition['axis'],
   segment: ShaftPartitionSegment,
-  preference: 'axial' | 'axial-bottom' | 'radial',
+  preference: RepresentativeSurfacePreference,
 ): number {
   const a = representativeNodeMetrics(left, axis, segment, preference);
   const b = representativeNodeMetrics(right, axis, segment, preference);
@@ -325,7 +454,7 @@ function compareRepresentativeNodes(
     || a.overflow - b.overflow
     || b.preferredSpan - a.preferredSpan
     || a.crossSpan - b.crossSpan
-    || (preference === 'axial-bottom' ? a.signedRadius - b.signedRadius : 0)
+    || (preference === 'axis-parallel-bottom' ? a.signedRadius - b.signedRadius : 0)
     || String(left.id).localeCompare(String(right.id));
 }
 
@@ -333,7 +462,7 @@ function representativeNodeMetrics(
   node: GeometryNode,
   axis: ShaftPartition['axis'],
   segment: ShaftPartitionSegment,
-  preference: 'axial' | 'axial-bottom' | 'radial',
+  preference: RepresentativeSurfacePreference,
 ): RepresentativeNodeMetrics {
   if (node.type !== 'line') {
     return { line: false, inside: false, outsideDistance: Number.POSITIVE_INFINITY, overflow: Number.POSITIVE_INFINITY, preferredSpan: 0, crossSpan: 0, signedRadius: 0 };
@@ -352,13 +481,13 @@ function representativeNodeMetrics(
     inside: outsideDistance === 0,
     outsideDistance,
     overflow: Math.max(0, axial - segmentWidth),
-    preferredSpan: preference === 'radial' ? radial : axial,
-    crossSpan: preference === 'radial' ? axial : radial,
+    preferredSpan: preference === 'radial-face' ? radial : axial,
+    crossSpan: preference === 'radial-face' ? axial : radial,
     signedRadius,
   };
 }
 
-function prefersRadialSurface(value: GeometricCharacteristic): boolean {
+function prefersRadialFace(value: GeometricCharacteristic): boolean {
   return value === 'flatness' || value === 'perpendicularity' || value === 'angularity' || value === 'parallelism';
 }
 

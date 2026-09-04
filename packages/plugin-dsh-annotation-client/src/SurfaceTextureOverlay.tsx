@@ -3,25 +3,52 @@
 import type { DrawingDocument, GeometryNode, Vec2 } from '@vectorai/drawing-core';
 import { drawingBounds, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import type { EngineeringAnnotationDraft } from '@vectorai/plugin-space-contracts';
-import { useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { SurfaceTextureSymbol } from './SurfaceTextureSymbol';
+import { useRafPreview } from './useRafPreview';
 
-export function SurfaceTextureOverlay({ draft, document, scale, visible, previewHeld, onSelect, onMove }: {
+export function SurfaceTextureOverlay({ draft, document, scale, visible, previewHeld, attachToGdt, onSelect, onMove, onInteractionActiveChange }: {
   draft: EngineeringAnnotationDraft;
   document: DrawingDocument;
   scale: number;
   visible: boolean;
   previewHeld: boolean;
+  attachToGdt?: boolean;
   onSelect(id: string): void;
   onMove(id: string, position: readonly [number, number]): void | Promise<void>;
+  onInteractionActiveChange?(active: boolean): void;
 }) {
-  if (!visible) return null;
-  const geometry = new Map(document.geometry.map((node) => [String(node.id), node]));
-  const bounds = drawingBounds({ ...document, annotations: [] }) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  const geometry = useMemo(() => new Map(document.geometry.map((node) => [String(node.id), node])), [document.geometry]);
+  const bounds = useMemo(() => drawingBounds({ ...document, annotations: [] })
+    ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 }, [document]);
   const drawingHeight = Math.max(1, bounds.maxY - bounds.minY);
   const safeScale = Math.max(scale, 1e-6);
   const [dragPositions, setDragPositions] = useState<Record<string, Vec2>>({});
   const dragRef = useRef<{ id: string; pointerId: number; startClient: Vec2; startPosition: Vec2; current: Vec2 } | null>(null);
   const suppressClickRef = useRef(false);
+  const dragPreview = useRafPreview(({ id, position }: { id: string; position: Vec2 }) => {
+    setDragPositions((current) => ({ ...current, [id]: position }));
+  });
+  const gdtTargetIds = useMemo(() => attachToGdt ? new Set(draft.geometricTolerances
+    .filter((intent) => intent.status !== 'conflict' && intent.status !== 'stale')
+    .map((intent) => intent.controlledTargets[0]?.geometryId)
+    .filter((id): id is string => id !== undefined)
+    .map(String)) : null, [attachToGdt, draft.geometricTolerances]);
+  useEffect(() => {
+    setDragPositions((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const [id, preview] of Object.entries(current)) {
+        const position = draft.surfaceTextures.find((intent) => intent.id === id)?.labelPosition;
+        if (position !== undefined && Math.hypot(position[0] - preview[0], position[1] - preview[1]) <= 0.0005) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [draft.surfaceTextures]);
+  if (!visible) return null;
   const updateDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -32,24 +59,24 @@ export function SurfaceTextureOverlay({ draft, document, scale, visible, preview
     ];
     drag.current = next;
     if (Math.hypot(event.clientX - drag.startClient[0], event.clientY - drag.startClient[1]) > 3) suppressClickRef.current = true;
-    setDragPositions((current) => ({ ...current, [drag.id]: next }));
+    dragPreview.schedule({ id: drag.id, position: next });
   };
   const finishDrag = (event: PointerEvent<SVGGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     updateDrag(event);
+    dragPreview.flush({ id: drag.id, position: drag.current });
     dragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    void Promise.resolve(onMove(drag.id, drag.current)).then(() => setDragPositions((current) => {
+    void Promise.resolve(onMove(drag.id, drag.current)).catch(() => setDragPositions((current) => {
       const next = { ...current }; delete next[drag.id]; return next;
-    })).catch(() => setDragPositions((current) => {
-      const next = { ...current }; delete next[drag.id]; return next;
-    }));
+    })).finally(() => onInteractionActiveChange?.(false));
   };
   return <g className="vai-surface-texture-overlay">
     {draft.surfaceTextures.map((intent, index) => {
       if (intent.status === 'conflict' || intent.status === 'stale') return null;
       const targetSpec = intent.controlledTargets[0];
+      if (targetSpec && gdtTargetIds?.has(String(targetSpec.geometryId))) return null;
       const target = targetSpec ? resolveAnchor(geometry.get(String(targetSpec.geometryId)), targetSpec.anchor) : null;
       if (!target) return null;
       const marker: Vec2 = dragPositions[intent.id]
@@ -71,18 +98,20 @@ export function SurfaceTextureOverlay({ draft, document, scale, visible, preview
             id: intent.id, pointerId: event.pointerId,
             startClient: [event.clientX, event.clientY], startPosition: marker, current: marker,
           };
+          onInteractionActiveChange?.(true);
         }}
         onPointerMove={updateDrag}
         onPointerUp={finishDrag}
-        onPointerCancel={() => { dragRef.current = null; setDragPositions({}); }}>
+        onPointerCancel={() => {
+          dragPreview.cancel(); dragRef.current = null; setDragPositions({}); onInteractionActiveChange?.(false);
+        }}>
         <path className="vai-surface-texture-leader" pointerEvents="none"
           d={`M ${target[0]} ${target[1]} L ${target[0]} ${marker[1]} L ${marker[0]} ${marker[1]}`} />
         <g transform={screenSpaceTransform(marker, safeScale)} data-material-removal={intent.materialRemoval}>
-          <rect className="vai-surface-texture__hit" x={-18} y={-24} width={66} height={40} rx={4} />
-          <path className="vai-surface-texture__symbol" d="M -8 8 L 0 -8 L 10 8" />
-          {intent.materialRemoval === 'required' && <path className="vai-surface-texture__symbol" d="M -1 -6 L 14 -6" />}
-          {intent.materialRemoval === 'prohibited' && <circle className="vai-surface-texture__symbol" cx={1} cy={0} r={4} />}
-          <text x={18} y={-8} dominantBaseline="middle" fontSize={11}>{`${intent.parameter} ${format(intent.value)}`}</text>
+          <rect className="vai-surface-texture__hit" x={-16} y={-46} width={58} height={58} rx={4} />
+          <SurfaceTextureSymbol materialRemoval={intent.materialRemoval} />
+          <text className="vai-surface-texture__value" x={-2} y={-23} textAnchor="middle" fontSize={11}
+            aria-label={`${intent.parameter} ${format(intent.value)}`}>{format(intent.value)}</text>
         </g>
       </g>;
     })}

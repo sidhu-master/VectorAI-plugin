@@ -144,7 +144,7 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 - worst-case 尺寸链上下界分析；`statistical` 当前返回明确 unsupported 诊断；
 - 投影前的状态、证据、规则结果与 Drawing revision 校验。
 
-名义尺寸链推断位于现有 `DimensionIntent` / `DimensionChain` 之前，流程为：分区轴线与台阶边界规范化为 `AxialTopology`；候选生成器只建立相邻跨度、功能范围、文档范围、工艺包络、有限组合与总长；策略层按具名语义证据评分；层级区间求解器选择非交叉显示集合并为每个父尺寸保留一个闭环。所有名义值、正负系数和等式校验均由本地算法产生。默认策略是 `shaft-reference-terminal-closure-v1`，直接采用黄金样本归纳出的参考端闭合惯例；只有用户明确要求保留惯例歧义时才使用 `shaft-hierarchical-dimensioning-v1`。
+名义尺寸链推断位于现有 `DimensionIntent` / `DimensionChain` 之前，流程为：分区轴线与台阶边界规范化为 `AxialTopology`；候选生成器只建立相邻跨度、功能范围、文档范围、工艺包络、有限组合与总长；求解器先应用 `required / prohibited` 硬约束，再按人工、文档、功能/工艺和几何证据层级选择闭环。方向、坐标、长度和实体 ID 不参与同级歧义的裁决；同级证据等价时返回多个候选并要求复核。所有名义值、正负系数和等式校验均由本地算法产生。
 
 方案随 dimension-plan durable envelope 保存，包含候选、决策依据、显示/闭环集合和诊断。Client 通过严格 Typert remote 只能按候选 ID 切换显示或闭环，不能提交坐标。确认前会重新投影和验证；`needs-review`、`conflict`、`stale` 均阻止确认。上传文件不会调用推断，唯一模型入口是显式 `drawing_dimension_chain_start`。
 

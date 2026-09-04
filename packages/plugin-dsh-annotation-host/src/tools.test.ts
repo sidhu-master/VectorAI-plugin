@@ -16,6 +16,59 @@ import { AnnotationSessionStateStore } from './session-state';
 import { PartitionSessionStore } from './partition-store';
 
 describe('drawing_auto_annotate', () => {
+  it('resolves an editable partition once and continues in the same tool call', async () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-confirm' }, now: () => 1 });
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const rise = 4 * Math.sqrt(3);
+    const journal = 12.9 - rise;
+    document.geometry = [
+      ['top', [14, journal], [86, journal]], ['bottom', [14, -journal], [86, -journal]],
+      ['left-upper', [10, 12.9], [14, journal]], ['left-lower', [10, -12.9], [14, -journal]],
+    ].map(([id, start, end]) => ({
+      id: id as never, type: 'line' as const, start: start as never, end: end as never, visible: true, quality,
+    }));
+    const draft = {
+      version: 1 as const,
+      drawingRef: { drawingId: 'drawing-confirm', revision: 1 },
+      axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 20, orientation: 'forward' as const },
+      segments: [], semanticGroups: [], stepCandidates: [], evidence: [], diagnostics: [],
+    };
+    const resolvePartitionDecision = vi.fn(async () => 'confirm' as const);
+    const runExtensionProgram = vi.fn(async () => ({ result: {
+      status: 'committed' as const, mode: 'auto-safe' as const, commitId: 'commit-confirm',
+      ref: { drawingId: 'drawing-confirm', revision: 2 }, operationId: 'op-confirm',
+      operationBindingDigest: 'sha256:confirm',
+    } }));
+    const tool = createEngineeringAnnotationTool({
+      getSnapshot: () => ({
+        version: 1 as const, ref: { drawingId: 'drawing-confirm', revision: 1 }, document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+      runExtensionProgram: runExtensionProgram as never,
+    }, new AnnotationSessionStateStore(), {
+      get: () => ({
+        version: 1 as const, phase: 'editing' as const, drawingRef: draft.drawingRef,
+        draft, canUndo: false, canRedo: false, updatedAt: 1,
+      }),
+      advanceDrawingRevision: vi.fn(),
+    }, undefined, {
+      name: 'drawing_auto_annotate', description: 'automatic set',
+      annotationKinds: ['opening-angle'], objective: 'automatic set',
+      preparePartition: async () => ({
+        version: 1 as const, phase: 'editing' as const, drawingRef: draft.drawingRef,
+        draft, canUndo: false, canRedo: false, updatedAt: 1,
+      }),
+      resolvePartitionDecision,
+    } as never);
+
+    await expect(tool.execute({}, {
+      agent: { id: 'session-confirm' } as Agent,
+      signal: new AbortController().signal,
+    } as ToolRunContext)).resolves.toMatchObject({ status: 'committed' });
+    expect(resolvePartitionDecision).toHaveBeenCalledOnce();
+    expect(runExtensionProgram).toHaveBeenCalledOnce();
+  });
+
   it('allows opening-angle preview while a partition draft is still being edited', async () => {
     const sessions = new AnnotationSessionStateStore(undefined, { now: () => 12 });
     sessions.start('session-1', 'partition-1');

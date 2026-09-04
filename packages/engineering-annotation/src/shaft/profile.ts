@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DrawingDocument, Vec2 } from '@vectorai/drawing-core';
+import type { DrawingDocument } from '@vectorai/drawing-core';
 import type { ShaftAxis } from '../partition/types';
 import { sampleNode } from './axis';
+import { buildShaftContourTopology, type ShaftContourTopology } from './contour-topology';
+import { createShaftCoordinateFrame } from './coordinate-frame';
+import { isShaftProfileGeometry } from './geometry-filter';
 
 export interface ShaftProfilePiece { z1: number; r1: number; z2: number; r2: number; geometryNodeId: string }
 export interface ShaftProfile {
   axis: ShaftAxis;
+  topology: ShaftContourTopology;
   pieces: ShaftProfilePiece[];
   shoulders: Array<{ z: number; radialSpan: number; geometryNodeIds: string[] }>;
   maxRadius: number;
@@ -30,11 +34,12 @@ interface ShoulderCluster {
 }
 
 export function extractShaftProfile(document: DrawingDocument, axis: ShaftAxis): ShaftProfile {
+  const topology = buildShaftContourTopology(document, axis);
+  const frame = createShaftCoordinateFrame(axis);
   const pieces: ShaftProfilePiece[] = [];
-  const selected = axis.geometryNodeIds === undefined ? undefined : new Set(axis.geometryNodeIds);
   for (const node of document.geometry) {
-    if (!node.visible || node.type === 'ray' || node.type === 'xline' || selected !== undefined && !selected.has(String(node.id))) continue;
-    const points = sampleNode(node).map((point) => local(point, axis));
+    if (!isShaftProfileGeometry(node)) continue;
+    const points = sampleNode(node).map((point) => frame.toLocal(point));
     for (let index = 1; index < points.length; index += 1) {
       const first = points[index - 1]!;
       const second = points[index]!;
@@ -62,7 +67,7 @@ export function extractShaftProfile(document: DrawingDocument, axis: ShaftAxis):
       geometryNodeIds,
     }))
     .sort((first, second) => first.z - second.z);
-  return { axis, pieces, shoulders, maxRadius, sampleCount: pieces.length + 1 };
+  return { axis, topology, pieces, shoulders, maxRadius, sampleCount: pieces.length + 1 };
 }
 
 function clusterShoulderEvents(events: ShoulderEvent[], tolerance: number): ShoulderCluster[] {
@@ -90,10 +95,11 @@ function clusterShoulderEvents(events: ShoulderEvent[], tolerance: number): Shou
 }
 
 export function radiusSummary(profile: ShaftProfile, zStart: number, zEnd: number) {
+  const axialTolerance = Math.max(Math.abs(profile.axis.zMax - profile.axis.zMin) * 1e-8, 1e-8);
   const radii = profile.pieces.flatMap((piece) => {
     const low = Math.min(piece.z1, piece.z2);
     const high = Math.max(piece.z1, piece.z2);
-    if (high < zStart || low > zEnd) return [];
+    if (high - low <= axialTolerance || high <= zStart + axialTolerance || low >= zEnd - axialTolerance) return [];
     return [Math.abs(piece.r1), Math.abs(piece.r2)];
   });
   return {
@@ -101,9 +107,4 @@ export function radiusSummary(profile: ShaftProfile, zStart: number, zEnd: numbe
     maxRadius: radii.length ? Math.max(...radii) : 0,
     sampleCount: radii.length,
   };
-}
-
-function local(point: Vec2, axis: ShaftAxis): Vec2 {
-  const delta: Vec2 = [point[0] - axis.origin[0], point[1] - axis.origin[1]];
-  return [delta[0] * axis.direction[0] + delta[1] * axis.direction[1], delta[0] * axis.normal[0] + delta[1] * axis.normal[1]];
 }

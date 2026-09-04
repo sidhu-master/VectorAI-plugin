@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { build } from 'vite';
+import { writeDshBuildFreshnessManifest } from './dsh-build-freshness.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const spaceHostDir = join(root, 'packages/plugin-dsh-space-host');
@@ -31,6 +32,7 @@ if (target === 'space' || target === 'all') {
     temporaryPrefix: 'vectorai-dsh-client-',
   });
   await copyFile(join(root, 'LICENSE'), join(spaceBundleDir, 'LICENSE'));
+  await writeDshBuildFreshnessManifest({ root, target: 'space' });
 }
 
 if (target === 'annotation' || target === 'all') {
@@ -44,6 +46,7 @@ if (target === 'annotation' || target === 'all') {
     temporaryPrefix: 'vectorai-dsh-annotation-client-',
   });
   await copyFile(join(root, 'LICENSE'), join(annotationBundleDir, 'LICENSE'));
+  await writeDshBuildFreshnessManifest({ root, target: 'annotation' });
 }
 
 async function buildPluginPair({

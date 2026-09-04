@@ -299,4 +299,24 @@ describe('PartitionWorkflowService', () => {
     expect(partitions.get('s').draft).toBeUndefined();
     expect(annotations.get('s').workspaceClaimed).toBe(false);
   });
+
+  it('rolls back partition state when a generated draft cannot be persisted', async () => {
+    const document = drawing();
+    document.sources = [{ id: 'source:dxf', kind: 'dxf', mediaType: 'application/dxf', digest: `sha256:${'a'.repeat(64)}`, name: 'shaft.dxf' }];
+    const annotations = new AnnotationSessionStateStore();
+    const partitions = new PartitionSessionStore();
+    const reviewer = vi.fn(async ({ draft }: { draft: object }) => ({
+      draft: { ...draft, unsupportedWireField: true },
+    }));
+    const service = new PartitionWorkflowService({
+      importDxf: vi.fn(),
+      getSnapshot: () => ({ version: 1 as const, ref: { drawingId: 'd', revision: 1 }, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    } as never, partitions, annotations, reviewer as never);
+
+    await expect(service.analyzeCurrent({ id: 's' } as Agent)).rejects.toThrow();
+
+    expect(partitions.get('s').phase).toBe('idle');
+    expect(partitions.get('s').draft).toBeUndefined();
+    expect(annotations.get('s').workflow.status).toBe('failed');
+  });
 });

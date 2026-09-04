@@ -92,6 +92,7 @@ export class PartitionSessionStore {
     const revision: DomainPartitionRevision = {
       version: 1, drawingRef: draft.drawingRef, axis: draft.axis, segments: draft.segments,
       semanticGroups: draft.semanticGroups, evidence: draft.evidence, diagnostics: draft.diagnostics,
+      ...(draft.geometryFingerprint === undefined ? {} : { geometryFingerprint: draft.geometryFingerprint }),
       id: this.ports.id(), ...(previous === undefined ? {} : { parentRevisionId: previous.id }), confirmedAt: this.ports.now(),
     };
     return this.#push(
@@ -221,7 +222,25 @@ export class PartitionSessionStore {
     const existing = this.#states.get(sessionId);
     if (existing) return existing;
     const loaded = parseEnvelope(this.storage?.load(sessionId));
-    const initial: Envelope = loaded ?? { snapshot: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, undo: [], redo: [] };
+    let initial: Envelope = loaded ?? { snapshot: { version: 1, phase: 'idle', canUndo: false, canRedo: false, updatedAt: 0 }, undo: [], redo: [] };
+    if (initial.snapshot.phase === 'analyzing') {
+      const confirmed = latestConfirmed(initial);
+      initial = {
+        ...initial,
+        snapshot: partitionSessionSnapshotSchema.parse({
+          version: 1,
+          phase: confirmed === undefined ? 'idle' : 'confirmed',
+          ...(initial.snapshot.drawingRef === undefined ? {} : { drawingRef: initial.snapshot.drawingRef }),
+          ...(confirmed === undefined ? {} : { confirmed }),
+          canUndo: false,
+          canRedo: false,
+          updatedAt: this.ports.now(),
+        }),
+        undo: [],
+        redo: [],
+      };
+      this.storage?.save(sessionId, initial);
+    }
     this.#states.set(sessionId, initial);
     return initial;
   }
@@ -301,6 +320,7 @@ function reconstructDraft(revision: DomainPartitionRevision): DomainPartitionDra
         message: 'Editable partition state was reconstructed from a legacy confirmed revision.',
       },
     ],
+    ...(revision.geometryFingerprint === undefined ? {} : { geometryFingerprint: revision.geometryFingerprint }),
     basePartitionRevisionId: revision.id,
   };
 }

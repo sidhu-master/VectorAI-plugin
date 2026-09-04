@@ -888,6 +888,14 @@ const shaftAxisSchema = z.object({
 }).strict();
 const stepCandidateSchema = z.object({
   id: idSchema, z: z.number(), score: z.number(), evidenceIds: z.array(idSchema), accepted: z.boolean(),
+  policyVersion: z.literal('shaft-step-confidence-v1').optional(),
+  confidenceBreakdown: z.object({
+    contourContinuity: z.number(),
+    bilateralCorrespondence: z.number(),
+    axialResidence: z.number(),
+    radiusChange: z.number(),
+    entityQuality: z.number(),
+  }).strict().optional(),
 }).strict();
 const partitionSegmentSchema = z.object({
   id: idSchema, zStart: z.number(), zEnd: z.number(),
@@ -902,17 +910,29 @@ const partitionGroupSchema = z.object({
   semanticType: z.string(),
   dimensionRole: z.enum(['functional-feature', 'process-datum', 'transition', 'ordinary']).optional(),
   name: z.string().optional(), evidenceIds: z.array(idSchema),
+  reconciliation: z.object({
+    status: z.enum(['matched', 'ambiguous', 'conflict', 'unmatched']),
+    stationError: z.number(),
+    widthError: z.number(),
+    diameterError: z.number().optional(),
+    topologyError: z.number(),
+    documentIdentityError: z.number(),
+    documentRange: z.object({ zStart: z.number(), zEnd: z.number() }).strict(),
+    geometryRange: z.object({ zStart: z.number(), zEnd: z.number() }).strict().optional(),
+  }).strict().optional(),
 }).strict();
 export const partitionDraftSchema = z.object({
   version: z.literal(1), drawingRef: drawingRefSchema, axis: shaftAxisSchema,
   segments: z.array(partitionSegmentSchema), semanticGroups: z.array(partitionGroupSchema),
   stepCandidates: z.array(stepCandidateSchema), evidence: z.array(partitionEvidenceSchema), diagnostics: z.array(partitionDiagnosticSchema),
+  geometryFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
   basePartitionRevisionId: idSchema.optional(),
 }).strict();
 export const partitionRevisionSchema = z.object({
   version: z.literal(1), drawingRef: drawingRefSchema, axis: shaftAxisSchema,
   segments: z.array(partitionSegmentSchema), semanticGroups: z.array(partitionGroupSchema),
   evidence: z.array(partitionEvidenceSchema), diagnostics: z.array(partitionDiagnosticSchema),
+  geometryFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/u).optional(),
   id: idSchema, parentRevisionId: idSchema.optional(), confirmedAt: z.number(),
 }).strict();
 
@@ -970,10 +990,18 @@ const engineeringDiagnosticSchema = z.object({
   severity: z.enum(['info', 'warning', 'error']),
   code: idSchema,
   message: z.string(),
+  segmentIds: z.array(idSchema).optional(),
   entityIds: z.array(idSchema).optional(),
   evidenceIds: z.array(idSchema).optional(),
 }).strict();
 const engineeringStateSchema = z.enum(['candidate', 'resolved', 'confirmed', 'conflict', 'stale']);
+const engineeringDecisionAuthoritySchema = z.enum([
+  'standard-expression',
+  'deterministic-geometry',
+  'documented-requirement',
+  'ai-recommendation',
+  'user-confirmed',
+]);
 const featureClassSchema = z.enum(['internal', 'external']);
 const engineeringDatumSchema = z.object({
   id: idSchema,
@@ -986,6 +1014,7 @@ const engineeringDatumSchema = z.object({
   source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
   status: z.enum(['candidate', 'confirmed', 'conflict', 'stale']),
   evidenceIds: z.array(idSchema),
+  decisionAuthority: engineeringDecisionAuthoritySchema.optional(),
 }).strict();
 const dimensionIntentSchema = z.object({
   id: idSchema,
@@ -1362,6 +1391,7 @@ export const geometricToleranceIntentSchema = z.object({
   source: z.enum(['document', 'geometry', 'manual', 'ai-candidate']),
   status: z.enum(['candidate', 'pending-calculation', 'resolved', 'confirmed', 'conflict', 'stale']),
   evidenceIds: z.array(idSchema),
+  decisionAuthority: engineeringDecisionAuthoritySchema.optional(),
   framePosition: vec2Schema.optional(),
 }).strict();
 export const surfaceTextureIntentSchema = z.object({
@@ -1375,6 +1405,7 @@ export const surfaceTextureIntentSchema = z.object({
   source: z.enum(['document', 'manual', 'process-rule', 'ai-candidate']),
   status: z.enum(['candidate', 'resolved', 'confirmed', 'conflict', 'stale']),
   evidenceIds: z.array(idSchema),
+  decisionAuthority: engineeringDecisionAuthoritySchema.optional(),
   ruleRef: z.object({ id: idSchema, version: idSchema }).strict().optional(),
   labelPosition: vec2Schema.optional(),
 }).strict();
@@ -1428,6 +1459,7 @@ const dimensionEvidenceSchema = z.object({
   kind: z.enum(['drawing-end', 'elementary-span', 'functional-region', 'document-interval', 'process-envelope', 'manual-requirement']),
   label: z.string(),
   required: z.boolean(),
+  constraint: z.enum(['required', 'preferred', 'prohibited']).optional(),
   sourceIds: z.array(idSchema),
 }).strict();
 const axialDimensionCandidateSchema = z.object({
@@ -1438,6 +1470,7 @@ const axialDimensionCandidateSchema = z.object({
   roles: z.array(z.enum(['overall', 'composite', 'functional', 'process', 'local', 'reference', 'closure'])),
   evidenceIds: z.array(idSchema),
   required: z.boolean(),
+  constraint: z.enum(['required', 'preferred', 'prohibited']).optional(),
 }).strict();
 const dimensionDecisionTraceSchema = z.object({
   candidateId: idSchema,
@@ -1457,6 +1490,12 @@ const axialChainNodeSchema = z.object({
   closureCandidateId: idSchema,
   alternativeClosureCandidateIds: z.array(idSchema),
   status: z.enum(['resolved', 'needs-review', 'conflict']),
+  closureRationale: z.object({
+    rule: z.literal('hard-constraints-then-evidence-authority'),
+    selectedEvidenceTier: z.number().finite(),
+    reasonCodes: z.array(idSchema),
+    counterfactualCandidateIds: z.array(idSchema),
+  }).strict().optional(),
 }).strict();
 export const axialDimensionSchemeSchema = z.object({
   version: z.literal(1),

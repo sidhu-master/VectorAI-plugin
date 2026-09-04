@@ -74,4 +74,22 @@ describe('editable shaft partition', () => {
     expect(moved.segments).toEqual(source.segments);
     expect(moved.evidence.at(-1)).toMatchObject({ origin: 'manual' });
   });
+
+  it('snaps a semantic range to the nearest accepted structural shoulder only', () => {
+    const source = draft();
+    source.semanticGroups = [{
+      id: 'group:gear', segmentIds: ['segment:10-20'], range: { zStart: 8, zEnd: 18 },
+      semanticType: 'gear', evidenceIds: [],
+    }];
+    const moved = moveSemanticRange(source, {
+      groupId: 'group:gear', edge: 'start', requestedZ: 9.72,
+      snapCandidates: [
+        { id: 'tooth-profile', z: 9.7, score: 0.99, evidenceIds: [], accepted: false },
+        { id: 'far-shoulder', z: 9, score: 0.98, evidenceIds: [], accepted: true },
+        { id: 'nearest-shoulder', z: 10, score: 0.7, evidenceIds: [], accepted: true },
+      ],
+      snapTolerance: 1,
+    });
+    expect(moved.semanticGroups[0]?.range?.zStart).toBe(10);
+  });
 });

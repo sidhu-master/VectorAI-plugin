@@ -6,6 +6,7 @@ import { canonicalRuleInputDigest, createGbt1800Provider, type PartitionDraft, t
 import { describe, expect, it } from 'vitest';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { DimensionPlanStore } from './dimension-plan-store';
+import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
 import { ToleranceService } from './tolerance-service';
 
 const ref = { drawingId: 'drawing:shaft', revision: 1 };
@@ -35,11 +36,15 @@ function service(partitionValue: PartitionDraft | null = partition(), plans = ne
     id: 'geometry:shaft' as GeometryId, type: 'line', start: [0, 0], end: [20, 0], visible: true,
     quality: { status: 'confirmed', evidenceRefs: [] },
   }];
+  const currentPartition = partitionValue === null ? null : {
+    ...partitionValue,
+    geometryFingerprint: partitionGeometryFingerprint(document),
+  };
   return new DimensionInferenceService(
     { getSnapshot: () => ({ version: 1, ref, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }) },
-    { get: () => partitionValue === null
+    { get: () => currentPartition === null
       ? { version: 1, phase: 'idle', drawingRef: ref, canUndo: false, canRedo: false, updatedAt: 0 }
-      : { version: 1, phase: 'editing', drawingRef: ref, draft: partitionValue as never, canUndo: false, canRedo: false, updatedAt: 0 } },
+      : { version: 1, phase: 'editing', drawingRef: ref, draft: currentPartition as never, canUndo: false, canRedo: false, updatedAt: 0 } },
     { getStagedEngineeringText: () => options.engineeringText },
     plans,
   );
