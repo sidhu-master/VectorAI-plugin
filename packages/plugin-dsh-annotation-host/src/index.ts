@@ -27,3 +27,27 @@ export { DimensionInferenceService } from './dimension-inference-service';
 export { GdtService } from './gdt-service';
 export { groundGdtRecommendation } from './gdt-grounding';
 export type { GdtRecommendation } from './gdt-grounding';
+export {
+  RecognitionPipelineRunner,
+  createRecognitionFingerprint,
+  recognitionDigest,
+} from './recognition-runtime';
+export type {
+  RecognitionContractCase,
+  RecognitionEvaluationAttempt,
+  RecognitionEvaluationReport,
+  RecognitionFingerprintInput,
+  RecognitionModelObservation,
+  RecognitionModelPort,
+  RecognitionModelRequest,
+  RecognitionModelResult,
+  RecognitionModelRoute,
+  RecognitionPipeline,
+  RecognitionPromptPart,
+  RecognitionRun,
+  RecognitionRunContext,
+  RecognitionRuntimeVersions,
+  RecognitionStageKind,
+  RecognitionStageStatus,
+  RecognitionStageTrace,
+} from './recognition-runtime';
