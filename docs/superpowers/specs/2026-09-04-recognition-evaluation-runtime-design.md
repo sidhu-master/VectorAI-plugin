@@ -121,7 +121,7 @@ export interface RecognitionModelObservation {
 export interface RecognitionModelResult<TStructured> {
   readonly stopReason: string;
   readonly structured?: TStructured;
-  readonly observation: RecognitionModelObservation;
+  readonly observations: readonly RecognitionModelObservation[];
 }
 
 export interface RecognitionPipeline<I, O> {
@@ -148,7 +148,10 @@ actual DSH ordering was verified to publish `subagent/start` before the child's
 first `agent/request` and `llm/stream` call. Capture closes on the paired
 `subagent/end`, timeout, abort, start failure, or adapter disposal.
 
-The observation stores only normalized metadata and SHA-256 digests. Message
+Each child may make more than one model request, including a follow-up step that
+submits structured output. The result therefore retains an ordered observation
+list rather than pretending one child equals one request. Each observation stores
+only normalized metadata and SHA-256 digests. Message
 text, system text, tool descriptions, images, local paths, document contents,
 credentials, and provider headers are not written to evaluation artifacts. A
 diagnostic run may retain sanitized structured candidates because those are
@@ -252,9 +255,10 @@ The initial implementation delivers one observable end-to-end workflow:
 7. rebuild the annotation DSH bundle and verify the existing automatic annotation
    workflow remains unchanged.
 
-The second slice migrates the existing GD&T semantic reviewer. Deterministic
-dimension-chain, datum, diameter, opening-angle, and roughness cases then register
-with the evaluator without acquiring unnecessary model stages.
+The next slice in the same migration moves the existing GD&T semantic reviewer
+behind the same adapter. Deterministic dimension-chain, datum, diameter,
+opening-angle, and roughness cases then register with the evaluator without
+acquiring unnecessary model stages.
 
 ## 12. Acceptance Criteria
 
