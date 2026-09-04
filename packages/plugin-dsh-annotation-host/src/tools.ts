@@ -341,7 +341,11 @@ export function createPartitionStartTool(workflow: {
 }
 
 export function createDimensionChainStartTool(workflow: {
-  start(agent: Agent, policyId?: AxialInferencePolicy['id']): DimensionPlanSessionSnapshot;
+  start(
+    agent: Agent,
+    policyId?: AxialInferencePolicy['id'],
+    signal?: AbortSignal,
+  ): DimensionPlanSessionSnapshot | Promise<DimensionPlanSessionSnapshot>;
 }) {
   return defineTool({
     name: 'drawing_dimension_chain_start',
@@ -357,7 +361,7 @@ export function createDimensionChainStartTool(workflow: {
     async execute(args, exec) {
       if (!exec.agent) throw new Error('DRAWING_SESSION_REQUIRED');
       const policy = 'shaft-hierarchical-dimensioning-v1';
-      const snapshot = workflow.start(exec.agent, policy);
+      const snapshot = await workflow.start(exec.agent, policy, exec.signal);
       const ready = snapshot.draft?.axialScheme?.status === 'resolved';
       return {
         status: ready ? 'ready' : snapshot.phase,

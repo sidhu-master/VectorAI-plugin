@@ -4,6 +4,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
 import { canonicalRuleInputDigest, createGbt1800Provider, type PartitionDraft, type ToleranceStandardProvider } from '@vectorai/engineering-annotation';
 import { describe, expect, it } from 'vitest';
+import { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
+import { createAxialDimensionInference } from './axial-dimension-pipeline';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { DimensionPlanStore } from './dimension-plan-store';
 import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
@@ -40,40 +42,49 @@ function service(partitionValue: PartitionDraft | null = partition(), plans = ne
     ...partitionValue,
     geometryFingerprint: partitionGeometryFingerprint(document),
   };
+  const space = {
+    getSnapshot: () => ({ version: 1 as const, ref, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }),
+    renderObservation: async () => { throw new Error('MODEL_MUST_NOT_RUN'); },
+  };
+  const recognition = createAnnotationRecognitionRunner(
+    { review: async () => { throw new Error('MODEL_MUST_NOT_RUN'); } },
+    space,
+  );
   return new DimensionInferenceService(
-    { getSnapshot: () => ({ version: 1, ref, document, capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: false } }) },
+    space,
     { get: () => currentPartition === null
       ? { version: 1, phase: 'idle', drawingRef: ref, canUndo: false, canRedo: false, updatedAt: 0 }
       : { version: 1, phase: 'editing', drawingRef: ref, draft: currentPartition as never, canUndo: false, canRedo: false, updatedAt: 0 } },
     { getStagedEngineeringText: () => options.engineeringText },
     plans,
+    createAxialDimensionInference(recognition),
   );
 }
 
 describe('DimensionInferenceService', () => {
-  it('defaults to the evidence-weighted hierarchical convention', () => {
+  it('defaults to the evidence-weighted hierarchical convention', async () => {
     const workflow = service();
-    const result = workflow.start(agent);
+    const result = await workflow.start(agent);
     expect(result.draft?.axialScheme).toMatchObject({
       policy: { id: 'shaft-hierarchical-dimensioning-v1' },
     });
   });
 
-  it('starts only when invoked and binds the current partition draft', () => {
+  it('starts only when invoked and binds the current partition draft', async () => {
     const workflow = service();
     expect(workflow.getState(agent).phase).toBe('idle');
 
-    const result = workflow.start(agent, 'shaft-hierarchical-dimensioning-v1');
+    const result = await workflow.start(agent, 'shaft-hierarchical-dimensioning-v1');
 
     expect(result.phase).toBe('editing');
     expect(result.draft?.axialScheme).toMatchObject({ policy: { id: 'shaft-hierarchical-dimensioning-v1' } });
   });
 
-  it('rejects a missing partition without fabricating topology', () => {
-    expect(() => service(null).start(agent)).toThrow('DIMENSION_PARTITION_REQUIRED');
+  it('rejects a missing partition without fabricating topology', async () => {
+    await expect(service(null).start(agent)).rejects.toThrow('DIMENSION_PARTITION_REQUIRED');
   });
 
-  it('preserves existing datum and GD&T annotations when dimension inference is refreshed', () => {
+  it('preserves existing datum and GD&T annotations when dimension inference is refreshed', async () => {
     const plans = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'dimension:r1' });
     const existing = {
       version: 1 as const, drawingRef: ref,
@@ -98,7 +109,7 @@ describe('DimensionInferenceService', () => {
     plans.begin(String(agent.id), ref);
     plans.setDraft(String(agent.id), existing);
 
-    const result = service(partition(), plans).start(agent);
+    const result = await service(partition(), plans).start(agent);
 
     expect(result.draft).toMatchObject({
       datums: existing.datums,
@@ -107,7 +118,7 @@ describe('DimensionInferenceService', () => {
     });
   });
 
-  it('keeps normalized millimetre partition coordinates authoritative when the source engineering document is inch', () => {
+  it('keeps normalized millimetre partition coordinates authoritative when the source engineering document is inch', async () => {
     const normalizedPartition = partition();
     normalizedPartition.axis.zMax = 25;
     normalizedPartition.segments[1]!.zEnd = 25;
@@ -131,7 +142,7 @@ center_z=0.6889763779527559
 width=0.5905511811023622`,
     });
 
-    const started = workflow.start(agent);
+    const started = await workflow.start(agent);
     const candidate = started.draft?.axialScheme?.candidates.find(({ nominalValue }) => nominalValue === 15);
     expect(candidate).toMatchObject({
       nominalValue: 15, required: true,
@@ -166,11 +177,11 @@ width=0.5905511811023622`,
     }));
   });
 
-  it('maps centimetre document regions onto millimetre topology stations', () => {
+  it('maps centimetre document regions onto millimetre topology stations', async () => {
     const normalizedPartition = partition();
     normalizedPartition.axis.zMax = 25;
     normalizedPartition.segments[1]!.zEnd = 25;
-    const started = service(normalizedPartition, undefined, {
+    const started = await service(normalizedPartition, undefined, {
       drawingUnit: 'mm',
       engineeringText: `[drawing]
 unit=cm

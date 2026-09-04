@@ -2,6 +2,7 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { DrawingSpaceExtensionHost } from '@vectorai/plugin-space-contracts';
+import { createAxialDimensionPipeline } from './axial-dimension-pipeline';
 import { createDeterministicAnnotationPipeline } from './deterministic-annotation-pipeline';
 import { createAutomaticGdtPipeline } from './gdt-reviewer';
 import { RecognitionPipelineRunner, type RecognitionModelPort } from './recognition-runtime';
@@ -19,6 +20,7 @@ export function createAnnotationRecognitionRunner(
   const runner = new RecognitionPipelineRunner(model);
   runner.register(createPartitionSemanticPipeline(space));
   runner.register(createDeterministicAnnotationPipeline());
+  runner.register(createAxialDimensionPipeline());
   runner.register(createAutomaticGdtPipeline(space));
   return runner;
 }

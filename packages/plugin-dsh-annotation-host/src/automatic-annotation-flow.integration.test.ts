@@ -17,6 +17,7 @@ import { PartitionSessionStore } from './partition-store';
 import { createEngineeringAnnotationTool } from './tools';
 import { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
 import { createEngineeringAnnotationPlanner } from './deterministic-annotation-pipeline';
+import { createAxialDimensionInference } from './axial-dimension-pipeline';
 import type { RecognitionModelPort } from './recognition-runtime';
 
 const fixtureDirectory = resolve(import.meta.dirname, '../../engineering-annotation/test/fixtures/golden-shaft-001');
@@ -70,14 +71,15 @@ describe('complete automatic annotation workflow', () => {
       } }),
       renderObservation: async () => { throw new Error('MODEL_STAGE_MUST_NOT_RUN_FOR_DOCUMENTED_GOLDEN_FIXTURE'); },
     };
+    const review = vi.fn(async () => { throw new Error('MODEL_STAGE_MUST_NOT_RUN_FOR_DOCUMENTED_GOLDEN_FIXTURE'); });
+    const recognition = createAnnotationRecognitionRunner({ review } as RecognitionModelPort, host);
     const dimensions = new DimensionInferenceService(
       host,
       partitions,
       { getStagedEngineeringText: () => engineeringText },
       plans,
+      createAxialDimensionInference(recognition),
     );
-    const review = vi.fn(async () => { throw new Error('MODEL_STAGE_MUST_NOT_RUN_FOR_DOCUMENTED_GOLDEN_FIXTURE'); });
-    const recognition = createAnnotationRecognitionRunner({ review } as RecognitionModelPort, host);
     const gdt = new GdtService(host, plans, createAutomaticGdtReviewer(recognition));
     const tool = createEngineeringAnnotationTool(
       host,
@@ -90,8 +92,8 @@ describe('complete automatic annotation workflow', () => {
         description: 'automatic set',
         annotationKinds: ['opening-angle', 'diameter', 'centerline', 'radius'],
         objective: '工程图纸自动标注集',
-        afterAnnotations: (currentAgent) => {
-          dimensions.start(currentAgent);
+        afterAnnotations: async (currentAgent, signal) => {
+          await dimensions.start(currentAgent, undefined, signal);
           const partition = partitions.get(String(currentAgent.id));
           const value = partition.confirmed ?? partition.draft;
           if (!value) throw new Error('GDT_PARTITION_REQUIRED');
@@ -128,6 +130,7 @@ describe('complete automatic annotation workflow', () => {
     expect(recognition.list()).toEqual([
       'partition-semantic-review',
       'deterministic-engineering-annotation-plan',
+      'axial-dimension-inference',
       'shaft-gdt-semantic-review',
     ]);
     expect(review).not.toHaveBeenCalled();

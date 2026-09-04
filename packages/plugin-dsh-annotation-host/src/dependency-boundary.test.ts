@@ -45,7 +45,18 @@ describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
   it('keeps deterministic recognition algorithms behind pipeline modules', () => {
     const directory = dirname(fileURLToPath(import.meta.url));
     const tools = readFileSync(join(directory, 'tools.ts'), 'utf8');
+    const dimensions = readFileSync(join(directory, 'dimension-inference-service.ts'), 'utf8');
     expect(tools).not.toContain('planEngineeringAnnotations');
     expect(tools).toContain('EngineeringAnnotationPlanner');
+    expect(dimensions).toContain('AxialDimensionInference');
+    for (const implementationDetail of [
+      'buildAxialTopology',
+      'generateAxialDimensionCandidates',
+      'inferAxialDimensionScheme',
+      'parseEngineeringDocument',
+      'projectAxialDimensionScheme',
+    ]) {
+      expect(dimensions).not.toContain(implementationDetail);
+    }
   });
 });

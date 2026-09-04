@@ -68,6 +68,16 @@ export type {
   DeterministicAnnotationPipelineInput,
   EngineeringAnnotationPlanner,
 } from './deterministic-annotation-pipeline';
+export {
+  AXIAL_DIMENSION_PIPELINE_ID,
+  AXIAL_DIMENSION_PIPELINE_VERSION,
+  createAxialDimensionInference,
+  createAxialDimensionPipeline,
+} from './axial-dimension-pipeline';
+export type {
+  AxialDimensionInference,
+  AxialDimensionPipelineInput,
+} from './axial-dimension-pipeline';
 export type {
   RecognitionContractCase,
   RecognitionEvaluationAttempt,

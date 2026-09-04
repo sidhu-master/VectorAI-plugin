@@ -499,6 +499,7 @@ describe('drawing_dimension_chain_start', () => {
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1' }),
       'shaft-hierarchical-dimensioning-v1',
+      expect.any(AbortSignal),
     );
   });
 
@@ -518,6 +519,7 @@ describe('drawing_dimension_chain_start', () => {
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-1' }),
       'shaft-hierarchical-dimensioning-v1',
+      expect.any(AbortSignal),
     );
   });
 });

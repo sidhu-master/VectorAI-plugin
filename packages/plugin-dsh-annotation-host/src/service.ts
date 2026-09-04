@@ -46,6 +46,7 @@ import { RecognitionPipelineRunner } from './recognition-runtime';
 import { createDshRecognitionModelAdapter } from './dsh-recognition-model-adapter';
 import { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
 import { createEngineeringAnnotationPlanner } from './deterministic-annotation-pipeline';
+import { createAxialDimensionInference } from './axial-dimension-pipeline';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { acceptPendingPartitionForEvent } from './partition-auto-confirm';
@@ -114,6 +115,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       this.partitions,
       this.partitionWorkflow,
       this.dimensionPlans,
+      createAxialDimensionInference(this.recognition),
     );
     this.gdt = new GdtService(
       ctx.drawingSpace,
@@ -135,7 +137,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
         ),
         afterAnnotations: async (agent, signal, reportStage) => {
           reportStage('dimension-chain');
-          this.dimensionInference.start(agent);
+          await this.dimensionInference.start(agent, undefined, signal);
           const partition = this.partitions.get(String(agent.id));
           const value = partition.draft ?? partition.confirmed;
           if (!value) throw new Error('GDT_PARTITION_REQUIRED');
