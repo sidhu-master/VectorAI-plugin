@@ -58,6 +58,16 @@ export {
 } from './gdt-reviewer';
 export type { AutomaticGdtReviewInput, AutomaticGdtReviewer } from './gdt-reviewer';
 export { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
+export {
+  DETERMINISTIC_ANNOTATION_PIPELINE_ID,
+  DETERMINISTIC_ANNOTATION_PIPELINE_VERSION,
+  createDeterministicAnnotationPipeline,
+  createEngineeringAnnotationPlanner,
+} from './deterministic-annotation-pipeline';
+export type {
+  DeterministicAnnotationPipelineInput,
+  EngineeringAnnotationPlanner,
+} from './deterministic-annotation-pipeline';
 export type {
   RecognitionContractCase,
   RecognitionEvaluationAttempt,

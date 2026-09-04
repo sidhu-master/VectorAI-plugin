@@ -13,6 +13,7 @@ describe('annotation recognition runtime composition', () => {
 
     expect(runner.list()).toEqual([
       'partition-semantic-review',
+      'deterministic-engineering-annotation-plan',
       'shaft-gdt-semantic-review',
     ]);
   });
