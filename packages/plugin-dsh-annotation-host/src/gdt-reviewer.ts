@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { Context } from '@deepseek-ai/cordis';
-import type { SessionId } from '@deepseek-ai/dsh-session';
-import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent';
 import type {
   EngineeringDecisionAuthority,
   GeometricCharacteristic,
@@ -19,15 +16,25 @@ import {
   type GdtClarificationQuestion,
   type ReviewedShaftFeature,
 } from './shaft-gdt-rules';
+import {
+  recognitionDigest,
+  type RecognitionPipeline,
+  type RecognitionPipelineRunner,
+} from './recognition-runtime';
 
 type SpacePort = Pick<DrawingSpaceExtensionHost<Agent>, 'getSnapshot' | 'renderObservation'>;
 type ShaftPartition = PartitionDraft | PartitionRevision;
 
-export type AutomaticGdtReviewer = (input: {
+export interface AutomaticGdtReviewInput {
   agent: Agent;
   partition: ShaftPartition;
   signal?: AbortSignal;
-}) => Promise<GdtRecommendation>;
+}
+
+export type AutomaticGdtReviewer = (input: AutomaticGdtReviewInput) => Promise<GdtRecommendation>;
+
+export const GDT_SEMANTIC_PIPELINE_ID = 'shaft-gdt-semantic-review';
+export const GDT_SEMANTIC_PIPELINE_VERSION = '1';
 
 export type DatumFunction = 'axis-support' | 'axial-stop' | 'clocking';
 
@@ -82,12 +89,14 @@ export interface SemanticRecommendation {
   }>;
 }
 
-export function createAutomaticGdtReviewer(
-  ctx: Context & { subagents: SubagentRuntime },
+export function createAutomaticGdtPipeline(
   space: SpacePort,
   options: { timeoutMs?: number } = {},
-): AutomaticGdtReviewer {
-  return async ({ agent, partition, signal }) => {
+): RecognitionPipeline<AutomaticGdtReviewInput, GdtRecommendation> {
+  return {
+    id: GDT_SEMANTIC_PIPELINE_ID,
+    version: GDT_SEMANTIC_PIPELINE_VERSION,
+    async execute({ agent, partition }, context) {
     const drawing = space.getSnapshot(agent);
     if (!drawing) throw new Error('DRAWING_REQUIRED');
     if (!sameRef(drawing.ref, partition.drawingRef)) throw new Error('GDT_PARTITION_STALE');
@@ -96,14 +105,19 @@ export function createAutomaticGdtReviewer(
     const localResolution = resolveShaftGdtRules(partition);
     if (localResolution.status === 'resolved'
       || localResolution.questions.some(({ code }) => code === 'GDT_ENGINEERING_REQUIREMENTS_REQUIRED')) {
-      return {
+      const grounded = {
         ...groundSegmentRecommendation(drawing.document.geometry, partition, localResolution.recommendation),
         coverage: evaluateShaftGdtCoverage(partition, localResolution.recommendation, localResolution.questions),
       };
+      context.record({
+        id: 'gdt-local-resolution', kind: 'deterministic', status: 'completed',
+        digest: recognitionDigest({ status: localResolution.status, questionCount: localResolution.questions.length }),
+      });
+      return grounded;
     }
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error('AI_GDT_REVIEW_TIMEOUT')), options.timeoutMs ?? 60_000);
-    const reviewSignal = combineSignals(signal, timeout.signal);
+    const reviewSignal = combineSignals(context.signal, timeout.signal);
     try {
       const overlays = segments.map((segment, index) => ({
         id: `gdt-observation:${segment.id}`,
@@ -112,16 +126,9 @@ export function createAutomaticGdtReviewer(
       }));
       const rendered = await abortable(space.renderObservation(agent, { ref: partition.drawingRef, overlays }, reviewSignal), reviewSignal);
       if (rendered.status !== 'rendered') throw new Error(`AI_GDT_OBSERVATION_${rendered.status.toUpperCase()}`);
-      const attachment = await abortable(ctx.attachments.saveImage({
-        data: rendered.png, mediaType: 'image/png', name: 'shaft-gdt-observation.png',
-      }), reviewSignal);
-      const parent = ctx.agents.get(String(agent.id) as SessionId);
-      const providerName = ctx.subagents.list()[0];
-      if (!parent || !providerName) throw new Error('AI_GDT_REVIEW_UNAVAILABLE');
-      const provider = ctx.subagents.getProvider(providerName);
-      if (!provider?.capabilities.outputSchema || !provider.capabilities.toolFilter || !provider.capabilities.depthLimit) {
-        throw new Error('AI_GDT_REVIEW_ISOLATION_REQUIRED');
-      }
+      context.record({
+        id: 'gdt-observation', kind: 'deterministic', status: 'completed', digest: rendered.contentDigest,
+      });
       const payload = JSON.stringify({
         instruction: '只识别轴段的功能角色，不选择形位公差特征、基准名称、公差值或坐标。function 只能是 axis-support（建立旋转轴线的圆柱支承面）、rotary-functional（齿轮、花键等旋转配合功能区）、axial-stop（轴向定位端面）或 clocking（键槽、平面等周向定位特征）。同一功能特征允许包含多个相邻 segmentId。只有可由图像和语义共同支持时才返回；confidence 必须反映真实把握，低于 0.8 也要保留，交由系统询问用户。形位控制集合和基准顺序全部由本地规则计算。',
         segments: segments.map((segment, index) => ({
@@ -134,36 +141,46 @@ export function createAutomaticGdtReviewer(
         })),
         observationDigest: rendered.contentDigest,
       });
-      const run = await abortable(ctx.subagents.start(providerName, {
-        label: 'shaft-gdt-semantic-reviewer', parent, signal: reviewSignal, maxDepth: 1,
-        toolFilter: { allow: [] },
-        persona: provider.capabilities.persona
-          ? 'You are a bounded shaft functional-feature classifier. Return only functional roles and confidence. Never choose GD&T controls, coordinates or tolerance values.'
-          : undefined,
-        prompt: [{ type: 'text', text: payload }, { type: 'image', attachment }],
-        outputSchema: featureReviewSchema as never,
+      const result = await abortable(context.review<{ features: ReviewedShaftFeature[] }>({
+        pipelineId: GDT_SEMANTIC_PIPELINE_ID,
+        pipelineVersion: GDT_SEMANTIC_PIPELINE_VERSION,
+        parentSessionId: String(agent.id),
+        signal: reviewSignal,
+        maxDepth: 1,
+        timeoutMs: options.timeoutMs ?? 60_000,
+        persona: 'You are a bounded shaft functional-feature classifier. Return only functional roles and confidence. Never choose GD&T controls, coordinates or tolerance values.',
+        prompt: [
+          { type: 'text', text: payload },
+          { type: 'image', data: rendered.png, mediaType: 'image/png', name: 'shaft-gdt-observation.png' },
+        ],
+        outputSchema: featureReviewSchema,
       }), reviewSignal);
-      try {
-        const result = await abortable(run.result, reviewSignal);
-        const semantic = result.stopReason === 'completed' ? validateFeatureReview(result.structured, segments) : null;
-        const resolution = resolveShaftGdtRules(partition, semantic?.features ?? []);
-        return {
-          ...groundSegmentRecommendation(
-            drawing.document.geometry,
-            partition,
-            resolution.recommendation,
-          ),
-          coverage: evaluateShaftGdtCoverage(partition, resolution.recommendation, resolution.questions),
-        };
-      } finally {
-        await abortable(run.dispose(), reviewSignal).catch(() => undefined);
-      }
+      context.record({
+        id: 'gdt-model-review', kind: 'model',
+        status: result.stopReason === 'completed' ? 'completed' : 'failed',
+        digest: recognitionDigest({ stopReason: result.stopReason, observationCount: result.observations.length }),
+      });
+      const semantic = result.stopReason === 'completed' ? validateFeatureReview(result.structured, segments) : null;
+      const resolution = resolveShaftGdtRules(partition, semantic?.features ?? []);
+      const grounded = {
+        ...groundSegmentRecommendation(drawing.document.geometry, partition, resolution.recommendation),
+        coverage: evaluateShaftGdtCoverage(partition, resolution.recommendation, resolution.questions),
+      };
+      context.record({
+        id: 'gdt-rule-grounding', kind: 'grounding', status: 'completed',
+        digest: recognitionDigest({
+          datumCount: grounded.datums.length,
+          controlCount: grounded.controls.length,
+          complete: grounded.coverage?.complete ?? false,
+        }),
+      });
+      return grounded;
     } catch (error) {
       // Semantic review is an optional enrichment step. A provider timeout or
       // observation failure must not tear down the deterministic annotation
       // transaction; preserve the grounded local result and its clarification
       // state so the caller can continue or ask the user for missing semantics.
-      if (signal?.aborted) throw error;
+      if (context.signal?.aborted) throw error;
       return {
         ...groundSegmentRecommendation(
           drawing.document.geometry,
@@ -179,7 +196,21 @@ export function createAutomaticGdtReviewer(
     } finally {
       clearTimeout(timer);
     }
+    },
+    normalize: (output) => structuredClone(output),
   };
+}
+
+export function createAutomaticGdtReviewer(
+  runner: RecognitionPipelineRunner,
+): AutomaticGdtReviewer {
+  return async (input) => (
+    await runner.run<AutomaticGdtReviewInput, GdtRecommendation>(
+      GDT_SEMANTIC_PIPELINE_ID,
+      input,
+      input.signal,
+    )
+  ).output;
 }
 
 /** Compatibility normalizer for explicit/manual semantic recommendations. */

@@ -50,6 +50,13 @@ export {
   createPartitionSemanticPipeline,
   createPartitionSemanticReviewer,
 } from './semantic-reviewer';
+export {
+  GDT_SEMANTIC_PIPELINE_ID,
+  GDT_SEMANTIC_PIPELINE_VERSION,
+  createAutomaticGdtPipeline,
+  createAutomaticGdtReviewer,
+} from './gdt-reviewer';
+export type { AutomaticGdtReviewInput, AutomaticGdtReviewer } from './gdt-reviewer';
 export type {
   RecognitionContractCase,
   RecognitionEvaluationAttempt,

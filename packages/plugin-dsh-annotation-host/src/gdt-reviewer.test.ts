@@ -1,11 +1,72 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { GeometryId } from '@vectorai/drawing-core';
+import type { Agent } from '@deepseek-ai/dsh-agent';
+import { createEmptyDrawing, type GeometryId } from '@vectorai/drawing-core';
 import type { PartitionDraft } from '@vectorai/engineering-annotation';
-import { describe, expect, it } from 'vitest';
-import { completeShaftGdtRecommendation, evaluateShaftGdtCoverage, groundSegmentRecommendation } from './gdt-reviewer';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  completeShaftGdtRecommendation,
+  createAutomaticGdtPipeline,
+  createAutomaticGdtReviewer,
+  evaluateShaftGdtCoverage,
+  groundSegmentRecommendation,
+} from './gdt-reviewer';
+import { RecognitionPipelineRunner, type RecognitionModelPort, type RecognitionModelRequest } from './recognition-runtime';
 
 describe('automatic GD&T segment grounding', () => {
+  it('runs uncertain functional recognition through the shared bounded model port', async () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-ai' }, now: () => 1 });
+    document.geometry = [
+      { id: 'edge:left' as GeometryId, type: 'line', start: [0, 6], end: [20, 6], visible: true, quality: { status: 'confirmed', evidenceRefs: [] } },
+      { id: 'edge:right' as GeometryId, type: 'line', start: [80, 6], end: [100, 6], visible: true, quality: { status: 'confirmed', evidenceRefs: [] } },
+    ];
+    const partition: PartitionDraft = {
+      version: 1, drawingRef: { drawingId: 'drawing-ai', revision: 1 },
+      axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 100, orientation: 'forward' },
+      segments: [
+        { ...testSegment('left', 0, 20), geometryNodeIds: ['edge:left'] },
+        { ...testSegment('right', 80, 100), geometryNodeIds: ['edge:right'] },
+      ],
+      semanticGroups: [], stepCandidates: [], evidence: [], diagnostics: [],
+    };
+    const review = vi.fn(async (_request: RecognitionModelRequest<unknown>) => ({
+      stopReason: 'completed',
+      structured: { features: [
+        { id: 'support:left', segmentIds: ['left'], function: 'axis-support', confidence: 0.94 },
+        { id: 'support:right', segmentIds: ['right'], function: 'axis-support', confidence: 0.93 },
+      ] },
+      observations: [{
+        provider: 'fixture', model: 'fixture', messageCount: 3,
+        systemDigest: 'sha256:system', toolNames: ['structured_output'], requestDigest: 'sha256:request',
+      }],
+    }));
+    const runner = new RecognitionPipelineRunner({ review } as RecognitionModelPort);
+    runner.register(createAutomaticGdtPipeline({
+      getSnapshot: () => ({
+        version: 1, ref: partition.drawingRef, document,
+        capabilities: { edit: true, delete: true, annotations: true, sourceUnderlay: true },
+      }),
+      renderObservation: async () => ({
+        status: 'rendered', png: new Uint8Array([1, 2]), contentDigest: 'sha256:gdt-image', width: 960, height: 720,
+      }),
+    }));
+
+    const result = await createAutomaticGdtReviewer(runner)({
+      agent: { id: 'session-ai' } as Agent,
+      partition,
+    });
+
+    expect(review).toHaveBeenCalledWith(expect.objectContaining({
+      pipelineId: 'shaft-gdt-semantic-review', pipelineVersion: '1', parentSessionId: 'session-ai', maxDepth: 1,
+      prompt: expect.arrayContaining([expect.objectContaining({ type: 'image', data: new Uint8Array([1, 2]) })]),
+    }));
+    expect(result.datums.map(({ name, geometryId }) => ({ name, geometryId }))).toEqual([
+      { name: 'A', geometryId: 'edge:left' },
+      { name: 'B', geometryId: 'edge:right' },
+    ]);
+    expect(result.controls.some(({ characteristic }) => characteristic === 'total-runout')).toBe(true);
+  });
+
   it('builds the minimum datum system from referenced functional candidates', () => {
     const segment = (id: string, zStart: number, zEnd: number, semanticType: string, name: string) => ({
       id, zStart, zEnd, semanticType, name,

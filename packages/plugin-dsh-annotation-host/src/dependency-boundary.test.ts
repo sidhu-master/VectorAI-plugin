@@ -32,9 +32,13 @@ describe('@vectorai/plugin-dsh-annotation-host boundary', () => {
       const source = readFileSync(join(directory, name), 'utf8');
       expect(source).not.toContain("'agent/request'");
       expect(source).not.toContain("'llm/stream'");
+      expect(source).not.toContain('subagents.start');
+      expect(source).not.toContain('attachments.saveImage');
     }
     const adapter = readFileSync(join(directory, 'dsh-recognition-model-adapter.ts'), 'utf8');
     expect(adapter).toContain("'agent/request'");
     expect(adapter).toContain("'llm/stream'");
+    expect(adapter).toContain('subagents.start');
+    expect(adapter).toContain('attachments.saveImage');
   });
 });

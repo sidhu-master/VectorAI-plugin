@@ -48,7 +48,7 @@ import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-s
 import { DimensionInferenceService } from './dimension-inference-service';
 import { acceptPendingPartitionForEvent } from './partition-auto-confirm';
 import { GdtService } from './gdt-service';
-import { createAutomaticGdtReviewer } from './gdt-reviewer';
+import { createAutomaticGdtPipeline, createAutomaticGdtReviewer } from './gdt-reviewer';
 import {
   AUTO_ANNOTATION_CONFLICTING_TOOLS,
   classifyPartitionDecisionEvent,
@@ -98,6 +98,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     this.tolerances = new ToleranceService(this.dimensionPlans, toleranceProvider);
     this.recognition = new RecognitionPipelineRunner(createDshRecognitionModelAdapter(ctx));
     this.recognition.register(createPartitionSemanticPipeline(ctx.drawingSpace));
+    this.recognition.register(createAutomaticGdtPipeline(ctx.drawingSpace));
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,
       this.partitions,
@@ -113,7 +114,7 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
     this.gdt = new GdtService(
       ctx.drawingSpace,
       this.dimensionPlans,
-      createAutomaticGdtReviewer(ctx, ctx.drawingSpace),
+      createAutomaticGdtReviewer(this.recognition),
     );
     registerEngineeringDxfExport(ctx, ctx.drawingSpace, this.dimensionPlans);
     ctx.effect(() => ctx.tools.register(createEngineeringAnnotationTool(
