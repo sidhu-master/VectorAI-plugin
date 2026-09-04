@@ -137,16 +137,18 @@ ContentBlock, SessionId, and SubagentRun types remain private to the adapter.
 
 ## 6. Request Capture and Correlation
 
-The adapter registers one process-wide, effect-scoped observer. It does not
-persist ordinary conversations. Capture is enabled only while an adapter-owned
-recognition child is active.
+The adapter installs short-lived global DSH observers for each active review and
+removes them in the review's `finally` path. It does not persist ordinary
+conversations. Each observer ignores events until an adapter-owned recognition
+child is published and then accepts only that child's session ID.
 
-Before starting the child, the adapter subscribes to `subagent/start` and
-`llm/stream`. The lifecycle event supplies the published child session ID; only
-`llm/stream` requests whose `sessionId` matches that child are included. The
+Before starting the child, the adapter subscribes to `subagent/start`,
+`agent/request`, and `llm/stream`. The lifecycle event supplies the published
+child session ID; only model requests whose session matches that child are
+included. The
 actual DSH ordering was verified to publish `subagent/start` before the child's
-first `agent/request` and `llm/stream` call. Capture closes on the paired
-`subagent/end`, timeout, abort, start failure, or adapter disposal.
+first `agent/request` and `llm/stream` call. Capture closes when the owned run
+completes, times out, is aborted, fails to start, or is disposed.
 
 Each child may make more than one model request, including a follow-up step that
 submits structured output. The result therefore retains an ordered observation
@@ -157,7 +159,10 @@ credentials, and provider headers are not written to evaluation artifacts. A
 diagnostic run may retain sanitized structured candidates because those are
 already bounded by the pipeline schema.
 
-Concurrent runs are isolated by child session ID and subagent run ID. An
+Concurrent runs are isolated by child session ID and subagent run ID. The local
+subagent transport provider is configured independently from the downstream LLM
+provider/model route; these names belong to different DSH registries and must
+never be inferred from each other. An
 unmatched or ambiguous request is reported as
 `RECOGNITION_REQUEST_CORRELATION_FAILED`; it is never attributed by timing alone.
 

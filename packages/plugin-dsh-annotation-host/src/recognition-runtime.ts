@@ -12,6 +12,7 @@ export type RecognitionPromptPart =
   };
 
 export interface RecognitionModelRoute {
+  readonly subagentProvider?: string;
   readonly provider?: string;
   readonly model?: string;
   readonly reasoningEffort?: string;

@@ -57,6 +57,7 @@ export {
   createAutomaticGdtReviewer,
 } from './gdt-reviewer';
 export type { AutomaticGdtReviewInput, AutomaticGdtReviewer } from './gdt-reviewer';
+export { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
 export type {
   RecognitionContractCase,
   RecognitionEvaluationAttempt,

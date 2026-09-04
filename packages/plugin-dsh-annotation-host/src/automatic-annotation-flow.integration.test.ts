@@ -6,16 +6,17 @@ import { analyzeShaftPartition, type PartitionDraft, type PartitionRevision } fr
 import { importDxf } from '../../dxf-import/src/index';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AnnotationSessionStateStore } from './session-state';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { DimensionPlanStore } from './dimension-plan-store';
-import { evaluateShaftGdtCoverage, groundSegmentRecommendation } from './gdt-reviewer';
+import { createAutomaticGdtReviewer } from './gdt-reviewer';
 import { GdtService } from './gdt-service';
 import { partitionGeometryFingerprint } from './partition-geometry-fingerprint';
 import { PartitionSessionStore } from './partition-store';
-import { resolveShaftGdtRules } from './shaft-gdt-rules';
 import { createEngineeringAnnotationTool } from './tools';
+import { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
+import type { RecognitionModelPort } from './recognition-runtime';
 
 const fixtureDirectory = resolve(import.meta.dirname, '../../engineering-annotation/test/fixtures/golden-shaft-001');
 
@@ -66,6 +67,7 @@ describe('complete automatic annotation workflow', () => {
         operationId: 'operation:deterministic',
         operationBindingDigest: 'sha256:deterministic',
       } }),
+      renderObservation: async () => { throw new Error('MODEL_STAGE_MUST_NOT_RUN_FOR_DOCUMENTED_GOLDEN_FIXTURE'); },
     };
     const dimensions = new DimensionInferenceService(
       host,
@@ -73,13 +75,9 @@ describe('complete automatic annotation workflow', () => {
       { getStagedEngineeringText: () => engineeringText },
       plans,
     );
-    const gdt = new GdtService(host, plans, async ({ partition }) => {
-      const resolution = resolveShaftGdtRules(partition);
-      return {
-        ...groundSegmentRecommendation(imported.document.geometry, partition, resolution.recommendation),
-        coverage: evaluateShaftGdtCoverage(partition, resolution.recommendation, resolution.questions),
-      };
-    });
+    const review = vi.fn(async () => { throw new Error('MODEL_STAGE_MUST_NOT_RUN_FOR_DOCUMENTED_GOLDEN_FIXTURE'); });
+    const recognition = createAnnotationRecognitionRunner({ review } as RecognitionModelPort, host);
+    const gdt = new GdtService(host, plans, createAutomaticGdtReviewer(recognition));
     const tool = createEngineeringAnnotationTool(
       host,
       new AnnotationSessionStateStore(undefined, { now: () => 4 }),
@@ -125,5 +123,7 @@ describe('complete automatic annotation workflow', () => {
     const completedDraft = plans.get(sessionId).draft;
     expect(completedDraft?.surfaceTextures.length).toBeGreaterThan(0);
     expect(completedDraft?.diagnostics).toContainEqual(expect.objectContaining({ code: 'GDT_COVERAGE_COMPLETE' }));
+    expect(recognition.list()).toEqual(['partition-semantic-review', 'shaft-gdt-semantic-review']);
+    expect(review).not.toHaveBeenCalled();
   });
 });

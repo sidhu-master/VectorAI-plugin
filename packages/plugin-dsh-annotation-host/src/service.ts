@@ -41,14 +41,15 @@ import {
 } from './tools';
 import { FilePartitionStorage, PartitionSessionStore } from './partition-store';
 import { PartitionWorkflowService } from './partition-service';
-import { createPartitionSemanticPipeline, createPartitionSemanticReviewer } from './semantic-reviewer';
+import { createPartitionSemanticReviewer } from './semantic-reviewer';
 import { RecognitionPipelineRunner } from './recognition-runtime';
 import { createDshRecognitionModelAdapter } from './dsh-recognition-model-adapter';
+import { createAnnotationRecognitionRunner } from './annotation-recognition-runtime';
 import { DimensionPlanStore, FileDimensionPlanStorage } from './dimension-plan-store';
 import { DimensionInferenceService } from './dimension-inference-service';
 import { acceptPendingPartitionForEvent } from './partition-auto-confirm';
 import { GdtService } from './gdt-service';
-import { createAutomaticGdtPipeline, createAutomaticGdtReviewer } from './gdt-reviewer';
+import { createAutomaticGdtReviewer } from './gdt-reviewer';
 import {
   AUTO_ANNOTATION_CONFLICTING_TOOLS,
   classifyPartitionDecisionEvent,
@@ -96,9 +97,10 @@ export class DrawingAnnotationHostService extends TypertRemoteService {
       createToleranceReconciler(toleranceProvider),
     );
     this.tolerances = new ToleranceService(this.dimensionPlans, toleranceProvider);
-    this.recognition = new RecognitionPipelineRunner(createDshRecognitionModelAdapter(ctx));
-    this.recognition.register(createPartitionSemanticPipeline(ctx.drawingSpace));
-    this.recognition.register(createAutomaticGdtPipeline(ctx.drawingSpace));
+    this.recognition = createAnnotationRecognitionRunner(
+      createDshRecognitionModelAdapter(ctx),
+      ctx.drawingSpace,
+    );
     this.partitionWorkflow = new PartitionWorkflowService(
       ctx.drawingSpace,
       this.partitions,

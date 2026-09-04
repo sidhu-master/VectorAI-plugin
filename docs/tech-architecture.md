@@ -2,7 +2,7 @@
 
 > 状态：当前架构与已批准目标的权威说明
 >
-> 更新日期：2026-09-01
+> 更新日期：2026-09-04
 
 ## 1. 架构结论
 
@@ -132,6 +132,16 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 第二层认领的是会话 Workspace，不是一次任务的 modal。completed、canceled、failed、idle 或 needs-rebase 均不释放 claim。插件暂时不可用时显示第一层 fallback，但保留 claim。
 
 当前轴类智能分区是第二层的第一项完整交互能力；公差与尺寸链数据基础也已落地。最终尺寸候选布局、碰撞优化、覆盖策略和生产公差公式属于后续阶段。分区契约与验收见 [DXF 智能分区设计](superpowers/specs/2026-08-25-dxf-smart-partition-design.md)。
+
+### 识别运行时与真实请求回测
+
+第二层 Host 只创建一个 `RecognitionPipelineRunner`，并在其中注册版本化的分区语义识别与轴类形位公差语义识别管线。生产流程和合同回测执行同一个已注册的 `RecognitionPipeline` 对象；测试不能复制一套“近似生产”的提示词、后处理或落点算法。确定性管线可以直接完成并记录本地阶段，不会为了形成统一接口而强制发起模型请求。
+
+所有 DSH 耦合集中在 `dsh-recognition-model-adapter.ts`：父 Agent 解析、图片附件入库、子代理启动、`agent/request` 与 `llm/stream` 观测，以及资源释放都只能从这一边界发生。子代理传输提供方与实际 LLM provider/model 是两套独立路由，不得互相代用。当前兼容门槛精确锁定 `@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-llm` 和 `@deepseek-ai/dsh-subagent` 的 `0.1.2-alpha.5`；任一版本不同、五项子代理能力不完整、子会话请求无法关联或 Agent/LLM 路由漂移时均明确失败，不静默降级为另一种请求方式。
+
+模型仍只承担有界语义复核。轴段坐标、边界、尺寸、基准优先级、形位特征、公差值、粗糙度值和最终图元落点继续由本地算法与正式工程证据决定。一次子代理可以产生多次模型请求，运行时按子会话 ID 收集每次请求的 provider、model、reasoning effort、token 上限、消息数、工具名和内容摘要，以便比较真实运行环境。
+
+回测产物只保存规范化结果、阶段状态、版本、规则摘要和 SHA-256 指纹。提示词正文、system 正文、图片字节、工程文档正文、凭据、环境变量和 provider header 不得进入报告或持久化记录。模型路由、DSH 运行时版本、管线版本、测试夹具或规则版本任一变化都会改变可复现指纹。
 
 ### 公差与尺寸链数据边界
 

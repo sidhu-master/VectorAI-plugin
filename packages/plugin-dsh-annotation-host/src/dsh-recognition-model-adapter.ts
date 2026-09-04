@@ -33,11 +33,16 @@ export interface DshRecognitionBridgeRun {
   dispose(): Promise<void>;
 }
 
-export interface DshRecognitionAgentConfig {
-  readonly provider: string;
-  readonly model: string;
+export interface DshRecognitionAgentOptions {
+  readonly provider?: string;
+  readonly model?: string;
   readonly reasoningEffort?: string;
   readonly maxTokens?: number;
+}
+
+export interface DshRecognitionAgentConfig extends DshRecognitionAgentOptions {
+  readonly provider: string;
+  readonly model: string;
 }
 
 export interface DshRecognitionStreamOptions extends DshRecognitionAgentConfig {
@@ -58,7 +63,7 @@ export interface DshRecognitionStartRequest {
   readonly label: string;
   readonly parent: unknown;
   readonly signal: AbortSignal;
-  readonly agentOptions?: DshRecognitionAgentConfig;
+  readonly agentOptions?: DshRecognitionAgentOptions;
   readonly maxDepth: number;
   readonly toolFilter: { readonly allow: readonly string[] };
   readonly persona?: string;
@@ -101,7 +106,7 @@ export class DshRecognitionModelAdapter implements RecognitionModelPort {
     if (request.signal?.aborted) throw new Error('DSH_RECOGNITION_ABORTED');
     const parent = this.bridge.getParent(request.parentSessionId);
     if (!parent) throw new Error('DSH_RECOGNITION_PARENT_UNAVAILABLE');
-    const providerName = request.route?.provider ?? this.bridge.listProviders()[0];
+    const providerName = request.route?.subagentProvider ?? this.bridge.listProviders()[0];
     if (!providerName) throw new Error('DSH_RECOGNITION_PROVIDER_UNAVAILABLE');
     const provider = this.bridge.getProvider(providerName);
     if (!provider) throw new Error('DSH_RECOGNITION_PROVIDER_UNAVAILABLE');
@@ -109,7 +114,8 @@ export class DshRecognitionModelAdapter implements RecognitionModelPort {
 
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new Error('DSH_RECOGNITION_TIMEOUT')), request.timeoutMs);
-    const signal = combineSignals(request.signal, timeout.signal);
+    const combinedSignal = combineSignals(request.signal, timeout.signal);
+    const signal = combinedSignal.signal;
     const candidateIds = new Set<string>();
     const routesBySession = new Map<string, DshRecognitionAgentConfig[]>();
     const observationsBySession = new Map<string, RecognitionModelObservation[]>();
@@ -131,8 +137,9 @@ export class DshRecognitionModelAdapter implements RecognitionModelPort {
         const childId = options.sessionId;
         if (!childId || !candidateIds.has(childId)) return;
         const agentRoute = routesBySession.get(childId)?.shift();
-        if (!agentRoute || !sameRoute(agentRoute, options)) {
-          failuresBySession.set(childId, 'DSH_RECOGNITION_ROUTE_MISMATCH');
+        const mismatch = routeMismatch(agentRoute, options);
+        if (mismatch) {
+          failuresBySession.set(childId, `DSH_RECOGNITION_ROUTE_MISMATCH:${mismatch}`);
           return;
         }
         const observations = observationsBySession.get(childId) ?? [];
@@ -182,6 +189,7 @@ export class DshRecognitionModelAdapter implements RecognitionModelPort {
       throw error;
     } finally {
       clearTimeout(timer);
+      combinedSignal.dispose();
       for (const dispose of disposers.reverse()) dispose();
       if (run) await run.dispose().catch(() => undefined);
     }
@@ -266,21 +274,26 @@ function assertCapabilities(provider: DshRecognitionProvider): void {
   }
 }
 
-function createAgentOptions<TStructured>(request: RecognitionModelRequest<TStructured>): DshRecognitionAgentConfig | undefined {
-  if (!request.route && request.maxTokens === undefined) return undefined;
-  return {
+function createAgentOptions<TStructured>(request: RecognitionModelRequest<TStructured>): DshRecognitionAgentOptions | undefined {
+  const options: DshRecognitionAgentOptions = {
     ...(request.route?.provider !== undefined ? { provider: request.route.provider } : {}),
     ...(request.route?.model !== undefined ? { model: request.route.model } : {}),
     ...(request.route?.reasoningEffort !== undefined ? { reasoningEffort: request.route.reasoningEffort } : {}),
     ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
-  } as DshRecognitionAgentConfig;
+  };
+  return Object.keys(options).length > 0 ? options : undefined;
 }
 
-function sameRoute(agent: DshRecognitionAgentConfig, stream: DshRecognitionStreamOptions): boolean {
-  return agent.provider === stream.provider
-    && agent.model === stream.model
-    && agent.reasoningEffort === stream.reasoningEffort
-    && agent.maxTokens === stream.maxTokens;
+function routeMismatch(
+  agent: DshRecognitionAgentConfig | undefined,
+  stream: DshRecognitionStreamOptions,
+): string | undefined {
+  if (!agent) return 'agent-request-missing';
+  if (agent.provider !== stream.provider) return 'provider';
+  if (agent.model !== stream.model) return 'model';
+  if (agent.reasoningEffort !== undefined && agent.reasoningEffort !== stream.reasoningEffort) return 'reasoning-effort';
+  if (agent.maxTokens !== undefined && agent.maxTokens !== stream.maxTokens) return 'max-tokens';
+  return undefined;
 }
 
 function toObservation(
@@ -312,15 +325,26 @@ function toObservation(
   };
 }
 
-function combineSignals(first: AbortSignal | undefined, second: AbortSignal): AbortSignal {
-  if (!first) return second;
+function combineSignals(
+  first: AbortSignal | undefined,
+  second: AbortSignal,
+): { readonly signal: AbortSignal; dispose(): void } {
+  if (!first) return { signal: second, dispose: () => undefined };
   const controller = new AbortController();
   const forward = (source: AbortSignal) => controller.abort(source.reason);
+  const forwardFirst = () => forward(first);
+  const forwardSecond = () => forward(second);
   if (first.aborted) forward(first);
-  else first.addEventListener('abort', () => forward(first), { once: true });
+  else first.addEventListener('abort', forwardFirst, { once: true });
   if (second.aborted) forward(second);
-  else second.addEventListener('abort', () => forward(second), { once: true });
-  return controller.signal;
+  else second.addEventListener('abort', forwardSecond, { once: true });
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      first.removeEventListener('abort', forwardFirst);
+      second.removeEventListener('abort', forwardSecond);
+    },
+  };
 }
 
 function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {

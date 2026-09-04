@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DshRecognitionModelAdapter,
   SUPPORTED_DSH_RECOGNITION_VERSION,
   loadDshRecognitionVersions,
+  type DshRecognitionAgentConfig,
   type DshRecognitionBridge,
   type DshRecognitionBridgeRun,
   type DshRecognitionProvider,
+  type DshRecognitionStartRequest,
+  type DshRecognitionStreamOptions,
 } from './dsh-recognition-model-adapter';
 import type { RecognitionModelRequest } from './recognition-runtime';
 
@@ -112,6 +115,47 @@ describe('DshRecognitionModelAdapter', () => {
     expect(fixture.disposedRuns).toBe(1);
   });
 
+  it('accepts provider defaults resolved only at llm/stream', async () => {
+    const call = modelCall();
+    const fixture = createFakeBridge({
+      modelCalls: [{
+        request: {
+          provider: call.request.provider,
+          model: call.request.model,
+          maxTokens: call.request.maxTokens,
+        } as DshRecognitionAgentConfig,
+        stream: call.stream,
+      }],
+    });
+
+    await expect(new DshRecognitionModelAdapter(fixture.bridge).review(request))
+      .resolves.toMatchObject({ observations: [expect.objectContaining({ reasoningEffort: 'high' })] });
+  });
+
+  it('keeps the subagent transport provider separate from the LLM route', async () => {
+    const call = modelCall({
+      requestProvider: 'llm-provider', requestModel: 'llm-model',
+      streamProvider: 'llm-provider', streamModel: 'llm-model',
+    });
+    const fixture = createFakeBridge({ modelCalls: [call] });
+
+    await new DshRecognitionModelAdapter(fixture.bridge).review({
+      ...request,
+      route: {
+        subagentProvider: 'spawn-provider',
+        provider: 'llm-provider',
+        model: 'llm-model',
+        reasoningEffort: 'high',
+      },
+    });
+
+    expect(fixture.lookedUpProviders).toEqual(['spawn-provider']);
+    expect(fixture.startedProviders).toEqual(['spawn-provider']);
+    expect(fixture.startRequests[0]?.agentOptions).toMatchObject({
+      provider: 'llm-provider', model: 'llm-model', reasoningEffort: 'high', maxTokens: 256,
+    });
+  });
+
   it('uses stable timeout and cancellation errors and releases listeners', async () => {
     const timedOut = createFakeBridge({ hang: true });
     await expect(new DshRecognitionModelAdapter(timedOut.bridge).review({ ...request, timeoutMs: 5 }))
@@ -125,6 +169,18 @@ describe('DshRecognitionModelAdapter', () => {
       .rejects.toThrow('DSH_RECOGNITION_ABORTED');
     expect(aborted.activeListenerCount()).toBe(0);
   });
+
+  it('releases caller abort forwarding after a successful review', async () => {
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+
+    await new DshRecognitionModelAdapter(createFakeBridge().bridge).review({
+      ...request,
+      signal: controller.signal,
+    });
+
+    expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
 });
 
 function modelCall(overrides: Partial<{
@@ -133,7 +189,7 @@ function modelCall(overrides: Partial<{
   streamProvider: string;
   streamModel: string;
   messageCount: number;
-}> = {}) {
+}> = {}): { request: DshRecognitionAgentConfig; stream: DshRecognitionStreamOptions } {
   return {
     request: {
       provider: overrides.requestProvider ?? 'deepseek-official',
@@ -153,7 +209,7 @@ function modelCall(overrides: Partial<{
       system: 'SYSTEM_PROMPT_BODY',
       tools: [{ name: 'structured_output', description: 'capture', parameters: {} }],
       sessionId: 'child',
-    },
+    } as DshRecognitionStreamOptions,
   };
 }
 
@@ -172,6 +228,9 @@ function createFakeBridge(options: {
   const savedImages: Array<{ bytes: number[]; mediaType: string; name: string }> = [];
   let started = 0;
   let disposedRuns = 0;
+  const lookedUpProviders: string[] = [];
+  const startedProviders: string[] = [];
+  const startRequests: DshRecognitionStartRequest[] = [];
   const baseCapabilities = {
     agentOptions: true,
     outputSchema: true,
@@ -190,7 +249,10 @@ function createFakeBridge(options: {
     },
     getParent: () => options.parentAvailable === false ? undefined : { id: 'parent' },
     listProviders: () => options.providerAvailable === false ? [] : ['spawn'],
-    getProvider: () => options.providerAvailable === false ? undefined : provider,
+    getProvider: (name) => {
+      lookedUpProviders.push(name);
+      return options.providerAvailable === false ? undefined : provider;
+    },
     saveImage: async (input) => {
       savedImages.push({ bytes: [...input.data], mediaType: input.mediaType, name: input.name });
       return { id: 'attachment-1' };
@@ -200,6 +262,8 @@ function createFakeBridge(options: {
     onLlmStream: (listener) => register(streams, listener),
     startSubagent: async (providerName, startRequest): Promise<DshRecognitionBridgeRun> => {
       started += 1;
+      startedProviders.push(providerName);
+      startRequests.push(startRequest);
       if (options.hang) {
         return new Promise((_resolve, reject) => {
           startRequest.signal.addEventListener('abort', () => reject(startRequest.signal.reason), { once: true });
@@ -225,6 +289,9 @@ function createFakeBridge(options: {
     savedImages,
     startedRuns: () => started,
     activeListenerCount: () => starts.size + requests.size + streams.size,
+    lookedUpProviders,
+    startedProviders,
+    startRequests,
     get disposedRuns() { return disposedRuns; },
   };
 }
