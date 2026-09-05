@@ -26,7 +26,7 @@ function fixture() {
       toleranceZone: { shape: 'linear' }, datumReferenceFrame: index === 2 ? [{ datumId: 'datum:A' }] : [],
       computed: { status: 'resolved', unit: 'mm', diagnostics: [] },
       framePosition: [200, 100], source: 'ai-candidate', status: 'resolved', evidenceIds: [],
-    })), chains: [], dependencies: [], diagnostics: [],
+    })), surfaceTextures: [], chains: [], dependencies: [], diagnostics: [],
   } as unknown as EngineeringAnnotationDraft;
   return { document, draft };
 }
@@ -157,6 +157,24 @@ describe('GdtOverlay datum marker', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(120); });
 
     expect(onMoveDatum).toHaveBeenCalledWith('datum:A', [25, -9]);
+    vi.useRealTimers();
+  });
+
+  it('persists the latest tolerance-frame position when pointer capture disappears', async () => {
+    vi.useFakeTimers();
+    const onMoveGdtGroup = vi.fn(async () => undefined);
+    const { view } = render(2, vi.fn(), onMoveGdtGroup);
+    const group = view.root.findByProps({ 'data-gdt-group': 'datum-line' });
+    const event = {
+      pointerId: 10, button: 0, preventDefault: vi.fn(), stopPropagation: vi.fn(),
+      currentTarget: { setPointerCapture: vi.fn() },
+    };
+
+    act(() => group.props.onPointerDown({ ...event, clientX: 100, clientY: 100 }));
+    act(() => group.props.onPointerMove({ ...event, clientX: 140, clientY: 120 }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+
+    expect(onMoveGdtGroup).toHaveBeenCalledWith(['gdt:1', 'gdt:2', 'gdt:3'], [220, 90]);
     vi.useRealTimers();
   });
 

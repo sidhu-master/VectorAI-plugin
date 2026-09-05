@@ -13,6 +13,7 @@ import {
 } from 'react';
 
 import { useDrawingWorkspace } from '../hooks';
+import { cancelFrame, scheduleFrame } from '../frame-scheduler';
 import { CadGrid } from './Grid';
 import { EntityRenderer } from './EntityRenderer';
 import { MotionRigOverlay } from './MotionRigOverlay';
@@ -76,7 +77,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
 
   const cancelQueuedAnnotation = useCallback(() => {
     if (annotationFrameRef.current !== null) {
-      window.cancelAnimationFrame(annotationFrameRef.current);
+      cancelFrame(annotationFrameRef.current);
       annotationFrameRef.current = null;
     }
     queuedAnnotationRef.current = null;
@@ -84,7 +85,7 @@ export function Canvas({ motionPreviewHeld = false }: CanvasProps) {
   const queueAnnotation = useCallback((annotation: AnnotationNode) => {
     queuedAnnotationRef.current = annotation;
     if (annotationFrameRef.current !== null) return;
-    annotationFrameRef.current = window.requestAnimationFrame(() => {
+    annotationFrameRef.current = scheduleFrame(() => {
       annotationFrameRef.current = null;
       const queued = queuedAnnotationRef.current;
       queuedAnnotationRef.current = null;

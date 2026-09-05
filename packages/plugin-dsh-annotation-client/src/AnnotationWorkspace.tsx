@@ -401,7 +401,6 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
     const hydrate = async () => {
       await Promise.allSettled([
         runtime.actions.refresh(),
-        partition.actions.refresh(),
         dimensionChain.actions.refresh(),
         gdt.actions.refresh(),
       ]);
@@ -413,7 +412,7 @@ export function AnnotationWorkspace({ sessionId, namespace, runtime, state, part
       active = false;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [annotationState.workflow.status, canvasInteractionActive, dimensionChain, gdt, partition, partitionState.busy, runtime]);
+  }, [annotationState.workflow.status, canvasInteractionActive, dimensionChain, gdt, partitionState.busy, runtime]);
   useEffect(() => {
     if (displaySnapshot === null) return undefined;
     if (!displaySnapshot.document.geometry.some(({ visible }) => visible)) return;

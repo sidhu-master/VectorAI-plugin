@@ -771,7 +771,7 @@ describe('AnnotationWorkspace', () => {
     vi.unstubAllGlobals();
   });
 
-  it('keeps refreshing the shared drawing while an imported partition is being analyzed', async () => {
+  it('keeps refreshing the shared drawing without reintroducing a partition progress pill', async () => {
     vi.useFakeTimers();
     const testWindow = new EventTarget() as EventTarget & Pick<typeof globalThis, 'setInterval' | 'clearInterval'>;
     testWindow.setInterval = globalThis.setInterval;
@@ -804,8 +804,7 @@ describe('AnnotationWorkspace', () => {
         sessionId="session-1" namespace="engineering-annotation" runtime={runtime} state={state} partition={partition}
       />);
     });
-    const progress = renderer!.root.findByProps({ 'data-partition-progress': 'analyzing' });
-    expect(progress.findAll((node) => node.children.includes('正在识别轴段并进行 AI 语义复核'))).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ 'data-partition-progress': 'analyzing' })).toHaveLength(0);
     expect(refresh).toHaveBeenCalledOnce();
     await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     expect(refresh.mock.calls.length).toBeGreaterThanOrEqual(2);

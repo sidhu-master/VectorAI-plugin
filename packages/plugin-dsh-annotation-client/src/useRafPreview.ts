@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useRef } from 'react';
+import { cancelFrame, scheduleFrame } from '@vectorai/drawing-viewer-react';
 
 export function useRafPreview<Value>(apply: (value: Value) => void) {
   const applyRef = useRef(apply);
@@ -11,7 +12,7 @@ export function useRafPreview<Value>(apply: (value: Value) => void) {
 
   const cancel = useCallback(() => {
     if (frameRef.current !== null) {
-      window.cancelAnimationFrame(frameRef.current);
+      cancelFrame(frameRef.current);
       frameRef.current = null;
     }
     pendingRef.current = undefined;
@@ -22,7 +23,7 @@ export function useRafPreview<Value>(apply: (value: Value) => void) {
     pendingRef.current = value;
     hasPendingRef.current = true;
     if (frameRef.current !== null) {
-      window.cancelAnimationFrame(frameRef.current);
+      cancelFrame(frameRef.current);
       frameRef.current = null;
     }
     const pending = pendingRef.current as Value;
@@ -35,7 +36,7 @@ export function useRafPreview<Value>(apply: (value: Value) => void) {
     pendingRef.current = value;
     hasPendingRef.current = true;
     if (frameRef.current !== null) return;
-    frameRef.current = window.requestAnimationFrame(() => {
+    frameRef.current = scheduleFrame(() => {
       frameRef.current = null;
       if (!hasPendingRef.current) return;
       const pending = pendingRef.current as Value;

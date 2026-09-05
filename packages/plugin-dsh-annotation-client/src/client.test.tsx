@@ -59,6 +59,20 @@ describe('annotation client contribution', () => {
             workflow: { status: 'idle' as const },
           },
         })),
+        getPartitionState: vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            version: 1 as const, phase: 'idle' as const,
+            canUndo: false, canRedo: false, updatedAt: 0,
+          },
+        })),
+        getDimensionPlan: vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            version: 1 as const, phase: 'idle' as const,
+            canUndo: false, canRedo: false, updatedAt: 0,
+          },
+        })),
       },
     };
     const drawingFileExport = { download: vi.fn() };

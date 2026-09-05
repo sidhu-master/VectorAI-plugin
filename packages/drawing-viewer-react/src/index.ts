@@ -26,6 +26,7 @@ export { Canvas } from './canvas/Canvas';
 export { EntityRenderer, formatPortableTolerance } from './canvas/EntityRenderer';
 export { ScreenSpaceLabel } from './canvas/ScreenSpaceLabel';
 export { estimateScreenTextWidth, screenSpaceTransform } from './canvas/screen-space';
+export { cancelFrame, scheduleFrame } from './frame-scheduler';
 export type { ScreenSpaceLabelProps } from './canvas/ScreenSpaceLabel';
 export {
   drawingBounds,

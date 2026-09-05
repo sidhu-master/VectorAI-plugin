@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SurfaceTextureOverlay } from './SurfaceTextureOverlay';
 
 describe('SurfaceTextureOverlay', () => {
-  it('renders a material-removal Ra 0.8 symbol anchored to its controlled surface and opens its editor', () => {
+  it('renders a CAD-style material-removal value with its Ra semantics and opens its editor', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     document.geometry = [{
       id: 'journal-edge' as never, type: 'line', start: [0, 0], end: [30, 0], visible: true,
@@ -33,7 +33,8 @@ describe('SurfaceTextureOverlay', () => {
 
     const marker = view.root.findByProps({ 'data-surface-texture-id': 'texture:journal' });
     expect(marker.findByProps({ 'data-material-removal': 'required' })).toBeDefined();
-    expect(marker.findAllByType('text').map(({ children }) => children.join(''))).toContain('Ra 0.8');
+    expect(marker.findAllByType('text').map(({ children }) => children.join(''))).toContain('0.8');
+    expect(marker.findByProps({ 'aria-label': 'Ra 0.8' })).toBeDefined();
     act(() => marker.props.onClick({ stopPropagation: vi.fn() }));
     expect(onSelect).toHaveBeenCalledWith('texture:journal');
   });

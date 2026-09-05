@@ -35,6 +35,7 @@ import {
 import { CadGrid } from '../canvas/Grid';
 import { EntityRenderer } from '../canvas/EntityRenderer';
 import { projectAnnotationDrag } from '../canvas/annotation-drag';
+import { cancelFrame, scheduleFrame } from '../frame-scheduler';
 
 type DragState =
   | { kind: 'pan'; start: Vec2; viewport: DrawingWorkspaceViewport; clearSelectionOnClick: boolean }
@@ -105,7 +106,7 @@ export function DrawingSurface({
 
   const cancelQueuedAnnotationPreview = useCallback(() => {
     if (annotationPreviewFrameRef.current !== null) {
-      window.cancelAnimationFrame(annotationPreviewFrameRef.current);
+      cancelFrame(annotationPreviewFrameRef.current);
       annotationPreviewFrameRef.current = null;
     }
     queuedAnnotationPreviewRef.current = null;
@@ -113,7 +114,7 @@ export function DrawingSurface({
   const queueAnnotationPreview = useCallback((preview: AnnotationNode) => {
     queuedAnnotationPreviewRef.current = preview;
     if (annotationPreviewFrameRef.current !== null) return;
-    annotationPreviewFrameRef.current = window.requestAnimationFrame(() => {
+    annotationPreviewFrameRef.current = scheduleFrame(() => {
       annotationPreviewFrameRef.current = null;
       const queued = queuedAnnotationPreviewRef.current;
       queuedAnnotationPreviewRef.current = null;

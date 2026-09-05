@@ -10,6 +10,7 @@ import { useRafPreview } from './useRafPreview';
 
 const ROW_HEIGHT = 24;
 const DRAWING_GAP = 28;
+const DRAG_PERSIST_DELAY_MS = 120;
 
 export function GdtOverlay({
   draft, document, scale, viewport, datumVisible, gdtVisible, surfaceTextureVisible = false, previewHeld,
@@ -38,9 +39,11 @@ export function GdtOverlay({
   const [datumDragPositions, setDatumDragPositions] = useState<Record<string, Vec2>>({});
   const datumDragRef = useRef<DatumDragState | null>(null);
   const suppressDatumClickRef = useRef(false);
+  const datumPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [gdtDragPositions, setGdtDragPositions] = useState<Record<string, Vec2>>({});
   const gdtDragRef = useRef<GdtDragState | null>(null);
   const suppressGdtClickRef = useRef(false);
+  const gdtPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geometry = useMemo(() => new Map(document.geometry.map((node) => [String(node.id), node])), [document.geometry]);
   const datums = useMemo(() => new Map(draft.datums.map((datum) => [datum.id, datum])), [draft.datums]);
   const bounds = useMemo(() => drawingBounds({ ...document, annotations: [] })
@@ -89,9 +92,18 @@ export function GdtOverlay({
     }
     drag.currentPosition = next;
     datumPreview.schedule({ datumId: drag.datumId, position: next });
+    if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
+    datumPersistTimerRef.current = setTimeout(() => {
+      datumPersistTimerRef.current = null;
+      void Promise.resolve(onMoveDatum(drag.datumId, drag.currentPosition)).catch(() => undefined);
+    }, DRAG_PERSIST_DELAY_MS);
     return next;
   };
   const commitDatumDrag = (drag: DatumDragState, next: Vec2) => {
+    if (datumPersistTimerRef.current !== null) {
+      clearTimeout(datumPersistTimerRef.current);
+      datumPersistTimerRef.current = null;
+    }
     datumPreview.flush({ datumId: drag.datumId, position: next });
     datumDragRef.current = null;
     void Promise.resolve(onMoveDatum(drag.datumId, next)).catch(() => setDatumDragPositions((current) => {
@@ -118,6 +130,11 @@ export function GdtOverlay({
     drag.currentPosition = next;
     if (Math.hypot(dx, dy) > 3) suppressGdtClickRef.current = true;
     gdtPreview.schedule({ groupId: drag.groupId, position: next });
+    if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+    gdtPersistTimerRef.current = setTimeout(() => {
+      gdtPersistTimerRef.current = null;
+      void Promise.resolve(onMoveGdtGroup(drag.intentIds, drag.currentPosition)).catch(() => undefined);
+    }, DRAG_PERSIST_DELAY_MS);
     return next;
   };
   const updateGdtDrag = (event: PointerEvent<SVGGElement>): Vec2 | null => {
@@ -128,6 +145,10 @@ export function GdtOverlay({
     return updateGdtDragAt(event.clientX, event.clientY);
   };
   const commitGdtDrag = (drag: GdtDragState, next: Vec2) => {
+    if (gdtPersistTimerRef.current !== null) {
+      clearTimeout(gdtPersistTimerRef.current);
+      gdtPersistTimerRef.current = null;
+    }
     gdtPreview.flush({ groupId: drag.groupId, position: next });
     gdtDragRef.current = null;
     void Promise.resolve(onMoveGdtGroup(drag.intentIds, next)).catch(() => setGdtDragPositions((current) => {
@@ -143,6 +164,11 @@ export function GdtOverlay({
     commitGdtDrag(drag, next);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
+
+  useEffect(() => () => {
+    if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
+    if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+  }, []);
 
   return <g className="vai-gdt-overlay" data-preview-held={previewHeld ? 'true' : undefined}>
     {datumVisible && draft.datums.map((datum) => {
@@ -191,6 +217,8 @@ export function GdtOverlay({
         onPointerCancel={(event) => {
           const drag = datumDragRef.current;
           if (!drag || drag.pointerId !== event.pointerId) return;
+          if (datumPersistTimerRef.current !== null) clearTimeout(datumPersistTimerRef.current);
+          datumPersistTimerRef.current = null;
           datumPreview.cancel();
           datumDragRef.current = null;
           onInteractionActiveChange?.(false);
@@ -236,6 +264,8 @@ export function GdtOverlay({
         onPointerCancel={(event) => {
           const drag = gdtDragRef.current;
           if (!drag || drag.pointerId !== event.pointerId) return;
+          if (gdtPersistTimerRef.current !== null) clearTimeout(gdtPersistTimerRef.current);
+          gdtPersistTimerRef.current = null;
           gdtPreview.cancel();
           gdtDragRef.current = null;
           onInteractionActiveChange?.(false);
