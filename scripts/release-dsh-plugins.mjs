@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkDshRegistryReadiness } from './check-dsh-registry-readiness.mjs';
+import { bundleInstallCommands, publicBundleSources } from './verify-dsh-install-plan.mjs';
 import { waitForNpmPackage } from './wait-for-npm-package.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,10 +39,7 @@ export function pendingPublications(order, receipt) {
 }
 
 export function installCommands(manifest) {
-  return manifest.bundles.map((name) => [
-    'plugin', '--profile', manifest.dsh.profile, 'add',
-    ...(manifest.dsh.installArgs?.[name] ?? []), `${name}@${manifest.version}`,
-  ]);
+  return bundleInstallCommands({ release: manifest, sources: publicBundleSources(manifest) });
 }
 
 function run(command, args, options = {}) {
@@ -75,21 +73,35 @@ export async function runRelease({
   }
 
   effects.authenticate();
-  for (const name of pendingPublications(order, receipt)) {
-    const tarball = artifacts[name];
-    let entry = receipt.published.find((candidate) => candidate.name === name);
-    if (!entry) {
-      effects.publish(name, tarball, tag);
-      entry = { name, version, tarball, publishedAt: effects.now() };
-      receipt.published.push(entry);
+  const publish = async (names) => {
+    for (const name of pendingPublications(names, receipt)) {
+      const tarball = artifacts[name];
+      let entry = receipt.published.find((candidate) => candidate.name === name);
+      if (!entry) {
+        effects.publish(name, tarball, tag);
+        entry = { name, version, tarball, publishedAt: effects.now() };
+        receipt.published.push(entry);
+        effects.saveReceipt(receiptPath, receipt);
+      }
+      const metadata = await effects.waitForPackage(name, version);
+      entry.integrity = metadata.dist.integrity;
+      entry.visibleAt = effects.now();
       effects.saveReceipt(receiptPath, receipt);
     }
-    const metadata = await effects.waitForPackage(name, version);
-    entry.integrity = metadata.dist.integrity;
-    entry.visibleAt = effects.now();
-    effects.saveReceipt(receiptPath, receipt);
-  }
-  effects.verifyPublic(version);
+  };
+
+  const runtimeNames = manifest.runtimes.map((runtime) => runtime.name);
+  await publish(runtimeNames);
+  const localSources = Object.fromEntries(
+    manifest.bundles.map((name) => [name, artifacts[name]]),
+  );
+  await effects.acceptLocal({ release: manifest, sources: localSources, version });
+  await publish(manifest.bundles);
+  await effects.acceptPublic({
+    release: manifest,
+    sources: publicBundleSources(manifest, version),
+    version,
+  });
   receipt.verifiedAt = effects.now();
   effects.saveReceipt(receiptPath, receipt);
   return receipt;
@@ -117,7 +129,12 @@ function createReleaseEffects(repositoryRoot) {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`);
     },
-    verifyPublic: (version) => run(process.execPath, [
+    acceptLocal: ({ release, sources, version }) => run(process.execPath, [
+      'scripts/verify-public-dsh-install.mjs', '--version', version,
+      '--space', sources[release.bundles[0]],
+      '--annotation', sources[release.bundles[1]],
+    ], { inherit: true }),
+    acceptPublic: ({ version }) => run(process.execPath, [
       'scripts/verify-public-dsh-install.mjs', '--version', version,
     ], { inherit: true }),
     commit: () => run('git', ['rev-parse', 'HEAD']).trim(),

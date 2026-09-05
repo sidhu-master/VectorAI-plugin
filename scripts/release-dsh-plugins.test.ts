@@ -73,7 +73,8 @@ describe('guarded DSH release workflow', () => {
         publish: (name: string) => { events.push(`publish:${name}`); },
         waitForPackage: async () => ({ dist: { integrity: 'sha512-ready' } }),
         saveReceipt: () => {},
-        verifyPublic: () => {},
+        acceptLocal: () => {},
+        acceptPublic: () => {},
         commit: () => 'abc123',
         now: () => '2026-09-05T00:00:00.000Z',
       },
@@ -83,4 +84,64 @@ describe('guarded DSH release workflow', () => {
     expect(events.indexOf('registry-check')).toBeLessThan(events.indexOf('prepare'));
     expect(events.indexOf('registry-check')).toBeLessThan(events.findIndex((event) => event.startsWith('publish:')));
   });
+
+  it('accepts local Bundles after runtimes and before either Bundle is published', async () => {
+    const events: string[] = [];
+    await runRelease({
+      args: ['--version', '1.2.3-alpha.1', '--tag', 'alpha'],
+      effects: fixtureEffects(events),
+    });
+
+    expect(events).toEqual([
+      'registry-check',
+      'publish:runtime-a',
+      'publish:runtime-b',
+      'accept:local-bundles',
+      'publish:space',
+      'publish:annotation',
+      'accept:public-bundles',
+    ]);
+  });
+
+  it('does not publish either Bundle when local two-command acceptance fails', async () => {
+    const events: string[] = [];
+    const effects = fixtureEffects(events);
+    effects.acceptLocal = () => {
+      events.push('accept:local-bundles');
+      throw new Error('local acceptance failed');
+    };
+
+    await expect(runRelease({
+      args: ['--version', '1.2.3-alpha.1', '--tag', 'alpha'],
+      effects,
+    })).rejects.toThrow(/local acceptance failed/i);
+    expect(events).toEqual([
+      'registry-check',
+      'publish:runtime-a',
+      'publish:runtime-b',
+      'accept:local-bundles',
+    ]);
+  });
 });
+
+function fixtureEffects(events: string[]) {
+  return {
+    status: () => '',
+    readConfiguredManifest: () => manifest,
+    checkRegistry: async () => { events.push('registry-check'); },
+    prepare: () => {},
+    pack: () => {},
+    readPreparedManifest: () => manifest,
+    loadReceipt: () => ({ version: manifest.version, tag: 'alpha', published: [] }),
+    artifacts: () => Object.fromEntries(publicationOrder(manifest).map((name) => [name, `${name}.tgz`])),
+    artifactExists: () => true,
+    authenticate: () => {},
+    publish: (name: string) => { events.push(`publish:${name}`); },
+    waitForPackage: async () => ({ dist: { integrity: 'sha512-ready' } }),
+    saveReceipt: () => {},
+    acceptLocal: () => { events.push('accept:local-bundles'); },
+    acceptPublic: () => { events.push('accept:public-bundles'); },
+    commit: () => 'abc123',
+    now: () => '2026-09-05T00:00:00.000Z',
+  };
+}
