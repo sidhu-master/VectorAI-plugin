@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import {
   createProbePluginSource,
   formatProbeSummary,
+  resolveProbeBundlePath,
   validateProbeRecords,
 } from './probe-dsh-recognition-runtime.mjs';
 import { readDshRuntimeManifest } from './dsh-runtime-manifest.mjs';
@@ -47,6 +48,17 @@ test('generates one bounded adapter request against the built bundle', () => {
   assert.match(source, /timeoutMs: 60_000/);
   assert.match(source, /VECTORAI_DSH_RECOGNITION_PROBE_OUTPUT/);
   assert.doesNotMatch(source, /process\.env\s*[),]/);
+});
+
+test('can probe the physically installed bundle from an isolated source-runtime profile', () => {
+  assert.equal(
+    resolveProbeBundlePath({ root: '/repo', override: '/profile/node_modules/annotation/lib/index.js' }),
+    '/profile/node_modules/annotation/lib/index.js',
+  );
+  assert.equal(
+    resolveProbeBundlePath({ root: '/repo' }),
+    '/repo/packages/plugin-dsh-annotation/lib/index.js',
+  );
 });
 
 function safeRecords() {

@@ -9,7 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditRuntimePackage } from './vectorizer-runtime-audit.mjs';
+import { auditRuntimePackage, runtimeTreeDigest } from './vectorizer-runtime-audit.mjs';
 import {
   PIPELINE_VERSION, PROTOCOL_VERSION, PYTHON_VERSION, RUNTIME_VERSION,
   runtimeExecutable, targetFor,
@@ -88,9 +88,10 @@ function smoke(executable, imagePath) {
       responses[0].value?.pipelineVersion !== PIPELINE_VERSION) {
     throw new Error('Packaged vectorizer health metadata mismatch');
   }
+  return responses[0].value;
 }
 
-function writeManifest(sourceCommit) {
+function writeManifest(sourceCommit, health) {
   const template = JSON.parse(readFileSync(join(root, 'packages/vectorizer-runtime-template/package.json'), 'utf8'));
   const manifest = {
     ...template,
@@ -106,13 +107,16 @@ function writeManifest(sourceCommit) {
     relative(packageRoot, path).split('\\').join('/'), digest(path),
   ]));
   writeFileSync(join(packageRoot, 'runtime.json'), `${JSON.stringify({
+    releaseVersion: RUNTIME_VERSION,
     protocolVersion: PROTOCOL_VERSION,
     pipelineVersion: PIPELINE_VERSION,
-    runtimeVersion: RUNTIME_VERSION,
     platform: target.platform,
     arch: target.arch,
+    pythonVersion: health.pythonVersion,
+    dependencies: health.dependencies,
     sourceCommit,
     executable: runtimeExecutable(target),
+    treeSha256: runtimeTreeDigest(runtimeFiles),
     files: runtimeFiles,
   }, null, 2)}\n`);
 }
@@ -152,8 +156,8 @@ async function main() {
     'cv2.line(image,(4,16),(28,16),(0,0,0),2)',
     'assert cv2.imwrite(sys.argv[1],image)',
   ].join(';'), fixture]);
-  smoke(executable, fixture);
-  writeManifest(run('git', ['rev-parse', 'HEAD'], { capture: true }).trim());
+  const health = smoke(executable, fixture);
+  writeManifest(run('git', ['rev-parse', 'HEAD'], { capture: true }).trim(), health);
   auditRuntimePackage(packageRoot, { ...target, version: RUNTIME_VERSION });
 
   mkdirSync(join(outputRoot, 'tarballs'), { recursive: true });

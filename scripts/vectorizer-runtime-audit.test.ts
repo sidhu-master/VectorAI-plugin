@@ -8,10 +8,14 @@ import { describe, expect, it } from 'vitest';
 import { auditRuntimePackage } from './vectorizer-runtime-audit.mjs';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+const executable = 'bin/vectorai-vectorizer/vectorai-vectorizer';
+const files = { [executable]: digest('runtime') };
+const treeSha256 = `sha256:${createHash('sha256')
+  .update(`${executable}:${files[executable]}\n`)
+  .digest('hex')}`;
 
 function fixture(overrides: Record<string, unknown> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'vectorai-runtime-audit-'));
-  const executable = 'bin/vectorai-vectorizer/vectorai-vectorizer';
   mkdirSync(join(root, 'bin/vectorai-vectorizer'), { recursive: true });
   writeFileSync(join(root, executable), 'runtime');
   chmodSync(join(root, executable), 0o755);
@@ -25,13 +29,21 @@ function fixture(overrides: Record<string, unknown> = {}) {
     license: 'Apache-2.0',
   }));
   writeFileSync(join(root, 'runtime.json'), JSON.stringify({
+    releaseVersion: '0.1.0-alpha.1',
     protocolVersion: 'vectorai-vectorizer-1',
     pipelineVersion: 'clean-line-v5',
-    runtimeVersion: '0.1.0-alpha.1',
     platform: 'darwin',
     arch: 'arm64',
+    pythonVersion: '3.13.2',
+    dependencies: {
+      numpy: '2.5.1',
+      'opencv-python-headless': '4.14.0.94',
+      'scikit-image': '0.26.0',
+    },
+    sourceCommit: 'a'.repeat(40),
     executable,
-    files: { [executable]: digest('runtime') },
+    treeSha256,
+    files,
     ...overrides,
   }));
   return root;
@@ -46,8 +58,16 @@ describe('vectorizer runtime package audit', () => {
 
   it.each([
     ['wrong platform', { platform: 'linux' }],
-    ['wrong release', { runtimeVersion: '9.9.9' }],
+    ['wrong release', { releaseVersion: '9.9.9' }],
     ['executable traversal', { executable: '../escape' }],
+    ['wrong tree digest', { treeSha256: `sha256:${'b'.repeat(64)}` }],
+    ['missing Python metadata', { pythonVersion: undefined }],
+    ['missing dependency metadata', { dependencies: undefined }],
+    ['wrong dependency version', { dependencies: {
+      numpy: '9.9.9',
+      'opencv-python-headless': '4.14.0.94',
+      'scikit-image': '0.26.0',
+    } }],
   ])('rejects %s', (_name, overrides) => {
     expect(() => auditRuntimePackage(fixture(overrides), {
       platform: 'darwin', arch: 'arm64', version: '0.1.0-alpha.1',

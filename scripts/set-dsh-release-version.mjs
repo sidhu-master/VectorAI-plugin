@@ -61,7 +61,7 @@ for (const runtime of release.runtimes) {
   const packageJson = readJson(packagePath);
   const runtimeJson = readJson(runtimePath);
   packageJson.version = version;
-  runtimeJson.runtimeVersion = version;
+  runtimeJson.releaseVersion = version;
   writes.set(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
   writes.set(runtimePath, `${JSON.stringify(runtimeJson, null, 2)}\n`);
 }

@@ -47,7 +47,7 @@
     "@vectorai/drawing-spatial": "workspace:*",
     "@vectorai/dxf-import": "workspace:*",
     "@vectorai/plugin-space-contracts": "workspace:*",
-    "sharp": "^0.35.3",
+    "sharp": "0.35.3",
     "zod": "4.4.3"
   }
 }

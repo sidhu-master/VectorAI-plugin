@@ -1,9 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
-export const RUNTIME_VERSION = '0.1.0-alpha.1';
-export const PYTHON_VERSION = '3.13.2';
-export const PROTOCOL_VERSION = 'vectorai-vectorizer-1';
-export const PIPELINE_VERSION = 'clean-line-v5';
+import { readFileSync } from 'node:fs';
+
+const releaseManifest = JSON.parse(readFileSync(
+  new URL('../release/dsh-plugins.json', import.meta.url),
+  'utf8',
+));
+
+export const RUNTIME_VERSION = releaseManifest.version;
+export const PYTHON_VERSION = releaseManifest.vectorizer.pythonVersion;
+export const PROTOCOL_VERSION = releaseManifest.vectorizer.protocolVersion;
+export const PIPELINE_VERSION = releaseManifest.vectorizer.pipelineVersion;
+export const RUNTIME_DEPENDENCIES = Object.freeze(Object.fromEntries(
+  ['numpy', 'opencv-python-headless', 'scikit-image'].map((name) => [
+    name,
+    releaseManifest.vectorizer.buildDependencies[name],
+  ]),
+));
 
 export const RUNTIME_TARGETS = [
   { platform: 'darwin', arch: 'arm64' },

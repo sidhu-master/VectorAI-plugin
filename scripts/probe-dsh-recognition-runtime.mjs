@@ -110,9 +110,15 @@ export function formatProbeSummary(summary) {
   ].join('\n');
 }
 
+export function resolveProbeBundlePath({ root, override } = {}) {
+  const repositoryRoot = resolve(root ?? defaultRepositoryRoot());
+  return resolve(override ?? join(repositoryRoot, 'packages/plugin-dsh-annotation/lib/index.js'));
+}
+
 export async function runDshRecognitionProbe({
   root = defaultRepositoryRoot(),
   dshCli = process.env.VECTORAI_DSH_CLI,
+  bundlePath: bundleOverride = process.env.VECTORAI_DSH_RECOGNITION_BUNDLE,
   timeoutMs = 90_000,
 } = {}) {
   const repositoryRoot = resolve(root);
@@ -120,7 +126,7 @@ export async function runDshRecognitionProbe({
   if (!freshness.fresh) {
     throw new Error(`DSH_RECOGNITION_PROBE_BUNDLE_STALE:${freshness.reason}`);
   }
-  const bundlePath = join(repositoryRoot, 'packages/plugin-dsh-annotation/lib/index.js');
+  const bundlePath = resolveProbeBundlePath({ root: repositoryRoot, override: bundleOverride });
   await access(bundlePath);
   const cliPath = resolve(dshCli ?? join(homedir(), '.dsh/profiles/node_modules/@deepseek-ai/dsh/lib/bin.js'));
   await access(cliPath);
@@ -139,7 +145,9 @@ export async function runDshRecognitionProbe({
 
   const exit = await spawnProbe({ cliPath, patchPath, outputPath, runDirectory, timeoutMs });
   if (exit.timedOut) throw new Error('DSH_RECOGNITION_PROBE_TIMEOUT');
-  if (exit.code !== 0) throw new Error(`DSH_RECOGNITION_PROBE_PROCESS_FAILED:${String(exit.code)}`);
+  if (exit.code !== 0) {
+    throw new Error(`DSH_RECOGNITION_PROBE_PROCESS_FAILED:${String(exit.code)}:${runDirectory}`);
+  }
   const records = parseJsonLines(await readFile(outputPath, 'utf8'));
   return validateProbeRecords(records);
 }

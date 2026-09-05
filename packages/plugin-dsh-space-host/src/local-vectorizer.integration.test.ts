@@ -3,6 +3,7 @@
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -12,10 +13,22 @@ import { InMemoryDrawingRepository } from './repository';
 import { SemanticEditService } from './semantic-edit-service';
 import { FileDrawingRepositoryStorage } from './repository-storage';
 import { renderDrawingObservation, type ObservationRenderManifest } from './review-renderer';
+import { runtimePackageName } from './vectorizer-runtime';
 
 const fixturePath = resolve(import.meta.dirname, '../../../test2.png');
+const runtimeOverride = process.env.VECTORAI_VECTORIZER_RUNTIME?.trim();
+const hasVectorizerRuntime = runtimeOverride
+  ? true
+  : (() => {
+      try {
+        createRequire(import.meta.url).resolve(`${runtimePackageName(process.platform, process.arch)}/package.json`);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
 
-describe.skipIf(!existsSync(fixturePath))('LocalCleanLineVectorizer', () => {
+describe.skipIf(!existsSync(fixturePath) || !hasVectorizerRuntime)('LocalCleanLineVectorizer', () => {
   it('vectorizes a real upload and completes semantic selection, multi-part commit, and Undo', async () => {
     const data = await readFile(fixturePath);
     const attachment: ImageAttachmentRef = {

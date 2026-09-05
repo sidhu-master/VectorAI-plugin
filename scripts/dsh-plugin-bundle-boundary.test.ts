@@ -20,7 +20,7 @@ describe('DSH plugin bundle boundaries', () => {
     const bundle = readManifest('packages/plugin-dsh-space/package.json');
 
     expect(bundle.name).toBe('@newwe/vectorai-plugin-dsh-space');
-    expect(bundle.dependencies).toEqual({ sharp: '^0.35.3', zod: '4.4.3' });
+    expect(bundle.dependencies).toEqual({ sharp: '0.35.3', zod: '4.4.3' });
     expect(bundle.optionalDependencies).toBeUndefined();
     expect(readPatchServices('packages/plugin-dsh-space/cordis.patch.yml')).toEqual([
       '@newwe/vectorai-plugin-dsh-space',

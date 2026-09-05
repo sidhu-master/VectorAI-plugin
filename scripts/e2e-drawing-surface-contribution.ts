@@ -25,18 +25,21 @@ class MemoryDrawingStorage {
 }
 
 const root = resolve(import.meta.dirname, '..');
-const spaceHost = await import(pathToFileURL(resolve(
-  root, 'packages/plugin-dsh-space-host/lib/index.js',
-)).href);
-const spaceClient = await import(pathToFileURL(resolve(
-  root, 'packages/plugin-dsh-space-client/lib/index.js',
-)).href);
-const annotationHost = await import(pathToFileURL(resolve(
-  root, 'packages/plugin-dsh-annotation/lib/index.js',
-)).href);
-const annotationClient = await import(pathToFileURL(resolve(
-  root, 'packages/plugin-dsh-annotation-client/lib/index.js',
-)).href);
+const importSource = (path: string) => import(pathToFileURL(resolve(root, path)).href);
+const spaceHost = {
+  ...await importSource('packages/plugin-dsh-space-host/src/repository.ts'),
+  ...await importSource('packages/plugin-dsh-space-host/src/semantic-edit-service.ts'),
+  ...await importSource('packages/plugin-dsh-space-host/src/extension-preview-service.ts'),
+};
+const spaceClient = await importSource('packages/plugin-dsh-space-client/src/surface-registry.ts');
+const annotationHost = {
+  ...await importSource('packages/plugin-dsh-annotation-host/src/session-state.ts'),
+  ...await importSource('packages/plugin-dsh-annotation-host/src/recognition-runtime.ts'),
+  ...await importSource('packages/plugin-dsh-annotation-host/src/deterministic-annotation-pipeline.ts'),
+};
+const annotationClient = await importSource(
+  'packages/plugin-dsh-annotation-client/src/annotation-state-source.ts',
+);
 
 const sessionId = 'surface-e2e-session';
 const sessionStorage = new MemoryAnnotationStorage();
