@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { checkDshRegistryReadiness } from './check-dsh-registry-readiness.mjs';
 import { waitForNpmPackage } from './wait-for-npm-package.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,39 +50,83 @@ function run(command, args, options = {}) {
   return result.stdout;
 }
 
-export async function runRelease() {
-  const { version, tag } = parseReleaseArgs(process.argv.slice(2));
-  assertCleanWorktree(run('git', ['status', '--porcelain']));
-  run(process.execPath, ['scripts/set-dsh-release-version.mjs', '--version', version, '--tag', tag], { inherit: true });
-  run('pnpm', ['pack:dsh-plugins'], { inherit: true });
-  const manifest = JSON.parse(readFileSync(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
-  const receiptPath = resolve(root, 'dist/releases', version, 'release-receipt.json');
-  mkdirSync(dirname(receiptPath), { recursive: true });
-  const receipt = readFileOr(receiptPath, { version, tag, commit: run('git', ['rev-parse', 'HEAD']).trim(), published: [] });
+export async function runRelease({
+  args = process.argv.slice(2),
+  effects = createReleaseEffects(root),
+  repositoryRoot = root,
+} = {}) {
+  const { version, tag } = parseReleaseArgs(args);
+  assertCleanWorktree(effects.status());
+  const configuredManifest = effects.readConfiguredManifest();
+  await effects.checkRegistry({ root: repositoryRoot, release: configuredManifest });
+  effects.prepare({ version, tag });
+  effects.pack();
+  const manifest = effects.readPreparedManifest();
+  const receiptPath = resolve(repositoryRoot, 'dist/releases', version, 'release-receipt.json');
+  const receipt = effects.loadReceipt(receiptPath, {
+    version, tag, commit: effects.commit(), published: [],
+  });
   const order = publicationOrder(manifest);
-  const artifacts = artifactMap(version, manifest);
+  const artifacts = effects.artifacts(version, manifest);
   for (const name of order) {
-    if (!existsSync(artifacts[name])) throw new Error(`Missing release artifact for ${name}@${version}: ${artifacts[name]}`);
+    if (!effects.artifactExists(artifacts[name])) {
+      throw new Error(`Missing release artifact for ${name}@${version}: ${artifacts[name]}`);
+    }
   }
 
-  run('npm', ['whoami'], { inherit: true });
+  effects.authenticate();
   for (const name of pendingPublications(order, receipt)) {
     const tarball = artifacts[name];
     let entry = receipt.published.find((candidate) => candidate.name === name);
     if (!entry) {
-      run('npm', ['publish', tarball, '--access', 'public', '--tag', tag], { inherit: true });
-      entry = { name, version, tarball, publishedAt: new Date().toISOString() };
+      effects.publish(name, tarball, tag);
+      entry = { name, version, tarball, publishedAt: effects.now() };
       receipt.published.push(entry);
-      writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+      effects.saveReceipt(receiptPath, receipt);
     }
-    const metadata = await waitForNpmPackage(name, version);
+    const metadata = await effects.waitForPackage(name, version);
     entry.integrity = metadata.dist.integrity;
-    entry.visibleAt = new Date().toISOString();
-    writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+    entry.visibleAt = effects.now();
+    effects.saveReceipt(receiptPath, receipt);
   }
-  run(process.execPath, ['scripts/verify-public-dsh-install.mjs', '--version', version], { inherit: true });
-  receipt.verifiedAt = new Date().toISOString();
-  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  effects.verifyPublic(version);
+  receipt.verifiedAt = effects.now();
+  effects.saveReceipt(receiptPath, receipt);
+  return receipt;
+}
+
+function createReleaseEffects(repositoryRoot) {
+  return {
+    status: () => run('git', ['status', '--porcelain']),
+    readConfiguredManifest: () => readReleaseManifest(repositoryRoot),
+    checkRegistry: checkDshRegistryReadiness,
+    prepare: ({ version, tag }) => run(process.execPath, [
+      'scripts/set-dsh-release-version.mjs', '--version', version, '--tag', tag,
+    ], { inherit: true }),
+    pack: () => run('pnpm', ['pack:dsh-plugins'], { inherit: true }),
+    readPreparedManifest: () => readReleaseManifest(repositoryRoot),
+    loadReceipt: readFileOr,
+    artifacts: artifactMap,
+    artifactExists: existsSync,
+    authenticate: () => run('npm', ['whoami'], { inherit: true }),
+    publish: (_name, tarball, tag) => run(
+      'npm', ['publish', tarball, '--access', 'public', '--tag', tag], { inherit: true },
+    ),
+    waitForPackage: waitForNpmPackage,
+    saveReceipt: (path, receipt) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`);
+    },
+    verifyPublic: (version) => run(process.execPath, [
+      'scripts/verify-public-dsh-install.mjs', '--version', version,
+    ], { inherit: true }),
+    commit: () => run('git', ['rev-parse', 'HEAD']).trim(),
+    now: () => new Date().toISOString(),
+  };
+}
+
+function readReleaseManifest(repositoryRoot) {
+  return JSON.parse(readFileSync(resolve(repositoryRoot, 'release/dsh-plugins.json'), 'utf8'));
 }
 
 function artifactMap(version, manifest) {

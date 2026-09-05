@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertCleanWorktree, installCommands, parseReleaseArgs, pendingPublications,
-  publicationOrder,
+  publicationOrder, runRelease,
 } from './release-dsh-plugins.mjs';
 import { waitForNpmPackage } from './wait-for-npm-package.mjs';
 
@@ -53,5 +53,34 @@ describe('guarded DSH release workflow', () => {
       lookup, delay: async () => {}, attempts: 2,
     })).rejects.toThrow(/timed out/i);
     expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('checks exact DSH registry readiness before release mutation or publication', async () => {
+    const events: string[] = [];
+    await runRelease({
+      args: ['--version', '1.2.3-alpha.1', '--tag', 'alpha'],
+      effects: {
+        status: () => '',
+        readConfiguredManifest: () => manifest,
+        checkRegistry: async () => { events.push('registry-check'); },
+        prepare: () => { events.push('prepare'); },
+        pack: () => { events.push('pack'); },
+        readPreparedManifest: () => manifest,
+        loadReceipt: () => ({ version: manifest.version, tag: 'alpha', published: [] }),
+        artifacts: () => Object.fromEntries(publicationOrder(manifest).map((name) => [name, `${name}.tgz`])),
+        artifactExists: () => true,
+        authenticate: () => {},
+        publish: (name: string) => { events.push(`publish:${name}`); },
+        waitForPackage: async () => ({ dist: { integrity: 'sha512-ready' } }),
+        saveReceipt: () => {},
+        verifyPublic: () => {},
+        commit: () => 'abc123',
+        now: () => '2026-09-05T00:00:00.000Z',
+      },
+    });
+
+    expect(events[0]).toBe('registry-check');
+    expect(events.indexOf('registry-check')).toBeLessThan(events.indexOf('prepare'));
+    expect(events.indexOf('registry-check')).toBeLessThan(events.findIndex((event) => event.startsWith('publish:')));
   });
 });
