@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { auditPackageEntries, auditPackedManifest } from './dsh-package-audit.mjs';
+import { materializeBundleRuntimeDependencies } from './set-dsh-release-version.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -130,5 +131,35 @@ describe('official DSH release manifests', () => {
       dependencies: { local: 'workspace:*' },
       dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web' } },
     })).toThrow(/forbidden local dependency/i);
+  });
+
+  it('rejects a packed Host runtime import that remains an optional peer', async () => {
+    const release = JSON.parse(await readFile(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
+    const manifest = JSON.parse(await readFile(
+      resolve(root, 'packages/plugin-dsh-space/package.json'),
+      'utf8',
+    ));
+    manifest.optionalDependencies = Object.fromEntries(
+      release.runtimes.map((runtime: { name: string }) => [runtime.name, release.version]),
+    );
+    const hostSource = await readFile(resolve(root, 'packages/plugin-dsh-space/lib/index.js'), 'utf8');
+
+    expect(() => auditPackedManifest(manifest, { release, hostSource }))
+      .toThrow(/runtime dependency.*dsh-llm/i);
+  });
+
+  it('accepts the official packed dependency classification', async () => {
+    const release = JSON.parse(await readFile(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
+    const manifest = JSON.parse(await readFile(
+      resolve(root, 'packages/plugin-dsh-space/package.json'),
+      'utf8',
+    ));
+    manifest.optionalDependencies = Object.fromEntries(
+      release.runtimes.map((runtime: { name: string }) => [runtime.name, release.version]),
+    );
+    const prepared = materializeBundleRuntimeDependencies(manifest, manifest.name, release.dsh);
+    const hostSource = await readFile(resolve(root, 'packages/plugin-dsh-space/lib/index.js'), 'utf8');
+
+    expect(() => auditPackedManifest(prepared, { release, hostSource })).not.toThrow();
   });
 });

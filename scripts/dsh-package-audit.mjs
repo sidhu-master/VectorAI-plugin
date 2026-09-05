@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
+import { runtimeImports } from './dsh-bundle-runtime-dependencies.mjs';
 import { RUNTIME_TARGETS, RUNTIME_VERSION } from './vectorizer-runtime-config.mjs';
 
 const allowedEntry = /^package\/(?:package\.json|README\.md|LICENSE|cordis\.patch\.yml|lib\/(?:.*\.js|.*\.d\.ts))$/;
@@ -19,7 +21,7 @@ export function auditPackageEntries(entries) {
   }
 }
 
-export function auditPackedManifest(manifest) {
+export function auditPackedManifest(manifest, { release, hostSource } = {}) {
   if (manifest?.publishConfig?.access !== 'public') {
     throw new Error('Packed package must use public npm access');
   }
@@ -40,13 +42,21 @@ export function auditPackedManifest(manifest) {
       throw new Error('Space Bundle platform runtime coverage or version mismatch');
     }
   }
+  if (release && typeof hostSource === 'string') {
+    auditDshDependencyClassification(manifest, release, hostSource);
+  }
 }
 
 export function auditTarball(path) {
   const listing = runTar(['-tzf', path]).trim().split('\n').filter(Boolean);
   auditPackageEntries(listing);
   const manifest = JSON.parse(runTar(['-xOzf', path, 'package/package.json']));
-  auditPackedManifest(manifest);
+  const hostSource = runTar(['-xOzf', path, 'package/lib/index.js']);
+  const release = JSON.parse(readFileSync(
+    new URL('../release/dsh-plugins.json', import.meta.url),
+    'utf8',
+  ));
+  auditPackedManifest(manifest, { release, hostSource });
   for (const entry of listing.filter((item) => /\.(?:js|json|md|yml|py|d\.ts)$/.test(item))) {
     const content = runTar(['-xOzf', path, entry]);
     if (/\/Users\/|AndroidStudioProjects|sourceMappingURL=/.test(content)) {
@@ -54,6 +64,50 @@ export function auditTarball(path) {
     }
   }
   return manifest;
+}
+
+function auditDshDependencyClassification(manifest, release, hostSource) {
+  const expected = release.dsh?.bundleRuntimeDependencies?.[manifest.name];
+  if (!Array.isArray(expected) || expected.length === 0) {
+    throw new Error(`Missing DSH runtime dependency inventory for Bundle: ${manifest.name}`);
+  }
+  const actual = runtimeImports(hostSource);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`Built Host runtime dependency inventory mismatch for ${manifest.name}`);
+  }
+
+  for (const name of expected) {
+    if (manifest.dependencies?.[name] !== release.dsh.version) {
+      throw new Error(`Packed runtime dependency ${name} must be an exact normal dependency`);
+    }
+    if (manifest.peerDependencies?.[name] !== undefined
+      || manifest.peerDependenciesMeta?.[name] !== undefined) {
+      throw new Error(`Packed runtime dependency ${name} must not remain an optional peer`);
+    }
+  }
+  for (const [name, version] of Object.entries(manifest.dependencies ?? {})) {
+    if (name.startsWith('@deepseek-ai/dsh-') && !expected.includes(name)) {
+      throw new Error(`Unexpected packed DSH runtime dependency ${name}`);
+    }
+    if (name.startsWith('@deepseek-ai/dsh-') && version !== release.dsh.version) {
+      throw new Error(`Packed DSH runtime dependency version mismatch for ${name}`);
+    }
+  }
+  for (const [name, version] of Object.entries(manifest.peerDependencies ?? {})) {
+    if (!name.startsWith('@deepseek-ai/dsh-')) continue;
+    if (version !== release.dsh.version) {
+      throw new Error(`Packed DSH peer dependency version mismatch for ${name}`);
+    }
+    if (manifest.peerDependenciesMeta?.[name]?.optional !== true) {
+      throw new Error(`Packed Host-provided DSH peer must remain optional: ${name}`);
+    }
+  }
+  if (!manifest.peerDependencies?.['@deepseek-ai/cordis']) {
+    throw new Error('Packed Bundle must keep Cordis as a required peer');
+  }
+  if (manifest.peerDependenciesMeta?.['@deepseek-ai/cordis'] !== undefined) {
+    throw new Error('Packed Bundle must not mark Cordis optional');
+  }
 }
 
 function runTar(arguments_) {

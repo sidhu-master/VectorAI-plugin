@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { materializeBundleRuntimeDependencies } from './set-dsh-release-version.mjs';
 
 interface PackageManifest {
   name: string;
@@ -75,6 +76,23 @@ describe('DSH plugin bundle boundaries', () => {
     const typert = readFileSync(resolve(root, `packages/plugin-dsh-${bundle}/lib/typert.js`), 'utf8');
 
     expect(typert).toContain(`package: ${JSON.stringify(packageName)}`);
+  });
+
+  it('keeps development peers intact until release manifests are materialized', () => {
+    const bundle = readManifest('packages/plugin-dsh-space/package.json') as PackageManifest & {
+      peerDependencies: Record<string, string>;
+      peerDependenciesMeta: Record<string, { optional: boolean }>;
+    };
+    const prepared = materializeBundleRuntimeDependencies(bundle, bundle.name, {
+      version: '0.1.3-alpha.1',
+      bundleRuntimeDependencies: {
+        [bundle.name]: ['@deepseek-ai/dsh-tools'],
+      },
+    });
+
+    expect(bundle.peerDependencies['@deepseek-ai/dsh-tools']).toBe('0.1.3-alpha.1');
+    expect(prepared.dependencies['@deepseek-ai/dsh-tools']).toBe('0.1.3-alpha.1');
+    expect(prepared.peerDependencies['@deepseek-ai/dsh-tools']).toBeUndefined();
   });
 });
 
