@@ -16,6 +16,7 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 swiftc -O \
   -framework AppKit \
   -framework WebKit \
+  "$APP_SOURCE_DIR/Sources/DSHRuntimeBaseline.generated.swift" \
   "$APP_SOURCE_DIR/Sources/LauncherCore.swift" \
   "$APP_SOURCE_DIR/Sources/DSHVersion.swift" \
   "$APP_SOURCE_DIR/Sources/UpdateChecker.swift" \

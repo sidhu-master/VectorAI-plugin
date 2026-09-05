@@ -4,7 +4,7 @@
 
 Move VectorAI from DeepSeek Harness `0.1.2-alpha.5` to the latest official
 upstream release, `dsh-v0.1.3-alpha.1` at commit
-`d347e703725e7e2954a82b08cc00410c7f275c21`, and establish one repeatable
+`d347e703908d0406b7a7ef80e3a0e594d86b2215`, and establish one repeatable
 latest-only upgrade workflow for later DSH releases.
 
 VectorAI accepts upstream breaking changes and migrates forward. It does not
@@ -111,7 +111,7 @@ coordinates. Its DSH section is expanded to hold:
   "dsh": {
     "version": "0.1.3-alpha.1",
     "tag": "dsh-v0.1.3-alpha.1",
-    "commit": "d347e703725e7e2954a82b08cc00410c7f275c21",
+    "commit": "d347e703908d0406b7a7ef80e3a0e594d86b2215",
     "registrySdkVersion": "0.1.2-rc.1",
     "profile": "web"
   }

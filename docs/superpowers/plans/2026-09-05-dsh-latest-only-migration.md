@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Runtime version is exactly `0.1.3-alpha.1`, tag `dsh-v0.1.3-alpha.1`, commit `d347e703725e7e2954a82b08cc00410c7f275c21`.
+- Runtime version is exactly `0.1.3-alpha.1`, tag `dsh-v0.1.3-alpha.1`, commit `d347e703908d0406b7a7ef80e3a0e594d86b2215`.
 - npm SDK fallback is exactly `0.1.2-rc.1` only while matching `0.1.3-alpha.1` packages are unavailable.
 - Support one DSH runtime baseline only; do not add an old-API fallback or dual-version branch.
 - Keep the official `shell.overlay` integration and do not patch DSH source or generated runtime output.
@@ -55,7 +55,7 @@ const baseline = readDshRuntimeManifest(root);
 expect(baseline).toEqual({
   version: '0.1.3-alpha.1',
   tag: 'dsh-v0.1.3-alpha.1',
-  commit: 'd347e703725e7e2954a82b08cc00410c7f275c21',
+  commit: 'd347e703908d0406b7a7ef80e3a0e594d86b2215',
   registrySdkVersion: '0.1.2-rc.1',
   profile: 'web',
 });
@@ -102,7 +102,7 @@ Set:
 "dsh": {
   "version": "0.1.3-alpha.1",
   "tag": "dsh-v0.1.3-alpha.1",
-  "commit": "d347e703725e7e2954a82b08cc00410c7f275c21",
+  "commit": "d347e703908d0406b7a7ef80e3a0e594d86b2215",
   "registrySdkVersion": "0.1.2-rc.1",
   "profile": "web",
   "installArgs": {

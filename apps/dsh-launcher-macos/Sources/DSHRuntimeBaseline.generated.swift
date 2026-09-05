@@ -4,5 +4,5 @@
 enum DSHRuntimeBaseline {
     static let version = "0.1.3-alpha.1"
     static let tag = "dsh-v0.1.3-alpha.1"
-    static let commit = "d347e703725e7e2954a82b08cc00410c7f275c21"
+    static let commit = "d347e703908d0406b7a7ef80e3a0e594d86b2215"
 }

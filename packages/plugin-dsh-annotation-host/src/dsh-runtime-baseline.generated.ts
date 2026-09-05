@@ -3,4 +3,4 @@
 
 export const DSH_RUNTIME_VERSION = "0.1.3-alpha.1" as const;
 export const DSH_RUNTIME_TAG = "dsh-v0.1.3-alpha.1" as const;
-export const DSH_RUNTIME_COMMIT = "d347e703725e7e2954a82b08cc00410c7f275c21" as const;
+export const DSH_RUNTIME_COMMIT = "d347e703908d0406b7a7ef80e3a0e594d86b2215" as const;

@@ -7,7 +7,6 @@ import WebKit
 private enum LauncherConstants {
     static let port: UInt16 = 3080
     static let startupTimeout: TimeInterval = 90
-    static let bootstrapVersion = "0.1.2-alpha.5"
     static let runtimeRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/VectorAI/dsh-runtime", isDirectory: true)
 }
@@ -53,7 +52,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
-            try registry.bootstrap(version: LauncherConstants.bootstrapVersion)
+            try registry.bootstrap(version: DSHRuntimeBaseline.version)
             switchingCandidate = try registry.load().switchPending
         } catch {
             NSAlert(error: error).runModal()
@@ -104,7 +103,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         window.contentView = webView
         window.delegate = self
         window.isReleasedWhenClosed = false
-        let current = (try? registry.load().activeVersion).flatMap(DSHVersion.init) ?? DSHVersion(LauncherConstants.bootstrapVersion)!
+        let current = (try? registry.load().activeVersion).flatMap(DSHVersion.init) ?? DSHVersion(DSHRuntimeBaseline.version)!
         updateToolbar = UpdateToolbarController(currentVersion: current)
         updateToolbar.onCheck = { [weak self] in self?.checkForUpdates() }
         updateToolbar.onInstall = { [weak self] tag in self?.installUpdate(tag) }
@@ -244,6 +243,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     private func installUpdate(_ tag: DSHTag) {
+        guard
+            tag.version.description == DSHRuntimeBaseline.version,
+            tag.name == DSHRuntimeBaseline.tag,
+            tag.commitSHA == DSHRuntimeBaseline.commit
+        else {
+            updateToolbar.setFailure("This DSH build has not completed VectorAI compatibility verification.")
+            return
+        }
         let updateLog = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/DSH/update.log")
         updateToolbar.setInstalling("Preparing DSH \(tag.version)…")

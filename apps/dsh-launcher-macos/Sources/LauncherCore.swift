@@ -33,9 +33,11 @@ enum WindowChromeInteraction {
 }
 
 enum SourceDSHResolver {
-    private static let pinnedVersion = "0.1.2-alpha.5"
-
-    static func find(in sourceDirectory: URL, expectedVersion: String = pinnedVersion, fileManager: FileManager = .default) -> URL? {
+    static func find(
+        in sourceDirectory: URL,
+        expectedVersion: String = DSHRuntimeBaseline.version,
+        fileManager: FileManager = .default
+    ) -> URL? {
         let packageJSON = sourceDirectory.appendingPathComponent("package.json")
         let executable = sourceDirectory.appendingPathComponent("apps/cli/lib/bin.js")
         guard

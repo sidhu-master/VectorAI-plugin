@@ -79,10 +79,15 @@ private func testSourceDSHResolverSelectsOnlyPinnedExecutable() throws {
         return executable
     }
 
-    let pinnedExecutable = try createSourceDSH(version: "0.1.2-alpha.5")
+    let pinnedExecutable = try createSourceDSH(version: DSHRuntimeBaseline.version)
 
     let resolved = SourceDSHResolver.find(in: temporaryDirectory)
-    try expect(resolved?.standardizedFileURL == pinnedExecutable.standardizedFileURL, "must resolve only the pinned alpha.5 source runtime")
+    try expect(resolved?.standardizedFileURL == pinnedExecutable.standardizedFileURL, "must resolve the generated DSH source runtime baseline")
+
+    _ = try createSourceDSH(version: "0.1.2-alpha.5")
+    try expect(SourceDSHResolver.find(in: temporaryDirectory) == nil, "must reject a source runtime older than the generated baseline")
+
+    _ = try createSourceDSH(version: DSHRuntimeBaseline.version)
 
     let command = DSHServerCommand.makeDirect(port: 43123, dshURL: pinnedExecutable)
     try expect(command.executableURL == pinnedExecutable, "direct launch must invoke the cached DSH executable")
@@ -356,22 +361,29 @@ private func testDSHVersionOrderingAndChannelPolicy() throws {
     try expect(DSHVersion("main") == nil, "non-version refs must be rejected")
 }
 
-private func testOfficialTagSelectionUsesCurrentChannel() throws {
+private func testOfficialTagSelectionDoesNotExceedTestedBaseline() throws {
     let payload = Data("""
     [
       {"name":"dsh-v0.1.2-alpha.2","commit":{"sha":"alpha2"}},
       {"name":"unrelated-v9.0.0","commit":{"sha":"bad"}},
-      {"name":"dsh-v0.1.2","commit":{"sha":"stable"}},
-      {"name":"dsh-v0.2.0-alpha.1","commit":{"sha":"next-alpha"}}
+      {"name":"dsh-v0.1.3-alpha.1","commit":{"sha":"tested"}},
+      {"name":"dsh-v0.1.3-alpha.2","commit":{"sha":"unverified"}},
+      {"name":"dsh-v0.2.0-alpha.1","commit":{"sha":"future"}}
     ]
     """.utf8)
-    let prerelease = try GitHubUpdateChecker.selectLatest(
+    let selected = try GitHubUpdateChecker.selectLatest(
         from: payload,
-        current: try requireVersion("0.1.2-alpha.1")
+        current: try requireVersion("0.1.2-alpha.1"),
+        maximum: try requireVersion(DSHRuntimeBaseline.version)
     )
-    try expect(prerelease?.name == "dsh-v0.2.0-alpha.1", "prerelease channel must select latest official compatible tag")
-    let stable = try GitHubUpdateChecker.selectLatest(from: payload, current: try requireVersion("0.1.1"))
-    try expect(stable?.name == "dsh-v0.1.2", "stable channel must ignore alpha tags")
+    try expect(selected?.name == DSHRuntimeBaseline.tag, "update selection must stop at the tested runtime baseline")
+
+    let current = try GitHubUpdateChecker.selectLatest(
+        from: payload,
+        current: try requireVersion(DSHRuntimeBaseline.version),
+        maximum: try requireVersion(DSHRuntimeBaseline.version)
+    )
+    try expect(current == nil, "the tested runtime baseline must report current even when newer unverified tags exist")
 }
 
 private func testRuntimeRegistryPersistsCandidateAndRollbackState() throws {
@@ -391,6 +403,23 @@ private func testRuntimeRegistryPersistsCandidateAndRollbackState() throws {
     let rolledBack = try registry.load()
     try expect(rolledBack.activeVersion == "0.1.2-alpha.1", "rollback must restore previous runtime")
     try expect(rolledBack.candidateVersion == nil, "rollback must clear candidate")
+}
+
+private func testRuntimeRegistryMigratesToGeneratedBaseline() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("dsh-registry-migration-tests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = RuntimeRegistry(rootDirectory: root)
+    try registry.bootstrap(version: "0.1.2-alpha.5")
+    try registry.stageCandidate(version: "0.1.2-alpha.6")
+
+    try registry.bootstrap(version: DSHRuntimeBaseline.version)
+
+    let migrated = try registry.load()
+    try expect(migrated.activeVersion == DSHRuntimeBaseline.version, "bootstrap must migrate an old launcher state to the generated runtime baseline")
+    try expect(migrated.previousVersion == nil, "latest-only migration must not retain an unsupported rollback runtime")
+    try expect(migrated.candidateVersion == nil, "latest-only migration must clear stale candidates")
+    try expect(!migrated.switchPending, "latest-only migration must clear stale switch state")
 }
 
 private func testRuntimeInstallerBuildPlanIsPinnedAndSideBySide() throws {
@@ -431,8 +460,9 @@ private struct LauncherCoreTestRunner {
             ("managed process stops its group and leaves outsiders alive", testManagedProcessStopsItsWholeGroupAndLeavesOutsidersAlive),
             ("managed process passes environment overrides", testManagedProcessPassesEnvironmentOverridesToChild),
             ("DSH version ordering and channel policy", testDSHVersionOrderingAndChannelPolicy),
-            ("official tag selection follows current channel", testOfficialTagSelectionUsesCurrentChannel),
+            ("official tag selection stops at tested baseline", testOfficialTagSelectionDoesNotExceedTestedBaseline),
             ("runtime registry persists candidate and rollback", testRuntimeRegistryPersistsCandidateAndRollbackState),
+            ("runtime registry migrates to generated baseline", testRuntimeRegistryMigratesToGeneratedBaseline),
             ("runtime installer plan is pinned and side-by-side", testRuntimeInstallerBuildPlanIsPinnedAndSideBySide),
             ("update toolbar dot reflects availability", testUpdateToolbarStateShowsDotOnlyForAvailableUpdate),
         ]

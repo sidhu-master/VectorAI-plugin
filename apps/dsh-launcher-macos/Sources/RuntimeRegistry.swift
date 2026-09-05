@@ -21,7 +21,16 @@ final class RuntimeRegistry {
     }
 
     func bootstrap(version: String) throws {
-        guard !fileManager.fileExists(atPath: manifestURL.path) else { return }
+        if
+            fileManager.fileExists(atPath: manifestURL.path),
+            let state = try? load(),
+            state.activeVersion == version,
+            state.previousVersion == nil,
+            state.candidateVersion == nil,
+            !state.switchPending
+        {
+            return
+        }
         try save(RuntimeState(activeVersion: version, previousVersion: nil, candidateVersion: nil, switchPending: false))
     }
 

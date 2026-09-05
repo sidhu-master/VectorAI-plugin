@@ -35,7 +35,7 @@ describe('official DSH release manifests', () => {
     expect(release.dsh).toMatchObject({
       version: '0.1.3-alpha.1',
       tag: 'dsh-v0.1.3-alpha.1',
-      commit: 'd347e703725e7e2954a82b08cc00410c7f275c21',
+      commit: 'd347e703908d0406b7a7ef80e3a0e594d86b2215',
       registrySdkVersion: '0.1.2-rc.1',
       profile: 'web',
     });

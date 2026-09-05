@@ -70,7 +70,7 @@ DSH 持久化使用版本化 durable envelope，包含当前 Drawing、追加式
 
 ### Client 与布局
 
-第一层 Client 通过 DSH `0.1.2-alpha.5` 的正式 `shell.overlay` 扩展位声明 session-scoped Drawing 子槽，并按官方 Conversation 区域的真实尺寸为画布预留左侧空间。它在内部维护 `DrawingSurfaceRegistry`；专业插件注册 contribution，但注册本身不激活 UI，只有当前 session 的成功能力 claim 才参与确定性选举。没有 Drawing 时不产生 Overlay、Conversation 恢复全宽；存在 Drawing 时固定使用“图纸在中间、聊天在右侧”的横向布局。仓库不再包含或运行 DSH 编译产物补丁，也不覆盖官方 root/sidebar/details 的所有权。
+第一层 Client 通过 DSH `0.1.3-alpha.1` 的正式 `shell.overlay` 扩展位声明 session-scoped Drawing 子槽，并按官方 Conversation 区域的真实尺寸为画布预留左侧空间。它在内部维护 `DrawingSurfaceRegistry`；专业插件注册 contribution，但注册本身不激活 UI，只有当前 session 的成功能力 claim 才参与确定性选举。没有 Drawing 时不产生 Overlay、Conversation 恢复全宽；存在 Drawing 时固定使用“图纸在中间、聊天在右侧”的横向布局。仓库不包含或运行 DSH 编译产物补丁，也不覆盖官方 root/sidebar/details 的所有权。
 
 macOS Launcher 在无终端窗口下启动 DSH，处理 3080 端口占用、独立窗口和关闭窗口后终止所属进程组。
 
@@ -146,7 +146,7 @@ DXF `HATCH` 在第一层以版本化参数模型保存：边界路径、直线/�
 
 工具与业务服务只能注入 `runner.run()` 的薄封装：标注工具负责应用 edit program，尺寸服务负责合并并保存投影，分区与形位服务负责各自的会话事务。识别管线不得写 Drawing、分区、尺寸计划或标注会话；反过来，持久化服务也不得拥有或直接调用底层识别算法。尺寸链的人工显示/闭环编辑复用轴向管线提供的重投影边界，不复制尺寸投影实现。
 
-所有 DSH 耦合集中在 `dsh-recognition-model-adapter.ts`：父 Agent 解析、图片附件入库、子代理启动、`agent/request` 与 `llm/stream` 观测，以及资源释放都只能从这一边界发生。子代理传输提供方与实际 LLM provider/model 是两套独立路由，不得互相代用。当前兼容门槛精确锁定 `@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-llm` 和 `@deepseek-ai/dsh-subagent` 的 `0.1.2-alpha.5`；任一版本不同、五项子代理能力不完整、子会话请求无法关联或 Agent/LLM 路由漂移时均明确失败，不静默降级为另一种请求方式。
+所有 DSH 耦合集中在 `dsh-recognition-model-adapter.ts`：父 Agent 解析、图片附件入库、子代理启动、`agent/request` 与 `llm/stream` 观测，以及资源释放都只能从这一边界发生。子代理传输提供方与实际 LLM provider/model 是两套独立路由，不得互相代用。当前运行时兼容门槛由 `release/dsh-plugins.json` 唯一维护，精确锁定 DSH `0.1.3-alpha.1`（源码 tag 与 commit 同时校验）；任一运行时包版本不同、五项子代理能力不完整、子会话请求无法关联或 Agent/LLM 路由漂移时均明确失败，不静默降级为另一种请求方式。npm 暂未发布同版本 SDK，因此构建期依赖临时使用清单记录的 `0.1.2-rc.1`，它不是可运行版本，也不会成为终端用户安装步骤。
 
 模型仍只承担有界语义复核。轴段坐标、边界、尺寸、基准优先级、形位特征、公差值、粗糙度值和最终图元落点继续由本地算法与正式工程证据决定。一次子代理可以产生多次模型请求，运行时按子会话 ID 收集每次请求的 provider、model、reasoning effort、token 上限、消息数、工具名和内容摘要，以便比较真实运行环境。
 

@@ -27,8 +27,15 @@ final class GitHubUpdateChecker: UpdateChecking {
     private struct APICommit: Decodable { let sha: String }
     private struct APITag: Decodable { let name: String; let commit: APICommit }
     private let session: URLSession
+    private let maximumVersion: DSHVersion
 
-    init(session: URLSession = .shared) { self.session = session }
+    init(
+        session: URLSession = .shared,
+        maximumVersion: DSHVersion = DSHVersion(DSHRuntimeBaseline.version)!
+    ) {
+        self.session = session
+        self.maximumVersion = maximumVersion
+    }
 
     func check(current: DSHVersion, completion: @escaping (UpdateCheckResult) -> Void) {
         let url = URL(string: "https://api.github.com/repos/deepseek-ai/deepseek-harness/tags?per_page=100")!
@@ -43,7 +50,11 @@ final class GitHubUpdateChecker: UpdateChecking {
                 result = .unavailable("GitHub HTTP \(http.statusCode)")
             } else if let data {
                 do {
-                    result = try Self.selectLatest(from: data, current: current).map(UpdateCheckResult.available) ?? .current
+                    result = try Self.selectLatest(
+                        from: data,
+                        current: current,
+                        maximum: self.maximumVersion
+                    ).map(UpdateCheckResult.available) ?? .current
                 } catch {
                     result = .unavailable(error.localizedDescription)
                 }
@@ -54,10 +65,17 @@ final class GitHubUpdateChecker: UpdateChecking {
         }.resume()
     }
 
-    static func selectLatest(from data: Data, current: DSHVersion) throws -> DSHTag? {
+    static func selectLatest(from data: Data, current: DSHVersion, maximum: DSHVersion) throws -> DSHTag? {
         let tags = try JSONDecoder().decode([APITag].self, from: data)
         return tags.compactMap { tag -> DSHTag? in
-            guard tag.name.hasPrefix("dsh-v"), let version = DSHVersion(tag.name), current.accepts(candidate: version) else { return nil }
+            guard
+                tag.name.hasPrefix("dsh-v"),
+                let version = DSHVersion(tag.name),
+                current.accepts(candidate: version),
+                version <= maximum
+            else {
+                return nil
+            }
             let encoded = tag.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? tag.name
             let currentTag = "dsh-v\(current)"
             return DSHTag(

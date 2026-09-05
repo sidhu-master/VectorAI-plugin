@@ -14,6 +14,7 @@ fi
 print -r -- "PASS: native titlebar remains a dedicated drag and content-safe area"
 
 swiftc \
+  "$APP_SOURCE_DIR/Sources/DSHRuntimeBaseline.generated.swift" \
   "$APP_SOURCE_DIR/Sources/LauncherCore.swift" \
   "$APP_SOURCE_DIR/Sources/DSHVersion.swift" \
   "$APP_SOURCE_DIR/Sources/UpdateChecker.swift" \
