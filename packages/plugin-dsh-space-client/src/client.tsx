@@ -2,9 +2,6 @@
 
 import type { Context } from '@deepseek-ai/cordis';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
-import type {
-  ConversationController,
-} from '@deepseek-ai/dsh-client-ui-conversation/client';
 import type { UseSession } from '@deepseek-ai/dsh-client-ui-session/client';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import {
@@ -26,8 +23,12 @@ import { DRAWING_SPACE_REMOTE } from './remote';
 import { DrawingSurfaceHost } from './DrawingSurfaceHost';
 import { createDrawingSurfaceRegistry } from './surface-registry';
 import { VectorAIWorkspaceOverlay, type DrawingPresence } from './VectorAIWorkspaceOverlay';
-import type { DrawingWorkspaceSlotProps } from './workspace-slot';
 import { createDrawingFileExport, type DrawingFileExport } from './drawing-export';
+import {
+  stageDraftAttachments,
+  type DshDraftConversation,
+  type DshInputActions,
+} from './dsh-draft-attachments';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -45,8 +46,8 @@ interface DrawingConversationViewProps {
   sessionId: string;
   surfaceRegistry: DrawingSurfaceRegistry;
   workspacePort: DrawingWorkspacePort;
-  inputActions: DrawingWorkspaceSlotProps['inputActions'];
-  createDraftImages(files: readonly File[]): readonly { id: string }[];
+  inputActions: DshInputActions;
+  conversation: DshDraftConversation;
   releaseSources(): void;
   drawingFileExport: DrawingFileExport;
 }
@@ -65,7 +66,7 @@ export function DrawingConversationView({
   useSession,
   workspacePort,
   inputActions,
-  createDraftImages,
+  conversation,
   releaseSources,
   drawingFileExport,
 }: DrawingConversationViewProps) {
@@ -95,8 +96,7 @@ export function DrawingConversationView({
   useEffect(() => releaseSources, [releaseSources]);
 
   const uploadDrawing = (files: readonly File[]) => {
-    const attachments = createDraftImages(files);
-    if (attachments.length === 0 || !inputActions.addImages(attachments.map(({ id }) => id as never))) return;
+    if (!stageDraftAttachments({ sessionId, files, conversation, inputActions })) return;
     inputActions.setDraft('请将上传的图片导入并矢量化为可编辑图纸');
     inputActions.submit();
   };
@@ -163,10 +163,7 @@ export async function apply(ctx: Context) {
   const viewFiber = ctx.inject(['remote.drawingSpace', 'remote.commands', 'conversation', 'uiConversation'], (scope) => {
     const drawingSpace = scope.get('remote').drawingSpace;
     const commands = scope.get('remote').commands;
-    const conversation = scope.get('conversation') as unknown as Pick<
-      ConversationController,
-      'createDraftImages'
-    >;
+    const conversation = scope.get('conversation') as unknown as DshDraftConversation;
     const uiConversation = scope.get('uiConversation') as unknown as {
       imageUrl(sessionId: SessionId, attachment: ImageAttachmentRef): Promise<string>;
     };
@@ -184,7 +181,7 @@ export async function apply(ctx: Context) {
               uiConversation.imageUrl(ownerId as SessionId, attachment)
             ),
           }),
-          createDraftImages: (files: readonly File[]) => conversation.createDraftImages(files),
+          conversation,
           releaseSources: () => undefined,
           drawingFileExport,
         };

@@ -16,10 +16,9 @@ const useIdleSession = ((selector: (state: { running: boolean }) => unknown) => 
   selector({ running: false })
 )) as never;
 const inputActions = {
-  setDraft: vi.fn(), addImages: vi.fn(() => true), removeImage: vi.fn(),
-  dropImages: vi.fn(), pruneImages: vi.fn(), submit: vi.fn(),
+  setDraft: vi.fn(), addAttachments: vi.fn(() => true), submit: vi.fn(),
 } as never;
-const createDraftImages = vi.fn(() => []);
+const conversation = { createDrafts: vi.fn(() => []), releaseDraftAttachments: vi.fn() };
 const drawingFileExport = { download: vi.fn() } as never;
 
 function drawingSnapshot(): DrawingWorkspaceSnapshot {
@@ -55,7 +54,7 @@ describe('DrawingConversationView', () => {
           useSession={useIdleSession}
           workspacePort={workspacePort}
           inputActions={inputActions}
-          createDraftImages={createDraftImages}
+          conversation={conversation}
           releaseSources={() => undefined}
           drawingFileExport={drawingFileExport}
         />,
@@ -82,7 +81,7 @@ describe('DrawingConversationView', () => {
           useSession={useIdleSession}
           workspacePort={workspacePort}
           inputActions={inputActions}
-          createDraftImages={createDraftImages}
+          conversation={conversation}
           releaseSources={() => undefined}
           drawingFileExport={drawingFileExport}
         />,
@@ -102,14 +101,16 @@ describe('DrawingConversationView', () => {
       load: async () => drawingSnapshot(),
       commit: async () => ({ status: 'rejected', message: 'not available' }),
     };
-    const addImages = vi.fn(() => true);
+    const addAttachments = vi.fn(() => true);
     const setDraft = vi.fn();
     const submit = vi.fn();
     const localInputActions = {
-      setDraft, addImages, submit,
-      removeImage: vi.fn(), pruneImages: vi.fn(),
+      setDraft, addAttachments, submit,
     } as never;
-    const localCreateDraftImages = vi.fn(() => [{ id: 'draft-image-1' }]);
+    const localConversation = {
+      createDrafts: vi.fn(() => [{ id: 'draft-image-1' }]),
+      releaseDraftAttachments: vi.fn(),
+    };
     let renderer: TestRenderer.ReactTestRenderer;
 
     await act(async () => {
@@ -120,7 +121,7 @@ describe('DrawingConversationView', () => {
           useSession={useIdleSession}
           workspacePort={workspacePort}
           inputActions={localInputActions}
-          createDraftImages={localCreateDraftImages}
+          conversation={localConversation}
           releaseSources={() => undefined}
           drawingFileExport={drawingFileExport}
         />,
@@ -131,8 +132,8 @@ describe('DrawingConversationView', () => {
       currentTarget: { files: [file], value: 'drawing.png' },
     }));
 
-    expect(localCreateDraftImages).toHaveBeenCalledWith([file]);
-    expect(addImages).toHaveBeenCalledWith(['draft-image-1']);
+    expect(localConversation.createDrafts).toHaveBeenCalledWith('session-1', [file]);
+    expect(addAttachments).toHaveBeenCalledWith(['draft-image-1']);
     expect(setDraft).toHaveBeenCalledWith('请将上传的图片导入并矢量化为可编辑图纸');
     expect(submit).toHaveBeenCalledOnce();
     act(() => renderer!.unmount());

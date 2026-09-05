@@ -16,7 +16,8 @@ describe('client apply', () => {
     const getOperation = vi.fn();
     const execute = vi.fn();
     const resolveImage = vi.fn();
-    const createDraftImages = vi.fn();
+    const createDrafts = vi.fn();
+    const releaseDraftAttachments = vi.fn();
     const disposeRemote = vi.fn();
     const disposeRegistry = vi.fn();
     const disposeFileExport = vi.fn();
@@ -28,13 +29,17 @@ describe('client apply', () => {
       children?: Record<string, unknown>;
       inject(sessionId: string): {
         workspacePort: { load(): Promise<unknown> };
+        conversation: {
+          createDrafts: typeof createDrafts;
+          releaseDraftAttachments: typeof releaseDraftAttachments;
+        };
         releaseSources(): void;
       };
     }>();
 
     let pluginActive = true;
     const drawingSpace = { getSnapshot, stageInteractiveEdit, stageUndo, getOperation };
-    const conversation = { createDraftImages };
+    const conversation = { createDrafts, releaseDraftAttachments };
     const uiConversation = { imageUrl: resolveImage };
     const remote = {
       $mount: vi.fn(async () => disposeRemote),
@@ -110,6 +115,7 @@ describe('client apply', () => {
     expect(injected?.workspacePort.load).toBeTypeOf('function');
     await expect(injected?.workspacePort.load()).resolves.toBeNull();
     expect(getSnapshot).toHaveBeenCalledWith('session-1');
+    expect(injected).toMatchObject({ conversation });
     injected?.releaseSources();
 
     await dispose();
