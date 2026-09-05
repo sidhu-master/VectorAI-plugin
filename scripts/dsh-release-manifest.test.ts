@@ -22,10 +22,23 @@ const bundles = [
   },
 ] as const;
 
+const buildInputs = [
+  'plugin-dsh-space-client',
+  'plugin-dsh-space-host',
+  'plugin-dsh-annotation-client',
+  'plugin-dsh-annotation-host',
+] as const;
+
 describe('official DSH release manifests', () => {
-  it('targets one exact supported DSH alpha across the release and Bundle manifests', async () => {
+  it('targets one exact source runtime while recording the temporary registry SDK baseline', async () => {
     const release = JSON.parse(await readFile(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
-    expect(release.dsh.version).toBe('0.1.2-alpha.5');
+    expect(release.dsh).toMatchObject({
+      version: '0.1.3-alpha.1',
+      tag: 'dsh-v0.1.3-alpha.1',
+      commit: 'd347e703725e7e2954a82b08cc00410c7f275c21',
+      registrySdkVersion: '0.1.2-rc.1',
+      profile: 'web',
+    });
 
     for (const bundle of bundles) {
       const manifest = JSON.parse(await readFile(
@@ -34,7 +47,19 @@ describe('official DSH release manifests', () => {
       ));
       expect(manifest.peerDependencies['@deepseek-ai/dsh-client-runtime']).toBeUndefined();
       for (const [name, version] of Object.entries(manifest.peerDependencies)) {
-        if (name.startsWith('@deepseek-ai/dsh-')) expect(version).toBe('0.1.2-alpha.5');
+        if (!name.startsWith('@deepseek-ai/dsh-')) continue;
+        expect(version).toBe('0.1.3-alpha.1');
+        expect(manifest.peerDependenciesMeta?.[name]).toEqual({ optional: true });
+      }
+    }
+
+    for (const directory of buildInputs) {
+      const manifest = JSON.parse(await readFile(
+        resolve(root, 'packages', directory, 'package.json'),
+        'utf8',
+      ));
+      for (const [name, version] of Object.entries(manifest.dependencies ?? {})) {
+        if (name.startsWith('@deepseek-ai/dsh-')) expect(version).toBe('0.1.2-rc.1');
       }
     }
   });

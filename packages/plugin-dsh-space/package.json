@@ -6,9 +6,15 @@
   "license": "Apache-2.0",
   "main": "./lib/index.js",
   "exports": {
-    ".": { "default": "./lib/index.js" },
-    "./client": { "default": "./lib/client.js" },
-    "./typert": { "default": "./lib/typert.js" },
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./typert": {
+      "default": "./lib/typert.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -20,9 +26,13 @@
     "README.md",
     "LICENSE"
   ],
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-api-remotes",
@@ -37,19 +47,63 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-agent": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-api-remotes": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-attachment": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-client-ui-session": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-commands": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-llm": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-session": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-subagent": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-tools": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-typert-protocol": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-user-questions": "0.1.2-alpha.5",
-    "@deepseek-ai/dsh-util-values": "0.1.2-alpha.5"
+    "@deepseek-ai/dsh-agent": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-api-remotes": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-attachment": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-client-ui-session": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-commands": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-llm": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-session": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-subagent": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-tools": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-user-questions": "0.1.3-alpha.1",
+    "@deepseek-ai/dsh-util-values": "0.1.3-alpha.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-api-remotes": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-attachment": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-conversation": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-slots": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subagent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-questions": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-util-values": {
+      "optional": true
+    }
   }
 }
