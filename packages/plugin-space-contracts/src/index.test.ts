@@ -641,6 +641,7 @@ describe('DSH drawing workspace wire schemas', () => {
       stepCandidates: [{
         id: 'step:5', z: 5, score: 0.95, evidenceIds: [], accepted: true,
         policyVersion: 'shaft-step-confidence-v1' as const,
+        transitionKind: 'chamfer' as const,
         confidenceBreakdown: {
           contourContinuity: 1,
           bilateralCorrespondence: 0.9,

@@ -2,7 +2,7 @@
 
 import type { ToleranceProjection } from '@vectorai/drawing-core';
 import { estimateScreenTextWidth, formatPortableTolerance, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
-import { axialDimensionIntentId } from '@vectorai/engineering-annotation';
+import { axialDimensionIntentId, isAxialDimensionCandidateSuppressed } from '@vectorai/engineering-annotation';
 import { allocateAxialDimensionLanes, type AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
 import { useRafPreview } from './useRafPreview';
@@ -352,7 +352,13 @@ function layoutIntervals(
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
   const closures = previewHeld ? new Set<string>() : new Set(scheme.closureCandidateIds);
-  const visibleIds = [...scheme.displayedCandidateIds, ...closures];
+  const visibleIds = [
+    ...scheme.displayedCandidateIds,
+    ...[...closures].filter((id) => {
+      const candidate = candidates.get(id);
+      return candidate !== undefined && !isAxialDimensionCandidateSuppressed(candidate);
+    }),
+  ];
   const membershipByCandidate = candidateMemberships(scheme);
   const safeScale = Math.max(scale, 1e-6);
   const base = radialExtent + 28 / safeScale;

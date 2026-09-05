@@ -100,6 +100,34 @@ describe('approved shaft DXF opening-angle annotation', () => {
     expect(inwardLeftCoordinates.every((coordinate, index) => index === 0 || coordinate < inwardLeftCoordinates[index - 1]!)).toBe(true);
     expect(outwardCoordinates.every((coordinate, index) => index === 0 || coordinate > outwardCoordinates[index - 1]!)).toBe(true);
   });
+
+  it('finds the physical shaft end when the centerline extends beyond the profile', async () => {
+    const bytes = await readFile(resolve(
+      import.meta.dirname,
+      '../../test/fixtures/external-golden-001/initial.dxf',
+    ));
+    const imported = importDxf({
+      bytes,
+      source: { name: 'initial.dxf', digest: 'sha256:extended-centerline-opening-angle' },
+      drawingId: 'drawing:extended-centerline-opening-angle',
+      now: () => 1,
+    });
+    expect(imported.status).toBe('imported');
+    if (imported.status !== 'imported') return;
+
+    const plan = planEngineeringAnnotations({
+      document: imported.document,
+      ref: { drawingId: 'drawing:extended-centerline-opening-angle', revision: 1 },
+      objective: '自动标注轴端开角',
+      annotationKinds: ['opening-angle'],
+    });
+    const angularValues = plan.annotations
+      .filter((item): item is DimensionAnnotation => item.type === 'dimension' && item.dimensionKind === 'angular')
+      .map(({ computedValue }) => computedValue);
+
+    expect(angularValues).toHaveLength(1);
+    expect(angularValues[0]).toBeCloseTo(60, 6);
+  });
 });
 
 function axialCoordinate(point: readonly [number, number], origin: readonly [number, number], direction: readonly [number, number]): number {

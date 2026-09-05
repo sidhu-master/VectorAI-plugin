@@ -8,6 +8,7 @@ export interface ShaftAxis { origin: Vec2; direction: Vec2; normal: Vec2; zMin: 
 export interface StepCandidate {
   id: string; z: number; score: number; evidenceIds: string[]; accepted: boolean;
   policyVersion?: 'shaft-step-confidence-v1';
+  transitionKind?: 'shoulder' | 'chamfer' | 'fillet-or-groove';
   confidenceBreakdown?: {
     contourContinuity: number;
     bilateralCorrespondence: number;

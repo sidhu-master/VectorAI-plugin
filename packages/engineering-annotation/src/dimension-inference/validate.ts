@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EngineeringDiagnostic } from '../dimension/types';
+import { isAxialDimensionCandidateSuppressed } from './presentation';
 import type { AxialDimensionCandidate, AxialDimensionScheme } from './types';
 
 export function validateAxialDimensionScheme(scheme: AxialDimensionScheme): EngineeringDiagnostic[] {
@@ -23,7 +24,7 @@ export function validateAxialDimensionScheme(scheme: AxialDimensionScheme): Engi
       continue;
     }
     if (!displayed.has(parent.id)
-      || chain.childCandidateIds.some((id) => !displayed.has(id))
+      || children.some((candidate) => !displayed.has(candidate!.id) && !isAxialDimensionCandidateSuppressed(candidate!))
       || displayed.has(closure.id)
       || !closures.has(closure.id)) {
       diagnostics.push(problem('DIMENSION_CHAIN_INCOMPLETE', [chain.id]));

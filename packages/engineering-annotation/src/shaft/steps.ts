@@ -5,10 +5,17 @@ import type { ShaftProfile } from './profile';
 
 export function detectShaftSteps(profile: ShaftProfile): StepCandidate[] {
   const tolerance = Math.max(Math.abs(profile.axis.zMax - profile.axis.zMin) * 1e-5, 1e-6);
-  const candidates = [
+  const candidates: Array<{
+    z: number;
+    score: number;
+    geometryNodeIds: string[];
+    transitionKind?: StepCandidate['transitionKind'];
+    confidenceBreakdown?: NonNullable<StepCandidate['confidenceBreakdown']>;
+  }> = [
     { z: profile.axis.zMin, score: 1, geometryNodeIds: [] as string[] },
-    ...profile.topology.transitions.map(({ z, radialSpan, geometryNodeIds, confidence }) => ({
-      z, score: confidence, geometryNodeIds, confidenceBreakdown: confidenceAt(profile, z, radialSpan),
+    ...profile.topology.transitions.map(({ z, kind, radialSpan, geometryNodeIds, confidence }) => ({
+      z, score: confidence, geometryNodeIds, transitionKind: kind,
+      confidenceBreakdown: confidenceAt(profile, z, radialSpan),
     })),
     { z: profile.axis.zMax, score: 1, geometryNodeIds: [] as string[] },
   ].sort((a, b) => a.z - b.z);
@@ -16,7 +23,11 @@ export function detectShaftSteps(profile: ShaftProfile): StepCandidate[] {
   for (const candidate of candidates) {
     const previous = clustered.at(-1);
     if (previous && Math.abs(previous.z - candidate.z) <= tolerance) {
-      if (candidate.score > previous.score) previous.score = candidate.score;
+      if (candidate.score > previous.score) {
+        previous.score = candidate.score;
+        previous.transitionKind = candidate.transitionKind;
+        previous.confidenceBreakdown = candidate.confidenceBreakdown;
+      }
       previous.geometryNodeIds = [...new Set([...previous.geometryNodeIds, ...candidate.geometryNodeIds])];
     } else clustered.push({ ...candidate });
   }

@@ -189,6 +189,43 @@ describe('exportEngineeringDrawingDxf', () => {
     expect(dxf).toMatch(/0\r\nDIMENSION[\s\S]*?8\r\n7标注缺省层/);
   });
 
+  it('does not export a prohibited transition used only to close a dimension-chain equation', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-hidden-transition' }, now: () => 1 });
+    document.geometry = [{
+      id: 'shaft' as never, type: 'line', start: [0, 0], end: [100, 0], visible: true,
+      quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const plan = snapshot({
+      datumStatus: 'confirmed', gdtStatus: 'confirmed', computedStatus: 'resolved', computedValue: 0.015,
+    });
+    plan.confirmed!.axialScheme = {
+      ...plan.confirmed!.axialScheme!,
+      topology: {
+        ...plan.confirmed!.axialScheme!.topology,
+        axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 100, orientation: 'forward' },
+        stations: [
+          { id: 's0', coordinate: 0, sourceCoordinate: 0, unit: 'mm', kinds: ['drawing-end'], geometryNodeIds: ['shaft'], evidenceIds: [] },
+          { id: 's1', coordinate: 60, sourceCoordinate: 60, unit: 'mm', kinds: ['step'], geometryNodeIds: ['shaft'], evidenceIds: [] },
+          { id: 's2', coordinate: 100, sourceCoordinate: 100, unit: 'mm', kinds: ['drawing-end'], geometryNodeIds: ['shaft'], evidenceIds: [] },
+        ],
+      },
+      candidates: [
+        { id: 'shown', startStationId: 's0', endStationId: 's1', nominalValue: 60, roles: ['functional'], evidenceIds: [], required: true, constraint: 'required' },
+        { id: 'transition', startStationId: 's1', endStationId: 's2', nominalValue: 40, roles: ['closure'], evidenceIds: [], required: false, constraint: 'prohibited' },
+      ],
+      displayedCandidateIds: ['shown'],
+      closureCandidateIds: ['transition'],
+      chains: [{
+        id: 'chain', parentCandidateId: 'shown', childCandidateIds: [], closureCandidateId: 'transition',
+        alternativeClosureCandidateIds: [], status: 'resolved',
+      }],
+    } as NonNullable<typeof plan.confirmed>['axialScheme'];
+
+    const dimensions = nativeDimensions(exportEngineeringDrawingDxf(document, plan));
+
+    expect(dimensions.map(({ measurement }) => measurement)).toEqual([60]);
+  });
+
   it('places longer axial dimensions farther outside than shorter dimensions regardless of input order', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-length-order' }, now: () => 1 });
     document.geometry = [{

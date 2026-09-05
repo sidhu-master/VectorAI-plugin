@@ -28,6 +28,7 @@ export * from './dimension-inference/infer';
 export * from './dimension-inference/validate';
 export * from './dimension-inference/project';
 export * from './dimension-inference/edit';
+export * from './dimension-inference/presentation';
 export * from './tolerance/rules';
 export * from './tolerance/digest';
 export * from './tolerance/evaluate';

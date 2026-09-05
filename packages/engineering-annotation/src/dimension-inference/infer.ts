@@ -11,6 +11,7 @@ import type {
   DimensionScoreFeature,
   InferAxialDimensionSchemeInput,
 } from './types';
+import { isAxialDimensionCandidateSuppressed } from './presentation';
 
 interface CoordinateIndex {
   station: Map<string, number>;
@@ -47,12 +48,16 @@ export function inferAxialDimensionScheme(input: InferAxialDimensionSchemeInput)
     const chain = materializeInnerChain(parent, input.candidateSet.candidates, input.candidateSet.evidence, decisions, index);
     if (chain) chains.push(chain);
   }
+  const closureCandidateIds = unique(chains.map(({ closureCandidateId }) => closureCandidateId));
   const displayedCandidateIds = unique([
     root.id,
-    ...chains.flatMap(({ childCandidateIds }) => childCandidateIds),
+    ...chains.flatMap(({ childCandidateIds }) => childCandidateIds)
+      .filter((id) => !isAxialDimensionCandidateSuppressed(index.candidate.get(id)!)),
     ...chains.slice(1).map(({ parentCandidateId }) => parentCandidateId),
+    ...input.candidateSet.candidates
+      .filter(({ id, required }) => required && !closureCandidateIds.includes(id))
+      .map(({ id }) => id),
   ]);
-  const closureCandidateIds = unique(chains.map(({ closureCandidateId }) => closureCandidateId));
   const hasAmbiguousChain = chains.some(({ status }) => status === 'needs-review');
   const diagnostics: EngineeringDiagnostic[] = [...input.candidateSet.diagnostics];
   if (hasAmbiguousChain) {
@@ -114,7 +119,10 @@ function materializeInnerChain(
 ): AxialChainNode | undefined {
   const inside = candidates.filter((candidate) => candidate.id !== parent.id && contains(parent, candidate, index));
   const protectedCandidates = inside
-    .filter((candidate) => candidate.roles.includes('functional') || candidate.evidenceIds.some((id) => evidence.find((item) => item.id === id)?.origin === 'document'))
+    .filter((candidate) => !isProhibited(candidate, evidence) && (
+      candidate.roles.includes('functional')
+      || candidate.evidenceIds.some((id) => evidence.find((item) => item.id === id)?.origin === 'document')
+    ))
     .sort((left, right) => start(left, index) - start(right, index));
   const elementary = inside
     .filter((candidate) => candidate.roles.includes('local'))
@@ -140,7 +148,11 @@ function materializeInnerChain(
     alternativeClosureCandidateIds: viableRootClosureAlternatives(
       parent, closure, candidates, evidence, decisions, index,
     ).map(({ id }) => id),
-    status: ranked[1] && sameClosurePreference(closure, ranked[1], evidence, decisions) ? 'needs-review' : 'resolved',
+    status: ranked[1]
+      && sameClosurePreference(closure, ranked[1], evidence, decisions)
+      && !(isProhibited(closure, evidence) && isProhibited(ranked[1], evidence))
+      ? 'needs-review'
+      : 'resolved',
     closureRationale: closureRationale(closure, ranked.slice(1), evidence),
   };
 }
@@ -262,8 +274,8 @@ function sameClosurePreference(
 }
 
 function isProhibited(candidate: AxialDimensionCandidate, evidence: readonly DimensionEvidence[]): boolean {
-  return candidate.constraint === 'prohibited'
-    || candidate.evidenceIds.some((id) => evidence.find((item) => item.id === id)?.constraint === 'prohibited');
+  return candidate.constraint !== 'required' && (candidate.constraint === 'prohibited'
+    || candidate.evidenceIds.some((id) => evidence.find((item) => item.id === id)?.constraint === 'prohibited'));
 }
 function evidenceTier(candidate: AxialDimensionCandidate, evidence: readonly DimensionEvidence[]): number {
   const authority = { ai: 0, geometry: 1, partition: 2, document: 3, manual: 4 } as const;

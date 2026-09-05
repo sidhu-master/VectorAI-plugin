@@ -121,6 +121,33 @@ describe('document region reconciliation', () => {
       code: 'DOCUMENT_REGION_RECONCILED',
     }));
   });
+
+  it('does not replace exact document bounds with nearby chamfer midpoints', () => {
+    const draft = makeDraft([
+      segment(0, 2.598, 55),
+      segment(2.598, 21, 55),
+      segment(21, 30, 50),
+    ]);
+    draft.stepCandidates = [
+      step(0),
+      step(2.598, 'fillet-or-groove'),
+      step(21, 'chamfer'),
+      step(30),
+    ];
+
+    const result = fuseDocumentRegions(draft, [{
+      id: 'T01', type: 'thread', name: '左端锁紧螺纹',
+      interval: { start: 2, end: 20 }, outerDiameter: 55, sourceLines: [1],
+    }]);
+
+    expect(result.semanticGroups[0]).toMatchObject({
+      range: { zStart: 2, zEnd: 20 },
+      reconciliation: { status: 'matched' },
+    });
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({
+      code: 'DOCUMENT_REGION_RECONCILED',
+    }));
+  });
 });
 
 function makeDraft(segments: ShaftPartitionSegment[]): PartitionDraft {
@@ -144,5 +171,16 @@ function segment(zStart: number, zEnd: number, diameter: number, sampleCount = 2
     profile: { minRadius: diameter / 2, maxRadius: diameter / 2, sampleCount },
     boundaryConfidence: 1,
     geometryNodeIds: [], boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [],
+  };
+}
+
+function step(z: number, transitionKind?: 'shoulder' | 'chamfer' | 'fillet-or-groove') {
+  return {
+    id: `step:${z}`,
+    z,
+    score: 1,
+    evidenceIds: [],
+    accepted: true,
+    ...(transitionKind === undefined ? {} : { transitionKind }),
   };
 }

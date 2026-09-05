@@ -38,8 +38,15 @@ export function fuseDocumentRegions(draft: PartitionDraft, regions: EngineeringR
       },
       output.axis.zMax - output.axis.zMin,
     );
+    const geometryRangeUsesTransitionDetail = rangeUsesTransitionDetail(
+      output,
+      best.segments[0]!.zStart,
+      best.segments.at(-1)!.zEnd,
+      rangeTolerance,
+    );
     const geometryReconciled = !documentBoundariesAlignWithSteps
       && !documentRangeWithinGeometryResolution
+      && !geometryRangeUsesTransitionDetail
       && best.topologyError === 0
       && best.documentIdentityError === 0
       && best.widthError <= 0.03
@@ -231,6 +238,18 @@ function distanceToSegment(segment: ShaftPartitionSegment, z: number): number {
 
 function formatRange(range: { zStart: number; zEnd: number }): string {
   return `${Number(range.zStart.toFixed(6))}–${Number(range.zEnd.toFixed(6))}`;
+}
+
+function rangeUsesTransitionDetail(
+  draft: PartitionDraft,
+  start: number,
+  end: number,
+  tolerance: number,
+): boolean {
+  return [start, end].some((z) => {
+    const step = draft.stepCandidates.find((candidate) => Math.abs(candidate.z - z) <= tolerance);
+    return step?.transitionKind !== undefined && step.transitionKind !== 'shoulder';
+  });
 }
 
 function boundariesDifferOnlyBySampling(

@@ -3,7 +3,7 @@
 import { sampleSpline, type DrawingDocument, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
 import type { EngineeringRegionEvidence } from '../engineering-document/parser';
 import type { ShaftAxis } from '../partition/types';
-import { isShaftProfileGeometry } from './geometry-filter';
+import { isShaftAxisLine, isShaftProfileGeometry } from './geometry-filter';
 
 export interface ShaftAxisHints {
   axisOrigin?: 'left_end' | 'right_end';
@@ -63,14 +63,7 @@ function resolveExplicitCenterline(
 ): ShaftAxis | null {
   const profilePoints = nodes.flatMap(({ points }) => points);
   const candidates = document.geometry
-    .filter((node): node is Extract<GeometryNode, { type: 'line' }> => (
-      node.type === 'line'
-      && node.visible
-      && node.quality.status === 'confirmed'
-      && /(?:^|[-_\s])(?:centerline|axis|中心线)(?:$|[-_\s])/iu.test(
-        `${node.sourceRef?.objectType ?? ''} ${node.sourceRef?.layer ?? ''}`,
-      )
-    ))
+    .filter(isShaftAxisLine)
     .map((node) => ({
       node,
       length: Math.hypot(node.end[0] - node.start[0], node.end[1] - node.start[1]),

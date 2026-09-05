@@ -3,6 +3,16 @@ import { resolve } from 'node:path';
 
 const fixtureDirectory = resolve('packages/engineering-annotation/test/fixtures/external-golden-001');
 
+const LEFT_BORE_OPENING = {
+  includedAngleDegrees: 60,
+  startRadius: 15,
+  endRadius: 12,
+};
+const leftBoreOpeningAxialRun = clean(
+  (LEFT_BORE_OPENING.startRadius - LEFT_BORE_OPENING.endRadius)
+    / Math.tan(LEFT_BORE_OPENING.includedAngleDegrees * Math.PI / 360),
+);
+
 const GEAR = {
   startX: 138,
   endX: 198,
@@ -352,8 +362,16 @@ const lowerOuter = [
 ];
 
 const topBore = [
-  lineSegment([0, 15], [4, 12], 'PROFILE-BORE'),
-  lineSegment([4, 12], [22, 12], 'PROFILE-BORE'),
+  lineSegment(
+    [0, LEFT_BORE_OPENING.startRadius],
+    [leftBoreOpeningAxialRun, LEFT_BORE_OPENING.endRadius],
+    'PROFILE-BORE',
+  ),
+  lineSegment(
+    [leftBoreOpeningAxialRun, LEFT_BORE_OPENING.endRadius],
+    [22, LEFT_BORE_OPENING.endRadius],
+    'PROFILE-BORE',
+  ),
   lineSegment([22, 12], [22, 16], 'PROFILE-BORE'),
   lineSegment([22, 16], [58, 16], 'PROFILE-BORE'),
   lineSegment([58, 16], [58, 12], 'PROFILE-BORE'),

@@ -216,9 +216,10 @@ export function createEngineeringAnnotationTool(
                 nextAction: 'inspect-grounded-geometry-and-call-drawing_gdt_start',
               } : options.requiresGdtRecommendation === true ? {
                 gdtStatus: followup.phase,
-                completionStatus: 'preview-ready',
+                completionStatus: 'complete',
                 completionClaimAllowed: true,
-                nextAction: 'review-complete-automatic-annotation-preview',
+                terminal: true,
+                nextAction: 'report-automatic-annotation-complete-and-stop',
               } : { nextAction: 'preview-or-confirm' }),
             },
           }),

@@ -6,6 +6,7 @@ import type { DrawingWorkspaceSnapshot } from '@vectorai/plugin-space-contracts'
 import { describe, expect, it, vi } from 'vitest';
 import {
   AXIAL_DIMENSION_PIPELINE_ID,
+  AXIAL_DIMENSION_PIPELINE_VERSION,
   createAxialDimensionInference,
   createAxialDimensionPipeline,
 } from './axial-dimension-pipeline';
@@ -40,6 +41,7 @@ describe('axial dimension inference pipeline', () => {
     expect(review).not.toHaveBeenCalled();
 
     const run = await runner.run(AXIAL_DIMENSION_PIPELINE_ID, input);
+    expect(run.pipelineVersion).toBe(AXIAL_DIMENSION_PIPELINE_VERSION);
     expect(run.trace.map(({ id }) => id)).toEqual([
       'dimension-partition-validation',
       'dimension-document-normalization',

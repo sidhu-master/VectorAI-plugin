@@ -28,6 +28,10 @@ thread-limit lines. The section hatch continues to the thick major-diameter outl
 The design does not claim a bearing or locknut selection until assembly requirements
 are supplied.
 
+The through bore opens at the left end with a 60 degree included angle. Its radius
+changes from 15 mm to 12 mm over an axial run of 5.196152 mm; the mirrored upper and
+lower flanks therefore define the angle directly without a decorative or inferred line.
+
 Reference basis:
 
 - GB/T 4459.1-1995 / ISO 6410-1:1993, conventional representation of screw

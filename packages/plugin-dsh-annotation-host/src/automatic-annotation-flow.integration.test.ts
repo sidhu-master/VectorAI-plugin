@@ -111,6 +111,8 @@ describe('complete automatic annotation workflow', () => {
       annotationSet: {
         completionStatus: string;
         completionClaimAllowed: boolean;
+        terminal: boolean;
+        nextAction: string;
         displayedDimensionCount: number;
         datumCount: number;
         geometricToleranceCount: number;
@@ -118,8 +120,10 @@ describe('complete automatic annotation workflow', () => {
     };
 
     expect(result.annotationSet).toMatchObject({
-      completionStatus: 'preview-ready',
+      completionStatus: 'complete',
       completionClaimAllowed: true,
+      terminal: true,
+      nextAction: 'report-automatic-annotation-complete-and-stop',
     });
     expect(result.annotationSet.displayedDimensionCount).toBeGreaterThan(0);
     expect(result.annotationSet.datumCount).toBe(2);

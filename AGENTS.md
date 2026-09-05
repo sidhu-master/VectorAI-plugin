@@ -21,6 +21,12 @@ Before changing existing behavior, refactoring a subsystem, or replacing an impl
 
 The required sequence is: reconstruct requirements, analyze impact, define change boundaries and invariants, implement, then verify against both the requested change and preserved behavior.
 
+## Agent intent and workflow routing
+
+Natural-language intent belongs to the AI agent. Do not route user requests to tools or workflow branches with phrase lists, regular expressions, keyword-to-action tables, fixed key/value mappings, or injected prompts that shadow the agent's own tool selection. Tool descriptions must explain their semantic scope, while Host code validates only typed inputs and lifecycle state.
+
+If a deterministic natural-language routing rule appears necessary, stop before implementing it, explain the proposed rule and failure mode to the user, and obtain explicit approval. This restriction does not apply to typed protocol values, standards catalogs, or engineering lookup tables whose keys are part of a documented data contract.
+
 ## Rapid-fix mode
 
 Rapid-fix mode is the default for small bug fixes and UI adjustments unless the user explicitly requests broader verification. Locate the faulty code and make the smallest scoped correction; do not add tests, run unrelated verification, create a PR, or publish a package.

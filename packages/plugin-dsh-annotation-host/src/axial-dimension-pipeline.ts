@@ -24,7 +24,7 @@ import {
 } from './recognition-runtime';
 
 export const AXIAL_DIMENSION_PIPELINE_ID = 'axial-dimension-inference';
-export const AXIAL_DIMENSION_PIPELINE_VERSION = '1';
+export const AXIAL_DIMENSION_PIPELINE_VERSION = '2';
 
 export interface AxialDimensionPipelineInput {
   drawing: DrawingWorkspaceSnapshot;

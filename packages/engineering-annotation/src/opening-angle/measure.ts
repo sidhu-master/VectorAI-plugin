@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { sampleSpline, type EvidenceId, type GeometryNode, type Vec2 } from '@vectorai/drawing-core';
+import type { EvidenceId, GeometryNode, Vec2 } from '@vectorai/drawing-core';
+import { isShaftAxisLine, isShaftProfileGeometry } from '../shaft/geometry-filter';
 import type { OpeningAngleAxis, OpeningAngleFact } from './types';
 
 const MINIMUM_TOLERANCE = 1e-5;
@@ -19,23 +20,23 @@ export function measureOpeningAngles(geometryInput: GeometryNode[]): {
   facts: OpeningAngleFact[];
 } {
   const geometry = geometryInput.filter(({ visible, quality }) => visible && quality.status === 'confirmed');
-  const worldBounds = geometryBounds(geometry);
   const worldSegments = collectSegments(geometry);
   const frame = resolveOpeningFrame(geometry, worldSegments);
-  if (!worldBounds || !frame) return { axis: { start: [0, 0], end: [0, 0], status: 'conflict' }, facts: [] };
+  if (!frame) return { axis: { start: [0, 0], end: [0, 0], status: 'conflict' }, facts: [] };
   const segments = worldSegments.map((segment) => ({
     ...segment, start: toLocal(frame, segment.start), end: toLocal(frame, segment.end),
   }));
-  const bounds = segmentBounds(segments);
+  const profileSegments = segments.filter(({ source }) => isShaftProfileGeometry(source));
+  const bounds = segmentBounds(profileSegments);
   if (!bounds) return { axis: { start: [0, 0], end: [0, 0], status: 'conflict' }, facts: [] };
   const diagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
   const tolerance = Math.max(diagonal * 1e-6, MINIMUM_TOLERANCE);
-  const axisY = reflectedAxisY(segments, bounds, tolerance);
+  const axisY = frame.axisRadialCoordinate ?? reflectedAxisY(profileSegments, bounds, tolerance);
   const axis: OpeningAngleAxis = axisY === null
     ? { start: toWorld(frame, bounds.minX, (bounds.minY + bounds.maxY) / 2), end: toWorld(frame, bounds.maxX, (bounds.minY + bounds.maxY) / 2), status: 'conflict' }
     : { start: cleanPoint(toWorld(frame, bounds.minX, axisY)), end: cleanPoint(toWorld(frame, bounds.maxX, axisY)), status: 'confirmed' };
   if (axis.status === 'conflict') return { axis, facts: [] };
-  const localFacts = openingAngleFacts(segments, axisY!, diagonal, tolerance);
+  const localFacts = openingAngleFacts(profileSegments, axisY!, diagonal, tolerance);
   return { axis, facts: localFacts.map((fact) => ({
     ...fact,
     key: `${fact.key}:${numberKey(frame.angle)}`,
@@ -46,12 +47,27 @@ export function measureOpeningAngles(geometryInput: GeometryNode[]): {
   })) };
 }
 
-interface OpeningFrame { origin: Vec2; axis: Vec2; normal: Vec2; angle: number }
+interface OpeningFrame {
+  origin: Vec2;
+  axis: Vec2;
+  normal: Vec2;
+  angle: number;
+  axisRadialCoordinate?: number;
+}
 
 function resolveOpeningFrame(geometry: GeometryNode[], segments: SegmentSample[]): OpeningFrame | null {
-  const explicit = geometry.find((node) => node.type === 'xline' && Math.hypot(...node.direction) > MINIMUM_TOLERANCE);
+  const explicit = geometry.find((node) => (
+    node.type === 'xline' && Math.hypot(...node.direction) > MINIMUM_TOLERANCE
+  ) || isShaftAxisLine(node));
   let angle: number;
-  if (explicit?.type === 'xline') angle = Math.atan2(explicit.direction[1], explicit.direction[0]);
+  let axisPoint: Vec2 | undefined;
+  if (explicit?.type === 'xline') {
+    angle = Math.atan2(explicit.direction[1], explicit.direction[0]);
+    axisPoint = explicit.origin;
+  } else if (explicit?.type === 'line') {
+    angle = Math.atan2(explicit.end[1] - explicit.start[1], explicit.end[0] - explicit.start[0]);
+    axisPoint = explicit.start;
+  }
   else {
     const lengths = segments.map(({ start, end }) => Math.hypot(end[0] - start[0], end[1] - start[1]));
     const maximum = Math.max(0, ...lengths);
@@ -68,7 +84,13 @@ function resolveOpeningFrame(geometry: GeometryNode[], segments: SegmentSample[]
   let axis: Vec2 = [Math.cos(angle), Math.sin(angle)];
   if (Math.abs(axis[0]) >= Math.abs(axis[1]) ? axis[0] < 0 : axis[1] < 0) axis = [-axis[0], -axis[1]];
   const normal: Vec2 = [-axis[1], axis[0]];
-  return { origin: [0, 0], axis, normal, angle: Math.atan2(axis[1], axis[0]) };
+  return {
+    origin: [0, 0],
+    axis,
+    normal,
+    angle: Math.atan2(axis[1], axis[0]),
+    ...(axisPoint === undefined ? {} : { axisRadialCoordinate: dot(axisPoint, normal) }),
+  };
 }
 
 function toLocal(frame: OpeningFrame, point: Vec2): Vec2 {
@@ -180,25 +202,6 @@ function normalizedSlopedSegment(segment: SegmentSample): NormalizedSlopedSegmen
   return { segment, left, right, midpoint: [(left[0] + right[0]) / 2, (left[1] + right[1]) / 2], length };
 }
 
-function geometryBounds(geometry: GeometryNode[]) {
-  const points = geometry.flatMap(pointsOf);
-  if (points.length === 0) return null;
-  return {
-    minX: Math.min(...points.map(([x]) => x)), minY: Math.min(...points.map(([, y]) => y)),
-    maxX: Math.max(...points.map(([x]) => x)), maxY: Math.max(...points.map(([, y]) => y)),
-  };
-}
-
-function pointsOf(node: GeometryNode): Vec2[] {
-  if (node.type === 'point') return [[node.x, node.y]];
-  if (node.type === 'line') return [node.start, node.end];
-  if (node.type === 'polyline') return node.vertices.map(({ point }) => point);
-  if (node.type === 'circle' || node.type === 'arc') return [[node.center[0] - node.radius, node.center[1] - node.radius], [node.center[0] + node.radius, node.center[1] + node.radius]];
-  if (node.type === 'ellipse') { const radius = Math.hypot(...node.majorAxis); return [[node.center[0] - radius, node.center[1] - radius], [node.center[0] + radius, node.center[1] + radius]]; }
-  if (node.type === 'spline') return sampleSpline(node, { maxError: 0.02, maxDepth: 14 });
-  return [];
-}
-
 function lineIntersection(a: Vec2, b: Vec2, c: Vec2, d: Vec2, tolerance: number): Vec2 | null {
   const first = [b[0] - a[0], b[1] - a[1]] as const;
   const second = [d[0] - c[0], d[1] - c[1]] as const;
@@ -218,6 +221,7 @@ function includedAngle(vertex: Vec2, first: Vec2, second: Vec2): number {
 function uniqueEvidence(nodes: GeometryNode[]): EvidenceId[] { return [...new Set(nodes.flatMap(({ quality }) => quality.evidenceRefs))].sort(); }
 function distanceToSegmentRange(x: number, first: number, second: number): number { const min = Math.min(first, second); const max = Math.max(first, second); return x < min ? min - x : x > max ? x - max : 0; }
 function normalizedAngleValue(value: number): number { const integer = Math.round(value); return Math.abs(value - integer) <= 0.01 ? integer : clean(value); }
+function dot(left: Vec2, right: Vec2): number { return left[0] * right[0] + left[1] * right[1]; }
 function cross(a: Vec2, b: Vec2): number { return a[0] * b[1] - a[1] * b[0]; }
 function cleanPoint(point: Vec2): Vec2 { return [clean(point[0]), clean(point[1])]; }
 function numberKey(value: number): string { return clean(value).toFixed(6); }

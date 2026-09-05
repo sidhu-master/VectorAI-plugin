@@ -56,6 +56,22 @@ describe('generateAxialDimensionCandidates', () => {
     expect(findInterval(candidates, topology, 53, 92)?.roles).toEqual(['local']);
   });
 
+  it('keeps transition-only local spans out of automatic display while document dimensions override them', () => {
+    const input = fixtureInput();
+    input.topology.stations.find(({ coordinate }) => coordinate === 41.5)!.kinds = ['partition-boundary'];
+
+    const { candidates, evidence } = generateAxialDimensionCandidates(input);
+
+    expect(findInterval(candidates, input.topology, 41.5, 45)).toMatchObject({
+      roles: ['local'], constraint: 'prohibited', required: false,
+    });
+    expect(findInterval(candidates, input.topology, 17, 41.5)).toMatchObject({
+      constraint: 'required', required: true,
+    });
+    expect(evidence.find(({ id }) => id === 'geometry:span:station:41.5:station:45'))
+      .toMatchObject({ constraint: 'prohibited' });
+  });
+
   it('reports document intervals that do not resolve to geometry stations', () => {
     const input = fixtureInput('[region:gear:G02]\nname=未知齿轮\ncenter_z=81\nwidth=13');
     const result = generateAxialDimensionCandidates(input);

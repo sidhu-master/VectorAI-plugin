@@ -233,6 +233,77 @@ describe('automatic GD&T segment grounding', () => {
     });
   });
 
+  it('grounds bearing datums on the outer cylindrical working surfaces when source lines cross partition boundaries', () => {
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const geometry = [
+      { id: 'left-shoulder' as GeometryId, type: 'line' as const, start: [31, -26] as [number, number], end: [31, -30] as [number, number], visible: true, quality },
+      { id: 'left-bearing-outer' as GeometryId, type: 'line' as const, start: [31, -30] as [number, number], end: [61, -30] as [number, number], visible: true, quality },
+      { id: 'left-bore' as GeometryId, type: 'line' as const, start: [22, -16] as [number, number], end: [58, -16] as [number, number], visible: true, quality },
+      { id: 'right-bearing-outer' as GeometryId, type: 'line' as const, start: [208, -32] as [number, number], end: [244, -32] as [number, number], visible: true, quality },
+      { id: 'right-bore-chamfer' as GeometryId, type: 'line' as const, start: [232, -10] as [number, number], end: [236, -13] as [number, number], visible: true, quality },
+    ];
+    const segment = (id: string, zStart: number, zEnd: number, maxRadius: number, geometryNodeIds: string[]) => ({
+      id, zStart, zEnd, profile: { minRadius: 10, maxRadius, sampleCount: 8 },
+      boundaryConfidence: 1, geometryNodeIds, boundaryEvidenceIds: [], semanticEvidenceIds: [], diagnosticIds: [],
+    });
+    const partition: PartitionDraft = {
+      version: 1, drawingRef: { drawingId: 'bearing-datum-regression', revision: 1 },
+      axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 286, orientation: 'forward' },
+      segments: [
+        segment('bearing-left', 31, 58, 30, ['left-shoulder', 'left-bearing-outer', 'left-bore']),
+        segment('bearing-right', 208, 234, 32, ['right-bearing-outer', 'right-bore-chamfer']),
+      ],
+      semanticGroups: [], stepCandidates: [], evidence: [], diagnostics: [],
+    };
+
+    const result = groundSegmentRecommendation(geometry, partition, {
+      datums: [
+        { name: 'A', segmentId: 'bearing-left', role: 'primary', confidence: 1 },
+        { name: 'B', segmentId: 'bearing-right', role: 'secondary', confidence: 1 },
+      ],
+      controls: [],
+    });
+
+    expect(result.datums.map(({ name, geometryId }) => ({ name, geometryId }))).toEqual([
+      { name: 'A', geometryId: 'left-bearing-outer' },
+      { name: 'B', geometryId: 'right-bearing-outer' },
+    ]);
+  });
+
+  it('keeps datum markers below while grounding cylindrical specification tables above', () => {
+    const quality = { status: 'confirmed' as const, evidenceRefs: [] };
+    const geometry = [
+      { id: 'a-bottom' as GeometryId, type: 'line' as const, start: [31, -30] as [number, number], end: [61, -30] as [number, number], visible: true, quality },
+      { id: 'z-top' as GeometryId, type: 'line' as const, start: [31, 30] as [number, number], end: [61, 30] as [number, number], visible: true, quality },
+    ];
+    const partition: PartitionDraft = {
+      version: 1, drawingRef: { drawingId: 'upper-specification-table-regression', revision: 1 },
+      axis: { origin: [0, 0], direction: [1, 0], normal: [0, 1], zMin: 0, zMax: 100, orientation: 'forward' },
+      segments: [{
+        id: 'bearing', zStart: 31, zEnd: 61, profile: { minRadius: 12, maxRadius: 30, sampleCount: 8 },
+        boundaryConfidence: 1, geometryNodeIds: ['a-bottom', 'z-top'], boundaryEvidenceIds: [],
+        semanticEvidenceIds: [], diagnosticIds: [],
+      }],
+      semanticGroups: [], stepCandidates: [], evidence: [], diagnostics: [],
+    };
+
+    const result = groundSegmentRecommendation(geometry, partition, {
+      datums: [{ name: 'A', segmentId: 'bearing', role: 'primary', confidence: 1 }],
+      controls: [{
+        id: 'gdt:cylindricity', characteristic: 'cylindricity', segmentIds: ['bearing'],
+        surfaceRole: 'segment-surface', datumNames: [], toleranceZoneShape: 'linear', confidence: 1,
+      }],
+      surfaceTextures: [{
+        id: 'texture:ra', segmentIds: ['bearing'], parameter: 'Ra', value: 0.8,
+        materialRemoval: 'required', source: 'process-rule', confidence: 1,
+      }],
+    });
+
+    expect(result.datums[0]?.geometryId).toBe('a-bottom');
+    expect(result.controls[0]?.geometryIds).toEqual(['z-top']);
+    expect(result.surfaceTextures?.[0]?.geometryIds).toEqual(['z-top']);
+  });
+
   it('grounds a rotary feature on the strongest face in its adjacent locating-shoulder group', () => {
     const quality = { status: 'confirmed' as const, evidenceRefs: [] };
     const geometry = [

@@ -10,6 +10,7 @@ export function resolveShaftDimensionRole(
   const semanticType = group.semanticType.toLowerCase();
   if (semanticType === 'regular-shaft') return 'ordinary';
   if (semanticType === 'shoulder') return 'process-datum';
+  if (semanticType === 'relief') return 'transition';
   if (semanticType === 'shaft-seat' && hasOnlyAiEvidence(group, partition)) return 'ordinary';
   return 'functional-feature';
 }

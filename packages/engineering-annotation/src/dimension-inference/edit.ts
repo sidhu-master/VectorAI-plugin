@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EngineeringDiagnostic } from '../dimension/types';
+import { isAxialDimensionCandidateSuppressed } from './presentation';
 import { validateAxialDimensionScheme } from './validate';
 import type { AxialDimensionCandidate, AxialDimensionScheme, DimensionDecisionTrace } from './types';
 
@@ -154,7 +155,7 @@ function chooseChainClosure(
   chains[chainIndex] = nextChain;
   const displayedCandidateIds = unique([
     ...scheme.displayedCandidateIds.filter((id) => !chain.childCandidateIds.includes(id) && id !== chosen.id),
-    ...childCandidateIds,
+    ...childCandidateIds.filter((id) => !isAxialDimensionCandidateSuppressed(requireCandidate(scheme, id))),
   ]);
   const activeChains = chains.filter((candidateChain) => (
     candidateChain.id === nextChain.id || displayedCandidateIds.includes(candidateChain.parentCandidateId)

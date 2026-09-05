@@ -105,7 +105,8 @@ export function createPreStepIntake(
     if (directUser && drawingRef) {
       const capability = [
         `VectorAI drawing capability is available for ${drawingRef.drawingId}@${drawingRef.revision}.`,
-        'To activate it, call drawing_observe only if the current user intent is to inspect or modify this drawing; otherwise ignore this capability and continue with other plugins.',
+        'First inspect the available tool descriptions. If a dedicated drawing tool matches the current intent, call it directly; do not call drawing_observe first or reconstruct that specialized workflow with generic selection or preview tools.',
+        'Use drawing_observe only for generic inspection or selection when no dedicated tool matches the intent; otherwise ignore this capability and continue with other plugins.',
         'drawing_observe returns short selection candidates such as cN; use those keys with drawing_select_parts, and do not use drawing_query node ids or guessed coordinates for semantic selection.',
         'In drawing_select_parts, mark movable or editable geometry as role=target and fixed context as role=reference. For a motion rig, select only the movable assembly when possible; the Host infers the fixed connection locally, and fixed references are never highlighted.',
         ...(selection ? [

@@ -889,6 +889,7 @@ const shaftAxisSchema = z.object({
 const stepCandidateSchema = z.object({
   id: idSchema, z: z.number(), score: z.number(), evidenceIds: z.array(idSchema), accepted: z.boolean(),
   policyVersion: z.literal('shaft-step-confidence-v1').optional(),
+  transitionKind: z.enum(['shoulder', 'chamfer', 'fillet-or-groove']).optional(),
   confidenceBreakdown: z.object({
     contourContinuity: z.number(),
     bilateralCorrespondence: z.number(),

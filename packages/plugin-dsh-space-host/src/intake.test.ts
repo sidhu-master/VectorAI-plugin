@@ -175,7 +175,7 @@ describe('drawing image intake', () => {
     expect(binds).toBe(0);
   });
 
-  it('advertises drawing capability conditionally without injecting a fixed workflow', async () => {
+  it('advertises drawing capability without forcing specialized tasks through generic observation', async () => {
     const message = createUserMessage({
       content: [{ type: 'text', text: 'hello' }],
       source: { kind: 'user' },
@@ -196,7 +196,8 @@ describe('drawing image intake', () => {
     const text = result.messages.at(-1)?.content[0];
     expect(text).toMatchObject({ type: 'text' });
     if (text?.type !== 'text') throw new Error('expected text');
-    expect(text.text).toMatch(/drawing-1@3[\s\S]*drawing_observe[\s\S]*only if[\s\S]*otherwise ignore/i);
+    expect(text.text).toMatch(/drawing-1@3[\s\S]*dedicated drawing tool[\s\S]*call it directly[\s\S]*do not call drawing_observe first/i);
+    expect(text.text).toMatch(/drawing_observe[\s\S]*generic inspection or selection[\s\S]*no dedicated tool/i);
     expect(text.text).toMatch(/selection candidates[\s\S]*cN[\s\S]*drawing_select_parts/i);
     expect(text.text).toMatch(/role=target[\s\S]*role=reference[\s\S]*fixed/i);
     expect(text.text).toMatch(/do not use drawing_query node ids or guessed coordinates/i);

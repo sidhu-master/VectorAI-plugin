@@ -298,7 +298,7 @@ export function groundSegmentRecommendation(
       ? [selectLocatingShoulderGeometry(segments, partition, nodeById, item.boundary)]
       : segments.map((segment) => selectRepresentativeGeometry(
         segment, nodeById, partition.axis,
-        prefersRadialFace(item.characteristic) ? 'radial-face' : 'axis-parallel-surface',
+        prefersRadialFace(item.characteristic) ? 'radial-face' : 'axis-parallel-top',
       ));
     return {
       id: item.id,
@@ -318,7 +318,7 @@ export function groundSegmentRecommendation(
       // A journal's surface texture controls the cylindrical working surface.
       // In an axial section that surface is represented by a line parallel to
       // the shaft axis; a radial line is an end/shoulder face instead.
-      return selectRepresentativeGeometry(segment, nodeById, partition.axis, 'axis-parallel-surface');
+      return selectRepresentativeGeometry(segment, nodeById, partition.axis, 'axis-parallel-top');
     }))],
   }));
   return {
@@ -447,7 +447,7 @@ function selectRadialFaceAtFeatureBoundary(
   return selected ? String(selected.node.id) : selectRepresentativeGeometry(feature, nodes, axis, 'radial-face');
 }
 
-type RepresentativeSurfacePreference = 'axis-parallel-surface' | 'axis-parallel-bottom' | 'radial-face';
+type RepresentativeSurfacePreference = 'axis-parallel-top' | 'axis-parallel-bottom' | 'radial-face';
 
 function selectRepresentativeGeometry(
   segment: ShaftPartitionSegment,
@@ -462,6 +462,8 @@ function selectRepresentativeGeometry(
 
 interface RepresentativeNodeMetrics {
   line: boolean;
+  alignmentError: number;
+  surfaceRadiusError: number;
   inside: boolean;
   outsideDistance: number;
   overflow: number;
@@ -480,12 +482,16 @@ function compareRepresentativeNodes(
   const a = representativeNodeMetrics(left, axis, segment, preference);
   const b = representativeNodeMetrics(right, axis, segment, preference);
   return Number(b.line) - Number(a.line)
+    || a.alignmentError - b.alignmentError
+    || a.surfaceRadiusError - b.surfaceRadiusError
     || Number(b.inside) - Number(a.inside)
     || a.outsideDistance - b.outsideDistance
     || a.overflow - b.overflow
+    || (preference === 'axis-parallel-bottom'
+      ? a.signedRadius - b.signedRadius
+      : preference === 'axis-parallel-top' ? b.signedRadius - a.signedRadius : 0)
     || b.preferredSpan - a.preferredSpan
     || a.crossSpan - b.crossSpan
-    || (preference === 'axis-parallel-bottom' ? a.signedRadius - b.signedRadius : 0)
     || String(left.id).localeCompare(String(right.id));
 }
 
@@ -496,11 +502,22 @@ function representativeNodeMetrics(
   preference: RepresentativeSurfacePreference,
 ): RepresentativeNodeMetrics {
   if (node.type !== 'line') {
-    return { line: false, inside: false, outsideDistance: Number.POSITIVE_INFINITY, overflow: Number.POSITIVE_INFINITY, preferredSpan: 0, crossSpan: 0, signedRadius: 0 };
+    return {
+      line: false,
+      alignmentError: Number.POSITIVE_INFINITY,
+      surfaceRadiusError: Number.POSITIVE_INFINITY,
+      inside: false,
+      outsideDistance: Number.POSITIVE_INFINITY,
+      overflow: Number.POSITIVE_INFINITY,
+      preferredSpan: 0,
+      crossSpan: 0,
+      signedRadius: 0,
+    };
   }
   const delta: Vec2 = [node.end[0] - node.start[0], node.end[1] - node.start[1]];
   const axial = Math.abs(dot(delta, axis.direction));
   const radial = Math.abs(dot(delta, axis.normal));
+  const length = Math.max(Math.hypot(axial, radial), Number.EPSILON);
   const midpoint: Vec2 = [(node.start[0] + node.end[0]) / 2, (node.start[1] + node.end[1]) / 2];
   const midpointZ = dot([midpoint[0] - axis.origin[0], midpoint[1] - axis.origin[1]], axis.direction);
   const segmentWidth = Math.max(segment.zEnd - segment.zStart, 1e-6);
@@ -509,6 +526,14 @@ function representativeNodeMetrics(
   const signedRadius = dot([midpoint[0] - axis.origin[0], midpoint[1] - axis.origin[1]], axis.normal);
   return {
     line: true,
+    // A datum established by a journal belongs to its cylindrical working
+    // surface. In an axial section that surface is axis-parallel; containment
+    // inside a partition interval is only a secondary signal because source
+    // CAD commonly keeps one continuous profile line across several segments.
+    alignmentError: (preference === 'radial-face' ? axial : radial) / length,
+    surfaceRadiusError: preference === 'radial-face'
+      ? 0
+      : Math.abs(Math.abs(signedRadius) - segment.profile.maxRadius),
     inside: outsideDistance === 0,
     outsideDistance,
     overflow: Math.max(0, axial - segmentWidth),

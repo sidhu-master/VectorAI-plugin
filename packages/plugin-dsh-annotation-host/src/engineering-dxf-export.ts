@@ -11,6 +11,7 @@ import {
   type Vec2,
 } from '@vectorai/drawing-core';
 import {
+  isAxialDimensionCandidateSuppressed,
   projectEngineeringAnnotations,
   type EngineeringAnnotationDraft as DomainEngineeringAnnotationDraft,
 } from '@vectorai/engineering-annotation';
@@ -148,7 +149,13 @@ function dimensionChainEntities(scheme: AxialDimensionScheme, document: DrawingD
   const origin = asVec2(axis.origin);
   const radialDistance = radialDistanceFromAxis(document, origin, normal);
   const textHeight = presentation.dimension.textHeight;
-  const visibleIds = [...new Set([...scheme.displayedCandidateIds, ...scheme.closureCandidateIds])];
+  const visibleIds = [...new Set([
+    ...scheme.displayedCandidateIds,
+    ...scheme.closureCandidateIds.filter((id) => {
+      const candidate = candidates.get(id);
+      return candidate !== undefined && !isAxialDimensionCandidateSuppressed(candidate);
+    }),
+  ])];
   const closureIds = new Set(scheme.closureCandidateIds);
   const lanes = allocateAxialDimensionLanes(visibleIds.flatMap((candidateId) => {
     const candidate = candidates.get(candidateId);

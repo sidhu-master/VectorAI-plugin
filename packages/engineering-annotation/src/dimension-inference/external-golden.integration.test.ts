@@ -13,6 +13,7 @@ import {
   generateAxialDimensionCandidates,
   inferAxialDimensionScheme,
   inferRegularShaftRegions,
+  isAxialDimensionCandidateSuppressed,
   SHAFT_HIERARCHICAL_DIMENSIONING_V1,
   validatePartition,
 } from '../index';
@@ -221,7 +222,7 @@ describe('independently designed educational shaft initial drawing', () => {
     expect(validatePartition(finalized)).toEqual([]);
   });
 
-  it('keeps authored feature bounds exact and omits tessellation-only micro dimensions', async () => {
+  it('keeps authored feature bounds exact and omits transition-detail dimensions', async () => {
     const bytes = await readFile(resolve(FIXTURE_DIRECTORY, 'initial.dxf'));
     const engineeringText = await readFile(resolve(FIXTURE_DIRECTORY, 'engineering-data.ini'), 'utf8');
     const imported = importDxf({
@@ -268,18 +269,23 @@ describe('independently designed educational shaft initial drawing', () => {
       candidateById.get(parentCandidateId)?.roles.includes('overall')
     ))!;
     expect(root.childCandidateIds.map(range)).toEqual([
-      [0, 2],
-      [2, 22],
+      [0, 22],
       [22, 62],
       [62, 138],
       [138, 207],
       [207, 270],
     ]);
-    const represented = [...scheme.displayedCandidateIds, ...scheme.closureCandidateIds].map(range);
-    expect(represented).toEqual(expect.arrayContaining([
+    const visible = [
+      ...scheme.displayedCandidateIds,
+      ...scheme.closureCandidateIds.filter((id) => !isAxialDimensionCandidateSuppressed(candidateById.get(id)!)),
+    ].map(range);
+    expect(visible).toEqual(expect.arrayContaining([
       [2, 20], [31, 61], [62, 81], [81, 115], [138, 198], [198, 201], [208, 244], [270, 286],
     ]));
-    expect(represented.flatMap(([start, end]) => [Number((end! - start!).toFixed(3))]))
+    for (const transition of [[0, 2], [20, 22], [61, 62], [207, 208]] as const) {
+      expect(visible).not.toContainEqual(transition);
+    }
+    expect(visible.flatMap(([start, end]) => [Number((end! - start!).toFixed(3))]))
       .not.toEqual(expect.arrayContaining([0.102, 2.005, 2.796, 2.898, 60.102]));
   });
 });

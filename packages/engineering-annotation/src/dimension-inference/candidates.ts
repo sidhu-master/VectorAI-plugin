@@ -20,7 +20,12 @@ interface ProcessEnvelope extends ResolvedInterval { groupId: string; evidence: 
 export function generateAxialDimensionCandidates(input: GenerateCandidateInput): AxialCandidateSet {
   const accumulator = new CandidateAccumulator(input.topology);
   for (const span of input.topology.elementarySpans) {
-    accumulator.add(span.startStationId, span.endStationId, 'local', elementaryEvidence(span));
+    accumulator.add(
+      span.startStationId,
+      span.endStationId,
+      'local',
+      elementaryEvidence(span, input.topology, input.partition),
+    );
   }
   for (const group of input.partition.semanticGroups) addFunctionalInterval(accumulator, group, input.partition);
   for (const region of input.document?.regions ?? []) addDocumentInterval(accumulator, region, input.partition);
@@ -125,12 +130,29 @@ function addFunctionalInterval(
   group: ShaftSemanticGroup,
   partition: PartitionDraft | PartitionRevision,
 ): void {
-  if (!group.range || resolveShaftDimensionRole(group, partition) !== 'functional-feature') return;
+  if (!group.range) return;
+  const documentEvidence = group.evidenceIds
+    .map((id) => partition.evidence.find((item) => item.id === id))
+    .find((item) => item?.origin === 'document');
+  if (resolveShaftDimensionRole(group, partition) !== 'functional-feature' && !documentEvidence) return;
   const resolved = resolveCoordinates(accumulator.topology, group.range.zStart, group.range.zEnd);
-  const evidence: DimensionEvidence = {
-    id: `partition:group:${group.id}`, origin: 'partition', kind: 'functional-region',
-    label: group.name ?? group.semanticType, required: false, sourceIds: [group.id, ...group.evidenceIds],
-  };
+  const evidence: DimensionEvidence = documentEvidence
+    ? {
+      id: documentEvidence.id,
+      origin: 'document',
+      kind: 'document-interval',
+      label: documentEvidence.label,
+      required: true,
+      sourceIds: [
+        group.id,
+        ...group.evidenceIds,
+        ...(documentEvidence.sourceLines ?? []).map((line) => `document:line:${line}`),
+      ],
+    }
+    : {
+      id: `partition:group:${group.id}`, origin: 'partition', kind: 'functional-region',
+      label: group.name ?? group.semanticType, required: false, sourceIds: [group.id, ...group.evidenceIds],
+    };
   if (!resolved) {
     accumulator.problem('DIMENSION_STATION_UNRESOLVED', evidence.id);
     return;
@@ -180,24 +202,39 @@ function deriveProcessEnvelopes(
 ): ProcessEnvelope[] {
   const tolerance = coordinateTolerance(topology);
   const segments = [...partition.segments].sort((left, right) => left.zStart - right.zStart);
-  return partition.semanticGroups.flatMap((group): ProcessEnvelope[] => {
-    if (!group.range || !isProcessFeature(group, partition)) return [];
-    const sharedBoundary = partition.semanticGroups.some((candidate) => (
+  const processGroups = partition.semanticGroups.filter((group) => (
+    group.range !== undefined && isProcessFeature(group, partition) && !hasOnlyAiEvidence(group, partition)
+  ));
+  const structuralStations = topology.stations.filter(({ kinds }) => (
+    kinds.includes('drawing-end') || kinds.includes('shoulder')
+  ));
+  return processGroups.flatMap((group): ProcessEnvelope[] => {
+    const sharedBoundary = processGroups.some((candidate) => (
       candidate.id !== group.id
       && candidate.range !== undefined
-      && resolveShaftDimensionRole(candidate, partition) === 'functional-feature'
       && Math.abs(candidate.range.zStart - group.range!.zEnd) <= tolerance
     ));
     if (sharedBoundary) return [];
-    const transitionEnd = topology.stations
+    const startStation = topology.stations.find(({ coordinate }) => (
+      Math.abs(coordinate - group.range!.zStart) <= tolerance
+    ));
+    const envelopeStart = startStation?.kinds.some((kind) => kind === 'drawing-end' || kind === 'shoulder')
+      ? group.range.zStart
+      : structuralStations
+        .map(({ coordinate }) => coordinate)
+        .filter((coordinate) => coordinate < group.range!.zStart - tolerance)
+        .sort((left, right) => right - left)[0] ?? group.range.zStart;
+    const transitionEnd = structuralStations
       .map(({ coordinate }) => coordinate)
       .filter((coordinate) => coordinate > group.range!.zEnd + tolerance)
       .sort((left, right) => left - right)[0];
     if (transitionEnd === undefined) return [];
-    const resolved = resolveCoordinates(topology, group.range.zStart, transitionEnd);
+    const resolved = resolveCoordinates(topology, envelopeStart, transitionEnd);
     if (!resolved) return [];
     const transitionSegments = segments.filter(({ zStart, zEnd }) => (
-      zEnd > group.range!.zEnd + tolerance && zStart < transitionEnd - tolerance
+      zEnd > envelopeStart + tolerance
+      && zStart < transitionEnd - tolerance
+      && (zStart < group.range!.zStart - tolerance || zEnd > group.range!.zEnd + tolerance)
     ));
     return [{
       ...resolved,
@@ -219,14 +256,72 @@ function isProcessFeature(
   group: ShaftSemanticGroup,
   partition: PartitionDraft | PartitionRevision,
 ): boolean {
-  return resolveShaftDimensionRole(group, partition) === 'functional-feature';
+  const role = resolveShaftDimensionRole(group, partition);
+  return role === 'functional-feature' || role === 'transition';
 }
 
-function elementaryEvidence(span: AxialElementarySpan): DimensionEvidence {
+function hasOnlyAiEvidence(
+  group: ShaftSemanticGroup,
+  partition: PartitionDraft | PartitionRevision,
+): boolean {
+  const evidence = group.evidenceIds
+    .map((id) => partition.evidence.find((item) => item.id === id))
+    .filter((item) => item !== undefined);
+  return evidence.length > 0 && evidence.every(({ origin }) => origin === 'ai');
+}
+
+function elementaryEvidence(
+  span: AxialElementarySpan,
+  topology: AxialTopology,
+  partition: PartitionDraft | PartitionRevision,
+): DimensionEvidence {
   return {
     id: `geometry:${span.id}`, origin: 'geometry', kind: 'elementary-span',
     label: '相邻轴向台阶', required: false, sourceIds: [span.id, ...span.evidenceIds],
+    ...(isTransitionDetailSpan(span, topology, partition) ? { constraint: 'prohibited' as const } : {}),
   };
+}
+
+function isTransitionDetailSpan(
+  span: AxialElementarySpan,
+  topology: AxialTopology,
+  partition: PartitionDraft | PartitionRevision,
+): boolean {
+  const stations = [span.startStationId, span.endStationId]
+    .map((id) => topology.stations.find((station) => station.id === id))
+    .filter((station) => station !== undefined);
+  return stations.length !== 2 || liesInTransitionCorridor(stations[0]!.coordinate, stations[1]!.coordinate, partition, topology)
+    || stations.some((station) => (
+    !station.kinds.some((kind) => kind === 'drawing-end' || kind === 'shoulder')
+    || partition.semanticGroups.some((group) => (
+      (station.evidenceIds.includes(group.id)
+        || group.evidenceIds.some((id) => station.evidenceIds.includes(id)))
+      && hasOnlyAiEvidence(group, partition)
+    ))
+    ));
+}
+
+function liesInTransitionCorridor(
+  left: number,
+  right: number,
+  partition: PartitionDraft | PartitionRevision,
+  topology: AxialTopology,
+): boolean {
+  const tolerance = coordinateTolerance(topology);
+  const groups = partition.semanticGroups
+    .filter((group) => group.range !== undefined && !hasOnlyAiEvidence(group, partition))
+    .sort((a, b) => a.range!.zStart - b.range!.zStart || a.range!.zEnd - b.range!.zEnd);
+  const spanStart = Math.min(left, right);
+  const spanEnd = Math.max(left, right);
+  return groups.some((group, index) => {
+    if (resolveShaftDimensionRole(group, partition) !== 'transition') return false;
+    const nextFunctionalStart = groups.slice(index + 1)
+      .find((candidate) => resolveShaftDimensionRole(candidate, partition) === 'functional-feature')
+      ?.range?.zStart;
+    const corridorStart = group.range!.zStart;
+    const corridorEnd = Math.max(group.range!.zEnd, nextFunctionalStart ?? group.range!.zEnd);
+    return spanStart >= corridorStart - tolerance && spanEnd <= corridorEnd + tolerance;
+  });
 }
 
 function resolveCoordinates(topology: AxialTopology, start: number, end: number): ResolvedInterval | undefined {

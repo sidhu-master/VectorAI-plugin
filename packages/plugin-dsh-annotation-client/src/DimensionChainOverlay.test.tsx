@@ -38,6 +38,39 @@ describe('DimensionChainOverlay', () => {
     expect(labels[0]?.findAllByType('rect')).toHaveLength(1);
   });
 
+  it('keeps prohibited transition spans in a chain equation without drawing them', () => {
+    const transitionScheme = {
+      ...scheme,
+      topology: {
+        ...scheme.topology,
+        stations: [
+          { id: 's0', sourceCoordinate: 0 }, { id: 's1', sourceCoordinate: 2 },
+          { id: 's2', sourceCoordinate: 18 }, { id: 's3', sourceCoordinate: 20 },
+        ],
+      },
+      candidates: [
+        { id: 'overall', startStationId: 's0', endStationId: 's3', nominalValue: 20, required: true, constraint: 'required' },
+        { id: 'left-transition', startStationId: 's0', endStationId: 's1', nominalValue: 2, required: false, constraint: 'prohibited' },
+        { id: 'feature', startStationId: 's1', endStationId: 's2', nominalValue: 16, required: true, constraint: 'required' },
+        { id: 'right-transition', startStationId: 's2', endStationId: 's3', nominalValue: 2, required: false, constraint: 'prohibited' },
+      ],
+      displayedCandidateIds: ['overall', 'feature'],
+      closureCandidateIds: ['right-transition'],
+      chains: [{
+        id: 'chain:overall', parentCandidateId: 'overall', childCandidateIds: ['left-transition', 'feature'],
+        closureCandidateId: 'right-transition', alternativeClosureCandidateIds: [], status: 'resolved',
+      }],
+      diagnostics: [],
+    } as unknown as AxialDimensionScheme;
+
+    const root = renderer.create(<DimensionChainOverlay scheme={transitionScheme} scale={2} visible />).root;
+    const renderedIds = root.findAll((node) => typeof node.props['data-dimension-candidate-id'] === 'string')
+      .map(({ props }) => props['data-dimension-candidate-id']);
+
+    expect(renderedIds).toEqual(['overall', 'feature']);
+    expect(root.findByProps({ 'data-dimension-candidate-id': 'feature' }).props['data-dimension-role']).toBe('child');
+  });
+
   it('keeps label glyphs and backgrounds at a constant screen size while zooming', () => {
     const atOne = renderer.create(<DimensionChainOverlay scheme={scheme} scale={1} visible />).root
       .findAll((node) => node.type === 'g' && node.props.className === 'vai-dimension-chain-label')[0]!;
