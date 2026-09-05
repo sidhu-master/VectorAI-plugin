@@ -14,8 +14,9 @@ import {
   type RecognitionModelResult,
   type RecognitionRuntimeVersions,
 } from './recognition-runtime';
+import { DSH_RUNTIME_VERSION } from './dsh-runtime-baseline.generated';
 
-export const SUPPORTED_DSH_RECOGNITION_VERSION = '0.1.2-alpha.5';
+export const SUPPORTED_DSH_RECOGNITION_VERSION = DSH_RUNTIME_VERSION;
 
 export interface DshRecognitionProvider {
   readonly capabilities: {

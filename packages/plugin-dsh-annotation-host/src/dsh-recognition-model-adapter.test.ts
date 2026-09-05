@@ -13,6 +13,7 @@ import {
   type DshRecognitionStreamOptions,
 } from './dsh-recognition-model-adapter';
 import type { RecognitionModelRequest } from './recognition-runtime';
+import { DSH_RUNTIME_VERSION } from './dsh-runtime-baseline.generated';
 
 const request: RecognitionModelRequest<{ proposals: unknown[] }> = {
   pipelineId: 'partition',
@@ -30,11 +31,12 @@ const request: RecognitionModelRequest<{ proposals: unknown[] }> = {
 };
 
 describe('DshRecognitionModelAdapter', () => {
-  it('loads the installed DSH recognition package versions', () => {
+  it('uses the generated runtime baseline independently of the build-time SDK packages', () => {
+    expect(SUPPORTED_DSH_RECOGNITION_VERSION).toBe(DSH_RUNTIME_VERSION);
     expect(loadDshRecognitionVersions()).toEqual({
-      agent: SUPPORTED_DSH_RECOGNITION_VERSION,
-      llm: SUPPORTED_DSH_RECOGNITION_VERSION,
-      subagent: SUPPORTED_DSH_RECOGNITION_VERSION,
+      agent: '0.1.2-rc.1',
+      llm: '0.1.2-rc.1',
+      subagent: '0.1.2-rc.1',
     });
   });
 
@@ -71,7 +73,11 @@ describe('DshRecognitionModelAdapter', () => {
   });
 
   it('rejects an unsupported DSH package version before starting a child', async () => {
-    const fixture = createFakeBridge({ versions: { agent: '0.1.2-alpha.4', llm: '0.1.2-alpha.5', subagent: '0.1.2-alpha.5' } });
+    const fixture = createFakeBridge({ versions: {
+      agent: '0.1.2-alpha.4',
+      llm: SUPPORTED_DSH_RECOGNITION_VERSION,
+      subagent: SUPPORTED_DSH_RECOGNITION_VERSION,
+    } });
 
     await expect(new DshRecognitionModelAdapter(fixture.bridge).review(request))
       .rejects.toThrow('DSH_RECOGNITION_VERSION_MISMATCH:agent:0.1.2-alpha.4');

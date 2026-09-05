@@ -7,8 +7,9 @@ import {
   formatProbeSummary,
   validateProbeRecords,
 } from './probe-dsh-recognition-runtime.mjs';
+import { readDshRuntimeManifest } from './dsh-runtime-manifest.mjs';
 
-const version = '0.1.2-alpha.5';
+const version = readDshRuntimeManifest().version;
 
 test('validates and formats only sanitized live recognition facts', () => {
   const summary = validateProbeRecords(safeRecords());
@@ -23,7 +24,7 @@ test('validates and formats only sanitized live recognition facts', () => {
   });
   assert.equal(
     formatProbeSummary(summary),
-    'recognition probe: pass\ncompatible=true\nversions agent=0.1.2-alpha.5 llm=0.1.2-alpha.5 subagent=0.1.2-alpha.5\nprovider=deepseek-official model=fixture-model reasoningEffort=high observations=1\n',
+    `recognition probe: pass\ncompatible=true\nversions agent=${version} llm=${version} subagent=${version}\nprovider=deepseek-official model=fixture-model reasoningEffort=high observations=1\n`,
   );
 });
 

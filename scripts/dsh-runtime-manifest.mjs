@@ -106,6 +106,12 @@ export async function inspectDshRuntimeDrift(root = defaultRepositoryRoot()) {
       }
     }
   }
+  const rootManifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+  for (const [name, version] of Object.entries(rootManifest.devDependencies ?? {})) {
+    if (name.startsWith('@deepseek-ai/dsh-') && version !== baseline.registrySdkVersion) {
+      drift.push(`package.json:devDependencies.${name}`);
+    }
+  }
   return drift.sort();
 }
 

@@ -46,6 +46,14 @@ if (checkOnly) {
     }
     await writeJson(path, manifest);
   }
+  const rootManifestPath = resolve(root, 'package.json');
+  const rootManifest = JSON.parse(await readFile(rootManifestPath, 'utf8'));
+  for (const name of Object.keys(rootManifest.devDependencies ?? {})) {
+    if (name.startsWith('@deepseek-ai/dsh-')) {
+      rootManifest.devDependencies[name] = baseline.registrySdkVersion;
+    }
+  }
+  await writeJson(rootManifestPath, rootManifest);
   await writeFile(
     resolve(root, 'packages/plugin-dsh-annotation-host/src/dsh-runtime-baseline.generated.ts'),
     renderDshTypeScriptBaseline(baseline),

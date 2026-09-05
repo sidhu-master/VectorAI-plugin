@@ -5,6 +5,7 @@ import type { PartitionDraft } from '@vectorai/engineering-annotation';
 import { describe, expect, it } from 'vitest';
 import { RecognitionPipelineRunner, recognitionDigest, type RecognitionModelPort } from './recognition-runtime';
 import { createPartitionSemanticPipeline, PARTITION_SEMANTIC_PIPELINE_ID } from './semantic-reviewer';
+import { DSH_RUNTIME_VERSION } from './dsh-runtime-baseline.generated';
 
 describe('partition recognition contract', () => {
   it('evaluates the production pipeline through rendering, model review, validation and local grounding', async () => {
@@ -24,7 +25,11 @@ describe('partition recognition contract', () => {
           provider: 'fixture-provider', model: 'fixture-model', reasoningEffort: 'high',
           messageCount: 3, systemDigest: 'sha256:system', toolNames: ['structured_output'],
           requestDigest: 'sha256:model-request',
-          runtimeVersions: { agent: '0.1.2-alpha.5', llm: '0.1.2-alpha.5', subagent: '0.1.2-alpha.5' },
+          runtimeVersions: {
+            agent: DSH_RUNTIME_VERSION,
+            llm: DSH_RUNTIME_VERSION,
+            subagent: DSH_RUNTIME_VERSION,
+          },
         }],
       }),
     };

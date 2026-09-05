@@ -62,6 +62,11 @@ describe('official DSH release manifests', () => {
         if (name.startsWith('@deepseek-ai/dsh-')) expect(version).toBe('0.1.2-rc.1');
       }
     }
+
+    const rootManifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+    for (const [name, version] of Object.entries(rootManifest.devDependencies ?? {})) {
+      if (name.startsWith('@deepseek-ai/dsh-')) expect(version).toBe('0.1.2-rc.1');
+    }
   });
 
   for (const bundle of bundles) {

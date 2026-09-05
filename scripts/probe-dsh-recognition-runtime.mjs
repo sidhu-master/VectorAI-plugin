@@ -10,8 +10,9 @@ import {
   checkDshBuildFreshness,
   defaultRepositoryRoot,
 } from './dsh-build-freshness.mjs';
+import { readDshRuntimeManifest } from './dsh-runtime-manifest.mjs';
 
-const SUPPORTED_VERSION = '0.1.2-alpha.5';
+const SUPPORTED_VERSION = readDshRuntimeManifest().version;
 const PROBE_MARKER = 'ADAPTER_RUNTIME_OK';
 const PROBE_PROMPT = `Set value to exactly ${PROBE_MARKER}.`;
 const PROBE_PERSONA = 'Return only the requested structured result.';
