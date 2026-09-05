@@ -21,6 +21,18 @@ describe('DSH runtime manifest', () => {
       commit: 'd347e703908d0406b7a7ef80e3a0e594d86b2215',
       registrySdkVersion: '0.1.2-rc.1',
       profile: 'web',
+      bundleRuntimeDependencies: {
+        '@newwe/vectorai-plugin-dsh-space': [
+          '@deepseek-ai/dsh-llm',
+          '@deepseek-ai/dsh-tools',
+          '@deepseek-ai/dsh-typert-protocol',
+        ],
+        '@newwe/vectorai-plugin-dsh-annotation': [
+          '@deepseek-ai/dsh-session',
+          '@deepseek-ai/dsh-tools',
+          '@deepseek-ai/dsh-typert-protocol',
+        ],
+      },
     });
     expect(formatDshRuntimeCoordinates(baseline)).toBe(
       '0.1.3-alpha.1\ndsh-v0.1.3-alpha.1\nd347e703908d0406b7a7ef80e3a0e594d86b2215\n',

@@ -23,7 +23,7 @@ export function assertDshRuntimeManifest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('DSH_RUNTIME_MANIFEST_INVALID');
   }
-  const { version, tag, commit, registrySdkVersion, profile } = value;
+  const { version, tag, commit, registrySdkVersion, profile, bundleRuntimeDependencies } = value;
   for (const [key, member] of Object.entries({ version, tag, commit, registrySdkVersion, profile })) {
     if (typeof member !== 'string' || member.length === 0) {
       throw new Error(`DSH_RUNTIME_MANIFEST_FIELD_INVALID:${key}`);
@@ -37,7 +37,31 @@ export function assertDshRuntimeManifest(value) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(registrySdkVersion)) {
     throw new Error('DSH_RUNTIME_MANIFEST_SDK_VERSION_INVALID');
   }
-  return { version, tag, commit, registrySdkVersion, profile };
+  if (!bundleRuntimeDependencies || typeof bundleRuntimeDependencies !== 'object'
+    || Array.isArray(bundleRuntimeDependencies)) {
+    throw new Error('DSH_RUNTIME_MANIFEST_BUNDLE_DEPENDENCIES_INVALID');
+  }
+  const normalizedDependencies = {};
+  for (const [bundle, dependencies] of Object.entries(bundleRuntimeDependencies)) {
+    if (!Array.isArray(dependencies) || dependencies.length === 0) {
+      throw new Error(`DSH_RUNTIME_MANIFEST_BUNDLE_DEPENDENCIES_INVALID:${bundle}`);
+    }
+    const normalized = [...dependencies];
+    if (normalized.some((name) => typeof name !== 'string'
+      || !name.startsWith('@deepseek-ai/dsh-')
+      || name === '@deepseek-ai/cordis')) {
+      throw new Error(`DSH_RUNTIME_MANIFEST_BUNDLE_DEPENDENCY_INVALID:${bundle}`);
+    }
+    const sorted = [...new Set(normalized)].sort();
+    if (JSON.stringify(normalized) !== JSON.stringify(sorted)) {
+      throw new Error(`DSH_RUNTIME_MANIFEST_BUNDLE_DEPENDENCIES_UNSORTED:${bundle}`);
+    }
+    normalizedDependencies[bundle] = sorted;
+  }
+  return {
+    version, tag, commit, registrySdkVersion, profile,
+    bundleRuntimeDependencies: normalizedDependencies,
+  };
 }
 
 export function readDshRuntimeManifest(root = defaultRepositoryRoot()) {
