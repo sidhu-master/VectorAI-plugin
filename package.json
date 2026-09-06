@@ -10,6 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "build:dsh-space": "node scripts/build-dsh-space.mjs space",
     "build:dsh-annotation": "node scripts/build-dsh-space.mjs annotation",
+    "build:cad-preview-app": "python3 tools/cad-preview-app/build_app.py",
     "sync:dsh-runtime-baseline": "node scripts/sync-dsh-runtime-baseline.mjs",
     "check:dsh-runtime-baseline": "node scripts/sync-dsh-runtime-baseline.mjs --check",
     "check:dsh-registry-readiness": "node scripts/check-dsh-registry-readiness.mjs",

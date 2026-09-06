@@ -1,0 +1,7 @@
+.venv/
+build/
+dist/
+assets/AppIcon.icns
+assets/AppIcon.iconset/
+__pycache__/
+.pytest_cache/
