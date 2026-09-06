@@ -132,6 +132,28 @@ def test_canvas_zoom_and_pan_change_the_visible_world_window(qtbot) -> None:
     assert axes.get_ylim() == (10, 50)
 
 
+def test_drag_uses_fixed_press_origin_without_accumulating_drift(qtbot) -> None:
+    from matplotlib.figure import Figure
+
+    figure = Figure(figsize=(8, 4), dpi=100)
+    axes = figure.add_axes([0, 0, 1, 1])
+    axes.set_xlim(0, 100)
+    axes.set_ylim(0, 50)
+    canvas = InteractiveFigureCanvas(figure)
+    qtbot.addWidget(canvas)
+    canvas.draw()
+
+    canvas._on_press(SimpleNamespace(dblclick=False, button=1, inaxes=axes, x=400, y=200))
+    motion = SimpleNamespace(x=480, y=240)
+    canvas._on_motion(motion)
+    first_limits = (axes.get_xlim(), axes.get_ylim())
+    canvas.draw()
+    canvas._on_motion(motion)
+
+    assert axes.get_xlim() == first_limits[0]
+    assert axes.get_ylim() == first_limits[1]
+
+
 def test_layer_panel_is_collapsed_by_default_and_can_be_shown(qtbot) -> None:
     window = CadPreviewWindow(show_error=lambda _title, _message: None)
     qtbot.addWidget(window)

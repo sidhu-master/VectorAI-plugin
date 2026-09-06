@@ -40,7 +40,8 @@ class InteractiveFigureCanvas(FigureCanvasQTAgg):
         self.setStyleSheet("background-color: #10171d;")
         self._fit_callback: Callable[[], None] | None = None
         self._drag_axes = None
-        self._drag_point: tuple[float, float] | None = None
+        self._drag_origin: tuple[float, float] | None = None
+        self._drag_limits: tuple[tuple[float, float], tuple[float, float]] | None = None
         self.mpl_connect("scroll_event", self._on_scroll)
         self.mpl_connect("button_press_event", self._on_press)
         self.mpl_connect("motion_notify_event", self._on_motion)
@@ -73,26 +74,34 @@ class InteractiveFigureCanvas(FigureCanvasQTAgg):
             if self._fit_callback is not None:
                 self._fit_callback()
             return
-        if event.button == 1 and event.inaxes is not None and event.xdata is not None and event.ydata is not None:
+        if event.button == 1 and event.inaxes is not None:
             self._drag_axes = event.inaxes
-            self._drag_point = (event.xdata, event.ydata)
+            self._drag_origin = (event.x, event.y)
+            self._drag_limits = (event.inaxes.get_xlim(), event.inaxes.get_ylim())
 
     def _on_motion(self, event) -> None:
         if (
             self._drag_axes is None
-            or self._drag_point is None
-            or event.inaxes is not self._drag_axes
-            or event.xdata is None
-            or event.ydata is None
+            or self._drag_origin is None
+            or self._drag_limits is None
         ):
             return
-        previous_x, previous_y = self._drag_point
-        self.pan_by(self._drag_axes, event.xdata - previous_x, event.ydata - previous_y)
-        self._drag_point = (event.xdata, event.ydata)
+        origin_x, origin_y = self._drag_origin
+        (left, right), (bottom, top) = self._drag_limits
+        axes_width = self._drag_axes.bbox.width
+        axes_height = self._drag_axes.bbox.height
+        if axes_width <= 0 or axes_height <= 0:
+            return
+        dx = (event.x - origin_x) * (right - left) / axes_width
+        dy = (event.y - origin_y) * (top - bottom) / axes_height
+        self._drag_axes.set_xlim(left - dx, right - dx)
+        self._drag_axes.set_ylim(bottom - dy, top - dy)
+        self.draw_idle()
 
     def _on_release(self, _event) -> None:
         self._drag_axes = None
-        self._drag_point = None
+        self._drag_origin = None
+        self._drag_limits = None
 
 
 class CadPreviewWindow(QMainWindow):
