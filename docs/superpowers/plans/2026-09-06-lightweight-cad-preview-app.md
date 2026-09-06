@@ -1,6 +1,6 @@
 # VectorAI CAD Preview Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build and install a self-contained macOS DXF viewer that reproduces the existing ezdxf/Matplotlib acceptance preview and exports PNG images.
 
@@ -38,27 +38,27 @@
 - `LoadedDrawing` contains the resolved path, ezdxf document, ordered layer records, audit counts, and modelspace entity count.
 - `RenderSummary` contains visible entity count, bounds, and visible text strings.
 
-- [ ] **Step 1: Create the dependency manifest and failing renderer tests**
+- [x] **Step 1: Create the dependency manifest and failing renderer tests**
 
 Write tests that create a temporary standards-based DXF with two layers, LINE/HATCH/MTEXT entities, and MTEXT formatting controls. Assert that loading returns ordered layers and audit counts; rendering excludes a hidden layer, returns plain visible text without `\\f` or `\\W`, and writes a non-empty PNG. Also assert that an invalid DXF raises `DxfPreviewError` with the input filename.
 
-- [ ] **Step 2: Run the renderer tests and verify RED**
+- [x] **Step 2: Run the renderer tests and verify RED**
 
 Run: `tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests/test_renderer.py -q`
 
 Expected: collection fails because `vectorai_cad_preview` does not exist.
 
-- [ ] **Step 3: Implement the minimal model and renderer**
+- [x] **Step 3: Implement the minimal model and renderer**
 
 Use `ezdxf.readfile`, `doc.audit()`, and modelspace iteration for loading. Render through `RenderContext`, `Frontend`, and `MatplotlibBackend`; use an ezdxf `filter_func` based on the entity layer. Extract visible text with `plain_text()` for MTEXT and `dxf.text` for TEXT. Apply background `#10171d`, equal aspect, autoscale, hidden axes, and a fixed viewport margin.
 
-- [ ] **Step 4: Run the renderer tests and verify GREEN**
+- [x] **Step 4: Run the renderer tests and verify GREEN**
 
 Run: `tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests/test_renderer.py -q`
 
 Expected: all renderer tests pass without warnings.
 
-- [ ] **Step 5: Commit the renderer slice**
+- [x] **Step 5: Commit the renderer slice**
 
 Run: `git add tools/cad-preview-app && git commit -m "feat: add deterministic DXF preview renderer"`
 
@@ -75,27 +75,27 @@ Run: `git add tools/cad-preview-app && git commit -m "feat: add deterministic DX
 - Produces: `CadPreviewWindow.export_current_png(path: Path) -> bool`
 - Produces: `CadPreviewApplication.event(event: QEvent) -> bool` for macOS file-open events.
 
-- [ ] **Step 1: Write failing window tests**
+- [x] **Step 1: Write failing window tests**
 
 Use a real temporary DXF and `pytest-qt`. Assert that `open_path` updates the title, canvas, layer list, status counts, and last successful path; a later invalid file returns false and preserves that state. Assert that toggling a layer redraws without changing the source file bytes, drag/drop accepts only `.dxf`, export creates a PNG, and a `QFileOpenEvent` routes to the active window.
 
-- [ ] **Step 2: Run the window tests and verify RED**
+- [x] **Step 2: Run the window tests and verify RED**
 
 Run: `QT_QPA_PLATFORM=offscreen tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests/test_window.py -q`
 
 Expected: collection fails because the window classes do not exist.
 
-- [ ] **Step 3: Implement the minimal application UI**
+- [x] **Step 3: Implement the minimal application UI**
 
 Embed `FigureCanvasQTAgg` and `NavigationToolbar2QT`. Add Open, Fit, Pan, Zoom, Export PNG actions; a checkable right-side layer dock; a dark central canvas; file drop handlers; status text for entity/layer/audit counts; and a diagnostic error dialog. File errors return false and leave the loaded drawing intact.
 
-- [ ] **Step 4: Run window and renderer tests and verify GREEN**
+- [x] **Step 4: Run window and renderer tests and verify GREEN**
 
 Run: `QT_QPA_PLATFORM=offscreen tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests -q`
 
 Expected: all tests pass without Qt or Matplotlib warnings.
 
-- [ ] **Step 5: Commit the UI slice**
+- [x] **Step 5: Commit the UI slice**
 
 Run: `git add tools/cad-preview-app && git commit -m "feat: add interactive CAD preview window"`
 
@@ -113,21 +113,21 @@ Run: `git add tools/cad-preview-app && git commit -m "feat: add interactive CAD 
 - Produces: `tools/cad-preview-app/dist/VectorAI CAD Preview.app`
 - Produces: application bundle ID `com.vectorai.cadpreview` with `.dxf` document declarations.
 
-- [ ] **Step 1: Write failing bundle configuration tests**
+- [x] **Step 1: Write failing bundle configuration tests**
 
 Assert that the PyInstaller spec declares the expected app name, Bundle ID, `CFBundleDocumentTypes`, `CFBundleTypeExtensions = ["dxf"]`, and includes ezdxf drawing fonts/resources. Assert that `package.json` exposes `build:cad-preview-app`.
 
-- [ ] **Step 2: Run the bundle tests and verify RED**
+- [x] **Step 2: Run the bundle tests and verify RED**
 
 Run: `tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests/test_bundle_config.py -q`
 
 Expected: tests fail because the spec and root command do not exist.
 
-- [ ] **Step 3: Implement packaging and documentation**
+- [x] **Step 3: Implement packaging and documentation**
 
 Create a PyInstaller windowed `onedir` app with arm64 target, application icon generated from a deterministic local SVG/PNG asset, ezdxf resource collection, and the required Info.plist keys. `build_app.py` creates or reuses `.venv`, installs exact versions from `requirements.txt`, invokes PyInstaller, and applies ad-hoc deep signing. Document development, build, install, file opening, and limitations.
 
-- [ ] **Step 4: Run bundle tests and build the app**
+- [x] **Step 4: Run bundle tests and build the app**
 
 Run: `tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests -q`
 
@@ -135,7 +135,7 @@ Run: `pnpm build:cad-preview-app`
 
 Expected: tests pass and `tools/cad-preview-app/dist/VectorAI CAD Preview.app` exists.
 
-- [ ] **Step 5: Verify bundle metadata and architecture**
+- [x] **Step 5: Verify bundle metadata and architecture**
 
 Run: `plutil -p "tools/cad-preview-app/dist/VectorAI CAD Preview.app/Contents/Info.plist"`
 
@@ -145,7 +145,7 @@ Run: `codesign --verify --deep --strict "tools/cad-preview-app/dist/VectorAI CAD
 
 Expected: Bundle ID and DXF association are present, executable includes arm64, and signature verification exits 0.
 
-- [ ] **Step 6: Commit the packaging slice**
+- [x] **Step 6: Commit the packaging slice**
 
 Run: `git add package.json pnpm-lock.yaml tools/cad-preview-app docs && git commit -m "build: package VectorAI CAD Preview for macOS"`
 
@@ -159,35 +159,35 @@ Run: `git add package.json pnpm-lock.yaml tools/cad-preview-app docs && git comm
 - Consumes: packaged app and real DXF paths from the design spec.
 - Produces: installed `/Applications/VectorAI CAD Preview.app` and PNG acceptance renders.
 
-- [ ] **Step 1: Write the real-file acceptance test**
+- [x] **Step 1: Write the real-file acceptance test**
 
 Parameterize over every existing acceptance DXF. Load and render each file, assert a non-empty modelspace and PNG, assert visible text contains no raw `\\f` or `\\W`, and record layer/entity/audit counts plus PNG SHA-256 in `.local/cad-preview-app-acceptance/report.json`.
 
-- [ ] **Step 2: Run the real-file acceptance**
+- [x] **Step 2: Run the real-file acceptance**
 
 Run: `tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests/test_real_files.py -q`
 
 Expected: all existing fixture parameters pass and write their PNG/report records. If one fails, preserve the failing file and assertion as the required RED regression before changing production code.
 
-- [ ] **Step 3: Resolve any evidenced real-file incompatibility**
+- [x] **Step 3: Resolve any evidenced real-file incompatibility**
 
 If Step 2 fails, trace the failure to DXF loading, text interpretation, layer filtering, or Matplotlib output; add a focused assertion to `test_renderer.py`, then change only that responsible renderer/model boundary. Do not special-case fixture names, handles, expected paper coordinates, or golden content. If Step 2 passes, make no production change in this step.
 
-- [ ] **Step 4: Run all app tests and acceptance**
+- [x] **Step 4: Run all app tests and acceptance**
 
 Run: `QT_QPA_PLATFORM=offscreen tools/cad-preview-app/.venv/bin/python -m pytest tools/cad-preview-app/tests -q`
 
 Expected: all tests pass and three acceptance PNGs exist for the available real files.
 
-- [ ] **Step 5: Install and launch outside the development environment**
+- [x] **Step 5: Install and launch outside the development environment**
 
 Copy the built app to `/Applications/VectorAI CAD Preview.app`, launch it with `/Users/sidhu/Downloads/样本图001.dxf`, and verify the process remains running. Repeat with the latest current exported DXF and export a PNG through the app.
 
-- [ ] **Step 6: Perform visual checklist**
+- [x] **Step 6: Perform visual checklist**
 
 Inspect the generated images and confirm dimensions, datum symbols, GD&T frames, roughness, hatches, centerlines, layer colors, and readable text individually. Record unsupported CAXA proxy entities or missing fonts rather than marking them visually equivalent.
 
-- [ ] **Step 7: Run repository regression checks and commit acceptance**
+- [x] **Step 7: Run repository regression checks and commit acceptance**
 
 Run: `pnpm check`
 

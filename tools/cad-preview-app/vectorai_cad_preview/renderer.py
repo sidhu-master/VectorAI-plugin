@@ -129,3 +129,8 @@ def _visible_texts(entities: Iterable[DXFGraphic]) -> Iterable[str]:
             yield entity.plain_text()
         elif kind in {"TEXT", "ATTRIB", "ATTDEF"}:
             yield entity.dxf.get("text", "")
+        elif kind in {"INSERT", "DIMENSION", "MLEADER"} and hasattr(entity, "virtual_entities"):
+            try:
+                yield from _visible_texts(entity.virtual_entities())
+            except Exception:
+                continue

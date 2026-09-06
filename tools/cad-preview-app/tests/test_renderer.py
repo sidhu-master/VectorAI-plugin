@@ -72,3 +72,19 @@ def test_invalid_dxf_reports_the_filename(tmp_path: Path) -> None:
 
     with pytest.raises(DxfPreviewError, match="broken.dxf"):
         load_dxf(path)
+
+
+def test_reports_plain_text_nested_in_insert_blocks(tmp_path: Path) -> None:
+    from matplotlib.figure import Figure
+
+    path = tmp_path / "nested.dxf"
+    doc = ezdxf.new("R2010", setup=True)
+    block = doc.blocks.new("GDT")
+    block.add_mtext(r"{\fArial|b0|i0;A-B}", dxfattribs={"char_height": 2.5})
+    doc.modelspace().add_blockref("GDT", (10, 10))
+    doc.saveas(path)
+
+    summary = draw_loaded_dxf(load_dxf(path), Figure(figsize=(8, 4), dpi=100))
+
+    assert "A-B" in summary.visible_texts
+    assert all("\\f" not in text for text in summary.visible_texts)
