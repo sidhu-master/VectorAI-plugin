@@ -6,9 +6,10 @@ from types import SimpleNamespace
 import ezdxf
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QFileOpenEvent
+from PySide6.QtWidgets import QSizePolicy
 
 from vectorai_cad_preview.app import CadPreviewApplication
-from vectorai_cad_preview.window import CadPreviewWindow, supported_drop_paths
+from vectorai_cad_preview.window import CadPreviewWindow, InteractiveFigureCanvas, supported_drop_paths
 
 
 def make_drawing(path: Path) -> Path:
@@ -106,3 +107,36 @@ def test_macos_file_open_event_routes_to_the_window(tmp_path: Path) -> None:
 
     assert CadPreviewApplication.event(fake_app, QFileOpenEvent(str(path))) is True
     assert window.opened == path
+
+
+def test_canvas_zoom_and_pan_change_the_visible_world_window(qtbot) -> None:
+    from matplotlib.figure import Figure
+
+    figure = Figure(figsize=(8, 4), dpi=100)
+    axes = figure.add_axes([0, 0, 1, 1])
+    axes.set_xlim(0, 100)
+    axes.set_ylim(0, 50)
+    canvas = InteractiveFigureCanvas(figure)
+    qtbot.addWidget(canvas)
+
+    assert canvas.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert canvas.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    assert "#10171d" in canvas.styleSheet()
+
+    canvas.zoom_at(axes, 50, 25, 0.8)
+    assert axes.get_xlim() == (10, 90)
+    assert axes.get_ylim() == (5, 45)
+
+    canvas.pan_by(axes, 10, -5)
+    assert axes.get_xlim() == (0, 80)
+    assert axes.get_ylim() == (10, 50)
+
+
+def test_layer_panel_is_collapsed_by_default_and_can_be_shown(qtbot) -> None:
+    window = CadPreviewWindow(show_error=lambda _title, _message: None)
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.layer_dock.isVisible() is False
+    window.layers_action.trigger()
+    assert window.layer_dock.isVisible() is True

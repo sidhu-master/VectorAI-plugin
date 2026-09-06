@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Iterable
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QSizePolicy,
     QToolBar,
 )
 
@@ -32,6 +33,68 @@ def supported_drop_paths(urls: Iterable[QUrl]) -> list[Path]:
     ]
 
 
+class InteractiveFigureCanvas(FigureCanvasQTAgg):
+    def __init__(self, figure: Figure) -> None:
+        super().__init__(figure)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setStyleSheet("background-color: #10171d;")
+        self._fit_callback: Callable[[], None] | None = None
+        self._drag_axes = None
+        self._drag_point: tuple[float, float] | None = None
+        self.mpl_connect("scroll_event", self._on_scroll)
+        self.mpl_connect("button_press_event", self._on_press)
+        self.mpl_connect("motion_notify_event", self._on_motion)
+        self.mpl_connect("button_release_event", self._on_release)
+
+    def set_fit_callback(self, callback: Callable[[], None]) -> None:
+        self._fit_callback = callback
+
+    def zoom_at(self, axes, x: float, y: float, scale: float) -> None:
+        left, right = axes.get_xlim()
+        bottom, top = axes.get_ylim()
+        axes.set_xlim(x + (left - x) * scale, x + (right - x) * scale)
+        axes.set_ylim(y + (bottom - y) * scale, y + (top - y) * scale)
+        self.draw_idle()
+
+    def pan_by(self, axes, dx: float, dy: float) -> None:
+        left, right = axes.get_xlim()
+        bottom, top = axes.get_ylim()
+        axes.set_xlim(left - dx, right - dx)
+        axes.set_ylim(bottom - dy, top - dy)
+        self.draw_idle()
+
+    def _on_scroll(self, event) -> None:
+        if event.inaxes is None or event.xdata is None or event.ydata is None:
+            return
+        self.zoom_at(event.inaxes, event.xdata, event.ydata, 0.8 if event.button == "up" else 1.25)
+
+    def _on_press(self, event) -> None:
+        if event.dblclick and event.button == 1:
+            if self._fit_callback is not None:
+                self._fit_callback()
+            return
+        if event.button == 1 and event.inaxes is not None and event.xdata is not None and event.ydata is not None:
+            self._drag_axes = event.inaxes
+            self._drag_point = (event.xdata, event.ydata)
+
+    def _on_motion(self, event) -> None:
+        if (
+            self._drag_axes is None
+            or self._drag_point is None
+            or event.inaxes is not self._drag_axes
+            or event.xdata is None
+            or event.ydata is None
+        ):
+            return
+        previous_x, previous_y = self._drag_point
+        self.pan_by(self._drag_axes, event.xdata - previous_x, event.ydata - previous_y)
+        self._drag_point = (event.xdata, event.ydata)
+
+    def _on_release(self, _event) -> None:
+        self._drag_axes = None
+        self._drag_point = None
+
+
 class CadPreviewWindow(QMainWindow):
     def __init__(self, *, show_error: ErrorPresenter | None = None) -> None:
         super().__init__()
@@ -46,17 +109,18 @@ class CadPreviewWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         self.figure = Figure(figsize=(12.8, 8), dpi=100)
-        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.figure.patch.set_facecolor("#10171d")
+        self.canvas = InteractiveFigureCanvas(self.figure)
+        self.canvas.set_fit_callback(self.fit_drawing)
         self.setCentralWidget(self.canvas)
-        self.navigation = NavigationToolbar2QT(self.canvas, self)
-        self.navigation.hide()
 
         self.layer_list = QListWidget()
         self.layer_list.itemChanged.connect(self._layer_item_changed)
-        dock = QDockWidget("图层", self)
-        dock.setObjectName("layers")
-        dock.setWidget(self.layer_list)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self.layer_dock = QDockWidget("图层", self)
+        self.layer_dock.setObjectName("layers")
+        self.layer_dock.setWidget(self.layer_list)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.layer_dock)
+        self.layer_dock.hide()
 
         self._build_actions()
         self.statusBar().showMessage("拖入 DXF，或点击“打开 DXF”")
@@ -76,15 +140,12 @@ class CadPreviewWindow(QMainWindow):
         fit_action.triggered.connect(self.fit_drawing)
         toolbar.addAction(fit_action)
 
-        pan_action = QAction("平移", self)
-        pan_action.setCheckable(True)
-        pan_action.triggered.connect(self.navigation.pan)
-        toolbar.addAction(pan_action)
-
-        zoom_action = QAction("框选缩放", self)
-        zoom_action.setCheckable(True)
-        zoom_action.triggered.connect(self.navigation.zoom)
-        toolbar.addAction(zoom_action)
+        self.layers_action = QAction("图层", self)
+        self.layers_action.setCheckable(True)
+        self.layers_action.setChecked(False)
+        self.layers_action.toggled.connect(self.layer_dock.setVisible)
+        self.layer_dock.visibilityChanged.connect(self.layers_action.setChecked)
+        toolbar.addAction(self.layers_action)
 
         export_action = QAction("导出 PNG", self)
         export_action.setShortcut("Ctrl+Shift+S")

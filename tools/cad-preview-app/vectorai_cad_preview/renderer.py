@@ -55,7 +55,6 @@ def draw_loaded_dxf(
     figure.set_facecolor(BACKGROUND)
     axes = figure.add_axes((0, 0, 1, 1))
     axes.set_facecolor(BACKGROUND)
-    axes.set_axis_off()
 
     modelspace = loaded.document.modelspace()
     entities = tuple(modelspace)
@@ -74,9 +73,11 @@ def draw_loaded_dxf(
     except Exception as exc:
         raise DxfPreviewError(f"无法渲染 {loaded.path.name}: {exc}") from exc
 
-    axes.set_facecolor(BACKGROUND)
     axes.set_aspect("equal")
-    axes.margins(x=0.02, y=0.05)
+    # ezdxf owns the axes background, while the surrounding letterbox belongs
+    # to the preview window. Reapply it after finalize so resizing never exposes
+    # Qt's default white widget background.
+    figure.patch.set_facecolor(BACKGROUND)
     visible = tuple(entity for entity in entities if is_visible(entity))
     bounds = _axes_bounds(axes)
     texts = tuple(_visible_texts(visible))

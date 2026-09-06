@@ -4,6 +4,7 @@ from pathlib import Path
 
 import ezdxf
 import pytest
+from PIL import Image, ImageChops
 
 from vectorai_cad_preview.renderer import (
     DxfPreviewError,
@@ -52,7 +53,7 @@ def test_renders_filtered_layers_and_plain_mtext(tmp_path: Path) -> None:
     assert summary.bounds is not None
     assert "尺寸链\n105" in summary.visible_texts
     assert all("\\f" not in text and "\\W" not in text for text in summary.visible_texts)
-    assert figure.axes[0].get_facecolor()[:3] == pytest.approx((16 / 255, 23 / 255, 29 / 255))
+    assert figure.axes[0].get_facecolor()[:3] == pytest.approx((33 / 255, 40 / 255, 48 / 255))
 
 
 def test_exports_non_empty_png(tmp_path: Path) -> None:
@@ -88,3 +89,35 @@ def test_reports_plain_text_nested_in_insert_blocks(tmp_path: Path) -> None:
 
     assert "A-B" in summary.visible_texts
     assert all("\\f" not in text for text in summary.visible_texts)
+
+
+def test_png_matches_the_legacy_python_render_path_pixel_for_pixel(tmp_path: Path) -> None:
+    from ezdxf.addons.drawing import Frontend, RenderContext
+    from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+    from matplotlib.figure import Figure
+
+    source = make_drawing(tmp_path / "drawing.dxf")
+    expected_path = tmp_path / "legacy.png"
+    actual_path = tmp_path / "app.png"
+    doc = ezdxf.readfile(source)
+    figure = Figure(figsize=(16, 9), dpi=150, facecolor="#10171d")
+    axes = figure.add_axes([0, 0, 1, 1])
+    axes.set_facecolor("#10171d")
+    Frontend(RenderContext(doc), MatplotlibBackend(axes)).draw_layout(
+        doc.modelspace(), finalize=True
+    )
+    axes.set_aspect("equal")
+    figure.savefig(
+        expected_path,
+        dpi=150,
+        facecolor="#10171d",
+        bbox_inches="tight",
+        pad_inches=0.15,
+    )
+
+    export_png(load_dxf(source), actual_path, dpi=150)
+
+    expected = Image.open(expected_path).convert("RGB")
+    actual = Image.open(actual_path).convert("RGB")
+    assert expected.size == actual.size
+    assert ImageChops.difference(expected, actual).getbbox() is None
