@@ -67,6 +67,22 @@ def test_exports_non_empty_png(tmp_path: Path) -> None:
     assert output.stat().st_size > 1_000
 
 
+def test_interactive_render_keeps_axes_over_the_full_canvas(tmp_path: Path) -> None:
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    loaded = load_dxf(make_drawing(tmp_path / "drawing.dxf"))
+    figure = Figure(figsize=(8, 8), dpi=100)
+    FigureCanvasAgg(figure)
+    original_size = tuple(figure.get_size_inches())
+
+    draw_loaded_dxf(loaded, figure, fill_canvas=True)
+    figure.canvas.draw()
+
+    assert tuple(figure.get_size_inches()) == pytest.approx(original_size)
+    assert figure.axes[0].get_position().bounds == pytest.approx((0, 0, 1, 1))
+
+
 def test_invalid_dxf_reports_the_filename(tmp_path: Path) -> None:
     path = tmp_path / "broken.dxf"
     path.write_text("not a DXF", encoding="utf-8")

@@ -50,6 +50,8 @@ def draw_loaded_dxf(
     loaded: LoadedDrawing,
     figure: Figure,
     visible_layers: frozenset[str] | None = None,
+    *,
+    fill_canvas: bool = False,
 ) -> RenderSummary:
     figure.clear()
     figure.set_facecolor(BACKGROUND)
@@ -68,12 +70,12 @@ def draw_loaded_dxf(
     try:
         Frontend(
             RenderContext(loaded.document),
-            MatplotlibBackend(axes),
+            MatplotlibBackend(axes, adjust_figure=not fill_canvas),
         ).draw_layout(modelspace, finalize=True, filter_func=is_visible)
     except Exception as exc:
         raise DxfPreviewError(f"无法渲染 {loaded.path.name}: {exc}") from exc
 
-    axes.set_aspect("equal")
+    axes.set_aspect("equal", adjustable="datalim" if fill_canvas else "box", anchor="C")
     # ezdxf owns the axes background, while the surrounding letterbox belongs
     # to the preview window. Reapply it after finalize so resizing never exposes
     # Qt's default white widget background.

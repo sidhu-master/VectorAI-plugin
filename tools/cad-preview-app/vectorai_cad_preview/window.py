@@ -161,7 +161,7 @@ class CadPreviewWindow(QMainWindow):
         try:
             candidate = load_dxf(path)
             default_layers = frozenset(layer.name for layer in candidate.layers if layer.visible)
-            summary = draw_loaded_dxf(candidate, self.figure, default_layers)
+            summary = draw_loaded_dxf(candidate, self.figure, default_layers, fill_canvas=True)
             if summary.bounds is None:
                 raise DxfPreviewError(f"图纸没有可显示的模型空间内容：{candidate.path.name}")
         except DxfPreviewError as exc:
@@ -261,6 +261,7 @@ class CadPreviewWindow(QMainWindow):
                 self.loaded,
                 self.figure,
                 frozenset(self.visible_layers),
+                fill_canvas=True,
             )
         except DxfPreviewError as exc:
             self._show_error("无法渲染 DXF", str(exc))
