@@ -3,6 +3,8 @@
 import type { DrawingDocument } from '@vectorai/drawing-core';
 import type { PartitionDraft, PartitionRevision } from '../partition/types';
 import { buildShaftContourTopology } from '../shaft/contour-topology';
+import { sampleNode } from '../shaft/axis';
+import { createShaftCoordinateFrame } from '../shaft/coordinate-frame';
 import type { AxialElementarySpan, AxialStation, AxialStationKind, AxialTopology } from './types';
 
 export interface BuildAxialTopologyInput {
@@ -28,6 +30,7 @@ export function buildAxialTopology(input: BuildAxialTopologyInput): AxialTopolog
   const boundaries = collectBoundaryEvidence(partition, contour, tolerance);
   if (boundaries.some(({ z }) => !Number.isFinite(z))) throw new Error('DIMENSION_STATION_UNRESOLVED');
   const stations = mergeBoundaries(boundaries, partition.axis.zMin, input.unit ?? 'mm', tolerance);
+  if (input.document) prioritizeStationGeometry(stations, input.document, partition, tolerance);
   const elementarySpans = consecutiveSpans(stations, partition, tolerance);
   return {
     drawingRef: partition.drawingRef,
@@ -36,6 +39,36 @@ export function buildAxialTopology(input: BuildAxialTopologyInput): AxialTopolog
     stations,
     elementarySpans,
   };
+}
+
+/**
+ * Projection uses the first station geometry as its typed target. Partition
+ * evidence also contains whole-region representatives, so prefer an actual
+ * face or endpoint at this station without discarding the other evidence.
+ */
+function prioritizeStationGeometry(
+  stations: AxialStation[], document: DrawingDocument, partition: PartitionDraft | PartitionRevision, tolerance: number,
+): void {
+  const frame = createShaftCoordinateFrame(partition.axis);
+  const geometry = new Map(document.geometry.map((node) => [String(node.id), node]));
+  for (const station of stations) {
+    const priority = new Map(station.geometryNodeIds.map((id) => {
+      const node = geometry.get(id);
+      if (!node || !['line', 'polyline', 'arc', 'spline'].includes(node.type)) return [id, 2];
+      const points = sampleNode(node);
+      // A curve passing through a station is not an endpoint owner. Only
+      // original polyline vertices and true curve ends establish support.
+      const endpoints = node.type === 'polyline' ? points : [points[0], points.at(-1)].filter((point) => point !== undefined);
+      const coordinates = endpoints.map((point) => frame.toLocal(point)[0]);
+      const atStation = (z: number) => Math.abs(z - station.sourceCoordinate) <= tolerance;
+      const face = (node.type === 'line' || node.type === 'polyline')
+        && coordinates.some((z, index) => atStation(z) && coordinates[index + 1] !== undefined && atStation(coordinates[index + 1]!));
+      return [id, face ? 0 : coordinates.some(atStation) ? 1 : 2];
+    }));
+    // The existing order is deterministic and remains the tie-breaker. No
+    // geometry outside the station's evidence set is introduced by this pass.
+    station.geometryNodeIds.sort((left, right) => priority.get(left)! - priority.get(right)!);
+  }
 }
 
 function collectBoundaryEvidence(

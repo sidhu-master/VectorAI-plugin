@@ -5,6 +5,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { DimensionChainInspector } from './DimensionChainInspector';
 
 describe('DimensionChainInspector', () => {
+  it('keeps an explicitly hidden candidate unchecked if a closure edit selects it as a chain member', () => {
+    const setDisplayed = vi.fn(async () => undefined);
+    const scheme = { topology: { unit: 'mm' }, candidates: [{ id: 'child', nominalValue: 39 }],
+      displayedCandidateIds: ['child'], closureCandidateIds: [], hiddenCandidateIds: ['child'],
+      chains: [], diagnostics: [], status: 'resolved' } as never;
+    const controller = { actions: { setDisplayed } } as never;
+    const tree = create(<DimensionChainInspector scheme={scheme} controller={controller} />);
+    expect(tree.root.findByType('input').props.checked).toBe(false);
+    act(() => tree.root.findByType('input').props.onChange({ currentTarget: { checked: true } }));
+    expect(setDisplayed).toHaveBeenCalledWith('child', true);
+    tree.unmount();
+  });
+
   it('shows evidence conflict and lets the user choose an alternative closure', async () => {
     const chooseClosure = vi.fn(async () => undefined);
     const scheme = {

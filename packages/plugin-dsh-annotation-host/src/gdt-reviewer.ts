@@ -13,6 +13,7 @@ import type { DrawingSpaceExtensionHost } from '@vectorai/plugin-space-contracts
 import type { GdtRecommendation } from './gdt-grounding';
 import {
   resolveShaftGdtRules,
+  extractPartitionFeatures,
   type GdtClarificationQuestion,
   type ReviewedShaftFeature,
 } from './shaft-gdt-rules';
@@ -282,6 +283,20 @@ export function groundSegmentRecommendation(
 ): GdtRecommendation {
   const segmentById = new Map(partition.segments.map((segment) => [segment.id, segment]));
   const nodeById = new Map(geometry.filter(({ visible }) => visible).map((node) => [String(node.id), node]));
+  const supportFeatures = extractPartitionFeatures(partition).filter(({ function: value }) => value === 'axis-support');
+  const workingSegments = (segmentIds: readonly string[]) => {
+    const selected = new Set(segmentIds);
+    for (const feature of supportFeatures) {
+      if (!feature.segmentIds.every((id) => selected.has(id))) continue;
+      const working = feature.segmentIds.map((id) => requireSegment(segmentById, id))
+        .sort((a, b) => (b.zEnd - b.zStart) - (a.zEnd - a.zStart) || a.id.localeCompare(b.id))[0];
+      // A complete bearing feature includes transition segments. Its cylindrical
+      // control belongs to the working span, not the chamfer and through bore.
+      feature.segmentIds.forEach((id) => selected.delete(id));
+      selected.add(working.id);
+    }
+    return [...selected].map((id) => requireSegment(segmentById, id));
+  };
   const datums = recommendation.datums.map((item) => {
     const segment = requireSegment(segmentById, item.segmentId);
     return {
@@ -296,7 +311,7 @@ export function groundSegmentRecommendation(
     const segments = item.segmentIds.map((segmentId) => requireSegment(segmentById, segmentId));
     const geometryIds = item.surfaceRole === 'positive-locating-shoulder'
       ? [selectLocatingShoulderGeometry(segments, partition, nodeById, item.boundary)]
-      : segments.map((segment) => selectRepresentativeGeometry(
+      : (prefersRadialFace(item.characteristic) ? segments : workingSegments(item.segmentIds)).map((segment) => selectRepresentativeGeometry(
         segment, nodeById, partition.axis,
         prefersRadialFace(item.characteristic) ? 'radial-face' : 'axis-parallel-top',
       ));
@@ -313,8 +328,7 @@ export function groundSegmentRecommendation(
   });
   const surfaceTextures = (recommendation.surfaceTextures ?? []).map((item) => ({
     ...structuredClone(item),
-    geometryIds: [...new Set(item.segmentIds.map((segmentId) => {
-      const segment = requireSegment(segmentById, segmentId);
+    geometryIds: [...new Set(workingSegments(item.segmentIds).map((segment) => {
       // A journal's surface texture controls the cylindrical working surface.
       // In an axial section that surface is represented by a line parallel to
       // the shaft axis; a radial line is an end/shoulder face instead.
@@ -481,12 +495,17 @@ function compareRepresentativeNodes(
 ): number {
   const a = representativeNodeMetrics(left, axis, segment, preference);
   const b = representativeNodeMetrics(right, axis, segment, preference);
+  // The fitted axis can drift slightly across the drawing. Both section
+  // generators of the same cylinder must count as matching its radius, so
+  // the requested top/bottom attachment is not decided by that fit noise.
+  const radiusContact = Math.abs(axis.zMax - axis.zMin) * 2e-5;
+  const radiusRank = (error: number) => Math.max(0, error - radiusContact);
   return Number(b.line) - Number(a.line)
-    || a.alignmentError - b.alignmentError
-    || a.surfaceRadiusError - b.surfaceRadiusError
+    || Math.round(a.alignmentError / 1e-6) - Math.round(b.alignmentError / 1e-6)
+    || radiusRank(a.surfaceRadiusError) - radiusRank(b.surfaceRadiusError)
     || Number(b.inside) - Number(a.inside)
     || a.outsideDistance - b.outsideDistance
-    || a.overflow - b.overflow
+    || Math.round(a.overflow / Math.max(radiusContact, 1e-9)) - Math.round(b.overflow / Math.max(radiusContact, 1e-9))
     || (preference === 'axis-parallel-bottom'
       ? a.signedRadius - b.signedRadius
       : preference === 'axis-parallel-top' ? b.signedRadius - a.signedRadius : 0)

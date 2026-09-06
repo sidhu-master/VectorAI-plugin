@@ -22,6 +22,22 @@ function document(y: number) {
 }
 
 describe('renderReviewComparison', () => {
+  it('renders the additional branch and detail circle in the authoritative observation', async () => {
+    const source = document(0);
+    source.annotations = [{ id: 'leader' as never, type: 'leader', visible: true, quality,
+      target: { geometryId: 'arm' as never, anchor: { kind: 'start' } }, points: [[0, 0], [20, 10]], content: 'I', textHeight: 3.5 }];
+    const viewport = { minX: -10, minY: -30, maxX: 110, maxY: 60 };
+    const before = await renderDrawingObservation({ document: source, viewport });
+    const node = source.annotations[0];
+    if (node.type !== 'leader') throw new Error('fixture');
+    node.callout = { type: 'detail', radius: 4 };
+    const detail = await renderDrawingObservation({ document: source, viewport });
+    node.branches = [{ target: { geometryId: 'arm' as never, anchor: { kind: 'end' } }, points: [[100, 0], [20, 10]] }];
+    const branched = await renderDrawingObservation({ document: source, viewport });
+    expect(detail.contentDigest).not.toBe(before.contentDigest);
+    expect(branched.contentDigest).not.toBe(detail.contentDigest);
+  });
+
   it('renders model-only candidate labels at their exact geometry anchors', async () => {
     const source = document(0);
     const plain = await renderDrawingObservation({

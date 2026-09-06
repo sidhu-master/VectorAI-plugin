@@ -218,6 +218,31 @@ export function planEngineeringAnnotations(input: {
   const dimensionTemplates = annotationTemplates.filter(
     (annotation): annotation is Extract<AnnotationNode, { type: 'dimension' }> => annotation.type === 'dimension',
   );
+  const existingAnnotations = new Map(input.document.annotations.map((node) => [node.id, node]));
+  for (const annotation of dimensionTemplates) {
+    annotation.layout = { mode: 'automatic', generatedText: annotation.displayText };
+    const existing = existingAnnotations.get(annotation.id);
+    if (existing?.type === 'dimension') {
+      annotation.visible = existing.visible;
+      if (existing.displayText !== undefined && (existing.layout?.generatedText === undefined || existing.displayText !== existing.layout.generatedText)) {
+        annotation.displayText = existing.displayText;
+        annotation.layout = existing.layout === undefined ? undefined : structuredClone(existing.layout);
+      }
+    }
+    // Repeating annotation may refresh automatic defaults, but cannot claim
+    // ownership of manually placed dimensions or older records without metadata.
+    if (existing?.type === 'dimension' && existing.layout?.mode !== 'automatic') {
+      annotation.textPosition = structuredClone(existing.textPosition);
+      annotation.definitionPoints = structuredClone(existing.definitionPoints);
+      if (existing.layout === undefined) delete annotation.layout;
+      else {
+        annotation.layout = structuredClone(existing.layout);
+        if (existing.layout.generatedText !== undefined && existing.displayText === existing.layout.generatedText) {
+          annotation.layout.generatedText = annotation.displayText;
+        }
+      }
+    }
+  }
   const draft: EngineeringAnnotationDraft = {
     version: 1,
     drawingRef: structuredClone(input.ref),
@@ -254,7 +279,6 @@ export function planEngineeringAnnotations(input: {
     ...projection.annotations,
     ...annotationTemplates.filter((annotation) => annotation.type !== 'dimension'),
   ];
-  const existingAnnotations = new Map(input.document.annotations.map((node) => [node.id, node]));
   const existingAssociations = new Map(input.document.relations
     .filter((relation): relation is AssociationRelation => relation.type === 'association')
     .map((relation) => [relation.id, relation]));
@@ -673,7 +697,8 @@ function sameEngineeringAnnotation(left: AnnotationNode, right: AnnotationNode):
     && left.unit === right.unit
     && JSON.stringify(left.targets) === JSON.stringify(right.targets)
     && JSON.stringify(left.textPosition) === JSON.stringify(right.textPosition)
-    && JSON.stringify(left.definitionPoints) === JSON.stringify(right.definitionPoints);
+    && JSON.stringify(left.definitionPoints) === JSON.stringify(right.definitionPoints)
+    && JSON.stringify(left.layout) === JSON.stringify(right.layout);
 }
 
 function sameEngineeringAssociation(left: AssociationRelation, right: AssociationRelation): boolean {

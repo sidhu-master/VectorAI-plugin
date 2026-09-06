@@ -8,6 +8,32 @@ import { SHAFT_HIERARCHICAL_DIMENSIONING_V1 } from './policy';
 import type { AxialDimensionScheme } from './types';
 
 describe('applyDimensionSchemeEdit', () => {
+  it('hides and shows a closure without changing its calculation role or review status', () => {
+    const scheme = transitionClosureScheme();
+    const hidden = applyDimensionSchemeEdit(scheme, { type: 'candidate.display', candidateId: 'right-transition', displayed: false });
+    expect(hidden.hiddenCandidateIds).toEqual(['right-transition']);
+    expect(hidden.closureCandidateIds).toEqual(scheme.closureCandidateIds);
+    expect(hidden.chains).toEqual(scheme.chains);
+    expect(hidden.status).toBe(scheme.status);
+    expect(hidden.diagnostics).toEqual(scheme.diagnostics);
+    const shown = applyDimensionSchemeEdit(hidden, { type: 'candidate.display', candidateId: 'right-transition', displayed: true });
+    expect(shown.hiddenCandidateIds).not.toContain('right-transition');
+    expect(shown.displayedCandidateIds).not.toContain('right-transition');
+    expect(shown.closureCandidateIds).toEqual(scheme.closureCandidateIds);
+    expect(shown.status).toBe(scheme.status);
+    expect(scheme).not.toHaveProperty('hiddenCandidateIds');
+  });
+
+  it('preserves an explicit hide through layout edits and closure replacement', () => {
+    const hidden = applyDimensionSchemeEdit(transitionClosureScheme(), { type: 'candidate.display', candidateId: 'right-transition', displayed: false });
+    const moved = applyDimensionSchemeEdit(hidden, { type: 'chain.layout', chainId: 'chain:overall', normalOffset: 8 });
+    const replaced = applyDimensionSchemeEdit(moved, { type: 'closure.choose', chainId: 'chain:overall', candidateId: 'left-transition' });
+    expect(replaced.hiddenCandidateIds).toEqual(['right-transition']);
+    expect(replaced.layout).toEqual(moved.layout);
+    expect(replaced.chains[0]?.closureCandidateId).toBe('left-transition');
+    expect(replaced.status).toBe('resolved');
+  });
+
   it('chooses a closure alternative immutably and resolves the review decision', async () => {
     const input = await analyzeGoldenInferenceInput();
     const scheme = inferAxialDimensionScheme({

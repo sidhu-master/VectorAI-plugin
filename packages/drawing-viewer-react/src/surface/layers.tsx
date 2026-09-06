@@ -8,7 +8,7 @@ import type {
   Vec2,
 } from '@vectorai/drawing-core';
 import type { DrawingSourceRef, DrawingWorkspaceViewport } from '@vectorai/drawing-workspace';
-import { memo, useMemo, type MouseEvent } from 'react';
+import { memo, useMemo, type MouseEvent, type ReactNode } from 'react';
 
 import { CadGrid } from '../canvas/Grid';
 import { EntityRenderer } from '../canvas/EntityRenderer';
@@ -83,9 +83,11 @@ export const AnnotationLayer = memo(function AnnotationLayer({
   onContextMenu,
   onPointerDown,
   hiddenNodeId,
+  renderAnnotation,
 }: EntityLayerProps<AnnotationNode> & {
   onPointerDown?(node: Extract<AnnotationNode, { type: 'dimension' }>, event: MouseEvent<SVGGElement>): void;
   hiddenNodeId?: string;
+  renderAnnotation?(node: AnnotationNode): ReactNode;
 }) {
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
   const attention = useMemo(() => new Set(attentionIds), [attentionIds]);
@@ -93,6 +95,7 @@ export const AnnotationLayer = memo(function AnnotationLayer({
     <EntityRenderer
       key={node.id}
       node={node}
+      content={renderAnnotation?.(node)}
       viewport={viewport}
       selected={selected.has(node.id)}
       aiGrounded={attention.has(node.id)}

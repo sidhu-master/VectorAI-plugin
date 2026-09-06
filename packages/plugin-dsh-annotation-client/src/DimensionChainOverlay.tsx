@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ToleranceProjection } from '@vectorai/drawing-core';
+import type { DimensionAnnotation, ToleranceProjection, Vec2 } from '@vectorai/drawing-core';
+import type { EngineeringCadScene } from '@vectorai/drawing-cad';
 import { estimateScreenTextWidth, formatPortableTolerance, ScreenSpaceLabel, screenSpaceTransform } from '@vectorai/drawing-viewer-react';
 import { axialDimensionIntentId, isAxialDimensionCandidateSuppressed } from '@vectorai/engineering-annotation';
 import { allocateAxialDimensionLanes, type AxialDimensionScheme } from '@vectorai/plugin-space-contracts';
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent } from 'react';
 import { useRafPreview } from './useRafPreview';
+import { CadPaperGraphics } from './CadPaperGraphics';
+import { canvasDimensionPicture } from './cad-canvas-presentation';
 
 type Candidate = AxialDimensionScheme['candidates'][number];
 type Role = 'parent' | 'child' | 'closure' | 'standalone';
@@ -24,6 +27,7 @@ interface IntervalLayout {
   minimumGroupOffset: number;
   label: string;
   toleranceProjection?: ToleranceProjection;
+  paper?: { node: DimensionAnnotation; scene: EngineeringCadScene; normalOffset: number };
 }
 interface DragState {
   target: { type: 'chain' | 'candidate'; id: string };
@@ -51,6 +55,7 @@ export function DimensionChainOverlay({
   onSetTolerance,
   toleranceByIntentId,
   onInteractionActiveChange,
+  paperScene,
 }: {
   scheme: AxialDimensionScheme;
   scale: number;
@@ -64,6 +69,7 @@ export function DimensionChainOverlay({
   onSetTolerance?(dimensionIntentId: string): void | Promise<void>;
   toleranceByIntentId?: ReadonlyMap<string, ToleranceProjection>;
   onInteractionActiveChange?(active: boolean): void;
+  paperScene?: EngineeringCadScene;
 }) {
   const [dragPreviews, setDragPreviews] = useState<Record<string, number>>({});
   const [contextMenu, setContextMenu] = useState<DimensionContextMenuState | null>(null);
@@ -91,8 +97,8 @@ export function DimensionChainOverlay({
     ({ severity, entityIds }) => severity === 'error' ? entityIds ?? [] : [],
   )), [scheme.diagnostics]);
   const baseLayouts = useMemo(
-    () => visible ? layoutIntervals(scheme, scale, radialExtent, previewHeld, {}, toleranceByIntentId) : [],
-    [previewHeld, radialExtent, scale, scheme, toleranceByIntentId, visible],
+    () => visible ? layoutIntervals(scheme, scale, radialExtent, previewHeld, {}, toleranceByIntentId, paperScene) : [],
+    [previewHeld, radialExtent, scale, scheme, toleranceByIntentId, visible, paperScene],
   );
   const layouts = useMemo(
     () => applyDragPreviews(baseLayouts, dragPreviews),
@@ -244,7 +250,7 @@ export function DimensionChainOverlay({
 
   const dragAxis = Math.abs(screenNormal[0]) > Math.abs(screenNormal[1]) ? 'x' : 'y';
   return <g
-    className="vai-dimension-chain-overlay"
+    className={paperScene ? 'vai-cad-chain-overlay' : 'vai-dimension-chain-overlay'}
     data-dimension-chain-overlay="true"
     onPointerDown={() => setContextMenu(null)}
   >
@@ -252,11 +258,12 @@ export function DimensionChainOverlay({
       const draggable = Boolean(onMoveChain) && !previewHeld && owned.length > 0;
       return <g
         key={chain.id}
-        className={`vai-dimension-chain-group vai-dimension-chain-group--tone-${chainIndex % 3}`}
+        className={paperScene ? 'vai-cad-chain-group' : `vai-dimension-chain-group vai-dimension-chain-group--tone-${chainIndex % 3}`}
         data-dimension-chain-group={chain.id}
         data-dimension-draggable={draggable || undefined}
         data-dimension-drag-axis={dragAxis}
         pointerEvents={draggable || Boolean(onChooseClosure) || Boolean(onSetTolerance) ? 'all' : 'none'}
+        onMouseDown={paperScene ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
         onPointerDown={draggable ? (event) => beginDrag(owned[0]!, event) : undefined}
         onPointerMove={draggable ? updateDrag : undefined}
         onPointerUp={draggable ? finishDrag : undefined}
@@ -264,7 +271,7 @@ export function DimensionChainOverlay({
         onLostPointerCapture={draggable ? (event) => cancelDrag(event, false) : undefined}
       >
       {owned.map((layout) => renderInterval(layout, false, draggable))}
-      {!previewHeld && <ChainBracket
+      {!previewHeld && !paperScene && <ChainBracket
         scheme={scheme}
         chain={chain}
         chainIndex={chainIndex}
@@ -348,10 +355,12 @@ function layoutIntervals(
   previewHeld: boolean,
   dragPreviews: Readonly<Record<string, number>> = {},
   toleranceByIntentId?: ReadonlyMap<string, ToleranceProjection>,
+  paperScene?: EngineeringCadScene,
 ): IntervalLayout[] {
   const candidates = new Map(scheme.candidates.map((candidate) => [candidate.id, candidate]));
   const coordinates = new Map(scheme.topology.stations.map(({ id, sourceCoordinate }) => [id, sourceCoordinate]));
   const closures = previewHeld ? new Set<string>() : new Set(scheme.closureCandidateIds);
+  const hidden = new Set(scheme.hiddenCandidateIds ?? []);
   const visibleIds = [
     ...scheme.displayedCandidateIds,
     ...[...closures].filter((id) => {
@@ -365,6 +374,7 @@ function layoutIntervals(
   const manual = new Map(scheme.layout?.candidateNormalOffsets.map(({ candidateId, normalOffset }) => [candidateId, normalOffset]) ?? []);
   const chainOffsets = new Map(scheme.layout?.chainNormalOffsets.map(({ chainId, normalOffset }) => [chainId, normalOffset]) ?? []);
   const prepared = [...new Set(visibleIds)].flatMap((candidateId) => {
+    if (hidden.has(candidateId)) return [];
     const candidate = candidates.get(candidateId);
     if (!candidate) return [];
     const first = coordinates.get(candidate.startStationId);
@@ -417,7 +427,7 @@ function layoutIntervals(
     const targetKey = layout.chainId === undefined ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`;
     minimumByTarget.set(targetKey, Math.max(minimumByTarget.get(targetKey) ?? Number.NEGATIVE_INFINITY, layout.minimumGroupOffset));
   }
-  return layouts.map((layout) => ({
+  const normalizedLayouts = layouts.map((layout) => ({
     ...layout,
     groupOffset: Math.max(
       layout.groupOffset,
@@ -431,6 +441,25 @@ function layoutIntervals(
       minimumByTarget.get(layout.chainId === undefined ? `candidate:${layout.candidate.id}` : `chain:${layout.chainId}`) ?? Number.NEGATIVE_INFINITY,
     ),
   }));
+  if (!paperScene) return normalizedLayouts;
+  const paperByIntent = new Map(paperScene.document.annotations.flatMap((node) => node.type === 'dimension'
+    && node.engineeringIntentId ? [[node.engineeringIntentId, node] as const] : []));
+  const placements = new Map(paperScene.dimensionPlacements.map((placement) => [placement.annotationId, placement]));
+  const normal = normalized(scheme.topology.axis.normal);
+  const origin = scheme.topology.axis.origin;
+  return normalizedLayouts.flatMap((layout): IntervalLayout[] => {
+    const node = paperByIntent.get(axialDimensionIntentId(layout.candidate.id));
+    const placement = node && placements.get(node.id);
+    if (!node || !placement?.line) return [];
+    const offset = (placement.line.start[0] - origin[0]) * normal[0] + (placement.line.start[1] - origin[1]) * normal[1];
+    const candidateOffset = manual.get(layout.candidate.id) ?? 0;
+    const groupOffset = layout.chainId ? chainOffsets.get(layout.chainId) ?? 0 : candidateOffset;
+    const ownOffset = layout.chainId ? candidateOffset : 0;
+    const automaticOffset = offset - groupOffset - ownOffset;
+    return [{ ...layout, automaticOffset, manualOffset: groupOffset + ownOffset, groupOffset,
+      minimumGroupOffset: radialExtent + placement.footprint.textHeight - automaticOffset - ownOffset,
+      paper: { node, scene: paperScene, normalOffset: offset } }];
+  });
 }
 
 function candidateMemberships(scheme: AxialDimensionScheme): Map<string, Array<{
@@ -489,10 +518,22 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
   const screenLength = Math.abs(layout.end - layout.start) * safeScale;
   const closureDash = screenLength < 24
     ? `${Math.max(1, screenLength / 5) / safeScale} ${Math.max(.8, screenLength / 10) / safeScale}`
-    : `${5 / safeScale} ${4 / safeScale}`;
+    : `${3 / safeScale} ${2 / safeScale}`;
   const tick = 4 / safeScale;
+  const paperNode = layout.paper && structuredClone(layout.paper.node);
+  if (paperNode && layout.paper) {
+    const delta = offset - layout.paper.normalOffset;
+    const move = (value: Vec2): Vec2 => [value[0] + normal[0] * delta, value[1] + normal[1] * delta];
+    paperNode.definitionPoints = paperNode.definitionPoints.map((value, index) => index >= 2 ? move(value) : value);
+    paperNode.textPosition = move(paperNode.textPosition);
+  }
+  const paperTextBounds = layout.paper?.scene.dimensionPlacements.find(({ annotationId }) => annotationId === paperNode?.id)?.textBounds;
+  const paperDelta = layout.paper ? offset - layout.paper.normalOffset : 0;
+  const paperHitPath = paperNode && paperNode.definitionPoints.length >= 4
+    ? `M ${paperNode.definitionPoints[0]![0]} ${paperNode.definitionPoints[0]![1]} L ${paperNode.definitionPoints[2]![0]} ${paperNode.definitionPoints[2]![1]} L ${paperNode.definitionPoints[3]![0]} ${paperNode.definitionPoints[3]![1]} M ${paperNode.definitionPoints[1]![0]} ${paperNode.definitionPoints[1]![1]} L ${paperNode.definitionPoints[3]![0]} ${paperNode.definitionPoints[3]![1]}`
+    : undefined;
   return <g
-    className={`vai-dimension-chain-interval vai-dimension-chain-interval--${role}`}
+    className={paperNode ? 'vai-cad-chain-interval' : `vai-dimension-chain-interval vai-dimension-chain-interval--${role}`}
     data-dimension-candidate-id={candidate.id}
     data-dimension-chain-id={layout.chainId}
     data-dimension-chain-index={layout.chainIndex}
@@ -509,10 +550,28 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
     data-dimension-drag-axis={dragAxis}
     pointerEvents={draggable || pointerHandlers.onContextMenu ? 'all' : 'none'}
     {...pointerHandlers}
+    onMouseDown={paperNode ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined}
     onContextMenu={pointerHandlers.onContextMenu
-      ? (event) => pointerHandlers.onContextMenu?.(event, middle)
+      ? (event) => pointerHandlers.onContextMenu?.(event, paperNode?.textPosition ?? middle)
       : undefined}
   >
+    {paperNode && layout.paper ? <>
+      <CadPaperGraphics picture={canvasDimensionPicture(paperNode, layout.paper.scene)} profile={layout.paper.scene.profile} />
+      {paperHitPath && <path
+        data-dimension-context-hit={candidate.id}
+        d={paperHitPath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={10}
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+        pointerEvents="stroke"
+      />}
+      {paperTextBounds && <rect
+        x={paperTextBounds.minX + normal[0] * paperDelta - 1} y={paperTextBounds.minY + normal[1] * paperDelta - 1}
+        width={paperTextBounds.maxX - paperTextBounds.minX + 2} height={paperTextBounds.maxY - paperTextBounds.minY + 2}
+        fill="transparent" stroke="none" />}
+    </> : <>
     <line className="vai-dimension-chain-extension" data-dimension-extension="start" x1={witnessA[0]} y1={witnessA[1]} x2={a[0]} y2={a[1]} vectorEffect="non-scaling-stroke" />
     <line className="vai-dimension-chain-extension" data-dimension-extension="end" x1={witnessB[0]} y1={witnessB[1]} x2={b[0]} y2={b[1]} vectorEffect="non-scaling-stroke" />
     <line
@@ -535,6 +594,7 @@ function IntervalGraphic({ scheme, layout, scale, radialExtent, dragAxis, confli
       fallback={layout.label}
       lane={lane}
     />
+    </>}
   </g>;
 }
 

@@ -60,6 +60,32 @@ function existing(): AnnotationNode {
 }
 
 describe('portable engineering annotation projection', () => {
+  it.each([undefined, 'automatic', 'manual'] as const)('retains explicit text under %s layout when applying a tolerance or repeating projection', (mode) => {
+    const node = existing();
+    if (node.type !== 'dimension') throw new Error('fixture');
+    node.displayText = 'CUSTOM 20';
+    if (mode !== undefined) node.layout = { mode, generatedText: '20' };
+    const result = projectEngineeringAnnotations({ draft: draft(), orderedIntentIds: ['intent-a'], existingAnnotations: [node] });
+    expect(result.annotations[0].displayText).toBe('CUSTOM 20');
+    expect(result.annotations[0].toleranceProjection).toMatchObject({ upperDeviation: .02, lowerDeviation: -.01 });
+  });
+
+  it('marks freshly generated placements and their label baseline as automatic', () => {
+    const result = projectEngineeringAnnotations({ draft: draft(), orderedIntentIds: ['intent-a'], existingAnnotations: [] });
+    expect(result.annotations[0]).toMatchObject({ layout: { mode: 'automatic', generatedText: '20' } });
+  });
+
+  it.each([undefined, 'automatic', 'manual'] as const)('preserves %s placement ownership when projecting a tolerance', (mode) => {
+    const placed = existing();
+    if (placed.type !== 'dimension') throw new Error('fixture');
+    if (mode !== undefined) placed.layout = { mode, generatedText: '20' };
+    const result = projectEngineeringAnnotations({ draft: draft(), orderedIntentIds: ['intent-a'], existingAnnotations: [placed] });
+    expect(result.annotations[0]?.textPosition).toEqual(placed.textPosition);
+    expect(result.annotations[0]?.definitionPoints).toEqual(placed.definitionPoints);
+    expect(result.annotations[0]?.layout).toEqual(placed.layout);
+    if (mode === undefined) expect(result.annotations[0]).not.toHaveProperty('layout');
+  });
+
   it('projects a resolved axial intent with a persisted standard tolerance', () => {
     const scheme: AxialDimensionScheme = {
       version: 1,
@@ -214,6 +240,7 @@ describe('portable engineering annotation projection', () => {
     const stale = existing();
     if (stale.type !== 'dimension') throw new Error('fixture');
     stale.displayText = '19';
+    stale.layout = { mode: 'automatic', generatedText: '19' };
     stale.observedValue = 19;
     stale.tolerance = { upper: 0.5, lower: -0.5 };
     stale.toleranceProjection = {

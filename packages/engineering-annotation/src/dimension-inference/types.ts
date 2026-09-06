@@ -122,6 +122,8 @@ export interface AxialDimensionScheme {
   candidates: AxialDimensionCandidate[];
   displayedCandidateIds: string[];
   closureCandidateIds: string[];
+  /** Explicit display overrides; hidden candidates still participate in chain calculations. */
+  hiddenCandidateIds?: string[];
   chains: AxialChainNode[];
   layout?: {
     chainNormalOffsets: Array<{ chainId: string; normalOffset: number }>;

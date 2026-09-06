@@ -27,23 +27,74 @@ export function normalizeCadDxf(source: string): string {
     } finally {
       writer.dispose();
     }
-    return restoreDimensionToleranceStacks(
+    return omitZeroDimensionRounding(restoreDimensionGeometry(
       source,
       restoreHatchPatternAngles(source, output.replace(/\r?\n/g, '\r\n')),
-    );
+    ));
   } finally {
     reader.dispose();
   }
 }
 
-/** acad-ts inserts a presentation-only space after the MText stack separator.
- * Same-sign tolerance fallbacks require the exact explicit sign sequence, so
- * restore the authoritative stack tokens emitted by drawing-core. */
-function restoreDimensionToleranceStacks(source: string, output: string): string {
-  const expected = source.match(/\\S[^;^\r\n]+\^[^;\r\n]+;/g) ?? [];
-  if (expected.length === 0) return output;
-  let cursor = 0;
-  return output.replace(/\\S[^;^\r\n]+\^[^;\r\n]+;/g, (actual) => expected[cursor++] ?? actual);
+/** acad-ts materializes DIMRND=0. Omission has the same DXF no-rounding default
+ * and avoids ezdxf's xround(value, 0) integer-rounding interpretation. */
+function omitZeroDimensionRounding(source: string): string {
+  const lines = source.split(/\r?\n/);
+  const result: string[] = [];
+  let entity = '';
+  for (let index = 0; index + 1 < lines.length; index += 2) {
+    const code = Number(lines[index].trim());
+    if (code === 0) entity = lines[index + 1].trim();
+    if (entity === 'DIMSTYLE' && code === 45 && Number(lines[index + 1]) === 0) continue;
+    result.push(lines[index], lines[index + 1]);
+  }
+  return `${result.join('\r\n')}\r\n`;
+}
+
+/** acad-ts duplicates AcDbAlignedDimension and writes group 50 into the empty
+ * AcDbRotatedDimension subclass. Restore only the authoritative geometry
+ * subclasses, retaining repaired handles, common fields and tolerance XDATA.
+ * Its angular group 42 also needs its original degree value, not radians. */
+function restoreDimensionGeometry(source: string, output: string): string {
+  const sourceLines = source.split(/\r?\n/);
+  const expected = new Map(dimensionRecords(sourceLines).map((record) => [record.block, record]));
+  if (expected.size === 0) return output;
+  const lines = output.split(/\r?\n/);
+  for (const record of dimensionRecords(lines).reverse()) {
+    const original = expected.get(record.block);
+    if (original === undefined || original.type !== record.type) continue;
+    if (record.type === 0 && original.start !== -1 && record.start !== -1) {
+      lines.splice(record.start, record.end - record.start, ...sourceLines.slice(original.start, original.end));
+    } else if (record.type === 2 && original.measurement !== -1 && record.measurement !== -1) {
+      lines[record.measurement + 1] = sourceLines[original.measurement + 1]!;
+    }
+  }
+  return lines.join('\r\n');
+}
+
+function dimensionRecords(lines: readonly string[]): { block: string; type: number; start: number; end: number; measurement: number }[] {
+  const result: ReturnType<typeof dimensionRecords> = [];
+  for (let index = 0; index + 1 < lines.length; index += 2) {
+    if (lines[index]!.trim() !== '0' || lines[index + 1]!.trim() !== 'DIMENSION') continue;
+    let block = '';
+    let dimensionType = NaN;
+    let start = -1;
+    let measurement = -1;
+    let end = index + 2;
+    for (; end + 1 < lines.length; end += 2) {
+      const code = Number.parseInt(lines[end]!.trim(), 10);
+      const value = lines[end + 1]!.trim();
+      if (code === 0 || code >= 1000) break;
+      if (code === 2) block = value;
+      if (code === 70) dimensionType = Number(value);
+      if (code === 42) measurement = end;
+      if (start === -1 && code === 100 && value === 'AcDbAlignedDimension') start = end;
+    }
+    if (block && Number.isInteger(dimensionType)) {
+      result.push({ block, type: dimensionType & 7, start, end, measurement });
+    }
+  }
+  return result;
 }
 
 /** acad-ts serializes HATCH pattern-line angles as radians although DXF group

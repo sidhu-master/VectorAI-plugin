@@ -192,11 +192,24 @@ export interface DimensionAnnotation extends BaseNode<AnnotationId, 'dimension'>
   suffix?: string;
   textPosition: Vec2;
   definitionPoints: Vec2[];
+  /** Only explicit automatic placement may be recomputed for CAD export. Absence preserves legacy positions. */
+  layout?: {
+    mode: 'automatic' | 'manual';
+    /** Baseline generated label; a different displayText is an explicit text override. */
+    generatedText?: string;
+  };
 }
 
 export interface LeaderAnnotation extends BaseNode<AnnotationId, 'leader'> {
   target: DimensionTarget;
+  /** Main path: first point is the tip, or the detail circle center; last point anchors the text. */
   points: Vec2[];
+  /** Additional tips, each associated with its own geometry and joined to the main path. */
+  branches?: Array<{ target: DimensionTarget; points: Vec2[] }>;
+  /** Single legacy leaders default to none; branched leaders default to closed-filled. */
+  arrowhead?: 'closed-filled' | 'none';
+  /** Detail reference circle centered at points[0], with radius in document units. */
+  callout?: { type: 'detail'; radius: number };
   content: string;
   textHeight: number;
 }

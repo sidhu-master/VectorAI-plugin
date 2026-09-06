@@ -162,6 +162,41 @@ describe('planEngineeringAnnotations', () => {
     expect(plan.targetNodeIds.sort()).toEqual(['left-lower', 'left-upper', 'right-lower', 'right-upper']);
   });
 
+  it.each(['generated', 'custom', 'legacy'] as const)('preserves a moved diameter and its %s text ownership when annotating again', (textOwnership) => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-diameter' }, now: () => 1 });
+    document.geometry = [{
+      id: 'hole' as GeometryId, type: 'circle', center: [30, 10], radius: 3,
+      visible: true, quality: { status: 'confirmed', evidenceRefs: [] },
+    }];
+    const input = {
+      document, ref: { drawingId: 'drawing-diameter', revision: 1 },
+      objective: '标注直径', annotationKinds: ['diameter' as const],
+    };
+    const first = planEngineeringAnnotations(input);
+    expect(first.annotations).toHaveLength(1);
+    document.annotations = structuredClone(first.annotations);
+    document.relations = structuredClone(first.associations);
+    const moved = document.annotations[0] as DimensionAnnotation;
+    expect(moved.displayText).toBe(moved.layout?.generatedText);
+    moved.layout = { ...moved.layout, mode: 'manual' };
+    moved.textPosition = [-12, 9];
+    moved.definitionPoints = moved.definitionPoints.map((point, index) => index < 2 ? [point[0] - 40, point[1]] : point);
+    if (textOwnership === 'custom') moved.displayText = 'CUSTOM Ø6';
+    if (textOwnership === 'legacy') delete moved.layout;
+    const before = structuredClone(moved);
+
+    const repeated = planEngineeringAnnotations(input);
+    const dimension = repeated.annotations[0] as DimensionAnnotation;
+
+    expect(dimension.textPosition).toEqual([-12, 9]);
+    expect(dimension.definitionPoints).toEqual(before.definitionPoints);
+    expect(dimension.displayText).toBe(before.displayText);
+    expect(dimension.layout).toEqual(before.layout);
+    if (textOwnership === 'generated') expect(dimension.displayText).toBe(dimension.layout?.generatedText);
+    expect(repeated.program).toBeNull();
+    expect(document.annotations[0]).toEqual(before);
+  });
+
   it('is idempotent and refreshes only stale automatic opening annotations', () => {
     const document = createEmptyDrawing({ idFactory: { next: () => 'drawing-1' }, now: () => 1 });
     const quality = { status: 'confirmed' as const, evidenceRefs: [] };
@@ -176,11 +211,32 @@ describe('planEngineeringAnnotations', () => {
     const input = { document, ref: { drawingId: 'drawing-1', revision: 1 }, objective: '自动标注' };
     const first = planEngineeringAnnotations(input);
     expect(first.annotations).toHaveLength(1);
+    expect(first.annotations[0]).toMatchObject({ layout: { mode: 'automatic', generatedText: '120°' } });
     const committed = structuredClone(document);
     committed.annotations = structuredClone(first.annotations);
     committed.relations = structuredClone(first.associations);
 
     expect(planEngineeringAnnotations({ ...input, document: committed }).program).toBeNull();
+    const customized = structuredClone(committed);
+    const custom = customized.annotations[0] as DimensionAnnotation;
+    custom.displayText = 'CUSTOM 120°';
+    custom.visible = false;
+    custom.layout = { mode: 'manual', generatedText: '120°' };
+    const repeatedCustom = planEngineeringAnnotations({ ...input, document: customized });
+    expect(repeatedCustom.annotations[0]).toMatchObject({ displayText: 'CUSTOM 120°', visible: false, layout: custom.layout });
+    expect(repeatedCustom.program).toBeNull();
+    for (const mode of [undefined, 'manual'] as const) {
+      const placed = structuredClone(committed);
+      const opening = placed.annotations[0] as DimensionAnnotation;
+      opening.textPosition = [-40, 20];
+      opening.definitionPoints[3] = [-30, 15];
+      if (mode === undefined) delete opening.layout;
+      else opening.layout = { mode, generatedText: opening.displayText };
+      const repeated = planEngineeringAnnotations({ ...input, document: placed });
+      expect(repeated.program).toBeNull();
+      expect(repeated.annotations[0]).toMatchObject({ textPosition: opening.textPosition, definitionPoints: opening.definitionPoints });
+      expect((repeated.annotations[0] as DimensionAnnotation).layout).toEqual(opening.layout);
+    }
     const reordered = structuredClone(committed);
     const association = reordered.relations[0] as typeof first.associations[number];
     association.geometryIds.reverse();

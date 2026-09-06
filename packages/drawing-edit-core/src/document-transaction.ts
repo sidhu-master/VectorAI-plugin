@@ -56,12 +56,30 @@ function applyCommand(document: DrawingDocument, command: DrawingTransactionComm
     const node = located.node as unknown as Record<string, unknown>;
     const key = node.type === 'text' ? 'position' : 'textPosition';
     assertExpected(node[key], command.expectedPosition);
-    node[key] = structuredClone(command.position);
+    Object.assign(node, structuredClone(withDimensionLayoutOwnership(node, { [key]: command.position })));
     return;
   }
   const node = located.node as unknown as Record<string, unknown>;
-  for (const [key, expected] of Object.entries(command.expected)) assertExpected(node[key], expected);
-  for (const [key, value] of Object.entries(command.changes)) node[key] = structuredClone(value);
+  for (const [key, expected] of Object.entries(command.expected)) {
+    assertExpected(node[key], node.type === 'dimension' && key === 'layout' && expected === null ? undefined : expected);
+  }
+  for (const [key, value] of Object.entries(withDimensionLayoutOwnership(node, command.changes))) {
+    // JSON-safe transaction sentinel: undo removes metadata from legacy records.
+    if (node.type === 'dimension' && key === 'layout' && value === null) delete node.layout;
+    else node[key] = structuredClone(value);
+  }
+}
+
+/** Placement edits take ownership; semantic edits and zero-distance moves do not. */
+export function withDimensionLayoutOwnership(
+  node: Record<string, unknown>,
+  changes: Record<string, unknown>,
+): Record<string, unknown> {
+  if (node.type !== 'dimension' || Object.prototype.hasOwnProperty.call(changes, 'layout')) return changes;
+  const moved = ['textPosition', 'definitionPoints'].some((key) => (
+    Object.prototype.hasOwnProperty.call(changes, key) && JSON.stringify(node[key]) !== JSON.stringify(changes[key])
+  ));
+  return moved ? { ...changes, layout: { ...(node.layout as object | undefined), mode: 'manual' } } : changes;
 }
 
 function collectionFor(document: DrawingDocument, plane: Plane): unknown[] {
@@ -99,6 +117,11 @@ function validateDocument(document: DrawingDocument): void {
   const geometry = new Set(document.geometry.map(({ id }) => id));
   const annotation = new Set(document.annotations.map(({ id }) => id));
   const feature = new Set(document.features.map(({ id }) => id));
+  for (const node of document.annotations) {
+    if (node.type === 'leader' && node.branches?.some(({ target }) => !geometry.has(target.geometryId))) {
+      throw new Error('EDIT_DANGLING_REFERENCE');
+    }
+  }
   for (const relation of document.relations) {
     const valid = relation.type === 'topology'
       ? relation.nodeIds.every((id) => ids.includes(String(id)))

@@ -163,6 +163,8 @@ export interface SurfaceTextureIntent {
   decisionAuthority?: EngineeringDecisionAuthority;
   ruleRef?: { id: string; version: string };
   labelPosition?: [number, number];
+  /** Explicit glyph facing captured when an automatic marker is moved. */
+  labelFacing?: 1 | -1;
 }
 
 export interface EngineeringAnnotationDraft {

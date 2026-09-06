@@ -76,7 +76,26 @@ describe('golden CAD export contract', () => {
 
     const dxf = exportDrawingDxf(document, { profile: CAXA_COMPATIBLE_DXF_PROFILE });
 
-    expect(dxf).toContain('\\A1;<>{\\C2;{\\H0.71x;\\S-0.1^-0.2;}}');
+    expect(dxf).toContain('\\A1;<>{\\C2;{\\H0.71x;\\S-0.1^ -0.2;}}');
     expect(dxf).not.toContain('28 -0.1/-0.2');
+  });
+
+  it('keeps decimal precision without materializing zero DIMRND during normalization', () => {
+    const document = createEmptyDrawing({ idFactory: { next: () => 'fractional' }, now: () => 1 });
+    const dxf = normalizeCadDxf(exportDrawingDxf(document, { profile: CAXA_COMPATIBLE_DXF_PROFILE }));
+    const lines = dxf.split(/\r?\n/);
+    let entity = '';
+    let checked = 0;
+    for (let index = 0; index + 1 < lines.length; index += 2) {
+      const code = Number(lines[index].trim());
+      if (code === 0) entity = lines[index + 1].trim();
+      if (entity !== 'DIMSTYLE') continue;
+      expect(code).not.toBe(45);
+      if (code === 271) {
+        expect(Number(lines[index + 1])).toBe(2);
+        checked += 1;
+      }
+    }
+    expect(checked).toBe(CAXA_COMPATIBLE_DXF_PROFILE.dimensionStyles.length);
   });
 });

@@ -5,6 +5,7 @@ import type { DrawingDocument } from '@vectorai/drawing-core';
 import {
   applyDrawingTransaction,
   canonicalSemanticString,
+  withDimensionLayoutOwnership,
 } from '@vectorai/drawing-edit-core';
 import type {
   Assessment,
@@ -782,13 +783,15 @@ function applyCommand(
         code: 'PRECONDITION_FAILED',
       };
     }
-    node[key] = structuredClone(command.position) as never;
+    Object.assign(node, structuredClone(withDimensionLayoutOwnership(
+      node as unknown as Record<string, unknown>, { [key]: command.position },
+    )));
     return null;
   }
 
   const mutable = node as unknown as Record<string, unknown>;
   for (const [key, expected] of Object.entries(command.expected)) {
-    if (!isDeepStrictEqual(mutable[key], expected)) {
+    if (!isDeepStrictEqual(mutable[key], node.type === 'dimension' && key === 'layout' && expected === null ? undefined : expected)) {
       return {
         status: 'rejected',
         message: `Precondition failed for node ${command.id} property ${key}`,
@@ -796,15 +799,17 @@ function applyCommand(
       };
     }
   }
-  for (const [key, value] of Object.entries(command.changes)) {
-    if (key === 'id' || key === 'type' || key === 'plane' || !(key in mutable)) {
+  for (const [key, value] of Object.entries(withDimensionLayoutOwnership(mutable, command.changes))) {
+    const dimensionLayout = node.type === 'dimension' && key === 'layout';
+    if (key === 'id' || key === 'type' || key === 'plane' || (!(key in mutable) && !dimensionLayout)) {
       return {
         status: 'rejected',
         message: `Property ${key} cannot be updated on node ${command.id}`,
         code: 'INVALID_COMMAND',
       };
     }
-    mutable[key] = structuredClone(value);
+    if (dimensionLayout && value === null) delete mutable.layout;
+    else mutable[key] = structuredClone(value);
   }
   return null;
 }
@@ -906,7 +911,7 @@ function validateDocument(
     const targets = annotation.type === 'dimension'
       ? annotation.targets.map(({ geometryId }) => geometryId)
       : annotation.type === 'leader'
-        ? [annotation.target.geometryId]
+        ? [annotation.target.geometryId, ...(annotation.branches ?? []).map(({ target }) => target.geometryId)]
         : annotation.type === 'centerline'
           ? annotation.targets
           : [];

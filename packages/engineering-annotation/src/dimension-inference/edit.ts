@@ -116,12 +116,18 @@ function setCandidateDisplayed(
   candidateId: string,
   displayed: boolean,
 ): AxialDimensionScheme {
-  const displayedCandidateIds = displayed
+  // A closure remains a closure when shown; adding it to the selected members
+  // would make a valid equation fail the existing closure validation.
+  const displayedCandidateIds = displayed && !scheme.closureCandidateIds.includes(candidateId)
     ? unique([...scheme.displayedCandidateIds, candidateId])
     : scheme.displayedCandidateIds.filter((id) => id !== candidateId);
+  const hiddenCandidateIds = displayed
+    ? (scheme.hiddenCandidateIds ?? []).filter((id) => id !== candidateId)
+    : unique([...(scheme.hiddenCandidateIds ?? []), candidateId]);
   return {
     ...structuredClone(scheme),
     displayedCandidateIds,
+    hiddenCandidateIds,
     decisions: updateDecisions(scheme.decisions, displayedCandidateIds, scheme.closureCandidateIds, scheme.chains),
   };
 }

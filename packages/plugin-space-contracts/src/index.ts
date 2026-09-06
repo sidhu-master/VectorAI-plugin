@@ -241,12 +241,16 @@ const annotationSchema = z.discriminatedUnion('type', [
     suffix: z.string().optional(),
     textPosition: vec2Schema,
     definitionPoints: z.array(vec2Schema),
+    layout: z.object({ mode: z.enum(['automatic', 'manual']), generatedText: z.string().optional() }).strict().optional(),
   }).strict(),
   z.object({
     ...baseNodeShape,
     type: z.literal('leader'),
     target: dimensionTargetSchema,
     points: z.array(vec2Schema),
+    branches: z.array(z.object({ target: dimensionTargetSchema, points: z.array(vec2Schema).min(2) }).strict()).optional(),
+    arrowhead: z.enum(['closed-filled', 'none']).optional(),
+    callout: z.object({ type: z.literal('detail'), radius: z.number().finite().positive() }).strict().optional(),
     content: z.string(),
     textHeight: z.number(),
   }).strict(),
@@ -1409,6 +1413,7 @@ export const surfaceTextureIntentSchema = z.object({
   decisionAuthority: engineeringDecisionAuthoritySchema.optional(),
   ruleRef: z.object({ id: idSchema, version: idSchema }).strict().optional(),
   labelPosition: vec2Schema.optional(),
+  labelFacing: z.union([z.literal(1), z.literal(-1)]).optional(),
 }).strict();
 const dimensionChainSchema = z.object({
   id: idSchema,
@@ -1518,6 +1523,7 @@ export const axialDimensionSchemeSchema = z.object({
   candidates: z.array(axialDimensionCandidateSchema),
   displayedCandidateIds: z.array(idSchema),
   closureCandidateIds: z.array(idSchema),
+  hiddenCandidateIds: z.array(idSchema).optional(),
   chains: z.array(axialChainNodeSchema),
   layout: z.object({
     chainNormalOffsets: z.array(z.object({
@@ -1554,7 +1560,7 @@ export const dimensionSchemeEditCommandSchema = z.discriminatedUnion('type', [
 ]);
 
 export const geometricToleranceEditCommandSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('surface-texture.layout'), intentId: idSchema, position: vec2Schema, expectedDrawingRef: drawingRefSchema }).strict(),
+  z.object({ type: z.literal('surface-texture.layout'), intentId: idSchema, position: vec2Schema, facing: z.union([z.literal(1), z.literal(-1)]).optional(), expectedDrawingRef: drawingRefSchema }).strict(),
   z.object({
     type: z.literal('surface-texture.set'), intentId: idSchema,
     parameter: z.enum(['Ra', 'Rz', 'Rq', 'Rt']), value: z.number().finite().positive(),

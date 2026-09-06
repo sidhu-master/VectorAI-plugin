@@ -202,6 +202,25 @@ describe('DimensionPlanStore', () => {
     });
   });
 
+  it('persists roughness facing through layout edits, undo, redo and session restoration', () => {
+    const storage = new FileDimensionPlanStorage(mkdtempSync(join(tmpdir(), 'vectorai-ra-facing-')));
+    const store = new DimensionPlanStore(storage, { now: () => 7, id: () => 'revision-1' });
+    const value = draft();
+    value.surfaceTextures = [{ id: 'texture', drawingRef,
+      controlledTargets: [{ geometryId: 'line-1' as GeometryId, anchor: { kind: 'end' } }],
+      parameter: 'Ra', value: 0.8, unit: 'um', materialRemoval: 'required', source: 'process-rule', status: 'candidate', evidenceIds: [] }];
+    store.begin('session', drawingRef); store.setDraft('session', value);
+    const command = { type: 'surface-texture.layout' as const, intentId: 'texture', position: [35, 18] as [number, number], facing: -1 as const, expectedDrawingRef: drawingRef };
+    const moved = store.editGeometricTolerance('session', command);
+    expect(moved.draft!.surfaceTextures[0]).toMatchObject({ labelPosition: [35, 18], labelFacing: -1, status: 'candidate' });
+    expect(store.undo('session', drawingRef).draft!.surfaceTextures[0]).not.toHaveProperty('labelFacing');
+    expect(store.redo('session', drawingRef).draft!.surfaceTextures[0].labelFacing).toBe(-1);
+    const restored = new DimensionPlanStore(storage);
+    expect(restored.get('session').draft!.surfaceTextures[0].labelFacing).toBe(-1);
+    const { facing, ...legacyCommand } = command;
+    expect(restored.editGeometricTolerance('session', { ...legacyCommand, position: [36, 18] }).draft!.surfaceTextures[0].labelFacing).toBe(-1);
+  });
+
   it('tracks draft edits, confirms atomically, then undoes and redoes confirmation', () => {
     const store = new DimensionPlanStore(undefined, { now: () => 7, id: () => 'revision-1' });
     store.begin('session', drawingRef);
@@ -297,6 +316,27 @@ describe('DimensionPlanStore', () => {
     expect(store.get('session').draft?.axialScheme?.displayedCandidateIds).not.toContain('candidate:local');
     expect(store.undo('session', drawingRef).draft?.axialScheme?.displayedCandidateIds).toContain('candidate:local');
     expect(store.redo('session', drawingRef).draft?.axialScheme?.displayedCandidateIds).not.toContain('candidate:local');
+  });
+
+  it('persists an explicitly hidden closure and restores hide/show through undo and redo without losing its intent', () => {
+    const storage = new FileDimensionPlanStorage(mkdtempSync(join(tmpdir(), 'vectorai-hidden-closure-')));
+    const first = new DimensionPlanStore(storage, { now: () => 7, id: () => 'revision-1' });
+    first.begin('session', drawingRef);
+    first.setDraft('session', inferredDraft());
+    first.editScheme('session', { type: 'candidate.display', candidateId: 'candidate:closure', displayed: false, expectedDrawingRef: drawingRef });
+    const store = new DimensionPlanStore(storage, { now: () => 8, id: () => 'revision-2' });
+    const hidden = store.get('session').draft!;
+    expect(hidden.axialScheme?.hiddenCandidateIds).toEqual(['candidate:closure']);
+    expect(hidden.axialScheme?.closureCandidateIds).toEqual(['candidate:closure']);
+    expect(hidden.axialScheme?.status).toBe('resolved');
+    expect(hidden.intents.some(({ id }) => id === 'dimension-intent:candidate:closure')).toBe(true);
+    expect(store.undo('session', drawingRef).draft?.axialScheme?.hiddenCandidateIds).toBeUndefined();
+    expect(store.redo('session', drawingRef).draft?.axialScheme?.hiddenCandidateIds).toEqual(['candidate:closure']);
+    const shown = store.editScheme('session', { type: 'candidate.display', candidateId: 'candidate:closure', displayed: true, expectedDrawingRef: drawingRef });
+    expect(shown.draft?.axialScheme?.hiddenCandidateIds).not.toContain('candidate:closure');
+    expect(shown.draft?.axialScheme?.displayedCandidateIds).not.toContain('candidate:closure');
+    expect(shown.draft?.axialScheme?.status).toBe('resolved');
+    expect(store.undo('session', drawingRef).draft?.axialScheme?.hiddenCandidateIds).toEqual(['candidate:closure']);
   });
 
   it('persists a candidate layout offset and restores it through undo and redo', () => {

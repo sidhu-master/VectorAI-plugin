@@ -33,7 +33,7 @@
     "e2e:dxf-smart-partition": "tsx scripts/e2e-dxf-smart-partition.ts",
     "e2e:tolerance-data-foundation": "tsx scripts/e2e-tolerance-data-foundation.ts",
     "e2e:golden-dimension-chain": "tsx scripts/e2e-golden-dimension-chain.ts",
-    "test:cad-export": "vitest run packages/drawing-core/src/io/dxf.test.ts packages/plugin-dsh-annotation-host/src/cad-*.test.ts packages/plugin-dsh-annotation-host/src/engineering-dxf-export.test.ts packages/plugin-dsh-annotation-host/src/golden-engineering-export.integration.test.ts",
+    "test:cad-export": "vitest run packages/drawing-core/src/io/dxf*.test.ts packages/plugin-dsh-annotation-host/src/cad-*.test.ts packages/plugin-dsh-annotation-host/src/engineering-dxf-export.test.ts packages/plugin-dsh-annotation-host/src/golden-engineering-export.integration.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

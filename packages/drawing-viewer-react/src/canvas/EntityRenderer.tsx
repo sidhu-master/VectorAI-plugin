@@ -2,13 +2,15 @@
 
 import {
   convertLength,
+  leaderPaths,
+  leaderArrowTriangles,
   sampleSpline,
   type AnnotationNode,
   type GeometryNode,
   type ToleranceProjection,
   type Vec2,
 } from '@vectorai/drawing-core';
-import { memo, type MouseEvent } from 'react';
+import { memo, type MouseEvent, type ReactNode } from 'react';
 
 import { nodeBounds, worldBoundsForViewport } from './geometry';
 import { HatchRenderer } from './HatchRenderer';
@@ -25,6 +27,7 @@ export interface EntityRendererProps {
   onContextMenu?(event: MouseEvent<SVGGElement>): void;
   onTextPointerDown?(event: MouseEvent<SVGGElement>): void;
   previewDiff?: 'created' | 'updated' | 'before' | 'deleted';
+  content?: ReactNode;
 }
 
 export function EntityRenderer({
@@ -37,6 +40,7 @@ export function EntityRenderer({
   onContextMenu,
   onTextPointerDown,
   previewDiff,
+  content,
 }: EntityRendererProps) {
   if (!node.visible) return null;
   const semanticClassName = node.type === 'dimension' && (node.dimensionKind === 'angular' || node.dimensionKind === 'diameter')
@@ -53,7 +57,8 @@ export function EntityRenderer({
   const interactiveText = (node.type === 'text' || node.type === 'dimension') && onTextPointerDown !== undefined;
   return (
     <g
-      className={className}
+      className={content === undefined ? className : 'vai-cad-entity'}
+      style={content !== undefined && selected ? { filter: 'brightness(1.5) drop-shadow(0 0 1px white)' } : undefined}
       data-entity-id={node.id}
       data-entity-type={node.type}
       data-selected={selected || undefined}
@@ -64,7 +69,7 @@ export function EntityRenderer({
       onContextMenu={onContextMenu}
       onMouseDown={interactiveText ? onTextPointerDown : undefined}
     >
-      {renderNode(node, viewport)}
+      {content === undefined ? renderNode(node, viewport) : content}
     </g>
   );
 }
@@ -129,7 +134,9 @@ function renderNode(node: GeometryNode | AnnotationNode, viewport: DrawingWorksp
       const textPosition = node.points.at(-1) ?? [0, 0];
       return (
         <>
-          <polyline points={pointsAttribute(node.points)} fill="none" {...vectorStroke} />
+          {leaderPaths(node).map((points, index) => <polyline key={index} data-leader-role={index === 0 ? 'main' : 'branch'} points={pointsAttribute(points)} fill="none" {...vectorStroke} />)}
+          {node.callout?.type === 'detail' && node.points[0] && <circle data-leader-role="detail" cx={node.points[0][0]} cy={node.points[0][1]} r={node.callout.radius} fill="none" {...vectorStroke} />}
+          {leaderArrowTriangles(node).map((points, index) => <polygon key={index} data-leader-role="arrow" points={pointsAttribute(points)} fill="currentColor" />)}
           <WorldText position={textPosition} height={node.textHeight} align="left">{node.content}</WorldText>
         </>
       );

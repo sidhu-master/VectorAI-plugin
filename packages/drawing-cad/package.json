@@ -1,0 +1,27 @@
+{
+  "name": "@vectorai/drawing-cad",
+  "version": "0.1.0-alpha.0",
+  "description": "Browser-safe engineering CAD paper layout shared by canvas and DXF export",
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./cad-dimension-layout": "./src/cad-dimension-layout.ts",
+    "./cad-symbol-layout": "./src/cad-symbol-layout.ts",
+    "./cad-paper-layout": "./src/cad-paper-layout.ts",
+    "./cad-dimension-projector": "./src/cad-dimension-projector.ts",
+    "./gb-cad-profile": "./src/gb-cad-profile.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@vectorai/drawing-core": "workspace:*",
+    "@vectorai/drawing-hatch": "workspace:*",
+    "@vectorai/engineering-annotation": "workspace:*",
+    "@vectorai/plugin-space-contracts": "workspace:*"
+  }
+}

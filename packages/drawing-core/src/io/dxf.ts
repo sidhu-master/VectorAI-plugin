@@ -7,6 +7,7 @@ import type {
   Vec2,
 } from '../document';
 import { convertLength } from '../document/length-unit';
+import { leaderArrowTriangles, leaderPaths } from '../document/leader';
 import {
   DEFAULT_DXF_EXPORT_PROFILE,
   type DxfDimensionStyle,
@@ -19,6 +20,7 @@ export type DxfExportLayer = DxfLayerStyle;
 
 export type DxfBlockGraphic =
   | { type: 'line'; layer: string; color?: number; start: Vec2; end: Vec2 }
+  | { type: 'circle'; layer: string; color?: number; center: Vec2; radius: number }
   | { type: 'arc'; layer: string; color?: number; center: Vec2; radius: number; startAngle: number; endAngle: number }
   | { type: 'polyline'; layer: string; color?: number; points: readonly Vec2[]; closed?: boolean }
   | { type: 'text'; layer: string; color?: number; position: Vec2; content: string; height: number; rotation?: number; alignment?: 'left' | 'center' | 'right' }
@@ -37,12 +39,26 @@ export interface DxfExportOptions {
   layers?: readonly DxfExportLayer[];
   entities?: readonly DxfExportEntity[];
   profile?: DxfExportProfile;
+  dimensionPresentation?: Readonly<Record<string, DxfDimensionPresentation>>;
+}
+
+/** Resolved paper placement. This does not replace the canonical measurement. */
+export interface DxfDimensionPresentation {
+  nativeKind?: 'linear' | 'angular' | 'diameter' | 'radius';
+  textBounds?: { minX: number; minY: number; maxX: number; maxY: number };
+  rotation?: number;
+  arrowsOutside?: boolean;
+  textGap?: number;
+  angularWitnesses?: readonly { start: Vec2; end: Vec2 }[];
+  style?: 'GB_LINEAR' | 'GB_ANGULAR' | 'GB_RADIAL';
+  leader?: { start: Vec2; end: Vec2 };
 }
 
 interface PreparedDimension {
   entity: Extract<DxfExportEntity, { type: 'dimension' }>;
   blockName: string;
   nativeTolerance?: NativeDimensionTolerance;
+  nativeTextGap?: number;
   vectorAiToleranceStrings?: readonly string[];
 }
 
@@ -74,32 +90,40 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
   for (const node of document.annotations) {
     if (!node.visible || node.type !== 'dimension') continue;
     const blockName = `*D${nextDimensionBlock++}`;
-    const entity = canonicalDimensionEntity(node, profile, document.unitSystem.length);
+    const entity = canonicalDimensionEntity(node, profile, document.unitSystem.length, options.dimensionPresentation?.[node.id]);
+    const nativeTextGap = options.dimensionPresentation?.[node.id]?.textGap;
     const tolerance = portableDimensionTolerance(node, document.unitSystem.length);
     const nativeTolerance = tolerance?.native ? {
       upperDeviation: tolerance.upperDeviation,
       lowerDeviationMagnitude: Math.abs(tolerance.lowerDeviation),
       decimalPlaces: toleranceDecimalPlaces(profile, entity.style),
     } : undefined;
-    assertXDataAggregateLimit(nativeTolerance, tolerance?.vectorAiStrings);
+    assertXDataAggregateLimit(nativeTolerance, tolerance?.vectorAiStrings, nativeTextGap);
     nativeDimensions.push({
       entity,
       blockName,
       ...(nativeTolerance === undefined ? {} : { nativeTolerance }),
+      ...(nativeTextGap === undefined ? {} : { nativeTextGap }),
       ...(tolerance?.vectorAiStrings === undefined ? {} : { vectorAiToleranceStrings: tolerance.vectorAiStrings }),
     });
   }
   for (const value of options.entities ?? []) {
-    if (value.type === 'dimension') nativeDimensions.push({ entity: value, blockName: `*D${nextDimensionBlock++}` });
+    if (value.type === 'dimension') nativeDimensions.push({ entity: structuredClone(value), blockName: `*D${nextDimensionBlock++}` });
   }
-  const blockReferences = (options.entities ?? [])
+  const textBounds = Object.values(options.dimensionPresentation ?? {}).flatMap(({ textBounds }) => textBounds ? [textBounds] : []);
+  for (const value of nativeDimensions) {
+    value.entity.picture = value.entity.picture.flatMap((graphic) => clipDimensionGraphic(graphic, textBounds));
+  }
+  const leaderBlocks = document.annotations.filter((node) => node.visible && node.type === 'leader')
+    .map((node) => canonicalLeaderEntity(node as Extract<AnnotationNode, { type: 'leader' }>, profile));
+  const blockReferences = [...(options.entities ?? []), ...leaderBlocks]
     .filter((value): value is Extract<DxfExportEntity, { type: 'block-reference' }> => value.type === 'block-reference')
     .map((entity, index): PreparedBlockReference => ({ entity, blockName: `*VAI${index + 1}` }));
   const blockNames = [...nativeDimensions.map((value) => value.blockName), ...blockReferences.map((value) => value.blockName)];
-  const blockRecordHandles = new Map(
-    ['*Model_Space', '*Paper_Space', ...blockNames].map((name, index) => [name, (0x40 + index).toString(16).toUpperCase()]),
-  );
   const writer = new DxfWriter();
+  const blockRecordHandles = new Map(
+    ['*Model_Space', '*Paper_Space', ...blockNames].map((name) => [name, writer.allocateHandle()]),
+  );
   writer.section('HEADER', () => {
     writer.pair(9, '$ACADVER');
     writer.pair(1, 'AC1027');
@@ -123,7 +147,7 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
       ...(options.layers ?? []),
     ]);
     writer.pair(70, layers.length);
-    layers.forEach((layer, index) => writeLayer(writer, layer, (0x20 + index).toString(16).toUpperCase()));
+    layers.forEach((layer) => writeLayer(writer, layer, writer.allocateHandle()));
     writer.pair(0, 'ENDTAB');
     const textStyleHandles = writeStyleTable(writer, profile.textStyles);
     writeDimensionStyleTable(writer, profile.dimensionStyles, textStyleHandles);
@@ -142,7 +166,7 @@ export function exportDrawingDxf(document: DrawingDocument, options: DxfExportOp
       if (node.visible) writeGeometry(writer, node, geometryLayer(node, profile));
     }
     for (const node of document.annotations) {
-      if (node.visible && node.type !== 'dimension') writeAnnotation(writer, node, profile);
+      if (node.visible && node.type !== 'dimension' && node.type !== 'leader') writeAnnotation(writer, node, profile);
     }
     for (const extra of options.entities ?? []) {
       if (extra.type !== 'dimension' && extra.type !== 'block-reference') writeExtraEntity(writer, extra);
@@ -185,20 +209,7 @@ function standardLayer(name: string): DxfExportLayer {
 }
 
 function writeExtraEntity(writer: DxfWriter, value: DxfExportEntity): void {
-  switch (value.type) {
-    case 'line':
-      writeLine(writer, value.start, value.end, value.layer);
-      return;
-    case 'polyline':
-      writePolyline(writer, value.points, value.closed ?? false, value.layer);
-      return;
-    case 'text':
-      writeText(writer, value.position, value.content, value.height, value.rotation ?? 0, value.alignment ?? 'center', 'middle', value.layer);
-      return;
-    case 'dimension':
-    case 'block-reference':
-      return;
-  }
+  if (value.type !== 'dimension' && value.type !== 'block-reference') writeBlockGraphic(writer, value, false);
 }
 
 class DxfWriter {
@@ -210,8 +221,12 @@ class DxfWriter {
     this.#lines.push(String(code), typeof value === 'number' ? formatNumber(value) : value);
   }
 
+  allocateHandle(): string {
+    return (this.#nextHandle++).toString(16).toUpperCase();
+  }
+
   handle(): void {
-    this.pair(5, (this.#nextHandle++).toString(16).toUpperCase());
+    this.pair(5, this.allocateHandle());
     if (this.#owner !== undefined) this.pair(330, this.#owner);
   }
 
@@ -273,7 +288,7 @@ function writePatternLineType(writer: DxfWriter, name: string, description: stri
 }
 
 function writeStyleTable(writer: DxfWriter, styles: readonly DxfTextStyle[]): ReadonlyMap<string, string> {
-  const handles = new Map(styles.map((style, index) => [style.name, (0x160 + index).toString(16).toUpperCase()]));
+  const handles = new Map(styles.map((style) => [style.name, writer.allocateHandle()]));
   writer.pair(0, 'TABLE');
   writer.pair(2, 'STYLE');
   writer.pair(5, '12');
@@ -311,9 +326,9 @@ function writeDimensionStyleTable(
   writer.pair(330, '0');
   writer.pair(100, 'AcDbSymbolTable');
   writer.pair(70, styles.length);
-  for (const [index, style] of styles.entries()) {
+  for (const style of styles) {
     writer.pair(0, 'DIMSTYLE');
-    writer.pair(105, (0xA1 + index).toString(16).toUpperCase());
+    writer.pair(105, writer.allocateHandle());
     writer.pair(330, '13');
     writer.pair(100, 'AcDbSymbolTableRecord');
     writer.pair(100, 'AcDbDimStyleTableRecord');
@@ -329,8 +344,9 @@ function writeDimensionStyleTable(
     writer.pair(42, style.originOffset);
     writer.pair(43, 10);
     writer.pair(44, style.extension);
-    writer.pair(45, 0);
-    writer.pair(46, 7);
+    // Omit the optional zero DIMRND: some CAD regenerators treat an explicit
+    // zero as integer rounding, whereas absence correctly follows DIMDEC.
+    writer.pair(46, style.dimensionLineExtension ?? 0);
     writer.pair(47, 0);
     writer.pair(48, 0);
     writer.pair(49, 2.5);
@@ -353,7 +369,8 @@ function writeDimensionStyleTable(
     writer.pair(178, style.textColor);
     writer.pair(271, style.decimalPlaces);
     writer.pair(272, style.toleranceDecimalPlaces ?? style.decimalPlaces);
-    writer.pair(275, style.angularDecimalPlaces);
+    writer.pair(179, style.angularDecimalPlaces);
+    writer.pair(275, 0); // DIMAUNIT: canonical angular measurements are degrees.
     const textStyleHandle = style.textStyle ? textStyleHandles.get(style.textStyle) : undefined;
     if (textStyleHandle) writer.pair(340, textStyleHandle);
   }
@@ -367,9 +384,9 @@ function writeAppIdTable(writer: DxfWriter): void {
   writer.pair(330, '0');
   writer.pair(100, 'AcDbSymbolTable');
   writer.pair(70, 2);
-  for (const [index, name] of ['ACAD', 'VECTORAI'].entries()) {
+  for (const name of ['ACAD', 'VECTORAI']) {
     writer.pair(0, 'APPID');
-    writer.pair(5, (0x180 + index).toString(16).toUpperCase());
+    writer.pair(5, writer.allocateHandle());
     writer.pair(330, '15');
     writer.pair(100, 'AcDbSymbolTableRecord');
     writer.pair(100, 'AcDbRegAppTableRecord');
@@ -443,6 +460,12 @@ function writeBlockEnd(writer: DxfWriter, layer: string): void {
 
 function writeBlockGraphic(writer: DxfWriter, value: DxfBlockGraphic, multilineText: boolean): void {
   if (value.type === 'line') writeLine(writer, value.start, value.end, value.layer, undefined, value.color);
+  else if (value.type === 'circle') {
+    entity(writer, 'CIRCLE', value.layer, value.color);
+    writer.pair(100, 'AcDbCircle');
+    point(writer, 10, value.center);
+    writer.pair(40, value.radius);
+  }
   else if (value.type === 'arc') writeArc(writer, value.center, value.radius, value.startAngle, value.endAngle, value.layer, value.color);
   else if (value.type === 'polyline') writePolyline(writer, value.points, value.closed ?? false, value.layer, value.color);
   else if (value.type === 'mtext') writeMText(writer, value.position, value.content, value.height, value.rotation ?? 0, value.layer, value.style, value.alignment, value.color);
@@ -451,25 +474,59 @@ function writeBlockGraphic(writer: DxfWriter, value: DxfBlockGraphic, multilineT
   else writeText(writer, value.position, value.content, value.height, value.rotation ?? 0, value.alignment ?? 'center', 'middle', value.layer, value.color);
 }
 
+function canonicalLeaderEntity(
+  node: Extract<AnnotationNode, { type: 'leader' }>, profile: DxfExportProfile,
+): Extract<DxfExportEntity, { type: 'block-reference' }> {
+  const layer = node.sourceRef?.layer ?? profile.semanticLayers.symbol;
+  const style = profile.dimensionStyles.find(({ name }) => name === 'GB_LEADER') ?? profile.dimensionStyles[0];
+  const gb = profile.cadConvention === 'gb';
+  const color = gb ? node.callout ? 31 : 4 : undefined;
+  const picture: DxfBlockGraphic[] = leaderPaths(node).map((points) => ({ type: 'polyline', layer, color, points }));
+  picture.push(...leaderArrowTriangles(node, style?.arrowSize ?? node.textHeight).map((boundary): DxfBlockGraphic => ({ type: 'solid-hatch', layer, color, boundary })));
+  if (node.callout?.type === 'detail' && node.points[0]) {
+    picture.push({ type: 'circle', layer, color, center: node.points[0], radius: node.callout.radius });
+  }
+  const position = node.points.at(-1);
+  if (position && node.content) picture.push({ type: 'mtext', layer, color: gb ? 3 : undefined,
+    position, content: node.content, height: node.textHeight, style: style?.textStyle, alignment: 4,
+  });
+  return { type: 'block-reference', layer, picture };
+}
+
+/** The exact cached CAD graphics used by DXF, available to browser renderers. */
+export function projectDimensionPicture(
+  node: Extract<AnnotationNode, { type: 'dimension' }>,
+  profile: DxfExportProfile,
+  drawingLengthUnit: DrawingDocument['unitSystem']['length'],
+  presentation?: DxfDimensionPresentation,
+  allTextBounds: readonly NonNullable<DxfDimensionPresentation['textBounds']>[] = [],
+): DxfBlockGraphic[] {
+  return canonicalDimensionEntity(node, profile, drawingLengthUnit, presentation).picture
+    .flatMap((graphic) => clipDimensionGraphic(graphic, allTextBounds));
+}
+
 function canonicalDimensionEntity(
   node: Extract<AnnotationNode, { type: 'dimension' }>,
   profile: DxfExportProfile,
   drawingLengthUnit: DrawingDocument['unitSystem']['length'],
+  presentation?: DxfDimensionPresentation,
 ): Extract<DxfExportEntity, { type: 'dimension' }> {
-  const genericLabel = dimensionLabel(node);
   const portableTolerance = portableDimensionTolerance(node, drawingLengthUnit);
-  const label = portableTolerance !== undefined || profile.cadConvention === 'gb'
-    ? gbDimensionPictureText(node, genericLabel, drawingLengthUnit)
-    : genericLabel;
-  const points = node.definitionPoints;
+  const points = presentation?.nativeKind === 'linear' && node.dimensionKind === 'diameter' && node.definitionPoints.length >= 4
+    ? [node.definitionPoints[2]!, node.definitionPoints[3]!, node.definitionPoints[0]!, node.definitionPoints[1]!]
+    : node.definitionPoints;
   const measurement = node.observedValue ?? node.computedValue ?? dimensionMeasurement(node.dimensionKind, points);
-  const kind: Extract<DxfExportEntity, { type: 'dimension' }>['dimensionKind'] =
+  const kind: Extract<DxfExportEntity, { type: 'dimension' }>['dimensionKind'] = presentation?.nativeKind ?? (
     node.dimensionKind === 'angular' ? 'angular'
       : node.dimensionKind === 'radius' ? 'radius'
         : node.dimensionKind === 'diameter' ? 'diameter'
-          : 'linear';
-  const style = kind === 'angular' ? 'GB_ANGULAR' : kind === 'radius' || kind === 'diameter' ? 'GB_RADIAL' : 'GB_LINEAR';
+          : 'linear');
+  const style = presentation?.style ?? (kind === 'angular' ? 'GB_ANGULAR' : kind === 'radius' || kind === 'diameter' ? 'GB_RADIAL' : 'GB_LINEAR');
   const dimensionStyle = profile.dimensionStyles.find(({ name }) => name === style);
+  const genericLabel = dimensionLabel(node, dimensionStyle);
+  const label = portableTolerance !== undefined || profile.cadConvention === 'gb'
+    ? gbDimensionPictureText(node, genericLabel, drawingLengthUnit, dimensionStyle)
+    : genericLabel;
   const textHeight = dimensionStyle?.textHeight ?? annotationTextHeight(node);
   const arrowSize = dimensionStyle?.arrowSize ?? textHeight;
   return {
@@ -488,6 +545,8 @@ function canonicalDimensionEntity(
     picture: canonicalDimensionPicture(
       node, annotationLayer(node, profile), label, textHeight, arrowSize, dimensionStyle?.textStyle,
       profile.cadConvention === 'gb' ? 3 : undefined,
+      dimensionStyle,
+      presentation,
     ),
   };
 }
@@ -497,9 +556,10 @@ function writeNativeDimension(writer: DxfWriter, value: PreparedDimension): void
   const points = item.definitionPoints;
   const first = points[0] ?? [0, 0];
   const second = points[1] ?? first;
+  const angularLegs = angularDimensionLegs(points, item.measurement);
   const definition = item.dimensionKind === 'angular'
-    ? angularDimensionDefinitionPoint(points, item.measurement, item.textPosition)
-    : item.dimensionKind === 'diameter'
+    ? angularLegs[1]
+    : item.dimensionKind === 'diameter' || item.dimensionKind === 'radius'
       ? first
     : points.at(-1) ?? item.textPosition;
   writer.pair(0, 'DIMENSION');
@@ -514,16 +574,19 @@ function writeNativeDimension(writer: DxfWriter, value: PreparedDimension): void
   writer.pair(42, item.measurement);
   writer.pair(1, dxfText(item.text));
   writer.pair(3, item.style ?? defaultDimensionStyle(item.dimensionKind));
+  const text = item.picture.find((graphic) => graphic.type === 'mtext' || graphic.type === 'text');
+  if (text?.type === 'mtext' || text?.type === 'text') writer.pair(53, text.rotation ?? 0);
   if (item.dimensionKind === 'angular') {
     writer.pair(100, 'AcDb2LineAngularDimension');
     point(writer, 13, first);
-    point(writer, 14, second);
+    point(writer, 14, angularLegs[0]);
     point(writer, 15, first);
-    point(writer, 16, points[2] ?? second);
+    point(writer, 16, angularDimensionDefinitionPoint(points, item.measurement, item.textPosition));
   } else if (item.dimensionKind === 'radius') {
     writer.pair(100, 'AcDbRadialDimension');
-    point(writer, 15, first);
-    writer.pair(40, item.measurement);
+    point(writer, 15, second);
+    // The text position owns the placement; no independent leader extension is specified.
+    writer.pair(40, 0);
   } else if (item.dimensionKind === 'diameter') {
     writer.pair(100, 'AcDbDiametricDimension');
     point(writer, 15, second);
@@ -532,28 +595,35 @@ function writeNativeDimension(writer: DxfWriter, value: PreparedDimension): void
     writer.pair(100, 'AcDbAlignedDimension');
     point(writer, 13, first);
     point(writer, 14, second);
+    const [lineStart, lineEnd] = linearDimensionEndpoints(points);
+    writer.pair(50, pointAngleDegrees(lineStart, lineEnd));
     writer.pair(100, 'AcDbRotatedDimension');
-    writer.pair(50, Math.atan2(second[1] - first[1], second[0] - first[0]) * 180 / Math.PI);
   }
-  if (value.nativeTolerance) writeNativeToleranceOverride(writer, value.nativeTolerance);
+  if (value.nativeTolerance || value.nativeTextGap !== undefined) writeNativeDimensionOverrides(writer, value.nativeTolerance, value.nativeTextGap);
   if (value.vectorAiToleranceStrings !== undefined) {
     writer.pair(1001, 'VECTORAI');
     for (const entry of value.vectorAiToleranceStrings) writer.pair(1000, entry);
   }
 }
 
-function writeNativeToleranceOverride(writer: DxfWriter, tolerance: NativeDimensionTolerance): void {
+function writeNativeDimensionOverrides(writer: DxfWriter, tolerance?: NativeDimensionTolerance, textGap?: number): void {
   writer.pair(1001, 'ACAD');
   writer.pair(1000, 'DSTYLE');
   writer.pair(1002, '{');
-  writer.pair(1070, 71);
-  writer.pair(1070, 1);
-  writer.pair(1070, 47);
-  writer.pair(1040, tolerance.upperDeviation);
-  writer.pair(1070, 48);
-  writer.pair(1040, tolerance.lowerDeviationMagnitude);
-  writer.pair(1070, 272);
-  writer.pair(1070, tolerance.decimalPlaces);
+  if (tolerance) {
+    writer.pair(1070, 71);
+    writer.pair(1070, 1);
+    writer.pair(1070, 47);
+    writer.pair(1040, tolerance.upperDeviation);
+    writer.pair(1070, 48);
+    writer.pair(1040, tolerance.lowerDeviationMagnitude);
+    writer.pair(1070, 272);
+    writer.pair(1070, tolerance.decimalPlaces);
+  }
+  if (textGap !== undefined) {
+    writer.pair(1070, 147);
+    writer.pair(1040, textGap);
+  }
   writer.pair(1002, '}');
 }
 
@@ -565,6 +635,8 @@ function canonicalDimensionPicture(
   arrowSize: number,
   textStyle?: string,
   textColor?: number,
+  dimensionStyle?: DxfDimensionStyle,
+  presentation?: DxfDimensionPresentation,
 ): DxfBlockGraphic[] {
   const text: DxfBlockGraphic = {
     type: 'mtext', layer, position: node.textPosition,
@@ -583,8 +655,10 @@ function canonicalDimensionPicture(
     const startTangent = normalizedVector([-(arcStart[1] - vertex[1]), arcStart[0] - vertex[0]]);
     const endTangent = normalizedVector([arcEnd[1] - vertex[1], -(arcEnd[0] - vertex[0])]);
     return [
-      { type: 'line', layer, start: vertex, end: firstExtension },
-      { type: 'line', layer, start: vertex, end: secondExtension },
+      ...(presentation?.angularWitnesses
+        ? presentation.angularWitnesses.map(({ start, end }): DxfBlockGraphic => ({ type: 'line', layer, color: dimensionStyle?.extensionLineColor, start, end }))
+        : [...angularWitnessLine(vertex, firstExtension, firstArcPoint, layer, dimensionStyle),
+          ...angularWitnessLine(vertex, secondExtension, secondArcPoint, layer, dimensionStyle)]),
       {
         type: 'arc', layer, center: vertex, radius,
         startAngle: pointAngleDegrees(vertex, arcStart),
@@ -592,46 +666,193 @@ function canonicalDimensionPicture(
       },
       arrowHatch(layer, arcStart, startTangent, arrowSize),
       arrowHatch(layer, arcEnd, endTangent, arrowSize),
-      text,
+      {
+        ...text,
+        rotation: presentation?.rotation ?? (dimensionStyle?.angularTextOrientation === 'horizontal' ? 0
+          : readableDimensionTextAngle(pointAngleDegrees(vertex, arcStart)
+            + positiveDegrees(pointAngleDegrees(vertex, arcEnd) - pointAngleDegrees(vertex, arcStart)) / 2 + 90)),
+      },
     ];
   }
   if (node.dimensionKind === 'diameter' && node.definitionPoints.length >= 2) {
     const [first, second, sourceFirst = first, sourceSecond = second] = node.definitionPoints;
     const direction = normalizedVector([second[0] - first[0], second[1] - first[1]]);
+    const arrowDirection: Vec2 = presentation?.arrowsOutside ? [-direction[0], -direction[1]] : direction;
     return [
-      { type: 'line', layer, start: sourceFirst, end: first },
-      { type: 'line', layer, start: sourceSecond, end: second },
-      { type: 'line', layer, start: first, end: second },
-      arrowHatch(layer, first, direction, arrowSize),
-      arrowHatch(layer, second, [-direction[0], -direction[1]], arrowSize),
-      text,
+      ...dimensionWitnessLine(sourceFirst, first, layer, dimensionStyle),
+      ...dimensionWitnessLine(sourceSecond, second, layer, dimensionStyle),
+      ...paperDimensionLine(first, second, layer, presentation, arrowSize),
+      ...(presentation?.leader ? paperDimensionLine(presentation.leader.start, presentation.leader.end, layer, presentation, arrowSize, false) : []),
+      arrowHatch(layer, first, arrowDirection, arrowSize),
+      arrowHatch(layer, second, [-arrowDirection[0], -arrowDirection[1]], arrowSize),
+      { ...text, rotation: presentation?.rotation ?? readableDimensionTextAngle(pointAngleDegrees(first, second)) },
     ];
   }
   if (node.dimensionKind === 'radius' && node.definitionPoints.length >= 2) {
     const center = node.definitionPoints[0]!;
     const edge = node.definitionPoints[1]!;
-    const direction = normalizedVector([center[0] - edge[0], center[1] - edge[1]]);
+    const direction = normalizedVector([node.textPosition[0] - edge[0], node.textPosition[1] - edge[1]]);
     return [
-      { type: 'line', layer, start: edge, end: node.textPosition },
+      ...paperDimensionLine(edge, node.textPosition, layer, presentation, arrowSize, false),
       arrowHatch(layer, edge, direction, arrowSize),
-      text,
+      { ...text, rotation: presentation?.rotation ?? readableDimensionTextAngle(pointAngleDegrees(center, edge)) },
     ];
   }
   if (node.definitionPoints.length >= 2) {
-    const first = node.definitionPoints[0]!;
-    const second = node.definitionPoints[1]!;
+    const [first, second] = linearDimensionEndpoints(node.definitionPoints);
     const direction = normalizedVector([second[0] - first[0], second[1] - first[1]]);
+    const arrowDirection: Vec2 = presentation?.arrowsOutside ? [-direction[0], -direction[1]] : direction;
+    const witnesses = node.definitionPoints.length >= 4
+      ? [
+        ...dimensionWitnessLine(node.definitionPoints[0]!, first, layer, dimensionStyle),
+        ...dimensionWitnessLine(node.definitionPoints[1]!, second, layer, dimensionStyle),
+      ]
+      : [];
     return [
-      { type: 'line', layer, start: first, end: second },
-      arrowHatch(layer, first, direction, arrowSize),
-      arrowHatch(layer, second, [-direction[0], -direction[1]], arrowSize),
-      text,
+      ...witnesses,
+      ...paperDimensionLine(first, second, layer, presentation, arrowSize),
+      arrowHatch(layer, first, arrowDirection, arrowSize),
+      arrowHatch(layer, second, [-arrowDirection[0], -arrowDirection[1]], arrowSize),
+      { ...text, rotation: presentation?.rotation ?? readableDimensionTextAngle(pointAngleDegrees(first, second)) },
     ];
   }
   return [
     { type: 'polyline', layer, points: node.definitionPoints, closed: false },
     text,
   ];
+}
+
+function angularWitnessLine(vertex: Vec2, leg: Vec2, arcPoint: Vec2, layer: string, style?: DxfDimensionStyle): DxfBlockGraphic[] {
+  const legLength = Math.hypot(leg[0] - vertex[0], leg[1] - vertex[1]);
+  const radius = Math.hypot(arcPoint[0] - vertex[0], arcPoint[1] - vertex[1]);
+  if (radius <= legLength) return [{ type: 'line', layer, color: style?.extensionLineColor, start: vertex, end: leg }];
+  return dimensionWitnessLine(leg, arcPoint, layer, style);
+}
+
+/** Clip the line at the resolved label footprint; exterior arrows have a landing. */
+function paperDimensionLine(
+  first: Vec2, second: Vec2, layer: string, presentation: DxfDimensionPresentation | undefined,
+  arrowSize: number, extendArrows = true,
+): DxfBlockGraphic[] {
+  const direction = normalizedVector([second[0] - first[0], second[1] - first[1]]);
+  const extension = extendArrows && presentation?.arrowsOutside ? arrowSize * 1.5 : 0;
+  const box = presentation?.textBounds;
+  let before = extension;
+  let after = extension;
+  if (extension > 0 && box && !presentation?.leader) {
+    // A small span can place its label beyond the outside arrow landing.
+    // Carry the line beneath that label, while keeping the measured points
+    // and arrow tips fixed. A separate circular leader owns its own reach.
+    const textCenter: Vec2 = [(box.minX + box.maxX) / 2, (box.minY + box.maxY) / 2];
+    const projection = (textCenter[0] - first[0]) * direction[0] + (textCenter[1] - first[1]) * direction[1];
+    const length = Math.hypot(second[0] - first[0], second[1] - first[1]);
+    before = Math.max(before, -projection);
+    after = Math.max(after, projection - length);
+  }
+  const start: Vec2 = [first[0] - direction[0] * before, first[1] - direction[1] * before];
+  const end: Vec2 = [second[0] + direction[0] * after, second[1] + direction[1] * after];
+  if (!box) return [{ type: 'line', layer, start, end }];
+  let near = 0;
+  let far = 1;
+  for (const [origin, delta, min, max] of [
+    [start[0], end[0] - start[0], box.minX, box.maxX],
+    [start[1], end[1] - start[1], box.minY, box.maxY],
+  ]) {
+    if (Math.abs(delta) < 1e-12) {
+      if (origin < min || origin > max) return [{ type: 'line', layer, start, end }];
+    } else {
+      const a = (min - origin) / delta;
+      const b = (max - origin) / delta;
+      near = Math.max(near, Math.min(a, b));
+      far = Math.min(far, Math.max(a, b));
+      if (near > far) return [{ type: 'line', layer, start, end }];
+    }
+  }
+  const at = (t: number): Vec2 => [start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t];
+  // Contact with the padded label edge is not a crossing. Small axis-fit
+  // noise must not erase a line that runs underneath an above-line label.
+  const entrance = at(near);
+  const exit = at(far);
+  const contact = Math.max(box.maxX - box.minX, box.maxY - box.minY) * 1e-5;
+  if (Math.max(entrance[0], exit[0]) <= box.minX + contact
+    || Math.min(entrance[0], exit[0]) >= box.maxX - contact
+    || Math.max(entrance[1], exit[1]) <= box.minY + contact
+    || Math.min(entrance[1], exit[1]) >= box.maxY - contact) {
+    return [{ type: 'line', layer, start, end }];
+  }
+  return [
+    ...(near > 1e-10 ? [{ type: 'line' as const, layer, start, end: at(near) }] : []),
+    ...(far < 1 - 1e-10 ? [{ type: 'line' as const, layer, start: at(far), end }] : []),
+  ];
+}
+
+/** Witnesses can legally cross several dimension tiers; open a gap at labels. */
+function clipDimensionGraphic(graphic: DxfBlockGraphic, bounds: readonly NonNullable<DxfDimensionPresentation['textBounds']>[]): DxfBlockGraphic[] {
+  if (graphic.type !== 'line' && graphic.type !== 'arc') return [graphic];
+  let pieces: DxfBlockGraphic[] = [graphic];
+  for (const box of bounds) pieces = pieces.flatMap((piece): DxfBlockGraphic[] => {
+    if (piece.type === 'line') return paperDimensionLine(piece.start, piece.end, piece.layer, { textBounds: box }, 0, false)
+      .map((part) => ({ ...piece, ...part }));
+    if (piece.type !== 'arc') return [piece];
+    const start = positiveDegrees(piece.startAngle);
+    const sweep = positiveDegrees(piece.endAngle - piece.startAngle) || 360;
+    const cuts = [0, sweep];
+    const addAngle = (angle: number) => { const offset = positiveDegrees(angle - start); if (offset > 1e-9 && offset < sweep - 1e-9) cuts.push(offset); };
+    for (const x of [box.minX, box.maxX]) {
+      const cos = (x - piece.center[0]) / piece.radius;
+      if (Math.abs(cos) <= 1) { const a = Math.acos(cos) * 180 / Math.PI; addAngle(a); addAngle(-a); }
+    }
+    for (const y of [box.minY, box.maxY]) {
+      const sin = (y - piece.center[1]) / piece.radius;
+      if (Math.abs(sin) <= 1) { const a = Math.asin(sin) * 180 / Math.PI; addAngle(a); addAngle(180 - a); }
+    }
+    cuts.sort((a, b) => a - b);
+    const kept: Array<[number, number]> = [];
+    cuts.slice(1).forEach((end, index) => {
+      const begin = cuts[index];
+      if (end - begin < 1e-9) return;
+      const angle = (start + (begin + end) / 2) * Math.PI / 180;
+      const x = piece.center[0] + piece.radius * Math.cos(angle);
+      const y = piece.center[1] + piece.radius * Math.sin(angle);
+      if (x > box.minX && x < box.maxX && y > box.minY && y < box.maxY) return;
+      const last = kept.at(-1);
+      if (last && Math.abs(last[1] - begin) < 1e-9) last[1] = end;
+      else kept.push([begin, end]);
+    });
+    return kept.map(([begin, end]) => ({ ...piece, startAngle: start + begin, endAngle: start + end }));
+  });
+  return pieces;
+}
+
+function linearDimensionEndpoints(points: readonly Vec2[]): readonly [Vec2, Vec2] {
+  const first = points[0] ?? [0, 0];
+  return points.length >= 4 ? [points[2]!, points[3]!] : [first, points[1] ?? first];
+}
+
+function dimensionWitnessLine(
+  source: Vec2,
+  endpoint: Vec2,
+  layer: string,
+  style?: DxfDimensionStyle,
+): DxfBlockGraphic[] {
+  const delta: Vec2 = [endpoint[0] - source[0], endpoint[1] - source[1]];
+  const length = Math.hypot(...delta);
+  if (length <= Number.EPSILON) return [];
+  const direction: Vec2 = [delta[0] / length, delta[1] / length];
+  const offset = Math.min(length, Math.max(0, style?.originOffset ?? 0));
+  const extension = Math.max(0, style?.extension ?? 0);
+  if (length + extension - offset <= Number.EPSILON) return [];
+  return [{
+    type: 'line', layer, color: style?.extensionLineColor,
+    start: [source[0] + direction[0] * offset, source[1] + direction[1] * offset],
+    end: [endpoint[0] + direction[0] * extension, endpoint[1] + direction[1] * extension],
+  }];
+}
+
+function readableDimensionTextAngle(angle: number): number {
+  const normalized = positiveDegrees(angle);
+  if (normalized > 90 && normalized <= 270) return normalized - 180;
+  return normalized > 270 ? normalized - 360 : normalized;
 }
 
 function pointAngleDegrees(center: Vec2, point: Vec2): number {
@@ -675,6 +896,15 @@ function angularDimensionDefinitionPoint(
   return [vertex[0] + Math.cos(angle) * radius, vertex[1] + Math.sin(angle) * radius];
 }
 
+function angularDimensionLegs(points: readonly Vec2[], requestedSweep: number): readonly [Vec2, Vec2] {
+  const first = points[1] ?? points[0] ?? [0, 0];
+  const second = points[2] ?? first;
+  if (points.length < 5) return [first, second];
+  const { start } = orderedAngularArc(points[0]!, points[3]!, points[4]!, Math.abs(requestedSweep));
+  // Two-line dimensions run from the second leg toward the first leg.
+  return start === points[3] ? [second, first] : [first, second];
+}
+
 function arrowHatch(layer: string, tip: Vec2, direction: Vec2, size: number): DxfBlockGraphic {
   const normal: Vec2 = [-direction[1], direction[0]];
   const base = [tip[0] + direction[0] * size, tip[1] + direction[1] * size] as Vec2;
@@ -708,7 +938,8 @@ function gbDimensionOverride(
   node: Extract<AnnotationNode, { type: 'dimension' }>,
   portableTolerance?: PortableDimensionTolerance,
 ): string {
-  const placeholder = node.dimensionKind === 'diameter' ? '%%C<>' : '<>';
+  const explicit = explicitDimensionLabel(node);
+  const placeholder = explicit ?? (node.dimensionKind === 'diameter' ? '%%C<>' : '<>');
   const projection = node.toleranceProjection;
   if (projection && (projection.status === 'resolved' || projection.status === 'confirmed')) {
     if ((projection.mode === 'bilateral' || projection.mode === 'unilateral')
@@ -718,12 +949,15 @@ function gbDimensionOverride(
         : '';
       if (portableTolerance && !portableTolerance.showDeviations) return `${placeholder}${designation}`;
       if (portableTolerance?.native) return `${placeholder}${designation}`;
+      const upper = portableTolerance?.upperDeviation ?? projection.upperDeviation ?? 0;
+      const lower = portableTolerance?.lowerDeviation ?? projection.lowerDeviation ?? 0;
+      if (upper > 0 && Math.abs(upper + lower) < 1e-12) return `${placeholder}${designation}{\\C3;%%P${textNumber(upper)}}`;
       const convertedUpper = signed(portableTolerance?.upperDeviation ?? projection.upperDeviation ?? 0);
       const convertedLower = signed(portableTolerance?.lowerDeviation ?? projection.lowerDeviation ?? 0);
-      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${convertedUpper}^${convertedLower};}}`;
+      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${convertedUpper}^ ${convertedLower};}}`;
     }
     if (projection.mode === 'limits' && finite(projection.upperLimit) && finite(projection.lowerLimit)) {
-      return `\\A1;${placeholder}{\\C2;{\\H0.71x;\\S${textNumber(projection.upperLimit)}^${textNumber(projection.lowerLimit)};}}`;
+      return `\\A1;${placeholder}{\\C2;{\\H0.71x;\\S${textNumber(projection.upperLimit)}^ ${textNumber(projection.lowerLimit)};}}`;
     }
     if (projection.mode === 'fit' && projection.fitDesignation?.trim()) {
       const designation = portableTolerance?.showDesignation === false
@@ -731,22 +965,45 @@ function gbDimensionOverride(
         : `{\\C3;${projection.fitDesignation.trim()}}`;
       if (!portableTolerance?.showDeviations) return `${placeholder}${designation}`;
       if (portableTolerance.native) return `${placeholder}${designation}`;
+      if (portableTolerance.upperDeviation > 0 && Math.abs(portableTolerance.upperDeviation + portableTolerance.lowerDeviation) < 1e-12) {
+        return `${placeholder}${designation}{\\C3;%%P${textNumber(portableTolerance.upperDeviation)}}`;
+      }
       const upper = signed(portableTolerance.upperDeviation);
       const lower = signed(portableTolerance.lowerDeviation);
-      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${upper}^${lower};}}`;
+      return `\\A1;${placeholder}${designation}{\\C2;{\\H0.71x;\\S${upper}^ ${lower};}}`;
     }
   }
   const legacy = node.tolerance;
   if (legacy && (finite(legacy.upper) || finite(legacy.lower))) {
-    return `\\A1;${placeholder}{\\C2;{\\H0.71x;\\S${signed(legacy.upper ?? 0)}^${signed(legacy.lower ?? 0)};}}`;
+    if ((legacy.upper ?? 0) > 0 && Math.abs((legacy.upper ?? 0) + (legacy.lower ?? 0)) < 1e-12) {
+      return `${placeholder}{\\C3;%%P${textNumber(legacy.upper!)}}`;
+    }
+    return `\\A1;${placeholder}{\\C2;{\\H0.71x;\\S${signed(legacy.upper ?? 0)}^ ${signed(legacy.lower ?? 0)};}}`;
   }
-  return node.dimensionKind === 'diameter' ? '%%C<>' : '';
+  return explicit ?? (node.dimensionKind === 'diameter' ? '%%C<>' : '');
+}
+
+function explicitDimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string | undefined {
+  if (node.displayText === undefined) return undefined;
+  if (node.layout?.generatedText !== undefined) {
+    return node.displayText === node.layout.generatedText ? undefined : cadPictureText(node.displayText);
+  }
+  // Legacy records did not distinguish a generated display from an override.
+  // Preserve their native measurement when the numeric text agrees; retain all
+  // non-numeric overrides and explicitly different design nominals in CAD.
+  const value = node.observedValue ?? node.computedValue;
+  const plain = node.displayText.replace(/^(?:⌀|%%[cC]|R)/, '').replace(/(?:°|\s*(?:mm|cm|m|in|deg))$/, '').trim();
+  if (plain !== '' && Number.isFinite(Number(plain)) && value !== undefined) {
+    if (Math.abs(Number(plain) - value) <= 1e-10) return undefined;
+  }
+  return cadPictureText(node.displayText);
 }
 
 function gbDimensionPictureText(
   node: Extract<AnnotationNode, { type: 'dimension' }>,
   genericLabel: string,
   drawingLengthUnit: DrawingDocument['unitSystem']['length'],
+  style?: DxfDimensionStyle,
 ): string {
   // The anonymous picture block is a frozen visual fallback. Keep the exact
   // deviations in it even when the editable DIMENSION entity carries DSTYLE
@@ -756,7 +1013,7 @@ function gbDimensionPictureText(
     ? undefined
     : { ...portableTolerance, native: false });
   if (!override) return genericLabel;
-  const numericLabel = baseDimensionLabel(node).replace(/^(?:⌀|%%C)/, '');
+  const numericLabel = baseDimensionLabel(node, style).replace(/^(?:⌀|%%C)/, '');
   return override.replace('<>', numericLabel);
 }
 
@@ -857,6 +1114,7 @@ function toleranceXDataStrings(value: {
 function assertXDataAggregateLimit(
   nativeTolerance: NativeDimensionTolerance | undefined,
   vectorAiStrings: readonly string[] | undefined,
+  nativeTextGap?: number,
 ): void {
   // AutoCAD documents a 16,383-byte XDATA ceiling. Its internal REGAPP
   // bookkeeping is not represented by the ASCII DXF pairs, so reserve a
@@ -865,14 +1123,14 @@ function assertXDataAggregateLimit(
   const safeMaximumBytes = 16_383;
   const regappReserveBytes = 40;
   let byteLength = 0;
-  if (nativeTolerance !== undefined) {
+  if (nativeTolerance !== undefined || nativeTextGap !== undefined) {
     byteLength += regappReserveBytes
       + xdataStringBytes('ACAD')
       + xdataStringBytes('DSTYLE')
       + xdataStringBytes('{')
       + xdataStringBytes('}')
-      + 6 * 2
-      + 2 * 8;
+      + (nativeTolerance === undefined ? 0 : 6 * 2 + 2 * 8)
+      + (nativeTextGap === undefined ? 0 : 2 + 8);
   }
   if (vectorAiStrings !== undefined) {
     byteLength += regappReserveBytes + xdataStringBytes('VECTORAI');
@@ -988,6 +1246,8 @@ function writeGeometry(writer: DxfWriter, node: GeometryNode, layer: string): vo
 
 function writeAnnotation(writer: DxfWriter, node: AnnotationNode, profile: DxfExportProfile): void {
   const layer = annotationLayer(node, profile);
+  const textStyle = profile.dimensionStyles.find(({ name }) => name === 'GB_LEADER')?.textStyle
+    ?? profile.dimensionStyles[0]?.textStyle ?? profile.textStyles[0]?.name;
   switch (node.type) {
     case 'text':
       writeText(
@@ -999,6 +1259,9 @@ function writeAnnotation(writer: DxfWriter, node: AnnotationNode, profile: DxfEx
         node.alignment,
         node.verticalAlignment,
         layer,
+        undefined,
+        textStyle,
+        profile.plainTextWidthFactor ?? profile.textStyles.find(({ name }) => name === textStyle)?.widthFactor,
       );
       return;
     case 'dimension': {
@@ -1171,6 +1434,8 @@ function writeText(
   verticalAlignment: 'baseline' | 'bottom' | 'middle' | 'top',
   layer = '0',
   color?: number,
+  style?: string,
+  widthFactor?: number,
 ): void {
   entity(writer, 'TEXT', layer, color);
   writer.pair(100, 'AcDbText');
@@ -1178,6 +1443,9 @@ function writeText(
   writer.pair(40, Math.max(height, Number.EPSILON));
   writer.pair(1, dxfText(content));
   writer.pair(50, rotation);
+  if (style !== undefined) writer.pair(7, style);
+  // TEXT owns its width; the STYLE value is only the creation default.
+  if (widthFactor !== undefined) writer.pair(41, widthFactor);
   writer.pair(72, { left: 0, center: 1, right: 2 }[alignment]);
   writer.pair(73, { baseline: 0, bottom: 1, middle: 2, top: 3 }[verticalAlignment]);
   writer.pair(100, 'AcDbText');
@@ -1251,17 +1519,24 @@ function annotationTextHeight(node: Extract<AnnotationNode, { type: 'dimension' 
   return Math.max(Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]) * 0.05, 0.1);
 }
 
-function dimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
-  const base = baseDimensionLabel(node);
+function dimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>, style?: DxfDimensionStyle): string {
+  const base = baseDimensionLabel(node, style);
   const tolerance = toleranceLabel(node);
   return tolerance === undefined ? base : `${base} ${tolerance}`;
 }
 
-function baseDimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string {
+function baseDimensionLabel(node: Extract<AnnotationNode, { type: 'dimension' }>, style?: DxfDimensionStyle): string {
   if (node.displayText !== undefined) return node.displayText;
   const value = node.observedValue ?? node.computedValue;
   if (value === undefined) return '—';
-  return `${node.prefix ?? ''}${value}${node.unit ? ` ${node.unit}` : ''}${node.suffix ?? ''}`;
+  const angular = node.dimensionKind === 'angular';
+  const decimals = angular ? style?.angularDecimalPlaces : style?.decimalPlaces;
+  let formatted = decimals === undefined ? String(value) : value.toFixed(Math.max(0, Math.min(100, decimals)));
+  const suppression = angular ? style?.angularZeroSuppression ?? 0 : style?.zeroSuppression ?? 0;
+  if (formatted.includes('.') && (suppression & (angular ? 2 : 8))) formatted = formatted.replace(/\.?0+$/, '');
+  if (Number(formatted) === 0) formatted = formatted.replace(/^-/, '');
+  if (suppression & (angular ? 1 : 4)) formatted = formatted.replace(/^(-?)0\./, '$1.');
+  return `${node.prefix ?? ''}${formatted}${node.unit ? ` ${node.unit}` : ''}${node.suffix ?? ''}`;
 }
 
 function toleranceLabel(node: Extract<AnnotationNode, { type: 'dimension' }>): string | undefined {

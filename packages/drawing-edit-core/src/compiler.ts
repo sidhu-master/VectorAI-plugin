@@ -299,7 +299,10 @@ function transformedAnnotationFields(
 ): { before: Record<string, unknown>; after: Record<string, unknown> } {
   if (node.type === 'text') return pair({ position: node.position, rotation: node.rotation }, { position: transformPoint(node.position, transform), rotation: node.rotation + transform.rotationRadians });
   if (node.type === 'dimension') return pair({ textPosition: node.textPosition, definitionPoints: node.definitionPoints }, { textPosition: transformPoint(node.textPosition, transform), definitionPoints: node.definitionPoints.map((point) => transformPoint(point, transform)) });
-  if (node.type === 'leader') return pair({ points: node.points }, { points: node.points.map((point) => transformPoint(point, transform)) });
+  if (node.type === 'leader') return pair({ points: node.points, ...(node.branches === undefined ? {} : { branches: node.branches }) }, {
+    points: node.points.map((point) => transformPoint(point, transform)),
+    ...(node.branches === undefined ? {} : { branches: node.branches.map((branch) => ({ ...branch, points: branch.points.map((point) => transformPoint(point, transform)) })) }),
+  });
   if (node.type === 'centerline') return pair({ start: node.start, end: node.end }, { start: transformPoint(node.start, transform), end: transformPoint(node.end, transform) });
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
