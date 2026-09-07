@@ -10,6 +10,11 @@ import { spawnSync } from 'node:child_process';
 import { prepareCredential } from './prepare-desktop-credential.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import { selectPackedRuntimeClosure } from './desktop-dsh-closure.mjs';
+import {
+  createLocalPackageOverrides,
+  sanitizeInstalledProfileManifest,
+  vectorizerProfileDirectory,
+} from './desktop-profile-bootstrap.mjs';
 import { createDesktopRuntimePlan, DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 import { materializeBundleRuntimeDependencies } from './set-dsh-release-version.mjs';
 
@@ -59,14 +64,13 @@ try {
 
   const assemblyHome = join(temporaryRoot, 'profile-home');
   await mkdir(assemblyHome, { recursive: true });
-  const bundleTarballs = await packedVectorAiBundles();
   const packedProfilePackages = await readPackedPackages([vendorPacks, dshPacks, resolve(root, 'dist/npm')]);
   const spaceBundle = release.bundles[0];
-  const spaceClosure = selectPackedRuntimeClosure(packedProfilePackages, spaceBundle)
-    .filter(({ manifest }) => manifest.name !== spaceBundle)
-    .map(({ tarball }) => tarball);
-  spaceClosure.push(bundleTarballs[spaceBundle]);
-  spaceClosure.push(await packedVectorizerTarball(target));
+  const annotationBundle = release.bundles[1];
+  const spaceClosure = selectPackedRuntimeClosure(packedProfilePackages, spaceBundle);
+  const annotationClosure = selectPackedRuntimeClosure(packedProfilePackages, annotationBundle);
+  const vectorizer = await packedPackage(await packedVectorizerTarball(target));
+  const profilePackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
   const environment = {
     ...process.env,
     DSH_HOME: assemblyHome,
@@ -74,12 +78,37 @@ try {
     PATH: `${dirname(nodeExecutable)}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
   };
   run(nodeExecutable, [
-    dshEntry, 'plugin', '--profile', 'web', 'add', '--workspace-root', ...spaceClosure,
+    dshEntry, 'plugin', '--profile', release.dsh.profile, 'why', '@deepseek-ai/dsh-base',
+  ], root, environment);
+  const profileRoot = join(assemblyHome, 'profiles', release.dsh.profile);
+  const profileManifestPath = join(profileRoot, 'package.json');
+  const profileManifest = JSON.parse(await readFile(profileManifestPath, 'utf8'));
+  profileManifest.pnpm = {
+    ...profileManifest.pnpm,
+    overrides: createLocalPackageOverrides(profilePackages),
+  };
+  await writeFile(profileManifestPath, `${JSON.stringify(profileManifest, null, 2)}\n`);
+  run(nodeExecutable, [
+    dshEntry, 'plugin', '--profile', release.dsh.profile, 'add', '--workspace-root',
+    ...spaceClosure.map(({ tarball }) => tarball), vectorizer.tarball,
   ], root, environment);
   run(nodeExecutable, [
-    dshEntry, 'plugin', '--profile', 'web', 'add', '--workspace-root', '--allow-build=tesseract.js',
-    bundleTarballs[release.bundles[1]],
+    dshEntry, 'plugin', '--profile', release.dsh.profile, 'add', '--workspace-root', '--allow-build=tesseract.js',
+    ...annotationClosure.map(({ tarball }) => tarball),
   ], root, environment);
+
+  const installedManifest = JSON.parse(await readFile(profileManifestPath, 'utf8'));
+  const installedBundles = installedManifest.dsh?.profile?.bundles ?? [];
+  let previousBundle = -1;
+  for (const bundle of release.bundles) {
+    const index = installedBundles.indexOf(bundle);
+    if (index <= previousBundle) throw new Error(`DESKTOP_PROFILE_BUNDLE_MISSING_OR_UNORDERED:${bundle}`);
+    previousBundle = index;
+  }
+  await writeFile(profileManifestPath, `${JSON.stringify(
+    sanitizeInstalledProfileManifest(installedManifest, profilePackages), null, 2,
+  )}\n`);
+  await rm(join(profileRoot, 'pnpm-lock.yaml'), { force: true });
 
   await replaceInstalledVectorizer(assemblyHome, target);
   await mkdir(join(output, 'profile-seed'), { recursive: true });
@@ -204,6 +233,15 @@ async function readPackedPackages(packDirectories) {
   return packed;
 }
 
+async function packedPackage(tarball) {
+  const manifest = JSON.parse(capture('tar', ['-xOzf', tarball, 'package/package.json'], root));
+  return { manifest, tarball };
+}
+
+function uniquePackedPackages(packed) {
+  return [...new Map(packed.map((entry) => [entry.manifest.name, entry])).values()];
+}
+
 async function installDshClosure(output, packed) {
   const dependencies = Object.fromEntries(packed
     .map(({ manifest, tarball }) => [manifest.name, pathToFileURL(tarball).href]));
@@ -223,20 +261,6 @@ async function packedVectorizerTarball(target) {
   const matches = (await readdir(directory)).filter((name) => name.endsWith('.tgz'));
   if (matches.length !== 1) throw new Error(`DESKTOP_VECTORIZER_TARBALL_INVALID:${target.id}`);
   return join(directory, matches[0]);
-}
-
-async function packedVectorAiBundles() {
-  const directory = resolve(root, 'dist/npm');
-  const result = {};
-  for (const filename of (await readdir(directory)).filter((name) => name.endsWith('.tgz'))) {
-    const tarball = join(directory, filename);
-    const manifest = JSON.parse(capture('tar', ['-xOzf', tarball, 'package/package.json'], root));
-    if (release.bundles.includes(manifest.name)) result[manifest.name] = tarball;
-  }
-  for (const name of release.bundles) {
-    if (!result[name]) throw new Error(`DESKTOP_BUNDLE_TARBALL_MISSING:${name}`);
-  }
-  return result;
 }
 
 async function packVectorAiBundles() {
@@ -270,7 +294,7 @@ async function replaceInstalledVectorizer(assemblyHome, target) {
   const runtime = release.runtimes.find((candidate) =>
     candidate.platform === target.platform && candidate.arch === target.arch);
   if (!runtime) throw new Error(`DESKTOP_VECTORIZER_TARGET_MISSING:${target.id}`);
-  const destination = join(assemblyHome, 'profiles', 'node_modules', ...runtime.name.split('/'));
+  const destination = vectorizerProfileDirectory(assemblyHome, release.dsh.profile, runtime.name);
   const source = resolve(root, 'dist/vectorizer-runtime', target.id, 'package');
   await rm(destination, { recursive: true, force: true });
   await mkdir(dirname(destination), { recursive: true });

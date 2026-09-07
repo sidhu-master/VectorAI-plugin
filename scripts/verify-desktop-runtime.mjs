@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
+import { vectorizerProfileDirectory } from './desktop-profile-bootstrap.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(readFileSync(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
@@ -41,7 +42,7 @@ for (const bundle of release.bundles) {
 const runtimePackage = release.runtimes.find((candidate) =>
   candidate.platform === target.platform && candidate.arch === target.arch);
 assert(runtimePackage, `DESKTOP_VECTORIZER_TARGET_MISSING:${target.id}`);
-const vectorizerRoot = join(seedHome, 'profiles', 'node_modules', ...runtimePackage.name.split('/'));
+const vectorizerRoot = vectorizerProfileDirectory(seedHome, release.dsh.profile, runtimePackage.name);
 const vectorizer = JSON.parse(readFileSync(join(vectorizerRoot, 'runtime.json'), 'utf8'));
 assert(vectorizer.platform === target.platform && vectorizer.arch === target.arch, 'DESKTOP_VECTORIZER_METADATA_INVALID');
 const health = spawnSync(resolve(vectorizerRoot, vectorizer.executable), [], {

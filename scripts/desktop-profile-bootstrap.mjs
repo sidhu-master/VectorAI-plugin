@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+export function createLocalPackageOverrides(packed) {
+  return Object.fromEntries(packed.map(({ manifest, tarball }) => [
+    manifest.name, pathToFileURL(tarball).href,
+  ]));
+}
+
+export function sanitizeInstalledProfileManifest(source, packed) {
+  const manifest = structuredClone(source);
+  const versions = new Map(packed.map(({ manifest: entry }) => [entry.name, entry.version]));
+  for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
+    if (specifier.startsWith('file:') && versions.has(name)) {
+      manifest.dependencies[name] = versions.get(name);
+    }
+  }
+  if (manifest.pnpm) {
+    delete manifest.pnpm.overrides;
+    if (Object.keys(manifest.pnpm).length === 0) delete manifest.pnpm;
+  }
+  return manifest;
+}
+
+export function vectorizerProfileDirectory(home, profile, packageName) {
+  return join(home, 'profiles', profile, 'node_modules', ...packageName.split('/'));
+}
