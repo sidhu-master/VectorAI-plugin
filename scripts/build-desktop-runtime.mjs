@@ -1,0 +1,230 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from 'node:crypto';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+import { prepareCredential } from './prepare-desktop-credential.mjs';
+import { createDesktopRuntimePlan, DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const release = JSON.parse(await readFile(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
+const targetArgument = argumentValue('--target') ?? `${process.platform}-${process.arch}`;
+const target = parseDesktopTarget(targetArgument);
+createDesktopRuntimePlan(release, target.id);
+
+if (`${process.platform}-${process.arch}` !== target.id) {
+  throw new Error(`DESKTOP_RUNTIME_NATIVE_BUILD_REQUIRED:${target.id}`);
+}
+assertCleanSource();
+
+const output = resolve(root, 'dist/desktop-runtime', target.id);
+const temporaryRoot = await mkdtemp(join(tmpdir(), `vectorai-desktop-${target.id}-`));
+let succeeded = false;
+try {
+  await rm(output, { recursive: true, force: true });
+  await mkdir(output, { recursive: true });
+
+  run('pnpm', ['runtime:pack'], root);
+  run('pnpm', ['pack:dsh-plugins'], root);
+
+  const dshSource = await resolveDshSource(temporaryRoot);
+  run(process.execPath, [resolve(root, 'scripts/check-dsh-source-runtime.mjs'), dshSource], root);
+  if (!process.env.DSH_SOURCE_DIR) {
+    run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'install', '--frozen-lockfile'], root);
+    run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'run', 'build'], root);
+  }
+
+  const vendorPacks = join(temporaryRoot, 'dsh-vendor-packs');
+  const dshPacks = join(temporaryRoot, 'dsh-packs');
+  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'run', 'release:pack', '--', '--family', 'vendor', '--out', vendorPacks], root);
+  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'run', 'release:pack', '--', '--family', 'dsh', '--out', dshPacks], root);
+
+  await installNodeRuntime(output, temporaryRoot, target);
+  await installDshClosure(output, [vendorPacks, dshPacks]);
+  const nodeExecutable = target.platform === 'win32'
+    ? join(output, 'node', 'node.exe')
+    : join(output, 'node', 'bin', 'node');
+  const dshEntry = join(output, 'dsh/node_modules/@deepseek-ai/dsh/lib/bin.js');
+  const dshVersion = capture(nodeExecutable, [dshEntry, '--version'], root).trim();
+  if (dshVersion !== release.dsh.version) {
+    throw new Error(`DESKTOP_DSH_VERSION_MISMATCH:${dshVersion}`);
+  }
+
+  const assemblyHome = join(temporaryRoot, 'profile-home');
+  await mkdir(assemblyHome, { recursive: true });
+  const bundleTarballs = await packedVectorAiBundles();
+  const environment = {
+    ...process.env,
+    DSH_HOME: assemblyHome,
+    DSH_TELEMETRY_DISABLED: '1',
+    PATH: `${dirname(nodeExecutable)}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
+  };
+  run(nodeExecutable, [dshEntry, 'plugin', '--profile', 'web', 'add', bundleTarballs[release.bundles[0]]], root, environment);
+  run(nodeExecutable, [
+    dshEntry, 'plugin', '--profile', 'web', 'add', '--allow-build=tesseract.js',
+    bundleTarballs[release.bundles[1]],
+  ], root, environment);
+
+  await replaceInstalledVectorizer(assemblyHome, target);
+  await mkdir(join(output, 'profile-seed'), { recursive: true });
+  await cp(join(assemblyHome, 'profiles'), join(output, 'profile-seed', 'profiles'), { recursive: true });
+  await cp(
+    resolve(root, 'apps/vectorai-desktop/resources/default-settings.yaml'),
+    join(output, 'default-settings.yaml'),
+  );
+  await prepareCredential({
+    key: process.env.VECTORAI_TEST_API_KEY,
+    output: join(output, 'secrets', 'vectorai-test-api-key'),
+  });
+  await collectLicenses(output, dshSource);
+
+  const sourceCommit = capture('git', ['rev-parse', 'HEAD'], root).trim();
+  const manifest = {
+    schemaVersion: 1,
+    vectoraiVersion: release.version,
+    sourceCommit,
+    dsh: { version: release.dsh.version, commit: release.dsh.commit },
+    nodeVersion: DESKTOP_NODE_VERSION,
+    profile: release.dsh.profile,
+    bundles: release.bundles,
+    platform: target.platform,
+    arch: target.arch,
+    entry: 'dsh/node_modules/@deepseek-ai/dsh/lib/bin.js',
+  };
+  await writeFile(join(output, 'runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  run(process.execPath, [resolve(root, 'scripts/verify-desktop-runtime.mjs'), '--runtime', output], root);
+  succeeded = true;
+  process.stdout.write(`Desktop runtime assembled: ${output}\n`);
+} finally {
+  if (succeeded || process.env.VECTORAI_KEEP_DESKTOP_BUILD_TEMP !== '1') {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  } else {
+    process.stderr.write(`Desktop build temporary directory retained: ${temporaryRoot}\n`);
+  }
+}
+
+function assertCleanSource() {
+  const status = capture('git', ['status', '--porcelain', '--untracked-files=all'], root).trim();
+  if (status) throw new Error('DESKTOP_BUILD_REQUIRES_CLEAN_WORKTREE');
+}
+
+async function resolveDshSource(temporaryRoot) {
+  if (process.env.DSH_SOURCE_DIR) return resolve(process.env.DSH_SOURCE_DIR);
+  const directory = join(temporaryRoot, 'deepseek-harness');
+  run('git', ['clone', '--depth', '1', '--branch', release.dsh.tag, 'https://github.com/deepseek-ai/deepseek-harness.git', directory], root);
+  const commit = capture('git', ['-C', directory, 'rev-parse', 'HEAD'], root).trim();
+  if (commit !== release.dsh.commit) throw new Error(`DESKTOP_DSH_COMMIT_MISMATCH:${commit}`);
+  return directory;
+}
+
+async function installNodeRuntime(output, temporaryRoot, target) {
+  const stem = `node-v${DESKTOP_NODE_VERSION}-${target.platform === 'win32' ? 'win' : 'darwin'}-${target.arch}`;
+  const archiveName = target.platform === 'win32' ? `${stem}.zip` : `${stem}.tar.gz`;
+  const base = `https://nodejs.org/dist/v${DESKTOP_NODE_VERSION}`;
+  const [archiveResponse, sumsResponse] = await Promise.all([
+    fetch(`${base}/${archiveName}`),
+    fetch(`${base}/SHASUMS256.txt`),
+  ]);
+  if (!archiveResponse.ok || !sumsResponse.ok) throw new Error('DESKTOP_NODE_DOWNLOAD_FAILED');
+  const archive = Buffer.from(await archiveResponse.arrayBuffer());
+  const expected = (await sumsResponse.text()).split(/\r?\n/u)
+    .find((line) => line.endsWith(`  ${archiveName}`))?.split(/\s/u, 1)[0];
+  const actual = createHash('sha256').update(archive).digest('hex');
+  if (!expected || actual !== expected) throw new Error('DESKTOP_NODE_ARCHIVE_DIGEST_MISMATCH');
+  const archivePath = join(temporaryRoot, archiveName);
+  const extracted = join(temporaryRoot, 'node-extracted');
+  await writeFile(archivePath, archive);
+  await mkdir(extracted, { recursive: true });
+  if (target.platform === 'win32') {
+    run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force', archivePath, extracted], root);
+  } else {
+    run('tar', ['-xzf', archivePath, '-C', extracted], root);
+  }
+  await cp(join(extracted, stem), join(output, 'node'), { recursive: true });
+}
+
+async function installDshClosure(output, packDirectories) {
+  const dependencies = {};
+  for (const directory of packDirectories) {
+    for (const filename of (await readdir(directory)).filter((name) => name.endsWith('.tgz')).sort()) {
+      const tarball = join(directory, filename);
+      const manifest = JSON.parse(capture('tar', ['-xOzf', tarball, 'package/package.json'], root));
+      dependencies[manifest.name] = pathToFileURL(tarball).href;
+    }
+  }
+  const dshRoot = join(output, 'dsh');
+  await mkdir(dshRoot, { recursive: true });
+  await writeFile(join(dshRoot, 'package.json'), `${JSON.stringify({
+    name: 'vectorai-embedded-dsh', private: true, version: '0.0.0', dependencies,
+  }, null, 2)}\n`);
+  run('npm', [
+    'install', '--omit=dev', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund',
+    '--package-lock=false',
+  ], dshRoot, { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' });
+}
+
+async function packedVectorAiBundles() {
+  const directory = resolve(root, 'dist/npm');
+  const result = {};
+  for (const filename of (await readdir(directory)).filter((name) => name.endsWith('.tgz'))) {
+    const tarball = join(directory, filename);
+    const manifest = JSON.parse(capture('tar', ['-xOzf', tarball, 'package/package.json'], root));
+    if (release.bundles.includes(manifest.name)) result[manifest.name] = tarball;
+  }
+  for (const name of release.bundles) {
+    if (!result[name]) throw new Error(`DESKTOP_BUNDLE_TARBALL_MISSING:${name}`);
+  }
+  return result;
+}
+
+async function replaceInstalledVectorizer(assemblyHome, target) {
+  const runtime = release.runtimes.find((candidate) =>
+    candidate.platform === target.platform && candidate.arch === target.arch);
+  if (!runtime) throw new Error(`DESKTOP_VECTORIZER_TARGET_MISSING:${target.id}`);
+  const destination = join(assemblyHome, 'profiles', 'node_modules', ...runtime.name.split('/'));
+  const source = resolve(root, 'dist/vectorizer-runtime', target.id, 'package');
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(dirname(destination), { recursive: true });
+  await cp(source, destination, { recursive: true });
+}
+
+async function collectLicenses(output, dshSource) {
+  const licenses = join(output, 'licenses');
+  await mkdir(licenses, { recursive: true });
+  await cp(resolve(root, 'LICENSE'), join(licenses, 'VectorAI-LICENSE'));
+  await cp(resolve(dshSource, 'LICENSE'), join(licenses, 'DSH-LICENSE'));
+  const nodeLicense = target.platform === 'win32'
+    ? join(output, 'node', 'LICENSE')
+    : join(output, 'node', 'LICENSE');
+  await cp(nodeLicense, join(licenses, 'Node.js-LICENSE'));
+  await writeFile(join(licenses, 'README.txt'), [
+    'VectorAI includes third-party packages inside the DSH and profile node_modules directories.',
+    'Their package manifests and included license files remain beside the installed packages.',
+    '',
+  ].join('\n'));
+}
+
+function argumentValue(name) {
+  const index = process.argv.indexOf(name);
+  return index < 0 ? undefined : process.argv[index + 1];
+}
+
+function run(command, args, cwd, env = process.env) {
+  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' });
+  if (result.error || result.status !== 0) {
+    throw result.error ?? new Error(`${basename(command)} failed with status ${String(result.status)}`);
+  }
+}
+
+function capture(command, args, cwd, env = process.env) {
+  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8' });
+  if (result.error || result.status !== 0) {
+    throw result.error ?? new Error(result.stderr || `${basename(command)} failed with status ${String(result.status)}`);
+  }
+  return result.stdout;
+}
