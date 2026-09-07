@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +12,7 @@ import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import { selectPackedRuntimeClosure } from './desktop-dsh-closure.mjs';
 import {
   createLocalPackageOverrides,
+  pnpmShimContents,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
 } from './desktop-profile-bootstrap.mjs';
@@ -71,11 +72,16 @@ try {
   const annotationClosure = selectPackedRuntimeClosure(packedProfilePackages, annotationBundle);
   const vectorizer = await packedPackage(await packedVectorizerTarball(target));
   const profilePackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
+  const pnpmShim = join(temporaryRoot, 'pnpm-shim');
+  await mkdir(pnpmShim, { recursive: true });
+  const pnpmShimPath = join(pnpmShim, target.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
+  await writeFile(pnpmShimPath, pnpmShimContents(target.platform));
+  if (target.platform !== 'win32') await chmod(pnpmShimPath, 0o755);
   const environment = {
     ...process.env,
     DSH_HOME: assemblyHome,
     DSH_TELEMETRY_DISABLED: '1',
-    PATH: `${dirname(nodeExecutable)}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
+    PATH: [pnpmShim, dirname(nodeExecutable), process.env.PATH ?? ''].join(process.platform === 'win32' ? ';' : ':'),
   };
   run(nodeExecutable, [
     dshEntry, 'plugin', '--profile', release.dsh.profile, 'why', '@deepseek-ai/dsh-base',

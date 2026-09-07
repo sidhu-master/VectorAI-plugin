@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 
 import {
   createLocalPackageOverrides,
+  pnpmShimContents,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
 } from './desktop-profile-bootstrap.mjs';
@@ -50,5 +51,10 @@ describe('desktop profile bootstrap', () => {
       vectorizerProfileDirectory('/seed', 'web', '@newwe/vectorai-vectorizer-darwin-arm64'),
       '/seed/profiles/web/node_modules/@newwe/vectorai-vectorizer-darwin-arm64',
     );
+  });
+
+  it('pins DSH profile mutations to the pnpm version that supports build allowlists', () => {
+    assert.match(pnpmShimContents('darwin'), /corepack pnpm@11\.7\.0 "\$@"/u);
+    assert.match(pnpmShimContents('win32'), /corepack pnpm@11\.7\.0 %\*/u);
   });
 });

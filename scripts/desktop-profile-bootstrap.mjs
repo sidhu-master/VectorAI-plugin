@@ -27,3 +27,8 @@ export function sanitizeInstalledProfileManifest(source, packed) {
 export function vectorizerProfileDirectory(home, profile, packageName) {
   return join(home, 'profiles', profile, 'node_modules', ...packageName.split('/'));
 }
+
+export function pnpmShimContents(platform) {
+  if (platform === 'win32') return '@echo off\r\ncorepack pnpm@11.7.0 %*\r\n';
+  return '#!/bin/sh\nexec corepack pnpm@11.7.0 "$@"\n';
+}
