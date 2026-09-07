@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
 import { createDesktopRuntimePlan, DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
+import { materializeBundleRuntimeDependencies } from './set-dsh-release-version.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(await readFile(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
@@ -29,7 +30,7 @@ try {
   await mkdir(output, { recursive: true });
 
   run('pnpm', ['runtime:pack'], root);
-  run('pnpm', ['pack:dsh-plugins'], root);
+  await packVectorAiBundles();
 
   const dshSource = await resolveDshSource(temporaryRoot);
   run(process.execPath, [resolve(root, 'scripts/check-dsh-source-runtime.mjs'), dshSource], root);
@@ -180,6 +181,33 @@ async function packedVectorAiBundles() {
     if (!result[name]) throw new Error(`DESKTOP_BUNDLE_TARBALL_MISSING:${name}`);
   }
   return result;
+}
+
+async function packVectorAiBundles() {
+  const spacePath = resolve(root, 'packages/plugin-dsh-space/package.json');
+  const annotationPath = resolve(root, 'packages/plugin-dsh-annotation/package.json');
+  const originals = new Map(await Promise.all([spacePath, annotationPath].map(async (path) => [
+    path, await readFile(path, 'utf8'),
+  ])));
+  try {
+    const spaceSource = JSON.parse(originals.get(spacePath));
+    const annotationSource = JSON.parse(originals.get(annotationPath));
+    const space = materializeBundleRuntimeDependencies(spaceSource, spaceSource.name, release.dsh);
+    const annotation = materializeBundleRuntimeDependencies(annotationSource, annotationSource.name, release.dsh);
+    space.version = release.version;
+    space.optionalDependencies = Object.fromEntries(
+      release.runtimes.map((runtime) => [runtime.name, release.version]),
+    );
+    annotation.version = release.version;
+    annotation.peerDependencies[space.name] = release.version;
+    await Promise.all([
+      writeFile(spacePath, `${JSON.stringify(space, null, 2)}\n`),
+      writeFile(annotationPath, `${JSON.stringify(annotation, null, 2)}\n`),
+    ]);
+    run('pnpm', ['pack:dsh-plugins'], root);
+  } finally {
+    await Promise.all([...originals].map(([path, content]) => writeFile(path, content)));
+  }
 }
 
 async function replaceInstalledVectorizer(assemblyHome, target) {
