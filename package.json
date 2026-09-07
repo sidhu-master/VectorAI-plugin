@@ -22,6 +22,9 @@
     "release:dsh-plugins": "node scripts/release-dsh-plugins.mjs",
     "runtime:pack": "node scripts/build-vectorizer-runtime.mjs",
     "build:dsh-launcher": "pnpm --filter @vectorai/dsh-launcher-macos build",
+    "build:desktop": "pnpm --filter @vectorai/desktop build",
+    "test:desktop": "pnpm --filter @vectorai/desktop test",
+    "pack:desktop": "pnpm --filter @vectorai/desktop pack",
     "install:dsh-alpha": "./scripts/install-dsh-alpha-runtime.sh",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -69,6 +72,7 @@
     "typescript-eslint": "^8.30.1",
     "vite": "^6.3.5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "yaml": "2.9.0"
   }
 }
