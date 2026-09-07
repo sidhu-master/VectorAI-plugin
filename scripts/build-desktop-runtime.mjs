@@ -132,19 +132,24 @@ async function installNodeRuntime(output, temporaryRoot, target) {
   const stem = `node-v${DESKTOP_NODE_VERSION}-${target.platform === 'win32' ? 'win' : 'darwin'}-${target.arch}`;
   const archiveName = target.platform === 'win32' ? `${stem}.zip` : `${stem}.tar.gz`;
   const base = `https://nodejs.org/dist/v${DESKTOP_NODE_VERSION}`;
-  const [archiveResponse, sumsResponse] = await Promise.all([
-    fetch(`${base}/${archiveName}`),
-    fetch(`${base}/SHASUMS256.txt`),
-  ]);
-  if (!archiveResponse.ok || !sumsResponse.ok) throw new Error('DESKTOP_NODE_DOWNLOAD_FAILED');
-  const archive = Buffer.from(await archiveResponse.arrayBuffer());
-  const expected = (await sumsResponse.text()).split(/\r?\n/u)
+  const cache = resolve(root, 'dist/desktop-cache/node', DESKTOP_NODE_VERSION);
+  const sumsPath = join(cache, 'SHASUMS256.txt');
+  const archivePath = join(cache, archiveName);
+  await mkdir(cache, { recursive: true });
+  await downloadIfMissing(`${base}/SHASUMS256.txt`, sumsPath);
+  await downloadIfMissing(`${base}/${archiveName}`, archivePath);
+  const expected = (await readFile(sumsPath, 'utf8')).split(/\r?\n/u)
     .find((line) => line.endsWith(`  ${archiveName}`))?.split(/\s/u, 1)[0];
-  const actual = createHash('sha256').update(archive).digest('hex');
+  let archive = await readFile(archivePath);
+  let actual = createHash('sha256').update(archive).digest('hex');
+  if (expected && actual !== expected) {
+    await rm(archivePath, { force: true });
+    await downloadIfMissing(`${base}/${archiveName}`, archivePath);
+    archive = await readFile(archivePath);
+    actual = createHash('sha256').update(archive).digest('hex');
+  }
   if (!expected || actual !== expected) throw new Error('DESKTOP_NODE_ARCHIVE_DIGEST_MISMATCH');
-  const archivePath = join(temporaryRoot, archiveName);
   const extracted = join(temporaryRoot, 'node-extracted');
-  await writeFile(archivePath, archive);
   await mkdir(extracted, { recursive: true });
   if (target.platform === 'win32') {
     run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
@@ -153,6 +158,27 @@ async function installNodeRuntime(output, temporaryRoot, target) {
     run('tar', ['-xzf', archivePath, '-C', extracted], root);
   }
   await cp(join(extracted, stem), join(output, 'node'), { recursive: true });
+}
+
+async function downloadIfMissing(url, destination) {
+  try {
+    await readFile(destination);
+    return;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  const partial = `${destination}.partial-${process.pid}`;
+  try {
+    const executable = process.platform === 'win32' ? 'curl.exe' : 'curl';
+    run(executable, [
+      '--fail', '--location', '--silent', '--show-error', '--retry', '3',
+      '--connect-timeout', '15', '--max-time', '300', '--output', partial, url,
+    ], root);
+    await rm(destination, { force: true });
+    await cp(partial, destination);
+  } finally {
+    await rm(partial, { force: true });
+  }
 }
 
 async function installDshClosure(output, packDirectories) {
