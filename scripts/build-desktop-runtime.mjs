@@ -172,7 +172,8 @@ async function downloadIfMissing(url, destination) {
     const executable = process.platform === 'win32' ? 'curl.exe' : 'curl';
     run(executable, [
       '--fail', '--location', '--silent', '--show-error', '--retry', '3',
-      '--connect-timeout', '15', '--max-time', '300', '--output', partial, url,
+      '--continue-at', '-', '--connect-timeout', '15', '--max-time', '900',
+      '--output', partial, url,
     ], root);
     await rm(destination, { force: true });
     await cp(partial, destination);
