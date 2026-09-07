@@ -46,7 +46,8 @@ try {
   run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'dsh', '--out', dshPacks], root);
 
   await installNodeRuntime(output, temporaryRoot, target);
-  await installDshClosure(output, [vendorPacks, dshPacks]);
+  const packedDshPackages = await readPackedPackages([vendorPacks, dshPacks]);
+  await installDshClosure(output, selectPackedRuntimeClosure(packedDshPackages));
   const nodeExecutable = target.platform === 'win32'
     ? join(output, 'node', 'node.exe')
     : join(output, 'node', 'bin', 'node');
@@ -59,15 +60,24 @@ try {
   const assemblyHome = join(temporaryRoot, 'profile-home');
   await mkdir(assemblyHome, { recursive: true });
   const bundleTarballs = await packedVectorAiBundles();
+  const packedProfilePackages = await readPackedPackages([vendorPacks, dshPacks, resolve(root, 'dist/npm')]);
+  const spaceBundle = release.bundles[0];
+  const spaceClosure = selectPackedRuntimeClosure(packedProfilePackages, spaceBundle)
+    .filter(({ manifest }) => manifest.name !== spaceBundle)
+    .map(({ tarball }) => tarball);
+  spaceClosure.push(bundleTarballs[spaceBundle]);
+  spaceClosure.push(await packedVectorizerTarball(target));
   const environment = {
     ...process.env,
     DSH_HOME: assemblyHome,
     DSH_TELEMETRY_DISABLED: '1',
     PATH: `${dirname(nodeExecutable)}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
   };
-  run(nodeExecutable, [dshEntry, 'plugin', '--profile', 'web', 'add', bundleTarballs[release.bundles[0]]], root, environment);
   run(nodeExecutable, [
-    dshEntry, 'plugin', '--profile', 'web', 'add', '--allow-build=tesseract.js',
+    dshEntry, 'plugin', '--profile', 'web', 'add', '--workspace-root', ...spaceClosure,
+  ], root, environment);
+  run(nodeExecutable, [
+    dshEntry, 'plugin', '--profile', 'web', 'add', '--workspace-root', '--allow-build=tesseract.js',
     bundleTarballs[release.bundles[1]],
   ], root, environment);
 
@@ -182,7 +192,7 @@ async function downloadIfMissing(url, destination) {
   }
 }
 
-async function installDshClosure(output, packDirectories) {
+async function readPackedPackages(packDirectories) {
   const packed = [];
   for (const directory of packDirectories) {
     for (const filename of (await readdir(directory)).filter((name) => name.endsWith('.tgz')).sort()) {
@@ -191,7 +201,11 @@ async function installDshClosure(output, packDirectories) {
       packed.push({ manifest, tarball });
     }
   }
-  const dependencies = Object.fromEntries(selectPackedRuntimeClosure(packed)
+  return packed;
+}
+
+async function installDshClosure(output, packed) {
+  const dependencies = Object.fromEntries(packed
     .map(({ manifest, tarball }) => [manifest.name, pathToFileURL(tarball).href]));
   const dshRoot = join(output, 'dsh');
   await mkdir(dshRoot, { recursive: true });
@@ -202,6 +216,13 @@ async function installDshClosure(output, packDirectories) {
     'install', '--omit=dev', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund',
     '--package-lock=false',
   ], dshRoot, { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' });
+}
+
+async function packedVectorizerTarball(target) {
+  const directory = resolve(root, 'dist/vectorizer-runtime', target.id, 'tarballs');
+  const matches = (await readdir(directory)).filter((name) => name.endsWith('.tgz'));
+  if (matches.length !== 1) throw new Error(`DESKTOP_VECTORIZER_TARBALL_INVALID:${target.id}`);
+  return join(directory, matches[0]);
 }
 
 async function packedVectorAiBundles() {

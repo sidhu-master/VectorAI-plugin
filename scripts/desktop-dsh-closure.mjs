@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Select the packed internal packages reachable from the DSH executable. */
-export function selectPackedRuntimeClosure(packages, entryName = '@deepseek-ai/dsh') {
+export function selectPackedRuntimeClosure(packages, entryNames = '@deepseek-ai/dsh') {
   const byName = new Map(packages.map((entry) => [entry.manifest.name, entry]));
   const selected = new Map();
-  const pending = [entryName];
+  const pending = Array.isArray(entryNames) ? [...entryNames] : [entryNames];
   while (pending.length > 0) {
     const name = pending.pop();
     if (selected.has(name)) continue;

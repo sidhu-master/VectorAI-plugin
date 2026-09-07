@@ -22,6 +22,18 @@ describe('desktop DSH packed closure', () => {
   it('fails when the executable package is absent', () => {
     assert.throws(() => selectPackedRuntimeClosure([]), /DESKTOP_DSH_PACKED_DEPENDENCY_MISSING/);
   });
+
+  it('can close over an external bundle and its internal DSH dependencies', () => {
+    const packed = [
+      entry('@newwe/space', { dependencies: { '@deepseek-ai/runtime': '1.0.0' } }),
+      entry('@deepseek-ai/runtime'),
+      entry('@deepseek-ai/unrelated'),
+    ];
+    assert.deepEqual(
+      selectPackedRuntimeClosure(packed, '@newwe/space').map((item) => item.manifest.name),
+      ['@deepseek-ai/runtime', '@newwe/space'],
+    );
+  });
 });
 
 function entry(name, fields = {}) {
