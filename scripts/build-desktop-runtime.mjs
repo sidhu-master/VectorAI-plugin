@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
+import { selectPackedRuntimeClosure } from './desktop-dsh-closure.mjs';
 import { createDesktopRuntimePlan, DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 import { materializeBundleRuntimeDependencies } from './set-dsh-release-version.mjs';
 
@@ -155,14 +156,16 @@ async function installNodeRuntime(output, temporaryRoot, target) {
 }
 
 async function installDshClosure(output, packDirectories) {
-  const dependencies = {};
+  const packed = [];
   for (const directory of packDirectories) {
     for (const filename of (await readdir(directory)).filter((name) => name.endsWith('.tgz')).sort()) {
       const tarball = join(directory, filename);
       const manifest = JSON.parse(capture('tar', ['-xOzf', tarball, 'package/package.json'], root));
-      dependencies[manifest.name] = pathToFileURL(tarball).href;
+      packed.push({ manifest, tarball });
     }
   }
+  const dependencies = Object.fromEntries(selectPackedRuntimeClosure(packed)
+    .map(({ manifest, tarball }) => [manifest.name, pathToFileURL(tarball).href]));
   const dshRoot = join(output, 'dsh');
   await mkdir(dshRoot, { recursive: true });
   await writeFile(join(dshRoot, 'package.json'), `${JSON.stringify({
