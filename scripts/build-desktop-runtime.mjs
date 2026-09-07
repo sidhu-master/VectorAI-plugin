@@ -71,6 +71,8 @@ try {
   const annotationBundle = release.bundles[1];
   const spaceClosure = selectPackedRuntimeClosure(packedProfilePackages, spaceBundle);
   const annotationClosure = selectPackedRuntimeClosure(packedProfilePackages, annotationBundle);
+  const annotationPackage = annotationClosure.find(({ manifest }) => manifest.name === annotationBundle);
+  if (!annotationPackage) throw new Error(`DESKTOP_BUNDLE_TARBALL_MISSING:${annotationBundle}`);
   const vectorizer = await packedPackage(await packedVectorizerTarball(target));
   const profilePackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
   const pnpmShim = join(temporaryRoot, 'pnpm-shim');
@@ -98,7 +100,7 @@ try {
   ], root, environment);
   run(nodeExecutable, [
     dshEntry, 'plugin', '--profile', release.dsh.profile, 'add', '--workspace-root', '--allow-build=tesseract.js',
-    ...annotationClosure.map(({ tarball }) => tarball),
+    annotationPackage.tarball,
   ], root, environment);
 
   const installedManifest = JSON.parse(await readFile(profileManifestPath, 'utf8'));
