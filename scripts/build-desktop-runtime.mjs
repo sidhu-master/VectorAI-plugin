@@ -116,6 +116,9 @@ try {
   )}\n`);
   await writeFile(profileWorkspacePath, YAML.stringify(profileWorkspace));
   await rm(join(profileRoot, 'pnpm-lock.yaml'), { force: true });
+  await rm(join(profileRoot, 'node_modules', '.modules.yaml'), { force: true });
+  await rm(join(profileRoot, 'node_modules', '.pnpm-workspace-state-v1.json'), { force: true });
+  await rm(join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'), { force: true });
 
   await replaceInstalledVectorizer(assemblyHome, target);
   await mkdir(join(output, 'profile-seed'), { recursive: true });

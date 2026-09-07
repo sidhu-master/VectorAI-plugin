@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 import { vectorizerProfileDirectory } from './desktop-profile-bootstrap.mjs';
+import { isDevelopmentRuntimePath } from './desktop-runtime-audit.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const release = JSON.parse(readFileSync(resolve(root, 'release/dsh-plugins.json'), 'utf8'));
@@ -70,8 +71,7 @@ let bytes = 0;
 let files = 0;
 for (const path of walk(runtimeRoot)) {
   const relative = path.slice(runtimeRoot.length + 1);
-  assert(!relative.split(/[\\/]/u).some((part) => ['.git', 'tests', '__tests__'].includes(part)),
-    `DESKTOP_RUNTIME_DEVELOPMENT_FILE:${relative}`);
+  assert(!isDevelopmentRuntimePath(relative), `DESKTOP_RUNTIME_DEVELOPMENT_FILE:${relative}`);
   const stat = statSync(path);
   bytes += stat.size;
   files += 1;
