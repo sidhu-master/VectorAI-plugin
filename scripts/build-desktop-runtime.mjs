@@ -41,8 +41,8 @@ try {
 
   const vendorPacks = join(temporaryRoot, 'dsh-vendor-packs');
   const dshPacks = join(temporaryRoot, 'dsh-packs');
-  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'run', 'release:pack', '--', '--family', 'vendor', '--out', vendorPacks], root);
-  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'run', 'release:pack', '--', '--family', 'dsh', '--out', dshPacks], root);
+  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'vendor', '--out', vendorPacks], root);
+  run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'exec', 'tsx', 'scripts/release/pack.ts', '--family', 'dsh', '--out', dshPacks], root);
 
   await installNodeRuntime(output, temporaryRoot, target);
   await installDshClosure(output, [vendorPacks, dshPacks]);
