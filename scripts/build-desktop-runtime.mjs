@@ -6,15 +6,16 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import YAML from 'yaml';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import { selectPackedRuntimeClosure } from './desktop-dsh-closure.mjs';
 import {
-  createLocalPackageOverrides,
   pnpmShimContents,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
+  withLocalPackageOverrides,
 } from './desktop-profile-bootstrap.mjs';
 import { createDesktopRuntimePlan, DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 import { materializeBundleRuntimeDependencies } from './set-dsh-release-version.mjs';
@@ -88,12 +89,9 @@ try {
   ], root, environment);
   const profileRoot = join(assemblyHome, 'profiles', release.dsh.profile);
   const profileManifestPath = join(profileRoot, 'package.json');
-  const profileManifest = JSON.parse(await readFile(profileManifestPath, 'utf8'));
-  profileManifest.pnpm = {
-    ...profileManifest.pnpm,
-    overrides: createLocalPackageOverrides(profilePackages),
-  };
-  await writeFile(profileManifestPath, `${JSON.stringify(profileManifest, null, 2)}\n`);
+  const profileWorkspacePath = join(profileRoot, 'pnpm-workspace.yaml');
+  const profileWorkspace = YAML.parse(await readFile(profileWorkspacePath, 'utf8'));
+  await writeFile(profileWorkspacePath, YAML.stringify(withLocalPackageOverrides(profileWorkspace, profilePackages)));
   run(nodeExecutable, [
     dshEntry, 'plugin', '--profile', release.dsh.profile, 'add', '--workspace-root',
     ...spaceClosure.map(({ tarball }) => tarball), vectorizer.tarball,
@@ -114,6 +112,7 @@ try {
   await writeFile(profileManifestPath, `${JSON.stringify(
     sanitizeInstalledProfileManifest(installedManifest, profilePackages), null, 2,
   )}\n`);
+  await writeFile(profileWorkspacePath, YAML.stringify(profileWorkspace));
   await rm(join(profileRoot, 'pnpm-lock.yaml'), { force: true });
 
   await replaceInstalledVectorizer(assemblyHome, target);

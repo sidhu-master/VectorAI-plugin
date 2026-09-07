@@ -9,6 +9,10 @@ export function createLocalPackageOverrides(packed) {
   ]));
 }
 
+export function withLocalPackageOverrides(workspace, packed) {
+  return { ...structuredClone(workspace), overrides: createLocalPackageOverrides(packed) };
+}
+
 export function sanitizeInstalledProfileManifest(source, packed) {
   const manifest = structuredClone(source);
   const versions = new Map(packed.map(({ manifest: entry }) => [entry.name, entry.version]));

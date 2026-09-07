@@ -8,6 +8,7 @@ import {
   pnpmShimContents,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
+  withLocalPackageOverrides,
 } from './desktop-profile-bootstrap.mjs';
 
 describe('desktop profile bootstrap', () => {
@@ -20,6 +21,14 @@ describe('desktop profile bootstrap', () => {
     assert.deepEqual(createLocalPackageOverrides(packed), {
       '@deepseek-ai/dsh-tools': 'file:///tmp/dsh-tools.tgz',
       '@newwe/vectorai-plugin-dsh-space': 'file:///tmp/space.tgz',
+    });
+  });
+
+  it('writes local overrides into the pnpm 11 workspace settings', () => {
+    assert.deepEqual(withLocalPackageOverrides({ packages: ['.'], nodeLinker: 'hoisted' }, packed), {
+      packages: ['.'],
+      nodeLinker: 'hoisted',
+      overrides: createLocalPackageOverrides(packed),
     });
   });
 
