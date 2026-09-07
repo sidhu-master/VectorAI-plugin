@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
+import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import { createDesktopRuntimePlan, DESKTOP_NODE_VERSION, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 import { materializeBundleRuntimeDependencies } from './set-dsh-release-version.mjs';
 
@@ -34,9 +35,8 @@ try {
 
   const dshSource = await resolveDshSource(temporaryRoot);
   run(process.execPath, [resolve(root, 'scripts/check-dsh-source-runtime.mjs'), dshSource], root);
-  if (!process.env.DSH_SOURCE_DIR) {
-    run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'install', '--frozen-lockfile'], root);
-    run('corepack', ['pnpm@11.7.0', '--dir', dshSource, 'run', 'build'], root);
+  for (const command of createDshBuildCommands(dshSource)) {
+    run(command.command, command.args, root);
   }
 
   const vendorPacks = join(temporaryRoot, 'dsh-vendor-packs');
@@ -114,9 +114,14 @@ function assertCleanSource() {
 }
 
 async function resolveDshSource(temporaryRoot) {
-  if (process.env.DSH_SOURCE_DIR) return resolve(process.env.DSH_SOURCE_DIR);
   const directory = join(temporaryRoot, 'deepseek-harness');
-  run('git', ['clone', '--depth', '1', '--branch', release.dsh.tag, 'https://github.com/deepseek-ai/deepseek-harness.git', directory], root);
+  if (process.env.DSH_SOURCE_DIR) {
+    const source = resolve(process.env.DSH_SOURCE_DIR);
+    run('git', ['clone', '--no-checkout', source, directory], root);
+    run('git', ['-C', directory, 'checkout', '--detach', release.dsh.commit], root);
+  } else {
+    run('git', ['clone', '--depth', '1', '--branch', release.dsh.tag, 'https://github.com/deepseek-ai/deepseek-harness.git', directory], root);
+  }
   const commit = capture('git', ['-C', directory, 'rev-parse', 'HEAD'], root).trim();
   if (commit !== release.dsh.commit) throw new Error(`DESKTOP_DSH_COMMIT_MISMATCH:${commit}`);
   return directory;
