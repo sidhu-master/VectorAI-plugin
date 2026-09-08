@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 
@@ -23,6 +23,7 @@ import {
   selectPackedRuntimeClosure,
 } from './desktop-dsh-closure.mjs';
 import {
+  localTarballSpecifier,
   pnpmShimContents,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
@@ -274,7 +275,7 @@ function uniquePackedPackages(packed) {
 
 async function installDshClosure(output, packed, npmCache) {
   const dependencies = Object.fromEntries(packed
-    .map(({ manifest, tarball }) => [manifest.name, pathToFileURL(tarball).href]));
+    .map(({ manifest, tarball }) => [manifest.name, localTarballSpecifier(tarball)]));
   const dshRoot = join(output, 'dsh');
   await mkdir(dshRoot, { recursive: true });
   await writeFile(join(dshRoot, 'package.json'), `${JSON.stringify({
@@ -287,7 +288,7 @@ async function installAdditionalDshPackages(output, packed, npmCache) {
   const dshRoot = join(output, 'dsh');
   run('npm', [
     ...dshProductionInstallArgs(), '--no-save',
-    ...packed.map(({ tarball }) => pathToFileURL(tarball).href),
+    ...packed.map(({ tarball }) => localTarballSpecifier(tarball)),
   ], dshRoot, dshProductionInstallEnvironment(process.env, npmCache));
 }
 
