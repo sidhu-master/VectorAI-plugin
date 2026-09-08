@@ -147,11 +147,13 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, D
       closeSync(file);
     }
     renameSync(temporary, path);
-    const directory = openSync(this.#directory, 'r');
-    try {
-      fsyncSync(directory);
-    } finally {
-      closeSync(directory);
+    if (supportsDirectoryFsync(process.platform)) {
+      const directory = openSync(this.#directory, 'r');
+      try {
+        fsyncSync(directory);
+      } finally {
+        closeSync(directory);
+      }
     }
   }
 
@@ -159,6 +161,10 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, D
     const key = createHash('sha256').update(sessionId).digest('hex');
     return join(this.#directory, `${key}.json`);
   }
+}
+
+export function supportsDirectoryFsync(platform: NodeJS.Platform): boolean {
+  return platform !== 'win32';
 }
 
 function entryFromStored(value: {

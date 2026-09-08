@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { FileDrawingRepositoryStorage } from './repository-storage';
+import { FileDrawingRepositoryStorage, supportsDirectoryFsync } from './repository-storage';
 import { InMemoryDrawingRepository, type ImageVectorizer } from './repository';
 
 const temporaryDirectories: string[] = [];
@@ -46,6 +46,12 @@ function vectorizer(): ImageVectorizer {
 }
 
 describe('FileDrawingRepositoryStorage', () => {
+  it('skips directory fsync on Windows where Node reports EPERM', () => {
+    expect(supportsDirectoryFsync('win32')).toBe(false);
+    expect(supportsDirectoryFsync('darwin')).toBe(true);
+    expect(supportsDirectoryFsync('linux')).toBe(true);
+  });
+
   it('round-trips deterministic solver provenance inside the durable commit envelope', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'vectorai-dsh-provenance-'));
     temporaryDirectories.push(directory);
