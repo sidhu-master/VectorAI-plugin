@@ -20,3 +20,8 @@ The installer is written to `dist/desktop-installers`. Packaging only creates a 
 
 The runtime must match the native machine target: `darwin-arm64`, `darwin-x64`, or `win32-x64`. The Windows installer is per-user and does not request administrator elevation. Closed-test macOS builds are unsigned and require macOS 13 or later.
 
+## Verification
+
+After packaging on a native runner, run `pnpm --filter @vectorai/desktop test:packaged`. This boots the packaged executable with an isolated home and restricted `PATH`, checks that its bundled DSH page is reachable and its default model is `维构 AI`, quits through the application lifecycle, confirms the DSH process is gone, and verifies that user session data survives relaunch.
+
+Use [`scripts/desktop-clean-machine-checklist.md`](../../scripts/desktop-clean-machine-checklist.md) for the three installer acceptance runs. A package built with a placeholder key is suitable only for packaging verification. The real model-response and engineering drawing workflow rows require a dedicated temporary key and clean test machines.

@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { app, BrowserWindow, shell } from 'electron';
@@ -16,6 +16,9 @@ let shutdownComplete = false;
 let shutdownStarted = false;
 
 app.setName('VectorAI');
+if (process.env.VECTORAI_DESKTOP_USER_DATA_DIR) {
+  app.setPath('userData', resolve(process.env.VECTORAI_DESKTOP_USER_DATA_DIR));
+}
 
 app.on('before-quit', (event) => {
   if (shutdownComplete || shutdownStarted) return;
@@ -28,8 +31,7 @@ app.on('before-quit', (event) => {
   });
 });
 
-await app.whenReady();
-await launch();
+void app.whenReady().then(launch);
 
 async function launch(): Promise<void> {
   window = new BrowserWindow({
@@ -45,14 +47,18 @@ async function launch(): Promise<void> {
       sandbox: true,
     },
   });
-  window.maximize();
-  window.once('ready-to-show', () => window?.show());
+  const smokeHeadless = process.env.VECTORAI_DESKTOP_SMOKE_HEADLESS === '1';
+  if (!smokeHeadless) {
+    window.maximize();
+    window.once('ready-to-show', () => window?.show());
+  }
   window.on('closed', () => {
     window = undefined;
     if (!shutdownStarted) app.quit();
   });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   await window.loadFile(resolve(import.meta.dirname, 'loading.html'));
+  installSmokeControl();
 
   const userData = app.getPath('userData');
   const logPath = join(userData, 'logs', 'dsh.log');
@@ -89,11 +95,45 @@ async function launch(): Promise<void> {
     const readyUrl = await manager.start();
     configureNavigation(window, readyUrl);
     await window.loadURL(readyUrl.href);
+    await signalSmokeReady(readyUrl, manager.processIdentifier);
   } catch (error) {
     await manager?.stop();
+    await signalSmokeFailure(error, logPath);
     if (window && !window.isDestroyed()) {
       await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderStartupError(error, logPath))}`);
     }
+  }
+}
+
+async function signalSmokeReady(readyUrl: URL, dshPid: number): Promise<void> {
+  const readyFile = process.env.VECTORAI_DESKTOP_SMOKE_READY_FILE;
+  if (readyFile) {
+    await mkdir(dirname(readyFile), { recursive: true });
+    await writeFile(readyFile, `${JSON.stringify({ url: readyUrl.href, dshPid })}\n`, 'utf8');
+  }
+}
+
+async function signalSmokeFailure(error: unknown, logPath: string): Promise<void> {
+  const failureFile = process.env.VECTORAI_DESKTOP_SMOKE_FAILURE_FILE;
+  if (!failureFile) return;
+  await mkdir(dirname(failureFile), { recursive: true });
+  await writeFile(failureFile, `${JSON.stringify({ error: error instanceof Error ? error.message : String(error), logPath })}\n`, 'utf8');
+}
+
+function installSmokeControl(): void {
+  const controlFile = process.env.VECTORAI_DESKTOP_SMOKE_CONTROL_FILE;
+  if (controlFile) {
+    const timer = setInterval(async () => {
+      try {
+        if ((await readFile(controlFile, 'utf8')).trim() === 'quit') {
+          clearInterval(timer);
+          app.quit();
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') clearInterval(timer);
+      }
+    }, 100);
+    timer.unref();
   }
 }
 

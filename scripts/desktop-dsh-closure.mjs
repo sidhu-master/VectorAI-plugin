@@ -20,3 +20,18 @@ export function selectPackedRuntimeClosure(packages, entryNames = '@deepseek-ai/
   return [...selected.values()].sort((left, right) =>
     left.manifest.name.localeCompare(right.manifest.name));
 }
+
+export function dshProductionInstallArgs() {
+  return ['install', '--omit=dev', '--include=optional', '--no-audit', '--no-fund', '--package-lock=false'];
+}
+
+export function createPortableDshManifest(packages) {
+  return {
+    name: 'vectorai-embedded-dsh',
+    private: true,
+    version: '0.0.0',
+    dependencies: Object.fromEntries(packages
+      .map(({ manifest }) => [manifest.name, manifest.version])
+      .sort(([left], [right]) => left.localeCompare(right))),
+  };
+}

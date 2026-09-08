@@ -3,7 +3,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { selectPackedRuntimeClosure } from './desktop-dsh-closure.mjs';
+import {
+  createPortableDshManifest,
+  dshProductionInstallArgs,
+  selectPackedRuntimeClosure,
+} from './desktop-dsh-closure.mjs';
 
 describe('desktop DSH packed closure', () => {
   it('includes runtime dependencies and internal peers without unrelated packages', () => {
@@ -33,6 +37,21 @@ describe('desktop DSH packed closure', () => {
       selectPackedRuntimeClosure(packed, '@newwe/space').map((item) => item.manifest.name),
       ['@deepseek-ai/runtime', '@newwe/space'],
     );
+  });
+
+  it('keeps native production installation enabled and writes portable dependency versions', () => {
+    assert.deepEqual(dshProductionInstallArgs(), [
+      'install', '--omit=dev', '--include=optional', '--no-audit', '--no-fund', '--package-lock=false',
+    ]);
+    assert.deepEqual(createPortableDshManifest([
+      entry('@deepseek-ai/dsh', { version: '0.1.3' }),
+      entry('@newwe/space', { version: '0.1.0' }),
+    ]), {
+      name: 'vectorai-embedded-dsh',
+      private: true,
+      version: '0.0.0',
+      dependencies: { '@deepseek-ai/dsh': '0.1.3', '@newwe/space': '0.1.0' },
+    });
   });
 });
 

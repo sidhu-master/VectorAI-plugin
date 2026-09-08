@@ -10,7 +10,11 @@ import YAML from 'yaml';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
-import { selectPackedRuntimeClosure } from './desktop-dsh-closure.mjs';
+import {
+  createPortableDshManifest,
+  dshProductionInstallArgs,
+  selectPackedRuntimeClosure,
+} from './desktop-dsh-closure.mjs';
 import {
   pnpmShimContents,
   sanitizeInstalledProfileManifest,
@@ -54,7 +58,8 @@ try {
 
   await installNodeRuntime(output, temporaryRoot, target);
   const packedDshPackages = await readPackedPackages([vendorPacks, dshPacks]);
-  await installDshClosure(output, selectPackedRuntimeClosure(packedDshPackages));
+  const dshRuntimeClosure = selectPackedRuntimeClosure(packedDshPackages);
+  await installDshClosure(output, dshRuntimeClosure);
   const nodeExecutable = target.platform === 'win32'
     ? join(output, 'node', 'node.exe')
     : join(output, 'node', 'bin', 'node');
@@ -75,6 +80,11 @@ try {
   if (!annotationPackage) throw new Error(`DESKTOP_BUNDLE_TARBALL_MISSING:${annotationBundle}`);
   const vectorizer = await packedPackage(await packedVectorizerTarball(target));
   const profilePackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
+  const dshAdditionalPackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
+  await installAdditionalDshPackages(output, dshAdditionalPackages);
+  await writeFile(join(output, 'dsh', 'package.json'), `${JSON.stringify(
+    createPortableDshManifest(uniquePackedPackages([...dshRuntimeClosure, ...dshAdditionalPackages])), null, 2,
+  )}\n`);
   const pnpmShim = join(temporaryRoot, 'pnpm-shim');
   await mkdir(pnpmShim, { recursive: true });
   const pnpmShimPath = join(pnpmShim, target.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
@@ -260,9 +270,14 @@ async function installDshClosure(output, packed) {
   await writeFile(join(dshRoot, 'package.json'), `${JSON.stringify({
     name: 'vectorai-embedded-dsh', private: true, version: '0.0.0', dependencies,
   }, null, 2)}\n`);
+  run('npm', dshProductionInstallArgs(), dshRoot, { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' });
+}
+
+async function installAdditionalDshPackages(output, packed) {
+  const dshRoot = join(output, 'dsh');
   run('npm', [
-    'install', '--omit=dev', '--omit=optional', '--ignore-scripts', '--no-audit', '--no-fund',
-    '--package-lock=false',
+    ...dshProductionInstallArgs(), '--no-save',
+    ...packed.map(({ tarball }) => pathToFileURL(tarball).href),
   ], dshRoot, { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' });
 }
 

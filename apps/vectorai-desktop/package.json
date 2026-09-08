@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run src",
+    "test": "vitest run src --exclude src/desktop-smoke.test.ts",
+    "test:packaged": "vitest run src/desktop-smoke.test.ts",
     "dev": "pnpm build && electron .",
     "pack": "electron-builder --config electron-builder.yml"
   },
