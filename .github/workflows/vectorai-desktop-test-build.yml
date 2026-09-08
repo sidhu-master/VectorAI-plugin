@@ -24,7 +24,7 @@ jobs:
           - runner: macos-15-intel
             target: darwin-x64
             artifact: VectorAI-${{ inputs.version }}-mac-x64.dmg
-          - runner: windows-2025
+          - runner: windows-2022
             target: win32-x64
             artifact: VectorAI-${{ inputs.version }}-win-x64-setup.exe
     runs-on: ${{ matrix.runner }}
@@ -49,12 +49,7 @@ jobs:
           $prefix = Join-Path $env:RUNNER_TEMP 'pnpm-exe'
           npm install --prefix $prefix --no-save @pnpm/exe@11.7.0
           $bin = Join-Path $prefix 'node_modules\@pnpm\exe'
-          $nodeGyp = Join-Path $bin 'dist\node_modules\node-gyp\bin\node-gyp.js'
-          if (-not (Test-Path $nodeGyp)) {
-            throw "Bundled node-gyp was not found at $nodeGyp"
-          }
           $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "npm_config_node_gyp=$nodeGyp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           & (Join-Path $bin 'pnpm.exe') --version
       - name: Verify requested version
         shell: bash
