@@ -25,6 +25,15 @@ export function dshProductionInstallArgs() {
   return ['install', '--omit=dev', '--include=optional', '--no-audit', '--no-fund', '--package-lock=false'];
 }
 
+export function dshProductionInstallEnvironment(environment, cacheDirectory) {
+  return {
+    ...environment,
+    NODE_OPTIONS: '',
+    NODE_PATH: '',
+    npm_config_cache: cacheDirectory,
+  };
+}
+
 export function createPortableDshManifest(packages) {
   return {
     name: 'vectorai-embedded-dsh',

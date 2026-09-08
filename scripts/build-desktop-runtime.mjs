@@ -12,6 +12,7 @@ import { prepareCredential } from './prepare-desktop-credential.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import {
   createPortableDshManifest,
+  dshProductionInstallEnvironment,
   dshProductionInstallArgs,
   selectPackedRuntimeClosure,
 } from './desktop-dsh-closure.mjs';
@@ -59,7 +60,8 @@ try {
   await installNodeRuntime(output, temporaryRoot, target);
   const packedDshPackages = await readPackedPackages([vendorPacks, dshPacks]);
   const dshRuntimeClosure = selectPackedRuntimeClosure(packedDshPackages);
-  await installDshClosure(output, dshRuntimeClosure);
+  const npmCache = join(temporaryRoot, 'npm-cache');
+  await installDshClosure(output, dshRuntimeClosure, npmCache);
   const nodeExecutable = target.platform === 'win32'
     ? join(output, 'node', 'node.exe')
     : join(output, 'node', 'bin', 'node');
@@ -81,7 +83,7 @@ try {
   const vectorizer = await packedPackage(await packedVectorizerTarball(target));
   const profilePackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
   const dshAdditionalPackages = uniquePackedPackages([...spaceClosure, ...annotationClosure, vectorizer]);
-  await installAdditionalDshPackages(output, dshAdditionalPackages);
+  await installAdditionalDshPackages(output, dshAdditionalPackages, npmCache);
   await writeFile(join(output, 'dsh', 'package.json'), `${JSON.stringify(
     createPortableDshManifest(uniquePackedPackages([...dshRuntimeClosure, ...dshAdditionalPackages])), null, 2,
   )}\n`);
@@ -262,7 +264,7 @@ function uniquePackedPackages(packed) {
   return [...new Map(packed.map((entry) => [entry.manifest.name, entry])).values()];
 }
 
-async function installDshClosure(output, packed) {
+async function installDshClosure(output, packed, npmCache) {
   const dependencies = Object.fromEntries(packed
     .map(({ manifest, tarball }) => [manifest.name, pathToFileURL(tarball).href]));
   const dshRoot = join(output, 'dsh');
@@ -270,15 +272,15 @@ async function installDshClosure(output, packed) {
   await writeFile(join(dshRoot, 'package.json'), `${JSON.stringify({
     name: 'vectorai-embedded-dsh', private: true, version: '0.0.0', dependencies,
   }, null, 2)}\n`);
-  run('npm', dshProductionInstallArgs(), dshRoot, { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' });
+  run('npm', dshProductionInstallArgs(), dshRoot, dshProductionInstallEnvironment(process.env, npmCache));
 }
 
-async function installAdditionalDshPackages(output, packed) {
+async function installAdditionalDshPackages(output, packed, npmCache) {
   const dshRoot = join(output, 'dsh');
   run('npm', [
     ...dshProductionInstallArgs(), '--no-save',
     ...packed.map(({ tarball }) => pathToFileURL(tarball).href),
-  ], dshRoot, { ...process.env, NODE_OPTIONS: '', NODE_PATH: '' });
+  ], dshRoot, dshProductionInstallEnvironment(process.env, npmCache));
 }
 
 async function packedVectorizerTarball(target) {

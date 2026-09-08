@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 
 import {
   createPortableDshManifest,
+  dshProductionInstallEnvironment,
   dshProductionInstallArgs,
   selectPackedRuntimeClosure,
 } from './desktop-dsh-closure.mjs';
@@ -51,6 +52,15 @@ describe('desktop DSH packed closure', () => {
       private: true,
       version: '0.0.0',
       dependencies: { '@deepseek-ai/dsh': '0.1.3', '@newwe/space': '0.1.0' },
+    });
+  });
+
+  it('isolates npm installs from the developer machine cache', () => {
+    assert.deepEqual(dshProductionInstallEnvironment({ PATH: '/usr/bin', NODE_OPTIONS: '--inspect' }, '/tmp/vectorai-npm-cache'), {
+      PATH: '/usr/bin',
+      NODE_OPTIONS: '',
+      NODE_PATH: '',
+      npm_config_cache: '/tmp/vectorai-npm-cache',
     });
   });
 });
