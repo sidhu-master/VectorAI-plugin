@@ -95,7 +95,7 @@ async function launch(): Promise<void> {
     const readyUrl = await manager.start();
     configureNavigation(window, readyUrl);
     await window.loadURL(readyUrl.href);
-    await signalSmokeReady(readyUrl, manager.processIdentifier);
+    await signalSmokeReady(readyUrl, manager.processIdentifier, window);
   } catch (error) {
     await manager?.stop();
     await signalSmokeFailure(error, logPath);
@@ -105,11 +105,16 @@ async function launch(): Promise<void> {
   }
 }
 
-async function signalSmokeReady(readyUrl: URL, dshPid: number): Promise<void> {
+async function signalSmokeReady(readyUrl: URL, dshPid: number, target: BrowserWindow): Promise<void> {
   const readyFile = process.env.VECTORAI_DESKTOP_SMOKE_READY_FILE;
   if (readyFile) {
+    const page = await target.webContents.executeJavaScript(`({
+      url: location.href,
+      title: document.title,
+      text: document.body?.innerText?.slice(0, 500) ?? '',
+    })`) as { url: string; title: string; text: string };
     await mkdir(dirname(readyFile), { recursive: true });
-    await writeFile(readyFile, `${JSON.stringify({ url: readyUrl.href, dshPid })}\n`, 'utf8');
+    await writeFile(readyFile, `${JSON.stringify({ url: readyUrl.href, dshPid, page })}\n`, 'utf8');
   }
 }
 

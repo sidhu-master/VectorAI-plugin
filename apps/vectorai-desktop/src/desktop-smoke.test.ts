@@ -10,9 +10,13 @@ const executable = process.env.VECTORAI_DESKTOP_SMOKE_APP ?? (process.platform =
   ? join(repositoryRoot, 'dist', 'desktop-installers', `mac-${process.arch}`, 'VectorAI.app', 'Contents', 'MacOS', 'VectorAI')
   : join(repositoryRoot, 'dist', 'desktop-installers', 'win-unpacked', 'VectorAI.exe'));
 const roots: string[] = [];
+const instances: Array<Awaited<ReturnType<typeof launch>>> = [];
 
 afterAll(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  for (const instance of instances.splice(0)) await stop(instance);
+  for (const root of roots.splice(0)) {
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
 });
 
 describe('packaged VectorAI desktop', () => {
@@ -23,13 +27,16 @@ describe('packaged VectorAI desktop', () => {
     const userData = join(root, 'user-data');
 
     const first = await launch(userData, 'first');
-    expect((await fetch(first.ready.url)).status).toBe(200);
+    instances.push(first);
+    expect(first.ready.page.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//u);
+    expect(`${first.ready.page.title}\n${first.ready.page.text}`).not.toMatch(/401|unauthorized/u);
     const settings = await readFile(join(userData, 'dsh-home', 'settings.yaml'), 'utf8');
     expect(settings).toContain('name: 维构 AI');
     expect(settings).toContain('model: doubao-seed-2.0-lite');
     expect(settings).toContain('provider: deepseek-official');
     expect(settings).toContain('https://ark.cn-beijing.volces.com/api/plan/v3');
     await stop(first);
+    instances.splice(instances.indexOf(first), 1);
     expect(isAlive(first.ready.dshPid)).toBe(false);
     await expect(access(join(userData, 'owned-process.json'))).rejects.toMatchObject({ code: 'ENOENT' });
 
@@ -37,8 +44,10 @@ describe('packaged VectorAI desktop', () => {
     await mkdir(resolve(sessionPath, '..'), { recursive: true });
     await writeFile(sessionPath, '{"preserved":true}\n');
     const second = await launch(userData, 'second');
+    instances.push(second);
     expect(await readFile(sessionPath, 'utf8')).toBe('{"preserved":true}\n');
     await stop(second);
+    instances.splice(instances.indexOf(second), 1);
     expect(isAlive(second.ready.dshPid)).toBe(false);
   }, 180_000);
 });
@@ -73,7 +82,11 @@ async function waitForReady(child: ChildProcess, path: string, failurePath: stri
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`PACKAGED_APP_EXITED:${child.exitCode}:${Buffer.concat(output).toString('utf8')}`);
     try {
-      return JSON.parse(await readFile(path, 'utf8')) as { url: string; dshPid: number };
+      return JSON.parse(await readFile(path, 'utf8')) as {
+        url: string;
+        dshPid: number;
+        page: { url: string; title: string; text: string };
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -101,6 +114,7 @@ async function waitForExit(child: ChildProcess) {
 }
 
 async function stop(instance: { child: ChildProcess; controlFile: string }) {
+  if (instance.child.exitCode !== null || instance.child.signalCode !== null) return;
   await writeFile(instance.controlFile, 'quit\n');
   await Promise.race([
     new Promise<void>((resolve, reject) => instance.child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`PACKAGED_APP_EXIT:${code}`)))),
