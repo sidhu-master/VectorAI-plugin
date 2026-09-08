@@ -47,8 +47,8 @@ jobs:
         shell: pwsh
         run: |
           $prefix = Join-Path $env:RUNNER_TEMP 'pnpm-exe'
-          npm install --prefix $prefix --no-save @pnpm/win-x64@11.7.0
-          $bin = Join-Path $prefix 'node_modules\@pnpm\win-x64'
+          npm install --prefix $prefix --no-save @pnpm/exe@11.7.0
+          $bin = Join-Path $prefix 'node_modules\@pnpm\exe'
           $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           & (Join-Path $bin 'pnpm.exe') --version
       - name: Verify requested version
