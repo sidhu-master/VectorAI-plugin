@@ -53,6 +53,8 @@ jobs:
         run: |
           node scripts/build-desktop-runtime.mjs --target "${{ matrix.target }}"
           pnpm pack:desktop
+      - name: Smoke test packaged desktop app
+        run: pnpm --filter @vectorai/desktop test:packaged
       - name: Record artifact provenance
         shell: bash
         run: |
