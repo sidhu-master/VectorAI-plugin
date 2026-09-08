@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import release from '../release/dsh-plugins.json' with { type: 'json' };
-import { createDesktopRuntimePlan } from './desktop-runtime-plan.mjs';
+import { createDesktopRuntimePlan, desktopUnpackedDirectoryName, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 
 describe('desktop runtime assembly plan', () => {
   it('uses the approved build and install sequence', () => {
@@ -37,5 +37,11 @@ describe('desktop runtime assembly plan', () => {
 
   it('rejects targets outside the desktop product matrix', () => {
     assert.throws(() => createDesktopRuntimePlan(release, 'linux-x64'), /DESKTOP_RUNTIME_TARGET_UNSUPPORTED/);
+  });
+
+  it('matches electron-builder unpacked directory names for every desktop target', () => {
+    assert.equal(desktopUnpackedDirectoryName(parseDesktopTarget('darwin-arm64')), 'mac-arm64');
+    assert.equal(desktopUnpackedDirectoryName(parseDesktopTarget('darwin-x64')), 'mac');
+    assert.equal(desktopUnpackedDirectoryName(parseDesktopTarget('win32-x64')), 'win-unpacked');
   });
 });

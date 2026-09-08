@@ -10,6 +10,23 @@ export function portableTarEnvironment(environment, platform = process.platform)
   };
 }
 
+export function powershellExpandArchiveInvocation(archivePath, destinationPath, environment = process.env) {
+  return {
+    command: 'powershell.exe',
+    args: [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Expand-Archive -LiteralPath $env:VECTORAI_NODE_ARCHIVE -DestinationPath $env:VECTORAI_NODE_DESTINATION -Force',
+    ],
+    environment: {
+      ...environment,
+      VECTORAI_NODE_ARCHIVE: archivePath,
+      VECTORAI_NODE_DESTINATION: destinationPath,
+    },
+  };
+}
+
 export function platformInvocation(
   command,
   args,

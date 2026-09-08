@@ -9,7 +9,11 @@ import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
-import { platformInvocation, portableTarEnvironment } from './desktop-command.mjs';
+import {
+  platformInvocation,
+  portableTarEnvironment,
+  powershellExpandArchiveInvocation,
+} from './desktop-command.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import {
   createPortableDshManifest,
@@ -217,8 +221,8 @@ async function installNodeRuntime(output, temporaryRoot, target) {
   const extracted = join(temporaryRoot, 'node-extracted');
   await mkdir(extracted, { recursive: true });
   if (target.platform === 'win32') {
-    run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force', archivePath, extracted], root);
+    const invocation = powershellExpandArchiveInvocation(archivePath, extracted);
+    run(invocation.command, invocation.args, root, invocation.environment);
   } else {
     run('tar', ['-xzf', archivePath, '-C', extracted], root);
   }
