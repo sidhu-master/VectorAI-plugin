@@ -297,7 +297,6 @@ async function cleanupNativeDshBuild(output, target) {
   const plan = fsExtBuildCleanupPlan(target.platform);
   let preserved;
   if (plan.preserve) preserved = await readFile(join(dshRoot, ...plan.preserve.split('/')));
-  if (plan.strip) run('strip', ['-S', join(dshRoot, ...plan.strip.split('/'))], root);
   await Promise.all(plan.remove.map((path) =>
     rm(join(dshRoot, ...path.split('/')), { recursive: true, force: true })));
   if (plan.preserve) {
@@ -305,6 +304,7 @@ async function cleanupNativeDshBuild(output, target) {
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(destination, preserved);
   }
+  if (plan.strip) run('strip', ['-S', join(dshRoot, ...plan.strip.split('/'))], root);
 }
 
 async function packedVectorizerTarball(target) {
