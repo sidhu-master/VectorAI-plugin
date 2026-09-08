@@ -9,6 +9,12 @@ import { findReadyUrl } from './ready-url.js';
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_LIMIT = 1024 * 1024;
+const DEFAULT_STARTUP_TIMEOUT_MS = 45_000;
+const WINDOWS_COLD_START_TIMEOUT_MS = 180_000;
+
+export function defaultStartupTimeoutMs(platform: NodeJS.Platform): number {
+  return platform === 'win32' ? WINDOWS_COLD_START_TIMEOUT_MS : DEFAULT_STARTUP_TIMEOUT_MS;
+}
 
 export interface DSHProcessManagerOptions {
   nodeExecutable: string;
@@ -109,7 +115,10 @@ export class DSHProcessManager {
       });
     });
     const timeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('DSH_STARTUP_TIMEOUT')), this.#options.startupTimeoutMs ?? 45_000)
+      setTimeout(
+        () => reject(new Error('DSH_STARTUP_TIMEOUT')),
+        this.#options.startupTimeoutMs ?? defaultStartupTimeoutMs(platform),
+      )
         .unref();
     });
     try {

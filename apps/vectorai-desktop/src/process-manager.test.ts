@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { DSHProcessManager } from './process-manager.js';
+import { DSHProcessManager, defaultStartupTimeoutMs } from './process-manager.js';
 
 const roots: string[] = [];
 
@@ -46,6 +46,12 @@ async function fixture(mode: 'ready' | 'silent' = 'ready') {
 }
 
 describe('DSHProcessManager', () => {
+  it('allows extra time for Windows cold starts', () => {
+    expect(defaultStartupTimeoutMs('win32')).toBe(180_000);
+    expect(defaultStartupTimeoutMs('darwin')).toBe(45_000);
+    expect(defaultStartupTimeoutMs('linux')).toBe(45_000);
+  });
+
   it('starts on loopback, passes private state to the child, and stops it', async () => {
     const { manager, environmentPath, root } = await fixture();
     const ready = await manager.start();
