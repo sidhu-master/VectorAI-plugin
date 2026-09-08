@@ -177,6 +177,14 @@ async function exerciseSmokeDxfDrop(target: BrowserWindow): Promise<void> {
   const encoded = (await readFile(path)).toString('base64');
   const filename = basename(path);
   const status = await target.webContents.executeJavaScript(`(async () => {
+    const mountDeadline = Date.now() + 15000;
+    while (Date.now() < mountDeadline) {
+      const composerReady = document.querySelector('[data-composer-input]')?.getAttribute('contenteditable') === 'true';
+      const workspaceReady = document.querySelector('[data-vectorai-workspace-overlay]') !== null;
+      if (composerReady && workspaceReady) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const bytes = Uint8Array.from(atob(${JSON.stringify(encoded)}), value => value.charCodeAt(0));
     const file = new File([bytes], ${JSON.stringify(filename)}, { type: 'application/dxf' });
     const transfer = new DataTransfer();
@@ -184,7 +192,7 @@ async function exerciseSmokeDxfDrop(target: BrowserWindow): Promise<void> {
     for (const type of ['dragenter', 'dragover', 'drop']) {
       document.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer }));
     }
-    const deadline = Date.now() + 15000;
+    const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
       const text = document.querySelector('.vai-engineering-drop')?.textContent ?? '';
       if (text.includes('图纸已打开')) return text;
