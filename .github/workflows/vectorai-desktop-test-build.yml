@@ -1,0 +1,103 @@
+name: VectorAI desktop closed-test build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: VectorAI test installer version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: darwin-arm64
+            artifact: VectorAI-${{ inputs.version }}-mac-arm64.dmg
+          - runner: macos-15-intel
+            target: darwin-x64
+            artifact: VectorAI-${{ inputs.version }}-mac-x64.dmg
+          - runner: windows-2025
+            target: win32-x64
+            artifact: VectorAI-${{ inputs.version }}-win-x64-setup.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.14.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.13.2
+      - name: Install repository dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify requested version
+        shell: bash
+        run: node -e "const r=require('./release/dsh-plugins.json'); if(r.version!==process.argv[1]) throw new Error('DESKTOP_VERSION_MISMATCH')" "${{ inputs.version }}"
+      - name: Build runtime and native installer
+        shell: bash
+        env:
+          VECTORAI_TEST_API_KEY: ${{ secrets.VECTORAI_TEST_API_KEY }}
+          VECTORAI_DESKTOP_TARGET: ${{ matrix.target }}
+        run: |
+          node scripts/build-desktop-runtime.mjs --target "${{ matrix.target }}"
+          pnpm pack:desktop
+      - name: Record artifact provenance
+        shell: bash
+        run: |
+          node scripts/write-desktop-artifact-record.mjs \
+            --target "${{ matrix.target }}" \
+            --artifact "dist/desktop-installers/${{ matrix.artifact }}" \
+            --runtime "dist/desktop-runtime/${{ matrix.target }}" \
+            --commit "${{ github.sha }}" \
+            --output "dist/desktop-installers/${{ matrix.target }}.artifact.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vectorai-desktop-${{ matrix.target }}
+          path: |
+            dist/desktop-installers/${{ matrix.artifact }}
+            dist/desktop-installers/${{ matrix.target }}.artifact.json
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: Audit closed-test installer set
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vectorai-desktop-*
+          path: dist/desktop-installers
+          merge-multiple: true
+      - name: Verify exact artifact set
+        run: >-
+          node scripts/verify-desktop-artifact-set.mjs
+          --input dist/desktop-installers
+          --version "${{ inputs.version }}"
+          --commit "${{ github.sha }}"
+          --output dist/desktop-installers/desktop-artifacts.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VectorAI-${{ inputs.version }}-closed-test
+          path: |
+            dist/desktop-installers/*.dmg
+            dist/desktop-installers/*.exe
+            dist/desktop-installers/desktop-artifacts.json
+          if-no-files-found: error
+          retention-days: 7
