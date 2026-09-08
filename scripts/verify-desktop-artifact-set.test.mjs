@@ -71,7 +71,7 @@ describe('desktop installer artifact inventory', () => {
       ['windows-2025', 'win32-x64'],
     ]);
     assert.equal(workflow.on.workflow_dispatch.inputs.version.required, true);
-    assert.match(source, /@pnpm\/win-x64@11\.7\.0/u);
+    assert.match(source, /@pnpm\/exe@11\.7\.0/u);
     assert.match(source, /GITHUB_PATH/u);
     assert.doesNotMatch(source, /npm publish|release:dsh-plugins/u);
   });
