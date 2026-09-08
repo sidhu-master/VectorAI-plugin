@@ -25,6 +25,7 @@ import {
 import {
   localTarballSpecifier,
   pnpmShimContents,
+  retainInstalledProfilePackages,
   sanitizeInstalledProfileManifest,
   vectorizerProfileDirectory,
   withLocalPackageOverrides,
@@ -142,6 +143,10 @@ try {
   await rm(join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'), { force: true });
 
   await replaceInstalledVectorizer(assemblyHome, target);
+  await retainInstalledProfilePackages(join(profileRoot, 'node_modules'), [
+    ...release.bundles,
+    vectorizer.manifest.name,
+  ]);
   await mkdir(join(output, 'profile-seed'), { recursive: true });
   await cp(join(assemblyHome, 'profiles'), join(output, 'profile-seed', 'profiles'), { recursive: true });
   await cp(
