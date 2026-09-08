@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseDesktopTarget } from './desktop-runtime-plan.mjs';
+import { platformInvocation } from './desktop-command.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const appRoot = join(root, 'apps', 'vectorai-desktop');
@@ -67,7 +68,8 @@ if (matching.length !== 1) throw new Error(`DESKTOP_INSTALLER_ARTIFACT_INVALID:$
 process.stdout.write(`${join(outputRoot, expectedName)}\n`);
 
 function run(command, args, cwd, env = process.env) {
-  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' });
+  const invocation = platformInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, { cwd, env, stdio: 'inherit' });
   if (result.error || result.status !== 0) {
     throw result.error ?? new Error(`DESKTOP_INSTALLER_COMMAND_FAILED:${command}:${result.status}`);
   }

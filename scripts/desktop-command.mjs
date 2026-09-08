@@ -14,3 +14,7 @@ export function platformInvocation(
     args: ['/d', '/s', '/c', `${command}.cmd`, ...args],
   };
 }
+
+export function platformTarCommand(platform = process.platform) {
+  return platform === 'win32' ? 'tar' : '/usr/bin/tar';
+}

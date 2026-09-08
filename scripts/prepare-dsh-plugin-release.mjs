@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { auditTarball } from './dsh-package-audit.mjs';
+import { platformInvocation } from './desktop-command.mjs';
 import { auditRuntimePackage } from './vectorizer-runtime-audit.mjs';
 import { RUNTIME_VERSION, targetFor } from './vectorizer-runtime-config.mjs';
 
@@ -44,7 +45,8 @@ for (const tarball of tarballs) auditTarball(tarball);
 process.stdout.write(`${tarballs.join('\n')}\n`);
 
 function run(command, arguments_, cwd) {
-  const result = spawnSync(command, arguments_, { cwd, stdio: 'inherit' });
+  const invocation = platformInvocation(command, arguments_);
+  const result = spawnSync(invocation.command, invocation.args, { cwd, stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${arguments_.join(' ')} failed with status ${result.status}`);
 }
