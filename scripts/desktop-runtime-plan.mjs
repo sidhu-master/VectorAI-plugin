@@ -45,3 +45,8 @@ export function parseDesktopTarget(target = `${process.platform}-${process.arch}
   const separator = target.indexOf('-');
   return { id: target, platform: target.slice(0, separator), arch: target.slice(separator + 1) };
 }
+
+export function desktopUnpackedDirectoryName(target) {
+  if (target.platform === 'win32') return 'win-unpacked';
+  return target.arch === 'x64' ? 'mac' : `mac-${target.arch}`;
+}

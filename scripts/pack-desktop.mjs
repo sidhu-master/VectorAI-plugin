@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:f
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseDesktopTarget } from './desktop-runtime-plan.mjs';
+import { desktopUnpackedDirectoryName, parseDesktopTarget } from './desktop-runtime-plan.mjs';
 import { platformInvocation } from './desktop-command.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,8 +44,8 @@ run('pnpm', builderArgs, appRoot, {
 });
 
 const unpackedRuntime = target.platform === 'darwin'
-  ? join(outputRoot, `mac-${target.arch}`, 'VectorAI.app', 'Contents', 'Resources', 'runtime')
-  : join(outputRoot, 'win-unpacked', 'resources', 'runtime');
+  ? join(outputRoot, desktopUnpackedDirectoryName(target), 'VectorAI.app', 'Contents', 'Resources', 'runtime')
+  : join(outputRoot, desktopUnpackedDirectoryName(target), 'resources', 'runtime');
 for (const required of [
   'runtime-manifest.json',
   'default-settings.yaml',
