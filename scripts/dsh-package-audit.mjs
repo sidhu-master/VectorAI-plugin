@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 import { runtimeImports } from './dsh-bundle-runtime-dependencies.mjs';
+import { platformTarCommand } from './desktop-command.mjs';
 import { RUNTIME_TARGETS, RUNTIME_VERSION } from './vectorizer-runtime-config.mjs';
 
 const allowedEntry = /^package\/(?:package\.json|README\.md|LICENSE|cordis\.patch\.yml|lib\/(?:.*\.js|.*\.d\.ts))$/;
@@ -115,7 +116,7 @@ function runTar(arguments_) {
 }
 
 export function readTarOutput(arguments_) {
-  const result = spawnSync('/usr/bin/tar', arguments_, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const result = spawnSync(platformTarCommand(), arguments_, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   if (result.error || result.status !== 0) {
     throw result.error ?? new Error(result.stderr || `tar failed with status ${result.status}`);
   }

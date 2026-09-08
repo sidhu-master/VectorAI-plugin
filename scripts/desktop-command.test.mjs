@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { platformInvocation } from './desktop-command.mjs';
+import { platformInvocation, platformTarCommand } from './desktop-command.mjs';
 
 describe('desktop subprocess commands', () => {
   it('uses executable command shims for Node package managers on Windows', () => {
@@ -24,5 +24,10 @@ describe('desktop subprocess commands', () => {
       command: 'pnpm',
       args: ['test'],
     });
+  });
+
+  it('uses the Windows tar executable from PATH', () => {
+    assert.equal(platformTarCommand('win32'), 'tar');
+    assert.equal(platformTarCommand('darwin'), '/usr/bin/tar');
   });
 });
