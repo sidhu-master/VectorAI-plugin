@@ -78,7 +78,10 @@ describe('desktop DSH packed closure', () => {
       ],
       strip: 'node_modules/fs-ext/build/Release/fs_ext.node',
     });
-    assert.equal(fsExtBuildCleanupPlan('win32').strip, undefined);
+    assert.deepEqual(fsExtBuildCleanupPlan('win32'), {
+      remove: ['node_modules/fs-ext/build'],
+      preserve: 'node_modules/fs-ext/build/Release/fs_ext.node',
+    });
   });
 });
 
