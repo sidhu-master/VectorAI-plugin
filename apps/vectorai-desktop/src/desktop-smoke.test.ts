@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
-const target = `${process.platform}-${process.arch}`;
 const executable = process.env.VECTORAI_DESKTOP_SMOKE_APP ?? (process.platform === 'darwin'
   ? join(repositoryRoot, 'dist', 'desktop-installers', `mac-${process.arch}`, 'VectorAI.app', 'Contents', 'MacOS', 'VectorAI')
   : join(repositoryRoot, 'dist', 'desktop-installers', 'win-unpacked', 'VectorAI.exe'));
