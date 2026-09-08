@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { platformInvocation, platformTarCommand } from './desktop-command.mjs';
+import { platformInvocation } from './desktop-command.mjs';
 
 describe('desktop subprocess commands', () => {
   it('uses executable command shims for Node package managers on Windows', () => {
@@ -26,8 +26,10 @@ describe('desktop subprocess commands', () => {
     });
   });
 
-  it('uses the Windows tar executable from PATH', () => {
-    assert.equal(platformTarCommand('win32'), 'tar');
-    assert.equal(platformTarCommand('darwin'), '/usr/bin/tar');
+  it('forces Windows tar to treat drive-letter archives as local files', () => {
+    assert.deepEqual(platformInvocation('tar', ['-tzf', 'D:\\bundle.tgz'], 'win32'), {
+      command: 'tar',
+      args: ['--force-local', '-tzf', 'D:\\bundle.tgz'],
+    });
   });
 });
