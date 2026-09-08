@@ -140,7 +140,7 @@ export class FileDrawingRepositoryStorage implements DrawingRepositoryStorage, D
 
   #atomicWrite(path: string, temporary: string, value: StoredDrawing | StoredDurableDrawing): void {
     writeFileSync(temporary, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 });
-    const file = openSync(temporary, 'r');
+    const file = openSync(temporary, 'r+');
     try {
       fsyncSync(file);
     } finally {
