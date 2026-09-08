@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
 
 import { prepareCredential } from './prepare-desktop-credential.mjs';
+import { platformInvocation } from './desktop-command.mjs';
 import { createDshBuildCommands } from './desktop-dsh-build.mjs';
 import {
   createPortableDshManifest,
@@ -360,14 +361,16 @@ function argumentValue(name) {
 }
 
 function run(command, args, cwd, env = process.env) {
-  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' });
+  const invocation = platformInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, { cwd, env, stdio: 'inherit' });
   if (result.error || result.status !== 0) {
     throw result.error ?? new Error(`${basename(command)} failed with status ${String(result.status)}`);
   }
 }
 
 function capture(command, args, cwd, env = process.env) {
-  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8' });
+  const invocation = platformInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, { cwd, env, encoding: 'utf8' });
   if (result.error || result.status !== 0) {
     throw result.error ?? new Error(result.stderr || `${basename(command)} failed with status ${String(result.status)}`);
   }
