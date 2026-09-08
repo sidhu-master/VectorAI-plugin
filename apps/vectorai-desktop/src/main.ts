@@ -9,7 +9,7 @@ import { renderStartupError } from './error-page.js';
 import { isAllowedInAppNavigation, isExternalHttpUrl } from './navigation.js';
 import { DSHProcessManager } from './process-manager.js';
 import { parseDesktopRuntimeManifest } from './runtime-contract.js';
-import { initializeUserHome } from './user-home.js';
+import { initializeUserHome, installedProfileVersion } from './user-home.js';
 
 let window: BrowserWindow | undefined;
 let manager: DSHProcessManager | undefined;
@@ -79,7 +79,7 @@ async function launch(): Promise<void> {
       userData,
       profileSeedPath: join(runtimeRoot, 'profile-seed', 'profiles'),
       templatePath: join(runtimeRoot, 'default-settings.yaml'),
-      runtimeVersion: `${manifest.vectoraiVersion}:${manifest.dsh.version}`,
+      runtimeVersion: installedProfileVersion(`${manifest.vectoraiVersion}:${manifest.dsh.version}`),
     });
     const nodeExecutable = manifest.platform === 'win32'
       ? join(runtimeRoot, 'node', 'node.exe')

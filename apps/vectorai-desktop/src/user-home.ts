@@ -14,6 +14,12 @@ export interface UserHomePaths {
   workspace: string;
 }
 
+const PROFILE_LAYOUT_VERSION = 2;
+
+export function installedProfileVersion(runtimeVersion: string): string {
+  return `${runtimeVersion}:profile-${PROFILE_LAYOUT_VERSION}`;
+}
+
 export async function initializeUserHome(options: InitializeUserHomeOptions): Promise<UserHomePaths> {
   const dshHome = join(options.userData, 'dsh-home');
   const logs = join(options.userData, 'logs');
