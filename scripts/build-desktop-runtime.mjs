@@ -295,9 +295,16 @@ async function installAdditionalDshPackages(output, packed, npmCache) {
 async function cleanupNativeDshBuild(output, target) {
   const dshRoot = join(output, 'dsh');
   const plan = fsExtBuildCleanupPlan(target.platform);
+  let preserved;
+  if (plan.preserve) preserved = await readFile(join(dshRoot, ...plan.preserve.split('/')));
   if (plan.strip) run('strip', ['-S', join(dshRoot, ...plan.strip.split('/'))], root);
   await Promise.all(plan.remove.map((path) =>
     rm(join(dshRoot, ...path.split('/')), { recursive: true, force: true })));
+  if (plan.preserve) {
+    const destination = join(dshRoot, ...plan.preserve.split('/'));
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, preserved);
+  }
 }
 
 async function packedVectorizerTarball(target) {

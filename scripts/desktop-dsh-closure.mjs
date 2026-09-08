@@ -36,6 +36,12 @@ export function dshProductionInstallEnvironment(environment, cacheDirectory) {
 
 export function fsExtBuildCleanupPlan(platform) {
   const buildRoot = 'node_modules/fs-ext/build';
+  if (platform === 'win32') {
+    return {
+      remove: [buildRoot],
+      preserve: `${buildRoot}/Release/fs_ext.node`,
+    };
+  }
   return {
     remove: [
       `${buildRoot}/Release/.deps`,
